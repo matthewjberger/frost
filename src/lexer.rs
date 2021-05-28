@@ -1,4 +1,6 @@
-use anyhow::{Context, Result};
+use self::Token::*;
+use anyhow::Result;
+use std::str::Chars;
 
 #[allow(dead_code)]
 #[derive(Debug, PartialEq)]
@@ -16,7 +18,7 @@ pub enum Token {
     Identifier(String),
     If,
     Illegal(String),
-    Integer(String),
+    Integer(i32),
     LeftBrace,
     LeftParentheses,
     LessThan,
@@ -32,52 +34,91 @@ pub enum Token {
     True,
 }
 
-#[derive(Default)]
-pub struct Lexer {
-    input: String,
-    position: usize,
-    read_position: usize,
-    char: char,
+pub const EOF_CHAR: char = '\0';
+
+pub struct Lexer<'a> {
+    chars: Chars<'a>,
 }
 
-impl Lexer {
-    pub fn new(input: String) -> Self {
+impl<'a> Lexer<'a> {
+    pub fn new(input: &'a str) -> Lexer<'a> {
         Self {
-            input,
-            ..Default::default()
+            chars: input.chars(),
         }
     }
 
     pub fn next_token(&mut self) -> Result<Token> {
-        self.read_char()?;
-        let token = match self.char {
-            '=' => Token::Assign,
-            ';' => Token::Semicolon,
-            '(' => Token::LeftParentheses,
-            ')' => Token::RightParentheses,
-            ',' => Token::Comma,
-            '+' => Token::Plus,
-            '{' => Token::LeftBrace,
-            '}' => Token::RightBrace,
-            '\0' => Token::EndOfFile,
-            _ => Token::Equal,
+        self.skip_while(Self::is_whitespace);
+        let first_char = self.read_char();
+        let token = match first_char {
+            '=' => Assign,
+            ';' => Semicolon,
+            '(' => LeftParentheses,
+            ')' => RightParentheses,
+            ',' => Comma,
+            '+' => Plus,
+            '{' => LeftBrace,
+            '}' => RightBrace,
+            c if Self::is_letter(c) => {
+                let mut identifier = c.to_string();
+                identifier.push_str(&self.take_while(Self::is_letter));
+                Self::lookup_identifier(&identifier)
+            }
+            c if Self::is_digit(c) => {
+                let mut number = c.to_string();
+                number.push_str(&self.take_while(Self::is_digit));
+                Integer(number.parse::<i32>()?)
+            }
+            EOF_CHAR => EndOfFile,
+            illegal => Illegal(illegal.to_string()),
         };
         Ok(token)
     }
 
-    pub fn read_char(&mut self) -> Result<()> {
-        if self.read_position >= self.input.len() {
-            self.char = '\0';
-        } else {
-            self.char = self
-                .input
-                .chars()
-                .nth(self.read_position)
-                .context("Tried to read an out of bounds character!")?;
+    fn read_char(&mut self) -> char {
+        self.chars.next().unwrap_or(EOF_CHAR)
+    }
+
+    fn peek_nth(&self, n: usize) -> char {
+        self.chars.clone().nth(n).unwrap_or(EOF_CHAR)
+    }
+
+    fn is_eof(&self) -> bool {
+        self.chars.as_str().is_empty()
+    }
+
+    fn take_while(&mut self, mut predicate: impl FnMut(char) -> bool) -> String {
+        let mut chars = String::new();
+        while predicate(self.peek_nth(0)) && !self.is_eof() {
+            chars.push(self.read_char());
         }
-        self.position = self.read_position;
-        self.read_position += 1;
-        Ok(())
+        chars
+    }
+
+    fn skip_while(&mut self, mut predicate: impl FnMut(char) -> bool) {
+        while predicate(self.peek_nth(0)) && !self.is_eof() {
+            self.read_char();
+        }
+    }
+
+    fn is_letter(c: char) -> bool {
+        ('a'..='z').contains(&c) || ('A'..='Z').contains(&c) || c == '_'
+    }
+
+    fn is_digit(c: char) -> bool {
+        ('0'..='9').contains(&c)
+    }
+
+    fn is_whitespace(c: char) -> bool {
+        c == ' ' || c == '\t' || c == '\n' || c == '\r'
+    }
+
+    fn lookup_identifier(identifier: &str) -> Token {
+        match identifier {
+            "fn" => Function,
+            "let" => Let,
+            _ => Identifier(identifier.to_string()),
+        }
     }
 }
 
@@ -87,28 +128,26 @@ mod tests {
 
     #[test]
     fn test_next_token() -> Result<()> {
-        let input = r"
-let five = 5;
+        let input = r"let five = 5;
 let ten = 10;
 let add = fn(x, y) {
 x + y;
 };
 let result = add(five, ten);
-"
-        .to_string();
+";
 
         let tokens = [
             // let five = 5;
             Token::Let,
             Token::Identifier("five".to_string()),
             Token::Assign,
-            Token::Integer("5".to_string()),
+            Token::Integer(5),
             Token::Semicolon,
             // let ten = 10;
             Token::Let,
             Token::Identifier("ten".to_string()),
             Token::Assign,
-            Token::Integer("10".to_string()),
+            Token::Integer(10),
             Token::Semicolon,
             // let add = fn(x, y) { x + y; };
             Token::Let,
