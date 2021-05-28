@@ -86,7 +86,6 @@ impl<'a> Lexer<'a> {
         loop {
             let next_token = self.next_token()?;
             if let Token::EndOfFile = next_token {
-                tokens.push(next_token);
                 break;
             }
             tokens.push(next_token);
