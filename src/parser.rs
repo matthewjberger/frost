@@ -46,11 +46,7 @@ impl<'a> Parser<'a> {
 
         // TODO: Parse expressions
 
-        loop {
-            if matches!(self.read_token(), Token::Semicolon) {
-                break;
-            }
-        }
+        while !matches!(self.read_token(), Token::Semicolon) {}
 
         Ok(Statement::LetStatement(
             Identifier(identifier),
