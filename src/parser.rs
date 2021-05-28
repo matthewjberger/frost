@@ -44,6 +44,8 @@ impl<'a> Parser<'a> {
             bail!("Expected 'Assign' token!");
         }
 
+        // TODO: Parse expressions
+
         loop {
             if matches!(self.read_token(), Token::Semicolon) {
                 break;
