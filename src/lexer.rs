@@ -81,6 +81,19 @@ impl<'a> Lexer<'a> {
         Ok(token)
     }
 
+    pub fn exhaust(&mut self) -> Result<Vec<Token>> {
+        let mut tokens = Vec::new();
+        loop {
+            let next_token = self.next_token()?;
+            if let Token::EndOfFile = next_token {
+                tokens.push(next_token);
+                break;
+            }
+            tokens.push(next_token);
+        }
+        Ok(tokens)
+    }
+
     fn read_char(&mut self) -> char {
         self.chars.next().unwrap_or(EOF_CHAR)
     }

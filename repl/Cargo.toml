@@ -1,12 +1,10 @@
 [package]
-name = "monkey"
+name = "repl"
 version = "0.1.0"
 authors = ["Matthew J. Berger <matthewberger@nevada.unr.edu>"]
 edition = "2018"
 
-[workspace]
-members = ["repl"]
-default-members = ["repl"]
-
 [dependencies]
 anyhow = "1.0.40"
+monkey = { path = "../" }
+rustyline = "8.2.0"
