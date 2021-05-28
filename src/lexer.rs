@@ -51,13 +51,7 @@ impl<'a> Lexer<'a> {
         self.skip_while(Self::is_whitespace);
         let first_char = self.read_char();
         let token = match first_char {
-            '=' => match self.peek_nth(0) {
-                '=' => {
-                    self.read_char();
-                    Equal
-                }
-                _ => Assign,
-            },
+            '=' => self.next_char_or(Assign, '=', Equal),
             ';' => Semicolon,
             '(' => LeftParentheses,
             ')' => RightParentheses,
@@ -65,13 +59,7 @@ impl<'a> Lexer<'a> {
             '+' => Plus,
             '{' => LeftBrace,
             '}' => RightBrace,
-            '!' => match self.peek_nth(0) {
-                '=' => {
-                    self.read_char();
-                    NotEqual
-                }
-                _ => Bang,
-            },
+            '!' => self.next_char_or(Bang, '=', NotEqual),
             '<' => LessThan,
             '>' => GreaterThan,
             '-' => Minus,
@@ -141,6 +129,16 @@ impl<'a> Lexer<'a> {
             "if" => If,
             "else" => Else,
             _ => Identifier(identifier.to_string()),
+        }
+    }
+
+    fn next_char_or(&mut self, default: Token, next_char: char, token: Token) -> Token {
+        match self.peek_nth(0) {
+            c if c == next_char => {
+                self.read_char();
+                token
+            }
+            _ => default,
         }
     }
 }
