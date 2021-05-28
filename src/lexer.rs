@@ -157,7 +157,7 @@ impl<'a> Lexer<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Lexer, Result, Token};
 
     #[test]
     fn test_next_token() -> Result<()> {
