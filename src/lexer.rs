@@ -51,7 +51,13 @@ impl<'a> Lexer<'a> {
         self.skip_while(Self::is_whitespace);
         let first_char = self.read_char();
         let token = match first_char {
-            '=' => Assign,
+            '=' => match self.peek_nth(0) {
+                '=' => {
+                    self.read_char();
+                    Equal
+                }
+                _ => Assign,
+            },
             ';' => Semicolon,
             '(' => LeftParentheses,
             ')' => RightParentheses,
@@ -59,7 +65,13 @@ impl<'a> Lexer<'a> {
             '+' => Plus,
             '{' => LeftBrace,
             '}' => RightBrace,
-            '!' => Bang,
+            '!' => match self.peek_nth(0) {
+                '=' => {
+                    self.read_char();
+                    NotEqual
+                }
+                _ => Bang,
+            },
             '<' => LessThan,
             '>' => GreaterThan,
             '-' => Minus,
@@ -153,6 +165,9 @@ if (5 < 10) {
 } else {
     return false;
 }
+
+10 == 10;
+10 != 9;
 ";
 
         let tokens = [
@@ -228,6 +243,16 @@ if (5 < 10) {
             Token::False,
             Token::Semicolon,
             Token::RightBrace,
+            // 10 == 10;
+            Token::Integer(10),
+            Token::Equal,
+            Token::Integer(10),
+            Token::Semicolon,
+            // 10 != 9;
+            Token::Integer(10),
+            Token::NotEqual,
+            Token::Integer(9),
+            Token::Semicolon,
             Token::EndOfFile,
         ];
 
