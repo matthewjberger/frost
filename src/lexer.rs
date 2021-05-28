@@ -59,6 +59,12 @@ impl<'a> Lexer<'a> {
             '+' => Plus,
             '{' => LeftBrace,
             '}' => RightBrace,
+            '!' => Bang,
+            '<' => LessThan,
+            '>' => GreaterThan,
+            '-' => Minus,
+            '*' => Asterisk,
+            '/' => Slash,
             EOF_CHAR => EndOfFile,
             c if Self::is_letter(c) => {
                 let mut identifier = c.to_string();
@@ -117,6 +123,11 @@ impl<'a> Lexer<'a> {
         match identifier {
             "fn" => Function,
             "let" => Let,
+            "true" => True,
+            "false" => False,
+            "return" => Return,
+            "if" => If,
+            "else" => Else,
             _ => Identifier(identifier.to_string()),
         }
     }
@@ -134,6 +145,14 @@ let add = fn(x, y) {
 x + y;
 };
 let result = add(five, ten);
+!-/*5;
+5 < 10 > 5;
+
+if (5 < 10) {
+    return true;
+} else {
+    return false;
+}
 ";
 
         let tokens = [
@@ -177,6 +196,38 @@ let result = add(five, ten);
             Token::Identifier("ten".to_string()),
             Token::RightParentheses,
             Token::Semicolon,
+            // !-/*5;
+            Token::Bang,
+            Token::Minus,
+            Token::Slash,
+            Token::Asterisk,
+            Token::Integer(5),
+            Token::Semicolon,
+            // 5 < 10 > 5;
+            Token::Integer(5),
+            Token::LessThan,
+            Token::Integer(10),
+            Token::GreaterThan,
+            Token::Integer(5),
+            Token::Semicolon,
+            // if (5 < 10) { return true; } else { return false; }
+            Token::If,
+            Token::LeftParentheses,
+            Token::Integer(5),
+            Token::LessThan,
+            Token::Integer(10),
+            Token::RightParentheses,
+            Token::LeftBrace,
+            Token::Return,
+            Token::True,
+            Token::Semicolon,
+            Token::RightBrace,
+            Token::Else,
+            Token::LeftBrace,
+            Token::Return,
+            Token::False,
+            Token::Semicolon,
+            Token::RightBrace,
             Token::EndOfFile,
         ];
 
