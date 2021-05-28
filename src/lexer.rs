@@ -59,6 +59,7 @@ impl<'a> Lexer<'a> {
             '+' => Plus,
             '{' => LeftBrace,
             '}' => RightBrace,
+            EOF_CHAR => EndOfFile,
             c if Self::is_letter(c) => {
                 let mut identifier = c.to_string();
                 identifier.push_str(&self.take_while(Self::is_letter));
@@ -69,7 +70,6 @@ impl<'a> Lexer<'a> {
                 number.push_str(&self.take_while(Self::is_digit));
                 Integer(number.parse::<i32>()?)
             }
-            EOF_CHAR => EndOfFile,
             illegal => Illegal(illegal.to_string()),
         };
         Ok(token)
