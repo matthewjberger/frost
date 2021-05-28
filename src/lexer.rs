@@ -87,16 +87,56 @@ mod tests {
 
     #[test]
     fn test_next_token() -> Result<()> {
-        let input = "=+(){},;".to_string();
+        let input = r"
+let five = 5;
+let ten = 10;
+let add = fn(x, y) {
+x + y;
+};
+let result = add(five, ten);
+"
+        .to_string();
 
         let tokens = [
+            // let five = 5;
+            Token::Let,
+            Token::Identifier("five".to_string()),
             Token::Assign,
-            Token::Plus,
+            Token::Integer("5".to_string()),
+            Token::Semicolon,
+            // let ten = 10;
+            Token::Let,
+            Token::Identifier("ten".to_string()),
+            Token::Assign,
+            Token::Integer("10".to_string()),
+            Token::Semicolon,
+            // let add = fn(x, y) { x + y; };
+            Token::Let,
+            Token::Identifier("add".to_string()),
+            Token::Assign,
+            Token::Function,
             Token::LeftParentheses,
+            Token::Identifier("x".to_string()),
+            Token::Comma,
+            Token::Identifier("y".to_string()),
             Token::RightParentheses,
             Token::LeftBrace,
+            Token::Identifier("x".to_string()),
+            Token::Plus,
+            Token::Identifier("y".to_string()),
+            Token::Semicolon,
             Token::RightBrace,
+            Token::Semicolon,
+            // let result = add(five, ten);
+            Token::Let,
+            Token::Identifier("result".to_string()),
+            Token::Assign,
+            Token::Identifier("add".to_string()),
+            Token::LeftParentheses,
+            Token::Identifier("five".to_string()),
             Token::Comma,
+            Token::Identifier("ten".to_string()),
+            Token::RightParentheses,
             Token::Semicolon,
             Token::EndOfFile,
         ];
