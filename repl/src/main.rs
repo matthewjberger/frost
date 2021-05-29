@@ -25,9 +25,7 @@ fn main() -> Result<()> {
                     let mut lexer = Lexer::new(line);
                     let tokens = lexer.tokenize()?;
                     println!("--- Tokens ---");
-                    for token in tokens.iter() {
-                        println!("{}", token)
-                    }
+                    println!("{:?}", tokens);
 
                     // Parsing
                     let mut parser = Parser::new(&tokens);
