@@ -18,7 +18,7 @@ pub enum Token {
     Identifier(String),
     If,
     Illegal(String),
-    Integer(i32),
+    Integer(i64),
     LeftBrace,
     LeftParentheses,
     LessThan,
@@ -74,7 +74,7 @@ impl<'a> Lexer<'a> {
             c if Self::is_digit(c) => {
                 let mut number = c.to_string();
                 number.push_str(&self.take_while(Self::is_digit));
-                Integer(number.parse::<i32>()?)
+                Integer(number.parse::<i64>()?)
             }
             illegal => Illegal(illegal.to_string()),
         };
