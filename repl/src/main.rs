@@ -1,21 +1,8 @@
 use anyhow::Result;
 use monkey::Lexer;
-
-// fn main() -> Result<()> {
-//     let mut lexer = Lexer::new("let x = 5;");
-//     println!("{:?}", lexer.next_token()?);
-//     println!("{:?}", lexer.next_token()?);
-//     println!("{:?}", lexer.next_token()?);
-//     println!("{:?}", lexer.next_token()?);
-//     println!("{:?}", lexer.next_token()?);
-//     Ok(())
-// }
-
-use rustyline::error::ReadlineError;
-use rustyline::Editor;
+use rustyline::{error::ReadlineError, Editor};
 
 fn main() -> Result<()> {
-    // `()` can be used when no completer is required
     println!();
     println!("Welcome to the Monkey programming language REPL!");
     println!("You may type Monkey code below for evaluation.");
@@ -30,7 +17,7 @@ fn main() -> Result<()> {
                 "exit" => break,
                 line => {
                     let mut lexer = Lexer::new(line);
-                    for token in lexer.exhaust()? {
+                    for token in lexer.tokenize()? {
                         println!("{:?}", token)
                     }
                 }
