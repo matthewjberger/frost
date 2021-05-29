@@ -22,7 +22,8 @@ impl<'a> Parser<'a> {
             match self.peek_nth(0) {
                 Token::EndOfFile => break,
                 Token::Let => program.push(self.parse_let_statement()?),
-                _ => {}
+                Token::Return => program.push(self.parse_return_statement()?),
+                token => bail!("Unrecognized token: '{:?}'", token),
             };
         }
         Ok(program)
@@ -55,6 +56,20 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    fn parse_return_statement(&mut self) -> Result<Statement> {
+        if !matches!(self.read_token(), Token::Return) {
+            bail!("Expected 'Return' token!");
+        }
+
+        // TODO: Parse expressions
+
+        while !matches!(self.read_token(), Token::Semicolon) {}
+
+        Ok(Statement::ReturnStatement(
+            Expression::IdentifierExpression(Identifier("".to_string())),
+        ))
+    }
+
     fn read_token(&mut self) -> &Token {
         self.tokens.next().unwrap_or(&Token::EndOfFile)
     }
@@ -67,6 +82,7 @@ impl<'a> Parser<'a> {
 #[derive(Debug)]
 pub enum Statement {
     LetStatement(Identifier, Expression),
+    ReturnStatement(Expression),
 }
 
 #[derive(Debug)]
@@ -87,8 +103,12 @@ pub enum Literal {
 
 #[cfg(test)]
 mod tests {
-    use super::{Identifier, Parser, Result, Statement::LetStatement};
+    use super::{
+        Identifier, Parser, Result,
+        Statement::{LetStatement, ReturnStatement},
+    };
     use crate::lexer::Lexer;
+    use anyhow::bail;
 
     #[test]
     fn test_let_statements() -> Result<()> {
@@ -117,6 +137,34 @@ mod tests {
                 LetStatement(identifier, _expression) => {
                     assert_eq!(identifier, expected_identifier);
                 }
+                _ => bail!("Expected a let statement!"),
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_return_statements() -> Result<()> {
+        let input = r#"
+        return 5;
+        return 10;
+        return 993322;
+        "#;
+
+        let mut lexer = Lexer::new(&input);
+        let tokens = lexer.exhaust()?;
+
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert!(!program.is_empty());
+        assert_eq!(program.len(), 3);
+
+        for statement in program.into_iter() {
+            match statement {
+                ReturnStatement(_expression) => {}
+                _ => bail!("Expected a return statement!"),
             }
         }
 
