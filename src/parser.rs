@@ -48,7 +48,7 @@ pub struct Prefix(pub String, pub Box<Expression>);
 
 impl Display for Prefix {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        write!(f, "{}{}", self.0, self.1)
+        write!(f, "({}{})", self.0, self.1)
     }
 }
 
@@ -57,7 +57,7 @@ pub struct Infix(pub Box<Expression>, pub String, pub Box<Expression>);
 
 impl Display for Infix {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        write!(f, "{} {} {}", self.0, self.1, self.2)
+        write!(f, "({} {} {})", self.0, self.1, self.2)
     }
 }
 
@@ -192,16 +192,25 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expression(&mut self, precedence: Precedence) -> Result<Expression> {
+        let mut advance = false;
         let mut expression = match self.peek_nth(0) {
             Token::Identifier(identifier) => {
+                advance = true;
                 Expression::Identifier(Identifier(identifier.to_string()))
             }
-            Token::Integer(value) => Expression::Literal(Literal::Integer(*value)),
+            Token::Integer(value) => {
+                advance = true;
+                Expression::Literal(Literal::Integer(*value))
+            }
             Token::Bang | Token::Minus => self.parse_prefix_expression()?,
             token => bail!("Token not valid for an expression: {:?}", token),
         };
-        self.read_token();
-        while self.peek_nth(1) != &Token::Semicolon
+
+        if advance {
+            self.read_token();
+        }
+
+        while self.peek_nth(0) != &Token::Semicolon
             && precedence < Precedence::of_token(self.peek_nth(0))
         {
             match self.peek_nth(0) {
@@ -215,10 +224,10 @@ impl<'a> Parser<'a> {
                 | Token::GreaterThan => {
                     expression = self.parse_infix_expression(expression.clone())?;
                 }
-                token => bail!("Token not valid for an infix expression: {:?}", token),
+                _ => return Ok(expression),
             };
-            self.read_token();
         }
+
         Ok(expression)
     }
 
@@ -279,7 +288,6 @@ mod tests {
             .collect();
 
         for (statement, expected_identifier) in program.into_iter().zip(identifiers.into_iter()) {
-            println!("Found a statement: {}", statement.to_string());
             match statement {
                 Statement::Let(identifier, _expression) => {
                     assert_eq!(identifier, expected_identifier);
@@ -443,6 +451,45 @@ mod tests {
                     _ => bail!("Expected an expression statement!"),
                 }
             }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_operator_precedence() -> Result<()> {
+        let tests = [
+            ("-a * b", "((-a) * b)"),
+            ("!-a", "(!(-a))"),
+            ("a + b + c", "((a + b) + c)"),
+            ("a + b - c", "((a + b) - c)"),
+            ("a * b * c", "((a * b) * c)"),
+            ("a * b / c", "((a * b) / c)"),
+            ("a + b / c", "(a + (b / c))"),
+            ("a + b * c + d / e - f", "(((a + (b * c)) + (d / e)) - f)"),
+            ("3 + 4; -5 * 5", "(3 + 4)((-5) * 5)"),
+            ("5 > 4 == 3 < 4", "((5 > 4) == (3 < 4))"),
+            ("5 < 4 != 3 > 4", "((5 < 4) != (3 > 4))"),
+            (
+                "3 + 4 * 5 == 3 * 1 + 4 * 5",
+                "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))",
+            ),
+        ];
+
+        for (input, expected) in tests.iter() {
+            let mut lexer = Lexer::new(input);
+            let tokens = lexer.tokenize()?;
+
+            let mut parser = Parser::new(&tokens);
+            let program = parser.parse()?;
+            let program_string = program
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+                .join("");
+            println!("{}", program_string);
+
+            assert_eq!(program_string, expected.to_string());
         }
 
         Ok(())
