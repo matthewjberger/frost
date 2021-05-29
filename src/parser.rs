@@ -27,15 +27,26 @@ impl Display for Statement {
 pub enum Expression {
     Identifier(Identifier),
     Literal(Literal),
+    Prefix(Prefix),
 }
 
 impl Display for Expression {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         let expression = match self {
-            Self::Identifier(identifier) => format!("{}", identifier),
-            Self::Literal(literal) => format!("{}", literal),
+            Self::Identifier(identifier) => identifier.to_string(),
+            Self::Literal(literal) => literal.to_string(),
+            Self::Prefix(prefix) => prefix.to_string(),
         };
         write!(f, "{}", expression)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Prefix(pub String, pub Box<Expression>);
+
+impl Display for Prefix {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "{}{}", self.0, self.1)
     }
 }
 
@@ -78,16 +89,8 @@ pub enum Precedence {
     Call,
 }
 
-#[derive(Debug, PartialEq)]
-pub enum Prefix {
-    Plus,
-    Minus,
-    Not,
-}
-
 pub type Program = Vec<Statement>;
 
-// TODO: Can this just be a function instead?
 pub struct Parser<'a> {
     pub tokens: Iter<'a, Token>,
 }
@@ -163,14 +166,25 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expression(&mut self, _precedence: Precedence) -> Result<Expression> {
-        let expression = match self.read_token() {
+        let expression = match self.peek_nth(0) {
             Token::Identifier(identifier) => {
                 Expression::Identifier(Identifier(identifier.to_string()))
             }
             Token::Integer(value) => Expression::Literal(Literal::Integer(*value)),
+            Token::Bang | Token::Minus => self.parse_prefix_expression()?,
             token => bail!("Token not valid for an expression: {:?}", token),
         };
+        self.read_token();
         Ok(expression)
+    }
+
+    fn parse_prefix_expression(&mut self) -> Result<Expression> {
+        let operator = self.peek_nth(0).to_string();
+        self.read_token();
+        Ok(Expression::Prefix(Prefix(
+            operator.to_string(),
+            Box::new(self.parse_expression(Precedence::Prefix)?),
+        )))
     }
 
     fn read_token(&mut self) -> &Token {
@@ -184,7 +198,7 @@ impl<'a> Parser<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Expression, Identifier, Literal, Parser, Result, Statement};
+    use super::{Expression, Identifier, Literal, Parser, Prefix, Result, Statement};
     use crate::lexer::Lexer;
     use anyhow::bail;
 
@@ -197,7 +211,7 @@ mod tests {
         "#;
 
         let mut lexer = Lexer::new(&input);
-        let tokens = lexer.exhaust()?;
+        let tokens = lexer.tokenize()?;
 
         let mut parser = Parser::new(&tokens);
         let program = parser.parse()?;
@@ -231,7 +245,7 @@ mod tests {
         "#;
 
         let mut lexer = Lexer::new(&input);
-        let tokens = lexer.exhaust()?;
+        let tokens = lexer.tokenize()?;
 
         let mut parser = Parser::new(&tokens);
         let program = parser.parse()?;
@@ -264,7 +278,7 @@ mod tests {
         let input = "foobar;";
 
         let mut lexer = Lexer::new(&input);
-        let tokens = lexer.exhaust()?;
+        let tokens = lexer.tokenize()?;
 
         let mut parser = Parser::new(&tokens);
         let program = parser.parse()?;
@@ -288,7 +302,7 @@ mod tests {
         let input = "5;";
 
         let mut lexer = Lexer::new(&input);
-        let tokens = lexer.exhaust()?;
+        let tokens = lexer.tokenize()?;
 
         let mut parser = Parser::new(&tokens);
         let program = parser.parse()?;
@@ -301,6 +315,37 @@ mod tests {
             match statement {
                 Statement::Expression(expression) => assert_eq!(expression, expected_expression),
                 _ => bail!("Expected an expression statement!"),
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_prefix_expressions() -> Result<()> {
+        let tests = [("!5;", "!", 5), ("-15;", "-", 15)];
+
+        for (input, operator, value) in tests.iter() {
+            let mut lexer = Lexer::new(&input);
+            let tokens = lexer.tokenize()?;
+
+            let mut parser = Parser::new(&tokens);
+            let program = parser.parse()?;
+
+            assert_eq!(program.len(), 1);
+
+            let prefix = Prefix(
+                operator.to_string(),
+                Box::new(Expression::Literal(Literal::Integer(*value))),
+            );
+
+            if let Some(statement) = program.into_iter().next() {
+                match statement {
+                    Statement::Expression(expression) => {
+                        assert_eq!(expression, Expression::Prefix(prefix))
+                    }
+                    _ => bail!("Expected an expression statement!"),
+                }
             }
         }
 

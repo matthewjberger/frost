@@ -1,6 +1,9 @@
 use self::Token::*;
 use anyhow::Result;
-use std::str::Chars;
+use std::{
+    fmt::{Display, Formatter, Result as FmtResult},
+    str::Chars,
+};
 
 #[allow(dead_code)]
 #[derive(Debug, PartialEq)]
@@ -32,6 +35,41 @@ pub enum Token {
     Semicolon,
     Slash,
     True,
+}
+
+impl Display for Token {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        let symbol = match self {
+            Assign => "=".to_string(),
+            Asterisk => "*".to_string(),
+            Bang => "!".to_string(),
+            Comma => ",".to_string(),
+            Else => "else".to_string(),
+            EndOfFile => EOF_CHAR.to_string(),
+            Equal => "==".to_string(),
+            False => "false".to_string(),
+            Function => "function".to_string(),
+            GreaterThan => ">".to_string(),
+            Identifier(value) => value.to_string(),
+            If => "if".to_string(),
+            Illegal(value) => value.to_string(),
+            Integer(number) => number.to_string(),
+            LeftBrace => "{".to_string(),
+            LeftParentheses => "(".to_string(),
+            LessThan => "<".to_string(),
+            Let => "let".to_string(),
+            Minus => "-".to_string(),
+            NotEqual => "!=".to_string(),
+            Plus => "+".to_string(),
+            Return => "return".to_string(),
+            RightBrace => "}".to_string(),
+            RightParentheses => ")".to_string(),
+            Semicolon => ";".to_string(),
+            Slash => "/".to_string(),
+            True => "true".to_string(),
+        };
+        write!(f, "{}", symbol)
+    }
 }
 
 pub const EOF_CHAR: char = '\0';
@@ -81,7 +119,7 @@ impl<'a> Lexer<'a> {
         Ok(token)
     }
 
-    pub fn exhaust(&mut self) -> Result<Vec<Token>> {
+    pub fn tokenize(&mut self) -> Result<Vec<Token>> {
         let mut tokens = Vec::new();
         loop {
             let next_token = self.next_token()?;
