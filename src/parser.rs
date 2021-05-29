@@ -143,10 +143,7 @@ impl<'a> Parser<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Identifier, Parser, Result,
-        Statement::{Let, Return},
-    };
+    use super::{Expression, Identifier, Parser, Result, Statement};
     use crate::lexer::Lexer;
     use anyhow::bail;
 
@@ -175,7 +172,7 @@ mod tests {
         for (statement, expected_identifier) in program.into_iter().zip(identifiers.into_iter()) {
             println!("Found a statement: {}", statement.to_string());
             match statement {
-                Let(identifier, _expression) => {
+                Statement::Let(identifier, _expression) => {
                     assert_eq!(identifier, expected_identifier);
                 }
                 _ => bail!("Expected a let statement!"),
@@ -204,11 +201,22 @@ mod tests {
 
         for statement in program.into_iter() {
             match statement {
-                Return(_expression) => {}
+                Statement::Return(_expression) => {}
                 _ => bail!("Expected a return statement!"),
             }
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_ast() -> Result<()> {
+        let output = "let myVar = anotherVar;";
+        let ast = Statement::Let(
+            Identifier("myVar".to_string()),
+            Expression::Identifier(Identifier("anotherVar".to_string())),
+        );
+        assert_eq!(ast.to_string(), output.to_string());
         Ok(())
     }
 }
