@@ -50,7 +50,7 @@ impl Display for Identifier {
 
 #[derive(Debug, PartialEq)]
 pub enum Literal {
-    Int(i64),
+    Integer(i64),
     Bool(bool),
     String(String),
 }
@@ -58,7 +58,7 @@ pub enum Literal {
 impl Display for Literal {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         let literal = match self {
-            Literal::Int(x) => x.to_string(),
+            Literal::Integer(x) => x.to_string(),
             Literal::Bool(x) => x.to_string(),
             Literal::String(x) => x.to_string(),
         };
@@ -167,6 +167,7 @@ impl<'a> Parser<'a> {
             Token::Identifier(identifier) => {
                 Expression::Identifier(Identifier(identifier.to_string()))
             }
+            Token::Integer(value) => Expression::Literal(Literal::Integer(*value)),
             token => bail!("Token not valid for an expression: {:?}", token),
         };
         Ok(expression)
@@ -183,7 +184,7 @@ impl<'a> Parser<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Expression, Identifier, Parser, Result, Statement};
+    use super::{Expression, Identifier, Literal, Parser, Result, Statement};
     use crate::lexer::Lexer;
     use anyhow::bail;
 
@@ -271,6 +272,30 @@ mod tests {
         assert_eq!(program.len(), 1);
 
         let expressions = vec![Expression::Identifier(Identifier("foobar".to_string()))];
+
+        for (statement, expected_expression) in program.into_iter().zip(expressions.into_iter()) {
+            match statement {
+                Statement::Expression(expression) => assert_eq!(expression, expected_expression),
+                _ => bail!("Expected an expression statement!"),
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_integer_expression() -> Result<()> {
+        let input = "5;";
+
+        let mut lexer = Lexer::new(&input);
+        let tokens = lexer.exhaust()?;
+
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+
+        let expressions = vec![Expression::Literal(Literal::Integer(5))];
 
         for (statement, expected_expression) in program.into_iter().zip(expressions.into_iter()) {
             match statement {
