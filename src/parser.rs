@@ -6,7 +6,7 @@ use std::{
     slice::Iter,
 };
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Statement {
     Let(Identifier, Expression),
     Return(Expression),
@@ -23,7 +23,7 @@ impl Display for Statement {
         write!(f, "{}", statement)
     }
 }
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Expression {
     Identifier(Identifier),
     Literal(Literal),
@@ -270,9 +270,11 @@ mod tests {
 
         assert_eq!(program.len(), 1);
 
-        for statement in program.into_iter() {
+        let expressions = vec![Expression::Identifier(Identifier("foobar".to_string()))];
+
+        for (statement, expected_expression) in program.into_iter().zip(expressions.into_iter()) {
             match statement {
-                Statement::Expression(_expression) => {}
+                Statement::Expression(expression) => assert_eq!(expression, expected_expression),
                 _ => bail!("Expected an expression statement!"),
             }
         }
