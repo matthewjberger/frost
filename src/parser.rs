@@ -10,6 +10,7 @@ use std::{
 pub enum Statement {
     Let(Identifier, Expression),
     Return(Expression),
+    Expression(Expression),
 }
 
 impl Display for Statement {
@@ -17,6 +18,7 @@ impl Display for Statement {
         let statement = match self {
             Self::Let(identifier, expression) => format!("let {} = {};", identifier, expression),
             Self::Return(expression) => format!("return {};", expression),
+            Self::Expression(expression) => expression.to_string(),
         };
         write!(f, "{}", statement)
     }
@@ -64,6 +66,25 @@ impl Display for Literal {
     }
 }
 
+#[derive(Debug, PartialEq, PartialOrd)]
+pub enum Precedence {
+    Lowest,
+    Equals,
+    LessThan,
+    GreaterThan,
+    Sum,
+    Product,
+    Prefix,
+    Call,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Prefix {
+    Plus,
+    Minus,
+    Not,
+}
+
 pub type Program = Vec<Statement>;
 
 // TODO: Can this just be a function instead?
@@ -81,12 +102,13 @@ impl<'a> Parser<'a> {
     pub fn parse(&mut self) -> Result<Program> {
         let mut program = Program::new();
         loop {
-            match self.peek_nth(0) {
+            let statement = match self.peek_nth(0) {
                 Token::EndOfFile => break,
-                Token::Let => program.push(self.parse_let_statement()?),
-                Token::Return => program.push(self.parse_return_statement()?),
-                token => bail!("Unrecognized token: '{:?}'", token),
+                Token::Let => self.parse_let_statement()?,
+                Token::Return => self.parse_return_statement()?,
+                _ => self.parse_expression_statement()?,
             };
+            program.push(statement);
         }
         Ok(program)
     }
@@ -132,6 +154,24 @@ impl<'a> Parser<'a> {
         ))))
     }
 
+    fn parse_expression_statement(&mut self) -> Result<Statement> {
+        let statement = Statement::Expression(self.parse_expression(Precedence::Lowest)?);
+        if matches!(self.peek_nth(0), Token::Semicolon) {
+            self.read_token();
+        }
+        Ok(statement)
+    }
+
+    fn parse_expression(&mut self, _precedence: Precedence) -> Result<Expression> {
+        let expression = match self.read_token() {
+            Token::Identifier(identifier) => {
+                Expression::Identifier(Identifier(identifier.to_string()))
+            }
+            token => bail!("Token not valid for an expression: {:?}", token),
+        };
+        Ok(expression)
+    }
+
     fn read_token(&mut self) -> &Token {
         self.tokens.next().unwrap_or(&Token::EndOfFile)
     }
@@ -161,7 +201,6 @@ mod tests {
         let mut parser = Parser::new(&tokens);
         let program = parser.parse()?;
 
-        assert!(!program.is_empty());
         assert_eq!(program.len(), 3);
 
         let identifiers: Vec<Identifier> = ["x", "y", "foobar"]
@@ -196,7 +235,6 @@ mod tests {
         let mut parser = Parser::new(&tokens);
         let program = parser.parse()?;
 
-        assert!(!program.is_empty());
         assert_eq!(program.len(), 3);
 
         for statement in program.into_iter() {
@@ -217,6 +255,28 @@ mod tests {
             Expression::Identifier(Identifier("anotherVar".to_string())),
         );
         assert_eq!(ast.to_string(), output.to_string());
+        Ok(())
+    }
+
+    #[test]
+    fn test_identifier_expression() -> Result<()> {
+        let input = "foobar;";
+
+        let mut lexer = Lexer::new(&input);
+        let tokens = lexer.exhaust()?;
+
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+
+        for statement in program.into_iter() {
+            match statement {
+                Statement::Expression(_expression) => {}
+                _ => bail!("Expected an expression statement!"),
+            }
+        }
+
         Ok(())
     }
 }
