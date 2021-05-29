@@ -33,6 +33,7 @@ fn main() -> Result<()> {
                     println!("--- Statements ---");
                     for statement in program.iter() {
                         println!("{}", statement);
+                        println!("Debug: {:?}", statement);
                     }
                 }
             },
