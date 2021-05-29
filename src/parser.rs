@@ -1,6 +1,68 @@
 use crate::lexer::Token;
 use anyhow::{bail, Result};
-use std::{matches, slice::Iter};
+use std::{
+    fmt::{Display, Formatter, Result as FmtResult},
+    matches,
+    slice::Iter,
+};
+
+#[derive(Debug)]
+pub enum Statement {
+    Let(Identifier, Expression),
+    Return(Expression),
+}
+
+impl Display for Statement {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        let statement = match self {
+            Self::Let(identifier, expression) => format!("let {} = {};", identifier, expression),
+            Self::Return(expression) => format!("return {};", expression),
+        };
+        write!(f, "{}", statement)
+    }
+}
+#[derive(Debug)]
+pub enum Expression {
+    Identifier(Identifier),
+    Literal(Literal),
+}
+
+impl Display for Expression {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        let expression = match self {
+            Self::Identifier(identifier) => format!("{}", identifier),
+            Self::Literal(literal) => format!("{}", literal),
+        };
+        write!(f, "{}", expression)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Identifier(pub String);
+
+impl Display for Identifier {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Literal {
+    Int(i64),
+    Bool(bool),
+    String(String),
+}
+
+impl Display for Literal {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        let literal = match self {
+            Literal::Int(x) => x.to_string(),
+            Literal::Bool(x) => x.to_string(),
+            Literal::String(x) => x.to_string(),
+        };
+        write!(f, "{}", literal)
+    }
+}
 
 pub type Program = Vec<Statement>;
 
@@ -49,10 +111,10 @@ impl<'a> Parser<'a> {
 
         while !matches!(self.read_token(), Token::Semicolon) {}
 
-        Ok(Statement::LetStatement(
+        Ok(Statement::Let(
             Identifier(identifier),
             // TODO
-            Expression::IdentifierExpression(Identifier("".to_string())),
+            Expression::Identifier(Identifier("".to_string())),
         ))
     }
 
@@ -65,9 +127,9 @@ impl<'a> Parser<'a> {
 
         while !matches!(self.read_token(), Token::Semicolon) {}
 
-        Ok(Statement::ReturnStatement(
-            Expression::IdentifierExpression(Identifier("".to_string())),
-        ))
+        Ok(Statement::Return(Expression::Identifier(Identifier(
+            "".to_string(),
+        ))))
     }
 
     fn read_token(&mut self) -> &Token {
@@ -79,33 +141,11 @@ impl<'a> Parser<'a> {
     }
 }
 
-#[derive(Debug)]
-pub enum Statement {
-    LetStatement(Identifier, Expression),
-    ReturnStatement(Expression),
-}
-
-#[derive(Debug)]
-pub enum Expression {
-    IdentifierExpression(Identifier),
-    LiteralExpression(Literal),
-}
-
-#[derive(Debug, PartialEq)]
-pub struct Identifier(pub String);
-
-#[derive(Debug, PartialEq)]
-pub enum Literal {
-    Int(i64),
-    Bool(bool),
-    String(String),
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         Identifier, Parser, Result,
-        Statement::{LetStatement, ReturnStatement},
+        Statement::{Let, Return},
     };
     use crate::lexer::Lexer;
     use anyhow::bail;
@@ -133,8 +173,9 @@ mod tests {
             .collect();
 
         for (statement, expected_identifier) in program.into_iter().zip(identifiers.into_iter()) {
+            println!("Found a statement: {}", statement.to_string());
             match statement {
-                LetStatement(identifier, _expression) => {
+                Let(identifier, _expression) => {
                     assert_eq!(identifier, expected_identifier);
                 }
                 _ => bail!("Expected a let statement!"),
@@ -163,7 +204,7 @@ mod tests {
 
         for statement in program.into_iter() {
             match statement {
-                ReturnStatement(_expression) => {}
+                Return(_expression) => {}
                 _ => bail!("Expected a return statement!"),
             }
         }
