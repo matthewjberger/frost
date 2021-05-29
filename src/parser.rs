@@ -75,7 +75,6 @@ impl Display for Identifier {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
     Integer(i64),
-    Bool(bool),
     String(String),
 }
 
@@ -83,7 +82,6 @@ impl Display for Literal {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         let literal = match self {
             Literal::Integer(x) => x.to_string(),
-            Literal::Bool(x) => x.to_string(),
             Literal::String(x) => x.to_string(),
         };
         write!(f, "{}", literal)
@@ -446,6 +444,37 @@ mod tests {
     }
 
     #[test]
+    fn test_prefix_boolean_expressions() -> Result<()> {
+        let tests = [("!true;", "!", true), ("!false;", "!", false)];
+
+        for (input, operator, value) in tests.iter() {
+            let mut lexer = Lexer::new(&input);
+            let tokens = lexer.tokenize()?;
+
+            let mut parser = Parser::new(&tokens);
+            let program = parser.parse()?;
+
+            assert_eq!(program.len(), 1);
+
+            let prefix = Prefix(
+                operator.to_string(),
+                Box::new(Expression::BooleanExpression(*value)),
+            );
+
+            if let Some(statement) = program.into_iter().next() {
+                match statement {
+                    Statement::Expression(expression) => {
+                        assert_eq!(expression, Expression::PrefixExpression(prefix))
+                    }
+                    _ => bail!("Expected an expression statement!"),
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn test_infix_expressions() -> Result<()> {
         let tests = [
             ("5 + 5;", 5, "+", 5),
@@ -489,6 +518,42 @@ mod tests {
     }
 
     #[test]
+    fn test_infix_boolean_expressions() -> Result<()> {
+        let tests = [
+            ("true == true", true, "==", true),
+            ("true != false", true, "!=", false),
+            ("false == false", false, "==", false),
+        ];
+
+        for (input, left_value, operator, right_value) in tests.iter() {
+            let mut lexer = Lexer::new(&input);
+            let tokens = lexer.tokenize()?;
+
+            let mut parser = Parser::new(&tokens);
+            let program = parser.parse()?;
+
+            assert_eq!(program.len(), 1);
+
+            let infix = Infix(
+                Box::new(Expression::BooleanExpression(*left_value)),
+                operator.to_string(),
+                Box::new(Expression::BooleanExpression(*right_value)),
+            );
+
+            if let Some(statement) = program.into_iter().next() {
+                match statement {
+                    Statement::Expression(expression) => {
+                        assert_eq!(expression, Expression::InfixExpression(infix))
+                    }
+                    _ => bail!("Expected an expression statement!"),
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn test_operator_precedence() -> Result<()> {
         let tests = [
             ("-a * b", "((-a) * b)"),
@@ -506,6 +571,10 @@ mod tests {
                 "3 + 4 * 5 == 3 * 1 + 4 * 5",
                 "((3 + (4 * 5)) == ((3 * 1) + (4 * 5)))",
             ),
+            ("true", "true"),
+            ("false", "false"),
+            ("3 > 5 == false", "((3 > 5) == false)"),
+            ("3 < 5 == true", "((3 < 5) == true)"),
         ];
 
         for (input, expected) in tests.iter() {
