@@ -6,7 +6,7 @@ use std::{
     slice::Iter,
 };
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Statement {
     Let(Identifier, Expression),
     Return(Expression),
@@ -23,11 +23,12 @@ impl Display for Statement {
         write!(f, "{}", statement)
     }
 }
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Expression {
     Identifier(Identifier),
     Literal(Literal),
     Prefix(Prefix),
+    Infix(Infix),
 }
 
 impl Display for Expression {
@@ -36,12 +37,13 @@ impl Display for Expression {
             Self::Identifier(identifier) => identifier.to_string(),
             Self::Literal(literal) => literal.to_string(),
             Self::Prefix(prefix) => prefix.to_string(),
+            Self::Infix(infix) => infix.to_string(),
         };
         write!(f, "{}", expression)
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Prefix(pub String, pub Box<Expression>);
 
 impl Display for Prefix {
@@ -50,7 +52,16 @@ impl Display for Prefix {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
+pub struct Infix(pub Box<Expression>, pub String, pub Box<Expression>);
+
+impl Display for Infix {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "{} {} {}", self.0, self.1, self.2)
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct Identifier(pub String);
 
 impl Display for Identifier {
@@ -59,7 +70,7 @@ impl Display for Identifier {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
     Integer(i64),
     Bool(bool),
@@ -77,16 +88,31 @@ impl Display for Literal {
     }
 }
 
-#[derive(Debug, PartialEq, PartialOrd)]
+#[derive(Debug, PartialEq, PartialOrd, Copy, Clone)]
 pub enum Precedence {
     Lowest,
     Equals,
-    LessThan,
-    GreaterThan,
+    LessThanGreaterThan,
     Sum,
     Product,
     Prefix,
     Call,
+}
+
+impl Precedence {
+    pub fn of_token(token: &Token) -> Self {
+        match token {
+            Token::Equal => Self::Equals,
+            Token::NotEqual => Self::Equals,
+            Token::LessThan => Self::LessThanGreaterThan,
+            Token::GreaterThan => Self::LessThanGreaterThan,
+            Token::Plus => Self::Sum,
+            Token::Minus => Self::Sum,
+            Token::Slash => Self::Product,
+            Token::Asterisk => Self::Product,
+            _ => Self::Lowest,
+        }
+    }
 }
 
 pub type Program = Vec<Statement>;
@@ -165,8 +191,8 @@ impl<'a> Parser<'a> {
         Ok(statement)
     }
 
-    fn parse_expression(&mut self, _precedence: Precedence) -> Result<Expression> {
-        let expression = match self.peek_nth(0) {
+    fn parse_expression(&mut self, precedence: Precedence) -> Result<Expression> {
+        let mut expression = match self.peek_nth(0) {
             Token::Identifier(identifier) => {
                 Expression::Identifier(Identifier(identifier.to_string()))
             }
@@ -175,6 +201,24 @@ impl<'a> Parser<'a> {
             token => bail!("Token not valid for an expression: {:?}", token),
         };
         self.read_token();
+        while self.peek_nth(1) != &Token::Semicolon
+            && precedence < Precedence::of_token(self.peek_nth(0))
+        {
+            match self.peek_nth(0) {
+                Token::Plus
+                | Token::Minus
+                | Token::Slash
+                | Token::Asterisk
+                | Token::Equal
+                | Token::NotEqual
+                | Token::LessThan
+                | Token::GreaterThan => {
+                    expression = self.parse_infix_expression(expression.clone())?;
+                }
+                token => bail!("Token not valid for an infix expression: {:?}", token),
+            };
+            self.read_token();
+        }
         Ok(expression)
     }
 
@@ -184,6 +228,17 @@ impl<'a> Parser<'a> {
         Ok(Expression::Prefix(Prefix(
             operator.to_string(),
             Box::new(self.parse_expression(Precedence::Prefix)?),
+        )))
+    }
+
+    fn parse_infix_expression(&mut self, left_expression: Expression) -> Result<Expression> {
+        let operator = self.peek_nth(0).to_string();
+        let precedence = Precedence::of_token(self.peek_nth(0));
+        self.read_token();
+        Ok(Expression::Infix(Infix(
+            Box::new(left_expression),
+            operator.to_string(),
+            Box::new(self.parse_expression(precedence)?),
         )))
     }
 
@@ -198,7 +253,7 @@ impl<'a> Parser<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Expression, Identifier, Literal, Parser, Prefix, Result, Statement};
+    use super::{Expression, Identifier, Infix, Literal, Parser, Prefix, Result, Statement};
     use crate::lexer::Lexer;
     use anyhow::bail;
 
@@ -343,6 +398,47 @@ mod tests {
                 match statement {
                     Statement::Expression(expression) => {
                         assert_eq!(expression, Expression::Prefix(prefix))
+                    }
+                    _ => bail!("Expected an expression statement!"),
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_infix_expressions() -> Result<()> {
+        let tests = [
+            ("5 + 5;", 5, "+", 5),
+            ("5 - 5;", 5, "-", 5),
+            ("5 * 5;", 5, "*", 5),
+            ("5 / 5;", 5, "/", 5),
+            ("5 > 5;", 5, ">", 5),
+            ("5 < 5;", 5, "<", 5),
+            ("5 == 5;", 5, "==", 5),
+            ("5 != 5;", 5, "!=", 5),
+        ];
+
+        for (input, left_value, operator, right_value) in tests.iter() {
+            let mut lexer = Lexer::new(&input);
+            let tokens = lexer.tokenize()?;
+
+            let mut parser = Parser::new(&tokens);
+            let program = parser.parse()?;
+
+            assert_eq!(program.len(), 1);
+
+            let infix = Infix(
+                Box::new(Expression::Literal(Literal::Integer(*left_value))),
+                operator.to_string(),
+                Box::new(Expression::Literal(Literal::Integer(*right_value))),
+            );
+
+            if let Some(statement) = program.into_iter().next() {
+                match statement {
+                    Statement::Expression(expression) => {
+                        assert_eq!(expression, Expression::Infix(infix))
                     }
                     _ => bail!("Expected an expression statement!"),
                 }
