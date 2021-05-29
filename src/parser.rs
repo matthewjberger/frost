@@ -25,19 +25,19 @@ impl Display for Statement {
 }
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expression {
-    Identifier(Identifier),
-    Literal(Literal),
-    Prefix(Prefix),
-    Infix(Infix),
+    IdentifierExpression(Identifier),
+    LiteralExpression(Literal),
+    PrefixExpression(Prefix),
+    InfixExpression(Infix),
 }
 
 impl Display for Expression {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         let expression = match self {
-            Self::Identifier(identifier) => identifier.to_string(),
-            Self::Literal(literal) => literal.to_string(),
-            Self::Prefix(prefix) => prefix.to_string(),
-            Self::Infix(infix) => infix.to_string(),
+            Self::IdentifierExpression(identifier) => identifier.to_string(),
+            Self::LiteralExpression(literal) => literal.to_string(),
+            Self::PrefixExpression(prefix) => prefix.to_string(),
+            Self::InfixExpression(infix) => infix.to_string(),
         };
         write!(f, "{}", expression)
     }
@@ -165,7 +165,7 @@ impl<'a> Parser<'a> {
         Ok(Statement::Let(
             Identifier(identifier),
             // TODO
-            Expression::Identifier(Identifier("".to_string())),
+            Expression::IdentifierExpression(Identifier("".to_string())),
         ))
     }
 
@@ -178,9 +178,9 @@ impl<'a> Parser<'a> {
 
         while !matches!(self.read_token(), Token::Semicolon) {}
 
-        Ok(Statement::Return(Expression::Identifier(Identifier(
-            "".to_string(),
-        ))))
+        Ok(Statement::Return(Expression::IdentifierExpression(
+            Identifier("".to_string()),
+        )))
     }
 
     fn parse_expression_statement(&mut self) -> Result<Statement> {
@@ -195,9 +195,9 @@ impl<'a> Parser<'a> {
         let mut advance = true;
         let mut expression = match self.peek_nth(0) {
             Token::Identifier(identifier) => {
-                Expression::Identifier(Identifier(identifier.to_string()))
+                Expression::IdentifierExpression(Identifier(identifier.to_string()))
             }
-            Token::Integer(value) => Expression::Literal(Literal::Integer(*value)),
+            Token::Integer(value) => Expression::LiteralExpression(Literal::Integer(*value)),
             Token::Bang | Token::Minus => {
                 advance = false;
                 self.parse_prefix_expression()?
@@ -233,7 +233,7 @@ impl<'a> Parser<'a> {
     fn parse_prefix_expression(&mut self) -> Result<Expression> {
         let operator = self.peek_nth(0).to_string();
         self.read_token();
-        Ok(Expression::Prefix(Prefix(
+        Ok(Expression::PrefixExpression(Prefix(
             operator.to_string(),
             Box::new(self.parse_expression(Precedence::Prefix)?),
         )))
@@ -243,7 +243,7 @@ impl<'a> Parser<'a> {
         let operator = self.peek_nth(0).to_string();
         let precedence = Precedence::of_token(self.peek_nth(0));
         self.read_token();
-        Ok(Expression::Infix(Infix(
+        Ok(Expression::InfixExpression(Infix(
             Box::new(left_expression),
             operator.to_string(),
             Box::new(self.parse_expression(precedence)?),
@@ -329,7 +329,7 @@ mod tests {
         let output = "let myVar = anotherVar;";
         let ast = Statement::Let(
             Identifier("myVar".to_string()),
-            Expression::Identifier(Identifier("anotherVar".to_string())),
+            Expression::IdentifierExpression(Identifier("anotherVar".to_string())),
         );
         assert_eq!(ast.to_string(), output.to_string());
         Ok(())
@@ -347,7 +347,9 @@ mod tests {
 
         assert_eq!(program.len(), 1);
 
-        let expressions = vec![Expression::Identifier(Identifier("foobar".to_string()))];
+        let expressions = vec![Expression::IdentifierExpression(Identifier(
+            "foobar".to_string(),
+        ))];
 
         for (statement, expected_expression) in program.into_iter().zip(expressions.into_iter()) {
             match statement {
@@ -371,7 +373,7 @@ mod tests {
 
         assert_eq!(program.len(), 1);
 
-        let expressions = vec![Expression::Literal(Literal::Integer(5))];
+        let expressions = vec![Expression::LiteralExpression(Literal::Integer(5))];
 
         for (statement, expected_expression) in program.into_iter().zip(expressions.into_iter()) {
             match statement {
@@ -398,13 +400,13 @@ mod tests {
 
             let prefix = Prefix(
                 operator.to_string(),
-                Box::new(Expression::Literal(Literal::Integer(*value))),
+                Box::new(Expression::LiteralExpression(Literal::Integer(*value))),
             );
 
             if let Some(statement) = program.into_iter().next() {
                 match statement {
                     Statement::Expression(expression) => {
-                        assert_eq!(expression, Expression::Prefix(prefix))
+                        assert_eq!(expression, Expression::PrefixExpression(prefix))
                     }
                     _ => bail!("Expected an expression statement!"),
                 }
@@ -437,15 +439,17 @@ mod tests {
             assert_eq!(program.len(), 1);
 
             let infix = Infix(
-                Box::new(Expression::Literal(Literal::Integer(*left_value))),
+                Box::new(Expression::LiteralExpression(Literal::Integer(*left_value))),
                 operator.to_string(),
-                Box::new(Expression::Literal(Literal::Integer(*right_value))),
+                Box::new(Expression::LiteralExpression(Literal::Integer(
+                    *right_value,
+                ))),
             );
 
             if let Some(statement) = program.into_iter().next() {
                 match statement {
                     Statement::Expression(expression) => {
-                        assert_eq!(expression, Expression::Infix(infix))
+                        assert_eq!(expression, Expression::InfixExpression(infix))
                     }
                     _ => bail!("Expected an expression statement!"),
                 }
