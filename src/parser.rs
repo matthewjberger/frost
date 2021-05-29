@@ -192,17 +192,16 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expression(&mut self, precedence: Precedence) -> Result<Expression> {
-        let mut advance = false;
+        let mut advance = true;
         let mut expression = match self.peek_nth(0) {
             Token::Identifier(identifier) => {
-                advance = true;
                 Expression::Identifier(Identifier(identifier.to_string()))
             }
-            Token::Integer(value) => {
-                advance = true;
-                Expression::Literal(Literal::Integer(*value))
+            Token::Integer(value) => Expression::Literal(Literal::Integer(*value)),
+            Token::Bang | Token::Minus => {
+                advance = false;
+                self.parse_prefix_expression()?
             }
-            Token::Bang | Token::Minus => self.parse_prefix_expression()?,
             token => bail!("Token not valid for an expression: {:?}", token),
         };
 
@@ -487,7 +486,6 @@ mod tests {
                 .map(|s| s.to_string())
                 .collect::<Vec<_>>()
                 .join("");
-            println!("{}", program_string);
 
             assert_eq!(program_string, expected.to_string());
         }
