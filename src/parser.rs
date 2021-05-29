@@ -204,6 +204,10 @@ impl<'a> Parser<'a> {
             }
             Token::True => Expression::BooleanExpression(true),
             Token::False => Expression::BooleanExpression(false),
+            Token::LeftParentheses => {
+                advance = false;
+                self.parse_grouped_expressions()?
+            }
             token => bail!("Token not valid for an expression: {:?}", token),
         };
 
@@ -250,6 +254,15 @@ impl<'a> Parser<'a> {
             operator.to_string(),
             Box::new(self.parse_expression(precedence)?),
         )))
+    }
+
+    fn parse_grouped_expressions(&mut self) -> Result<Expression> {
+        self.read_token();
+        let expression = self.parse_expression(Precedence::Lowest)?;
+        if matches!(self.peek_nth(0), Token::RightParentheses) {
+            self.read_token();
+        }
+        Ok(expression)
     }
 
     fn read_token(&mut self) -> &Token {
@@ -575,6 +588,11 @@ mod tests {
             ("false", "false"),
             ("3 > 5 == false", "((3 > 5) == false)"),
             ("3 < 5 == true", "((3 < 5) == true)"),
+            ("1 + (2 + 3) + 4", "((1 + (2 + 3)) + 4)"),
+            ("(5 + 5) * 2", "((5 + 5) * 2)"),
+            ("2 / (5 + 5)", "(2 / (5 + 5))"),
+            ("-(5 + 5)", "(-(5 + 5))"),
+            ("!(true == true)", "(!(true == true))"),
         ];
 
         for (input, expected) in tests.iter() {
