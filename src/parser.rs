@@ -27,6 +27,7 @@ impl Display for Statement {
 pub enum Expression {
     IdentifierExpression(Identifier),
     LiteralExpression(Literal),
+    BooleanExpression(bool),
     PrefixExpression(Prefix),
     InfixExpression(Infix),
 }
@@ -36,6 +37,7 @@ impl Display for Expression {
         let expression = match self {
             Self::IdentifierExpression(identifier) => identifier.to_string(),
             Self::LiteralExpression(literal) => literal.to_string(),
+            Self::BooleanExpression(boolean) => boolean.to_string(),
             Self::PrefixExpression(prefix) => prefix.to_string(),
             Self::InfixExpression(infix) => infix.to_string(),
         };
@@ -202,6 +204,8 @@ impl<'a> Parser<'a> {
                 advance = false;
                 self.parse_prefix_expression()?
             }
+            Token::True => Expression::BooleanExpression(true),
+            Token::False => Expression::BooleanExpression(false),
             token => bail!("Token not valid for an expression: {:?}", token),
         };
 
@@ -379,6 +383,31 @@ mod tests {
             match statement {
                 Statement::Expression(expression) => assert_eq!(expression, expected_expression),
                 _ => bail!("Expected an expression statement!"),
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_boolean_expression() -> Result<()> {
+        let tests = [("true;", true), ("false;", false)];
+
+        for (input, expected_value) in tests.iter() {
+            let mut lexer = Lexer::new(&input);
+            let tokens = lexer.tokenize()?;
+
+            let mut parser = Parser::new(&tokens);
+            let program = parser.parse()?;
+
+            assert_eq!(program.len(), 1);
+
+            if let Some(Statement::Expression(Expression::BooleanExpression(value))) =
+                program.into_iter().next()
+            {
+                assert_eq!(value, *expected_value)
+            } else {
+                bail!("Expected a boolean expression statement!");
             }
         }
 
