@@ -1,5 +1,5 @@
 use anyhow::Result;
-use monkey::Lexer;
+use monkey::{Lexer, Parser};
 use rustyline::{error::ReadlineError, Editor};
 
 fn main() -> Result<()> {
@@ -10,15 +10,31 @@ fn main() -> Result<()> {
     println!();
 
     let mut rl = Editor::<()>::new();
+    if rl.load_history("history.txt").is_err() {
+        println!("No previous history.");
+    }
     loop {
         let readline = rl.readline("monkey >> ");
         match readline {
             Ok(line) => match line.as_ref() {
                 "exit" => break,
                 line => {
+                    rl.add_history_entry(line);
+
+                    // Lexing
                     let mut lexer = Lexer::new(line);
-                    for token in lexer.tokenize()? {
-                        println!("{:?}", token)
+                    let tokens = lexer.tokenize()?;
+                    println!("--- Tokens ---");
+                    for token in tokens.iter() {
+                        println!("{}", token)
+                    }
+
+                    // Parsing
+                    let mut parser = Parser::new(&tokens);
+                    let program = parser.parse()?;
+                    println!("--- Statements ---");
+                    for statement in program.iter() {
+                        println!("{}", statement);
                     }
                 }
             },
@@ -32,5 +48,6 @@ fn main() -> Result<()> {
             }
         }
     }
+    rl.save_history("history.txt")?;
     Ok(())
 }
