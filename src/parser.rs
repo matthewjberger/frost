@@ -1,6 +1,7 @@
 use crate::lexer::Token;
 use anyhow::{bail, Result};
 use std::{
+    convert::TryFrom,
     fmt::{Display, Formatter, Result as FmtResult},
     matches,
     slice::Iter,
@@ -13,6 +14,40 @@ pub type Block = Vec<Statement>;
 fn flatten(items: &[impl Display], separator: &str) -> String {
     let strings = items.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     format!("{}", strings.join(separator))
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Operator {
+    Add,
+    Subtract,
+    Divide,
+    Multiply,
+}
+
+impl TryFrom<&Token> for Operator {
+    type Error = anyhow::Error;
+
+    fn try_from(token: &Token) -> Result<Self, Self::Error> {
+        Ok(match token {
+            Token::Plus => Self::Add,
+            Token::Minus => Self::Subtract,
+            Token::Slash => Self::Divide,
+            Token::Asterisk => Self::Multiply,
+            _ => bail!("Token is not an operator: {}", token),
+        })
+    }
+}
+
+impl Display for Operator {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        let statement = match self {
+            Self::Add => "+",
+            Self::Subtract => "-",
+            Self::Divide => "/",
+            Self::Multiply => "*",
+        };
+        write!(f, "{}", statement.to_string())
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -113,8 +148,8 @@ pub enum Precedence {
     Call,
 }
 
-impl Precedence {
-    pub fn of_token(token: &Token) -> Self {
+impl From<&Token> for Precedence {
+    fn from(token: &Token) -> Self {
         match token {
             Token::Equal => Self::Equals,
             Token::NotEqual => Self::Equals,
@@ -241,7 +276,7 @@ impl<'a> Parser<'a> {
         }
 
         while self.peek_nth(0) != &Token::Semicolon
-            && precedence < Precedence::of_token(self.peek_nth(0))
+            && precedence < Precedence::from(self.peek_nth(0))
         {
             match self.peek_nth(0) {
                 Token::Plus
@@ -275,7 +310,7 @@ impl<'a> Parser<'a> {
 
     fn parse_infix_expression(&mut self, left_expression: Expression) -> Result<Expression> {
         let operator = self.peek_nth(0).to_string();
-        let precedence = Precedence::of_token(self.peek_nth(0));
+        let precedence = Precedence::from(self.peek_nth(0));
         self.read_token();
         Ok(Expression::Infix(
             Box::new(left_expression),
