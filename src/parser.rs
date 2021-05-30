@@ -10,6 +10,11 @@ pub type Identifier = String;
 
 pub type Block = Vec<Statement>;
 
+fn flatten(items: &[impl Display], separator: &str) -> String {
+    let strings = items.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    format!("{}", strings.join(separator))
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Statement {
     Let(Identifier, Expression),
@@ -35,6 +40,7 @@ pub enum Expression {
     Prefix(String, Box<Expression>),
     Infix(Box<Expression>, String, Box<Expression>),
     If(Box<Expression>, Block, Option<Block>),
+    Function(Vec<Identifier>, Block),
 }
 
 impl Display for Expression {
@@ -48,27 +54,28 @@ impl Display for Expression {
                 format!("({} {} {})", left_expression, operator, right_expression)
             }
             Self::If(condition, consequence, alternative) => {
-                let block = consequence
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<_>>()
-                    .join("");
-                let statement = format!("if ({}) {{ {} }}", condition.to_string(), block);
+                let statement = format!(
+                    "if ({}) {{ {} }}",
+                    condition.to_string(),
+                    flatten(consequence, "\n"),
+                );
 
                 let mut result = String::new();
                 result.push_str(statement.as_str());
 
                 if let Some(alternative) = alternative {
-                    let else_block = alternative
-                        .iter()
-                        .map(|s| s.to_string())
-                        .collect::<Vec<_>>()
-                        .join("");
-                    let else_statement = format!("else {{ {} }}", else_block.to_string());
+                    let else_statement = format!("else {{ {} }}", flatten(alternative, "\n"));
                     result.push_str(&else_statement);
                 }
 
                 result
+            }
+            Self::Function(parameters, block) => {
+                format!(
+                    "fn({}) {{ {} }}",
+                    flatten(&parameters, ","),
+                    flatten(block, "\n"),
+                )
             }
         };
         write!(f, "{}", expression)
@@ -217,6 +224,10 @@ impl<'a> Parser<'a> {
                 advance = false;
                 self.parse_if_expression()?
             }
+            Token::Function => {
+                advance = false;
+                self.parse_function_literal()?
+            }
             token => bail!("Token not valid for an expression: {:?}", token),
         };
 
@@ -302,6 +313,38 @@ impl<'a> Parser<'a> {
             consequence,
             alternative,
         ))
+    }
+
+    fn parse_function_literal(&mut self) -> Result<Expression> {
+        self.read_token();
+        let parameters = self.parse_function_parameters()?;
+        let block = self.parse_block()?;
+        Ok(Expression::Function(parameters, block))
+    }
+
+    fn parse_function_parameters(&mut self) -> Result<Vec<Identifier>> {
+        if !matches!(self.peek_nth(0), Token::LeftParentheses) {
+            bail!("Expected a left parentheses in parameter list!");
+        }
+        self.read_token();
+
+        let mut identifiers = Vec::new();
+        while self.peek_nth(0) != &Token::RightParentheses {
+            if matches!(self.peek_nth(0), Token::Identifier(_)) {
+                identifiers.push(self.read_token().to_string());
+            }
+
+            if matches!(self.peek_nth(0), Token::Comma) {
+                self.read_token();
+            }
+        }
+
+        if !matches!(self.peek_nth(0), Token::RightParentheses) {
+            bail!("Expected a right parentheses in parameter list!");
+        }
+        self.read_token();
+
+        Ok(identifiers)
     }
 
     fn parse_block(&mut self) -> Result<Block> {
@@ -741,6 +784,76 @@ mod tests {
                     )
                 }
                 _ => bail!("Expected an expression statement!"),
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_function_expressions() -> Result<()> {
+        let input = "fn(x, y) { x + y; }";
+
+        let mut lexer = Lexer::new(&input);
+        let tokens = lexer.tokenize()?;
+
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+
+        if let Some(statement) = program.into_iter().next() {
+            match statement {
+                Statement::Expression(expression) => {
+                    assert_eq!(
+                        expression,
+                        Expression::Function(
+                            vec!["x".to_string(), "y".to_string()],
+                            vec![Statement::Expression(Expression::Infix(
+                                Box::new(Expression::Identifier("x".to_string())),
+                                "+".to_string(),
+                                Box::new(Expression::Identifier("y".to_string())),
+                            ))],
+                        )
+                    )
+                }
+                _ => bail!("Expected an expression statement!"),
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_function_parameter_parsing() -> Result<()> {
+        let tests = [
+            ("fn() {};", vec![]),
+            ("fn(x) {};", vec!["x".to_string()]),
+            (
+                "fn(x, y, z) {};",
+                vec!["x".to_string(), "y".to_string(), "z".to_string()],
+            ),
+        ];
+
+        for (input, expected_parameters) in tests.iter() {
+            let mut lexer = Lexer::new(&input);
+            let tokens = lexer.tokenize()?;
+
+            let mut parser = Parser::new(&tokens);
+            let program = parser.parse()?;
+
+            assert_eq!(program.len(), 1);
+
+            if let Some(statement) = program.into_iter().next() {
+                match statement {
+                    Statement::Expression(expression) => {
+                        assert_eq!(
+                            expression,
+                            Expression::Function(expected_parameters.to_vec(), vec![],)
+                        )
+                    }
+                    _ => bail!("Expected an expression statement!"),
+                }
             }
         }
 
