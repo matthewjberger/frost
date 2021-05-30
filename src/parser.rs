@@ -417,28 +417,41 @@ mod tests {
 
     #[test]
     fn test_let_statements() -> Result<()> {
-        let input = r#"
-        let x = 5;
-        let y = 10;
-        let foobar = 838383;
-        "#;
+        let tests = [
+            (
+                "let x = 5;",
+                "x".to_string(),
+                Expression::Literal(Literal::Integer(5)),
+            ),
+            (
+                "let y = 10;",
+                "y".to_string(),
+                Expression::Literal(Literal::Integer(10)),
+            ),
+            (
+                "let foobar = 838383;",
+                "foobar".to_string(),
+                Expression::Literal(Literal::Integer(838383)),
+            ),
+        ];
 
-        let mut lexer = Lexer::new(&input);
-        let tokens = lexer.tokenize()?;
+        for (input, expected_identifier, expected_expression) in tests.iter() {
+            let mut lexer = Lexer::new(&input);
+            let tokens = lexer.tokenize()?;
 
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
+            let mut parser = Parser::new(&tokens);
+            let program = parser.parse()?;
 
-        assert_eq!(program.len(), 3);
+            assert_eq!(program.len(), 1);
 
-        let identifiers = ["x", "y", "foobar"];
-
-        for (statement, expected_identifier) in program.into_iter().zip(identifiers.iter()) {
-            match statement {
-                Statement::Let(identifier, _expression) => {
-                    assert_eq!(identifier, expected_identifier.to_string());
+            for statement in program.into_iter() {
+                match statement {
+                    Statement::Let(identifier, expression) => {
+                        assert_eq!(identifier, *expected_identifier);
+                        assert_eq!(expression, *expected_expression);
+                    }
+                    _ => bail!("Expected a let statement!"),
                 }
-                _ => bail!("Expected a let statement!"),
             }
         }
 
