@@ -8,6 +8,8 @@ use std::{
 
 pub type Identifier = String;
 
+pub type Block = Vec<Statement>;
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Statement {
     Let(Identifier, Expression),
@@ -32,6 +34,7 @@ pub enum Expression {
     Boolean(bool),
     Prefix(String, Box<Expression>),
     Infix(Box<Expression>, String, Box<Expression>),
+    If(Box<Expression>, Block, Option<Block>),
 }
 
 impl Display for Expression {
@@ -43,6 +46,29 @@ impl Display for Expression {
             Self::Prefix(operator, expression) => format!("({}{})", operator, expression),
             Self::Infix(left_expression, operator, right_expression) => {
                 format!("({} {} {})", left_expression, operator, right_expression)
+            }
+            Self::If(condition, consequence, alternative) => {
+                let block = consequence
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<_>>()
+                    .join("");
+                let statement = format!("if ({}) {{ {} }}", condition.to_string(), block);
+
+                let mut result = String::new();
+                result.push_str(statement.as_str());
+
+                if let Some(alternative) = alternative {
+                    let else_block = alternative
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>()
+                        .join("");
+                    let else_statement = format!("else {{ {} }}", else_block.to_string());
+                    result.push_str(&else_statement);
+                }
+
+                result
             }
         };
         write!(f, "{}", expression)
@@ -108,15 +134,21 @@ impl<'a> Parser<'a> {
     pub fn parse(&mut self) -> Result<Program> {
         let mut program = Program::new();
         loop {
-            let statement = match self.peek_nth(0) {
-                Token::EndOfFile => break,
-                Token::Let => self.parse_let_statement()?,
-                Token::Return => self.parse_return_statement()?,
-                _ => self.parse_expression_statement()?,
-            };
-            program.push(statement);
+            match self.parse_statement()? {
+                Some(statement) => program.push(statement),
+                None => break,
+            }
         }
         Ok(program)
+    }
+
+    pub fn parse_statement(&mut self) -> Result<Option<Statement>> {
+        Ok(match self.peek_nth(0) {
+            Token::EndOfFile => None,
+            Token::Let => Some(self.parse_let_statement()?),
+            Token::Return => Some(self.parse_return_statement()?),
+            _ => Some(self.parse_expression_statement()?),
+        })
     }
 
     fn parse_let_statement(&mut self) -> Result<Statement> {
@@ -181,6 +213,10 @@ impl<'a> Parser<'a> {
                 advance = false;
                 self.parse_grouped_expressions()?
             }
+            Token::If => {
+                advance = false;
+                self.parse_if_expression()?
+            }
             token => bail!("Token not valid for an expression: {:?}", token),
         };
 
@@ -236,6 +272,54 @@ impl<'a> Parser<'a> {
             self.read_token();
         }
         Ok(expression)
+    }
+
+    fn parse_if_expression(&mut self) -> Result<Expression> {
+        self.read_token();
+
+        if !matches!(self.peek_nth(0), Token::LeftParentheses) {
+            bail!("Expected a left parentheses in if expression!");
+        }
+        self.read_token();
+
+        let condition = self.parse_expression(Precedence::Lowest)?;
+
+        if !matches!(self.peek_nth(0), Token::RightParentheses) {
+            bail!("Expected a right parentheses in if expression!");
+        }
+        self.read_token();
+
+        let consequence = self.parse_block()?;
+
+        let mut alternative = None;
+        if matches!(self.peek_nth(0), Token::Else) {
+            self.read_token();
+            alternative = Some(self.parse_block()?);
+        }
+
+        Ok(Expression::If(
+            Box::new(condition),
+            consequence,
+            alternative,
+        ))
+    }
+
+    fn parse_block(&mut self) -> Result<Block> {
+        if !matches!(self.peek_nth(0), Token::LeftBrace) {
+            bail!("Expected a left brace in block!");
+        }
+        self.read_token();
+        let mut statements = Vec::new();
+        loop {
+            if let Some(statement) = self.parse_statement()? {
+                statements.push(statement);
+            }
+            if self.peek_nth(0) == &Token::RightBrace || self.peek_nth(0) == &Token::EndOfFile {
+                self.read_token();
+                break;
+            }
+        }
+        Ok(statements)
     }
 
     fn read_token(&mut self) -> &Token {
@@ -578,6 +662,82 @@ mod tests {
                 .join("");
 
             assert_eq!(program_string, expected.to_string());
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_if_expressions() -> Result<()> {
+        let input = "if (x < y) { x }";
+
+        let mut lexer = Lexer::new(&input);
+        let tokens = lexer.tokenize()?;
+
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+
+        if let Some(statement) = program.into_iter().next() {
+            match statement {
+                Statement::Expression(expression) => {
+                    assert_eq!(
+                        expression,
+                        Expression::If(
+                            Box::new(Expression::Infix(
+                                Box::new(Expression::Identifier("x".to_string())),
+                                "<".to_string(),
+                                Box::new(Expression::Identifier("y".to_string())),
+                            )),
+                            vec![Statement::Expression(Expression::Identifier(
+                                "x".to_string()
+                            ))],
+                            None,
+                        )
+                    )
+                }
+                _ => bail!("Expected an expression statement!"),
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_if_else_expressions() -> Result<()> {
+        let input = "if (x < y) { x } else { y }";
+
+        let mut lexer = Lexer::new(&input);
+        let tokens = lexer.tokenize()?;
+
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+
+        if let Some(statement) = program.into_iter().next() {
+            match statement {
+                Statement::Expression(expression) => {
+                    assert_eq!(
+                        expression,
+                        Expression::If(
+                            Box::new(Expression::Infix(
+                                Box::new(Expression::Identifier("x".to_string())),
+                                "<".to_string(),
+                                Box::new(Expression::Identifier("y".to_string())),
+                            )),
+                            vec![Statement::Expression(Expression::Identifier(
+                                "x".to_string()
+                            ))],
+                            Some(vec![Statement::Expression(Expression::Identifier(
+                                "y".to_string()
+                            ))],)
+                        )
+                    )
+                }
+                _ => bail!("Expected an expression statement!"),
+            }
         }
 
         Ok(())
