@@ -309,16 +309,20 @@ impl<'a> Parser<'a> {
             bail!("Expected a left brace in block!");
         }
         self.read_token();
+
         let mut statements = Vec::new();
-        loop {
+
+        while self.peek_nth(0) != &Token::RightBrace && self.peek_nth(0) != &Token::EndOfFile {
             if let Some(statement) = self.parse_statement()? {
                 statements.push(statement);
             }
-            if self.peek_nth(0) == &Token::RightBrace || self.peek_nth(0) == &Token::EndOfFile {
-                self.read_token();
-                break;
-            }
         }
+
+        if !matches!(self.peek_nth(0), Token::RightBrace) {
+            bail!("Expected a right brace in block!");
+        }
+        self.read_token();
+
         Ok(statements)
     }
 
