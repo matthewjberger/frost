@@ -23,13 +23,25 @@ fn main() -> Result<()> {
 
                     // Lexing
                     let mut lexer = Lexer::new(line);
-                    let tokens = lexer.tokenize()?;
+                    let tokens = match lexer.tokenize() {
+                        Ok(tokens) => tokens,
+                        Err(error) => {
+                            eprintln!("Error lexing: {}", error);
+                            continue;
+                        }
+                    };
                     println!("--- Tokens ---");
                     println!("{:?}", tokens);
 
                     // Parsing
                     let mut parser = Parser::new(&tokens);
-                    let program = parser.parse()?;
+                    let program = match parser.parse() {
+                        Ok(program) => program,
+                        Err(error) => {
+                            eprintln!("Error parsing: {}", error);
+                            continue;
+                        }
+                    };
                     println!("--- Statements ---");
                     for statement in program.iter() {
                         println!("{}", statement);
