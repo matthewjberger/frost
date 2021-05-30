@@ -179,15 +179,13 @@ impl<'a> Parser<'a> {
             bail!("Expected 'Assign' token!");
         }
 
-        // TODO: Parse expressions
+        let expression = self.parse_expression(Precedence::Lowest)?;
 
-        while !matches!(self.read_token(), Token::Semicolon) {}
+        if matches!(self.peek_nth(0), Token::Semicolon) {
+            self.read_token();
+        }
 
-        Ok(Statement::Let(
-            identifier,
-            // TODO
-            Expression::Identifier("".to_string()),
-        ))
+        Ok(Statement::Let(identifier, expression))
     }
 
     fn parse_return_statement(&mut self) -> Result<Statement> {
@@ -195,11 +193,13 @@ impl<'a> Parser<'a> {
             bail!("Expected 'Return' token!");
         }
 
-        // TODO: Parse expressions
+        let expression = self.parse_expression(Precedence::Lowest)?;
 
-        while !matches!(self.read_token(), Token::Semicolon) {}
+        if matches!(self.peek_nth(0), Token::Semicolon) {
+            self.read_token();
+        }
 
-        Ok(Statement::Return(Expression::Identifier("".to_string())))
+        Ok(Statement::Return(expression))
     }
 
     fn parse_expression_statement(&mut self) -> Result<Statement> {
