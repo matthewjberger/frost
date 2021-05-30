@@ -41,6 +41,7 @@ pub enum Expression {
     Infix(Box<Expression>, String, Box<Expression>),
     If(Box<Expression>, Block, Option<Block>),
     Function(Vec<Identifier>, Block),
+    Call(Box<Expression>, Vec<Expression>),
 }
 
 impl Display for Expression {
@@ -73,9 +74,12 @@ impl Display for Expression {
             Self::Function(parameters, block) => {
                 format!(
                     "fn({}) {{ {} }}",
-                    flatten(&parameters, ","),
+                    flatten(&parameters, ", "),
                     flatten(block, "\n"),
                 )
+            }
+            Self::Call(expression, arguments) => {
+                format!("{}({})", expression.to_string(), flatten(arguments, ", "),)
             }
         };
         write!(f, "{}", expression)
@@ -120,6 +124,7 @@ impl Precedence {
             Token::Minus => Self::Sum,
             Token::Slash => Self::Product,
             Token::Asterisk => Self::Product,
+            Token::LeftParentheses => Self::Call,
             _ => Self::Lowest,
         }
     }
@@ -249,6 +254,9 @@ impl<'a> Parser<'a> {
                 | Token::GreaterThan => {
                     expression = self.parse_infix_expression(expression.clone())?;
                 }
+                Token::LeftParentheses => {
+                    expression = self.parse_call_expression(expression.clone())?;
+                }
                 _ => return Ok(expression),
             };
         }
@@ -274,6 +282,29 @@ impl<'a> Parser<'a> {
             operator,
             Box::new(self.parse_expression(precedence)?),
         ))
+    }
+
+    fn parse_call_expression(&mut self, expression: Expression) -> Result<Expression> {
+        if !matches!(self.peek_nth(0), Token::LeftParentheses) {
+            bail!("Expected a left parentheses in call expression argument list!");
+        }
+        self.read_token();
+
+        let mut arguments = Vec::new();
+        while self.peek_nth(0) != &Token::RightParentheses {
+            arguments.push(self.parse_expression(Precedence::Lowest)?);
+
+            if matches!(self.peek_nth(0), Token::Comma) {
+                self.read_token();
+            }
+        }
+
+        if !matches!(self.peek_nth(0), Token::RightParentheses) {
+            bail!("Expected a right parentheses in call expression argument list!");
+        }
+        self.read_token();
+
+        Ok(Expression::Call(Box::new(expression), arguments))
     }
 
     fn parse_grouped_expressions(&mut self) -> Result<Expression> {
@@ -694,6 +725,15 @@ mod tests {
             ("2 / (5 + 5)", "(2 / (5 + 5))"),
             ("-(5 + 5)", "(-(5 + 5))"),
             ("!(true == true)", "(!(true == true))"),
+            ("a + add(b * c) + d", "((a + add((b * c))) + d)"),
+            (
+                "add(a, b, 1, 2 * 3, 4 + 5, add(6, 7 * 8))",
+                "add(a, b, 1, (2 * 3), (4 + 5), add(6, (7 * 8)))",
+            ),
+            (
+                "add(a + b + c * d / f + g)",
+                "add((((a + b) + ((c * d) / f)) + g))",
+            ),
         ];
 
         for (input, expected) in tests.iter() {
@@ -854,6 +894,48 @@ mod tests {
                     }
                     _ => bail!("Expected an expression statement!"),
                 }
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_call_expressions() -> Result<()> {
+        let input = "add(1, 2 * 3, 4 + 5);";
+
+        let mut lexer = Lexer::new(&input);
+        let tokens = lexer.tokenize()?;
+
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+
+        if let Some(statement) = program.into_iter().next() {
+            match statement {
+                Statement::Expression(expression) => {
+                    assert_eq!(
+                        expression,
+                        Expression::Call(
+                            Box::new(Expression::Identifier("add".to_string())),
+                            vec![
+                                Expression::Literal(Literal::Integer(1)),
+                                Expression::Infix(
+                                    Box::new(Expression::Literal(Literal::Integer(2))),
+                                    "*".to_string(),
+                                    Box::new(Expression::Literal(Literal::Integer(3))),
+                                ),
+                                Expression::Infix(
+                                    Box::new(Expression::Literal(Literal::Integer(4))),
+                                    "+".to_string(),
+                                    Box::new(Expression::Literal(Literal::Integer(5))),
+                                ),
+                            ],
+                        )
+                    )
+                }
+                _ => bail!("Expected an expression statement!"),
             }
         }
 
