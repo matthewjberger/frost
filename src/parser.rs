@@ -1,7 +1,6 @@
 use crate::lexer::Token;
 use anyhow::{bail, Result};
 use std::{
-    convert::TryFrom,
     fmt::{Display, Formatter, Result as FmtResult},
     matches,
     slice::Iter,
@@ -16,23 +15,33 @@ fn flatten(items: &[impl Display], separator: &str) -> String {
     format!("{}", strings.join(separator))
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum Operator {
     Add,
-    Subtract,
     Divide,
     Multiply,
+    Not,
+    Negate,
+    Subtract,
+    LessThan,
+    GreaterThan,
+    Equal,
+    NotEqual,
 }
 
-impl TryFrom<&Token> for Operator {
-    type Error = anyhow::Error;
-
-    fn try_from(token: &Token) -> Result<Self, Self::Error> {
+impl Operator {
+    pub fn from_token(token: &Token, is_prefix: bool) -> Result<Self> {
         Ok(match token {
             Token::Plus => Self::Add,
-            Token::Minus => Self::Subtract,
             Token::Slash => Self::Divide,
             Token::Asterisk => Self::Multiply,
+            Token::Bang => Self::Not,
+            Token::Minus if is_prefix => Self::Negate,
+            Token::Minus if !is_prefix => Self::Subtract,
+            Token::LessThan => Self::LessThan,
+            Token::GreaterThan => Self::GreaterThan,
+            Token::Equal => Self::Equal,
+            Token::NotEqual => Self::NotEqual,
             _ => bail!("Token is not an operator: {}", token),
         })
     }
@@ -42,9 +51,14 @@ impl Display for Operator {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         let statement = match self {
             Self::Add => "+",
-            Self::Subtract => "-",
+            Self::Subtract | Self::Negate => "-",
             Self::Divide => "/",
             Self::Multiply => "*",
+            Self::Not => "!",
+            Self::LessThan => "<",
+            Self::GreaterThan => ">",
+            Self::Equal => "==",
+            Self::NotEqual => "!=",
         };
         write!(f, "{}", statement.to_string())
     }
@@ -72,8 +86,8 @@ pub enum Expression {
     Identifier(Identifier),
     Literal(Literal),
     Boolean(bool),
-    Prefix(String, Box<Expression>),
-    Infix(Box<Expression>, String, Box<Expression>),
+    Prefix(Operator, Box<Expression>),
+    Infix(Box<Expression>, Operator, Box<Expression>),
     If(Box<Expression>, Block, Option<Block>),
     Function(Vec<Identifier>, Block),
     Call(Box<Expression>, Vec<Expression>),
@@ -300,7 +314,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_prefix_expression(&mut self) -> Result<Expression> {
-        let operator = self.peek_nth(0).to_string();
+        let operator = Operator::from_token(self.peek_nth(0), true)?;
         self.read_token();
         Ok(Expression::Prefix(
             operator,
@@ -309,7 +323,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_infix_expression(&mut self, left_expression: Expression) -> Result<Expression> {
-        let operator = self.peek_nth(0).to_string();
+        let operator = Operator::from_token(self.peek_nth(0), false)?;
         let precedence = Precedence::from(self.peek_nth(0));
         self.read_token();
         Ok(Expression::Infix(
@@ -447,7 +461,7 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::{Expression, Literal, Parser, Result, Statement};
-    use crate::lexer::Lexer;
+    use crate::{lexer::Lexer, Operator};
     use anyhow::bail;
 
     #[test]
@@ -616,7 +630,7 @@ mod tests {
 
     #[test]
     fn test_prefix_expressions() -> Result<()> {
-        let tests = [("!5;", "!", 5), ("-15;", "-", 15)];
+        let tests = [("!5;", Operator::Not, 5), ("-15;", Operator::Negate, 15)];
 
         for (input, operator, value) in tests.iter() {
             let mut lexer = Lexer::new(&input);
@@ -633,7 +647,7 @@ mod tests {
                         assert_eq!(
                             expression,
                             Expression::Prefix(
-                                operator.to_string(),
+                                *operator,
                                 Box::new(Expression::Literal(Literal::Integer(*value))),
                             )
                         )
@@ -648,7 +662,10 @@ mod tests {
 
     #[test]
     fn test_prefix_boolean_expressions() -> Result<()> {
-        let tests = [("!true;", "!", true), ("!false;", "!", false)];
+        let tests = [
+            ("!true;", Operator::Not, true),
+            ("!false;", Operator::Not, false),
+        ];
 
         for (input, operator, value) in tests.iter() {
             let mut lexer = Lexer::new(&input);
@@ -664,10 +681,7 @@ mod tests {
                     Statement::Expression(expression) => {
                         assert_eq!(
                             expression,
-                            Expression::Prefix(
-                                operator.to_string(),
-                                Box::new(Expression::Boolean(*value)),
-                            )
+                            Expression::Prefix(*operator, Box::new(Expression::Boolean(*value)),)
                         )
                     }
                     _ => bail!("Expected an expression statement!"),
@@ -681,14 +695,14 @@ mod tests {
     #[test]
     fn test_infix_expressions() -> Result<()> {
         let tests = [
-            ("5 + 5;", 5, "+", 5),
-            ("5 - 5;", 5, "-", 5),
-            ("5 * 5;", 5, "*", 5),
-            ("5 / 5;", 5, "/", 5),
-            ("5 > 5;", 5, ">", 5),
-            ("5 < 5;", 5, "<", 5),
-            ("5 == 5;", 5, "==", 5),
-            ("5 != 5;", 5, "!=", 5),
+            ("5 + 5;", 5, Operator::Add, 5),
+            ("5 - 5;", 5, Operator::Subtract, 5),
+            ("5 * 5;", 5, Operator::Multiply, 5),
+            ("5 / 5;", 5, Operator::Divide, 5),
+            ("5 > 5;", 5, Operator::GreaterThan, 5),
+            ("5 < 5;", 5, Operator::LessThan, 5),
+            ("5 == 5;", 5, Operator::Equal, 5),
+            ("5 != 5;", 5, Operator::NotEqual, 5),
         ];
 
         for (input, left_value, operator, right_value) in tests.iter() {
@@ -707,7 +721,7 @@ mod tests {
                             expression,
                             Expression::Infix(
                                 Box::new(Expression::Literal(Literal::Integer(*left_value))),
-                                operator.to_string(),
+                                *operator,
                                 Box::new(Expression::Literal(Literal::Integer(*right_value,))),
                             )
                         )
@@ -723,9 +737,9 @@ mod tests {
     #[test]
     fn test_infix_boolean_expressions() -> Result<()> {
         let tests = [
-            ("true == true", true, "==", true),
-            ("true != false", true, "!=", false),
-            ("false == false", false, "==", false),
+            ("true == true", true, Operator::Equal, true),
+            ("true != false", true, Operator::NotEqual, false),
+            ("false == false", false, Operator::Equal, false),
         ];
 
         for (input, left_value, operator, right_value) in tests.iter() {
@@ -744,7 +758,7 @@ mod tests {
                             expression,
                             Expression::Infix(
                                 Box::new(Expression::Boolean(*left_value)),
-                                operator.to_string(),
+                                *operator,
                                 Box::new(Expression::Boolean(*right_value)),
                             )
                         )
@@ -833,7 +847,7 @@ mod tests {
                         Expression::If(
                             Box::new(Expression::Infix(
                                 Box::new(Expression::Identifier("x".to_string())),
-                                "<".to_string(),
+                                Operator::LessThan,
                                 Box::new(Expression::Identifier("y".to_string())),
                             )),
                             vec![Statement::Expression(Expression::Identifier(
@@ -870,7 +884,7 @@ mod tests {
                         Expression::If(
                             Box::new(Expression::Infix(
                                 Box::new(Expression::Identifier("x".to_string())),
-                                "<".to_string(),
+                                Operator::LessThan,
                                 Box::new(Expression::Identifier("y".to_string())),
                             )),
                             vec![Statement::Expression(Expression::Identifier(
@@ -910,7 +924,7 @@ mod tests {
                             vec!["x".to_string(), "y".to_string()],
                             vec![Statement::Expression(Expression::Infix(
                                 Box::new(Expression::Identifier("x".to_string())),
-                                "+".to_string(),
+                                Operator::Add,
                                 Box::new(Expression::Identifier("y".to_string())),
                             ))],
                         )
@@ -982,12 +996,12 @@ mod tests {
                                 Expression::Literal(Literal::Integer(1)),
                                 Expression::Infix(
                                     Box::new(Expression::Literal(Literal::Integer(2))),
-                                    "*".to_string(),
+                                    Operator::Multiply,
                                     Box::new(Expression::Literal(Literal::Integer(3))),
                                 ),
                                 Expression::Infix(
                                     Box::new(Expression::Literal(Literal::Integer(4))),
-                                    "+".to_string(),
+                                    Operator::Add,
                                     Box::new(Expression::Literal(Literal::Integer(5))),
                                 ),
                             ],
