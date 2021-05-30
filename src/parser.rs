@@ -889,7 +889,7 @@ mod tests {
                     Statement::Expression(expression) => {
                         assert_eq!(
                             expression,
-                            Expression::Function(expected_parameters.to_vec(), vec![],)
+                            Expression::Function(expected_parameters.to_vec(), Vec::new())
                         )
                     }
                     _ => bail!("Expected an expression statement!"),
