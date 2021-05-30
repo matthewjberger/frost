@@ -433,6 +433,11 @@ mod tests {
                 "foobar".to_string(),
                 Expression::Literal(Literal::Integer(838383)),
             ),
+            (
+                "let foobar = y;",
+                "foobar".to_string(),
+                Expression::Identifier("y".to_string()),
+            ),
         ];
 
         for (input, expected_identifier, expected_expression) in tests.iter() {
