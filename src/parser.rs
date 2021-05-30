@@ -447,24 +447,30 @@ mod tests {
 
     #[test]
     fn test_return_statements() -> Result<()> {
-        let input = r#"
-        return 5;
-        return 10;
-        return 993322;
-        "#;
+        let tests = [
+            ("return 5;", Expression::Literal(Literal::Integer(5))),
+            ("return 10;", Expression::Literal(Literal::Integer(10))),
+            (
+                "return 993322;",
+                Expression::Literal(Literal::Integer(993322)),
+            ),
+            ("return y;", Expression::Identifier("y".to_string())),
+        ];
 
-        let mut lexer = Lexer::new(&input);
-        let tokens = lexer.tokenize()?;
+        for (input, expected_expression) in tests.iter() {
+            let mut lexer = Lexer::new(&input);
+            let tokens = lexer.tokenize()?;
 
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
+            let mut parser = Parser::new(&tokens);
+            let program = parser.parse()?;
 
-        assert_eq!(program.len(), 3);
+            assert_eq!(program.len(), 1);
 
-        for statement in program.into_iter() {
-            match statement {
-                Statement::Return(_expression) => {}
-                _ => bail!("Expected a return statement!"),
+            for statement in program.into_iter() {
+                match statement {
+                    Statement::Return(expression) => assert_eq!(expression, *expected_expression),
+                    _ => bail!("Expected a return statement!"),
+                }
             }
         }
 
