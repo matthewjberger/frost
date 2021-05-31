@@ -85,7 +85,19 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn next_token(&mut self) -> Result<Token> {
+    pub fn tokenize(&mut self) -> Result<Vec<Token>> {
+        let mut tokens = Vec::new();
+        loop {
+            let next_token = self.next_token()?;
+            if let Token::EndOfFile = next_token {
+                break;
+            }
+            tokens.push(next_token);
+        }
+        Ok(tokens)
+    }
+
+    fn next_token(&mut self) -> Result<Token> {
         self.skip_while(Self::is_whitespace);
         let first_char = self.read_char();
         let token = match first_char {
@@ -117,18 +129,6 @@ impl<'a> Lexer<'a> {
             illegal => Illegal(illegal.to_string()),
         };
         Ok(token)
-    }
-
-    pub fn tokenize(&mut self) -> Result<Vec<Token>> {
-        let mut tokens = Vec::new();
-        loop {
-            let next_token = self.next_token()?;
-            if let Token::EndOfFile = next_token {
-                break;
-            }
-            tokens.push(next_token);
-        }
-        Ok(tokens)
     }
 
     fn read_char(&mut self) -> char {
@@ -218,7 +218,7 @@ if (5 < 10) {
 10 != 9;
 ";
 
-        let tokens = [
+        let expected_tokens = [
             // let five = 5;
             Token::Let,
             Token::Identifier("five".to_string()),
@@ -306,8 +306,8 @@ if (5 < 10) {
 
         let mut lexer = Lexer::new(input);
 
-        for token in tokens.iter() {
-            assert_eq!(lexer.next_token()?, *token);
+        for (token, expected_token) in lexer.tokenize()?.into_iter().zip(expected_tokens.iter()) {
+            assert_eq!(token, *expected_token);
         }
 
         Ok(())
