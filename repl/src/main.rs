@@ -63,10 +63,7 @@ fn main() -> Result<()> {
                     println!("{}", result);
                 }
             },
-            Err(ReadlineError::Interrupted) => {
-                println!("CTRL-C");
-                break;
-            }
+            Err(ReadlineError::Interrupted) => break,
             Err(err) => {
                 println!("Error: {:?}", err);
                 break;
