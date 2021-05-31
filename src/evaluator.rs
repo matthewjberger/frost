@@ -20,7 +20,7 @@ impl Display for Object {
     }
 }
 
-pub fn evaluate_program(statements: &[Statement]) -> Result<Object> {
+pub fn evaluate(statements: &[Statement]) -> Result<Object> {
     let mut result = Object::Null;
     for statement in statements.iter() {
         result = evaluate_statement(statement)?;
@@ -44,6 +44,9 @@ pub fn evaluate_expression(expression: &Expression) -> Result<Object> {
         }
         Expression::Infix(left_expression, operator, right_expression) => {
             evaluate_infix_expression(left_expression, operator, right_expression)?
+        }
+        Expression::If(condition, consequence, alternative) => {
+            evaluate_if_expression(condition, consequence, alternative)?
         }
         _ => Object::Null,
     })
@@ -109,6 +112,31 @@ pub fn evaluate_infix_expression(
     bail!("Could not evaluate infix expression that wasn't bool-bool or int-int")
 }
 
+pub fn evaluate_if_expression(
+    condition: &Expression,
+    consequence: &[Statement],
+    alternative: &Option<Vec<Statement>>,
+) -> Result<Object> {
+    let condition = evaluate_expression(condition)?;
+
+    if object_to_bool(&condition) {
+        evaluate(consequence)
+    } else {
+        match alternative.as_ref() {
+            Some(alternative) => evaluate(alternative),
+            None => Ok(Object::Null),
+        }
+    }
+}
+
+pub fn object_to_bool(object: &Object) -> bool {
+    match object {
+        Object::Null => false,
+        Object::Integer(_) => true,
+        Object::Boolean(boolean) => *boolean,
+    }
+}
+
 pub fn apply_operator_not(object: &Object) -> Result<Object> {
     let boolean = match object {
         Object::Null => true,
@@ -128,7 +156,7 @@ pub fn apply_operator_negate(object: &Object) -> Result<Object> {
 #[cfg(test)]
 mod tests {
     use super::Result;
-    use crate::{evaluate_program, Lexer, Object, Parser};
+    use crate::{evaluate, Lexer, Object, Parser};
 
     #[test]
     fn evaluate_integer_literals() -> Result<()> {
@@ -159,7 +187,7 @@ mod tests {
 
             assert_eq!(program.len(), 1);
 
-            let object = evaluate_program(&program)?;
+            let object = evaluate(&program)?;
 
             assert_eq!(object, Object::Integer(*expected_value));
         }
@@ -180,7 +208,7 @@ mod tests {
 
             assert_eq!(program.len(), 1);
 
-            let object = evaluate_program(&program)?;
+            let object = evaluate(&program)?;
 
             assert_eq!(object, Object::Boolean(*expected_value));
         }
@@ -208,7 +236,7 @@ mod tests {
 
             assert_eq!(program.len(), 1);
 
-            let object = evaluate_program(&program)?;
+            let object = evaluate(&program)?;
 
             assert_eq!(object, Object::Boolean(*expected_value));
         }
@@ -249,9 +277,38 @@ mod tests {
 
             assert_eq!(program.len(), 1);
 
-            let object = evaluate_program(&program)?;
+            let object = evaluate(&program)?;
 
             assert_eq!(object, Object::Boolean(*expected_value));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn if_else_expressions() -> Result<()> {
+        let tests = [
+            ("if (true) { 10 }", Object::Integer(10)),
+            ("if (false) { 10 }", Object::Null),
+            ("if (1) { 10 }", Object::Integer(10)),
+            ("if (1 < 2) { 10 }", Object::Integer(10)),
+            ("if (1 > 2) { 10 }", Object::Null),
+            ("if (1 > 2) { 10 } else { 20 }", Object::Integer(20)),
+            ("if (1 < 2) { 10 } else { 20 }", Object::Integer(10)),
+        ];
+
+        for (input, expected_value) in tests.iter() {
+            let mut lexer = Lexer::new(&input);
+            let tokens = lexer.tokenize()?;
+
+            let mut parser = Parser::new(&tokens);
+            let program = parser.parse()?;
+
+            assert_eq!(program.len(), 1);
+
+            let object = evaluate(&program)?;
+
+            assert_eq!(object, *expected_value);
         }
 
         Ok(())
