@@ -22,7 +22,7 @@ impl Display for Object {
     }
 }
 
-pub fn evaluate(statements: &[Statement]) -> Result<Object> {
+pub fn evaluate_program(statements: &[Statement]) -> Result<Object> {
     let mut result = Object::Null;
     for statement in statements.iter() {
         match evaluate_statement(statement)? {
@@ -126,10 +126,10 @@ pub fn evaluate_if_expression(
     let condition = evaluate_expression(condition)?;
 
     if object_to_bool(&condition) {
-        evaluate(consequence)
+        evaluate_program(consequence)
     } else {
         match alternative.as_ref() {
-            Some(alternative) => evaluate(alternative),
+            Some(alternative) => evaluate_program(alternative),
             None => Ok(Object::Null),
         }
     }
@@ -154,7 +154,7 @@ pub fn apply_operator_negate(object: &Object) -> Result<Object> {
 #[cfg(test)]
 mod tests {
     use super::Result;
-    use crate::{evaluate, Lexer, Object, Parser};
+    use crate::{evaluate_program, Lexer, Object, Parser};
 
     #[test]
     fn evaluate_integer_literals() -> Result<()> {
@@ -185,7 +185,7 @@ mod tests {
 
             assert_eq!(program.len(), 1);
 
-            let object = evaluate(&program)?;
+            let object = evaluate_program(&program)?;
 
             assert_eq!(object, Object::Integer(*expected_value));
         }
@@ -206,7 +206,7 @@ mod tests {
 
             assert_eq!(program.len(), 1);
 
-            let object = evaluate(&program)?;
+            let object = evaluate_program(&program)?;
 
             assert_eq!(object, Object::Boolean(*expected_value));
         }
@@ -234,7 +234,7 @@ mod tests {
 
             assert_eq!(program.len(), 1);
 
-            let object = evaluate(&program)?;
+            let object = evaluate_program(&program)?;
 
             assert_eq!(object, Object::Boolean(*expected_value));
         }
@@ -275,7 +275,7 @@ mod tests {
 
             assert_eq!(program.len(), 1);
 
-            let object = evaluate(&program)?;
+            let object = evaluate_program(&program)?;
 
             assert_eq!(object, Object::Boolean(*expected_value));
         }
@@ -304,7 +304,7 @@ mod tests {
 
             assert_eq!(program.len(), 1);
 
-            let object = evaluate(&program)?;
+            let object = evaluate_program(&program)?;
 
             assert_eq!(object, *expected_value);
         }
@@ -328,6 +328,10 @@ mod tests {
                 "9; return 2 * 5; 9;",
                 Object::Return(Box::new(Object::Integer(10))),
             ),
+            (
+                "if (10 > 1) { if (10 > 1) { return 10; } return 1; }",
+                Object::Return(Box::new(Object::Integer(10))),
+            ),
         ];
 
         for (input, expected_value) in tests.iter() {
@@ -337,7 +341,7 @@ mod tests {
             let mut parser = Parser::new(&tokens);
             let program = parser.parse()?;
 
-            let object = evaluate(&program)?;
+            let object = evaluate_program(&program)?;
 
             assert_eq!(object, *expected_value);
         }
