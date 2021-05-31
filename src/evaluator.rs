@@ -118,7 +118,7 @@ mod tests {
     }
 
     #[test]
-    fn bang_operator() -> Result<()> {
+    fn not_operator() -> Result<()> {
         let tests = [
             ("!true", false),
             ("!false", true),
