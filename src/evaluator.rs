@@ -42,6 +42,9 @@ pub fn evaluate_expression(expression: &Expression) -> Result<Object> {
         Expression::Prefix(operator, expression) => {
             evaluate_prefix_expression(operator, expression)?
         }
+        Expression::Infix(left_expression, operator, right_expression) => {
+            evaluate_infix_expression(left_expression, operator, right_expression)?
+        }
         _ => Object::Null,
     })
 }
@@ -60,6 +63,50 @@ pub fn evaluate_prefix_expression(operator: &Operator, expression: &Expression) 
         Operator::Negate => apply_operator_negate(&value)?,
         _ => Object::Null,
     })
+}
+
+pub fn evaluate_infix_expression(
+    left_expression: &Expression,
+    operator: &Operator,
+    right_expression: &Expression,
+) -> Result<Object> {
+    let left_value = evaluate_expression(left_expression)?;
+    let right_value = evaluate_expression(right_expression)?;
+
+    if let Object::Integer(lhs) = left_value {
+        if let Object::Integer(rhs) = right_value {
+            return Ok(match operator {
+                Operator::Add => Object::Integer(lhs + rhs),
+                Operator::Divide => Object::Integer(lhs / rhs),
+                Operator::Multiply => Object::Integer(lhs * rhs),
+                Operator::Subtract => Object::Integer(lhs - rhs),
+                Operator::LessThan => Object::Boolean(lhs < rhs),
+                Operator::GreaterThan => Object::Boolean(lhs > rhs),
+                Operator::Equal => Object::Boolean(lhs == rhs),
+                Operator::NotEqual => Object::Boolean(lhs != rhs),
+                _ => bail!(
+                    "Operator '{}' is not valid for int<->int infix expressions",
+                    operator
+                ),
+            });
+        }
+    }
+
+    if let Object::Boolean(lhs) = left_value {
+        if let Object::Boolean(rhs) = right_value {
+            return Ok(match operator {
+                Operator::Equal => Object::Boolean(lhs == rhs),
+                Operator::NotEqual => Object::Boolean(lhs != rhs),
+                _ => bail!(
+                    "Operator '{}' is not valid for bool<->bool infix expressions",
+                    operator
+                ),
+            });
+        }
+    }
+
+    // TODO: Support infix on non integer values
+    bail!("Could not evaluate infix expression that wasn't bool-bool or int-int")
 }
 
 pub fn apply_operator_not(object: &Object) -> Result<Object> {
@@ -90,6 +137,17 @@ mod tests {
             ("10", 10_i64),
             ("-5", -5_i64),
             ("-10", -10_i64),
+            ("5 + 5 + 5 + 5 - 10", 10),
+            ("2 * 2 * 2 * 2 * 2", 32),
+            ("-50 + 100 + -50", 0),
+            ("5 * 2 + 10", 20),
+            ("5 + 2 * 10", 25),
+            ("20 + 2 * -10", 0),
+            ("50 / 2 * 2 + 10", 60),
+            ("2 * (5 + 10)", 30),
+            ("3 * 3 * 3 + 10", 37),
+            ("3 * (3 * 3) + 10", 37),
+            ("(5 + 10 * 2 + 15 / 3) * 2 + -10", 50),
         ];
 
         for (input, expected_value) in tests.iter() {
@@ -139,6 +197,47 @@ mod tests {
             ("!!true", true),
             ("!!false", false),
             ("!!5", true),
+        ];
+
+        for (input, expected_value) in tests.iter() {
+            let mut lexer = Lexer::new(&input);
+            let tokens = lexer.tokenize()?;
+
+            let mut parser = Parser::new(&tokens);
+            let program = parser.parse()?;
+
+            assert_eq!(program.len(), 1);
+
+            let object = evaluate_program(&program)?;
+
+            assert_eq!(object, Object::Boolean(*expected_value));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_boolean_expressions() -> Result<()> {
+        let tests = [
+            ("true", true),
+            ("false", false),
+            ("1 < 2", true),
+            ("1 > 2", false),
+            ("1 < 1", false),
+            ("1 > 1", false),
+            ("1 == 1", true),
+            ("1 != 1", false),
+            ("1 == 2", false),
+            ("1 != 2", true),
+            ("true == true", true),
+            ("false == false", true),
+            ("true == false", false),
+            ("true != false", true),
+            ("false != true", true),
+            ("(1 < 2) == true", true),
+            ("(1 < 2) == false", false),
+            ("(1 > 2) == true", false),
+            ("(1 > 2) == false", true),
         ];
 
         for (input, expected_value) in tests.iter() {
