@@ -1,4 +1,4 @@
-use crate::{Expression, Literal, Statement};
+use crate::{Expression, Literal, Operator, Statement};
 use anyhow::Result;
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
@@ -39,6 +39,9 @@ pub fn evaluate_expression(expression: &Expression) -> Result<Object> {
     Ok(match expression {
         Expression::Literal(literal) => evaluate_literal(literal)?,
         Expression::Boolean(boolean) => Object::Boolean(*boolean),
+        Expression::Prefix(operator, expression) => {
+            evaluate_prefix_expression(operator, expression)?
+        }
         _ => Object::Null,
     })
 }
@@ -48,6 +51,23 @@ pub fn evaluate_literal(literal: &Literal) -> Result<Object> {
         Literal::Integer(integer) => Object::Integer(*integer),
         _ => Object::Null,
     })
+}
+
+pub fn evaluate_prefix_expression(operator: &Operator, expression: &Expression) -> Result<Object> {
+    let value = evaluate_expression(expression)?;
+    Ok(match operator {
+        Operator::Not => apply_operator_not(&value)?,
+        _ => Object::Null,
+    })
+}
+
+pub fn apply_operator_not(object: &Object) -> Result<Object> {
+    let boolean = match object {
+        Object::Null => true,
+        Object::Boolean(boolean) => !*boolean,
+        _ => false,
+    };
+    Ok(Object::Boolean(boolean))
 }
 
 #[cfg(test)]
@@ -79,6 +99,34 @@ mod tests {
     #[test]
     fn evaluate_boolean_literals() -> Result<()> {
         let tests = [("true", true), ("false", false)];
+
+        for (input, expected_value) in tests.iter() {
+            let mut lexer = Lexer::new(&input);
+            let tokens = lexer.tokenize()?;
+
+            let mut parser = Parser::new(&tokens);
+            let program = parser.parse()?;
+
+            assert_eq!(program.len(), 1);
+
+            let object = evaluate_program(&program)?;
+
+            assert_eq!(object, Object::Boolean(*expected_value));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn bang_operator() -> Result<()> {
+        let tests = [
+            ("!true", false),
+            ("!false", true),
+            ("!5", false),
+            ("!!true", true),
+            ("!!false", false),
+            ("!!5", true),
+        ];
 
         for (input, expected_value) in tests.iter() {
             let mut lexer = Lexer::new(&input);
