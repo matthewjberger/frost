@@ -1,11 +1,23 @@
 use crate::{Expression, Literal, Statement};
 use anyhow::Result;
+use std::fmt::{Display, Formatter, Result as FmtResult};
 
 #[derive(Debug, PartialEq)]
 pub enum Object {
     Null,
     Integer(i64),
     Boolean(bool),
+}
+
+impl Display for Object {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        let statement = match self {
+            Self::Null => "null".to_string(),
+            Self::Integer(integer) => integer.to_string(),
+            Self::Boolean(boolean) => boolean.to_string(),
+        };
+        write!(f, "{}", statement)
+    }
 }
 
 pub fn evaluate_program(statements: &[Statement]) -> Result<Object> {

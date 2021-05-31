@@ -1,5 +1,5 @@
 use anyhow::Result;
-use monkey::{Lexer, Parser};
+use monkey::{evaluate_program, Lexer, Parser};
 use rustyline::{error::ReadlineError, Editor};
 
 fn main() -> Result<()> {
@@ -21,7 +21,6 @@ fn main() -> Result<()> {
                 line => {
                     rl.add_history_entry(line);
 
-                    // Lexing
                     let mut lexer = Lexer::new(line);
                     let tokens = match lexer.tokenize() {
                         Ok(tokens) => tokens,
@@ -30,10 +29,7 @@ fn main() -> Result<()> {
                             continue;
                         }
                     };
-                    println!("--- Tokens ---");
-                    println!("{:?}", tokens);
 
-                    // Parsing
                     let mut parser = Parser::new(&tokens);
                     let program = match parser.parse() {
                         Ok(program) => program,
@@ -42,11 +38,29 @@ fn main() -> Result<()> {
                             continue;
                         }
                     };
-                    println!("--- Statements ---");
-                    for statement in program.iter() {
-                        println!("{}", statement);
-                        println!("Debug: {:?}", statement);
+
+                    let result = match evaluate_program(&program) {
+                        Ok(program) => program,
+                        Err(error) => {
+                            eprintln!("Error evaluating: {}", error);
+                            continue;
+                        }
+                    };
+
+                    // Leaving this in for debugging purposes
+                    let verbose = false;
+                    if verbose {
+                        println!("--- Tokens ---");
+                        println!("{:?}", tokens);
+                        println!("--- Statements ---");
+                        for statement in program.iter() {
+                            println!("{}", statement);
+                            println!("Debug: {:?}", statement);
+                        }
+                        println!("--- Result ---");
                     }
+
+                    println!("{}", result);
                 }
             },
             Err(ReadlineError::Interrupted) => {
