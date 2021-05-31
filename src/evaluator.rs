@@ -18,19 +18,22 @@ pub fn evaluate_program(statements: &[Statement]) -> Result<Object> {
 
 pub fn evaluate_statement(statement: &Statement) -> Result<Object> {
     Ok(match statement {
-        Statement::Let(_, _) => Object::Null,
-        Statement::Return(_) => Object::Null,
         Statement::Expression(expression) => evaluate_expression(expression)?,
+        _ => Object::Null,
     })
 }
 
 pub fn evaluate_expression(expression: &Expression) -> Result<Object> {
     Ok(match expression {
-        Expression::Literal(literal) => match literal {
-            Literal::Integer(integer) => Object::Integer(*integer),
-            _ => Object::Null,
-        },
+        Expression::Literal(literal) => evaluate_literal(literal)?,
         Expression::Boolean(boolean) => Object::Boolean(*boolean),
+        _ => Object::Null,
+    })
+}
+
+pub fn evaluate_literal(literal: &Literal) -> Result<Object> {
+    Ok(match literal {
+        Literal::Integer(integer) => Object::Integer(*integer),
         _ => Object::Null,
     })
 }
