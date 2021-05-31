@@ -546,7 +546,7 @@ mod tests {
     }
 
     #[test]
-    fn test_ast() -> Result<()> {
+    fn ast() -> Result<()> {
         let output = "let myVar = anotherVar;";
         let ast = Statement::Let(
             "myVar".to_string(),
@@ -557,7 +557,7 @@ mod tests {
     }
 
     #[test]
-    fn test_identifier_expression() -> Result<()> {
+    fn identifier_expressions() -> Result<()> {
         let input = "foobar;";
 
         let mut lexer = Lexer::new(&input);
@@ -581,7 +581,7 @@ mod tests {
     }
 
     #[test]
-    fn test_integer_expression() -> Result<()> {
+    fn integer_expressions() -> Result<()> {
         let input = "5;";
 
         let mut lexer = Lexer::new(&input);
@@ -605,7 +605,7 @@ mod tests {
     }
 
     #[test]
-    fn test_boolean_expression() -> Result<()> {
+    fn boolean_expressions() -> Result<()> {
         let tests = [("true;", true), ("false;", false)];
 
         for (input, expected_value) in tests.iter() {
@@ -630,7 +630,7 @@ mod tests {
     }
 
     #[test]
-    fn test_prefix_expressions() -> Result<()> {
+    fn prefix_expressions() -> Result<()> {
         let tests = [("!5;", Operator::Not, 5), ("-15;", Operator::Negate, 15)];
 
         for (input, operator, value) in tests.iter() {
@@ -662,7 +662,7 @@ mod tests {
     }
 
     #[test]
-    fn test_prefix_boolean_expressions() -> Result<()> {
+    fn prefix_boolean_expressions() -> Result<()> {
         let tests = [
             ("!true;", Operator::Not, true),
             ("!false;", Operator::Not, false),
@@ -694,7 +694,7 @@ mod tests {
     }
 
     #[test]
-    fn test_infix_expressions() -> Result<()> {
+    fn infix_expressions() -> Result<()> {
         let tests = [
             ("5 + 5;", 5, Operator::Add, 5),
             ("5 - 5;", 5, Operator::Subtract, 5),
@@ -736,7 +736,7 @@ mod tests {
     }
 
     #[test]
-    fn test_infix_boolean_expressions() -> Result<()> {
+    fn infix_boolean_expressions() -> Result<()> {
         let tests = [
             ("true == true", true, Operator::Equal, true),
             ("true != false", true, Operator::NotEqual, false),
@@ -773,7 +773,7 @@ mod tests {
     }
 
     #[test]
-    fn test_operator_precedence() -> Result<()> {
+    fn operator_precedence() -> Result<()> {
         let tests = [
             ("-a * b", "((-a) * b)"),
             ("!-a", "(!(-a))"),
@@ -829,7 +829,7 @@ mod tests {
     }
 
     #[test]
-    fn test_if_expressions() -> Result<()> {
+    fn if_expressions() -> Result<()> {
         let input = "if (x < y) { x }";
 
         let mut lexer = Lexer::new(&input);
@@ -866,7 +866,7 @@ mod tests {
     }
 
     #[test]
-    fn test_if_else_expressions() -> Result<()> {
+    fn if_else_expressions() -> Result<()> {
         let input = "if (x < y) { x } else { y }";
 
         let mut lexer = Lexer::new(&input);
@@ -905,7 +905,7 @@ mod tests {
     }
 
     #[test]
-    fn test_function_expressions() -> Result<()> {
+    fn function_expressions() -> Result<()> {
         let input = "fn(x, y) { x + y; }";
 
         let mut lexer = Lexer::new(&input);
@@ -939,7 +939,7 @@ mod tests {
     }
 
     #[test]
-    fn test_function_parameter_parsing() -> Result<()> {
+    fn function_parameter_parsing() -> Result<()> {
         let tests = [
             ("fn() {};", vec![]),
             ("fn(x) {};", vec!["x".to_string()]),
@@ -975,7 +975,7 @@ mod tests {
     }
 
     #[test]
-    fn test_call_expressions() -> Result<()> {
+    fn call_expressions() -> Result<()> {
         let input = "add(1, 2 * 3, 4 + 5);";
 
         let mut lexer = Lexer::new(&input);

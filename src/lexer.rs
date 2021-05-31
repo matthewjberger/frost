@@ -198,7 +198,7 @@ mod tests {
     use super::{Lexer, Result, Token};
 
     #[test]
-    fn test_next_token() -> Result<()> {
+    fn next_token() -> Result<()> {
         let input = r"let five = 5;
 let ten = 10;
 let add = fn(x, y) {
