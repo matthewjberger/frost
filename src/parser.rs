@@ -81,6 +81,7 @@ impl Display for Statement {
         write!(f, "{}", statement)
     }
 }
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Expression {
     Identifier(Identifier),
