@@ -56,7 +56,7 @@ mod tests {
     use crate::{evaluate_program, Lexer, Object, Parser};
 
     #[test]
-    fn test() -> Result<()> {
+    fn evaluate_integer_literals() -> Result<()> {
         let tests = [("5", 5_i64), ("10", 10_i64)];
 
         for (input, expected_value) in tests.iter() {
@@ -71,6 +71,27 @@ mod tests {
             let object = evaluate_program(&program)?;
 
             assert_eq!(object, Object::Integer(*expected_value));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_boolean_literals() -> Result<()> {
+        let tests = [("true", true), ("false", false)];
+
+        for (input, expected_value) in tests.iter() {
+            let mut lexer = Lexer::new(&input);
+            let tokens = lexer.tokenize()?;
+
+            let mut parser = Parser::new(&tokens);
+            let program = parser.parse()?;
+
+            assert_eq!(program.len(), 1);
+
+            let object = evaluate_program(&program)?;
+
+            assert_eq!(object, Object::Boolean(*expected_value));
         }
 
         Ok(())
