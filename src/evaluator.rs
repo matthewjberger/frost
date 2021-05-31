@@ -1,5 +1,5 @@
 use crate::{Expression, Literal, Operator, Statement};
-use anyhow::Result;
+use anyhow::{bail, Result};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
 #[derive(Debug, PartialEq)]
@@ -57,6 +57,7 @@ pub fn evaluate_prefix_expression(operator: &Operator, expression: &Expression) 
     let value = evaluate_expression(expression)?;
     Ok(match operator {
         Operator::Not => apply_operator_not(&value)?,
+        Operator::Negate => apply_operator_negate(&value)?,
         _ => Object::Null,
     })
 }
@@ -70,6 +71,13 @@ pub fn apply_operator_not(object: &Object) -> Result<Object> {
     Ok(Object::Boolean(boolean))
 }
 
+pub fn apply_operator_negate(object: &Object) -> Result<Object> {
+    Ok(match object {
+        Object::Integer(value) => Object::Integer(-value),
+        _ => bail!("Attempted to negate a non-integer value!"),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::Result;
@@ -77,7 +85,12 @@ mod tests {
 
     #[test]
     fn evaluate_integer_literals() -> Result<()> {
-        let tests = [("5", 5_i64), ("10", 10_i64)];
+        let tests = [
+            ("5", 5_i64),
+            ("10", 10_i64),
+            ("-5", -5_i64),
+            ("-10", -10_i64),
+        ];
 
         for (input, expected_value) in tests.iter() {
             let mut lexer = Lexer::new(&input);
