@@ -7,6 +7,7 @@ pub enum Object {
     Null,
     Integer(i64),
     Boolean(bool),
+    Return(Box<Object>),
 }
 
 impl Display for Object {
@@ -15,6 +16,7 @@ impl Display for Object {
             Self::Null => "null".to_string(),
             Self::Integer(integer) => integer.to_string(),
             Self::Boolean(boolean) => boolean.to_string(),
+            Self::Return(value) => value.to_string(),
         };
         write!(f, "{}", statement)
     }
@@ -23,7 +25,10 @@ impl Display for Object {
 pub fn evaluate(statements: &[Statement]) -> Result<Object> {
     let mut result = Object::Null;
     for statement in statements.iter() {
-        result = evaluate_statement(statement)?;
+        match evaluate_statement(statement)? {
+            Object::Return(value) => return Ok(Object::Return(value)),
+            object => result = object,
+        }
     }
     Ok(result)
 }
@@ -31,6 +36,7 @@ pub fn evaluate(statements: &[Statement]) -> Result<Object> {
 pub fn evaluate_statement(statement: &Statement) -> Result<Object> {
     Ok(match statement {
         Statement::Expression(expression) => evaluate_expression(expression)?,
+        Statement::Return(expression) => Object::Return(Box::new(evaluate_expression(expression)?)),
         _ => Object::Null,
     })
 }
@@ -62,7 +68,7 @@ pub fn evaluate_literal(literal: &Literal) -> Result<Object> {
 pub fn evaluate_prefix_expression(operator: &Operator, expression: &Expression) -> Result<Object> {
     let value = evaluate_expression(expression)?;
     Ok(match operator {
-        Operator::Not => apply_operator_not(&value)?,
+        Operator::Not => Object::Boolean(!object_to_bool(&value)),
         Operator::Negate => apply_operator_negate(&value)?,
         _ => Object::Null,
     })
@@ -134,16 +140,8 @@ pub fn object_to_bool(object: &Object) -> bool {
         Object::Null => false,
         Object::Integer(_) => true,
         Object::Boolean(boolean) => *boolean,
-    }
-}
-
-pub fn apply_operator_not(object: &Object) -> Result<Object> {
-    let boolean = match object {
-        Object::Null => true,
-        Object::Boolean(boolean) => !*boolean,
         _ => false,
-    };
-    Ok(Object::Boolean(boolean))
+    }
 }
 
 pub fn apply_operator_negate(object: &Object) -> Result<Object> {
@@ -305,6 +303,39 @@ mod tests {
             let program = parser.parse()?;
 
             assert_eq!(program.len(), 1);
+
+            let object = evaluate(&program)?;
+
+            assert_eq!(object, *expected_value);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn return_statements() -> Result<()> {
+        let tests = [
+            ("return 10;", Object::Return(Box::new(Object::Integer(10)))),
+            (
+                "return 10; 9;",
+                Object::Return(Box::new(Object::Integer(10))),
+            ),
+            (
+                "return 2 * 5; 9;",
+                Object::Return(Box::new(Object::Integer(10))),
+            ),
+            (
+                "9; return 2 * 5; 9;",
+                Object::Return(Box::new(Object::Integer(10))),
+            ),
+        ];
+
+        for (input, expected_value) in tests.iter() {
+            let mut lexer = Lexer::new(&input);
+            let tokens = lexer.tokenize()?;
+
+            let mut parser = Parser::new(&tokens);
+            let program = parser.parse()?;
 
             let object = evaluate(&program)?;
 
