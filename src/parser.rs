@@ -460,9 +460,9 @@ impl<'a> Parser<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Expression, Literal, Parser, Result, Statement};
+    use super::{Expression, Literal, Parser, Statement};
     use crate::{lexer::Lexer, Operator};
-    use anyhow::bail;
+    use anyhow::{bail, Result};
 
     #[test]
     fn test_let_statements() -> Result<()> {
