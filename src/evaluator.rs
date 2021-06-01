@@ -7,6 +7,7 @@ use std::{
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Object {
+    Empty,
     Null,
     Integer(i64),
     Boolean(bool),
@@ -16,6 +17,7 @@ pub enum Object {
 impl Display for Object {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         let statement = match self {
+            Self::Empty => "".to_string(),
             Self::Null => "null".to_string(),
             Self::Integer(integer) => integer.to_string(),
             Self::Boolean(boolean) => boolean.to_string(),
@@ -54,7 +56,7 @@ impl Evaluator {
                 self.environment
                     .bindings
                     .insert(identifier.to_string(), value.clone());
-                value
+                Object::Empty
             }
             Statement::Expression(expression) => self.evaluate_expression(expression)?,
             Statement::Return(expression) => {
