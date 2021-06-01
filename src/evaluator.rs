@@ -1,4 +1,4 @@
-use crate::{Expression, Literal, Operator, Statement};
+use crate::{flatten, Block, Expression, Identifier, Literal, Operator, Statement};
 use anyhow::{bail, Context, Result};
 use std::{
     collections::HashMap,
@@ -12,6 +12,7 @@ pub enum Object {
     Integer(i64),
     Boolean(bool),
     Return(Box<Object>),
+    Function(Vec<Identifier>, Block),
 }
 
 impl Display for Object {
@@ -22,6 +23,13 @@ impl Display for Object {
             Self::Integer(integer) => integer.to_string(),
             Self::Boolean(boolean) => boolean.to_string(),
             Self::Return(value) => value.to_string(),
+            Self::Function(parameters, body) => {
+                format!(
+                    "fn({}) {{ {} }}",
+                    flatten(&parameters, ", "),
+                    flatten(body, "\n"),
+                )
+            }
         };
         write!(f, "{}", statement)
     }
@@ -67,6 +75,9 @@ impl Evaluator {
 
     pub fn evaluate_expression(&mut self, expression: &Expression) -> Result<Object> {
         Ok(match expression {
+            Expression::Function(parameters, body) => {
+                Object::Function(parameters.to_vec(), body.to_vec())
+            }
             Expression::Identifier(identifier) => self
                 .environment
                 .bindings
@@ -190,7 +201,7 @@ impl Evaluator {
 #[cfg(test)]
 mod tests {
     use super::Result;
-    use crate::{Evaluator, Lexer, Object, Parser};
+    use crate::{Evaluator, Expression, Lexer, Literal, Object, Operator, Parser, Statement};
 
     fn evaluate_tests(tests: &[(&str, Object)]) -> Result<()> {
         for (input, expected_value) in tests.iter() {
@@ -328,6 +339,22 @@ mod tests {
                 Object::Integer(15),
             ),
         ];
+        evaluate_tests(&tests)
+    }
+
+    #[test]
+    fn function_object() -> Result<()> {
+        let tests = [(
+            "fn(x) { x + 2; };",
+            Object::Function(
+                vec!["x".to_string()],
+                vec![Statement::Expression(Expression::Infix(
+                    Box::new(Expression::Identifier("x".to_string())),
+                    Operator::Add,
+                    Box::new(Expression::Literal(Literal::Integer(2))),
+                ))],
+            ),
+        )];
         evaluate_tests(&tests)
     }
 }
