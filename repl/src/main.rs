@@ -1,5 +1,5 @@
 use anyhow::Result;
-use monkey::{Evaluator, Lexer, Parser};
+use frost::{Evaluator, Lexer, Object, Parser};
 use rustyline::{error::ReadlineError, Editor};
 
 fn main() -> Result<()> {
@@ -63,7 +63,9 @@ fn main() -> Result<()> {
                         println!("--- Result ---");
                     }
 
-                    println!("{}", result);
+                    if result != Object::Empty {
+                        println!("{}", result);
+                    }
                 }
             },
             Err(ReadlineError::Interrupted) => break,

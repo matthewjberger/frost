@@ -6,5 +6,5 @@ edition = "2018"
 
 [dependencies]
 anyhow = "1.0.40"
-monkey = { path = "../" }
+frost = { path = "../" }
 rustyline = "8.2.0"
