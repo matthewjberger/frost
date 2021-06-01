@@ -3,11 +3,13 @@ use frost::{Evaluator, Lexer, Object, Parser};
 use rustyline::{error::ReadlineError, Editor};
 
 fn main() -> Result<()> {
-    println!();
-    println!("Welcome to the Monkey programming language REPL!");
-    println!("You may type Monkey code below for evaluation.");
-    println!("Enter \"exit\" or press \"CTRL+C\" to exit the REPL.");
-    println!();
+    println!(
+        r"
+Welcome to the Frost programming language REPL!
+You may type Frost code below for evaluation.
+Enter 'exit' or press 'CTRL+C' to exit the REPL.
+    "
+    );
 
     let mut evaluator = Evaluator::default();
 
@@ -17,7 +19,7 @@ fn main() -> Result<()> {
     }
 
     loop {
-        let readline = rl.readline("monkey >> ");
+        let readline = rl.readline("frost ❄️>  ");
         match readline {
             Ok(line) => match line.as_ref() {
                 "exit" => break,
