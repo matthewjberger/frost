@@ -1,5 +1,5 @@
 use anyhow::Result;
-use monkey::{evaluate_program, Lexer, Parser};
+use monkey::{Evaluator, Lexer, Parser};
 use rustyline::{error::ReadlineError, Editor};
 
 fn main() -> Result<()> {
@@ -39,7 +39,8 @@ fn main() -> Result<()> {
                         }
                     };
 
-                    let result = match evaluate_program(&program) {
+                    let evaluator = Evaluator::default();
+                    let result = match evaluator.evaluate_program(&program) {
                         Ok(program) => program,
                         Err(error) => {
                             eprintln!("Error evaluating: {}", error);
