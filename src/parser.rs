@@ -526,20 +526,7 @@ mod tests {
         ];
 
         for (input, expected_expression) in tests.iter() {
-            let mut lexer = Lexer::new(&input);
-            let tokens = lexer.tokenize()?;
-
-            let mut parser = Parser::new(&tokens);
-            let program = parser.parse()?;
-
-            assert_eq!(program.len(), 1);
-
-            for statement in program.into_iter() {
-                match statement {
-                    Statement::Return(expression) => assert_eq!(expression, *expected_expression),
-                    _ => bail!("Expected a return statement!"),
-                }
-            }
+            parse_statement(input, expected_expression)?;
         }
 
         Ok(())
@@ -558,50 +545,12 @@ mod tests {
 
     #[test]
     fn identifier_expressions() -> Result<()> {
-        let input = "foobar;";
-
-        let mut lexer = Lexer::new(&input);
-        let tokens = lexer.tokenize()?;
-
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-
-        let expressions = vec![Expression::Identifier("foobar".to_string())];
-
-        for (statement, expected_expression) in program.into_iter().zip(expressions.into_iter()) {
-            match statement {
-                Statement::Expression(expression) => assert_eq!(expression, expected_expression),
-                _ => bail!("Expected an expression statement!"),
-            }
-        }
-
-        Ok(())
+        parse_statement("foobar;", &Expression::Identifier("foobar".to_string()))
     }
 
     #[test]
     fn integer_expressions() -> Result<()> {
-        let input = "5;";
-
-        let mut lexer = Lexer::new(&input);
-        let tokens = lexer.tokenize()?;
-
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-
-        let expressions = vec![Expression::Literal(Literal::Integer(5))];
-
-        for (statement, expected_expression) in program.into_iter().zip(expressions.into_iter()) {
-            match statement {
-                Statement::Expression(expression) => assert_eq!(expression, expected_expression),
-                _ => bail!("Expected an expression statement!"),
-            }
-        }
-
-        Ok(())
+        parse_statement("5;", &Expression::Literal(Literal::Integer(5)))
     }
 
     #[test]
@@ -830,112 +779,51 @@ mod tests {
 
     #[test]
     fn if_expressions() -> Result<()> {
-        let input = "if (x < y) { x }";
+        let expression = Expression::If(
+            Box::new(Expression::Infix(
+                Box::new(Expression::Identifier("x".to_string())),
+                Operator::LessThan,
+                Box::new(Expression::Identifier("y".to_string())),
+            )),
+            vec![Statement::Expression(Expression::Identifier(
+                "x".to_string(),
+            ))],
+            None,
+        );
 
-        let mut lexer = Lexer::new(&input);
-        let tokens = lexer.tokenize()?;
-
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-
-        if let Some(statement) = program.into_iter().next() {
-            match statement {
-                Statement::Expression(expression) => {
-                    assert_eq!(
-                        expression,
-                        Expression::If(
-                            Box::new(Expression::Infix(
-                                Box::new(Expression::Identifier("x".to_string())),
-                                Operator::LessThan,
-                                Box::new(Expression::Identifier("y".to_string())),
-                            )),
-                            vec![Statement::Expression(Expression::Identifier(
-                                "x".to_string()
-                            ))],
-                            None,
-                        )
-                    )
-                }
-                _ => bail!("Expected an expression statement!"),
-            }
-        }
-
-        Ok(())
+        parse_statement("if (x < y) { x }", &expression)
     }
 
     #[test]
     fn if_else_expressions() -> Result<()> {
-        let input = "if (x < y) { x } else { y }";
+        let expression = Expression::If(
+            Box::new(Expression::Infix(
+                Box::new(Expression::Identifier("x".to_string())),
+                Operator::LessThan,
+                Box::new(Expression::Identifier("y".to_string())),
+            )),
+            vec![Statement::Expression(Expression::Identifier(
+                "x".to_string(),
+            ))],
+            Some(vec![Statement::Expression(Expression::Identifier(
+                "y".to_string(),
+            ))]),
+        );
 
-        let mut lexer = Lexer::new(&input);
-        let tokens = lexer.tokenize()?;
-
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-
-        if let Some(statement) = program.into_iter().next() {
-            match statement {
-                Statement::Expression(expression) => {
-                    assert_eq!(
-                        expression,
-                        Expression::If(
-                            Box::new(Expression::Infix(
-                                Box::new(Expression::Identifier("x".to_string())),
-                                Operator::LessThan,
-                                Box::new(Expression::Identifier("y".to_string())),
-                            )),
-                            vec![Statement::Expression(Expression::Identifier(
-                                "x".to_string()
-                            ))],
-                            Some(vec![Statement::Expression(Expression::Identifier(
-                                "y".to_string()
-                            ))],)
-                        )
-                    )
-                }
-                _ => bail!("Expected an expression statement!"),
-            }
-        }
-
-        Ok(())
+        parse_statement("if (x < y) { x } else { y }", &expression)
     }
 
     #[test]
     fn function_expressions() -> Result<()> {
-        let input = "fn(x, y) { x + y; }";
-
-        let mut lexer = Lexer::new(&input);
-        let tokens = lexer.tokenize()?;
-
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-
-        if let Some(statement) = program.into_iter().next() {
-            match statement {
-                Statement::Expression(expression) => {
-                    assert_eq!(
-                        expression,
-                        Expression::Function(
-                            vec!["x".to_string(), "y".to_string()],
-                            vec![Statement::Expression(Expression::Infix(
-                                Box::new(Expression::Identifier("x".to_string())),
-                                Operator::Add,
-                                Box::new(Expression::Identifier("y".to_string())),
-                            ))],
-                        )
-                    )
-                }
-                _ => bail!("Expected an expression statement!"),
-            }
-        }
-
-        Ok(())
+        let expression = Expression::Function(
+            vec!["x".to_string(), "y".to_string()],
+            vec![Statement::Expression(Expression::Infix(
+                Box::new(Expression::Identifier("x".to_string())),
+                Operator::Add,
+                Box::new(Expression::Identifier("y".to_string())),
+            ))],
+        );
+        parse_statement("fn(x, y) { x + y; }", &expression)
     }
 
     #[test]
@@ -976,38 +864,37 @@ mod tests {
 
     #[test]
     fn call_expressions() -> Result<()> {
-        let input = "add(1, 2 * 3, 4 + 5);";
+        let expression = Expression::Call(
+            Box::new(Expression::Identifier("add".to_string())),
+            vec![
+                Expression::Literal(Literal::Integer(1)),
+                Expression::Infix(
+                    Box::new(Expression::Literal(Literal::Integer(2))),
+                    Operator::Multiply,
+                    Box::new(Expression::Literal(Literal::Integer(3))),
+                ),
+                Expression::Infix(
+                    Box::new(Expression::Literal(Literal::Integer(4))),
+                    Operator::Add,
+                    Box::new(Expression::Literal(Literal::Integer(5))),
+                ),
+            ],
+        );
 
+        parse_statement("add(1, 2 * 3, 4 + 5);", &expression)
+    }
+
+    fn parse_statement(input: &str, expected_expression: &Expression) -> Result<()> {
         let mut lexer = Lexer::new(&input);
         let tokens = lexer.tokenize()?;
 
         let mut parser = Parser::new(&tokens);
         let program = parser.parse()?;
 
-        assert_eq!(program.len(), 1);
-
         if let Some(statement) = program.into_iter().next() {
             match statement {
-                Statement::Expression(expression) => {
-                    assert_eq!(
-                        expression,
-                        Expression::Call(
-                            Box::new(Expression::Identifier("add".to_string())),
-                            vec![
-                                Expression::Literal(Literal::Integer(1)),
-                                Expression::Infix(
-                                    Box::new(Expression::Literal(Literal::Integer(2))),
-                                    Operator::Multiply,
-                                    Box::new(Expression::Literal(Literal::Integer(3))),
-                                ),
-                                Expression::Infix(
-                                    Box::new(Expression::Literal(Literal::Integer(4))),
-                                    Operator::Add,
-                                    Box::new(Expression::Literal(Literal::Integer(5))),
-                                ),
-                            ],
-                        )
-                    )
+                Statement::Expression(expression) | Statement::Return(expression) => {
+                    assert_eq!(expression, *expected_expression)
                 }
                 _ => bail!("Expected an expression statement!"),
             }
