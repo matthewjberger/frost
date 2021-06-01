@@ -135,7 +135,6 @@ impl Evaluator {
             }
         }
 
-        // TODO: Support infix on non integer values
         bail!("Could not evaluate infix expression that wasn't bool-bool or int-int")
     }
 
