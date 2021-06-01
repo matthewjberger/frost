@@ -1,4 +1,4 @@
-# Frost
+# Frost ❄️
 
 Frost is a small programming language, made after working through ["Writing an Interpreter in Go"](https://interpreterbook.com/).
 
