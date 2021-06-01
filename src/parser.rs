@@ -1,4 +1,4 @@
-use crate::lexer::Token;
+use crate::{flatten, lexer::Token};
 use anyhow::{bail, Result};
 use std::{
     fmt::{Display, Formatter, Result as FmtResult},
@@ -9,11 +9,6 @@ use std::{
 pub type Identifier = String;
 
 pub type Block = Vec<Statement>;
-
-fn flatten(items: &[impl Display], separator: &str) -> String {
-    let strings = items.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    format!("{}", strings.join(separator))
-}
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum Operator {
@@ -121,11 +116,11 @@ impl Display for Expression {
 
                 result
             }
-            Self::Function(parameters, block) => {
+            Self::Function(parameters, body) => {
                 format!(
                     "fn({}) {{ {} }}",
                     flatten(&parameters, ", "),
-                    flatten(block, "\n"),
+                    flatten(body, "\n"),
                 )
             }
             Self::Call(expression, arguments) => {
