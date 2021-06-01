@@ -9,10 +9,13 @@ fn main() -> Result<()> {
     println!("Enter \"exit\" or press \"CTRL+C\" to exit the REPL.");
     println!();
 
+    let mut evaluator = Evaluator::default();
+
     let mut rl = Editor::<()>::new();
     if rl.load_history("history.txt").is_err() {
         println!("No previous history.");
     }
+
     loop {
         let readline = rl.readline("monkey >> ");
         match readline {
@@ -39,7 +42,6 @@ fn main() -> Result<()> {
                         }
                     };
 
-                    let mut evaluator = Evaluator::default();
                     let result = match evaluator.evaluate_program(&program) {
                         Ok(program) => program,
                         Err(error) => {
