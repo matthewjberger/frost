@@ -1,11 +1,11 @@
 use crate::{Expression, Literal, Operator, Statement};
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use std::{
     collections::HashMap,
     fmt::{Display, Formatter, Result as FmtResult},
 };
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Object {
     Null,
     Integer(i64),
@@ -36,7 +36,7 @@ pub struct Evaluator {
 }
 
 impl Evaluator {
-    pub fn evaluate_program(&self, statements: &[Statement]) -> Result<Object> {
+    pub fn evaluate_program(&mut self, statements: &[Statement]) -> Result<Object> {
         let mut result = Object::Null;
         for statement in statements.iter() {
             match self.evaluate_statement(statement)? {
@@ -47,18 +47,30 @@ impl Evaluator {
         Ok(result)
     }
 
-    pub fn evaluate_statement(&self, statement: &Statement) -> Result<Object> {
+    pub fn evaluate_statement(&mut self, statement: &Statement) -> Result<Object> {
         Ok(match statement {
+            Statement::Let(identifier, expression) => {
+                let value = self.evaluate_expression(expression)?;
+                self.environment
+                    .bindings
+                    .insert(identifier.to_string(), value.clone());
+                value
+            }
             Statement::Expression(expression) => self.evaluate_expression(expression)?,
             Statement::Return(expression) => {
                 Object::Return(Box::new(self.evaluate_expression(expression)?))
             }
-            _ => Object::Null,
         })
     }
 
-    pub fn evaluate_expression(&self, expression: &Expression) -> Result<Object> {
+    pub fn evaluate_expression(&mut self, expression: &Expression) -> Result<Object> {
         Ok(match expression {
+            Expression::Identifier(identifier) => self
+                .environment
+                .bindings
+                .get(identifier)
+                .context(format!("Identifier '{}' not found", identifier))?
+                .clone(),
             Expression::Literal(literal) => self.evaluate_literal(literal)?,
             Expression::Boolean(boolean) => Object::Boolean(*boolean),
             Expression::Prefix(operator, expression) => {
@@ -82,7 +94,7 @@ impl Evaluator {
     }
 
     pub fn evaluate_prefix_expression(
-        &self,
+        &mut self,
         operator: &Operator,
         expression: &Expression,
     ) -> Result<Object> {
@@ -95,7 +107,7 @@ impl Evaluator {
     }
 
     pub fn evaluate_infix_expression(
-        &self,
+        &mut self,
         left_expression: &Expression,
         operator: &Operator,
         right_expression: &Expression,
@@ -139,7 +151,7 @@ impl Evaluator {
     }
 
     pub fn evaluate_if_expression(
-        &self,
+        &mut self,
         condition: &Expression,
         consequence: &[Statement],
         alternative: &Option<Vec<Statement>>,
@@ -186,7 +198,7 @@ mod tests {
             let mut parser = Parser::new(&tokens);
             let program = parser.parse()?;
 
-            let evaluator = Evaluator::default();
+            let mut evaluator = Evaluator::default();
             let object = evaluator.evaluate_program(&program)?;
 
             assert_eq!(object, *expected_value);
@@ -298,6 +310,20 @@ mod tests {
             (
                 "if (10 > 1) { if (10 > 1) { return 10; } return 1; }",
                 Object::Return(Box::new(Object::Integer(10))),
+            ),
+        ];
+        evaluate_tests(&tests)
+    }
+
+    #[test]
+    fn let_statements() -> Result<()> {
+        let tests = [
+            ("let a = 5; a;", Object::Integer(5)),
+            ("let a = 5 * 5; a;", Object::Integer(25)),
+            ("let a = 5; let b = a; b;", Object::Integer(5)),
+            (
+                "let a = 5; let b = a; let c = a + b + 5; c;",
+                Object::Integer(15),
             ),
         ];
         evaluate_tests(&tests)

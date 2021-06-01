@@ -39,7 +39,7 @@ fn main() -> Result<()> {
                         }
                     };
 
-                    let evaluator = Evaluator::default();
+                    let mut evaluator = Evaluator::default();
                     let result = match evaluator.evaluate_program(&program) {
                         Ok(program) => program,
                         Err(error) => {
