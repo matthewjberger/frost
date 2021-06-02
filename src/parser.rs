@@ -256,7 +256,9 @@ impl<'a> Parser<'a> {
         let mut advance = true;
         let mut expression = match self.peek_nth(0) {
             Token::Identifier(identifier) => Expression::Identifier(identifier.to_string()),
-            Token::StringLiteral(value) => Expression::Literal(Literal::String(value.to_string())),
+            Token::StringLiteral(string) => {
+                Expression::Literal(Literal::String(string.to_string()))
+            }
             Token::Integer(value) => Expression::Literal(Literal::Integer(*value)),
             Token::Bang | Token::Minus => {
                 advance = false;
