@@ -190,11 +190,8 @@ impl<'a> Parser<'a> {
 
     pub fn parse(&mut self) -> Result<Program> {
         let mut program = Program::new();
-        loop {
-            match self.parse_statement()? {
-                Some(statement) => program.push(statement),
-                None => break,
-            }
+        while let Some(statement) = self.parse_statement()? {
+            program.push(statement);
         }
         Ok(program)
     }
