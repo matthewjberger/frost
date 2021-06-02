@@ -472,4 +472,12 @@ addTwo(2);",
         )];
         evaluate_tests(&tests)
     }
+
+    #[test]
+    fn string_literals() -> Result<()> {
+        let phrase = "Hello World!";
+        let quoted = format!("\"{}\"", phrase);
+        let tests = [(quoted.as_str(), Object::String(phrase.to_string()))];
+        evaluate_tests(&tests)
+    }
 }
