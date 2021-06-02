@@ -256,6 +256,7 @@ impl<'a> Parser<'a> {
         let mut advance = true;
         let mut expression = match self.peek_nth(0) {
             Token::Identifier(identifier) => Expression::Identifier(identifier.to_string()),
+            Token::StringLiteral(value) => Expression::Literal(Literal::String(value.to_string())),
             Token::Integer(value) => Expression::Literal(Literal::Integer(*value)),
             Token::Bang | Token::Minus => {
                 advance = false;
@@ -877,6 +878,14 @@ mod tests {
         );
 
         parse_statement("add(1, 2 * 3, 4 + 5);", &expression)
+    }
+
+    #[test]
+    fn string_literal_expression() -> Result<()> {
+        parse_statement(
+            "\"hello world\"",
+            &Expression::Literal(Literal::String("hello world".to_string())),
+        )
     }
 
     fn parse_statement(input: &str, expected_expression: &Expression) -> Result<()> {
