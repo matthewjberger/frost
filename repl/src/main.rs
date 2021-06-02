@@ -1,5 +1,5 @@
 use anyhow::Result;
-use frost::{Evaluator, Lexer, Object, Parser};
+use frost::{evaluate_statements, Environment, Lexer, Object, Parser};
 use rustyline::{error::ReadlineError, Editor};
 
 fn main() -> Result<()> {
@@ -11,12 +11,12 @@ Enter 'exit' or press 'CTRL+C' to exit the REPL.
     "
     );
 
-    let mut evaluator = Evaluator::default();
-
     let mut rl = Editor::<()>::new();
     if rl.load_history("history.txt").is_err() {
         println!("No previous history.");
     }
+
+    let environment = Environment::new_rc(None);
 
     loop {
         let readline = rl.readline("frost ❄️>  ");
@@ -44,7 +44,7 @@ Enter 'exit' or press 'CTRL+C' to exit the REPL.
                         }
                     };
 
-                    let result = match evaluator.evaluate_program(&program) {
+                    let result = match evaluate_statements(&program, environment.clone()) {
                         Ok(program) => program,
                         Err(error) => {
                             eprintln!("Error evaluating: {}", error);
