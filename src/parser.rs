@@ -275,6 +275,9 @@ impl<'a> Parser<'a> {
                 advance = false;
                 self.parse_function_literal()?
             }
+            Token::EndOfFile => {
+                bail!("Unexpected end of file")
+            }
             token => bail!("Token not valid for an expression: {:?}", token),
         };
 
