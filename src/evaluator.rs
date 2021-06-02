@@ -198,6 +198,7 @@ fn evaluate_infix_expression(
     let left_value = evaluate_expression(left_expression, environment.clone())?;
     let right_value = evaluate_expression(right_expression, environment)?;
 
+    // Integer x Integer
     if let Object::Integer(lhs) = left_value {
         if let Object::Integer(rhs) = right_value {
             return Ok(match operator {
@@ -210,27 +211,43 @@ fn evaluate_infix_expression(
                 Operator::Equal => Object::Boolean(lhs == rhs),
                 Operator::NotEqual => Object::Boolean(lhs != rhs),
                 _ => bail!(
-                    "Operator '{}' is not valid for int<->int infix expressions",
+                    "Operator '{}' is not valid for int-int infix expressions",
                     operator
                 ),
             });
         }
     }
 
+    // Boolean x Boolean
     if let Object::Boolean(lhs) = left_value {
         if let Object::Boolean(rhs) = right_value {
             return Ok(match operator {
                 Operator::Equal => Object::Boolean(lhs == rhs),
                 Operator::NotEqual => Object::Boolean(lhs != rhs),
                 _ => bail!(
-                    "Operator '{}' is not valid for bool<->bool infix expressions",
+                    "Operator '{}' is not valid for bool-bool infix expressions",
                     operator
                 ),
             });
         }
     }
 
-    bail!("Could not evaluate infix expression that wasn't bool-bool or int-int")
+    // String x String
+    if let Object::String(lhs) = left_value {
+        if let Object::String(rhs) = right_value {
+            return Ok(match operator {
+                Operator::Equal => Object::Boolean(lhs == rhs),
+                Operator::NotEqual => Object::Boolean(lhs != rhs),
+                Operator::Add => Object::String(format!("{}{}", lhs, rhs)),
+                _ => bail!(
+                    "Operator '{}' is not valid for string-string infix expressions",
+                    operator
+                ),
+            });
+        }
+    }
+
+    bail!("Could not evaluate infix expression that wasn't bool-bool, int-int, or string-string")
 }
 
 fn evaluate_if_expression(
@@ -478,6 +495,15 @@ addTwo(2);",
         let phrase = "Hello World!";
         let quoted = format!("\"{}\"", phrase);
         let tests = [(quoted.as_str(), Object::String(phrase.to_string()))];
+        evaluate_tests(&tests)
+    }
+
+    #[test]
+    fn string_concatenation() -> Result<()> {
+        let tests = [(
+            "\"Hello\" + \" \" + \"World!\"",
+            Object::String("Hello World!".to_string()),
+        )];
         evaluate_tests(&tests)
     }
 }
