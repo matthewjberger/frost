@@ -130,8 +130,8 @@ fn evaluate_expression(
             let function = evaluate_expression(function, environment.clone())?;
 
             match function {
-                Object::Function(parameters, body, inner_environment) => {
-                    environment.borrow_mut().outer = Some(inner_environment);
+                Object::Function(parameters, body, function_environment) => {
+                    environment.borrow_mut().outer = Some(function_environment);
 
                     let arguments = evaluate_expressions(arguments, environment.clone())?;
                     for (argument, name) in arguments.into_iter().zip(parameters.into_iter()) {
