@@ -13,6 +13,7 @@ pub enum Object {
     Null,
     Integer(i64),
     Boolean(bool),
+    String(String),
     Return(Box<Object>),
     Function(Vec<Identifier>, Block, Rc<RefCell<Environment>>),
 }
@@ -24,6 +25,7 @@ impl Display for Object {
             Self::Null => "null".to_string(),
             Self::Integer(integer) => integer.to_string(),
             Self::Boolean(boolean) => boolean.to_string(),
+            Self::String(string) => string.to_string(),
             Self::Return(value) => value.to_string(),
             Self::Function(parameters, body, _environment) => {
                 format!(
@@ -170,7 +172,7 @@ fn evaluate_expression(
 fn evaluate_literal(literal: &Literal) -> Result<Object> {
     Ok(match literal {
         Literal::Integer(integer) => Object::Integer(*integer),
-        _ => Object::Null,
+        Literal::String(string) => Object::String(string.to_string()),
     })
 }
 
