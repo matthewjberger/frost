@@ -1,5 +1,5 @@
 use self::Token::*;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use std::{
     fmt::{Display, Formatter, Result as FmtResult},
     str::Chars,
@@ -32,6 +32,7 @@ pub enum Token {
     Return,
     RightBrace,
     RightParentheses,
+    StringLiteral(String),
     Semicolon,
     Slash,
     True,
@@ -64,6 +65,7 @@ impl Display for Token {
             Return => "return".to_string(),
             RightBrace => "}".to_string(),
             RightParentheses => ")".to_string(),
+            StringLiteral(value) => value.to_string(),
             Semicolon => ";".to_string(),
             Slash => "/".to_string(),
             True => "true".to_string(),
@@ -115,6 +117,19 @@ impl<'a> Lexer<'a> {
             '-' => Minus,
             '*' => Asterisk,
             '/' => Slash,
+            '"' => {
+                let literal = self.take_while(|x| x != '"');
+                match self.peek_nth(0) {
+                    EOF_CHAR => bail!(
+                        "Reached end of file while scanning string. Expected closing delimiter '\"'."
+                    ),
+                    '"' => {
+                        self.read_char();
+                    }
+                    _ => bail!("String literal is missing closing delimiter"),
+                }
+                StringLiteral(literal)
+            }
             EOF_CHAR => EndOfFile,
             c if Self::is_letter(c) => {
                 let mut identifier = c.to_string();
@@ -199,7 +214,7 @@ mod tests {
 
     #[test]
     fn next_token() -> Result<()> {
-        let input = r"let five = 5;
+        let input = r#"let five = 5;
 let ten = 10;
 let add = fn(x, y) {
 x + y;
@@ -216,7 +231,9 @@ if (5 < 10) {
 
 10 == 10;
 10 != 9;
-";
+"foobar"
+"foo bar"
+"#;
 
         let expected_tokens = [
             // let five = 5;
@@ -301,6 +318,11 @@ if (5 < 10) {
             Token::NotEqual,
             Token::Integer(9),
             Token::Semicolon,
+            // "foobar"
+            Token::StringLiteral("foobar".to_string()),
+            // "foo bar"
+            Token::StringLiteral("foo bar".to_string()),
+            // end of file, must come last
             Token::EndOfFile,
         ];
 
