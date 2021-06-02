@@ -1,8 +1,10 @@
 use crate::{flatten, Block, Expression, Identifier, Literal, Operator, Statement};
 use anyhow::{bail, Context, Result};
 use std::{
+    cell::RefCell,
     collections::HashMap,
     fmt::{Display, Formatter, Result as FmtResult},
+    rc::Rc,
 };
 
 #[derive(Debug, PartialEq, Clone)]
@@ -12,7 +14,7 @@ pub enum Object {
     Integer(i64),
     Boolean(bool),
     Return(Box<Object>),
-    Function(Vec<Identifier>, Block),
+    Function(Vec<Identifier>, Block, Rc<RefCell<Environment>>),
 }
 
 impl Display for Object {
@@ -23,7 +25,7 @@ impl Display for Object {
             Self::Integer(integer) => integer.to_string(),
             Self::Boolean(boolean) => boolean.to_string(),
             Self::Return(value) => value.to_string(),
-            Self::Function(parameters, body) => {
+            Self::Function(parameters, body, _environment) => {
                 format!(
                     "fn({}) {{ {} }}",
                     flatten(&parameters, ", "),
@@ -35,173 +37,241 @@ impl Display for Object {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Clone)]
 pub struct Environment {
     pub bindings: HashMap<String, Object>,
+    pub outer: Option<Rc<RefCell<Environment>>>,
 }
 
-#[derive(Debug, Default)]
-pub struct Evaluator {
-    environment: Environment,
-}
-
-impl Evaluator {
-    pub fn evaluate_program(&mut self, statements: &[Statement]) -> Result<Object> {
-        let mut result = Object::Null;
-        for statement in statements.iter() {
-            match self.evaluate_statement(statement)? {
-                Object::Return(value) => return Ok(Object::Return(value)),
-                object => result = object,
-            }
+impl Environment {
+    pub fn new(outer: Option<Rc<RefCell<Environment>>>) -> Self {
+        Self {
+            outer,
+            ..Default::default()
         }
-        Ok(result)
     }
 
-    pub fn evaluate_statement(&mut self, statement: &Statement) -> Result<Object> {
-        Ok(match statement {
-            Statement::Let(identifier, expression) => {
-                let value = self.evaluate_expression(expression)?;
-                self.environment
-                    .bindings
-                    .insert(identifier.to_string(), value.clone());
-                Object::Empty
-            }
-            Statement::Expression(expression) => self.evaluate_expression(expression)?,
-            Statement::Return(expression) => {
-                Object::Return(Box::new(self.evaluate_expression(expression)?))
-            }
-        })
+    pub fn new_rc(outer: Option<Rc<RefCell<Environment>>>) -> Rc<RefCell<Self>> {
+        Rc::new(RefCell::new(Self::new(outer)))
     }
 
-    pub fn evaluate_expression(&mut self, expression: &Expression) -> Result<Object> {
-        Ok(match expression {
-            Expression::Function(parameters, body) => {
-                Object::Function(parameters.to_vec(), body.to_vec())
-            }
-            Expression::Identifier(identifier) => self
-                .environment
+    pub fn set_binding(&mut self, binding: String, value: Object) {
+        self.bindings.insert(binding, value);
+    }
+
+    pub fn get_binding(&self, binding: String) -> Result<Object> {
+        if let Some(binding) = self.bindings.get(&binding) {
+            return Ok(binding.clone());
+        }
+
+        if let Some(outer) = self.outer.as_ref() {
+            return outer.borrow().get_binding(binding);
+        }
+
+        bail!("Binding not found: {:?}", binding)
+    }
+}
+
+pub fn evaluate_statements(
+    statements: &[Statement],
+    environment: Rc<RefCell<Environment>>,
+) -> Result<Object> {
+    let mut result = Object::Null;
+    for statement in statements.iter() {
+        match evaluate_statement(statement, environment.clone())? {
+            Object::Return(value) => return Ok(Object::Return(value)),
+            object => result = object,
+        }
+    }
+    Ok(result)
+}
+
+fn evaluate_statement(
+    statement: &Statement,
+    environment: Rc<RefCell<Environment>>,
+) -> Result<Object> {
+    Ok(match statement {
+        Statement::Let(identifier, expression) => {
+            let value = evaluate_expression(expression, environment.clone())?;
+            environment
+                .borrow_mut()
                 .bindings
-                .get(identifier)
-                .context(format!("Identifier '{}' not found", identifier))?
-                .clone(),
-            Expression::Literal(literal) => self.evaluate_literal(literal)?,
-            Expression::Boolean(boolean) => Object::Boolean(*boolean),
-            Expression::Prefix(operator, expression) => {
-                self.evaluate_prefix_expression(operator, expression)?
-            }
-            Expression::Infix(left_expression, operator, right_expression) => {
-                self.evaluate_infix_expression(left_expression, operator, right_expression)?
-            }
-            Expression::If(condition, consequence, alternative) => {
-                self.evaluate_if_expression(condition, consequence, alternative)?
-            }
-            _ => Object::Null,
-        })
-    }
+                .insert(identifier.to_string(), value);
+            Object::Empty
+        }
+        Statement::Expression(expression) => evaluate_expression(expression, environment)?,
+        Statement::Return(expression) => {
+            Object::Return(Box::new(evaluate_expression(expression, environment)?))
+        }
+    })
+}
 
-    pub fn evaluate_literal(&self, literal: &Literal) -> Result<Object> {
-        Ok(match literal {
-            Literal::Integer(integer) => Object::Integer(*integer),
-            _ => Object::Null,
-        })
-    }
+fn evaluate_expressions(
+    expressions: &[Expression],
+    environment: Rc<RefCell<Environment>>,
+) -> Result<Vec<Object>> {
+    expressions
+        .iter()
+        .map(|expression| evaluate_expression(expression, environment.clone()))
+        .collect()
+}
 
-    pub fn evaluate_prefix_expression(
-        &mut self,
-        operator: &Operator,
-        expression: &Expression,
-    ) -> Result<Object> {
-        let value = self.evaluate_expression(expression)?;
-        Ok(match operator {
-            Operator::Not => Object::Boolean(!self.object_to_bool(&value)),
-            Operator::Negate => self.apply_operator_negate(&value)?,
-            _ => Object::Null,
-        })
-    }
+fn evaluate_expression(
+    expression: &Expression,
+    environment: Rc<RefCell<Environment>>,
+) -> Result<Object> {
+    Ok(match expression {
+        Expression::Function(parameters, body) => Object::Function(
+            parameters.to_vec(),
+            body.to_vec(),
+            Environment::new_rc(Some(environment)),
+        ),
+        Expression::Call(function, arguments) => {
+            let function = evaluate_expression(function, environment.clone())?;
 
-    pub fn evaluate_infix_expression(
-        &mut self,
-        left_expression: &Expression,
-        operator: &Operator,
-        right_expression: &Expression,
-    ) -> Result<Object> {
-        let left_value = self.evaluate_expression(left_expression)?;
-        let right_value = self.evaluate_expression(right_expression)?;
+            match function {
+                Object::Function(parameters, body, inner_environment) => {
+                    inner_environment.borrow_mut().outer = Some(environment.clone());
 
-        if let Object::Integer(lhs) = left_value {
-            if let Object::Integer(rhs) = right_value {
-                return Ok(match operator {
-                    Operator::Add => Object::Integer(lhs + rhs),
-                    Operator::Divide => Object::Integer(lhs / rhs),
-                    Operator::Multiply => Object::Integer(lhs * rhs),
-                    Operator::Subtract => Object::Integer(lhs - rhs),
-                    Operator::LessThan => Object::Boolean(lhs < rhs),
-                    Operator::GreaterThan => Object::Boolean(lhs > rhs),
-                    Operator::Equal => Object::Boolean(lhs == rhs),
-                    Operator::NotEqual => Object::Boolean(lhs != rhs),
-                    _ => bail!(
-                        "Operator '{}' is not valid for int<->int infix expressions",
-                        operator
-                    ),
-                });
+                    let arguments = evaluate_expressions(arguments, environment)?;
+                    for (argument, name) in arguments.into_iter().zip(parameters.into_iter()) {
+                        inner_environment.borrow_mut().set_binding(name, argument);
+                    }
+
+                    let result = evaluate_statements(&body, inner_environment)?;
+                    match result {
+                        Object::Return(value) => return Ok(*value),
+                        _ => return Ok(result),
+                    }
+                }
+                _ => bail!("'{}' is not a defined function", function),
             }
         }
-
-        if let Object::Boolean(lhs) = left_value {
-            if let Object::Boolean(rhs) = right_value {
-                return Ok(match operator {
-                    Operator::Equal => Object::Boolean(lhs == rhs),
-                    Operator::NotEqual => Object::Boolean(lhs != rhs),
-                    _ => bail!(
-                        "Operator '{}' is not valid for bool<->bool infix expressions",
-                        operator
-                    ),
-                });
-            }
+        Expression::Identifier(identifier) => environment
+            .borrow()
+            .bindings
+            .get(identifier)
+            .context(format!("Identifier '{}' not found", identifier))?
+            .clone(),
+        Expression::Literal(literal) => evaluate_literal(literal)?,
+        Expression::Boolean(boolean) => Object::Boolean(*boolean),
+        Expression::Prefix(operator, expression) => {
+            evaluate_prefix_expression(operator, expression, environment)?
         }
+        Expression::Infix(left_expression, operator, right_expression) => {
+            evaluate_infix_expression(left_expression, operator, right_expression, environment)?
+        }
+        Expression::If(condition, consequence, alternative) => {
+            evaluate_if_expression(condition, consequence, alternative, environment)?
+        }
+    })
+}
 
-        bail!("Could not evaluate infix expression that wasn't bool-bool or int-int")
-    }
+fn evaluate_literal(literal: &Literal) -> Result<Object> {
+    Ok(match literal {
+        Literal::Integer(integer) => Object::Integer(*integer),
+        _ => Object::Null,
+    })
+}
 
-    pub fn evaluate_if_expression(
-        &mut self,
-        condition: &Expression,
-        consequence: &[Statement],
-        alternative: &Option<Vec<Statement>>,
-    ) -> Result<Object> {
-        let condition = self.evaluate_expression(condition)?;
+fn evaluate_prefix_expression(
+    operator: &Operator,
+    expression: &Expression,
+    environment: Rc<RefCell<Environment>>,
+) -> Result<Object> {
+    let value = evaluate_expression(expression, environment)?;
+    Ok(match operator {
+        Operator::Not => Object::Boolean(!object_to_bool(&value)),
+        Operator::Negate => apply_operator_negate(&value)?,
+        _ => Object::Null,
+    })
+}
 
-        if self.object_to_bool(&condition) {
-            self.evaluate_program(consequence)
-        } else {
-            match alternative.as_ref() {
-                Some(alternative) => self.evaluate_program(alternative),
-                None => Ok(Object::Null),
-            }
+fn evaluate_infix_expression(
+    left_expression: &Expression,
+    operator: &Operator,
+    right_expression: &Expression,
+    environment: Rc<RefCell<Environment>>,
+) -> Result<Object> {
+    let left_value = evaluate_expression(left_expression, environment.clone())?;
+    let right_value = evaluate_expression(right_expression, environment)?;
+
+    if let Object::Integer(lhs) = left_value {
+        if let Object::Integer(rhs) = right_value {
+            return Ok(match operator {
+                Operator::Add => Object::Integer(lhs + rhs),
+                Operator::Divide => Object::Integer(lhs / rhs),
+                Operator::Multiply => Object::Integer(lhs * rhs),
+                Operator::Subtract => Object::Integer(lhs - rhs),
+                Operator::LessThan => Object::Boolean(lhs < rhs),
+                Operator::GreaterThan => Object::Boolean(lhs > rhs),
+                Operator::Equal => Object::Boolean(lhs == rhs),
+                Operator::NotEqual => Object::Boolean(lhs != rhs),
+                _ => bail!(
+                    "Operator '{}' is not valid for int<->int infix expressions",
+                    operator
+                ),
+            });
         }
     }
 
-    pub fn object_to_bool(&self, object: &Object) -> bool {
-        match object {
-            Object::Null => false,
-            Object::Integer(_) => true,
-            Object::Boolean(boolean) => *boolean,
-            _ => false,
+    if let Object::Boolean(lhs) = left_value {
+        if let Object::Boolean(rhs) = right_value {
+            return Ok(match operator {
+                Operator::Equal => Object::Boolean(lhs == rhs),
+                Operator::NotEqual => Object::Boolean(lhs != rhs),
+                _ => bail!(
+                    "Operator '{}' is not valid for bool<->bool infix expressions",
+                    operator
+                ),
+            });
         }
     }
 
-    pub fn apply_operator_negate(&self, object: &Object) -> Result<Object> {
-        Ok(match object {
-            Object::Integer(value) => Object::Integer(-value),
-            _ => bail!("Attempted to negate a non-integer value!"),
-        })
+    bail!("Could not evaluate infix expression that wasn't bool-bool or int-int")
+}
+
+fn evaluate_if_expression(
+    condition: &Expression,
+    consequence: &[Statement],
+    alternative: &Option<Vec<Statement>>,
+    environment: Rc<RefCell<Environment>>,
+) -> Result<Object> {
+    let condition = evaluate_expression(condition, environment.clone())?;
+
+    if object_to_bool(&condition) {
+        evaluate_statements(consequence, environment)
+    } else {
+        match alternative.as_ref() {
+            Some(alternative) => evaluate_statements(alternative, environment),
+            None => Ok(Object::Null),
+        }
     }
+}
+
+fn object_to_bool(object: &Object) -> bool {
+    match object {
+        Object::Null => false,
+        Object::Integer(_) => true,
+        Object::Boolean(boolean) => *boolean,
+        _ => false,
+    }
+}
+
+fn apply_operator_negate(object: &Object) -> Result<Object> {
+    Ok(match object {
+        Object::Integer(value) => Object::Integer(-value),
+        _ => bail!("Attempted to negate a non-integer value!"),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::Result;
-    use crate::{Evaluator, Expression, Lexer, Literal, Object, Operator, Parser, Statement};
+    use crate::{
+        evaluate_statements, Environment, Expression, Lexer, Literal, Object, Operator, Parser,
+        Statement,
+    };
 
     fn evaluate_tests(tests: &[(&str, Object)]) -> Result<()> {
         for (input, expected_value) in tests.iter() {
@@ -211,8 +281,8 @@ mod tests {
             let mut parser = Parser::new(&tokens);
             let program = parser.parse()?;
 
-            let mut evaluator = Evaluator::default();
-            let object = evaluator.evaluate_program(&program)?;
+            let environment = Environment::new_rc(None);
+            let object = evaluate_statements(&program, environment)?;
 
             assert_eq!(object, *expected_value);
         }
@@ -353,8 +423,37 @@ mod tests {
                     Operator::Add,
                     Box::new(Expression::Literal(Literal::Integer(2))),
                 ))],
+                Environment::new_rc(Some(Environment::new_rc(None))),
             ),
         )];
+        evaluate_tests(&tests)
+    }
+
+    #[test]
+    fn function_application() -> Result<()> {
+        let tests = [
+            (
+                "let identity = fn(x) { x; }; identity(5);",
+                Object::Integer(5),
+            ),
+            (
+                "let identity = fn(x) { return x; }; identity(5);",
+                Object::Integer(5),
+            ),
+            (
+                "let double = fn(x) { x * 2; }; double(5);",
+                Object::Integer(10),
+            ),
+            (
+                "let add = fn(x, y) { x + y; }; add(5, 5);",
+                Object::Integer(10),
+            ),
+            (
+                "let add = fn(x, y) { x + y; }; add(5 + 5, add(5, 5));",
+                Object::Integer(20),
+            ),
+            ("fn(x) { x; }(5)", Object::Integer(5)),
+        ];
         evaluate_tests(&tests)
     }
 }
