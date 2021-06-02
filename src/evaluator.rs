@@ -131,14 +131,14 @@ fn evaluate_expression(
 
             match function {
                 Object::Function(parameters, body, inner_environment) => {
-                    inner_environment.borrow_mut().outer = Some(environment.clone());
+                    environment.borrow_mut().outer = Some(inner_environment);
 
-                    let arguments = evaluate_expressions(arguments, environment)?;
+                    let arguments = evaluate_expressions(arguments, environment.clone())?;
                     for (argument, name) in arguments.into_iter().zip(parameters.into_iter()) {
-                        inner_environment.borrow_mut().set_binding(name, argument);
+                        environment.borrow_mut().set_binding(name, argument);
                     }
 
-                    let result = evaluate_statements(&body, inner_environment)?;
+                    let result = evaluate_statements(&body, environment)?;
                     match result {
                         Object::Return(value) => return Ok(*value),
                         _ => return Ok(result),
@@ -454,6 +454,20 @@ mod tests {
             ),
             ("fn(x) { x; }(5)", Object::Integer(5)),
         ];
+        evaluate_tests(&tests)
+    }
+
+    #[test]
+    fn closures() -> Result<()> {
+        let tests = [(
+            r"
+let newAdder = fn(x) {
+fn(y) { x + y };
+};
+let addTwo = newAdder(2);
+addTwo(2);",
+            Object::Integer(4),
+        )];
         evaluate_tests(&tests)
     }
 }
