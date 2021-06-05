@@ -19,7 +19,7 @@ Enter 'exit' or press 'CTRL+C' to exit the REPL.
     let environment = Environment::new_rc(None);
 
     loop {
-        let readline = rl.readline("frost ❄️>  ");
+        let readline = rl.readline("> ");
         match readline {
             Ok(line) => match line.as_ref() {
                 "exit" => break,
