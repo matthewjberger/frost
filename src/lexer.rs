@@ -212,126 +212,163 @@ impl<'a> Lexer<'a> {
 mod tests {
     use super::{Lexer, Result, Token};
 
-    #[test]
-    fn next_token() -> Result<()> {
-        let input = r#"let five = 5;
-let ten = 10;
-let add = fn(x, y) {
-x + y;
-};
-let result = add(five, ten);
-!-/*5;
-5 < 10 > 5;
-
-if (5 < 10) {
-    return true;
-} else {
-    return false;
-}
-
-10 == 10;
-10 != 9;
-"foobar"
-"foo bar"
-"#;
-
-        let expected_tokens = [
-            // let five = 5;
-            Token::Let,
-            Token::Identifier("five".to_string()),
-            Token::Assign,
-            Token::Integer(5),
-            Token::Semicolon,
-            // let ten = 10;
-            Token::Let,
-            Token::Identifier("ten".to_string()),
-            Token::Assign,
-            Token::Integer(10),
-            Token::Semicolon,
-            // let add = fn(x, y) { x + y; };
-            Token::Let,
-            Token::Identifier("add".to_string()),
-            Token::Assign,
-            Token::Function,
-            Token::LeftParentheses,
-            Token::Identifier("x".to_string()),
-            Token::Comma,
-            Token::Identifier("y".to_string()),
-            Token::RightParentheses,
-            Token::LeftBrace,
-            Token::Identifier("x".to_string()),
-            Token::Plus,
-            Token::Identifier("y".to_string()),
-            Token::Semicolon,
-            Token::RightBrace,
-            Token::Semicolon,
-            // let result = add(five, ten);
-            Token::Let,
-            Token::Identifier("result".to_string()),
-            Token::Assign,
-            Token::Identifier("add".to_string()),
-            Token::LeftParentheses,
-            Token::Identifier("five".to_string()),
-            Token::Comma,
-            Token::Identifier("ten".to_string()),
-            Token::RightParentheses,
-            Token::Semicolon,
-            // !-/*5;
-            Token::Bang,
-            Token::Minus,
-            Token::Slash,
-            Token::Asterisk,
-            Token::Integer(5),
-            Token::Semicolon,
-            // 5 < 10 > 5;
-            Token::Integer(5),
-            Token::LessThan,
-            Token::Integer(10),
-            Token::GreaterThan,
-            Token::Integer(5),
-            Token::Semicolon,
-            // if (5 < 10) { return true; } else { return false; }
-            Token::If,
-            Token::LeftParentheses,
-            Token::Integer(5),
-            Token::LessThan,
-            Token::Integer(10),
-            Token::RightParentheses,
-            Token::LeftBrace,
-            Token::Return,
-            Token::True,
-            Token::Semicolon,
-            Token::RightBrace,
-            Token::Else,
-            Token::LeftBrace,
-            Token::Return,
-            Token::False,
-            Token::Semicolon,
-            Token::RightBrace,
-            // 10 == 10;
-            Token::Integer(10),
-            Token::Equal,
-            Token::Integer(10),
-            Token::Semicolon,
-            // 10 != 9;
-            Token::Integer(10),
-            Token::NotEqual,
-            Token::Integer(9),
-            Token::Semicolon,
-            // "foobar"
-            Token::StringLiteral("foobar".to_string()),
-            // "foo bar"
-            Token::StringLiteral("foo bar".to_string()),
-            // end of file, must come last
-            Token::EndOfFile,
-        ];
-
+    fn check_tokens(input: &str, expected_tokens: &[Token]) -> Result<()> {
         let mut lexer = Lexer::new(input);
-
         for (token, expected_token) in lexer.tokenize()?.into_iter().zip(expected_tokens.iter()) {
             assert_eq!(token, *expected_token);
         }
-
         Ok(())
+    }
+
+    #[test]
+    fn let_statement() -> Result<()> {
+        check_tokens(
+            "let five = 5;",
+            &[
+                Token::Let,
+                Token::Identifier("five".to_string()),
+                Token::Assign,
+                Token::Integer(5),
+                Token::Semicolon,
+            ],
+        )
+    }
+
+    #[test]
+    fn function_declaration() -> Result<()> {
+        check_tokens(
+            "let add = fn(x, y) { x + y; };",
+            &[
+                Token::Let,
+                Token::Identifier("add".to_string()),
+                Token::Assign,
+                Token::Function,
+                Token::LeftParentheses,
+                Token::Identifier("x".to_string()),
+                Token::Comma,
+                Token::Identifier("y".to_string()),
+                Token::RightParentheses,
+                Token::LeftBrace,
+                Token::Identifier("x".to_string()),
+                Token::Plus,
+                Token::Identifier("y".to_string()),
+                Token::Semicolon,
+                Token::RightBrace,
+                Token::Semicolon,
+            ],
+        )
+    }
+
+    #[test]
+    fn function_assignment() -> Result<()> {
+        check_tokens(
+            "let result = add(five, ten);",
+            &[
+                Token::Let,
+                Token::Identifier("result".to_string()),
+                Token::Assign,
+                Token::Identifier("add".to_string()),
+                Token::LeftParentheses,
+                Token::Identifier("five".to_string()),
+                Token::Comma,
+                Token::Identifier("ten".to_string()),
+                Token::RightParentheses,
+                Token::Semicolon,
+            ],
+        )
+    }
+
+    #[test]
+    fn operators() -> Result<()> {
+        check_tokens(
+            "!-/*5;",
+            &[
+                Token::Bang,
+                Token::Minus,
+                Token::Slash,
+                Token::Asterisk,
+                Token::Integer(5),
+                Token::Semicolon,
+            ],
+        )
+    }
+
+    #[test]
+    fn comparisons() -> Result<()> {
+        check_tokens(
+            "5 < 10 > 5;",
+            &[
+                Token::Integer(5),
+                Token::LessThan,
+                Token::Integer(10),
+                Token::GreaterThan,
+                Token::Integer(5),
+                Token::Semicolon,
+            ],
+        )
+    }
+
+    #[test]
+    fn if_else() -> Result<()> {
+        check_tokens(
+            "if (5 < 10) { return true; } else { return false; }",
+            &[
+                Token::If,
+                Token::LeftParentheses,
+                Token::Integer(5),
+                Token::LessThan,
+                Token::Integer(10),
+                Token::RightParentheses,
+                Token::LeftBrace,
+                Token::Return,
+                Token::True,
+                Token::Semicolon,
+                Token::RightBrace,
+                Token::Else,
+                Token::LeftBrace,
+                Token::Return,
+                Token::False,
+                Token::Semicolon,
+                Token::RightBrace,
+            ],
+        )
+    }
+
+    #[test]
+    fn equality() -> Result<()> {
+        check_tokens(
+            "10 == 10;",
+            &[
+                Token::Integer(10),
+                Token::Equal,
+                Token::Integer(10),
+                Token::Semicolon,
+            ],
+        )
+    }
+
+    #[test]
+    fn inequality() -> Result<()> {
+        check_tokens(
+            "10 != 9;",
+            &[
+                Token::Integer(10),
+                Token::NotEqual,
+                Token::Integer(9),
+                Token::Semicolon,
+            ],
+        )
+    }
+
+    #[test]
+    fn string_literals() -> Result<()> {
+        check_tokens(
+            "\"foobar\";\"foo bar\"",
+            &[
+                Token::StringLiteral("foobar".to_string()),
+                Token::Semicolon,
+                Token::StringLiteral("foo bar".to_string()),
+            ],
+        )
     }
 }
