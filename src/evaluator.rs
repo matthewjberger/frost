@@ -199,52 +199,46 @@ fn evaluate_infix_expression(
     let right_value = evaluate_expression(right_expression, environment)?;
 
     // Integer x Integer
-    if let Object::Integer(lhs) = left_value {
-        if let Object::Integer(rhs) = right_value {
-            return Ok(match operator {
-                Operator::Add => Object::Integer(lhs + rhs),
-                Operator::Divide => Object::Integer(lhs / rhs),
-                Operator::Multiply => Object::Integer(lhs * rhs),
-                Operator::Subtract => Object::Integer(lhs - rhs),
-                Operator::LessThan => Object::Boolean(lhs < rhs),
-                Operator::GreaterThan => Object::Boolean(lhs > rhs),
-                Operator::Equal => Object::Boolean(lhs == rhs),
-                Operator::NotEqual => Object::Boolean(lhs != rhs),
-                _ => bail!(
-                    "Operator '{}' is not valid for int-int infix expressions",
-                    operator
-                ),
-            });
-        }
+    if let (Object::Integer(lhs), Object::Integer(rhs)) = (&left_value, &right_value) {
+        return Ok(match operator {
+            Operator::Add => Object::Integer(lhs + rhs),
+            Operator::Divide => Object::Integer(lhs / rhs),
+            Operator::Multiply => Object::Integer(lhs * rhs),
+            Operator::Subtract => Object::Integer(lhs - rhs),
+            Operator::LessThan => Object::Boolean(lhs < rhs),
+            Operator::GreaterThan => Object::Boolean(lhs > rhs),
+            Operator::Equal => Object::Boolean(lhs == rhs),
+            Operator::NotEqual => Object::Boolean(lhs != rhs),
+            _ => bail!(
+                "Operator '{}' is not valid for int-int infix expressions",
+                operator
+            ),
+        });
     }
 
     // Boolean x Boolean
-    if let Object::Boolean(lhs) = left_value {
-        if let Object::Boolean(rhs) = right_value {
-            return Ok(match operator {
-                Operator::Equal => Object::Boolean(lhs == rhs),
-                Operator::NotEqual => Object::Boolean(lhs != rhs),
-                _ => bail!(
-                    "Operator '{}' is not valid for bool-bool infix expressions",
-                    operator
-                ),
-            });
-        }
+    if let (Object::Boolean(lhs), Object::Boolean(rhs)) = (&left_value, &right_value) {
+        return Ok(match operator {
+            Operator::Equal => Object::Boolean(lhs == rhs),
+            Operator::NotEqual => Object::Boolean(lhs != rhs),
+            _ => bail!(
+                "Operator '{}' is not valid for bool-bool infix expressions",
+                operator
+            ),
+        });
     }
 
     // String x String
-    if let Object::String(lhs) = left_value {
-        if let Object::String(rhs) = right_value {
-            return Ok(match operator {
-                Operator::Equal => Object::Boolean(lhs == rhs),
-                Operator::NotEqual => Object::Boolean(lhs != rhs),
-                Operator::Add => Object::String(format!("{}{}", lhs, rhs)),
-                _ => bail!(
-                    "Operator '{}' is not valid for string-string infix expressions",
-                    operator
-                ),
-            });
-        }
+    if let (Object::String(lhs), Object::String(rhs)) = (left_value, right_value) {
+        return Ok(match operator {
+            Operator::Equal => Object::Boolean(lhs == rhs),
+            Operator::NotEqual => Object::Boolean(lhs != rhs),
+            Operator::Add => Object::String(format!("{}{}", lhs, rhs)),
+            _ => bail!(
+                "Operator '{}' is not valid for string-string infix expressions",
+                operator
+            ),
+        });
     }
 
     bail!("Could not evaluate infix expression that wasn't bool-bool, int-int, or string-string")
