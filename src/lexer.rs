@@ -23,6 +23,7 @@ pub enum Token {
     Illegal(String),
     Integer(i64),
     LeftBrace,
+    LeftBracket,
     LeftParentheses,
     LessThan,
     Let,
@@ -31,6 +32,7 @@ pub enum Token {
     Plus,
     Return,
     RightBrace,
+    RightBracket,
     RightParentheses,
     StringLiteral(String),
     Semicolon,
@@ -56,6 +58,7 @@ impl Display for Token {
             Illegal(value) => value.to_string(),
             Integer(number) => number.to_string(),
             LeftBrace => "{".to_string(),
+            LeftBracket => "[".to_string(),
             LeftParentheses => "(".to_string(),
             LessThan => "<".to_string(),
             Let => "let".to_string(),
@@ -64,6 +67,7 @@ impl Display for Token {
             Plus => "+".to_string(),
             Return => "return".to_string(),
             RightBrace => "}".to_string(),
+            RightBracket => "]".to_string(),
             RightParentheses => ")".to_string(),
             StringLiteral(value) => value.to_string(),
             Semicolon => ";".to_string(),
@@ -111,6 +115,8 @@ impl<'a> Lexer<'a> {
             '+' => Plus,
             '{' => LeftBrace,
             '}' => RightBrace,
+            '[' => LeftBracket,
+            ']' => RightBracket,
             '!' => self.next_char_or(Bang, '=', NotEqual),
             '<' => LessThan,
             '>' => GreaterThan,
@@ -368,6 +374,21 @@ mod tests {
                 Token::StringLiteral("foobar".to_string()),
                 Token::Semicolon,
                 Token::StringLiteral("foo bar".to_string()),
+            ],
+        )
+    }
+
+    #[test]
+    fn arrays() -> Result<()> {
+        check_tokens(
+            "[1, 2];",
+            &[
+                Token::LeftBracket,
+                Token::Integer(1),
+                Token::Comma,
+                Token::Integer(2),
+                Token::RightBracket,
+                Token::Semicolon,
             ],
         )
     }
