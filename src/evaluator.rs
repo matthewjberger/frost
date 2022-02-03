@@ -3,9 +3,30 @@ use anyhow::{bail, Context, Result};
 use std::{
     cell::RefCell,
     collections::HashMap,
+    fmt,
     fmt::{Display, Formatter, Result as FmtResult},
     rc::Rc,
 };
+
+#[derive(Clone)]
+pub struct BuiltInFunction {
+    pub name: String,
+    pub action: Rc<RefCell<dyn Fn(Vec<Object>) -> Result<Object>>>,
+}
+
+impl fmt::Debug for BuiltInFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BuiltInFunction")
+            .field("name", &self.name)
+            .finish()
+    }
+}
+
+impl PartialEq for BuiltInFunction {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Object {
@@ -16,6 +37,7 @@ pub enum Object {
     String(String),
     Return(Box<Object>),
     Function(Vec<Identifier>, Block, Rc<RefCell<Environment>>),
+    BuiltInFunction(BuiltInFunction),
 }
 
 impl Display for Object {
@@ -33,6 +55,9 @@ impl Display for Object {
                     flatten(&parameters, ", "),
                     flatten(body, "\n"),
                 )
+            }
+            Self::BuiltInFunction(builtin_function) => {
+                format!("BuiltIn function '{}'", builtin_function.name)
             }
         };
         write!(f, "{}", statement)
@@ -134,7 +159,6 @@ fn evaluate_expression(
             match function {
                 Object::Function(parameters, body, function_environment) => {
                     environment.borrow_mut().outer = Some(function_environment);
-
                     let arguments = evaluate_expressions(arguments, environment.clone())?;
                     for (argument, name) in arguments.into_iter().zip(parameters.into_iter()) {
                         environment.borrow_mut().set_binding(name, argument);
@@ -146,15 +170,24 @@ fn evaluate_expression(
                         _ => return Ok(result),
                     }
                 }
+                Object::BuiltInFunction(function) => {
+                    let arguments = evaluate_expressions(arguments, environment.clone())?;
+                    let action = function.action.borrow();
+                    action(arguments)?
+                }
                 _ => bail!("'{}' is not a defined function", function),
             }
         }
-        Expression::Identifier(identifier) => environment
-            .borrow()
-            .bindings
-            .get(identifier)
-            .context(format!("Identifier '{}' not found", identifier))?
-            .clone(),
+        Expression::Identifier(identifier) => {
+            let builtin_functions = builtin_functions();
+            if let Some(identifier) = environment.borrow().bindings.get(identifier) {
+                identifier.clone()
+            } else if let Some(identifier) = builtin_functions.bindings.get(identifier) {
+                identifier.clone()
+            } else {
+                bail!("Identifier '{}' not found", identifier)
+            }
+        }
         Expression::Literal(literal) => evaluate_literal(literal)?,
         Expression::Boolean(boolean) => Object::Boolean(*boolean),
         Expression::Prefix(operator, expression) => {
@@ -276,6 +309,30 @@ fn apply_operator_negate(object: &Object) -> Result<Object> {
         Object::Integer(value) => Object::Integer(-value),
         _ => bail!("Attempted to negate a non-integer value!"),
     })
+}
+
+// TODO: Store this somewhere...
+fn builtin_functions() -> Environment {
+    let mut environment = Environment::new(None);
+    environment.set_binding(
+        "len".to_string(),
+        Object::BuiltInFunction(BuiltInFunction {
+            name: "len".to_string(),
+            action: Rc::new(RefCell::new(|args: Vec<Object>| {
+                if args.len() > 1 {
+                    bail!("Too many arguments to 'len'")
+                }
+
+                let arg = args.first().context("No arguments were passed to 'len'!")?;
+
+                match arg {
+                    Object::String(value) => Ok(Object::Integer(value.len() as _)),
+                    _ => bail!("Invalid type was provided to len function!"),
+                }
+            })),
+        }),
+    );
+    environment
 }
 
 #[cfg(test)]
@@ -498,6 +555,16 @@ addTwo(2);",
             "\"Hello\" + \" \" + \"World!\"",
             Object::String("Hello World!".to_string()),
         )];
+        evaluate_tests(&tests)
+    }
+
+    #[test]
+    fn builtin_functions() -> Result<()> {
+        let tests = [
+            ("len(\"\")", Object::Integer(0)),
+            ("len(\"four\")", Object::Integer(4)),
+            ("len(\"hello world\")", Object::Integer(11)),
+        ];
         evaluate_tests(&tests)
     }
 }
