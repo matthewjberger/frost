@@ -58,7 +58,7 @@ impl Display for Object {
                         }
                     })
                     .collect::<Vec<_>>();
-                format!("[{}]", objects.join(","))
+                format!("[{}]", objects.join(", "))
             }
             Self::Boolean(boolean) => boolean.to_string(),
             Self::String(string) => string.to_string(),
