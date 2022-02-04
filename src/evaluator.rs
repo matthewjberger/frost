@@ -33,6 +33,7 @@ pub enum Object {
     Empty,
     Null,
     Integer(i64),
+    Array(Vec<Object>),
     Boolean(bool),
     String(String),
     Return(Box<Object>),
@@ -46,6 +47,19 @@ impl Display for Object {
             Self::Empty => "".to_string(),
             Self::Null => "null".to_string(),
             Self::Integer(integer) => integer.to_string(),
+            Self::Array(objects) => {
+                let objects = objects
+                    .iter()
+                    .map(|e| {
+                        if let Object::String(_) = e {
+                            format!("\"{}\"", e.to_string())
+                        } else {
+                            e.to_string()
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                format!("[{}]", objects.join(","))
+            }
             Self::Boolean(boolean) => boolean.to_string(),
             Self::String(string) => string.to_string(),
             Self::Return(value) => value.to_string(),
@@ -188,7 +202,7 @@ fn evaluate_expression(
                 bail!("Identifier '{}' not found", identifier)
             }
         }
-        Expression::Literal(literal) => evaluate_literal(literal)?,
+        Expression::Literal(literal) => evaluate_literal(literal, environment)?,
         Expression::Boolean(boolean) => Object::Boolean(*boolean),
         Expression::Prefix(operator, expression) => {
             evaluate_prefix_expression(operator, expression, environment)?
@@ -202,10 +216,17 @@ fn evaluate_expression(
     })
 }
 
-fn evaluate_literal(literal: &Literal) -> Result<Object> {
+fn evaluate_literal(literal: &Literal, environment: Rc<RefCell<Environment>>) -> Result<Object> {
     Ok(match literal {
         Literal::Integer(integer) => Object::Integer(*integer),
         Literal::String(string) => Object::String(string.to_string()),
+        Literal::Array(elements) => {
+            let elements = elements
+                .iter()
+                .map(|expression| evaluate_expression(expression, environment.clone()))
+                .collect::<Result<Vec<_>>>()?;
+            Object::Array(elements)
+        }
     })
 }
 
@@ -379,6 +400,19 @@ mod tests {
             ("(5 + 10 * 2 + 15 / 3) * 2 + -10", Object::Integer(50)),
         ];
 
+        evaluate_tests(&tests)
+    }
+
+    #[test]
+    fn evaluate_array_literals() -> Result<()> {
+        let tests = [(
+            "[1, 2 * 2, 3 + 3]",
+            Object::Array(vec![
+                Object::Integer(1),
+                Object::Integer(4),
+                Object::Integer(6),
+            ]),
+        )];
         evaluate_tests(&tests)
     }
 

@@ -135,6 +135,7 @@ impl Display for Expression {
 pub enum Literal {
     Integer(i64),
     String(String),
+    Array(Vec<Expression>),
 }
 
 impl Display for Literal {
@@ -142,6 +143,10 @@ impl Display for Literal {
         let literal = match self {
             Literal::Integer(x) => x.to_string(),
             Literal::String(x) => x.to_string(),
+            Literal::Array(array) => {
+                let expressions = array.iter().map(|e| e.to_string()).collect::<Vec<_>>();
+                format!("[{}]", expressions.join(","))
+            }
         };
         write!(f, "{}", literal)
     }
@@ -266,6 +271,10 @@ impl<'a> Parser<'a> {
             }
             Token::True => Expression::Boolean(true),
             Token::False => Expression::Boolean(false),
+            Token::LeftBracket => {
+                advance = false;
+                self.parse_array_literal()?
+            }
             Token::LeftParentheses => {
                 advance = false;
                 self.parse_grouped_expressions()?
@@ -332,27 +341,28 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    fn parse_call_expression(&mut self, expression: Expression) -> Result<Expression> {
-        if !matches!(self.peek_nth(0), Token::LeftParentheses) {
-            bail!("Expected a left parentheses in call expression argument list!");
-        }
-        self.read_token();
+    fn parse_array_literal(&mut self) -> Result<Expression> {
+        let elements = self.parse_expression_list(&Token::RightBracket)?;
+        Ok(Expression::Literal(Literal::Array(elements)))
+    }
 
-        let mut arguments = Vec::new();
-        while self.peek_nth(0) != &Token::RightParentheses {
-            arguments.push(self.parse_expression(Precedence::Lowest)?);
+    fn parse_call_expression(&mut self, expression: Expression) -> Result<Expression> {
+        let elements = self.parse_expression_list(&Token::RightParentheses)?;
+        Ok(Expression::Call(Box::new(expression), elements))
+    }
+
+    fn parse_expression_list(&mut self, end_token: &Token) -> Result<Vec<Expression>> {
+        self.read_token();
+        let mut elements = Vec::new();
+        while self.peek_nth(0) != end_token {
+            elements.push(self.parse_expression(Precedence::Lowest)?);
 
             if matches!(self.peek_nth(0), Token::Comma) {
                 self.read_token();
             }
         }
-
-        if !matches!(self.peek_nth(0), Token::RightParentheses) {
-            bail!("Expected a right parentheses in call expression argument list!");
-        }
         self.read_token();
-
-        Ok(Expression::Call(Box::new(expression), arguments))
+        Ok(elements)
     }
 
     fn parse_grouped_expressions(&mut self) -> Result<Expression> {
@@ -887,6 +897,26 @@ mod tests {
         parse_statement(
             "\"hello world\"",
             &Expression::Literal(Literal::String("hello world".to_string())),
+        )
+    }
+
+    #[test]
+    fn array_literal_expression() -> Result<()> {
+        parse_statement(
+            "[1, 2 * 2, 3 + 3]",
+            &Expression::Literal(Literal::Array(vec![
+                Expression::Literal(Literal::Integer(1)),
+                Expression::Infix(
+                    Box::new(Expression::Literal(Literal::Integer(2))),
+                    Operator::Multiply,
+                    Box::new(Expression::Literal(Literal::Integer(2))),
+                ),
+                Expression::Infix(
+                    Box::new(Expression::Literal(Literal::Integer(3))),
+                    Operator::Add,
+                    Box::new(Expression::Literal(Literal::Integer(3))),
+                ),
+            ])),
         )
     }
 
