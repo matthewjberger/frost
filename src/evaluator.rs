@@ -192,6 +192,9 @@ fn evaluate_expression(
                 _ => bail!("'{}' is not a defined function", function),
             }
         }
+        Expression::Index(left_expression, index_expression) => {
+            todo!()
+        }
         Expression::Identifier(identifier) => {
             let builtin_functions = builtin_functions();
             if let Some(identifier) = environment.borrow().bindings.get(identifier) {

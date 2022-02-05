@@ -87,6 +87,7 @@ pub enum Expression {
     If(Box<Expression>, Block, Option<Block>),
     Function(Vec<Identifier>, Block),
     Call(Box<Expression>, Vec<Expression>),
+    Index(Box<Expression>, Box<Expression>),
 }
 
 impl Display for Expression {
@@ -126,6 +127,13 @@ impl Display for Expression {
             Self::Call(expression, arguments) => {
                 format!("{}({})", expression.to_string(), flatten(arguments, ", "),)
             }
+            Self::Index(left_expression, index_expression) => {
+                format!(
+                    "({}[{}])",
+                    left_expression.to_string(),
+                    index_expression.to_string()
+                )
+            }
         };
         write!(f, "{}", expression)
     }
@@ -145,7 +153,7 @@ impl Display for Literal {
             Literal::String(x) => x.to_string(),
             Literal::Array(array) => {
                 let expressions = array.iter().map(|e| e.to_string()).collect::<Vec<_>>();
-                format!("[{}]", expressions.join(","))
+                format!("[{}]", expressions.join(", "))
             }
         };
         write!(f, "{}", literal)
@@ -161,6 +169,7 @@ pub enum Precedence {
     Product,
     Prefix,
     Call,
+    Index,
 }
 
 impl From<&Token> for Precedence {
@@ -175,6 +184,7 @@ impl From<&Token> for Precedence {
             Token::Slash => Self::Product,
             Token::Asterisk => Self::Product,
             Token::LeftParentheses => Self::Call,
+            Token::LeftBracket => Self::Index,
             _ => Self::Lowest,
         }
     }
@@ -311,6 +321,9 @@ impl<'a> Parser<'a> {
                 | Token::GreaterThan => {
                     expression = self.parse_infix_expression(expression.clone())?;
                 }
+                Token::LeftBracket => {
+                    expression = self.parse_index_expression(expression.clone())?;
+                }
                 Token::LeftParentheses => {
                     expression = self.parse_call_expression(expression.clone())?;
                 }
@@ -349,6 +362,16 @@ impl<'a> Parser<'a> {
     fn parse_call_expression(&mut self, expression: Expression) -> Result<Expression> {
         let elements = self.parse_expression_list(&Token::RightParentheses)?;
         Ok(Expression::Call(Box::new(expression), elements))
+    }
+
+    fn parse_index_expression(&mut self, expression: Expression) -> Result<Expression> {
+        self.read_token(); // [
+        let index_expression = self.parse_expression(Precedence::Lowest)?;
+        self.read_token(); // ]
+        Ok(Expression::Index(
+            Box::new(expression),
+            Box::new(index_expression),
+        ))
     }
 
     fn parse_expression_list(&mut self, end_token: &Token) -> Result<Vec<Expression>> {
@@ -765,6 +788,14 @@ mod tests {
                 "add(a + b + c * d / f + g)",
                 "add((((a + b) + ((c * d) / f)) + g))",
             ),
+            (
+                "a * [1, 2, 3, 4][b * c] * d",
+                "((a * ([1, 2, 3, 4][(b * c)])) * d)",
+            ),
+            (
+                "add(a * b[2], b[1], 2 * [1, 2][1])",
+                "add((a * (b[2])), (b[1]), (2 * ([1, 2][1])))",
+            ),
         ];
 
         for (input, expected) in tests.iter() {
@@ -917,6 +948,21 @@ mod tests {
                     Box::new(Expression::Literal(Literal::Integer(3))),
                 ),
             ])),
+        )
+    }
+
+    #[test]
+    fn index_expression() -> Result<()> {
+        parse_statement(
+            "myArray[1 + 1]",
+            &Expression::Index(
+                Box::new(Expression::Identifier("myArray".to_string())),
+                Box::new(Expression::Infix(
+                    Box::new(Expression::Literal(Literal::Integer(1))),
+                    Operator::Add,
+                    Box::new(Expression::Literal(Literal::Integer(1))),
+                )),
+            ),
         )
     }
 
