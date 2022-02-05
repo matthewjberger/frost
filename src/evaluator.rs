@@ -390,6 +390,7 @@ fn builtin_functions() -> Result<Environment> {
     environment.add_builtin(builtin_last())?;
     environment.add_builtin(builtin_rest())?;
     environment.add_builtin(builtin_push())?;
+    environment.add_builtin(builtin_print())?;
     Ok(environment)
 }
 
@@ -498,6 +499,16 @@ fn builtin_push() -> Object {
                 }
                 _ => bail!("Invalid type was provided to 'push' function!"),
             }
+        })),
+    })
+}
+
+fn builtin_print() -> Object {
+    Object::BuiltInFunction(BuiltInFunction {
+        name: "print".to_string(),
+        action: Rc::new(RefCell::new(|args: Vec<Object>| {
+            args.iter().for_each(|arg| println!("{}", arg));
+            Ok(Object::Null)
         })),
     })
 }
