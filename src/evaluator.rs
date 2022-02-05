@@ -392,6 +392,7 @@ fn builtin_len() -> Object {
 
             match arg {
                 Object::String(value) => Ok(Object::Integer(value.len() as _)),
+                Object::Array(value) => Ok(Object::Integer(value.len() as _)),
                 _ => bail!("Invalid type was provided to len function!"),
             }
         })),
@@ -640,6 +641,10 @@ addTwo(2);",
             ("len(\"\")", Object::Integer(0)),
             ("len(\"four\")", Object::Integer(4)),
             ("len(\"hello world\")", Object::Integer(11)),
+            ("len([])", Object::Integer(0)),
+            ("len([1])", Object::Integer(1)),
+            ("len([1, 2])", Object::Integer(2)),
+            ("len([1, 2 + 18, 3 * 6, 4, \"hi\"])", Object::Integer(5)),
         ];
         evaluate_tests(&tests)
     }
