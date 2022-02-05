@@ -376,25 +376,26 @@ fn apply_operator_negate(object: &Object) -> Result<Object> {
 // TODO: Store this somewhere...
 fn builtin_functions() -> Environment {
     let mut environment = Environment::new(None);
-    environment.set_binding(
-        "len".to_string(),
-        Object::BuiltInFunction(BuiltInFunction {
-            name: "len".to_string(),
-            action: Rc::new(RefCell::new(|args: Vec<Object>| {
-                if args.len() > 1 {
-                    bail!("Too many arguments to 'len'")
-                }
-
-                let arg = args.first().context("No arguments were passed to 'len'!")?;
-
-                match arg {
-                    Object::String(value) => Ok(Object::Integer(value.len() as _)),
-                    _ => bail!("Invalid type was provided to len function!"),
-                }
-            })),
-        }),
-    );
+    environment.set_binding("len".to_string(), builtin_len());
     environment
+}
+
+fn builtin_len() -> Object {
+    Object::BuiltInFunction(BuiltInFunction {
+        name: "len".to_string(),
+        action: Rc::new(RefCell::new(|args: Vec<Object>| {
+            if args.len() > 1 {
+                bail!("Too many arguments to 'len'")
+            }
+
+            let arg = args.first().context("No arguments were passed to 'len'!")?;
+
+            match arg {
+                Object::String(value) => Ok(Object::Integer(value.len() as _)),
+                _ => bail!("Invalid type was provided to len function!"),
+            }
+        })),
+    })
 }
 
 #[cfg(test)]
