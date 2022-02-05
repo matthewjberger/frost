@@ -96,6 +96,16 @@ impl Environment {
         Rc::new(RefCell::new(Self::new(outer)))
     }
 
+    pub fn add_builtin(&mut self, value: Object) -> Result<()> {
+        let name = if let Object::BuiltInFunction(ref builtin) = value {
+            builtin.name.to_string()
+        } else {
+            bail!("'{}' is not the name of a builtin function!", value)
+        };
+        self.bindings.insert(name, value);
+        Ok(())
+    }
+
     pub fn set_binding(&mut self, binding: String, value: Object) {
         self.bindings.insert(binding, value);
     }
@@ -174,7 +184,7 @@ fn evaluate_expression(
             evaluate_index_expression(environment, left_expression, index_expression)?
         }
         Expression::Identifier(identifier) => {
-            let builtin_functions = builtin_functions();
+            let builtin_functions = builtin_functions()?;
             if let Some(identifier) = environment.borrow().bindings.get(identifier) {
                 identifier.clone()
             } else if let Some(identifier) = builtin_functions.bindings.get(identifier) {
@@ -373,11 +383,10 @@ fn apply_operator_negate(object: &Object) -> Result<Object> {
     })
 }
 
-// TODO: Store this somewhere...
-fn builtin_functions() -> Environment {
+fn builtin_functions() -> Result<Environment> {
     let mut environment = Environment::new(None);
-    environment.set_binding("len".to_string(), builtin_len());
-    environment
+    environment.add_builtin(builtin_len())?;
+    Ok(environment)
 }
 
 fn builtin_len() -> Object {
