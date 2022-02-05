@@ -388,6 +388,8 @@ fn builtin_functions() -> Result<Environment> {
     environment.add_builtin(builtin_len())?;
     environment.add_builtin(builtin_first())?;
     environment.add_builtin(builtin_last())?;
+    environment.add_builtin(builtin_rest())?;
+    environment.add_builtin(builtin_push())?;
     Ok(environment)
 }
 
@@ -438,11 +440,63 @@ fn builtin_last() -> Object {
                 bail!("Too many arguments to 'last'")
             }
 
-            let arg = args.last().context("No arguments were passed to 'last'!")?;
+            let arg = args
+                .first()
+                .context("No arguments were passed to 'last'!")?;
 
             match arg {
                 Object::Array(value) => Ok(value.last().unwrap_or(&Object::Null).clone()),
                 _ => bail!("Invalid type was provided to 'last' function!"),
+            }
+        })),
+    })
+}
+
+fn builtin_rest() -> Object {
+    Object::BuiltInFunction(BuiltInFunction {
+        name: "rest".to_string(),
+        action: Rc::new(RefCell::new(|args: Vec<Object>| {
+            if args.len() > 1 {
+                bail!("Too many arguments to 'rest'")
+            }
+
+            let arg = args
+                .first()
+                .context("No arguments were passed to 'rest'!")?;
+
+            match arg {
+                Object::Array(value) => Ok(Object::Array(
+                    value.iter().skip(1).cloned().collect::<Vec<_>>(),
+                )),
+                _ => bail!("Invalid type was provided to 'rest' function!"),
+            }
+        })),
+    })
+}
+
+fn builtin_push() -> Object {
+    Object::BuiltInFunction(BuiltInFunction {
+        name: "push".to_string(),
+        action: Rc::new(RefCell::new(|args: Vec<Object>| {
+            if args.len() > 2 {
+                bail!("Too many arguments to 'push'")
+            }
+
+            let array = args
+                .first()
+                .context("No arguments were passed to 'push'!")?;
+
+            let element = args
+                .get(1)
+                .context("Second argument not found for 'push'")?;
+
+            match array {
+                Object::Array(value) => {
+                    let mut elements = value.iter().cloned().collect::<Vec<_>>();
+                    elements.push(element.clone());
+                    Ok(Object::Array(elements))
+                }
+                _ => bail!("Invalid type was provided to 'push' function!"),
             }
         })),
     })
@@ -687,6 +741,7 @@ addTwo(2);",
     #[test]
     fn builtin_functions() -> Result<()> {
         let tests = [
+            // len
             ("len(\"\")", Object::Integer(0)),
             ("len(\"four\")", Object::Integer(4)),
             ("len(\"hello world\")", Object::Integer(11)),
@@ -694,6 +749,7 @@ addTwo(2);",
             ("len([1])", Object::Integer(1)),
             ("len([1, 2])", Object::Integer(2)),
             ("len([1, 2 + 18, 3 * 6, 4, \"hi\"])", Object::Integer(5)),
+            // first
             ("first([1, 2 + 18, 3 * 6, 4, \"hi\"])", Object::Integer(1)),
             ("first([])", Object::Null),
             ("first([2 * 4, 3, 4])", Object::Integer(8)),
@@ -701,8 +757,32 @@ addTwo(2);",
                 "last([1, 2 + 18, 3 * 6, 4, \"hi\"])",
                 Object::String("hi".to_string()),
             ),
+            // last
             ("last([])", Object::Null),
             ("last([2 * 4, 3, 4])", Object::Integer(4)),
+            ("last([2 * 4, 3, 4])", Object::Integer(4)),
+            // rest
+            (
+                "rest([2, 3, 4])",
+                Object::Array(vec![Object::Integer(3), Object::Integer(4)]),
+            ),
+            (
+                "rest(rest([2, 3, 4]))",
+                Object::Array(vec![Object::Integer(4)]),
+            ),
+            ("rest(rest(rest([2, 3, 4])))", Object::Array(vec![])),
+            ("rest([])", Object::Array(vec![])),
+            // push
+            (
+                "push([2, 3, 4], 5)",
+                Object::Array(vec![
+                    Object::Integer(2),
+                    Object::Integer(3),
+                    Object::Integer(4),
+                    Object::Integer(5),
+                ]),
+            ),
+            ("push([], 3)", Object::Array(vec![Object::Integer(3)])),
         ];
         evaluate_tests(&tests)
     }
