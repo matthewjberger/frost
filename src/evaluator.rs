@@ -387,6 +387,7 @@ fn builtin_functions() -> Result<Environment> {
     let mut environment = Environment::new(None);
     environment.add_builtin(builtin_len())?;
     environment.add_builtin(builtin_first())?;
+    environment.add_builtin(builtin_last())?;
     Ok(environment)
 }
 
@@ -422,8 +423,26 @@ fn builtin_first() -> Object {
                 .context("No arguments were passed to 'first'!")?;
 
             match arg {
-                Object::Array(value) => Ok(value.get(0).unwrap_or(&Object::Null).clone()),
+                Object::Array(value) => Ok(value.first().unwrap_or(&Object::Null).clone()),
                 _ => bail!("Invalid type was provided to 'first' function!"),
+            }
+        })),
+    })
+}
+
+fn builtin_last() -> Object {
+    Object::BuiltInFunction(BuiltInFunction {
+        name: "last".to_string(),
+        action: Rc::new(RefCell::new(|args: Vec<Object>| {
+            if args.len() > 1 {
+                bail!("Too many arguments to 'last'")
+            }
+
+            let arg = args.last().context("No arguments were passed to 'last'!")?;
+
+            match arg {
+                Object::Array(value) => Ok(value.last().unwrap_or(&Object::Null).clone()),
+                _ => bail!("Invalid type was provided to 'last' function!"),
             }
         })),
     })
@@ -678,6 +697,12 @@ addTwo(2);",
             ("first([1, 2 + 18, 3 * 6, 4, \"hi\"])", Object::Integer(1)),
             ("first([])", Object::Null),
             ("first([2 * 4, 3, 4])", Object::Integer(8)),
+            (
+                "last([1, 2 + 18, 3 * 6, 4, \"hi\"])",
+                Object::String("hi".to_string()),
+            ),
+            ("last([])", Object::Null),
+            ("last([2 * 4, 3, 4])", Object::Integer(4)),
         ];
         evaluate_tests(&tests)
     }
