@@ -168,32 +168,10 @@ fn evaluate_expression(
             Environment::new_rc(Some(environment)),
         ),
         Expression::Call(function, arguments) => {
-            let function = evaluate_expression(function, environment.clone())?;
-
-            match function {
-                Object::Function(parameters, body, function_environment) => {
-                    environment.borrow_mut().outer = Some(function_environment);
-                    let arguments = evaluate_expressions(arguments, environment.clone())?;
-                    for (argument, name) in arguments.into_iter().zip(parameters.into_iter()) {
-                        environment.borrow_mut().set_binding(name, argument);
-                    }
-
-                    let result = evaluate_statements(&body, environment)?;
-                    match result {
-                        Object::Return(value) => return Ok(*value),
-                        _ => return Ok(result),
-                    }
-                }
-                Object::BuiltInFunction(function) => {
-                    let arguments = evaluate_expressions(arguments, environment.clone())?;
-                    let action = function.action.borrow();
-                    action(arguments)?
-                }
-                _ => bail!("'{}' is not a defined function", function),
-            }
+            evaluate_call_expression(environment, function, arguments)?
         }
         Expression::Index(left_expression, index_expression) => {
-            todo!()
+            evaluate_index_expression(environment, left_expression, index_expression)?
         }
         Expression::Identifier(identifier) => {
             let builtin_functions = builtin_functions();
@@ -231,6 +209,66 @@ fn evaluate_literal(literal: &Literal, environment: Rc<RefCell<Environment>>) ->
             Object::Array(elements)
         }
     })
+}
+
+fn evaluate_call_expression(
+    environment: Rc<RefCell<Environment>>,
+    function: &Expression,
+    arguments: &[Expression],
+) -> Result<Object> {
+    let function = evaluate_expression(function, environment.clone())?;
+    match function {
+        Object::Function(parameters, body, function_environment) => {
+            environment.borrow_mut().outer = Some(function_environment);
+            let arguments = evaluate_expressions(arguments, environment.clone())?;
+            for (argument, name) in arguments.into_iter().zip(parameters.into_iter()) {
+                environment.borrow_mut().set_binding(name, argument);
+            }
+            let result = evaluate_statements(&body, environment)?;
+            match result {
+                Object::Return(value) => return Ok(*value),
+                _ => return Ok(result),
+            }
+        }
+        Object::BuiltInFunction(function) => {
+            let arguments = evaluate_expressions(arguments, environment.clone())?;
+            let action = function.action.borrow();
+            action(arguments)
+        }
+        _ => bail!("'{}' is not a defined function", function),
+    }
+}
+
+fn evaluate_index_expression(
+    environment: Rc<RefCell<Environment>>,
+    left_expression: &Expression,
+    index_expression: &Expression,
+) -> Result<Object> {
+    let identifier = evaluate_expression(left_expression, environment.clone())?;
+    let index = evaluate_expression(index_expression, environment.clone())?;
+
+    if !matches!(identifier, Object::Array(_)) {
+        bail!(
+            "Identifier '{}' is not an array. Index expressions are only valid for arrays.",
+            identifier
+        )
+    }
+
+    if !matches!(index, Object::Integer(_)) {
+        bail!("Arrays can only be indexed by integers")
+    }
+
+    if let (Object::Array(elements), Object::Integer(index)) = (identifier, index) {
+        if index < 0 {
+            return Ok(Object::Null);
+        }
+        match elements.get(index as usize) {
+            Some(element) => Ok(element.clone()),
+            None => Ok(Object::Null),
+        }
+    } else {
+        bail!("Index expression is invalid!")
+    }
 }
 
 fn evaluate_prefix_expression(
@@ -601,6 +639,29 @@ addTwo(2);",
             ("len(\"\")", Object::Integer(0)),
             ("len(\"four\")", Object::Integer(4)),
             ("len(\"hello world\")", Object::Integer(11)),
+        ];
+        evaluate_tests(&tests)
+    }
+
+    #[test]
+    fn array_index_expressions() -> Result<()> {
+        let tests = [
+            ("[1, 2, 3][0]", Object::Integer(1)),
+            ("[1, 2, 3][1]", Object::Integer(2)),
+            ("[1, 2, 3][2]", Object::Integer(3)),
+            ("let i = 0; [1][i];", Object::Integer(1)),
+            ("[1, 2, 3][1 + 1];", Object::Integer(3)),
+            ("let myArray = [1, 2, 3]; myArray[2];", Object::Integer(3)),
+            (
+                "let myArray = [1, 2, 3]; myArray[0] + myArray[1] + myArray[2];",
+                Object::Integer(6),
+            ),
+            (
+                "let myArray = [1, 2, 3]; let i = myArray[0]; myArray[i]",
+                Object::Integer(2),
+            ),
+            ("[1, 2, 3][3]", Object::Null),
+            ("[1, 2, 3][-1]", Object::Null),
         ];
         evaluate_tests(&tests)
     }
