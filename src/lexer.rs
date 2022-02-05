@@ -12,6 +12,7 @@ pub enum Token {
     Asterisk,
     Bang,
     Comma,
+    Colon,
     Else,
     EndOfFile,
     Equal,
@@ -47,6 +48,7 @@ impl Display for Token {
             Asterisk => "*".to_string(),
             Bang => "!".to_string(),
             Comma => ",".to_string(),
+            Colon => ":".to_string(),
             Else => "else".to_string(),
             EndOfFile => EOF_CHAR.to_string(),
             Equal => "==".to_string(),
@@ -112,6 +114,7 @@ impl<'a> Lexer<'a> {
             '(' => LeftParentheses,
             ')' => RightParentheses,
             ',' => Comma,
+            ':' => Colon,
             '+' => Plus,
             '{' => LeftBrace,
             '}' => RightBrace,
@@ -388,6 +391,21 @@ mod tests {
                 Token::Comma,
                 Token::Integer(2),
                 Token::RightBracket,
+                Token::Semicolon,
+            ],
+        )
+    }
+
+    #[test]
+    fn hash_maps() -> Result<()> {
+        check_tokens(
+            "{\"foo\": \"bar\"}",
+            &[
+                Token::LeftBrace,
+                Token::StringLiteral("foo".to_string()),
+                Token::Colon,
+                Token::StringLiteral("bar".to_string()),
+                Token::RightBrace,
                 Token::Semicolon,
             ],
         )
