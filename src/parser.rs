@@ -134,6 +134,7 @@ impl Display for Expression {
                     index_expression.to_string()
                 )
             }
+
         };
         write!(f, "{}", expression)
     }
@@ -144,16 +145,23 @@ pub enum Literal {
     Integer(i64),
     String(String),
     Array(Vec<Expression>),
+    HashMap(Vec<(Expression, Expression)>)
 }
 
 impl Display for Literal {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         let literal = match self {
-            Literal::Integer(x) => x.to_string(),
-            Literal::String(x) => x.to_string(),
-            Literal::Array(array) => {
+            Self::Integer(x) => x.to_string(),
+            Self::String(x) => x.to_string(),
+            Self::Array(array) => {
                 let expressions = array.iter().map(|e| e.to_string()).collect::<Vec<_>>();
                 format!("[{}]", expressions.join(", "))
+            }
+            Self::HashMap(key_value_pairs) => {
+                let pairs: Vec<String> = key_value_pairs.iter().map(|(key, value)| {
+                    format!("{}: {}", key, value)
+                }).collect();
+                format!("{{ {} }}", pairs.join(", "))
             }
         };
         write!(f, "{}", literal)
@@ -281,6 +289,10 @@ impl<'a> Parser<'a> {
             }
             Token::True => Expression::Boolean(true),
             Token::False => Expression::Boolean(false),
+            Token::LeftBrace => {
+                advance = false;
+                self.parse_hashmap_literal()?
+            }
             Token::LeftBracket => {
                 advance = false;
                 self.parse_array_literal()?
@@ -372,6 +384,22 @@ impl<'a> Parser<'a> {
             Box::new(expression),
             Box::new(index_expression),
         ))
+    }
+
+    fn parse_hashmap_literal(&mut self) -> Result<Expression> {
+        let mut pairs = Vec::new();
+        self.read_token(); // {
+        while self.peek_nth(0) != &Token::RightBrace {
+            let key = self.parse_expression(Precedence::Lowest)?;
+            self.read_token(); // :
+            let value = self.parse_expression(Precedence::Lowest)?;
+            if matches!(self.peek_nth(0), &Token::Comma) {
+                self.read_token(); 
+            }
+            pairs.push((key, value));
+        }
+        self.read_token(); // }
+        Ok(Expression::Literal(Literal::HashMap(pairs)))
     }
 
     fn parse_expression_list(&mut self, end_token: &Token) -> Result<Vec<Expression>> {
@@ -965,6 +993,70 @@ mod tests {
             ),
         )
     }
+
+    #[test]
+    fn hashmap_literal() -> Result<()> {
+        parse_statement(
+            r#"{"one": 1, "two": 2, "three": 3}"#,
+            &Expression::Literal(Literal::HashMap(vec![
+                (
+                    Expression::Literal(Literal::String("one".to_string())),
+                    Expression::Literal(Literal::Integer(1)),
+                ),
+                (
+                    Expression::Literal(Literal::String("two".to_string())),
+                    Expression::Literal(Literal::Integer(2)),
+                ),
+                (
+                    Expression::Literal(Literal::String("three".to_string())),
+                    Expression::Literal(Literal::Integer(3)),
+                ),
+            ])),
+        )
+    }
+
+    #[test]
+    fn empty_hashmap_literal() -> Result<()> {
+        parse_statement(
+            "{}",
+            &Expression::Literal(Literal::HashMap(vec![])),
+        )
+    }
+
+    #[test]
+    fn hashmap_literal_with_expressions() -> Result<()> {
+        parse_statement(
+            "{\"one\": 0 + 1, \"two\": 10 - 8, \"three\": 15 / 5}",
+            &Expression::Literal(Literal::HashMap(vec![
+                (
+                    Expression::Literal(Literal::String("one".to_string())),
+                    Expression::Infix(
+                        Box::new(Expression::Literal(Literal::Integer(0))),
+                        Operator::Add,
+                        Box::new(Expression::Literal(Literal::Integer(1))),
+                    ),
+                ),
+                (
+                    Expression::Literal(Literal::String("two".to_string())),
+                    Expression::Infix(
+                        Box::new(Expression::Literal(Literal::Integer(10))),
+                        Operator::Subtract,
+                        Box::new(Expression::Literal(Literal::Integer(8))),
+                    ),
+                ),
+                (
+                    Expression::Literal(Literal::String("three".to_string())),
+                    Expression::Infix(
+                        Box::new(Expression::Literal(Literal::Integer(15))),
+                        Operator::Divide,
+                        Box::new(Expression::Literal(Literal::Integer(5))),
+                    ),
+                ),
+            ])),
+        )
+    }
+
+
 
     fn parse_statement(input: &str, expected_expression: &Expression) -> Result<()> {
         let mut lexer = Lexer::new(&input);
