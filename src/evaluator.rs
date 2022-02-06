@@ -218,6 +218,9 @@ fn evaluate_literal(literal: &Literal, environment: Rc<RefCell<Environment>>) ->
                 .collect::<Result<Vec<_>>>()?;
             Object::Array(elements)
         }
+        Literal::HashMap(_pairs) => {
+            todo!()
+        }
     })
 }
 
