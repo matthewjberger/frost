@@ -53,7 +53,7 @@ Enter 'exit' or press 'CTRL+C' to exit the REPL.
                     };
 
                     // Leaving this in for debugging purposes
-                    let verbose = false;
+                    let verbose = true;
                     if verbose {
                         println!("--- Tokens ---");
                         println!("{:?}", tokens);

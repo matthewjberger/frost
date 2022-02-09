@@ -2,9 +2,10 @@ use crate::{flatten, Block, Expression, Identifier, Literal, Operator, Statement
 use anyhow::{bail, Context, Result};
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{hash_map::DefaultHasher, HashMap},
     fmt,
     fmt::{Display, Formatter, Result as FmtResult},
+    hash::{Hash, Hasher},
     rc::Rc,
 };
 
@@ -34,6 +35,7 @@ pub enum Object {
     Null,
     Integer(i64),
     Array(Vec<Object>),
+    HashMap(HashMap<u64, Object>),
     Boolean(bool),
     String(String),
     Return(Box<Object>),
@@ -60,6 +62,7 @@ impl Display for Object {
                     .collect::<Vec<_>>();
                 format!("[{}]", objects.join(", "))
             }
+            Self::HashMap(map) => format!("{:?}", map),
             Self::Boolean(boolean) => boolean.to_string(),
             Self::String(string) => string.to_string(),
             Self::Return(value) => value.to_string(),
@@ -207,6 +210,12 @@ fn evaluate_expression(
     })
 }
 
+fn hash<T: Hash>(t: &T) -> u64 {
+    let mut s = DefaultHasher::new();
+    t.hash(&mut s);
+    s.finish()
+}
+
 fn evaluate_literal(literal: &Literal, environment: Rc<RefCell<Environment>>) -> Result<Object> {
     Ok(match literal {
         Literal::Integer(integer) => Object::Integer(*integer),
@@ -218,8 +227,34 @@ fn evaluate_literal(literal: &Literal, environment: Rc<RefCell<Environment>>) ->
                 .collect::<Result<Vec<_>>>()?;
             Object::Array(elements)
         }
-        Literal::HashMap(_pairs) => {
-            todo!()
+        Literal::HashMap(pairs) => {
+            let mut hashmap = HashMap::new();
+            for (key, value) in pairs.iter() {
+                let value = evaluate_expression(value, environment.clone())?;
+                match key {
+                    Expression::Infix(left, _, right) => match (*left.clone(), *right.clone()) {
+                        (Expression::Literal(left_literal), Expression::Literal(right_literal)) => {
+                            match (left_literal, right_literal) {
+                                (Literal::String(_), Literal::String(_)) => {}
+                                (Literal::Integer(_), Literal::Integer(_)) => {}
+                                _ => {}
+                            }
+                        }
+                        _ => bail!(
+                            "An invalid infix expression was used as a key in a hashmap! {:#?}",
+                            key
+                        ),
+                    },
+                    Expression::Identifier(_)
+                    | Expression::Literal(Literal::String(_))
+                    | Expression::Literal(Literal::Integer(_))
+                    | Expression::Boolean(_) => {}
+                    _ => bail!("An invalid type was used as a key in a hashmap! {:#?}", key),
+                };
+                let key = hash(&format!("{:?}", key));
+                hashmap.insert(key, value);
+            }
+            Object::HashMap(hashmap)
         }
     })
 }
@@ -821,6 +856,24 @@ addTwo(2);",
             ("[1, 2, 3][3]", Object::Null),
             ("[1, 2, 3][-1]", Object::Null),
         ];
+        evaluate_tests(&tests)
+    }
+
+    #[test]
+    fn hash_literals() -> Result<()> {
+        let tests = [(
+            r#"
+let two = "two";
+{
+    "one": 10 - 9,
+    two: 1 + 1,
+    "thr" + "ee": 6 / 2,
+    4: 4,
+    true: 5,
+    false: 6
+}"#,
+            Object::Null,
+        )];
         evaluate_tests(&tests)
     }
 }
