@@ -553,7 +553,9 @@ fn builtin_print() -> Object {
 
 #[cfg(test)]
 mod tests {
-    use super::Result;
+    use std::{array::IntoIter, collections::HashMap, iter::FromIterator};
+
+    use super::{hash, Result};
     use crate::{
         evaluate_statements, Environment, Expression, Lexer, Literal, Object, Operator, Parser,
         Statement,
@@ -872,7 +874,42 @@ let two = "two";
     true: 5,
     false: 6
 }"#,
-            Object::Null,
+            Object::HashMap(HashMap::<_, _>::from_iter(IntoIter::new([
+                (
+                    hash(&format!(
+                        "{:?}",
+                        Expression::Literal(Literal::String("one".to_string()))
+                    )),
+                    Object::Integer(1),
+                ),
+                (
+                    hash(&format!("{:?}", Expression::Identifier("two".to_string()))),
+                    Object::Integer(2),
+                ),
+                (
+                    hash(&format!(
+                        "{:?}",
+                        Expression::Infix(
+                            Box::new(Expression::Literal(Literal::String("thr".to_string()))),
+                            Operator::Add,
+                            Box::new(Expression::Literal(Literal::String("ee".to_string())))
+                        ),
+                    )),
+                    Object::Integer(3),
+                ),
+                (
+                    hash(&format!("{:?}", Expression::Literal(Literal::Integer(4)))),
+                    Object::Integer(4),
+                ),
+                (
+                    hash(&format!("{:?}", Expression::Boolean(true))),
+                    Object::Integer(5),
+                ),
+                (
+                    hash(&format!("{:?}", Expression::Boolean(false))),
+                    Object::Integer(6),
+                ),
+            ]))),
         )];
         evaluate_tests(&tests)
     }
