@@ -134,7 +134,6 @@ impl Display for Expression {
                     index_expression.to_string()
                 )
             }
-
         };
         write!(f, "{}", expression)
     }
@@ -145,7 +144,7 @@ pub enum Literal {
     Integer(i64),
     String(String),
     Array(Vec<Expression>),
-    HashMap(Vec<(Expression, Expression)>)
+    HashMap(Vec<(Expression, Expression)>),
 }
 
 impl Display for Literal {
@@ -158,9 +157,10 @@ impl Display for Literal {
                 format!("[{}]", expressions.join(", "))
             }
             Self::HashMap(key_value_pairs) => {
-                let pairs: Vec<String> = key_value_pairs.iter().map(|(key, value)| {
-                    format!("{}: {}", key, value)
-                }).collect();
+                let pairs: Vec<String> = key_value_pairs
+                    .iter()
+                    .map(|(key, value)| format!("{}: {}", key, value))
+                    .collect();
                 format!("{{ {} }}", pairs.join(", "))
             }
         };
@@ -394,7 +394,7 @@ impl<'a> Parser<'a> {
             self.read_token(); // :
             let value = self.parse_expression(Precedence::Lowest)?;
             if matches!(self.peek_nth(0), &Token::Comma) {
-                self.read_token(); 
+                self.read_token();
             }
             pairs.push((key, value));
         }
@@ -1017,10 +1017,7 @@ mod tests {
 
     #[test]
     fn empty_hashmap_literal() -> Result<()> {
-        parse_statement(
-            "{}",
-            &Expression::Literal(Literal::HashMap(vec![])),
-        )
+        parse_statement("{}", &Expression::Literal(Literal::HashMap(vec![])))
     }
 
     #[test]
@@ -1055,8 +1052,6 @@ mod tests {
             ])),
         )
     }
-
-
 
     fn parse_statement(input: &str, expected_expression: &Expression) -> Result<()> {
         let mut lexer = Lexer::new(&input);
