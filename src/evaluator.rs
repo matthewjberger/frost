@@ -2,10 +2,9 @@ use crate::{flatten, Block, Expression, Identifier, Literal, Operator, Statement
 use anyhow::{bail, Context, Result};
 use std::{
     cell::RefCell,
-    collections::{hash_map::DefaultHasher, HashMap},
+    collections::HashMap,
     fmt,
     fmt::{Display, Formatter, Result as FmtResult},
-    hash::{Hash, Hasher},
     rc::Rc,
 };
 
@@ -210,12 +209,6 @@ fn evaluate_expression(
     })
 }
 
-fn hash<T: Hash>(t: &T) -> u64 {
-    let mut s = DefaultHasher::new();
-    t.hash(&mut s);
-    s.finish()
-}
-
 fn evaluate_literal(literal: &Literal, environment: Rc<RefCell<Environment>>) -> Result<Object> {
     Ok(match literal {
         Literal::Integer(integer) => Object::Integer(*integer),
@@ -251,8 +244,7 @@ fn evaluate_literal(literal: &Literal, environment: Rc<RefCell<Environment>>) ->
                     | Expression::Boolean(_) => {}
                     _ => bail!("An invalid type was used as a key in a hashmap! {:#?}", key),
                 };
-                let key = hash(&format!("{:?}", key));
-                hashmap.insert(key, value);
+                hashmap.insert(key.hash(), value);
             }
             Object::HashMap(hashmap)
         }
@@ -297,8 +289,10 @@ fn evaluate_index_expression(
 
     if !matches!(identifier, Object::Array(_)) {
         bail!(
-            "Identifier '{}' is not an array. Index expressions are only valid for arrays.",
-            identifier
+            "Identifier '{}' is not an array. Index expressions are only valid for arrays. Index: {} Hash: {}",
+            identifier,
+            index,
+            index_expression.hash(),
         )
     }
 
@@ -555,7 +549,7 @@ fn builtin_print() -> Object {
 mod tests {
     use std::{array::IntoIter, collections::HashMap, iter::FromIterator};
 
-    use super::{hash, Result};
+    use super::Result;
     use crate::{
         evaluate_statements, Environment, Expression, Lexer, Literal, Object, Operator, Parser,
         Statement,
@@ -876,39 +870,28 @@ let two = "two";
 }"#,
             Object::HashMap(HashMap::<_, _>::from_iter(IntoIter::new([
                 (
-                    hash(&format!(
-                        "{:?}",
-                        Expression::Literal(Literal::String("one".to_string()))
-                    )),
+                    Expression::Literal(Literal::String("one".to_string())).hash(),
                     Object::Integer(1),
                 ),
                 (
-                    hash(&format!("{:?}", Expression::Identifier("two".to_string()))),
+                    Expression::Identifier("two".to_string()).hash(),
                     Object::Integer(2),
                 ),
                 (
-                    hash(&format!(
-                        "{:?}",
-                        Expression::Infix(
-                            Box::new(Expression::Literal(Literal::String("thr".to_string()))),
-                            Operator::Add,
-                            Box::new(Expression::Literal(Literal::String("ee".to_string())))
-                        ),
-                    )),
+                    Expression::Infix(
+                        Box::new(Expression::Literal(Literal::String("thr".to_string()))),
+                        Operator::Add,
+                        Box::new(Expression::Literal(Literal::String("ee".to_string()))),
+                    )
+                    .hash(),
                     Object::Integer(3),
                 ),
                 (
-                    hash(&format!("{:?}", Expression::Literal(Literal::Integer(4)))),
+                    Expression::Literal(Literal::Integer(4)).hash(),
                     Object::Integer(4),
                 ),
-                (
-                    hash(&format!("{:?}", Expression::Boolean(true))),
-                    Object::Integer(5),
-                ),
-                (
-                    hash(&format!("{:?}", Expression::Boolean(false))),
-                    Object::Integer(6),
-                ),
+                (Expression::Boolean(true).hash(), Object::Integer(5)),
+                (Expression::Boolean(false).hash(), Object::Integer(6)),
             ]))),
         )];
         evaluate_tests(&tests)
