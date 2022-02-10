@@ -1,9 +1,7 @@
-use crate::{flatten, lexer::Token};
+use crate::{flatten, hash, lexer::Token};
 use anyhow::{bail, Result};
 use std::{
-    collections::hash_map::DefaultHasher,
     fmt::{Display, Formatter, Result as FmtResult},
-    hash::{Hash, Hasher},
     matches,
     slice::Iter,
 };
@@ -94,9 +92,7 @@ pub enum Expression {
 
 impl Expression {
     pub fn hash(&self) -> u64 {
-        let mut s = DefaultHasher::new();
-        format!("{:?}", self).hash(&mut s);
-        s.finish()
+        hash(&format!("{:?}", self))
     }
 }
 
