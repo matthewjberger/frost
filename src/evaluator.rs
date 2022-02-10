@@ -3,8 +3,7 @@ use anyhow::{bail, Context, Result};
 use std::{
     cell::RefCell,
     collections::HashMap,
-    fmt,
-    fmt::{Display, Formatter, Result as FmtResult},
+    fmt::{self, Display, Formatter, Result as FmtResult},
     rc::Rc,
 };
 
@@ -99,10 +98,9 @@ impl Environment {
     }
 
     pub fn add_builtin(&mut self, value: Object) -> Result<()> {
-        let name = if let Object::BuiltInFunction(ref builtin) = value {
-            builtin.name.to_string()
-        } else {
-            bail!("'{}' is not the name of a builtin function!", value)
+        let name = match value {
+            Object::BuiltInFunction(ref builtin) => builtin.name.to_string(),
+            _ => bail!("'{}' is not the name of a builtin function!", value),
         };
         self.bindings.insert(name, value);
         Ok(())
@@ -185,16 +183,7 @@ fn evaluate_expression(
         Expression::Index(left_expression, index_expression) => {
             evaluate_index_expression(environment, left_expression, index_expression)?
         }
-        Expression::Identifier(identifier) => {
-            let builtin_functions = builtin_functions()?;
-            if let Some(identifier) = environment.borrow().bindings.get(identifier) {
-                identifier.clone()
-            } else if let Some(identifier) = builtin_functions.bindings.get(identifier) {
-                identifier.clone()
-            } else {
-                bail!("Identifier '{}' not found", identifier)
-            }
-        }
+        Expression::Identifier(identifier) => evaluate_identifier(environment, identifier)?,
         Expression::Literal(literal) => evaluate_literal(literal, environment)?,
         Expression::Boolean(boolean) => Object::Boolean(*boolean),
         Expression::Prefix(operator, expression) => {
@@ -228,9 +217,11 @@ fn evaluate_literal(literal: &Literal, environment: Rc<RefCell<Environment>>) ->
                     Expression::Infix(left, _, right) => match (*left.clone(), *right.clone()) {
                         (Expression::Literal(left_literal), Expression::Literal(right_literal)) => {
                             match (left_literal, right_literal) {
-                                (Literal::String(_), Literal::String(_)) => {}
-                                (Literal::Integer(_), Literal::Integer(_)) => {}
-                                _ => {}
+                                (Literal::String(_), Literal::String(_))
+                                | (Literal::Integer(_), Literal::Integer(_)) => {
+                                    hashmap.insert(key.hash(), value)
+                                }
+                                _ => bail!("Infix expression used as key in hashmap was not string <-> string or integer <-> integer")
                             }
                         }
                         _ => bail!(
@@ -238,17 +229,38 @@ fn evaluate_literal(literal: &Literal, environment: Rc<RefCell<Environment>>) ->
                             key
                         ),
                     },
+                    // Expression::Identifier(identifier) => {
+                    //     let object = evaluate_identifier(environment.clone(), identifier)?;
+                    //     match object {
+                    //         Object::Integer(_) |
+                    //         Object::String(_) => hashmap.insert(key.hash(), value),
+                    //         _ => bail!("Identifier is not valid as a key in a hashmap!"),
+                    //     }
+                    // }
                     Expression::Identifier(_)
                     | Expression::Literal(Literal::String(_))
                     | Expression::Literal(Literal::Integer(_))
-                    | Expression::Boolean(_) => {}
+                    | Expression::Boolean(_) => hashmap.insert(key.hash(), value),
                     _ => bail!("An invalid type was used as a key in a hashmap! {:#?}", key),
                 };
-                hashmap.insert(key.hash(), value);
             }
             Object::HashMap(hashmap)
         }
     })
+}
+
+fn evaluate_identifier(
+    environment: Rc<RefCell<Environment>>,
+    identifier: &Identifier,
+) -> Result<Object> {
+    let builtin_functions = builtin_functions()?;
+    match environment.borrow().bindings.get(identifier) {
+        Some(identifier) => Ok(identifier.clone()),
+        None => match builtin_functions.bindings.get(identifier) {
+            Some(identifier) => Ok(identifier.clone()),
+            None => bail!("Identifier '{}' not found", identifier),
+        },
+    }
 }
 
 fn evaluate_call_expression(
@@ -287,29 +299,34 @@ fn evaluate_index_expression(
     let identifier = evaluate_expression(left_expression, environment.clone())?;
     let index = evaluate_expression(index_expression, environment.clone())?;
 
-    if !matches!(identifier, Object::Array(_)) {
-        bail!(
-            "Identifier '{}' is not an array. Index expressions are only valid for arrays. Index: {} Hash: {}",
-            identifier,
-            index,
-            index_expression.hash(),
-        )
-    }
-
-    if !matches!(index, Object::Integer(_)) {
-        bail!("Arrays can only be indexed by integers")
-    }
-
-    if let (Object::Array(elements), Object::Integer(index)) = (identifier, index) {
-        if index < 0 {
-            return Ok(Object::Null);
+    match (identifier, index) {
+        (Object::Array(elements), Object::Integer(index)) => {
+            if index < 0 {
+                return Ok(Object::Null);
+            }
+            match elements.get(index as usize) {
+                Some(element) => Ok(element.clone()),
+                None => Ok(Object::Null),
+            }
         }
-        match elements.get(index as usize) {
-            Some(element) => Ok(element.clone()),
-            None => Ok(Object::Null),
-        }
-    } else {
-        bail!("Index expression is invalid!")
+        (Object::HashMap(hashmap), _index) => match index_expression {
+            // Expression::Identifier(_) => match index {
+            //     Object::Integer(_) | Object::String(_) => Ok(hashmap
+            //         .get(&hash(&index_expression))
+            //         .unwrap_or(&Object::Null)
+            //         .clone()),
+            //     _ => bail!("Identifier is not valid as an index in a hashmap!"),
+            // },
+            Expression::Identifier(_)
+            | Expression::Literal(Literal::String(_))
+            | Expression::Literal(Literal::Integer(_))
+            | Expression::Boolean(_) => Ok(hashmap
+                .get(&index_expression.hash())
+                .unwrap_or(&Object::Null)
+                .clone()),
+            _ => Ok(Object::Null),
+        },
+        _ => bail!("Index expression is invalid!"),
     }
 }
 
@@ -894,6 +911,21 @@ let two = "two";
                 (Expression::Boolean(false).hash(), Object::Integer(6)),
             ]))),
         )];
+        evaluate_tests(&tests)
+    }
+
+    #[test]
+    fn hash_index_expressions() -> Result<()> {
+        let tests = [
+            (r#"{ "foo": 5 }["foo"]"#, Object::Integer(5)),
+            (r#"{ "foo": 5 }["bar"]"#, Object::Null),
+            (r#"{}["foo"]"#, Object::Null),
+            ("{5: 5}[5]", Object::Integer(5)),
+            ("{true: 5}[true]", Object::Integer(5)),
+            ("{false: 5}[false]", Object::Integer(5)),
+            // TODO: Make this test pass
+            // (r#"let key = "foo"; {"foo": 5}[key]"#, Object::Integer(5)),
+        ];
         evaluate_tests(&tests)
     }
 }
