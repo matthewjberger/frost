@@ -229,14 +229,6 @@ fn evaluate_literal(literal: &Literal, environment: Rc<RefCell<Environment>>) ->
                             key
                         ),
                     },
-                    // Expression::Identifier(identifier) => {
-                    //     let object = evaluate_identifier(environment.clone(), identifier)?;
-                    //     match object {
-                    //         Object::Integer(_) |
-                    //         Object::String(_) => hashmap.insert(key.hash(), value),
-                    //         _ => bail!("Identifier is not valid as a key in a hashmap!"),
-                    //     }
-                    // }
                     Expression::Identifier(_)
                     | Expression::Literal(Literal::String(_))
                     | Expression::Literal(Literal::Integer(_))
@@ -310,13 +302,6 @@ fn evaluate_index_expression(
             }
         }
         (Object::HashMap(hashmap), _index) => match index_expression {
-            // Expression::Identifier(_) => match index {
-            //     Object::Integer(_) | Object::String(_) => Ok(hashmap
-            //         .get(&hash(&index_expression))
-            //         .unwrap_or(&Object::Null)
-            //         .clone()),
-            //     _ => bail!("Identifier is not valid as an index in a hashmap!"),
-            // },
             Expression::Identifier(_)
             | Expression::Literal(Literal::String(_))
             | Expression::Literal(Literal::Integer(_))
@@ -923,8 +908,6 @@ let two = "two";
             ("{5: 5}[5]", Object::Integer(5)),
             ("{true: 5}[true]", Object::Integer(5)),
             ("{false: 5}[false]", Object::Integer(5)),
-            // TODO: Make this test pass
-            // (r#"let key = "foo"; {"foo": 5}[key]"#, Object::Integer(5)),
         ];
         evaluate_tests(&tests)
     }
