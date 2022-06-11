@@ -41,7 +41,7 @@ pub enum Object {
     Boolean(bool),
     String(String),
     Return(Box<Object>),
-    Function(Vec<Identifier>, Block, Rc<RefCell<Environment>>),
+    Function(Vec<Identifier>, Block, SharedPointer<Environment>),
     BuiltInFunction(BuiltInFunction),
 }
 
@@ -86,11 +86,11 @@ impl Display for Object {
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct Environment {
     pub bindings: HashMap<String, Object>,
-    pub outer: Option<Rc<RefCell<Environment>>>,
+    pub outer: Option<SharedPointer<Environment>>,
 }
 
 impl Environment {
-    pub fn new(outer: Option<Rc<RefCell<Environment>>>) -> Self {
+    pub fn new(outer: Option<SharedPointer<Environment>>) -> Self {
         Self {
             outer,
             ..Default::default()
@@ -98,8 +98,8 @@ impl Environment {
     }
 
     pub fn new_rc(
-        outer: Option<Rc<RefCell<Environment>>>,
-    ) -> Rc<RefCell<Self>> {
+        outer: Option<SharedPointer<Environment>>,
+    ) -> SharedPointer<Self> {
         Rc::new(RefCell::new(Self::new(outer)))
     }
 
@@ -129,7 +129,7 @@ impl Environment {
 
 pub fn evaluate_statements(
     statements: &[Statement],
-    environment: Rc<RefCell<Environment>>,
+    environment: SharedPointer<Environment>,
 ) -> Result<Object> {
     let mut result = Object::Null;
     for statement in statements.iter() {
@@ -143,7 +143,7 @@ pub fn evaluate_statements(
 
 fn evaluate_statement(
     statement: &Statement,
-    environment: Rc<RefCell<Environment>>,
+    environment: SharedPointer<Environment>,
 ) -> Result<Object> {
     Ok(match statement {
         Statement::Let(identifier, expression) => {
@@ -165,7 +165,7 @@ fn evaluate_statement(
 
 fn evaluate_expressions(
     expressions: &[Expression],
-    environment: Rc<RefCell<Environment>>,
+    environment: SharedPointer<Environment>,
 ) -> Result<Vec<Object>> {
     expressions
         .iter()
@@ -175,7 +175,7 @@ fn evaluate_expressions(
 
 fn evaluate_expression(
     expression: &Expression,
-    environment: Rc<RefCell<Environment>>,
+    environment: SharedPointer<Environment>,
 ) -> Result<Object> {
     Ok(match expression {
         Expression::Function(parameters, body) => Object::Function(
@@ -222,7 +222,7 @@ fn evaluate_expression(
 
 fn evaluate_literal(
     literal: &Literal,
-    environment: Rc<RefCell<Environment>>,
+    environment: SharedPointer<Environment>,
 ) -> Result<Object> {
     Ok(match literal {
         Literal::Integer(integer) => Object::Integer(*integer),
@@ -269,7 +269,7 @@ fn evaluate_literal(
 }
 
 fn evaluate_identifier(
-    environment: Rc<RefCell<Environment>>,
+    environment: SharedPointer<Environment>,
     identifier: &Identifier,
 ) -> Result<Object> {
     let builtin_functions = builtin_functions()?;
@@ -283,7 +283,7 @@ fn evaluate_identifier(
 }
 
 fn evaluate_call_expression(
-    environment: Rc<RefCell<Environment>>,
+    environment: SharedPointer<Environment>,
     function: &Expression,
     arguments: &[Expression],
 ) -> Result<Object> {
@@ -314,7 +314,7 @@ fn evaluate_call_expression(
 }
 
 fn evaluate_index_expression(
-    environment: Rc<RefCell<Environment>>,
+    environment: SharedPointer<Environment>,
     left_expression: &Expression,
     index_expression: &Expression,
 ) -> Result<Object> {
@@ -348,7 +348,7 @@ fn evaluate_index_expression(
 fn evaluate_prefix_expression(
     operator: &Operator,
     expression: &Expression,
-    environment: Rc<RefCell<Environment>>,
+    environment: SharedPointer<Environment>,
 ) -> Result<Object> {
     let value = evaluate_expression(expression, environment)?;
     Ok(match operator {
@@ -362,7 +362,7 @@ fn evaluate_infix_expression(
     left_expression: &Expression,
     operator: &Operator,
     right_expression: &Expression,
-    environment: Rc<RefCell<Environment>>,
+    environment: SharedPointer<Environment>,
 ) -> Result<Object> {
     let left_value = evaluate_expression(left_expression, environment.clone())?;
     let right_value = evaluate_expression(right_expression, environment)?;
@@ -423,7 +423,7 @@ fn evaluate_if_expression(
     condition: &Expression,
     consequence: &[Statement],
     alternative: &Option<Vec<Statement>>,
-    environment: Rc<RefCell<Environment>>,
+    environment: SharedPointer<Environment>,
 ) -> Result<Object> {
     let condition = evaluate_expression(condition, environment.clone())?;
 
