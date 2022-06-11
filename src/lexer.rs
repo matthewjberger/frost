@@ -167,7 +167,10 @@ impl<'a> Lexer<'a> {
         self.chars.as_str().is_empty()
     }
 
-    fn take_while(&mut self, mut predicate: impl FnMut(char) -> bool) -> String {
+    fn take_while(
+        &mut self,
+        mut predicate: impl FnMut(char) -> bool,
+    ) -> String {
         let mut chars = String::new();
         while predicate(self.peek_nth(0)) && !self.is_eof() {
             chars.push(self.read_char());
@@ -206,7 +209,12 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn next_char_or(&mut self, default: Token, next_char: char, token: Token) -> Token {
+    fn next_char_or(
+        &mut self,
+        default: Token,
+        next_char: char,
+        token: Token,
+    ) -> Token {
         match self.peek_nth(0) {
             c if c == next_char => {
                 self.read_char();
@@ -223,7 +231,9 @@ mod tests {
 
     fn check_tokens(input: &str, expected_tokens: &[Token]) -> Result<()> {
         let mut lexer = Lexer::new(input);
-        for (token, expected_token) in lexer.tokenize()?.into_iter().zip(expected_tokens.iter()) {
+        for (token, expected_token) in
+            lexer.tokenize()?.into_iter().zip(expected_tokens.iter())
+        {
             assert_eq!(token, *expected_token);
         }
         Ok(())

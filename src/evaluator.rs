@@ -1,4 +1,6 @@
-use crate::{flatten, Block, Expression, Identifier, Literal, Operator, Statement};
+use crate::{
+    flatten, Block, Expression, Identifier, Literal, Operator, Statement,
+};
 use anyhow::{bail, Context, Result};
 use std::{
     cell::RefCell,
@@ -95,7 +97,9 @@ impl Environment {
         }
     }
 
-    pub fn new_rc(outer: Option<Rc<RefCell<Environment>>>) -> Rc<RefCell<Self>> {
+    pub fn new_rc(
+        outer: Option<Rc<RefCell<Environment>>>,
+    ) -> Rc<RefCell<Self>> {
         Rc::new(RefCell::new(Self::new(outer)))
     }
 
@@ -150,10 +154,12 @@ fn evaluate_statement(
                 .insert(identifier.to_string(), value);
             Object::Empty
         }
-        Statement::Expression(expression) => evaluate_expression(expression, environment)?,
-        Statement::Return(expression) => {
-            Object::Return(Box::new(evaluate_expression(expression, environment)?))
+        Statement::Expression(expression) => {
+            evaluate_expression(expression, environment)?
         }
+        Statement::Return(expression) => Object::Return(Box::new(
+            evaluate_expression(expression, environment)?,
+        )),
     })
 }
 
@@ -181,31 +187,52 @@ fn evaluate_expression(
             evaluate_call_expression(environment, function, arguments)?
         }
         Expression::Index(left_expression, index_expression) => {
-            evaluate_index_expression(environment, left_expression, index_expression)?
+            evaluate_index_expression(
+                environment,
+                left_expression,
+                index_expression,
+            )?
         }
-        Expression::Identifier(identifier) => evaluate_identifier(environment, identifier)?,
+        Expression::Identifier(identifier) => {
+            evaluate_identifier(environment, identifier)?
+        }
         Expression::Literal(literal) => evaluate_literal(literal, environment)?,
         Expression::Boolean(boolean) => Object::Boolean(*boolean),
         Expression::Prefix(operator, expression) => {
             evaluate_prefix_expression(operator, expression, environment)?
         }
         Expression::Infix(left_expression, operator, right_expression) => {
-            evaluate_infix_expression(left_expression, operator, right_expression, environment)?
+            evaluate_infix_expression(
+                left_expression,
+                operator,
+                right_expression,
+                environment,
+            )?
         }
         Expression::If(condition, consequence, alternative) => {
-            evaluate_if_expression(condition, consequence, alternative, environment)?
+            evaluate_if_expression(
+                condition,
+                consequence,
+                alternative,
+                environment,
+            )?
         }
     })
 }
 
-fn evaluate_literal(literal: &Literal, environment: Rc<RefCell<Environment>>) -> Result<Object> {
+fn evaluate_literal(
+    literal: &Literal,
+    environment: Rc<RefCell<Environment>>,
+) -> Result<Object> {
     Ok(match literal {
         Literal::Integer(integer) => Object::Integer(*integer),
         Literal::String(string) => Object::String(string.to_string()),
         Literal::Array(elements) => {
             let elements = elements
                 .iter()
-                .map(|expression| evaluate_expression(expression, environment.clone()))
+                .map(|expression| {
+                    evaluate_expression(expression, environment.clone())
+                })
                 .collect::<Result<Vec<_>>>()?;
             Object::Array(elements)
         }
@@ -264,8 +291,11 @@ fn evaluate_call_expression(
     match function {
         Object::Function(parameters, body, function_environment) => {
             environment.borrow_mut().outer = Some(function_environment);
-            let arguments = evaluate_expressions(arguments, environment.clone())?;
-            for (argument, name) in arguments.into_iter().zip(parameters.into_iter()) {
+            let arguments =
+                evaluate_expressions(arguments, environment.clone())?;
+            for (argument, name) in
+                arguments.into_iter().zip(parameters.into_iter())
+            {
                 environment.borrow_mut().set_binding(name, argument);
             }
             let result = evaluate_statements(&body, environment)?;
@@ -338,7 +368,9 @@ fn evaluate_infix_expression(
     let right_value = evaluate_expression(right_expression, environment)?;
 
     // Integer x Integer
-    if let (Object::Integer(lhs), Object::Integer(rhs)) = (&left_value, &right_value) {
+    if let (Object::Integer(lhs), Object::Integer(rhs)) =
+        (&left_value, &right_value)
+    {
         return Ok(match operator {
             Operator::Add => Object::Integer(lhs + rhs),
             Operator::Divide => Object::Integer(lhs / rhs),
@@ -356,7 +388,9 @@ fn evaluate_infix_expression(
     }
 
     // Boolean x Boolean
-    if let (Object::Boolean(lhs), Object::Boolean(rhs)) = (&left_value, &right_value) {
+    if let (Object::Boolean(lhs), Object::Boolean(rhs)) =
+        (&left_value, &right_value)
+    {
         return Ok(match operator {
             Operator::Equal => Object::Boolean(lhs == rhs),
             Operator::NotEqual => Object::Boolean(lhs != rhs),
@@ -368,7 +402,9 @@ fn evaluate_infix_expression(
     }
 
     // String x String
-    if let (Object::String(lhs), Object::String(rhs)) = (left_value, right_value) {
+    if let (Object::String(lhs), Object::String(rhs)) =
+        (left_value, right_value)
+    {
         return Ok(match operator {
             Operator::Equal => Object::Boolean(lhs == rhs),
             Operator::NotEqual => Object::Boolean(lhs != rhs),
@@ -436,7 +472,8 @@ fn builtin_len() -> Object {
                 bail!("Too many arguments to 'len'")
             }
 
-            let arg = args.first().context("No arguments were passed to 'len'!")?;
+            let arg =
+                args.first().context("No arguments were passed to 'len'!")?;
 
             match arg {
                 Object::String(value) => Ok(Object::Integer(value.len() as _)),
@@ -460,7 +497,9 @@ fn builtin_first() -> Object {
                 .context("No arguments were passed to 'first'!")?;
 
             match arg {
-                Object::Array(value) => Ok(value.first().unwrap_or(&Object::Null).clone()),
+                Object::Array(value) => {
+                    Ok(value.first().unwrap_or(&Object::Null).clone())
+                }
                 _ => bail!("Invalid type was provided to 'first' function!"),
             }
         })),
@@ -480,7 +519,9 @@ fn builtin_last() -> Object {
                 .context("No arguments were passed to 'last'!")?;
 
             match arg {
-                Object::Array(value) => Ok(value.last().unwrap_or(&Object::Null).clone()),
+                Object::Array(value) => {
+                    Ok(value.last().unwrap_or(&Object::Null).clone())
+                }
                 _ => bail!("Invalid type was provided to 'last' function!"),
             }
         })),
@@ -553,8 +594,8 @@ mod tests {
 
     use super::Result;
     use crate::{
-        evaluate_statements, Environment, Expression, Lexer, Literal, Object, Operator, Parser,
-        Statement,
+        evaluate_statements, Environment, Expression, Lexer, Literal, Object,
+        Operator, Parser, Statement,
     };
 
     fn evaluate_tests(tests: &[(&str, Object)]) -> Result<()> {
@@ -873,7 +914,8 @@ let two = "two";
             Object::HashMap(HashMap::<_, _>::from_iter({
                 let array = [
                     (
-                        Expression::Literal(Literal::String("one".to_string())).hash(),
+                        Expression::Literal(Literal::String("one".to_string()))
+                            .hash(),
                         Object::Integer(1),
                     ),
                     (
@@ -882,9 +924,13 @@ let two = "two";
                     ),
                     (
                         Expression::Infix(
-                            Box::new(Expression::Literal(Literal::String("thr".to_string()))),
+                            Box::new(Expression::Literal(Literal::String(
+                                "thr".to_string(),
+                            ))),
                             Operator::Add,
-                            Box::new(Expression::Literal(Literal::String("ee".to_string()))),
+                            Box::new(Expression::Literal(Literal::String(
+                                "ee".to_string(),
+                            ))),
                         )
                         .hash(),
                         Object::Integer(3),
