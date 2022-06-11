@@ -549,7 +549,7 @@ fn builtin_print() -> Object {
 
 #[cfg(test)]
 mod tests {
-    use std::{array::IntoIter, collections::HashMap, iter::FromIterator};
+    use std::{collections::HashMap, iter::FromIterator};
 
     use super::Result;
     use crate::{
@@ -870,31 +870,34 @@ let two = "two";
     true: 5,
     false: 6
 }"#,
-            Object::HashMap(HashMap::<_, _>::from_iter(IntoIter::new([
-                (
-                    Expression::Literal(Literal::String("one".to_string())).hash(),
-                    Object::Integer(1),
-                ),
-                (
-                    Expression::Identifier("two".to_string()).hash(),
-                    Object::Integer(2),
-                ),
-                (
-                    Expression::Infix(
-                        Box::new(Expression::Literal(Literal::String("thr".to_string()))),
-                        Operator::Add,
-                        Box::new(Expression::Literal(Literal::String("ee".to_string()))),
-                    )
-                    .hash(),
-                    Object::Integer(3),
-                ),
-                (
-                    Expression::Literal(Literal::Integer(4)).hash(),
-                    Object::Integer(4),
-                ),
-                (Expression::Boolean(true).hash(), Object::Integer(5)),
-                (Expression::Boolean(false).hash(), Object::Integer(6)),
-            ]))),
+            Object::HashMap(HashMap::<_, _>::from_iter({
+                let array = [
+                    (
+                        Expression::Literal(Literal::String("one".to_string())).hash(),
+                        Object::Integer(1),
+                    ),
+                    (
+                        Expression::Identifier("two".to_string()).hash(),
+                        Object::Integer(2),
+                    ),
+                    (
+                        Expression::Infix(
+                            Box::new(Expression::Literal(Literal::String("thr".to_string()))),
+                            Operator::Add,
+                            Box::new(Expression::Literal(Literal::String("ee".to_string()))),
+                        )
+                        .hash(),
+                        Object::Integer(3),
+                    ),
+                    (
+                        Expression::Literal(Literal::Integer(4)).hash(),
+                        Object::Integer(4),
+                    ),
+                    (Expression::Boolean(true).hash(), Object::Integer(5)),
+                    (Expression::Boolean(false).hash(), Object::Integer(6)),
+                ];
+                IntoIterator::into_iter(array)
+            })),
         )];
         evaluate_tests(&tests)
     }
