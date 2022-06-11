@@ -7,10 +7,12 @@ use std::{
     rc::Rc,
 };
 
+pub type SharedPointer<T> = Rc<RefCell<T>>;
+
 #[derive(Clone)]
 pub struct BuiltInFunction {
     pub name: String,
-    pub action: Rc<RefCell<dyn Fn(Vec<Object>) -> Result<Object>>>,
+    pub action: SharedPointer<dyn Fn(Vec<Object>) -> Result<Object>>,
 }
 
 impl fmt::Debug for BuiltInFunction {
@@ -52,7 +54,7 @@ impl Display for Object {
                     .iter()
                     .map(|e| {
                         if let Object::String(_) = e {
-                            format!("\"{}\"", e.to_string())
+                            format!(r#""{}""#, e)
                         } else {
                             e.to_string()
                         }
@@ -67,7 +69,7 @@ impl Display for Object {
             Self::Function(parameters, body, _environment) => {
                 format!(
                     "fn({}) {{ {} }}",
-                    flatten(&parameters, ", "),
+                    flatten(parameters, ", "),
                     flatten(body, "\n"),
                 )
             }
@@ -112,14 +114,12 @@ impl Environment {
 
     pub fn get_binding(&self, binding: String) -> Result<Object> {
         if let Some(binding) = self.bindings.get(&binding) {
-            return Ok(binding.clone());
+            Ok(binding.clone())
+        } else if let Some(outer) = self.outer.as_ref() {
+            outer.borrow().get_binding(binding)
+        } else {
+            bail!("Binding not found: {:?}", binding)
         }
-
-        if let Some(outer) = self.outer.as_ref() {
-            return outer.borrow().get_binding(binding);
-        }
-
-        bail!("Binding not found: {:?}", binding)
     }
 }
 
@@ -270,12 +270,12 @@ fn evaluate_call_expression(
             }
             let result = evaluate_statements(&body, environment)?;
             match result {
-                Object::Return(value) => return Ok(*value),
-                _ => return Ok(result),
+                Object::Return(value) => Ok(*value),
+                _ => Ok(result),
             }
         }
         Object::BuiltInFunction(function) => {
-            let arguments = evaluate_expressions(arguments, environment.clone())?;
+            let arguments = evaluate_expressions(arguments, environment)?;
             let action = function.action.borrow();
             action(arguments)
         }
@@ -289,7 +289,7 @@ fn evaluate_index_expression(
     index_expression: &Expression,
 ) -> Result<Object> {
     let identifier = evaluate_expression(left_expression, environment.clone())?;
-    let index = evaluate_expression(index_expression, environment.clone())?;
+    let index = evaluate_expression(index_expression, environment)?;
 
     match (identifier, index) {
         (Object::Array(elements), Object::Integer(index)) => {
@@ -527,7 +527,7 @@ fn builtin_push() -> Object {
 
             match array {
                 Object::Array(value) => {
-                    let mut elements = value.iter().cloned().collect::<Vec<_>>();
+                    let mut elements = value.to_vec();
                     elements.push(element.clone());
                     Ok(Object::Array(elements))
                 }
