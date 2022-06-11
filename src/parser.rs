@@ -55,7 +55,7 @@ impl Display for Operator {
             Self::Equal => "==",
             Self::NotEqual => "!=",
         };
-        write!(f, "{}", statement.to_string())
+        write!(f, "{}", statement)
     }
 }
 
@@ -107,11 +107,7 @@ impl Display for Expression {
                 format!("({} {} {})", left_expression, operator, right_expression)
             }
             Self::If(condition, consequence, alternative) => {
-                let statement = format!(
-                    "if ({}) {{ {} }}",
-                    condition.to_string(),
-                    flatten(consequence, "\n"),
-                );
+                let statement = format!("if ({}) {{ {} }}", condition, flatten(consequence, "\n"),);
 
                 let mut result = String::new();
                 result.push_str(statement.as_str());
@@ -126,19 +122,15 @@ impl Display for Expression {
             Self::Function(parameters, body) => {
                 format!(
                     "fn({}) {{ {} }}",
-                    flatten(&parameters, ", "),
+                    flatten(parameters, ", "),
                     flatten(body, "\n"),
                 )
             }
             Self::Call(expression, arguments) => {
-                format!("{}({})", expression.to_string(), flatten(arguments, ", "),)
+                format!("{}({})", expression, flatten(arguments, ", "),)
             }
             Self::Index(left_expression, index_expression) => {
-                format!(
-                    "({}[{}])",
-                    left_expression.to_string(),
-                    index_expression.to_string()
-                )
+                format!("({}[{}])", left_expression, index_expression,)
             }
         };
         write!(f, "{}", expression)
