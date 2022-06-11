@@ -44,7 +44,10 @@ Enter 'exit' or press 'CTRL+C' to exit the REPL.
                         }
                     };
 
-                    let result = match evaluate_statements(&program, environment.clone()) {
+                    let result = match evaluate_statements(
+                        &program,
+                        environment.clone(),
+                    ) {
                         Ok(program) => program,
                         Err(error) => {
                             eprintln!("Error evaluating: {}", error);

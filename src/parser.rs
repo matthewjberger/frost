@@ -69,7 +69,9 @@ pub enum Statement {
 impl Display for Statement {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         let statement = match self {
-            Self::Let(identifier, expression) => format!("let {} = {};", identifier, expression),
+            Self::Let(identifier, expression) => {
+                format!("let {} = {};", identifier, expression)
+            }
             Self::Return(expression) => format!("return {};", expression),
             Self::Expression(expression) => expression.to_string(),
         };
@@ -102,18 +104,28 @@ impl Display for Expression {
             Self::Identifier(identifier) => identifier.to_string(),
             Self::Literal(literal) => literal.to_string(),
             Self::Boolean(boolean) => boolean.to_string(),
-            Self::Prefix(operator, expression) => format!("({}{})", operator, expression),
+            Self::Prefix(operator, expression) => {
+                format!("({}{})", operator, expression)
+            }
             Self::Infix(left_expression, operator, right_expression) => {
-                format!("({} {} {})", left_expression, operator, right_expression)
+                format!(
+                    "({} {} {})",
+                    left_expression, operator, right_expression
+                )
             }
             Self::If(condition, consequence, alternative) => {
-                let statement = format!("if ({}) {{ {} }}", condition, flatten(consequence, "\n"),);
+                let statement = format!(
+                    "if ({}) {{ {} }}",
+                    condition,
+                    flatten(consequence, "\n"),
+                );
 
                 let mut result = String::new();
                 result.push_str(statement.as_str());
 
                 if let Some(alternative) = alternative {
-                    let else_statement = format!("else {{ {} }}", flatten(alternative, "\n"));
+                    let else_statement =
+                        format!("else {{ {} }}", flatten(alternative, "\n"));
                     result.push_str(&else_statement);
                 }
 
@@ -151,7 +163,8 @@ impl Display for Literal {
             Self::Integer(x) => x.to_string(),
             Self::String(x) => x.to_string(),
             Self::Array(array) => {
-                let expressions = array.iter().map(|e| e.to_string()).collect::<Vec<_>>();
+                let expressions =
+                    array.iter().map(|e| e.to_string()).collect::<Vec<_>>();
                 format!("[{}]", expressions.join(", "))
             }
             Self::HashMap(key_value_pairs) => {
@@ -266,21 +279,29 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expression_statement(&mut self) -> Result<Statement> {
-        let statement = Statement::Expression(self.parse_expression(Precedence::Lowest)?);
+        let statement =
+            Statement::Expression(self.parse_expression(Precedence::Lowest)?);
         if matches!(self.peek_nth(0), Token::Semicolon) {
             self.read_token();
         }
         Ok(statement)
     }
 
-    fn parse_expression(&mut self, precedence: Precedence) -> Result<Expression> {
+    fn parse_expression(
+        &mut self,
+        precedence: Precedence,
+    ) -> Result<Expression> {
         let mut advance = true;
         let mut expression = match self.peek_nth(0) {
-            Token::Identifier(identifier) => Expression::Identifier(identifier.to_string()),
+            Token::Identifier(identifier) => {
+                Expression::Identifier(identifier.to_string())
+            }
             Token::StringLiteral(string) => {
                 Expression::Literal(Literal::String(string.to_string()))
             }
-            Token::Integer(value) => Expression::Literal(Literal::Integer(*value)),
+            Token::Integer(value) => {
+                Expression::Literal(Literal::Integer(*value))
+            }
             Token::Bang | Token::Minus => {
                 advance = false;
                 self.parse_prefix_expression()?
@@ -329,13 +350,16 @@ impl<'a> Parser<'a> {
                 | Token::NotEqual
                 | Token::LessThan
                 | Token::GreaterThan => {
-                    expression = self.parse_infix_expression(expression.clone())?;
+                    expression =
+                        self.parse_infix_expression(expression.clone())?;
                 }
                 Token::LeftBracket => {
-                    expression = self.parse_index_expression(expression.clone())?;
+                    expression =
+                        self.parse_index_expression(expression.clone())?;
                 }
                 Token::LeftParentheses => {
-                    expression = self.parse_call_expression(expression.clone())?;
+                    expression =
+                        self.parse_call_expression(expression.clone())?;
                 }
                 _ => return Ok(expression),
             };
@@ -353,7 +377,10 @@ impl<'a> Parser<'a> {
         ))
     }
 
-    fn parse_infix_expression(&mut self, left_expression: Expression) -> Result<Expression> {
+    fn parse_infix_expression(
+        &mut self,
+        left_expression: Expression,
+    ) -> Result<Expression> {
         let operator = Operator::from_token(self.peek_nth(0), false)?;
         let precedence = Precedence::from(self.peek_nth(0));
         self.read_token();
@@ -369,12 +396,18 @@ impl<'a> Parser<'a> {
         Ok(Expression::Literal(Literal::Array(elements)))
     }
 
-    fn parse_call_expression(&mut self, expression: Expression) -> Result<Expression> {
+    fn parse_call_expression(
+        &mut self,
+        expression: Expression,
+    ) -> Result<Expression> {
         let elements = self.parse_expression_list(&Token::RightParentheses)?;
         Ok(Expression::Call(Box::new(expression), elements))
     }
 
-    fn parse_index_expression(&mut self, expression: Expression) -> Result<Expression> {
+    fn parse_index_expression(
+        &mut self,
+        expression: Expression,
+    ) -> Result<Expression> {
         self.read_token(); // [
         let index_expression = self.parse_expression(Precedence::Lowest)?;
         self.read_token(); // ]
@@ -400,7 +433,10 @@ impl<'a> Parser<'a> {
         Ok(Expression::Literal(Literal::HashMap(pairs)))
     }
 
-    fn parse_expression_list(&mut self, end_token: &Token) -> Result<Vec<Expression>> {
+    fn parse_expression_list(
+        &mut self,
+        end_token: &Token,
+    ) -> Result<Vec<Expression>> {
         self.read_token();
         let mut elements = Vec::new();
         while self.peek_nth(0) != end_token {
@@ -493,7 +529,9 @@ impl<'a> Parser<'a> {
 
         let mut statements = Vec::new();
 
-        while self.peek_nth(0) != &Token::RightBrace && self.peek_nth(0) != &Token::EndOfFile {
+        while self.peek_nth(0) != &Token::RightBrace
+            && self.peek_nth(0) != &Token::EndOfFile
+        {
             if let Some(statement) = self.parse_statement()? {
                 statements.push(statement);
             }
@@ -602,7 +640,10 @@ mod tests {
 
     #[test]
     fn identifier_expressions() -> Result<()> {
-        parse_statement("foobar;", &Expression::Identifier("foobar".to_string()))
+        parse_statement(
+            "foobar;",
+            &Expression::Identifier("foobar".to_string()),
+        )
     }
 
     #[test]
@@ -655,7 +696,9 @@ mod tests {
                             expression,
                             Expression::Prefix(
                                 *operator,
-                                Box::new(Expression::Literal(Literal::Integer(*value))),
+                                Box::new(Expression::Literal(
+                                    Literal::Integer(*value)
+                                )),
                             )
                         )
                     }
@@ -688,7 +731,10 @@ mod tests {
                     Statement::Expression(expression) => {
                         assert_eq!(
                             expression,
-                            Expression::Prefix(*operator, Box::new(Expression::Boolean(*value)),)
+                            Expression::Prefix(
+                                *operator,
+                                Box::new(Expression::Boolean(*value)),
+                            )
                         )
                     }
                     _ => bail!("Expected an expression statement!"),
@@ -727,9 +773,13 @@ mod tests {
                         assert_eq!(
                             expression,
                             Expression::Infix(
-                                Box::new(Expression::Literal(Literal::Integer(*left_value))),
+                                Box::new(Expression::Literal(
+                                    Literal::Integer(*left_value)
+                                )),
                                 *operator,
-                                Box::new(Expression::Literal(Literal::Integer(*right_value,))),
+                                Box::new(Expression::Literal(
+                                    Literal::Integer(*right_value,)
+                                )),
                             )
                         )
                     }
@@ -916,7 +966,10 @@ mod tests {
                     Statement::Expression(expression) => {
                         assert_eq!(
                             expression,
-                            Expression::Function(expected_parameters.to_vec(), Vec::new())
+                            Expression::Function(
+                                expected_parameters.to_vec(),
+                                Vec::new()
+                            )
                         )
                     }
                     _ => bail!("Expected an expression statement!"),
@@ -1051,7 +1104,10 @@ mod tests {
         )
     }
 
-    fn parse_statement(input: &str, expected_expression: &Expression) -> Result<()> {
+    fn parse_statement(
+        input: &str,
+        expected_expression: &Expression,
+    ) -> Result<()> {
         let mut lexer = Lexer::new(&input);
         let tokens = lexer.tokenize()?;
 
@@ -1060,7 +1116,8 @@ mod tests {
 
         if let Some(statement) = program.into_iter().next() {
             match statement {
-                Statement::Expression(expression) | Statement::Return(expression) => {
+                Statement::Expression(expression)
+                | Statement::Return(expression) => {
                     assert_eq!(expression, *expected_expression)
                 }
                 _ => bail!("Expected an expression statement!"),
