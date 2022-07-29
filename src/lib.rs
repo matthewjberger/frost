@@ -1,9 +1,10 @@
+mod compiler;
 mod evaluator;
 mod lexer;
 mod parser;
 mod vm;
 
-pub use self::{evaluator::*, lexer::*, parser::*, vm::*};
+pub use self::{compiler::*, evaluator::*, lexer::*, parser::*, vm::*};
 
 use std::{
     collections::hash_map::DefaultHasher,
