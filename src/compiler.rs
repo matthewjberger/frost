@@ -46,6 +46,13 @@ pub struct Bytecode {
 }
 
 impl Bytecode {
+    pub fn assemble(&self) -> Vec<u8> {
+        self.instructions
+            .iter()
+            .flat_map(|instruction| instruction.as_bytes())
+            .collect::<Vec<_>>()
+    }
+
     pub fn disassemble(&self) -> String {
         let mut byte_counter = 0;
         self.instructions
@@ -61,61 +68,66 @@ impl Bytecode {
 }
 
 pub struct Compiler<'a> {
-    pub bytecode: Bytecode,
     pub statements: Iter<'a, Statement>,
 }
 
 impl<'a> Compiler<'a> {
     pub fn new(statements: &'a [Statement]) -> Self {
         Self {
-            bytecode: Bytecode::default(),
             statements: statements.iter(),
         }
     }
 
-    pub fn compile(&mut self) -> Result<&Bytecode> {
+    pub fn compile(&mut self) -> Result<Bytecode> {
+        let mut bytecode = Bytecode::default();
         while let Some(statement) = self.statements.next() {
-            self.compile_statement(statement)?;
+            self.compile_statement(statement, &mut bytecode)?;
         }
-        Ok(&self.bytecode)
+        Ok(bytecode)
     }
 
-    fn add_constant(&mut self, constant: Object) {
-        self.bytecode.constants.push(constant);
-    }
-
-    fn emit(&mut self, instruction: Instruction) {
-        self.bytecode.instructions.push(instruction);
-    }
-
-    fn compile_statement(&mut self, statement: &Statement) -> Result<()> {
+    fn compile_statement(
+        &mut self,
+        statement: &Statement,
+        bytecode: &mut Bytecode,
+    ) -> Result<()> {
         match statement {
             Statement::Expression(expression) => {
-                self.compile_expression(expression)
+                self.compile_expression(expression, bytecode)
             }
             _ => unimplemented!(),
         }
     }
 
-    fn compile_expression(&mut self, expression: &Expression) -> Result<()> {
+    fn compile_expression(
+        &mut self,
+        expression: &Expression,
+        bytecode: &mut Bytecode,
+    ) -> Result<()> {
         match expression {
-            Expression::Literal(literal) => self.compile_literal(literal),
+            Expression::Literal(literal) => {
+                self.compile_literal(literal, bytecode)
+            }
             Expression::Infix(left, operator, right) => {
-                self.compile_infix(left, operator, right)
+                self.compile_infix(left, operator, right, bytecode)
             }
             _ => unimplemented!(),
         }
     }
 
-    fn compile_literal(&mut self, literal: &Literal) -> Result<()> {
+    fn compile_literal(
+        &mut self,
+        literal: &Literal,
+        bytecode: &mut Bytecode,
+    ) -> Result<()> {
         let instruction = match literal {
             Literal::Integer(value) => {
-                self.add_constant(Object::Integer(*value));
+                bytecode.constants.push(Object::Integer(*value));
                 Instruction::new(Opcode::Constant, vec![*value as u16])
             }
             _ => unimplemented!(),
         };
-        self.emit(instruction);
+        bytecode.instructions.push(instruction);
         Ok(())
     }
 
@@ -124,9 +136,10 @@ impl<'a> Compiler<'a> {
         left: &Expression,
         _operator: &Operator,
         right: &Expression,
+        bytecode: &mut Bytecode,
     ) -> Result<()> {
-        self.compile_expression(left)?;
-        self.compile_expression(right)?;
+        self.compile_expression(left, bytecode)?;
+        self.compile_expression(right, bytecode)?;
         Ok(())
     }
 }
@@ -204,7 +217,7 @@ mod tests {
             let mut compiler = Compiler::new(&program);
             let bytecode = compiler.compile()?;
 
-            assert_eq!(*bytecode, expected_result);
+            assert_eq!(bytecode, expected_result);
         }
 
         Ok(())
