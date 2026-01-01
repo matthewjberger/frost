@@ -1,0 +1,19 @@
+import "examples/vec3_utils.frost"
+
+main :: proc() {
+    a := vec3(0.0f32, 0.0f32, 0.0f32);
+    b := vec3(3.0f32, 4.0f32, 0.0f32);
+
+    dist := distance(0.0f32, 0.0f32, 0.0f32, 3.0f32, 4.0f32, 0.0f32);
+    print(dist);
+
+    direction := vec3_sub(b, a);
+    normalized := vec3_normalize(direction);
+    print(normalized);
+
+    rotation := quat_from_euler(0.0f32, 1.57f32, 0.0f32);
+    rotated := quat_rotate_vec3(rotation, normalized);
+    print(rotated);
+}
+
+main()

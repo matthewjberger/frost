@@ -1,0 +1,26 @@
+// Basic arithmetic
+print(1 + 2 * 3);
+print(10 - 5);
+print(100 / 4);
+print(17 % 5);
+
+// Variables and mutability
+x := 42;
+print(x);
+
+mut y := 10;
+y = y + 5;
+print(y);
+
+// Floats
+pi := 3.14159;
+print(pi * 2.0);
+
+// Booleans
+print(true);
+print(1 < 2);
+print(5 >= 5);
+
+// Strings
+greeting := "Hello, Frost!";
+print(greeting);

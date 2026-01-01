@@ -1,0 +1,50 @@
+// Comprehensive Frost Evaluation
+
+// 1. Fibonacci with memoization-style iteration
+fib :: proc(n: i64) -> i64 {
+    if (n < 2) {
+        return n;
+    }
+    mut a := 0;
+    mut b := 1;
+    for i in 2..n+1 {
+        mut temp := a + b;
+        a = b;
+        b = temp;
+    }
+    return b;
+}
+
+print(fib(10));
+print(fib(20));
+
+// 2. Higher-order functions
+map_int :: proc(f: proc(i64) -> i64, n: i64) -> i64 {
+    return f(n);
+}
+
+double :: proc(x: i64) -> i64 { x * 2 }
+square :: proc(x: i64) -> i64 { x * x }
+
+print(map_int(double, 5));
+print(map_int(square, 5));
+
+// 3. Currying
+curry_add :: proc(a: i64) -> proc(i64) -> i64 {
+    return proc(b: i64) -> i64 { a + b };
+}
+
+add5 := curry_add(5);
+add10 := curry_add(10);
+print(add5(3));
+print(add10(3));
+
+// 4. Defer for cleanup
+test_defer :: proc() -> i64 {
+    mut result := 0;
+    defer result = result + 1;
+    defer result = result * 10;
+    result = 5;
+    return result;
+}
+print(test_defer());

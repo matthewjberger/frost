@@ -1,0 +1,37 @@
+// Functions
+add :: proc(a: i64, b: i64) -> i64 {
+    return a + b;
+}
+print(add(3, 4));
+
+// Recursive function
+factorial :: proc(n: i64) -> i64 {
+    if (n < 2) {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+print(factorial(5));
+print(factorial(10));
+
+// Closures
+make_adder :: proc(x: i64) -> proc(i64) -> i64 {
+    return proc(y: i64) -> i64 { x + y };
+}
+add10 := make_adder(10);
+print(add10(5));
+print(add10(25));
+
+// If expressions
+max :: proc(a: i64, b: i64) -> i64 {
+    if (a > b) { a } else { b }
+}
+print(max(10, 20));
+print(max(100, 50));
+
+// For loops
+mut sum := 0;
+for i in 0..10 {
+    sum = sum + i;
+}
+print(sum);

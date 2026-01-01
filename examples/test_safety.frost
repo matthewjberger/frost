@@ -1,0 +1,5 @@
+Point :: struct { x: i64, y: i64 }
+p := Point { x = 10, y = 20 };
+print(p.x);
+print(p.y);
+print("Memory is automatically managed - no free() needed");
