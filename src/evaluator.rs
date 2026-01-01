@@ -1,5 +1,5 @@
 use crate::{
-    flatten, Block, Expression, Identifier, Literal, Operator, Statement,
+    flatten, Block, CompiledFunction, Expression, Identifier, Literal, Operator, Statement,
 };
 use anyhow::{bail, Context, Result};
 use std::{
@@ -43,6 +43,14 @@ pub enum Object {
     Return(Box<Object>),
     Function(Vec<Identifier>, Block, SharedPointer<Environment>),
     BuiltInFunction(BuiltInFunction),
+    CompiledFunction(CompiledFunction),
+    Closure(Closure),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Closure {
+    pub function: CompiledFunction,
+    pub free: Vec<Object>,
 }
 
 impl Display for Object {
@@ -77,6 +85,16 @@ impl Display for Object {
             }
             Self::BuiltInFunction(builtin_function) => {
                 format!("BuiltIn function '{}'", builtin_function.name)
+            }
+            Self::CompiledFunction(cf) => {
+                format!("CompiledFunction[{} locals]", cf.num_locals)
+            }
+            Self::Closure(closure) => {
+                format!(
+                    "Closure[{} locals, {} free]",
+                    closure.function.num_locals,
+                    closure.free.len()
+                )
             }
         };
         write!(f, "{}", statement)
