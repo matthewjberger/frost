@@ -1,0 +1,12 @@
+Result :: enum {
+    Ok { value: i64 },
+    Err { code: i64 },
+}
+
+r := Result::Ok { value = 42 };
+
+result := switch r {
+    case .Ok { value }: value
+    case .Err { code }: 0 - code
+};
+print(result);

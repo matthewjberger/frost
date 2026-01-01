@@ -1,0 +1,19 @@
+add :: proc(a: i64, b: i64) -> i64 {
+    a + b
+}
+
+sub :: proc(a: i64, b: i64) -> i64 {
+    a - b
+}
+
+mul :: proc(a: i64, b: i64) -> i64 {
+    a * b
+}
+
+square :: proc(x: i64) -> i64 {
+    x * x
+}
+
+sum_of_squares :: proc(a: i64, b: i64) -> i64 {
+    square(a) + square(b)
+}

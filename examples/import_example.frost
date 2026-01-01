@@ -1,0 +1,23 @@
+import "examples/math.frost"
+
+main :: proc() {
+    a := 3;
+    b := 4;
+
+    sum := add(a, b);
+    print(sum);
+
+    diff := sub(b, a);
+    print(diff);
+
+    product := mul(a, b);
+    print(product);
+
+    sq := square(5);
+    print(sq);
+
+    sos := sum_of_squares(3, 4);
+    print(sos);
+}
+
+main()

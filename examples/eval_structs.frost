@@ -1,0 +1,63 @@
+// Structs
+Point :: struct {
+    x: i64,
+    y: i64,
+}
+
+p := Point { x = 10, y = 20 };
+print(p.x);
+print(p.y);
+print(p.x + p.y);
+
+// Nested struct access
+Rectangle :: struct {
+    origin: Point,
+    width: i64,
+    height: i64,
+}
+
+// Tagged unions (enums)
+Option :: enum {
+    Some { value: i64 },
+    None {},
+}
+
+some_val := Option::Some { value = 42 };
+none_val := Option::None {};
+
+// Pattern matching with switch
+get_or_default :: proc(opt: Option, default: i64) -> i64 {
+    switch opt {
+        case .Some { value }: value
+        case .None {}: default
+    }
+}
+
+print(get_or_default(some_val, 0));
+print(get_or_default(none_val, -1));
+
+// Result type
+Result :: enum {
+    Ok { value: i64 },
+    Err { code: i64 },
+}
+
+divide :: proc(a: i64, b: i64) -> Result {
+    if (b == 0) {
+        return Result::Err { code = 1 };
+    }
+    return Result::Ok { value = a / b };
+}
+
+result1 := divide(10, 2);
+result2 := divide(10, 0);
+
+handle_result :: proc(r: Result) -> i64 {
+    switch r {
+        case .Ok { value }: value
+        case .Err { code }: 0 - code
+    }
+}
+
+print(handle_result(result1));
+print(handle_result(result2));

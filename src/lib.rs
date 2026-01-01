@@ -1,10 +1,16 @@
 mod compiler;
-mod evaluator;
+pub mod ffi;
 mod lexer;
 mod parser;
-mod vm;
+mod typechecker;
+mod typed_vm;
+mod types;
+mod value;
 
-pub use self::{compiler::*, evaluator::*, lexer::*, parser::*, vm::*};
+pub use self::{
+    compiler::*, ffi::*, lexer::*, parser::*, typechecker::*, typed_vm::*,
+    types::*, value::*,
+};
 
 use std::{
     collections::hash_map::DefaultHasher,

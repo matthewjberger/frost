@@ -6,75 +6,161 @@ use std::{
 };
 
 #[allow(dead_code)]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Token {
+    Ampersand,
+    And,
+    Arrow,
     Assign,
     Asterisk,
     Bang,
-    Comma,
+    Break,
+    Caret,
+    Case,
     Colon,
+    ColonAssign,
+    Comma,
+    Continue,
+    Defer,
+    Distinct,
+    DoubleColon,
+    Dot,
+    DotDot,
     Else,
     EndOfFile,
+    Enum,
     Equal,
     False,
+    For,
     Function,
     GreaterThan,
+    GreaterThanOrEqual,
     Identifier(String),
     If,
     Illegal(String),
+    Import,
+    In,
     Integer(i64),
+    Float(f64),
+    Float32(f32),
     LeftBrace,
     LeftBracket,
     LeftParentheses,
     LessThan,
-    Let,
+    LessThanOrEqual,
     Minus,
+    Mut,
     NotEqual,
+    Or,
+    Percent,
     Plus,
+    Proc,
     Return,
     RightBrace,
     RightBracket,
     RightParentheses,
-    StringLiteral(String),
     Semicolon,
+    Sizeof,
     Slash,
+    StringLiteral(String),
+    Struct,
+    Switch,
     True,
+    TypeBool,
+    TypeF32,
+    TypeF64,
+    TypeI8,
+    TypeI16,
+    TypeI32,
+    TypeI64,
+    TypeStr,
+    TypeU8,
+    TypeU16,
+    TypeU32,
+    TypeU64,
+    TypeVoid,
+    Underscore,
+    Using,
+    While,
 }
 
 impl Display for Token {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         let symbol = match self {
+            Ampersand => "&".to_string(),
+            And => "&&".to_string(),
+            Arrow => "->".to_string(),
             Assign => "=".to_string(),
             Asterisk => "*".to_string(),
             Bang => "!".to_string(),
-            Comma => ",".to_string(),
+            Break => "break".to_string(),
+            Caret => "^".to_string(),
+            Case => "case".to_string(),
             Colon => ":".to_string(),
+            ColonAssign => ":=".to_string(),
+            Comma => ",".to_string(),
+            Continue => "continue".to_string(),
+            Defer => "defer".to_string(),
+            Distinct => "distinct".to_string(),
+            Dot => ".".to_string(),
+            DotDot => "..".to_string(),
+            DoubleColon => "::".to_string(),
             Else => "else".to_string(),
             EndOfFile => EOF_CHAR.to_string(),
+            Enum => "enum".to_string(),
             Equal => "==".to_string(),
             False => "false".to_string(),
-            Function => "function".to_string(),
+            For => "for".to_string(),
+            Function => "fn".to_string(),
             GreaterThan => ">".to_string(),
+            GreaterThanOrEqual => ">=".to_string(),
             Identifier(value) => value.to_string(),
             If => "if".to_string(),
             Illegal(value) => value.to_string(),
+            Import => "import".to_string(),
+            In => "in".to_string(),
             Integer(number) => number.to_string(),
+            Float(number) => number.to_string(),
+            Float32(number) => format!("{}f32", number),
             LeftBrace => "{".to_string(),
             LeftBracket => "[".to_string(),
             LeftParentheses => "(".to_string(),
             LessThan => "<".to_string(),
-            Let => "let".to_string(),
+            LessThanOrEqual => "<=".to_string(),
             Minus => "-".to_string(),
+            Mut => "mut".to_string(),
             NotEqual => "!=".to_string(),
+            Or => "||".to_string(),
+            Percent => "%".to_string(),
             Plus => "+".to_string(),
+            Proc => "proc".to_string(),
             Return => "return".to_string(),
             RightBrace => "}".to_string(),
             RightBracket => "]".to_string(),
             RightParentheses => ")".to_string(),
-            StringLiteral(value) => value.to_string(),
             Semicolon => ";".to_string(),
+            Sizeof => "sizeof".to_string(),
             Slash => "/".to_string(),
+            StringLiteral(value) => value.to_string(),
+            Struct => "struct".to_string(),
+            Switch => "switch".to_string(),
             True => "true".to_string(),
+            TypeBool => "bool".to_string(),
+            TypeF32 => "f32".to_string(),
+            TypeF64 => "f64".to_string(),
+            TypeI8 => "i8".to_string(),
+            TypeI16 => "i16".to_string(),
+            TypeI32 => "i32".to_string(),
+            TypeI64 => "i64".to_string(),
+            TypeStr => "str".to_string(),
+            TypeU8 => "u8".to_string(),
+            TypeU16 => "u16".to_string(),
+            TypeU32 => "u32".to_string(),
+            TypeU64 => "u64".to_string(),
+            TypeVoid => "void".to_string(),
+            Underscore => "_".to_string(),
+            Using => "using".to_string(),
+            While => "while".to_string(),
         };
         write!(f, "{}", symbol)
     }
@@ -114,18 +200,61 @@ impl<'a> Lexer<'a> {
             '(' => LeftParentheses,
             ')' => RightParentheses,
             ',' => Comma,
-            ':' => Colon,
+            ':' => match self.peek_nth(0) {
+                ':' => {
+                    self.read_char();
+                    DoubleColon
+                }
+                '=' => {
+                    self.read_char();
+                    ColonAssign
+                }
+                _ => Colon,
+            },
             '+' => Plus,
             '{' => LeftBrace,
             '}' => RightBrace,
             '[' => LeftBracket,
             ']' => RightBracket,
             '!' => self.next_char_or(Bang, '=', NotEqual),
-            '<' => LessThan,
-            '>' => GreaterThan,
-            '-' => Minus,
+            '<' => self.next_char_or(LessThan, '=', LessThanOrEqual),
+            '>' => self.next_char_or(GreaterThan, '=', GreaterThanOrEqual),
+            '%' => Percent,
+            '-' => self.next_char_or(Minus, '>', Arrow),
             '*' => Asterisk,
-            '/' => Slash,
+            '/' => {
+                if self.peek_nth(0) == '/' {
+                    self.take_while(|c| c != '\n');
+                    return self.next_token();
+                }
+                if self.peek_nth(0) == '*' {
+                    self.read_char();
+                    loop {
+                        if self.is_eof() {
+                            bail!("Unterminated block comment");
+                        }
+                        if self.peek_nth(0) == '*' && self.peek_nth(1) == '/' {
+                            self.read_char();
+                            self.read_char();
+                            break;
+                        }
+                        self.read_char();
+                    }
+                    return self.next_token();
+                }
+                Slash
+            }
+            '^' => Caret,
+            '&' => self.next_char_or(Ampersand, '&', And),
+            '|' => {
+                if self.peek_nth(0) == '|' {
+                    self.read_char();
+                    Or
+                } else {
+                    Illegal("|".to_string())
+                }
+            }
+            '.' => self.next_char_or(Dot, '.', DotDot),
             '"' => {
                 let literal = self.take_while(|x| x != '"');
                 match self.peek_nth(0) {
@@ -140,15 +269,30 @@ impl<'a> Lexer<'a> {
                 StringLiteral(literal)
             }
             EOF_CHAR => EndOfFile,
-            c if Self::is_letter(c) => {
+            c if Self::is_ident_start(c) => {
                 let mut identifier = c.to_string();
-                identifier.push_str(&self.take_while(Self::is_letter));
+                identifier.push_str(&self.take_while(Self::is_ident_char));
                 Self::lookup_identifier(&identifier)
             }
             c if Self::is_digit(c) => {
                 let mut number = c.to_string();
                 number.push_str(&self.take_while(Self::is_digit));
-                Integer(number.parse::<i64>()?)
+                if self.peek_nth(0) == '.' && self.peek_nth(1) != '.' {
+                    number.push(self.read_char());
+                    number.push_str(&self.take_while(Self::is_digit));
+                    if self.peek_nth(0) == 'f' {
+                        self.read_char();
+                        if self.peek_nth(0) == '3' && self.peek_nth(1) == '2' {
+                            self.read_char();
+                            self.read_char();
+                        }
+                        Float32(number.parse::<f32>()?)
+                    } else {
+                        Float(number.parse::<f64>()?)
+                    }
+                } else {
+                    Integer(number.parse::<i64>()?)
+                }
             }
             illegal => Illegal(illegal.to_string()),
         };
@@ -184,8 +328,15 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn is_letter(c: char) -> bool {
+    fn is_ident_start(c: char) -> bool {
         c.is_ascii_lowercase() || c.is_ascii_uppercase() || c == '_'
+    }
+
+    fn is_ident_char(c: char) -> bool {
+        c.is_ascii_lowercase()
+            || c.is_ascii_uppercase()
+            || c.is_ascii_digit()
+            || c == '_'
     }
 
     fn is_digit(c: char) -> bool {
@@ -198,13 +349,42 @@ impl<'a> Lexer<'a> {
 
     fn lookup_identifier(identifier: &str) -> Token {
         match identifier {
+            "_" => Underscore,
             "fn" => Function,
-            "let" => Let,
+            "mut" => Mut,
             "true" => True,
             "false" => False,
             "return" => Return,
             "if" => If,
+            "import" => Import,
             "else" => Else,
+            "proc" => Proc,
+            "struct" => Struct,
+            "enum" => Enum,
+            "defer" => Defer,
+            "using" => Using,
+            "while" => While,
+            "for" => For,
+            "in" => In,
+            "distinct" => Distinct,
+            "sizeof" => Sizeof,
+            "break" => Break,
+            "continue" => Continue,
+            "switch" => Switch,
+            "case" => Case,
+            "i8" => TypeI8,
+            "i16" => TypeI16,
+            "i32" => TypeI32,
+            "i64" => TypeI64,
+            "u8" => TypeU8,
+            "u16" => TypeU16,
+            "u32" => TypeU32,
+            "u64" => TypeU64,
+            "f32" => TypeF32,
+            "f64" => TypeF64,
+            "bool" => TypeBool,
+            "str" => TypeStr,
+            "void" => TypeVoid,
             _ => Identifier(identifier.to_string()),
         }
     }
@@ -240,13 +420,12 @@ mod tests {
     }
 
     #[test]
-    fn let_statement() -> Result<()> {
+    fn declaration_statement() -> Result<()> {
         check_tokens(
-            "let five = 5;",
+            "five := 5;",
             &[
-                Token::Let,
                 Token::Identifier("five".to_string()),
-                Token::Assign,
+                Token::ColonAssign,
                 Token::Integer(5),
                 Token::Semicolon,
             ],
@@ -256,11 +435,10 @@ mod tests {
     #[test]
     fn function_declaration() -> Result<()> {
         check_tokens(
-            "let add = fn(x, y) { x + y; };",
+            "add := fn(x, y) { x + y; };",
             &[
-                Token::Let,
                 Token::Identifier("add".to_string()),
-                Token::Assign,
+                Token::ColonAssign,
                 Token::Function,
                 Token::LeftParentheses,
                 Token::Identifier("x".to_string()),
@@ -279,13 +457,12 @@ mod tests {
     }
 
     #[test]
-    fn function_assignment() -> Result<()> {
+    fn function_call() -> Result<()> {
         check_tokens(
-            "let result = add(five, ten);",
+            "result := add(five, ten);",
             &[
-                Token::Let,
                 Token::Identifier("result".to_string()),
-                Token::Assign,
+                Token::ColonAssign,
                 Token::Identifier("add".to_string()),
                 Token::LeftParentheses,
                 Token::Identifier("five".to_string()),
@@ -298,9 +475,23 @@ mod tests {
     }
 
     #[test]
+    fn mut_declaration() -> Result<()> {
+        check_tokens(
+            "mut x := 5;",
+            &[
+                Token::Mut,
+                Token::Identifier("x".to_string()),
+                Token::ColonAssign,
+                Token::Integer(5),
+                Token::Semicolon,
+            ],
+        )
+    }
+
+    #[test]
     fn operators() -> Result<()> {
         check_tokens(
-            "!-/*5;",
+            "!- / *5;",
             &[
                 Token::Bang,
                 Token::Minus,
@@ -417,6 +608,236 @@ mod tests {
                 Token::StringLiteral("bar".to_string()),
                 Token::RightBrace,
                 Token::Semicolon,
+            ],
+        )
+    }
+
+    #[test]
+    fn type_keywords() -> Result<()> {
+        check_tokens(
+            "i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 bool str void",
+            &[
+                Token::TypeI8,
+                Token::TypeI16,
+                Token::TypeI32,
+                Token::TypeI64,
+                Token::TypeU8,
+                Token::TypeU16,
+                Token::TypeU32,
+                Token::TypeU64,
+                Token::TypeF32,
+                Token::TypeF64,
+                Token::TypeBool,
+                Token::TypeStr,
+                Token::TypeVoid,
+            ],
+        )
+    }
+
+    #[test]
+    fn odin_style_tokens() -> Result<()> {
+        check_tokens(
+            ":: := -> ^ & .",
+            &[
+                Token::DoubleColon,
+                Token::ColonAssign,
+                Token::Arrow,
+                Token::Caret,
+                Token::Ampersand,
+                Token::Dot,
+            ],
+        )
+    }
+
+    #[test]
+    fn proc_and_struct_keywords() -> Result<()> {
+        check_tokens(
+            "proc struct enum defer using for in distinct sizeof",
+            &[
+                Token::Proc,
+                Token::Struct,
+                Token::Enum,
+                Token::Defer,
+                Token::Using,
+                Token::For,
+                Token::In,
+                Token::Distinct,
+                Token::Sizeof,
+            ],
+        )
+    }
+
+    #[test]
+    fn odin_style_procedure() -> Result<()> {
+        check_tokens(
+            "add :: proc(a: i64, b: i64) -> i64 { return a + b; }",
+            &[
+                Token::Identifier("add".to_string()),
+                Token::DoubleColon,
+                Token::Proc,
+                Token::LeftParentheses,
+                Token::Identifier("a".to_string()),
+                Token::Colon,
+                Token::TypeI64,
+                Token::Comma,
+                Token::Identifier("b".to_string()),
+                Token::Colon,
+                Token::TypeI64,
+                Token::RightParentheses,
+                Token::Arrow,
+                Token::TypeI64,
+                Token::LeftBrace,
+                Token::Return,
+                Token::Identifier("a".to_string()),
+                Token::Plus,
+                Token::Identifier("b".to_string()),
+                Token::Semicolon,
+                Token::RightBrace,
+            ],
+        )
+    }
+
+    #[test]
+    fn odin_style_variable() -> Result<()> {
+        check_tokens(
+            "x := 5; y : i64 = 10;",
+            &[
+                Token::Identifier("x".to_string()),
+                Token::ColonAssign,
+                Token::Integer(5),
+                Token::Semicolon,
+                Token::Identifier("y".to_string()),
+                Token::Colon,
+                Token::TypeI64,
+                Token::Assign,
+                Token::Integer(10),
+                Token::Semicolon,
+            ],
+        )
+    }
+
+    #[test]
+    fn odin_style_struct() -> Result<()> {
+        check_tokens(
+            "Vec3 :: struct { x: f32, y: f32, z: f32, }",
+            &[
+                Token::Identifier("Vec3".to_string()),
+                Token::DoubleColon,
+                Token::Struct,
+                Token::LeftBrace,
+                Token::Identifier("x".to_string()),
+                Token::Colon,
+                Token::TypeF32,
+                Token::Comma,
+                Token::Identifier("y".to_string()),
+                Token::Colon,
+                Token::TypeF32,
+                Token::Comma,
+                Token::Identifier("z".to_string()),
+                Token::Colon,
+                Token::TypeF32,
+                Token::Comma,
+                Token::RightBrace,
+            ],
+        )
+    }
+
+    #[test]
+    fn pointer_syntax() -> Result<()> {
+        check_tokens(
+            "p: ^i64 = &x; y := p^;",
+            &[
+                Token::Identifier("p".to_string()),
+                Token::Colon,
+                Token::Caret,
+                Token::TypeI64,
+                Token::Assign,
+                Token::Ampersand,
+                Token::Identifier("x".to_string()),
+                Token::Semicolon,
+                Token::Identifier("y".to_string()),
+                Token::ColonAssign,
+                Token::Identifier("p".to_string()),
+                Token::Caret,
+                Token::Semicolon,
+            ],
+        )
+    }
+
+    #[test]
+    fn range_syntax() -> Result<()> {
+        check_tokens(
+            "for i in 0..10 { }",
+            &[
+                Token::For,
+                Token::Identifier("i".to_string()),
+                Token::In,
+                Token::Integer(0),
+                Token::DotDot,
+                Token::Integer(10),
+                Token::LeftBrace,
+                Token::RightBrace,
+            ],
+        )
+    }
+
+    #[test]
+    fn identifier_with_numbers() -> Result<()> {
+        check_tokens(
+            "x1 y2z abc123",
+            &[
+                Token::Identifier("x1".to_string()),
+                Token::Identifier("y2z".to_string()),
+                Token::Identifier("abc123".to_string()),
+            ],
+        )
+    }
+
+    #[test]
+    fn comparison_operators_extended() -> Result<()> {
+        check_tokens(
+            "5 <= 10 >= 3;",
+            &[
+                Token::Integer(5),
+                Token::LessThanOrEqual,
+                Token::Integer(10),
+                Token::GreaterThanOrEqual,
+                Token::Integer(3),
+                Token::Semicolon,
+            ],
+        )
+    }
+
+    #[test]
+    fn modulo_operator() -> Result<()> {
+        check_tokens(
+            "10 % 3;",
+            &[
+                Token::Integer(10),
+                Token::Percent,
+                Token::Integer(3),
+                Token::Semicolon,
+            ],
+        )
+    }
+
+    #[test]
+    fn switch_case_tokens() -> Result<()> {
+        check_tokens(
+            "switch x { case 1: y case _: z }",
+            &[
+                Token::Switch,
+                Token::Identifier("x".to_string()),
+                Token::LeftBrace,
+                Token::Case,
+                Token::Integer(1),
+                Token::Colon,
+                Token::Identifier("y".to_string()),
+                Token::Case,
+                Token::Underscore,
+                Token::Colon,
+                Token::Identifier("z".to_string()),
+                Token::RightBrace,
             ],
         )
     }

@@ -1,0 +1,7 @@
+test := fn(n) {
+    for i in 0..n {
+        print(i)
+    }
+    0
+}
+test(3)

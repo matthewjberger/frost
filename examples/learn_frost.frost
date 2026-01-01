@@ -1,0 +1,191 @@
+// Learn Frost in Y Minutes
+// Frost is a statically-typed language with ownership semantics,
+// pattern matching, and first-class functions.
+
+// ============================================
+// VARIABLES AND TYPES
+// ============================================
+
+// Immutable by default (use := for declaration with inference)
+x := 42;
+pi := 3.14159;
+name := "Frost";
+flag := true;
+
+// Mutable variables use 'mut'
+mut counter := 0;
+counter = counter + 1;
+
+// Explicit type annotations
+age : i64 = 25;
+temperature : f64 = 98.6;
+
+// Constants use :: (cannot be reassigned)
+PI :: 3.14159;
+MAX_SIZE :: 100;
+
+print(x);
+print(counter);
+print(age);
+
+// ============================================
+// OPERATORS
+// ============================================
+
+// Arithmetic: + - * / %
+result := 10 + 5 * 2;
+remainder := 17 % 5;
+print(result);
+print(remainder);
+
+// Comparison: == != < > <= >=
+is_equal := 5 == 5;
+is_greater := 10 > 5;
+print(is_equal);
+print(is_greater);
+
+// ============================================
+// CONTROL FLOW
+// ============================================
+
+// If expressions (they return values!)
+max := if (10 > 5) { 10 } else { 5 };
+print(max);
+
+// For loops with ranges
+for i in 0..3 {
+    print(i);
+}
+
+// ============================================
+// FUNCTIONS (PROCEDURES)
+// ============================================
+
+// Basic function using ::
+add :: proc(a: i64, b: i64) -> i64 {
+    a + b
+}
+
+// Explicit return
+factorial :: proc(n: i64) -> i64 {
+    if (n <= 1) {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+print(add(3, 4));
+print(factorial(5));
+
+// ============================================
+// FIRST-CLASS FUNCTIONS
+// ============================================
+
+double :: proc(x: i64) -> i64 { x * 2 }
+square :: proc(x: i64) -> i64 { x * x }
+
+apply :: proc(f: proc(i64) -> i64, val: i64) -> i64 {
+    f(val)
+}
+
+print(apply(double, 5));
+print(apply(square, 5));
+
+// Closures capture their environment
+make_adder :: proc(n: i64) -> proc(i64) -> i64 {
+    proc(addend: i64) -> i64 { addend + n }
+}
+
+add10 := make_adder(10);
+print(add10(5));
+
+// ============================================
+// ARRAYS
+// ============================================
+
+numbers := [1, 2, 3, 4, 5];
+print(len(numbers));
+print(first(numbers));
+print(last(numbers));
+
+// ============================================
+// STRUCTS
+// ============================================
+
+Point :: struct {
+    x: i64,
+    y: i64
+}
+
+p := Point { x = 10, y = 20 };
+print(p.x);
+print(p.y);
+
+// ============================================
+// ENUMS (TAGGED UNIONS)
+// ============================================
+
+Result :: enum {
+    Ok { value: i64 },
+    Err { code: i64 }
+}
+
+success := Result::Ok { value = 42 };
+
+extracted := switch success {
+    case .Ok { value }: value
+    case .Err { code }: 0 - code
+};
+print(extracted);
+
+// ============================================
+// PATTERN MATCHING
+// ============================================
+
+// FizzBuzz with pattern matching
+for i in 1..16 {
+    out := switch (i % 3, i % 5) {
+        case (0, 0): "FizzBuzz"
+        case (0, _): "Fizz"
+        case (_, 0): "Buzz"
+        case (_, _): i
+    };
+    print(out);
+}
+
+// ============================================
+// OWNERSHIP AND BORROWING
+// ============================================
+
+// Primitive types are Copy (no move)
+a := 42;
+b := a;
+print(a);
+print(b);
+
+// Immutable borrow with &
+value := 100;
+ref := &value;
+print(ref^);
+
+// Mutable borrow with &mut
+mut number := 50;
+mut_ref := &mut number;
+mut_ref^ = 200;
+print(number);
+
+// ============================================
+// DEFER
+// ============================================
+
+test_defer :: proc() -> i64 {
+    mut val := 1;
+    defer val = val * 10;
+    defer val = val + 5;
+    val = 2;
+    val
+}
+
+print(test_defer());
+
+print("Done!");

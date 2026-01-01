@@ -1,0 +1,209 @@
+use std::collections::HashMap;
+use std::fmt::{self, Display, Formatter};
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Value64 {
+    Integer(i64),
+    Float(f64),
+    Float32(f32),
+    Bool(bool),
+    Null,
+    HeapRef(u32),
+}
+
+impl Value64 {
+    pub fn as_i64(self) -> i64 {
+        match self {
+            Value64::Integer(v) => v,
+            _ => panic!("expected integer, got {:?}", self),
+        }
+    }
+
+    pub fn as_f64(self) -> f64 {
+        match self {
+            Value64::Float(v) => v,
+            Value64::Float32(v) => v as f64,
+            _ => panic!("expected float, got {:?}", self),
+        }
+    }
+
+    pub fn as_f32(self) -> f32 {
+        match self {
+            Value64::Float32(v) => v,
+            Value64::Float(v) => v as f32,
+            _ => panic!("expected f32, got {:?}", self),
+        }
+    }
+
+    pub fn as_bool(self) -> bool {
+        match self {
+            Value64::Bool(v) => v,
+            _ => panic!("expected bool, got {:?}", self),
+        }
+    }
+
+    pub fn as_heap_ref(self) -> u32 {
+        match self {
+            Value64::HeapRef(v) => v,
+            _ => panic!("expected heap ref, got {:?}", self),
+        }
+    }
+
+    pub fn is_truthy(self) -> bool {
+        match self {
+            Value64::Bool(v) => v,
+            Value64::Null => false,
+            Value64::Integer(0) => false,
+            _ => true,
+        }
+    }
+}
+
+impl Display for Value64 {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            Value64::Integer(v) => write!(f, "{}", v),
+            Value64::Float(v) => write!(f, "{}", v),
+            Value64::Float32(v) => write!(f, "{}f32", v),
+            Value64::Bool(v) => write!(f, "{}", v),
+            Value64::Null => write!(f, "null"),
+            Value64::HeapRef(v) => write!(f, "heap@{}", v),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TypedClosure {
+    pub function_index: u32,
+    pub free: Vec<Value64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypedBuiltIn {
+    pub name: String,
+    pub index: u32,
+}
+
+#[derive(Debug, Clone)]
+pub enum HeapObject {
+    String(String),
+    Array(Vec<Value64>),
+    HashMap(HashMap<u64, Value64>),
+    Closure(TypedClosure),
+    Struct(String, Vec<Value64>),
+    BuiltIn(TypedBuiltIn),
+    NativeFunction(String),
+    NativeHandle(u32),
+    TaggedUnion(u32, Vec<Value64>),
+    Vec2(f32, f32),
+    Vec3(f32, f32, f32),
+    Vec4(f32, f32, f32, f32),
+    Quat(f32, f32, f32, f32),
+    Mat4([f32; 16]),
+}
+
+impl Display for HeapObject {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            HeapObject::String(s) => write!(f, "\"{}\"", s),
+            HeapObject::Array(elements) => {
+                let strs: Vec<String> =
+                    elements.iter().map(|e| e.to_string()).collect();
+                write!(f, "[{}]", strs.join(", "))
+            }
+            HeapObject::HashMap(map) => write!(f, "{:?}", map),
+            HeapObject::Closure(closure) => {
+                write!(
+                    f,
+                    "Closure[fn={}, free={}]",
+                    closure.function_index,
+                    closure.free.len()
+                )
+            }
+            HeapObject::Struct(name, fields) => {
+                let strs: Vec<String> =
+                    fields.iter().map(|e| e.to_string()).collect();
+                write!(f, "{} {{ {} }}", name, strs.join(", "))
+            }
+            HeapObject::BuiltIn(builtin) => {
+                write!(f, "builtin:{}", builtin.name)
+            }
+            HeapObject::NativeFunction(name) => write!(f, "native:{}", name),
+            HeapObject::NativeHandle(index) => write!(f, "handle@{}", index),
+            HeapObject::TaggedUnion(tag, fields) => {
+                let strs: Vec<String> =
+                    fields.iter().map(|e| e.to_string()).collect();
+                write!(f, "TaggedUnion(tag={}, {{ {} }})", tag, strs.join(", "))
+            }
+            HeapObject::Vec2(x, y) => write!(f, "Vec2({}, {})", x, y),
+            HeapObject::Vec3(x, y, z) => write!(f, "Vec3({}, {}, {})", x, y, z),
+            HeapObject::Vec4(x, y, z, w) => {
+                write!(f, "Vec4({}, {}, {}, {})", x, y, z, w)
+            }
+            HeapObject::Quat(x, y, z, w) => {
+                write!(f, "Quat({}, {}, {}, {})", x, y, z, w)
+            }
+            HeapObject::Mat4(m) => write!(f, "Mat4({:?})", m),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_value64_integer() {
+        let v = Value64::Integer(42);
+        assert_eq!(v.as_i64(), 42);
+        assert!(v.is_truthy());
+    }
+
+    #[test]
+    fn test_value64_float() {
+        let v = Value64::Float(3.14);
+        assert_eq!(v.as_f64(), 3.14);
+        assert!(v.is_truthy());
+    }
+
+    #[test]
+    fn test_value64_bool() {
+        assert!(Value64::Bool(true).as_bool());
+        assert!(!Value64::Bool(false).as_bool());
+        assert!(Value64::Bool(true).is_truthy());
+        assert!(!Value64::Bool(false).is_truthy());
+    }
+
+    #[test]
+    fn test_value64_null() {
+        assert!(!Value64::Null.is_truthy());
+    }
+
+    #[test]
+    fn test_value64_heap_ref() {
+        let v = Value64::HeapRef(123);
+        assert_eq!(v.as_heap_ref(), 123);
+        assert!(v.is_truthy());
+    }
+
+    #[test]
+    fn test_value64_copy() {
+        let v1 = Value64::Integer(42);
+        let v2 = v1;
+        assert_eq!(v1.as_i64(), 42);
+        assert_eq!(v2.as_i64(), 42);
+    }
+
+    #[test]
+    fn test_heap_object_string() {
+        let obj = HeapObject::String("hello".to_string());
+        assert_eq!(format!("{}", obj), "\"hello\"");
+    }
+
+    #[test]
+    fn test_heap_object_array() {
+        let obj =
+            HeapObject::Array(vec![Value64::Integer(1), Value64::Integer(2)]);
+        assert_eq!(format!("{}", obj), "[1, 2]");
+    }
+}

@@ -1,0 +1,30 @@
+// Arrays
+arr := [1, 2, 3, 4, 5];
+print(arr[0]);
+print(arr[4]);
+print(len(arr));
+
+// Array operations
+print(first(arr));
+print(last(arr));
+
+// Build array with push
+mut nums := [10];
+nums = push(nums, 20);
+nums = push(nums, 30);
+print(len(nums));
+print(nums[0]);
+print(nums[1]);
+print(nums[2]);
+
+// Sum array elements
+sum :: proc(arr: []i64) -> i64 {
+    mut total := 0;
+    for i in 0..len(arr) {
+        total = total + arr[i];
+    }
+    return total;
+}
+
+print(sum([1, 2, 3, 4, 5]));
+print(sum([10, 20, 30]));

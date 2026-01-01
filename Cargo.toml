@@ -10,3 +10,4 @@ default-members = ["repl"]
 
 [dependencies]
 anyhow = "1.0.40"
+clap = { version = "4", features = ["derive"] }

@@ -1,0 +1,9 @@
+for i in 1..16 {
+    result := switch (i % 3, i % 5) {
+        case (0, 0): "FizzBuzz"
+        case (0, _): "Fizz"
+        case (_, 0): "Buzz"
+        case (_, _): i
+    };
+    print(result);
+}
