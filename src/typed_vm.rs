@@ -468,6 +468,21 @@ impl VirtualMachine {
                     };
                     self.push(result)?;
                 }
+                Opcode::ShiftLeft => {
+                    let right = self.pop()?.as_i64();
+                    let left = self.pop()?.as_i64();
+                    self.push(Value64::Integer(left << right))?;
+                }
+                Opcode::ShiftRight => {
+                    let right = self.pop()?.as_i64();
+                    let left = self.pop()?.as_i64();
+                    self.push(Value64::Integer(left >> right))?;
+                }
+                Opcode::BitwiseOr => {
+                    let right = self.pop()?.as_i64();
+                    let left = self.pop()?.as_i64();
+                    self.push(Value64::Integer(left | right))?;
+                }
                 Opcode::True => {
                     self.push(Value64::Bool(true))?;
                 }
@@ -1402,7 +1417,8 @@ impl VirtualMachine {
                 if !args.is_empty() {
                     bail!("wrong number of arguments for quat_identity");
                 }
-                let heap_idx = self.allocate_heap(HeapObject::Quat(0.0, 0.0, 0.0, 1.0));
+                let heap_idx =
+                    self.allocate_heap(HeapObject::Quat(0.0, 0.0, 0.0, 1.0));
                 Value64::HeapRef(heap_idx)
             }
             "vec2_add" => {
@@ -1411,7 +1427,8 @@ impl VirtualMachine {
                 }
                 let (x1, y1) = self.get_vec2(args[0])?;
                 let (x2, y2) = self.get_vec2(args[1])?;
-                let heap_idx = self.allocate_heap(HeapObject::Vec2(x1 + x2, y1 + y2));
+                let heap_idx =
+                    self.allocate_heap(HeapObject::Vec2(x1 + x2, y1 + y2));
                 Value64::HeapRef(heap_idx)
             }
             "vec2_sub" => {
@@ -1420,7 +1437,8 @@ impl VirtualMachine {
                 }
                 let (x1, y1) = self.get_vec2(args[0])?;
                 let (x2, y2) = self.get_vec2(args[1])?;
-                let heap_idx = self.allocate_heap(HeapObject::Vec2(x1 - x2, y1 - y2));
+                let heap_idx =
+                    self.allocate_heap(HeapObject::Vec2(x1 - x2, y1 - y2));
                 Value64::HeapRef(heap_idx)
             }
             "vec2_mul" => {
@@ -1429,7 +1447,8 @@ impl VirtualMachine {
                 }
                 let (x1, y1) = self.get_vec2(args[0])?;
                 let scalar = args[1].as_f32();
-                let heap_idx = self.allocate_heap(HeapObject::Vec2(x1 * scalar, y1 * scalar));
+                let heap_idx = self
+                    .allocate_heap(HeapObject::Vec2(x1 * scalar, y1 * scalar));
                 Value64::HeapRef(heap_idx)
             }
             "vec2_div" => {
@@ -1438,7 +1457,8 @@ impl VirtualMachine {
                 }
                 let (x1, y1) = self.get_vec2(args[0])?;
                 let scalar = args[1].as_f32();
-                let heap_idx = self.allocate_heap(HeapObject::Vec2(x1 / scalar, y1 / scalar));
+                let heap_idx = self
+                    .allocate_heap(HeapObject::Vec2(x1 / scalar, y1 / scalar));
                 Value64::HeapRef(heap_idx)
             }
             "vec2_dot" => {
@@ -1462,7 +1482,8 @@ impl VirtualMachine {
                 }
                 let (x, y) = self.get_vec2(args[0])?;
                 let len = (x * x + y * y).sqrt();
-                let heap_idx = self.allocate_heap(HeapObject::Vec2(x / len, y / len));
+                let heap_idx =
+                    self.allocate_heap(HeapObject::Vec2(x / len, y / len));
                 Value64::HeapRef(heap_idx)
             }
             "vec3_add" => {
@@ -1471,7 +1492,11 @@ impl VirtualMachine {
                 }
                 let (x1, y1, z1) = self.get_vec3(args[0])?;
                 let (x2, y2, z2) = self.get_vec3(args[1])?;
-                let heap_idx = self.allocate_heap(HeapObject::Vec3(x1 + x2, y1 + y2, z1 + z2));
+                let heap_idx = self.allocate_heap(HeapObject::Vec3(
+                    x1 + x2,
+                    y1 + y2,
+                    z1 + z2,
+                ));
                 Value64::HeapRef(heap_idx)
             }
             "vec3_sub" => {
@@ -1480,7 +1505,11 @@ impl VirtualMachine {
                 }
                 let (x1, y1, z1) = self.get_vec3(args[0])?;
                 let (x2, y2, z2) = self.get_vec3(args[1])?;
-                let heap_idx = self.allocate_heap(HeapObject::Vec3(x1 - x2, y1 - y2, z1 - z2));
+                let heap_idx = self.allocate_heap(HeapObject::Vec3(
+                    x1 - x2,
+                    y1 - y2,
+                    z1 - z2,
+                ));
                 Value64::HeapRef(heap_idx)
             }
             "vec3_mul" => {
@@ -1489,7 +1518,11 @@ impl VirtualMachine {
                 }
                 let (x1, y1, z1) = self.get_vec3(args[0])?;
                 let scalar = args[1].as_f32();
-                let heap_idx = self.allocate_heap(HeapObject::Vec3(x1 * scalar, y1 * scalar, z1 * scalar));
+                let heap_idx = self.allocate_heap(HeapObject::Vec3(
+                    x1 * scalar,
+                    y1 * scalar,
+                    z1 * scalar,
+                ));
                 Value64::HeapRef(heap_idx)
             }
             "vec3_div" => {
@@ -1498,7 +1531,11 @@ impl VirtualMachine {
                 }
                 let (x1, y1, z1) = self.get_vec3(args[0])?;
                 let scalar = args[1].as_f32();
-                let heap_idx = self.allocate_heap(HeapObject::Vec3(x1 / scalar, y1 / scalar, z1 / scalar));
+                let heap_idx = self.allocate_heap(HeapObject::Vec3(
+                    x1 / scalar,
+                    y1 / scalar,
+                    z1 / scalar,
+                ));
                 Value64::HeapRef(heap_idx)
             }
             "vec3_dot" => {
@@ -1535,7 +1572,11 @@ impl VirtualMachine {
                 }
                 let (x, y, z) = self.get_vec3(args[0])?;
                 let len = (x * x + y * y + z * z).sqrt();
-                let heap_idx = self.allocate_heap(HeapObject::Vec3(x / len, y / len, z / len));
+                let heap_idx = self.allocate_heap(HeapObject::Vec3(
+                    x / len,
+                    y / len,
+                    z / len,
+                ));
                 Value64::HeapRef(heap_idx)
             }
             "vec4_add" => {
@@ -1544,7 +1585,12 @@ impl VirtualMachine {
                 }
                 let (x1, y1, z1, w1) = self.get_vec4(args[0])?;
                 let (x2, y2, z2, w2) = self.get_vec4(args[1])?;
-                let heap_idx = self.allocate_heap(HeapObject::Vec4(x1 + x2, y1 + y2, z1 + z2, w1 + w2));
+                let heap_idx = self.allocate_heap(HeapObject::Vec4(
+                    x1 + x2,
+                    y1 + y2,
+                    z1 + z2,
+                    w1 + w2,
+                ));
                 Value64::HeapRef(heap_idx)
             }
             "vec4_sub" => {
@@ -1553,7 +1599,12 @@ impl VirtualMachine {
                 }
                 let (x1, y1, z1, w1) = self.get_vec4(args[0])?;
                 let (x2, y2, z2, w2) = self.get_vec4(args[1])?;
-                let heap_idx = self.allocate_heap(HeapObject::Vec4(x1 - x2, y1 - y2, z1 - z2, w1 - w2));
+                let heap_idx = self.allocate_heap(HeapObject::Vec4(
+                    x1 - x2,
+                    y1 - y2,
+                    z1 - z2,
+                    w1 - w2,
+                ));
                 Value64::HeapRef(heap_idx)
             }
             "vec4_mul" => {
@@ -1562,7 +1613,12 @@ impl VirtualMachine {
                 }
                 let (x1, y1, z1, w1) = self.get_vec4(args[0])?;
                 let scalar = args[1].as_f32();
-                let heap_idx = self.allocate_heap(HeapObject::Vec4(x1 * scalar, y1 * scalar, z1 * scalar, w1 * scalar));
+                let heap_idx = self.allocate_heap(HeapObject::Vec4(
+                    x1 * scalar,
+                    y1 * scalar,
+                    z1 * scalar,
+                    w1 * scalar,
+                ));
                 Value64::HeapRef(heap_idx)
             }
             "vec4_div" => {
@@ -1571,7 +1627,12 @@ impl VirtualMachine {
                 }
                 let (x1, y1, z1, w1) = self.get_vec4(args[0])?;
                 let scalar = args[1].as_f32();
-                let heap_idx = self.allocate_heap(HeapObject::Vec4(x1 / scalar, y1 / scalar, z1 / scalar, w1 / scalar));
+                let heap_idx = self.allocate_heap(HeapObject::Vec4(
+                    x1 / scalar,
+                    y1 / scalar,
+                    z1 / scalar,
+                    w1 / scalar,
+                ));
                 Value64::HeapRef(heap_idx)
             }
             "vec4_dot" => {
@@ -1595,7 +1656,12 @@ impl VirtualMachine {
                 }
                 let (x, y, z, w) = self.get_vec4(args[0])?;
                 let len = (x * x + y * y + z * z + w * w).sqrt();
-                let heap_idx = self.allocate_heap(HeapObject::Vec4(x / len, y / len, z / len, w / len));
+                let heap_idx = self.allocate_heap(HeapObject::Vec4(
+                    x / len,
+                    y / len,
+                    z / len,
+                    w / len,
+                ));
                 Value64::HeapRef(heap_idx)
             }
             "quat_mul" => {
@@ -1618,7 +1684,12 @@ impl VirtualMachine {
                 }
                 let (x, y, z, w) = self.get_quat(args[0])?;
                 let len = (x * x + y * y + z * z + w * w).sqrt();
-                let heap_idx = self.allocate_heap(HeapObject::Quat(x / len, y / len, z / len, w / len));
+                let heap_idx = self.allocate_heap(HeapObject::Quat(
+                    x / len,
+                    y / len,
+                    z / len,
+                    w / len,
+                ));
                 Value64::HeapRef(heap_idx)
             }
             "quat_from_euler" => {
@@ -1943,6 +2014,21 @@ impl VirtualMachine {
                     _ => bail!("unsupported operation"),
                 };
                 self.push(result)?;
+            }
+            Opcode::ShiftLeft => {
+                let right = self.pop()?.as_i64();
+                let left = self.pop()?.as_i64();
+                self.push(Value64::Integer(left << right))?;
+            }
+            Opcode::ShiftRight => {
+                let right = self.pop()?.as_i64();
+                let left = self.pop()?.as_i64();
+                self.push(Value64::Integer(left >> right))?;
+            }
+            Opcode::BitwiseOr => {
+                let right = self.pop()?.as_i64();
+                let left = self.pop()?.as_i64();
+                self.push(Value64::Integer(left | right))?;
             }
             Opcode::True => self.push(Value64::Bool(true))?,
             Opcode::False => self.push(Value64::Bool(false))?,
@@ -3197,6 +3283,60 @@ mod tests {
         "#;
         let result = run_vm_test(input)?;
         assert_eq!(result, Value64::Bool(true));
+        Ok(())
+    }
+
+    #[test]
+    fn test_comptime_for_typename() -> Result<()> {
+        let input = r#"
+            Position :: struct { x: f64, y: f64 }
+            comptime for T in [Position] {
+                print(typename(T))
+            }
+            42
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(42));
+        Ok(())
+    }
+
+    #[test]
+    fn test_shift_operators() -> Result<()> {
+        let input = "1 << 3";
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(8));
+        Ok(())
+    }
+
+    #[test]
+    fn test_shift_right_operator() -> Result<()> {
+        let input = "16 >> 2";
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(4));
+        Ok(())
+    }
+
+    #[test]
+    fn test_bitwise_or_operator() -> Result<()> {
+        let input = "1 | 2 | 4";
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(7));
+        Ok(())
+    }
+
+    #[test]
+    fn test_comptime_bitmask_generation() -> Result<()> {
+        let input = r#"
+            Position :: struct { x: f64, y: f64 }
+            Velocity :: struct { dx: f64, dy: f64 }
+            Health :: struct { value: i64 }
+            comptime for index, T in [Position, Velocity, Health] {
+                BIT_#T :: 1 << index
+            }
+            BIT_Position | BIT_Velocity | BIT_Health
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(7));
         Ok(())
     }
 }
