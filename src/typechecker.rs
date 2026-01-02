@@ -345,9 +345,8 @@ impl TypeChecker {
                 }
                 Ok(None)
             }
-            Statement::Import(_path) => {
-                Ok(None)
-            }
+            Statement::Import(_path) => Ok(None),
+            Statement::InterpolatedConstant(_, _) => Ok(None),
         }
     }
 
@@ -506,6 +505,11 @@ impl TypeChecker {
                 }
                 Ok(Type::Enum(enum_name.clone()))
             }
+            Expression::ComptimeBlock(_) => Ok(Type::Void),
+            Expression::ComptimeFor { .. } => Ok(Type::Void),
+            Expression::TypeValue(typ) => Ok(typ.clone()),
+            Expression::Typename(_) => Ok(Type::Str),
+            Expression::InterpolatedIdent(_) => Ok(Type::Unknown),
         }
     }
 

@@ -1,8 +1,8 @@
 use crate::{
-    types::Type, Expression, HeapObject, Literal, Operator, Parameter,
-    Statement, StructField, Value64,
+    parser::IdentPart, types::Type, Expression, HeapObject, Literal, Operator,
+    Parameter, Statement, StructField, Value64,
 };
-use anyhow::Result;
+use anyhow::{bail, Result};
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -255,6 +255,9 @@ pub enum Opcode {
     TupleGet,
     Dup,
     Drop,
+    ShiftLeft,
+    ShiftRight,
+    BitwiseOr,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -400,6 +403,20 @@ impl BorrowChecker {
     }
 }
 
+struct SubstitutionContext<'a> {
+    index_var: Option<&'a str>,
+    type_var: &'a str,
+    index: usize,
+    type_name: &'a str,
+}
+
+struct ComptimeForParams<'a> {
+    index_var: &'a Option<String>,
+    type_var: &'a str,
+    types: &'a [Type],
+    body: &'a [Statement],
+}
+
 pub struct Compiler<'a> {
     pub statements: Iter<'a, Statement>,
     pub symbol_table: SymbolTable,
@@ -413,6 +430,7 @@ pub struct Compiler<'a> {
     pub scope_owned_values: Vec<Vec<String>>,
     pub moved_symbols: HashSet<String>,
     pub native_names: Vec<String>,
+    pub comptime_constants: HashMap<String, i64>,
 }
 
 impl<'a> Compiler<'a> {
@@ -487,6 +505,7 @@ impl<'a> Compiler<'a> {
             scope_owned_values: vec![Vec::new()],
             moved_symbols: HashSet::new(),
             native_names: Vec::new(),
+            comptime_constants: HashMap::new(),
         }
     }
 
@@ -580,6 +599,7 @@ impl<'a> Compiler<'a> {
             scope_owned_values: vec![Vec::new()],
             moved_symbols: HashSet::new(),
             native_names: Vec::new(),
+            comptime_constants: HashMap::new(),
         }
     }
 
@@ -600,6 +620,7 @@ impl<'a> Compiler<'a> {
             scope_owned_values: vec![Vec::new()],
             moved_symbols: HashSet::new(),
             native_names: Vec::new(),
+            comptime_constants: HashMap::new(),
         }
     }
 
@@ -642,10 +663,17 @@ impl<'a> Compiler<'a> {
     ) -> Result<()> {
         match statement {
             Statement::Expression(expression) => {
+                let needs_pop = !matches!(
+                    expression,
+                    Expression::ComptimeBlock(_)
+                        | Expression::ComptimeFor { .. }
+                );
                 self.compile_expression(expression, bytecode)?;
-                bytecode
-                    .instructions
-                    .push(Instruction::new(Opcode::Pop, vec![]));
+                if needs_pop {
+                    bytecode
+                        .instructions
+                        .push(Instruction::new(Opcode::Pop, vec![]));
+                }
                 Ok(())
             }
             Statement::Let {
@@ -1053,18 +1081,28 @@ impl<'a> Compiler<'a> {
                 Ok(())
             }
             Statement::Import(path) => {
-                let source = std::fs::read_to_string(path)
-                    .map_err(|e| anyhow::anyhow!("failed to read import '{}': {}", path, e))?;
+                let source = std::fs::read_to_string(path).map_err(|e| {
+                    anyhow::anyhow!("failed to read import '{}': {}", path, e)
+                })?;
                 let mut lexer = crate::Lexer::new(&source);
-                let tokens = lexer.tokenize()
-                    .map_err(|e| anyhow::anyhow!("failed to tokenize import '{}': {}", path, e))?;
+                let tokens = lexer.tokenize().map_err(|e| {
+                    anyhow::anyhow!(
+                        "failed to tokenize import '{}': {}",
+                        path,
+                        e
+                    )
+                })?;
                 let mut parser = crate::Parser::new(&tokens);
-                let statements = parser.parse()
-                    .map_err(|e| anyhow::anyhow!("failed to parse import '{}': {}", path, e))?;
+                let statements = parser.parse().map_err(|e| {
+                    anyhow::anyhow!("failed to parse import '{}': {}", path, e)
+                })?;
                 for statement in &statements {
                     self.compile_statement(statement, bytecode)?;
                 }
                 Ok(())
+            }
+            Statement::InterpolatedConstant(_, _) => {
+                anyhow::bail!("InterpolatedConstant can only be used inside comptime blocks")
             }
         }
     }
@@ -1456,6 +1494,36 @@ impl<'a> Compiler<'a> {
             }
             Expression::Switch(scrutinee, cases) => {
                 self.compile_switch(scrutinee, cases, bytecode)
+            }
+            Expression::ComptimeBlock(body) => {
+                self.compile_comptime_block(body, bytecode)
+            }
+            Expression::ComptimeFor {
+                index_var,
+                type_var,
+                types,
+                body,
+            } => {
+                let params = ComptimeForParams {
+                    index_var,
+                    type_var,
+                    types,
+                    body,
+                };
+                self.compile_comptime_for(&params, bytecode)
+            }
+            Expression::TypeValue(_) => {
+                bail!("TypeValue can only be used in comptime context")
+            }
+            Expression::Typename(typ) => {
+                let name = format!("{}", typ);
+                self.compile_expression(
+                    &Expression::Literal(Literal::String(name)),
+                    bytecode,
+                )
+            }
+            Expression::InterpolatedIdent(_parts) => {
+                bail!("InterpolatedIdent can only be used in comptime context")
             }
         }
     }
@@ -1933,6 +2001,9 @@ impl<'a> Compiler<'a> {
                     Operator::Equal => Opcode::Equal,
                     Operator::NotEqual => Opcode::NotEqual,
                     Operator::GreaterThan => Opcode::GreaterThan,
+                    Operator::ShiftLeft => Opcode::ShiftLeft,
+                    Operator::ShiftRight => Opcode::ShiftRight,
+                    Operator::BitwiseOr => Opcode::BitwiseOr,
                     _ => unimplemented!(
                         "Operator {:?} not implemented for infix",
                         operator
@@ -1949,6 +2020,9 @@ impl<'a> Compiler<'a> {
                 Operator::Equal => Opcode::Equal,
                 Operator::NotEqual => Opcode::NotEqual,
                 Operator::GreaterThan => Opcode::GreaterThan,
+                Operator::ShiftLeft => Opcode::ShiftLeft,
+                Operator::ShiftRight => Opcode::ShiftRight,
+                Operator::BitwiseOr => Opcode::BitwiseOr,
                 _ => unimplemented!(
                     "Operator {:?} not implemented for infix",
                     operator
@@ -2070,6 +2144,232 @@ impl<'a> Compiler<'a> {
             bytecode
                 .instructions
                 .push(Instruction::new(Opcode::ReturnValue, vec![]));
+        }
+    }
+
+    fn compile_comptime_block(
+        &mut self,
+        body: &[Statement],
+        bytecode: &mut Bytecode,
+    ) -> Result<()> {
+        for statement in body {
+            match statement {
+                Statement::Constant(name, expr) => {
+                    let value = self.evaluate_comptime_expr(expr)?;
+                    self.comptime_constants.insert(name.clone(), value);
+                }
+                Statement::Expression(Expression::ComptimeFor {
+                    index_var,
+                    type_var,
+                    types,
+                    body,
+                }) => {
+                    let params = ComptimeForParams {
+                        index_var,
+                        type_var,
+                        types,
+                        body,
+                    };
+                    self.compile_comptime_for(&params, bytecode)?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn compile_comptime_for(
+        &mut self,
+        params: &ComptimeForParams,
+        bytecode: &mut Bytecode,
+    ) -> Result<()> {
+        for (index, typ) in params.types.iter().enumerate() {
+            let type_name = format!("{}", typ);
+            let ctx = SubstitutionContext {
+                index_var: params.index_var.as_deref(),
+                type_var: params.type_var,
+                index,
+                type_name: &type_name,
+            };
+            let expanded_body: Vec<Statement> = params
+                .body
+                .iter()
+                .map(|stmt| Self::substitute_in_statement(stmt, &ctx))
+                .collect();
+            for statement in &expanded_body {
+                self.compile_statement(statement, bytecode)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn substitute_in_statement(
+        stmt: &Statement,
+        ctx: &SubstitutionContext,
+    ) -> Statement {
+        match stmt {
+            Statement::Constant(name, expr) => {
+                let new_name = Self::substitute_identifier(
+                    name,
+                    ctx.type_var,
+                    ctx.type_name,
+                );
+                let new_expr = Self::substitute_in_expr(expr, ctx);
+                Statement::Constant(new_name, new_expr)
+            }
+            Statement::Let {
+                name,
+                mutable,
+                type_annotation,
+                value,
+            } => Statement::Let {
+                name: Self::substitute_identifier(
+                    name,
+                    ctx.type_var,
+                    ctx.type_name,
+                ),
+                mutable: *mutable,
+                type_annotation: type_annotation.clone(),
+                value: Self::substitute_in_expr(value, ctx),
+            },
+            Statement::Expression(expr) => {
+                Statement::Expression(Self::substitute_in_expr(expr, ctx))
+            }
+            Statement::InterpolatedConstant(parts, expr) => {
+                let resolved_name: String = parts
+                    .iter()
+                    .map(|part| match part {
+                        IdentPart::Literal(s) => s.clone(),
+                        IdentPart::TypeVar(var) => {
+                            if var == ctx.type_var {
+                                ctx.type_name.to_string()
+                            } else {
+                                format!("#{}", var)
+                            }
+                        }
+                    })
+                    .collect();
+                let new_expr = Self::substitute_in_expr(expr, ctx);
+                Statement::Constant(resolved_name, new_expr)
+            }
+            other => other.clone(),
+        }
+    }
+
+    fn substitute_in_expr(
+        expr: &Expression,
+        ctx: &SubstitutionContext,
+    ) -> Expression {
+        match expr {
+            Expression::InterpolatedIdent(parts) => {
+                let resolved: String = parts
+                    .iter()
+                    .map(|part| match part {
+                        IdentPart::Literal(s) => s.clone(),
+                        IdentPart::TypeVar(var) => {
+                            if var == ctx.type_var {
+                                ctx.type_name.to_string()
+                            } else {
+                                format!("#{}", var)
+                            }
+                        }
+                    })
+                    .collect();
+                Expression::Identifier(resolved)
+            }
+            Expression::Identifier(name) => {
+                if Some(name.as_str()) == ctx.index_var {
+                    Expression::Literal(Literal::Integer(ctx.index as i64))
+                } else if name == ctx.type_var {
+                    Expression::TypeValue(Type::Struct(
+                        ctx.type_name.to_string(),
+                    ))
+                } else {
+                    Expression::Identifier(name.clone())
+                }
+            }
+            Expression::Infix(left, op, right) => Expression::Infix(
+                Box::new(Self::substitute_in_expr(left, ctx)),
+                *op,
+                Box::new(Self::substitute_in_expr(right, ctx)),
+            ),
+            Expression::Call(func, args) => Expression::Call(
+                Box::new(Self::substitute_in_expr(func, ctx)),
+                args.iter()
+                    .map(|a| Self::substitute_in_expr(a, ctx))
+                    .collect(),
+            ),
+            Expression::Sizeof(typ) => {
+                if format!("{}", typ) == ctx.type_var {
+                    Expression::Sizeof(Type::Struct(ctx.type_name.to_string()))
+                } else {
+                    expr.clone()
+                }
+            }
+            Expression::Typename(typ) => {
+                if format!("{}", typ) == ctx.type_var {
+                    Expression::Literal(Literal::String(
+                        ctx.type_name.to_string(),
+                    ))
+                } else {
+                    Expression::Literal(Literal::String(format!("{}", typ)))
+                }
+            }
+            other => other.clone(),
+        }
+    }
+
+    fn substitute_identifier(
+        name: &str,
+        type_var: &str,
+        type_name: &str,
+    ) -> String {
+        if name.contains(&format!("#{}", type_var)) {
+            name.replace(&format!("#{}", type_var), type_name)
+        } else {
+            name.to_string()
+        }
+    }
+
+    fn evaluate_comptime_expr(&self, expr: &Expression) -> Result<i64> {
+        match expr {
+            Expression::Literal(Literal::Integer(n)) => Ok(*n),
+            Expression::Infix(left, Operator::ShiftLeft, right) => {
+                let l = self.evaluate_comptime_expr(left)?;
+                let r = self.evaluate_comptime_expr(right)?;
+                Ok(l << r)
+            }
+            Expression::Infix(left, Operator::ShiftRight, right) => {
+                let l = self.evaluate_comptime_expr(left)?;
+                let r = self.evaluate_comptime_expr(right)?;
+                Ok(l >> r)
+            }
+            Expression::Infix(left, Operator::BitwiseOr, right) => {
+                let l = self.evaluate_comptime_expr(left)?;
+                let r = self.evaluate_comptime_expr(right)?;
+                Ok(l | r)
+            }
+            Expression::Infix(left, Operator::Add, right) => {
+                let l = self.evaluate_comptime_expr(left)?;
+                let r = self.evaluate_comptime_expr(right)?;
+                Ok(l + r)
+            }
+            Expression::Infix(left, Operator::Multiply, right) => {
+                let l = self.evaluate_comptime_expr(left)?;
+                let r = self.evaluate_comptime_expr(right)?;
+                Ok(l * r)
+            }
+            Expression::Identifier(name) => {
+                if let Some(&value) = self.comptime_constants.get(name) {
+                    Ok(value)
+                } else {
+                    anyhow::bail!("Unknown comptime constant: {}", name)
+                }
+            }
+            _ => anyhow::bail!(
+                "Cannot evaluate expression at compile time: {:?}",
+                expr
+            ),
         }
     }
 }
@@ -2244,6 +2544,84 @@ mod tests {
             .instructions
             .iter()
             .any(|i| i.opcode == Opcode::LoadPtr));
+        Ok(())
+    }
+
+    #[test]
+    fn test_comptime_for_produces_no_loop_instructions() -> Result<()> {
+        let input = r#"
+            Position :: struct { x: f64, y: f64 }
+            Velocity :: struct { dx: f64, dy: f64 }
+            comptime for index, T in [Position, Velocity] {
+                BIT_#T :: 1 << index
+            }
+            BIT_Position
+        "#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        let mut compiler = Compiler::new(&program);
+        let bytecode = compiler.compile()?;
+
+        let has_jump = bytecode
+            .instructions
+            .iter()
+            .any(|i| matches!(i.opcode, Opcode::Jump | Opcode::JumpNotTruthy));
+        assert!(
+            !has_jump,
+            "Comptime for should not produce any loop/jump instructions"
+        );
+
+        let has_get_global = bytecode
+            .instructions
+            .iter()
+            .any(|i| i.opcode == Opcode::GetGlobal);
+        assert!(
+            has_get_global,
+            "Should be able to access BIT_Position at runtime"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_comptime_for_expands_multiple_constants() -> Result<()> {
+        let input = r#"
+            A :: struct { a: i64 }
+            B :: struct { b: i64 }
+            C :: struct { c: i64 }
+            comptime for index, T in [A, B, C] {
+                MASK_#T :: 1 << index
+            }
+            MASK_A | MASK_B | MASK_C
+        "#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        let mut compiler = Compiler::new(&program);
+        let bytecode = compiler.compile()?;
+
+        let get_global_count = bytecode
+            .instructions
+            .iter()
+            .filter(|i| i.opcode == Opcode::GetGlobal)
+            .count();
+        assert!(
+            get_global_count >= 3,
+            "Should have at least 3 GetGlobal for MASK_A, MASK_B, MASK_C"
+        );
+
+        let bitwise_or_count = bytecode
+            .instructions
+            .iter()
+            .filter(|i| i.opcode == Opcode::BitwiseOr)
+            .count();
+        assert_eq!(bitwise_or_count, 2, "Should have 2 BitwiseOr operations");
+
         Ok(())
     }
 }

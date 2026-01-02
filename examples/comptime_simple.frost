@@ -1,0 +1,15 @@
+Position :: struct {
+    x: f64,
+    y: f64,
+}
+
+Velocity :: struct {
+    dx: f64,
+    dy: f64,
+}
+
+comptime for T in [Position, Velocity] {
+    print(typename(T))
+}
+
+print("Done")

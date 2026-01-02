@@ -1,0 +1,24 @@
+Position :: struct {
+    x: f64,
+    y: f64,
+}
+
+Velocity :: struct {
+    dx: f64,
+    dy: f64,
+}
+
+Health :: struct {
+    value: i64,
+}
+
+comptime for index, T in [Position, Velocity, Health] {
+    BIT_#T :: 1 << index
+}
+
+print(BIT_Position)
+print(BIT_Velocity)
+print(BIT_Health)
+
+mask := BIT_Position | BIT_Velocity
+print(mask)

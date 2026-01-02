@@ -60,12 +60,15 @@ pub enum Pattern {
 pub enum Operator {
     Add,
     And,
+    BitwiseOr,
     Divide,
     Multiply,
     Modulo,
     Not,
     Negate,
     Or,
+    ShiftLeft,
+    ShiftRight,
     Subtract,
     LessThan,
     LessThanOrEqual,
@@ -93,6 +96,9 @@ impl Operator {
             Token::NotEqual => Self::NotEqual,
             Token::And => Self::And,
             Token::Or => Self::Or,
+            Token::Pipe => Self::BitwiseOr,
+            Token::ShiftLeft => Self::ShiftLeft,
+            Token::ShiftRight => Self::ShiftRight,
             _ => bail!("Token is not an operator: {}", token),
         })
     }
@@ -115,6 +121,9 @@ impl Display for Operator {
             Self::GreaterThanOrEqual => ">=",
             Self::Equal => "==",
             Self::NotEqual => "!=",
+            Self::BitwiseOr => "|",
+            Self::ShiftLeft => "<<",
+            Self::ShiftRight => ">>",
         };
         write!(f, "{}", statement)
     }
@@ -141,6 +150,7 @@ pub enum Statement {
     Break,
     Continue,
     Import(String),
+    InterpolatedConstant(Vec<IdentPart>, Expression),
 }
 
 impl Display for Statement {
@@ -219,9 +229,18 @@ impl Display for Statement {
             Self::Break => "break".to_string(),
             Self::Continue => "continue".to_string(),
             Self::Import(path) => format!("import \"{}\"", path),
+            Self::InterpolatedConstant(parts, expr) => {
+                format!("{:?} :: {}", parts, expr)
+            }
         };
         write!(f, "{}", statement)
     }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum IdentPart {
+    Literal(String),
+    TypeVar(String),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -247,6 +266,16 @@ pub enum Expression {
     Switch(Box<Expression>, Vec<SwitchCase>),
     Tuple(Vec<Expression>),
     EnumVariantInit(Identifier, Identifier, Vec<(Identifier, Expression)>),
+    ComptimeBlock(Block),
+    ComptimeFor {
+        index_var: Option<Identifier>,
+        type_var: Identifier,
+        types: Vec<Type>,
+        body: Block,
+    },
+    TypeValue(Type),
+    Typename(Type),
+    InterpolatedIdent(Vec<IdentPart>),
 }
 
 impl Expression {
@@ -443,6 +472,23 @@ impl Display for Expression {
                     field_strs.join(", ")
                 )
             }
+            Self::ComptimeBlock(body) => {
+                format!("comptime {{ {:?} }}", body)
+            }
+            Self::ComptimeFor {
+                index_var,
+                type_var,
+                types,
+                body,
+            } => {
+                format!(
+                    "comptime for {:?}, {} in {:?} {{ {:?} }}",
+                    index_var, type_var, types, body
+                )
+            }
+            Self::TypeValue(typ) => format!("{}", typ),
+            Self::Typename(typ) => format!("typename({})", typ),
+            Self::InterpolatedIdent(parts) => format!("{:?}", parts),
         };
         write!(f, "{}", expression)
     }
@@ -488,8 +534,10 @@ pub enum Precedence {
     Range,
     LogicalOr,
     LogicalAnd,
+    BitwiseOr,
     Equals,
     LessThanGreaterThan,
+    Shift,
     Sum,
     Product,
     Prefix,
@@ -503,6 +551,9 @@ impl From<&Token> for Precedence {
         match token {
             Token::Or => Self::LogicalOr,
             Token::And => Self::LogicalAnd,
+            Token::Pipe => Self::BitwiseOr,
+            Token::ShiftLeft => Self::Shift,
+            Token::ShiftRight => Self::Shift,
             Token::DotDot => Self::Range,
             Token::Equal => Self::Equals,
             Token::NotEqual => Self::Equals,
@@ -603,6 +654,13 @@ impl<'a> Parser<'a> {
                     ) =>
             {
                 Some(self.parse_constant_or_struct_statement()?)
+            }
+            Token::Identifier(_)
+                if matches!(self.peek_nth(1), Token::Hash)
+                    && matches!(self.peek_nth(2), Token::Identifier(_))
+                    && matches!(self.peek_nth(3), Token::DoubleColon) =>
+            {
+                Some(self.parse_interpolated_constant()?)
             }
             _ => Some(self.parse_expression_statement()?),
         })
@@ -873,7 +931,13 @@ impl<'a> Parser<'a> {
         let mut advance = true;
         let mut expression = match self.peek_nth(0) {
             Token::Identifier(identifier) => {
-                Expression::Identifier(identifier.to_string())
+                let base = identifier.to_string();
+                if matches!(self.peek_nth(1), Token::Hash) {
+                    advance = false;
+                    self.parse_interpolated_identifier(base)?
+                } else {
+                    Expression::Identifier(base)
+                }
             }
             Token::StringLiteral(string) => {
                 Expression::Literal(Literal::String(string.to_string()))
@@ -882,7 +946,9 @@ impl<'a> Parser<'a> {
                 Expression::Literal(Literal::Integer(*value))
             }
             Token::Float(value) => Expression::Literal(Literal::Float(*value)),
-            Token::Float32(value) => Expression::Literal(Literal::Float32(*value)),
+            Token::Float32(value) => {
+                Expression::Literal(Literal::Float32(*value))
+            }
             Token::Bang | Token::Minus => {
                 advance = false;
                 self.parse_prefix_expression()?
@@ -925,6 +991,14 @@ impl<'a> Parser<'a> {
                 advance = false;
                 self.parse_switch_expression()?
             }
+            Token::Comptime => {
+                advance = false;
+                self.parse_comptime_expression()?
+            }
+            Token::Typename => {
+                advance = false;
+                self.parse_typename_expression()?
+            }
             Token::EndOfFile => {
                 bail!("Unexpected end of file")
             }
@@ -951,7 +1025,10 @@ impl<'a> Parser<'a> {
                 | Token::GreaterThan
                 | Token::GreaterThanOrEqual
                 | Token::And
-                | Token::Or => {
+                | Token::Or
+                | Token::Pipe
+                | Token::ShiftLeft
+                | Token::ShiftRight => {
                     expression =
                         self.parse_infix_expression(expression.clone())?;
                 }
@@ -1610,6 +1687,127 @@ impl<'a> Parser<'a> {
 
     fn peek_nth(&self, n: usize) -> &Token {
         self.tokens.clone().nth(n).unwrap_or(&Token::EndOfFile)
+    }
+
+    fn parse_comptime_expression(&mut self) -> Result<Expression> {
+        self.read_token();
+        if matches!(self.peek_nth(0), Token::For) {
+            self.parse_comptime_for()
+        } else if matches!(self.peek_nth(0), Token::LeftBrace) {
+            let body = self.parse_block()?;
+            Ok(Expression::ComptimeBlock(body))
+        } else {
+            bail!("Expected 'for' or '{{' after 'comptime'")
+        }
+    }
+
+    fn parse_comptime_for(&mut self) -> Result<Expression> {
+        self.read_token();
+        let first_ident = match self.read_token() {
+            Token::Identifier(name) => name.to_string(),
+            _ => bail!("Expected identifier in comptime for"),
+        };
+        let (index_var, type_var) = if matches!(self.peek_nth(0), Token::Comma)
+        {
+            self.read_token();
+            let second_ident = match self.read_token() {
+                Token::Identifier(name) => name.to_string(),
+                _ => bail!("Expected type variable after ','"),
+            };
+            (Some(first_ident), second_ident)
+        } else {
+            (None, first_ident)
+        };
+        if !matches!(self.read_token(), Token::In) {
+            bail!("Expected 'in' in comptime for");
+        }
+        if !matches!(self.read_token(), Token::LeftBracket) {
+            bail!("Expected '[' for type list in comptime for");
+        }
+        let types = self.parse_type_list()?;
+        if !matches!(self.read_token(), Token::RightBracket) {
+            bail!("Expected ']' after type list");
+        }
+        let body = self.parse_block()?;
+        Ok(Expression::ComptimeFor {
+            index_var,
+            type_var,
+            types,
+            body,
+        })
+    }
+
+    fn parse_type_list(&mut self) -> Result<Vec<Type>> {
+        let mut types = Vec::new();
+        while !matches!(self.peek_nth(0), Token::RightBracket) {
+            let typ = self.parse_type()?;
+            types.push(typ);
+            if matches!(self.peek_nth(0), Token::Comma) {
+                self.read_token();
+            }
+        }
+        Ok(types)
+    }
+
+    fn parse_typename_expression(&mut self) -> Result<Expression> {
+        self.read_token();
+        if !matches!(self.read_token(), Token::LeftParentheses) {
+            bail!("Expected '(' after 'typename'");
+        }
+        let typ = self.parse_type()?;
+        if !matches!(self.read_token(), Token::RightParentheses) {
+            bail!("Expected ')' after type in typename");
+        }
+        Ok(Expression::Typename(typ))
+    }
+
+    fn parse_interpolated_identifier(
+        &mut self,
+        first_part: String,
+    ) -> Result<Expression> {
+        let mut parts = vec![IdentPart::Literal(first_part)];
+        self.read_token();
+        while matches!(self.peek_nth(0), Token::Hash) {
+            self.read_token();
+            if let Token::Identifier(var_name) = self.read_token() {
+                parts.push(IdentPart::TypeVar(var_name.to_string()));
+            } else {
+                bail!("Expected identifier after '#'");
+            }
+            if let Token::Identifier(next) = self.peek_nth(0) {
+                parts.push(IdentPart::Literal(next.to_string()));
+                self.read_token();
+            }
+        }
+        Ok(Expression::InterpolatedIdent(parts))
+    }
+
+    fn parse_interpolated_constant(&mut self) -> Result<Statement> {
+        let first_part = match self.read_token() {
+            Token::Identifier(name) => name.to_string(),
+            _ => bail!("Expected identifier at start of interpolated constant"),
+        };
+        let mut parts = vec![IdentPart::Literal(first_part)];
+        while matches!(self.peek_nth(0), Token::Hash) {
+            self.read_token();
+            if let Token::Identifier(var_name) = self.read_token() {
+                parts.push(IdentPart::TypeVar(var_name.to_string()));
+            } else {
+                bail!("Expected identifier after '#' in interpolated constant");
+            }
+            if let Token::Identifier(next) = self.peek_nth(0) {
+                parts.push(IdentPart::Literal(next.to_string()));
+                self.read_token();
+            }
+        }
+        if !matches!(self.read_token(), Token::DoubleColon) {
+            bail!("Expected '::' in interpolated constant declaration");
+        }
+        let value = self.parse_expression(Precedence::Lowest)?;
+        if matches!(self.peek_nth(0), Token::Semicolon) {
+            self.read_token();
+        }
+        Ok(Statement::InterpolatedConstant(parts, value))
     }
 }
 
@@ -2913,6 +3111,135 @@ mod tests {
             mutable: true,
         };
         assert_eq!(ast.to_string(), output.to_string());
+        Ok(())
+    }
+
+    #[test]
+    fn comptime_for_loop() -> Result<()> {
+        let input =
+            "comptime for T in [Position, Velocity] { print(typename(T)) }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let statements = parser.parse()?;
+        assert_eq!(statements.len(), 1);
+        if let Statement::Expression(Expression::ComptimeFor {
+            index_var,
+            type_var,
+            types,
+            body,
+        }) = &statements[0]
+        {
+            assert!(index_var.is_none());
+            assert_eq!(type_var, "T");
+            assert_eq!(types.len(), 2);
+            assert_eq!(body.len(), 1);
+        } else {
+            bail!("Expected ComptimeFor expression");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn comptime_for_with_index() -> Result<()> {
+        let input = "comptime for index, T in [A, B, C] { x := index }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let statements = parser.parse()?;
+        assert_eq!(statements.len(), 1);
+        if let Statement::Expression(Expression::ComptimeFor {
+            index_var,
+            type_var,
+            types,
+            body: _,
+        }) = &statements[0]
+        {
+            assert_eq!(index_var.as_deref(), Some("index"));
+            assert_eq!(type_var, "T");
+            assert_eq!(types.len(), 3);
+        } else {
+            bail!("Expected ComptimeFor expression with index");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn shift_operators() -> Result<()> {
+        let input = "x := 1 << 2";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let statements = parser.parse()?;
+        assert_eq!(statements.len(), 1);
+        if let Statement::Let { value, .. } = &statements[0] {
+            if let Expression::Infix(_, op, _) = value {
+                assert_eq!(*op, Operator::ShiftLeft);
+            } else {
+                bail!("Expected Infix expression");
+            }
+        } else {
+            bail!("Expected Let statement");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bitwise_or_operator() -> Result<()> {
+        let input = "x := 1 | 2";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let statements = parser.parse()?;
+        assert_eq!(statements.len(), 1);
+        if let Statement::Let { value, .. } = &statements[0] {
+            if let Expression::Infix(_, op, _) = value {
+                assert_eq!(*op, Operator::BitwiseOr);
+            } else {
+                bail!("Expected Infix expression");
+            }
+        } else {
+            bail!("Expected Let statement");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn interpolated_constant() -> Result<()> {
+        use super::IdentPart;
+        let input = "BIT_#T :: 1 << 2";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let statements = parser.parse()?;
+        assert_eq!(statements.len(), 1);
+        if let Statement::InterpolatedConstant(parts, _) = &statements[0] {
+            assert_eq!(parts.len(), 2);
+            assert_eq!(parts[0], IdentPart::Literal("BIT_".to_string()));
+            assert_eq!(parts[1], IdentPart::TypeVar("T".to_string()));
+        } else {
+            bail!("Expected InterpolatedConstant statement");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn typename_expression() -> Result<()> {
+        let input = "x := typename(Position)";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let statements = parser.parse()?;
+        assert_eq!(statements.len(), 1);
+        if let Statement::Let { value, .. } = &statements[0] {
+            if let Expression::Typename(typ) = value {
+                assert_eq!(format!("{}", typ), "Position");
+            } else {
+                bail!("Expected Typename expression");
+            }
+        } else {
+            bail!("Expected Let statement");
+        }
         Ok(())
     }
 }

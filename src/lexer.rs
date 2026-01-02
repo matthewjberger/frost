@@ -20,6 +20,7 @@ pub enum Token {
     Colon,
     ColonAssign,
     Comma,
+    Comptime,
     Continue,
     Defer,
     Distinct,
@@ -35,6 +36,7 @@ pub enum Token {
     Function,
     GreaterThan,
     GreaterThanOrEqual,
+    Hash,
     Identifier(String),
     If,
     Illegal(String),
@@ -53,6 +55,7 @@ pub enum Token {
     NotEqual,
     Or,
     Percent,
+    Pipe,
     Plus,
     Proc,
     Return,
@@ -60,12 +63,16 @@ pub enum Token {
     RightBracket,
     RightParentheses,
     Semicolon,
+    ShiftLeft,
+    ShiftRight,
     Sizeof,
     Slash,
     StringLiteral(String),
     Struct,
     Switch,
     True,
+    Type,
+    Typename,
     TypeBool,
     TypeF32,
     TypeF64,
@@ -99,6 +106,7 @@ impl Display for Token {
             Colon => ":".to_string(),
             ColonAssign => ":=".to_string(),
             Comma => ",".to_string(),
+            Comptime => "comptime".to_string(),
             Continue => "continue".to_string(),
             Defer => "defer".to_string(),
             Distinct => "distinct".to_string(),
@@ -114,6 +122,7 @@ impl Display for Token {
             Function => "fn".to_string(),
             GreaterThan => ">".to_string(),
             GreaterThanOrEqual => ">=".to_string(),
+            Hash => "#".to_string(),
             Identifier(value) => value.to_string(),
             If => "if".to_string(),
             Illegal(value) => value.to_string(),
@@ -132,6 +141,7 @@ impl Display for Token {
             NotEqual => "!=".to_string(),
             Or => "||".to_string(),
             Percent => "%".to_string(),
+            Pipe => "|".to_string(),
             Plus => "+".to_string(),
             Proc => "proc".to_string(),
             Return => "return".to_string(),
@@ -139,12 +149,16 @@ impl Display for Token {
             RightBracket => "]".to_string(),
             RightParentheses => ")".to_string(),
             Semicolon => ";".to_string(),
+            ShiftLeft => "<<".to_string(),
+            ShiftRight => ">>".to_string(),
             Sizeof => "sizeof".to_string(),
             Slash => "/".to_string(),
             StringLiteral(value) => value.to_string(),
             Struct => "struct".to_string(),
             Switch => "switch".to_string(),
             True => "true".to_string(),
+            Type => "type".to_string(),
+            Typename => "typename".to_string(),
             TypeBool => "bool".to_string(),
             TypeF32 => "f32".to_string(),
             TypeF64 => "f64".to_string(),
@@ -217,8 +231,28 @@ impl<'a> Lexer<'a> {
             '[' => LeftBracket,
             ']' => RightBracket,
             '!' => self.next_char_or(Bang, '=', NotEqual),
-            '<' => self.next_char_or(LessThan, '=', LessThanOrEqual),
-            '>' => self.next_char_or(GreaterThan, '=', GreaterThanOrEqual),
+            '<' => match self.peek_nth(0) {
+                '<' => {
+                    self.read_char();
+                    ShiftLeft
+                }
+                '=' => {
+                    self.read_char();
+                    LessThanOrEqual
+                }
+                _ => LessThan,
+            },
+            '>' => match self.peek_nth(0) {
+                '>' => {
+                    self.read_char();
+                    ShiftRight
+                }
+                '=' => {
+                    self.read_char();
+                    GreaterThanOrEqual
+                }
+                _ => GreaterThan,
+            },
             '%' => Percent,
             '-' => self.next_char_or(Minus, '>', Arrow),
             '*' => Asterisk,
@@ -251,9 +285,10 @@ impl<'a> Lexer<'a> {
                     self.read_char();
                     Or
                 } else {
-                    Illegal("|".to_string())
+                    Pipe
                 }
             }
+            '#' => Hash,
             '.' => self.next_char_or(Dot, '.', DotDot),
             '"' => {
                 let literal = self.take_while(|x| x != '"');
@@ -371,7 +406,10 @@ impl<'a> Lexer<'a> {
             "break" => Break,
             "continue" => Continue,
             "switch" => Switch,
+            "type" => Type,
+            "typename" => Typename,
             "case" => Case,
+            "comptime" => Comptime,
             "i8" => TypeI8,
             "i16" => TypeI16,
             "i32" => TypeI32,
