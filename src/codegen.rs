@@ -68,16 +68,17 @@ impl CodegenContext {
     pub fn compile_program(&mut self, statements: &[Statement]) -> Result<()> {
         for statement in statements {
             match statement {
-                Statement::Struct(name, fields) => {
+                Statement::Struct(name, _type_params, fields) => {
                     self.compile_struct_definition(name, fields)?;
                 }
                 Statement::Extern { name, params, return_type } => {
                     self.declare_extern_function(name, params, return_type.as_ref())?;
                 }
                 Statement::Constant(name, expr) => {
-                    if let Expression::Function(params, ret_type, body)
-                    | Expression::Proc(params, ret_type, body) = expr
+                    if let Expression::Function(params, ret_sig, body)
+                    | Expression::Proc(params, ret_sig, body) = expr
                     {
+                        let ret_type = ret_sig.to_type();
                         self.compile_function(name, params, ret_type.as_ref(), body)?;
                     }
                 }
@@ -89,7 +90,7 @@ impl CodegenContext {
             let mut global_body = Vec::new();
             for statement in statements {
                 match statement {
-                    Statement::Struct(_, _) => {}
+                    Statement::Struct(..) => {}
                     Statement::Extern { .. } => {}
                     Statement::Constant(_name, expr) => {
                         if matches!(expr, Expression::Function(_, _, _) | Expression::Proc(_, _, _)) {
@@ -402,7 +403,7 @@ impl<'a> FunctionTranslator<'a> {
             }
 
             Statement::For(iter_name, range, body) => {
-                if let Expression::Range(start, end) = range {
+                if let Expression::Range(start, end, inclusive) = range {
                     let start_val = self.translate_expression(start)?;
                     let end_val = self.translate_expression(end)?;
 
@@ -417,7 +418,12 @@ impl<'a> FunctionTranslator<'a> {
 
                     self.builder.switch_to_block(header_block);
                     let current = self.builder.use_var(iter_var);
-                    let cond = self.builder.ins().icmp(IntCC::SignedLessThan, current, end_val);
+                    let compare = if *inclusive {
+                        IntCC::SignedLessThanOrEqual
+                    } else {
+                        IntCC::SignedLessThan
+                    };
+                    let cond = self.builder.ins().icmp(compare, current, end_val);
                     self.builder.ins().brif(cond, body_block, &[], exit_block, &[]);
 
                     self.builder.switch_to_block(body_block);
@@ -466,13 +472,25 @@ impl<'a> FunctionTranslator<'a> {
                 Ok(None)
             }
 
-            Statement::Struct(_, _) => Ok(None),
+            Statement::Struct(..) => Ok(None),
             Statement::Enum(_, _) => Ok(None),
             Statement::TypeAlias(_, _) => Ok(None),
             Statement::Import(_) => Ok(None),
             Statement::Defer(_) => Ok(None),
             Statement::InterpolatedConstant(_, _) => Ok(None),
             Statement::Extern { .. } => Ok(None),
+            Statement::PushContext { body, .. } => {
+                for statement in body {
+                    self.translate_statement(statement)?;
+                }
+                Ok(None)
+            }
+            Statement::PushAllocator { body, .. } => {
+                for statement in body {
+                    self.translate_statement(statement)?;
+                }
+                Ok(None)
+            }
         }
     }
 
@@ -634,7 +652,7 @@ impl<'a> FunctionTranslator<'a> {
                 Ok(self.builder.ins().iconst(types::I64, size as i64))
             }
 
-            Expression::Range(_, _) => {
+            Expression::Range(_, _, _) => {
                 bail!("Range expressions should be handled in for loops")
             }
 
@@ -685,6 +703,12 @@ impl<'a> FunctionTranslator<'a> {
                     }
                 }
                 Ok(result)
+            }
+            Expression::ContextAccess => {
+                Ok(self.builder.ins().iconst(types::I64, 0))
+            }
+            Expression::IfLet(_, _, _, _) => {
+                Ok(self.builder.ins().iconst(types::I64, 0))
             }
         }
     }

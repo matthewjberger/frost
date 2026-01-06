@@ -21,12 +21,15 @@ pub enum Token {
     ColonAssign,
     Comma,
     Comptime,
+    Context,
     Continue,
     Defer,
     Distinct,
+    Dollar,
     DoubleColon,
     Dot,
     DotDot,
+    DotDotEqual,
     Else,
     EndOfFile,
     Enum,
@@ -51,6 +54,7 @@ pub enum Token {
     LeftParentheses,
     LessThan,
     LessThanOrEqual,
+    Let,
     Minus,
     Mut,
     NotEqual,
@@ -58,6 +62,8 @@ pub enum Token {
     Percent,
     Pipe,
     Plus,
+    PushAllocator,
+    PushContext,
     Question,
     Return,
     RightBrace,
@@ -81,11 +87,13 @@ pub enum Token {
     TypeI16,
     TypeI32,
     TypeI64,
+    TypeIsize,
     TypeStr,
     TypeU8,
     TypeU16,
     TypeU32,
     TypeU64,
+    TypeUsize,
     TypeVoid,
     Underscore,
     Unsafe,
@@ -109,11 +117,14 @@ impl Display for Token {
             ColonAssign => ":=".to_string(),
             Comma => ",".to_string(),
             Comptime => "comptime".to_string(),
+            Context => "context".to_string(),
             Continue => "continue".to_string(),
             Defer => "defer".to_string(),
             Distinct => "distinct".to_string(),
+            Dollar => "$".to_string(),
             Dot => ".".to_string(),
             DotDot => "..".to_string(),
+            DotDotEqual => "..=".to_string(),
             DoubleColon => "::".to_string(),
             Else => "else".to_string(),
             EndOfFile => EOF_CHAR.to_string(),
@@ -139,6 +150,7 @@ impl Display for Token {
             LeftParentheses => "(".to_string(),
             LessThan => "<".to_string(),
             LessThanOrEqual => "<=".to_string(),
+            Let => "let".to_string(),
             Minus => "-".to_string(),
             Mut => "mut".to_string(),
             NotEqual => "!=".to_string(),
@@ -146,6 +158,8 @@ impl Display for Token {
             Percent => "%".to_string(),
             Pipe => "|".to_string(),
             Plus => "+".to_string(),
+            PushAllocator => "push_allocator".to_string(),
+            PushContext => "push_context".to_string(),
             Question => "?".to_string(),
             Return => "return".to_string(),
             RightBrace => "}".to_string(),
@@ -169,11 +183,13 @@ impl Display for Token {
             TypeI16 => "i16".to_string(),
             TypeI32 => "i32".to_string(),
             TypeI64 => "i64".to_string(),
+            TypeIsize => "isize".to_string(),
             TypeStr => "str".to_string(),
             TypeU8 => "u8".to_string(),
             TypeU16 => "u16".to_string(),
             TypeU32 => "u32".to_string(),
             TypeU64 => "u64".to_string(),
+            TypeUsize => "usize".to_string(),
             TypeVoid => "void".to_string(),
             Underscore => "_".to_string(),
             Unsafe => "unsafe".to_string(),
@@ -294,7 +310,20 @@ impl<'a> Lexer<'a> {
                 }
             }
             '#' => Hash,
-            '.' => self.next_char_or(Dot, '.', DotDot),
+            '$' => Dollar,
+            '.' => {
+                if self.peek_nth(0) == '.' {
+                    self.read_char();
+                    if self.peek_nth(0) == '=' {
+                        self.read_char();
+                        DotDotEqual
+                    } else {
+                        DotDot
+                    }
+                } else {
+                    Dot
+                }
+            }
             '"' => {
                 let literal = self.take_while(|x| x != '"');
                 match self.peek_nth(0) {
@@ -397,6 +426,7 @@ impl<'a> Lexer<'a> {
             "return" => Return,
             "if" => If,
             "import" => Import,
+            "let" => Let,
             "else" => Else,
             "struct" => Struct,
             "enum" => Enum,
@@ -415,14 +445,19 @@ impl<'a> Lexer<'a> {
             "typename" => Typename,
             "case" => Case,
             "comptime" => Comptime,
+            "context" => Context,
+            "push_allocator" => PushAllocator,
+            "push_context" => PushContext,
             "i8" => TypeI8,
             "i16" => TypeI16,
             "i32" => TypeI32,
             "i64" => TypeI64,
+            "isize" => TypeIsize,
             "u8" => TypeU8,
             "u16" => TypeU16,
             "u32" => TypeU32,
             "u64" => TypeU64,
+            "usize" => TypeUsize,
             "f32" => TypeF32,
             "f64" => TypeF64,
             "bool" => TypeBool,
@@ -659,16 +694,18 @@ mod tests {
     #[test]
     fn type_keywords() -> Result<()> {
         check_tokens(
-            "i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 bool str void",
+            "i8 i16 i32 i64 isize u8 u16 u32 u64 usize f32 f64 bool str void",
             &[
                 Token::TypeI8,
                 Token::TypeI16,
                 Token::TypeI32,
                 Token::TypeI64,
+                Token::TypeIsize,
                 Token::TypeU8,
                 Token::TypeU16,
                 Token::TypeU32,
                 Token::TypeU64,
+                Token::TypeUsize,
                 Token::TypeF32,
                 Token::TypeF64,
                 Token::TypeBool,
@@ -679,7 +716,7 @@ mod tests {
     }
 
     #[test]
-    fn odin_style_tokens() -> Result<()> {
+    fn declaration_tokens() -> Result<()> {
         check_tokens(
             ":: := -> ^ & .",
             &[
@@ -741,7 +778,7 @@ mod tests {
     }
 
     #[test]
-    fn odin_style_variable() -> Result<()> {
+    fn variable_declaration() -> Result<()> {
         check_tokens(
             "x := 5; y : i64 = 10;",
             &[
@@ -760,7 +797,7 @@ mod tests {
     }
 
     #[test]
-    fn odin_style_struct() -> Result<()> {
+    fn struct_declaration() -> Result<()> {
         check_tokens(
             "Vec3 :: struct { x: f32, y: f32, z: f32, }",
             &[
@@ -825,6 +862,23 @@ mod tests {
     }
 
     #[test]
+    fn inclusive_range_syntax() -> Result<()> {
+        check_tokens(
+            "for i in 0..=10 { }",
+            &[
+                Token::For,
+                Token::Identifier("i".to_string()),
+                Token::In,
+                Token::Integer(0),
+                Token::DotDotEqual,
+                Token::Integer(10),
+                Token::LeftBrace,
+                Token::RightBrace,
+            ],
+        )
+    }
+
+    #[test]
     fn identifier_with_numbers() -> Result<()> {
         check_tokens(
             "x1 y2z abc123",
@@ -881,6 +935,19 @@ mod tests {
                 Token::Colon,
                 Token::Identifier("z".to_string()),
                 Token::RightBrace,
+            ],
+        )
+    }
+
+    #[test]
+    fn dollar_token() -> Result<()> {
+        check_tokens(
+            "$T $U",
+            &[
+                Token::Dollar,
+                Token::Identifier("T".to_string()),
+                Token::Dollar,
+                Token::Identifier("U".to_string()),
             ],
         )
     }

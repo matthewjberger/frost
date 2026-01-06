@@ -1,6 +1,6 @@
 use crate::{
-    types::Type, Block, Expression, Literal, Operator, Parameter, Pattern, Statement,
-    StructField,
+    parser::ReturnSignature, types::Type, Block, Expression, Literal, Operator, Parameter,
+    Pattern, Statement, StructField,
 };
 use anyhow::{bail, Result};
 use std::collections::HashMap;
@@ -292,7 +292,7 @@ impl TypeChecker {
                 self.infer_expression(expression)?;
                 Ok(None)
             }
-            Statement::Struct(name, fields) => {
+            Statement::Struct(name, _type_params, fields) => {
                 self.env.define_struct(
                     name,
                     StructDef {
@@ -323,7 +323,7 @@ impl TypeChecker {
                 Ok(None)
             }
             Statement::For(iterator, range, body) => {
-                if let Expression::Range(start, end) = range {
+                if let Expression::Range(start, end, _inclusive) = range {
                     let start_type = self.infer_expression(start)?;
                     let end_type = self.infer_expression(end)?;
                     if start_type != end_type {
@@ -364,6 +364,20 @@ impl TypeChecker {
             Statement::Import(_path) => Ok(None),
             Statement::InterpolatedConstant(_, _) => Ok(None),
             Statement::Extern { .. } => Ok(None),
+            Statement::PushContext { context_expr, body } => {
+                self.infer_expression(context_expr)?;
+                for statement in body {
+                    self.check_statement(statement)?;
+                }
+                Ok(None)
+            }
+            Statement::PushAllocator { allocator_expr, body } => {
+                self.infer_expression(allocator_expr)?;
+                for statement in body {
+                    self.check_statement(statement)?;
+                }
+                Ok(None)
+            }
         }
     }
 
@@ -498,7 +512,7 @@ impl TypeChecker {
                 Ok(Type::Struct(name.clone()))
             }
             Expression::Sizeof(_) => Ok(Type::I64),
-            Expression::Range(start, _end) => self.infer_expression(start),
+            Expression::Range(start, _end, _inclusive) => self.infer_expression(start),
             Expression::Switch(scrutinee, cases) => {
                 let scrutinee_type = self.infer_expression(scrutinee)?;
                 let mut result_type = Type::Unknown;
@@ -540,6 +554,22 @@ impl TypeChecker {
                 let result = self.check_block(body);
                 self.in_unsafe = was_unsafe;
                 result
+            }
+            Expression::ContextAccess => Ok(Type::Context),
+            Expression::IfLet(_pattern, value, consequence, alternative) => {
+                let _value_type = self.infer_expression(value)?;
+                let conseq_type = self.check_block(consequence)?;
+                if let Some(alt) = alternative {
+                    let alt_type = self.check_block(alt)?;
+                    if !self.types_compatible(&conseq_type, &alt_type) {
+                        bail!(
+                            "If let branches have different types: {} vs {}",
+                            conseq_type,
+                            alt_type
+                        );
+                    }
+                }
+                Ok(conseq_type)
             }
         }
     }
@@ -631,7 +661,7 @@ impl TypeChecker {
     fn check_function(
         &mut self,
         params: &[Parameter],
-        return_type: &Option<Type>,
+        return_sig: &ReturnSignature,
         body: &Block,
     ) -> Result<Type> {
         let mut child_env = TypeEnv::new_child(self.env.clone());
@@ -643,18 +673,25 @@ impl TypeChecker {
             self.env.define(&param.name, param_type);
         }
 
+        if let Some(named_params) = return_sig.named_params() {
+            for ret_param in named_params {
+                self.env.define(&ret_param.name, ret_param.param_type.clone());
+            }
+        }
+
         let body_type = self.check_block(body)?;
 
         std::mem::swap(&mut self.env, &mut child_env);
 
-        if let Some(declared_return) = return_type {
-            if !self.in_unsafe && declared_return.is_reference() {
+        let declared_return = return_sig.to_type();
+        if let Some(ref declared) = declared_return {
+            if !self.in_unsafe && declared.is_reference() {
                 bail!("functions cannot return references - return an owned value instead");
             }
-            if !self.types_compatible(declared_return, &body_type) {
+            if !self.types_compatible(declared, &body_type) {
                 bail!(
                     "Function return type mismatch: declared {}, body returns {}",
-                    declared_return,
+                    declared,
                     body_type
                 );
             }
@@ -664,7 +701,7 @@ impl TypeChecker {
             .iter()
             .map(|p| p.type_annotation.clone().unwrap_or(Type::Unknown))
             .collect();
-        let ret = return_type.clone().unwrap_or(body_type.clone());
+        let ret = declared_return.unwrap_or(body_type.clone());
         if !self.in_unsafe && ret.is_reference() {
             bail!("functions cannot return references - return an owned value instead");
         }
@@ -729,7 +766,16 @@ impl TypeChecker {
         if *expected == Type::Unknown || *actual == Type::Unknown {
             return true;
         }
+        if matches!(expected, Type::TypeParam(_)) || matches!(actual, Type::TypeParam(_)) {
+            return true;
+        }
         if expected == actual {
+            return true;
+        }
+        if self.is_integer(expected) && *actual == Type::I64 {
+            return true;
+        }
+        if matches!(expected, Type::F32 | Type::F64) && *actual == Type::F64 {
             return true;
         }
         match (expected, actual) {
@@ -747,12 +793,15 @@ impl TypeChecker {
                 | Type::I16
                 | Type::I32
                 | Type::I64
+                | Type::Isize
                 | Type::U8
                 | Type::U16
                 | Type::U32
                 | Type::U64
+                | Type::Usize
                 | Type::F32
                 | Type::F64
+                | Type::TypeParam(_)
                 | Type::Unknown
         )
     }
@@ -764,10 +813,12 @@ impl TypeChecker {
                 | Type::I16
                 | Type::I32
                 | Type::I64
+                | Type::Isize
                 | Type::U8
                 | Type::U16
                 | Type::U32
                 | Type::U64
+                | Type::Usize
                 | Type::Unknown
         )
     }
@@ -1085,6 +1136,50 @@ mod tests {
                     case .Blue: 2
                 }
             }
+        "#
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn check_isize_arithmetic() {
+        assert!(check(
+            r#"
+            x: isize = 42
+            y: isize = 10
+            z := x + y
+        "#
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn check_usize_arithmetic() {
+        assert!(check(
+            r#"
+            x: usize = 42
+            y: usize = 10
+            z := x + y
+        "#
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn check_generic_function_definition() {
+        assert!(check(
+            r#"
+            identity :: fn(x: $T) -> T { x }
+        "#
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn check_generic_function_multiple_params() {
+        assert!(check(
+            r#"
+            first :: fn(a: $T, b: $U) -> T { a }
         "#
         )
         .is_ok());
