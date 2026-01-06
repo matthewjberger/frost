@@ -45,7 +45,7 @@ References are **second-class citizens**:
 
 ```frost
 // ALLOWED
-update :: proc(pos: &mut Position) { ... }
+update :: fn(pos: &mut Position) { ... }
 ref := &value;
 process(ref);
 
@@ -54,7 +54,7 @@ CachedRef :: struct {
     pos: &Position,     // ERROR: cannot store reference in struct
 }
 
-get_ref :: proc(world: &World) -> &Position {  // ERROR: cannot return reference
+get_ref :: fn(world: &World) -> &Position {  // ERROR: cannot return reference
     ...
 }
 
@@ -69,9 +69,9 @@ Arenas provide bulk allocation with region tracking:
 
 ```frost
 Arena :: builtin_type {
-    new :: proc(size: usize) -> Arena
-    alloc :: proc<T>(self: &Arena, value: T) -> ^T
-    reset :: proc(self: &mut Arena)
+    new :: fn(size: usize) -> Arena
+    alloc :: fn<T>(self: &Arena, value: T) -> ^T
+    reset :: fn(self: &mut Arena)
 }
 ```
 
@@ -91,7 +91,7 @@ ptr := frame.alloc(Position { x = 0.0, y = 0.0 });
 - Arenas can be passed to functions; their pointers valid for that call
 
 ```frost
-process_frame :: proc(frame: &Arena) {
+process_frame :: fn(frame: &Arena) {
     temp := frame.alloc(Data { ... });
     // temp valid here
 }
@@ -100,7 +100,7 @@ process_frame :: proc(frame: &Arena) {
 // FORBIDDEN
 global_ptr : ^Position;  // Untagged pointer - must use unsafe
 
-store_ptr :: proc(frame: &Arena) -> ^Position {
+store_ptr :: fn(frame: &Arena) -> ^Position {
     frame.alloc(Position { ... })  // ERROR: cannot return arena pointer
 }
 ```
@@ -116,11 +116,11 @@ Handle :: builtin_type<T> {
 }
 
 Pool :: builtin_type<T> {
-    new :: proc(capacity: usize) -> Pool<T>
-    alloc :: proc(self: &mut Pool<T>, value: T) -> Handle<T>
-    get :: proc(self: &Pool<T>, handle: Handle<T>) -> ?&T
-    get_mut :: proc(self: &mut Pool<T>, handle: Handle<T>) -> ?&mut T
-    free :: proc(self: &mut Pool<T>, handle: Handle<T>)
+    new :: fn(capacity: usize) -> Pool<T>
+    alloc :: fn(self: &mut Pool<T>, value: T) -> Handle<T>
+    get :: fn(self: &Pool<T>, handle: Handle<T>) -> ?&T
+    get_mut :: fn(self: &mut Pool<T>, handle: Handle<T>) -> ?&mut T
+    free :: fn(self: &mut Pool<T>, handle: Handle<T>)
 }
 ```
 
@@ -206,7 +206,7 @@ m^ = 200;
 ### Pattern 1: Frame Allocator (Per-Frame Scratch)
 
 ```frost
-game_loop :: proc() {
+game_loop :: fn() {
     frame : Arena = Arena::new(megabytes(4));
 
     while running {
@@ -228,7 +228,7 @@ World :: struct {
     velocities: Pool<Velocity>,
 }
 
-spawn_enemy :: proc(world: &mut World) -> Handle<Entity> {
+spawn_enemy :: fn(world: &mut World) -> Handle<Entity> {
     pos := world.positions.alloc(Position { x = 0.0, y = 0.0 });
     vel := world.velocities.alloc(Velocity { dx = 1.0, dy = 0.0 });
     world.entities.alloc(Entity { position = pos, velocity = vel })
@@ -244,13 +244,13 @@ Level :: struct {
     textures: []^[self.arena]Texture,
 }
 
-load_level :: proc(path: str) -> Level {
+load_level :: fn(path: str) -> Level {
     level := Level { arena = Arena::new(megabytes(64)), ... };
     // All level data allocated in level.arena
     level
 }
 
-unload_level :: proc(level: Level) {
+unload_level :: fn(level: Level) {
     // Single reset frees everything
     level.arena.reset();
 }

@@ -1,4 +1,4 @@
-distance :: proc(a_x: f32, a_y: f32, a_z: f32, b_x: f32, b_y: f32, b_z: f32) -> f32 {
+distance :: fn(a_x: f32, a_y: f32, a_z: f32, b_x: f32, b_y: f32, b_z: f32) -> f32 {
     dx := b_x - a_x;
     dy := b_y - a_y;
     dz := b_z - a_z;
@@ -6,7 +6,7 @@ distance :: proc(a_x: f32, a_y: f32, a_z: f32, b_x: f32, b_y: f32, b_z: f32) -> 
     vec3_len(v)
 }
 
-midpoint :: proc(a_x: f32, a_y: f32, a_z: f32, b_x: f32, b_y: f32, b_z: f32) -> f32 {
+midpoint :: fn(a_x: f32, a_y: f32, a_z: f32, b_x: f32, b_y: f32, b_z: f32) -> f32 {
     a := vec3(a_x, a_y, a_z);
     b := vec3(b_x, b_y, b_z);
     sum := vec3_add(a, b);

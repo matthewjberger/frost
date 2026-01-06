@@ -1,6 +1,6 @@
 import "examples/math.frost"
 
-main :: proc() {
+main :: fn() {
     a := 3;
     b := 4;
 

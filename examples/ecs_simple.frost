@@ -4,7 +4,7 @@ Velocity :: struct { dx: f64, dy: f64 }
 COMPONENT_Position :: 1
 COMPONENT_Velocity :: 2
 
-movement_system :: proc(mut masks: []i64, mut positions: []Position, velocities: []Velocity, count: i64) -> void {
+movement_system :: fn(mut masks: []i64, mut positions: []Position, velocities: []Velocity, count: i64) -> void {
     for entity in 0..count {
         mask := masks[entity]
         has_pos := (mask & COMPONENT_Position) != 0

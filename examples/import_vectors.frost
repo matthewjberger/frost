@@ -1,6 +1,6 @@
 import "examples/vec3_utils.frost"
 
-main :: proc() {
+main :: fn() {
     a := vec3(0.0f32, 0.0f32, 0.0f32);
     b := vec3(3.0f32, 4.0f32, 0.0f32);
 

@@ -5,7 +5,7 @@ Result :: enum {
 
 r := Result::Ok { value = 42 };
 
-result := switch r {
+result := match r {
     case .Ok { value }: value
     case .Err { code }: 0 - code
 };

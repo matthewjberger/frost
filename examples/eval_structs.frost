@@ -25,9 +25,9 @@ Option :: enum {
 some_val := Option::Some { value = 42 };
 none_val := Option::None {};
 
-// Pattern matching with switch
-get_or_default :: proc(opt: Option, default: i64) -> i64 {
-    switch opt {
+// Pattern matching with match
+get_or_default :: fn(opt: Option, default: i64) -> i64 {
+    match opt {
         case .Some { value }: value
         case .None {}: default
     }
@@ -42,7 +42,7 @@ Result :: enum {
     Err { code: i64 },
 }
 
-divide :: proc(a: i64, b: i64) -> Result {
+divide :: fn(a: i64, b: i64) -> Result {
     if (b == 0) {
         return Result::Err { code = 1 };
     }
@@ -52,8 +52,8 @@ divide :: proc(a: i64, b: i64) -> Result {
 result1 := divide(10, 2);
 result2 := divide(10, 0);
 
-handle_result :: proc(r: Result) -> i64 {
-    switch r {
+handle_result :: fn(r: Result) -> i64 {
+    match r {
         case .Ok { value }: value
         case .Err { code }: 0 - code
     }

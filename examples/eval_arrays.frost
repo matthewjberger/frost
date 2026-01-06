@@ -18,7 +18,7 @@ print(nums[1]);
 print(nums[2]);
 
 // Sum array elements
-sum :: proc(arr: []i64) -> i64 {
+sum :: fn(arr: []i64) -> i64 {
     mut total := 0;
     for i in 0..len(arr) {
         total = total + arr[i];

@@ -58,16 +58,16 @@ for i in 0..3 {
 }
 
 // ============================================
-// FUNCTIONS (PROCEDURES)
+// FUNCTIONS
 // ============================================
 
 // Basic function using ::
-add :: proc(a: i64, b: i64) -> i64 {
+add :: fn(a: i64, b: i64) -> i64 {
     a + b
 }
 
 // Explicit return
-factorial :: proc(n: i64) -> i64 {
+factorial :: fn(n: i64) -> i64 {
     if (n <= 1) {
         return 1;
     }
@@ -81,10 +81,10 @@ print(factorial(5));
 // FIRST-CLASS FUNCTIONS
 // ============================================
 
-double :: proc(x: i64) -> i64 { x * 2 }
-square :: proc(x: i64) -> i64 { x * x }
+double :: fn(x: i64) -> i64 { x * 2 }
+square :: fn(x: i64) -> i64 { x * x }
 
-apply :: proc(f: proc(i64) -> i64, val: i64) -> i64 {
+apply :: fn(f: fn(i64) -> i64, val: i64) -> i64 {
     f(val)
 }
 
@@ -92,8 +92,8 @@ print(apply(double, 5));
 print(apply(square, 5));
 
 // Closures capture their environment
-make_adder :: proc(n: i64) -> proc(i64) -> i64 {
-    proc(addend: i64) -> i64 { addend + n }
+make_adder :: fn(n: i64) -> fn(i64) -> i64 {
+    fn(addend: i64) -> i64 { addend + n }
 }
 
 add10 := make_adder(10);
@@ -132,7 +132,7 @@ Result :: enum {
 
 success := Result::Ok { value = 42 };
 
-extracted := switch success {
+extracted := match success {
     case .Ok { value }: value
     case .Err { code }: 0 - code
 };
@@ -144,7 +144,7 @@ print(extracted);
 
 // FizzBuzz with pattern matching
 for i in 1..16 {
-    out := switch (i % 3, i % 5) {
+    out := match (i % 3, i % 5) {
         case (0, 0): "FizzBuzz"
         case (0, _): "Fizz"
         case (_, 0): "Buzz"
@@ -178,7 +178,7 @@ print(number);
 // DEFER
 // ============================================
 
-test_defer :: proc() -> i64 {
+test_defer :: fn() -> i64 {
     mut val := 1;
     defer val = val * 10;
     defer val = val + 5;

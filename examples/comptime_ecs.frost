@@ -22,7 +22,7 @@ print(BIT_Velocity)
 print(BIT_Health)
 
 comptime for T in [Position, Velocity, Health] {
-    print_#T :: proc(component: T) -> void {
+    print_#T :: fn(component: T) -> void {
         print(typename(T))
     }
 }

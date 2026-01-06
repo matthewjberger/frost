@@ -870,7 +870,7 @@ mod tests {
     #[test]
     fn test_compile_simple_function() {
         let source = r#"
-            add :: proc(a: i64, b: i64) -> i64 {
+            add :: fn(a: i64, b: i64) -> i64 {
                 a + b
             }
         "#;
@@ -883,7 +883,7 @@ mod tests {
     #[test]
     fn test_compile_arithmetic() {
         let source = r#"
-            calc :: proc(x: i64) -> i64 {
+            calc :: fn(x: i64) -> i64 {
                 y := x * 2;
                 z := y + 10;
                 z - 5
@@ -896,7 +896,7 @@ mod tests {
     #[test]
     fn test_compile_if_expression() {
         let source = r#"
-            max :: proc(a: i64, b: i64) -> i64 {
+            max :: fn(a: i64, b: i64) -> i64 {
                 if (a > b) { a } else { b }
             }
         "#;
@@ -910,7 +910,7 @@ mod tests {
     #[test]
     fn test_compile_while_loop() {
         let source = r#"
-            sum_to :: proc(n: i64) -> i64 {
+            sum_to :: fn(n: i64) -> i64 {
                 mut result := 0;
                 mut i := 0;
                 while (i < n) {
@@ -930,7 +930,7 @@ mod tests {
     #[test]
     fn test_compile_for_loop() {
         let source = r#"
-            sum_range :: proc() -> i64 {
+            sum_range :: fn() -> i64 {
                 mut result := 0;
                 for i in 0..10 {
                     result = result + i;
@@ -950,7 +950,7 @@ mod tests {
                 y: i64,
             }
 
-            make_point :: proc() -> i64 {
+            make_point :: fn() -> i64 {
                 p := Point { x = 10, y = 20 };
                 0
             }
@@ -962,11 +962,11 @@ mod tests {
     #[test]
     fn test_compile_function_call() {
         let source = r#"
-            double :: proc(x: i64) -> i64 {
+            double :: fn(x: i64) -> i64 {
                 x * 2
             }
 
-            quad :: proc(x: i64) -> i64 {
+            quad :: fn(x: i64) -> i64 {
                 double(double(x))
             }
         "#;
@@ -977,7 +977,7 @@ mod tests {
     #[test]
     fn test_compile_comparison_operators() {
         let source = r#"
-            compare :: proc(a: i64, b: i64) -> i64 {
+            compare :: fn(a: i64, b: i64) -> i64 {
                 if (a == b) { 0 }
                 else if (a < b) { 1 }
                 else if (a > b) { 2 }
@@ -997,7 +997,7 @@ mod tests {
     #[test]
     fn test_compile_logical_operators() {
         let source = r#"
-            logic :: proc(a: bool, b: bool) -> i64 {
+            logic :: fn(a: bool, b: bool) -> i64 {
                 if (a && b) { 1 }
                 else if (a || b) { 2 }
                 else { 0 }
@@ -1013,7 +1013,7 @@ mod tests {
     #[test]
     fn test_compile_bitwise_operators() {
         let source = r#"
-            bits :: proc(a: i64, b: i64) -> i64 {
+            bits :: fn(a: i64, b: i64) -> i64 {
                 c := a & b;
                 d := a | b;
                 e := a << 2;
@@ -1028,7 +1028,7 @@ mod tests {
     #[test]
     fn test_compile_break_continue() {
         let source = r#"
-            with_break :: proc() -> i64 {
+            with_break :: fn() -> i64 {
                 mut i := 0;
                 while (true) {
                     if (i > 10) { break; }
@@ -1047,7 +1047,7 @@ mod tests {
     #[test]
     fn test_object_file_has_valid_header() {
         let source = r#"
-            main :: proc() -> i64 {
+            main :: fn() -> i64 {
                 42
             }
         "#;
@@ -1059,9 +1059,9 @@ mod tests {
     #[test]
     fn test_compile_extern_function() {
         let source = r#"
-            puts :: extern proc(s: ^i8) -> i32
+            puts :: extern fn(s: ^i8) -> i32
 
-            main :: proc() -> i64 {
+            main :: fn() -> i64 {
                 0
             }
         "#;
@@ -1075,9 +1075,9 @@ mod tests {
     #[test]
     fn test_compile_extern_call() {
         let source = r#"
-            add_extern :: extern proc(a: i64, b: i64) -> i64
+            add_extern :: extern fn(a: i64, b: i64) -> i64
 
-            main :: proc() -> i64 {
+            main :: fn() -> i64 {
                 add_extern(10, 20)
             }
         "#;
@@ -1091,9 +1091,9 @@ mod tests {
     #[test]
     fn test_compile_string_literal() {
         let source = r#"
-            puts :: extern proc(s: ^i8) -> i32
+            puts :: extern fn(s: ^i8) -> i32
 
-            main :: proc() -> i64 {
+            main :: fn() -> i64 {
                 puts("Hello, World!");
                 0
             }
@@ -1108,9 +1108,9 @@ mod tests {
     #[test]
     fn test_compile_multiple_strings() {
         let source = r#"
-            puts :: extern proc(s: ^i8) -> i32
+            puts :: extern fn(s: ^i8) -> i32
 
-            main :: proc() -> i64 {
+            main :: fn() -> i64 {
                 puts("First string");
                 puts("Second string");
                 puts("First string");
@@ -1127,9 +1127,9 @@ mod tests {
     #[test]
     fn test_compile_with_libc_functions() {
         let source = r#"
-            puts :: extern proc(s: ^i8) -> i32
+            puts :: extern fn(s: ^i8) -> i32
 
-            main :: proc() -> i64 {
+            main :: fn() -> i64 {
                 puts("Hello from Frost!");
                 puts("Another line");
                 0
@@ -1145,7 +1145,7 @@ mod tests {
     #[test]
     fn test_compile_array_literal() {
         let source = r#"
-            main :: proc() -> i64 {
+            main :: fn() -> i64 {
                 arr := [1, 2, 3, 4, 5];
                 arr[2]
             }
@@ -1160,7 +1160,7 @@ mod tests {
     #[test]
     fn test_compile_array_index_assignment() {
         let source = r#"
-            main :: proc() -> i64 {
+            main :: fn() -> i64 {
                 mut arr := [10, 20, 30];
                 arr[1] = 42;
                 arr[1]
@@ -1176,7 +1176,7 @@ mod tests {
     #[test]
     fn test_compile_array_in_loop() {
         let source = r#"
-            main :: proc() -> i64 {
+            main :: fn() -> i64 {
                 mut arr := [0, 0, 0, 0, 0];
                 for i in 0..5 {
                     arr[i] = i * 2;

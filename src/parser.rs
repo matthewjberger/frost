@@ -248,8 +248,8 @@ impl Display for Statement {
                     .collect::<Vec<_>>()
                     .join(", ");
                 match return_type {
-                    Some(typ) => format!("{} :: extern proc({}) -> {}", name, params_str, typ),
-                    None => format!("{} :: extern proc({})", name, params_str),
+                    Some(typ) => format!("{} :: extern fn({}) -> {}", name, params_str, typ),
+                    None => format!("{} :: extern fn({})", name, params_str),
                 }
             }
         };
@@ -366,13 +366,13 @@ impl Display for Expression {
                     .join(", ");
                 match return_type {
                     Some(typ) => format!(
-                        "proc({}) -> {} {{ {} }}",
+                        "fn({}) -> {} {{ {} }}",
                         params_str,
                         typ,
                         flatten(body, "\n")
                     ),
                     None => format!(
-                        "proc({}) {{ {} }}",
+                        "fn({}) {{ {} }}",
                         params_str,
                         flatten(body, "\n")
                     ),
@@ -474,7 +474,7 @@ impl Display for Expression {
                         )
                     })
                     .collect();
-                format!("switch {} {{ {} }}", scrutinee, case_strs.join(" "))
+                format!("match {} {{ {} }}", scrutinee, case_strs.join(" "))
             }
             Self::Tuple(elements) => {
                 let elem_strs: Vec<String> =
@@ -675,7 +675,6 @@ impl<'a> Parser<'a> {
                             | Token::True
                             | Token::False
                             | Token::Function
-                            | Token::Proc
                             | Token::LeftBracket
                             | Token::LeftBrace
                             | Token::Minus
@@ -923,11 +922,11 @@ impl<'a> Parser<'a> {
             Ok(Statement::TypeAlias(identifier, typ))
         } else if matches!(self.peek_nth(0), Token::Extern) {
             self.read_token();
-            if !matches!(self.read_token(), Token::Proc) {
-                bail!("Expected 'proc' after 'extern'");
+            if !matches!(self.read_token(), Token::Function) {
+                bail!("Expected 'fn' after 'extern'");
             }
             if !matches!(self.read_token(), Token::LeftParentheses) {
-                bail!("Expected '(' after 'proc'");
+                bail!("Expected '(' after 'fn'");
             }
             let mut params = Vec::new();
             while self.peek_nth(0) != &Token::RightParentheses {
@@ -1060,13 +1059,9 @@ impl<'a> Parser<'a> {
                 advance = false;
                 self.parse_function_literal()?
             }
-            Token::Proc => {
+            Token::Match => {
                 advance = false;
-                self.parse_proc_literal()?
-            }
-            Token::Switch => {
-                advance = false;
-                self.parse_switch_expression()?
+                self.parse_match_expression()?
             }
             Token::Comptime => {
                 advance = false;
@@ -1384,20 +1379,20 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_switch_expression(&mut self) -> Result<Expression> {
+    fn parse_match_expression(&mut self) -> Result<Expression> {
         self.read_token();
         let scrutinee = self.parse_expression(Precedence::Lowest)?;
         if !matches!(self.read_token(), Token::LeftBrace) {
-            bail!("Expected '{{' after switch expression");
+            bail!("Expected '{{' after match expression");
         }
         let mut cases = Vec::new();
         while self.peek_nth(0) != &Token::RightBrace {
             if !matches!(self.read_token(), Token::Case) {
-                bail!("Expected 'case' in switch");
+                bail!("Expected 'case' in match");
             }
             let pattern = self.parse_pattern()?;
             if !matches!(self.read_token(), Token::Colon) {
-                bail!("Expected ':' after pattern in switch case");
+                bail!("Expected ':' after pattern in match case");
             }
             let body = if matches!(self.peek_nth(0), Token::LeftBrace) {
                 self.parse_block()?
@@ -1575,20 +1570,12 @@ impl<'a> Parser<'a> {
             None
         };
         let block = self.parse_block()?;
-        Ok(Expression::Function(parameters, return_type, block))
-    }
-
-    fn parse_proc_literal(&mut self) -> Result<Expression> {
-        self.read_token();
-        let parameters = self.parse_function_parameters()?;
-        let return_type = if matches!(self.peek_nth(0), Token::Arrow) {
-            self.read_token();
-            Some(self.parse_type()?)
+        let has_type_annotations = parameters.iter().any(|p| p.type_annotation.is_some()) || return_type.is_some();
+        if has_type_annotations {
+            Ok(Expression::Proc(parameters, return_type, block))
         } else {
-            None
-        };
-        let block = self.parse_block()?;
-        Ok(Expression::Proc(parameters, return_type, block))
+            Ok(Expression::Function(parameters, return_type, block))
+        }
     }
 
     fn parse_function_parameters(&mut self) -> Result<Vec<Parameter>> {
@@ -1732,10 +1719,10 @@ impl<'a> Parser<'a> {
                     Type::Array(Box::new(element_type), size)
                 }
             }
-            Token::Proc => {
+            Token::Function => {
                 self.read_token();
                 if !matches!(self.peek_nth(0), Token::LeftParentheses) {
-                    bail!("Expected '(' after 'proc' in type");
+                    bail!("Expected '(' after 'fn' in type");
                 }
                 self.read_token();
                 let mut param_types = Vec::new();
@@ -2000,7 +1987,7 @@ impl<'a> Parser<'a> {
             Type::Ptr(inner) => format!("^{}", Self::type_to_name(inner)),
             Type::Proc(params, ret) => {
                 let param_strs: Vec<String> = params.iter().map(Self::type_to_name).collect();
-                format!("proc({}) -> {}", param_strs.join(", "), Self::type_to_name(ret))
+                format!("fn({}) -> {}", param_strs.join(", "), Self::type_to_name(ret))
             }
             Type::Distinct(inner) => format!("distinct {}", Self::type_to_name(inner)),
             Type::Arena => "Arena".to_string(),
@@ -2741,7 +2728,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::Function(
+        if let Statement::Expression(Expression::Proc(
             params,
             return_type,
             body,
@@ -2755,14 +2742,14 @@ mod tests {
             assert_eq!(return_type, &Some(Type::Bool));
             assert_eq!(body.len(), 1);
         } else {
-            bail!("Expected function expression");
+            bail!("Expected typed function expression");
         }
         Ok(())
     }
 
     #[test]
-    fn proc_literal() -> Result<()> {
-        let input = "proc(x: i64) -> i64 { x }";
+    fn typed_function_literal() -> Result<()> {
+        let input = "fn(x: i64) -> i64 { x }";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize()?;
         let mut parser = Parser::new(&tokens);
@@ -2781,7 +2768,7 @@ mod tests {
             assert_eq!(return_type, &Some(Type::I64));
             assert_eq!(body.len(), 1);
         } else {
-            bail!("Expected proc expression");
+            bail!("Expected typed function expression");
         }
         Ok(())
     }
@@ -3123,8 +3110,8 @@ mod tests {
     }
 
     #[test]
-    fn proc_type_annotation() -> Result<()> {
-        let input = "callback : proc(i64, i64) -> i64 = x;";
+    fn fn_type_annotation() -> Result<()> {
+        let input = "callback : fn(i64, i64) -> i64 = x;";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize()?;
         let mut parser = Parser::new(&tokens);
@@ -3146,7 +3133,7 @@ mod tests {
                 ))
             );
         } else {
-            bail!("Expected let statement with proc type");
+            bail!("Expected let statement with fn type");
         }
         Ok(())
     }
@@ -3638,7 +3625,7 @@ mod tests {
 
     #[test]
     fn extern_declaration() -> Result<()> {
-        let input = "puts :: extern proc(s: ^i8) -> i32";
+        let input = "puts :: extern fn(s: ^i8) -> i32";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize()?;
         let mut parser = Parser::new(&tokens);
@@ -3780,9 +3767,9 @@ mod tests {
     }
 
     #[test]
-    fn switch_expression_integer_patterns() -> Result<()> {
+    fn match_expression_integer_patterns() -> Result<()> {
         let input = r#"
-            result := switch x {
+            result := match x {
                 case 1: "one"
                 case 2: "two"
                 case _: "other"
@@ -3806,7 +3793,7 @@ mod tests {
                 assert!(matches!(&cases[1].pattern, Pattern::Literal(Literal::Integer(2))));
                 assert!(matches!(&cases[2].pattern, Pattern::Wildcard));
             } else {
-                bail!("Expected switch expression");
+                bail!("Expected match expression");
             }
         } else {
             bail!("Expected let statement");
@@ -3815,9 +3802,9 @@ mod tests {
     }
 
     #[test]
-    fn switch_expression_shorthand_enum_pattern() -> Result<()> {
+    fn match_expression_shorthand_enum_pattern() -> Result<()> {
         let input = r#"
-            result := switch color {
+            result := match color {
                 case .Red: 0
                 case .Green: 1
                 case .Blue: 2
@@ -3840,7 +3827,7 @@ mod tests {
                     bail!("Expected enum variant pattern");
                 }
             } else {
-                bail!("Expected switch expression");
+                bail!("Expected match expression");
             }
         } else {
             bail!("Expected let statement");
@@ -3849,9 +3836,9 @@ mod tests {
     }
 
     #[test]
-    fn switch_expression_enum_pattern_with_bindings() -> Result<()> {
+    fn match_expression_enum_pattern_with_bindings() -> Result<()> {
         let input = r#"
-            result := switch opt {
+            result := match opt {
                 case .Some { value }: value
                 case .None: 0
             }
@@ -3874,7 +3861,7 @@ mod tests {
                     bail!("Expected enum variant pattern with bindings");
                 }
             } else {
-                bail!("Expected switch expression");
+                bail!("Expected match expression");
             }
         } else {
             bail!("Expected let statement");
@@ -3883,9 +3870,9 @@ mod tests {
     }
 
     #[test]
-    fn switch_expression_fully_qualified_pattern() -> Result<()> {
+    fn match_expression_fully_qualified_pattern() -> Result<()> {
         let input = r#"
-            result := switch color {
+            result := match color {
                 case Color::Red: 0
                 case Color::Green: 1
             }
@@ -3906,7 +3893,7 @@ mod tests {
                     bail!("Expected fully qualified enum variant pattern");
                 }
             } else {
-                bail!("Expected switch expression");
+                bail!("Expected match expression");
             }
         } else {
             bail!("Expected let statement");
@@ -3915,9 +3902,9 @@ mod tests {
     }
 
     #[test]
-    fn switch_expression_tuple_pattern() -> Result<()> {
+    fn match_expression_tuple_pattern() -> Result<()> {
         let input = r#"
-            result := switch (x % 3, x % 5) {
+            result := match (x % 3, x % 5) {
                 case (0, 0): "FizzBuzz"
                 case (0, _): "Fizz"
                 case (_, 0): "Buzz"
@@ -3945,7 +3932,7 @@ mod tests {
                     bail!("Expected tuple pattern with wildcard");
                 }
             } else {
-                bail!("Expected switch expression");
+                bail!("Expected match expression");
             }
         } else {
             bail!("Expected let statement");
@@ -3954,9 +3941,9 @@ mod tests {
     }
 
     #[test]
-    fn switch_expression_bool_pattern() -> Result<()> {
+    fn match_expression_bool_pattern() -> Result<()> {
         let input = r#"
-            result := switch flag {
+            result := match flag {
                 case true: 1
                 case false: 0
             }
@@ -3973,7 +3960,7 @@ mod tests {
                 assert!(matches!(&cases[0].pattern, Pattern::Literal(Literal::Boolean(true))));
                 assert!(matches!(&cases[1].pattern, Pattern::Literal(Literal::Boolean(false))));
             } else {
-                bail!("Expected switch expression");
+                bail!("Expected match expression");
             }
         } else {
             bail!("Expected let statement");

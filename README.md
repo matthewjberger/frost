@@ -5,10 +5,10 @@ A statically-typed programming language combining Odin/Jai-style syntax with Rus
 ## Features
 
 - **Immutable by default** - Variables are immutable unless declared with `mut`
-- **Odin-style syntax** - `:=` for inference, `::` for constants, `proc` for typed functions
+- **Odin-style syntax** - `:=` for inference, `::` for constants, `fn` for functions
 - **Ownership and borrowing** - Memory safety without garbage collection
 - **Second-class references** - References can't be stored in structs or returned, eliminating lifetime annotations
-- **Enums with data** - Tagged unions with pattern matching via `switch`
+- **Enums with data** - Tagged unions with pattern matching via `match`
 - **Dual backends** - Bytecode VM for development, Cranelift native compilation for production
 - **Structs** - User-defined data types with field access
 - **First-class functions** - Closures, higher-order functions, recursion
@@ -112,15 +112,15 @@ factorial := fn(n) {
 apply_twice := fn(f, x) { f(f(x)) }
 ```
 
-### Procedures (Typed Functions)
+### Typed Functions
 
 ```rust
-// Odin-style procedures with type annotations
-add :: proc(a: i64, b: i64) -> i64 {
+// Functions with type annotations
+add :: fn(a: i64, b: i64) -> i64 {
     a + b
 }
 
-is_even :: proc(n: i64) -> bool {
+is_even :: fn(n: i64) -> bool {
     n % 2 == 0
 }
 ```
@@ -165,24 +165,24 @@ success := Result::Ok { value = 42 }
 failure := Result::Err { code = 404, message = "Not found" }
 ```
 
-### Switch (Pattern Matching)
+### Match (Pattern Matching)
 
 ```rust
 // Match on enum variants
-msg := switch result {
+msg := match result {
     case .Ok { value }: value
     case .Err { code }: 0 - code
 }
 
 // Match on values
-grade := switch score {
+grade := match score {
     case 90: "A"
     case 80: "B"
     case _: "C"
 }
 
 // Tuple patterns
-result := switch (x % 3, x % 5) {
+result := match (x % 3, x % 5) {
     case (0, 0): "FizzBuzz"
     case (0, _): "Fizz"
     case (_, 0): "Buzz"
@@ -246,12 +246,12 @@ print(add5(10))  // 15
 
 ```rust
 // Immutable reference
-read_point :: proc(p: &Point) -> i64 {
+read_point :: fn(p: &Point) -> i64 {
     p.x + p.y
 }
 
 // Mutable reference
-increment :: proc(x: &mut i64) {
+increment :: fn(x: &mut i64) {
     x^ = x^ + 1
 }
 
@@ -300,7 +300,7 @@ print(len(message))
 | `&mut T` | Mutable reference |
 | `[N]T` | Fixed-size array |
 | `[]T` | Slice |
-| `proc(...) -> T` | Procedure type |
+| `fn(...) -> T` | Function type |
 
 ## Built-in Functions
 
@@ -323,7 +323,7 @@ The `examples/` directory contains many sample programs:
 | `variables.frost` | Variables and mutability |
 | `constants.frost` | Compile-time constants |
 | `functions.frost` | Functions and recursion |
-| `procedures.frost` | Typed procedures |
+| `procedures.frost` | Typed functions |
 | `structs.frost` | Struct definitions |
 | `arrays.frost` | Array operations |
 | `control_flow.frost` | If/else expressions |
