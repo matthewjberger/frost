@@ -27,6 +27,89 @@ impl Display for Parameter {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct ReturnParam {
+    pub name: Identifier,
+    pub param_type: Type,
+}
+
+impl Display for ReturnParam {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "{}: {}", self.name, self.param_type)
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum ReturnSignature {
+    None,
+    Single(Type),
+    Named(Vec<ReturnParam>),
+}
+
+impl ReturnSignature {
+    pub fn to_type(&self) -> Option<Type> {
+        match self {
+            ReturnSignature::None => None,
+            ReturnSignature::Single(t) => Some(t.clone()),
+            ReturnSignature::Named(params) => {
+                if params.len() == 1 {
+                    Some(params[0].param_type.clone())
+                } else {
+                    Some(Type::Struct(format!("__tuple{}", params.len())))
+                }
+            }
+        }
+    }
+
+    pub fn is_named(&self) -> bool {
+        matches!(self, ReturnSignature::Named(_))
+    }
+
+    pub fn has_second_class(&self) -> Option<&Type> {
+        match self {
+            ReturnSignature::None => None,
+            ReturnSignature::Single(t) => {
+                if t.is_second_class() { Some(t) } else { None }
+            }
+            ReturnSignature::Named(params) => {
+                params.iter().find(|p| p.param_type.is_second_class()).map(|p| &p.param_type)
+            }
+        }
+    }
+
+    pub fn contains_reference(&self) -> Option<&Type> {
+        match self {
+            ReturnSignature::None => None,
+            ReturnSignature::Single(t) => {
+                if t.contains_reference() { Some(t) } else { None }
+            }
+            ReturnSignature::Named(params) => {
+                params.iter().find(|p| p.param_type.contains_reference()).map(|p| &p.param_type)
+            }
+        }
+    }
+
+    pub fn named_params(&self) -> Option<&Vec<ReturnParam>> {
+        match self {
+            ReturnSignature::Named(params) => Some(params),
+            _ => None,
+        }
+    }
+}
+
+impl Display for ReturnSignature {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        match self {
+            ReturnSignature::None => write!(f, ""),
+            ReturnSignature::Single(t) => write!(f, " -> {}", t),
+            ReturnSignature::Named(params) => {
+                let parts: Vec<String> = params.iter().map(|p| p.to_string()).collect();
+                write!(f, " -> ({})", parts.join(", "))
+            }
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub struct StructField {
     pub name: Identifier,
     pub field_type: Type,
@@ -144,7 +227,7 @@ pub enum Statement {
     Constant(Identifier, Expression),
     Return(Expression),
     Expression(Expression),
-    Struct(Identifier, Vec<StructField>),
+    Struct(Identifier, Vec<String>, Vec<StructField>),
     Enum(Identifier, Vec<EnumVariant>),
     TypeAlias(Identifier, Type),
     Defer(Box<Statement>),
@@ -159,6 +242,14 @@ pub enum Statement {
         name: Identifier,
         params: Vec<Parameter>,
         return_type: Option<Type>,
+    },
+    PushContext {
+        context_expr: Expression,
+        body: Block,
+    },
+    PushAllocator {
+        allocator_expr: Expression,
+        body: Block,
     },
 }
 
@@ -184,14 +275,19 @@ impl Display for Statement {
             }
             Self::Return(expression) => format!("return {};", expression),
             Self::Expression(expression) => expression.to_string(),
-            Self::Struct(name, fields) => {
+            Self::Struct(name, type_params, fields) => {
                 let field_strs: Vec<String> = fields
                     .iter()
                     .map(|field| {
                         format!("{}: {}", field.name, field.field_type)
                     })
                     .collect();
-                format!("{} :: struct {{ {} }}", name, field_strs.join(", "))
+                if type_params.is_empty() {
+                    format!("{} :: struct {{ {} }}", name, field_strs.join(", "))
+                } else {
+                    let params_str = type_params.iter().map(|p| format!("${}: Type", p)).collect::<Vec<_>>().join(", ");
+                    format!("{} :: struct({}) {{ {} }}", name, params_str, field_strs.join(", "))
+                }
             }
             Self::Enum(name, variants) => {
                 let variant_strs: Vec<String> = variants
@@ -252,6 +348,12 @@ impl Display for Statement {
                     None => format!("{} :: extern fn({})", name, params_str),
                 }
             }
+            Self::PushContext { context_expr, body } => {
+                format!("push_context {} {{ {} }}", context_expr, flatten(body, "\n"))
+            }
+            Self::PushAllocator { allocator_expr, body } => {
+                format!("push_allocator({}) {{ {} }}", allocator_expr, flatten(body, "\n"))
+            }
         };
         write!(f, "{}", statement)
     }
@@ -271,8 +373,8 @@ pub enum Expression {
     Prefix(Operator, Box<Expression>),
     Infix(Box<Expression>, Operator, Box<Expression>),
     If(Box<Expression>, Block, Option<Block>),
-    Function(Vec<Parameter>, Option<Type>, Block),
-    Proc(Vec<Parameter>, Option<Type>, Block),
+    Function(Vec<Parameter>, ReturnSignature, Block),
+    Proc(Vec<Parameter>, ReturnSignature, Block),
     Call(Box<Expression>, Vec<Expression>),
     Index(Box<Expression>, Box<Expression>),
     FieldAccess(Box<Expression>, Identifier),
@@ -282,7 +384,7 @@ pub enum Expression {
     Dereference(Box<Expression>),
     StructInit(Identifier, Vec<(Identifier, Expression)>),
     Sizeof(Type),
-    Range(Box<Expression>, Box<Expression>),
+    Range(Box<Expression>, Box<Expression>, bool),
     Switch(Box<Expression>, Vec<SwitchCase>),
     Tuple(Vec<Expression>),
     EnumVariantInit(Identifier, Identifier, Vec<(Identifier, Expression)>),
@@ -297,6 +399,8 @@ pub enum Expression {
     Typename(Type),
     InterpolatedIdent(Vec<IdentPart>),
     Unsafe(Block),
+    ContextAccess,
+    IfLet(Pattern, Box<Expression>, Block, Option<Block>),
 }
 
 impl Expression {
@@ -338,45 +442,31 @@ impl Display for Expression {
 
                 result
             }
-            Self::Function(parameters, return_type, body) => {
+            Self::Function(parameters, return_sig, body) => {
                 let params_str = parameters
                     .iter()
                     .map(|p| p.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
-                match return_type {
-                    Some(typ) => format!(
-                        "fn({}) -> {} {{ {} }}",
-                        params_str,
-                        typ,
-                        flatten(body, "\n")
-                    ),
-                    None => format!(
-                        "fn({}) {{ {} }}",
-                        params_str,
-                        flatten(body, "\n")
-                    ),
-                }
+                format!(
+                    "fn({}){}{{ {} }}",
+                    params_str,
+                    return_sig,
+                    flatten(body, "\n")
+                )
             }
-            Self::Proc(parameters, return_type, body) => {
+            Self::Proc(parameters, return_sig, body) => {
                 let params_str = parameters
                     .iter()
                     .map(|p| p.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
-                match return_type {
-                    Some(typ) => format!(
-                        "fn({}) -> {} {{ {} }}",
-                        params_str,
-                        typ,
-                        flatten(body, "\n")
-                    ),
-                    None => format!(
-                        "fn({}) {{ {} }}",
-                        params_str,
-                        flatten(body, "\n")
-                    ),
-                }
+                format!(
+                    "fn({}){}{{ {} }}",
+                    params_str,
+                    return_sig,
+                    flatten(body, "\n")
+                )
             }
             Self::Call(expression, arguments) => {
                 format!("{}({})", expression, flatten(arguments, ", "),)
@@ -409,8 +499,12 @@ impl Display for Expression {
             Self::Sizeof(typ) => {
                 format!("sizeof({})", typ)
             }
-            Self::Range(start, end) => {
-                format!("{}..{}", start, end)
+            Self::Range(start, end, inclusive) => {
+                if *inclusive {
+                    format!("{}..={}", start, end)
+                } else {
+                    format!("{}..{}", start, end)
+                }
             }
             Self::Switch(scrutinee, cases) => {
                 let case_strs: Vec<String> = cases
@@ -514,6 +608,25 @@ impl Display for Expression {
                 let body_str: Vec<String> = body.iter().map(|s| s.to_string()).collect();
                 format!("unsafe {{ {} }}", body_str.join("; "))
             }
+            Self::ContextAccess => "context".to_string(),
+            Self::IfLet(pattern, value, consequence, alternative) => {
+                let alt_str = match alternative {
+                    Some(alt) => {
+                        let alt_body: Vec<String> = alt.iter().map(|s| s.to_string()).collect();
+                        format!(" else {{ {} }}", alt_body.join("; "))
+                    }
+                    None => String::new(),
+                };
+                let consequence_str: Vec<String> =
+                    consequence.iter().map(|s| s.to_string()).collect();
+                format!(
+                    "if let {:?} = {} {{ {} }}{}",
+                    pattern,
+                    value,
+                    consequence_str.join("; "),
+                    alt_str
+                )
+            }
         };
         write!(f, "{}", expression)
     }
@@ -583,7 +696,7 @@ impl From<&Token> for Precedence {
             Token::Ampersand => Self::BitwiseAnd,
             Token::ShiftLeft => Self::Shift,
             Token::ShiftRight => Self::Shift,
-            Token::DotDot => Self::Range,
+            Token::DotDot | Token::DotDotEqual => Self::Range,
             Token::Equal => Self::Equals,
             Token::NotEqual => Self::Equals,
             Token::LessThan => Self::LessThanGreaterThan,
@@ -691,6 +804,8 @@ impl<'a> Parser<'a> {
             {
                 Some(self.parse_interpolated_constant()?)
             }
+            Token::PushContext => Some(self.parse_push_context_statement()?),
+            Token::PushAllocator => Some(self.parse_push_allocator_statement()?),
             _ => Some(self.parse_expression_statement()?),
         })
     }
@@ -713,6 +828,28 @@ impl<'a> Parser<'a> {
             .parse_statement()?
             .ok_or_else(|| anyhow::anyhow!("Expected statement after defer"))?;
         Ok(Statement::Defer(Box::new(statement)))
+    }
+
+    fn parse_push_context_statement(&mut self) -> Result<Statement> {
+        self.read_token();
+        let context_expr = self.parse_expression(Precedence::Lowest)?;
+        let body = self.parse_block()?;
+        Ok(Statement::PushContext { context_expr, body })
+    }
+
+    fn parse_push_allocator_statement(&mut self) -> Result<Statement> {
+        self.read_token();
+        if !matches!(self.peek_nth(0), Token::LeftParentheses) {
+            bail!("Expected '(' after 'push_allocator'");
+        }
+        self.read_token();
+        let allocator_expr = self.parse_expression(Precedence::Lowest)?;
+        if !matches!(self.peek_nth(0), Token::RightParentheses) {
+            bail!("Expected ')' after allocator expression");
+        }
+        self.read_token();
+        let body = self.parse_block()?;
+        Ok(Statement::PushAllocator { allocator_expr, body })
     }
 
     fn parse_for_statement(&mut self) -> Result<Statement> {
@@ -832,6 +969,33 @@ impl<'a> Parser<'a> {
 
         if matches!(self.peek_nth(0), Token::Struct) {
             self.read_token();
+            let mut type_params = Vec::new();
+            if matches!(self.peek_nth(0), Token::LeftParentheses) {
+                self.read_token();
+                while self.peek_nth(0) != &Token::RightParentheses {
+                    if !matches!(self.peek_nth(0), Token::Dollar) {
+                        bail!("Expected '$' before type parameter name");
+                    }
+                    self.read_token();
+                    let param_name = match self.read_token() {
+                        Token::Identifier(name) => name.to_string(),
+                        _ => bail!("Expected type parameter name after '$'"),
+                    };
+                    if !matches!(self.read_token(), Token::Colon) {
+                        bail!("Expected ':' after type parameter name");
+                    }
+                    match self.read_token() {
+                        Token::Type => {}
+                        Token::Identifier(s) if s == "Type" => {}
+                        _ => bail!("Expected 'Type' after ':' in type parameter"),
+                    }
+                    type_params.push(param_name);
+                    if matches!(self.peek_nth(0), Token::Comma) {
+                        self.read_token();
+                    }
+                }
+                self.read_token();
+            }
             if !matches!(self.read_token(), Token::LeftBrace) {
                 bail!("Expected '{{' after struct");
             }
@@ -862,7 +1026,7 @@ impl<'a> Parser<'a> {
             if matches!(self.peek_nth(0), Token::Semicolon) {
                 self.read_token();
             }
-            Ok(Statement::Struct(identifier, fields))
+            Ok(Statement::Struct(identifier, type_params, fields))
         } else if matches!(self.peek_nth(0), Token::Enum) {
             self.read_token();
             if !matches!(self.read_token(), Token::LeftBrace) {
@@ -1075,6 +1239,9 @@ impl<'a> Parser<'a> {
                 advance = false;
                 self.parse_unsafe_expression()?
             }
+            Token::Context => {
+                Expression::ContextAccess
+            }
             Token::EndOfFile => {
                 bail!("Unexpected end of file")
             }
@@ -1111,7 +1278,11 @@ impl<'a> Parser<'a> {
                 }
                 Token::DotDot => {
                     expression =
-                        self.parse_range_expression(expression.clone())?;
+                        self.parse_range_expression(expression.clone(), false)?;
+                }
+                Token::DotDotEqual => {
+                    expression =
+                        self.parse_range_expression(expression.clone(), true)?;
                 }
                 Token::LeftBracket => {
                     expression =
@@ -1212,12 +1383,14 @@ impl<'a> Parser<'a> {
     fn parse_range_expression(
         &mut self,
         left_expression: Expression,
+        inclusive: bool,
     ) -> Result<Expression> {
         self.read_token();
         let right_expression = self.parse_expression(Precedence::Range)?;
         Ok(Expression::Range(
             Box::new(left_expression),
             Box::new(right_expression),
+            inclusive,
         ))
     }
 
@@ -1359,6 +1532,45 @@ impl<'a> Parser<'a> {
 
     fn parse_grouped_expressions(&mut self) -> Result<Expression> {
         self.read_token();
+
+        if matches!(self.peek_nth(0), Token::RightParentheses) {
+            self.read_token();
+            if matches!(self.peek_nth(0), Token::LeftBrace | Token::Arrow) {
+                let return_sig = self.parse_return_signature()?;
+                let block = self.parse_block()?;
+                return Ok(Expression::Proc(vec![], return_sig, block));
+            }
+            return Ok(Expression::Tuple(vec![]));
+        }
+
+        let looks_like_params = self.looks_like_function_params();
+
+        if looks_like_params {
+            let parameters = self.parse_function_parameters_inner()?;
+
+            if matches!(self.peek_nth(0), Token::LeftBrace | Token::Arrow) {
+                let return_sig = self.parse_return_signature()?;
+                let block = self.parse_block()?;
+                let has_type_annotations = parameters.iter().any(|p| p.type_annotation.is_some())
+                    || !matches!(return_sig, ReturnSignature::None);
+                if has_type_annotations {
+                    return Ok(Expression::Proc(parameters, return_sig, block));
+                } else {
+                    return Ok(Expression::Function(parameters, return_sig, block));
+                }
+            }
+
+            let expressions: Vec<Expression> = parameters
+                .into_iter()
+                .map(|p| Expression::Identifier(p.name))
+                .collect();
+
+            if expressions.len() == 1 {
+                return Ok(expressions.into_iter().next().unwrap());
+            }
+            return Ok(Expression::Tuple(expressions));
+        }
+
         let first_expression = self.parse_expression(Precedence::Lowest)?;
         if matches!(self.peek_nth(0), Token::Comma) {
             self.read_token();
@@ -1377,6 +1589,111 @@ impl<'a> Parser<'a> {
             }
             Ok(first_expression)
         }
+    }
+
+    fn looks_like_function_params(&self) -> bool {
+        let mut depth = 0;
+        let mut index = 0;
+        let max_lookahead = 1000;
+        let mut saw_identifier = false;
+        let mut has_non_param_content = false;
+        while index < max_lookahead {
+            match self.peek_nth(index) {
+                Token::Identifier(_) | Token::Mut | Token::Underscore => {
+                    if depth == 0 {
+                        saw_identifier = true;
+                    }
+                }
+                Token::LeftParentheses | Token::LeftBracket | Token::LeftBrace => depth += 1,
+                Token::RightParentheses => {
+                    if depth == 0 {
+                        if has_non_param_content {
+                            return false;
+                        }
+                        let next = self.peek_nth(index + 1);
+                        return matches!(next, Token::LeftBrace | Token::Arrow);
+                    }
+                    depth -= 1;
+                }
+                Token::RightBracket | Token::RightBrace => {
+                    if depth == 0 {
+                        return false;
+                    }
+                    depth -= 1;
+                }
+                Token::Colon => {
+                    if depth == 0 && saw_identifier {
+                        return true;
+                    }
+                }
+                Token::Comma => {
+                    if depth == 0 {
+                        saw_identifier = false;
+                    }
+                }
+                Token::Integer(_) | Token::Float(_) | Token::StringLiteral(_)
+                | Token::True | Token::False => {
+                    if depth == 0 {
+                        has_non_param_content = true;
+                        saw_identifier = false;
+                    }
+                }
+                Token::Plus | Token::Minus | Token::Asterisk | Token::Slash
+                | Token::Equal | Token::NotEqual | Token::LessThan | Token::GreaterThan
+                | Token::And | Token::Or | Token::Percent | Token::Dot | Token::DotDot
+                | Token::DotDotEqual => {
+                    if depth == 0 {
+                        return false;
+                    }
+                }
+                Token::EndOfFile | Token::Semicolon => return false,
+                _ => {}
+            }
+            index += 1;
+        }
+        false
+    }
+
+    fn parse_function_parameters_inner(&mut self) -> Result<Vec<Parameter>> {
+        let mut parameters = Vec::new();
+        while self.peek_nth(0) != &Token::RightParentheses {
+            let mutable = if matches!(self.peek_nth(0), Token::Mut) {
+                self.read_token();
+                true
+            } else {
+                false
+            };
+
+            if let Token::Identifier(name) = self.peek_nth(0) {
+                let name = name.to_string();
+                self.read_token();
+
+                let type_annotation =
+                    if matches!(self.peek_nth(0), Token::Colon) {
+                        self.read_token();
+                        Some(self.parse_type()?)
+                    } else {
+                        None
+                    };
+
+                parameters.push(Parameter {
+                    name,
+                    type_annotation,
+                    mutable,
+                });
+            }
+
+            if matches!(self.peek_nth(0), Token::Comma) {
+                self.read_token();
+            }
+        }
+
+        if !matches!(self.peek_nth(0), Token::RightParentheses) {
+            bail!("Expected a right parentheses in parameter list!");
+        }
+        self.read_token();
+
+        Ok(parameters)
     }
 
     fn parse_match_expression(&mut self) -> Result<Expression> {
@@ -1528,6 +1845,10 @@ impl<'a> Parser<'a> {
     fn parse_if_expression(&mut self) -> Result<Expression> {
         self.read_token();
 
+        if matches!(self.peek_nth(0), Token::Let) {
+            return self.parse_if_let_expression();
+        }
+
         if !matches!(self.peek_nth(0), Token::LeftParentheses) {
             bail!("Expected a left parentheses in if expression!");
         }
@@ -1560,22 +1881,105 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    fn parse_if_let_expression(&mut self) -> Result<Expression> {
+        self.read_token();
+
+        let pattern = self.parse_pattern()?;
+
+        if !matches!(self.peek_nth(0), Token::Assign) {
+            bail!("Expected '=' after pattern in if let expression");
+        }
+        self.read_token();
+
+        let value = self.parse_expression(Precedence::Range)?;
+
+        let consequence = self.parse_block()?;
+
+        let mut alternative = None;
+        if matches!(self.peek_nth(0), Token::Else) {
+            self.read_token();
+            if matches!(self.peek_nth(0), Token::If) {
+                let else_if = self.parse_if_expression()?;
+                alternative = Some(vec![Statement::Expression(else_if)]);
+            } else {
+                alternative = Some(self.parse_block()?);
+            }
+        }
+
+        Ok(Expression::IfLet(
+            pattern,
+            Box::new(value),
+            consequence,
+            alternative,
+        ))
+    }
+
     fn parse_function_literal(&mut self) -> Result<Expression> {
         self.read_token();
         let parameters = self.parse_function_parameters()?;
-        let return_type = if matches!(self.peek_nth(0), Token::Arrow) {
-            self.read_token();
-            Some(self.parse_type()?)
-        } else {
-            None
-        };
+        let return_sig = self.parse_return_signature()?;
         let block = self.parse_block()?;
-        let has_type_annotations = parameters.iter().any(|p| p.type_annotation.is_some()) || return_type.is_some();
+        let has_type_annotations = parameters.iter().any(|p| p.type_annotation.is_some())
+            || !matches!(return_sig, ReturnSignature::None);
         if has_type_annotations {
-            Ok(Expression::Proc(parameters, return_type, block))
+            Ok(Expression::Proc(parameters, return_sig, block))
         } else {
-            Ok(Expression::Function(parameters, return_type, block))
+            Ok(Expression::Function(parameters, return_sig, block))
         }
+    }
+
+    fn parse_return_signature(&mut self) -> Result<ReturnSignature> {
+        if !matches!(self.peek_nth(0), Token::Arrow) {
+            return Ok(ReturnSignature::None);
+        }
+        self.read_token();
+
+        if matches!(self.peek_nth(0), Token::LeftParentheses) {
+            if let Token::Identifier(_) = self.peek_nth(1) {
+                if matches!(self.peek_nth(2), Token::Colon) {
+                    return self.parse_named_returns();
+                }
+            }
+        }
+
+        let typ = self.parse_type()?;
+        Ok(ReturnSignature::Single(typ))
+    }
+
+    fn parse_named_returns(&mut self) -> Result<ReturnSignature> {
+        if !matches!(self.peek_nth(0), Token::LeftParentheses) {
+            bail!("Expected '(' for named returns");
+        }
+        self.read_token();
+
+        let mut returns = Vec::new();
+        while !matches!(self.peek_nth(0), Token::RightParentheses) {
+            if let Token::Identifier(name) = self.peek_nth(0) {
+                let name = name.to_string();
+                self.read_token();
+
+                if !matches!(self.peek_nth(0), Token::Colon) {
+                    bail!("Expected ':' after return parameter name");
+                }
+                self.read_token();
+
+                let param_type = self.parse_type()?;
+                returns.push(ReturnParam { name, param_type });
+
+                if matches!(self.peek_nth(0), Token::Comma) {
+                    self.read_token();
+                }
+            } else {
+                bail!("Expected identifier in named return parameters");
+            }
+        }
+
+        if !matches!(self.peek_nth(0), Token::RightParentheses) {
+            bail!("Expected ')' after named returns");
+        }
+        self.read_token();
+
+        Ok(ReturnSignature::Named(returns))
     }
 
     fn parse_function_parameters(&mut self) -> Result<Vec<Parameter>> {
@@ -1643,6 +2047,10 @@ impl<'a> Parser<'a> {
                 self.read_token();
                 Type::I64
             }
+            Token::TypeIsize => {
+                self.read_token();
+                Type::Isize
+            }
             Token::TypeU8 => {
                 self.read_token();
                 Type::U8
@@ -1658,6 +2066,10 @@ impl<'a> Parser<'a> {
             Token::TypeU64 => {
                 self.read_token();
                 Type::U64
+            }
+            Token::TypeUsize => {
+                self.read_token();
+                Type::Usize
             }
             Token::TypeF32 => {
                 self.read_token();
@@ -1768,6 +2180,14 @@ impl<'a> Parser<'a> {
                     }
                     _ => Type::Struct(name)
                 }
+            }
+            Token::Dollar => {
+                self.read_token();
+                let param_name = match self.read_token() {
+                    Token::Identifier(name) => name.to_string(),
+                    _ => bail!("Expected identifier after '$' in type parameter"),
+                };
+                Type::TypeParam(param_name)
             }
             Token::Hash => {
                 self.read_token();
@@ -1971,10 +2391,12 @@ impl<'a> Parser<'a> {
             Type::I16 => "i16".to_string(),
             Type::I32 => "i32".to_string(),
             Type::I64 => "i64".to_string(),
+            Type::Isize => "isize".to_string(),
             Type::U8 => "u8".to_string(),
             Type::U16 => "u16".to_string(),
             Type::U32 => "u32".to_string(),
             Type::U64 => "u64".to_string(),
+            Type::Usize => "usize".to_string(),
             Type::F32 => "f32".to_string(),
             Type::F64 => "f64".to_string(),
             Type::Bool => "bool".to_string(),
@@ -1991,8 +2413,10 @@ impl<'a> Parser<'a> {
             }
             Type::Distinct(inner) => format!("distinct {}", Self::type_to_name(inner)),
             Type::Arena => "Arena".to_string(),
+            Type::Context => "Context".to_string(),
             Type::Handle(inner) => format!("Handle<{}>", Self::type_to_name(inner)),
             Type::Optional(inner) => format!("?{}", Self::type_to_name(inner)),
+            Type::TypeParam(name) => format!("${}", name),
             Type::Unknown => "?".to_string(),
         }
     }
@@ -2104,7 +2528,7 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Expression, Literal, Parameter, Parser, Pattern, Statement, StructField,
+        Expression, Literal, Parameter, Parser, Pattern, ReturnSignature, Statement, StructField,
     };
     use crate::{lexer::Lexer, types::Type, Operator};
     use anyhow::{bail, Result};
@@ -2497,7 +2921,7 @@ mod tests {
                     mutable: false,
                 },
             ],
-            None,
+            ReturnSignature::None,
             vec![Statement::Expression(Expression::Infix(
                 Box::new(Expression::Identifier("x".to_string())),
                 Operator::Add,
@@ -2557,7 +2981,7 @@ mod tests {
                             expression,
                             Expression::Function(
                                 expected_parameters.to_vec(),
-                                None,
+                                ReturnSignature::None,
                                 Vec::new()
                             )
                         )
@@ -2739,7 +3163,7 @@ mod tests {
             assert_eq!(params[0].type_annotation, Some(Type::I64));
             assert_eq!(params[1].name, "b");
             assert_eq!(params[1].type_annotation, Some(Type::I32));
-            assert_eq!(return_type, &Some(Type::Bool));
+            assert_eq!(return_type, &ReturnSignature::Single(Type::Bool));
             assert_eq!(body.len(), 1);
         } else {
             bail!("Expected typed function expression");
@@ -2765,7 +3189,7 @@ mod tests {
             assert_eq!(params.len(), 1);
             assert_eq!(params[0].name, "x");
             assert_eq!(params[0].type_annotation, Some(Type::I64));
-            assert_eq!(return_type, &Some(Type::I64));
+            assert_eq!(return_type, &ReturnSignature::Single(Type::I64));
             assert_eq!(body.len(), 1);
         } else {
             bail!("Expected typed function expression");
@@ -2782,8 +3206,9 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Struct(name, fields) = &program[0] {
+        if let Statement::Struct(name, type_params, fields) = &program[0] {
             assert_eq!(name, "Vec3");
+            assert!(type_params.is_empty());
             assert_eq!(fields.len(), 3);
             assert_eq!(
                 fields[0],
@@ -2862,7 +3287,7 @@ mod tests {
         assert_eq!(program.len(), 1);
         if let Statement::For(iterator, range, body) = &program[0] {
             assert_eq!(iterator, "i");
-            if let Expression::Range(start, end) = range {
+            if let Expression::Range(start, end, inclusive) = range {
                 assert_eq!(
                     start.as_ref(),
                     &Expression::Literal(Literal::Integer(0))
@@ -2871,6 +3296,7 @@ mod tests {
                     end.as_ref(),
                     &Expression::Literal(Literal::Integer(10))
                 );
+                assert!(!inclusive);
             } else {
                 bail!("Expected range expression");
             }
@@ -3311,7 +3737,7 @@ mod tests {
     }
 
     #[test]
-    fn odin_style_function() -> Result<()> {
+    fn function_declaration() -> Result<()> {
         let input = "add := fn(a, b) { a + b }";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize()?;
@@ -3669,6 +4095,127 @@ mod tests {
     }
 
     #[test]
+    fn inclusive_range_expression() -> Result<()> {
+        let input = "for i in 0..=10 { print(i) }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::For(_, range_expr, _) = &program[0] {
+            if let Expression::Range(_, _, inclusive) = range_expr {
+                assert!(inclusive, "Expected inclusive range");
+            } else {
+                bail!("Expected range expression");
+            }
+        } else {
+            bail!("Expected for statement");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn exclusive_range_expression() -> Result<()> {
+        let input = "for i in 0..10 { print(i) }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::For(_, range_expr, _) = &program[0] {
+            if let Expression::Range(_, _, inclusive) = range_expr {
+                assert!(!inclusive, "Expected exclusive range");
+            } else {
+                bail!("Expected range expression");
+            }
+        } else {
+            bail!("Expected for statement");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn if_let_expression() -> Result<()> {
+        let input = "if let x = 42 { print(x) }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Expression(Expression::IfLet(pattern, value, consequence, alternative)) =
+            &program[0]
+        {
+            assert!(matches!(pattern, Pattern::Identifier(_)));
+            assert!(matches!(value.as_ref(), Expression::Literal(Literal::Integer(42))));
+            assert_eq!(consequence.len(), 1);
+            assert!(alternative.is_none());
+        } else {
+            bail!("Expected if let expression");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn if_let_with_else() -> Result<()> {
+        let input = "if let x = 42 { print(x) } else { print(0) }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Expression(Expression::IfLet(_, _, _, alternative)) = &program[0] {
+            assert!(alternative.is_some());
+        } else {
+            bail!("Expected if let expression with else");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn isize_type_annotation() -> Result<()> {
+        let input = "x: isize = 42";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Let {
+            type_annotation, ..
+        } = &program[0]
+        {
+            assert_eq!(type_annotation.as_ref(), Some(&Type::Isize));
+        } else {
+            bail!("Expected let statement");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn usize_type_annotation() -> Result<()> {
+        let input = "x: usize = 42";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Let {
+            type_annotation, ..
+        } = &program[0]
+        {
+            assert_eq!(type_annotation.as_ref(), Some(&Type::Usize));
+        } else {
+            bail!("Expected let statement");
+        }
+        Ok(())
+    }
+
+    #[test]
     fn enum_declaration_unit_variants() -> Result<()> {
         let input = "Color :: enum { Red, Green, Blue }";
         let mut lexer = Lexer::new(input);
@@ -3987,6 +4534,170 @@ mod tests {
             assert_eq!(variants[1].fields.as_ref().unwrap().len(), 1);
         } else {
             bail!("Expected enum declaration");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn named_returns_single() -> Result<()> {
+        let input = "fn(a: i64, b: i64) -> (result: i64) { result = a + b }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Expression(Expression::Proc(params, return_sig, _body)) = &program[0] {
+            assert_eq!(params.len(), 2);
+            if let ReturnSignature::Named(ret_params) = return_sig {
+                assert_eq!(ret_params.len(), 1);
+                assert_eq!(ret_params[0].name, "result");
+                assert_eq!(ret_params[0].param_type, Type::I64);
+            } else {
+                bail!("Expected named return signature");
+            }
+        } else {
+            bail!("Expected function expression");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn named_returns_multiple() -> Result<()> {
+        let input = "fn(a: i64, b: i64) -> (quotient: i64, remainder: i64) { quotient = a / b; remainder = a % b }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Expression(Expression::Proc(params, return_sig, _body)) = &program[0] {
+            assert_eq!(params.len(), 2);
+            if let ReturnSignature::Named(ret_params) = return_sig {
+                assert_eq!(ret_params.len(), 2);
+                assert_eq!(ret_params[0].name, "quotient");
+                assert_eq!(ret_params[0].param_type, Type::I64);
+                assert_eq!(ret_params[1].name, "remainder");
+                assert_eq!(ret_params[1].param_type, Type::I64);
+            } else {
+                bail!("Expected named return signature");
+            }
+        } else {
+            bail!("Expected function expression");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn return_signature_to_type_single() {
+        let sig = ReturnSignature::Single(Type::I64);
+        assert_eq!(sig.to_type(), Some(Type::I64));
+    }
+
+    #[test]
+    fn return_signature_to_type_named_single() {
+        use super::ReturnParam;
+        let sig = ReturnSignature::Named(vec![ReturnParam {
+            name: "x".to_string(),
+            param_type: Type::I64,
+        }]);
+        assert_eq!(sig.to_type(), Some(Type::I64));
+    }
+
+    #[test]
+    fn return_signature_to_type_none() {
+        let sig = ReturnSignature::None;
+        assert_eq!(sig.to_type(), None);
+    }
+
+    #[test]
+    fn generic_function_parameter() -> Result<()> {
+        let input = "identity :: fn(x: $T) -> T { x }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Constant(name, Expression::Proc(params, return_sig, _body)) = &program[0] {
+            assert_eq!(name, "identity");
+            assert_eq!(params.len(), 1);
+            assert_eq!(params[0].name, "x");
+            assert_eq!(params[0].type_annotation, Some(Type::TypeParam("T".to_string())));
+            if let ReturnSignature::Single(ret_type) = return_sig {
+                assert_eq!(*ret_type, Type::Struct("T".to_string()));
+            } else {
+                bail!("Expected single return type");
+            }
+        } else {
+            bail!("Expected constant function declaration");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn generic_function_multiple_type_params() -> Result<()> {
+        let input = "pair :: fn(a: $T, b: $U) -> void { }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Constant(name, Expression::Proc(params, _, _)) = &program[0] {
+            assert_eq!(name, "pair");
+            assert_eq!(params.len(), 2);
+            assert_eq!(params[0].type_annotation, Some(Type::TypeParam("T".to_string())));
+            assert_eq!(params[1].type_annotation, Some(Type::TypeParam("U".to_string())));
+        } else {
+            bail!("Expected constant function declaration");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parameterized_struct() -> Result<()> {
+        let input = "Pair :: struct($T: Type, $U: Type) { first: T, second: U }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Struct(name, type_params, fields) = &program[0] {
+            assert_eq!(name, "Pair");
+            assert_eq!(type_params.len(), 2);
+            assert_eq!(type_params[0], "T");
+            assert_eq!(type_params[1], "U");
+            assert_eq!(fields.len(), 2);
+            assert_eq!(fields[0].name, "first");
+            assert_eq!(fields[0].field_type, Type::Struct("T".to_string()));
+            assert_eq!(fields[1].name, "second");
+            assert_eq!(fields[1].field_type, Type::Struct("U".to_string()));
+        } else {
+            bail!("Expected struct declaration");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parameterized_struct_single_param() -> Result<()> {
+        let input = "Wrapper :: struct($T: Type) { value: T }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Struct(name, type_params, fields) = &program[0] {
+            assert_eq!(name, "Wrapper");
+            assert_eq!(type_params.len(), 1);
+            assert_eq!(type_params[0], "T");
+            assert_eq!(fields.len(), 1);
+            assert_eq!(fields[0].name, "value");
+            assert_eq!(fields[0].field_type, Type::Struct("T".to_string()));
+        } else {
+            bail!("Expected struct declaration");
         }
         Ok(())
     }

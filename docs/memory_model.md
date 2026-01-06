@@ -3,7 +3,7 @@
 ## Design Goals
 
 1. Memory safety without lifetime annotations
-2. Explicit allocators (Odin/Zig style)
+2. Explicit allocators
 3. Simple mental model
 4. Game engine optimized
 

@@ -2,7 +2,7 @@
 
 **Version 0.1.0**
 
-Frost is a statically-oriented programming language combining Odin/Jai-style syntax with Rust-inspired immutability defaults. It compiles to bytecode executed by a stack-based virtual machine.
+Frost is a statically-typed programming language with Rust-inspired immutability defaults. It compiles to bytecode executed by a stack-based virtual machine or native code via Cranelift.
 
 ---
 

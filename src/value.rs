@@ -1,12 +1,13 @@
 use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Value64 {
     Integer(i64),
     Float(f64),
     Float32(f32),
     Bool(bool),
+    #[default]
     Null,
     HeapRef(u32),
 }

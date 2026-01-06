@@ -11,12 +11,20 @@ const STACK_SIZE: usize = 2048;
 const GLOBALS_SIZE: usize = 65536;
 const MAX_FRAMES: usize = 1024;
 
+#[derive(Debug, Clone, Default)]
+pub struct RuntimeContext {
+    pub allocator: Value64,
+    pub temp_allocator: Value64,
+    pub logger: Value64,
+}
+
 #[derive(Debug, Clone)]
 pub struct Frame {
     pub function_index: u32,
     pub ip: usize,
     pub base_pointer: usize,
     pub free_values: Vec<Value64>,
+    pub context: RuntimeContext,
 }
 
 impl Frame {
@@ -30,6 +38,22 @@ impl Frame {
             ip: 0,
             base_pointer,
             free_values,
+            context: RuntimeContext::default(),
+        }
+    }
+
+    pub fn new_with_context(
+        function_index: u32,
+        base_pointer: usize,
+        free_values: Vec<Value64>,
+        context: RuntimeContext,
+    ) -> Self {
+        Self {
+            function_index,
+            ip: 0,
+            base_pointer,
+            free_values,
+            context,
         }
     }
 }
@@ -46,6 +70,7 @@ pub struct VirtualMachine {
     pub frame_index: usize,
     pub native_registry: Option<NativeRegistry>,
     pub native_names: Vec<String>,
+    pub context_stack: Vec<RuntimeContext>,
 }
 
 static BUILTINS: &[&str] = &[
@@ -112,6 +137,8 @@ static BUILTINS: &[&str] = &[
     "handle_generation",
     "char_at",
     "assert",
+    "alloc",
+    "temp_alloc",
 ];
 
 impl VirtualMachine {
@@ -132,6 +159,7 @@ impl VirtualMachine {
             frame_index: 0,
             native_registry: None,
             native_names: Vec::new(),
+            context_stack: Vec::new(),
         }
     }
 
@@ -154,6 +182,7 @@ impl VirtualMachine {
             frame_index: 0,
             native_registry: Some(native_registry),
             native_names,
+            context_stack: Vec::new(),
         }
     }
 
@@ -319,7 +348,15 @@ impl VirtualMachine {
         let main_fn_index = self.functions.len() as u32;
         self.functions.push(main_fn);
 
-        let main_frame = Frame::new(main_fn_index, 0, vec![]);
+        let default_allocator_idx = self.allocate_heap(HeapObject::Arena(ArenaData::new(65536)));
+        let default_temp_allocator_idx = self.allocate_heap(HeapObject::Arena(ArenaData::new(65536)));
+        let default_context = RuntimeContext {
+            allocator: Value64::HeapRef(default_allocator_idx),
+            temp_allocator: Value64::HeapRef(default_temp_allocator_idx),
+            logger: Value64::Null,
+        };
+
+        let main_frame = Frame::new_with_context(main_fn_index, 0, vec![], default_context);
         self.push_frame(main_frame);
 
         while self.frame_index > 0 {
@@ -526,6 +563,16 @@ impl VirtualMachine {
                     let right = self.pop()?.as_i64();
                     let left = self.pop()?.as_i64();
                     self.push(Value64::Bool(left > right))?;
+                }
+                Opcode::GreaterThanOrEqualI64 => {
+                    let right = self.pop()?.as_i64();
+                    let left = self.pop()?.as_i64();
+                    self.push(Value64::Bool(left >= right))?;
+                }
+                Opcode::LessThanOrEqualI64 => {
+                    let right = self.pop()?.as_i64();
+                    let left = self.pop()?.as_i64();
+                    self.push(Value64::Bool(left <= right))?;
                 }
                 Opcode::EqualBool => {
                     let right = self.pop()?.as_bool();
@@ -1025,6 +1072,59 @@ impl VirtualMachine {
                         self.drop_heap_value(idx);
                     }
                 }
+                Opcode::GetContext => {
+                    let context = &self.current_frame().context;
+                    let fields = vec![
+                        context.allocator,
+                        context.temp_allocator,
+                        context.logger,
+                    ];
+                    let heap_index = self.allocate_heap(HeapObject::Struct("Context".to_string(), fields));
+                    self.push(Value64::HeapRef(heap_index))?;
+                }
+                Opcode::SetContext => {
+                    let context_val = self.pop()?;
+                    if let Value64::HeapRef(idx) = context_val {
+                        if let HeapObject::Struct(_, fields) = &self.heap[idx as usize] {
+                            let new_context = RuntimeContext {
+                                allocator: fields.first().copied().unwrap_or(Value64::Null),
+                                temp_allocator: fields.get(1).copied().unwrap_or(Value64::Null),
+                                logger: fields.get(2).copied().unwrap_or(Value64::Null),
+                            };
+                            self.current_frame_mut().context = new_context;
+                        }
+                    }
+                }
+                Opcode::GetContextField => {
+                    let field_index = instruction.operands[0] as usize;
+                    let context = &self.current_frame().context;
+                    let value = match field_index {
+                        0 => context.allocator,
+                        1 => context.temp_allocator,
+                        2 => context.logger,
+                        _ => Value64::Null,
+                    };
+                    self.push(value)?;
+                }
+                Opcode::SetContextField => {
+                    let field_index = instruction.operands[0] as usize;
+                    let value = self.pop()?;
+                    match field_index {
+                        0 => self.current_frame_mut().context.allocator = value,
+                        1 => self.current_frame_mut().context.temp_allocator = value,
+                        2 => self.current_frame_mut().context.logger = value,
+                        _ => {}
+                    }
+                }
+                Opcode::PushContextScope => {
+                    let current_context = self.current_frame().context.clone();
+                    self.context_stack.push(current_context);
+                }
+                Opcode::PopContextScope => {
+                    if let Some(previous_context) = self.context_stack.pop() {
+                        self.current_frame_mut().context = previous_context;
+                    }
+                }
             }
         }
         Ok(())
@@ -1051,8 +1151,9 @@ impl VirtualMachine {
                     }
 
                     let base_pointer = self.stack_pointer - num_args;
+                    let caller_context = self.current_frame().context.clone();
                     let frame =
-                        Frame::new(function_index, base_pointer, free_values);
+                        Frame::new_with_context(function_index, base_pointer, free_values, caller_context);
                     self.push_frame(frame);
                     self.stack_pointer = base_pointer + num_locals;
 
@@ -1996,6 +2097,42 @@ impl VirtualMachine {
                 }
                 Value64::Null
             }
+            "alloc" => {
+                if args.len() != 1 {
+                    bail!("alloc takes 1 argument");
+                }
+                let allocator_ref = self.current_frame().context.allocator;
+                if let Value64::HeapRef(arena_idx) = allocator_ref {
+                    if let HeapObject::Arena(arena) = &mut self.heap[arena_idx as usize] {
+                        match arena.alloc(args[0]) {
+                            Some(index) => Value64::Integer(index as i64),
+                            None => bail!("alloc failed: arena is full"),
+                        }
+                    } else {
+                        bail!("context.allocator is not an arena");
+                    }
+                } else {
+                    bail!("context.allocator is not set");
+                }
+            }
+            "temp_alloc" => {
+                if args.len() != 1 {
+                    bail!("temp_alloc takes 1 argument");
+                }
+                let temp_allocator_ref = self.current_frame().context.temp_allocator;
+                if let Value64::HeapRef(arena_idx) = temp_allocator_ref {
+                    if let HeapObject::Arena(arena) = &mut self.heap[arena_idx as usize] {
+                        match arena.alloc(args[0]) {
+                            Some(index) => Value64::Integer(index as i64),
+                            None => bail!("temp_alloc failed: arena is full"),
+                        }
+                    } else {
+                        bail!("context.temp_allocator is not an arena");
+                    }
+                } else {
+                    bail!("context.temp_allocator is not set");
+                }
+            }
             _ => bail!("unknown builtin: {}", name),
         };
 
@@ -2390,6 +2527,16 @@ impl VirtualMachine {
                 let left = self.pop()?.as_i64();
                 self.push(Value64::Bool(left > right))?;
             }
+            Opcode::GreaterThanOrEqualI64 => {
+                let right = self.pop()?.as_i64();
+                let left = self.pop()?.as_i64();
+                self.push(Value64::Bool(left >= right))?;
+            }
+            Opcode::LessThanOrEqualI64 => {
+                let right = self.pop()?.as_i64();
+                let left = self.pop()?.as_i64();
+                self.push(Value64::Bool(left <= right))?;
+            }
             Opcode::EqualBool => {
                 let right = self.pop()?.as_bool();
                 let left = self.pop()?.as_bool();
@@ -2760,6 +2907,59 @@ impl VirtualMachine {
                     self.drop_heap_value(idx);
                 }
             }
+            Opcode::GetContext => {
+                let context = &self.current_frame().context;
+                let fields = vec![
+                    context.allocator,
+                    context.temp_allocator,
+                    context.logger,
+                ];
+                let heap_index = self.allocate_heap(HeapObject::Struct("Context".to_string(), fields));
+                self.push(Value64::HeapRef(heap_index))?;
+            }
+            Opcode::SetContext => {
+                let context_val = self.pop()?;
+                if let Value64::HeapRef(idx) = context_val {
+                    if let HeapObject::Struct(_, fields) = &self.heap[idx as usize] {
+                        let new_context = RuntimeContext {
+                            allocator: fields.first().copied().unwrap_or(Value64::Null),
+                            temp_allocator: fields.get(1).copied().unwrap_or(Value64::Null),
+                            logger: fields.get(2).copied().unwrap_or(Value64::Null),
+                        };
+                        self.current_frame_mut().context = new_context;
+                    }
+                }
+            }
+            Opcode::GetContextField => {
+                let field_index = instruction.operands[0] as usize;
+                let context = &self.current_frame().context;
+                let value = match field_index {
+                    0 => context.allocator,
+                    1 => context.temp_allocator,
+                    2 => context.logger,
+                    _ => Value64::Null,
+                };
+                self.push(value)?;
+            }
+            Opcode::SetContextField => {
+                let field_index = instruction.operands[0] as usize;
+                let value = self.pop()?;
+                match field_index {
+                    0 => self.current_frame_mut().context.allocator = value,
+                    1 => self.current_frame_mut().context.temp_allocator = value,
+                    2 => self.current_frame_mut().context.logger = value,
+                    _ => {}
+                }
+            }
+            Opcode::PushContextScope => {
+                let current_context = self.current_frame().context.clone();
+                self.context_stack.push(current_context);
+            }
+            Opcode::PopContextScope => {
+                if let Some(previous_context) = self.context_stack.pop() {
+                    self.current_frame_mut().context = previous_context;
+                }
+            }
         }
         Ok(())
     }
@@ -2911,6 +3111,67 @@ mod tests {
         "#;
         let result = run_vm_test(input)?;
         assert_eq!(result, Value64::Integer(10));
+        Ok(())
+    }
+
+    #[test]
+    fn test_inclusive_range() -> Result<()> {
+        let input = r#"
+            mut sum := 0;
+            for i in 0..=5 {
+                sum = sum + i;
+            }
+            sum
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(15));
+        Ok(())
+    }
+
+    #[test]
+    fn test_if_let_binding() -> Result<()> {
+        let input = r#"
+            x := 42;
+            if let y = x {
+                y
+            } else {
+                0
+            }
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(42));
+        Ok(())
+    }
+
+    #[test]
+    fn test_if_let_enum_pattern() -> Result<()> {
+        let input = r#"
+            Option :: enum { Some { value: i64 }, None }
+            x: Option = Option::Some { value = 42 }
+            if let .Some { value } = x {
+                value
+            } else {
+                0
+            }
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(42));
+        Ok(())
+    }
+
+    #[test]
+    fn test_if_let_enum_no_match() -> Result<()> {
+        let input = r#"
+            Option :: enum { Some { value: i64 }, None }
+            x: Option = Option::None
+            if let .Some { value } = x {
+                value
+            } else {
+                -1
+            }
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(-1));
         Ok(())
     }
 
@@ -3116,6 +3377,106 @@ mod tests {
     }
 
     #[test]
+    fn test_struct_field_assignment() -> Result<()> {
+        let input = r#"
+            Point :: struct { x: i64, y: i64 }
+            mut p := Point { x = 10, y = 20 };
+            p.x = 100;
+            p.x + p.y
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(120));
+        Ok(())
+    }
+
+    #[test]
+    fn test_struct_multiple_field_assignments() -> Result<()> {
+        let input = r#"
+            Point :: struct { x: i64, y: i64, z: i64 }
+            mut p := Point { x = 1, y = 2, z = 3 };
+            p.x = 10;
+            p.y = 20;
+            p.z = 30;
+            p.x + p.y + p.z
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(60));
+        Ok(())
+    }
+
+    #[test]
+    fn test_hashmap_creation_and_access() -> Result<()> {
+        let input = r#"
+            m := { 1: 100, 2: 200, 3: 300 };
+            m[2]
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(200));
+        Ok(())
+    }
+
+    #[test]
+    fn test_hashmap_assignment() -> Result<()> {
+        let input = r#"
+            mut m := { 1: 10 };
+            m[1] = 999;
+            m[1]
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(999));
+        Ok(())
+    }
+
+    #[test]
+    fn test_named_return_single() -> Result<()> {
+        let input = r#"
+            add :: fn(a: i64, b: i64) -> (result: i64) {
+                result = a + b;
+            };
+            add(10, 20)
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(30));
+        Ok(())
+    }
+
+    #[test]
+    fn test_named_return_with_computation() -> Result<()> {
+        let input = r#"
+            factorial :: fn(n: i64) -> (result: i64) {
+                result = 1;
+                mut index := 1;
+                while (index <= n) {
+                    result = result * index;
+                    index = index + 1;
+                }
+            };
+            factorial(5)
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(120));
+        Ok(())
+    }
+
+    #[test]
+    fn test_named_return_early_exit() -> Result<()> {
+        let input = r#"
+            check :: fn(value: i64) -> (result: i64) {
+                result = 0;
+                if (value > 10) {
+                    result = 100;
+                    return result;
+                };
+                result = value * 2;
+            };
+            check(5) + check(15)
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(110));
+        Ok(())
+    }
+
+    #[test]
     fn test_string_concatenation() -> Result<()> {
         let tests = [
             (r#""hello" + " world""#, "hello world"),
@@ -3237,7 +3598,7 @@ mod tests {
     }
 
     #[test]
-    fn test_odin_style_declarations() -> Result<()> {
+    fn test_declarations() -> Result<()> {
         let tests = [
             ("x := 5; x", Value64::Integer(5)),
             ("x := 10; y := 20; x + y", Value64::Integer(30)),
@@ -3919,6 +4280,150 @@ mod tests {
     }
 
     #[test]
+    fn test_struct_return_from_function() -> Result<()> {
+        let input = r#"
+            Point :: struct { x: i64, y: i64 }
+            make_point :: fn(a: i64, b: i64) -> Point {
+                Point { x = a, y = b }
+            }
+            p := make_point(10, 20);
+            p.x + p.y
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(30));
+        Ok(())
+    }
+
+    #[test]
+    fn test_struct_return_three_fields() -> Result<()> {
+        let input = r#"
+            Vec3 :: struct { x: i64, y: i64, z: i64 }
+            make_vec :: fn(a: i64, b: i64, c: i64) -> Vec3 {
+                Vec3 { x = a, y = b, z = c }
+            }
+            v := make_vec(100, 200, 300);
+            v.x + v.y + v.z
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(600));
+        Ok(())
+    }
+
+    #[test]
+    fn test_struct_return_with_string_field() -> Result<()> {
+        let input = r#"
+            Person :: struct { name: str, age: i64 }
+            make_person :: fn(n: str, a: i64) -> Person {
+                Person { name = n, age = a }
+            }
+            p := make_person("Alice", 30);
+            p.age
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(30));
+        Ok(())
+    }
+
+    #[test]
+    fn test_struct_return_second_field_access() -> Result<()> {
+        let input = r#"
+            Pair :: struct { first: i64, second: i64 }
+            make_pair :: fn(a: i64, b: i64) -> Pair {
+                Pair { first = a, second = b }
+            }
+            p := make_pair(111, 222);
+            p.second
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(222));
+        Ok(())
+    }
+
+    #[test]
+    fn test_struct_return_nested_calls() -> Result<()> {
+        let input = r#"
+            Point :: struct { x: i64, y: i64 }
+            make_point :: fn(a: i64, b: i64) -> Point {
+                Point { x = a, y = b }
+            }
+            double_point :: fn(p: Point) -> Point {
+                Point { x = p.x * 2, y = p.y * 2 }
+            }
+            p1 := make_point(5, 10);
+            p2 := double_point(p1);
+            p2.x + p2.y
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(30));
+        Ok(())
+    }
+
+    #[test]
+    fn test_enum_return_from_function() -> Result<()> {
+        let input = r#"
+            Color :: enum { Red, Green, Blue }
+            get_color :: fn() -> Color {
+                Color::Blue
+            }
+            c := get_color();
+            match c {
+                case .Red: 1
+                case .Green: 2
+                case .Blue: 3
+            }
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(3));
+        Ok(())
+    }
+
+    #[test]
+    fn test_enum_return_with_fields() -> Result<()> {
+        let input = r#"
+            Token :: enum { Number { value: i64 }, Plus, End }
+            get_token :: fn() -> Token {
+                Token::Number { value = 42 }
+            }
+            t := get_token();
+            match t {
+                case .Number { value }: value
+                case .Plus: 0
+                case .End: 0
+            }
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(42));
+        Ok(())
+    }
+
+    #[test]
+    fn test_enum_return_multiple_variants() -> Result<()> {
+        let input = r#"
+            Result :: enum { Ok { value: i64 }, Err { code: i64 } }
+            make_ok :: fn(v: i64) -> Result {
+                Result::Ok { value = v }
+            }
+            make_err :: fn(c: i64) -> Result {
+                Result::Err { code = c }
+            }
+            r1 := make_ok(100);
+            r2 := make_err(404);
+            v1 := match r1 {
+                case .Ok { value }: value
+                case .Err { code }: code
+            };
+            v2 := match r2 {
+                case .Ok { value }: value
+                case .Err { code }: code
+            };
+            v1 + v2
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(504));
+        Ok(())
+    }
+
+    #[test]
     fn test_comptime_for_typename() -> Result<()> {
         let input = r#"
             Position :: struct { x: f64, y: f64 }
@@ -3953,6 +4458,22 @@ mod tests {
         let input = "1 | 2 | 4";
         let result = run_vm_test(input)?;
         assert_eq!(result, Value64::Integer(7));
+        Ok(())
+    }
+
+    #[test]
+    fn test_bitwise_and_operator() -> Result<()> {
+        let input = "7 & 3";
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(3));
+        Ok(())
+    }
+
+    #[test]
+    fn test_bitwise_and_masking() -> Result<()> {
+        let input = "255 & 15";
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(15));
         Ok(())
     }
 
@@ -4296,6 +4817,127 @@ mod tests {
 
         let result = vm.last_popped()?.as_i64();
         assert!(result >= 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_context_access_allocator() -> Result<()> {
+        let input = r#"
+            a := context.allocator;
+            a
+        "#;
+        let result = run_vm_test(input)?;
+        assert!(matches!(result, Value64::HeapRef(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_context_alloc_builtin() -> Result<()> {
+        let input = r#"
+            idx := alloc(42);
+            idx
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(0));
+        Ok(())
+    }
+
+    #[test]
+    fn test_context_temp_alloc_builtin() -> Result<()> {
+        let input = r#"
+            idx := temp_alloc(99);
+            idx
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(0));
+        Ok(())
+    }
+
+    #[test]
+    fn test_context_alloc_multiple() -> Result<()> {
+        let input = r#"
+            idx1 := alloc(10);
+            idx2 := alloc(20);
+            idx3 := alloc(30);
+            idx1 + idx2 + idx3
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(0 + 1 + 2));
+        Ok(())
+    }
+
+    #[test]
+    fn test_context_propagates_to_functions() -> Result<()> {
+        let input = r#"
+            do_alloc :: fn() -> i64 {
+                alloc(100)
+            };
+            idx1 := alloc(50);
+            idx2 := do_alloc();
+            idx1 + idx2
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(0 + 1));
+        Ok(())
+    }
+
+    #[test]
+    fn test_push_allocator_scope() -> Result<()> {
+        let input = r#"
+            custom_arena := arena_new(100);
+            idx_before := alloc(1);
+            push_allocator(custom_arena) {
+                idx_inside := alloc(2);
+            }
+            idx_after := alloc(3);
+            idx_before + idx_after
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(0 + 1));
+        Ok(())
+    }
+
+    #[test]
+    fn test_generic_identity_function() -> Result<()> {
+        let input = r#"
+            identity :: fn(x: $T) -> T { x }
+            identity(42)
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(42));
+        Ok(())
+    }
+
+    #[test]
+    fn test_generic_identity_with_bool() -> Result<()> {
+        let input = r#"
+            identity :: fn(x: $T) -> T { x }
+            identity(true)
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Bool(true));
+        Ok(())
+    }
+
+    #[test]
+    fn test_generic_first_of_two() -> Result<()> {
+        let input = r#"
+            first :: fn(a: $T, b: T) -> T { a }
+            first(10, 20)
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(10));
+        Ok(())
+    }
+
+    #[test]
+    fn test_generic_multiple_type_params() -> Result<()> {
+        let input = r#"
+            second :: fn(a: $T, b: $U) -> U { b }
+            second(1, 99)
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(99));
         Ok(())
     }
 }

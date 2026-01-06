@@ -1,11 +1,11 @@
 # Frost
 
-A statically-typed programming language combining Odin/Jai-style syntax with Rust-inspired ownership and immutability. Frost compiles to bytecode for rapid development or native code via Cranelift for production.
+A statically-typed programming language with Rust-inspired ownership and immutability. Frost compiles to bytecode for rapid development or native code via Cranelift for production.
 
 ## Features
 
 - **Immutable by default** - Variables are immutable unless declared with `mut`
-- **Odin-style syntax** - `:=` for inference, `::` for constants, `fn` for functions
+- **Clean syntax** - `:=` for inference, `::` for constants, `fn` for functions
 - **Ownership and borrowing** - Memory safety without garbage collection
 - **Second-class references** - References can't be stored in structs or returned, eliminating lifetime annotations
 - **Enums with data** - Tagged unions with pattern matching via `match`
@@ -86,7 +86,7 @@ mut score : i64 = 0
 ### Constants
 
 ```rust
-// Compile-time constants (Odin-style ::)
+// Compile-time constants (::)
 PI :: 3.14159
 MAX_SIZE :: 1024
 GREETING :: "Hello!"

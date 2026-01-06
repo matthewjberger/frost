@@ -1,0 +1,9 @@
+Option :: enum { Some { value: i64 }, None }
+
+x: Option = Option::None
+
+if let .Some { value } = x {
+    print(value)
+} else {
+    print(-1)
+}

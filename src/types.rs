@@ -6,10 +6,12 @@ pub enum Type {
     I16,
     I32,
     I64,
+    Isize,
     U8,
     U16,
     U32,
     U64,
+    Usize,
     F32,
     F64,
     Bool,
@@ -25,8 +27,10 @@ pub enum Type {
     Enum(String),
     Distinct(Box<Type>),
     Arena,
+    Context,
     Handle(Box<Type>),
     Optional(Box<Type>),
+    TypeParam(String),
     Unknown,
 }
 
@@ -36,7 +40,7 @@ impl Type {
             Type::I8 | Type::U8 | Type::Bool => 1,
             Type::I16 | Type::U16 => 2,
             Type::I32 | Type::U32 | Type::F32 => 4,
-            Type::I64 | Type::U64 | Type::F64 => 8,
+            Type::I64 | Type::U64 | Type::Isize | Type::Usize | Type::F64 => 8,
             Type::Ptr(_) | Type::Ref(_) | Type::RefMut(_) => 8,
             Type::Str => 16,
             Type::Void => 0,
@@ -47,8 +51,10 @@ impl Type {
             Type::Enum(_) => 4,
             Type::Distinct(inner) => inner.size_of(),
             Type::Arena => 24,
+            Type::Context => 24,
             Type::Handle(_) => 8,
             Type::Optional(inner) => 1 + inner.size_of(),
+            Type::TypeParam(_) => 0,
             Type::Unknown => 0,
         }
     }
@@ -60,6 +66,8 @@ impl Type {
             Type::I32 | Type::U32 | Type::F32 => 4,
             Type::I64
             | Type::U64
+            | Type::Isize
+            | Type::Usize
             | Type::F64
             | Type::Ptr(_)
             | Type::Ref(_)
@@ -72,16 +80,18 @@ impl Type {
             Type::Enum(_) => 4,
             Type::Distinct(inner) => inner.align_of(),
             Type::Arena => 8,
+            Type::Context => 8,
             Type::Handle(_) => 4,
             Type::Optional(inner) => inner.align_of(),
+            Type::TypeParam(_) => 1,
             Type::Unknown => 1,
         }
     }
 
     pub fn is_copy(&self) -> bool {
         match self {
-            Type::I8 | Type::I16 | Type::I32 | Type::I64 => true,
-            Type::U8 | Type::U16 | Type::U32 | Type::U64 => true,
+            Type::I8 | Type::I16 | Type::I32 | Type::I64 | Type::Isize => true,
+            Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::Usize => true,
             Type::F32 | Type::F64 | Type::Bool => true,
             Type::Ref(_) | Type::RefMut(_) | Type::Ptr(_) => true,
             Type::Proc(_, _) | Type::Void => true,
@@ -89,8 +99,10 @@ impl Type {
             Type::Str | Type::Struct(_) | Type::Enum(_) => false,
             Type::Distinct(inner) => inner.is_copy(),
             Type::Arena => false,
+            Type::Context => false,
             Type::Handle(_) => true,
             Type::Optional(inner) => inner.is_copy(),
+            Type::TypeParam(_) => false,
             Type::Unknown => false,
         }
     }
@@ -101,6 +113,7 @@ impl Type {
             Type::Array(inner, _) => inner.needs_drop(),
             Type::Distinct(inner) => inner.needs_drop(),
             Type::Arena => true,
+            Type::Context => false,
             Type::Optional(inner) => inner.needs_drop(),
             _ => false,
         }
@@ -135,10 +148,12 @@ impl Display for Type {
             Type::I16 => write!(f, "i16"),
             Type::I32 => write!(f, "i32"),
             Type::I64 => write!(f, "i64"),
+            Type::Isize => write!(f, "isize"),
             Type::U8 => write!(f, "u8"),
             Type::U16 => write!(f, "u16"),
             Type::U32 => write!(f, "u32"),
             Type::U64 => write!(f, "u64"),
+            Type::Usize => write!(f, "usize"),
             Type::F32 => write!(f, "f32"),
             Type::F64 => write!(f, "f64"),
             Type::Bool => write!(f, "bool"),
@@ -158,8 +173,10 @@ impl Display for Type {
             Type::Enum(name) => write!(f, "{}", name),
             Type::Distinct(inner) => write!(f, "distinct {}", inner),
             Type::Arena => write!(f, "Arena"),
+            Type::Context => write!(f, "Context"),
             Type::Handle(inner) => write!(f, "Handle<{}>", inner),
             Type::Optional(inner) => write!(f, "?{}", inner),
+            Type::TypeParam(name) => write!(f, "${}", name),
             Type::Unknown => write!(f, "?"),
         }
     }
@@ -277,5 +294,11 @@ mod tests {
         assert!(Type::RefMut(Box::new(Type::I64)).is_second_class());
         assert!(!Type::Ptr(Box::new(Type::I64)).is_second_class());
         assert!(!Type::I64.is_second_class());
+    }
+
+    #[test]
+    fn type_param_display() {
+        assert_eq!(Type::TypeParam("T".to_string()).to_string(), "$T");
+        assert_eq!(Type::TypeParam("U".to_string()).to_string(), "$U");
     }
 }
