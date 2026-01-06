@@ -1,0 +1,38 @@
+Position :: struct { x: f64, y: f64 }
+Velocity :: struct { dx: f64, dy: f64 }
+
+World :: struct {
+    count: i64,
+    comptime for T in [Position, Velocity] {
+        storage_#T: [#T; 4]
+    }
+}
+
+world := World {
+    count = 0,
+    storage_Position = [
+        Position { x = 0.0, y = 0.0 },
+        Position { x = 1.0, y = 1.0 },
+        Position { x = 2.0, y = 2.0 },
+        Position { x = 3.0, y = 3.0 }
+    ],
+    storage_Velocity = [
+        Velocity { dx = 0.0, dy = 0.0 },
+        Velocity { dx = 1.0, dy = 1.0 },
+        Velocity { dx = 2.0, dy = 2.0 },
+        Velocity { dx = 3.0, dy = 3.0 }
+    ]
+}
+
+print("World count:")
+print(world.count)
+
+pos := world.storage_Position[1]
+print("Position 1 x:")
+print(pos.x)
+
+vel := world.storage_Velocity[2]
+print("Velocity 2 dx:")
+print(vel.dx)
+
+print("Comptime struct field generation works!")

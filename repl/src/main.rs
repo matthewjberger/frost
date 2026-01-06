@@ -1,8 +1,38 @@
 use anyhow::Result;
 use frost::{Compiler, Lexer, Parser, Value64, VirtualMachine};
 use rustyline::{error::ReadlineError, Editor};
+use std::env;
+use std::fs;
+
+fn run_code(code: &str) -> Result<()> {
+    let mut lexer = Lexer::new(code);
+    let tokens = lexer.tokenize()?;
+
+    let mut parser = Parser::new(&tokens);
+    let program = parser.parse()?;
+
+    let mut compiler = Compiler::new(&program);
+    let bytecode = compiler.compile()?;
+
+    let mut vm = VirtualMachine::new(bytecode.constants, bytecode.functions, bytecode.heap);
+    vm.run(&bytecode.instructions)?;
+
+    Ok(())
+}
 
 fn main() -> Result<()> {
+    let args: Vec<String> = env::args().collect();
+
+    if args.len() > 1 {
+        if args[1] == "-c" && args.len() > 2 {
+            return run_code(&args[2]);
+        } else {
+            let filename = &args[1];
+            let code = fs::read_to_string(filename)?;
+            return run_code(&code);
+        }
+    }
+
     println!(
         r"
 Welcome to the Frost programming language REPL!
@@ -160,6 +190,19 @@ fn print_value(vm: &VirtualMachine, value: Value64) {
             frost::HeapObject::Mat4(m) => {
                 println!("Mat4({:?})", m);
             }
+            frost::HeapObject::Arena(arena) => {
+                println!("Arena(used={}/{})", arena.next_index, arena.capacity);
+            }
+            frost::HeapObject::Pool(pool) => {
+                println!(
+                    "Pool(allocated={}/{})",
+                    pool.capacity - pool.free_list.len(),
+                    pool.capacity
+                );
+            }
+            frost::HeapObject::Handle(index, generation) => {
+                println!("Handle({}, {})", index, generation);
+            }
         },
     }
 }
@@ -207,6 +250,19 @@ fn print_value_inline(vm: &VirtualMachine, value: Value64) {
             }
             frost::HeapObject::Mat4(m) => {
                 print!("Mat4({:?})", m);
+            }
+            frost::HeapObject::Arena(arena) => {
+                print!("Arena(used={}/{})", arena.next_index, arena.capacity);
+            }
+            frost::HeapObject::Pool(pool) => {
+                print!(
+                    "Pool(allocated={}/{})",
+                    pool.capacity - pool.free_list.len(),
+                    pool.capacity
+                );
+            }
+            frost::HeapObject::Handle(index, generation) => {
+                print!("Handle({}, {})", index, generation);
             }
         },
     }

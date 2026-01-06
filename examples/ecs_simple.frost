@@ -1,0 +1,61 @@
+Position :: struct { x: f64, y: f64 }
+Velocity :: struct { dx: f64, dy: f64 }
+
+COMPONENT_Position :: 1
+COMPONENT_Velocity :: 2
+
+movement_system :: proc(mut masks: []i64, mut positions: []Position, velocities: []Velocity, count: i64) -> void {
+    for entity in 0..count {
+        mask := masks[entity]
+        has_pos := (mask & COMPONENT_Position) != 0
+        has_vel := (mask & COMPONENT_Velocity) != 0
+        if (has_pos && has_vel) {
+            pos := positions[entity]
+            vel := velocities[entity]
+            positions[entity] = Position { x = pos.x + vel.dx, y = pos.y + vel.dy }
+        }
+    }
+}
+
+print("=== Simple ECS Test ===")
+
+mut masks := [3, 3, 1]
+
+mut positions := [
+    Position { x = 10.0, y = 20.0 },
+    Position { x = 50.0, y = 50.0 },
+    Position { x = 100.0, y = 100.0 }
+]
+
+velocities := [
+    Velocity { dx = 1.5, dy = 0.5 },
+    Velocity { dx = -2.0, dy = 1.0 },
+    Velocity { dx = 0.0, dy = 0.0 }
+]
+
+print("Initial positions:")
+for entity in 0..3 {
+    pos := positions[entity]
+    print("Entity")
+    print(entity)
+    print("x:")
+    print(pos.x)
+    print("y:")
+    print(pos.y)
+}
+
+print("")
+print("Running movement system...")
+movement_system(masks, positions, velocities, 3)
+
+print("")
+print("Final positions:")
+for entity in 0..3 {
+    pos := positions[entity]
+    print("Entity")
+    print(entity)
+    print("x:")
+    print(pos.x)
+    print("y:")
+    print(pos.y)
+}

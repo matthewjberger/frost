@@ -14,6 +14,7 @@ pub type Block = Vec<Statement>;
 pub struct Parameter {
     pub name: Identifier,
     pub type_annotation: Option<Type>,
+    pub mutable: bool,
 }
 
 impl Display for Parameter {
@@ -60,6 +61,7 @@ pub enum Pattern {
 pub enum Operator {
     Add,
     And,
+    BitwiseAnd,
     BitwiseOr,
     Divide,
     Multiply,
@@ -96,6 +98,7 @@ impl Operator {
             Token::NotEqual => Self::NotEqual,
             Token::And => Self::And,
             Token::Or => Self::Or,
+            Token::Ampersand => Self::BitwiseAnd,
             Token::Pipe => Self::BitwiseOr,
             Token::ShiftLeft => Self::ShiftLeft,
             Token::ShiftRight => Self::ShiftRight,
@@ -109,6 +112,7 @@ impl Display for Operator {
         let statement = match self {
             Self::Add => "+",
             Self::And => "&&",
+            Self::BitwiseAnd => "&",
             Self::Subtract | Self::Negate => "-",
             Self::Divide => "/",
             Self::Multiply => "*",
@@ -151,6 +155,11 @@ pub enum Statement {
     Continue,
     Import(String),
     InterpolatedConstant(Vec<IdentPart>, Expression),
+    Extern {
+        name: Identifier,
+        params: Vec<Parameter>,
+        return_type: Option<Type>,
+    },
 }
 
 impl Display for Statement {
@@ -232,6 +241,17 @@ impl Display for Statement {
             Self::InterpolatedConstant(parts, expr) => {
                 format!("{:?} :: {}", parts, expr)
             }
+            Self::Extern { name, params, return_type } => {
+                let params_str = params
+                    .iter()
+                    .map(|p| p.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                match return_type {
+                    Some(typ) => format!("{} :: extern proc({}) -> {}", name, params_str, typ),
+                    None => format!("{} :: extern proc({})", name, params_str),
+                }
+            }
         };
         write!(f, "{}", statement)
     }
@@ -276,6 +296,7 @@ pub enum Expression {
     TypeValue(Type),
     Typename(Type),
     InterpolatedIdent(Vec<IdentPart>),
+    Unsafe(Block),
 }
 
 impl Expression {
@@ -489,6 +510,10 @@ impl Display for Expression {
             Self::TypeValue(typ) => format!("{}", typ),
             Self::Typename(typ) => format!("typename({})", typ),
             Self::InterpolatedIdent(parts) => format!("{:?}", parts),
+            Self::Unsafe(body) => {
+                let body_str: Vec<String> = body.iter().map(|s| s.to_string()).collect();
+                format!("unsafe {{ {} }}", body_str.join("; "))
+            }
         };
         write!(f, "{}", expression)
     }
@@ -499,6 +524,7 @@ pub enum Literal {
     Integer(i64),
     Float(f64),
     Float32(f32),
+    Boolean(bool),
     String(String),
     Array(Vec<Expression>),
     HashMap(Vec<(Expression, Expression)>),
@@ -510,6 +536,7 @@ impl Display for Literal {
             Self::Integer(x) => x.to_string(),
             Self::Float(x) => x.to_string(),
             Self::Float32(x) => format!("{}f32", x),
+            Self::Boolean(x) => x.to_string(),
             Self::String(x) => x.to_string(),
             Self::Array(array) => {
                 let expressions =
@@ -534,9 +561,10 @@ pub enum Precedence {
     Range,
     LogicalOr,
     LogicalAnd,
-    BitwiseOr,
     Equals,
     LessThanGreaterThan,
+    BitwiseOr,
+    BitwiseAnd,
     Shift,
     Sum,
     Product,
@@ -552,6 +580,7 @@ impl From<&Token> for Precedence {
             Token::Or => Self::LogicalOr,
             Token::And => Self::LogicalAnd,
             Token::Pipe => Self::BitwiseOr,
+            Token::Ampersand => Self::BitwiseAnd,
             Token::ShiftLeft => Self::Shift,
             Token::ShiftRight => Self::Shift,
             Token::DotDot => Self::Range,
@@ -639,6 +668,7 @@ impl<'a> Parser<'a> {
                         Token::Struct
                             | Token::Enum
                             | Token::Distinct
+                            | Token::Extern
                             | Token::Integer(_)
                             | Token::Float(_)
                             | Token::StringLiteral(_)
@@ -808,18 +838,23 @@ impl<'a> Parser<'a> {
             }
             let mut fields = Vec::new();
             while self.peek_nth(0) != &Token::RightBrace {
-                let field_name = match self.read_token() {
-                    Token::Identifier(name) => name.to_string(),
-                    _ => bail!("Expected field name"),
-                };
-                if !matches!(self.read_token(), Token::Colon) {
-                    bail!("Expected ':' after field name");
+                if matches!(self.peek_nth(0), Token::Comptime) {
+                    let expanded = self.parse_comptime_struct_fields()?;
+                    fields.extend(expanded);
+                } else {
+                    let field_name = match self.read_token() {
+                        Token::Identifier(name) => name.to_string(),
+                        _ => bail!("Expected field name"),
+                    };
+                    if !matches!(self.read_token(), Token::Colon) {
+                        bail!("Expected ':' after field name");
+                    }
+                    let field_type = self.parse_type()?;
+                    fields.push(StructField {
+                        name: field_name,
+                        field_type,
+                    });
                 }
-                let field_type = self.parse_type()?;
-                fields.push(StructField {
-                    name: field_name,
-                    field_type,
-                });
                 if matches!(self.peek_nth(0), Token::Comma) {
                     self.read_token();
                 }
@@ -886,6 +921,48 @@ impl<'a> Parser<'a> {
                 self.read_token();
             }
             Ok(Statement::TypeAlias(identifier, typ))
+        } else if matches!(self.peek_nth(0), Token::Extern) {
+            self.read_token();
+            if !matches!(self.read_token(), Token::Proc) {
+                bail!("Expected 'proc' after 'extern'");
+            }
+            if !matches!(self.read_token(), Token::LeftParentheses) {
+                bail!("Expected '(' after 'proc'");
+            }
+            let mut params = Vec::new();
+            while self.peek_nth(0) != &Token::RightParentheses {
+                let param_name = match self.read_token() {
+                    Token::Identifier(name) => name.to_string(),
+                    _ => bail!("Expected parameter name"),
+                };
+                if !matches!(self.read_token(), Token::Colon) {
+                    bail!("Expected ':' after parameter name");
+                }
+                let param_type = self.parse_type()?;
+                params.push(Parameter {
+                    name: param_name,
+                    type_annotation: Some(param_type),
+                    mutable: false,
+                });
+                if matches!(self.peek_nth(0), Token::Comma) {
+                    self.read_token();
+                }
+            }
+            self.read_token();
+            let return_type = if matches!(self.peek_nth(0), Token::Arrow) {
+                self.read_token();
+                Some(self.parse_type()?)
+            } else {
+                None
+            };
+            if matches!(self.peek_nth(0), Token::Semicolon) {
+                self.read_token();
+            }
+            Ok(Statement::Extern {
+                name: identifier,
+                params,
+                return_type,
+            })
         } else {
             let expression = self.parse_expression(Precedence::Lowest)?;
             if matches!(self.peek_nth(0), Token::Semicolon) {
@@ -999,6 +1076,10 @@ impl<'a> Parser<'a> {
                 advance = false;
                 self.parse_typename_expression()?
             }
+            Token::Unsafe => {
+                advance = false;
+                self.parse_unsafe_expression()?
+            }
             Token::EndOfFile => {
                 bail!("Unexpected end of file")
             }
@@ -1026,6 +1107,7 @@ impl<'a> Parser<'a> {
                 | Token::GreaterThanOrEqual
                 | Token::And
                 | Token::Or
+                | Token::Ampersand
                 | Token::Pipe
                 | Token::ShiftLeft
                 | Token::ShiftRight => {
@@ -1092,10 +1174,11 @@ impl<'a> Parser<'a> {
                                 fields,
                             );
                         } else {
-                            expression = Expression::Identifier(format!(
-                                "{}::{}",
-                                enum_name, variant_name
-                            ));
+                            expression = Expression::EnumVariantInit(
+                                enum_name.clone(),
+                                variant_name,
+                                vec![],
+                            );
                         }
                     } else {
                         return Ok(expression);
@@ -1198,10 +1281,19 @@ impl<'a> Parser<'a> {
         expression: Expression,
     ) -> Result<Expression> {
         self.read_token();
-        let field_name = match self.read_token() {
+        let mut field_name = match self.read_token() {
             Token::Identifier(name) => name.to_string(),
             token => bail!("Expected field name after '.', found {:?}", token),
         };
+        while matches!(self.peek_nth(0), Token::Hash) {
+            self.read_token();
+            field_name.push('#');
+            if let Token::Identifier(var_name) = self.read_token() {
+                field_name.push_str(var_name);
+            } else {
+                bail!("Expected identifier after '#' in field name");
+            }
+        }
         Ok(Expression::FieldAccess(Box::new(expression), field_name))
     }
 
@@ -1347,11 +1439,11 @@ impl<'a> Parser<'a> {
             }
             Token::True => {
                 self.read_token();
-                Ok(Pattern::Literal(Literal::Integer(1)))
+                Ok(Pattern::Literal(Literal::Boolean(true)))
             }
             Token::False => {
                 self.read_token();
-                Ok(Pattern::Literal(Literal::Integer(0)))
+                Ok(Pattern::Literal(Literal::Boolean(false)))
             }
             Token::Dot => {
                 self.read_token();
@@ -1507,6 +1599,13 @@ impl<'a> Parser<'a> {
 
         let mut parameters = Vec::new();
         while self.peek_nth(0) != &Token::RightParentheses {
+            let mutable = if matches!(self.peek_nth(0), Token::Mut) {
+                self.read_token();
+                true
+            } else {
+                false
+            };
+
             if let Token::Identifier(name) = self.peek_nth(0) {
                 let name = name.to_string();
                 self.read_token();
@@ -1522,6 +1621,7 @@ impl<'a> Parser<'a> {
                 parameters.push(Parameter {
                     name,
                     type_annotation,
+                    mutable,
                 });
             }
 
@@ -1618,7 +1718,18 @@ impl<'a> Parser<'a> {
                     }
                     Type::Array(Box::new(self.parse_type()?), size)
                 } else {
-                    bail!("Expected array size or ']' for slice");
+                    let element_type = self.parse_type()?;
+                    if !matches!(self.read_token(), Token::Semicolon) {
+                        bail!("Expected ';' after array element type");
+                    }
+                    let size = match self.read_token() {
+                        Token::Integer(size) => *size as usize,
+                        token => bail!("Expected array size, found {:?}", token),
+                    };
+                    if !matches!(self.read_token(), Token::RightBracket) {
+                        bail!("Expected ']' after array size");
+                    }
+                    Type::Array(Box::new(element_type), size)
                 }
             }
             Token::Proc => {
@@ -1647,10 +1758,37 @@ impl<'a> Parser<'a> {
                 self.read_token();
                 Type::Distinct(Box::new(self.parse_type()?))
             }
+            Token::Question => {
+                self.read_token();
+                Type::Optional(Box::new(self.parse_type()?))
+            }
             Token::Identifier(name) => {
                 let name = name.to_string();
                 self.read_token();
-                Type::Struct(name)
+                match name.as_str() {
+                    "Arena" => Type::Arena,
+                    "Handle" => {
+                        if !matches!(self.peek_nth(0), Token::LessThan) {
+                            bail!("Expected '<' after 'Handle'");
+                        }
+                        self.read_token();
+                        let inner_type = self.parse_type()?;
+                        if !matches!(self.peek_nth(0), Token::GreaterThan) {
+                            bail!("Expected '>' after Handle type parameter");
+                        }
+                        self.read_token();
+                        Type::Handle(Box::new(inner_type))
+                    }
+                    _ => Type::Struct(name)
+                }
+            }
+            Token::Hash => {
+                self.read_token();
+                let var_name = match self.read_token() {
+                    Token::Identifier(name) => name.to_string(),
+                    _ => bail!("Expected identifier after '#' in type"),
+                };
+                Type::Struct(format!("#{}", var_name))
             }
             token => bail!("Expected type, found {:?}", token),
         };
@@ -1749,6 +1887,162 @@ impl<'a> Parser<'a> {
         Ok(types)
     }
 
+    fn parse_comptime_struct_fields(&mut self) -> Result<Vec<StructField>> {
+        self.read_token();
+        if !matches!(self.read_token(), Token::For) {
+            bail!("Expected 'for' after 'comptime' in struct field generation");
+        }
+        let first_ident = match self.read_token() {
+            Token::Identifier(name) => name.to_string(),
+            _ => bail!("Expected identifier in comptime for"),
+        };
+        let (_index_var, type_var) = if matches!(self.peek_nth(0), Token::Comma) {
+            self.read_token();
+            let second_ident = match self.read_token() {
+                Token::Identifier(name) => name.to_string(),
+                _ => bail!("Expected type variable after ','"),
+            };
+            (Some(first_ident), second_ident)
+        } else {
+            (None, first_ident)
+        };
+        if !matches!(self.read_token(), Token::In) {
+            bail!("Expected 'in' in comptime for");
+        }
+        if !matches!(self.read_token(), Token::LeftBracket) {
+            bail!("Expected '[' for type list in comptime for");
+        }
+        let types = self.parse_type_list()?;
+        if !matches!(self.read_token(), Token::RightBracket) {
+            bail!("Expected ']' after type list");
+        }
+        if !matches!(self.read_token(), Token::LeftBrace) {
+            bail!("Expected '{{' for comptime struct field body");
+        }
+        let mut field_templates = Vec::new();
+        while self.peek_nth(0) != &Token::RightBrace {
+            let first_part = match self.read_token() {
+                Token::Identifier(name) => name.to_string(),
+                _ => bail!("Expected field name in comptime struct fields"),
+            };
+            let mut name_parts = vec![IdentPart::Literal(first_part)];
+            while matches!(self.peek_nth(0), Token::Hash) {
+                self.read_token();
+                if let Token::Identifier(var_name) = self.read_token() {
+                    name_parts.push(IdentPart::TypeVar(var_name.to_string()));
+                } else {
+                    bail!("Expected identifier after '#' in field name");
+                }
+                if let Token::Identifier(next) = self.peek_nth(0) {
+                    if !matches!(self.peek_nth(1), Token::Colon) {
+                        name_parts.push(IdentPart::Literal(next.to_string()));
+                        self.read_token();
+                    }
+                }
+            }
+            if !matches!(self.read_token(), Token::Colon) {
+                bail!("Expected ':' after field name");
+            }
+            let field_type = self.parse_type()?;
+            field_templates.push((name_parts, field_type));
+            if matches!(self.peek_nth(0), Token::Comma) {
+                self.read_token();
+            }
+        }
+        self.read_token();
+        let mut result = Vec::new();
+        for typ in &types {
+            let type_name = Self::type_to_name(typ);
+            for (name_parts, type_template) in &field_templates {
+                let mut field_name = String::new();
+                for part in name_parts {
+                    match part {
+                        IdentPart::Literal(s) => field_name.push_str(s),
+                        IdentPart::TypeVar(v) if v == &type_var => field_name.push_str(&type_name),
+                        IdentPart::TypeVar(v) => {
+                            field_name.push('#');
+                            field_name.push_str(v);
+                        }
+                    }
+                }
+                let field_type =
+                    Self::substitute_type_var_in_type(type_template, &type_var, typ);
+                result.push(StructField {
+                    name: field_name,
+                    field_type,
+                });
+            }
+        }
+        Ok(result)
+    }
+
+    fn type_to_name(typ: &Type) -> String {
+        match typ {
+            Type::Struct(name) => name.clone(),
+            Type::Enum(name) => name.clone(),
+            Type::I8 => "i8".to_string(),
+            Type::I16 => "i16".to_string(),
+            Type::I32 => "i32".to_string(),
+            Type::I64 => "i64".to_string(),
+            Type::U8 => "u8".to_string(),
+            Type::U16 => "u16".to_string(),
+            Type::U32 => "u32".to_string(),
+            Type::U64 => "u64".to_string(),
+            Type::F32 => "f32".to_string(),
+            Type::F64 => "f64".to_string(),
+            Type::Bool => "bool".to_string(),
+            Type::Str => "str".to_string(),
+            Type::Void => "void".to_string(),
+            Type::Array(inner, size) => format!("[{}; {}]", Self::type_to_name(inner), size),
+            Type::Slice(inner) => format!("[{}]", Self::type_to_name(inner)),
+            Type::Ref(inner) => format!("&{}", Self::type_to_name(inner)),
+            Type::RefMut(inner) => format!("&mut {}", Self::type_to_name(inner)),
+            Type::Ptr(inner) => format!("^{}", Self::type_to_name(inner)),
+            Type::Proc(params, ret) => {
+                let param_strs: Vec<String> = params.iter().map(Self::type_to_name).collect();
+                format!("proc({}) -> {}", param_strs.join(", "), Self::type_to_name(ret))
+            }
+            Type::Distinct(inner) => format!("distinct {}", Self::type_to_name(inner)),
+            Type::Arena => "Arena".to_string(),
+            Type::Handle(inner) => format!("Handle<{}>", Self::type_to_name(inner)),
+            Type::Optional(inner) => format!("?{}", Self::type_to_name(inner)),
+            Type::Unknown => "?".to_string(),
+        }
+    }
+
+    fn substitute_type_var_in_type(template: &Type, type_var: &str, replacement: &Type) -> Type {
+        match template {
+            Type::Struct(name) if name == &format!("#{}", type_var) => replacement.clone(),
+            Type::Array(inner, size) => Type::Array(
+                Box::new(Self::substitute_type_var_in_type(inner, type_var, replacement)),
+                *size,
+            ),
+            Type::Slice(inner) => Type::Slice(Box::new(Self::substitute_type_var_in_type(
+                inner, type_var, replacement,
+            ))),
+            Type::Ref(inner) => Type::Ref(Box::new(Self::substitute_type_var_in_type(
+                inner, type_var, replacement,
+            ))),
+            Type::RefMut(inner) => Type::RefMut(Box::new(Self::substitute_type_var_in_type(
+                inner, type_var, replacement,
+            ))),
+            Type::Ptr(inner) => Type::Ptr(Box::new(Self::substitute_type_var_in_type(
+                inner, type_var, replacement,
+            ))),
+            Type::Distinct(inner) => Type::Distinct(Box::new(Self::substitute_type_var_in_type(
+                inner, type_var, replacement,
+            ))),
+            Type::Proc(params, ret) => Type::Proc(
+                params
+                    .iter()
+                    .map(|p| Self::substitute_type_var_in_type(p, type_var, replacement))
+                    .collect(),
+                Box::new(Self::substitute_type_var_in_type(ret, type_var, replacement)),
+            ),
+            other => other.clone(),
+        }
+    }
+
     fn parse_typename_expression(&mut self) -> Result<Expression> {
         self.read_token();
         if !matches!(self.read_token(), Token::LeftParentheses) {
@@ -1759,6 +2053,15 @@ impl<'a> Parser<'a> {
             bail!("Expected ')' after type in typename");
         }
         Ok(Expression::Typename(typ))
+    }
+
+    fn parse_unsafe_expression(&mut self) -> Result<Expression> {
+        self.read_token();
+        if !matches!(self.peek_nth(0), Token::LeftBrace) {
+            bail!("Expected '{{' after 'unsafe'");
+        }
+        let body = self.parse_block()?;
+        Ok(Expression::Unsafe(body))
     }
 
     fn parse_interpolated_identifier(
@@ -1814,7 +2117,7 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Expression, Literal, Parameter, Parser, Statement, StructField,
+        Expression, Literal, Parameter, Parser, Pattern, Statement, StructField,
     };
     use crate::{lexer::Lexer, types::Type, Operator};
     use anyhow::{bail, Result};
@@ -2199,10 +2502,12 @@ mod tests {
                 Parameter {
                     name: "x".to_string(),
                     type_annotation: None,
+                    mutable: false,
                 },
                 Parameter {
                     name: "y".to_string(),
                     type_annotation: None,
+                    mutable: false,
                 },
             ],
             None,
@@ -2224,6 +2529,7 @@ mod tests {
                 vec![Parameter {
                     name: "x".to_string(),
                     type_annotation: None,
+                    mutable: false,
                 }],
             ),
             (
@@ -2232,14 +2538,17 @@ mod tests {
                     Parameter {
                         name: "x".to_string(),
                         type_annotation: None,
+                        mutable: false,
                     },
                     Parameter {
                         name: "y".to_string(),
                         type_annotation: None,
+                        mutable: false,
                     },
                     Parameter {
                         name: "z".to_string(),
                         type_annotation: None,
+                        mutable: false,
                     },
                 ],
             ),
@@ -2617,11 +2926,20 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::Identifier(name)) = &program[0]
+        if let Statement::Expression(Expression::EnumVariantInit(
+            enum_name,
+            variant_name,
+            fields,
+        )) = &program[0]
         {
-            assert_eq!(name, "Color::Green");
+            assert_eq!(enum_name, "Color");
+            assert_eq!(variant_name, "Green");
+            assert!(fields.is_empty());
         } else {
-            bail!("Expected scoped identifier, got {:?}", program[0]);
+            bail!(
+                "Expected EnumVariantInit, got {:?}",
+                program[0]
+            );
         }
         Ok(())
     }
@@ -3239,6 +3557,449 @@ mod tests {
             }
         } else {
             bail!("Expected Let statement");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn arena_type_annotation() -> Result<()> {
+        let input = "a : Arena = x;";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Let { name, type_annotation, .. } = &program[0] {
+            assert_eq!(name, "a");
+            assert_eq!(type_annotation, &Some(Type::Arena));
+        } else {
+            bail!("Expected let statement with Arena type");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn handle_type_annotation() -> Result<()> {
+        let input = "h : Handle<Entity> = x;";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Let { name, type_annotation, .. } = &program[0] {
+            assert_eq!(name, "h");
+            assert_eq!(type_annotation, &Some(Type::Handle(Box::new(Type::Struct("Entity".to_string())))));
+        } else {
+            bail!("Expected let statement with Handle type");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn optional_type_annotation() -> Result<()> {
+        let input = "x : ?i64 = y;";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Let { name, type_annotation, .. } = &program[0] {
+            assert_eq!(name, "x");
+            assert_eq!(type_annotation, &Some(Type::Optional(Box::new(Type::I64))));
+        } else {
+            bail!("Expected let statement with Optional type");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn nested_handle_optional() -> Result<()> {
+        let input = "x : ?Handle<Position> = y;";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Let { name, type_annotation, .. } = &program[0] {
+            assert_eq!(name, "x");
+            assert_eq!(
+                type_annotation,
+                &Some(Type::Optional(Box::new(Type::Handle(Box::new(Type::Struct("Position".to_string()))))))
+            );
+        } else {
+            bail!("Expected let statement with nested Optional<Handle> type");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn extern_declaration() -> Result<()> {
+        let input = "puts :: extern proc(s: ^i8) -> i32";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Extern { name, params, return_type } = &program[0] {
+            assert_eq!(name, "puts");
+            assert_eq!(params.len(), 1);
+            assert_eq!(params[0].name, "s");
+            assert_eq!(
+                params[0].type_annotation,
+                Some(Type::Ptr(Box::new(Type::I8)))
+            );
+            assert_eq!(return_type, &Some(Type::I32));
+        } else {
+            bail!("Expected extern declaration");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unsafe_block() -> Result<()> {
+        let input = "x := unsafe { ptr^ }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Let { value, .. } = &program[0] {
+            if let Expression::Unsafe(body) = value {
+                assert_eq!(body.len(), 1);
+            } else {
+                bail!("Expected unsafe expression");
+            }
+        } else {
+            bail!("Expected let statement");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn enum_declaration_unit_variants() -> Result<()> {
+        let input = "Color :: enum { Red, Green, Blue }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Enum(name, variants) = &program[0] {
+            assert_eq!(name, "Color");
+            assert_eq!(variants.len(), 3);
+            assert_eq!(variants[0].name, "Red");
+            assert!(variants[0].fields.is_none());
+            assert_eq!(variants[1].name, "Green");
+            assert!(variants[1].fields.is_none());
+            assert_eq!(variants[2].name, "Blue");
+            assert!(variants[2].fields.is_none());
+        } else {
+            bail!("Expected enum declaration");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn enum_declaration_data_variants() -> Result<()> {
+        let input = "Result :: enum { Ok { value: i64 }, Err { code: i64, message: str } }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Enum(name, variants) = &program[0] {
+            assert_eq!(name, "Result");
+            assert_eq!(variants.len(), 2);
+            assert_eq!(variants[0].name, "Ok");
+            let ok_fields = variants[0].fields.as_ref().unwrap();
+            assert_eq!(ok_fields.len(), 1);
+            assert_eq!(ok_fields[0].name, "value");
+            assert_eq!(variants[1].name, "Err");
+            let err_fields = variants[1].fields.as_ref().unwrap();
+            assert_eq!(err_fields.len(), 2);
+            assert_eq!(err_fields[0].name, "code");
+            assert_eq!(err_fields[1].name, "message");
+        } else {
+            bail!("Expected enum declaration");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn enum_variant_init_unit() -> Result<()> {
+        let input = "color := Color::Red";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Let { value, .. } = &program[0] {
+            if let Expression::EnumVariantInit(enum_name, variant_name, fields) = value {
+                assert_eq!(enum_name, "Color");
+                assert_eq!(variant_name, "Red");
+                assert!(fields.is_empty());
+            } else {
+                bail!("Expected enum variant init, got {:?}", value);
+            }
+        } else {
+            bail!("Expected let statement");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn enum_variant_init_with_fields() -> Result<()> {
+        let input = "result := Result::Ok { value = 42 }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Let { value, .. } = &program[0] {
+            if let Expression::EnumVariantInit(enum_name, variant_name, fields) = value {
+                assert_eq!(enum_name, "Result");
+                assert_eq!(variant_name, "Ok");
+                assert_eq!(fields.len(), 1);
+                assert_eq!(fields[0].0, "value");
+            } else {
+                bail!("Expected enum variant init, got {:?}", value);
+            }
+        } else {
+            bail!("Expected let statement");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn switch_expression_integer_patterns() -> Result<()> {
+        let input = r#"
+            result := switch x {
+                case 1: "one"
+                case 2: "two"
+                case _: "other"
+            }
+        "#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Let { value, .. } = &program[0] {
+            if let Expression::Switch(scrutinee, cases) = value {
+                if let Expression::Identifier(name) = scrutinee.as_ref() {
+                    assert_eq!(name, "x");
+                } else {
+                    bail!("Expected identifier scrutinee");
+                }
+                assert_eq!(cases.len(), 3);
+                assert!(matches!(&cases[0].pattern, Pattern::Literal(Literal::Integer(1))));
+                assert!(matches!(&cases[1].pattern, Pattern::Literal(Literal::Integer(2))));
+                assert!(matches!(&cases[2].pattern, Pattern::Wildcard));
+            } else {
+                bail!("Expected switch expression");
+            }
+        } else {
+            bail!("Expected let statement");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn switch_expression_shorthand_enum_pattern() -> Result<()> {
+        let input = r#"
+            result := switch color {
+                case .Red: 0
+                case .Green: 1
+                case .Blue: 2
+            }
+        "#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Let { value, .. } = &program[0] {
+            if let Expression::Switch(_, cases) = value {
+                assert_eq!(cases.len(), 3);
+                if let Pattern::EnumVariant { enum_name, variant_name, bindings } = &cases[0].pattern {
+                    assert!(enum_name.is_none());
+                    assert_eq!(variant_name, "Red");
+                    assert!(bindings.is_empty());
+                } else {
+                    bail!("Expected enum variant pattern");
+                }
+            } else {
+                bail!("Expected switch expression");
+            }
+        } else {
+            bail!("Expected let statement");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn switch_expression_enum_pattern_with_bindings() -> Result<()> {
+        let input = r#"
+            result := switch opt {
+                case .Some { value }: value
+                case .None: 0
+            }
+        "#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Let { value, .. } = &program[0] {
+            if let Expression::Switch(_, cases) = value {
+                assert_eq!(cases.len(), 2);
+                if let Pattern::EnumVariant { enum_name, variant_name, bindings } = &cases[0].pattern {
+                    assert!(enum_name.is_none());
+                    assert_eq!(variant_name, "Some");
+                    assert_eq!(bindings.len(), 1);
+                    assert_eq!(bindings[0].0, "value");
+                } else {
+                    bail!("Expected enum variant pattern with bindings");
+                }
+            } else {
+                bail!("Expected switch expression");
+            }
+        } else {
+            bail!("Expected let statement");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn switch_expression_fully_qualified_pattern() -> Result<()> {
+        let input = r#"
+            result := switch color {
+                case Color::Red: 0
+                case Color::Green: 1
+            }
+        "#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Let { value, .. } = &program[0] {
+            if let Expression::Switch(_, cases) = value {
+                assert_eq!(cases.len(), 2);
+                if let Pattern::EnumVariant { enum_name, variant_name, .. } = &cases[0].pattern {
+                    assert_eq!(enum_name.as_ref().unwrap(), "Color");
+                    assert_eq!(variant_name, "Red");
+                } else {
+                    bail!("Expected fully qualified enum variant pattern");
+                }
+            } else {
+                bail!("Expected switch expression");
+            }
+        } else {
+            bail!("Expected let statement");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn switch_expression_tuple_pattern() -> Result<()> {
+        let input = r#"
+            result := switch (x % 3, x % 5) {
+                case (0, 0): "FizzBuzz"
+                case (0, _): "Fizz"
+                case (_, 0): "Buzz"
+            }
+        "#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Let { value, .. } = &program[0] {
+            if let Expression::Switch(_, cases) = value {
+                assert_eq!(cases.len(), 3);
+                if let Pattern::Tuple(patterns) = &cases[0].pattern {
+                    assert_eq!(patterns.len(), 2);
+                    assert!(matches!(&patterns[0], Pattern::Literal(Literal::Integer(0))));
+                    assert!(matches!(&patterns[1], Pattern::Literal(Literal::Integer(0))));
+                } else {
+                    bail!("Expected tuple pattern");
+                }
+                if let Pattern::Tuple(patterns) = &cases[1].pattern {
+                    assert!(matches!(&patterns[1], Pattern::Wildcard));
+                } else {
+                    bail!("Expected tuple pattern with wildcard");
+                }
+            } else {
+                bail!("Expected switch expression");
+            }
+        } else {
+            bail!("Expected let statement");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn switch_expression_bool_pattern() -> Result<()> {
+        let input = r#"
+            result := switch flag {
+                case true: 1
+                case false: 0
+            }
+        "#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Let { value, .. } = &program[0] {
+            if let Expression::Switch(_, cases) = value {
+                assert_eq!(cases.len(), 2);
+                assert!(matches!(&cases[0].pattern, Pattern::Literal(Literal::Boolean(true))));
+                assert!(matches!(&cases[1].pattern, Pattern::Literal(Literal::Boolean(false))));
+            } else {
+                bail!("Expected switch expression");
+            }
+        } else {
+            bail!("Expected let statement");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn enum_mixed_variants() -> Result<()> {
+        let input = "Option :: enum { None, Some { value: i64 } }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        if let Statement::Enum(name, variants) = &program[0] {
+            assert_eq!(name, "Option");
+            assert_eq!(variants.len(), 2);
+            assert_eq!(variants[0].name, "None");
+            assert!(variants[0].fields.is_none());
+            assert_eq!(variants[1].name, "Some");
+            assert!(variants[1].fields.is_some());
+            assert_eq!(variants[1].fields.as_ref().unwrap().len(), 1);
+        } else {
+            bail!("Expected enum declaration");
         }
         Ok(())
     }

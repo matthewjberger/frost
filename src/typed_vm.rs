@@ -1,4 +1,5 @@
 use crate::ffi::NativeRegistry;
+use crate::value::{ArenaData, PoolData};
 use crate::{
     CompiledFunction, HeapObject, Instruction, Opcode, TypedBuiltIn,
     TypedClosure, Value64,
@@ -99,6 +100,18 @@ static BUILTINS: &[&str] = &[
     "quat_normalize",
     "quat_from_euler",
     "quat_rotate_vec3",
+    "arena_new",
+    "arena_alloc",
+    "arena_reset",
+    "arena_get",
+    "pool_new",
+    "pool_alloc",
+    "pool_get",
+    "pool_free",
+    "handle_index",
+    "handle_generation",
+    "char_at",
+    "assert",
 ];
 
 impl VirtualMachine {
@@ -478,6 +491,11 @@ impl VirtualMachine {
                     let left = self.pop()?.as_i64();
                     self.push(Value64::Integer(left >> right))?;
                 }
+                Opcode::BitwiseAnd => {
+                    let right = self.pop()?.as_i64();
+                    let left = self.pop()?.as_i64();
+                    self.push(Value64::Integer(left & right))?;
+                }
                 Opcode::BitwiseOr => {
                     let right = self.pop()?.as_i64();
                     let left = self.pop()?.as_i64();
@@ -561,6 +579,55 @@ impl VirtualMachine {
                             Value64::Bool(r),
                             Opcode::NotEqual,
                         ) => l != r,
+                        (Value64::HeapRef(l), Value64::HeapRef(r), op) => {
+                            match (&self.heap[l as usize], &self.heap[r as usize]) {
+                                (HeapObject::String(ls), HeapObject::String(rs)) => {
+                                    match op {
+                                        Opcode::Equal => ls == rs,
+                                        Opcode::NotEqual => ls != rs,
+                                        Opcode::GreaterThan => ls > rs,
+                                        _ => unreachable!(),
+                                    }
+                                }
+                                _ => bail!("unsupported heap comparison"),
+                            }
+                        }
+                        (Value64::Integer(addr), Value64::HeapRef(r), op) if (addr as u64) & 0x80000000 != 0 => {
+                            let stack_addr = (addr as u64 & !0x80000000) as usize;
+                            if let Value64::HeapRef(l) = self.stack[stack_addr] {
+                                match (&self.heap[l as usize], &self.heap[r as usize]) {
+                                    (HeapObject::String(ls), HeapObject::String(rs)) => {
+                                        match op {
+                                            Opcode::Equal => ls == rs,
+                                            Opcode::NotEqual => ls != rs,
+                                            Opcode::GreaterThan => ls > rs,
+                                            _ => unreachable!(),
+                                        }
+                                    }
+                                    _ => bail!("unsupported heap comparison"),
+                                }
+                            } else {
+                                bail!("expected string reference")
+                            }
+                        }
+                        (Value64::HeapRef(l), Value64::Integer(addr), op) if (addr as u64) & 0x80000000 != 0 => {
+                            let stack_addr = (addr as u64 & !0x80000000) as usize;
+                            if let Value64::HeapRef(r) = self.stack[stack_addr] {
+                                match (&self.heap[l as usize], &self.heap[r as usize]) {
+                                    (HeapObject::String(ls), HeapObject::String(rs)) => {
+                                        match op {
+                                            Opcode::Equal => ls == rs,
+                                            Opcode::NotEqual => ls != rs,
+                                            Opcode::GreaterThan => ls > rs,
+                                            _ => unreachable!(),
+                                        }
+                                    }
+                                    _ => bail!("unsupported heap comparison"),
+                                }
+                            } else {
+                                bail!("expected string reference")
+                            }
+                        }
                         _ => bail!("unsupported types for comparison"),
                     };
                     self.push(Value64::Bool(result))?;
@@ -656,6 +723,12 @@ impl VirtualMachine {
                     let index = self.pop()?;
                     let left = self.pop()?;
                     self.execute_index_expression(left, index)?;
+                }
+                Opcode::IndexSet => {
+                    let value = self.pop()?;
+                    let index = self.pop()?;
+                    let array = self.pop()?;
+                    self.execute_index_set(array, index, value)?;
                 }
                 Opcode::Call => {
                     let num_args = instruction.operands[0] as usize;
@@ -852,7 +925,7 @@ impl VirtualMachine {
                     let tag = instruction.operands[0] as u32;
                     let union_val = self.stack[self.stack_pointer - 1];
                     if let Value64::HeapRef(idx) = union_val {
-                        if let HeapObject::TaggedUnion(ref mut t, _) =
+                        if let HeapObject::TaggedUnion(t, _) =
                             &mut self.heap[idx as usize]
                         {
                             *t = tag;
@@ -861,16 +934,20 @@ impl VirtualMachine {
                 }
                 Opcode::TaggedUnionGetTag => {
                     let union_val = self.pop()?;
-                    if let Value64::HeapRef(idx) = union_val {
-                        if let HeapObject::TaggedUnion(tag, _) =
-                            &self.heap[idx as usize]
-                        {
-                            self.push(Value64::Integer(*tag as i64))?;
-                        } else {
-                            bail!("TaggedUnionGetTag requires a tagged union");
+                    match union_val {
+                        Value64::HeapRef(idx) => {
+                            if let HeapObject::TaggedUnion(tag, _) =
+                                &self.heap[idx as usize]
+                            {
+                                self.push(Value64::Integer(*tag as i64))?;
+                            } else {
+                                bail!("TaggedUnionGetTag requires a tagged union");
+                            }
                         }
-                    } else {
-                        bail!("TaggedUnionGetTag requires a heap reference");
+                        Value64::Integer(tag) => {
+                            self.push(Value64::Integer(tag))?;
+                        }
+                        _ => bail!("TaggedUnionGetTag requires a heap reference or integer"),
                     }
                 }
                 Opcode::TaggedUnionGetField => {
@@ -1732,6 +1809,193 @@ impl VirtualMachine {
                 ));
                 Value64::HeapRef(heap_idx)
             }
+            "arena_new" => {
+                if args.len() != 1 {
+                    bail!("wrong number of arguments for arena_new");
+                }
+                let capacity = args[0].as_i64() as usize;
+                let arena = ArenaData::new(capacity);
+                let heap_idx = self.allocate_heap(HeapObject::Arena(arena));
+                Value64::HeapRef(heap_idx)
+            }
+            "arena_alloc" => {
+                if args.len() != 2 {
+                    bail!("wrong number of arguments for arena_alloc");
+                }
+                let arena_ref = args[0].as_heap_ref();
+                let value = args[1];
+                if let HeapObject::Arena(arena) = &mut self.heap[arena_ref as usize] {
+                    match arena.alloc(value) {
+                        Some(index) => Value64::Integer(index as i64),
+                        None => Value64::Null,
+                    }
+                } else {
+                    bail!("first argument to arena_alloc must be an Arena");
+                }
+            }
+            "arena_reset" => {
+                if args.len() != 1 {
+                    bail!("wrong number of arguments for arena_reset");
+                }
+                let arena_ref = args[0].as_heap_ref();
+                if let HeapObject::Arena(arena) = &mut self.heap[arena_ref as usize] {
+                    arena.reset();
+                    Value64::Null
+                } else {
+                    bail!("argument to arena_reset must be an Arena");
+                }
+            }
+            "arena_get" => {
+                if args.len() != 2 {
+                    bail!("wrong number of arguments for arena_get");
+                }
+                let arena_ref = args[0].as_heap_ref();
+                let index = args[1].as_i64() as usize;
+                if let HeapObject::Arena(arena) = &self.heap[arena_ref as usize] {
+                    if index < arena.next_index {
+                        arena.storage[index]
+                    } else {
+                        Value64::Null
+                    }
+                } else {
+                    bail!("first argument to arena_get must be an Arena");
+                }
+            }
+            "pool_new" => {
+                if args.len() != 1 {
+                    bail!("wrong number of arguments for pool_new");
+                }
+                let capacity = args[0].as_i64() as usize;
+                let pool = PoolData::new(capacity);
+                let heap_idx = self.allocate_heap(HeapObject::Pool(pool));
+                Value64::HeapRef(heap_idx)
+            }
+            "pool_alloc" => {
+                if args.len() != 2 {
+                    bail!("wrong number of arguments for pool_alloc");
+                }
+                let pool_ref = args[0].as_heap_ref();
+                let value = args[1];
+                if let HeapObject::Pool(pool) = &mut self.heap[pool_ref as usize] {
+                    match pool.alloc(value) {
+                        Some((index, generation)) => {
+                            let handle = HeapObject::Handle(index, generation);
+                            let heap_idx = self.allocate_heap(handle);
+                            Value64::HeapRef(heap_idx)
+                        }
+                        None => Value64::Null,
+                    }
+                } else {
+                    bail!("first argument to pool_alloc must be a Pool");
+                }
+            }
+            "pool_get" => {
+                if args.len() != 2 {
+                    bail!("wrong number of arguments for pool_get");
+                }
+                let pool_ref = args[0].as_heap_ref();
+                let handle_ref = args[1].as_heap_ref();
+                let (index, generation) = if let HeapObject::Handle(i, g) = &self.heap[handle_ref as usize] {
+                    (*i, *g)
+                } else {
+                    bail!("second argument to pool_get must be a Handle");
+                };
+                if let HeapObject::Pool(pool) = &self.heap[pool_ref as usize] {
+                    match pool.get(index, generation) {
+                        Some(value) => value,
+                        None => Value64::Null,
+                    }
+                } else {
+                    bail!("first argument to pool_get must be a Pool");
+                }
+            }
+            "pool_free" => {
+                if args.len() != 2 {
+                    bail!("wrong number of arguments for pool_free");
+                }
+                let pool_ref = args[0].as_heap_ref();
+                let handle_ref = args[1].as_heap_ref();
+                let (index, generation) = if let HeapObject::Handle(i, g) = &self.heap[handle_ref as usize] {
+                    (*i, *g)
+                } else {
+                    bail!("second argument to pool_free must be a Handle");
+                };
+                if let HeapObject::Pool(pool) = &mut self.heap[pool_ref as usize] {
+                    Value64::Bool(pool.free(index, generation))
+                } else {
+                    bail!("first argument to pool_free must be a Pool");
+                }
+            }
+            "handle_index" => {
+                if args.len() != 1 {
+                    bail!("wrong number of arguments for handle_index");
+                }
+                let handle_ref = args[0].as_heap_ref();
+                if let HeapObject::Handle(index, _) = &self.heap[handle_ref as usize] {
+                    Value64::Integer(*index as i64)
+                } else {
+                    bail!("argument to handle_index must be a Handle");
+                }
+            }
+            "handle_generation" => {
+                if args.len() != 1 {
+                    bail!("wrong number of arguments for handle_generation");
+                }
+                let handle_ref = args[0].as_heap_ref();
+                if let HeapObject::Handle(_, generation) = &self.heap[handle_ref as usize] {
+                    Value64::Integer(*generation as i64)
+                } else {
+                    bail!("argument to handle_generation must be a Handle");
+                }
+            }
+            "char_at" => {
+                if args.len() != 2 {
+                    bail!("wrong number of arguments for char_at");
+                }
+                match (args[0], args[1]) {
+                    (Value64::HeapRef(idx), Value64::Integer(pos)) => {
+                        if let HeapObject::String(s) = &self.heap[idx as usize] {
+                            let pos = pos as usize;
+                            if pos >= s.len() {
+                                Value64::Integer(-1)
+                            } else {
+                                let c = s.chars().nth(pos).unwrap_or('\0');
+                                Value64::Integer(c as i64)
+                            }
+                        } else {
+                            bail!("first argument to char_at must be a string");
+                        }
+                    }
+                    _ => bail!("char_at takes (string, index)"),
+                }
+            }
+            "assert" => {
+                if args.is_empty() || args.len() > 2 {
+                    bail!("assert takes 1 or 2 arguments");
+                }
+                let condition = match args[0] {
+                    Value64::Bool(b) => b,
+                    Value64::Integer(n) => n != 0,
+                    _ => bail!("assert condition must be a boolean or integer"),
+                };
+                if !condition {
+                    let message = if args.len() == 2 {
+                        if let Value64::HeapRef(idx) = args[1] {
+                            if let HeapObject::String(s) = &self.heap[idx as usize] {
+                                s.clone()
+                            } else {
+                                "assertion failed".to_string()
+                            }
+                        } else {
+                            "assertion failed".to_string()
+                        }
+                    } else {
+                        "assertion failed".to_string()
+                    };
+                    bail!("Assertion failed: {}", message);
+                }
+                Value64::Null
+            }
             _ => bail!("unknown builtin: {}", name),
         };
 
@@ -1784,6 +2048,35 @@ impl VirtualMachine {
                 _ => bail!("index operator not supported for this heap type"),
             },
             _ => bail!("index operator not supported for this type"),
+        }
+        Ok(())
+    }
+
+    fn execute_index_set(
+        &mut self,
+        array: Value64,
+        index: Value64,
+        value: Value64,
+    ) -> Result<()> {
+        match array {
+            Value64::HeapRef(idx) => {
+                let i = index.as_i64();
+                let hash_key = self.hash_key(index)?;
+                match &mut self.heap[idx as usize] {
+                    HeapObject::Array(elements) => {
+                        if i < 0 || i as usize >= elements.len() {
+                            bail!("array index out of bounds: {} (len: {})", i, elements.len());
+                        }
+                        elements[i as usize] = value;
+                    }
+                    HeapObject::HashMap(hash) => {
+                        hash.insert(hash_key, value);
+                    }
+                    _ => bail!("index set not supported for this heap type"),
+                }
+                self.push(array)?;
+            }
+            _ => bail!("index set not supported for this type"),
         }
         Ok(())
     }
@@ -1867,6 +2160,26 @@ impl VirtualMachine {
                 _ => bail!("global is not a callable closure"),
             },
             _ => bail!("global is not a function"),
+        }
+    }
+
+    pub fn create_struct(&mut self, name: &str, fields: Vec<Value64>) -> Value64 {
+        let heap_index = self.allocate_heap(HeapObject::Struct(name.to_string(), fields));
+        Value64::HeapRef(heap_index)
+    }
+
+    pub fn get_struct_field(&self, struct_ref: Value64, field_index: usize) -> Result<Value64> {
+        match struct_ref {
+            Value64::HeapRef(idx) => {
+                if let HeapObject::Struct(_, fields) = &self.heap[idx as usize] {
+                    fields.get(field_index).copied().ok_or_else(|| {
+                        anyhow::anyhow!("field index {} out of bounds", field_index)
+                    })
+                } else {
+                    bail!("expected struct, got different heap object")
+                }
+            }
+            _ => bail!("expected heap reference to struct"),
         }
     }
 
@@ -2024,6 +2337,11 @@ impl VirtualMachine {
                 let right = self.pop()?.as_i64();
                 let left = self.pop()?.as_i64();
                 self.push(Value64::Integer(left >> right))?;
+            }
+            Opcode::BitwiseAnd => {
+                let right = self.pop()?.as_i64();
+                let left = self.pop()?.as_i64();
+                self.push(Value64::Integer(left & right))?;
             }
             Opcode::BitwiseOr => {
                 let right = self.pop()?.as_i64();
@@ -2218,6 +2536,12 @@ impl VirtualMachine {
                 let left = self.pop()?;
                 self.execute_index_expression(left, index)?;
             }
+            Opcode::IndexSet => {
+                let value = self.pop()?;
+                let index = self.pop()?;
+                let array = self.pop()?;
+                self.execute_index_set(array, index, value)?;
+            }
             Opcode::Call => {
                 let num_args = instruction.operands[0] as usize;
                 self.execute_call(num_args)?;
@@ -2316,7 +2640,7 @@ impl VirtualMachine {
                 let value = self.pop()?;
                 let struct_ref = self.stack_top()?;
                 if let Value64::HeapRef(idx) = struct_ref {
-                    if let HeapObject::Struct(_, ref mut fields) =
+                    if let HeapObject::Struct(_, fields) =
                         &mut self.heap[idx as usize]
                     {
                         fields[offset] = value;
@@ -2338,7 +2662,7 @@ impl VirtualMachine {
                 let tag = instruction.operands[0] as u32;
                 let union_val = self.stack[self.stack_pointer - 1];
                 if let Value64::HeapRef(idx) = union_val {
-                    if let HeapObject::TaggedUnion(ref mut t, _) =
+                    if let HeapObject::TaggedUnion(t, _) =
                         &mut self.heap[idx as usize]
                     {
                         *t = tag;
@@ -2347,16 +2671,20 @@ impl VirtualMachine {
             }
             Opcode::TaggedUnionGetTag => {
                 let union_val = self.pop()?;
-                if let Value64::HeapRef(idx) = union_val {
-                    if let HeapObject::TaggedUnion(tag, _) =
-                        &self.heap[idx as usize]
-                    {
-                        self.push(Value64::Integer(*tag as i64))?;
-                    } else {
-                        bail!("TaggedUnionGetTag requires a tagged union");
+                match union_val {
+                    Value64::HeapRef(idx) => {
+                        if let HeapObject::TaggedUnion(tag, _) =
+                            &self.heap[idx as usize]
+                        {
+                            self.push(Value64::Integer(*tag as i64))?;
+                        } else {
+                            bail!("TaggedUnionGetTag requires a tagged union");
+                        }
                     }
-                } else {
-                    bail!("TaggedUnionGetTag requires a heap reference");
+                    Value64::Integer(tag) => {
+                        self.push(Value64::Integer(tag))?;
+                    }
+                    _ => bail!("TaggedUnionGetTag requires a heap reference or integer"),
                 }
             }
             Opcode::TaggedUnionGetField => {
@@ -3145,6 +3473,310 @@ mod tests {
     }
 
     #[test]
+    fn test_enum_unit_variants() -> Result<()> {
+        let input = r#"
+            Color :: enum { Red, Green, Blue };
+            c := Color::Green;
+            switch c {
+                case .Red: 1
+                case .Green: 2
+                case .Blue: 3
+            }
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(2));
+        Ok(())
+    }
+
+    #[test]
+    fn test_enum_unit_variant_red() -> Result<()> {
+        let input = r#"
+            Color :: enum { Red, Green, Blue };
+            c := Color::Red;
+            switch c {
+                case .Red: 1
+                case .Green: 2
+                case .Blue: 3
+            }
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(1));
+        Ok(())
+    }
+
+    #[test]
+    fn test_enum_unit_variant_blue() -> Result<()> {
+        let input = r#"
+            Color :: enum { Red, Green, Blue };
+            c := Color::Blue;
+            switch c {
+                case .Red: 1
+                case .Green: 2
+                case .Blue: 3
+            }
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(3));
+        Ok(())
+    }
+
+    #[test]
+    fn test_enum_two_variants_second() -> Result<()> {
+        let input = r#"
+            Bool :: enum { False, True };
+            b := Bool::True;
+            switch b {
+                case .False: 0
+                case .True: 1
+            }
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(1));
+        Ok(())
+    }
+
+    #[test]
+    fn test_enum_with_type_annotation() -> Result<()> {
+        let input = r#"
+            Status :: enum { Active, Inactive, Pending };
+            s : Status = Status::Active;
+            switch s {
+                case .Active: 100
+                case .Inactive: 0
+                case .Pending: 50
+            }
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(100));
+        Ok(())
+    }
+
+    #[test]
+    fn test_enum_mixed_unit_and_data_variants() -> Result<()> {
+        let input = r#"
+            Option :: enum { None, Some { value: i64 } };
+            x := Option::Some { value = 42 };
+            switch x {
+                case .None: 0
+                case .Some { value }: value
+            }
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(42));
+        Ok(())
+    }
+
+    #[test]
+    fn test_enum_mixed_none_case() -> Result<()> {
+        let input = r#"
+            Option :: enum { None, Some { value: i64 } };
+            x := Option::None;
+            switch x {
+                case .None: 0
+                case .Some { value }: value
+            }
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(0));
+        Ok(())
+    }
+
+    #[test]
+    fn test_enum_variant_with_multiple_fields() -> Result<()> {
+        let input = r#"
+            Point :: enum { Origin, At { x: i64, y: i64 } };
+            p := Point::At { x = 10, y = 20 };
+            switch p {
+                case .Origin: 0
+                case .At { x, y }: x + y
+            }
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(30));
+        Ok(())
+    }
+
+    #[test]
+    fn test_enum_switch_with_default() -> Result<()> {
+        let input = r#"
+            Status :: enum { A, B, C, D, E };
+            s := Status::D;
+            switch s {
+                case .A: 1
+                case .B: 2
+                case _: 99
+            }
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(99));
+        Ok(())
+    }
+
+    #[test]
+    fn test_enum_from_function_return() -> Result<()> {
+        let input = r#"
+            Result :: enum { Ok { value: i64 }, Err { code: i64 } };
+
+            make_ok :: proc(v: i64) -> Result {
+                Result::Ok { value = v }
+            }
+
+            r := make_ok(123);
+            switch r {
+                case .Ok { value }: value
+                case .Err { code }: 0 - code
+            }
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(123));
+        Ok(())
+    }
+
+    #[test]
+    fn test_enum_as_function_param() -> Result<()> {
+        let input = r#"
+            Result :: enum { Ok { value: i64 }, Err { code: i64 } };
+
+            unwrap :: proc(r: Result) -> i64 {
+                switch r {
+                    case .Ok { value }: value
+                    case .Err { code }: 0 - code
+                }
+            }
+
+            unwrap(Result::Ok { value = 55 })
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(55));
+        Ok(())
+    }
+
+    #[test]
+    fn test_enum_err_variant_matching() -> Result<()> {
+        let input = r#"
+            Result :: enum { Ok { value: i64 }, Err { code: i64 } };
+            r := Result::Err { code = 404 };
+            switch r {
+                case .Ok { value }: value
+                case .Err { code }: 0 - code
+            }
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(-404));
+        Ok(())
+    }
+
+    #[test]
+    fn test_enum_in_loop() -> Result<()> {
+        let input = r#"
+            Status :: enum { Active, Inactive };
+            mut count := 0;
+            for i in 0..5 {
+                s := Status::Active;
+                result := switch s {
+                    case .Active: 1
+                    case .Inactive: 0
+                };
+                count = count + result;
+            }
+            count
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(5));
+        Ok(())
+    }
+
+    #[test]
+    fn test_enum_fully_qualified_pattern() -> Result<()> {
+        let input = r#"
+            Color :: enum { Red, Green, Blue };
+            c := Color::Blue;
+            switch c {
+                case Color::Red: 1
+                case Color::Green: 2
+                case Color::Blue: 3
+            }
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(3));
+        Ok(())
+    }
+
+    #[test]
+    fn test_switch_integer_with_binding() -> Result<()> {
+        let input = r#"
+            x := 42;
+            switch x {
+                case 0: 0
+                case n: n * 2
+            }
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(84));
+        Ok(())
+    }
+
+    #[test]
+    fn test_switch_bool_patterns() -> Result<()> {
+        let tests = [
+            ("switch true { case true: 1 case false: 0 }", 1),
+            ("switch false { case true: 1 case false: 0 }", 0),
+        ];
+
+        for (input, expected) in tests {
+            let result = run_vm_test(input)?;
+            assert_eq!(result, Value64::Integer(expected), "Failed for input: {}", input);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_enum_three_data_variants() -> Result<()> {
+        let input = r#"
+            Shape :: enum {
+                Circle { radius: i64 },
+                Rectangle { width: i64, height: i64 },
+                Triangle { base: i64, height: i64 }
+            };
+
+            area :: proc(s: Shape) -> i64 {
+                switch s {
+                    case .Circle { radius }: radius * radius * 3
+                    case .Rectangle { width, height }: width * height
+                    case .Triangle { base, height }: base * height / 2
+                }
+            }
+
+            area(Shape::Rectangle { width = 10, height = 5 })
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(50));
+        Ok(())
+    }
+
+    #[test]
+    fn test_enum_nested_switch() -> Result<()> {
+        let input = r#"
+            Outer :: enum { A, B };
+            Inner :: enum { X, Y };
+
+            o := Outer::A;
+            i := Inner::Y;
+
+            switch o {
+                case .A: switch i {
+                    case .X: 1
+                    case .Y: 2
+                }
+                case .B: 3
+            }
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(2));
+        Ok(())
+    }
+
+    #[test]
     fn test_use_after_move_error() {
         let input = r#"
             Point :: struct { x: i64, y: i64 }
@@ -3337,6 +3969,333 @@ mod tests {
         "#;
         let result = run_vm_test(input)?;
         assert_eq!(result, Value64::Integer(7));
+        Ok(())
+    }
+
+    #[test]
+    fn test_array_index_assignment_in_loop_with_conditional() -> Result<()> {
+        let input = r#"
+            Point :: struct { x: i64, y: i64 }
+
+            update :: proc(mut masks: []i64, mut points: []Point, count: i64) -> i64 {
+                for i in 0..count {
+                    mask := masks[i]
+                    if (mask != 0) {
+                        point := points[i]
+                        points[i] = Point { x = point.x + 1, y = point.y + 2 }
+                    }
+                }
+                p0 := points[0]
+                p1 := points[1]
+                p2 := points[2]
+                p0.x + p0.y + p1.x + p1.y + p2.x + p2.y
+            }
+
+            mut masks := [1, 1, 0]
+            mut points := [
+                Point { x = 10, y = 20 },
+                Point { x = 30, y = 40 },
+                Point { x = 50, y = 60 }
+            ]
+            update(masks, points, 3)
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(33 + 73 + 110));
+        Ok(())
+    }
+
+    #[test]
+    fn test_array_index_assignment_global() -> Result<()> {
+        let input = r#"
+            Point :: struct { x: i64, y: i64 }
+
+            mut points := [
+                Point { x = 10, y = 20 },
+                Point { x = 30, y = 40 }
+            ]
+
+            for i in 0..2 {
+                point := points[i]
+                points[i] = Point { x = point.x + 5, y = point.y + 10 }
+            }
+
+            p0 := points[0]
+            p1 := points[1]
+            p0.x + p0.y + p1.x + p1.y
+        "#;
+        let result = run_vm_test(input)?;
+        assert_eq!(result, Value64::Integer(45 + 85));
+        Ok(())
+    }
+
+    #[test]
+    fn test_embedding_api() -> Result<()> {
+        let input = r#"
+            Input :: struct { x: f64, y: f64, dt: f64 }
+            Output :: struct { x: f64, y: f64 }
+
+            update :: proc(input: Input) -> Output {
+                Output {
+                    x = input.x + 10.0 * input.dt,
+                    y = input.y + 5.0 * input.dt
+                }
+            }
+        "#;
+
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+        let mut compiler = Compiler::new(&program);
+        let bytecode = compiler.compile()?;
+
+        assert!(bytecode.global_symbols.contains_key("update"));
+        let update_idx = *bytecode.global_symbols.get("update").unwrap();
+
+        let mut vm = VirtualMachine::new(
+            bytecode.constants,
+            bytecode.functions,
+            bytecode.heap,
+        );
+        vm.run(&bytecode.instructions)?;
+
+        let input_struct = vm.create_struct("Input", vec![
+            Value64::Float(100.0),
+            Value64::Float(200.0),
+            Value64::Float(0.016),
+        ]);
+
+        let output = vm.call_global(update_idx, &[input_struct])?;
+
+        let new_x = vm.get_struct_field(output, 0)?;
+        let new_y = vm.get_struct_field(output, 1)?;
+
+        assert_eq!(new_x.as_f64(), 100.16);
+        assert_eq!(new_y.as_f64(), 200.08);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_embedding_api_nonexistent_global() -> Result<()> {
+        let input = r#"
+            foo :: 42
+        "#;
+
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+        let mut compiler = Compiler::new(&program);
+        let bytecode = compiler.compile()?;
+
+        assert!(bytecode.global_symbols.get("foo").is_some());
+        assert!(bytecode.global_symbols.get("bar").is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_embedding_api_field_index_out_of_bounds() -> Result<()> {
+        let input = r#"
+            Point :: struct { x: f64, y: f64 }
+        "#;
+
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+        let mut compiler = Compiler::new(&program);
+        let bytecode = compiler.compile()?;
+
+        let mut vm = VirtualMachine::new(
+            bytecode.constants,
+            bytecode.functions,
+            bytecode.heap,
+        );
+        vm.run(&bytecode.instructions)?;
+
+        let point = vm.create_struct("Point", vec![1.0.into(), 2.0.into()]);
+
+        assert!(vm.get_struct_field(point, 0).is_ok());
+        assert!(vm.get_struct_field(point, 1).is_ok());
+        assert!(vm.get_struct_field(point, 2).is_err());
+        assert!(vm.get_struct_field(point, 100).is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_embedding_api_get_field_on_non_struct() -> Result<()> {
+        let input = r#"
+            x := 42
+        "#;
+
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+        let mut compiler = Compiler::new(&program);
+        let bytecode = compiler.compile()?;
+
+        let mut vm = VirtualMachine::new(
+            bytecode.constants,
+            bytecode.functions,
+            bytecode.heap,
+        );
+        vm.run(&bytecode.instructions)?;
+
+        let integer = Value64::Integer(42);
+        assert!(vm.get_struct_field(integer, 0).is_err());
+
+        let float = Value64::Float(3.14);
+        assert!(vm.get_struct_field(float, 0).is_err());
+
+        let boolean = Value64::Bool(true);
+        assert!(vm.get_struct_field(boolean, 0).is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_arena_new_and_alloc() -> Result<()> {
+        let input = r#"
+            arena := arena_new(100);
+            idx1 := arena_alloc(arena, 42);
+            idx2 := arena_alloc(arena, 99);
+            val1 := arena_get(arena, idx1);
+            val2 := arena_get(arena, idx2);
+            val1 + val2
+        "#;
+
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+        let mut compiler = Compiler::new(&program);
+        let bytecode = compiler.compile()?;
+
+        let mut vm = VirtualMachine::new(
+            bytecode.constants,
+            bytecode.functions,
+            bytecode.heap,
+        );
+        vm.run(&bytecode.instructions)?;
+
+        assert_eq!(vm.last_popped()?, Value64::Integer(141));
+        Ok(())
+    }
+
+    #[test]
+    fn test_arena_reset() -> Result<()> {
+        let input = r#"
+            arena := arena_new(10);
+            arena_alloc(arena, 1);
+            arena_alloc(arena, 2);
+            arena_alloc(arena, 3);
+            arena_reset(arena);
+            idx := arena_alloc(arena, 100);
+            arena_get(arena, idx)
+        "#;
+
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+        let mut compiler = Compiler::new(&program);
+        let bytecode = compiler.compile()?;
+
+        let mut vm = VirtualMachine::new(
+            bytecode.constants,
+            bytecode.functions,
+            bytecode.heap,
+        );
+        vm.run(&bytecode.instructions)?;
+
+        assert_eq!(vm.last_popped()?, Value64::Integer(100));
+        Ok(())
+    }
+
+    #[test]
+    fn test_pool_alloc_and_get() -> Result<()> {
+        let input = r#"
+            pool := pool_new(100);
+            h1 := pool_alloc(pool, 42);
+            h2 := pool_alloc(pool, 99);
+            val1 := pool_get(pool, h1);
+            val2 := pool_get(pool, h2);
+            val1 + val2
+        "#;
+
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+        let mut compiler = Compiler::new(&program);
+        let bytecode = compiler.compile()?;
+
+        let mut vm = VirtualMachine::new(
+            bytecode.constants,
+            bytecode.functions,
+            bytecode.heap,
+        );
+        vm.run(&bytecode.instructions)?;
+
+        assert_eq!(vm.last_popped()?, Value64::Integer(141));
+        Ok(())
+    }
+
+    #[test]
+    fn test_pool_free_invalidates_handle() -> Result<()> {
+        let input = r#"
+            pool := pool_new(100);
+            h := pool_alloc(pool, 42);
+            pool_free(pool, h);
+            pool_get(pool, h)
+        "#;
+
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+        let mut compiler = Compiler::new(&program);
+        let bytecode = compiler.compile()?;
+
+        let mut vm = VirtualMachine::new(
+            bytecode.constants,
+            bytecode.functions,
+            bytecode.heap,
+        );
+        vm.run(&bytecode.instructions)?;
+
+        assert_eq!(vm.last_popped()?, Value64::Null);
+        Ok(())
+    }
+
+    #[test]
+    fn test_handle_index_and_generation() -> Result<()> {
+        let input = r#"
+            pool := pool_new(100);
+            h := pool_alloc(pool, 42);
+            handle_index(h) + handle_generation(h)
+        "#;
+
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+        let mut compiler = Compiler::new(&program);
+        let bytecode = compiler.compile()?;
+
+        let mut vm = VirtualMachine::new(
+            bytecode.constants,
+            bytecode.functions,
+            bytecode.heap,
+        );
+        vm.run(&bytecode.instructions)?;
+
+        let result = vm.last_popped()?.as_i64();
+        assert!(result >= 0);
         Ok(())
     }
 }

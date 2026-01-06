@@ -1,0 +1,10 @@
+puts :: extern proc(s: ^i8) -> i32
+
+factorial :: proc(n: i64) -> i64 {
+    if (n <= 1) { 1 } else { n * factorial(n - 1) }
+}
+
+main :: proc() -> i64 {
+    puts("Computing factorial...");
+    factorial(10)
+}

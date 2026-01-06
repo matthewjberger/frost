@@ -1,0 +1,42 @@
+arena := arena_new(1000);
+
+idx1 := arena_alloc(arena, 10);
+idx2 := arena_alloc(arena, 20);
+idx3 := arena_alloc(arena, 30);
+
+print("Arena values:");
+print(arena_get(arena, idx1));
+print(arena_get(arena, idx2));
+print(arena_get(arena, idx3));
+
+arena_reset(arena);
+print("After reset, arena reuses slots:");
+new_idx := arena_alloc(arena, 999);
+print(arena_get(arena, new_idx));
+
+pool := pool_new(100);
+
+h1 := pool_alloc(pool, 42);
+h2 := pool_alloc(pool, 99);
+
+print("Pool values via handles:");
+print(pool_get(pool, h1));
+print(pool_get(pool, h2));
+
+print("Handle info for h1:");
+print(handle_index(h1));
+print(handle_generation(h1));
+
+pool_free(pool, h1);
+
+print("After freeing h1, pool_get returns:");
+print(pool_get(pool, h1));
+
+print("h2 still works:");
+print(pool_get(pool, h2));
+
+h3 := pool_alloc(pool, 777);
+print("Reused slot with new generation:");
+print(pool_get(pool, h3));
+print(handle_index(h3));
+print(handle_generation(h3))

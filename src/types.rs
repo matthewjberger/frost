@@ -24,6 +24,9 @@ pub enum Type {
     Struct(String),
     Enum(String),
     Distinct(Box<Type>),
+    Arena,
+    Handle(Box<Type>),
+    Optional(Box<Type>),
     Unknown,
 }
 
@@ -43,6 +46,9 @@ impl Type {
             Type::Struct(_) => 0,
             Type::Enum(_) => 4,
             Type::Distinct(inner) => inner.size_of(),
+            Type::Arena => 24,
+            Type::Handle(_) => 8,
+            Type::Optional(inner) => 1 + inner.size_of(),
             Type::Unknown => 0,
         }
     }
@@ -65,6 +71,9 @@ impl Type {
             Type::Struct(_) => 8,
             Type::Enum(_) => 4,
             Type::Distinct(inner) => inner.align_of(),
+            Type::Arena => 8,
+            Type::Handle(_) => 4,
+            Type::Optional(inner) => inner.align_of(),
             Type::Unknown => 1,
         }
     }
@@ -76,28 +85,46 @@ impl Type {
             Type::F32 | Type::F64 | Type::Bool => true,
             Type::Ref(_) | Type::RefMut(_) | Type::Ptr(_) => true,
             Type::Proc(_, _) | Type::Void => true,
-            Type::Str | Type::Slice(_) | Type::Struct(_) | Type::Enum(_) => {
-                false
-            }
-            Type::Array(_, _) => false,
+            Type::Slice(_) | Type::Array(_, _) => true,
+            Type::Str | Type::Struct(_) | Type::Enum(_) => false,
             Type::Distinct(inner) => inner.is_copy(),
+            Type::Arena => false,
+            Type::Handle(_) => true,
+            Type::Optional(inner) => inner.is_copy(),
             Type::Unknown => false,
         }
     }
 
     pub fn needs_drop(&self) -> bool {
         match self {
-            Type::Str | Type::Slice(_) | Type::Struct(_) | Type::Enum(_) => {
-                true
-            }
+            Type::Str | Type::Slice(_) | Type::Struct(_) | Type::Enum(_) => true,
             Type::Array(inner, _) => inner.needs_drop(),
             Type::Distinct(inner) => inner.needs_drop(),
+            Type::Arena => true,
+            Type::Optional(inner) => inner.needs_drop(),
             _ => false,
         }
     }
 
     pub fn is_reference(&self) -> bool {
         matches!(self, Type::Ref(_) | Type::RefMut(_))
+    }
+
+    pub fn contains_reference(&self) -> bool {
+        match self {
+            Type::Ref(_) | Type::RefMut(_) => true,
+            Type::Array(inner, _) => inner.contains_reference(),
+            Type::Slice(inner) => inner.contains_reference(),
+            Type::Ptr(inner) => inner.contains_reference(),
+            Type::Distinct(inner) => inner.contains_reference(),
+            Type::Handle(inner) => inner.contains_reference(),
+            Type::Optional(inner) => inner.contains_reference(),
+            _ => false,
+        }
+    }
+
+    pub fn is_second_class(&self) -> bool {
+        self.is_reference()
     }
 }
 
@@ -130,6 +157,9 @@ impl Display for Type {
             Type::Struct(name) => write!(f, "{}", name),
             Type::Enum(name) => write!(f, "{}", name),
             Type::Distinct(inner) => write!(f, "distinct {}", inner),
+            Type::Arena => write!(f, "Arena"),
+            Type::Handle(inner) => write!(f, "Handle<{}>", inner),
+            Type::Optional(inner) => write!(f, "?{}", inner),
             Type::Unknown => write!(f, "?"),
         }
     }
@@ -221,5 +251,31 @@ mod tests {
         assert_eq!(Type::I32.align_of(), 4);
         assert_eq!(Type::I64.align_of(), 8);
         assert_eq!(Type::Ptr(Box::new(Type::I64)).align_of(), 8);
+    }
+
+    #[test]
+    fn is_reference() {
+        assert!(Type::Ref(Box::new(Type::I64)).is_reference());
+        assert!(Type::RefMut(Box::new(Type::I64)).is_reference());
+        assert!(!Type::Ptr(Box::new(Type::I64)).is_reference());
+        assert!(!Type::I64.is_reference());
+    }
+
+    #[test]
+    fn contains_reference() {
+        assert!(Type::Ref(Box::new(Type::I64)).contains_reference());
+        assert!(Type::RefMut(Box::new(Type::I64)).contains_reference());
+        assert!(Type::Array(Box::new(Type::Ref(Box::new(Type::I64))), 10).contains_reference());
+        assert!(!Type::Array(Box::new(Type::I64), 10).contains_reference());
+        assert!(!Type::Ptr(Box::new(Type::I64)).contains_reference());
+        assert!(!Type::I64.contains_reference());
+    }
+
+    #[test]
+    fn is_second_class() {
+        assert!(Type::Ref(Box::new(Type::I64)).is_second_class());
+        assert!(Type::RefMut(Box::new(Type::I64)).is_second_class());
+        assert!(!Type::Ptr(Box::new(Type::I64)).is_second_class());
+        assert!(!Type::I64.is_second_class());
     }
 }
