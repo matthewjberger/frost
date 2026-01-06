@@ -912,8 +912,8 @@ mod tests {
     }
 
     #[test]
-    fn check_proc_literal() {
-        assert!(check("f := proc(x: i64) -> i64 { x };").is_ok());
+    fn check_typed_fn_literal() {
+        assert!(check("f := fn(x: i64) -> i64 { x };").is_ok());
     }
 
     #[test]
@@ -940,16 +940,16 @@ mod tests {
 
     #[test]
     fn check_cannot_return_reference() {
-        assert!(check_fails("f :: proc() -> &i64 { x := 1; &x };"));
+        assert!(check_fails("f :: fn() -> &i64 { x := 1; &x };"));
         assert!(check_fails(
-            "f :: proc() -> &mut i64 { mut x := 1; &mut x };"
+            "f :: fn() -> &mut i64 { mut x := 1; &mut x };"
         ));
     }
 
     #[test]
     fn check_can_accept_reference_param() {
-        assert!(check("f :: proc(x: &i64) -> i64 { x^ };").is_ok());
-        assert!(check("f :: proc(x: &mut i64) { x^ = 5; };").is_ok());
+        assert!(check("f :: fn(x: &i64) -> i64 { x^ };").is_ok());
+        assert!(check("f :: fn(x: &mut i64) { x^ = 5; };").is_ok());
     }
 
     #[test]
@@ -1006,7 +1006,7 @@ mod tests {
             r#"
             Color :: enum { Red, Green, Blue }
             c := Color::Red
-            x := switch c {
+            x := match c {
                 case .Red: 0
                 case .Green: 1
                 case .Blue: 2
@@ -1022,7 +1022,7 @@ mod tests {
             r#"
             Option :: enum { None, Some { value: i64 } }
             opt := Option::Some { value = 42 }
-            x := switch opt {
+            x := match opt {
                 case .Some { value }: value
                 case .None: 0
             }
@@ -1036,7 +1036,7 @@ mod tests {
         assert!(check(
             r#"
             x := 5
-            result := switch x {
+            result := match x {
                 case 1: "one"
                 case 2: "two"
                 case _: "other"
@@ -1051,7 +1051,7 @@ mod tests {
         assert!(check(
             r#"
             flag := true
-            x := switch flag {
+            x := match flag {
                 case true: 1
                 case false: 0
             }
@@ -1065,7 +1065,7 @@ mod tests {
         assert!(check(
             r#"
             Color :: enum { Red, Green, Blue }
-            get_color :: proc() -> Color {
+            get_color :: fn() -> Color {
                 Color::Red
             }
         "#
@@ -1078,8 +1078,8 @@ mod tests {
         assert!(check(
             r#"
             Color :: enum { Red, Green, Blue }
-            process :: proc(c: Color) -> i64 {
-                switch c {
+            process :: fn(c: Color) -> i64 {
+                match c {
                     case .Red: 0
                     case .Green: 1
                     case .Blue: 2

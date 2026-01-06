@@ -14,7 +14,7 @@ World :: struct {
 }
 
 comptime for T in [Position, Velocity] {
-    get_#T :: proc(world: World) -> T {
+    get_#T :: fn(world: World) -> T {
         world.storage_#T
     }
 }

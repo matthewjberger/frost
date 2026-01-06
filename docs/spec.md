@@ -15,7 +15,7 @@ Frost is a statically-oriented programming language combining Odin/Jai-style syn
 5. [Statements](#5-statements)
 6. [Operators](#6-operators)
 7. [Control Flow](#7-control-flow)
-8. [Functions and Procedures](#8-functions-and-procedures)
+8. [Functions](#8-functions)
 9. [Structs](#9-structs)
 10. [Enums](#10-enums)
 11. [Pointers and References](#11-pointers-and-references)
@@ -34,8 +34,8 @@ Frost is a statically-oriented programming language combining Odin/Jai-style syn
 
 ```
 break    case        comptime    continue    defer    distinct    else    enum
-extern   false       fn          for         if       in          mut     proc
-return   sizeof      struct      switch      true     unsafe      using   while
+extern   false       fn          for         if       in          mut     match
+return   sizeof      struct      true        unsafe   using       while
 ```
 
 ### 1.2 Type Keywords
@@ -206,9 +206,9 @@ Slice types (dynamic size):
 ### 2.5 Function Types
 
 ```frost
-proc(i64, i64) -> i64    // Function taking two i64, returning i64
-proc(f32) -> f32         // Function taking f32, returning f32
-proc()                   // Function with no params, no return
+fn(i64, i64) -> i64    // Function taking two i64, returning i64
+fn(f32) -> f32         // Function taking f32, returning f32
+fn()                   // Function with no params, no return
 ```
 
 ### 2.6 Struct Types
@@ -454,7 +454,7 @@ Vec3 { x = 1.0, y = 2.0, z = 3.0 }
 ```frost
 fn(x, y) { x + y }
 fn(n: i64) -> i64 { n * 2 }
-proc(x: f64) -> f64 { x * x }
+fn(x: f64) -> f64 { x * x }
 ```
 
 ### 4.9 If Expressions
@@ -781,19 +781,19 @@ for i in 0..10 {
 }
 ```
 
-### 7.5 Switch Expressions
+### 7.5 Match Expressions
 
-Switch expressions provide pattern matching:
+Match expressions provide pattern matching:
 
 ```frost
-result := switch x {
+result := match x {
     case 1: "one"
     case 2: "two"
     case _: "other"
 }
 ```
 
-Switch on enum variants:
+Match on enum variants:
 
 ```frost
 Result :: enum {
@@ -801,7 +801,7 @@ Result :: enum {
     Err { code: i64 },
 }
 
-msg := switch result {
+msg := match result {
     case .Ok { value }: value
     case .Err { code }: 0 - code
 }
@@ -813,7 +813,7 @@ Patterns can be:
 
 **Literals:**
 ```frost
-switch x {
+match x {
     case 0: "zero"
     case 1: "one"
     case _: "other"
@@ -822,21 +822,21 @@ switch x {
 
 **Wildcards:**
 ```frost
-switch x {
+match x {
     case _: "anything"
 }
 ```
 
 **Identifiers (binding):**
 ```frost
-switch x {
+match x {
     case n: n * 2  // Binds x to n
 }
 ```
 
 **Enum variants:**
 ```frost
-switch result {
+match result {
     case .Ok { value }: value
     case .Err { code }: code
 }
@@ -844,7 +844,7 @@ switch result {
 
 **Tuples:**
 ```frost
-switch (a, b) {
+match (a, b) {
     case (0, 0): "both zero"
     case (0, _): "a is zero"
     case (_, 0): "b is zero"
@@ -861,11 +861,11 @@ pair := (1, 2)
 triple := ("hello", 42, true)
 ```
 
-Tuples are commonly used with switch for multi-value pattern matching:
+Tuples are commonly used with match for multi-value pattern matching:
 
 ```frost
 for i in 1..101 {
-    result := switch (i % 3, i % 5) {
+    result := match (i % 3, i % 5) {
         case (0, 0): "FizzBuzz"
         case (0, _): "Fizz"
         case (_, 0): "Buzz"
@@ -877,7 +877,7 @@ for i in 1..101 {
 
 ---
 
-## 8. Functions and Procedures
+## 8. Functions
 
 ### 8.1 Function Syntax
 
@@ -896,14 +896,14 @@ multiply :: fn(x: i64, y: i64) -> i64 {
 }
 ```
 
-### 8.2 Procedure Syntax
+### 8.2 Typed Functions
 
-Procedures use `proc` instead of `fn`:
+Functions with type annotations:
 
 ```frost
-proc(x: i64, y: i64) -> i64 { x + y }
+fn(x: i64, y: i64) -> i64 { x + y }
 
-operation :: proc(a: i64, b: i64) -> i64 {
+operation :: fn(a: i64, b: i64) -> i64 {
     return a * b
 }
 ```
@@ -1140,7 +1140,7 @@ Frost implements an ownership system inspired by Rust, providing memory safety w
 - All primitive types: `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `f32`, `f64`, `bool`
 - References: `&T`, `&mut T`
 - Pointers: `^T`
-- Function types: `proc(...) -> T`
+- Function types: `fn(...) -> T`
 
 ```frost
 x := 42
@@ -1187,7 +1187,7 @@ r := &mut x
 3. **Cannot borrow moved values:**
 ```frost
 Point :: struct { x: i64, y: i64 }
-take :: proc(p: Point) { print(p.x) }
+take :: fn(p: Point) { print(p.x) }
 
 p := Point { x = 1, y = 2 }
 take(p)     // p is moved
@@ -1206,7 +1206,7 @@ r := &mut y   // OK
 5. **References are second-class citizens:**
 ```frost
 // ERROR: functions cannot return references
-bad :: proc() -> &i64 {
+bad :: fn() -> &i64 {
     x := 42
     return &x  // would be dangling
 }
@@ -1220,13 +1220,13 @@ BadStruct :: struct {
 refs := [&a, &b, &c];  // ERROR
 
 // OK: return owned values instead
-good :: proc() -> i64 {
+good :: fn() -> i64 {
     x := 42
     return x
 }
 
 // OK: functions can accept references as parameters
-read :: proc(r: &i64) -> i64 {
+read :: fn(r: &i64) -> i64 {
     r^
 }
 
@@ -1359,23 +1359,23 @@ Memory is managed automatically through ownership and the Drop system (see Secti
 
 ## 15. Foreign Function Interface
 
-### 15.1 Extern Procedure Declarations
+### 15.1 Extern Function Declarations
 
-External C functions can be declared using `extern proc`:
+External C functions can be declared using `extern fn`:
 
 ```frost
-puts :: extern proc(s: ^i8) -> i32
-printf :: extern proc(fmt: ^i8) -> i32
-malloc :: extern proc(size: u64) -> ^u8
-free :: extern proc(ptr: ^u8)
+puts :: extern fn(s: ^i8) -> i32
+printf :: extern fn(fmt: ^i8) -> i32
+malloc :: extern fn(size: u64) -> ^u8
+free :: extern fn(ptr: ^u8)
 ```
 
 When compiled to native code, these link against the C library:
 
 ```frost
-puts :: extern proc(s: ^i8) -> i32
+puts :: extern fn(s: ^i8) -> i32
 
-main :: proc() -> i64 {
+main :: fn() -> i64 {
     puts("Hello from Frost!");
     0
 }
@@ -1589,15 +1589,13 @@ expression_stmt = expression ";" ;
 
 expression     = if_expr
                | fn_expr
-               | proc_expr
-               | switch_expr
+               | match_expr
                | infix_expr ;
 
 if_expr        = "if" "(" expression ")" block ["else" (if_expr | block)] ;
 fn_expr        = "fn" "(" [params] ")" ["->" type] block ;
-proc_expr      = "proc" "(" [params] ")" ["->" type] block ;
-switch_expr    = "switch" expression "{" switch_case+ "}" ;
-switch_case    = "case" pattern ":" (block | expression) ;
+match_expr     = "match" expression "{" match_case+ "}" ;
+match_case     = "case" pattern ":" (block | expression) ;
 
 pattern        = "_"
                | literal
@@ -1643,7 +1641,7 @@ type           = primitive_type
                | "&" type
                | "&" "mut" type
                | "[" [INTEGER] "]" type
-               | "proc" "(" [type_list] ")" ["->" type]
+               | "fn" "(" [type_list] ")" ["->" type]
                | IDENT ;
 
 primitive_type = "i8" | "i16" | "i32" | "i64"
@@ -1683,11 +1681,11 @@ print(factorial(5))  // 120
 
 ### A.3 FizzBuzz
 
-Using switch with tuple patterns:
+Using match with tuple patterns:
 
 ```frost
 for i in 1..101 {
-    result := switch (i % 3, i % 5) {
+    result := match (i % 3, i % 5) {
         case (0, 0): "FizzBuzz"
         case (0, _): "Fizz"
         case (_, 0): "Buzz"
@@ -1802,7 +1800,7 @@ Result :: enum {
 }
 
 unwrap := fn(r: Result) -> i64 {
-    switch r {
+    match r {
         case .Ok { value }: value
         case .Err { code }: {
             print("Error occurred");

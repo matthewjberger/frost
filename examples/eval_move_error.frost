@@ -1,7 +1,7 @@
 // This should fail - use after move
 Point :: struct { x: i64, y: i64 }
 
-consume :: proc(p: Point) {
+consume :: fn(p: Point) {
     print(p.x);
 }
 

@@ -1,6 +1,6 @@
 // Test arrays passed by value (HeapRef is copied, not the array data)
 
-modify_array :: proc(mut arr: []i64) -> void {
+modify_array :: fn(mut arr: []i64) -> void {
     arr[0] = 999
 }
 

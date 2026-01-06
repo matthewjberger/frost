@@ -3084,8 +3084,8 @@ mod tests {
         let module_path = temp_dir.join("frost_test_math.frost");
 
         let mut file = std::fs::File::create(&module_path)?;
-        writeln!(file, "add :: proc(a: i64, b: i64) -> i64 {{ a + b }}")?;
-        writeln!(file, "mul :: proc(a: i64, b: i64) -> i64 {{ a * b }}")?;
+        writeln!(file, "add :: fn(a: i64, b: i64) -> i64 {{ a + b }}")?;
+        writeln!(file, "mul :: fn(a: i64, b: i64) -> i64 {{ a * b }}")?;
         drop(file);
 
         let input = format!(
@@ -3409,12 +3409,12 @@ mod tests {
     }
 
     #[test]
-    fn test_switch_expression() -> Result<()> {
+    fn test_match_expression() -> Result<()> {
         let tests = [
-            ("switch 1 { case 1: 100 case _: 0 }", Value64::Integer(100)),
-            ("switch 2 { case 1: 100 case _: 0 }", Value64::Integer(0)),
+            ("match 1 { case 1: 100 case _: 0 }", Value64::Integer(100)),
+            ("match 2 { case 1: 100 case _: 0 }", Value64::Integer(0)),
             (
-                "switch 3 { case 1: 10 case 2: 20 case 3: 30 case _: 0 }",
+                "match 3 { case 1: 10 case 2: 20 case 3: 30 case _: 0 }",
                 Value64::Integer(30),
             ),
         ];
@@ -3436,10 +3436,10 @@ mod tests {
     #[test]
     fn test_tuple_pattern_matching() -> Result<()> {
         let tests = [
-            ("switch (0, 0) { case (0, 0): 1 case (0, _): 2 case (_, 0): 3 case (_, _): 4 }", Value64::Integer(1)),
-            ("switch (0, 1) { case (0, 0): 1 case (0, _): 2 case (_, 0): 3 case (_, _): 4 }", Value64::Integer(2)),
-            ("switch (1, 0) { case (0, 0): 1 case (0, _): 2 case (_, 0): 3 case (_, _): 4 }", Value64::Integer(3)),
-            ("switch (1, 1) { case (0, 0): 1 case (0, _): 2 case (_, 0): 3 case (_, _): 4 }", Value64::Integer(4)),
+            ("match (0, 0) { case (0, 0): 1 case (0, _): 2 case (_, 0): 3 case (_, _): 4 }", Value64::Integer(1)),
+            ("match (0, 1) { case (0, 0): 1 case (0, _): 2 case (_, 0): 3 case (_, _): 4 }", Value64::Integer(2)),
+            ("match (1, 0) { case (0, 0): 1 case (0, _): 2 case (_, 0): 3 case (_, _): 4 }", Value64::Integer(3)),
+            ("match (1, 1) { case (0, 0): 1 case (0, _): 2 case (_, 0): 3 case (_, _): 4 }", Value64::Integer(4)),
         ];
 
         for (input, expected) in tests {
@@ -3462,7 +3462,7 @@ mod tests {
         let input = r#"
             Result :: enum { Ok { value: i64 }, Err { code: i64 } };
             r := Result::Ok { value = 42 };
-            switch r {
+            match r {
                 case .Ok { value }: value
                 case .Err { code }: 0 - code
             }
@@ -3477,7 +3477,7 @@ mod tests {
         let input = r#"
             Color :: enum { Red, Green, Blue };
             c := Color::Green;
-            switch c {
+            match c {
                 case .Red: 1
                 case .Green: 2
                 case .Blue: 3
@@ -3493,7 +3493,7 @@ mod tests {
         let input = r#"
             Color :: enum { Red, Green, Blue };
             c := Color::Red;
-            switch c {
+            match c {
                 case .Red: 1
                 case .Green: 2
                 case .Blue: 3
@@ -3509,7 +3509,7 @@ mod tests {
         let input = r#"
             Color :: enum { Red, Green, Blue };
             c := Color::Blue;
-            switch c {
+            match c {
                 case .Red: 1
                 case .Green: 2
                 case .Blue: 3
@@ -3525,7 +3525,7 @@ mod tests {
         let input = r#"
             Bool :: enum { False, True };
             b := Bool::True;
-            switch b {
+            match b {
                 case .False: 0
                 case .True: 1
             }
@@ -3540,7 +3540,7 @@ mod tests {
         let input = r#"
             Status :: enum { Active, Inactive, Pending };
             s : Status = Status::Active;
-            switch s {
+            match s {
                 case .Active: 100
                 case .Inactive: 0
                 case .Pending: 50
@@ -3556,7 +3556,7 @@ mod tests {
         let input = r#"
             Option :: enum { None, Some { value: i64 } };
             x := Option::Some { value = 42 };
-            switch x {
+            match x {
                 case .None: 0
                 case .Some { value }: value
             }
@@ -3571,7 +3571,7 @@ mod tests {
         let input = r#"
             Option :: enum { None, Some { value: i64 } };
             x := Option::None;
-            switch x {
+            match x {
                 case .None: 0
                 case .Some { value }: value
             }
@@ -3586,7 +3586,7 @@ mod tests {
         let input = r#"
             Point :: enum { Origin, At { x: i64, y: i64 } };
             p := Point::At { x = 10, y = 20 };
-            switch p {
+            match p {
                 case .Origin: 0
                 case .At { x, y }: x + y
             }
@@ -3601,7 +3601,7 @@ mod tests {
         let input = r#"
             Status :: enum { A, B, C, D, E };
             s := Status::D;
-            switch s {
+            match s {
                 case .A: 1
                 case .B: 2
                 case _: 99
@@ -3617,12 +3617,12 @@ mod tests {
         let input = r#"
             Result :: enum { Ok { value: i64 }, Err { code: i64 } };
 
-            make_ok :: proc(v: i64) -> Result {
+            make_ok :: fn(v: i64) -> Result {
                 Result::Ok { value = v }
             }
 
             r := make_ok(123);
-            switch r {
+            match r {
                 case .Ok { value }: value
                 case .Err { code }: 0 - code
             }
@@ -3637,8 +3637,8 @@ mod tests {
         let input = r#"
             Result :: enum { Ok { value: i64 }, Err { code: i64 } };
 
-            unwrap :: proc(r: Result) -> i64 {
-                switch r {
+            unwrap :: fn(r: Result) -> i64 {
+                match r {
                     case .Ok { value }: value
                     case .Err { code }: 0 - code
                 }
@@ -3656,7 +3656,7 @@ mod tests {
         let input = r#"
             Result :: enum { Ok { value: i64 }, Err { code: i64 } };
             r := Result::Err { code = 404 };
-            switch r {
+            match r {
                 case .Ok { value }: value
                 case .Err { code }: 0 - code
             }
@@ -3673,7 +3673,7 @@ mod tests {
             mut count := 0;
             for i in 0..5 {
                 s := Status::Active;
-                result := switch s {
+                result := match s {
                     case .Active: 1
                     case .Inactive: 0
                 };
@@ -3691,7 +3691,7 @@ mod tests {
         let input = r#"
             Color :: enum { Red, Green, Blue };
             c := Color::Blue;
-            switch c {
+            match c {
                 case Color::Red: 1
                 case Color::Green: 2
                 case Color::Blue: 3
@@ -3706,7 +3706,7 @@ mod tests {
     fn test_switch_integer_with_binding() -> Result<()> {
         let input = r#"
             x := 42;
-            switch x {
+            match x {
                 case 0: 0
                 case n: n * 2
             }
@@ -3719,8 +3719,8 @@ mod tests {
     #[test]
     fn test_switch_bool_patterns() -> Result<()> {
         let tests = [
-            ("switch true { case true: 1 case false: 0 }", 1),
-            ("switch false { case true: 1 case false: 0 }", 0),
+            ("match true { case true: 1 case false: 0 }", 1),
+            ("match false { case true: 1 case false: 0 }", 0),
         ];
 
         for (input, expected) in tests {
@@ -3739,8 +3739,8 @@ mod tests {
                 Triangle { base: i64, height: i64 }
             };
 
-            area :: proc(s: Shape) -> i64 {
-                switch s {
+            area :: fn(s: Shape) -> i64 {
+                match s {
                     case .Circle { radius }: radius * radius * 3
                     case .Rectangle { width, height }: width * height
                     case .Triangle { base, height }: base * height / 2
@@ -3763,8 +3763,8 @@ mod tests {
             o := Outer::A;
             i := Inner::Y;
 
-            switch o {
-                case .A: switch i {
+            match o {
+                case .A: match i {
                     case .X: 1
                     case .Y: 2
                 }
@@ -3780,7 +3780,7 @@ mod tests {
     fn test_use_after_move_error() {
         let input = r#"
             Point :: struct { x: i64, y: i64 }
-            take_point :: proc(p: Point) { p.x }
+            take_point :: fn(p: Point) { p.x }
             p := Point { x = 10, y = 20 };
             take_point(p);
             p.x
@@ -3896,7 +3896,7 @@ mod tests {
     fn test_struct_field_access_in_function() -> Result<()> {
         let input = r#"
             Person :: struct { name: str, age: i64 }
-            get_age :: proc(p: Person) -> i64 { p.age }
+            get_age :: fn(p: Person) -> i64 { p.age }
             alice := Person { name = "Alice", age = 30 };
             get_age(alice)
         "#;
@@ -3909,7 +3909,7 @@ mod tests {
     fn test_struct_field_comparison_in_function() -> Result<()> {
         let input = r#"
             Person :: struct { name: str, age: i64 }
-            is_adult :: proc(p: Person) -> bool { p.age >= 18 }
+            is_adult :: fn(p: Person) -> bool { p.age >= 18 }
             alice := Person { name = "Alice", age = 30 };
             is_adult(alice)
         "#;
@@ -3977,7 +3977,7 @@ mod tests {
         let input = r#"
             Point :: struct { x: i64, y: i64 }
 
-            update :: proc(mut masks: []i64, mut points: []Point, count: i64) -> i64 {
+            update :: fn(mut masks: []i64, mut points: []Point, count: i64) -> i64 {
                 for i in 0..count {
                     mask := masks[i]
                     if (mask != 0) {
@@ -4034,7 +4034,7 @@ mod tests {
             Input :: struct { x: f64, y: f64, dt: f64 }
             Output :: struct { x: f64, y: f64 }
 
-            update :: proc(input: Input) -> Output {
+            update :: fn(input: Input) -> Output {
                 Output {
                     x = input.x + 10.0 * input.dt,
                     y = input.y + 5.0 * input.dt

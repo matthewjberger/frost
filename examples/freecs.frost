@@ -52,7 +52,7 @@ World :: struct {
 // Generate component accessors for each type
 comptime for T in [Position, Velocity, Health, Sprite] {
     // Check if entity has component
-    has_#T :: proc(mask: i64) -> bool {
+    has_#T :: fn(mask: i64) -> bool {
         (mask & COMPONENT_#T) != 0
     }
 }

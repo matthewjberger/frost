@@ -58,7 +58,6 @@ pub enum Token {
     Percent,
     Pipe,
     Plus,
-    Proc,
     Question,
     Return,
     RightBrace,
@@ -71,7 +70,7 @@ pub enum Token {
     Slash,
     StringLiteral(String),
     Struct,
-    Switch,
+    Match,
     True,
     Type,
     Typename,
@@ -147,7 +146,6 @@ impl Display for Token {
             Percent => "%".to_string(),
             Pipe => "|".to_string(),
             Plus => "+".to_string(),
-            Proc => "proc".to_string(),
             Question => "?".to_string(),
             Return => "return".to_string(),
             RightBrace => "}".to_string(),
@@ -160,7 +158,7 @@ impl Display for Token {
             Slash => "/".to_string(),
             StringLiteral(value) => value.to_string(),
             Struct => "struct".to_string(),
-            Switch => "switch".to_string(),
+            Match => "match".to_string(),
             True => "true".to_string(),
             Type => "type".to_string(),
             Typename => "typename".to_string(),
@@ -400,7 +398,6 @@ impl<'a> Lexer<'a> {
             "if" => If,
             "import" => Import,
             "else" => Else,
-            "proc" => Proc,
             "struct" => Struct,
             "enum" => Enum,
             "extern" => Extern,
@@ -413,7 +410,7 @@ impl<'a> Lexer<'a> {
             "sizeof" => Sizeof,
             "break" => Break,
             "continue" => Continue,
-            "switch" => Switch,
+            "match" => Match,
             "type" => Type,
             "typename" => Typename,
             "case" => Case,
@@ -697,11 +694,10 @@ mod tests {
     }
 
     #[test]
-    fn proc_and_struct_keywords() -> Result<()> {
+    fn struct_and_other_keywords() -> Result<()> {
         check_tokens(
-            "proc struct enum defer using for in distinct sizeof",
+            "struct enum defer using for in distinct sizeof",
             &[
-                Token::Proc,
                 Token::Struct,
                 Token::Enum,
                 Token::Defer,
@@ -715,13 +711,13 @@ mod tests {
     }
 
     #[test]
-    fn odin_style_procedure() -> Result<()> {
+    fn typed_function() -> Result<()> {
         check_tokens(
-            "add :: proc(a: i64, b: i64) -> i64 { return a + b; }",
+            "add :: fn(a: i64, b: i64) -> i64 { return a + b; }",
             &[
                 Token::Identifier("add".to_string()),
                 Token::DoubleColon,
-                Token::Proc,
+                Token::Function,
                 Token::LeftParentheses,
                 Token::Identifier("a".to_string()),
                 Token::Colon,
@@ -869,11 +865,11 @@ mod tests {
     }
 
     #[test]
-    fn switch_case_tokens() -> Result<()> {
+    fn match_case_tokens() -> Result<()> {
         check_tokens(
-            "switch x { case 1: y case _: z }",
+            "match x { case 1: y case _: z }",
             &[
-                Token::Switch,
+                Token::Match,
                 Token::Identifier("x".to_string()),
                 Token::LeftBrace,
                 Token::Case,

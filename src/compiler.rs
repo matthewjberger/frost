@@ -3129,7 +3129,7 @@ mod tests {
     #[test]
     fn test_second_class_ref_return_type_rejected() {
         let input = r#"
-            get_ref :: proc(x: i64) -> &i64 {
+            get_ref :: fn(x: i64) -> &i64 {
                 &x
             }
         "#;
@@ -3149,7 +3149,7 @@ mod tests {
     #[test]
     fn test_second_class_ref_param_allowed() -> Result<()> {
         let input = r#"
-            update :: proc(p: &mut i64) -> void {
+            update :: fn(p: &mut i64) -> void {
                 p^ = 42
             }
         "#;
