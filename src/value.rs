@@ -72,6 +72,36 @@ impl Display for Value64 {
     }
 }
 
+impl From<i64> for Value64 {
+    fn from(value: i64) -> Self {
+        Value64::Integer(value)
+    }
+}
+
+impl From<i32> for Value64 {
+    fn from(value: i32) -> Self {
+        Value64::Integer(value as i64)
+    }
+}
+
+impl From<f64> for Value64 {
+    fn from(value: f64) -> Self {
+        Value64::Float(value)
+    }
+}
+
+impl From<f32> for Value64 {
+    fn from(value: f32) -> Self {
+        Value64::Float32(value)
+    }
+}
+
+impl From<bool> for Value64 {
+    fn from(value: bool) -> Self {
+        Value64::Bool(value)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TypedClosure {
     pub function_index: u32,
@@ -82,6 +112,85 @@ pub struct TypedClosure {
 pub struct TypedBuiltIn {
     pub name: String,
     pub index: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct ArenaData {
+    pub storage: Vec<Value64>,
+    pub next_index: usize,
+    pub capacity: usize,
+}
+
+impl ArenaData {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            storage: vec![Value64::Null; capacity],
+            next_index: 0,
+            capacity,
+        }
+    }
+
+    pub fn alloc(&mut self, value: Value64) -> Option<usize> {
+        if self.next_index >= self.capacity {
+            return None;
+        }
+        let index = self.next_index;
+        self.storage[index] = value;
+        self.next_index += 1;
+        Some(index)
+    }
+
+    pub fn reset(&mut self) {
+        self.next_index = 0;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PoolData {
+    pub storage: Vec<Value64>,
+    pub generations: Vec<u32>,
+    pub free_list: Vec<u32>,
+    pub capacity: usize,
+}
+
+impl PoolData {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            storage: vec![Value64::Null; capacity],
+            generations: vec![0; capacity],
+            free_list: (0..capacity as u32).rev().collect(),
+            capacity,
+        }
+    }
+
+    pub fn alloc(&mut self, value: Value64) -> Option<(u32, u32)> {
+        let index = self.free_list.pop()?;
+        self.storage[index as usize] = value;
+        let generation = self.generations[index as usize];
+        Some((index, generation))
+    }
+
+    pub fn get(&self, index: u32, generation: u32) -> Option<Value64> {
+        if index as usize >= self.capacity {
+            return None;
+        }
+        if self.generations[index as usize] != generation {
+            return None;
+        }
+        Some(self.storage[index as usize])
+    }
+
+    pub fn free(&mut self, index: u32, generation: u32) -> bool {
+        if index as usize >= self.capacity {
+            return false;
+        }
+        if self.generations[index as usize] != generation {
+            return false;
+        }
+        self.generations[index as usize] = self.generations[index as usize].wrapping_add(1);
+        self.free_list.push(index);
+        true
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +209,9 @@ pub enum HeapObject {
     Vec4(f32, f32, f32, f32),
     Quat(f32, f32, f32, f32),
     Mat4([f32; 16]),
+    Arena(ArenaData),
+    Pool(PoolData),
+    Handle(u32, u32),
 }
 
 impl Display for HeapObject {
@@ -144,6 +256,18 @@ impl Display for HeapObject {
                 write!(f, "Quat({}, {}, {}, {})", x, y, z, w)
             }
             HeapObject::Mat4(m) => write!(f, "Mat4({:?})", m),
+            HeapObject::Arena(arena) => {
+                write!(f, "Arena(used={}/{})", arena.next_index, arena.capacity)
+            }
+            HeapObject::Pool(pool) => {
+                write!(
+                    f,
+                    "Pool(allocated={}/{})",
+                    pool.capacity - pool.free_list.len(),
+                    pool.capacity
+                )
+            }
+            HeapObject::Handle(index, generation) => write!(f, "Handle({}, {})", index, generation),
         }
     }
 }
@@ -205,5 +329,35 @@ mod tests {
         let obj =
             HeapObject::Array(vec![Value64::Integer(1), Value64::Integer(2)]);
         assert_eq!(format!("{}", obj), "[1, 2]");
+    }
+
+    #[test]
+    fn test_value64_from_i64() {
+        let v: Value64 = 42i64.into();
+        assert_eq!(v.as_i64(), 42);
+    }
+
+    #[test]
+    fn test_value64_from_i32() {
+        let v: Value64 = 42i32.into();
+        assert_eq!(v.as_i64(), 42);
+    }
+
+    #[test]
+    fn test_value64_from_f64() {
+        let v: Value64 = 3.14f64.into();
+        assert_eq!(v.as_f64(), 3.14);
+    }
+
+    #[test]
+    fn test_value64_from_f32() {
+        let v: Value64 = 3.14f32.into();
+        assert_eq!(v.as_f32(), 3.14);
+    }
+
+    #[test]
+    fn test_value64_from_bool() {
+        let v: Value64 = true.into();
+        assert!(v.as_bool());
     }
 }

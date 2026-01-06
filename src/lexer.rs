@@ -30,6 +30,7 @@ pub enum Token {
     Else,
     EndOfFile,
     Enum,
+    Extern,
     Equal,
     False,
     For,
@@ -58,6 +59,7 @@ pub enum Token {
     Pipe,
     Plus,
     Proc,
+    Question,
     Return,
     RightBrace,
     RightBracket,
@@ -87,6 +89,7 @@ pub enum Token {
     TypeU64,
     TypeVoid,
     Underscore,
+    Unsafe,
     Using,
     While,
 }
@@ -116,6 +119,7 @@ impl Display for Token {
             Else => "else".to_string(),
             EndOfFile => EOF_CHAR.to_string(),
             Enum => "enum".to_string(),
+            Extern => "extern".to_string(),
             Equal => "==".to_string(),
             False => "false".to_string(),
             For => "for".to_string(),
@@ -144,6 +148,7 @@ impl Display for Token {
             Pipe => "|".to_string(),
             Plus => "+".to_string(),
             Proc => "proc".to_string(),
+            Question => "?".to_string(),
             Return => "return".to_string(),
             RightBrace => "}".to_string(),
             RightBracket => "]".to_string(),
@@ -173,6 +178,7 @@ impl Display for Token {
             TypeU64 => "u64".to_string(),
             TypeVoid => "void".to_string(),
             Underscore => "_".to_string(),
+            Unsafe => "unsafe".to_string(),
             Using => "using".to_string(),
             While => "while".to_string(),
         };
@@ -254,6 +260,7 @@ impl<'a> Lexer<'a> {
                 _ => GreaterThan,
             },
             '%' => Percent,
+            '?' => Question,
             '-' => self.next_char_or(Minus, '>', Arrow),
             '*' => Asterisk,
             '/' => {
@@ -396,6 +403,7 @@ impl<'a> Lexer<'a> {
             "proc" => Proc,
             "struct" => Struct,
             "enum" => Enum,
+            "extern" => Extern,
             "defer" => Defer,
             "using" => Using,
             "while" => While,
@@ -423,6 +431,7 @@ impl<'a> Lexer<'a> {
             "bool" => TypeBool,
             "str" => TypeStr,
             "void" => TypeVoid,
+            "unsafe" => Unsafe,
             _ => Identifier(identifier.to_string()),
         }
     }

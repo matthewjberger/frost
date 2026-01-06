@@ -33,9 +33,9 @@ Frost is a statically-oriented programming language combining Odin/Jai-style syn
 ### 1.1 Keywords
 
 ```
-break    case        continue    defer    distinct    else    enum    false
-fn       for         if          in       mut         proc    return  switch
-sizeof   struct      true        using
+break    case        comptime    continue    defer    distinct    else    enum
+extern   false       fn          for         if       in          mut     proc
+return   sizeof      struct      switch      true     unsafe      using   while
 ```
 
 ### 1.2 Type Keywords
@@ -45,6 +45,7 @@ i8    i16    i32    i64
 u8    u16    u32    u64
 f32   f64
 bool  str    void
+Arena    Pool    Handle
 ```
 
 ### 1.3 Operators and Punctuation
@@ -65,7 +66,10 @@ bool  str    void
 | `!` | Logical NOT |
 | `&&` | Logical AND (short-circuiting) |
 | `||` | Logical OR (short-circuiting) |
-| `&` | Address-of |
+| `&` | Bitwise AND / Address-of |
+| `|` | Bitwise OR |
+| `<<` | Shift Left |
+| `>>` | Shift Right |
 | `^` | Dereference (postfix) |
 | `:=` | Declaration with inference |
 | `=` | Assignment |
@@ -239,7 +243,49 @@ UserId :: distinct i64
 Temperature :: distinct f32
 ```
 
-### 2.9 Type Inference
+### 2.9 Arena Type
+
+Arenas provide region-based memory allocation:
+
+```frost
+frame : Arena = Arena::new(megabytes(4));
+ptr := frame.alloc(Position { x = 0.0, y = 0.0 });
+frame.reset();  // Free all allocations at once
+```
+
+### 2.10 Pool and Handle Types
+
+Pools provide object storage with generational handles:
+
+```frost
+entities : Pool<Entity> = Pool::new(1024);
+handle := entities.alloc(Entity { health = 100 });
+
+// Safe access - returns null if handle is stale
+if let Some(e) = entities.get(handle) {
+    print(e.health);
+}
+
+entities.free(handle);
+entities.get(handle);  // Returns null (generation mismatch)
+```
+
+Handle properties:
+- `Handle<T>` is Copy (just two u32s: index + generation)
+- Can be stored in structs and returned from functions
+- Access is O(1) with generation check
+- Dangling handles return null, never crash
+
+### 2.11 Optional Type
+
+Optional types represent values that may or may not exist:
+
+```frost
+?i64       // Optional i64
+?Point     // Optional Point
+```
+
+### 2.12 Type Inference
 
 When no explicit type is provided, types are inferred from the initializer:
 
@@ -703,7 +749,18 @@ for i in 0..10 {
 }
 ```
 
-### 7.3 Break and Continue
+### 7.3 While Loops
+
+Condition-based loops:
+```frost
+mut i := 0;
+while (i < 10) {
+    print(i);
+    i = i + 1;
+}
+```
+
+### 7.4 Break and Continue
 
 **Break** exits the innermost loop:
 ```frost
@@ -724,7 +781,7 @@ for i in 0..10 {
 }
 ```
 
-### 7.4 Switch Expressions
+### 7.5 Switch Expressions
 
 Switch expressions provide pattern matching:
 
@@ -750,7 +807,7 @@ msg := switch result {
 }
 ```
 
-### 7.5 Pattern Matching
+### 7.6 Pattern Matching
 
 Patterns can be:
 
@@ -795,7 +852,7 @@ switch (a, b) {
 }
 ```
 
-### 7.6 Tuple Expressions
+### 7.7 Tuple Expressions
 
 Tuples group multiple values:
 
@@ -1146,13 +1203,21 @@ mut y := 42   // mutable
 r := &mut y   // OK
 ```
 
-5. **Functions cannot return references:**
+5. **References are second-class citizens:**
 ```frost
 // ERROR: functions cannot return references
 bad :: proc() -> &i64 {
     x := 42
     return &x  // would be dangling
 }
+
+// ERROR: cannot store references in structs
+BadStruct :: struct {
+    ref: &i64,  // ERROR
+}
+
+// ERROR: cannot store references in arrays
+refs := [&a, &b, &c];  // ERROR
 
 // OK: return owned values instead
 good :: proc() -> i64 {
@@ -1164,6 +1229,10 @@ good :: proc() -> i64 {
 read :: proc(r: &i64) -> i64 {
     r^
 }
+
+// OK: use Handle<T> for persistent references
+entities : Pool<Entity> = Pool::new(1024);
+handle := entities.alloc(entity);  // Can be stored, returned, etc.
 ```
 
 This restriction ensures memory safety without requiring lifetime annotations.
@@ -1212,6 +1281,21 @@ for i in 0..10 {
     use(temp)
 }                            // temp dropped each iteration
 ```
+
+### 12.7 Unsafe Blocks
+
+Unsafe blocks disable certain safety checks:
+
+```frost
+result := unsafe {
+    // Inside unsafe:
+    // - Can return references from functions
+    // - Other reference restrictions relaxed
+    dangerous_operation()
+}
+```
+
+Unsafe blocks should be used sparingly and only when necessary for FFI or low-level operations.
 
 ---
 
@@ -1275,7 +1359,35 @@ Memory is managed automatically through ownership and the Drop system (see Secti
 
 ## 15. Foreign Function Interface
 
-### 15.1 Native Function Registration
+### 15.1 Extern Procedure Declarations
+
+External C functions can be declared using `extern proc`:
+
+```frost
+puts :: extern proc(s: ^i8) -> i32
+printf :: extern proc(fmt: ^i8) -> i32
+malloc :: extern proc(size: u64) -> ^u8
+free :: extern proc(ptr: ^u8)
+```
+
+When compiled to native code, these link against the C library:
+
+```frost
+puts :: extern proc(s: ^i8) -> i32
+
+main :: proc() -> i64 {
+    puts("Hello from Frost!");
+    0
+}
+```
+
+Compile and link:
+```bash
+frost --link -o hello hello.frost
+./hello
+```
+
+### 15.2 Native Function Registration (Bytecode VM)
 
 Native functions are registered from the host language (Rust):
 
@@ -1338,12 +1450,35 @@ All values are passed as `Value64`:
 
 ### 16.1 Execution Model
 
-Frost programs execute on a stack-based virtual machine with:
+Frost supports two execution modes:
+
+**Bytecode VM** (default):
+- Interpreted execution via stack-based virtual machine
+- Full feature support including arenas, pools, handles
+- Good for development and REPL
+
+**Native Compilation** (via Cranelift):
+- Compiles to native machine code
+- Produces real executables
+- Links against libc for I/O
+
+```bash
+# Bytecode VM (default)
+frost program.frost
+
+# Native compilation
+frost --native -o program.o program.frost    # Object file
+frost --link -o program program.frost        # Executable
+```
+
+### 16.2 Bytecode VM Details
+
+The bytecode VM provides:
 - **Stack**: 2,048 value slots
 - **Globals**: 65,536 variable slots
 - **Call frames**: 1,024 maximum depth
 
-### 16.2 Value Representation
+### 16.3 Value Representation
 
 All values are 64 bits:
 
@@ -1356,7 +1491,7 @@ Value64:
   - HeapRef(u32)      Reference to heap object
 ```
 
-### 16.3 Heap Objects
+### 16.4 Heap Objects
 
 Complex values are heap-allocated:
 
@@ -1368,7 +1503,7 @@ Complex values are heap-allocated:
 - `NativeFunction` - FFI function reference
 - `NativeHandle` - Opaque native object
 
-### 16.4 Truthiness
+### 16.5 Truthiness
 
 Values evaluate to boolean in conditions:
 
@@ -1381,7 +1516,7 @@ Values evaluate to boolean in conditions:
 | Other integers | Yes |
 | All other values | Yes |
 
-### 16.5 Mutability
+### 16.6 Mutability
 
 Variables are immutable by default:
 
@@ -1393,7 +1528,7 @@ mut y := 5
 y = 10      // OK
 ```
 
-### 16.6 Scope
+### 16.7 Scope
 
 Variables are lexically scoped:
 
@@ -1406,7 +1541,7 @@ x := 1
 print(x)      // 1
 ```
 
-### 16.7 Defer Execution
+### 16.8 Defer Execution
 
 Defer statements execute in LIFO order when scope exits:
 

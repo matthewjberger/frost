@@ -1,0 +1,13 @@
+// Test arrays passed by value (HeapRef is copied, not the array data)
+
+modify_array :: proc(mut arr: []i64) -> void {
+    arr[0] = 999
+}
+
+mut numbers := [1, 2, 3]
+print("Before:")
+print(numbers[0])
+
+modify_array(numbers)
+print("After:")
+print(numbers[0])

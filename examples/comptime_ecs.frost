@@ -1,0 +1,41 @@
+Position :: struct {
+    x: f64,
+    y: f64,
+}
+
+Velocity :: struct {
+    dx: f64,
+    dy: f64,
+}
+
+Health :: struct {
+    value: i64,
+}
+
+comptime for index, T in [Position, Velocity, Health] {
+    BIT_#T :: 1 << index
+}
+
+print("Component bitmasks:")
+print(BIT_Position)
+print(BIT_Velocity)
+print(BIT_Health)
+
+comptime for T in [Position, Velocity, Health] {
+    print_#T :: proc(component: T) -> void {
+        print(typename(T))
+    }
+}
+
+pos := Position { x = 1.0, y = 2.0 }
+vel := Velocity { dx = 3.0, dy = 4.0 }
+hp := Health { value = 100 }
+
+print("Testing type-parameterized functions:")
+print_Position(pos)
+print_Velocity(vel)
+print_Health(hp)
+
+entity_mask := BIT_Position | BIT_Velocity
+print("Entity mask:")
+print(entity_mask)

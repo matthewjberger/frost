@@ -227,6 +227,7 @@ pub enum Opcode {
     Array,
     Hash,
     Index,
+    IndexSet,
     Call,
     ReturnValue,
     Return,
@@ -257,6 +258,7 @@ pub enum Opcode {
     Drop,
     ShiftLeft,
     ShiftRight,
+    BitwiseAnd,
     BitwiseOr,
 }
 
@@ -297,6 +299,7 @@ pub struct Bytecode {
     pub functions: Vec<CompiledFunction>,
     pub heap: Vec<HeapObject>,
     pub native_names: Vec<String>,
+    pub global_symbols: HashMap<String, usize>,
 }
 
 impl Bytecode {
@@ -488,6 +491,18 @@ impl<'a> Compiler<'a> {
             "quat_normalize",
             "quat_from_euler",
             "quat_rotate_vec3",
+            "arena_new",
+            "arena_alloc",
+            "arena_reset",
+            "arena_get",
+            "pool_new",
+            "pool_alloc",
+            "pool_get",
+            "pool_free",
+            "handle_index",
+            "handle_generation",
+            "char_at",
+            "assert",
         ];
         for (index, name) in builtins.iter().enumerate() {
             symbol_table.define_builtin(index, name);
@@ -582,6 +597,18 @@ impl<'a> Compiler<'a> {
             "quat_normalize",
             "quat_from_euler",
             "quat_rotate_vec3",
+            "arena_new",
+            "arena_alloc",
+            "arena_reset",
+            "arena_get",
+            "pool_new",
+            "pool_alloc",
+            "pool_get",
+            "pool_free",
+            "handle_index",
+            "handle_generation",
+            "char_at",
+            "assert",
         ];
         for (index, name) in builtins.iter().enumerate() {
             symbol_table.define_builtin(index, name);
@@ -689,6 +716,35 @@ impl<'a> Compiler<'a> {
                         value
                     {
                         Some(Type::Enum(enum_name.clone()))
+                    } else if let Expression::Literal(Literal::Array(elements)) = value {
+                        if let Some(first) = elements.first() {
+                            if let Expression::StructInit(struct_name, _) = first {
+                                Some(Type::Slice(Box::new(Type::Struct(struct_name.clone()))))
+                            } else {
+                                type_annotation.clone()
+                            }
+                        } else {
+                            type_annotation.clone()
+                        }
+                    } else if let Expression::Index(array_expr, _) = value {
+                        if let Expression::Identifier(array_name) = array_expr.as_ref() {
+                            if let Some(symbol) = self.symbol_table.store.get(array_name) {
+                                if let Some(symbol_type) = &symbol.symbol_type {
+                                    match symbol_type {
+                                        Type::Array(inner, _) | Type::Slice(inner) => {
+                                            Some(inner.as_ref().clone())
+                                        }
+                                        _ => type_annotation.clone(),
+                                    }
+                                } else {
+                                    type_annotation.clone()
+                                }
+                            } else {
+                                type_annotation.clone()
+                            }
+                        } else {
+                            type_annotation.clone()
+                        }
                     } else {
                         type_annotation.clone()
                     };
@@ -699,9 +755,39 @@ impl<'a> Compiler<'a> {
                     inferred_type,
                     *mutable,
                 );
-                if let Expression::Function(parameters, _return_type, body) =
-                    value
-                {
+                if let Expression::Function(parameters, return_type, body) = value {
+                    if let Some(ret_type) = return_type {
+                        if ret_type.is_second_class() {
+                            bail!(
+                                "function '{}' cannot return reference type '{}' - references are second-class and cannot be returned",
+                                name, ret_type
+                            );
+                        }
+                        if ret_type.contains_reference() {
+                            bail!(
+                                "function '{}' cannot return type '{}' which contains a reference - references are second-class",
+                                name, ret_type
+                            );
+                        }
+                    }
+                    self.compile_function_with_name(
+                        name, parameters, body, bytecode,
+                    )?;
+                } else if let Expression::Proc(parameters, return_type, body) = value {
+                    if let Some(ret_type) = return_type {
+                        if ret_type.is_second_class() {
+                            bail!(
+                                "function '{}' cannot return reference type '{}' - references are second-class and cannot be returned",
+                                name, ret_type
+                            );
+                        }
+                        if ret_type.contains_reference() {
+                            bail!(
+                                "function '{}' cannot return type '{}' which contains a reference - references are second-class",
+                                name, ret_type
+                            );
+                        }
+                    }
                     self.compile_function_with_name(
                         name, parameters, body, bytecode,
                     )?;
@@ -709,6 +795,7 @@ impl<'a> Compiler<'a> {
                     self.compile_expression(value, bytecode)?;
                 }
                 let opcode = if symbol.scope == SymbolScope::Global {
+                    bytecode.global_symbols.insert(name.clone(), symbol.index);
                     Opcode::SetGlobal
                 } else {
                     Opcode::SetLocal
@@ -725,15 +812,43 @@ impl<'a> Compiler<'a> {
             }
             Statement::Constant(name, expression) => {
                 let symbol = self.symbol_table.define(name);
-                if let Expression::Function(parameters, _return_type, body) =
+                if let Expression::Function(parameters, return_type, body) =
                     expression
                 {
+                    if let Some(ret_type) = return_type {
+                        if ret_type.is_second_class() {
+                            bail!(
+                                "function '{}' cannot return reference type '{}' - references are second-class and cannot be returned",
+                                name, ret_type
+                            );
+                        }
+                        if ret_type.contains_reference() {
+                            bail!(
+                                "function '{}' cannot return type '{}' which contains a reference - references are second-class",
+                                name, ret_type
+                            );
+                        }
+                    }
                     self.compile_function_with_name(
                         name, parameters, body, bytecode,
                     )?;
-                } else if let Expression::Proc(parameters, _return_type, body) =
+                } else if let Expression::Proc(parameters, return_type, body) =
                     expression
                 {
+                    if let Some(ret_type) = return_type {
+                        if ret_type.is_second_class() {
+                            bail!(
+                                "function '{}' cannot return reference type '{}' - references are second-class and cannot be returned",
+                                name, ret_type
+                            );
+                        }
+                        if ret_type.contains_reference() {
+                            bail!(
+                                "function '{}' cannot return type '{}' which contains a reference - references are second-class",
+                                name, ret_type
+                            );
+                        }
+                    }
                     self.compile_function_with_name(
                         name, parameters, body, bytecode,
                     )?;
@@ -741,6 +856,7 @@ impl<'a> Compiler<'a> {
                     self.compile_expression(expression, bytecode)?;
                 }
                 let opcode = if symbol.scope == SymbolScope::Global {
+                    bytecode.global_symbols.insert(name.clone(), symbol.index);
                     Opcode::SetGlobal
                 } else {
                     Opcode::SetLocal
@@ -751,6 +867,20 @@ impl<'a> Compiler<'a> {
                 Ok(())
             }
             Statement::Struct(name, fields) => {
+                for field in fields.iter() {
+                    if field.field_type.is_second_class() {
+                        bail!(
+                            "struct '{}' field '{}' has reference type '{}' - references are second-class and cannot be stored in structs",
+                            name, field.name, field.field_type
+                        );
+                    }
+                    if field.field_type.contains_reference() {
+                        bail!(
+                            "struct '{}' field '{}' has type '{}' which contains a reference - references are second-class and cannot be stored",
+                            name, field.name, field.field_type
+                        );
+                    }
+                }
                 let mut field_offsets = HashMap::new();
                 let mut byte_size = 0usize;
                 for (index, field) in fields.iter().enumerate() {
@@ -767,6 +897,24 @@ impl<'a> Compiler<'a> {
                 Ok(())
             }
             Statement::Enum(name, variants) => {
+                for variant in variants.iter() {
+                    if let Some(fields) = &variant.fields {
+                        for field in fields {
+                            if field.field_type.is_second_class() {
+                                bail!(
+                                    "enum '{}' variant '{}' field '{}' has reference type '{}' - references are second-class and cannot be stored",
+                                    name, variant.name, field.name, field.field_type
+                                );
+                            }
+                            if field.field_type.contains_reference() {
+                                bail!(
+                                    "enum '{}' variant '{}' field '{}' has type '{}' which contains a reference - references are second-class and cannot be stored",
+                                    name, variant.name, field.name, field.field_type
+                                );
+                            }
+                        }
+                    }
+                }
                 let mut compiled_variants = Vec::new();
                 for (index, variant) in variants.iter().enumerate() {
                     let full_name = format!("{}::{}", name, variant.name);
@@ -889,44 +1037,102 @@ impl<'a> Compiler<'a> {
                                     symbol.scope
                                 ),
                             };
-                            let offset =
-                                if let Some(Type::Struct(struct_name)) =
-                                    &symbol.symbol_type
-                                {
-                                    if let Some(struct_def) =
-                                        self.struct_defs.get(struct_name)
-                                    {
-                                        *struct_def
-                                            .field_offsets
-                                            .get(field)
-                                            .ok_or_else(|| {
-                                                anyhow::anyhow!(
-                                                    "unknown field: {}",
-                                                    field
-                                                )
-                                            })?
+                            let (struct_name, is_ref) = match &symbol.symbol_type {
+                                Some(Type::Struct(name)) => (Some(name.clone()), false),
+                                Some(Type::RefMut(inner)) => {
+                                    if let Type::Struct(name) = inner.as_ref() {
+                                        (Some(name.clone()), true)
                                     } else {
-                                        0
+                                        (None, false)
                                     }
+                                }
+                                _ => (None, false),
+                            };
+                            let offset = if let Some(struct_name) = &struct_name {
+                                if let Some(struct_def) =
+                                    self.struct_defs.get(struct_name)
+                                {
+                                    *struct_def
+                                        .field_offsets
+                                        .get(field)
+                                        .ok_or_else(|| {
+                                            anyhow::anyhow!(
+                                                "unknown field: {}",
+                                                field
+                                            )
+                                        })?
                                 } else {
                                     0
-                                };
+                                }
+                            } else {
+                                0
+                            };
                             bytecode.instructions.push(Instruction::new(
                                 get_opcode,
                                 vec![symbol.index as u16],
                             ));
+                            if is_ref {
+                                bytecode.instructions.push(Instruction::new(
+                                    Opcode::LoadPtr,
+                                    vec![],
+                                ));
+                            }
                             self.compile_expression(rhs, bytecode)?;
                             bytecode.instructions.push(Instruction::new(
                                 Opcode::StructSet,
                                 vec![offset as u16],
                             ));
-                            bytecode.instructions.push(Instruction::new(
-                                set_opcode,
-                                vec![symbol.index as u16],
-                            ));
+                            if is_ref {
+                                bytecode.instructions.push(Instruction::new(
+                                    Opcode::Pop,
+                                    vec![],
+                                ));
+                            } else {
+                                bytecode.instructions.push(Instruction::new(
+                                    set_opcode,
+                                    vec![symbol.index as u16],
+                                ));
+                            }
                         } else {
                             anyhow::bail!(
                                 "can only assign to fields of identifiers"
+                            );
+                        }
+                    }
+                    Expression::Index(arr_expr, index_expr) => {
+                        if let Expression::Identifier(name) = arr_expr.as_ref() {
+                            let symbol = self
+                                .symbol_table
+                                .resolve(name)
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!("undefined variable: {}", name)
+                                })?;
+                            if !symbol.mutable {
+                                anyhow::bail!(
+                                    "cannot assign to index of immutable array '{}'. Use 'mut' to declare mutable arrays.",
+                                    name
+                                );
+                            }
+                            let get_opcode = match symbol.scope {
+                                SymbolScope::Local => Opcode::GetLocal,
+                                SymbolScope::Global => Opcode::GetGlobal,
+                                _ => anyhow::bail!(
+                                    "cannot index {:?}",
+                                    symbol.scope
+                                ),
+                            };
+                            bytecode.instructions.push(Instruction::new(
+                                get_opcode,
+                                vec![symbol.index as u16],
+                            ));
+                            self.compile_expression(index_expr, bytecode)?;
+                            self.compile_expression(rhs, bytecode)?;
+                            bytecode
+                                .instructions
+                                .push(Instruction::new(Opcode::IndexSet, vec![]));
+                        } else {
+                            anyhow::bail!(
+                                "can only assign to index of identifiers"
                             );
                         }
                     }
@@ -1104,6 +1310,9 @@ impl<'a> Compiler<'a> {
             Statement::InterpolatedConstant(_, _) => {
                 anyhow::bail!("InterpolatedConstant can only be used inside comptime blocks")
             }
+            Statement::Extern { .. } => {
+                Ok(())
+            }
         }
     }
 
@@ -1123,7 +1332,22 @@ impl<'a> Compiler<'a> {
                     })?;
                 if let Some(ref symbol_type) = symbol.symbol_type {
                     if !symbol_type.is_copy() {
-                        self.moved_symbols.insert(name.clone());
+                        let is_unit_variant = if name.contains("::") {
+                            if let Some((enum_name, variant_name)) = name.split_once("::") {
+                                self.enum_defs.get(enum_name).map_or(false, |enum_def| {
+                                    enum_def.variants.iter()
+                                        .find(|v| v.name == variant_name)
+                                        .map_or(false, |v| v.fields.is_empty())
+                                })
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+                        if !is_unit_variant {
+                            self.moved_symbols.insert(name.clone());
+                        }
                     }
                 }
                 self.load_symbol(&symbol, bytecode);
@@ -1200,14 +1424,33 @@ impl<'a> Compiler<'a> {
 
                 Ok(())
             }
-            Expression::Function(parameters, _return_type, body)
-            | Expression::Proc(parameters, _return_type, body) => {
+            Expression::Function(parameters, return_type, body)
+            | Expression::Proc(parameters, return_type, body) => {
+                if let Some(ret_type) = return_type {
+                    if ret_type.is_second_class() {
+                        bail!(
+                            "function cannot return reference type '{}' - references are second-class and cannot be returned",
+                            ret_type
+                        );
+                    }
+                    if ret_type.contains_reference() {
+                        bail!(
+                            "function cannot return type '{}' which contains a reference - references are second-class",
+                            ret_type
+                        );
+                    }
+                }
                 let outer_symbol_table = std::mem::take(&mut self.symbol_table);
+                let outer_moved_symbols = std::mem::take(&mut self.moved_symbols);
                 self.symbol_table =
                     SymbolTable::new_enclosed(outer_symbol_table);
 
                 for param in parameters {
-                    self.symbol_table.define(&param.name);
+                    self.symbol_table.define_with_type_and_mutability(
+                        &param.name,
+                        param.type_annotation.clone(),
+                        param.mutable,
+                    );
                 }
 
                 let mut fn_bytecode = Bytecode {
@@ -1216,6 +1459,7 @@ impl<'a> Compiler<'a> {
                     functions: std::mem::take(&mut bytecode.functions),
                     heap: std::mem::take(&mut bytecode.heap),
                     native_names: std::mem::take(&mut bytecode.native_names),
+                    global_symbols: std::mem::take(&mut bytecode.global_symbols),
                 };
                 for statement in body {
                     self.compile_statement(statement, &mut fn_bytecode)?;
@@ -1237,6 +1481,7 @@ impl<'a> Compiler<'a> {
                 bytecode.constants = fn_bytecode.constants;
                 bytecode.functions = fn_bytecode.functions;
                 bytecode.heap = fn_bytecode.heap;
+                bytecode.global_symbols = fn_bytecode.global_symbols;
 
                 let free_symbols = self.symbol_table.free_symbols.clone();
                 let num_locals = self.symbol_table.num_definitions;
@@ -1245,6 +1490,7 @@ impl<'a> Compiler<'a> {
                 if let Some(outer) = self.symbol_table.outer.take() {
                     self.symbol_table = *outer;
                 }
+                self.moved_symbols = outer_moved_symbols;
 
                 for sym in &free_symbols {
                     self.load_symbol(sym, bytecode);
@@ -1274,8 +1520,31 @@ impl<'a> Compiler<'a> {
                             anyhow::anyhow!("undefined variable: {}", name)
                         })?;
                     self.load_symbol(&symbol, bytecode);
-                    if let Some(Type::Struct(struct_name)) = symbol.symbol_type
-                    {
+                    let (struct_name, is_ref) = match &symbol.symbol_type {
+                        Some(Type::Struct(name)) => (Some(name.clone()), false),
+                        Some(Type::Ref(inner)) => {
+                            if let Type::Struct(name) = inner.as_ref() {
+                                (Some(name.clone()), true)
+                            } else {
+                                (None, false)
+                            }
+                        }
+                        Some(Type::RefMut(inner)) => {
+                            if let Type::Struct(name) = inner.as_ref() {
+                                (Some(name.clone()), true)
+                            } else {
+                                (None, false)
+                            }
+                        }
+                        _ => (None, false),
+                    };
+                    if is_ref {
+                        bytecode.instructions.push(Instruction::new(
+                            Opcode::LoadPtr,
+                            vec![],
+                        ));
+                    }
+                    if let Some(struct_name) = struct_name {
                         if let Some(struct_def) =
                             self.struct_defs.get(&struct_name)
                         {
@@ -1292,6 +1561,18 @@ impl<'a> Compiler<'a> {
                     }
                 } else {
                     self.compile_expression(expr, bytecode)?;
+                    let struct_type = self.infer_expression_struct_type(expr);
+                    if let Some(struct_name) = struct_type {
+                        if let Some(struct_def) = self.struct_defs.get(&struct_name) {
+                            if let Some(&offset) = struct_def.field_offsets.get(field) {
+                                bytecode.instructions.push(Instruction::new(
+                                    Opcode::StructGet,
+                                    vec![offset as u16],
+                                ));
+                                return Ok(());
+                            }
+                        }
+                    }
                 }
                 bytecode
                     .instructions
@@ -1436,6 +1717,7 @@ impl<'a> Compiler<'a> {
                     Opcode::Call,
                     vec![arguments.len() as u16],
                 ));
+                self.borrow_checker.active_borrows.clear();
                 Ok(())
             }
             Expression::Sizeof(typ) => {
@@ -1525,6 +1807,13 @@ impl<'a> Compiler<'a> {
             Expression::InterpolatedIdent(_parts) => {
                 bail!("InterpolatedIdent can only be used in comptime context")
             }
+            Expression::Unsafe(body) => {
+                for statement in body {
+                    self.compile_statement(statement, bytecode)?;
+                }
+                self.remove_last_pop(bytecode);
+                Ok(())
+            }
         }
     }
 
@@ -1564,12 +1853,19 @@ impl<'a> Compiler<'a> {
         cases: &[crate::parser::SwitchCase],
         bytecode: &mut Bytecode,
     ) -> Result<()> {
+        let scrutinee_enum_name = match self.infer_expression_type(scrutinee) {
+            Some(Type::Enum(name)) => Some(name),
+            Some(Type::Struct(name)) if self.enum_defs.contains_key(&name) => {
+                Some(name)
+            }
+            _ => None,
+        };
         self.compile_expression(scrutinee, bytecode)?;
 
         let mut jump_ends: Vec<usize> = Vec::new();
         let mut next_case_jumps: Vec<usize> = Vec::new();
 
-        for (case_index, case) in cases.iter().enumerate() {
+        for (_case_index, case) in cases.iter().enumerate() {
             for jump_pos in next_case_jumps.drain(..) {
                 bytecode.instructions[jump_pos].operands[0] =
                     bytecode.instructions.len() as u16;
@@ -1582,9 +1878,13 @@ impl<'a> Compiler<'a> {
                         .instructions
                         .push(Instruction::new(Opcode::Dup, vec![]));
                     self.compile_literal(lit, bytecode)?;
+                    let eq_opcode = match lit {
+                        Literal::Integer(_) => Opcode::EqualI64,
+                        _ => Opcode::Equal,
+                    };
                     bytecode
                         .instructions
-                        .push(Instruction::new(Opcode::EqualI64, vec![]));
+                        .push(Instruction::new(eq_opcode, vec![]));
                     let jump_pos = bytecode.instructions.len();
                     bytecode.instructions.push(Instruction::new(
                         Opcode::JumpNotTruthy,
@@ -1663,7 +1963,11 @@ impl<'a> Compiler<'a> {
                     variant_name,
                     bindings,
                 } => {
-                    let tag = if let Some(en) = enum_name {
+                    let effective_enum_name = enum_name
+                        .as_ref()
+                        .cloned()
+                        .or_else(|| scrutinee_enum_name.clone());
+                    let tag = if let Some(en) = &effective_enum_name {
                         self.get_variant_tag(en, variant_name)
                     } else {
                         0
@@ -1725,13 +2029,11 @@ impl<'a> Compiler<'a> {
             }
             self.remove_last_pop(bytecode);
 
-            if case_index < cases.len() - 1 {
-                let jump_pos = bytecode.instructions.len();
-                bytecode
-                    .instructions
-                    .push(Instruction::new(Opcode::Jump, vec![9999]));
-                jump_ends.push(jump_pos);
-            }
+            let jump_pos = bytecode.instructions.len();
+            bytecode
+                .instructions
+                .push(Instruction::new(Opcode::Jump, vec![9999]));
+            jump_ends.push(jump_pos);
         }
 
         if !next_case_jumps.is_empty() {
@@ -1781,6 +2083,14 @@ impl<'a> Compiler<'a> {
             Literal::Float32(value) => {
                 let constant_index = bytecode.constants.len() as u16;
                 bytecode.constants.push(Value64::Float32(*value));
+                bytecode.instructions.push(Instruction::new(
+                    Opcode::Constant,
+                    vec![constant_index],
+                ));
+            }
+            Literal::Boolean(value) => {
+                let constant_index = bytecode.constants.len() as u16;
+                bytecode.constants.push(Value64::Bool(*value));
                 bytecode.instructions.push(Instruction::new(
                     Opcode::Constant,
                     vec![constant_index],
@@ -1853,6 +2163,9 @@ impl<'a> Compiler<'a> {
                 self.infer_expression_type(operand)
             }
             Expression::Prefix(Operator::Not, _) => Some(Type::Bool),
+            Expression::EnumVariantInit(enum_name, _, _) => {
+                Some(Type::Enum(enum_name.clone()))
+            }
             _ => None,
         }
     }
@@ -1918,9 +2231,6 @@ impl<'a> Compiler<'a> {
             bytecode
                 .instructions
                 .push(Instruction::new(Opcode::JumpNotTruthy, vec![9999]));
-            bytecode
-                .instructions
-                .push(Instruction::new(Opcode::Pop, vec![]));
             self.compile_expression(right, bytecode)?;
             let jump_end_pos = bytecode.instructions.len();
             bytecode
@@ -1929,9 +2239,6 @@ impl<'a> Compiler<'a> {
             let false_pos = bytecode.instructions.len();
             bytecode.instructions[jump_false_pos].operands[0] =
                 false_pos as u16;
-            bytecode
-                .instructions
-                .push(Instruction::new(Opcode::Pop, vec![]));
             bytecode
                 .instructions
                 .push(Instruction::new(Opcode::False, vec![]));
@@ -1948,9 +2255,6 @@ impl<'a> Compiler<'a> {
                 .push(Instruction::new(Opcode::JumpNotTruthy, vec![9999]));
             bytecode
                 .instructions
-                .push(Instruction::new(Opcode::Pop, vec![]));
-            bytecode
-                .instructions
                 .push(Instruction::new(Opcode::True, vec![]));
             let jump_end_pos = bytecode.instructions.len();
             bytecode
@@ -1958,9 +2262,6 @@ impl<'a> Compiler<'a> {
                 .push(Instruction::new(Opcode::Jump, vec![9999]));
             let false_pos = bytecode.instructions.len();
             bytecode.instructions[jump_true_pos].operands[0] = false_pos as u16;
-            bytecode
-                .instructions
-                .push(Instruction::new(Opcode::Pop, vec![]));
             self.compile_expression(right, bytecode)?;
             let end_pos = bytecode.instructions.len();
             bytecode.instructions[jump_end_pos].operands[0] = end_pos as u16;
@@ -2003,6 +2304,7 @@ impl<'a> Compiler<'a> {
                     Operator::GreaterThan => Opcode::GreaterThan,
                     Operator::ShiftLeft => Opcode::ShiftLeft,
                     Operator::ShiftRight => Opcode::ShiftRight,
+                    Operator::BitwiseAnd => Opcode::BitwiseAnd,
                     Operator::BitwiseOr => Opcode::BitwiseOr,
                     _ => unimplemented!(
                         "Operator {:?} not implemented for infix",
@@ -2022,6 +2324,7 @@ impl<'a> Compiler<'a> {
                 Operator::GreaterThan => Opcode::GreaterThan,
                 Operator::ShiftLeft => Opcode::ShiftLeft,
                 Operator::ShiftRight => Opcode::ShiftRight,
+                Operator::BitwiseAnd => Opcode::BitwiseAnd,
                 Operator::BitwiseOr => Opcode::BitwiseOr,
                 _ => unimplemented!(
                     "Operator {:?} not implemented for infix",
@@ -2061,13 +2364,17 @@ impl<'a> Compiler<'a> {
         bytecode: &mut Bytecode,
     ) -> Result<()> {
         let outer_symbol_table = std::mem::take(&mut self.symbol_table);
+        let outer_moved_symbols = std::mem::take(&mut self.moved_symbols);
         self.symbol_table = SymbolTable::new_enclosed(outer_symbol_table);
 
         self.symbol_table.define_function_name(name);
 
         for param in parameters {
-            self.symbol_table
-                .define_with_type(&param.name, param.type_annotation.clone());
+            self.symbol_table.define_with_type_and_mutability(
+                &param.name,
+                param.type_annotation.clone(),
+                param.mutable,
+            );
         }
 
         let mut fn_bytecode = Bytecode {
@@ -2076,6 +2383,7 @@ impl<'a> Compiler<'a> {
             functions: std::mem::take(&mut bytecode.functions),
             heap: std::mem::take(&mut bytecode.heap),
             native_names: std::mem::take(&mut bytecode.native_names),
+            global_symbols: std::mem::take(&mut bytecode.global_symbols),
         };
         for statement in body {
             self.compile_statement(statement, &mut fn_bytecode)?;
@@ -2096,6 +2404,7 @@ impl<'a> Compiler<'a> {
         bytecode.constants = fn_bytecode.constants;
         bytecode.functions = fn_bytecode.functions;
         bytecode.heap = fn_bytecode.heap;
+        bytecode.global_symbols = fn_bytecode.global_symbols;
 
         let free_symbols = self.symbol_table.free_symbols.clone();
         let num_locals = self.symbol_table.num_definitions;
@@ -2104,6 +2413,7 @@ impl<'a> Compiler<'a> {
         if let Some(outer) = self.symbol_table.outer.take() {
             self.symbol_table = *outer;
         }
+        self.moved_symbols = outer_moved_symbols;
 
         for sym in &free_symbols {
             self.load_symbol(sym, bytecode);
@@ -2135,6 +2445,40 @@ impl<'a> Compiler<'a> {
     fn remove_last_pop(&self, bytecode: &mut Bytecode) {
         if self.last_instruction_is(bytecode, Opcode::Pop) {
             bytecode.instructions.pop();
+        }
+    }
+
+    fn infer_expression_struct_type(&self, expr: &Expression) -> Option<String> {
+        match expr {
+            Expression::Identifier(name) => {
+                if let Some(symbol) = self.symbol_table.store.get(name) {
+                    if let Some(Type::Struct(struct_name)) = &symbol.symbol_type {
+                        return Some(struct_name.clone());
+                    }
+                }
+                None
+            }
+            Expression::Index(array_expr, _) => {
+                if let Expression::Identifier(name) = array_expr.as_ref() {
+                    if let Some(symbol) = self.symbol_table.store.get(name) {
+                        if let Some(symbol_type) = &symbol.symbol_type {
+                            match symbol_type {
+                                Type::Array(inner, _) | Type::Slice(inner) => {
+                                    if let Type::Struct(struct_name) = inner.as_ref() {
+                                        return Some(struct_name.clone());
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                None
+            }
+            Expression::FieldAccess(inner_expr, _) => {
+                self.infer_expression_struct_type(inner_expr)
+            }
+            _ => None,
         }
     }
 
@@ -2229,7 +2573,9 @@ impl<'a> Compiler<'a> {
                     ctx.type_name,
                 ),
                 mutable: *mutable,
-                type_annotation: type_annotation.clone(),
+                type_annotation: type_annotation
+                    .as_ref()
+                    .map(|t| Self::substitute_in_type(t, ctx)),
                 value: Self::substitute_in_expr(value, ctx),
             },
             Statement::Expression(expr) => {
@@ -2299,6 +2645,43 @@ impl<'a> Compiler<'a> {
                     .map(|a| Self::substitute_in_expr(a, ctx))
                     .collect(),
             ),
+            Expression::Function(params, return_type, body) => {
+                Expression::Function(
+                    params
+                        .iter()
+                        .map(|p| Self::substitute_in_param(p, ctx))
+                        .collect(),
+                    return_type
+                        .as_ref()
+                        .map(|t| Self::substitute_in_type(t, ctx)),
+                    body.iter()
+                        .map(|s| Self::substitute_in_statement(s, ctx))
+                        .collect(),
+                )
+            }
+            Expression::Proc(params, return_type, body) => Expression::Proc(
+                params
+                    .iter()
+                    .map(|p| Self::substitute_in_param(p, ctx))
+                    .collect(),
+                return_type
+                    .as_ref()
+                    .map(|t| Self::substitute_in_type(t, ctx)),
+                body.iter()
+                    .map(|s| Self::substitute_in_statement(s, ctx))
+                    .collect(),
+            ),
+            Expression::FieldAccess(expr, field) => {
+                let new_field = Self::substitute_identifier(
+                    field,
+                    ctx.type_var,
+                    ctx.type_name,
+                );
+                Expression::FieldAccess(
+                    Box::new(Self::substitute_in_expr(expr, ctx)),
+                    new_field,
+                )
+            }
             Expression::Sizeof(typ) => {
                 if format!("{}", typ) == ctx.type_var {
                     Expression::Sizeof(Type::Struct(ctx.type_name.to_string()))
@@ -2331,6 +2714,59 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    fn substitute_in_type(typ: &Type, ctx: &SubstitutionContext) -> Type {
+        match typ {
+            Type::Struct(name) if name == ctx.type_var => {
+                Type::Struct(ctx.type_name.to_string())
+            }
+            Type::Ptr(inner) => {
+                Type::Ptr(Box::new(Self::substitute_in_type(inner, ctx)))
+            }
+            Type::Ref(inner) => {
+                Type::Ref(Box::new(Self::substitute_in_type(inner, ctx)))
+            }
+            Type::RefMut(inner) => {
+                Type::RefMut(Box::new(Self::substitute_in_type(inner, ctx)))
+            }
+            Type::Array(inner, size) => Type::Array(
+                Box::new(Self::substitute_in_type(inner, ctx)),
+                *size,
+            ),
+            Type::Slice(inner) => {
+                Type::Slice(Box::new(Self::substitute_in_type(inner, ctx)))
+            }
+            Type::Proc(params, ret) => Type::Proc(
+                params
+                    .iter()
+                    .map(|p| Self::substitute_in_type(p, ctx))
+                    .collect(),
+                Box::new(Self::substitute_in_type(ret, ctx)),
+            ),
+            Type::Distinct(inner) => {
+                Type::Distinct(Box::new(Self::substitute_in_type(inner, ctx)))
+            }
+            other => other.clone(),
+        }
+    }
+
+    fn substitute_in_param(
+        param: &Parameter,
+        ctx: &SubstitutionContext,
+    ) -> Parameter {
+        Parameter {
+            name: Self::substitute_identifier(
+                &param.name,
+                ctx.type_var,
+                ctx.type_name,
+            ),
+            type_annotation: param
+                .type_annotation
+                .as_ref()
+                .map(|t| Self::substitute_in_type(t, ctx)),
+            mutable: param.mutable,
+        }
+    }
+
     fn evaluate_comptime_expr(&self, expr: &Expression) -> Result<i64> {
         match expr {
             Expression::Literal(Literal::Integer(n)) => Ok(*n),
@@ -2343,6 +2779,11 @@ impl<'a> Compiler<'a> {
                 let l = self.evaluate_comptime_expr(left)?;
                 let r = self.evaluate_comptime_expr(right)?;
                 Ok(l >> r)
+            }
+            Expression::Infix(left, Operator::BitwiseAnd, right) => {
+                let l = self.evaluate_comptime_expr(left)?;
+                let r = self.evaluate_comptime_expr(right)?;
+                Ok(l & r)
             }
             Expression::Infix(left, Operator::BitwiseOr, right) => {
                 let l = self.evaluate_comptime_expr(left)?;
@@ -2622,6 +3063,144 @@ mod tests {
             .count();
         assert_eq!(bitwise_or_count, 2, "Should have 2 BitwiseOr operations");
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_second_class_ref_in_struct_rejected() {
+        let input = r#"
+            BadStruct :: struct {
+                value: &i64
+            }
+        "#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse().unwrap();
+
+        let mut compiler = Compiler::new(&program);
+        let result = compiler.compile();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("second-class"), "Error should mention second-class: {}", err);
+    }
+
+    #[test]
+    fn test_second_class_ref_mut_in_struct_rejected() {
+        let input = r#"
+            BadStruct :: struct {
+                value: &mut i64
+            }
+        "#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse().unwrap();
+
+        let mut compiler = Compiler::new(&program);
+        let result = compiler.compile();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("second-class"), "Error should mention second-class: {}", err);
+    }
+
+    #[test]
+    fn test_second_class_ref_in_enum_rejected() {
+        let input = r#"
+            BadEnum :: enum {
+                Variant { value: &i64 }
+            }
+        "#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse().unwrap();
+
+        let mut compiler = Compiler::new(&program);
+        let result = compiler.compile();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("second-class"), "Error should mention second-class: {}", err);
+    }
+
+    #[test]
+    fn test_second_class_ref_return_type_rejected() {
+        let input = r#"
+            get_ref :: proc(x: i64) -> &i64 {
+                &x
+            }
+        "#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse().unwrap();
+
+        let mut compiler = Compiler::new(&program);
+        let result = compiler.compile();
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("second-class"), "Error should mention second-class: {}", err);
+    }
+
+    #[test]
+    fn test_second_class_ref_param_allowed() -> Result<()> {
+        let input = r#"
+            update :: proc(p: &mut i64) -> void {
+                p^ = 42
+            }
+        "#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        let mut compiler = Compiler::new(&program);
+        let result = compiler.compile();
+
+        assert!(result.is_ok(), "Reference parameters should be allowed: {:?}", result);
+        Ok(())
+    }
+
+    #[test]
+    fn test_second_class_local_ref_allowed() -> Result<()> {
+        let input = r#"
+            x := 42;
+            r := &x;
+            r^
+        "#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        let mut compiler = Compiler::new(&program);
+        let result = compiler.compile();
+
+        assert!(result.is_ok(), "Local reference variables should be allowed: {:?}", result);
+        Ok(())
+    }
+
+    #[test]
+    fn test_pointer_in_struct_allowed() -> Result<()> {
+        let input = r#"
+            Node :: struct {
+                value: i64,
+                next: ^Node
+            }
+        "#;
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        let mut compiler = Compiler::new(&program);
+        let result = compiler.compile();
+
+        assert!(result.is_ok(), "Raw pointers in structs should be allowed: {:?}", result);
         Ok(())
     }
 }

@@ -1,0 +1,550 @@
+Token :: enum {
+    LeftParentheses,
+    RightParentheses,
+    LeftBrace,
+    RightBrace,
+    LeftBracket,
+    RightBracket,
+    Comma,
+    Semicolon,
+    Colon,
+    ColonColon,
+    ColonAssign,
+    Dot,
+    DotDot,
+    Plus,
+    Minus,
+    Asterisk,
+    Slash,
+    Percent,
+    Ampersand,
+    Pipe,
+    Caret,
+    Bang,
+    Question,
+    At,
+    Hash,
+    Assign,
+    Equal,
+    NotEqual,
+    LessThan,
+    LessThanOrEqual,
+    GreaterThan,
+    GreaterThanOrEqual,
+    ShiftLeft,
+    ShiftRight,
+    And,
+    Or,
+    Arrow,
+    Integer { value: i64 },
+    Float { value: f64 },
+    String { value: str },
+    Identifier { name: str },
+    True,
+    False,
+    If,
+    Else,
+    For,
+    While,
+    Return,
+    Break,
+    Continue,
+    Proc,
+    Struct,
+    Enum,
+    Mut,
+    Let,
+    Extern,
+    Unsafe,
+    Defer,
+    Switch,
+    Import,
+    In,
+    EndOfFile,
+}
+
+Lexer :: struct {
+    source: str,
+    position: i64,
+    length: i64,
+}
+
+lexer_new :: proc(source: str) -> Lexer {
+    mut lexer := Lexer {
+        source = source,
+        position = 0,
+        length = 0,
+    };
+    lexer.length = len(lexer.source);
+    lexer
+}
+
+is_whitespace :: proc(c: i64) -> bool {
+    c == 32 || c == 9 || c == 10 || c == 13
+}
+
+is_digit :: proc(c: i64) -> bool {
+    c >= 48 && c <= 57
+}
+
+is_alpha :: proc(c: i64) -> bool {
+    (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95
+}
+
+is_alphanumeric :: proc(c: i64) -> bool {
+    is_alpha(c) || is_digit(c)
+}
+
+peek :: proc(lexer: &Lexer) -> i64 {
+    if (lexer.position >= lexer.length) {
+        -1
+    } else {
+        char_at(lexer.source, lexer.position)
+    }
+}
+
+peek_next :: proc(lexer: &Lexer) -> i64 {
+    if (lexer.position + 1 >= lexer.length) {
+        -1
+    } else {
+        char_at(lexer.source, lexer.position + 1)
+    }
+}
+
+advance :: proc(lexer: &mut Lexer) -> i64 {
+    c := peek(lexer);
+    lexer.position = lexer.position + 1;
+    c
+}
+
+skip_whitespace :: proc(lexer: &mut Lexer) {
+    mut c := peek(lexer);
+    while (c != -1 && is_whitespace(c)) {
+        advance(lexer);
+        c = peek(lexer);
+    }
+}
+
+skip_line_comment :: proc(lexer: &mut Lexer) {
+    mut c := peek(lexer);
+    while (c != -1 && c != 10) {
+        advance(lexer);
+        c = peek(lexer);
+    }
+}
+
+read_string :: proc(lexer: &mut Lexer) -> str {
+    advance(lexer);
+    start := lexer.position;
+    mut c := peek(lexer);
+    while (c != -1 && c != 34) {
+        advance(lexer);
+        c = peek(lexer);
+    }
+    result := substr(lexer.source, start, lexer.position - start);
+    advance(lexer);
+    result
+}
+
+read_number :: proc(lexer: &mut Lexer) -> Token {
+    start := lexer.position;
+    mut c := peek(lexer);
+    while (is_digit(c)) {
+        advance(lexer);
+        c = peek(lexer);
+    }
+
+    c2 := peek(lexer);
+    n := peek_next(lexer);
+    if (c2 == 46 && is_digit(n)) {
+        advance(lexer);
+        mut c3 := peek(lexer);
+        while (is_digit(c3)) {
+            advance(lexer);
+            c3 = peek(lexer);
+        }
+        Token::Float { value = 0.0 }
+    } else {
+        num_str := substr(lexer.source, start, lexer.position - start);
+        Token::Integer { value = parse_int(num_str) }
+    }
+}
+
+read_identifier :: proc(lexer: &mut Lexer) -> str {
+    start := lexer.position;
+    mut c := peek(lexer);
+    while (is_alphanumeric(c)) {
+        advance(lexer);
+        c = peek(lexer);
+    }
+    substr(lexer.source, start, lexer.position - start)
+}
+
+is_keyword :: proc(name: &str) -> i64 {
+    if (name == "true") { 1 }
+    else if (name == "false") { 2 }
+    else if (name == "if") { 3 }
+    else if (name == "else") { 4 }
+    else if (name == "for") { 5 }
+    else if (name == "while") { 6 }
+    else if (name == "return") { 7 }
+    else if (name == "break") { 8 }
+    else if (name == "continue") { 9 }
+    else if (name == "proc") { 10 }
+    else if (name == "struct") { 11 }
+    else if (name == "enum") { 12 }
+    else if (name == "mut") { 13 }
+    else if (name == "let") { 14 }
+    else if (name == "extern") { 15 }
+    else if (name == "unsafe") { 16 }
+    else if (name == "defer") { 17 }
+    else if (name == "switch") { 18 }
+    else if (name == "import") { 19 }
+    else if (name == "in") { 20 }
+    else { 0 }
+}
+
+keyword_to_token :: proc(kw: i64) -> Token {
+    if (kw == 1) { return Token::True; }
+    if (kw == 2) { return Token::False; }
+    if (kw == 3) { return Token::If; }
+    if (kw == 4) { return Token::Else; }
+    if (kw == 5) { return Token::For; }
+    if (kw == 6) { return Token::While; }
+    if (kw == 7) { return Token::Return; }
+    if (kw == 8) { return Token::Break; }
+    if (kw == 9) { return Token::Continue; }
+    if (kw == 10) { return Token::Proc; }
+    if (kw == 11) { return Token::Struct; }
+    if (kw == 12) { return Token::Enum; }
+    if (kw == 13) { return Token::Mut; }
+    if (kw == 14) { return Token::Let; }
+    if (kw == 15) { return Token::Extern; }
+    if (kw == 16) { return Token::Unsafe; }
+    if (kw == 17) { return Token::Defer; }
+    if (kw == 18) { return Token::Switch; }
+    if (kw == 19) { return Token::Import; }
+    if (kw == 20) { return Token::In; }
+    Token::EndOfFile
+}
+
+next_token :: proc(lexer: &mut Lexer) -> Token {
+    skip_whitespace(lexer);
+
+    mut c := peek(lexer);
+    if (c == -1) {
+        return Token::EndOfFile;
+    }
+
+    mut n := peek_next(lexer);
+
+    while (c == 47 && n == 47) {
+        skip_line_comment(lexer);
+        skip_whitespace(lexer);
+        c = peek(lexer);
+        if (c == -1) {
+            return Token::EndOfFile;
+        }
+        n = peek_next(lexer);
+    }
+
+    if (c == 34) {
+        s := read_string(lexer);
+        return Token::String { value = s };
+    }
+
+    if (is_digit(c)) {
+        return read_number(lexer);
+    }
+
+    if (is_alpha(c)) {
+        name := read_identifier(lexer);
+        kw := is_keyword(&name);
+        if (kw != 0) {
+            return keyword_to_token(kw);
+        } else {
+            return Token::Identifier { name = name };
+        }
+    }
+
+    advance(lexer);
+
+    if (c == 40) { Token::LeftParentheses }
+    else if (c == 41) { Token::RightParentheses }
+    else if (c == 123) { Token::LeftBrace }
+    else if (c == 125) { Token::RightBrace }
+    else if (c == 91) { Token::LeftBracket }
+    else if (c == 93) { Token::RightBracket }
+    else if (c == 44) { Token::Comma }
+    else if (c == 59) { Token::Semicolon }
+    else if (c == 58) {
+        if (peek(lexer) == 58) {
+            advance(lexer);
+            Token::ColonColon
+        } else if (peek(lexer) == 61) {
+            advance(lexer);
+            Token::ColonAssign
+        } else {
+            Token::Colon
+        }
+    }
+    else if (c == 46) {
+        if (peek(lexer) == 46) {
+            advance(lexer);
+            Token::DotDot
+        } else {
+            Token::Dot
+        }
+    }
+    else if (c == 43) { Token::Plus }
+    else if (c == 45) {
+        if (peek(lexer) == 62) {
+            advance(lexer);
+            Token::Arrow
+        } else {
+            Token::Minus
+        }
+    }
+    else if (c == 42) { Token::Asterisk }
+    else if (c == 47) { Token::Slash }
+    else if (c == 37) { Token::Percent }
+    else if (c == 38) {
+        if (peek(lexer) == 38) {
+            advance(lexer);
+            Token::And
+        } else {
+            Token::Ampersand
+        }
+    }
+    else if (c == 124) {
+        if (peek(lexer) == 124) {
+            advance(lexer);
+            Token::Or
+        } else {
+            Token::Pipe
+        }
+    }
+    else if (c == 94) { Token::Caret }
+    else if (c == 33) {
+        if (peek(lexer) == 61) {
+            advance(lexer);
+            Token::NotEqual
+        } else {
+            Token::Bang
+        }
+    }
+    else if (c == 63) { Token::Question }
+    else if (c == 64) { Token::At }
+    else if (c == 35) { Token::Hash }
+    else if (c == 61) {
+        if (peek(lexer) == 61) {
+            advance(lexer);
+            Token::Equal
+        } else {
+            Token::Assign
+        }
+    }
+    else if (c == 60) {
+        if (peek(lexer) == 61) {
+            advance(lexer);
+            Token::LessThanOrEqual
+        } else if (peek(lexer) == 60) {
+            advance(lexer);
+            Token::ShiftLeft
+        } else {
+            Token::LessThan
+        }
+    }
+    else if (c == 62) {
+        if (peek(lexer) == 61) {
+            advance(lexer);
+            Token::GreaterThanOrEqual
+        } else if (peek(lexer) == 62) {
+            advance(lexer);
+            Token::ShiftRight
+        } else {
+            Token::GreaterThan
+        }
+    }
+    else {
+        return Token::EndOfFile;
+    }
+}
+
+is_identifier_token :: proc(tok: Token) -> bool {
+    switch tok {
+        case .Identifier { name }: true
+        case _: false
+    }
+}
+
+is_colon_assign_token :: proc(tok: Token) -> bool {
+    switch tok {
+        case .ColonAssign: true
+        case _: false
+    }
+}
+
+is_integer_token :: proc(tok: Token, expected: i64) -> bool {
+    switch tok {
+        case .Integer { value }: value == expected
+        case _: false
+    }
+}
+
+is_eof_token :: proc(tok: Token) -> bool {
+    switch tok {
+        case .EndOfFile: true
+        case _: false
+    }
+}
+
+is_if_token :: proc(tok: Token) -> bool {
+    switch tok { case .If: true case _: false }
+}
+
+is_else_token :: proc(tok: Token) -> bool {
+    switch tok { case .Else: true case _: false }
+}
+
+is_for_token :: proc(tok: Token) -> bool {
+    switch tok { case .For: true case _: false }
+}
+
+is_while_token :: proc(tok: Token) -> bool {
+    switch tok { case .While: true case _: false }
+}
+
+is_proc_token :: proc(tok: Token) -> bool {
+    switch tok { case .Proc: true case _: false }
+}
+
+is_struct_token :: proc(tok: Token) -> bool {
+    switch tok { case .Struct: true case _: false }
+}
+
+is_plus_token :: proc(tok: Token) -> bool {
+    switch tok { case .Plus: true case _: false }
+}
+
+is_minus_token :: proc(tok: Token) -> bool {
+    switch tok { case .Minus: true case _: false }
+}
+
+is_asterisk_token :: proc(tok: Token) -> bool {
+    switch tok { case .Asterisk: true case _: false }
+}
+
+is_slash_token :: proc(tok: Token) -> bool {
+    switch tok { case .Slash: true case _: false }
+}
+
+is_equal_token :: proc(tok: Token) -> bool {
+    switch tok { case .Equal: true case _: false }
+}
+
+is_not_equal_token :: proc(tok: Token) -> bool {
+    switch tok { case .NotEqual: true case _: false }
+}
+
+is_less_than_token :: proc(tok: Token) -> bool {
+    switch tok { case .LessThan: true case _: false }
+}
+
+is_less_than_or_equal_token :: proc(tok: Token) -> bool {
+    switch tok { case .LessThanOrEqual: true case _: false }
+}
+
+is_greater_than_token :: proc(tok: Token) -> bool {
+    switch tok { case .GreaterThan: true case _: false }
+}
+
+is_greater_than_or_equal_token :: proc(tok: Token) -> bool {
+    switch tok { case .GreaterThanOrEqual: true case _: false }
+}
+
+is_and_token :: proc(tok: Token) -> bool {
+    switch tok { case .And: true case _: false }
+}
+
+is_or_token :: proc(tok: Token) -> bool {
+    switch tok { case .Or: true case _: false }
+}
+
+is_string_token :: proc(tok: Token, expected: str) -> bool {
+    switch tok {
+        case .String { value }: value == expected
+        case _: false
+    }
+}
+
+test_lexer_simple :: proc() {
+    mut lexer : Lexer = lexer_new("x := 42");
+
+    tok1 : Token = next_token(&mut lexer);
+    ident := is_identifier_token(tok1);
+    assert(ident, "expected identifier x");
+
+    tok2 : Token = next_token(&mut lexer);
+    assert(is_colon_assign_token(tok2), "expected :=");
+
+    tok3 : Token = next_token(&mut lexer);
+    assert(is_integer_token(tok3, 42), "expected integer 42");
+
+    tok4 : Token = next_token(&mut lexer);
+    assert(is_eof_token(tok4), "expected EOF");
+
+    print("test_lexer_simple passed!");
+}
+
+test_lexer_keywords :: proc() {
+    mut lexer : Lexer = lexer_new("if else for while proc struct");
+
+    assert(is_if_token(next_token(&mut lexer)), "expected if");
+    assert(is_else_token(next_token(&mut lexer)), "expected else");
+    assert(is_for_token(next_token(&mut lexer)), "expected for");
+    assert(is_while_token(next_token(&mut lexer)), "expected while");
+    assert(is_proc_token(next_token(&mut lexer)), "expected proc");
+    assert(is_struct_token(next_token(&mut lexer)), "expected struct");
+
+    print("test_lexer_keywords passed!");
+}
+
+test_lexer_operators :: proc() {
+    mut lexer : Lexer = lexer_new("+ - * / == != < <= > >= && ||");
+
+    assert(is_plus_token(next_token(&mut lexer)), "expected +");
+    assert(is_minus_token(next_token(&mut lexer)), "expected -");
+    assert(is_asterisk_token(next_token(&mut lexer)), "expected *");
+    assert(is_slash_token(next_token(&mut lexer)), "expected /");
+    assert(is_equal_token(next_token(&mut lexer)), "expected ==");
+    assert(is_not_equal_token(next_token(&mut lexer)), "expected !=");
+    assert(is_less_than_token(next_token(&mut lexer)), "expected <");
+    assert(is_less_than_or_equal_token(next_token(&mut lexer)), "expected <=");
+    assert(is_greater_than_token(next_token(&mut lexer)), "expected >");
+    assert(is_greater_than_or_equal_token(next_token(&mut lexer)), "expected >=");
+    assert(is_and_token(next_token(&mut lexer)), "expected &&");
+    assert(is_or_token(next_token(&mut lexer)), "expected ||");
+
+    print("test_lexer_operators passed!");
+}
+
+test_lexer_string :: proc() {
+    source : str = read_file("bootstrap/test_string.txt");
+    mut lexer : Lexer = lexer_new(source);
+
+    tok : Token = next_token(&mut lexer);
+    assert(is_string_token(tok, "hello world"), "expected string");
+
+    print("test_lexer_string passed!");
+}
+
+main :: proc() {
+    print("Running lexer tests...");
+    test_lexer_simple();
+    test_lexer_keywords();
+    test_lexer_operators();
+    print("All lexer tests passed!");
+}
+
+main()

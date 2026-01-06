@@ -1,0 +1,20 @@
+puts :: extern proc(s: ^i8) -> i32
+
+main :: proc() -> i64 {
+    puts("Counting with a for loop:");
+
+    mut sum := 0;
+    for i in 0..10 {
+        sum = sum + i;
+    }
+
+    puts("Counting with a while loop:");
+
+    mut j := 0;
+    while (j < 5) {
+        j = j + 1;
+    }
+
+    puts("Done!");
+    sum
+}

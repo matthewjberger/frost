@@ -1,15 +1,18 @@
 # Frost
 
-A statically-oriented programming language combining the simplicity of Odin and Jai with Rust-inspired immutability. Frost compiles to bytecode and runs on a fast virtual machine.
+A statically-typed programming language combining Odin/Jai-style syntax with Rust-inspired ownership and immutability. Frost compiles to bytecode for rapid development or native code via Cranelift for production.
 
 ## Features
 
 - **Immutable by default** - Variables are immutable unless declared with `mut`
 - **Odin-style syntax** - `:=` for inference, `::` for constants, `proc` for typed functions
+- **Ownership and borrowing** - Memory safety without garbage collection
+- **Second-class references** - References can't be stored in structs or returned, eliminating lifetime annotations
+- **Enums with data** - Tagged unions with pattern matching via `switch`
+- **Dual backends** - Bytecode VM for development, Cranelift native compilation for production
+- **Structs** - User-defined data types with field access
 - **First-class functions** - Closures, higher-order functions, recursion
-- **Structs** - User-defined data types
 - **Defer** - Cleanup statements that run at scope exit
-- **Bytecode VM** - Fast execution with a stack-based virtual machine
 
 ## Quick Start
 
@@ -35,12 +38,25 @@ cargo run --release -p repl
 120
 ```
 
-### Run Examples
+### Run Examples (Bytecode VM)
 
 ```bash
 cargo run --release -p frost --bin frost -- examples/hello_world.frost
 cargo run --release -p frost --bin frost -- examples/fizzbuzz.frost
 cargo run --release -p frost --bin frost -- examples/recursion.frost
+```
+
+### Native Compilation (Cranelift)
+
+```bash
+# Compile to object file
+cargo run --release -p frost --bin frost -- --native -o program.o program.frost
+
+# Compile and link to executable
+cargo run --release -p frost --bin frost -- --link -o program program.frost
+
+# Run the native executable
+./program
 ```
 
 ### Run Benchmarks
@@ -127,6 +143,53 @@ print(p.x)
 print(p.y)
 ```
 
+### Enums
+
+```rust
+// Simple enum
+Color :: enum {
+    Red,
+    Green,
+    Blue,
+}
+
+color := Color::Red
+
+// Tagged union (enum with data)
+Result :: enum {
+    Ok { value: i64 },
+    Err { code: i64, message: str },
+}
+
+success := Result::Ok { value = 42 }
+failure := Result::Err { code = 404, message = "Not found" }
+```
+
+### Switch (Pattern Matching)
+
+```rust
+// Match on enum variants
+msg := switch result {
+    case .Ok { value }: value
+    case .Err { code }: 0 - code
+}
+
+// Match on values
+grade := switch score {
+    case 90: "A"
+    case 80: "B"
+    case _: "C"
+}
+
+// Tuple patterns
+result := switch (x % 3, x % 5) {
+    case (0, 0): "FizzBuzz"
+    case (0, _): "Fizz"
+    case (_, 0): "Buzz"
+    case (_, _): x
+}
+```
+
 ### Control Flow
 
 ```rust
@@ -179,6 +242,26 @@ add5 := make_adder(5)
 print(add5(10))  // 15
 ```
 
+### References
+
+```rust
+// Immutable reference
+read_point :: proc(p: &Point) -> i64 {
+    p.x + p.y
+}
+
+// Mutable reference
+increment :: proc(x: &mut i64) {
+    x^ = x^ + 1
+}
+
+mut value := 10
+increment(&mut value)
+print(value)  // 11
+```
+
+References are second-class citizens: they cannot be stored in structs, returned from functions, or stored in arrays. This eliminates the need for lifetime annotations.
+
 ### Defer
 
 ```rust
@@ -207,11 +290,14 @@ print(len(message))
 
 | Type | Description |
 |------|-------------|
-| `i64` | 64-bit signed integer |
-| `f64` | 64-bit floating point |
+| `i8`, `i16`, `i32`, `i64` | Signed integers |
+| `u8`, `u16`, `u32`, `u64` | Unsigned integers |
+| `f32`, `f64` | Floating point |
 | `bool` | Boolean (`true`/`false`) |
 | `str` | String |
 | `^T` | Pointer to T |
+| `&T` | Immutable reference |
+| `&mut T` | Mutable reference |
 | `[N]T` | Fixed-size array |
 | `[]T` | Slice |
 | `proc(...) -> T` | Procedure type |
@@ -265,13 +351,78 @@ frost/
 │   ├── compiler.rs     # Bytecode compiler
 │   ├── typed_vm.rs     # Virtual machine
 │   ├── typechecker.rs  # Type checking
+│   ├── codegen.rs      # Cranelift native backend
 │   ├── types.rs        # Type definitions
 │   └── value.rs        # Runtime values
 ├── repl/
 │   └── src/main.rs     # Interactive REPL
+├── bootstrap/          # Self-hosted compiler (Frost in Frost)
 ├── examples/           # Example programs
+├── docs/               # Documentation
 └── Cargo.toml
 ```
+
+## Architecture
+
+Frost has a **dual-backend architecture** designed for different use cases:
+
+```
+Source Code (.frost)
+       │
+       ▼
+┌─────────────┐
+│   Lexer     │  lexer.rs
+└─────────────┘
+       │ tokens
+       ▼
+┌─────────────┐
+│   Parser    │  parser.rs
+└─────────────┘
+       │ AST
+       ▼
+┌─────────────┐
+│ Typechecker │  typechecker.rs
+└─────────────┘
+       │ AST
+       ▼
+   ┌───┴───┐
+   │       │
+   ▼       ▼
+┌──────┐ ┌──────────┐
+│  VM  │ │ Cranelift│
+│Backend │ │ Backend  │
+└──────┘ └──────────┘
+   │           │
+   ▼           ▼
+Bytecode    Native
+Execution   Binary
+```
+
+### Two Backends
+
+1. **Bytecode VM** (`compiler.rs` → `typed_vm.rs`)
+   - Compiles Frost source to custom bytecode
+   - Executed by an interpreter written in Rust
+   - Used for: REPL, rapid iteration, debugging
+
+2. **Native Codegen** (`codegen.rs` via Cranelift)
+   - Compiles Frost source to machine code
+   - Produces `.o` object files or linked executables
+   - Used for: production builds, performance-critical code
+
+### Why Both?
+
+| Aspect | Bytecode VM | Native |
+|--------|-------------|--------|
+| Compile time | ~instant | slower |
+| Runtime speed | interpreted | fast |
+| Debugging | easier | harder |
+| Hot reload | possible | requires recompile |
+| Distribution | needs runtime | standalone binary |
+
+This is similar to how Java has interpreter + JIT, or how Lua has bytecode VM + LuaJIT.
+
+For game development, you'd use the VM during development for fast iteration, then compile native for shipping.
 
 ## Running Tests
 

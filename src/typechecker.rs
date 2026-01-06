@@ -1,5 +1,5 @@
 use crate::{
-    types::Type, Block, Expression, Literal, Operator, Parameter, Statement,
+    types::Type, Block, Expression, Literal, Operator, Parameter, Pattern, Statement,
     StructField,
 };
 use anyhow::{bail, Result};
@@ -82,6 +82,7 @@ impl TypeEnv {
 
 pub struct TypeChecker {
     env: TypeEnv,
+    in_unsafe: bool,
 }
 
 impl TypeChecker {
@@ -227,7 +228,21 @@ impl TypeChecker {
                 return_type: Type::Bool,
             },
         );
-        Self { env }
+        env.define_function(
+            "char_at",
+            FunctionSig {
+                params: vec![Type::Str, Type::I64],
+                return_type: Type::I64,
+            },
+        );
+        env.define_function(
+            "assert",
+            FunctionSig {
+                params: vec![Type::Bool],
+                return_type: Type::Void,
+            },
+        );
+        Self { env, in_unsafe: false }
     }
 
     pub fn check_program(&mut self, statements: &[Statement]) -> Result<()> {
@@ -324,6 +339,7 @@ impl TypeChecker {
                 Ok(None)
             }
             Statement::Enum(name, variants) => {
+                self.env.define(name, Type::Enum(name.clone()));
                 for variant in variants {
                     let full_name = format!("{}::{}", name, variant.name);
                     self.env.define(&full_name, Type::Enum(name.clone()));
@@ -347,6 +363,7 @@ impl TypeChecker {
             }
             Statement::Import(_path) => Ok(None),
             Statement::InterpolatedConstant(_, _) => Ok(None),
+            Statement::Extern { .. } => Ok(None),
         }
     }
 
@@ -483,9 +500,16 @@ impl TypeChecker {
             Expression::Sizeof(_) => Ok(Type::I64),
             Expression::Range(start, _end) => self.infer_expression(start),
             Expression::Switch(scrutinee, cases) => {
-                self.infer_expression(scrutinee)?;
+                let scrutinee_type = self.infer_expression(scrutinee)?;
                 let mut result_type = Type::Unknown;
                 for case in cases {
+                    if let Pattern::EnumVariant { bindings, .. } = &case.pattern {
+                        for (field_name, _) in bindings {
+                            self.env.define(field_name, Type::Unknown);
+                        }
+                    } else if let Pattern::Identifier(name) = &case.pattern {
+                        self.env.define(name, scrutinee_type.clone());
+                    }
                     let case_type = self.check_block(&case.body)?;
                     if result_type == Type::Unknown {
                         result_type = case_type;
@@ -510,6 +534,13 @@ impl TypeChecker {
             Expression::TypeValue(typ) => Ok(typ.clone()),
             Expression::Typename(_) => Ok(Type::Str),
             Expression::InterpolatedIdent(_) => Ok(Type::Unknown),
+            Expression::Unsafe(body) => {
+                let was_unsafe = self.in_unsafe;
+                self.in_unsafe = true;
+                let result = self.check_block(body);
+                self.in_unsafe = was_unsafe;
+                result
+            }
         }
     }
 
@@ -527,6 +558,7 @@ impl TypeChecker {
                 }
             }
             Literal::HashMap(_) => Ok(Type::Unknown),
+            Literal::Boolean(_) => Ok(Type::Bool),
         }
     }
 
@@ -616,7 +648,7 @@ impl TypeChecker {
         std::mem::swap(&mut self.env, &mut child_env);
 
         if let Some(declared_return) = return_type {
-            if declared_return.is_reference() {
+            if !self.in_unsafe && declared_return.is_reference() {
                 bail!("functions cannot return references - return an owned value instead");
             }
             if !self.types_compatible(declared_return, &body_type) {
@@ -633,7 +665,7 @@ impl TypeChecker {
             .map(|p| p.type_annotation.clone().unwrap_or(Type::Unknown))
             .collect();
         let ret = return_type.clone().unwrap_or(body_type.clone());
-        if ret.is_reference() {
+        if !self.in_unsafe && ret.is_reference() {
             bail!("functions cannot return references - return an owned value instead");
         }
         Ok(Type::Proc(param_types, Box::new(ret)))
@@ -697,7 +729,15 @@ impl TypeChecker {
         if *expected == Type::Unknown || *actual == Type::Unknown {
             return true;
         }
-        expected == actual
+        if expected == actual {
+            return true;
+        }
+        match (expected, actual) {
+            (Type::Struct(name1), Type::Enum(name2)) | (Type::Enum(name1), Type::Struct(name2)) => {
+                name1 == name2
+            }
+            _ => false,
+        }
     }
 
     fn is_numeric(&self, typ: &Type) -> bool {
@@ -910,5 +950,143 @@ mod tests {
     fn check_can_accept_reference_param() {
         assert!(check("f :: proc(x: &i64) -> i64 { x^ };").is_ok());
         assert!(check("f :: proc(x: &mut i64) { x^ = 5; };").is_ok());
+    }
+
+    #[test]
+    fn check_enum_declaration() {
+        assert!(check("Color :: enum { Red, Green, Blue }").is_ok());
+    }
+
+    #[test]
+    fn check_enum_data_variants() {
+        assert!(check("Result :: enum { Ok { value: i64 }, Err { code: i64, msg: str } }").is_ok());
+    }
+
+    #[test]
+    fn check_enum_mixed_variants() {
+        assert!(check("Option :: enum { None, Some { value: i64 } }").is_ok());
+    }
+
+    #[test]
+    fn check_enum_variant_init_unit() {
+        assert!(check(
+            r#"
+            Color :: enum { Red, Green, Blue }
+            c := Color::Red
+        "#
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn check_enum_variant_init_data() {
+        assert!(check(
+            r#"
+            Result :: enum { Ok { value: i64 }, Err { code: i64 } }
+            r := Result::Ok { value = 42 }
+        "#
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn check_enum_with_type_annotation() {
+        assert!(check(
+            r#"
+            Color :: enum { Red, Green, Blue }
+            c : Color = Color::Green
+        "#
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn check_switch_on_enum() {
+        assert!(check(
+            r#"
+            Color :: enum { Red, Green, Blue }
+            c := Color::Red
+            x := switch c {
+                case .Red: 0
+                case .Green: 1
+                case .Blue: 2
+            }
+        "#
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn check_switch_with_bindings() {
+        assert!(check(
+            r#"
+            Option :: enum { None, Some { value: i64 } }
+            opt := Option::Some { value = 42 }
+            x := switch opt {
+                case .Some { value }: value
+                case .None: 0
+            }
+        "#
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn check_switch_integer_patterns() {
+        assert!(check(
+            r#"
+            x := 5
+            result := switch x {
+                case 1: "one"
+                case 2: "two"
+                case _: "other"
+            }
+        "#
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn check_switch_bool_patterns() {
+        assert!(check(
+            r#"
+            flag := true
+            x := switch flag {
+                case true: 1
+                case false: 0
+            }
+        "#
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn check_enum_in_function_return() {
+        assert!(check(
+            r#"
+            Color :: enum { Red, Green, Blue }
+            get_color :: proc() -> Color {
+                Color::Red
+            }
+        "#
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn check_enum_in_function_param() {
+        assert!(check(
+            r#"
+            Color :: enum { Red, Green, Blue }
+            process :: proc(c: Color) -> i64 {
+                switch c {
+                    case .Red: 0
+                    case .Green: 1
+                    case .Blue: 2
+                }
+            }
+        "#
+        )
+        .is_ok());
     }
 }

@@ -1,0 +1,102 @@
+// Complete ECS Example with Movement System
+// Demonstrates: comptime struct fields, mutable array params, array index assignment
+
+// Component definitions
+Position :: struct {
+    x: f64,
+    y: f64,
+}
+
+Velocity :: struct {
+    dx: f64,
+    dy: f64,
+}
+
+// Generate component bitmasks
+comptime for index, T in [Position, Velocity] {
+    COMPONENT_#T :: 1 << index
+}
+
+// Component accessors generated at comptime
+comptime for T in [Position, Velocity] {
+    has_#T :: proc(mask: i64) -> bool {
+        (mask & COMPONENT_#T) != 0
+    }
+}
+
+// Movement system - updates positions based on velocities
+movement_system :: proc(mut masks: []i64, mut positions: []Position, velocities: []Velocity, count: i64) -> void {
+    for entity in 0..count {
+        mask := masks[entity]
+        has_pos := (mask & COMPONENT_Position) != 0
+        has_vel := (mask & COMPONENT_Velocity) != 0
+        if (has_pos && has_vel) {
+            pos := positions[entity]
+            vel := velocities[entity]
+            positions[entity] = Position { x = pos.x + vel.dx, y = pos.y + vel.dy }
+        }
+    }
+}
+
+print("=== ECS Movement System Demo ===")
+print("")
+
+// Entity component masks: Entity 0 and 1 have Position+Velocity, Entity 2 has only Position
+mut masks := [
+    COMPONENT_Position | COMPONENT_Velocity,
+    COMPONENT_Position | COMPONENT_Velocity,
+    COMPONENT_Position
+]
+
+// Positions for each entity
+mut positions := [
+    Position { x = 10.0, y = 20.0 },
+    Position { x = 50.0, y = 50.0 },
+    Position { x = 100.0, y = 100.0 }
+]
+
+// Velocities for each entity
+velocities := [
+    Velocity { dx = 1.5, dy = 0.5 },
+    Velocity { dx = -2.0, dy = 1.0 },
+    Velocity { dx = 0.0, dy = 0.0 }
+]
+
+print("Initial positions:")
+for entity in 0..3 {
+    if (has_Position(masks[entity])) {
+        pos := positions[entity]
+        print("Entity")
+        print(entity)
+        print("x:")
+        print(pos.x)
+        print("y:")
+        print(pos.y)
+        print("")
+    }
+}
+
+print("Running movement system once...")
+movement_system(masks, positions, velocities, 3)
+
+print("")
+print("Final positions (after 1 frame):")
+for entity in 0..3 {
+    if (has_Position(masks[entity])) {
+        pos := positions[entity]
+        print("Entity")
+        print(entity)
+        print("x:")
+        print(pos.x)
+        print("y:")
+        print(pos.y)
+        print("")
+    }
+}
+
+print("Expected:")
+print("Entity 0: x = 10 + 1.5 = 11.5, y = 20 + 0.5 = 20.5")
+print("Entity 1: x = 50 + (-2) = 48, y = 50 + 1 = 51")
+print("Entity 2: x = 100 (no velocity component)")
+print("")
+print("=== ECS Movement System Demo Complete ===")

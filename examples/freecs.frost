@@ -1,0 +1,129 @@
+// freecs.frost - A compile-time Entity Component System for Frost
+// Usage: Define your components, then use the macros to generate the World and accessors
+
+// ============================================
+// CONFIGURATION
+// ============================================
+
+MAX_ENTITIES :: 1024
+
+// ============================================
+// COMPONENT DEFINITIONS
+// ============================================
+
+Position :: struct {
+    x: f64,
+    y: f64,
+}
+
+Velocity :: struct {
+    dx: f64,
+    dy: f64,
+}
+
+Health :: struct {
+    current: i64,
+    max: i64,
+}
+
+Sprite :: struct {
+    texture_id: i64,
+    layer: i64,
+}
+
+// ============================================
+// COMPILE-TIME CODE GENERATION
+// ============================================
+
+// Generate component bitmasks (1, 2, 4, 8, ...)
+comptime for index, T in [Position, Velocity, Health, Sprite] {
+    COMPONENT_#T :: 1 << index
+}
+
+// The World struct is generated using comptime struct field generation
+World :: struct {
+    next_entity: i64,
+    entity_masks: [i64; 1024],
+    comptime for T in [Position, Velocity, Health, Sprite] {
+        storage_#T: [#T; 1024]
+    }
+}
+
+// Generate component accessors for each type
+comptime for T in [Position, Velocity, Health, Sprite] {
+    // Check if entity has component
+    has_#T :: proc(mask: i64) -> bool {
+        (mask & COMPONENT_#T) != 0
+    }
+}
+
+// ============================================
+// DEMO
+// ============================================
+
+print("=== Frost ECS Demo ===")
+print("")
+
+print("Component bitmasks:")
+print("Position:")
+print(COMPONENT_Position)
+print("Velocity:")
+print(COMPONENT_Velocity)
+print("Health:")
+print(COMPONENT_Health)
+print("Sprite:")
+print(COMPONENT_Sprite)
+print("")
+
+// Create a world with some entities
+default_pos := Position { x = 0.0, y = 0.0 }
+default_vel := Velocity { dx = 0.0, dy = 0.0 }
+default_hp := Health { current = 0, max = 0 }
+default_sprite := Sprite { texture_id = 0, layer = 0 }
+
+// Initialize entity masks (simulating entity creation)
+entity_masks := [
+    COMPONENT_Position | COMPONENT_Velocity | COMPONENT_Health,
+    COMPONENT_Position | COMPONENT_Sprite,
+    COMPONENT_Position | COMPONENT_Velocity,
+    COMPONENT_Health,
+    0
+];
+
+print("Entity component masks:")
+for i in 0..5 {
+    print("Entity")
+    print(i)
+    print("mask:")
+    print(entity_masks[i])
+    print("")
+}
+
+// Query: which entities have Position?
+print("Entities with Position:")
+for i in 0..5 {
+    if (has_Position(entity_masks[i])) {
+        print(i)
+    }
+}
+print("")
+
+// Query: which entities have Position AND Velocity?
+print("Entities with Position AND Velocity:")
+for i in 0..5 {
+    if (has_Position(entity_masks[i]) && has_Velocity(entity_masks[i])) {
+        print(i)
+    }
+}
+print("")
+
+// Query: which entities have Health?
+print("Entities with Health:")
+for i in 0..5 {
+    if (has_Health(entity_masks[i])) {
+        print(i)
+    }
+}
+print("")
+
+print("=== ECS Demo Complete ===")

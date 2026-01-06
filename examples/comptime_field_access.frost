@@ -1,0 +1,38 @@
+Position :: struct {
+    x: f64,
+    y: f64,
+}
+
+Velocity :: struct {
+    dx: f64,
+    dy: f64,
+}
+
+World :: struct {
+    storage_Position: Position,
+    storage_Velocity: Velocity,
+}
+
+comptime for T in [Position, Velocity] {
+    get_#T :: proc(world: World) -> T {
+        world.storage_#T
+    }
+}
+
+world1 := World {
+    storage_Position = Position { x = 10.0, y = 20.0 },
+    storage_Velocity = Velocity { dx = 1.0, dy = 2.0 },
+}
+
+world2 := World {
+    storage_Position = Position { x = 30.0, y = 40.0 },
+    storage_Velocity = Velocity { dx = 5.0, dy = 6.0 },
+}
+
+pos := get_Position(world1)
+print("Position result:")
+print(typename(Position))
+
+vel := get_Velocity(world2)
+print("Velocity result:")
+print(typename(Velocity))
