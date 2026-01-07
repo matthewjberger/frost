@@ -1,0 +1,3514 @@
+// Frost Bootstrap Parser
+// Parser infrastructure and parsing functions
+
+import "lexer.frost"
+import "ast.frost"
+
+// ============================================================================
+// Precedence
+// ============================================================================
+
+Precedence :: enum {
+    Lowest,
+    Range,
+    LogicalOr,
+    LogicalAnd,
+    Equals,
+    LessThanGreaterThan,
+    BitwiseOr,
+    BitwiseAnd,
+    Shift,
+    Sum,
+    Product,
+    Prefix,
+    Call,
+    Index,
+    FieldAccess,
+}
+
+// ============================================================================
+// Parser Infrastructure
+// ============================================================================
+
+Parser :: struct {
+    tokens: []Token,
+    position: i64,
+    expressions: []Expression,
+    statements: []Statement,
+    types: []Type,
+    parameters: []Parameter,
+    struct_fields: []StructField,
+    enum_variants: []EnumVariant,
+    patterns: []Pattern,
+    switch_cases: []SwitchCase
+}
+
+parser_new :: fn(tokens: []Token) -> Parser {
+    mut exprs : []Expression = [];
+    mut stmts : []Statement = [];
+    mut typs : []Type = [];
+    mut params : []Parameter = [];
+    mut fields : []StructField = [];
+    mut variants : []EnumVariant = [];
+    mut pats : []Pattern = [];
+    mut cases : []SwitchCase = [];
+    Parser {
+        tokens = tokens,
+        position = 0,
+        expressions = exprs,
+        statements = stmts,
+        types = typs,
+        parameters = params,
+        struct_fields = fields,
+        enum_variants = variants,
+        patterns = pats,
+        switch_cases = cases
+    }
+}
+
+parser_add_expression :: fn(parser: &mut Parser, expr: Expression) -> i64 {
+    index := len(parser.expressions);
+    parser.expressions = push(parser.expressions, expr);
+    index
+}
+
+parser_add_statement :: fn(parser: &mut Parser, stmt: Statement) -> i64 {
+    index := len(parser.statements);
+    parser.statements = push(parser.statements, stmt);
+    index
+}
+
+parser_add_type :: fn(parser: &mut Parser, typ: Type) -> i64 {
+    index := len(parser.types);
+    parser.types = push(parser.types, typ);
+    index
+}
+
+parser_add_parameter :: fn(parser: &mut Parser, param: Parameter) -> i64 {
+    index := len(parser.parameters);
+    parser.parameters = push(parser.parameters, param);
+    index
+}
+
+parser_add_struct_field :: fn(parser: &mut Parser, field: StructField) -> i64 {
+    index := len(parser.struct_fields);
+    parser.struct_fields = push(parser.struct_fields, field);
+    index
+}
+
+parser_add_enum_variant :: fn(parser: &mut Parser, variant: EnumVariant) -> i64 {
+    index := len(parser.enum_variants);
+    parser.enum_variants = push(parser.enum_variants, variant);
+    index
+}
+
+parser_add_pattern :: fn(parser: &mut Parser, pat: Pattern) -> i64 {
+    index := len(parser.patterns);
+    parser.patterns = push(parser.patterns, pat);
+    index
+}
+
+parser_add_switch_case :: fn(parser: &mut Parser, sc: SwitchCase) -> i64 {
+    index := len(parser.switch_cases);
+    parser.switch_cases = push(parser.switch_cases, sc);
+    index
+}
+
+parser_is_at_end :: fn(parser: &Parser) -> bool {
+    parser.position >= len(parser.tokens)
+}
+
+parser_peek :: fn(parser: &Parser) -> Token {
+    if (parser_is_at_end(parser)) {
+        Token::EndOfFile
+    } else {
+        parser.tokens[parser.position]
+    }
+}
+
+parser_peek_nth :: fn(parser: &Parser, n: i64) -> Token {
+    position := parser.position + n;
+    if (position >= len(parser.tokens)) {
+        Token::EndOfFile
+    } else {
+        parser.tokens[position]
+    }
+}
+
+parser_read_token :: fn(parser: &mut Parser) -> Token {
+    if (parser_is_at_end(parser)) {
+        Token::EndOfFile
+    } else {
+        token := parser.tokens[parser.position];
+        parser.position = parser.position + 1;
+        token
+    }
+}
+
+// ============================================================================
+// Token Helper Functions
+// ============================================================================
+
+token_is_case :: fn(token: Token) -> bool {
+    match token {
+        case .Case: true
+        case _: false
+    }
+}
+
+token_is_right_brace :: fn(token: Token) -> bool {
+    match token {
+        case .RightBrace: true
+        case _: false
+    }
+}
+
+// ============================================================================
+// Precedence Functions
+// ============================================================================
+
+precedence_from_token :: fn(token: Token) -> Precedence {
+    match token {
+        case .Or: Precedence::LogicalOr
+        case .And: Precedence::LogicalAnd
+        case .Pipe: Precedence::BitwiseOr
+        case .Ampersand: Precedence::BitwiseAnd
+        case .ShiftLeft: Precedence::Shift
+        case .ShiftRight: Precedence::Shift
+        case .DotDot: Precedence::Range
+        case .DotDotEqual: Precedence::Range
+        case .Equal: Precedence::Equals
+        case .NotEqual: Precedence::Equals
+        case .LessThan: Precedence::LessThanGreaterThan
+        case .LessThanOrEqual: Precedence::LessThanGreaterThan
+        case .GreaterThan: Precedence::LessThanGreaterThan
+        case .GreaterThanOrEqual: Precedence::LessThanGreaterThan
+        case .Plus: Precedence::Sum
+        case .Minus: Precedence::Sum
+        case .Slash: Precedence::Product
+        case .Asterisk: Precedence::Product
+        case .Percent: Precedence::Product
+        case .LeftParentheses: Precedence::Call
+        case .LeftBracket: Precedence::Index
+        case .Dot: Precedence::FieldAccess
+        case .Caret: Precedence::FieldAccess
+        case .LeftBrace: Precedence::Range
+        case .DoubleColon: Precedence::FieldAccess
+        case _: Precedence::Lowest
+    }
+}
+
+precedence_value :: fn(p: Precedence) -> i64 {
+    match p {
+        case .Lowest: 0
+        case .Range: 1
+        case .LogicalOr: 2
+        case .LogicalAnd: 3
+        case .Equals: 4
+        case .LessThanGreaterThan: 5
+        case .BitwiseOr: 6
+        case .BitwiseAnd: 7
+        case .Shift: 8
+        case .Sum: 9
+        case .Product: 10
+        case .Prefix: 11
+        case .Call: 12
+        case .Index: 13
+        case .FieldAccess: 14
+    }
+}
+
+precedence_less_than :: fn(a: Precedence, b: Precedence) -> bool {
+    precedence_value(a) < precedence_value(b)
+}
+
+// ============================================================================
+// Expression Parsing
+// ============================================================================
+
+// Helper to convert token to operator
+token_to_operator :: fn(token: Token) -> Operator {
+    match token {
+        case .Plus: Operator::Add
+        case .Minus: Operator::Subtract
+        case .Asterisk: Operator::Multiply
+        case .Slash: Operator::Divide
+        case .Percent: Operator::Modulo
+        case .Equal: Operator::Equal
+        case .NotEqual: Operator::NotEqual
+        case .LessThan: Operator::LessThan
+        case .LessThanOrEqual: Operator::LessThanOrEqual
+        case .GreaterThan: Operator::GreaterThan
+        case .GreaterThanOrEqual: Operator::GreaterThanOrEqual
+        case .And: Operator::And
+        case .Or: Operator::Or
+        case .Ampersand: Operator::BitwiseAnd
+        case .Pipe: Operator::BitwiseOr
+        case .ShiftLeft: Operator::ShiftLeft
+        case .ShiftRight: Operator::ShiftRight
+        case .Bang: Operator::Not
+        case _: Operator::Add
+    }
+}
+
+// Check if token is an infix operator
+is_infix_token :: fn(token: Token) -> bool {
+    match token {
+        case .Plus: true
+        case .Minus: true
+        case .Asterisk: true
+        case .Slash: true
+        case .Percent: true
+        case .Equal: true
+        case .NotEqual: true
+        case .LessThan: true
+        case .LessThanOrEqual: true
+        case .GreaterThan: true
+        case .GreaterThanOrEqual: true
+        case .And: true
+        case .Or: true
+        case .Ampersand: true
+        case .Pipe: true
+        case .ShiftLeft: true
+        case .ShiftRight: true
+        case _: false
+    }
+}
+
+// ============================================================================
+// Type Parsing
+// ============================================================================
+
+parse_type_idx :: fn(parser: &mut Parser) -> i64 {
+    tok := parser_peek(parser);
+    mut result := Type::Unknown;
+    match tok {
+        case .TypeI8: {
+            parser_read_token(parser);
+            result = Type::I8;
+        }
+        case .TypeI16: {
+            parser_read_token(parser);
+            result = Type::I16;
+        }
+        case .TypeI32: {
+            parser_read_token(parser);
+            result = Type::I32;
+        }
+        case .TypeI64: {
+            parser_read_token(parser);
+            result = Type::I64;
+        }
+        case .TypeIsize: {
+            parser_read_token(parser);
+            result = Type::Isize;
+        }
+        case .TypeU8: {
+            parser_read_token(parser);
+            result = Type::U8;
+        }
+        case .TypeU16: {
+            parser_read_token(parser);
+            result = Type::U16;
+        }
+        case .TypeU32: {
+            parser_read_token(parser);
+            result = Type::U32;
+        }
+        case .TypeU64: {
+            parser_read_token(parser);
+            result = Type::U64;
+        }
+        case .TypeUsize: {
+            parser_read_token(parser);
+            result = Type::Usize;
+        }
+        case .TypeF32: {
+            parser_read_token(parser);
+            result = Type::F32;
+        }
+        case .TypeF64: {
+            parser_read_token(parser);
+            result = Type::F64;
+        }
+        case .TypeBool: {
+            parser_read_token(parser);
+            result = Type::Bool;
+        }
+        case .TypeStr: {
+            parser_read_token(parser);
+            result = Type::Str;
+        }
+        case .TypeVoid: {
+            parser_read_token(parser);
+            result = Type::Void;
+        }
+        case .Caret: {
+            parser_read_token(parser);
+            inner_type_idx := parse_type_idx(parser);
+            result = Type::Ptr { inner = inner_type_idx };
+        }
+        case .Ampersand: {
+            parser_read_token(parser);
+            type_next_tok := parser_peek(parser);
+            match type_next_tok {
+                case .Mut: {
+                    parser_read_token(parser);
+                    inner_type_idx := parse_type_idx(parser);
+                    result = Type::RefMut { inner = inner_type_idx };
+                }
+                case _: {
+                    inner_type_idx := parse_type_idx(parser);
+                    result = Type::Ref { inner = inner_type_idx };
+                }
+            }
+        }
+        case .Question: {
+            parser_read_token(parser);
+            inner_type_idx := parse_type_idx(parser);
+            result = Type::Optional { inner = inner_type_idx };
+        }
+        case .LeftBracket: {
+            parser_read_token(parser);
+            type_bracket_tok := parser_peek(parser);
+            match type_bracket_tok {
+                case .RightBracket: {
+                    parser_read_token(parser);
+                    elem_type_idx := parse_type_idx(parser);
+                    result = Type::Slice { element = elem_type_idx };
+                }
+                case .Integer { value }: {
+                    type_arr_size := value;
+                    parser_read_token(parser);
+                    parser_read_token(parser);
+                    elem_type_idx := parse_type_idx(parser);
+                    result = Type::Array { element = elem_type_idx, size = type_arr_size };
+                }
+                case _: {
+                    result = Type::Unknown;
+                }
+            }
+        }
+        case .Identifier { name }: {
+            parser_read_token(parser);
+            type_struct_name := name;
+            result = Type::StructType { name = type_struct_name };
+        }
+        case .Dollar: {
+            parser_read_token(parser);
+            type_name_tok := parser_read_token(parser);
+            match type_name_tok {
+                case .Identifier { name }: {
+                    type_param_name := name;
+                    result = Type::TypeParam { name = type_param_name };
+                }
+                case _: {
+                    result = Type::Unknown;
+                }
+            }
+        }
+        case _: {
+            result = Type::Unknown;
+        }
+    }
+    parser_add_type(parser, result)
+}
+
+parse_type :: fn(parser: &mut Parser) -> Type {
+    idx := parse_type_idx(parser);
+    parser.types[idx]
+}
+
+// ============================================================================
+// Pattern Parsing
+// ============================================================================
+
+parse_pattern_idx :: fn(parser: &mut Parser) -> i64 {
+    tok := parser_peek(parser);
+    mut result := Pattern::Wildcard;
+
+    match tok {
+        case .Underscore: {
+            parser_read_token(parser);
+            result = Pattern::Wildcard;
+        }
+        case .Integer { value }: {
+            parser_read_token(parser);
+            int_val := value;
+            int_literal := Literal::Integer { value = int_val };
+            result = Pattern::LiteralPattern { value = int_literal };
+        }
+        case .StringLiteral { value }: {
+            parser_read_token(parser);
+            str_val := value;
+            str_literal := Literal::String { value = str_val };
+            result = Pattern::LiteralPattern { value = str_literal };
+        }
+        case .True: {
+            parser_read_token(parser);
+            true_literal := Literal::Boolean { value = true };
+            result = Pattern::LiteralPattern { value = true_literal };
+        }
+        case .False: {
+            parser_read_token(parser);
+            false_literal := Literal::Boolean { value = false };
+            result = Pattern::LiteralPattern { value = false_literal };
+        }
+        case .Dot: {
+            parser_read_token(parser);
+            dot_variant_tok := parser_read_token(parser);
+            match dot_variant_tok {
+                case .Identifier { name }: {
+                    dot_variant_name := name;
+                    dot_next_tok := parser_peek(parser);
+                    match dot_next_tok {
+                        case .LeftBrace: {
+                            parser_read_token(parser);
+                            dot_binding_start := len(parser.patterns);
+                            mut dot_binding_count : i64 = 0;
+                            dot_brace_check := parser_peek(parser);
+                            match dot_brace_check {
+                                case .RightBrace: {
+                                    parser_read_token(parser);
+                                }
+                                case _: {
+                                    mut dot_parsing_bindings := true;
+                                    while (dot_parsing_bindings) {
+                                        dot_binding_name_tok := parser_read_token(parser);
+                                        dot_binding_count = dot_binding_count + 1;
+                                        dot_next := parser_peek(parser);
+                                        match dot_next {
+                                            case .Comma: {
+                                                parser_read_token(parser);
+                                            }
+                                            case .RightBrace: {
+                                                parser_read_token(parser);
+                                                dot_parsing_bindings = false;
+                                            }
+                                            case _: {
+                                                dot_parsing_bindings = false;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            result = Pattern::EnumVariantPattern { enum_name = "", variant_name = dot_variant_name, binding_start = dot_binding_start, binding_count = dot_binding_count, has_enum_name = false };
+                        }
+                        case _: {
+                            result = Pattern::EnumVariantPattern { enum_name = "", variant_name = dot_variant_name, binding_start = 0, binding_count = 0, has_enum_name = false };
+                        }
+                    }
+                }
+                case _: {}
+            }
+        }
+        case .Identifier { name }: {
+            parser_read_token(parser);
+            ident_name := name;
+            ident_next_tok := parser_peek(parser);
+            match ident_next_tok {
+                case .DoubleColon: {
+                    parser_read_token(parser);
+                    ident_variant_tok := parser_read_token(parser);
+                    match ident_variant_tok {
+                        case .Identifier { name }: {
+                            ident_variant_name := name;
+                            ident_brace_check := parser_peek(parser);
+                            match ident_brace_check {
+                                case .LeftBrace: {
+                                    parser_read_token(parser);
+                                    ident_binding_start := len(parser.patterns);
+                                    mut ident_binding_count : i64 = 0;
+                                    ident_close_check := parser_peek(parser);
+                                    match ident_close_check {
+                                        case .RightBrace: {
+                                            parser_read_token(parser);
+                                        }
+                                        case _: {
+                                            mut ident_parsing_bindings := true;
+                                            while (ident_parsing_bindings) {
+                                                ident_binding_tok := parser_read_token(parser);
+                                                ident_binding_count = ident_binding_count + 1;
+                                                ident_next := parser_peek(parser);
+                                                match ident_next {
+                                                    case .Comma: {
+                                                        parser_read_token(parser);
+                                                    }
+                                                    case .RightBrace: {
+                                                        parser_read_token(parser);
+                                                        ident_parsing_bindings = false;
+                                                    }
+                                                    case _: {
+                                                        ident_parsing_bindings = false;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    result = Pattern::EnumVariantPattern { enum_name = ident_name, variant_name = ident_variant_name, binding_start = ident_binding_start, binding_count = ident_binding_count, has_enum_name = true };
+                                }
+                                case _: {
+                                    result = Pattern::EnumVariantPattern { enum_name = ident_name, variant_name = ident_variant_name, binding_start = 0, binding_count = 0, has_enum_name = true };
+                                }
+                            }
+                        }
+                        case _: {
+                            result = Pattern::IdentifierPattern { name = ident_name };
+                        }
+                    }
+                }
+                case _: {
+                    result = Pattern::IdentifierPattern { name = ident_name };
+                }
+            }
+        }
+        case _: {}
+    }
+
+    parser_add_pattern(parser, result)
+}
+
+// ============================================================================
+// Expression Parsing
+// ============================================================================
+
+parse_primary_expression_idx :: fn(parser: &mut Parser) -> i64 {
+    tok := parser_peek(parser);
+
+    mut result := Expression::Identifier { name = "" };
+    mut handled := false;
+
+    match tok {
+        case .Minus: {
+            parser_read_token(parser);
+            inner_idx := parse_primary_expression_idx(parser);
+            negate_op := Operator::Negate;
+            result = Expression::Prefix { op = negate_op, expr = inner_idx };
+            handled = true;
+        }
+        case .Integer { value }: {
+            parser_read_token(parser);
+            int_val := value;
+            int_lit := Literal::Integer { value = int_val };
+            result = Expression::LiteralExpr { value = int_lit };
+            handled = true;
+        }
+        case .Float { text }: {
+            parser_read_token(parser);
+            float_text := text;
+            float_lit := Literal::Float { text = float_text };
+            result = Expression::LiteralExpr { value = float_lit };
+            handled = true;
+        }
+        case .Float32 { text }: {
+            parser_read_token(parser);
+            float32_text := text;
+            float32_lit := Literal::Float32 { text = float32_text };
+            result = Expression::LiteralExpr { value = float32_lit };
+            handled = true;
+        }
+        case .StringLiteral { value }: {
+            parser_read_token(parser);
+            string_val := value;
+            string_lit := Literal::String { value = string_val };
+            result = Expression::LiteralExpr { value = string_lit };
+            handled = true;
+        }
+        case .True: {
+            parser_read_token(parser);
+            result = Expression::Boolean { value = true };
+            handled = true;
+        }
+        case .False: {
+            parser_read_token(parser);
+            result = Expression::Boolean { value = false };
+            handled = true;
+        }
+        case .Identifier { name }: {
+            parser_read_token(parser);
+            ident_name := name;
+            ident_next := parser_peek(parser);
+            match ident_next {
+                case .LeftBrace: {
+                    brace_lookahead := parser_peek_nth(parser, 1);
+                    if (token_is_case(brace_lookahead)) {
+                        result = Expression::Identifier { name = ident_name };
+                    } else {
+                        parser_read_token(parser);
+                        field_start_idx := len(parser.expressions);
+                        mut init_field_count : i64 = 0;
+                        brace_check := parser_peek(parser);
+                        match brace_check {
+                            case .RightBrace: {
+                                parser_read_token(parser);
+                            }
+                            case _: {
+                                mut parsing_fields := true;
+                                while (parsing_fields) {
+                                    field_name_tok := parser_read_token(parser);
+                                    assign_tok := parser_read_token(parser);
+                                    field_value_idx := parse_primary_expression_idx(parser);
+                                    init_field_count = init_field_count + 1;
+                                    field_next := parser_peek(parser);
+                                    match field_next {
+                                        case .Comma: {
+                                            parser_read_token(parser);
+                                        }
+                                        case .RightBrace: {
+                                            parser_read_token(parser);
+                                            parsing_fields = false;
+                                        }
+                                        case _: {
+                                            parsing_fields = false;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        result = Expression::StructInit { name = ident_name, field_start = field_start_idx, field_count = init_field_count };
+                    }
+                }
+                case .DoubleColon: {
+                    parser_read_token(parser);
+                    variant_tok := parser_read_token(parser);
+                    match variant_tok {
+                        case .Identifier { name }: {
+                            variant_name := name;
+                            variant_next := parser_peek(parser);
+                            match variant_next {
+                                case .LeftBrace: {
+                                    parser_read_token(parser);
+                                    variant_field_start := len(parser.expressions);
+                                    mut variant_field_count : i64 = 0;
+                                    variant_brace_check := parser_peek(parser);
+                                    match variant_brace_check {
+                                        case .RightBrace: {
+                                            parser_read_token(parser);
+                                        }
+                                        case _: {
+                                            mut parsing_variant_fields := true;
+                                            while (parsing_variant_fields) {
+                                                vf_name_tok := parser_read_token(parser);
+                                                vf_assign := parser_read_token(parser);
+                                                vf_value_idx := parse_primary_expression_idx(parser);
+                                                variant_field_count = variant_field_count + 1;
+                                                vf_next := parser_peek(parser);
+                                                match vf_next {
+                                                    case .Comma: {
+                                                        parser_read_token(parser);
+                                                    }
+                                                    case .RightBrace: {
+                                                        parser_read_token(parser);
+                                                        parsing_variant_fields = false;
+                                                    }
+                                                    case _: {
+                                                        parsing_variant_fields = false;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    result = Expression::EnumVariantInit { enum_name = ident_name, variant_name = variant_name, field_start = variant_field_start, field_count = variant_field_count };
+                                }
+                                case _: {
+                                    result = Expression::EnumVariantInit { enum_name = ident_name, variant_name = variant_name, field_start = 0, field_count = 0 };
+                                }
+                            }
+                        }
+                        case _: {
+                            result = Expression::Identifier { name = ident_name };
+                        }
+                    }
+                }
+                case _: {
+                    result = Expression::Identifier { name = ident_name };
+                }
+            }
+            handled = true;
+        }
+        case .Bang: {
+            parser_read_token(parser);
+            inner_idx := parse_primary_expression_idx(parser);
+            not_op := Operator::Not;
+            result = Expression::Prefix { op = not_op, expr = inner_idx };
+            handled = true;
+        }
+        case .Ampersand: {
+            parser_read_token(parser);
+            next := parser_peek(parser);
+            match next {
+                case .Mut: {
+                    parser_read_token(parser);
+                    inner_idx := parse_primary_expression_idx(parser);
+                    result = Expression::BorrowMut { expr = inner_idx };
+                }
+                case _: {
+                    inner_idx := parse_primary_expression_idx(parser);
+                    result = Expression::Borrow { expr = inner_idx };
+                }
+            }
+            handled = true;
+        }
+        case .Caret: {
+            parser_read_token(parser);
+            inner_idx := parse_primary_expression_idx(parser);
+            result = Expression::AddressOf { expr = inner_idx };
+            handled = true;
+        }
+        case .Context: {
+            parser_read_token(parser);
+            result = Expression::ContextAccess;
+            handled = true;
+        }
+        case .LeftParentheses: {
+            parser_read_token(parser);
+            inner_idx := parse_primary_expression_idx(parser);
+            paren_close := parser_peek(parser);
+            match paren_close {
+                case .RightParentheses: {
+                    parser_read_token(parser);
+                }
+                case _: {}
+            }
+            return inner_idx;
+        }
+        case .LeftBracket: {
+            parser_read_token(parser);
+            elem_start_idx := len(parser.expressions);
+            mut element_count : i64 = 0;
+            bracket_next := parser_peek(parser);
+            match bracket_next {
+                case .RightBracket: {
+                    parser_read_token(parser);
+                }
+                case _: {
+                    mut parsing_elements := true;
+                    while (parsing_elements) {
+                        elem_idx := parse_primary_expression_idx(parser);
+                        element_count = element_count + 1;
+                        elem_next := parser_peek(parser);
+                        match elem_next {
+                            case .Comma: {
+                                parser_read_token(parser);
+                            }
+                            case .RightBracket: {
+                                parser_read_token(parser);
+                                parsing_elements = false;
+                            }
+                            case _: {
+                                parsing_elements = false;
+                            }
+                        }
+                    }
+                }
+            }
+            result = Expression::Tuple { elem_start = elem_start_idx, elem_count = element_count };
+            handled = true;
+        }
+        case .If: {
+            parser_read_token(parser);
+            condition_idx := parse_primary_expression_idx(parser);
+            left_brace := parser_read_token(parser);
+            consequence_idx := parse_primary_expression_idx(parser);
+            right_brace := parser_read_token(parser);
+            else_tok := parser_peek(parser);
+            match else_tok {
+                case .Else: {
+                    parser_read_token(parser);
+                    else_brace := parser_read_token(parser);
+                    alternative_idx := parse_primary_expression_idx(parser);
+                    close_brace := parser_read_token(parser);
+                    result = Expression::If { condition = condition_idx, consequence = consequence_idx, alternative = alternative_idx, has_alternative = true };
+                }
+                case _: {
+                    result = Expression::If { condition = condition_idx, consequence = consequence_idx, alternative = -1, has_alternative = false };
+                }
+            }
+            handled = true;
+        }
+        case .Match: {
+            parser_read_token(parser);
+            scrutinee_idx := parse_primary_expression_idx(parser);
+            match_left_brace := parser_read_token(parser);
+            case_start_idx := len(parser.switch_cases);
+            mut match_case_count : i64 = 0;
+            mut parsing_match_cases := true;
+            while (parsing_match_cases) {
+                match_check_brace := parser_peek(parser);
+                if (token_is_right_brace(match_check_brace)) {
+                    parser_read_token(parser);
+                    parsing_match_cases = false;
+                } else {
+                    match_check_case := parser_peek(parser);
+                    if (token_is_case(match_check_case)) {
+                        parser_read_token(parser);
+                        pattern_idx := parse_pattern_idx(parser);
+                        match_colon := parser_read_token(parser);
+                        body_idx := parse_primary_expression_idx(parser);
+                        sc := SwitchCase { pattern_id = pattern_idx, body = body_idx };
+                        parser_add_switch_case(parser, sc);
+                        match_case_count = match_case_count + 1;
+                        match_next := parser_peek(parser);
+                        match match_next {
+                            case .Comma: {
+                                parser_read_token(parser);
+                            }
+                            case _: {}
+                        }
+                    } else {
+                        parsing_match_cases = false;
+                    }
+                }
+            }
+            result = Expression::Switch { scrutinee = scrutinee_idx, case_start = case_start_idx, case_count = match_case_count };
+            handled = true;
+        }
+        case .LeftBrace: {
+            parser_read_token(parser);
+            block_idx := parse_primary_expression_idx(parser);
+            close_brace := parser_read_token(parser);
+            return block_idx;
+        }
+        case .Sizeof: {
+            parser_read_token(parser);
+            sizeof_left_paren := parser_read_token(parser);
+            sizeof_type_idx := parse_type_idx(parser);
+            sizeof_right_paren := parser_read_token(parser);
+            result = Expression::Sizeof { type_id = sizeof_type_idx };
+            handled = true;
+        }
+        case .Unsafe: {
+            parser_read_token(parser);
+            unsafe_left_brace := parser_read_token(parser);
+            unsafe_body_idx := parse_primary_expression_idx(parser);
+            unsafe_right_brace := parser_read_token(parser);
+            result = Expression::Unsafe { body = unsafe_body_idx };
+            handled = true;
+        }
+        case .Comptime: {
+            parser_read_token(parser);
+            comptime_left_brace := parser_read_token(parser);
+            comptime_body_idx := parse_primary_expression_idx(parser);
+            comptime_right_brace := parser_read_token(parser);
+            result = Expression::ComptimeBlock { body = comptime_body_idx };
+            handled = true;
+        }
+        case .Typename: {
+            parser_read_token(parser);
+            typename_left_paren := parser_read_token(parser);
+            typename_type_idx := parse_type_idx(parser);
+            typename_right_paren := parser_read_token(parser);
+            result = Expression::Typename { type_id = typename_type_idx };
+            handled = true;
+        }
+        case _: {}
+    }
+
+    parser_add_expression(parser, result)
+}
+
+parse_primary_expression :: fn(parser: &mut Parser) -> Expression {
+    idx := parse_primary_expression_idx(parser);
+    parser.expressions[idx]
+}
+
+parse_expression_idx :: fn(parser: &mut Parser, precedence: Precedence) -> i64 {
+    mut left_idx := parse_primary_expression_idx(parser);
+
+    mut should_continue := true;
+    while (should_continue) {
+        tok := parser_peek(parser);
+        current_prec := precedence_from_token(tok);
+
+        if (precedence_less_than(precedence, current_prec) == false) {
+            should_continue = false;
+        } else {
+            peek_tok := parser_peek(parser);
+
+            match peek_tok {
+                case .Plus: {
+                    parser_read_token(parser);
+                    right_idx := parse_expression_idx(parser, Precedence::Sum);
+                    add_op := Operator::Add;
+                    add_infix := Expression::Infix { left = left_idx, op = add_op, right = right_idx };
+                    left_idx = parser_add_expression(parser, add_infix);
+                }
+                case .Minus: {
+                    parser_read_token(parser);
+                    right_idx := parse_expression_idx(parser, Precedence::Sum);
+                    sub_op := Operator::Subtract;
+                    sub_infix := Expression::Infix { left = left_idx, op = sub_op, right = right_idx };
+                    left_idx = parser_add_expression(parser, sub_infix);
+                }
+                case .Asterisk: {
+                    parser_read_token(parser);
+                    right_idx := parse_expression_idx(parser, Precedence::Product);
+                    mul_op := Operator::Multiply;
+                    mul_infix := Expression::Infix { left = left_idx, op = mul_op, right = right_idx };
+                    left_idx = parser_add_expression(parser, mul_infix);
+                }
+                case .Slash: {
+                    parser_read_token(parser);
+                    right_idx := parse_expression_idx(parser, Precedence::Product);
+                    div_op := Operator::Divide;
+                    div_infix := Expression::Infix { left = left_idx, op = div_op, right = right_idx };
+                    left_idx = parser_add_expression(parser, div_infix);
+                }
+                case .Percent: {
+                    parser_read_token(parser);
+                    right_idx := parse_expression_idx(parser, Precedence::Product);
+                    mod_op := Operator::Modulo;
+                    mod_infix := Expression::Infix { left = left_idx, op = mod_op, right = right_idx };
+                    left_idx = parser_add_expression(parser, mod_infix);
+                }
+                case .Equal: {
+                    parser_read_token(parser);
+                    right_idx := parse_expression_idx(parser, Precedence::Equals);
+                    eq_op := Operator::Equal;
+                    eq_infix := Expression::Infix { left = left_idx, op = eq_op, right = right_idx };
+                    left_idx = parser_add_expression(parser, eq_infix);
+                }
+                case .NotEqual: {
+                    parser_read_token(parser);
+                    right_idx := parse_expression_idx(parser, Precedence::Equals);
+                    neq_op := Operator::NotEqual;
+                    neq_infix := Expression::Infix { left = left_idx, op = neq_op, right = right_idx };
+                    left_idx = parser_add_expression(parser, neq_infix);
+                }
+                case .LessThan: {
+                    parser_read_token(parser);
+                    right_idx := parse_expression_idx(parser, Precedence::LessThanGreaterThan);
+                    lt_op := Operator::LessThan;
+                    lt_infix := Expression::Infix { left = left_idx, op = lt_op, right = right_idx };
+                    left_idx = parser_add_expression(parser, lt_infix);
+                }
+                case .LessThanOrEqual: {
+                    parser_read_token(parser);
+                    right_idx := parse_expression_idx(parser, Precedence::LessThanGreaterThan);
+                    lte_op := Operator::LessThanOrEqual;
+                    lte_infix := Expression::Infix { left = left_idx, op = lte_op, right = right_idx };
+                    left_idx = parser_add_expression(parser, lte_infix);
+                }
+                case .GreaterThan: {
+                    parser_read_token(parser);
+                    right_idx := parse_expression_idx(parser, Precedence::LessThanGreaterThan);
+                    gt_op := Operator::GreaterThan;
+                    gt_infix := Expression::Infix { left = left_idx, op = gt_op, right = right_idx };
+                    left_idx = parser_add_expression(parser, gt_infix);
+                }
+                case .GreaterThanOrEqual: {
+                    parser_read_token(parser);
+                    right_idx := parse_expression_idx(parser, Precedence::LessThanGreaterThan);
+                    gte_op := Operator::GreaterThanOrEqual;
+                    gte_infix := Expression::Infix { left = left_idx, op = gte_op, right = right_idx };
+                    left_idx = parser_add_expression(parser, gte_infix);
+                }
+                case .And: {
+                    parser_read_token(parser);
+                    right_idx := parse_expression_idx(parser, Precedence::LogicalAnd);
+                    and_op := Operator::And;
+                    and_infix := Expression::Infix { left = left_idx, op = and_op, right = right_idx };
+                    left_idx = parser_add_expression(parser, and_infix);
+                }
+                case .Or: {
+                    parser_read_token(parser);
+                    right_idx := parse_expression_idx(parser, Precedence::LogicalOr);
+                    or_op := Operator::Or;
+                    or_infix := Expression::Infix { left = left_idx, op = or_op, right = right_idx };
+                    left_idx = parser_add_expression(parser, or_infix);
+                }
+                case .Ampersand: {
+                    parser_read_token(parser);
+                    right_idx := parse_expression_idx(parser, Precedence::BitwiseAnd);
+                    band_op := Operator::BitwiseAnd;
+                    band_infix := Expression::Infix { left = left_idx, op = band_op, right = right_idx };
+                    left_idx = parser_add_expression(parser, band_infix);
+                }
+                case .Pipe: {
+                    parser_read_token(parser);
+                    right_idx := parse_expression_idx(parser, Precedence::BitwiseOr);
+                    bor_op := Operator::BitwiseOr;
+                    bor_infix := Expression::Infix { left = left_idx, op = bor_op, right = right_idx };
+                    left_idx = parser_add_expression(parser, bor_infix);
+                }
+                case .ShiftLeft: {
+                    parser_read_token(parser);
+                    right_idx := parse_expression_idx(parser, Precedence::Shift);
+                    shl_op := Operator::ShiftLeft;
+                    shl_infix := Expression::Infix { left = left_idx, op = shl_op, right = right_idx };
+                    left_idx = parser_add_expression(parser, shl_infix);
+                }
+                case .ShiftRight: {
+                    parser_read_token(parser);
+                    right_idx := parse_expression_idx(parser, Precedence::Shift);
+                    shr_op := Operator::ShiftRight;
+                    shr_infix := Expression::Infix { left = left_idx, op = shr_op, right = right_idx };
+                    left_idx = parser_add_expression(parser, shr_infix);
+                }
+                case .LeftParentheses: {
+                    parser_read_token(parser);
+                    arg_start_idx := len(parser.expressions);
+                    mut arg_count : i64 = 0;
+                    call_close := parser_peek(parser);
+                    match call_close {
+                        case .RightParentheses: {
+                            parser_read_token(parser);
+                        }
+                        case _: {
+                            mut parsing_args := true;
+                            while (parsing_args) {
+                                arg_idx := parse_expression_idx(parser, Precedence::Lowest);
+                                arg_count = arg_count + 1;
+                                next_tok := parser_peek(parser);
+                                match next_tok {
+                                    case .Comma: {
+                                        parser_read_token(parser);
+                                    }
+                                    case .RightParentheses: {
+                                        parser_read_token(parser);
+                                        parsing_args = false;
+                                    }
+                                    case _: {
+                                        parsing_args = false;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    call_expr := Expression::Call { callee = left_idx, arg_start = arg_start_idx, arg_count = arg_count };
+                    left_idx = parser_add_expression(parser, call_expr);
+                }
+                case .LeftBracket: {
+                    parser_read_token(parser);
+                    index_idx := parse_expression_idx(parser, Precedence::Lowest);
+                    close_bracket := parser_read_token(parser);
+                    index_expr := Expression::Index { expr = left_idx, index = index_idx };
+                    left_idx = parser_add_expression(parser, index_expr);
+                }
+                case .Dot: {
+                    parser_read_token(parser);
+                    field_tok := parser_read_token(parser);
+                    match field_tok {
+                        case .Identifier { name }: {
+                            field_name := name;
+                            field_expr := Expression::FieldAccess { expr = left_idx, field = field_name };
+                            left_idx = parser_add_expression(parser, field_expr);
+                        }
+                        case _: {
+                            should_continue = false;
+                        }
+                    }
+                }
+                case .Caret: {
+                    parser_read_token(parser);
+                    deref_expr := Expression::Dereference { expr = left_idx };
+                    left_idx = parser_add_expression(parser, deref_expr);
+                }
+                case .DotDot: {
+                    parser_read_token(parser);
+                    dotdot_end_idx := parse_expression_idx(parser, Precedence::Range);
+                    dotdot_range_expr := Expression::Range { start = left_idx, end = dotdot_end_idx, inclusive = false };
+                    left_idx = parser_add_expression(parser, dotdot_range_expr);
+                }
+                case .DotDotEqual: {
+                    parser_read_token(parser);
+                    dotdoteq_end_idx := parse_expression_idx(parser, Precedence::Range);
+                    dotdoteq_range_expr := Expression::Range { start = left_idx, end = dotdoteq_end_idx, inclusive = true };
+                    left_idx = parser_add_expression(parser, dotdoteq_range_expr);
+                }
+                case _: {
+                    should_continue = false;
+                }
+            }
+        }
+    }
+
+    left_idx
+}
+
+parse_expression :: fn(parser: &mut Parser, precedence: Precedence) -> Expression {
+    idx := parse_expression_idx(parser, precedence);
+    parser.expressions[idx]
+}
+
+// ============================================================================
+// Statement Parsing
+// ============================================================================
+
+// Parse a let statement: let name [: type] = value
+// or: name := value (shorthand)
+// or: mut name := value
+parse_let_statement :: fn(parser: &mut Parser) -> Statement {
+    tok := parser_peek(parser);
+    match tok {
+        case .Let: {
+            parser_read_token(parser);
+            let_name_tok := parser_read_token(parser);
+            match let_name_tok {
+                case .Identifier { name }: {
+                    let_var_name := name;
+                    let_colon_tok := parser_peek(parser);
+                    match let_colon_tok {
+                        case .Colon: {
+                            parser_read_token(parser);
+                            let_var_type_idx := parse_type_idx(parser);
+                            let_eq_tok := parser_peek(parser);
+                            match let_eq_tok {
+                                case .Assign: {
+                                    parser_read_token(parser);
+                                    let_value_idx := parse_expression_idx(parser, Precedence::Lowest);
+                                    Statement::Let { name = let_var_name, type_id = let_var_type_idx, value = let_value_idx, mutable = false, has_type = true }
+                                }
+                                case _: Statement::Let { name = let_var_name, type_id = let_var_type_idx, value = -1, mutable = false, has_type = true }
+                            }
+                        }
+                        case .Assign: {
+                            parser_read_token(parser);
+                            let_value_idx2 := parse_expression_idx(parser, Precedence::Lowest);
+                            Statement::Let { name = let_var_name, type_id = -1, value = let_value_idx2, mutable = false, has_type = false }
+                        }
+                        case _: Statement::Let { name = let_var_name, type_id = -1, value = -1, mutable = false, has_type = false }
+                    }
+                }
+                case _: Statement::ExpressionStmt { expr = -1 }
+            }
+        }
+        case .Mut: {
+            parser_read_token(parser);
+            mut_name_tok := parser_read_token(parser);
+            match mut_name_tok {
+                case .Identifier { name }: {
+                    mut_var_name := name;
+                    mut_colon_tok := parser_peek(parser);
+                    match mut_colon_tok {
+                        case .ColonAssign: {
+                            parser_read_token(parser);
+                            mut_value_idx := parse_expression_idx(parser, Precedence::Lowest);
+                            Statement::Let { name = mut_var_name, type_id = -1, value = mut_value_idx, mutable = true, has_type = false }
+                        }
+                        case .Colon: {
+                            parser_read_token(parser);
+                            mut_var_type_idx := parse_type_idx(parser);
+                            mut_eq_tok := parser_peek(parser);
+                            match mut_eq_tok {
+                                case .Assign: {
+                                    parser_read_token(parser);
+                                    mut_value_idx2 := parse_expression_idx(parser, Precedence::Lowest);
+                                    Statement::Let { name = mut_var_name, type_id = mut_var_type_idx, value = mut_value_idx2, mutable = true, has_type = true }
+                                }
+                                case _: Statement::Let { name = mut_var_name, type_id = mut_var_type_idx, value = -1, mutable = true, has_type = true }
+                            }
+                        }
+                        case _: Statement::Let { name = mut_var_name, type_id = -1, value = -1, mutable = true, has_type = false }
+                    }
+                }
+                case _: Statement::ExpressionStmt { expr = -1 }
+            }
+        }
+        case _: Statement::ExpressionStmt { expr = -1 }
+    }
+}
+
+// Parse a return statement
+parse_return_statement :: fn(parser: &mut Parser) -> Statement {
+    parser_read_token(parser);
+    tok := parser_peek(parser);
+    match tok {
+        case .Semicolon: Statement::Return { value = -1 }
+        case .RightBrace: Statement::Return { value = -1 }
+        case .EndOfFile: Statement::Return { value = -1 }
+        case _: {
+            value_idx := parse_expression_idx(parser, Precedence::Lowest);
+            Statement::Return { value = value_idx }
+        }
+    }
+}
+
+// Parse an expression statement or assignment
+// If we parse an expression followed by `=`, it's an assignment
+parse_expression_statement :: fn(parser: &mut Parser) -> Statement {
+    lhs_idx := parse_expression_idx(parser, Precedence::Lowest);
+    next_tok := parser_peek(parser);
+    match next_tok {
+        case .Assign: {
+            parser_read_token(parser);
+            rhs_idx := parse_expression_idx(parser, Precedence::Lowest);
+            Statement::Assignment { lhs = lhs_idx, rhs = rhs_idx }
+        }
+        case _: Statement::ExpressionStmt { expr = lhs_idx }
+    }
+}
+
+// Parse a for statement: for i in 0..10 { body }
+parse_for_statement :: fn(parser: &mut Parser) -> Statement {
+    parser_read_token(parser);
+    iter_tok := parser_read_token(parser);
+    match iter_tok {
+        case .Identifier { name }: {
+            iter_name := name;
+            in_tok := parser_read_token(parser);
+            range_idx := parse_expression_idx(parser, Precedence::Lowest);
+            body_idx := parse_expression_idx(parser, Precedence::Lowest);
+            Statement::For { iterator = iter_name, range = range_idx, body = body_idx }
+        }
+        case _: Statement::ExpressionStmt { expr = -1 }
+    }
+}
+
+// Parse a while statement: while condition { body }
+parse_while_statement :: fn(parser: &mut Parser) -> Statement {
+    parser_read_token(parser);
+    cond_idx := parse_expression_idx(parser, Precedence::Lowest);
+    body_idx := parse_expression_idx(parser, Precedence::Lowest);
+    Statement::While { condition = cond_idx, body = body_idx }
+}
+
+// Parse a break statement
+parse_break_statement :: fn(parser: &mut Parser) -> Statement {
+    parser_read_token(parser);
+    Statement::Break
+}
+
+// Parse a continue statement
+parse_continue_statement :: fn(parser: &mut Parser) -> Statement {
+    parser_read_token(parser);
+    Statement::Continue
+}
+
+// Parse a defer statement: defer { body } or defer expr
+parse_defer_statement :: fn(parser: &mut Parser) -> Statement {
+    parser_read_token(parser);
+    body_idx := parse_expression_idx(parser, Precedence::Lowest);
+    Statement::Defer { stmt = body_idx }
+}
+
+// Parse a struct field: name: Type
+parse_struct_field :: fn(parser: &mut Parser) -> StructField {
+    name_tok := parser_read_token(parser);
+    match name_tok {
+        case .Identifier { name }: {
+            field_name := name;
+            colon_tok := parser_read_token(parser);
+            field_type_idx := parse_type_idx(parser);
+            StructField { name = field_name, field_type = field_type_idx }
+        }
+        case _: StructField { name = "", field_type = -1 }
+    }
+}
+
+// Parse a struct definition: Name :: struct { field1: Type1, field2: Type2 }
+parse_struct_def :: fn(parser: &mut Parser, struct_name: str) -> Statement {
+    parser_read_token(parser);
+    left_brace := parser_read_token(parser);
+
+    mut field_count : i64 = 0;
+    mut should_continue := true;
+
+    while (should_continue) {
+        tok := parser_peek(parser);
+        match tok {
+            case .RightBrace: {
+                should_continue = false;
+            }
+            case .Identifier { name }: {
+                field := parse_struct_field(parser);
+                field_count = field_count + 1;
+                comma_or_brace := parser_peek(parser);
+                match comma_or_brace {
+                    case .Comma: {
+                        parser_read_token(parser);
+                    }
+                    case _: {}
+                }
+            }
+            case _: {
+                should_continue = false;
+            }
+        }
+    }
+
+    parser_read_token(parser);
+    Statement::StructDef { name = struct_name, type_param_start = 0, type_param_count = 0, field_start = 0, field_count = field_count }
+}
+
+// Parse an enum variant: Name or Name { field1: Type1, field2: Type2 }
+parse_enum_variant :: fn(parser: &mut Parser) -> EnumVariant {
+    name_tok := parser_read_token(parser);
+    match name_tok {
+        case .Identifier { name }: {
+            variant_name := name;
+            next_tok := parser_peek(parser);
+            match next_tok {
+                case .LeftBrace: {
+                    parser_read_token(parser);
+                    mut variant_field_count : i64 = 0;
+                    mut should_continue := true;
+
+                    while (should_continue) {
+                        field_tok := parser_peek(parser);
+                        match field_tok {
+                            case .RightBrace: {
+                                should_continue = false;
+                            }
+                            case .Identifier { name }: {
+                                field := parse_struct_field(parser);
+                                variant_field_count = variant_field_count + 1;
+                                comma_or_brace := parser_peek(parser);
+                                match comma_or_brace {
+                                    case .Comma: {
+                                        parser_read_token(parser);
+                                    }
+                                    case _: {}
+                                }
+                            }
+                            case _: {
+                                should_continue = false;
+                            }
+                        }
+                    }
+
+                    parser_read_token(parser);
+                    EnumVariant { name = variant_name, field_start = 0, field_count = variant_field_count, has_fields = true }
+                }
+                case _: EnumVariant { name = variant_name, field_start = 0, field_count = 0, has_fields = false }
+            }
+        }
+        case _: EnumVariant { name = "", field_start = 0, field_count = 0, has_fields = false }
+    }
+}
+
+// Parse an enum definition: Name :: enum { Variant1, Variant2 { field: Type } }
+parse_enum_def :: fn(parser: &mut Parser, enum_name: str) -> Statement {
+    parser_read_token(parser);
+    left_brace := parser_read_token(parser);
+
+    mut variant_count : i64 = 0;
+    mut should_continue := true;
+
+    while (should_continue) {
+        tok := parser_peek(parser);
+        match tok {
+            case .RightBrace: {
+                should_continue = false;
+            }
+            case .Identifier { name }: {
+                variant := parse_enum_variant(parser);
+                variant_count = variant_count + 1;
+                comma_or_brace := parser_peek(parser);
+                match comma_or_brace {
+                    case .Comma: {
+                        parser_read_token(parser);
+                    }
+                    case _: {}
+                }
+            }
+            case _: {
+                should_continue = false;
+            }
+        }
+    }
+
+    parser_read_token(parser);
+    Statement::EnumDef { name = enum_name, variant_start = 0, variant_count = variant_count }
+}
+
+// Parse a function definition: name :: fn(params) -> Type { body }
+parse_function_def :: fn(parser: &mut Parser, func_name: str) -> Statement {
+    parser_read_token(parser);
+    left_paren := parser_read_token(parser);
+    param_start_idx := len(parser.parameters);
+    mut param_count : i64 = 0;
+
+    paren_check := parser_peek(parser);
+    match paren_check {
+        case .RightParentheses: {
+            parser_read_token(parser);
+        }
+        case _: {
+            mut parsing_params := true;
+            while (parsing_params) {
+                param_name_tok := parser_read_token(parser);
+                match param_name_tok {
+                    case .Identifier { name }: {
+                        param_name := name;
+                        colon := parser_read_token(parser);
+                        param_type_idx := parse_type_idx(parser);
+                        param := Parameter { name = param_name, type_id = param_type_idx, has_type = true, mutable = false };
+                        parser_add_parameter(parser, param);
+                        param_count = param_count + 1;
+                    }
+                    case _: {}
+                }
+                param_next := parser_peek(parser);
+                match param_next {
+                    case .Comma: {
+                        parser_read_token(parser);
+                    }
+                    case .RightParentheses: {
+                        parser_read_token(parser);
+                        parsing_params = false;
+                    }
+                    case _: {
+                        parsing_params = false;
+                    }
+                }
+            }
+        }
+    }
+
+    mut return_type_idx : i64 = -1;
+    arrow_check := parser_peek(parser);
+    match arrow_check {
+        case .Arrow: {
+            parser_read_token(parser);
+            return_type_idx = parse_type_idx(parser);
+        }
+        case _: {}
+    }
+
+    left_brace := parser_read_token(parser);
+    body_idx := parse_expression_idx(parser, Precedence::Lowest);
+    right_brace := parser_read_token(parser);
+
+    func_expr := Expression::Function { param_start = param_start_idx, param_count = param_count, return_type = return_type_idx, body = body_idx };
+    func_expr_idx := parser_add_expression(parser, func_expr);
+    Statement::Constant { name = func_name, value = func_expr_idx }
+}
+
+// Parse a constant definition: name :: value
+parse_constant_def :: fn(parser: &mut Parser, const_name: str) -> Statement {
+    value_idx := parse_expression_idx(parser, Precedence::Lowest);
+    Statement::Constant { name = const_name, value = value_idx }
+}
+
+// Parse an import statement: import "path"
+parse_import_statement :: fn(parser: &mut Parser) -> Statement {
+    parser_read_token(parser);
+    path_tok := parser_read_token(parser);
+    match path_tok {
+        case .StringLiteral { value }: {
+            import_path := value;
+            Statement::Import { path = import_path }
+        }
+        case _: Statement::Import { path = "" }
+    }
+}
+
+// Parse an extern declaration: extern name :: fn(params) -> Type
+parse_extern_statement :: fn(parser: &mut Parser) -> Statement {
+    parser_read_token(parser);
+    name_tok := parser_read_token(parser);
+    match name_tok {
+        case .Identifier { name }: {
+            extern_name := name;
+            double_colon := parser_read_token(parser);
+            fn_tok := parser_read_token(parser);
+            left_paren := parser_read_token(parser);
+
+            param_start_idx := len(parser.parameters);
+            mut param_count : i64 = 0;
+            paren_check := parser_peek(parser);
+            match paren_check {
+                case .RightParentheses: {
+                    parser_read_token(parser);
+                }
+                case _: {
+                    mut parsing_params := true;
+                    while (parsing_params) {
+                        param_name_tok := parser_read_token(parser);
+                        match param_name_tok {
+                            case .Identifier { name }: {
+                                param_name := name;
+                                colon := parser_read_token(parser);
+                                param_type_idx := parse_type_idx(parser);
+                                param := Parameter { name = param_name, type_id = param_type_idx, has_type = true, mutable = false };
+                                parser_add_parameter(parser, param);
+                                param_count = param_count + 1;
+                            }
+                            case _: {}
+                        }
+                        param_next := parser_peek(parser);
+                        match param_next {
+                            case .Comma: {
+                                parser_read_token(parser);
+                            }
+                            case .RightParentheses: {
+                                parser_read_token(parser);
+                                parsing_params = false;
+                            }
+                            case _: {
+                                parsing_params = false;
+                            }
+                        }
+                    }
+                }
+            }
+
+            mut return_type_idx : i64 = -1;
+            mut has_return := false;
+            arrow_check := parser_peek(parser);
+            match arrow_check {
+                case .Arrow: {
+                    parser_read_token(parser);
+                    return_type_idx = parse_type_idx(parser);
+                    has_return = true;
+                }
+                case _: {}
+            }
+
+            Statement::Extern { name = extern_name, param_start = param_start_idx, param_count = param_count, return_type = return_type_idx, has_return = has_return }
+        }
+        case _: Statement::Extern { name = "", param_start = 0, param_count = 0, return_type = -1, has_return = false }
+    }
+}
+
+// Parse a type alias: name :: type OtherType
+parse_type_alias :: fn(parser: &mut Parser, alias_name: str) -> Statement {
+    parser_read_token(parser);
+    aliased_type_idx := parse_type_idx(parser);
+    Statement::TypeAlias { name = alias_name, type_id = aliased_type_idx }
+}
+
+// Parse push_context statement
+parse_push_context_statement :: fn(parser: &mut Parser) -> Statement {
+    parser_read_token(parser);
+    context_expr_idx := parse_expression_idx(parser, Precedence::Lowest);
+    left_brace := parser_read_token(parser);
+    body_idx := parse_primary_expression_idx(parser);
+    right_brace := parser_read_token(parser);
+    Statement::PushContext { context_expr = context_expr_idx, body = body_idx }
+}
+
+parse_push_allocator_statement :: fn(parser: &mut Parser) -> Statement {
+    parser_read_token(parser);
+    left_paren := parser_read_token(parser);
+    allocator_expr_idx := parse_expression_idx(parser, Precedence::Lowest);
+    right_paren := parser_read_token(parser);
+    left_brace := parser_read_token(parser);
+    body_idx := parse_primary_expression_idx(parser);
+    right_brace := parser_read_token(parser);
+    Statement::PushAllocator { allocator_expr = allocator_expr_idx, body = body_idx }
+}
+
+parse_statement :: fn(parser: &mut Parser) -> Statement {
+    tok := parser_peek(parser);
+    match tok {
+        case .Let: parse_let_statement(parser)
+        case .Mut: parse_let_statement(parser)
+        case .Return: parse_return_statement(parser)
+        case .For: parse_for_statement(parser)
+        case .While: parse_while_statement(parser)
+        case .Break: parse_break_statement(parser)
+        case .Continue: parse_continue_statement(parser)
+        case .Defer: parse_defer_statement(parser)
+        case .Import: parse_import_statement(parser)
+        case .Extern: parse_extern_statement(parser)
+        case .PushContext: parse_push_context_statement(parser)
+        case .PushAllocator: parse_push_allocator_statement(parser)
+        case .Identifier { name }: {
+            type_def_name := name;
+            tok2 := parser_peek_nth(parser, 1);
+            match tok2 {
+                case .DoubleColon: {
+                    tok3 := parser_peek_nth(parser, 2);
+                    match tok3 {
+                        case .Struct: {
+                            parser_read_token(parser);
+                            parser_read_token(parser);
+                            parse_struct_def(parser, type_def_name)
+                        }
+                        case .Enum: {
+                            parser_read_token(parser);
+                            parser_read_token(parser);
+                            parse_enum_def(parser, type_def_name)
+                        }
+                        case .Fn: {
+                            parser_read_token(parser);
+                            parser_read_token(parser);
+                            parse_function_def(parser, type_def_name)
+                        }
+                        case .Type: {
+                            parser_read_token(parser);
+                            parser_read_token(parser);
+                            parse_type_alias(parser, type_def_name)
+                        }
+                        case _: {
+                            parser_read_token(parser);
+                            parser_read_token(parser);
+                            parse_constant_def(parser, type_def_name)
+                        }
+                    }
+                }
+                case _: parse_expression_statement(parser)
+            }
+        }
+        case _: parse_expression_statement(parser)
+    }
+}
+
+// ============================================================================
+// Parser Tests
+// ============================================================================
+
+test_parser_infrastructure :: fn() {
+    print("Testing Parser infrastructure...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Integer { value = 42 });
+    tokens = push(tokens, Token::Plus);
+    tokens = push(tokens, Token::Integer { value = 10 });
+    tokens = push(tokens, Token::Semicolon);
+
+    mut parser := parser_new(tokens);
+    assert(parser.position == 0, "Expected position 0");
+    assert(parser_is_at_end(&parser) == false, "Expected not at end");
+    print("  OK: Parser created");
+
+    tok1 := parser_peek(&parser);
+    match tok1 {
+        case .Integer { value }: {
+            assert(value == 42, "Expected value 42");
+            print("  OK: peek returns correct token");
+        }
+        case _: print("  FAIL: Expected Integer token")
+    }
+
+    tok2 := parser_peek_nth(&parser, 1);
+    match tok2 {
+        case .Plus: print("  OK: peek_nth(1) returns Plus")
+        case _: print("  FAIL: Expected Plus token")
+    }
+
+    tok3 := parser_read_token(&mut parser);
+    match tok3 {
+        case .Integer { value }: {
+            assert(value == 42, "Expected value 42");
+            assert(parser.position == 1, "Expected position 1 after read");
+            print("  OK: read_token advances position");
+        }
+        case _: print("  FAIL: Expected Integer token")
+    }
+
+    tok4 := parser_read_token(&mut parser);
+    match tok4 {
+        case .Plus: {
+            assert(parser.position == 2, "Expected position 2");
+            print("  OK: second read_token");
+        }
+        case _: print("  FAIL: Expected Plus token")
+    }
+
+    parser_read_token(&mut parser);
+    parser_read_token(&mut parser);
+    assert(parser_is_at_end(&parser) == true, "Expected at end");
+    print("  OK: is_at_end works");
+
+    tok5 := parser_read_token(&mut parser);
+    match tok5 {
+        case .EndOfFile: print("  OK: reading past end returns EndOfFile")
+        case _: print("  FAIL: Expected EndOfFile")
+    }
+
+    print("Parser infrastructure tests passed!");
+}
+
+test_precedence :: fn() {
+    print("Testing Precedence enum...");
+
+    p1 := Precedence::Lowest;
+    match p1 {
+        case .Lowest: print("  OK: Precedence::Lowest created")
+        case _: print("  FAIL: Expected Lowest")
+    }
+
+    p2 := Precedence::Sum;
+    match p2 {
+        case .Sum: print("  OK: Precedence::Sum created")
+        case _: print("  FAIL: Expected Sum")
+    }
+
+    p3 := Precedence::FieldAccess;
+    match p3 {
+        case .FieldAccess: print("  OK: Precedence::FieldAccess created")
+        case _: print("  FAIL: Expected FieldAccess")
+    }
+
+    print("Precedence tests passed!");
+}
+
+test_precedence_from_token :: fn() {
+    print("Testing precedence_from_token...");
+
+    p1 := precedence_from_token(Token::Plus);
+    match p1 {
+        case .Sum: print("  OK: Plus -> Sum")
+        case _: print("  FAIL: Expected Sum for Plus")
+    }
+
+    p2 := precedence_from_token(Token::Asterisk);
+    match p2 {
+        case .Product: print("  OK: Asterisk -> Product")
+        case _: print("  FAIL: Expected Product for Asterisk")
+    }
+
+    p3 := precedence_from_token(Token::LeftParentheses);
+    match p3 {
+        case .Call: print("  OK: LeftParentheses -> Call")
+        case _: print("  FAIL: Expected Call for LeftParentheses")
+    }
+
+    p4 := precedence_from_token(Token::And);
+    match p4 {
+        case .LogicalAnd: print("  OK: And -> LogicalAnd")
+        case _: print("  FAIL: Expected LogicalAnd for And")
+    }
+
+    p5 := precedence_from_token(Token::Semicolon);
+    match p5 {
+        case .Lowest: print("  OK: Semicolon -> Lowest")
+        case _: print("  FAIL: Expected Lowest for Semicolon")
+    }
+
+    print("precedence_from_token tests passed!");
+}
+
+test_precedence_comparison :: fn() {
+    print("Testing precedence comparison...");
+
+    assert(precedence_less_than(Precedence::Lowest, Precedence::Sum) == true, "Lowest < Sum");
+    print("  OK: Lowest < Sum");
+
+    assert(precedence_less_than(Precedence::Sum, Precedence::Product) == true, "Sum < Product");
+    print("  OK: Sum < Product");
+
+    assert(precedence_less_than(Precedence::Product, Precedence::Sum) == false, "Product not < Sum");
+    print("  OK: Product not < Sum");
+
+    assert(precedence_less_than(Precedence::Call, Precedence::FieldAccess) == true, "Call < FieldAccess");
+    print("  OK: Call < FieldAccess");
+
+    print("Precedence comparison tests passed!");
+}
+
+test_parse_primitive_types :: fn() {
+    print("Testing parse primitive types...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::TypeI64);
+    mut parser := parser_new(tokens);
+
+    parsed_type := parse_type(&mut parser);
+    match parsed_type {
+        case .I64: print("  OK: Parsed i64")
+        case _: print("  FAIL: Expected I64 type")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::TypeBool);
+    mut parser2 := parser_new(tokens2);
+
+    parsed_type2 := parse_type(&mut parser2);
+    match parsed_type2 {
+        case .Bool: print("  OK: Parsed bool")
+        case _: print("  FAIL: Expected Bool type")
+    }
+
+    mut tokens3 : []Token = [];
+    tokens3 = push(tokens3, Token::TypeStr);
+    mut parser3 := parser_new(tokens3);
+
+    parsed_type3 := parse_type(&mut parser3);
+    match parsed_type3 {
+        case .Str: print("  OK: Parsed str")
+        case _: print("  FAIL: Expected Str type")
+    }
+
+    print("Primitive type parsing tests passed!");
+}
+
+test_parse_pointer_types :: fn() {
+    print("Testing parse pointer types...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Caret);
+    tokens = push(tokens, Token::TypeI64);
+    mut parser := parser_new(tokens);
+
+    result1 := parse_type(&mut parser);
+    match result1 {
+        case .Ptr { inner }: print("  OK: Parsed ^type (inner=-1 placeholder)")
+        case _: print("  FAIL: Expected Ptr type")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::Ampersand);
+    tokens2 = push(tokens2, Token::TypeStr);
+    mut parser2 := parser_new(tokens2);
+
+    result2 := parse_type(&mut parser2);
+    match result2 {
+        case .Ref { inner }: print("  OK: Parsed &type")
+        case _: print("  FAIL: Expected Ref type")
+    }
+
+    mut tokens3 : []Token = [];
+    tokens3 = push(tokens3, Token::Ampersand);
+    tokens3 = push(tokens3, Token::Mut);
+    tokens3 = push(tokens3, Token::TypeI32);
+    mut parser3 := parser_new(tokens3);
+
+    result3 := parse_type(&mut parser3);
+    match result3 {
+        case .RefMut { inner }: print("  OK: Parsed &mut type")
+        case _: print("  FAIL: Expected RefMut type")
+    }
+
+    print("Pointer type parsing tests passed!");
+}
+
+test_parse_array_types :: fn() {
+    print("Testing parse array types...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::LeftBracket);
+    tokens = push(tokens, Token::RightBracket);
+    tokens = push(tokens, Token::TypeU8);
+    mut parser := parser_new(tokens);
+
+    result1 := parse_type(&mut parser);
+    match result1 {
+        case .Slice { element }: print("  OK: Parsed []type")
+        case _: print("  FAIL: Expected Slice type")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::LeftBracket);
+    tokens2 = push(tokens2, Token::Integer { value = 10 });
+    tokens2 = push(tokens2, Token::RightBracket);
+    tokens2 = push(tokens2, Token::TypeF32);
+    mut parser2 := parser_new(tokens2);
+
+    result2 := parse_type(&mut parser2);
+    match result2 {
+        case .Array { element, size }: {
+            assert(size == 10, "Expected size 10");
+            print("  OK: Parsed [10]type");
+        }
+        case _: print("  FAIL: Expected Array type")
+    }
+
+    print("Array type parsing tests passed!");
+}
+
+test_parse_optional_type :: fn() {
+    print("Testing parse optional type...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Question);
+    tokens = push(tokens, Token::TypeI64);
+    mut parser := parser_new(tokens);
+
+    result1 := parse_type(&mut parser);
+    match result1 {
+        case .Optional { inner }: print("  OK: Parsed ?type")
+        case _: print("  FAIL: Expected Optional type")
+    }
+
+    print("Optional type parsing tests passed!");
+}
+
+test_parse_struct_and_type_param :: fn() {
+    print("Testing parse struct and type param...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Identifier { name = "Vec3" });
+    mut parser := parser_new(tokens);
+
+    result1 := parse_type(&mut parser);
+    match result1 {
+        case .StructType { name }: {
+            struct_name := name;
+            assert(struct_name == "Vec3", "Expected name Vec3");
+            print("  OK: Parsed Vec3 struct");
+        }
+        case _: print("  FAIL: Expected StructType")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::Dollar);
+    tokens2 = push(tokens2, Token::Identifier { name = "T" });
+    mut parser2 := parser_new(tokens2);
+
+    result2 := parse_type(&mut parser2);
+    match result2 {
+        case .TypeParam { name }: {
+            param_name := name;
+            assert(param_name == "T", "Expected name T");
+            print("  OK: Parsed $T type param");
+        }
+        case _: print("  FAIL: Expected TypeParam")
+    }
+
+    print("Struct and type param parsing tests passed!");
+}
+
+// ============================================================================
+// Expression Parsing Tests
+// ============================================================================
+
+test_parse_literal_expressions :: fn() {
+    print("Testing parse literal expressions...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Integer { value = 42 });
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .LiteralExpr { value }: {
+            match value {
+                case .Integer { value }: {
+                    assert(value == 42, "Expected 42");
+                    print("  OK: Parsed integer 42");
+                }
+                case _: print("  FAIL: Expected Integer literal")
+            }
+        }
+        case _: print("  FAIL: Expected LiteralExpr")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::StringLiteral { value = "hello" });
+    mut parser2 := parser_new(tokens2);
+    result2 := parse_expression(&mut parser2, Precedence::Lowest);
+    match result2 {
+        case .LiteralExpr { value }: {
+            match value {
+                case .String { value }: {
+                    assert(value == "hello", "Expected hello");
+                    print("  OK: Parsed string hello");
+                }
+                case _: print("  FAIL: Expected String literal")
+            }
+        }
+        case _: print("  FAIL: Expected LiteralExpr")
+    }
+
+    mut tokens3 : []Token = [];
+    tokens3 = push(tokens3, Token::True);
+    mut parser3 := parser_new(tokens3);
+    result3 := parse_expression(&mut parser3, Precedence::Lowest);
+    match result3 {
+        case .Boolean { value }: {
+            assert(value == true, "Expected true");
+            print("  OK: Parsed boolean true");
+        }
+        case _: print("  FAIL: Expected Boolean")
+    }
+
+    mut tokens4 : []Token = [];
+    tokens4 = push(tokens4, Token::False);
+    mut parser4 := parser_new(tokens4);
+    result4 := parse_expression(&mut parser4, Precedence::Lowest);
+    match result4 {
+        case .Boolean { value }: {
+            assert(value == false, "Expected false");
+            print("  OK: Parsed boolean false");
+        }
+        case _: print("  FAIL: Expected Boolean")
+    }
+
+    print("Literal expression parsing tests passed!");
+}
+
+test_parse_identifier_expression :: fn() {
+    print("Testing parse identifier expression...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Identifier { name = "foo" });
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .Identifier { name }: {
+            ident_name := name;
+            assert(ident_name == "foo", "Expected foo");
+            print("  OK: Parsed identifier foo");
+        }
+        case _: print("  FAIL: Expected Identifier")
+    }
+
+    print("Identifier expression parsing tests passed!");
+}
+
+test_parse_prefix_expressions :: fn() {
+    print("Testing parse prefix expressions...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Minus);
+    tokens = push(tokens, Token::Integer { value = 5 });
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .Prefix { op, expr }: {
+            match op {
+                case .Negate: print("  OK: Parsed -expr (negate)")
+                case _: print("  FAIL: Expected Negate operator")
+            }
+        }
+        case _: print("  FAIL: Expected Prefix expression")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::Bang);
+    tokens2 = push(tokens2, Token::True);
+    mut parser2 := parser_new(tokens2);
+    result2 := parse_expression(&mut parser2, Precedence::Lowest);
+    match result2 {
+        case .Prefix { op, expr }: {
+            match op {
+                case .Not: print("  OK: Parsed !expr (not)")
+                case _: print("  FAIL: Expected Not operator")
+            }
+        }
+        case _: print("  FAIL: Expected Prefix expression")
+    }
+
+    print("Prefix expression parsing tests passed!");
+}
+
+test_parse_infix_expressions :: fn() {
+    print("Testing parse infix expressions...");
+
+    mut tokens : []Token = [];
+    print("  DEBUG: pushing Integer{1}");
+    tokens = push(tokens, Token::Integer { value = 1 });
+    print("  DEBUG: pushing Plus");
+    tokens = push(tokens, Token::Plus);
+    print("  DEBUG: pushing Integer{2}");
+    tokens = push(tokens, Token::Integer { value = 2 });
+    print("  DEBUG: token array length:");
+    print(len(tokens));
+
+    print("  DEBUG: testing tokens[0] directly...");
+    test_tok0 := tokens[0];
+    match test_tok0 {
+        case .Integer { value }: {
+            print("  DEBUG: tokens[0] is Integer with value:");
+            print(value);
+        }
+        case .Plus: print("  DEBUG: tokens[0] is Plus (wrong!)")
+        case _: print("  DEBUG: tokens[0] is something else")
+    }
+
+    print("  DEBUG: testing tokens[1] directly...");
+    test_tok1 := tokens[1];
+    match test_tok1 {
+        case .Integer { value }: print("  DEBUG: tokens[1] is Integer (wrong!)")
+        case .Plus: print("  DEBUG: tokens[1] is Plus (correct)")
+        case _: print("  DEBUG: tokens[1] is something else")
+    }
+
+    print("  DEBUG: creating parser...");
+    mut parser := parser_new(tokens);
+
+    print("  DEBUG: testing parser.tokens length...");
+    print(len(parser.tokens));
+    print("  DEBUG: testing parser.tokens[0]...");
+    parser_tok0 := parser.tokens[0];
+    match parser_tok0 {
+        case .Integer { value }: {
+            print("  DEBUG: parser.tokens[0] is Integer with value:");
+            print(value);
+        }
+        case .Plus: print("  DEBUG: parser.tokens[0] is Plus (wrong!)")
+        case _: print("  DEBUG: parser.tokens[0] is something else")
+    }
+
+    print("  DEBUG: testing parser.tokens[1]...");
+    parser_tok1 := parser.tokens[1];
+    match parser_tok1 {
+        case .Integer { value }: print("  DEBUG: parser.tokens[1] is Integer (wrong!)")
+        case .Plus: print("  DEBUG: parser.tokens[1] is Plus (correct)")
+        case _: print("  DEBUG: parser.tokens[1] is something else")
+    }
+
+    print("  DEBUG: calling parse_expression...");
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .Infix { left, op, right }: {
+            match op {
+                case .Add: print("  OK: Parsed 1 + 2")
+                case _: print("  FAIL: Expected Add operator")
+            }
+        }
+        case _: print("  FAIL: Expected Infix expression")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::Identifier { name = "a" });
+    tokens2 = push(tokens2, Token::Asterisk);
+    tokens2 = push(tokens2, Token::Identifier { name = "b" });
+    mut parser2 := parser_new(tokens2);
+    result2 := parse_expression(&mut parser2, Precedence::Lowest);
+    match result2 {
+        case .Infix { left, op, right }: {
+            match op {
+                case .Multiply: print("  OK: Parsed a * b")
+                case _: print("  FAIL: Expected Multiply operator")
+            }
+        }
+        case _: print("  FAIL: Expected Infix expression")
+    }
+
+    mut tokens3 : []Token = [];
+    tokens3 = push(tokens3, Token::Identifier { name = "x" });
+    tokens3 = push(tokens3, Token::Equal);
+    tokens3 = push(tokens3, Token::Identifier { name = "y" });
+    mut parser3 := parser_new(tokens3);
+    result3 := parse_expression(&mut parser3, Precedence::Lowest);
+    match result3 {
+        case .Infix { left, op, right }: {
+            match op {
+                case .Equal: print("  OK: Parsed x == y")
+                case _: print("  FAIL: Expected Equal operator")
+            }
+        }
+        case _: print("  FAIL: Expected Infix expression")
+    }
+
+    print("Infix expression parsing tests passed!");
+}
+
+test_parse_call_expression :: fn() {
+    print("Testing parse call expression...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Identifier { name = "foo" });
+    tokens = push(tokens, Token::LeftParentheses);
+    tokens = push(tokens, Token::RightParentheses);
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .Call { callee, arg_start, arg_count }: {
+            print("  OK: Parsed foo()");
+        }
+        case _: print("  FAIL: Expected Call expression")
+    }
+
+    print("Call expression parsing tests passed!");
+}
+
+test_parse_field_access :: fn() {
+    print("Testing parse field access...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Identifier { name = "obj" });
+    tokens = push(tokens, Token::Dot);
+    tokens = push(tokens, Token::Identifier { name = "field" });
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .FieldAccess { expr, field }: {
+            assert(field == "field", "Expected field name 'field'");
+            print("  OK: Parsed obj.field");
+        }
+        case _: print("  FAIL: Expected FieldAccess expression")
+    }
+
+    print("Field access parsing tests passed!");
+}
+
+test_parse_index_expression :: fn() {
+    print("Testing parse index expression...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Identifier { name = "arr" });
+    tokens = push(tokens, Token::LeftBracket);
+    tokens = push(tokens, Token::Integer { value = 0 });
+    tokens = push(tokens, Token::RightBracket);
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .Index { expr, index }: {
+            print("  OK: Parsed arr[0]");
+        }
+        case _: print("  FAIL: Expected Index expression")
+    }
+
+    print("Index expression parsing tests passed!");
+}
+
+test_parse_range_expression :: fn() {
+    print("Testing parse range expression...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Integer { value = 0 });
+    tokens = push(tokens, Token::DotDot);
+    tokens = push(tokens, Token::Integer { value = 10 });
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .Range { start, end, inclusive }: {
+            assert(inclusive == false, "Expected exclusive range");
+            print("  OK: Parsed 0..10 (exclusive)");
+        }
+        case _: print("  FAIL: Expected Range expression")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::Integer { value = 0 });
+    tokens2 = push(tokens2, Token::DotDotEqual);
+    tokens2 = push(tokens2, Token::Integer { value = 10 });
+    mut parser2 := parser_new(tokens2);
+    result2 := parse_expression(&mut parser2, Precedence::Lowest);
+    match result2 {
+        case .Range { start, end, inclusive }: {
+            assert(inclusive == true, "Expected inclusive range");
+            print("  OK: Parsed 0..=10 (inclusive)");
+        }
+        case _: print("  FAIL: Expected Range expression")
+    }
+
+    print("Range expression parsing tests passed!");
+}
+
+test_parse_borrow_expressions :: fn() {
+    print("Testing parse borrow expressions...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Ampersand);
+    tokens = push(tokens, Token::Identifier { name = "x" });
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .Borrow { expr }: {
+            print("  OK: Parsed &x");
+        }
+        case _: print("  FAIL: Expected Borrow expression")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::Ampersand);
+    tokens2 = push(tokens2, Token::Mut);
+    tokens2 = push(tokens2, Token::Identifier { name = "y" });
+    mut parser2 := parser_new(tokens2);
+    result2 := parse_expression(&mut parser2, Precedence::Lowest);
+    match result2 {
+        case .BorrowMut { expr }: {
+            print("  OK: Parsed &mut y");
+        }
+        case _: print("  FAIL: Expected BorrowMut expression")
+    }
+
+    print("Borrow expression parsing tests passed!");
+}
+
+test_expression_parsing :: fn() {
+    print("Testing expression parsing...");
+    test_parse_literal_expressions();
+    test_parse_identifier_expression();
+    test_parse_prefix_expressions();
+    test_parse_infix_expressions();
+    test_parse_call_expression();
+    test_parse_field_access();
+    test_parse_index_expression();
+    test_parse_range_expression();
+    test_parse_borrow_expressions();
+    print("Expression parsing tests complete");
+    print("");
+}
+
+// ============================================================================
+// Statement Parsing Tests
+// ============================================================================
+
+test_parse_let_statement :: fn() {
+    print("Testing parse let statement...");
+
+    mut tokens1 : []Token = [];
+    tokens1 = push(tokens1, Token::Let);
+    tokens1 = push(tokens1, Token::Identifier { name = "x" });
+    tokens1 = push(tokens1, Token::Assign);
+    tokens1 = push(tokens1, Token::Integer { value = 42 });
+    mut parser1 := parser_new(tokens1);
+    result1 := parse_let_statement(&mut parser1);
+    match result1 {
+        case .Let { name, mutable }: {
+            print("  OK: Parsed let x = 42");
+        }
+        case _: print("  FAIL: Expected Let statement")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::Let);
+    tokens2 = push(tokens2, Token::Identifier { name = "y" });
+    tokens2 = push(tokens2, Token::Colon);
+    tokens2 = push(tokens2, Token::TypeI64);
+    tokens2 = push(tokens2, Token::Assign);
+    tokens2 = push(tokens2, Token::Integer { value = 10 });
+    mut parser2 := parser_new(tokens2);
+    result2 := parse_let_statement(&mut parser2);
+    match result2 {
+        case .Let { name, mutable }: {
+            print("  OK: Parsed let y: i64 = 10");
+        }
+        case _: print("  FAIL: Expected Let statement with type")
+    }
+
+    mut tokens3 : []Token = [];
+    tokens3 = push(tokens3, Token::Mut);
+    tokens3 = push(tokens3, Token::Identifier { name = "z" });
+    tokens3 = push(tokens3, Token::ColonAssign);
+    tokens3 = push(tokens3, Token::Integer { value = 5 });
+    mut parser3 := parser_new(tokens3);
+    result3 := parse_let_statement(&mut parser3);
+    match result3 {
+        case .Let { name, mutable }: {
+            print("  OK: Parsed mut z := 5");
+        }
+        case _: print("  FAIL: Expected mutable Let statement")
+    }
+
+    print("Let statement parsing tests passed!");
+}
+
+test_parse_return_statement :: fn() {
+    print("Testing parse return statement...");
+
+    mut tokens1 : []Token = [];
+    tokens1 = push(tokens1, Token::Return);
+    tokens1 = push(tokens1, Token::Semicolon);
+    mut parser1 := parser_new(tokens1);
+    result1 := parse_return_statement(&mut parser1);
+    match result1 {
+        case .Return { value }: {
+            print("  OK: Parsed return;");
+        }
+        case _: print("  FAIL: Expected Return statement")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::Return);
+    tokens2 = push(tokens2, Token::Integer { value = 42 });
+    mut parser2 := parser_new(tokens2);
+    result2 := parse_return_statement(&mut parser2);
+    match result2 {
+        case .Return { value }: {
+            print("  OK: Parsed return 42");
+        }
+        case _: print("  FAIL: Expected Return statement with value")
+    }
+
+    print("Return statement parsing tests passed!");
+}
+
+test_parse_expression_statement :: fn() {
+    print("Testing parse expression statement...");
+
+    mut tokens1 : []Token = [];
+    tokens1 = push(tokens1, Token::Identifier { name = "foo" });
+    tokens1 = push(tokens1, Token::LeftParentheses);
+    tokens1 = push(tokens1, Token::RightParentheses);
+    mut parser1 := parser_new(tokens1);
+    result1 := parse_expression_statement(&mut parser1);
+    match result1 {
+        case .ExpressionStmt { expr }: {
+            print("  OK: Parsed foo()");
+        }
+        case _: print("  FAIL: Expected ExpressionStmt")
+    }
+
+    print("Expression statement parsing tests passed!");
+}
+
+test_parse_statement :: fn() {
+    print("Testing parse_statement dispatch...");
+
+    mut tokens1 : []Token = [];
+    tokens1 = push(tokens1, Token::Let);
+    tokens1 = push(tokens1, Token::Identifier { name = "a" });
+    tokens1 = push(tokens1, Token::Assign);
+    tokens1 = push(tokens1, Token::Integer { value = 1 });
+    mut parser1 := parser_new(tokens1);
+    result1 := parse_statement(&mut parser1);
+    match result1 {
+        case .Let { name }: {
+            print("  OK: parse_statement dispatched to Let");
+        }
+        case _: print("  FAIL: Expected Let from parse_statement")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::Return);
+    tokens2 = push(tokens2, Token::Integer { value = 0 });
+    mut parser2 := parser_new(tokens2);
+    result2 := parse_statement(&mut parser2);
+    match result2 {
+        case .Return { value }: {
+            print("  OK: parse_statement dispatched to Return");
+        }
+        case _: print("  FAIL: Expected Return from parse_statement")
+    }
+
+    mut tokens3 : []Token = [];
+    tokens3 = push(tokens3, Token::Integer { value = 42 });
+    mut parser3 := parser_new(tokens3);
+    result3 := parse_statement(&mut parser3);
+    match result3 {
+        case .ExpressionStmt { expr }: {
+            print("  OK: parse_statement dispatched to ExpressionStmt");
+        }
+        case _: print("  FAIL: Expected ExpressionStmt from parse_statement")
+    }
+
+    print("parse_statement dispatch tests passed!");
+}
+
+test_parse_assignment :: fn() {
+    print("Testing parse assignment statement...");
+
+    mut tokens1 : []Token = [];
+    tokens1 = push(tokens1, Token::Identifier { name = "x" });
+    tokens1 = push(tokens1, Token::Assign);
+    tokens1 = push(tokens1, Token::Integer { value = 42 });
+    mut parser1 := parser_new(tokens1);
+    result1 := parse_expression_statement(&mut parser1);
+    match result1 {
+        case .Assignment { lhs, rhs }: {
+            print("  OK: Parsed x = 42");
+        }
+        case _: print("  FAIL: Expected Assignment statement")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::Identifier { name = "obj" });
+    tokens2 = push(tokens2, Token::Dot);
+    tokens2 = push(tokens2, Token::Identifier { name = "field" });
+    tokens2 = push(tokens2, Token::Assign);
+    tokens2 = push(tokens2, Token::Integer { value = 10 });
+    mut parser2 := parser_new(tokens2);
+    result2 := parse_expression_statement(&mut parser2);
+    match result2 {
+        case .Assignment { lhs, rhs }: {
+            print("  OK: Parsed obj.field = 10");
+        }
+        case _: print("  FAIL: Expected Assignment for field access")
+    }
+
+    mut tokens3 : []Token = [];
+    tokens3 = push(tokens3, Token::Identifier { name = "arr" });
+    tokens3 = push(tokens3, Token::LeftBracket);
+    tokens3 = push(tokens3, Token::Integer { value = 0 });
+    tokens3 = push(tokens3, Token::RightBracket);
+    tokens3 = push(tokens3, Token::Assign);
+    tokens3 = push(tokens3, Token::Integer { value = 5 });
+    mut parser3 := parser_new(tokens3);
+    result3 := parse_expression_statement(&mut parser3);
+    match result3 {
+        case .Assignment { lhs, rhs }: {
+            print("  OK: Parsed arr[0] = 5");
+        }
+        case _: print("  FAIL: Expected Assignment for index")
+    }
+
+    print("Assignment statement parsing tests passed!");
+}
+
+test_parse_for_statement :: fn() {
+    print("Testing parse for statement...");
+
+    mut tokens1 : []Token = [];
+    tokens1 = push(tokens1, Token::For);
+    tokens1 = push(tokens1, Token::Identifier { name = "i" });
+    tokens1 = push(tokens1, Token::In);
+    tokens1 = push(tokens1, Token::Integer { value = 0 });
+    tokens1 = push(tokens1, Token::DotDot);
+    tokens1 = push(tokens1, Token::Integer { value = 10 });
+    mut parser1 := parser_new(tokens1);
+    result1 := parse_for_statement(&mut parser1);
+    match result1 {
+        case .For { iterator, range, body }: {
+            print("  OK: Parsed for i in 0..10");
+        }
+        case _: print("  FAIL: Expected For statement")
+    }
+
+    print("For statement parsing tests passed!");
+}
+
+test_parse_while_statement :: fn() {
+    print("Testing parse while statement...");
+
+    mut tokens1 : []Token = [];
+    tokens1 = push(tokens1, Token::While);
+    tokens1 = push(tokens1, Token::Identifier { name = "running" });
+    mut parser1 := parser_new(tokens1);
+    result1 := parse_while_statement(&mut parser1);
+    match result1 {
+        case .While { condition, body }: {
+            print("  OK: Parsed while running");
+        }
+        case _: print("  FAIL: Expected While statement")
+    }
+
+    print("While statement parsing tests passed!");
+}
+
+test_parse_control_flow :: fn() {
+    print("Testing parse control flow statements...");
+
+    mut tokens1 : []Token = [];
+    tokens1 = push(tokens1, Token::Break);
+    mut parser1 := parser_new(tokens1);
+    result1 := parse_break_statement(&mut parser1);
+    match result1 {
+        case .Break: print("  OK: Parsed break")
+        case _: print("  FAIL: Expected Break statement")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::Continue);
+    mut parser2 := parser_new(tokens2);
+    result2 := parse_continue_statement(&mut parser2);
+    match result2 {
+        case .Continue: print("  OK: Parsed continue")
+        case _: print("  FAIL: Expected Continue statement")
+    }
+
+    mut tokens3 : []Token = [];
+    tokens3 = push(tokens3, Token::Defer);
+    mut parser3 := parser_new(tokens3);
+    result3 := parse_defer_statement(&mut parser3);
+    match result3 {
+        case .Defer { stmt }: print("  OK: Parsed defer")
+        case _: print("  FAIL: Expected Defer statement")
+    }
+
+    print("Control flow statement parsing tests passed!");
+}
+
+test_statement_dispatch_extended :: fn() {
+    print("Testing extended statement dispatch...");
+
+    mut tokens1 : []Token = [];
+    tokens1 = push(tokens1, Token::For);
+    tokens1 = push(tokens1, Token::Identifier { name = "x" });
+    tokens1 = push(tokens1, Token::In);
+    tokens1 = push(tokens1, Token::Integer { value = 0 });
+    tokens1 = push(tokens1, Token::DotDot);
+    tokens1 = push(tokens1, Token::Integer { value = 5 });
+    mut parser1 := parser_new(tokens1);
+    result1 := parse_statement(&mut parser1);
+    match result1 {
+        case .For { iterator }: print("  OK: parse_statement dispatched to For")
+        case _: print("  FAIL: Expected For from parse_statement")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::While);
+    tokens2 = push(tokens2, Token::True);
+    mut parser2 := parser_new(tokens2);
+    result2 := parse_statement(&mut parser2);
+    match result2 {
+        case .While { condition }: print("  OK: parse_statement dispatched to While")
+        case _: print("  FAIL: Expected While from parse_statement")
+    }
+
+    mut tokens3 : []Token = [];
+    tokens3 = push(tokens3, Token::Break);
+    mut parser3 := parser_new(tokens3);
+    result3 := parse_statement(&mut parser3);
+    match result3 {
+        case .Break: print("  OK: parse_statement dispatched to Break")
+        case _: print("  FAIL: Expected Break from parse_statement")
+    }
+
+    mut tokens4 : []Token = [];
+    tokens4 = push(tokens4, Token::Continue);
+    mut parser4 := parser_new(tokens4);
+    result4 := parse_statement(&mut parser4);
+    match result4 {
+        case .Continue: print("  OK: parse_statement dispatched to Continue")
+        case _: print("  FAIL: Expected Continue from parse_statement")
+    }
+
+    print("Extended statement dispatch tests passed!");
+}
+
+test_parse_struct_def :: fn() {
+    print("Testing parse struct definition...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Identifier { name = "Vec3" });
+    tokens = push(tokens, Token::DoubleColon);
+    tokens = push(tokens, Token::Struct);
+    tokens = push(tokens, Token::LeftBrace);
+    tokens = push(tokens, Token::Identifier { name = "x" });
+    tokens = push(tokens, Token::Colon);
+    tokens = push(tokens, Token::TypeF32);
+    tokens = push(tokens, Token::Comma);
+    tokens = push(tokens, Token::Identifier { name = "y" });
+    tokens = push(tokens, Token::Colon);
+    tokens = push(tokens, Token::TypeF32);
+    tokens = push(tokens, Token::Comma);
+    tokens = push(tokens, Token::Identifier { name = "z" });
+    tokens = push(tokens, Token::Colon);
+    tokens = push(tokens, Token::TypeF32);
+    tokens = push(tokens, Token::RightBrace);
+    mut parser := parser_new(tokens);
+    result := parse_statement(&mut parser);
+    match result {
+        case .StructDef { name, type_param_start, type_param_count, field_start, field_count }: {
+            assert(name == "Vec3", "Expected name Vec3");
+            assert(field_count == 3, "Expected 3 fields");
+            print("  OK: Parsed Vec3 :: struct { x: f32, y: f32, z: f32 }");
+        }
+        case _: print("  FAIL: Expected StructDef")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::Identifier { name = "Empty" });
+    tokens2 = push(tokens2, Token::DoubleColon);
+    tokens2 = push(tokens2, Token::Struct);
+    tokens2 = push(tokens2, Token::LeftBrace);
+    tokens2 = push(tokens2, Token::RightBrace);
+    mut parser2 := parser_new(tokens2);
+    result2 := parse_statement(&mut parser2);
+    match result2 {
+        case .StructDef { name, type_param_start, type_param_count, field_start, field_count }: {
+            assert(name == "Empty", "Expected name Empty");
+            assert(field_count == 0, "Expected 0 fields");
+            print("  OK: Parsed Empty :: struct { }");
+        }
+        case _: print("  FAIL: Expected StructDef for empty struct")
+    }
+
+    print("Struct definition parsing tests passed!");
+}
+
+test_parse_enum_def :: fn() {
+    print("Testing parse enum definition...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Identifier { name = "Color" });
+    tokens = push(tokens, Token::DoubleColon);
+    tokens = push(tokens, Token::Enum);
+    tokens = push(tokens, Token::LeftBrace);
+    tokens = push(tokens, Token::Identifier { name = "Red" });
+    tokens = push(tokens, Token::Comma);
+    tokens = push(tokens, Token::Identifier { name = "Green" });
+    tokens = push(tokens, Token::Comma);
+    tokens = push(tokens, Token::Identifier { name = "Blue" });
+    tokens = push(tokens, Token::RightBrace);
+    mut parser := parser_new(tokens);
+    result := parse_statement(&mut parser);
+    match result {
+        case .EnumDef { name, variant_start, variant_count }: {
+            assert(name == "Color", "Expected name Color");
+            assert(variant_count == 3, "Expected 3 variants");
+            print("  OK: Parsed Color :: enum { Red, Green, Blue }");
+        }
+        case _: print("  FAIL: Expected EnumDef")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::Identifier { name = "Option" });
+    tokens2 = push(tokens2, Token::DoubleColon);
+    tokens2 = push(tokens2, Token::Enum);
+    tokens2 = push(tokens2, Token::LeftBrace);
+    tokens2 = push(tokens2, Token::Identifier { name = "None" });
+    tokens2 = push(tokens2, Token::Comma);
+    tokens2 = push(tokens2, Token::Identifier { name = "Some" });
+    tokens2 = push(tokens2, Token::LeftBrace);
+    tokens2 = push(tokens2, Token::Identifier { name = "value" });
+    tokens2 = push(tokens2, Token::Colon);
+    tokens2 = push(tokens2, Token::TypeI64);
+    tokens2 = push(tokens2, Token::RightBrace);
+    tokens2 = push(tokens2, Token::RightBrace);
+    mut parser2 := parser_new(tokens2);
+    result2 := parse_statement(&mut parser2);
+    match result2 {
+        case .EnumDef { name, variant_start, variant_count }: {
+            assert(name == "Option", "Expected name Option");
+            assert(variant_count == 2, "Expected 2 variants");
+            print("  OK: Parsed Option :: enum { None, Some { value: i64 } }");
+        }
+        case _: print("  FAIL: Expected EnumDef with data variant")
+    }
+
+    print("Enum definition parsing tests passed!");
+}
+
+test_type_def_parsing :: fn() {
+    print("Testing type definition parsing...");
+    test_parse_struct_def();
+    test_parse_enum_def();
+    print("Type definition parsing tests complete");
+    print("");
+}
+
+test_parse_call_with_args :: fn() {
+    print("Testing parse call with arguments...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Identifier { name = "foo" });
+    tokens = push(tokens, Token::LeftParentheses);
+    tokens = push(tokens, Token::Integer { value = 1 });
+    tokens = push(tokens, Token::Comma);
+    tokens = push(tokens, Token::Integer { value = 2 });
+    tokens = push(tokens, Token::Comma);
+    tokens = push(tokens, Token::Integer { value = 3 });
+    tokens = push(tokens, Token::RightParentheses);
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .Call { callee, arg_start, arg_count }: {
+            assert(arg_count == 3, "Expected 3 arguments");
+            print("  OK: Parsed foo(1, 2, 3)");
+        }
+        case _: print("  FAIL: Expected Call with arguments")
+    }
+
+    print("Call with arguments tests passed!");
+}
+
+test_parse_if_expression :: fn() {
+    print("Testing parse if expression...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::If);
+    tokens = push(tokens, Token::True);
+    tokens = push(tokens, Token::LeftBrace);
+    tokens = push(tokens, Token::Integer { value = 1 });
+    tokens = push(tokens, Token::RightBrace);
+    tokens = push(tokens, Token::Else);
+    tokens = push(tokens, Token::LeftBrace);
+    tokens = push(tokens, Token::Integer { value = 0 });
+    tokens = push(tokens, Token::RightBrace);
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .If { condition, consequence, alternative, has_alternative }: {
+            assert(has_alternative == true, "Expected has_alternative true");
+            print("  OK: Parsed if true { 1 } else { 0 }");
+        }
+        case _: print("  FAIL: Expected If expression")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::If);
+    tokens2 = push(tokens2, Token::False);
+    tokens2 = push(tokens2, Token::LeftBrace);
+    tokens2 = push(tokens2, Token::Integer { value = 42 });
+    tokens2 = push(tokens2, Token::RightBrace);
+    mut parser2 := parser_new(tokens2);
+    result2 := parse_expression(&mut parser2, Precedence::Lowest);
+    match result2 {
+        case .If { condition, consequence, alternative, has_alternative }: {
+            assert(has_alternative == false, "Expected has_alternative false");
+            print("  OK: Parsed if false { 42 }");
+        }
+        case _: print("  FAIL: Expected If without else")
+    }
+
+    print("If expression tests passed!");
+}
+
+test_parse_array_literal :: fn() {
+    print("Testing parse array literal...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::LeftBracket);
+    tokens = push(tokens, Token::Integer { value = 1 });
+    tokens = push(tokens, Token::Comma);
+    tokens = push(tokens, Token::Integer { value = 2 });
+    tokens = push(tokens, Token::Comma);
+    tokens = push(tokens, Token::Integer { value = 3 });
+    tokens = push(tokens, Token::RightBracket);
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .Tuple { elem_start, elem_count }: {
+            assert(elem_count == 3, "Expected 3 elements");
+            print("  OK: Parsed [1, 2, 3]");
+        }
+        case _: print("  FAIL: Expected Tuple for array")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::LeftBracket);
+    tokens2 = push(tokens2, Token::RightBracket);
+    mut parser2 := parser_new(tokens2);
+    result2 := parse_expression(&mut parser2, Precedence::Lowest);
+    match result2 {
+        case .Tuple { elem_start, elem_count }: {
+            assert(elem_count == 0, "Expected 0 elements");
+            print("  OK: Parsed []");
+        }
+        case _: print("  FAIL: Expected empty Tuple for array")
+    }
+
+    print("Array literal tests passed!");
+}
+
+test_parse_struct_init :: fn() {
+    print("Testing parse struct initialization...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Identifier { name = "Vec3" });
+    tokens = push(tokens, Token::LeftBrace);
+    tokens = push(tokens, Token::Identifier { name = "x" });
+    tokens = push(tokens, Token::Assign);
+    tokens = push(tokens, Token::Integer { value = 1 });
+    tokens = push(tokens, Token::Comma);
+    tokens = push(tokens, Token::Identifier { name = "y" });
+    tokens = push(tokens, Token::Assign);
+    tokens = push(tokens, Token::Integer { value = 2 });
+    tokens = push(tokens, Token::RightBrace);
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .StructInit { name, field_start, field_count }: {
+            assert(name == "Vec3", "Expected name Vec3");
+            assert(field_count == 2, "Expected 2 fields");
+            print("  OK: Parsed Vec3 { x = 1, y = 2 }");
+        }
+        case _: print("  FAIL: Expected StructInit")
+    }
+
+    print("Struct initialization tests passed!");
+}
+
+test_parse_enum_variant_init :: fn() {
+    print("Testing parse enum variant initialization...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Identifier { name = "Option" });
+    tokens = push(tokens, Token::DoubleColon);
+    tokens = push(tokens, Token::Identifier { name = "None" });
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .EnumVariantInit { enum_name, variant_name, field_start, field_count }: {
+            assert(enum_name == "Option", "Expected enum_name Option");
+            assert(variant_name == "None", "Expected variant_name None");
+            assert(field_count == 0, "Expected 0 fields");
+            print("  OK: Parsed Option::None");
+        }
+        case _: print("  FAIL: Expected EnumVariantInit for None")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::Identifier { name = "Option" });
+    tokens2 = push(tokens2, Token::DoubleColon);
+    tokens2 = push(tokens2, Token::Identifier { name = "Some" });
+    tokens2 = push(tokens2, Token::LeftBrace);
+    tokens2 = push(tokens2, Token::Identifier { name = "value" });
+    tokens2 = push(tokens2, Token::Assign);
+    tokens2 = push(tokens2, Token::Integer { value = 42 });
+    tokens2 = push(tokens2, Token::RightBrace);
+    mut parser2 := parser_new(tokens2);
+    result2 := parse_expression(&mut parser2, Precedence::Lowest);
+    match result2 {
+        case .EnumVariantInit { enum_name, variant_name, field_start, field_count }: {
+            assert(enum_name == "Option", "Expected enum_name Option");
+            assert(variant_name == "Some", "Expected variant_name Some");
+            assert(field_count == 1, "Expected 1 field");
+            print("  OK: Parsed Option::Some { value = 42 }");
+        }
+        case _: print("  FAIL: Expected EnumVariantInit for Some")
+    }
+
+    print("Enum variant initialization tests passed!");
+}
+
+test_parse_match_expression :: fn() {
+    print("Testing parse match expression...");
+
+    mut tokens1 : []Token = [];
+    tokens1 = push(tokens1, Token::Match);
+    tokens1 = push(tokens1, Token::Identifier { name = "x" });
+    tokens1 = push(tokens1, Token::LeftBrace);
+    tokens1 = push(tokens1, Token::Case);
+    tokens1 = push(tokens1, Token::Integer { value = 1 });
+    tokens1 = push(tokens1, Token::Colon);
+    tokens1 = push(tokens1, Token::StringLiteral { value = "one" });
+    tokens1 = push(tokens1, Token::RightBrace);
+    mut parser1 := parser_new(tokens1);
+    result1 := parse_expression(&mut parser1, Precedence::Lowest);
+    match result1 {
+        case .Switch { scrutinee, case_start, case_count }: {
+            assert(case_count == 1, "Expected 1 case");
+            print("  OK: Parsed match x { case 1: one }");
+        }
+        case _: print("  FAIL: Expected Switch for single case")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::Match);
+    tokens2 = push(tokens2, Token::Identifier { name = "y" });
+    tokens2 = push(tokens2, Token::LeftBrace);
+    tokens2 = push(tokens2, Token::RightBrace);
+    mut parser2 := parser_new(tokens2);
+    result2 := parse_expression(&mut parser2, Precedence::Lowest);
+    match result2 {
+        case .Switch { scrutinee, case_start, case_count }: {
+            assert(case_count == 0, "Expected 0 cases");
+            print("  OK: Parsed match y { }");
+        }
+        case _: print("  FAIL: Expected empty Switch")
+    }
+
+    mut tokens3 : []Token = [];
+    tokens3 = push(tokens3, Token::Match);
+    tokens3 = push(tokens3, Token::Identifier { name = "z" });
+    tokens3 = push(tokens3, Token::LeftBrace);
+    tokens3 = push(tokens3, Token::Case);
+    tokens3 = push(tokens3, Token::Integer { value = 1 });
+    tokens3 = push(tokens3, Token::Colon);
+    tokens3 = push(tokens3, Token::StringLiteral { value = "one" });
+    tokens3 = push(tokens3, Token::Comma);
+    tokens3 = push(tokens3, Token::Case);
+    tokens3 = push(tokens3, Token::Integer { value = 2 });
+    tokens3 = push(tokens3, Token::Colon);
+    tokens3 = push(tokens3, Token::StringLiteral { value = "two" });
+    tokens3 = push(tokens3, Token::RightBrace);
+    mut parser3 := parser_new(tokens3);
+    result3 := parse_expression(&mut parser3, Precedence::Lowest);
+    match result3 {
+        case .Switch { scrutinee, case_start, case_count }: {
+            assert(case_count == 2, "Expected 2 cases");
+            print("  OK: Parsed match z { case 1: one, case 2: two }");
+        }
+        case _: print("  FAIL: Expected Switch with 2 cases")
+    }
+
+    print("Match expression tests passed!");
+}
+
+test_parse_sizeof_expression :: fn() {
+    print("Testing parse sizeof expression...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Sizeof);
+    tokens = push(tokens, Token::LeftParentheses);
+    tokens = push(tokens, Token::TypeI64);
+    tokens = push(tokens, Token::RightParentheses);
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .Sizeof { type_id }: {
+            print("  OK: Parsed sizeof(i64)");
+        }
+        case _: print("  FAIL: Expected Sizeof expression")
+    }
+
+    print("Sizeof expression tests passed!");
+}
+
+test_parse_comptime_expression :: fn() {
+    print("Testing parse comptime expression...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Comptime);
+    tokens = push(tokens, Token::LeftBrace);
+    tokens = push(tokens, Token::Integer { value = 42 });
+    tokens = push(tokens, Token::RightBrace);
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .ComptimeBlock { body }: {
+            print("  OK: Parsed comptime { 42 }");
+        }
+        case _: print("  FAIL: Expected ComptimeBlock expression")
+    }
+
+    print("Comptime expression tests passed!");
+}
+
+test_parse_typename_expression :: fn() {
+    print("Testing parse typename expression...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Typename);
+    tokens = push(tokens, Token::LeftParentheses);
+    tokens = push(tokens, Token::TypeI64);
+    tokens = push(tokens, Token::RightParentheses);
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .Typename { type_id }: {
+            print("  OK: Parsed typename(i64)");
+        }
+        case _: print("  FAIL: Expected Typename expression")
+    }
+
+    print("Typename expression tests passed!");
+}
+
+test_parse_unsafe_expression :: fn() {
+    print("Testing parse unsafe expression...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Unsafe);
+    tokens = push(tokens, Token::LeftBrace);
+    tokens = push(tokens, Token::Integer { value = 42 });
+    tokens = push(tokens, Token::RightBrace);
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .Unsafe { body }: {
+            print("  OK: Parsed unsafe { 42 }");
+        }
+        case _: print("  FAIL: Expected Unsafe expression")
+    }
+
+    print("Unsafe expression tests passed!");
+}
+
+test_parse_push_context :: fn() {
+    print("Testing parse push_context statement...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::PushContext);
+    tokens = push(tokens, Token::Identifier { name = "ctx" });
+    tokens = push(tokens, Token::LeftBrace);
+    tokens = push(tokens, Token::Integer { value = 42 });
+    tokens = push(tokens, Token::RightBrace);
+    mut parser := parser_new(tokens);
+    result := parse_statement(&mut parser);
+    match result {
+        case .PushContext { context_expr, body }: {
+            print("  OK: Parsed push_context ctx { 42 }");
+        }
+        case _: print("  FAIL: Expected PushContext statement")
+    }
+
+    print("PushContext statement tests passed!");
+}
+
+test_parse_push_allocator :: fn() {
+    print("Testing parse push_allocator statement...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::PushAllocator);
+    tokens = push(tokens, Token::LeftParentheses);
+    tokens = push(tokens, Token::Identifier { name = "alloc" });
+    tokens = push(tokens, Token::RightParentheses);
+    tokens = push(tokens, Token::LeftBrace);
+    tokens = push(tokens, Token::Integer { value = 42 });
+    tokens = push(tokens, Token::RightBrace);
+    mut parser := parser_new(tokens);
+    result := parse_statement(&mut parser);
+    match result {
+        case .PushAllocator { allocator_expr, body }: {
+            print("  OK: Parsed push_allocator(alloc) { 42 }");
+        }
+        case _: print("  FAIL: Expected PushAllocator statement")
+    }
+
+    print("PushAllocator statement tests passed!");
+}
+
+test_parse_function_def :: fn() {
+    print("Testing parse function definition...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Identifier { name = "add" });
+    tokens = push(tokens, Token::DoubleColon);
+    tokens = push(tokens, Token::Fn);
+    tokens = push(tokens, Token::LeftParentheses);
+    tokens = push(tokens, Token::Identifier { name = "a" });
+    tokens = push(tokens, Token::Colon);
+    tokens = push(tokens, Token::TypeI64);
+    tokens = push(tokens, Token::Comma);
+    tokens = push(tokens, Token::Identifier { name = "b" });
+    tokens = push(tokens, Token::Colon);
+    tokens = push(tokens, Token::TypeI64);
+    tokens = push(tokens, Token::RightParentheses);
+    tokens = push(tokens, Token::Arrow);
+    tokens = push(tokens, Token::TypeI64);
+    tokens = push(tokens, Token::LeftBrace);
+    tokens = push(tokens, Token::Integer { value = 0 });
+    tokens = push(tokens, Token::RightBrace);
+    mut parser := parser_new(tokens);
+    result := parse_statement(&mut parser);
+    match result {
+        case .Constant { name, value }: {
+            assert(name == "add", "Expected name add");
+            print("  OK: Parsed add :: fn(a: i64, b: i64) -> i64 { 0 }");
+        }
+        case _: print("  FAIL: Expected function definition")
+    }
+
+    print("Function definition tests passed!");
+}
+
+test_parse_constant_def :: fn() {
+    print("Testing parse constant definition...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Identifier { name = "PI" });
+    tokens = push(tokens, Token::DoubleColon);
+    tokens = push(tokens, Token::Integer { value = 314 });
+    mut parser := parser_new(tokens);
+    result := parse_statement(&mut parser);
+    match result {
+        case .Constant { name, value }: {
+            assert(name == "PI", "Expected name PI");
+            print("  OK: Parsed PI :: 314");
+        }
+        case _: print("  FAIL: Expected constant definition")
+    }
+
+    print("Constant definition tests passed!");
+}
+
+test_parse_import :: fn() {
+    print("Testing parse import statement...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Import);
+    tokens = push(tokens, Token::StringLiteral { value = "std/io" });
+    mut parser := parser_new(tokens);
+    result := parse_statement(&mut parser);
+    match result {
+        case .Import { path }: {
+            assert(path == "std/io", "Expected path std/io");
+            print("  OK: Parsed import std/io");
+        }
+        case _: print("  FAIL: Expected import statement")
+    }
+
+    print("Import statement tests passed!");
+}
+
+test_parse_extern :: fn() {
+    print("Testing parse extern statement...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Extern);
+    tokens = push(tokens, Token::Identifier { name = "printf" });
+    tokens = push(tokens, Token::DoubleColon);
+    tokens = push(tokens, Token::Fn);
+    tokens = push(tokens, Token::LeftParentheses);
+    tokens = push(tokens, Token::Identifier { name = "fmt" });
+    tokens = push(tokens, Token::Colon);
+    tokens = push(tokens, Token::TypeStr);
+    tokens = push(tokens, Token::RightParentheses);
+    tokens = push(tokens, Token::Arrow);
+    tokens = push(tokens, Token::TypeI32);
+    mut parser := parser_new(tokens);
+    result := parse_statement(&mut parser);
+    match result {
+        case .Extern { name, param_start, param_count, return_type, has_return }: {
+            assert(name == "printf", "Expected name printf");
+            assert(param_count == 1, "Expected 1 param");
+            print("  OK: Parsed extern printf :: fn(fmt: str) -> i32");
+        }
+        case _: print("  FAIL: Expected extern statement")
+    }
+
+    print("Extern statement tests passed!");
+}
+
+test_parse_type_alias :: fn() {
+    print("Testing parse type alias...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Identifier { name = "MyInt" });
+    tokens = push(tokens, Token::DoubleColon);
+    tokens = push(tokens, Token::Type);
+    tokens = push(tokens, Token::TypeI64);
+    mut parser := parser_new(tokens);
+    result := parse_statement(&mut parser);
+    match result {
+        case .TypeAlias { name, type_id }: {
+            assert(name == "MyInt", "Expected name MyInt");
+            print("  OK: Parsed MyInt :: type i64");
+        }
+        case _: print("  FAIL: Expected type alias")
+    }
+
+    print("Type alias tests passed!");
+}
+
+test_extended_expression_parsing :: fn() {
+    print("Testing extended expression parsing...");
+    test_parse_call_with_args();
+    test_parse_if_expression();
+    test_parse_array_literal();
+    test_parse_struct_init();
+    test_parse_enum_variant_init();
+    test_parse_match_expression();
+    test_parse_sizeof_expression();
+    test_parse_comptime_expression();
+    test_parse_typename_expression();
+    test_parse_unsafe_expression();
+    print("Extended expression parsing tests complete");
+    print("");
+}
+
+test_extended_statement_parsing :: fn() {
+    print("Testing extended statement parsing...");
+    test_parse_function_def();
+    test_parse_constant_def();
+    test_parse_import();
+    test_parse_extern();
+    test_parse_type_alias();
+    test_parse_push_context();
+    test_parse_push_allocator();
+    print("Extended statement parsing tests complete");
+    print("");
+}
+
+test_statement_parsing :: fn() {
+    print("Testing statement parsing...");
+    test_parse_let_statement();
+    test_parse_return_statement();
+    test_parse_expression_statement();
+    test_parse_assignment();
+    test_parse_statement();
+    test_parse_for_statement();
+    test_parse_while_statement();
+    test_parse_control_flow();
+    test_statement_dispatch_extended();
+    print("Statement parsing tests complete");
+    print("");
+}
+
+// ============================================================================
+// Integration Tests
+// ============================================================================
+
+test_chained_field_access :: fn() {
+    print("Testing chained field access...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Identifier { name = "a" });
+    tokens = push(tokens, Token::Dot);
+    tokens = push(tokens, Token::Identifier { name = "b" });
+    tokens = push(tokens, Token::Dot);
+    tokens = push(tokens, Token::Identifier { name = "c" });
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .FieldAccess { expr, field }: {
+            print("  OK: Parsed a.b.c");
+        }
+        case _: print("  FAIL: Expected FieldAccess for a.b.c")
+    }
+
+    print("Chained field access tests passed!");
+}
+
+test_nested_calls :: fn() {
+    print("Testing nested calls...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Identifier { name = "foo" });
+    tokens = push(tokens, Token::LeftParentheses);
+    tokens = push(tokens, Token::RightParentheses);
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .Call { callee, arg_start, arg_count }: {
+            print("  OK: Parsed foo()");
+        }
+        case _: print("  FAIL: Expected Call for foo()")
+    }
+
+    print("Nested call tests passed!");
+}
+
+test_complex_arithmetic :: fn() {
+    print("Testing complex arithmetic...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Integer { value = 1 });
+    tokens = push(tokens, Token::Plus);
+    tokens = push(tokens, Token::Integer { value = 2 });
+    tokens = push(tokens, Token::Asterisk);
+    tokens = push(tokens, Token::Integer { value = 3 });
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .Infix { left, operator, right }: {
+            print("  OK: Parsed 1 + 2 * 3 (respecting precedence)");
+        }
+        case _: print("  FAIL: Expected Infix for 1 + 2 * 3")
+    }
+
+    print("Complex arithmetic tests passed!");
+}
+
+test_method_call_chain :: fn() {
+    print("Testing method call chain...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Identifier { name = "obj" });
+    tokens = push(tokens, Token::Dot);
+    tokens = push(tokens, Token::Identifier { name = "method" });
+    tokens = push(tokens, Token::LeftParentheses);
+    tokens = push(tokens, Token::RightParentheses);
+    tokens = push(tokens, Token::Dot);
+    tokens = push(tokens, Token::Identifier { name = "field" });
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .FieldAccess { expr, field }: {
+            print("  OK: Parsed obj.method().field");
+        }
+        case _: print("  FAIL: Expected FieldAccess for obj.method().field")
+    }
+
+    print("Method call chain tests passed!");
+}
+
+test_array_index_chain :: fn() {
+    print("Testing array index chain...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Identifier { name = "arr" });
+    tokens = push(tokens, Token::LeftBracket);
+    tokens = push(tokens, Token::Integer { value = 0 });
+    tokens = push(tokens, Token::RightBracket);
+    tokens = push(tokens, Token::LeftBracket);
+    tokens = push(tokens, Token::Integer { value = 1 });
+    tokens = push(tokens, Token::RightBracket);
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .Index { expr, index }: {
+            print("  OK: Parsed arr[0][1]");
+        }
+        case _: print("  FAIL: Expected Index for arr[0][1]")
+    }
+
+    print("Array index chain tests passed!");
+}
+
+test_comparison_chain :: fn() {
+    print("Testing comparison expressions...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Identifier { name = "x" });
+    tokens = push(tokens, Token::Less);
+    tokens = push(tokens, Token::Integer { value = 10 });
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .Infix { left, operator, right }: {
+            print("  OK: Parsed x < 10");
+        }
+        case _: print("  FAIL: Expected Infix for x < 10")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::Identifier { name = "a" });
+    tokens2 = push(tokens2, Token::GreaterEqual);
+    tokens2 = push(tokens2, Token::Identifier { name = "b" });
+    mut parser2 := parser_new(tokens2);
+    result2 := parse_expression(&mut parser2, Precedence::Lowest);
+    match result2 {
+        case .Infix { left, operator, right }: {
+            print("  OK: Parsed a >= b");
+        }
+        case _: print("  FAIL: Expected Infix for a >= b")
+    }
+
+    print("Comparison expression tests passed!");
+}
+
+test_logical_expressions :: fn() {
+    print("Testing logical expressions...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Identifier { name = "a" });
+    tokens = push(tokens, Token::And);
+    tokens = push(tokens, Token::Identifier { name = "b" });
+    mut parser := parser_new(tokens);
+    result := parse_expression(&mut parser, Precedence::Lowest);
+    match result {
+        case .Infix { left, operator, right }: {
+            print("  OK: Parsed a && b");
+        }
+        case _: print("  FAIL: Expected Infix for a && b")
+    }
+
+    mut tokens2 : []Token = [];
+    tokens2 = push(tokens2, Token::Identifier { name = "x" });
+    tokens2 = push(tokens2, Token::Or);
+    tokens2 = push(tokens2, Token::Identifier { name = "y" });
+    mut parser2 := parser_new(tokens2);
+    result2 := parse_expression(&mut parser2, Precedence::Lowest);
+    match result2 {
+        case .Infix { left, operator, right }: {
+            print("  OK: Parsed x || y");
+        }
+        case _: print("  FAIL: Expected Infix for x || y")
+    }
+
+    print("Logical expression tests passed!");
+}
+
+test_let_with_complex_expr :: fn() {
+    print("Testing let with complex expression...");
+
+    mut tokens : []Token = [];
+    tokens = push(tokens, Token::Let);
+    tokens = push(tokens, Token::Identifier { name = "result" });
+    tokens = push(tokens, Token::Assign);
+    tokens = push(tokens, Token::Integer { value = 1 });
+    tokens = push(tokens, Token::Plus);
+    tokens = push(tokens, Token::Integer { value = 2 });
+    tokens = push(tokens, Token::Asterisk);
+    tokens = push(tokens, Token::Integer { value = 3 });
+    mut parser := parser_new(tokens);
+    result := parse_let_statement(&mut parser);
+    match result {
+        case .Let { name, mutable }: {
+            print("  OK: Parsed let result = 1 + 2 * 3");
+        }
+        case _: print("  FAIL: Expected Let statement")
+    }
+
+    print("Let with complex expression tests passed!");
+}
+
+test_integration :: fn() {
+    print("Testing integration...");
+    test_nested_calls();
+    test_complex_arithmetic();
+    test_chained_field_access();
+    test_method_call_chain();
+    test_array_index_chain();
+    test_comparison_chain();
+    test_logical_expressions();
+    test_let_with_complex_expr();
+    print("Integration tests complete");
+    print("");
+}
+
+test_parser :: fn() {
+    print("=== Parser Tests ===");
+    test_parser_infrastructure();
+    test_precedence();
+    test_precedence_from_token();
+    test_precedence_comparison();
+    test_parse_primitive_types();
+    test_parse_pointer_types();
+    test_parse_array_types();
+    test_parse_optional_type();
+    test_parse_struct_and_type_param();
+    test_expression_parsing();
+    test_statement_parsing();
+    test_type_def_parsing();
+    test_extended_expression_parsing();
+    test_extended_statement_parsing();
+    test_integration();
+    print("=== Parser Tests Complete ===");
+    print("");
+}
+
+test_parser();
+print("Parser module loaded")

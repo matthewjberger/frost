@@ -213,6 +213,7 @@ pub enum HeapObject {
     Arena(ArenaData),
     Pool(PoolData),
     Handle(u32, u32),
+    Free,
 }
 
 impl Display for HeapObject {
@@ -269,6 +270,7 @@ impl Display for HeapObject {
                 )
             }
             HeapObject::Handle(index, generation) => write!(f, "Handle({}, {})", index, generation),
+            HeapObject::Free => write!(f, "<freed>"),
         }
     }
 }

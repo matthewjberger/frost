@@ -203,6 +203,9 @@ fn print_value(vm: &VirtualMachine, value: Value64) {
             frost::HeapObject::Handle(index, generation) => {
                 println!("Handle({}, {})", index, generation);
             }
+            frost::HeapObject::Free => {
+                println!("<freed>");
+            }
         },
     }
 }
@@ -263,6 +266,9 @@ fn print_value_inline(vm: &VirtualMachine, value: Value64) {
             }
             frost::HeapObject::Handle(index, generation) => {
                 print!("Handle({}, {})", index, generation);
+            }
+            frost::HeapObject::Free => {
+                print!("<freed>");
             }
         },
     }

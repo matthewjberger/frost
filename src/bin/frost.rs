@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
@@ -70,7 +70,15 @@ fn main() -> Result<()> {
             println!("Compiled to: {}", object_path);
         }
     } else {
-        let mut compiler = Compiler::new(&statements);
+        let base_path = PathBuf::from(&cli.file)
+            .canonicalize()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+        let mut compiler = if let Some(base) = base_path {
+            Compiler::new_with_path(&statements, base)
+        } else {
+            Compiler::new(&statements)
+        };
         let bytecode = compiler.compile().context("Compiler error")?;
 
         let mut vm = VirtualMachine::new(

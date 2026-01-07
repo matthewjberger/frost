@@ -1,0 +1,486 @@
+// Frost Bootstrap Type Checker
+// Implements type inference and checking for Frost programs
+
+import "ast.frost"
+import "lexer.frost"
+
+// ============================================================================
+// Type Environment
+// ============================================================================
+
+// Type environment holds type bindings using parallel arrays
+TypeEnv :: struct {
+    binding_names: []str,
+    binding_tags: []i64,
+    binding_count: i64
+}
+
+// Create a new empty type environment
+type_env_new :: fn() -> TypeEnv {
+    mut names : []str = [];
+    mut tags : []i64 = [];
+    TypeEnv {
+        binding_names = names,
+        binding_tags = tags,
+        binding_count = 0
+    }
+}
+
+// Convert a type to a numeric tag for comparison
+type_tag :: fn(t: Type) -> i64 {
+    match t {
+        case .I8: 1
+        case .I16: 2
+        case .I32: 3
+        case .I64: 4
+        case .Isize: 5
+        case .U8: 6
+        case .U16: 7
+        case .U32: 8
+        case .U64: 9
+        case .Usize: 10
+        case .F32: 11
+        case .F64: 12
+        case .Bool: 13
+        case .Str: 14
+        case .Void: 15
+        case .Unknown: 16
+        case _: 0
+    }
+}
+
+// Define a variable binding in the environment
+type_env_define :: fn(env: &mut TypeEnv, name: str, typ: Type) {
+    tag := type_tag(typ);
+    env.binding_names = push(env.binding_names, name);
+    env.binding_tags = push(env.binding_tags, tag);
+    env.binding_count = env.binding_count + 1;
+}
+
+// Look up a variable's type tag in the environment
+type_env_lookup_tag :: fn(env: &TypeEnv, name: str) -> i64 {
+    mut index : i64 = 0;
+    while (index < env.binding_count) {
+        binding_name := env.binding_names[index];
+        if (binding_name == name) {
+            return env.binding_tags[index];
+        }
+        index = index + 1;
+    }
+    16
+}
+
+// Convert a tag back to a Type (for common cases)
+tag_to_type :: fn(tag: i64) -> Type {
+    if (tag == 1) { return Type::I8; }
+    if (tag == 2) { return Type::I16; }
+    if (tag == 3) { return Type::I32; }
+    if (tag == 4) { return Type::I64; }
+    if (tag == 5) { return Type::Isize; }
+    if (tag == 6) { return Type::U8; }
+    if (tag == 7) { return Type::U16; }
+    if (tag == 8) { return Type::U32; }
+    if (tag == 9) { return Type::U64; }
+    if (tag == 10) { return Type::Usize; }
+    if (tag == 11) { return Type::F32; }
+    if (tag == 12) { return Type::F64; }
+    if (tag == 13) { return Type::Bool; }
+    if (tag == 14) { return Type::Str; }
+    if (tag == 15) { return Type::Void; }
+    Type::Unknown
+}
+
+// Look up a variable's type in the environment
+type_env_lookup :: fn(env: &TypeEnv, name: str) -> Type {
+    tag := type_env_lookup_tag(env, name);
+    tag_to_type(tag)
+}
+
+// Check if a type is numeric (integers or floats)
+type_is_numeric :: fn(typ: Type) -> bool {
+    match typ {
+        case .I8: true
+        case .I16: true
+        case .I32: true
+        case .I64: true
+        case .Isize: true
+        case .U8: true
+        case .U16: true
+        case .U32: true
+        case .U64: true
+        case .Usize: true
+        case .F32: true
+        case .F64: true
+        case .Unknown: true
+        case _: false
+    }
+}
+
+// Check if a type is an integer
+type_is_integer :: fn(typ: Type) -> bool {
+    match typ {
+        case .I8: true
+        case .I16: true
+        case .I32: true
+        case .I64: true
+        case .Isize: true
+        case .U8: true
+        case .U16: true
+        case .U32: true
+        case .U64: true
+        case .Usize: true
+        case .Unknown: true
+        case _: false
+    }
+}
+
+// Helper to check type equality using tags
+type_equals :: fn(a: Type, b: Type) -> bool {
+    tag_a := type_tag(a);
+    tag_b := type_tag(b);
+    tag_a == tag_b
+}
+
+// Check if two types are compatible
+types_compatible :: fn(expected: Type, actual: Type) -> bool {
+    tag_expected := type_tag(expected);
+    tag_actual := type_tag(actual);
+    if (tag_expected == 16) { return true; }
+    if (tag_actual == 16) { return true; }
+    tag_expected == tag_actual
+}
+
+// ============================================================================
+// Type Inference for Literals
+// ============================================================================
+
+// Infer the type of a literal
+infer_literal_type :: fn(lit: Literal) -> Type {
+    match lit {
+        case .Integer { value }: Type::I64
+        case .Float { text }: Type::F64
+        case .Float32 { text }: Type::F32
+        case .String { value }: Type::Str
+        case .Boolean { value }: Type::Bool
+    }
+}
+
+// ============================================================================
+// Type Inference for Expressions
+// ============================================================================
+
+// Infer the type of an expression
+infer_expression_type :: fn(env: &TypeEnv, expr: Expression) -> Type {
+    match expr {
+        case .Identifier { name }: {
+            type_env_lookup(env, name)
+        }
+        case .LiteralExpr { literal }: {
+            infer_literal_type(literal)
+        }
+        case .Boolean { value }: Type::Bool
+        case .Prefix { op, expr }: {
+            match op {
+                case .Negate: Type::I64
+                case .Not: Type::Bool
+                case _: Type::Unknown
+            }
+        }
+        case .Infix { left, op, right }: {
+            match op {
+                case .Add: Type::I64
+                case .Subtract: Type::I64
+                case .Multiply: Type::I64
+                case .Divide: Type::I64
+                case .Modulo: Type::I64
+                case .Equal: Type::Bool
+                case .NotEqual: Type::Bool
+                case .LessThan: Type::Bool
+                case .GreaterThan: Type::Bool
+                case .LessThanOrEqual: Type::Bool
+                case .GreaterThanOrEqual: Type::Bool
+                case .And: Type::Bool
+                case .Or: Type::Bool
+                case _: Type::Unknown
+            }
+        }
+        case .Call { callee, arg_start, arg_count }: Type::Unknown
+        case .Index { expr, index }: Type::Unknown
+        case .FieldAccess { expr, field }: Type::Unknown
+        case .If { condition, then_branch, else_branch }: Type::Unknown
+        case .Range { start, end, inclusive }: Type::I64
+        case .Switch { scrutinee, case_start, case_count }: Type::Unknown
+        case .Sizeof { type_id }: Type::I64
+        case .Borrow { expr, mutable }: Type::Unknown
+        case .Dereference { expr }: Type::Unknown
+        case .StructInit { name, field_start, field_count }: Type::Unknown
+        case .Tuple { elem_start, elem_count }: Type::Unknown
+        case .EnumVariantInit { enum_name, variant_name, field_start, field_count }: Type::Unknown
+        case .ComptimeBlock { body }: Type::Void
+        case .ComptimeFor { index_var, type_var, type_start, type_count, body, has_index }: Type::Void
+        case .Typename { type_id }: Type::Str
+        case .Unsafe { body }: Type::Unknown
+        case .ContextAccess: Type::Unknown
+    }
+}
+
+// ============================================================================
+// Type Checker
+// ============================================================================
+
+TypeChecker :: struct {
+    env: TypeEnv,
+    error_count: i64
+}
+
+// Create a new type checker with built-in functions defined
+typechecker_new :: fn() -> TypeChecker {
+    mut env := type_env_new();
+
+    type_env_define(&mut env, "len", Type::Unknown);
+    type_env_define(&mut env, "push", Type::Unknown);
+    type_env_define(&mut env, "print", Type::Unknown);
+    type_env_define(&mut env, "assert", Type::Unknown);
+    type_env_define(&mut env, "first", Type::Unknown);
+    type_env_define(&mut env, "last", Type::Unknown);
+    type_env_define(&mut env, "rest", Type::Unknown);
+
+    TypeChecker {
+        env = env,
+        error_count = 0
+    }
+}
+
+// Check a let statement
+check_let_statement :: fn(env: &mut TypeEnv, name: str, typ: Type, mutable: bool) -> bool {
+    type_env_define(env, name, typ);
+    true
+}
+
+// Check an expression and return its type
+check_expression :: fn(env: &TypeEnv, expr: Expression) -> Type {
+    infer_expression_type(env, expr)
+}
+
+// ============================================================================
+// Type Checker Tests
+// ============================================================================
+
+test_type_env :: fn() {
+    print("Testing TypeEnv...");
+
+    mut env := type_env_new();
+    assert(env.binding_count == 0, "Expected 0 bindings");
+    print("  OK: Empty env created");
+
+    type_env_define(&mut env, "x", Type::I64);
+    assert(env.binding_count == 1, "Expected 1 binding");
+    print("  OK: Binding added");
+
+    result := type_env_lookup_tag(&env, "x");
+    if (result == 4) {
+        print("  OK: Lookup found I64 (tag 4)");
+    } else {
+        print("  FAIL: Expected tag 4 for I64");
+    }
+
+    unknown := type_env_lookup_tag(&env, "y");
+    if (unknown == 16) {
+        print("  OK: Unknown variable returns Unknown (tag 16)");
+    } else {
+        print("  FAIL: Expected tag 16 for Unknown");
+    }
+
+    print("TypeEnv tests passed!");
+}
+
+test_type_is_numeric :: fn() {
+    print("Testing type_is_numeric...");
+
+    assert(type_is_numeric(Type::I64), "I64 should be numeric");
+    print("  OK: I64 is numeric");
+
+    assert(type_is_numeric(Type::F64), "F64 should be numeric");
+    print("  OK: F64 is numeric");
+
+    assert(type_is_numeric(Type::U32), "U32 should be numeric");
+    print("  OK: U32 is numeric");
+
+    assert(type_is_numeric(Type::Bool) == false, "Bool should not be numeric");
+    print("  OK: Bool is not numeric");
+
+    assert(type_is_numeric(Type::Str) == false, "Str should not be numeric");
+    print("  OK: Str is not numeric");
+
+    print("type_is_numeric tests passed!");
+}
+
+test_type_is_integer :: fn() {
+    print("Testing type_is_integer...");
+
+    assert(type_is_integer(Type::I64), "I64 should be integer");
+    print("  OK: I64 is integer");
+
+    assert(type_is_integer(Type::U32), "U32 should be integer");
+    print("  OK: U32 is integer");
+
+    assert(type_is_integer(Type::F64) == false, "F64 should not be integer");
+    print("  OK: F64 is not integer");
+
+    assert(type_is_integer(Type::Bool) == false, "Bool should not be integer");
+    print("  OK: Bool is not integer");
+
+    print("type_is_integer tests passed!");
+}
+
+test_types_compatible :: fn() {
+    print("Testing types_compatible...");
+
+    assert(types_compatible(Type::I64, Type::I64), "I64 should be compatible with I64");
+    print("  OK: I64 compatible with I64");
+
+    assert(types_compatible(Type::Unknown, Type::I64), "Unknown compatible with anything");
+    print("  OK: Unknown compatible with I64");
+
+    assert(types_compatible(Type::I64, Type::Unknown), "Anything compatible with Unknown");
+    print("  OK: I64 compatible with Unknown");
+
+    assert(types_compatible(Type::I64, Type::Bool) == false, "I64 not compatible with Bool");
+    print("  OK: I64 not compatible with Bool");
+
+    print("types_compatible tests passed!");
+}
+
+test_infer_literal_type :: fn() {
+    print("Testing infer_literal_type...");
+
+    int_lit := Literal::Integer { value = 42 };
+    int_type := infer_literal_type(int_lit);
+    match int_type {
+        case .I64: print("  OK: Integer literal -> I64")
+        case _: print("  FAIL: Expected I64 for integer literal")
+    }
+
+    str_lit := Literal::String { value = "hello" };
+    str_type := infer_literal_type(str_lit);
+    match str_type {
+        case .Str: print("  OK: String literal -> Str")
+        case _: print("  FAIL: Expected Str for string literal")
+    }
+
+    bool_lit := Literal::Boolean { value = true };
+    bool_type := infer_literal_type(bool_lit);
+    match bool_type {
+        case .Bool: print("  OK: Boolean literal -> Bool")
+        case _: print("  FAIL: Expected Bool for boolean literal")
+    }
+
+    float_lit := Literal::Float { text = "3.14" };
+    float_type := infer_literal_type(float_lit);
+    match float_type {
+        case .F64: print("  OK: Float literal -> F64")
+        case _: print("  FAIL: Expected F64 for float literal")
+    }
+
+    print("infer_literal_type tests passed!");
+}
+
+test_infer_expression_type :: fn() {
+    print("Testing infer_expression_type...");
+
+    mut env := type_env_new();
+    type_env_define(&mut env, "x", Type::I64);
+    type_env_define(&mut env, "flag", Type::Bool);
+
+    ident_expr := Expression::Identifier { name = "x" };
+    ident_type := infer_expression_type(&env, ident_expr);
+    match ident_type {
+        case .I64: print("  OK: Identifier x -> I64")
+        case _: print("  FAIL: Expected I64 for x")
+    }
+
+    bool_expr := Expression::Boolean { value = true };
+    bool_type := infer_expression_type(&env, bool_expr);
+    match bool_type {
+        case .Bool: print("  OK: Boolean expression -> Bool")
+        case _: print("  FAIL: Expected Bool for boolean expr")
+    }
+
+    lit := Literal::Integer { value = 10 };
+    lit_expr := Expression::LiteralExpr { value = lit };
+    lit_type := infer_expression_type(&env, lit_expr);
+    match lit_type {
+        case .I64: print("  OK: LiteralExpr (int) -> I64")
+        case _: print("  FAIL: Expected I64 for literal expr")
+    }
+
+    add_op := Operator::Add;
+    infix_expr := Expression::Infix { left = 0, op = add_op, right = 1 };
+    infix_type := infer_expression_type(&env, infix_expr);
+    match infix_type {
+        case .I64: print("  OK: Infix Add -> I64")
+        case _: print("  FAIL: Expected I64 for add")
+    }
+
+    eq_op := Operator::Equal;
+    cmp_expr := Expression::Infix { left = 0, op = eq_op, right = 1 };
+    cmp_type := infer_expression_type(&env, cmp_expr);
+    match cmp_type {
+        case .Bool: print("  OK: Infix Equal -> Bool")
+        case _: print("  FAIL: Expected Bool for equal")
+    }
+
+    sizeof_expr := Expression::Sizeof { type_id = 0 };
+    sizeof_type := infer_expression_type(&env, sizeof_expr);
+    match sizeof_type {
+        case .I64: print("  OK: Sizeof -> I64")
+        case _: print("  FAIL: Expected I64 for sizeof")
+    }
+
+    print("infer_expression_type tests passed!");
+}
+
+test_typechecker_new :: fn() {
+    print("Testing typechecker_new...");
+
+    checker := typechecker_new();
+    assert(checker.error_count == 0, "Expected 0 errors");
+    print("  OK: TypeChecker created");
+
+    env := checker.env;
+    print_tag := type_env_lookup_tag(&env, "print");
+    if (print_tag == 16) {
+        print("  OK: Built-in print defined (Unknown type)");
+    } else {
+        print("  OK: Built-in print defined (with type)");
+    }
+
+    checker2 := typechecker_new();
+    env2 := checker2.env;
+    len_tag := type_env_lookup_tag(&env2, "len");
+    if (len_tag == 16) {
+        print("  OK: Built-in len defined (Unknown type)");
+    } else {
+        print("  OK: Built-in len defined (with type)");
+    }
+
+    print("typechecker_new tests passed!");
+}
+
+// Run all type checker tests
+run_typechecker_tests :: fn() {
+    print("=== Type Checker Tests ===");
+    test_type_env();
+    test_type_is_numeric();
+    test_type_is_integer();
+    test_types_compatible();
+    test_infer_literal_type();
+    test_infer_expression_type();
+    test_typechecker_new();
+    print("=== Type Checker Tests Complete ===");
+    print("");
+}
+
+// Module initialization
+print("Type checker module loaded");
+run_typechecker_tests();

@@ -1,0 +1,129 @@
+// Frost Bootstrap Compiler
+// Main entry point - imports all modules
+
+import "parser.frost"
+import "typechecker.frost"
+import "compiler.frost"
+import "vm.frost"
+
+print("Bootstrap compiler loaded successfully")
+
+// ============================================================================
+// Compilation Pipeline
+// ============================================================================
+
+compile_source :: fn(source: str) {
+    mut lexer := lexer_new(source);
+    tokens := tokenize(&mut lexer);
+
+    mut parser := parser_new(tokens);
+    mut stmt_indices : []i64 = [];
+
+    while (!parser_is_at_end(&parser)) {
+        stmt := parse_statement(&mut parser);
+        idx := len(parser.statements);
+        parser.statements = push(parser.statements, stmt);
+        stmt_indices = push(stmt_indices, idx);
+    }
+
+    mut compiler := compiler_new();
+    compiler_load_ast(&mut compiler, &parser);
+    compile_program(&mut compiler, stmt_indices);
+
+    mut vm := vm_new();
+    vm_load_instructions(&mut vm, compiler.instructions, compiler.instruction_count);
+    vm_load_constants(&mut vm, compiler.constants, compiler.constant_count);
+    vm_load_string_constants(&mut vm, compiler.string_constants, compiler.string_constant_count);
+    vm.functions = compiler.functions;
+    vm.function_count = compiler.function_count;
+
+    vm_run(&mut vm);
+}
+
+// Test direct enum array handling using a simple wrapper struct
+TestWrapper :: struct {
+    exprs: []Expression
+}
+
+test_enum_array :: fn() {
+    print("=== Testing Enum Array Handling ===");
+
+    mut exprs : []Expression = [];
+
+    expr1 := Expression::LiteralExpr { value = Literal::Integer { value = 42 } };
+    exprs = push(exprs, expr1);
+    print("Added LiteralExpr");
+
+    expr2 := Expression::Infix { left = 0, op = Operator::Add, right = 0 };
+    exprs = push(exprs, expr2);
+    print("Added Infix");
+
+    print("Array length:");
+    print(len(exprs));
+
+    retrieved := exprs[1];
+    print("Retrieved expression from array");
+
+    match retrieved {
+        case .Identifier { name }: print("MATCH: Identifier")
+        case .LiteralExpr { value }: print("MATCH: LiteralExpr")
+        case .Infix { left, op, right }: {
+            print("MATCH: Infix");
+            print("  left=");
+            print(left);
+            print("  right=");
+            print(right);
+        }
+        case _: print("MATCH: OTHER")
+    };
+
+    // Now test with a wrapper struct like Parser uses
+    print("Testing via wrapper struct:");
+    mut wrapper := TestWrapper { exprs = exprs };
+    print("  wrapper.exprs length:");
+    print(len(wrapper.exprs));
+
+    // Test: does the first element match?
+    wrapper_elem0 := wrapper.exprs[0];
+    match wrapper_elem0 {
+        case .LiteralExpr { value }: print("  wrapper.exprs[0] MATCH: LiteralExpr")
+        case _: print("  wrapper.exprs[0] MATCH: OTHER")
+    };
+
+    wrapper_retrieved := wrapper.exprs[1];
+    match wrapper_retrieved {
+        case .Infix { left, op, right }: print("  Wrapper MATCH: Infix")
+        case _: print("  Wrapper MATCH: OTHER")
+    };
+
+    // Test: reassign from wrapper to local
+    local_exprs := wrapper.exprs;
+    local_elem := local_exprs[1];
+    match local_elem {
+        case .Infix { left, op, right }: print("  Local from wrapper MATCH: Infix")
+        case _: print("  Local from wrapper MATCH: OTHER")
+    };
+
+    print("=== Enum Array Test Complete ===");
+}
+
+// Test programs of increasing complexity
+test_compile :: fn() {
+    print("=== Testing Compilation Pipeline ===");
+
+    print("Test 1: Simple let");
+    compile_source("let x = 42");
+
+    print("Test 2: Arithmetic");
+    compile_source("let y = 10 + 20");
+
+    print("Test 3: Multiple statements");
+    compile_source("let a = 1
+let b = 2");
+
+    print("=== All Tests Complete ===");
+}
+
+// Run tests
+test_enum_array()
+test_compile()

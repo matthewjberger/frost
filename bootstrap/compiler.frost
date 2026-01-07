@@ -1,0 +1,1113 @@
+// Frost Bootstrap Compiler
+// Compiles AST to bytecode
+
+import "ast.frost"
+import "lexer.frost"
+
+// ============================================================================
+// Opcodes
+// ============================================================================
+
+Opcode :: enum {
+    Constant,
+    Pop,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    True,
+    False,
+    Equal,
+    NotEqual,
+    LessThan,
+    GreaterThan,
+    LessThanOrEqual,
+    GreaterThanOrEqual,
+    Negate,
+    Not,
+    Jump,
+    JumpNotTruthy,
+    Null,
+    GetGlobal,
+    SetGlobal,
+    GetLocal,
+    SetLocal,
+    Array,
+    Index,
+    IndexSet,
+    Call,
+    Return,
+    ReturnValue,
+    Closure,
+    GetBuiltin,
+    GetFree,
+    Dup,
+    Drop,
+    ShiftLeft,
+    ShiftRight,
+    BitwiseAnd,
+    BitwiseOr,
+    StructAlloc,
+    StructGet,
+    StructSet,
+    TaggedUnionAlloc,
+    TaggedUnionSetTag,
+    TaggedUnionGetTag,
+    TaggedUnionGetField,
+    TaggedUnionSetField
+}
+
+// Convert opcode to numeric value for bytecode
+opcode_to_byte :: fn(op: Opcode) -> i64 {
+    match op {
+        case .Constant: 0
+        case .Pop: 1
+        case .Add: 2
+        case .Sub: 3
+        case .Mul: 4
+        case .Div: 5
+        case .Mod: 6
+        case .True: 7
+        case .False: 8
+        case .Equal: 9
+        case .NotEqual: 10
+        case .LessThan: 11
+        case .GreaterThan: 12
+        case .LessThanOrEqual: 13
+        case .GreaterThanOrEqual: 14
+        case .Negate: 15
+        case .Not: 16
+        case .Jump: 17
+        case .JumpNotTruthy: 18
+        case .Null: 19
+        case .GetGlobal: 20
+        case .SetGlobal: 21
+        case .GetLocal: 22
+        case .SetLocal: 23
+        case .Array: 24
+        case .Index: 25
+        case .IndexSet: 26
+        case .Call: 27
+        case .Return: 28
+        case .ReturnValue: 29
+        case .Closure: 30
+        case .GetBuiltin: 31
+        case .GetFree: 32
+        case .Dup: 33
+        case .Drop: 34
+        case .ShiftLeft: 35
+        case .ShiftRight: 36
+        case .BitwiseAnd: 37
+        case .BitwiseOr: 38
+        case .StructAlloc: 39
+        case .StructGet: 40
+        case .StructSet: 41
+        case .TaggedUnionAlloc: 42
+        case .TaggedUnionSetTag: 43
+        case .TaggedUnionGetTag: 44
+        case .TaggedUnionGetField: 45
+        case .TaggedUnionSetField: 46
+    }
+}
+
+// ============================================================================
+// Instructions
+// ============================================================================
+
+Instruction :: struct {
+    opcode: i64,
+    operand1: i64,
+    operand2: i64,
+    has_operand1: bool,
+    has_operand2: bool
+}
+
+// Create instruction with no operands
+instr :: fn(op: Opcode) -> Instruction {
+    Instruction {
+        opcode = opcode_to_byte(op),
+        operand1 = 0,
+        operand2 = 0,
+        has_operand1 = false,
+        has_operand2 = false
+    }
+}
+
+// Create instruction with one operand
+instr1 :: fn(op: Opcode, operand: i64) -> Instruction {
+    Instruction {
+        opcode = opcode_to_byte(op),
+        operand1 = operand,
+        operand2 = 0,
+        has_operand1 = true,
+        has_operand2 = false
+    }
+}
+
+// Create instruction with two operands
+instr2 :: fn(op: Opcode, op1: i64, op2: i64) -> Instruction {
+    Instruction {
+        opcode = opcode_to_byte(op),
+        operand1 = op1,
+        operand2 = op2,
+        has_operand1 = true,
+        has_operand2 = true
+    }
+}
+
+// ============================================================================
+// Constants Pool
+// ============================================================================
+
+ConstantKind :: enum {
+    Integer { value: i64 },
+    Float { value: i64 },
+    String { value: str },
+    Boolean { value: bool },
+    Function { index: i64 }
+}
+
+// ============================================================================
+// Symbol Table
+// ============================================================================
+
+SymbolScope :: enum {
+    Global,
+    Local,
+    Builtin,
+    Free,
+    Function
+}
+
+Symbol :: struct {
+    name: str,
+    scope_tag: i64,
+    index: i64,
+    mutable: bool
+}
+
+scope_global :: fn() -> i64 { 0 }
+scope_local :: fn() -> i64 { 1 }
+scope_builtin :: fn() -> i64 { 2 }
+scope_free :: fn() -> i64 { 3 }
+scope_function :: fn() -> i64 { 4 }
+
+// Symbol table using parallel arrays
+SymbolTable :: struct {
+    names: []str,
+    scope_tags: []i64,
+    indices: []i64,
+    mutables: []bool,
+    count: i64,
+    num_definitions: i64,
+    outer_names: []str,
+    outer_scope_tags: []i64,
+    outer_indices: []i64,
+    outer_mutables: []bool,
+    outer_count: i64,
+    has_outer: bool
+}
+
+symbol_table_new :: fn() -> SymbolTable {
+    mut names : []str = [];
+    mut scope_tags : []i64 = [];
+    mut indices : []i64 = [];
+    mut mutables : []bool = [];
+    mut outer_names : []str = [];
+    mut outer_scope_tags : []i64 = [];
+    mut outer_indices : []i64 = [];
+    mut outer_mutables : []bool = [];
+    SymbolTable {
+        names = names,
+        scope_tags = scope_tags,
+        indices = indices,
+        mutables = mutables,
+        count = 0,
+        num_definitions = 0,
+        outer_names = outer_names,
+        outer_scope_tags = outer_scope_tags,
+        outer_indices = outer_indices,
+        outer_mutables = outer_mutables,
+        outer_count = 0,
+        has_outer = false
+    }
+}
+
+symbol_table_define :: fn(table: &mut SymbolTable, name: str, mutable: bool) -> i64 {
+    scope := if (table.has_outer) { scope_local() } else { scope_global() };
+    index := table.num_definitions;
+    table.names = push(table.names, name);
+    table.scope_tags = push(table.scope_tags, scope);
+    table.indices = push(table.indices, index);
+    table.mutables = push(table.mutables, mutable);
+    table.count = table.count + 1;
+    table.num_definitions = table.num_definitions + 1;
+    index
+}
+
+symbol_table_define_builtin :: fn(table: &mut SymbolTable, name: str, index: i64) {
+    table.names = push(table.names, name);
+    table.scope_tags = push(table.scope_tags, scope_builtin());
+    table.indices = push(table.indices, index);
+    table.mutables = push(table.mutables, false);
+    table.count = table.count + 1;
+}
+
+// Resolve returns: (found: bool, scope: i64, index: i64)
+symbol_table_resolve :: fn(table: &SymbolTable, name: str) -> i64 {
+    mut idx : i64 = 0;
+    while (idx < table.count) {
+        if (table.names[idx] == name) {
+            return table.indices[idx];
+        }
+        idx = idx + 1;
+    }
+    -1
+}
+
+symbol_table_resolve_scope :: fn(table: &SymbolTable, name: str) -> i64 {
+    mut idx : i64 = 0;
+    while (idx < table.count) {
+        if (table.names[idx] == name) {
+            return table.scope_tags[idx];
+        }
+        idx = idx + 1;
+    }
+    -1
+}
+
+// ============================================================================
+// Compiled Function
+// ============================================================================
+
+CompiledFunction :: struct {
+    instructions: []Instruction,
+    instruction_count: i64,
+    num_locals: i64,
+    num_parameters: i64
+}
+
+compiled_function_new :: fn() -> CompiledFunction {
+    mut instrs : []Instruction = [];
+    CompiledFunction {
+        instructions = instrs,
+        instruction_count = 0,
+        num_locals = 0,
+        num_parameters = 0
+    }
+}
+
+// ============================================================================
+// Compiler (flat structure to avoid nested field assignment)
+// ============================================================================
+
+Compiler :: struct {
+    instructions: []Instruction,
+    instruction_count: i64,
+    constants: []i64,
+    constant_count: i64,
+    string_constants: []str,
+    string_constant_count: i64,
+    functions: []CompiledFunction,
+    function_count: i64,
+    symbol_names: []str,
+    symbol_scope_tags: []i64,
+    symbol_indices: []i64,
+    symbol_mutables: []bool,
+    symbol_count: i64,
+    num_definitions: i64,
+    scope_depth: i64,
+    expressions: []Expression,
+    statements: []Statement,
+    types: []Type,
+    parameters: []Parameter,
+    struct_fields: []StructField,
+    enum_variants: []EnumVariant,
+    patterns: []Pattern,
+    switch_cases: []SwitchCase,
+    loop_start_stack: []i64,
+    loop_end_patches: []i64,
+    struct_defs: []str,
+    struct_field_counts: []i64,
+    enum_defs: []str,
+    enum_variant_counts: []i64
+}
+
+compiler_define_builtin :: fn(compiler: &mut Compiler, name: str, index: i64) {
+    compiler.symbol_names = push(compiler.symbol_names, name);
+    compiler.symbol_scope_tags = push(compiler.symbol_scope_tags, scope_builtin());
+    compiler.symbol_indices = push(compiler.symbol_indices, index);
+    compiler.symbol_mutables = push(compiler.symbol_mutables, false);
+    compiler.symbol_count = compiler.symbol_count + 1;
+}
+
+compiler_define :: fn(compiler: &mut Compiler, name: str, mutable: bool) -> i64 {
+    scope := if (compiler.scope_depth > 0) { scope_local() } else { scope_global() };
+    index := compiler.num_definitions;
+    compiler.symbol_names = push(compiler.symbol_names, name);
+    compiler.symbol_scope_tags = push(compiler.symbol_scope_tags, scope);
+    compiler.symbol_indices = push(compiler.symbol_indices, index);
+    compiler.symbol_mutables = push(compiler.symbol_mutables, mutable);
+    compiler.symbol_count = compiler.symbol_count + 1;
+    compiler.num_definitions = compiler.num_definitions + 1;
+    index
+}
+
+compiler_resolve :: fn(compiler: &Compiler, name: str) -> i64 {
+    mut idx : i64 = 0;
+    while (idx < compiler.symbol_count) {
+        if (compiler.symbol_names[idx] == name) {
+            return compiler.symbol_indices[idx];
+        }
+        idx = idx + 1;
+    }
+    -1
+}
+
+compiler_resolve_scope :: fn(compiler: &Compiler, name: str) -> i64 {
+    mut idx : i64 = 0;
+    while (idx < compiler.symbol_count) {
+        if (compiler.symbol_names[idx] == name) {
+            return compiler.symbol_scope_tags[idx];
+        }
+        idx = idx + 1;
+    }
+    -1
+}
+
+compiler_new :: fn() -> Compiler {
+    mut instrs : []Instruction = [];
+    mut consts : []i64 = [];
+    mut strings : []str = [];
+    mut funcs : []CompiledFunction = [];
+    mut names : []str = [];
+    mut scope_tags : []i64 = [];
+    mut indices : []i64 = [];
+    mut mutables : []bool = [];
+    mut exprs : []Expression = [];
+    mut stmts : []Statement = [];
+    mut typs : []Type = [];
+    mut params : []Parameter = [];
+    mut fields : []StructField = [];
+    mut variants : []EnumVariant = [];
+    mut pats : []Pattern = [];
+    mut cases : []SwitchCase = [];
+    mut loop_starts : []i64 = [];
+    mut loop_ends : []i64 = [];
+    mut struct_names : []str = [];
+    mut struct_counts : []i64 = [];
+    mut enum_names : []str = [];
+    mut enum_counts : []i64 = [];
+
+    mut compiler := Compiler {
+        instructions = instrs,
+        instruction_count = 0,
+        constants = consts,
+        constant_count = 0,
+        string_constants = strings,
+        string_constant_count = 0,
+        functions = funcs,
+        function_count = 0,
+        symbol_names = names,
+        symbol_scope_tags = scope_tags,
+        symbol_indices = indices,
+        symbol_mutables = mutables,
+        symbol_count = 0,
+        num_definitions = 0,
+        scope_depth = 0,
+        expressions = exprs,
+        statements = stmts,
+        types = typs,
+        parameters = params,
+        struct_fields = fields,
+        enum_variants = variants,
+        patterns = pats,
+        switch_cases = cases,
+        loop_start_stack = loop_starts,
+        loop_end_patches = loop_ends,
+        struct_defs = struct_names,
+        struct_field_counts = struct_counts,
+        enum_defs = enum_names,
+        enum_variant_counts = enum_counts
+    };
+
+    compiler_define_builtin(&mut compiler, "len", 0);
+    compiler_define_builtin(&mut compiler, "first", 1);
+    compiler_define_builtin(&mut compiler, "last", 2);
+    compiler_define_builtin(&mut compiler, "rest", 3);
+    compiler_define_builtin(&mut compiler, "push", 4);
+    compiler_define_builtin(&mut compiler, "print", 5);
+    compiler_define_builtin(&mut compiler, "assert", 6);
+
+    compiler
+}
+
+// Emit an instruction
+compiler_emit :: fn(compiler: &mut Compiler, instruction: Instruction) -> i64 {
+    pos := compiler.instruction_count;
+    compiler.instructions = push(compiler.instructions, instruction);
+    compiler.instruction_count = compiler.instruction_count + 1;
+    pos
+}
+
+// Add a constant and return its index
+compiler_add_constant :: fn(compiler: &mut Compiler, value: i64) -> i64 {
+    index := compiler.constant_count;
+    compiler.constants = push(compiler.constants, value);
+    compiler.constant_count = compiler.constant_count + 1;
+    index
+}
+
+// Add a string constant and return its index
+compiler_add_string_constant :: fn(compiler: &mut Compiler, value: str) -> i64 {
+    index := compiler.string_constant_count;
+    compiler.string_constants = push(compiler.string_constants, value);
+    compiler.string_constant_count = compiler.string_constant_count + 1;
+    index
+}
+
+// ============================================================================
+// Expression Compilation
+// ============================================================================
+
+compile_literal :: fn(compiler: &mut Compiler, lit: Literal) {
+    match lit {
+        case .Integer { value }: {
+            const_idx := compiler_add_constant(compiler, value);
+            compiler_emit(compiler, instr1(Opcode::Constant, const_idx));
+        }
+        case .Boolean { value }: {
+            if (value) {
+                compiler_emit(compiler, instr(Opcode::True));
+            } else {
+                compiler_emit(compiler, instr(Opcode::False));
+            }
+        }
+        case .String { value }: {
+            const_idx := compiler_add_string_constant(compiler, value);
+            compiler_emit(compiler, instr1(Opcode::Constant, const_idx));
+        }
+        case .Float { text }: {
+            compiler_emit(compiler, instr1(Opcode::Constant, 0));
+        }
+        case .Float32 { text }: {
+            compiler_emit(compiler, instr1(Opcode::Constant, 0));
+        }
+    }
+}
+
+compile_operator :: fn(compiler: &mut Compiler, op: Operator) {
+    match op {
+        case .Add: compiler_emit(compiler, instr(Opcode::Add))
+        case .Subtract: compiler_emit(compiler, instr(Opcode::Sub))
+        case .Multiply: compiler_emit(compiler, instr(Opcode::Mul))
+        case .Divide: compiler_emit(compiler, instr(Opcode::Div))
+        case .Modulo: compiler_emit(compiler, instr(Opcode::Mod))
+        case .Equal: compiler_emit(compiler, instr(Opcode::Equal))
+        case .NotEqual: compiler_emit(compiler, instr(Opcode::NotEqual))
+        case .LessThan: compiler_emit(compiler, instr(Opcode::LessThan))
+        case .GreaterThan: compiler_emit(compiler, instr(Opcode::GreaterThan))
+        case .LessThanOrEqual: compiler_emit(compiler, instr(Opcode::LessThanOrEqual))
+        case .GreaterThanOrEqual: compiler_emit(compiler, instr(Opcode::GreaterThanOrEqual))
+        case .And: compiler_emit(compiler, instr(Opcode::BitwiseAnd))
+        case .Or: compiler_emit(compiler, instr(Opcode::BitwiseOr))
+        case .Negate: compiler_emit(compiler, instr(Opcode::Negate))
+        case .Not: compiler_emit(compiler, instr(Opcode::Not))
+        case .ShiftLeft: compiler_emit(compiler, instr(Opcode::ShiftLeft))
+        case .ShiftRight: compiler_emit(compiler, instr(Opcode::ShiftRight))
+        case _: {}
+    };
+}
+
+// Load AST data from parser into compiler
+compiler_load_ast :: fn(compiler: &mut Compiler, parser: &Parser) {
+    compiler.expressions = parser.expressions;
+    compiler.statements = parser.statements;
+    compiler.types = parser.types;
+    compiler.parameters = parser.parameters;
+    compiler.struct_fields = parser.struct_fields;
+    compiler.enum_variants = parser.enum_variants;
+    compiler.patterns = parser.patterns;
+    compiler.switch_cases = parser.switch_cases;
+}
+
+// Helper to get struct field count
+compiler_get_struct_field_count :: fn(compiler: &Compiler, name: str) -> i64 {
+    mut index : i64 = 0;
+    while (index < len(compiler.struct_defs)) {
+        if (compiler.struct_defs[index] == name) {
+            return compiler.struct_field_counts[index];
+        }
+        index = index + 1;
+    }
+    0
+}
+
+// Helper to get enum variant tag
+compiler_get_enum_variant_tag :: fn(compiler: &Compiler, enum_name: str, variant_name: str) -> i64 {
+    mut enum_index : i64 = 0;
+    mut variant_base : i64 = 0;
+    while (enum_index < len(compiler.enum_defs)) {
+        if (compiler.enum_defs[enum_index] == enum_name) {
+            return variant_base;
+        }
+        variant_base = variant_base + compiler.enum_variant_counts[enum_index];
+        enum_index = enum_index + 1;
+    }
+    0
+}
+
+// Patch a jump instruction's target
+// Note: We need to rebuild the instruction since Frost doesn't support nested field assignment
+compiler_patch_jump :: fn(compiler: &mut Compiler, position: i64) {
+    target := compiler.instruction_count;
+    old_instr := compiler.instructions[position];
+    new_instr := Instruction {
+        opcode = old_instr.opcode,
+        operand1 = target,
+        operand2 = old_instr.operand2,
+        has_operand1 = old_instr.has_operand1,
+        has_operand2 = old_instr.has_operand2
+    };
+    compiler.instructions[position] = new_instr;
+}
+
+// ============================================================================
+// Expression Compilation
+// ============================================================================
+
+compile_expression :: fn(compiler: &mut Compiler, expr_id: i64) {
+    if (expr_id < 0) {
+        return;
+    }
+    expr := compiler.expressions[expr_id];
+    match expr {
+        case .Identifier { name }: {
+            index := compiler_resolve(compiler, name);
+            if (index >= 0) {
+                scope := compiler_resolve_scope(compiler, name);
+                if (scope == scope_global()) {
+                    compiler_emit(compiler, instr1(Opcode::GetGlobal, index));
+                } else if (scope == scope_local()) {
+                    compiler_emit(compiler, instr1(Opcode::GetLocal, index));
+                } else if (scope == scope_builtin()) {
+                    compiler_emit(compiler, instr1(Opcode::GetBuiltin, index));
+                } else if (scope == scope_free()) {
+                    compiler_emit(compiler, instr1(Opcode::GetFree, index));
+                }
+            }
+        }
+        case .LiteralExpr { value }: {
+            compile_literal(compiler, value);
+        }
+        case .Boolean { value }: {
+            if (value) {
+                compiler_emit(compiler, instr(Opcode::True));
+            } else {
+                compiler_emit(compiler, instr(Opcode::False));
+            }
+        }
+        case .Prefix { op, expr }: {
+            compile_expression(compiler, expr);
+            match op {
+                case .Negate: compiler_emit(compiler, instr(Opcode::Negate))
+                case .Not: compiler_emit(compiler, instr(Opcode::Not))
+                case _: {}
+            };
+        }
+        case .Infix { left, op, right }: {
+            compile_expression(compiler, left);
+            compile_expression(compiler, right);
+            compile_operator(compiler, op);
+        }
+        case .If { condition, consequence, alternative, has_alternative }: {
+            compile_expression(compiler, condition);
+            jump_not_truthy := compiler_emit(compiler, instr1(Opcode::JumpNotTruthy, 9999));
+            compile_expression(compiler, consequence);
+            if (has_alternative) {
+                jump_past_alt := compiler_emit(compiler, instr1(Opcode::Jump, 9999));
+                compiler_patch_jump(compiler, jump_not_truthy);
+                compile_expression(compiler, alternative);
+                compiler_patch_jump(compiler, jump_past_alt);
+            } else {
+                compiler_patch_jump(compiler, jump_not_truthy);
+            }
+        }
+        case .Call { callee, arg_start, arg_count }: {
+            mut arg_index : i64 = 0;
+            while (arg_index < arg_count) {
+                compile_expression(compiler, arg_start + arg_index);
+                arg_index = arg_index + 1;
+            }
+            compile_expression(compiler, callee);
+            compiler_emit(compiler, instr1(Opcode::Call, arg_count));
+        }
+        case .Index { expr, index }: {
+            compile_expression(compiler, expr);
+            compile_expression(compiler, index);
+            compiler_emit(compiler, instr(Opcode::Index));
+        }
+        case .FieldAccess { expr, field }: {
+            compile_expression(compiler, expr);
+            field_offset : i64 = 0;
+            compiler_emit(compiler, instr1(Opcode::StructGet, field_offset));
+        }
+        case .AddressOf { expr }: {
+            compile_expression(compiler, expr);
+        }
+        case .Borrow { expr }: {
+            compile_expression(compiler, expr);
+        }
+        case .BorrowMut { expr }: {
+            compile_expression(compiler, expr);
+        }
+        case .Dereference { expr }: {
+            compile_expression(compiler, expr);
+        }
+        case .StructInit { name, field_start, field_count }: {
+            struct_field_count := compiler_get_struct_field_count(compiler, name);
+            compiler_emit(compiler, instr1(Opcode::StructAlloc, struct_field_count));
+            mut field_index : i64 = 0;
+            while (field_index < field_count) {
+                compile_expression(compiler, field_start + field_index);
+                compiler_emit(compiler, instr2(Opcode::StructSet, 0, field_index));
+                field_index = field_index + 1;
+            }
+        }
+        case .Sizeof { type_id }: {
+            const_idx := compiler_add_constant(compiler, 8);
+            compiler_emit(compiler, instr1(Opcode::Constant, const_idx));
+        }
+        case .Range { start, end, inclusive }: {
+            compile_expression(compiler, start);
+            compile_expression(compiler, end);
+        }
+        case .Switch { scrutinee, case_start, case_count }: {
+            compile_expression(compiler, scrutinee);
+            compiler_emit(compiler, instr(Opcode::TaggedUnionGetTag));
+            mut case_index : i64 = 0;
+            while (case_index < case_count) {
+                case_index = case_index + 1;
+            }
+        }
+        case .Tuple { elem_start, elem_count }: {
+            mut elem_index : i64 = 0;
+            while (elem_index < elem_count) {
+                compile_expression(compiler, elem_start + elem_index);
+                elem_index = elem_index + 1;
+            }
+            compiler_emit(compiler, instr1(Opcode::Array, elem_count));
+        }
+        case .EnumVariantInit { enum_name, variant_name, field_start, field_count }: {
+            tag := compiler_get_enum_variant_tag(compiler, enum_name, variant_name);
+            compiler_emit(compiler, instr1(Opcode::TaggedUnionAlloc, field_count));
+            compiler_emit(compiler, instr1(Opcode::TaggedUnionSetTag, tag));
+            mut field_index : i64 = 0;
+            while (field_index < field_count) {
+                compile_expression(compiler, field_start + field_index);
+                compiler_emit(compiler, instr2(Opcode::TaggedUnionSetField, 0, field_index));
+                field_index = field_index + 1;
+            }
+        }
+        case .Function { param_start, param_count, return_type, body }: {
+            compiler_emit(compiler, instr(Opcode::Null));
+        }
+        case .ProcExpr { param_start, param_count, return_type, body }: {
+            compiler_emit(compiler, instr(Opcode::Null));
+        }
+        case .ComptimeBlock { body }: {
+            compile_expression(compiler, body);
+        }
+        case .ComptimeFor { index_var, type_var, type_start, type_count, body, has_index }: {
+        }
+        case .TypeValue { type_id }: {
+            compiler_emit(compiler, instr(Opcode::Null));
+        }
+        case .Typename { type_id }: {
+            compiler_emit(compiler, instr(Opcode::Null));
+        }
+        case .Unsafe { body }: {
+            compile_expression(compiler, body);
+        }
+        case .ContextAccess: {
+            compiler_emit(compiler, instr(Opcode::Null));
+        }
+        case .IfLet { pattern_id, value, consequence, alternative, has_alternative }: {
+            compile_expression(compiler, value);
+            jump_not_truthy := compiler_emit(compiler, instr1(Opcode::JumpNotTruthy, 9999));
+            compile_expression(compiler, consequence);
+            if (has_alternative) {
+                jump_past_alt := compiler_emit(compiler, instr1(Opcode::Jump, 9999));
+                compiler_patch_jump(compiler, jump_not_truthy);
+                compile_expression(compiler, alternative);
+                compiler_patch_jump(compiler, jump_past_alt);
+            } else {
+                compiler_patch_jump(compiler, jump_not_truthy);
+            }
+        }
+        case _: {
+            print("  UNHANDLED expression type!");
+        }
+    }
+}
+
+// ============================================================================
+// Statement Compilation
+// ============================================================================
+
+compile_statement :: fn(compiler: &mut Compiler, stmt_id: i64) {
+    if (stmt_id < 0) {
+        return;
+    }
+    stmt := compiler.statements[stmt_id];
+    match stmt {
+        case .Let { name, type_id, value, mutable, has_type }: {
+            compile_expression(compiler, value);
+            index := compiler_define(compiler, name, mutable);
+            if (compiler.scope_depth > 0) {
+                compiler_emit(compiler, instr1(Opcode::SetLocal, index));
+            } else {
+                compiler_emit(compiler, instr1(Opcode::SetGlobal, index));
+            }
+        }
+        case .Constant { name, value }: {
+            compile_expression(compiler, value);
+            index := compiler_define(compiler, name, false);
+            if (compiler.scope_depth > 0) {
+                compiler_emit(compiler, instr1(Opcode::SetLocal, index));
+            } else {
+                compiler_emit(compiler, instr1(Opcode::SetGlobal, index));
+            }
+        }
+        case .Return { value }: {
+            if (value >= 0) {
+                compile_expression(compiler, value);
+                compiler_emit(compiler, instr(Opcode::ReturnValue));
+            } else {
+                compiler_emit(compiler, instr(Opcode::Return));
+            }
+        }
+        case .ExpressionStmt { expr }: {
+            compile_expression(compiler, expr);
+            compiler_emit(compiler, instr(Opcode::Pop));
+        }
+        case .StructDef { name, type_param_start, type_param_count, field_start, field_count }: {
+            compiler.struct_defs = push(compiler.struct_defs, name);
+            compiler.struct_field_counts = push(compiler.struct_field_counts, field_count);
+        }
+        case .EnumDef { name, variant_start, variant_count }: {
+            compiler.enum_defs = push(compiler.enum_defs, name);
+            compiler.enum_variant_counts = push(compiler.enum_variant_counts, variant_count);
+        }
+        case .TypeAlias { name, type_id }: {
+        }
+        case .Defer { stmt }: {
+        }
+        case .Assignment { lhs, rhs }: {
+            compile_expression(compiler, rhs);
+            lhs_expr := compiler.expressions[lhs];
+            match lhs_expr {
+                case .Identifier { name }: {
+                    index := compiler_resolve(compiler, name);
+                    scope := compiler_resolve_scope(compiler, name);
+                    if (scope == scope_global()) {
+                        compiler_emit(compiler, instr1(Opcode::SetGlobal, index));
+                    } else {
+                        compiler_emit(compiler, instr1(Opcode::SetLocal, index));
+                    }
+                }
+                case .Index { expr, index }: {
+                    compile_expression(compiler, expr);
+                    compile_expression(compiler, index);
+                    compiler_emit(compiler, instr(Opcode::IndexSet));
+                }
+                case .FieldAccess { expr, field }: {
+                    compile_expression(compiler, expr);
+                    field_offset : i64 = 0;
+                    compiler_emit(compiler, instr2(Opcode::StructSet, 0, field_offset));
+                }
+                case _: {}
+            }
+        }
+        case .For { iterator, range, body }: {
+            range_expr := compiler.expressions[range];
+            match range_expr {
+                case .Range { start, end, inclusive }: {
+                    compile_expression(compiler, start);
+                    iter_index := compiler_define(compiler, iterator, true);
+                    if (compiler.scope_depth > 0) {
+                        compiler_emit(compiler, instr1(Opcode::SetLocal, iter_index));
+                    } else {
+                        compiler_emit(compiler, instr1(Opcode::SetGlobal, iter_index));
+                    }
+
+                    loop_start := compiler.instruction_count;
+                    compiler.loop_start_stack = push(compiler.loop_start_stack, loop_start);
+
+                    if (compiler.scope_depth > 0) {
+                        compiler_emit(compiler, instr1(Opcode::GetLocal, iter_index));
+                    } else {
+                        compiler_emit(compiler, instr1(Opcode::GetGlobal, iter_index));
+                    }
+                    compile_expression(compiler, end);
+                    if (inclusive) {
+                        compiler_emit(compiler, instr(Opcode::LessThanOrEqual));
+                    } else {
+                        compiler_emit(compiler, instr(Opcode::LessThan));
+                    }
+
+                    exit_jump := compiler_emit(compiler, instr1(Opcode::JumpNotTruthy, 9999));
+
+                    compile_statement(compiler, body);
+
+                    if (compiler.scope_depth > 0) {
+                        compiler_emit(compiler, instr1(Opcode::GetLocal, iter_index));
+                    } else {
+                        compiler_emit(compiler, instr1(Opcode::GetGlobal, iter_index));
+                    }
+                    const_one := compiler_add_constant(compiler, 1);
+                    compiler_emit(compiler, instr1(Opcode::Constant, const_one));
+                    compiler_emit(compiler, instr(Opcode::Add));
+                    if (compiler.scope_depth > 0) {
+                        compiler_emit(compiler, instr1(Opcode::SetLocal, iter_index));
+                    } else {
+                        compiler_emit(compiler, instr1(Opcode::SetGlobal, iter_index));
+                    }
+
+                    compiler_emit(compiler, instr1(Opcode::Jump, loop_start));
+                    compiler_patch_jump(compiler, exit_jump);
+                }
+                case _: {}
+            }
+        }
+        case .While { condition, body }: {
+            loop_start := compiler.instruction_count;
+            compiler.loop_start_stack = push(compiler.loop_start_stack, loop_start);
+
+            compile_expression(compiler, condition);
+            exit_jump := compiler_emit(compiler, instr1(Opcode::JumpNotTruthy, 9999));
+
+            compile_statement(compiler, body);
+
+            compiler_emit(compiler, instr1(Opcode::Jump, loop_start));
+            compiler_patch_jump(compiler, exit_jump);
+        }
+        case .Break: {
+            compiler_emit(compiler, instr1(Opcode::Jump, 9999));
+            pos := compiler.instruction_count - 1;
+            compiler.loop_end_patches = push(compiler.loop_end_patches, pos);
+        }
+        case .Continue: {
+            if (len(compiler.loop_start_stack) > 0) {
+                loop_start := compiler.loop_start_stack[len(compiler.loop_start_stack) - 1];
+                compiler_emit(compiler, instr1(Opcode::Jump, loop_start));
+            }
+        }
+        case .Import { path }: {
+        }
+        case .Extern { name, param_start, param_count, return_type, has_return }: {
+        }
+        case .PushContext { context_expr, body }: {
+            compile_statement(compiler, body);
+        }
+        case .PushAllocator { allocator_expr, body }: {
+            compile_statement(compiler, body);
+        }
+    }
+}
+
+// ============================================================================
+// Compile Program
+// ============================================================================
+
+compile_program :: fn(compiler: &mut Compiler, stmt_indices: []i64) {
+    mut index : i64 = 0;
+    while (index < len(stmt_indices)) {
+        compile_statement(compiler, stmt_indices[index]);
+        index = index + 1;
+    }
+}
+
+// ============================================================================
+// Compiler Tests
+// ============================================================================
+
+test_opcode_enum :: fn() {
+    print("Testing Opcode enum...");
+
+    add_op := Opcode::Add;
+    add_byte := opcode_to_byte(add_op);
+    assert(add_byte == 2, "Add should be 2");
+    print("  OK: Add opcode = 2");
+
+    constant_op := Opcode::Constant;
+    constant_byte := opcode_to_byte(constant_op);
+    assert(constant_byte == 0, "Constant should be 0");
+    print("  OK: Constant opcode = 0");
+
+    jump_op := Opcode::Jump;
+    jump_byte := opcode_to_byte(jump_op);
+    assert(jump_byte == 17, "Jump should be 17");
+    print("  OK: Jump opcode = 17");
+
+    print("Opcode enum tests passed!");
+}
+
+test_instruction :: fn() {
+    print("Testing Instruction creation...");
+
+    pop_instr := instr(Opcode::Pop);
+    assert(pop_instr.opcode == 1, "Pop should have opcode 1");
+    assert(pop_instr.has_operand1 == false, "Pop should have no operand1");
+    print("  OK: Pop instruction created");
+
+    const_instr := instr1(Opcode::Constant, 42);
+    assert(const_instr.opcode == 0, "Constant should have opcode 0");
+    assert(const_instr.operand1 == 42, "Constant should have operand 42");
+    assert(const_instr.has_operand1 == true, "Constant should have operand1");
+    print("  OK: Constant instruction with operand created");
+
+    call_instr := instr2(Opcode::Call, 5, 3);
+    assert(call_instr.opcode == 27, "Call should have opcode 27");
+    assert(call_instr.operand1 == 5, "Call should have operand1 = 5");
+    assert(call_instr.operand2 == 3, "Call should have operand2 = 3");
+    print("  OK: Call instruction with two operands created");
+
+    print("Instruction tests passed!");
+}
+
+test_symbol_table :: fn() {
+    print("Testing SymbolTable...");
+
+    mut table := symbol_table_new();
+    assert(table.count == 0, "New table should have 0 symbols");
+    print("  OK: Empty symbol table created");
+
+    idx := symbol_table_define(&mut table, "x", false);
+    assert(idx == 0, "First symbol should have index 0");
+    assert(table.count == 1, "Table should have 1 symbol");
+    print("  OK: Symbol defined");
+
+    idx2 := symbol_table_define(&mut table, "y", true);
+    assert(idx2 == 1, "Second symbol should have index 1");
+    print("  OK: Second symbol defined");
+
+    resolved := symbol_table_resolve(&table, "x");
+    assert(resolved == 0, "x should resolve to index 0");
+    print("  OK: Symbol resolved");
+
+    scope := symbol_table_resolve_scope(&table, "x");
+    assert(scope == scope_global(), "x should be global scope");
+    print("  OK: Symbol scope is global");
+
+    not_found := symbol_table_resolve(&table, "z");
+    assert(not_found == -1, "z should not be found");
+    print("  OK: Unknown symbol returns -1");
+
+    print("SymbolTable tests passed!");
+}
+
+test_compiler_new :: fn() {
+    print("Testing compiler_new...");
+
+    compiler := compiler_new();
+    assert(compiler.instruction_count == 0, "New compiler should have 0 instructions");
+    assert(compiler.constant_count == 0, "New compiler should have 0 constants");
+    print("  OK: Compiler created");
+
+    print_idx := compiler_resolve(&compiler, "print");
+    assert(print_idx == 5, "print should be builtin index 5");
+    print("  OK: Built-in print defined");
+
+    len_idx := compiler_resolve(&compiler, "len");
+    assert(len_idx == 0, "len should be builtin index 0");
+    print("  OK: Built-in len defined");
+
+    print("compiler_new tests passed!");
+}
+
+test_compiler_emit :: fn() {
+    print("Testing compiler_emit...");
+
+    mut compiler := compiler_new();
+
+    pos1 := compiler_emit(&mut compiler, instr(Opcode::True));
+    assert(pos1 == 0, "First instruction should be at position 0");
+    assert(compiler.instruction_count == 1, "Should have 1 instruction");
+    print("  OK: First instruction emitted");
+
+    pos2 := compiler_emit(&mut compiler, instr(Opcode::Pop));
+    assert(pos2 == 1, "Second instruction should be at position 1");
+    assert(compiler.instruction_count == 2, "Should have 2 instructions");
+    print("  OK: Second instruction emitted");
+
+    print("compiler_emit tests passed!");
+}
+
+test_compiler_add_constant :: fn() {
+    print("Testing compiler_add_constant...");
+
+    mut compiler := compiler_new();
+
+    idx1 := compiler_add_constant(&mut compiler, 42);
+    assert(idx1 == 0, "First constant should be at index 0");
+    assert(compiler.constant_count == 1, "Should have 1 constant");
+    print("  OK: First constant added");
+
+    idx2 := compiler_add_constant(&mut compiler, 100);
+    assert(idx2 == 1, "Second constant should be at index 1");
+    assert(compiler.constant_count == 2, "Should have 2 constants");
+    print("  OK: Second constant added");
+
+    idx3 := compiler_add_string_constant(&mut compiler, "hello");
+    assert(idx3 == 0, "First string constant should be at index 0");
+    assert(compiler.string_constant_count == 1, "Should have 1 string constant");
+    print("  OK: String constant added");
+
+    print("compiler_add_constant tests passed!");
+}
+
+test_compile_literal :: fn() {
+    print("Testing compile_literal...");
+
+    mut compiler := compiler_new();
+
+    int_lit := Literal::Integer { value = 42 };
+    compile_literal(&mut compiler, int_lit);
+    assert(compiler.instruction_count == 1, "Should have 1 instruction");
+    assert(compiler.constant_count == 1, "Should have 1 constant");
+    print("  OK: Integer literal compiled");
+
+    mut compiler2 := compiler_new();
+    true_lit := Literal::Boolean { value = true };
+    compile_literal(&mut compiler2, true_lit);
+    assert(compiler2.instruction_count == 1, "Should have 1 instruction");
+    print("  OK: Boolean true compiled");
+
+    mut compiler3 := compiler_new();
+    false_lit := Literal::Boolean { value = false };
+    compile_literal(&mut compiler3, false_lit);
+    assert(compiler3.instruction_count == 1, "Should have 1 instruction");
+    print("  OK: Boolean false compiled");
+
+    print("compile_literal tests passed!");
+}
+
+// Run all compiler tests
+run_compiler_tests :: fn() {
+    print("=== Compiler Tests ===");
+    test_opcode_enum();
+    test_instruction();
+    test_symbol_table();
+    test_compiler_new();
+    test_compiler_emit();
+    test_compiler_add_constant();
+    test_compile_literal();
+    print("=== Compiler Tests Complete ===");
+    print("");
+}
+
+// Module initialization
+print("Compiler module loaded");
+run_compiler_tests();

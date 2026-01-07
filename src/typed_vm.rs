@@ -71,6 +71,7 @@ pub struct VirtualMachine {
     pub native_registry: Option<NativeRegistry>,
     pub native_names: Vec<String>,
     pub context_stack: Vec<RuntimeContext>,
+    freed_set: std::collections::HashSet<u32>,
 }
 
 static BUILTINS: &[&str] = &[
@@ -160,6 +161,7 @@ impl VirtualMachine {
             native_registry: None,
             native_names: Vec::new(),
             context_stack: Vec::new(),
+            freed_set: std::collections::HashSet::new(),
         }
     }
 
@@ -183,6 +185,7 @@ impl VirtualMachine {
             native_registry: Some(native_registry),
             native_names,
             context_stack: Vec::new(),
+            freed_set: std::collections::HashSet::new(),
         }
     }
 
@@ -243,6 +246,7 @@ impl VirtualMachine {
 
     fn allocate_heap(&mut self, object: HeapObject) -> u32 {
         if let Some(index) = self.heap_free_list.pop() {
+            self.freed_set.remove(&index);
             self.heap[index as usize] = object;
             index
         } else {
@@ -253,6 +257,11 @@ impl VirtualMachine {
     }
 
     fn free_heap(&mut self, index: u32) {
+        if self.freed_set.contains(&index) {
+            panic!("double free detected for HeapRef({})", index);
+        }
+        self.freed_set.insert(index);
+        self.heap[index as usize] = HeapObject::Free;
         self.heap_free_list.push(index);
     }
 
@@ -297,44 +306,6 @@ impl VirtualMachine {
     }
 
     fn drop_heap_value(&mut self, index: u32) {
-        let to_drop: Vec<u32> = match &self.heap[index as usize] {
-            HeapObject::Array(elements) => elements
-                .iter()
-                .filter_map(|v| {
-                    if let Value64::HeapRef(idx) = v {
-                        Some(*idx)
-                    } else {
-                        None
-                    }
-                })
-                .collect(),
-            HeapObject::Struct(_, fields) => fields
-                .iter()
-                .filter_map(|v| {
-                    if let Value64::HeapRef(idx) = v {
-                        Some(*idx)
-                    } else {
-                        None
-                    }
-                })
-                .collect(),
-            HeapObject::TaggedUnion(_, fields) => fields
-                .iter()
-                .filter_map(|v| {
-                    if let Value64::HeapRef(idx) = v {
-                        Some(*idx)
-                    } else {
-                        None
-                    }
-                })
-                .collect(),
-            _ => vec![],
-        };
-
-        for inner_idx in to_drop {
-            self.drop_heap_value(inner_idx);
-        }
-
         self.free_heap(index);
     }
 

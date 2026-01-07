@@ -479,7 +479,8 @@ test_lexer :: fn() {
     tok3 := next_token(&mut lexer);
     match tok3 {
         case .Identifier { name }: {
-            assert(name == "x", "Expected identifier x");
+            ident_name := name;
+            assert(ident_name == "x", "Expected identifier x");
         }
         case _: {
             print("FAIL: Expected Identifier token");
@@ -553,4 +554,4 @@ test_new_tokens :: fn() {
 
 test_lexer();
 test_new_tokens();
-print("Frost lexer module loaded successfully")
+print("Frost lexer module loaded")
