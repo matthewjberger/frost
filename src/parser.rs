@@ -1140,7 +1140,11 @@ impl<'a> Parser<'a> {
             bail!("Expected 'Return' token!");
         }
 
-        let expression = self.parse_expression(Precedence::Lowest)?;
+        let expression = if matches!(self.peek_nth(0), Token::Semicolon | Token::RightBrace) {
+            Expression::Tuple(vec![])
+        } else {
+            self.parse_expression(Precedence::Lowest)?
+        };
 
         if matches!(self.peek_nth(0), Token::Semicolon) {
             self.read_token();

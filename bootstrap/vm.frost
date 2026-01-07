@@ -1,0 +1,1888 @@
+// Frost Bootstrap Virtual Machine
+// Stack-based bytecode interpreter
+
+import "compiler.frost"
+
+// ============================================================================
+// Value Types
+// ============================================================================
+
+// Value kind tags for runtime type checking
+value_tag_null :: fn() -> i64 { 0 }
+value_tag_integer :: fn() -> i64 { 1 }
+value_tag_float :: fn() -> i64 { 2 }
+value_tag_bool :: fn() -> i64 { 3 }
+value_tag_string :: fn() -> i64 { 4 }
+value_tag_array :: fn() -> i64 { 5 }
+value_tag_closure :: fn() -> i64 { 6 }
+value_tag_builtin :: fn() -> i64 { 7 }
+value_tag_struct :: fn() -> i64 { 8 }
+value_tag_tagged_union :: fn() -> i64 { 9 }
+
+// ============================================================================
+// Stack (using parallel arrays for values)
+// ============================================================================
+
+Stack :: struct {
+    value_tags: []i64,
+    int_values: []i64,
+    str_values: []str,
+    bool_values: []bool,
+    heap_indices: []i64,
+    count: i64
+}
+
+stack_new :: fn() -> Stack {
+    mut tags : []i64 = [];
+    mut ints : []i64 = [];
+    mut strs : []str = [];
+    mut bools : []bool = [];
+    mut heaps : []i64 = [];
+    Stack {
+        value_tags = tags,
+        int_values = ints,
+        str_values = strs,
+        bool_values = bools,
+        heap_indices = heaps,
+        count = 0
+    }
+}
+
+stack_push_int :: fn(stack: &mut Stack, int_val: i64) {
+    array_len := len(stack.value_tags);
+    if (stack.count < array_len) {
+        mut tags := stack.value_tags;
+        mut ints := stack.int_values;
+        tags[stack.count] = value_tag_integer();
+        ints[stack.count] = int_val;
+        stack.value_tags = tags;
+        stack.int_values = ints;
+    } else {
+        stack.value_tags = push(stack.value_tags, value_tag_integer());
+        stack.int_values = push(stack.int_values, int_val);
+        stack.str_values = push(stack.str_values, "");
+        stack.bool_values = push(stack.bool_values, false);
+        stack.heap_indices = push(stack.heap_indices, -1);
+    }
+    stack.count = stack.count + 1;
+}
+
+stack_push_bool :: fn(stack: &mut Stack, bool_val: bool) {
+    array_len := len(stack.value_tags);
+    if (stack.count < array_len) {
+        mut tags := stack.value_tags;
+        mut bools := stack.bool_values;
+        tags[stack.count] = value_tag_bool();
+        bools[stack.count] = bool_val;
+        stack.value_tags = tags;
+        stack.bool_values = bools;
+    } else {
+        stack.value_tags = push(stack.value_tags, value_tag_bool());
+        stack.int_values = push(stack.int_values, 0);
+        stack.str_values = push(stack.str_values, "");
+        stack.bool_values = push(stack.bool_values, bool_val);
+        stack.heap_indices = push(stack.heap_indices, -1);
+    }
+    stack.count = stack.count + 1;
+}
+
+stack_needs_grow :: fn(stack: &Stack) -> bool {
+    array_len := len(stack.value_tags);
+    stack.count >= array_len
+}
+
+stack_push_str_grow :: fn(stack: &mut Stack, str_val: str) {
+    stack.value_tags = push(stack.value_tags, value_tag_string());
+    stack.int_values = push(stack.int_values, 0);
+    stack.str_values = push(stack.str_values, str_val);
+    stack.bool_values = push(stack.bool_values, false);
+    stack.heap_indices = push(stack.heap_indices, -1);
+    stack.count = stack.count + 1;
+}
+
+stack_push_str_overwrite :: fn(stack: &mut Stack, str_val: str) {
+    mut tags := stack.value_tags;
+    mut strs := stack.str_values;
+    tags[stack.count] = value_tag_string();
+    strs[stack.count] = str_val;
+    stack.value_tags = tags;
+    stack.str_values = strs;
+    stack.count = stack.count + 1;
+}
+
+stack_push_null :: fn(stack: &mut Stack) {
+    array_len := len(stack.value_tags);
+    if (stack.count < array_len) {
+        mut tags := stack.value_tags;
+        tags[stack.count] = value_tag_null();
+        stack.value_tags = tags;
+    } else {
+        stack.value_tags = push(stack.value_tags, value_tag_null());
+        stack.int_values = push(stack.int_values, 0);
+        stack.str_values = push(stack.str_values, "");
+        stack.bool_values = push(stack.bool_values, false);
+        stack.heap_indices = push(stack.heap_indices, -1);
+    }
+    stack.count = stack.count + 1;
+}
+
+stack_push_heap :: fn(stack: &mut Stack, tag: i64, heap_index: i64) {
+    array_len := len(stack.value_tags);
+    if (stack.count < array_len) {
+        mut tags := stack.value_tags;
+        mut heaps := stack.heap_indices;
+        tags[stack.count] = tag;
+        heaps[stack.count] = heap_index;
+        stack.value_tags = tags;
+        stack.heap_indices = heaps;
+    } else {
+        stack.value_tags = push(stack.value_tags, tag);
+        stack.int_values = push(stack.int_values, 0);
+        stack.str_values = push(stack.str_values, "");
+        stack.bool_values = push(stack.bool_values, false);
+        stack.heap_indices = push(stack.heap_indices, heap_index);
+    }
+    stack.count = stack.count + 1;
+}
+
+stack_pop_tag :: fn(stack: &mut Stack) -> i64 {
+    if (stack.count == 0) {
+        return -1;
+    }
+    index := stack.count - 1;
+    tag := stack.value_tags[index];
+    stack.count = stack.count - 1;
+    tag
+}
+
+stack_pop_int :: fn(stack: &mut Stack) -> i64 {
+    if (stack.count == 0) {
+        return 0;
+    }
+    index := stack.count - 1;
+    value := stack.int_values[index];
+    stack.count = stack.count - 1;
+    value
+}
+
+stack_pop_bool :: fn(stack: &mut Stack) -> bool {
+    if (stack.count == 0) {
+        return false;
+    }
+    index := stack.count - 1;
+    value := stack.bool_values[index];
+    stack.count = stack.count - 1;
+    value
+}
+
+stack_pop_str :: fn(stack: &mut Stack) -> str {
+    if (stack.count == 0) {
+        return "";
+    }
+    index := stack.count - 1;
+    value := stack.str_values[index];
+    stack.count = stack.count - 1;
+    value
+}
+
+stack_pop_heap :: fn(stack: &mut Stack) -> i64 {
+    if (stack.count == 0) {
+        return -1;
+    }
+    index := stack.count - 1;
+    value := stack.heap_indices[index];
+    stack.count = stack.count - 1;
+    value
+}
+
+stack_peek_tag :: fn(stack: &Stack, offset: i64) -> i64 {
+    if (stack.count == 0) {
+        return -1;
+    }
+    index := stack.count - 1 - offset;
+    if (index < 0) {
+        return -1;
+    }
+    stack.value_tags[index]
+}
+
+stack_peek_int :: fn(stack: &Stack, offset: i64) -> i64 {
+    index := stack.count - 1 - offset;
+    if (index < 0) {
+        return 0;
+    }
+    stack.int_values[index]
+}
+
+stack_peek_bool :: fn(stack: &Stack, offset: i64) -> bool {
+    index := stack.count - 1 - offset;
+    if (index < 0) {
+        return false;
+    }
+    stack.bool_values[index]
+}
+
+stack_peek_str :: fn(stack: &Stack, offset: i64) -> str {
+    index := stack.count - 1 - offset;
+    if (index < 0) {
+        return "";
+    }
+    stack.str_values[index]
+}
+
+stack_peek_heap :: fn(stack: &Stack, offset: i64) -> i64 {
+    index := stack.count - 1 - offset;
+    if (index < 0) {
+        return -1;
+    }
+    stack.heap_indices[index]
+}
+
+stack_get_tag :: fn(stack: &Stack, index: i64) -> i64 {
+    if (index < 0) { return -1; }
+    if (index >= stack.count) { return -1; }
+    stack.value_tags[index]
+}
+
+stack_get_int :: fn(stack: &Stack, index: i64) -> i64 {
+    if (index < 0) { return 0; }
+    if (index >= stack.count) { return 0; }
+    stack.int_values[index]
+}
+
+stack_get_bool :: fn(stack: &Stack, index: i64) -> bool {
+    if (index < 0) { return false; }
+    if (index >= stack.count) { return false; }
+    stack.bool_values[index]
+}
+
+stack_get_str :: fn(stack: &Stack, index: i64) -> str {
+    if (index < 0) { return ""; }
+    if (index >= stack.count) { return ""; }
+    stack.str_values[index]
+}
+
+stack_get_heap :: fn(stack: &Stack, index: i64) -> i64 {
+    if (index < 0) { return -1; }
+    if (index >= stack.count) { return -1; }
+    stack.heap_indices[index]
+}
+
+stack_set_int :: fn(stack: &mut Stack, index: i64, tag: i64, value: i64) {
+    if (index >= 0) {
+        if (index < stack.count) {
+            mut tags := stack.value_tags;
+            mut ints := stack.int_values;
+            tags[index] = tag;
+            ints[index] = value;
+            stack.value_tags = tags;
+            stack.int_values = ints;
+        }
+    }
+}
+
+stack_set_bool :: fn(stack: &mut Stack, index: i64, tag: i64, value: bool) {
+    if (index >= 0) {
+        if (index < stack.count) {
+            mut tags := stack.value_tags;
+            mut bools := stack.bool_values;
+            tags[index] = tag;
+            bools[index] = value;
+            stack.value_tags = tags;
+            stack.bool_values = bools;
+        }
+    }
+}
+
+stack_set_str :: fn(stack: &mut Stack, index: i64, tag: i64, value: str) {
+    if (index >= 0) {
+        if (index < stack.count) {
+            mut tags := stack.value_tags;
+            mut strs := stack.str_values;
+            tags[index] = tag;
+            strs[index] = value;
+            stack.value_tags = tags;
+            stack.str_values = strs;
+        }
+    }
+}
+
+stack_set_heap :: fn(stack: &mut Stack, index: i64, tag: i64, value: i64) {
+    if (index >= 0) {
+        if (index < stack.count) {
+            mut tags := stack.value_tags;
+            mut heaps := stack.heap_indices;
+            tags[index] = tag;
+            heaps[index] = value;
+            stack.value_tags = tags;
+            stack.heap_indices = heaps;
+        }
+    }
+}
+
+stack_set_count :: fn(stack: &mut Stack, new_count: i64) {
+    stack.count = new_count;
+}
+
+// ============================================================================
+// Heap (simplified - no nested arrays)
+// ============================================================================
+
+heap_tag_string :: fn() -> i64 { 0 }
+heap_tag_array :: fn() -> i64 { 1 }
+heap_tag_struct :: fn() -> i64 { 2 }
+heap_tag_closure :: fn() -> i64 { 3 }
+heap_tag_tagged_union :: fn() -> i64 { 4 }
+heap_tag_builtin :: fn() -> i64 { 5 }
+
+Heap :: struct {
+    object_tags: []i64,
+    string_values: []str,
+    closure_fn_indices: []i64,
+    tagged_union_tags: []i64,
+    builtin_indices: []i64,
+    struct_field_counts: []i64,
+    count: i64
+}
+
+heap_new :: fn() -> Heap {
+    mut tags : []i64 = [];
+    mut strings : []str = [];
+    mut closures : []i64 = [];
+    mut tu_tags : []i64 = [];
+    mut builtins : []i64 = [];
+    mut field_counts : []i64 = [];
+    Heap {
+        object_tags = tags,
+        string_values = strings,
+        closure_fn_indices = closures,
+        tagged_union_tags = tu_tags,
+        builtin_indices = builtins,
+        struct_field_counts = field_counts,
+        count = 0
+    }
+}
+
+heap_alloc_string :: fn(heap: &mut Heap, value: str) -> i64 {
+    index := heap.count;
+    heap.object_tags = push(heap.object_tags, heap_tag_string());
+    heap.string_values = push(heap.string_values, value);
+    heap.closure_fn_indices = push(heap.closure_fn_indices, -1);
+    heap.tagged_union_tags = push(heap.tagged_union_tags, 0);
+    heap.builtin_indices = push(heap.builtin_indices, -1);
+    heap.struct_field_counts = push(heap.struct_field_counts, 0);
+    heap.count = heap.count + 1;
+    index
+}
+
+heap_alloc_struct :: fn(heap: &mut Heap, num_fields: i64) -> i64 {
+    index := heap.count;
+    heap.object_tags = push(heap.object_tags, heap_tag_struct());
+    heap.string_values = push(heap.string_values, "");
+    heap.closure_fn_indices = push(heap.closure_fn_indices, -1);
+    heap.tagged_union_tags = push(heap.tagged_union_tags, 0);
+    heap.builtin_indices = push(heap.builtin_indices, -1);
+    heap.struct_field_counts = push(heap.struct_field_counts, num_fields);
+    heap.count = heap.count + 1;
+    index
+}
+
+heap_alloc_closure :: fn(heap: &mut Heap, fn_index: i64) -> i64 {
+    index := heap.count;
+    heap.object_tags = push(heap.object_tags, heap_tag_closure());
+    heap.string_values = push(heap.string_values, "");
+    heap.closure_fn_indices = push(heap.closure_fn_indices, fn_index);
+    heap.tagged_union_tags = push(heap.tagged_union_tags, 0);
+    heap.builtin_indices = push(heap.builtin_indices, -1);
+    heap.struct_field_counts = push(heap.struct_field_counts, 0);
+    heap.count = heap.count + 1;
+    index
+}
+
+heap_alloc_tagged_union :: fn(heap: &mut Heap, num_fields: i64) -> i64 {
+    index := heap.count;
+    heap.object_tags = push(heap.object_tags, heap_tag_tagged_union());
+    heap.string_values = push(heap.string_values, "");
+    heap.closure_fn_indices = push(heap.closure_fn_indices, -1);
+    heap.tagged_union_tags = push(heap.tagged_union_tags, 0);
+    heap.builtin_indices = push(heap.builtin_indices, -1);
+    heap.struct_field_counts = push(heap.struct_field_counts, num_fields);
+    heap.count = heap.count + 1;
+    index
+}
+
+heap_alloc_builtin :: fn(heap: &mut Heap, builtin_index: i64) -> i64 {
+    index := heap.count;
+    heap.object_tags = push(heap.object_tags, heap_tag_builtin());
+    heap.string_values = push(heap.string_values, "");
+    heap.closure_fn_indices = push(heap.closure_fn_indices, -1);
+    heap.tagged_union_tags = push(heap.tagged_union_tags, 0);
+    heap.builtin_indices = push(heap.builtin_indices, builtin_index);
+    heap.struct_field_counts = push(heap.struct_field_counts, 0);
+    heap.count = heap.count + 1;
+    index
+}
+
+heap_get_tag :: fn(heap: &Heap, index: i64) -> i64 {
+    if (index < 0) { return -1; }
+    if (index >= heap.count) { return -1; }
+    heap.object_tags[index]
+}
+
+heap_get_string :: fn(heap: &Heap, index: i64) -> str {
+    if (index < 0) { return ""; }
+    if (index >= heap.count) { return ""; }
+    heap.string_values[index]
+}
+
+heap_get_closure_fn :: fn(heap: &Heap, index: i64) -> i64 {
+    if (index < 0) { return -1; }
+    if (index >= heap.count) { return -1; }
+    heap.closure_fn_indices[index]
+}
+
+heap_get_builtin :: fn(heap: &Heap, index: i64) -> i64 {
+    if (index < 0) { return -1; }
+    if (index >= heap.count) { return -1; }
+    heap.builtin_indices[index]
+}
+
+heap_get_tagged_union_tag :: fn(heap: &Heap, index: i64) -> i64 {
+    if (index < 0) { return -1; }
+    if (index >= heap.count) { return -1; }
+    heap.tagged_union_tags[index]
+}
+
+// ============================================================================
+// Frame (call frame for function execution)
+// ============================================================================
+
+Frame :: struct {
+    function_index: i64,
+    ip: i64,
+    base_pointer: i64
+}
+
+frame_new :: fn(fn_index: i64, bp: i64) -> Frame {
+    Frame {
+        function_index = fn_index,
+        ip = 0,
+        base_pointer = bp
+    }
+}
+
+// ============================================================================
+// Virtual Machine
+// ============================================================================
+
+VirtualMachine :: struct {
+    stack: Stack,
+    globals_tags: []i64,
+    globals_ints: []i64,
+    globals_strs: []str,
+    globals_bools: []bool,
+    globals_heaps: []i64,
+    globals_count: i64,
+    heap: Heap,
+    frames: []Frame,
+    frame_count: i64,
+    instructions: []Instruction,
+    instruction_count: i64,
+    constants: []i64,
+    constant_count: i64,
+    string_constants: []str,
+    string_constant_count: i64,
+    functions: []CompiledFunction,
+    function_count: i64
+}
+
+vm_new :: fn() -> VirtualMachine {
+    stack := stack_new();
+    heap := heap_new();
+    mut globals_tags : []i64 = [];
+    mut globals_ints : []i64 = [];
+    mut globals_strs : []str = [];
+    mut globals_bools : []bool = [];
+    mut globals_heaps : []i64 = [];
+    mut frames : []Frame = [];
+    mut instrs : []Instruction = [];
+    mut consts : []i64 = [];
+    mut str_consts : []str = [];
+    mut funcs : []CompiledFunction = [];
+    VirtualMachine {
+        stack = stack,
+        globals_tags = globals_tags,
+        globals_ints = globals_ints,
+        globals_strs = globals_strs,
+        globals_bools = globals_bools,
+        globals_heaps = globals_heaps,
+        globals_count = 0,
+        heap = heap,
+        frames = frames,
+        frame_count = 0,
+        instructions = instrs,
+        instruction_count = 0,
+        constants = consts,
+        constant_count = 0,
+        string_constants = str_consts,
+        string_constant_count = 0,
+        functions = funcs,
+        function_count = 0
+    }
+}
+
+vm_load_instructions :: fn(vm: &mut VirtualMachine, instrs: []Instruction, count: i64) {
+    vm.instructions = instrs;
+    vm.instruction_count = count;
+}
+
+vm_load_constants :: fn(vm: &mut VirtualMachine, consts: []i64, count: i64) {
+    vm.constants = consts;
+    vm.constant_count = count;
+}
+
+vm_load_string_constants :: fn(vm: &mut VirtualMachine, strs: []str, count: i64) {
+    vm.string_constants = strs;
+    vm.string_constant_count = count;
+}
+
+vm_push_frame :: fn(vm: &mut VirtualMachine, frame: Frame) {
+    vm.frames = push(vm.frames, frame);
+    vm.frame_count = vm.frame_count + 1;
+}
+
+vm_pop_frame :: fn(vm: &mut VirtualMachine) -> Frame {
+    if (vm.frame_count == 0) {
+        return frame_new(-1, 0);
+    }
+    index := vm.frame_count - 1;
+    frame := vm.frames[index];
+    vm.frame_count = vm.frame_count - 1;
+    frame
+}
+
+vm_current_frame :: fn(vm: &VirtualMachine) -> Frame {
+    if (vm.frame_count == 0) {
+        return frame_new(-1, 0);
+    }
+    vm.frames[vm.frame_count - 1]
+}
+
+vm_set_ip :: fn(vm: &mut VirtualMachine, new_ip: i64) {
+    if (vm.frame_count > 0) {
+        index := vm.frame_count - 1;
+        frame := vm.frames[index];
+        new_frame := Frame {
+            function_index = frame.function_index,
+            ip = new_ip,
+            base_pointer = frame.base_pointer
+        };
+        mut frames := vm.frames;
+        frames[index] = new_frame;
+        vm.frames = frames;
+    }
+}
+
+vm_ensure_globals :: fn(vm: &mut VirtualMachine, index: i64) {
+    while (vm.globals_count <= index) {
+        vm.globals_tags = push(vm.globals_tags, value_tag_null());
+        vm.globals_ints = push(vm.globals_ints, 0);
+        vm.globals_strs = push(vm.globals_strs, "");
+        vm.globals_bools = push(vm.globals_bools, false);
+        vm.globals_heaps = push(vm.globals_heaps, -1);
+        vm.globals_count = vm.globals_count + 1;
+    }
+}
+
+vm_set_global_int :: fn(vm: &mut VirtualMachine, index: i64, value: i64) {
+    vm_ensure_globals(vm, index);
+    mut tags := vm.globals_tags;
+    mut ints := vm.globals_ints;
+    tags[index] = value_tag_integer();
+    ints[index] = value;
+    vm.globals_tags = tags;
+    vm.globals_ints = ints;
+}
+
+vm_set_global_bool :: fn(vm: &mut VirtualMachine, index: i64, value: bool) {
+    vm_ensure_globals(vm, index);
+    mut tags := vm.globals_tags;
+    mut bools := vm.globals_bools;
+    tags[index] = value_tag_bool();
+    bools[index] = value;
+    vm.globals_tags = tags;
+    vm.globals_bools = bools;
+}
+
+vm_set_global_str :: fn(vm: &mut VirtualMachine, index: i64, value: str) {
+    vm_ensure_globals(vm, index);
+    mut tags := vm.globals_tags;
+    mut strs := vm.globals_strs;
+    tags[index] = value_tag_string();
+    strs[index] = value;
+    vm.globals_tags = tags;
+    vm.globals_strs = strs;
+}
+
+vm_set_global_heap :: fn(vm: &mut VirtualMachine, index: i64, tag: i64, heap_idx: i64) {
+    vm_ensure_globals(vm, index);
+    mut tags := vm.globals_tags;
+    mut heaps := vm.globals_heaps;
+    tags[index] = tag;
+    heaps[index] = heap_idx;
+    vm.globals_tags = tags;
+    vm.globals_heaps = heaps;
+}
+
+vm_get_global_tag :: fn(vm: &VirtualMachine, index: i64) -> i64 {
+    if (index >= vm.globals_count) { return value_tag_null(); }
+    vm.globals_tags[index]
+}
+
+vm_get_global_int :: fn(vm: &VirtualMachine, index: i64) -> i64 {
+    if (index >= vm.globals_count) { return 0; }
+    vm.globals_ints[index]
+}
+
+vm_get_global_bool :: fn(vm: &VirtualMachine, index: i64) -> bool {
+    if (index >= vm.globals_count) { return false; }
+    vm.globals_bools[index]
+}
+
+vm_get_global_str :: fn(vm: &VirtualMachine, index: i64) -> str {
+    if (index >= vm.globals_count) { return ""; }
+    vm.globals_strs[index]
+}
+
+vm_get_global_heap :: fn(vm: &VirtualMachine, index: i64) -> i64 {
+    if (index >= vm.globals_count) { return -1; }
+    vm.globals_heaps[index]
+}
+
+// ============================================================================
+// Builtin Functions
+// ============================================================================
+
+builtin_len :: fn() -> i64 { 0 }
+builtin_first :: fn() -> i64 { 1 }
+builtin_last :: fn() -> i64 { 2 }
+builtin_rest :: fn() -> i64 { 3 }
+builtin_push_fn :: fn() -> i64 { 4 }
+builtin_print :: fn() -> i64 { 5 }
+builtin_assert :: fn() -> i64 { 6 }
+
+// ============================================================================
+// Execution
+// ============================================================================
+
+vm_execute_add :: fn(vm: &mut VirtualMachine) {
+    mut stack := vm.stack;
+    right_tag := stack_peek_tag(&stack, 0);
+    left_tag := stack_peek_tag(&stack, 1);
+
+    if (left_tag == value_tag_integer()) {
+        if (right_tag == value_tag_integer()) {
+            right := stack_pop_int(&mut stack);
+            left := stack_pop_int(&mut stack);
+            stack_push_int(&mut stack, left + right);
+        }
+    }
+    vm.stack = stack;
+}
+
+vm_execute_sub :: fn(vm: &mut VirtualMachine) {
+    mut stack := vm.stack;
+    right_tag := stack_peek_tag(&stack, 0);
+    left_tag := stack_peek_tag(&stack, 1);
+
+    if (left_tag == value_tag_integer()) {
+        if (right_tag == value_tag_integer()) {
+            right := stack_pop_int(&mut stack);
+            left := stack_pop_int(&mut stack);
+            stack_push_int(&mut stack, left - right);
+        }
+    }
+    vm.stack = stack;
+}
+
+vm_execute_mul :: fn(vm: &mut VirtualMachine) {
+    mut stack := vm.stack;
+    right_tag := stack_peek_tag(&stack, 0);
+    left_tag := stack_peek_tag(&stack, 1);
+
+    if (left_tag == value_tag_integer()) {
+        if (right_tag == value_tag_integer()) {
+            right := stack_pop_int(&mut stack);
+            left := stack_pop_int(&mut stack);
+            stack_push_int(&mut stack, left * right);
+        }
+    }
+    vm.stack = stack;
+}
+
+vm_execute_div :: fn(vm: &mut VirtualMachine) {
+    mut stack := vm.stack;
+    right_tag := stack_peek_tag(&stack, 0);
+    left_tag := stack_peek_tag(&stack, 1);
+
+    if (left_tag == value_tag_integer()) {
+        if (right_tag == value_tag_integer()) {
+            right := stack_pop_int(&mut stack);
+            left := stack_pop_int(&mut stack);
+            if (right != 0) {
+                stack_push_int(&mut stack, left / right);
+            } else {
+                stack_push_int(&mut stack, 0);
+            }
+        }
+    }
+    vm.stack = stack;
+}
+
+vm_execute_mod :: fn(vm: &mut VirtualMachine) {
+    mut stack := vm.stack;
+    right_tag := stack_peek_tag(&stack, 0);
+    left_tag := stack_peek_tag(&stack, 1);
+
+    if (left_tag == value_tag_integer()) {
+        if (right_tag == value_tag_integer()) {
+            right := stack_pop_int(&mut stack);
+            left := stack_pop_int(&mut stack);
+            if (right != 0) {
+                stack_push_int(&mut stack, left % right);
+            } else {
+                stack_push_int(&mut stack, 0);
+            }
+        }
+    }
+    vm.stack = stack;
+}
+
+vm_execute_equal :: fn(vm: &mut VirtualMachine) {
+    mut stack := vm.stack;
+    right_tag := stack_peek_tag(&stack, 0);
+    left_tag := stack_peek_tag(&stack, 1);
+
+    mut handled := false;
+
+    if (left_tag == value_tag_integer()) {
+        if (right_tag == value_tag_integer()) {
+            right := stack_pop_int(&mut stack);
+            left := stack_pop_int(&mut stack);
+            stack_push_bool(&mut stack, left == right);
+            handled = true;
+        }
+    }
+    if (handled == false) {
+        if (left_tag == value_tag_bool()) {
+            if (right_tag == value_tag_bool()) {
+                right := stack_pop_bool(&mut stack);
+                left := stack_pop_bool(&mut stack);
+                stack_push_bool(&mut stack, left == right);
+                handled = true;
+            }
+        }
+    }
+    if (handled == false) {
+        stack_pop_tag(&mut stack);
+        stack_pop_tag(&mut stack);
+        stack_push_bool(&mut stack, false);
+    }
+    vm.stack = stack;
+}
+
+vm_execute_not_equal :: fn(vm: &mut VirtualMachine) {
+    mut stack := vm.stack;
+    right_tag := stack_peek_tag(&stack, 0);
+    left_tag := stack_peek_tag(&stack, 1);
+
+    mut handled := false;
+
+    if (left_tag == value_tag_integer()) {
+        if (right_tag == value_tag_integer()) {
+            right := stack_pop_int(&mut stack);
+            left := stack_pop_int(&mut stack);
+            stack_push_bool(&mut stack, left != right);
+            handled = true;
+        }
+    }
+    if (handled == false) {
+        if (left_tag == value_tag_bool()) {
+            if (right_tag == value_tag_bool()) {
+                right := stack_pop_bool(&mut stack);
+                left := stack_pop_bool(&mut stack);
+                stack_push_bool(&mut stack, left != right);
+                handled = true;
+            }
+        }
+    }
+    if (handled == false) {
+        stack_pop_tag(&mut stack);
+        stack_pop_tag(&mut stack);
+        stack_push_bool(&mut stack, true);
+    }
+    vm.stack = stack;
+}
+
+vm_execute_less_than :: fn(vm: &mut VirtualMachine) {
+    mut stack := vm.stack;
+    right_tag := stack_peek_tag(&stack, 0);
+    left_tag := stack_peek_tag(&stack, 1);
+
+    mut handled := false;
+
+    if (left_tag == value_tag_integer()) {
+        if (right_tag == value_tag_integer()) {
+            right := stack_pop_int(&mut stack);
+            left := stack_pop_int(&mut stack);
+            stack_push_bool(&mut stack, left < right);
+            handled = true;
+        }
+    }
+    if (handled == false) {
+        stack_pop_tag(&mut stack);
+        stack_pop_tag(&mut stack);
+        stack_push_bool(&mut stack, false);
+    }
+    vm.stack = stack;
+}
+
+vm_execute_greater_than :: fn(vm: &mut VirtualMachine) {
+    mut stack := vm.stack;
+    right_tag := stack_peek_tag(&stack, 0);
+    left_tag := stack_peek_tag(&stack, 1);
+
+    mut handled := false;
+
+    if (left_tag == value_tag_integer()) {
+        if (right_tag == value_tag_integer()) {
+            right := stack_pop_int(&mut stack);
+            left := stack_pop_int(&mut stack);
+            stack_push_bool(&mut stack, left > right);
+            handled = true;
+        }
+    }
+    if (handled == false) {
+        stack_pop_tag(&mut stack);
+        stack_pop_tag(&mut stack);
+        stack_push_bool(&mut stack, false);
+    }
+    vm.stack = stack;
+}
+
+vm_execute_less_than_or_equal :: fn(vm: &mut VirtualMachine) {
+    mut stack := vm.stack;
+    right_tag := stack_peek_tag(&stack, 0);
+    left_tag := stack_peek_tag(&stack, 1);
+
+    mut handled := false;
+
+    if (left_tag == value_tag_integer()) {
+        if (right_tag == value_tag_integer()) {
+            right := stack_pop_int(&mut stack);
+            left := stack_pop_int(&mut stack);
+            stack_push_bool(&mut stack, left <= right);
+            handled = true;
+        }
+    }
+    if (handled == false) {
+        stack_pop_tag(&mut stack);
+        stack_pop_tag(&mut stack);
+        stack_push_bool(&mut stack, false);
+    }
+    vm.stack = stack;
+}
+
+vm_execute_greater_than_or_equal :: fn(vm: &mut VirtualMachine) {
+    mut stack := vm.stack;
+    right_tag := stack_peek_tag(&stack, 0);
+    left_tag := stack_peek_tag(&stack, 1);
+
+    mut handled := false;
+
+    if (left_tag == value_tag_integer()) {
+        if (right_tag == value_tag_integer()) {
+            right := stack_pop_int(&mut stack);
+            left := stack_pop_int(&mut stack);
+            stack_push_bool(&mut stack, left >= right);
+            handled = true;
+        }
+    }
+    if (handled == false) {
+        stack_pop_tag(&mut stack);
+        stack_pop_tag(&mut stack);
+        stack_push_bool(&mut stack, false);
+    }
+    vm.stack = stack;
+}
+
+vm_execute_negate :: fn(vm: &mut VirtualMachine) {
+    mut stack := vm.stack;
+    tag := stack_peek_tag(&stack, 0);
+    if (tag == value_tag_integer()) {
+        neg_val := stack_pop_int(&mut stack);
+        stack_push_int(&mut stack, 0 - neg_val);
+    }
+    vm.stack = stack;
+}
+
+vm_execute_not :: fn(vm: &mut VirtualMachine) {
+    mut stack := vm.stack;
+    tag := stack_peek_tag(&stack, 0);
+    if (tag == value_tag_bool()) {
+        not_val := stack_pop_bool(&mut stack);
+        stack_push_bool(&mut stack, not_val == false);
+    } else {
+        stack_pop_tag(&mut stack);
+        stack_push_bool(&mut stack, true);
+    }
+    vm.stack = stack;
+}
+
+vm_execute_builtin_print :: fn(vm: &mut VirtualMachine) {
+    mut stack := vm.stack;
+    tag := stack_peek_tag(&stack, 0);
+
+    if (tag == value_tag_integer()) {
+        int_val := stack_pop_int(&mut stack);
+        print(int_val);
+    } else {
+        if (tag == value_tag_bool()) {
+            bool_val := stack_pop_bool(&mut stack);
+            if (bool_val) {
+                print("true");
+            } else {
+                print("false");
+            }
+        } else {
+            if (tag == value_tag_string()) {
+                str_val := stack_pop_str(&mut stack);
+                print(str_val);
+            } else {
+                if (tag == value_tag_null()) {
+                    stack_pop_tag(&mut stack);
+                    print("null");
+                } else {
+                    heap_idx := stack_pop_heap(&mut stack);
+                    heap := vm.heap;
+                    obj_tag := heap_get_tag(&heap, heap_idx);
+                    if (obj_tag == heap_tag_string()) {
+                        heap_str := heap_get_string(&heap, heap_idx);
+                        print(heap_str);
+                    } else {
+                        print("<heap object>");
+                    }
+                }
+            }
+        }
+    }
+    stack_push_null(&mut stack);
+    vm.stack = stack;
+}
+
+vm_execute_instruction :: fn(vm: &mut VirtualMachine, instr: Instruction) -> bool {
+    opcode := instr.opcode;
+    mut stack := vm.stack;
+    mut heap := vm.heap;
+    mut result := true;
+    mut done := false;
+
+    if (opcode == 0) {
+        constant_index := instr.operand1;
+        const_val := vm.constants[constant_index];
+        stack_push_int(&mut stack, const_val);
+        done = true;
+    }
+    if (done == false) {
+        if (opcode == 1) {
+            stack_pop_tag(&mut stack);
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 2) {
+            vm.stack = stack;
+            vm_execute_add(vm);
+            stack = vm.stack;
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 3) {
+            vm.stack = stack;
+            vm_execute_sub(vm);
+            stack = vm.stack;
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 4) {
+            vm.stack = stack;
+            vm_execute_mul(vm);
+            stack = vm.stack;
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 5) {
+            vm.stack = stack;
+            vm_execute_div(vm);
+            stack = vm.stack;
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 6) {
+            vm.stack = stack;
+            vm_execute_mod(vm);
+            stack = vm.stack;
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 7) {
+            stack_push_bool(&mut stack, true);
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 8) {
+            stack_push_bool(&mut stack, false);
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 9) {
+            vm.stack = stack;
+            vm_execute_equal(vm);
+            stack = vm.stack;
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 10) {
+            vm.stack = stack;
+            vm_execute_not_equal(vm);
+            stack = vm.stack;
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 11) {
+            vm.stack = stack;
+            vm_execute_less_than(vm);
+            stack = vm.stack;
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 12) {
+            vm.stack = stack;
+            vm_execute_greater_than(vm);
+            stack = vm.stack;
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 13) {
+            vm.stack = stack;
+            vm_execute_less_than_or_equal(vm);
+            stack = vm.stack;
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 14) {
+            vm.stack = stack;
+            vm_execute_greater_than_or_equal(vm);
+            stack = vm.stack;
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 15) {
+            vm.stack = stack;
+            vm_execute_negate(vm);
+            stack = vm.stack;
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 16) {
+            vm.stack = stack;
+            vm_execute_not(vm);
+            stack = vm.stack;
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 17) {
+            target := instr.operand1;
+            vm_set_ip(vm, target);
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 18) {
+            target := instr.operand1;
+            tag := stack_peek_tag(&stack, 0);
+            mut condition := false;
+            if (tag == value_tag_bool()) {
+                condition = stack_pop_bool(&mut stack);
+            } else {
+                stack_pop_tag(&mut stack);
+            }
+            if (condition == false) {
+                vm_set_ip(vm, target);
+            }
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 19) {
+            stack_push_null(&mut stack);
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 20) {
+            global_index := instr.operand1;
+            tag := vm_get_global_tag(vm, global_index);
+            if (tag == value_tag_integer()) {
+                g_int_val := vm_get_global_int(vm, global_index);
+                stack_push_int(&mut stack, g_int_val);
+            } else {
+                if (tag == value_tag_bool()) {
+                    g_bool_val := vm_get_global_bool(vm, global_index);
+                    stack_push_bool(&mut stack, g_bool_val);
+                } else {
+                    if (tag == value_tag_string()) {
+                        str_needs_grow := stack_needs_grow(&stack);
+                        if (str_needs_grow) {
+                            g_str_grow := vm_get_global_str(vm, global_index);
+                            stack_push_str_grow(&mut stack, g_str_grow);
+                        }
+                        if (!str_needs_grow) {
+                            g_str_over := vm_get_global_str(vm, global_index);
+                            stack_push_str_overwrite(&mut stack, g_str_over);
+                        }
+                    } else {
+                        heap_idx := vm_get_global_heap(vm, global_index);
+                        stack_push_heap(&mut stack, tag, heap_idx);
+                    }
+                }
+            }
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 21) {
+            global_index := instr.operand1;
+            tag := stack_peek_tag(&stack, 0);
+            if (tag == value_tag_integer()) {
+                sg_int := stack_pop_int(&mut stack);
+                vm.stack = stack;
+                vm_set_global_int(vm, global_index, sg_int);
+                stack = vm.stack;
+            } else {
+                if (tag == value_tag_bool()) {
+                    sg_bool := stack_pop_bool(&mut stack);
+                    vm.stack = stack;
+                    vm_set_global_bool(vm, global_index, sg_bool);
+                    stack = vm.stack;
+                } else {
+                    if (tag == value_tag_string()) {
+                        sg_str := stack_pop_str(&mut stack);
+                        vm.stack = stack;
+                        vm_set_global_str(vm, global_index, sg_str);
+                        stack = vm.stack;
+                    } else {
+                        heap_idx := stack_pop_heap(&mut stack);
+                        vm.stack = stack;
+                        vm_set_global_heap(vm, global_index, tag, heap_idx);
+                        stack = vm.stack;
+                    }
+                }
+            }
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 22) {
+            local_index := instr.operand1;
+            frame := vm_current_frame(vm);
+            stack_index := frame.base_pointer + local_index;
+            tag := stack_get_tag(&stack, stack_index);
+            if (tag == value_tag_integer()) {
+                gl_int := stack_get_int(&stack, stack_index);
+                stack_push_int(&mut stack, gl_int);
+            } else {
+                if (tag == value_tag_bool()) {
+                    gl_bool := stack_get_bool(&stack, stack_index);
+                    stack_push_bool(&mut stack, gl_bool);
+                } else {
+                    if (tag == value_tag_string()) {
+                        local_str_grow := stack_needs_grow(&stack);
+                        if (local_str_grow) {
+                            gl_str_g := stack_get_str(&stack, stack_index);
+                            stack_push_str_grow(&mut stack, gl_str_g);
+                        }
+                        if (!local_str_grow) {
+                            gl_str_o := stack_get_str(&stack, stack_index);
+                            stack_push_str_overwrite(&mut stack, gl_str_o);
+                        }
+                    } else {
+                        heap_idx := stack_get_heap(&stack, stack_index);
+                        stack_push_heap(&mut stack, tag, heap_idx);
+                    }
+                }
+            }
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 23) {
+            local_index := instr.operand1;
+            frame := vm_current_frame(vm);
+            stack_index := frame.base_pointer + local_index;
+            tag := stack_peek_tag(&stack, 0);
+            if (tag == value_tag_integer()) {
+                sl_int := stack_pop_int(&mut stack);
+                stack_set_int(&mut stack, stack_index, tag, sl_int);
+            } else {
+                if (tag == value_tag_bool()) {
+                    sl_bool := stack_pop_bool(&mut stack);
+                    stack_set_bool(&mut stack, stack_index, tag, sl_bool);
+                } else {
+                    if (tag == value_tag_string()) {
+                        sl_str := stack_pop_str(&mut stack);
+                        stack_set_str(&mut stack, stack_index, tag, sl_str);
+                    } else {
+                        heap_idx := stack_pop_heap(&mut stack);
+                        stack_set_heap(&mut stack, stack_index, tag, heap_idx);
+                    }
+                }
+            }
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 28) {
+            frame := vm_pop_frame(vm);
+            stack_set_count(&mut stack, frame.base_pointer - 1);
+            stack_push_null(&mut stack);
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 29) {
+            tag := stack_peek_tag(&stack, 0);
+            ret_int := stack_peek_int(&stack, 0);
+            ret_bool := stack_peek_bool(&stack, 0);
+            ret_heap := stack_peek_heap(&stack, 0);
+            ret_str_idx := stack.count - 1;
+            stack_pop_tag(&mut stack);
+            frame := vm_pop_frame(vm);
+            stack_set_count(&mut stack, frame.base_pointer - 1);
+            if (tag == value_tag_integer()) {
+                stack_push_int(&mut stack, ret_int);
+            } else {
+                if (tag == value_tag_bool()) {
+                    stack_push_bool(&mut stack, ret_bool);
+                } else {
+                    if (tag == value_tag_string()) {
+                        ret_str_grow := stack_needs_grow(&stack);
+                        if (ret_str_grow) {
+                            ret_str_g := stack.str_values[ret_str_idx];
+                            stack_push_str_grow(&mut stack, ret_str_g);
+                        }
+                        if (!ret_str_grow) {
+                            ret_str_o := stack.str_values[ret_str_idx];
+                            stack_push_str_overwrite(&mut stack, ret_str_o);
+                        }
+                    } else {
+                        stack_push_heap(&mut stack, tag, ret_heap);
+                    }
+                }
+            }
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 31) {
+            builtin_index := instr.operand1;
+            heap_idx := heap_alloc_builtin(&mut heap, builtin_index);
+            stack_push_heap(&mut stack, value_tag_builtin(), heap_idx);
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 39) {
+            num_fields := instr.operand1;
+            heap_idx := heap_alloc_struct(&mut heap, num_fields);
+            stack_push_heap(&mut stack, value_tag_struct(), heap_idx);
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 42) {
+            num_fields := instr.operand1;
+            heap_idx := heap_alloc_tagged_union(&mut heap, num_fields);
+            stack_push_heap(&mut stack, value_tag_tagged_union(), heap_idx);
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 44) {
+            tag := stack_peek_tag(&stack, 0);
+            if (tag == value_tag_tagged_union()) {
+                heap_idx := stack_pop_heap(&mut stack);
+                tu_tag := heap_get_tagged_union_tag(&heap, heap_idx);
+                stack_push_int(&mut stack, tu_tag);
+            } else {
+                if (tag != value_tag_integer()) {
+                    stack_pop_tag(&mut stack);
+                    stack_push_int(&mut stack, 0);
+                }
+            }
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 24) {
+            num_elements := instr.operand1;
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 25) {
+            index_tag := stack_peek_tag(&stack, 0);
+            if (index_tag == value_tag_integer()) {
+                index_val := stack_pop_int(&mut stack);
+                stack_pop_tag(&mut stack);
+                stack_push_int(&mut stack, 0);
+            } else {
+                stack_pop_tag(&mut stack);
+                stack_pop_tag(&mut stack);
+                stack_push_int(&mut stack, 0);
+            }
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 26) {
+            stack_pop_tag(&mut stack);
+            stack_pop_tag(&mut stack);
+            stack_pop_tag(&mut stack);
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 27) {
+            num_args := instr.operand1;
+            callee_tag := stack_peek_tag(&stack, 0);
+            if (callee_tag == value_tag_closure()) {
+                callee_heap := stack_pop_heap(&mut stack);
+                fn_index := heap_get_closure_fn(&heap, callee_heap);
+                if (fn_index >= 0) {
+                    if (fn_index < vm.function_count) {
+                        func := vm.functions[fn_index];
+                        base_pointer := stack.count - num_args;
+                        new_frame := frame_new(fn_index, base_pointer);
+                        vm.stack = stack;
+                        vm.heap = heap;
+                        vm_push_frame(vm, new_frame);
+                        stack = vm.stack;
+                        heap = vm.heap;
+                        vm.instructions = func.instructions;
+                        vm.instruction_count = func.instruction_count;
+                    }
+                }
+            } else {
+                if (callee_tag == value_tag_builtin()) {
+                    builtin_heap := stack_pop_heap(&mut stack);
+                    builtin_idx := heap_get_builtin(&heap, builtin_heap);
+                    if (builtin_idx == builtin_print()) {
+                        vm.stack = stack;
+                        vm.heap = heap;
+                        vm_execute_builtin_print(vm);
+                        stack = vm.stack;
+                        heap = vm.heap;
+                    } else {
+                        if (builtin_idx == builtin_len()) {
+                            stack_pop_tag(&mut stack);
+                            stack_push_int(&mut stack, 0);
+                        } else {
+                            if (builtin_idx == builtin_assert()) {
+                                msg_tag := stack_peek_tag(&stack, 0);
+                                cond_tag := stack_peek_tag(&stack, 1);
+                                if (msg_tag == value_tag_string()) {
+                                    msg := stack_pop_str(&mut stack);
+                                    if (cond_tag == value_tag_bool()) {
+                                        cond := stack_pop_bool(&mut stack);
+                                        assert(cond, msg);
+                                    } else {
+                                        stack_pop_tag(&mut stack);
+                                    }
+                                } else {
+                                    stack_pop_tag(&mut stack);
+                                    stack_pop_tag(&mut stack);
+                                }
+                                stack_push_null(&mut stack);
+                            } else {
+                                if (builtin_idx == builtin_push_fn()) {
+                                    stack_pop_tag(&mut stack);
+                                    stack_pop_tag(&mut stack);
+                                    stack_push_null(&mut stack);
+                                } else {
+                                    mut arg_idx : i64 = 0;
+                                    while (arg_idx < num_args) {
+                                        stack_pop_tag(&mut stack);
+                                        arg_idx = arg_idx + 1;
+                                    }
+                                    stack_push_null(&mut stack);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    stack_pop_tag(&mut stack);
+                    mut arg_idx : i64 = 0;
+                    while (arg_idx < num_args) {
+                        stack_pop_tag(&mut stack);
+                        arg_idx = arg_idx + 1;
+                    }
+                    stack_push_null(&mut stack);
+                }
+            }
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 30) {
+            fn_index := instr.operand1;
+            num_free := instr.operand2;
+            heap_idx := heap_alloc_closure(&mut heap, fn_index);
+            stack_push_heap(&mut stack, value_tag_closure(), heap_idx);
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 32) {
+            free_index := instr.operand1;
+            stack_push_null(&mut stack);
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 33) {
+            tag := stack_peek_tag(&stack, 0);
+            if (tag == value_tag_integer()) {
+                val := stack_peek_int(&stack, 0);
+                stack_push_int(&mut stack, val);
+            } else {
+                if (tag == value_tag_bool()) {
+                    val := stack_peek_bool(&stack, 0);
+                    stack_push_bool(&mut stack, val);
+                } else {
+                    stack_push_null(&mut stack);
+                }
+            }
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 34) {
+            stack_pop_tag(&mut stack);
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 35) {
+            right := stack_pop_int(&mut stack);
+            left := stack_pop_int(&mut stack);
+            mut result_val := left * 2;
+            mut shift_count : i64 = 1;
+            while (shift_count < right) {
+                result_val = result_val * 2;
+                shift_count = shift_count + 1;
+            }
+            if (right == 0) {
+                result_val = left;
+            }
+            stack_push_int(&mut stack, result_val);
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 36) {
+            right := stack_pop_int(&mut stack);
+            left := stack_pop_int(&mut stack);
+            mut result_val := left / 2;
+            mut shift_count : i64 = 1;
+            while (shift_count < right) {
+                result_val = result_val / 2;
+                shift_count = shift_count + 1;
+            }
+            if (right == 0) {
+                result_val = left;
+            }
+            stack_push_int(&mut stack, result_val);
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 37) {
+            right := stack_pop_int(&mut stack);
+            left := stack_pop_int(&mut stack);
+            stack_push_int(&mut stack, left);
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 38) {
+            right := stack_pop_int(&mut stack);
+            left := stack_pop_int(&mut stack);
+            stack_push_int(&mut stack, left);
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 40) {
+            field_index := instr.operand1;
+            stack_pop_tag(&mut stack);
+            stack_push_int(&mut stack, 0);
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 41) {
+            field_index := instr.operand2;
+            stack_pop_tag(&mut stack);
+            stack_pop_tag(&mut stack);
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 43) {
+            tag_value := instr.operand1;
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 45) {
+            field_index := instr.operand2;
+            stack_pop_tag(&mut stack);
+            stack_push_int(&mut stack, 0);
+            done = true;
+        }
+    }
+    if (done == false) {
+        if (opcode == 46) {
+            field_index := instr.operand2;
+            stack_pop_tag(&mut stack);
+            stack_pop_tag(&mut stack);
+            done = true;
+        }
+    }
+
+    vm.stack = stack;
+    vm.heap = heap;
+    result
+}
+
+vm_run :: fn(vm: &mut VirtualMachine) {
+    main_frame := frame_new(0, 0);
+    vm_push_frame(vm, main_frame);
+
+    while (vm.frame_count > 0) {
+        frame := vm_current_frame(vm);
+        ip := frame.ip;
+
+        if (ip >= vm.instruction_count) {
+            break;
+        }
+
+        instr := vm.instructions[ip];
+        vm_set_ip(vm, ip + 1);
+
+        result := vm_execute_instruction(vm, instr);
+        if (result == false) {
+            break;
+        }
+    }
+}
+
+// ============================================================================
+// VM Tests
+// ============================================================================
+
+test_stack :: fn() {
+    print("Testing Stack...");
+
+    mut stack := stack_new();
+    assert(stack.count == 0, "New stack should have count 0");
+    print("  OK: Empty stack created");
+
+    stack_push_int(&mut stack, 42);
+    assert(stack.count == 1, "Stack should have 1 element");
+    print("  OK: Integer pushed");
+
+    tag := stack_peek_tag(&stack, 0);
+    assert(tag == value_tag_integer(), "Top should be integer");
+    print("  OK: Peeked tag is integer");
+
+    value := stack_peek_int(&stack, 0);
+    assert(value == 42, "Value should be 42");
+    print("  OK: Peeked value is 42");
+
+    popped := stack_pop_int(&mut stack);
+    assert(popped == 42, "Popped value should be 42");
+    assert(stack.count == 0, "Stack should be empty");
+    print("  OK: Integer popped correctly");
+
+    stack_push_bool(&mut stack, true);
+    bool_tag := stack_peek_tag(&stack, 0);
+    assert(bool_tag == value_tag_bool(), "Top should be bool");
+    bool_val := stack_pop_bool(&mut stack);
+    assert(bool_val == true, "Bool value should be true");
+    print("  OK: Boolean push/pop works");
+
+    test_str_grow := stack_needs_grow(&stack);
+    if (test_str_grow) {
+        stack_push_str_grow(&mut stack, "hello");
+    }
+    if (!test_str_grow) {
+        stack_push_str_overwrite(&mut stack, "hello");
+    }
+    str_tag := stack_peek_tag(&stack, 0);
+    assert(str_tag == value_tag_string(), "Top should be string");
+    str_val := stack_pop_str(&mut stack);
+    assert(str_val == "hello", "String value should be hello");
+    print("  OK: String push/pop works");
+
+    print("Stack tests passed!");
+}
+
+test_heap :: fn() {
+    print("Testing Heap...");
+
+    mut heap := heap_new();
+    assert(heap.count == 0, "New heap should have count 0");
+    print("  OK: Empty heap created");
+
+    str_idx := heap_alloc_string(&mut heap, "test string");
+    assert(str_idx == 0, "First allocation should be at 0");
+    assert(heap.count == 1, "Heap should have 1 object");
+    print("  OK: String allocated");
+
+    tag := heap_get_tag(&heap, str_idx);
+    assert(tag == heap_tag_string(), "Object should be string");
+    print("  OK: String tag correct");
+
+    value := heap_get_string(&heap, str_idx);
+    assert(value == "test string", "String value should match");
+    print("  OK: String value correct");
+
+    struct_idx := heap_alloc_struct(&mut heap, 3);
+    assert(struct_idx == 1, "Second allocation should be at 1");
+    struct_tag := heap_get_tag(&heap, struct_idx);
+    assert(struct_tag == heap_tag_struct(), "Object should be struct");
+    print("  OK: Struct allocated");
+
+    closure_idx := heap_alloc_closure(&mut heap, 5);
+    closure_tag := heap_get_tag(&heap, closure_idx);
+    assert(closure_tag == heap_tag_closure(), "Object should be closure");
+    fn_index := heap_get_closure_fn(&heap, closure_idx);
+    assert(fn_index == 5, "Function index should be 5");
+    print("  OK: Closure allocated");
+
+    print("Heap tests passed!");
+}
+
+test_vm_new :: fn() {
+    print("Testing vm_new...");
+
+    vm := vm_new();
+    print("  OK: VM constructed");
+    assert(vm.frame_count == 0, "No frames initially");
+    print("  OK: Frame count checked");
+    assert(vm.globals_count == 0, "No globals initially");
+    print("  OK: Globals count checked");
+    print("  OK: VM created");
+
+    print("vm_new tests passed!");
+}
+
+test_vm_arithmetic :: fn() {
+    print("Testing VM arithmetic...");
+
+    mut vm := vm_new();
+    mut stack := vm.stack;
+
+    stack_push_int(&mut stack, 10);
+    stack_push_int(&mut stack, 5);
+    vm.stack = stack;
+    vm_execute_add(&mut vm);
+    stack = vm.stack;
+    result := stack_pop_int(&mut stack);
+    assert(result == 15, "10 + 5 should be 15");
+    print("  OK: Addition works");
+
+    stack_push_int(&mut stack, 10);
+    stack_push_int(&mut stack, 3);
+    vm.stack = stack;
+    vm_execute_sub(&mut vm);
+    stack = vm.stack;
+    result2 := stack_pop_int(&mut stack);
+    assert(result2 == 7, "10 - 3 should be 7");
+    print("  OK: Subtraction works");
+
+    stack_push_int(&mut stack, 6);
+    stack_push_int(&mut stack, 7);
+    vm.stack = stack;
+    vm_execute_mul(&mut vm);
+    stack = vm.stack;
+    result3 := stack_pop_int(&mut stack);
+    assert(result3 == 42, "6 * 7 should be 42");
+    print("  OK: Multiplication works");
+
+    stack_push_int(&mut stack, 20);
+    stack_push_int(&mut stack, 4);
+    vm.stack = stack;
+    vm_execute_div(&mut vm);
+    stack = vm.stack;
+    result4 := stack_pop_int(&mut stack);
+    assert(result4 == 5, "20 / 4 should be 5");
+    print("  OK: Division works");
+
+    stack_push_int(&mut stack, 17);
+    stack_push_int(&mut stack, 5);
+    vm.stack = stack;
+    vm_execute_mod(&mut vm);
+    stack = vm.stack;
+    result5 := stack_pop_int(&mut stack);
+    assert(result5 == 2, "17 % 5 should be 2");
+    print("  OK: Modulo works");
+
+    vm.stack = stack;
+    print("VM arithmetic tests passed!");
+}
+
+test_vm_comparison :: fn() {
+    print("Testing VM comparison...");
+
+    mut vm := vm_new();
+    mut stack := vm.stack;
+
+    stack_push_int(&mut stack, 5);
+    stack_push_int(&mut stack, 5);
+    vm.stack = stack;
+    vm_execute_equal(&mut vm);
+    stack = vm.stack;
+    result := stack_pop_bool(&mut stack);
+    assert(result == true, "5 == 5 should be true");
+    print("  OK: Equal works");
+
+    stack_push_int(&mut stack, 5);
+    stack_push_int(&mut stack, 3);
+    vm.stack = stack;
+    vm_execute_not_equal(&mut vm);
+    stack = vm.stack;
+    result2 := stack_pop_bool(&mut stack);
+    assert(result2 == true, "5 != 3 should be true");
+    print("  OK: NotEqual works");
+
+    stack_push_int(&mut stack, 3);
+    stack_push_int(&mut stack, 5);
+    vm.stack = stack;
+    vm_execute_less_than(&mut vm);
+    stack = vm.stack;
+    result3 := stack_pop_bool(&mut stack);
+    assert(result3 == true, "3 < 5 should be true");
+    print("  OK: LessThan works");
+
+    stack_push_int(&mut stack, 5);
+    stack_push_int(&mut stack, 3);
+    vm.stack = stack;
+    vm_execute_greater_than(&mut vm);
+    stack = vm.stack;
+    result4 := stack_pop_bool(&mut stack);
+    assert(result4 == true, "5 > 3 should be true");
+    print("  OK: GreaterThan works");
+
+    vm.stack = stack;
+    print("VM comparison tests passed!");
+}
+
+test_vm_globals :: fn() {
+    print("Testing VM globals...");
+
+    mut vm := vm_new();
+
+    vm_set_global_int(&mut vm, 0, 42);
+    tag := vm_get_global_tag(&vm, 0);
+    assert(tag == value_tag_integer(), "Global should be integer");
+    value := vm_get_global_int(&vm, 0);
+    assert(value == 42, "Global value should be 42");
+    print("  OK: Integer global works");
+
+    vm_set_global_bool(&mut vm, 1, true);
+    bool_tag := vm_get_global_tag(&vm, 1);
+    assert(bool_tag == value_tag_bool(), "Global should be bool");
+    bool_val := vm_get_global_bool(&vm, 1);
+    assert(bool_val == true, "Global bool should be true");
+    print("  OK: Boolean global works");
+
+    vm_set_global_str(&mut vm, 2, "hello");
+    str_tag := vm_get_global_tag(&vm, 2);
+    assert(str_tag == value_tag_string(), "Global should be string");
+    str_val := vm_get_global_str(&vm, 2);
+    assert(str_val == "hello", "Global string should be hello");
+    print("  OK: String global works");
+
+    print("VM globals tests passed!");
+}
+
+test_vm_execution :: fn() {
+    print("Testing VM execution...");
+
+    mut vm := vm_new();
+
+    mut instrs : []Instruction = [];
+    instrs = push(instrs, instr1(Opcode::Constant, 0));
+    instrs = push(instrs, instr1(Opcode::Constant, 1));
+    instrs = push(instrs, instr(Opcode::Add));
+    instrs = push(instrs, instr1(Opcode::SetGlobal, 0));
+
+    mut consts : []i64 = [];
+    consts = push(consts, 10);
+    consts = push(consts, 32);
+
+    vm_load_instructions(&mut vm, instrs, 4);
+    vm_load_constants(&mut vm, consts, 2);
+
+    vm_run(&mut vm);
+
+    result := vm_get_global_int(&vm, 0);
+    assert(result == 42, "Global 0 should be 42");
+    print("  OK: Basic execution works");
+
+    print("VM execution tests passed!");
+}
+
+run_vm_tests :: fn() {
+    print("=== VM Tests ===");
+    test_stack();
+    test_heap();
+    test_vm_new();
+    test_vm_arithmetic();
+    test_vm_comparison();
+    test_vm_globals();
+    test_vm_execution();
+    print("=== VM Tests Complete ===");
+    print("");
+}
+
+print("VM module loaded");
+run_vm_tests();

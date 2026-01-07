@@ -1,0 +1,867 @@
+// Frost Bootstrap AST Types
+// AST type definitions for the parser
+
+// ============================================================================
+// Operator enum
+// ============================================================================
+
+Operator :: enum {
+    Add,
+    And,
+    BitwiseAnd,
+    BitwiseOr,
+    Divide,
+    Equal,
+    GreaterThan,
+    GreaterThanOrEqual,
+    LessThan,
+    LessThanOrEqual,
+    Modulo,
+    Multiply,
+    Negate,
+    Not,
+    NotEqual,
+    Or,
+    ShiftLeft,
+    ShiftRight,
+    Subtract,
+}
+
+// ============================================================================
+// Literal enum
+// ============================================================================
+
+Literal :: enum {
+    Integer { value: i64 },
+    Float { text: str },
+    Float32 { text: str },
+    Boolean { value: bool },
+    String { value: str },
+}
+
+// ============================================================================
+// Type enum
+// ============================================================================
+
+Type :: enum {
+    I8,
+    I16,
+    I32,
+    I64,
+    Isize,
+    U8,
+    U16,
+    U32,
+    U64,
+    Usize,
+    F32,
+    F64,
+    Bool,
+    Str,
+    Void,
+    Ptr { inner: i64 },
+    Ref { inner: i64 },
+    RefMut { inner: i64 },
+    Array { element: i64, size: i64 },
+    Slice { element: i64 },
+    Proc { param_count: i64, return_type: i64 },
+    StructType { name: str },
+    EnumType { name: str },
+    Distinct { inner: i64 },
+    Arena,
+    Context,
+    Handle { inner: i64 },
+    Optional { inner: i64 },
+    TypeParam { name: str },
+    Unknown,
+}
+
+// ============================================================================
+// Expression enum
+// ============================================================================
+
+Expression :: enum {
+    Identifier { name: str },
+    LiteralExpr { value: Literal },
+    Boolean { value: bool },
+    Prefix { op: Operator, expr: i64 },
+    Infix { left: i64, op: Operator, right: i64 },
+    If { condition: i64, consequence: i64, alternative: i64, has_alternative: bool },
+    Function { param_start: i64, param_count: i64, return_type: i64, body: i64 },
+    ProcExpr { param_start: i64, param_count: i64, return_type: i64, body: i64 },
+    Call { callee: i64, arg_start: i64, arg_count: i64 },
+    Index { expr: i64, index: i64 },
+    FieldAccess { expr: i64, field: str },
+    AddressOf { expr: i64 },
+    Borrow { expr: i64 },
+    BorrowMut { expr: i64 },
+    Dereference { expr: i64 },
+    StructInit { name: str, field_start: i64, field_count: i64 },
+    Sizeof { type_id: i64 },
+    Range { start: i64, end: i64, inclusive: bool },
+    Switch { scrutinee: i64, case_start: i64, case_count: i64 },
+    Tuple { elem_start: i64, elem_count: i64 },
+    EnumVariantInit { enum_name: str, variant_name: str, field_start: i64, field_count: i64 },
+    ComptimeBlock { body: i64 },
+    ComptimeFor { index_var: str, type_var: str, type_start: i64, type_count: i64, body: i64, has_index: bool },
+    TypeValue { type_id: i64 },
+    Typename { type_id: i64 },
+    Unsafe { body: i64 },
+    ContextAccess,
+    IfLet { pattern_id: i64, value: i64, consequence: i64, alternative: i64, has_alternative: bool },
+}
+
+// ============================================================================
+// Statement enum
+// ============================================================================
+
+Statement :: enum {
+    Let { name: str, type_id: i64, value: i64, mutable: bool, has_type: bool },
+    Constant { name: str, value: i64 },
+    Return { value: i64 },
+    ExpressionStmt { expr: i64 },
+    StructDef { name: str, type_param_start: i64, type_param_count: i64, field_start: i64, field_count: i64 },
+    EnumDef { name: str, variant_start: i64, variant_count: i64 },
+    TypeAlias { name: str, type_id: i64 },
+    Defer { stmt: i64 },
+    Assignment { lhs: i64, rhs: i64 },
+    For { iterator: str, range: i64, body: i64 },
+    While { condition: i64, body: i64 },
+    Break,
+    Continue,
+    Import { path: str },
+    Extern { name: str, param_start: i64, param_count: i64, return_type: i64, has_return: bool },
+    PushContext { context_expr: i64, body: i64 },
+    PushAllocator { allocator_expr: i64, body: i64 },
+}
+
+// ============================================================================
+// Supporting Types
+// ============================================================================
+
+Parameter :: struct {
+    name: str,
+    type_id: i64,
+    has_type: bool,
+    mutable: bool,
+}
+
+ReturnParam :: struct {
+    name: str,
+    param_type: i64,
+}
+
+ReturnSignature :: enum {
+    None,
+    Single { type_id: i64 },
+    Named { param_start: i64, param_count: i64 },
+}
+
+StructField :: struct {
+    name: str,
+    field_type: i64,
+}
+
+EnumVariant :: struct {
+    name: str,
+    field_start: i64,
+    field_count: i64,
+    has_fields: bool,
+}
+
+Pattern :: enum {
+    Wildcard,
+    LiteralPattern { value: Literal },
+    IdentifierPattern { name: str },
+    EnumVariantPattern { enum_name: str, variant_name: str, binding_start: i64, binding_count: i64, has_enum_name: bool },
+    TuplePattern { pattern_start: i64, pattern_count: i64 },
+}
+
+SwitchCase :: struct {
+    pattern_id: i64,
+    body: i64,
+}
+
+// ============================================================================
+// AST Tests
+// ============================================================================
+
+test_operator :: fn() {
+    print("Testing Operator enum...");
+
+    op1 := Operator::Add;
+    match op1 {
+        case .Add: print("  OK: Add operator created")
+        case _: print("  FAIL: Expected Add operator")
+    }
+
+    op2 := Operator::Negate;
+    match op2 {
+        case .Negate: print("  OK: Negate operator created")
+        case _: print("  FAIL: Expected Negate operator")
+    }
+
+    op3 := Operator::Equal;
+    match op3 {
+        case .Equal: print("  OK: Equal operator created")
+        case _: print("  FAIL: Expected Equal operator")
+    }
+
+    print("Operator tests passed!");
+}
+
+test_literal :: fn() {
+    print("Testing Literal enum...");
+
+    lit1 := Literal::Integer { value = 42 };
+    match lit1 {
+        case .Integer { value }: {
+            assert(value == 42, "Expected integer value 42");
+            print("  OK: Integer literal created");
+        }
+        case _: print("  FAIL: Expected Integer literal")
+    }
+
+    lit2 := Literal::Boolean { value = true };
+    match lit2 {
+        case .Boolean { value }: {
+            assert(value == true, "Expected boolean value true");
+            print("  OK: Boolean literal created");
+        }
+        case _: print("  FAIL: Expected Boolean literal")
+    }
+
+    lit3 := Literal::String { value = "hello" };
+    match lit3 {
+        case .String { value }: {
+            assert(value == "hello", "Expected string value hello");
+            print("  OK: String literal created");
+        }
+        case _: print("  FAIL: Expected String literal")
+    }
+
+    print("Literal tests passed!");
+}
+
+test_type :: fn() {
+    print("Testing Type enum...");
+
+    t1 := Type::I64;
+    match t1 {
+        case .I64: print("  OK: I64 type created")
+        case _: print("  FAIL: Expected I64 type")
+    }
+
+    t2 := Type::Bool;
+    match t2 {
+        case .Bool: print("  OK: Bool type created")
+        case _: print("  FAIL: Expected Bool type")
+    }
+
+    t3 := Type::StructType { name = "Vec3" };
+    match t3 {
+        case .StructType { name }: {
+            struct_name := name;
+            assert(struct_name == "Vec3", "Expected struct name Vec3");
+            print("  OK: StructType created");
+        }
+        case _: print("  FAIL: Expected StructType")
+    }
+
+    t4 := Type::TypeParam { name = "T" };
+    match t4 {
+        case .TypeParam { name }: {
+            param_name := name;
+            assert(param_name == "T", "Expected type param T");
+            print("  OK: TypeParam created");
+        }
+        case _: print("  FAIL: Expected TypeParam type")
+    }
+
+    type_id1 : i64 = 0;
+    t5 := Type::Ptr { inner = type_id1 };
+    match t5 {
+        case .Ptr { inner }: {
+            print("  OK: Ptr type created");
+        }
+        case _: print("  FAIL: Expected Ptr type")
+    }
+
+    type_id2 : i64 = 0;
+    t6 := Type::Array { element = type_id2, size = 10 };
+    match t6 {
+        case .Array { element, size }: {
+            assert(size == 10, "Expected array size 10");
+            print("  OK: Array type created");
+        }
+        case _: print("  FAIL: Expected Array type")
+    }
+
+    print("Type tests passed!");
+}
+
+test_expression_simple :: fn() {
+    print("Testing simple Expression variants...");
+
+    e1 := Expression::Identifier { name = "foo" };
+    match e1 {
+        case .Identifier { name }: {
+            ident_name := name;
+            assert(ident_name == "foo", "Expected identifier name foo");
+            print("  OK: Identifier expression created");
+        }
+        case _: print("  FAIL: Expected Identifier expression")
+    }
+
+    lit := Literal::Integer { value = 42 };
+    e2 := Expression::LiteralExpr { value = lit };
+    match e2 {
+        case .LiteralExpr { value }: {
+            match value {
+                case .Integer { value }: {
+                    assert(value == 42, "Expected literal value 42");
+                    print("  OK: LiteralExpr expression created");
+                }
+                case _: print("  FAIL: Expected Integer literal")
+            }
+        }
+        case _: print("  FAIL: Expected LiteralExpr expression")
+    }
+
+    e3 := Expression::Boolean { value = true };
+    match e3 {
+        case .Boolean { value }: {
+            assert(value == true, "Expected boolean value true");
+            print("  OK: Boolean expression created");
+        }
+        case _: print("  FAIL: Expected Boolean expression")
+    }
+
+    e4 := Expression::ContextAccess;
+    match e4 {
+        case .ContextAccess: print("  OK: ContextAccess expression created")
+        case _: print("  FAIL: Expected ContextAccess expression")
+    }
+
+    print("Simple Expression tests passed!");
+}
+
+test_expression_operators :: fn() {
+    print("Testing operator Expression variants...");
+
+    expr_id : i64 = 0;
+    e1 := Expression::Prefix { op = Operator::Negate, expr = expr_id };
+    match e1 {
+        case .Prefix { op, expr }: {
+            print("  OK: Prefix expression created");
+        }
+        case _: print("  FAIL: Expected Prefix expression")
+    }
+
+    left_id : i64 = 0;
+    right_id : i64 = 1;
+    e2 := Expression::Infix { left = left_id, op = Operator::Add, right = right_id };
+    match e2 {
+        case .Infix { left, op, right }: {
+            print("  OK: Infix expression created");
+        }
+        case _: print("  FAIL: Expected Infix expression")
+    }
+
+    print("Operator Expression tests passed!");
+}
+
+test_expression_compound :: fn() {
+    print("Testing compound Expression variants...");
+
+    callee_id : i64 = 0;
+    e1 := Expression::Call { callee = callee_id, arg_start = 0, arg_count = 2 };
+    match e1 {
+        case .Call { callee, arg_start, arg_count }: {
+            assert(arg_count == 2, "Expected arg_count 2");
+            print("  OK: Call expression created");
+        }
+        case _: print("  FAIL: Expected Call expression")
+    }
+
+    expr_id : i64 = 0;
+    idx_id : i64 = 1;
+    e2 := Expression::Index { expr = expr_id, index = idx_id };
+    match e2 {
+        case .Index { expr, index }: {
+            print("  OK: Index expression created");
+        }
+        case _: print("  FAIL: Expected Index expression")
+    }
+
+    expr_id2 : i64 = 0;
+    e3 := Expression::FieldAccess { expr = expr_id2, field = "x" };
+    match e3 {
+        case .FieldAccess { expr, field }: {
+            assert(field == "x", "Expected field name x");
+            print("  OK: FieldAccess expression created");
+        }
+        case _: print("  FAIL: Expected FieldAccess expression")
+    }
+
+    e4 := Expression::StructInit { name = "Vec3", field_start = 0, field_count = 3 };
+    match e4 {
+        case .StructInit { name, field_start, field_count }: {
+            assert(name == "Vec3", "Expected struct name Vec3");
+            assert(field_count == 3, "Expected field_count 3");
+            print("  OK: StructInit expression created");
+        }
+        case _: print("  FAIL: Expected StructInit expression")
+    }
+
+    print("Compound Expression tests passed!");
+}
+
+test_expression_control :: fn() {
+    print("Testing control flow Expression variants...");
+
+    cond_id : i64 = 0;
+    conseq_id : i64 = 0;
+    alt_id : i64 = 1;
+    e1 := Expression::If { condition = cond_id, consequence = conseq_id, alternative = alt_id, has_alternative = true };
+    match e1 {
+        case .If { condition, consequence, alternative, has_alternative }: {
+            assert(has_alternative == true, "Expected has_alternative true");
+            print("  OK: If expression created");
+        }
+        case _: print("  FAIL: Expected If expression")
+    }
+
+    start_id : i64 = 0;
+    end_id : i64 = 1;
+    e2 := Expression::Range { start = start_id, end = end_id, inclusive = false };
+    match e2 {
+        case .Range { start, end, inclusive }: {
+            assert(inclusive == false, "Expected inclusive false");
+            print("  OK: Range expression created");
+        }
+        case _: print("  FAIL: Expected Range expression")
+    }
+
+    scrutinee_id : i64 = 0;
+    e3 := Expression::Switch { scrutinee = scrutinee_id, case_start = 0, case_count = 3 };
+    match e3 {
+        case .Switch { scrutinee, case_start, case_count }: {
+            assert(case_count == 3, "Expected case_count 3");
+            print("  OK: Switch expression created");
+        }
+        case _: print("  FAIL: Expected Switch expression")
+    }
+
+    print("Control flow Expression tests passed!");
+}
+
+test_expression_special :: fn() {
+    print("Testing special Expression variants...");
+
+    type_id : i64 = 0;
+    e1 := Expression::Sizeof { type_id = type_id };
+    match e1 {
+        case .Sizeof { type_id }: {
+            print("  OK: Sizeof expression created");
+        }
+        case _: print("  FAIL: Expected Sizeof expression")
+    }
+
+    body_id : i64 = 0;
+    e2 := Expression::Unsafe { body = body_id };
+    match e2 {
+        case .Unsafe { body }: {
+            print("  OK: Unsafe expression created");
+        }
+        case _: print("  FAIL: Expected Unsafe expression")
+    }
+
+    expr_id : i64 = 0;
+    e3 := Expression::Borrow { expr = expr_id };
+    match e3 {
+        case .Borrow { expr }: {
+            print("  OK: Borrow expression created");
+        }
+        case _: print("  FAIL: Expected Borrow expression")
+    }
+
+    expr_id2 : i64 = 0;
+    e4 := Expression::Dereference { expr = expr_id2 };
+    match e4 {
+        case .Dereference { expr }: {
+            print("  OK: Dereference expression created");
+        }
+        case _: print("  FAIL: Expected Dereference expression")
+    }
+
+    e5 := Expression::Tuple { elem_start = 0, elem_count = 2 };
+    match e5 {
+        case .Tuple { elem_start, elem_count }: {
+            assert(elem_count == 2, "Expected elem_count 2");
+            print("  OK: Tuple expression created");
+        }
+        case _: print("  FAIL: Expected Tuple expression")
+    }
+
+    e6 := Expression::EnumVariantInit { enum_name = "Option", variant_name = "Some", field_start = 0, field_count = 1 };
+    match e6 {
+        case .EnumVariantInit { enum_name, variant_name, field_start, field_count }: {
+            assert(enum_name == "Option", "Expected enum_name Option");
+            assert(variant_name == "Some", "Expected variant_name Some");
+            print("  OK: EnumVariantInit expression created");
+        }
+        case _: print("  FAIL: Expected EnumVariantInit expression")
+    }
+
+    print("Special Expression tests passed!");
+}
+
+test_statement_declarations :: fn() {
+    print("Testing declaration Statement variants...");
+
+    type_id : i64 = 0;
+    expr_id : i64 = 0;
+    s1 := Statement::Let { name = "x", type_id = type_id, value = expr_id, mutable = false, has_type = false };
+    match s1 {
+        case .Let { name, type_id, value, mutable, has_type }: {
+            assert(name == "x", "Expected name x");
+            assert(mutable == false, "Expected mutable false");
+            print("  OK: Let statement created");
+        }
+        case _: print("  FAIL: Expected Let statement")
+    }
+
+    expr_id2 : i64 = 0;
+    s2 := Statement::Constant { name = "PI", value = expr_id2 };
+    match s2 {
+        case .Constant { name, value }: {
+            assert(name == "PI", "Expected name PI");
+            print("  OK: Constant statement created");
+        }
+        case _: print("  FAIL: Expected Constant statement")
+    }
+
+    expr_id3 : i64 = 0;
+    s3 := Statement::Return { value = expr_id3 };
+    match s3 {
+        case .Return { value }: {
+            print("  OK: Return statement created");
+        }
+        case _: print("  FAIL: Expected Return statement")
+    }
+
+    expr_id4 : i64 = 0;
+    s4 := Statement::ExpressionStmt { expr = expr_id4 };
+    match s4 {
+        case .ExpressionStmt { expr }: {
+            print("  OK: ExpressionStmt created");
+        }
+        case _: print("  FAIL: Expected ExpressionStmt")
+    }
+
+    print("Declaration Statement tests passed!");
+}
+
+test_statement_types :: fn() {
+    print("Testing type definition Statement variants...");
+
+    s1 := Statement::StructDef { name = "Vec3", type_param_start = 0, type_param_count = 0, field_start = 0, field_count = 3 };
+    match s1 {
+        case .StructDef { name, type_param_start, type_param_count, field_start, field_count }: {
+            assert(name == "Vec3", "Expected name Vec3");
+            assert(field_count == 3, "Expected field_count 3");
+            print("  OK: StructDef statement created");
+        }
+        case _: print("  FAIL: Expected StructDef statement")
+    }
+
+    s2 := Statement::EnumDef { name = "Option", variant_start = 0, variant_count = 2 };
+    match s2 {
+        case .EnumDef { name, variant_start, variant_count }: {
+            assert(name == "Option", "Expected name Option");
+            assert(variant_count == 2, "Expected variant_count 2");
+            print("  OK: EnumDef statement created");
+        }
+        case _: print("  FAIL: Expected EnumDef statement")
+    }
+
+    type_id : i64 = 0;
+    s3 := Statement::TypeAlias { name = "MyInt", type_id = type_id };
+    match s3 {
+        case .TypeAlias { name, type_id }: {
+            assert(name == "MyInt", "Expected name MyInt");
+            print("  OK: TypeAlias statement created");
+        }
+        case _: print("  FAIL: Expected TypeAlias statement")
+    }
+
+    print("Type definition Statement tests passed!");
+}
+
+test_statement_control :: fn() {
+    print("Testing control flow Statement variants...");
+
+    expr_id : i64 = 0;
+    body_id : i64 = 0;
+    s1 := Statement::For { iterator = "i", range = expr_id, body = body_id };
+    match s1 {
+        case .For { iterator, range, body }: {
+            assert(iterator == "i", "Expected iterator i");
+            print("  OK: For statement created");
+        }
+        case _: print("  FAIL: Expected For statement")
+    }
+
+    cond_id : i64 = 0;
+    body_id2 : i64 = 0;
+    s2 := Statement::While { condition = cond_id, body = body_id2 };
+    match s2 {
+        case .While { condition, body }: {
+            print("  OK: While statement created");
+        }
+        case _: print("  FAIL: Expected While statement")
+    }
+
+    s3 := Statement::Break;
+    match s3 {
+        case .Break: print("  OK: Break statement created")
+        case _: print("  FAIL: Expected Break statement")
+    }
+
+    s4 := Statement::Continue;
+    match s4 {
+        case .Continue: print("  OK: Continue statement created")
+        case _: print("  FAIL: Expected Continue statement")
+    }
+
+    stmt_id : i64 = 0;
+    s5 := Statement::Defer { stmt = stmt_id };
+    match s5 {
+        case .Defer { stmt }: {
+            print("  OK: Defer statement created");
+        }
+        case _: print("  FAIL: Expected Defer statement")
+    }
+
+    print("Control flow Statement tests passed!");
+}
+
+test_statement_other :: fn() {
+    print("Testing other Statement variants...");
+
+    lhs_id : i64 = 0;
+    rhs_id : i64 = 1;
+    s1 := Statement::Assignment { lhs = lhs_id, rhs = rhs_id };
+    match s1 {
+        case .Assignment { lhs, rhs }: {
+            print("  OK: Assignment statement created");
+        }
+        case _: print("  FAIL: Expected Assignment statement")
+    }
+
+    s2 := Statement::Import { path = "std/io" };
+    match s2 {
+        case .Import { path }: {
+            assert(path == "std/io", "Expected path std/io");
+            print("  OK: Import statement created");
+        }
+        case _: print("  FAIL: Expected Import statement")
+    }
+
+    return_type : i64 = 0;
+    s3 := Statement::Extern { name = "printf", param_start = 0, param_count = 1, return_type = return_type, has_return = true };
+    match s3 {
+        case .Extern { name, param_start, param_count, return_type, has_return }: {
+            assert(name == "printf", "Expected name printf");
+            assert(has_return == true, "Expected has_return true");
+            print("  OK: Extern statement created");
+        }
+        case _: print("  FAIL: Expected Extern statement")
+    }
+
+    ctx_id : i64 = 0;
+    body_id : i64 = 0;
+    s4 := Statement::PushContext { context_expr = ctx_id, body = body_id };
+    match s4 {
+        case .PushContext { context_expr, body }: {
+            print("  OK: PushContext statement created");
+        }
+        case _: print("  FAIL: Expected PushContext statement")
+    }
+
+    alloc_id : i64 = 0;
+    body_id2 : i64 = 0;
+    s5 := Statement::PushAllocator { allocator_expr = alloc_id, body = body_id2 };
+    match s5 {
+        case .PushAllocator { allocator_expr, body }: {
+            print("  OK: PushAllocator statement created");
+        }
+        case _: print("  FAIL: Expected PushAllocator statement")
+    }
+
+    print("Other Statement tests passed!");
+}
+
+test_parameter :: fn() {
+    print("Testing Parameter struct...");
+
+    type_id : i64 = 0;
+    p1 := Parameter { name = "x", type_id = type_id, has_type = true, mutable = false };
+    assert(p1.name == "x", "Expected name x");
+    assert(p1.has_type == true, "Expected has_type true");
+    assert(p1.mutable == false, "Expected mutable false");
+    print("  OK: Parameter created");
+
+    type_id2 : i64 = 0;
+    p2 := Parameter { name = "arr", type_id = type_id2, has_type = true, mutable = true };
+    assert(p2.name == "arr", "Expected name arr");
+    assert(p2.mutable == true, "Expected mutable true");
+    print("  OK: Mutable Parameter created");
+
+    print("Parameter tests passed!");
+}
+
+test_struct_field :: fn() {
+    print("Testing StructField struct...");
+
+    type_id : i64 = 0;
+    f1 := StructField { name = "x", field_type = type_id };
+    assert(f1.name == "x", "Expected name x");
+    print("  OK: StructField created");
+
+    print("StructField tests passed!");
+}
+
+test_enum_variant :: fn() {
+    print("Testing EnumVariant struct...");
+
+    v1 := EnumVariant { name = "None", field_start = 0, field_count = 0, has_fields = false };
+    assert(v1.name == "None", "Expected name None");
+    assert(v1.has_fields == false, "Expected has_fields false");
+    print("  OK: EnumVariant without fields created");
+
+    v2 := EnumVariant { name = "Some", field_start = 0, field_count = 1, has_fields = true };
+    assert(v2.name == "Some", "Expected name Some");
+    assert(v2.has_fields == true, "Expected has_fields true");
+    print("  OK: EnumVariant with fields created");
+
+    print("EnumVariant tests passed!");
+}
+
+test_return_signature :: fn() {
+    print("Testing ReturnSignature enum...");
+
+    r1 := ReturnSignature::None;
+    match r1 {
+        case .None: print("  OK: ReturnSignature::None created")
+        case _: print("  FAIL: Expected None")
+    }
+
+    type_id : i64 = 0;
+    r2 := ReturnSignature::Single { type_id = type_id };
+    match r2 {
+        case .Single { type_id }: {
+            print("  OK: ReturnSignature::Single created");
+        }
+        case _: print("  FAIL: Expected Single")
+    }
+
+    r3 := ReturnSignature::Named { param_start = 0, param_count = 2 };
+    match r3 {
+        case .Named { param_start, param_count }: {
+            assert(param_count == 2, "Expected param_count 2");
+            print("  OK: ReturnSignature::Named created");
+        }
+        case _: print("  FAIL: Expected Named")
+    }
+
+    print("ReturnSignature tests passed!");
+}
+
+test_pattern :: fn() {
+    print("Testing Pattern enum...");
+
+    p1 := Pattern::Wildcard;
+    match p1 {
+        case .Wildcard: print("  OK: Pattern::Wildcard created")
+        case _: print("  FAIL: Expected Wildcard")
+    }
+
+    p2 := Pattern::IdentifierPattern { name = "x" };
+    match p2 {
+        case .IdentifierPattern { name }: {
+            pattern_name := name;
+            assert(pattern_name == "x", "Expected name x");
+            print("  OK: Pattern::IdentifierPattern created");
+        }
+        case _: print("  FAIL: Expected IdentifierPattern")
+    }
+
+    lit := Literal::Integer { value = 42 };
+    p3 := Pattern::LiteralPattern { value = lit };
+    match p3 {
+        case .LiteralPattern { value }: {
+            print("  OK: Pattern::LiteralPattern created");
+        }
+        case _: print("  FAIL: Expected LiteralPattern")
+    }
+
+    p4 := Pattern::EnumVariantPattern { enum_name = "Option", variant_name = "Some", binding_start = 0, binding_count = 1, has_enum_name = true };
+    match p4 {
+        case .EnumVariantPattern { enum_name, variant_name, binding_start, binding_count, has_enum_name }: {
+            assert(variant_name == "Some", "Expected variant_name Some");
+            print("  OK: Pattern::EnumVariantPattern created");
+        }
+        case _: print("  FAIL: Expected EnumVariantPattern")
+    }
+
+    p5 := Pattern::TuplePattern { pattern_start = 0, pattern_count = 2 };
+    match p5 {
+        case .TuplePattern { pattern_start, pattern_count }: {
+            assert(pattern_count == 2, "Expected pattern_count 2");
+            print("  OK: Pattern::TuplePattern created");
+        }
+        case _: print("  FAIL: Expected TuplePattern")
+    }
+
+    print("Pattern tests passed!");
+}
+
+test_switch_case :: fn() {
+    print("Testing SwitchCase struct...");
+
+    body_id : i64 = 0;
+    sc := SwitchCase { pattern_id = 0, body = body_id };
+    assert(sc.pattern_id == 0, "Expected pattern_id 0");
+    print("  OK: SwitchCase created");
+
+    print("SwitchCase tests passed!");
+}
+
+test_ast :: fn() {
+    print("=== AST Type Tests ===");
+    test_operator();
+    test_literal();
+    test_type();
+    test_expression_simple();
+    test_expression_operators();
+    test_expression_compound();
+    test_expression_control();
+    test_expression_special();
+    test_statement_declarations();
+    test_statement_types();
+    test_statement_control();
+    test_statement_other();
+    test_parameter();
+    test_struct_field();
+    test_enum_variant();
+    test_return_signature();
+    test_pattern();
+    test_switch_case();
+    print("=== AST Type Tests Complete ===");
+    print("");
+}
+
+test_ast();
+print("AST module loaded")

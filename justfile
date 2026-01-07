@@ -64,15 +64,15 @@ repl:
 
 # Runs a frost file
 run file:
-    cargo run -r -p frost -- {{file}}
+    cargo run -r -p frost --bin frost -- {{file}}
 
 # Compiles a frost file to native code
 compile file:
-    cargo run -r -p frost -- --compile {{file}}
+    cargo run -r -p frost --bin frost -- --native {{file}}
 
 # Runs the bootstrap compiler (lexer, parser, etc.)
 bootstrap:
-    cargo run -r -p frost --bin frost -- bootstrap/lexer.frost
+    cargo run -r -p frost --bin frost -- bootstrap/main.frost
 
 # Runs all tests
 test:
