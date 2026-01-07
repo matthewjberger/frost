@@ -70,6 +70,10 @@ run file:
 compile file:
     cargo run -r -p frost -- --compile {{file}}
 
+# Runs the bootstrap compiler (lexer, parser, etc.)
+bootstrap:
+    cargo run -r -p frost --bin frost -- bootstrap/lexer.frost
+
 # Runs all tests
 test:
     cargo test -p frost -- --nocapture

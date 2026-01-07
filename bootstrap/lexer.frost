@@ -7,6 +7,7 @@ CHAR_CARRIAGE_RETURN :: 13
 CHAR_BANG :: 33
 CHAR_DOUBLE_QUOTE :: 34
 CHAR_HASH :: 35
+CHAR_DOLLAR :: 36
 CHAR_PERCENT :: 37
 CHAR_AMPERSAND :: 38
 CHAR_SINGLE_QUOTE :: 39
@@ -57,12 +58,15 @@ Token :: enum {
     ColonAssign,
     Comma,
     Comptime,
+    Context,
     Continue,
     Defer,
     Distinct,
+    Dollar,
     DoubleColon,
     Dot,
     DotDot,
+    DotDotEqual,
     Else,
     EndOfFile,
     Enum,
@@ -87,6 +91,7 @@ Token :: enum {
     LeftParentheses,
     LessThan,
     LessThanOrEqual,
+    Let,
     Minus,
     Match,
     Mut,
@@ -95,6 +100,8 @@ Token :: enum {
     Percent,
     Pipe,
     Plus,
+    PushAllocator,
+    PushContext,
     Question,
     Return,
     RightBrace,
@@ -117,11 +124,13 @@ Token :: enum {
     TypeI16,
     TypeI32,
     TypeI64,
+    TypeIsize,
     TypeStr,
     TypeU8,
     TypeU16,
     TypeU32,
     TypeU64,
+    TypeUsize,
     TypeVoid,
     Underscore,
     Unsafe,
@@ -219,6 +228,7 @@ lookup_identifier :: fn(id: str) -> Token {
     if (identifier == "return") { return Token::Return; }
     if (identifier == "if") { return Token::If; }
     if (identifier == "import") { return Token::Import; }
+    if (identifier == "let") { return Token::Let; }
     if (identifier == "else") { return Token::Else; }
     if (identifier == "struct") { return Token::Struct; }
     if (identifier == "enum") { return Token::Enum; }
@@ -237,15 +247,20 @@ lookup_identifier :: fn(id: str) -> Token {
     if (identifier == "typename") { return Token::Typename; }
     if (identifier == "case") { return Token::Case; }
     if (identifier == "comptime") { return Token::Comptime; }
+    if (identifier == "context") { return Token::Context; }
+    if (identifier == "push_allocator") { return Token::PushAllocator; }
+    if (identifier == "push_context") { return Token::PushContext; }
     if (identifier == "unsafe") { return Token::Unsafe; }
     if (identifier == "i8") { return Token::TypeI8; }
     if (identifier == "i16") { return Token::TypeI16; }
     if (identifier == "i32") { return Token::TypeI32; }
     if (identifier == "i64") { return Token::TypeI64; }
+    if (identifier == "isize") { return Token::TypeIsize; }
     if (identifier == "u8") { return Token::TypeU8; }
     if (identifier == "u16") { return Token::TypeU16; }
     if (identifier == "u32") { return Token::TypeU32; }
     if (identifier == "u64") { return Token::TypeU64; }
+    if (identifier == "usize") { return Token::TypeUsize; }
     if (identifier == "f32") { return Token::TypeF32; }
     if (identifier == "f64") { return Token::TypeF64; }
     if (identifier == "bool") { return Token::TypeBool; }
@@ -294,6 +309,7 @@ next_token :: fn(lexer: &mut Lexer) -> Token {
     if (first_char == CHAR_QUESTION) { return Token::Question; }
     if (first_char == CHAR_CARET) { return Token::Caret; }
     if (first_char == CHAR_HASH) { return Token::Hash; }
+    if (first_char == CHAR_DOLLAR) { return Token::Dollar; }
 
     if (first_char == CHAR_MINUS) {
         return next_char_or(lexer, Token::Minus, CHAR_GREATER_THAN, Token::Arrow);
@@ -334,7 +350,15 @@ next_token :: fn(lexer: &mut Lexer) -> Token {
     }
 
     if (first_char == CHAR_DOT) {
-        return next_char_or(lexer, Token::Dot, CHAR_DOT, Token::DotDot);
+        if (peek(lexer) == CHAR_DOT) {
+            read_char(lexer);
+            if (peek(lexer) == CHAR_EQUALS) {
+                read_char(lexer);
+                return Token::DotDotEqual;
+            }
+            return Token::DotDot;
+        }
+        return Token::Dot;
     }
 
     if (first_char == CHAR_LESS_THAN) {
@@ -465,5 +489,68 @@ test_lexer :: fn() {
     print("Lexer tests passed!");
 }
 
+test_new_tokens :: fn() {
+    print("Testing new tokens...");
+
+    mut lexer1 := lexer_new("$T");
+    tok1 := next_token(&mut lexer1);
+    match tok1 {
+        case .Dollar: { print("OK: Dollar"); }
+        case _: { print("FAIL: Expected Dollar"); }
+    }
+
+    mut lexer2 := lexer_new("..=");
+    tok2 := next_token(&mut lexer2);
+    match tok2 {
+        case .DotDotEqual: { print("OK: DotDotEqual"); }
+        case _: { print("FAIL: Expected DotDotEqual"); }
+    }
+
+    mut lexer3 := lexer_new("let");
+    tok3 := next_token(&mut lexer3);
+    match tok3 {
+        case .Let: { print("OK: Let"); }
+        case _: { print("FAIL: Expected Let"); }
+    }
+
+    mut lexer4 := lexer_new("isize");
+    tok4 := next_token(&mut lexer4);
+    match tok4 {
+        case .TypeIsize: { print("OK: TypeIsize"); }
+        case _: { print("FAIL: Expected TypeIsize"); }
+    }
+
+    mut lexer5 := lexer_new("usize");
+    tok5 := next_token(&mut lexer5);
+    match tok5 {
+        case .TypeUsize: { print("OK: TypeUsize"); }
+        case _: { print("FAIL: Expected TypeUsize"); }
+    }
+
+    mut lexer6 := lexer_new("context");
+    tok6 := next_token(&mut lexer6);
+    match tok6 {
+        case .Context: { print("OK: Context"); }
+        case _: { print("FAIL: Expected Context"); }
+    }
+
+    mut lexer7 := lexer_new("push_allocator");
+    tok7 := next_token(&mut lexer7);
+    match tok7 {
+        case .PushAllocator: { print("OK: PushAllocator"); }
+        case _: { print("FAIL: Expected PushAllocator"); }
+    }
+
+    mut lexer8 := lexer_new("push_context");
+    tok8 := next_token(&mut lexer8);
+    match tok8 {
+        case .PushContext: { print("OK: PushContext"); }
+        case _: { print("FAIL: Expected PushContext"); }
+    }
+
+    print("New token tests passed!");
+}
+
 test_lexer();
+test_new_tokens();
 print("Frost lexer module loaded successfully")
