@@ -188,6 +188,18 @@ impl Operator {
             _ => bail!("Token is not an operator: {}", token),
         })
     }
+
+    pub fn is_comparison(&self) -> bool {
+        matches!(
+            self,
+            Self::Equal
+                | Self::NotEqual
+                | Self::LessThan
+                | Self::LessThanOrEqual
+                | Self::GreaterThan
+                | Self::GreaterThanOrEqual
+        )
+    }
 }
 
 impl Display for Operator {

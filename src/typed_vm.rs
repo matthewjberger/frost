@@ -72,6 +72,7 @@ pub struct VirtualMachine {
     pub native_names: Vec<String>,
     pub context_stack: Vec<RuntimeContext>,
     freed_set: std::collections::HashSet<u32>,
+    ref_counts: std::collections::HashMap<u32, usize>,
 }
 
 static BUILTINS: &[&str] = &[
@@ -148,6 +149,12 @@ impl VirtualMachine {
         functions: Vec<CompiledFunction>,
         heap: Vec<HeapObject>,
     ) -> Self {
+        let mut ref_counts = std::collections::HashMap::new();
+        for (index, obj) in heap.iter().enumerate() {
+            if !matches!(obj, HeapObject::Free) {
+                ref_counts.insert(index as u32, 1);
+            }
+        }
         Self {
             stack: Vec::with_capacity(STACK_SIZE),
             stack_pointer: 0,
@@ -162,6 +169,7 @@ impl VirtualMachine {
             native_names: Vec::new(),
             context_stack: Vec::new(),
             freed_set: std::collections::HashSet::new(),
+            ref_counts,
         }
     }
 
@@ -172,6 +180,12 @@ impl VirtualMachine {
         native_registry: NativeRegistry,
         native_names: Vec<String>,
     ) -> Self {
+        let mut ref_counts = std::collections::HashMap::new();
+        for (index, obj) in heap.iter().enumerate() {
+            if !matches!(obj, HeapObject::Free) {
+                ref_counts.insert(index as u32, 1);
+            }
+        }
         Self {
             stack: Vec::with_capacity(STACK_SIZE),
             stack_pointer: 0,
@@ -186,6 +200,7 @@ impl VirtualMachine {
             native_names,
             context_stack: Vec::new(),
             freed_set: std::collections::HashSet::new(),
+            ref_counts,
         }
     }
 
@@ -245,15 +260,34 @@ impl VirtualMachine {
     }
 
     fn allocate_heap(&mut self, object: HeapObject) -> u32 {
-        if let Some(index) = self.heap_free_list.pop() {
-            self.freed_set.remove(&index);
-            self.heap[index as usize] = object;
-            index
+        let index = if let Some(idx) = self.heap_free_list.pop() {
+            self.freed_set.remove(&idx);
+            self.heap[idx as usize] = object;
+            idx
         } else {
-            let index = self.heap.len() as u32;
+            let idx = self.heap.len() as u32;
             self.heap.push(object);
-            index
+            idx
+        };
+        self.ref_counts.insert(index, 1);
+        index
+    }
+
+    fn inc_ref(&mut self, index: u32) {
+        if let Some(count) = self.ref_counts.get_mut(&index) {
+            *count += 1;
         }
+    }
+
+    fn dec_ref(&mut self, index: u32) -> bool {
+        if let Some(count) = self.ref_counts.get_mut(&index) {
+            *count -= 1;
+            if *count == 0 {
+                self.ref_counts.remove(&index);
+                return true;
+            }
+        }
+        false
     }
 
     fn free_heap(&mut self, index: u32) {
@@ -261,6 +295,7 @@ impl VirtualMachine {
             panic!("double free detected for HeapRef({})", index);
         }
         self.freed_set.insert(index);
+        self.ref_counts.remove(&index);
         self.heap[index as usize] = HeapObject::Free;
         self.heap_free_list.push(index);
     }
@@ -306,7 +341,9 @@ impl VirtualMachine {
     }
 
     fn drop_heap_value(&mut self, index: u32) {
-        self.free_heap(index);
+        if self.dec_ref(index) {
+            self.free_heap(index);
+        }
     }
 
     pub fn run(&mut self, main_instructions: &[Instruction]) -> Result<()> {
@@ -2138,23 +2175,27 @@ impl VirtualMachine {
         index: Value64,
     ) -> Result<()> {
         match left {
-            Value64::HeapRef(idx) => match &self.heap[idx as usize] {
-                HeapObject::Array(elements) => {
-                    let i = index.as_i64();
-                    if i < 0 || i as usize >= elements.len() {
-                        self.push(Value64::Null)?;
-                    } else {
-                        self.push(elements[i as usize])?;
+            Value64::HeapRef(idx) => {
+                let value = match &self.heap[idx as usize] {
+                    HeapObject::Array(elements) => {
+                        let i = index.as_i64();
+                        if i < 0 || i as usize >= elements.len() {
+                            Value64::Null
+                        } else {
+                            elements[i as usize]
+                        }
                     }
+                    HeapObject::HashMap(hash) => {
+                        let hash_key = self.hash_key(index)?;
+                        hash.get(&hash_key).copied().unwrap_or(Value64::Null)
+                    }
+                    _ => bail!("index operator not supported for this heap type"),
+                };
+                if let Value64::HeapRef(ref_idx) = value {
+                    self.inc_ref(ref_idx);
                 }
-                HeapObject::HashMap(hash) => {
-                    let hash_key = self.hash_key(index)?;
-                    let value =
-                        hash.get(&hash_key).copied().unwrap_or(Value64::Null);
-                    self.push(value)?;
-                }
-                _ => bail!("index operator not supported for this heap type"),
-            },
+                self.push(value)?;
+            }
             _ => bail!("index operator not supported for this type"),
         }
         Ok(())

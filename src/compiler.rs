@@ -948,7 +948,21 @@ impl<'a> Compiler<'a> {
 
     pub fn compile(&mut self) -> Result<Bytecode> {
         let mut bytecode = Bytecode::default();
-        while let Some(statement) = self.statements.next() {
+        let statements: Vec<Statement> = self.statements.by_ref().cloned().collect();
+
+        for statement in &statements {
+            if let Statement::Constant(name, expression) = statement {
+                if let Expression::Function(params, return_sig, _)
+                    | Expression::Proc(params, return_sig, _) = expression
+                {
+                    if !Self::function_is_generic(params, return_sig) {
+                        self.symbol_table.define(name);
+                    }
+                }
+            }
+        }
+
+        for statement in &statements {
             self.compile_statement(statement, &mut bytecode)?;
         }
         Ok(bytecode)
@@ -1196,7 +1210,7 @@ impl<'a> Compiler<'a> {
                         );
                         return Ok(());
                     }
-                    let symbol = self.symbol_table.define(name);
+                    let symbol = self.symbol_table.resolve(name).unwrap_or_else(|| self.symbol_table.define(name));
                     self.validate_and_store_return_type(name, return_sig)?;
                     self.compile_function_with_name(
                         name, parameters, return_sig, body, bytecode,
@@ -1676,6 +1690,19 @@ impl<'a> Compiler<'a> {
                 })?;
                 let old_base = self.base_path.take();
                 self.base_path = canonical_path.parent().map(|p| p.to_path_buf());
+
+                for statement in &statements {
+                    if let Statement::Constant(name, expression) = statement {
+                        if let Expression::Function(params, return_sig, _)
+                            | Expression::Proc(params, return_sig, _) = expression
+                        {
+                            if !Self::function_is_generic(params, return_sig) {
+                                self.symbol_table.define(name);
+                            }
+                        }
+                    }
+                }
+
                 for statement in &statements {
                     self.compile_statement(statement, bytecode)?;
                 }
@@ -2930,9 +2957,15 @@ impl<'a> Compiler<'a> {
             None
         };
 
+        let saved_suppress = self.suppress_move_marking;
+        if operator.is_comparison() {
+            self.suppress_move_marking = true;
+        }
+
         if *operator == Operator::LessThan {
             self.compile_expression(right, bytecode)?;
             self.compile_expression(left, bytecode)?;
+            self.suppress_move_marking = saved_suppress;
             let opcode = if self.typed_mode && left_type == Some(Type::I64) {
                 Opcode::GreaterThanI64
             } else {
@@ -2945,6 +2978,7 @@ impl<'a> Compiler<'a> {
         if *operator == Operator::LessThanOrEqual {
             self.compile_expression(left, bytecode)?;
             self.compile_expression(right, bytecode)?;
+            self.suppress_move_marking = saved_suppress;
             let opcode = if self.typed_mode && left_type == Some(Type::I64) {
                 Opcode::GreaterThanI64
             } else {
@@ -2960,6 +2994,7 @@ impl<'a> Compiler<'a> {
         if *operator == Operator::GreaterThanOrEqual {
             self.compile_expression(right, bytecode)?;
             self.compile_expression(left, bytecode)?;
+            self.suppress_move_marking = saved_suppress;
             let opcode = if self.typed_mode && left_type == Some(Type::I64) {
                 Opcode::GreaterThanI64
             } else {
@@ -3017,6 +3052,7 @@ impl<'a> Compiler<'a> {
 
         self.compile_expression(left, bytecode)?;
         self.compile_expression(right, bytecode)?;
+        self.suppress_move_marking = saved_suppress;
 
         let opcode = if self.typed_mode {
             match (operator, &left_type) {
