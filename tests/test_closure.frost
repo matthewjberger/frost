@@ -1,0 +1,26 @@
+make_adder :: fn(x: i64) -> fn(i64) -> i64 {
+    fn(y: i64) -> i64 { x + y }
+}
+
+add5 := make_adder(5);
+result := add5(3);
+print("Closure result (expected 8):");
+print(result);
+assert(result == 8, "closure should capture x=5 and add to y=3");
+
+make_multiplier :: fn(factor: i64) -> fn(i64) -> i64 {
+    fn(n: i64) -> i64 { n * factor }
+}
+
+double := make_multiplier(2);
+triple := make_multiplier(3);
+d_result := double(10);
+t_result := triple(10);
+print("Double result (expected 20):");
+print(d_result);
+print("Triple result (expected 30):");
+print(t_result);
+assert(d_result == 20, "double(10) should be 20");
+assert(t_result == 30, "triple(10) should be 30");
+
+print("All closure tests passed!");

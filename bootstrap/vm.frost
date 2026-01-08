@@ -546,6 +546,11 @@ vm_load_string_constants :: fn(vm: &mut VirtualMachine, strs: []str, count: i64)
     vm.string_constant_count = count;
 }
 
+vm_load_functions :: fn(vm: &mut VirtualMachine, funcs: []CompiledFunction, count: i64) {
+    vm.functions = funcs;
+    vm.function_count = count;
+}
+
 vm_push_frame :: fn(vm: &mut VirtualMachine, frame: Frame) {
     vm.frames = push(vm.frames, frame);
     vm.frame_count = vm.frame_count + 1;
