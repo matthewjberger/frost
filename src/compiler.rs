@@ -2262,17 +2262,21 @@ impl<'a> Compiler<'a> {
                             self.load_symbol(&symbol, bytecode);
                         }
                         let is_constructor = mangled_name.ends_with("_new") || mangled_name.starts_with("new_");
+                        let is_non_consuming_builtin = matches!(mangled_name.as_str(), "len" | "first" | "last" | "print" | "assert");
                         let was_suppressing = self.suppress_move_marking;
                         self.suppress_move_marking = true;
                         for arg in arguments {
                             self.compile_expression(arg, bytecode)?;
-                            if is_constructor {
+                            if !is_non_consuming_builtin {
                                 if let Expression::Identifier(arg_name) = arg {
                                     if let Some(sym) = self.symbol_table.resolve(arg_name) {
                                         if let Some(ref symbol_type) = sym.symbol_type {
                                             if !symbol_type.is_copy() {
-                                                if let Some(scope) = self.scope_owned_values.last_mut() {
-                                                    scope.retain(|n| n != arg_name);
+                                                self.moved_symbols.insert(arg_name.clone());
+                                                if is_constructor {
+                                                    if let Some(scope) = self.scope_owned_values.last_mut() {
+                                                        scope.retain(|n| n != arg_name);
+                                                    }
                                                 }
                                             }
                                         }
@@ -2289,23 +2293,28 @@ impl<'a> Compiler<'a> {
                         return Ok(());
                     }
                 }
-                let is_constructor = if let Expression::Identifier(func_name) = function.as_ref() {
-                    func_name.ends_with("_new") || func_name.starts_with("new_")
+                let (is_constructor, is_non_consuming_builtin) = if let Expression::Identifier(func_name) = function.as_ref() {
+                    let constructor = func_name.ends_with("_new") || func_name.starts_with("new_");
+                    let non_consuming = matches!(func_name.as_str(), "len" | "first" | "last" | "print" | "assert");
+                    (constructor, non_consuming)
                 } else {
-                    false
+                    (false, false)
                 };
                 self.compile_expression(function, bytecode)?;
                 let was_suppressing = self.suppress_move_marking;
                 self.suppress_move_marking = true;
                 for arg in arguments {
                     self.compile_expression(arg, bytecode)?;
-                    if is_constructor {
+                    if !is_non_consuming_builtin {
                         if let Expression::Identifier(name) = arg {
                             if let Some(symbol) = self.symbol_table.resolve(name) {
                                 if let Some(ref symbol_type) = symbol.symbol_type {
                                     if !symbol_type.is_copy() {
-                                        if let Some(scope) = self.scope_owned_values.last_mut() {
-                                            scope.retain(|n| n != name);
+                                        self.moved_symbols.insert(name.clone());
+                                        if is_constructor {
+                                            if let Some(scope) = self.scope_owned_values.last_mut() {
+                                                scope.retain(|n| n != name);
+                                            }
                                         }
                                     }
                                 }
