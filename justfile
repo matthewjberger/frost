@@ -70,9 +70,21 @@ run file:
 compile file:
     cargo run -r -p frost --bin frost -- --native {{file}}
 
-# Runs the bootstrap compiler (lexer, parser, etc.)
+# Runs the bootstrap compiler tests
 bootstrap:
     cargo run -r -p frost --bin frost -- bootstrap/main.frost
+
+# Runs a frost file through the self-hosted bootstrap compiler (Windows)
+[windows]
+bootstrap-run file:
+    [System.IO.File]::WriteAllText("bootstrap/.run_target", "{{file}}")
+    cargo run -r -p frost --bin frost -- bootstrap/run.frost
+
+# Runs a frost file through the self-hosted bootstrap compiler (Unix)
+[unix]
+bootstrap-run file:
+    printf '%s' "{{file}}" > bootstrap/.run_target
+    cargo run -r -p frost --bin frost -- bootstrap/run.frost
 
 # Runs all tests
 test:
