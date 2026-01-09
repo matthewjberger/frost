@@ -342,6 +342,29 @@ Heap :: struct {
     tagged_union_tags: []i64,
     builtin_indices: []i64,
     struct_field_counts: []i64,
+    struct_field_offsets: []i64,
+    closure_free_counts: []i64,
+    closure_free_offsets: []i64,
+    free_var_tags: []i64,
+    free_var_ints: []i64,
+    free_var_bools: []bool,
+    free_var_strs: []str,
+    free_var_heaps: []i64,
+    free_var_count: i64,
+    array_element_counts: []i64,
+    array_element_offsets: []i64,
+    array_elem_tags: []i64,
+    array_elem_ints: []i64,
+    array_elem_bools: []bool,
+    array_elem_strs: []str,
+    array_elem_heaps: []i64,
+    array_elem_count: i64,
+    struct_field_tags: []i64,
+    struct_field_ints: []i64,
+    struct_field_bools: []bool,
+    struct_field_strs: []str,
+    struct_field_heaps: []i64,
+    struct_field_count: i64,
     count: i64
 }
 
@@ -352,6 +375,26 @@ heap_new :: fn() -> Heap {
     mut tu_tags : []i64 = [];
     mut builtins : []i64 = [];
     mut field_counts : []i64 = [];
+    mut field_offsets : []i64 = [];
+    mut free_counts : []i64 = [];
+    mut free_offsets : []i64 = [];
+    mut fv_tags : []i64 = [];
+    mut fv_ints : []i64 = [];
+    mut fv_bools : []bool = [];
+    mut fv_strs : []str = [];
+    mut fv_heaps : []i64 = [];
+    mut arr_counts : []i64 = [];
+    mut arr_offsets : []i64 = [];
+    mut ae_tags : []i64 = [];
+    mut ae_ints : []i64 = [];
+    mut ae_bools : []bool = [];
+    mut ae_strs : []str = [];
+    mut ae_heaps : []i64 = [];
+    mut sf_tags : []i64 = [];
+    mut sf_ints : []i64 = [];
+    mut sf_bools : []bool = [];
+    mut sf_strs : []str = [];
+    mut sf_heaps : []i64 = [];
     Heap {
         object_tags = tags,
         string_values = strings,
@@ -359,6 +402,29 @@ heap_new :: fn() -> Heap {
         tagged_union_tags = tu_tags,
         builtin_indices = builtins,
         struct_field_counts = field_counts,
+        struct_field_offsets = field_offsets,
+        closure_free_counts = free_counts,
+        closure_free_offsets = free_offsets,
+        free_var_tags = fv_tags,
+        free_var_ints = fv_ints,
+        free_var_bools = fv_bools,
+        free_var_strs = fv_strs,
+        free_var_heaps = fv_heaps,
+        free_var_count = 0,
+        array_element_counts = arr_counts,
+        array_element_offsets = arr_offsets,
+        array_elem_tags = ae_tags,
+        array_elem_ints = ae_ints,
+        array_elem_bools = ae_bools,
+        array_elem_strs = ae_strs,
+        array_elem_heaps = ae_heaps,
+        array_elem_count = 0,
+        struct_field_tags = sf_tags,
+        struct_field_ints = sf_ints,
+        struct_field_bools = sf_bools,
+        struct_field_strs = sf_strs,
+        struct_field_heaps = sf_heaps,
+        struct_field_count = 0,
         count = 0
     }
 }
@@ -371,32 +437,113 @@ heap_alloc_string :: fn(heap: &mut Heap, value: str) -> i64 {
     heap.tagged_union_tags = push(heap.tagged_union_tags, 0);
     heap.builtin_indices = push(heap.builtin_indices, -1);
     heap.struct_field_counts = push(heap.struct_field_counts, 0);
+    heap.struct_field_offsets = push(heap.struct_field_offsets, 0);
+    heap.closure_free_counts = push(heap.closure_free_counts, 0);
+    heap.closure_free_offsets = push(heap.closure_free_offsets, 0);
+    heap.array_element_counts = push(heap.array_element_counts, 0);
+    heap.array_element_offsets = push(heap.array_element_offsets, 0);
     heap.count = heap.count + 1;
     index
 }
 
 heap_alloc_struct :: fn(heap: &mut Heap, num_fields: i64) -> i64 {
     index := heap.count;
+    struct_offset := heap.struct_field_count;
     heap.object_tags = push(heap.object_tags, heap_tag_struct());
     heap.string_values = push(heap.string_values, "");
     heap.closure_fn_indices = push(heap.closure_fn_indices, -1);
     heap.tagged_union_tags = push(heap.tagged_union_tags, 0);
     heap.builtin_indices = push(heap.builtin_indices, -1);
     heap.struct_field_counts = push(heap.struct_field_counts, num_fields);
+    heap.struct_field_offsets = push(heap.struct_field_offsets, struct_offset);
+    heap.closure_free_counts = push(heap.closure_free_counts, 0);
+    heap.closure_free_offsets = push(heap.closure_free_offsets, 0);
+    heap.array_element_counts = push(heap.array_element_counts, 0);
+    heap.array_element_offsets = push(heap.array_element_offsets, 0);
+    mut field_idx : i64 = 0;
+    while (field_idx < num_fields) {
+        heap.struct_field_tags = push(heap.struct_field_tags, value_tag_null());
+        heap.struct_field_ints = push(heap.struct_field_ints, 0);
+        heap.struct_field_bools = push(heap.struct_field_bools, false);
+        heap.struct_field_strs = push(heap.struct_field_strs, "");
+        heap.struct_field_heaps = push(heap.struct_field_heaps, -1);
+        heap.struct_field_count = heap.struct_field_count + 1;
+        field_idx = field_idx + 1;
+    }
     heap.count = heap.count + 1;
     index
 }
 
 heap_alloc_closure :: fn(heap: &mut Heap, fn_index: i64) -> i64 {
     index := heap.count;
+    free_offset := heap.free_var_count;
     heap.object_tags = push(heap.object_tags, heap_tag_closure());
     heap.string_values = push(heap.string_values, "");
     heap.closure_fn_indices = push(heap.closure_fn_indices, fn_index);
     heap.tagged_union_tags = push(heap.tagged_union_tags, 0);
     heap.builtin_indices = push(heap.builtin_indices, -1);
     heap.struct_field_counts = push(heap.struct_field_counts, 0);
+    heap.struct_field_offsets = push(heap.struct_field_offsets, 0);
+    heap.closure_free_counts = push(heap.closure_free_counts, 0);
+    heap.closure_free_offsets = push(heap.closure_free_offsets, free_offset);
+    heap.array_element_counts = push(heap.array_element_counts, 0);
+    heap.array_element_offsets = push(heap.array_element_offsets, 0);
     heap.count = heap.count + 1;
     index
+}
+
+heap_closure_add_free_var :: fn(heap: &mut Heap, closure_idx: i64, tag: i64, int_val: i64, bool_val: bool, str_val: str, heap_val: i64) {
+    heap.free_var_tags = push(heap.free_var_tags, tag);
+    heap.free_var_ints = push(heap.free_var_ints, int_val);
+    heap.free_var_bools = push(heap.free_var_bools, bool_val);
+    heap.free_var_strs = push(heap.free_var_strs, str_val);
+    heap.free_var_heaps = push(heap.free_var_heaps, heap_val);
+    heap.free_var_count = heap.free_var_count + 1;
+    mut counts := heap.closure_free_counts;
+    counts[closure_idx] = counts[closure_idx] + 1;
+    heap.closure_free_counts = counts;
+}
+
+heap_get_closure_free_count :: fn(heap: &Heap, closure_idx: i64) -> i64 {
+    if (closure_idx < 0) { return 0; }
+    if (closure_idx >= heap.count) { return 0; }
+    heap.closure_free_counts[closure_idx]
+}
+
+heap_get_closure_free_offset :: fn(heap: &Heap, closure_idx: i64) -> i64 {
+    if (closure_idx < 0) { return 0; }
+    if (closure_idx >= heap.count) { return 0; }
+    heap.closure_free_offsets[closure_idx]
+}
+
+heap_get_free_var_tag :: fn(heap: &Heap, offset: i64) -> i64 {
+    if (offset < 0) { return -1; }
+    if (offset >= heap.free_var_count) { return -1; }
+    heap.free_var_tags[offset]
+}
+
+heap_get_free_var_int :: fn(heap: &Heap, offset: i64) -> i64 {
+    if (offset < 0) { return 0; }
+    if (offset >= heap.free_var_count) { return 0; }
+    heap.free_var_ints[offset]
+}
+
+heap_get_free_var_bool :: fn(heap: &Heap, offset: i64) -> bool {
+    if (offset < 0) { return false; }
+    if (offset >= heap.free_var_count) { return false; }
+    heap.free_var_bools[offset]
+}
+
+heap_get_free_var_str :: fn(heap: &Heap, offset: i64) -> str {
+    if (offset < 0) { return ""; }
+    if (offset >= heap.free_var_count) { return ""; }
+    heap.free_var_strs[offset]
+}
+
+heap_get_free_var_heap :: fn(heap: &Heap, offset: i64) -> i64 {
+    if (offset < 0) { return -1; }
+    if (offset >= heap.free_var_count) { return -1; }
+    heap.free_var_heaps[offset]
 }
 
 heap_alloc_tagged_union :: fn(heap: &mut Heap, num_fields: i64) -> i64 {
@@ -407,6 +554,11 @@ heap_alloc_tagged_union :: fn(heap: &mut Heap, num_fields: i64) -> i64 {
     heap.tagged_union_tags = push(heap.tagged_union_tags, 0);
     heap.builtin_indices = push(heap.builtin_indices, -1);
     heap.struct_field_counts = push(heap.struct_field_counts, num_fields);
+    heap.struct_field_offsets = push(heap.struct_field_offsets, 0);
+    heap.closure_free_counts = push(heap.closure_free_counts, 0);
+    heap.closure_free_offsets = push(heap.closure_free_offsets, 0);
+    heap.array_element_counts = push(heap.array_element_counts, 0);
+    heap.array_element_offsets = push(heap.array_element_offsets, 0);
     heap.count = heap.count + 1;
     index
 }
@@ -419,8 +571,173 @@ heap_alloc_builtin :: fn(heap: &mut Heap, builtin_index: i64) -> i64 {
     heap.tagged_union_tags = push(heap.tagged_union_tags, 0);
     heap.builtin_indices = push(heap.builtin_indices, builtin_index);
     heap.struct_field_counts = push(heap.struct_field_counts, 0);
+    heap.struct_field_offsets = push(heap.struct_field_offsets, 0);
+    heap.closure_free_counts = push(heap.closure_free_counts, 0);
+    heap.closure_free_offsets = push(heap.closure_free_offsets, 0);
+    heap.array_element_counts = push(heap.array_element_counts, 0);
+    heap.array_element_offsets = push(heap.array_element_offsets, 0);
     heap.count = heap.count + 1;
     index
+}
+
+heap_tag_array :: fn() -> i64 { 6 }
+
+heap_alloc_array :: fn(heap: &mut Heap) -> i64 {
+    index := heap.count;
+    array_offset := heap.array_elem_count;
+    heap.object_tags = push(heap.object_tags, heap_tag_array());
+    heap.string_values = push(heap.string_values, "");
+    heap.closure_fn_indices = push(heap.closure_fn_indices, -1);
+    heap.tagged_union_tags = push(heap.tagged_union_tags, 0);
+    heap.builtin_indices = push(heap.builtin_indices, -1);
+    heap.struct_field_counts = push(heap.struct_field_counts, 0);
+    heap.struct_field_offsets = push(heap.struct_field_offsets, 0);
+    heap.closure_free_counts = push(heap.closure_free_counts, 0);
+    heap.closure_free_offsets = push(heap.closure_free_offsets, 0);
+    heap.array_element_counts = push(heap.array_element_counts, 0);
+    heap.array_element_offsets = push(heap.array_element_offsets, array_offset);
+    heap.count = heap.count + 1;
+    index
+}
+
+heap_array_add_element :: fn(heap: &mut Heap, array_idx: i64, tag: i64, int_val: i64, bool_val: bool, str_val: str, heap_val: i64) {
+    heap.array_elem_tags = push(heap.array_elem_tags, tag);
+    heap.array_elem_ints = push(heap.array_elem_ints, int_val);
+    heap.array_elem_bools = push(heap.array_elem_bools, bool_val);
+    heap.array_elem_strs = push(heap.array_elem_strs, str_val);
+    heap.array_elem_heaps = push(heap.array_elem_heaps, heap_val);
+    heap.array_elem_count = heap.array_elem_count + 1;
+    mut counts := heap.array_element_counts;
+    counts[array_idx] = counts[array_idx] + 1;
+    heap.array_element_counts = counts;
+}
+
+heap_get_array_element_count :: fn(heap: &Heap, array_idx: i64) -> i64 {
+    if (array_idx < 0) { return 0; }
+    if (array_idx >= heap.count) { return 0; }
+    heap.array_element_counts[array_idx]
+}
+
+heap_get_array_element_offset :: fn(heap: &Heap, array_idx: i64) -> i64 {
+    if (array_idx < 0) { return 0; }
+    if (array_idx >= heap.count) { return 0; }
+    heap.array_element_offsets[array_idx]
+}
+
+heap_get_array_elem_tag :: fn(heap: &Heap, offset: i64) -> i64 {
+    if (offset < 0) { return -1; }
+    if (offset >= heap.array_elem_count) { return -1; }
+    heap.array_elem_tags[offset]
+}
+
+heap_get_array_elem_int :: fn(heap: &Heap, offset: i64) -> i64 {
+    if (offset < 0) { return 0; }
+    if (offset >= heap.array_elem_count) { return 0; }
+    heap.array_elem_ints[offset]
+}
+
+heap_get_array_elem_bool :: fn(heap: &Heap, offset: i64) -> bool {
+    if (offset < 0) { return false; }
+    if (offset >= heap.array_elem_count) { return false; }
+    heap.array_elem_bools[offset]
+}
+
+heap_get_array_elem_str :: fn(heap: &Heap, offset: i64) -> str {
+    if (offset < 0) { return ""; }
+    if (offset >= heap.array_elem_count) { return ""; }
+    heap.array_elem_strs[offset]
+}
+
+heap_get_array_elem_heap :: fn(heap: &Heap, offset: i64) -> i64 {
+    if (offset < 0) { return -1; }
+    if (offset >= heap.array_elem_count) { return -1; }
+    heap.array_elem_heaps[offset]
+}
+
+heap_set_array_elem :: fn(heap: &mut Heap, offset: i64, tag: i64, int_val: i64, bool_val: bool, str_val: str, heap_val: i64) {
+    if (offset >= 0) {
+        if (offset < heap.array_elem_count) {
+            mut tags := heap.array_elem_tags;
+            mut ints := heap.array_elem_ints;
+            mut bools := heap.array_elem_bools;
+            mut strs := heap.array_elem_strs;
+            mut heaps := heap.array_elem_heaps;
+            tags[offset] = tag;
+            ints[offset] = int_val;
+            bools[offset] = bool_val;
+            strs[offset] = str_val;
+            heaps[offset] = heap_val;
+            heap.array_elem_tags = tags;
+            heap.array_elem_ints = ints;
+            heap.array_elem_bools = bools;
+            heap.array_elem_strs = strs;
+            heap.array_elem_heaps = heaps;
+        }
+    }
+}
+
+heap_get_struct_field_offset :: fn(heap: &Heap, struct_idx: i64) -> i64 {
+    if (struct_idx < 0) { return 0; }
+    if (struct_idx >= heap.count) { return 0; }
+    heap.struct_field_offsets[struct_idx]
+}
+
+heap_get_struct_field_count :: fn(heap: &Heap, struct_idx: i64) -> i64 {
+    if (struct_idx < 0) { return 0; }
+    if (struct_idx >= heap.count) { return 0; }
+    heap.struct_field_counts[struct_idx]
+}
+
+heap_get_struct_field_tag :: fn(heap: &Heap, offset: i64) -> i64 {
+    if (offset < 0) { return -1; }
+    if (offset >= heap.struct_field_count) { return -1; }
+    heap.struct_field_tags[offset]
+}
+
+heap_get_struct_field_int :: fn(heap: &Heap, offset: i64) -> i64 {
+    if (offset < 0) { return 0; }
+    if (offset >= heap.struct_field_count) { return 0; }
+    heap.struct_field_ints[offset]
+}
+
+heap_get_struct_field_bool :: fn(heap: &Heap, offset: i64) -> bool {
+    if (offset < 0) { return false; }
+    if (offset >= heap.struct_field_count) { return false; }
+    heap.struct_field_bools[offset]
+}
+
+heap_get_struct_field_str :: fn(heap: &Heap, offset: i64) -> str {
+    if (offset < 0) { return ""; }
+    if (offset >= heap.struct_field_count) { return ""; }
+    heap.struct_field_strs[offset]
+}
+
+heap_get_struct_field_heap :: fn(heap: &Heap, offset: i64) -> i64 {
+    if (offset < 0) { return -1; }
+    if (offset >= heap.struct_field_count) { return -1; }
+    heap.struct_field_heaps[offset]
+}
+
+heap_set_struct_field :: fn(heap: &mut Heap, offset: i64, tag: i64, int_val: i64, bool_val: bool, str_val: str, heap_val: i64) {
+    if (offset >= 0) {
+        if (offset < heap.struct_field_count) {
+            mut tags := heap.struct_field_tags;
+            mut ints := heap.struct_field_ints;
+            mut bools := heap.struct_field_bools;
+            mut strs := heap.struct_field_strs;
+            mut heaps := heap.struct_field_heaps;
+            tags[offset] = tag;
+            ints[offset] = int_val;
+            bools[offset] = bool_val;
+            strs[offset] = str_val;
+            heaps[offset] = heap_val;
+            heap.struct_field_tags = tags;
+            heap.struct_field_ints = ints;
+            heap.struct_field_bools = bools;
+            heap.struct_field_strs = strs;
+            heap.struct_field_heaps = heaps;
+        }
+    }
 }
 
 heap_get_tag :: fn(heap: &Heap, index: i64) -> i64 {
@@ -460,14 +777,25 @@ heap_get_tagged_union_tag :: fn(heap: &Heap, index: i64) -> i64 {
 Frame :: struct {
     function_index: i64,
     ip: i64,
-    base_pointer: i64
+    base_pointer: i64,
+    closure_heap_index: i64
 }
 
 frame_new :: fn(fn_index: i64, bp: i64) -> Frame {
     Frame {
         function_index = fn_index,
         ip = 0,
-        base_pointer = bp
+        base_pointer = bp,
+        closure_heap_index = -1
+    }
+}
+
+frame_new_with_closure :: fn(fn_index: i64, bp: i64, closure_idx: i64) -> Frame {
+    Frame {
+        function_index = fn_index,
+        ip = 0,
+        base_pointer = bp,
+        closure_heap_index = closure_idx
     }
 }
 
@@ -580,7 +908,8 @@ vm_set_ip :: fn(vm: &mut VirtualMachine, new_ip: i64) {
         new_frame := Frame {
             function_index = frame.function_index,
             ip = new_ip,
-            base_pointer = frame.base_pointer
+            base_pointer = frame.base_pointer,
+            closure_heap_index = frame.closure_heap_index
         };
         mut frames := vm.frames;
         frames[index] = new_frame;
@@ -1356,29 +1685,98 @@ vm_execute_instruction :: fn(vm: &mut VirtualMachine, instr: Instruction) -> boo
     if (done == false) {
         if (opcode == 24) {
             num_elements := instr.operand1;
+            heap_idx := heap_alloc_array(&mut heap);
+            mut elem_idx : i64 = 0;
+            while (elem_idx < num_elements) {
+                offset := num_elements - 1 - elem_idx;
+                elem_tag := stack_peek_tag(&stack, offset);
+                elem_int := stack_peek_int(&stack, offset);
+                elem_bool := stack_peek_bool(&stack, offset);
+                elem_str := stack_peek_str(&stack, offset);
+                elem_heap := stack_peek_heap(&stack, offset);
+                heap_array_add_element(&mut heap, heap_idx, elem_tag, elem_int, elem_bool, elem_str, elem_heap);
+                elem_idx = elem_idx + 1;
+            }
+            mut pop_idx : i64 = 0;
+            while (pop_idx < num_elements) {
+                stack_pop_tag(&mut stack);
+                pop_idx = pop_idx + 1;
+            }
+            stack_push_heap(&mut stack, value_tag_array(), heap_idx);
             done = true;
         }
     }
     if (done == false) {
         if (opcode == 25) {
             index_tag := stack_peek_tag(&stack, 0);
+            array_tag := stack_peek_tag(&stack, 1);
             if (index_tag == value_tag_integer()) {
                 index_val := stack_pop_int(&mut stack);
-                stack_pop_tag(&mut stack);
-                stack_push_int(&mut stack, 0);
+                if (array_tag == value_tag_array()) {
+                    array_heap := stack_pop_heap(&mut stack);
+                    base_offset := heap_get_array_element_offset(&heap, array_heap);
+                    actual_offset := base_offset + index_val;
+                    elem_tag := heap_get_array_elem_tag(&heap, actual_offset);
+                    if (elem_tag == value_tag_integer()) {
+                        elem_int := heap_get_array_elem_int(&heap, actual_offset);
+                        stack_push_int(&mut stack, elem_int);
+                    } else {
+                        if (elem_tag == value_tag_bool()) {
+                            elem_bool := heap_get_array_elem_bool(&heap, actual_offset);
+                            stack_push_bool(&mut stack, elem_bool);
+                        } else {
+                            if (elem_tag == value_tag_string()) {
+                                idx_str_grow := stack_needs_grow(&stack);
+                                if (idx_str_grow) {
+                                    elem_str_g := heap_get_array_elem_str(&heap, actual_offset);
+                                    stack_push_str_grow(&mut stack, elem_str_g);
+                                }
+                                if (!idx_str_grow) {
+                                    elem_str_o := heap_get_array_elem_str(&heap, actual_offset);
+                                    stack_push_str_overwrite(&mut stack, elem_str_o);
+                                }
+                            } else {
+                                elem_heap := heap_get_array_elem_heap(&heap, actual_offset);
+                                stack_push_heap(&mut stack, elem_tag, elem_heap);
+                            }
+                        }
+                    }
+                } else {
+                    stack_pop_tag(&mut stack);
+                    stack_push_null(&mut stack);
+                }
             } else {
                 stack_pop_tag(&mut stack);
                 stack_pop_tag(&mut stack);
-                stack_push_int(&mut stack, 0);
+                stack_push_null(&mut stack);
             }
             done = true;
         }
     }
     if (done == false) {
         if (opcode == 26) {
+            value_tag := stack_peek_tag(&stack, 0);
+            index_tag := stack_peek_tag(&stack, 1);
+            array_tag := stack_peek_tag(&stack, 2);
+            value_int := stack_peek_int(&stack, 0);
+            value_bool := stack_peek_bool(&stack, 0);
+            value_str := stack_peek_str(&stack, 0);
+            value_heap := stack_peek_heap(&stack, 0);
             stack_pop_tag(&mut stack);
-            stack_pop_tag(&mut stack);
-            stack_pop_tag(&mut stack);
+            if (index_tag == value_tag_integer()) {
+                index_val := stack_pop_int(&mut stack);
+                if (array_tag == value_tag_array()) {
+                    array_heap := stack_pop_heap(&mut stack);
+                    base_offset := heap_get_array_element_offset(&heap, array_heap);
+                    actual_offset := base_offset + index_val;
+                    heap_set_array_elem(&mut heap, actual_offset, value_tag, value_int, value_bool, value_str, value_heap);
+                } else {
+                    stack_pop_tag(&mut stack);
+                }
+            } else {
+                stack_pop_tag(&mut stack);
+                stack_pop_tag(&mut stack);
+            }
             done = true;
         }
     }
@@ -1393,7 +1791,7 @@ vm_execute_instruction :: fn(vm: &mut VirtualMachine, instr: Instruction) -> boo
                     if (fn_index < vm.function_count) {
                         func := vm.functions[fn_index];
                         base_pointer := stack.count - num_args;
-                        new_frame := frame_new(fn_index, base_pointer);
+                        new_frame := frame_new_with_closure(fn_index, base_pointer, callee_heap);
                         vm.stack = stack;
                         vm.heap = heap;
                         vm_push_frame(vm, new_frame);
@@ -1468,6 +1866,22 @@ vm_execute_instruction :: fn(vm: &mut VirtualMachine, instr: Instruction) -> boo
             fn_index := instr.operand1;
             num_free := instr.operand2;
             heap_idx := heap_alloc_closure(&mut heap, fn_index);
+            mut free_idx : i64 = 0;
+            while (free_idx < num_free) {
+                offset := num_free - 1 - free_idx;
+                fv_tag := stack_peek_tag(&stack, offset);
+                fv_int := stack_peek_int(&stack, offset);
+                fv_bool := stack_peek_bool(&stack, offset);
+                fv_str := stack_peek_str(&stack, offset);
+                fv_heap := stack_peek_heap(&stack, offset);
+                heap_closure_add_free_var(&mut heap, heap_idx, fv_tag, fv_int, fv_bool, fv_str, fv_heap);
+                free_idx = free_idx + 1;
+            }
+            mut pop_idx : i64 = 0;
+            while (pop_idx < num_free) {
+                stack_pop_tag(&mut stack);
+                pop_idx = pop_idx + 1;
+            }
             stack_push_heap(&mut stack, value_tag_closure(), heap_idx);
             done = true;
         }
@@ -1475,7 +1889,39 @@ vm_execute_instruction :: fn(vm: &mut VirtualMachine, instr: Instruction) -> boo
     if (done == false) {
         if (opcode == 32) {
             free_index := instr.operand1;
-            stack_push_null(&mut stack);
+            frame := vm_current_frame(vm);
+            closure_idx := frame.closure_heap_index;
+            if (closure_idx >= 0) {
+                base_offset := heap_get_closure_free_offset(&heap, closure_idx);
+                actual_offset := base_offset + free_index;
+                fv_tag := heap_get_free_var_tag(&heap, actual_offset);
+                if (fv_tag == value_tag_integer()) {
+                    fv_int := heap_get_free_var_int(&heap, actual_offset);
+                    stack_push_int(&mut stack, fv_int);
+                } else {
+                    if (fv_tag == value_tag_bool()) {
+                        fv_bool := heap_get_free_var_bool(&heap, actual_offset);
+                        stack_push_bool(&mut stack, fv_bool);
+                    } else {
+                        if (fv_tag == value_tag_string()) {
+                            fv_str_grow := stack_needs_grow(&stack);
+                            if (fv_str_grow) {
+                                fv_str_g := heap_get_free_var_str(&heap, actual_offset);
+                                stack_push_str_grow(&mut stack, fv_str_g);
+                            }
+                            if (!fv_str_grow) {
+                                fv_str_o := heap_get_free_var_str(&heap, actual_offset);
+                                stack_push_str_overwrite(&mut stack, fv_str_o);
+                            }
+                        } else {
+                            fv_heap := heap_get_free_var_heap(&heap, actual_offset);
+                            stack_push_heap(&mut stack, fv_tag, fv_heap);
+                        }
+                    }
+                }
+            } else {
+                stack_push_null(&mut stack);
+            }
             done = true;
         }
     }
@@ -1555,16 +2001,61 @@ vm_execute_instruction :: fn(vm: &mut VirtualMachine, instr: Instruction) -> boo
     if (done == false) {
         if (opcode == 40) {
             field_index := instr.operand1;
-            stack_pop_tag(&mut stack);
-            stack_push_int(&mut stack, 0);
+            struct_tag := stack_peek_tag(&stack, 0);
+            if (struct_tag == value_tag_struct()) {
+                struct_heap := stack_pop_heap(&mut stack);
+                base_offset := heap_get_struct_field_offset(&heap, struct_heap);
+                actual_offset := base_offset + field_index;
+                field_tag := heap_get_struct_field_tag(&heap, actual_offset);
+                if (field_tag == value_tag_integer()) {
+                    field_int := heap_get_struct_field_int(&heap, actual_offset);
+                    stack_push_int(&mut stack, field_int);
+                } else {
+                    if (field_tag == value_tag_bool()) {
+                        field_bool := heap_get_struct_field_bool(&heap, actual_offset);
+                        stack_push_bool(&mut stack, field_bool);
+                    } else {
+                        if (field_tag == value_tag_string()) {
+                            sg_str_grow := stack_needs_grow(&stack);
+                            if (sg_str_grow) {
+                                field_str_g := heap_get_struct_field_str(&heap, actual_offset);
+                                stack_push_str_grow(&mut stack, field_str_g);
+                            }
+                            if (!sg_str_grow) {
+                                field_str_o := heap_get_struct_field_str(&heap, actual_offset);
+                                stack_push_str_overwrite(&mut stack, field_str_o);
+                            }
+                        } else {
+                            field_heap := heap_get_struct_field_heap(&heap, actual_offset);
+                            stack_push_heap(&mut stack, field_tag, field_heap);
+                        }
+                    }
+                }
+            } else {
+                stack_pop_tag(&mut stack);
+                stack_push_null(&mut stack);
+            }
             done = true;
         }
     }
     if (done == false) {
         if (opcode == 41) {
-            field_index := instr.operand2;
+            field_index := instr.operand1;
+            value_tag := stack_peek_tag(&stack, 0);
+            struct_tag := stack_peek_tag(&stack, 1);
+            value_int := stack_peek_int(&stack, 0);
+            value_bool := stack_peek_bool(&stack, 0);
+            value_str := stack_peek_str(&stack, 0);
+            value_heap := stack_peek_heap(&stack, 0);
             stack_pop_tag(&mut stack);
-            stack_pop_tag(&mut stack);
+            if (struct_tag == value_tag_struct()) {
+                struct_heap := stack_pop_heap(&mut stack);
+                base_offset := heap_get_struct_field_offset(&heap, struct_heap);
+                actual_offset := base_offset + field_index;
+                heap_set_struct_field(&mut heap, actual_offset, value_tag, value_int, value_bool, value_str, value_heap);
+            } else {
+                stack_pop_tag(&mut stack);
+            }
             done = true;
         }
     }

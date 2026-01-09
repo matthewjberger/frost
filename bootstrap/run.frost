@@ -1,0 +1,49 @@
+// Bootstrap Compiler Runner
+// Reads a file path from bootstrap/.run_target and compiles it
+
+import "parser.frost"
+import "typechecker.frost"
+import "compiler.frost"
+import "vm.frost"
+
+// Compile and run source code
+compile_source :: fn(source: str) {
+    mut lexer := lexer_new(source);
+    tokens := tokenize(&mut lexer);
+
+    mut parser := parser_new(tokens);
+    mut stmt_indices : []i64 = [];
+
+    while (!parser_is_at_end(&parser)) {
+        stmt := parse_statement(&mut parser);
+        idx := len(parser.statements);
+        parser.statements = push(parser.statements, stmt);
+        stmt_indices = push(stmt_indices, idx);
+    }
+
+    mut compiler := compiler_new();
+    compiler_load_ast(&mut compiler, &parser);
+    compile_program(&mut compiler, stmt_indices);
+
+    mut vm := vm_new();
+    vm_load_instructions(&mut vm, compiler.instructions, compiler.instruction_count);
+    vm_load_constants(&mut vm, compiler.constants, compiler.constant_count);
+    vm_load_string_constants(&mut vm, compiler.string_constants, compiler.string_constant_count);
+    vm.functions = compiler.functions;
+    vm.function_count = compiler.function_count;
+
+    vm_run(&mut vm);
+}
+
+// Read the target file path from .run_target
+target_path := read_file("bootstrap/.run_target");
+
+// Read the source file
+source := read_file(target_path);
+
+print("=== Running via Bootstrap Compiler ===");
+print(target_path);
+print("");
+
+// Compile and run the source
+compile_source(source);
