@@ -613,6 +613,37 @@ fn native_generic_functions_monomorphize() {
     assert_eq!(output, "42\n9\n7\n5\n9\n200\n100\n");
 }
 
+const GENERIC_MULTI_PARAM: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Pair :: struct { a: i64, b: i64 }
+
+dup :: fn(x: $T) -> T { x }
+pick_first :: fn(a: $T, b: $U) -> T { a }
+second :: fn(a: $T, b: $U) -> U { b }
+
+main :: fn() -> i64 {
+    p := dup(Pair { a = 3, b = 4 })
+    printf("%lld\n", p.a + p.b)
+
+    printf("%lld\n", pick_first(42, 99))
+    printf("%lld\n", second(1, 7))
+
+    q := pick_first(Pair { a = 10, b = 20 }, 5)
+    printf("%lld\n", q.b)
+    0
+}
+"#;
+
+#[test]
+fn native_generic_multiple_type_parameters() {
+    let Some(output) = compile_and_run("generics_multi", GENERIC_MULTI_PARAM)
+    else {
+        return;
+    };
+    assert_eq!(output, "7\n42\n7\n20\n");
+}
+
 const TUPLE_MATCH: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -1272,6 +1303,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_aggassign", AGGREGATE_ASSIGNMENT),
         ("diff_generics", GENERIC_FUNCTIONS),
         ("diff_sizeof", SIZEOF),
+        ("diff_genmulti", GENERIC_MULTI_PARAM),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
