@@ -687,6 +687,310 @@ fn collect_instances_in_expression(
     }
 }
 
+fn infer_expr_type_shallow(
+    expression: &Expression,
+    env: &HashMap<String, Type>,
+    generic_functions: &HashMap<String, GenericFunction>,
+) -> Option<Type> {
+    match expression {
+        Expression::Literal(Literal::Integer(_)) => Some(Type::I64),
+        Expression::Literal(Literal::Float(_)) => Some(Type::F64),
+        Expression::Literal(Literal::Float32(_)) => Some(Type::F32),
+        Expression::Boolean(_) | Expression::Literal(Literal::Boolean(_)) => {
+            Some(Type::Bool)
+        }
+        Expression::Identifier(name) => env.get(name).cloned(),
+        Expression::StructInit(name, _) => Some(Type::Struct(name.clone())),
+        Expression::EnumVariantInit(name, _, _) => {
+            Some(Type::Enum(name.clone()))
+        }
+        Expression::Borrow(inner) => {
+            infer_expr_type_shallow(inner, env, generic_functions)
+                .map(|inner| Type::Ref(Box::new(inner)))
+        }
+        Expression::BorrowMut(inner) => {
+            infer_expr_type_shallow(inner, env, generic_functions)
+                .map(|inner| Type::RefMut(Box::new(inner)))
+        }
+        Expression::Call(callee, arguments) => {
+            let Expression::Identifier(name) = callee.as_ref() else {
+                return None;
+            };
+            let generic = generic_functions.get(name)?;
+            let subst =
+                infer_call_subst(generic, arguments, env, generic_functions);
+            generic
+                .return_sig
+                .to_type()
+                .map(|ty| substitute_type(&ty, &subst))
+        }
+        _ => None,
+    }
+}
+
+fn infer_call_subst(
+    generic: &GenericFunction,
+    arguments: &[Expression],
+    env: &HashMap<String, Type>,
+    generic_functions: &HashMap<String, GenericFunction>,
+) -> HashMap<String, Type> {
+    let mut subst = HashMap::new();
+    for (parameter, argument) in generic.parameters.iter().zip(arguments) {
+        if let Some(argument_type) =
+            infer_expr_type_shallow(argument, env, generic_functions)
+        {
+            infer_subst_into(
+                &parameter_type(parameter),
+                &argument_type,
+                &generic.type_params,
+                &mut subst,
+            );
+        }
+    }
+    subst
+}
+
+fn collect_call_instances_in_block(
+    block: &Block,
+    env: &mut HashMap<String, Type>,
+    generic_functions: &HashMap<String, GenericFunction>,
+    out: &mut Vec<String>,
+) {
+    for statement in block {
+        collect_call_instances_in_statement(
+            statement,
+            env,
+            generic_functions,
+            out,
+        );
+    }
+}
+
+fn collect_call_instances_in_statement(
+    statement: &Statement,
+    env: &mut HashMap<String, Type>,
+    generic_functions: &HashMap<String, GenericFunction>,
+    out: &mut Vec<String>,
+) {
+    match statement {
+        Statement::Let {
+            name,
+            type_annotation,
+            value,
+            ..
+        } => {
+            collect_call_instances_in_expression(
+                value,
+                env,
+                generic_functions,
+                out,
+            );
+            let inferred = type_annotation.clone().or_else(|| {
+                infer_expr_type_shallow(value, env, generic_functions)
+            });
+            if let Some(ty) = inferred {
+                env.insert(name.clone(), ty);
+            }
+        }
+        Statement::Return(expression) | Statement::Expression(expression) => {
+            collect_call_instances_in_expression(
+                expression,
+                env,
+                generic_functions,
+                out,
+            );
+        }
+        Statement::Assignment(target, value) => {
+            collect_call_instances_in_expression(
+                target,
+                env,
+                generic_functions,
+                out,
+            );
+            collect_call_instances_in_expression(
+                value,
+                env,
+                generic_functions,
+                out,
+            );
+        }
+        Statement::For(variable, range, body) => {
+            collect_call_instances_in_expression(
+                range,
+                env,
+                generic_functions,
+                out,
+            );
+            env.insert(variable.clone(), Type::I64);
+            collect_call_instances_in_block(body, env, generic_functions, out);
+        }
+        Statement::While(condition, body) => {
+            collect_call_instances_in_expression(
+                condition,
+                env,
+                generic_functions,
+                out,
+            );
+            collect_call_instances_in_block(body, env, generic_functions, out);
+        }
+        Statement::Defer(inner) => {
+            collect_call_instances_in_statement(
+                inner,
+                env,
+                generic_functions,
+                out,
+            );
+        }
+        _ => {}
+    }
+}
+
+fn collect_call_instances_in_expression(
+    expression: &Expression,
+    env: &mut HashMap<String, Type>,
+    generic_functions: &HashMap<String, GenericFunction>,
+    out: &mut Vec<String>,
+) {
+    if let Expression::Call(callee, arguments) = expression
+        && let Expression::Identifier(name) = callee.as_ref()
+        && let Some(generic) = generic_functions.get(name)
+    {
+        let subst =
+            infer_call_subst(generic, arguments, env, generic_functions);
+        if let Some(return_type) = generic.return_sig.to_type() {
+            collect_instances_in_type(
+                &substitute_type(&return_type, &subst),
+                out,
+            );
+        }
+        for parameter in &generic.parameters {
+            collect_instances_in_type(
+                &substitute_type(&parameter_type(parameter), &subst),
+                out,
+            );
+        }
+    }
+    match expression {
+        Expression::Call(callee, arguments) => {
+            collect_call_instances_in_expression(
+                callee,
+                env,
+                generic_functions,
+                out,
+            );
+            for argument in arguments {
+                collect_call_instances_in_expression(
+                    argument,
+                    env,
+                    generic_functions,
+                    out,
+                );
+            }
+        }
+        Expression::Prefix(_, operand)
+        | Expression::AddressOf(operand)
+        | Expression::Borrow(operand)
+        | Expression::BorrowMut(operand)
+        | Expression::Dereference(operand) => {
+            collect_call_instances_in_expression(
+                operand,
+                env,
+                generic_functions,
+                out,
+            );
+        }
+        Expression::Infix(left, _, right) => {
+            collect_call_instances_in_expression(
+                left,
+                env,
+                generic_functions,
+                out,
+            );
+            collect_call_instances_in_expression(
+                right,
+                env,
+                generic_functions,
+                out,
+            );
+        }
+        Expression::If(condition, consequence, alternative) => {
+            collect_call_instances_in_expression(
+                condition,
+                env,
+                generic_functions,
+                out,
+            );
+            let mut branch_env = env.clone();
+            collect_call_instances_in_block(
+                consequence,
+                &mut branch_env,
+                generic_functions,
+                out,
+            );
+            if let Some(block) = alternative {
+                let mut branch_env = env.clone();
+                collect_call_instances_in_block(
+                    block,
+                    &mut branch_env,
+                    generic_functions,
+                    out,
+                );
+            }
+        }
+        Expression::Index(base, index) => {
+            collect_call_instances_in_expression(
+                base,
+                env,
+                generic_functions,
+                out,
+            );
+            collect_call_instances_in_expression(
+                index,
+                env,
+                generic_functions,
+                out,
+            );
+        }
+        Expression::FieldAccess(base, _) => {
+            collect_call_instances_in_expression(
+                base,
+                env,
+                generic_functions,
+                out,
+            );
+        }
+        Expression::StructInit(_, fields)
+        | Expression::EnumVariantInit(_, _, fields) => {
+            for (_, value) in fields {
+                collect_call_instances_in_expression(
+                    value,
+                    env,
+                    generic_functions,
+                    out,
+                );
+            }
+        }
+        Expression::Switch(scrutinee, cases) => {
+            collect_call_instances_in_expression(
+                scrutinee,
+                env,
+                generic_functions,
+                out,
+            );
+            for case in cases {
+                let mut branch_env = env.clone();
+                collect_call_instances_in_block(
+                    &case.body,
+                    &mut branch_env,
+                    generic_functions,
+                    out,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
 fn expand_generic_structs(statements: &[Statement]) -> Result<Vec<Statement>> {
     let mut generic_structs: HashMap<String, (Vec<String>, Vec<StructField>)> =
         HashMap::new();
@@ -702,12 +1006,65 @@ fn expand_generic_structs(statements: &[Statement]) -> Result<Vec<Statement>> {
         return Ok(Vec::new());
     }
 
+    let mut generic_functions: HashMap<String, GenericFunction> =
+        HashMap::new();
+    for statement in statements {
+        if let Statement::Constant(
+            name,
+            Expression::Function(parameters, return_sig, body)
+            | Expression::Proc(parameters, return_sig, body),
+        ) = statement
+            && function_is_generic(parameters)
+        {
+            generic_functions.insert(
+                name.clone(),
+                GenericFunction {
+                    type_params: function_type_params(parameters),
+                    parameters: parameters.clone(),
+                    return_sig: return_sig.clone(),
+                    body: body.clone(),
+                },
+            );
+        }
+    }
+
     let mut queue: Vec<String> = Vec::new();
     for statement in statements {
+        if let Statement::Constant(
+            _,
+            Expression::Function(parameters, _, body)
+            | Expression::Proc(parameters, _, body),
+        ) = statement
+        {
+            let mut env: HashMap<String, Type> = HashMap::new();
+            for parameter in parameters {
+                if let Some(ty) = &parameter.type_annotation {
+                    env.insert(parameter.name.clone(), ty.clone());
+                }
+            }
+            collect_call_instances_in_block(
+                body,
+                &mut env,
+                &generic_functions,
+                &mut queue,
+            );
+        }
         collect_instances_in_statement(statement, &mut queue);
         if let Statement::Struct(_, _, fields) = statement {
             for field in fields {
                 collect_instances_in_type(&field.field_type, &mut queue);
+            }
+        }
+        if let Statement::Enum(_, variants) = statement {
+            for variant in variants {
+                if let Some(fields) = &variant.fields {
+                    for field in fields {
+                        collect_instances_in_type(
+                            &field.field_type,
+                            &mut queue,
+                        );
+                    }
+                }
             }
         }
         if let Statement::Extern {
@@ -1700,13 +2057,23 @@ impl<'a> FunctionLowering<'a> {
             Expression::Switch(scrutinee, cases) => {
                 self.lower_match(scrutinee, cases, expected)
             }
-            Expression::StructInit(struct_name, _)
-            | Expression::EnumVariantInit(struct_name, _, _) => {
-                let ty = if matches!(expression, Expression::StructInit(..)) {
-                    Type::Struct(struct_name.clone())
-                } else {
-                    Type::Enum(struct_name.clone())
+            Expression::StructInit(struct_name, _) => {
+                let ty = match expected {
+                    Some(Type::Struct(instance))
+                        if is_generic_instance(instance)
+                            && instance
+                                .starts_with(&format!("{struct_name}<")) =>
+                    {
+                        Type::Struct(instance.clone())
+                    }
+                    _ => Type::Struct(struct_name.clone()),
                 };
+                let temp = self.fresh_local(ty.clone(), None);
+                self.materialize_aggregate(temp, expression)?;
+                Ok((IrOperand::Local(temp), ty))
+            }
+            Expression::EnumVariantInit(struct_name, _, _) => {
+                let ty = Type::Enum(struct_name.clone());
                 let temp = self.fresh_local(ty.clone(), None);
                 self.materialize_aggregate(temp, expression)?;
                 Ok((IrOperand::Local(temp), ty))
