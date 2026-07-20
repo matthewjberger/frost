@@ -1063,19 +1063,14 @@ impl<'a> FunctionLowering<'a> {
         let parameter_types = signature.parameters.clone();
         let return_type = signature.return_type.clone();
 
-        if needs_memory(&return_type) {
-            bail!(
-                "native backend: returning an aggregate by value is not supported yet"
-            );
-        }
-
         let mut lowered = Vec::with_capacity(arguments.len());
         for (index, argument) in arguments.iter().enumerate() {
             let expected = parameter_types.get(index);
             if let Some(target) = expected
                 && needs_memory(target)
             {
-                let (address, _) = self.place_address(argument)?;
+                let address =
+                    self.aggregate_argument_address(argument, target)?;
                 lowered.push(address);
                 continue;
             }
@@ -1097,6 +1092,72 @@ impl<'a> FunctionLowering<'a> {
             },
         ));
         Ok((IrOperand::Local(result), return_type))
+    }
+
+    fn aggregate_argument_address(
+        &mut self,
+        argument: &Expression,
+        target: &Type,
+    ) -> Result<IrOperand> {
+        match argument {
+            Expression::Identifier(_)
+            | Expression::FieldAccess(..)
+            | Expression::Index(..)
+            | Expression::Dereference(_) => {
+                let (address, _) = self.place_address(argument)?;
+                Ok(address)
+            }
+            Expression::StructInit(..)
+            | Expression::EnumVariantInit(..)
+            | Expression::Literal(Literal::Array(_)) => {
+                let temp = self.fresh_local(target.clone(), None);
+                self.materialize_aggregate(temp, argument)?;
+                Ok(self.address_of_local(temp, target))
+            }
+            _ => {
+                let (operand, _) =
+                    self.lower_expression(argument, Some(target))?;
+                let IrOperand::Local(local) = operand else {
+                    bail!(
+                        "native backend: cannot pass this value as an aggregate argument"
+                    );
+                };
+                Ok(self.address_of_local(local, target))
+            }
+        }
+    }
+
+    fn address_of_local(&mut self, local: LocalId, ty: &Type) -> IrOperand {
+        let result = self.fresh_local(Type::Ptr(Box::new(ty.clone())), None);
+        self.emit(IrStatement::Assign(
+            result,
+            IrRvalue::AddressOf { local, offset: 0 },
+        ));
+        IrOperand::Local(result)
+    }
+
+    fn materialize_aggregate(
+        &mut self,
+        local: LocalId,
+        expression: &Expression,
+    ) -> Result<()> {
+        match expression {
+            Expression::StructInit(name, fields) => {
+                self.init_struct(local, name, fields)
+            }
+            Expression::EnumVariantInit(name, variant, fields) => {
+                self.init_enum(local, name, variant, fields)
+            }
+            Expression::Literal(Literal::Array(elements)) => {
+                let Type::Array(element, _) = self.type_of_local(local) else {
+                    bail!("native backend: array literal has non-array type");
+                };
+                self.init_array(local, &element, elements)
+            }
+            _ => {
+                bail!("native backend: cannot materialize this aggregate")
+            }
+        }
     }
 
     fn lower_assignment(

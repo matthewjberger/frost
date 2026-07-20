@@ -86,9 +86,10 @@ correct type and operation for each value because the IR is fully typed, and
   `increment(x: &mut i64)`).
 - Structs: layout with correct field alignment, construction, field read
   and write, references to structs and to fields, mutation through
-  `&mut Struct`, whole-struct copy (`copy := p`), and passing structs (and
-  other aggregates) by value, which copies at the call boundary so the
-  callee's mutations do not affect the caller.
+  `&mut Struct`, whole-struct copy (`copy := p`), passing aggregates by
+  value (copied at the call boundary so a callee's mutations do not affect
+  the caller), and returning aggregates by value (via a hidden out-pointer),
+  including passing an aggregate-returning call directly as an argument.
 - Fixed-size arrays: array literals, indexed read and write with static or
   runtime indices, and references to arrays (e.g. `sum(a: &[5]i64)`).
 - Enums and tagged unions: construction, and `match` over a value or a
@@ -96,9 +97,8 @@ correct type and operation for each value because the IR is fully typed, and
   literal patterns, identifier binding, and wildcard.
 
 **Not yet in the native backend** (these fail loudly, they are not
-silently miscompiled): returning an aggregate by value; tuple patterns in
-`match`; slices, closures, hashmaps, `defer`, `comptime`, and generics.
-These run on the bytecode VM.
+silently miscompiled): tuple patterns in `match`; slices, closures,
+hashmaps, `defer`, `comptime`, and generics. These run on the bytecode VM.
 
 This replaces the previous AST-walking `codegen.rs`, which treated most
 values as `i64`, hardcoded `if`-expression result types, resolved struct
