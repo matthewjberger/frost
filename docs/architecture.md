@@ -105,6 +105,33 @@ correct type and operation for each value because the IR is fully typed, and
   trailing expression. A `return` nested inside a branch alongside `defer`
   is rejected (it would need runtime tracking), so defers always run.
 
+### Generational handles and pools
+
+A small C runtime (`runtime/frost_runtime.c`) provides generational pools
+that both backends link automatically: `pool_new(capacity, elem_size)`,
+`pool_alloc`, `pool_get`, `pool_free`, `pool_contains`, `handle_index`, and
+`handle_generation`. This is the design's handle/pool proposition working
+natively without a garbage collector.
+
+The interface is deliberately scalar-only: a pool is an opaque pointer and a
+handle is a packed `i64` (`generation << 32 | index`). Nothing is passed or
+returned by aggregate value, so the runtime's natural C ABI matches Frost's
+internal aggregate-return convention (a hidden out-pointer) with no ABI
+negotiation — the identical compiled runtime links into both the Cranelift
+and C backends, which is why they agree bit for bit.
+
+The generational guarantee is what the differential test pins down: freeing a
+slot bumps its generation, so a later allocation reuses the slot at a higher
+generation and the original handle reports `pool_contains == 0`. A stale
+handle can never silently read a live value. Storing the *handle* is fine (it
+is plain copyable data, not a reference); the borrow you get by dereferencing
+through the pool is what stays second-class.
+
+Today these are extern functions the program declares and calls with raw
+pointers. The intended long-term shape is a generic pool library written in
+Frost and specialized at compile time (see the roadmap), which keeps this
+same surface while removing the runtime as a privileged builtin.
+
 **Not yet in the native backend** (these fail loudly, they are not
 silently miscompiled): slices, capturing closures (the design deliberately
 uses function pointers instead), hashmaps, `comptime`, and generics. These
@@ -174,7 +201,12 @@ Frost is being reshaped toward a data-oriented language with:
 3. Linear resources with path-sensitive consumption, and error enums that
    linearity makes non-ignorable.
 4. Handle-dereference-as-borrow, unifying pool handles with the region
-   checker.
+   checker. The runtime and the generational guarantee are in place (native
+   pools, differential-tested); the remaining work is the first-class
+   `Pool<T>` / `Handle<T>` surface where `pool[handle]` is a place expression
+   whose borrow the checker scopes exactly like `&array[i]`.
 5. Struct/array/enum by-value passing and tuple patterns in the native
-   backend.
-6. Eventual self-hosting of the compiler in Frost.
+   backend. *(Done: all three, plus nested aggregates and arrays of structs.)*
+6. Generics and specialization-only comptime (monomorphization), after which
+   pools become an ordinary Frost library rather than a runtime builtin.
+7. Eventual self-hosting of the compiler in Frost.
