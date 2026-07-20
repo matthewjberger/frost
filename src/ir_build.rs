@@ -260,6 +260,7 @@ fn expression_contains_return(expression: &Expression) -> bool {
 fn array_element_type(
     annotation: Option<&Type>,
     elements: &[Expression],
+    signatures: &HashMap<String, FunctionSignature>,
 ) -> Type {
     match annotation {
         Some(Type::Array(inner, _)) | Some(Type::Slice(inner)) => {
@@ -277,9 +278,18 @@ fn array_element_type(
         Some(Expression::EnumVariantInit(name, _, _)) => {
             Type::Enum(name.clone())
         }
-        Some(Expression::Literal(Literal::Array(inner))) => {
-            Type::Array(Box::new(array_element_type(None, inner)), inner.len())
+        Some(Expression::Identifier(name))
+            if let Some(signature) = signatures.get(name) =>
+        {
+            Type::Proc(
+                signature.parameters.clone(),
+                Box::new(signature.return_type.clone()),
+            )
         }
+        Some(Expression::Literal(Literal::Array(inner))) => Type::Array(
+            Box::new(array_element_type(None, inner, signatures)),
+            inner.len(),
+        ),
         _ => Type::I64,
     }
 }
@@ -678,8 +688,11 @@ impl<'a> FunctionLowering<'a> {
                     return Ok(());
                 }
                 if let Expression::Literal(Literal::Array(elements)) = value {
-                    let element_type =
-                        array_element_type(type_annotation.as_ref(), elements);
+                    let element_type = array_element_type(
+                        type_annotation.as_ref(),
+                        elements,
+                        &self.builder.signatures,
+                    );
                     let ty = Type::Array(
                         Box::new(element_type.clone()),
                         elements.len(),

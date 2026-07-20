@@ -480,6 +480,35 @@ main :: fn() -> i64 {
 }
 "#;
 
+const FUNCTION_POINTER_ARRAY: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+add1 :: fn(x: i64) -> i64 { x + 1 }
+mul2 :: fn(x: i64) -> i64 { x * 2 }
+sub3 :: fn(x: i64) -> i64 { x - 3 }
+
+main :: fn() -> i64 {
+    ops := [add1, mul2, sub3]
+    mut v : i64 = 10
+    for i in 0..3 {
+        f := ops[i]
+        v = f(v)
+    }
+    printf("%lld\n", v)
+    printf("%lld\n", ops[1](21))
+    0
+}
+"#;
+
+#[test]
+fn native_function_pointer_array() {
+    let Some(output) = compile_and_run("fnptr_array", FUNCTION_POINTER_ARRAY)
+    else {
+        return;
+    };
+    assert_eq!(output, "19\n42\n");
+}
+
 const TOP_LEVEL_CONSTANTS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -1051,6 +1080,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_f32", F32_OPERATIONS),
         ("diff_forward", FORWARD_REFERENCES),
         ("diff_constants", TOP_LEVEL_CONSTANTS),
+        ("diff_fnptrarr", FUNCTION_POINTER_ARRAY),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
