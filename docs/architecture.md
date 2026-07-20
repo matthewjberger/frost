@@ -135,6 +135,15 @@ Frost is being reshaped toward a data-oriented language with:
   Borrowing (`&x`), field access (`x.f`), and dereference do not consume, and
   copy types (integers, floats, bools, pointers, references, handles) are
   never moved.
+- **Linear resources.** A struct or enum declared `linear`
+  (`File :: linear struct { ... }`) is a resource that must be consumed
+  exactly once: the move checker's use-after-move rule gives "at most once",
+  and a linear value that is still live at the end of the function that owns
+  it is a "never consumed" error. Consuming means moving it onward — returning
+  it, or passing it by value to another function (the terminal consumer is
+  typically an `extern`, which takes ownership across the FFI boundary). This
+  is how the design replaces `Drop`: cleanup is an obligation the type system
+  tracks rather than an implicit call.
 
 ### Roadmap
 
