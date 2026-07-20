@@ -127,15 +127,36 @@ handle can never silently read a live value. Storing the *handle* is fine (it
 is plain copyable data, not a reference); the borrow you get by dereferencing
 through the pool is what stays second-class.
 
-Today these are extern functions the program declares and calls with raw
-pointers. The intended long-term shape is a generic pool library written in
-Frost and specialized at compile time (see the roadmap), which keeps this
-same surface while removing the runtime as a privileged builtin.
+Today the pool's memory management lives in the raw runtime, but the typed
+surface over it is now an ordinary Frost library (see below), not a set of
+privileged builtins.
+
+### Generic functions, specialization, and sizeof
+
+The native path monomorphizes generic functions. A function is generic when a
+parameter is typed `$T`; it is kept out of normal lowering and specialized on
+demand. At each call site the concrete substitution is inferred from the
+argument types, a specialized name is mangled (`identity__i64`), and a
+worklist drives specialization to fixpoint — so transitive generics and
+multiple instantiations of the same function are all emitted once. Substitution
+rewrites both `TypeParam(T)` and the bare `Struct("T")` the parser produces for
+later uses of a type parameter. This works for generics over scalars, structs
+by value, and references.
+
+`sizeof(T)` lowers to a compile-time integer from the IR's layout, and because
+substitution runs first, `sizeof(T)` inside a generic function becomes
+`sizeof(Concrete)` and then a constant. Together these turn the pool into a
+Frost library: `make_pool(cap, sample: &$T)` sizes itself with `sizeof(T)`,
+`insert(pool, value: $T)` copies the inferred element type in, and
+`fetch(pool, h, sample: &$T) -> ^T` hands back a typed pointer — no manual
+element size, no privileged builtin
+(`examples/native/generic_pool_library.frost`).
 
 **Not yet in the native backend** (these fail loudly, they are not
 silently miscompiled): slices, capturing closures (the design deliberately
-uses function pointers instead), hashmaps, `comptime`, and generics. These
-run on the bytecode VM.
+uses function pointers instead), hashmaps, `comptime` blocks/loops, generic
+*struct* instantiation (`Foo<T>` type syntax), and explicit type arguments.
+These run on the bytecode VM.
 
 The emitted C is an internal detail, not an interface for external C callers,
 so Frost function names are prefixed (`frost_`) to avoid C keyword clashes;
@@ -207,6 +228,8 @@ Frost is being reshaped toward a data-oriented language with:
    whose borrow the checker scopes exactly like `&array[i]`.
 5. Struct/array/enum by-value passing and tuple patterns in the native
    backend. *(Done: all three, plus nested aggregates and arrays of structs.)*
-6. Generics and specialization-only comptime (monomorphization), after which
-   pools become an ordinary Frost library rather than a runtime builtin.
+6. Generics and specialization-only comptime (monomorphization). *(Done for
+   generic functions and `sizeof`; the pool typed surface is now a Frost
+   library. Remaining: generic struct instantiation and explicit type
+   arguments so a type parameter need not be inferred from a sample value.)*
 7. Eventual self-hosting of the compiler in Frost.
