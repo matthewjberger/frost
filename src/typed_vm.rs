@@ -3469,13 +3469,15 @@ mod tests {
         writeln!(file, "mul :: fn(a: i64, b: i64) -> i64 {{ a * b }}")?;
         drop(file);
 
+        let escaped_path =
+            module_path.display().to_string().replace('\\', "\\\\");
         let input = format!(
             r#"
             import "{}"
             result := add(3, 4);
             result
             "#,
-            module_path.display()
+            escaped_path
         );
 
         let result = run_vm_test(&input)?;
