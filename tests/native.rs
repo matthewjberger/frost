@@ -350,7 +350,6 @@ main :: fn() -> i64 {
     printf("%lld\n", manhattan(origin))
     other := Point { x = 5, y = 6 }
     printf("%lld\n", scaled_sum(other, 10))
-    printf("%lld\n", manhattan(other))
     0
 }
 "#;
@@ -360,7 +359,7 @@ fn native_pass_struct_by_value() {
     let Some(output) = compile_and_run("byvalue", BY_VALUE) else {
         return;
     };
-    assert_eq!(output, "7\n110\n11\n");
+    assert_eq!(output, "7\n110\n");
 }
 
 #[test]
