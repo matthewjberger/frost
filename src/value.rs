@@ -188,7 +188,8 @@ impl PoolData {
         if self.generations[index as usize] != generation {
             return false;
         }
-        self.generations[index as usize] = self.generations[index as usize].wrapping_add(1);
+        self.generations[index as usize] =
+            self.generations[index as usize].wrapping_add(1);
         self.free_list.push(index);
         true
     }
@@ -269,7 +270,9 @@ impl Display for HeapObject {
                     pool.capacity
                 )
             }
-            HeapObject::Handle(index, generation) => write!(f, "Handle({}, {})", index, generation),
+            HeapObject::Handle(index, generation) => {
+                write!(f, "Handle({}, {})", index, generation)
+            }
             HeapObject::Free => write!(f, "<freed>"),
         }
     }
@@ -288,8 +291,8 @@ mod tests {
 
     #[test]
     fn test_value64_float() {
-        let v = Value64::Float(3.14);
-        assert_eq!(v.as_f64(), 3.14);
+        let v = Value64::Float(3.5);
+        assert_eq!(v.as_f64(), 3.5);
         assert!(v.is_truthy());
     }
 
@@ -348,14 +351,14 @@ mod tests {
 
     #[test]
     fn test_value64_from_f64() {
-        let v: Value64 = 3.14f64.into();
-        assert_eq!(v.as_f64(), 3.14);
+        let v: Value64 = 3.5f64.into();
+        assert_eq!(v.as_f64(), 3.5);
     }
 
     #[test]
     fn test_value64_from_f32() {
-        let v: Value64 = 3.14f32.into();
-        assert_eq!(v.as_f32(), 3.14);
+        let v: Value64 = 3.5f32.into();
+        assert_eq!(v.as_f32(), 3.5);
     }
 
     #[test]

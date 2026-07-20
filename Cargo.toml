@@ -6,7 +6,7 @@ edition = "2024"
 
 [workspace]
 members = ["repl"]
-default-members = ["repl"]
+default-members = [".", "repl"]
 
 [dependencies]
 anyhow = "1.0.40"

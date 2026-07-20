@@ -1,8 +1,10 @@
 use crate::{
-    parser::{IdentPart, ReturnSignature}, types::Type, Expression, HeapObject, Literal, Operator,
-    Parameter, Statement, StructField, Value64,
+    Expression, HeapObject, Literal, Operator, Parameter, Statement,
+    StructField, Value64,
+    parser::{IdentPart, ReturnSignature},
+    types::Type,
 };
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -16,6 +18,12 @@ pub struct CompiledStruct {
     pub fields: Vec<StructField>,
     pub field_offsets: HashMap<String, usize>,
     pub size: usize,
+}
+
+struct FunctionArtifact<'a> {
+    parameters: &'a [Parameter],
+    return_sig: &'a ReturnSignature,
+    body: &'a [Statement],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -152,16 +160,16 @@ impl SymbolTable {
         if let Some(symbol) = self.store.get(name) {
             return Some(symbol.clone());
         }
-        if let Some(ref mut outer) = self.outer {
-            if let Some(symbol) = outer.resolve(name) {
-                if symbol.scope == SymbolScope::Global
-                    || symbol.scope == SymbolScope::Builtin
-                    || symbol.scope == SymbolScope::Native
-                {
-                    return Some(symbol);
-                }
-                return Some(self.define_free(symbol));
+        if let Some(ref mut outer) = self.outer
+            && let Some(symbol) = outer.resolve(name)
+        {
+            if symbol.scope == SymbolScope::Global
+                || symbol.scope == SymbolScope::Builtin
+                || symbol.scope == SymbolScope::Native
+            {
+                return Some(symbol);
             }
+            return Some(self.define_free(symbol));
         }
         None
     }
@@ -384,7 +392,11 @@ impl BorrowChecker {
                     "cannot borrow '{}' as {} because it is already borrowed as {}",
                     name,
                     if is_mutable { "mutable" } else { "immutable" },
-                    if borrow.is_mutable { "mutable" } else { "immutable" }
+                    if borrow.is_mutable {
+                        "mutable"
+                    } else {
+                        "immutable"
+                    }
                 );
             }
         }
@@ -461,18 +473,34 @@ impl MonoSubstitution {
                     typ.clone()
                 }
             }
-            Type::Ptr(inner) => Type::Ptr(Box::new(self.substitute_type(inner))),
-            Type::Ref(inner) => Type::Ref(Box::new(self.substitute_type(inner))),
-            Type::RefMut(inner) => Type::RefMut(Box::new(self.substitute_type(inner))),
-            Type::Array(inner, size) => Type::Array(Box::new(self.substitute_type(inner)), *size),
-            Type::Slice(inner) => Type::Slice(Box::new(self.substitute_type(inner))),
+            Type::Ptr(inner) => {
+                Type::Ptr(Box::new(self.substitute_type(inner)))
+            }
+            Type::Ref(inner) => {
+                Type::Ref(Box::new(self.substitute_type(inner)))
+            }
+            Type::RefMut(inner) => {
+                Type::RefMut(Box::new(self.substitute_type(inner)))
+            }
+            Type::Array(inner, size) => {
+                Type::Array(Box::new(self.substitute_type(inner)), *size)
+            }
+            Type::Slice(inner) => {
+                Type::Slice(Box::new(self.substitute_type(inner)))
+            }
             Type::Proc(params, ret) => Type::Proc(
                 params.iter().map(|p| self.substitute_type(p)).collect(),
                 Box::new(self.substitute_type(ret)),
             ),
-            Type::Distinct(inner) => Type::Distinct(Box::new(self.substitute_type(inner))),
-            Type::Optional(inner) => Type::Optional(Box::new(self.substitute_type(inner))),
-            Type::Handle(inner) => Type::Handle(Box::new(self.substitute_type(inner))),
+            Type::Distinct(inner) => {
+                Type::Distinct(Box::new(self.substitute_type(inner)))
+            }
+            Type::Optional(inner) => {
+                Type::Optional(Box::new(self.substitute_type(inner)))
+            }
+            Type::Handle(inner) => {
+                Type::Handle(Box::new(self.substitute_type(inner)))
+            }
             other => other.clone(),
         }
     }
@@ -480,25 +508,28 @@ impl MonoSubstitution {
     fn substitute_return_sig(&self, sig: &ReturnSignature) -> ReturnSignature {
         match sig {
             ReturnSignature::None => ReturnSignature::None,
-            ReturnSignature::Single(t) => ReturnSignature::Single(self.substitute_type(t)),
-            ReturnSignature::Named(params) => {
-                ReturnSignature::Named(
-                    params
-                        .iter()
-                        .map(|p| crate::parser::ReturnParam {
-                            name: p.name.clone(),
-                            param_type: self.substitute_type(&p.param_type),
-                        })
-                        .collect(),
-                )
+            ReturnSignature::Single(t) => {
+                ReturnSignature::Single(self.substitute_type(t))
             }
+            ReturnSignature::Named(params) => ReturnSignature::Named(
+                params
+                    .iter()
+                    .map(|p| crate::parser::ReturnParam {
+                        name: p.name.clone(),
+                        param_type: self.substitute_type(&p.param_type),
+                    })
+                    .collect(),
+            ),
         }
     }
 
     fn substitute_param(&self, param: &Parameter) -> Parameter {
         Parameter {
             name: param.name.clone(),
-            type_annotation: param.type_annotation.as_ref().map(|t| self.substitute_type(t)),
+            type_annotation: param
+                .type_annotation
+                .as_ref()
+                .map(|t| self.substitute_type(t)),
             mutable: param.mutable,
         }
     }
@@ -507,7 +538,9 @@ impl MonoSubstitution {
         match expr {
             Expression::Identifier(name) => {
                 if self.type_bindings.contains_key(name) {
-                    Expression::TypeValue(self.type_bindings.get(name).unwrap().clone())
+                    Expression::TypeValue(
+                        self.type_bindings.get(name).unwrap().clone(),
+                    )
                 } else {
                     Expression::Identifier(name.clone())
                 }
@@ -525,28 +558,34 @@ impl MonoSubstitution {
                 Box::new(self.substitute_expr(base)),
                 Box::new(self.substitute_expr(index)),
             ),
-            Expression::Prefix(op, operand) => Expression::Prefix(
-                *op,
-                Box::new(self.substitute_expr(operand)),
-            ),
+            Expression::Prefix(op, operand) => {
+                Expression::Prefix(*op, Box::new(self.substitute_expr(operand)))
+            }
             Expression::If(cond, then_block, else_block) => Expression::If(
                 Box::new(self.substitute_expr(cond)),
                 then_block.iter().map(|s| self.substitute_stmt(s)).collect(),
-                else_block.as_ref().map(|b| b.iter().map(|s| self.substitute_stmt(s)).collect()),
+                else_block.as_ref().map(|b| {
+                    b.iter().map(|s| self.substitute_stmt(s)).collect()
+                }),
             ),
             Expression::StructInit(name, fields) => Expression::StructInit(
                 name.clone(),
-                fields.iter().map(|(n, e)| (n.clone(), self.substitute_expr(e))).collect(),
+                fields
+                    .iter()
+                    .map(|(n, e)| (n.clone(), self.substitute_expr(e)))
+                    .collect(),
             ),
             Expression::FieldAccess(base, field) => Expression::FieldAccess(
                 Box::new(self.substitute_expr(base)),
                 field.clone(),
             ),
-            Expression::Function(params, ret_sig, body) => Expression::Function(
-                params.iter().map(|p| self.substitute_param(p)).collect(),
-                self.substitute_return_sig(ret_sig),
-                body.iter().map(|s| self.substitute_stmt(s)).collect(),
-            ),
+            Expression::Function(params, ret_sig, body) => {
+                Expression::Function(
+                    params.iter().map(|p| self.substitute_param(p)).collect(),
+                    self.substitute_return_sig(ret_sig),
+                    body.iter().map(|s| self.substitute_stmt(s)).collect(),
+                )
+            }
             Expression::Proc(params, ret_sig, body) => Expression::Proc(
                 params.iter().map(|p| self.substitute_param(p)).collect(),
                 self.substitute_return_sig(ret_sig),
@@ -555,20 +594,24 @@ impl MonoSubstitution {
             Expression::Tuple(elems) => Expression::Tuple(
                 elems.iter().map(|e| self.substitute_expr(e)).collect(),
             ),
-            Expression::Dereference(inner) => Expression::Dereference(
-                Box::new(self.substitute_expr(inner)),
-            ),
-            Expression::AddressOf(inner) => Expression::AddressOf(
-                Box::new(self.substitute_expr(inner)),
-            ),
-            Expression::Borrow(inner) => Expression::Borrow(
-                Box::new(self.substitute_expr(inner)),
-            ),
-            Expression::BorrowMut(inner) => Expression::BorrowMut(
-                Box::new(self.substitute_expr(inner)),
-            ),
-            Expression::Sizeof(t) => Expression::Sizeof(self.substitute_type(t)),
-            Expression::Typename(t) => Expression::Typename(self.substitute_type(t)),
+            Expression::Dereference(inner) => {
+                Expression::Dereference(Box::new(self.substitute_expr(inner)))
+            }
+            Expression::AddressOf(inner) => {
+                Expression::AddressOf(Box::new(self.substitute_expr(inner)))
+            }
+            Expression::Borrow(inner) => {
+                Expression::Borrow(Box::new(self.substitute_expr(inner)))
+            }
+            Expression::BorrowMut(inner) => {
+                Expression::BorrowMut(Box::new(self.substitute_expr(inner)))
+            }
+            Expression::Sizeof(t) => {
+                Expression::Sizeof(self.substitute_type(t))
+            }
+            Expression::Typename(t) => {
+                Expression::Typename(self.substitute_type(t))
+            }
             Expression::Range(start, end, inclusive) => Expression::Range(
                 Box::new(self.substitute_expr(start)),
                 Box::new(self.substitute_expr(end)),
@@ -576,22 +619,41 @@ impl MonoSubstitution {
             ),
             Expression::Switch(scrutinee, cases) => Expression::Switch(
                 Box::new(self.substitute_expr(scrutinee)),
-                cases.iter().map(|case| crate::parser::SwitchCase {
-                    pattern: case.pattern.clone(),
-                    body: case.body.iter().map(|s| self.substitute_stmt(s)).collect(),
-                }).collect(),
+                cases
+                    .iter()
+                    .map(|case| crate::parser::SwitchCase {
+                        pattern: case.pattern.clone(),
+                        body: case
+                            .body
+                            .iter()
+                            .map(|s| self.substitute_stmt(s))
+                            .collect(),
+                    })
+                    .collect(),
             ),
-            Expression::EnumVariantInit(enum_name, variant, fields) => Expression::EnumVariantInit(
-                enum_name.clone(),
-                variant.clone(),
-                fields.iter().map(|(n, e)| (n.clone(), self.substitute_expr(e))).collect(),
-            ),
-            Expression::IfLet(pattern, value, consequence, alternative) => Expression::IfLet(
-                pattern.clone(),
-                Box::new(self.substitute_expr(value)),
-                consequence.iter().map(|s| self.substitute_stmt(s)).collect(),
-                alternative.as_ref().map(|b| b.iter().map(|s| self.substitute_stmt(s)).collect()),
-            ),
+            Expression::EnumVariantInit(enum_name, variant, fields) => {
+                Expression::EnumVariantInit(
+                    enum_name.clone(),
+                    variant.clone(),
+                    fields
+                        .iter()
+                        .map(|(n, e)| (n.clone(), self.substitute_expr(e)))
+                        .collect(),
+                )
+            }
+            Expression::IfLet(pattern, value, consequence, alternative) => {
+                Expression::IfLet(
+                    pattern.clone(),
+                    Box::new(self.substitute_expr(value)),
+                    consequence
+                        .iter()
+                        .map(|s| self.substitute_stmt(s))
+                        .collect(),
+                    alternative.as_ref().map(|b| {
+                        b.iter().map(|s| self.substitute_stmt(s)).collect()
+                    }),
+                )
+            }
             Expression::Unsafe(body) => Expression::Unsafe(
                 body.iter().map(|s| self.substitute_stmt(s)).collect(),
             ),
@@ -607,10 +669,17 @@ impl MonoSubstitution {
             Statement::Constant(name, expr) => {
                 Statement::Constant(name.clone(), self.substitute_expr(expr))
             }
-            Statement::Let { name, mutable, type_annotation, value } => Statement::Let {
+            Statement::Let {
+                name,
+                mutable,
+                type_annotation,
+                value,
+            } => Statement::Let {
                 name: name.clone(),
                 mutable: *mutable,
-                type_annotation: type_annotation.as_ref().map(|t| self.substitute_type(t)),
+                type_annotation: type_annotation
+                    .as_ref()
+                    .map(|t| self.substitute_type(t)),
                 value: self.substitute_expr(value),
             },
             Statement::Expression(expr) => {
@@ -622,22 +691,19 @@ impl MonoSubstitution {
             Statement::Defer(inner) => {
                 Statement::Defer(Box::new(self.substitute_stmt(inner)))
             }
-            Statement::Assignment(lhs, rhs) => {
-                Statement::Assignment(self.substitute_expr(lhs), self.substitute_expr(rhs))
-            }
-            Statement::For(iterator, iterable, body) => {
-                Statement::For(
-                    iterator.clone(),
-                    self.substitute_expr(iterable),
-                    body.iter().map(|s| self.substitute_stmt(s)).collect(),
-                )
-            }
-            Statement::While(cond, body) => {
-                Statement::While(
-                    self.substitute_expr(cond),
-                    body.iter().map(|s| self.substitute_stmt(s)).collect(),
-                )
-            }
+            Statement::Assignment(lhs, rhs) => Statement::Assignment(
+                self.substitute_expr(lhs),
+                self.substitute_expr(rhs),
+            ),
+            Statement::For(iterator, iterable, body) => Statement::For(
+                iterator.clone(),
+                self.substitute_expr(iterable),
+                body.iter().map(|s| self.substitute_stmt(s)).collect(),
+            ),
+            Statement::While(cond, body) => Statement::While(
+                self.substitute_expr(cond),
+                body.iter().map(|s| self.substitute_stmt(s)).collect(),
+            ),
             other => other.clone(),
         }
     }
@@ -670,12 +736,24 @@ impl MonoSubstitution {
             Type::Bool => "bool".to_string(),
             Type::Str => "str".to_string(),
             Type::Struct(name) | Type::Enum(name) => name.clone(),
-            Type::Ptr(inner) => format!("ptr_{}", Self::type_to_mangle_string(inner)),
-            Type::Ref(inner) => format!("ref_{}", Self::type_to_mangle_string(inner)),
-            Type::RefMut(inner) => format!("refmut_{}", Self::type_to_mangle_string(inner)),
-            Type::Array(inner, size) => format!("arr_{}_{}", Self::type_to_mangle_string(inner), size),
-            Type::Slice(inner) => format!("slice_{}", Self::type_to_mangle_string(inner)),
-            Type::Optional(inner) => format!("opt_{}", Self::type_to_mangle_string(inner)),
+            Type::Ptr(inner) => {
+                format!("ptr_{}", Self::type_to_mangle_string(inner))
+            }
+            Type::Ref(inner) => {
+                format!("ref_{}", Self::type_to_mangle_string(inner))
+            }
+            Type::RefMut(inner) => {
+                format!("refmut_{}", Self::type_to_mangle_string(inner))
+            }
+            Type::Array(inner, size) => {
+                format!("arr_{}_{}", Self::type_to_mangle_string(inner), size)
+            }
+            Type::Slice(inner) => {
+                format!("slice_{}", Self::type_to_mangle_string(inner))
+            }
+            Type::Optional(inner) => {
+                format!("opt_{}", Self::type_to_mangle_string(inner))
+            }
             _ => "unknown".to_string(),
         }
     }
@@ -799,7 +877,10 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    pub fn new_with_path(statements: &'a [Statement], base_path: PathBuf) -> Self {
+    pub fn new_with_path(
+        statements: &'a [Statement],
+        base_path: PathBuf,
+    ) -> Self {
         let mut compiler = Self::new(statements);
         compiler.base_path = Some(base_path);
         compiler
@@ -948,17 +1029,16 @@ impl<'a> Compiler<'a> {
 
     pub fn compile(&mut self) -> Result<Bytecode> {
         let mut bytecode = Bytecode::default();
-        let statements: Vec<Statement> = self.statements.by_ref().cloned().collect();
+        let statements: Vec<Statement> =
+            self.statements.by_ref().cloned().collect();
 
         for statement in &statements {
-            if let Statement::Constant(name, expression) = statement {
-                if let Expression::Function(params, return_sig, _)
-                    | Expression::Proc(params, return_sig, _) = expression
-                {
-                    if !Self::function_is_generic(params, return_sig) {
-                        self.symbol_table.define(name);
-                    }
-                }
+            if let Statement::Constant(name, expression) = statement
+                && let Expression::Function(params, return_sig, _)
+                | Expression::Proc(params, return_sig, _) = expression
+                && !Self::function_is_generic(params, return_sig)
+            {
+                self.symbol_table.define(name);
             }
         }
 
@@ -980,11 +1060,13 @@ impl<'a> Compiler<'a> {
     fn type_contains_type_param(typ: &Type) -> bool {
         match typ {
             Type::TypeParam(_) => true,
-            Type::Ptr(inner) | Type::Ref(inner) | Type::RefMut(inner)
-            | Type::Slice(inner) | Type::Distinct(inner)
-            | Type::Handle(inner) | Type::Optional(inner) => {
-                Self::type_contains_type_param(inner)
-            }
+            Type::Ptr(inner)
+            | Type::Ref(inner)
+            | Type::RefMut(inner)
+            | Type::Slice(inner)
+            | Type::Distinct(inner)
+            | Type::Handle(inner)
+            | Type::Optional(inner) => Self::type_contains_type_param(inner),
             Type::Array(inner, _) => Self::type_contains_type_param(inner),
             Type::Proc(params, ret) => {
                 params.iter().any(Self::type_contains_type_param)
@@ -994,18 +1076,21 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn function_is_generic(parameters: &[Parameter], return_sig: &ReturnSignature) -> bool {
+    fn function_is_generic(
+        parameters: &[Parameter],
+        return_sig: &ReturnSignature,
+    ) -> bool {
         for param in parameters {
-            if let Some(ref typ) = param.type_annotation {
-                if Self::type_contains_type_param(typ) {
-                    return true;
-                }
-            }
-        }
-        if let ReturnSignature::Single(typ) = return_sig {
-            if Self::type_contains_type_param(typ) {
+            if let Some(ref typ) = param.type_annotation
+                && Self::type_contains_type_param(typ)
+            {
                 return true;
             }
+        }
+        if let ReturnSignature::Single(typ) = return_sig
+            && Self::type_contains_type_param(typ)
+        {
+            return true;
         }
         if let ReturnSignature::Named(params) = return_sig {
             for param in params {
@@ -1020,30 +1105,37 @@ impl<'a> Compiler<'a> {
     fn extract_type_params(parameters: &[Parameter]) -> Vec<String> {
         let mut type_params = Vec::new();
         for param in parameters {
-            if let Some(Type::TypeParam(name)) = &param.type_annotation {
-                if !type_params.contains(name) {
-                    type_params.push(name.clone());
-                }
+            if let Some(Type::TypeParam(name)) = &param.type_annotation
+                && !type_params.contains(name)
+            {
+                type_params.push(name.clone());
             }
         }
         type_params
     }
 
-    fn validate_and_store_return_type(&mut self, name: &str, return_sig: &ReturnSignature) -> Result<()> {
+    fn validate_and_store_return_type(
+        &mut self,
+        name: &str,
+        return_sig: &ReturnSignature,
+    ) -> Result<()> {
         if let Some(bad_type) = return_sig.has_second_class() {
             bail!(
                 "function '{}' cannot return reference type '{}' - references are second-class and cannot be returned",
-                name, bad_type
+                name,
+                bad_type
             );
         }
         if let Some(bad_type) = return_sig.contains_reference() {
             bail!(
                 "function '{}' cannot return type '{}' which contains a reference - references are second-class",
-                name, bad_type
+                name,
+                bad_type
             );
         }
         if let Some(ret_type) = return_sig.to_type() {
-            self.function_return_types.insert(name.to_string(), self.resolve_type(&ret_type));
+            self.function_return_types
+                .insert(name.to_string(), self.resolve_type(&ret_type));
         }
         Ok(())
     }
@@ -1057,19 +1149,18 @@ impl<'a> Compiler<'a> {
         self.borrow_checker.exit_scope();
         if let Some(owned) = self.scope_owned_values.pop() {
             for name in owned.iter().rev() {
-                if !self.moved_symbols.contains(name) {
-                    if let Some(symbol) = self.symbol_table.resolve(name) {
-                        let should_drop = match &symbol.symbol_type {
-                            Some(Type::Slice(_)) => false,
-                            Some(Type::Enum(_)) => false,
-                            _ => true,
-                        };
-                        if should_drop {
-                            self.load_symbol(&symbol, bytecode);
-                            bytecode
-                                .instructions
-                                .push(Instruction::new(Opcode::Drop, vec![]));
-                        }
+                if !self.moved_symbols.contains(name)
+                    && let Some(symbol) = self.symbol_table.resolve(name)
+                {
+                    let should_drop = !matches!(
+                        symbol.symbol_type,
+                        Some(Type::Slice(_)) | Some(Type::Enum(_))
+                    );
+                    if should_drop {
+                        self.load_symbol(&symbol, bytecode);
+                        bytecode
+                            .instructions
+                            .push(Instruction::new(Opcode::Drop, vec![]));
                     }
                 }
             }
@@ -1112,22 +1203,31 @@ impl<'a> Compiler<'a> {
                         value
                     {
                         Some(Type::Enum(enum_name.clone()))
-                    } else if let Expression::Literal(Literal::Array(elements)) = value {
-                        if let Some(first) = elements.first() {
-                            if let Expression::StructInit(struct_name, _) = first {
-                                Some(Type::Slice(Box::new(Type::Struct(struct_name.clone()))))
-                            } else {
-                                type_annotation.clone()
-                            }
+                    } else if let Expression::Literal(Literal::Array(
+                        elements,
+                    )) = value
+                    {
+                        if let Some(first) = elements.first()
+                            && let Expression::StructInit(struct_name, _) =
+                                first
+                        {
+                            Some(Type::Slice(Box::new(Type::Struct(
+                                struct_name.clone(),
+                            ))))
                         } else {
                             type_annotation.clone()
                         }
                     } else if let Expression::Index(array_expr, _) = value {
-                        if let Expression::Identifier(array_name) = array_expr.as_ref() {
-                            if let Some(symbol) = self.symbol_table.store.get(array_name) {
+                        if let Expression::Identifier(array_name) =
+                            array_expr.as_ref()
+                        {
+                            if let Some(symbol) =
+                                self.symbol_table.store.get(array_name)
+                            {
                                 if let Some(symbol_type) = &symbol.symbol_type {
                                     match symbol_type {
-                                        Type::Array(inner, _) | Type::Slice(inner) => {
+                                        Type::Array(inner, _)
+                                        | Type::Slice(inner) => {
                                             Some(inner.as_ref().clone())
                                         }
                                         _ => type_annotation.clone(),
@@ -1138,20 +1238,34 @@ impl<'a> Compiler<'a> {
                             } else {
                                 type_annotation.clone()
                             }
-                        } else if let Expression::FieldAccess(base_expr, field_name) = array_expr.as_ref() {
-                            self.infer_field_access_element_type(base_expr, field_name)
-                                .or_else(|| type_annotation.clone())
+                        } else if let Expression::FieldAccess(
+                            base_expr,
+                            field_name,
+                        ) = array_expr.as_ref()
+                        {
+                            self.infer_field_access_element_type(
+                                base_expr, field_name,
+                            )
+                            .or_else(|| type_annotation.clone())
                         } else {
                             type_annotation.clone()
                         }
                     } else if let Expression::Call(func_expr, _) = value {
-                        if let Expression::Identifier(func_name) = func_expr.as_ref() {
-                            self.function_return_types.get(func_name).cloned()
+                        if let Expression::Identifier(func_name) =
+                            func_expr.as_ref()
+                        {
+                            self.function_return_types
+                                .get(func_name)
+                                .cloned()
                                 .or_else(|| type_annotation.clone())
                         } else {
                             type_annotation.clone()
                         }
-                    } else if let Expression::FieldAccess(base_expr, field_name) = value {
+                    } else if let Expression::FieldAccess(
+                        base_expr,
+                        field_name,
+                    ) = value
+                    {
                         self.infer_field_access_type(base_expr, field_name)
                             .or_else(|| type_annotation.clone())
                     } else {
@@ -1164,15 +1278,31 @@ impl<'a> Compiler<'a> {
                     inferred_type,
                     *mutable,
                 );
-                if let Expression::Function(parameters, return_sig, body) = value {
+                if let Expression::Function(parameters, return_sig, body) =
+                    value
+                {
                     self.validate_and_store_return_type(name, return_sig)?;
                     self.compile_function_with_name(
-                        name, parameters, return_sig, body, bytecode,
+                        name,
+                        FunctionArtifact {
+                            parameters,
+                            return_sig,
+                            body,
+                        },
+                        bytecode,
                     )?;
-                } else if let Expression::Proc(parameters, return_sig, body) = value {
+                } else if let Expression::Proc(parameters, return_sig, body) =
+                    value
+                {
                     self.validate_and_store_return_type(name, return_sig)?;
                     self.compile_function_with_name(
-                        name, parameters, return_sig, body, bytecode,
+                        name,
+                        FunctionArtifact {
+                            parameters,
+                            return_sig,
+                            body,
+                        },
+                        bytecode,
                     )?;
                 } else {
                     self.compile_expression(value, bytecode)?;
@@ -1186,16 +1316,17 @@ impl<'a> Compiler<'a> {
                 bytecode
                     .instructions
                     .push(Instruction::new(opcode, vec![symbol.index as u16]));
-                if needs_drop && symbol.scope == SymbolScope::Local {
-                    if let Some(owned) = self.scope_owned_values.last_mut() {
-                        owned.push(name.clone());
-                    }
+                if needs_drop
+                    && symbol.scope == SymbolScope::Local
+                    && let Some(owned) = self.scope_owned_values.last_mut()
+                {
+                    owned.push(name.clone());
                 }
                 Ok(())
             }
             Statement::Constant(name, expression) => {
                 if let Expression::Function(parameters, return_sig, body)
-                    | Expression::Proc(parameters, return_sig, body) = expression
+                | Expression::Proc(parameters, return_sig, body) = expression
                 {
                     if Self::function_is_generic(parameters, return_sig) {
                         let type_params = Self::extract_type_params(parameters);
@@ -1210,20 +1341,32 @@ impl<'a> Compiler<'a> {
                         );
                         return Ok(());
                     }
-                    let symbol = self.symbol_table.resolve(name).unwrap_or_else(|| self.symbol_table.define(name));
+                    let symbol = self
+                        .symbol_table
+                        .resolve(name)
+                        .unwrap_or_else(|| self.symbol_table.define(name));
                     self.validate_and_store_return_type(name, return_sig)?;
                     self.compile_function_with_name(
-                        name, parameters, return_sig, body, bytecode,
+                        name,
+                        FunctionArtifact {
+                            parameters,
+                            return_sig,
+                            body,
+                        },
+                        bytecode,
                     )?;
                     let opcode = if symbol.scope == SymbolScope::Global {
-                        bytecode.global_symbols.insert(name.clone(), symbol.index);
+                        bytecode
+                            .global_symbols
+                            .insert(name.clone(), symbol.index);
                         Opcode::SetGlobal
                     } else {
                         Opcode::SetLocal
                     };
-                    bytecode
-                        .instructions
-                        .push(Instruction::new(opcode, vec![symbol.index as u16]));
+                    bytecode.instructions.push(Instruction::new(
+                        opcode,
+                        vec![symbol.index as u16],
+                    ));
                     return Ok(());
                 }
                 let symbol = self.symbol_table.define(name);
@@ -1244,13 +1387,17 @@ impl<'a> Compiler<'a> {
                     if field.field_type.is_second_class() {
                         bail!(
                             "struct '{}' field '{}' has reference type '{}' - references are second-class and cannot be stored in structs",
-                            name, field.name, field.field_type
+                            name,
+                            field.name,
+                            field.field_type
                         );
                     }
                     if field.field_type.contains_reference() {
                         bail!(
                             "struct '{}' field '{}' has type '{}' which contains a reference - references are second-class and cannot be stored",
-                            name, field.name, field.field_type
+                            name,
+                            field.name,
+                            field.field_type
                         );
                     }
                 }
@@ -1276,13 +1423,19 @@ impl<'a> Compiler<'a> {
                             if field.field_type.is_second_class() {
                                 bail!(
                                     "enum '{}' variant '{}' field '{}' has reference type '{}' - references are second-class and cannot be stored",
-                                    name, variant.name, field.name, field.field_type
+                                    name,
+                                    variant.name,
+                                    field.name,
+                                    field.field_type
                                 );
                             }
                             if field.field_type.contains_reference() {
                                 bail!(
                                     "enum '{}' variant '{}' field '{}' has type '{}' which contains a reference - references are second-class and cannot be stored",
-                                    name, variant.name, field.name, field.field_type
+                                    name,
+                                    variant.name,
+                                    field.name,
+                                    field.field_type
                                 );
                             }
                         }
@@ -1306,7 +1459,6 @@ impl<'a> Compiler<'a> {
                         tag: index,
                         fields: fields.clone(),
                     });
-
                 }
                 self.enum_defs.insert(
                     name.clone(),
@@ -1350,7 +1502,10 @@ impl<'a> Compiler<'a> {
                                 anyhow::anyhow!("undefined variable: {}", name)
                             })?;
                         if !symbol.mutable {
-                            anyhow::bail!("cannot assign to immutable variable '{}'. Use 'mut' to declare mutable variables.", name);
+                            anyhow::bail!(
+                                "cannot assign to immutable variable '{}'. Use 'mut' to declare mutable variables.",
+                                name
+                            );
                         }
                         self.compile_expression(rhs, bytecode)?;
                         let opcode = match symbol.scope {
@@ -1366,14 +1521,13 @@ impl<'a> Compiler<'a> {
                             vec![symbol.index as u16],
                         ));
                         self.moved_symbols.remove(name);
-                        if let Some(ref symbol_type) = symbol.symbol_type {
-                            if symbol_type.needs_drop() {
-                                if let Some(scope) = self.scope_owned_values.last_mut() {
-                                    if !scope.contains(&name.to_string()) {
-                                        scope.push(name.clone());
-                                    }
-                                }
-                            }
+                        if let Some(ref symbol_type) = symbol.symbol_type
+                            && symbol_type.needs_drop()
+                            && let Some(scope) =
+                                self.scope_owned_values.last_mut()
+                            && !scope.contains(&name.to_string())
+                        {
+                            scope.push(name.clone());
                         }
                     }
                     Expression::FieldAccess(expr, field) => {
@@ -1403,8 +1557,12 @@ impl<'a> Compiler<'a> {
                                     symbol.scope
                                 ),
                             };
-                            let (struct_name, is_ref) = match &symbol.symbol_type {
-                                Some(Type::Struct(name)) => (Some(name.clone()), false),
+                            let (struct_name, is_ref) = match &symbol
+                                .symbol_type
+                            {
+                                Some(Type::Struct(name)) => {
+                                    (Some(name.clone()), false)
+                                }
                                 Some(Type::RefMut(inner)) => {
                                     if let Type::Struct(name) = inner.as_ref() {
                                         (Some(name.clone()), true)
@@ -1414,7 +1572,8 @@ impl<'a> Compiler<'a> {
                                 }
                                 _ => (None, false),
                             };
-                            let offset = if let Some(struct_name) = &struct_name {
+                            let offset = if let Some(struct_name) = &struct_name
+                            {
                                 if let Some(struct_def) =
                                     self.struct_defs.get(struct_name)
                                 {
@@ -1466,12 +1625,16 @@ impl<'a> Compiler<'a> {
                         }
                     }
                     Expression::Index(arr_expr, index_expr) => {
-                        if let Expression::Identifier(name) = arr_expr.as_ref() {
+                        if let Expression::Identifier(name) = arr_expr.as_ref()
+                        {
                             let symbol = self
                                 .symbol_table
                                 .resolve(name)
                                 .ok_or_else(|| {
-                                    anyhow::anyhow!("undefined variable: {}", name)
+                                    anyhow::anyhow!(
+                                        "undefined variable: {}",
+                                        name
+                                    )
                                 })?;
                             if !symbol.mutable {
                                 anyhow::bail!(
@@ -1493,16 +1656,18 @@ impl<'a> Compiler<'a> {
                             ));
                             self.compile_expression(index_expr, bytecode)?;
                             self.compile_expression(rhs, bytecode)?;
-                            bytecode
-                                .instructions
-                                .push(Instruction::new(Opcode::IndexSet, vec![]));
+                            bytecode.instructions.push(Instruction::new(
+                                Opcode::IndexSet,
+                                vec![],
+                            ));
                         } else {
                             self.compile_expression(arr_expr, bytecode)?;
                             self.compile_expression(index_expr, bytecode)?;
                             self.compile_expression(rhs, bytecode)?;
-                            bytecode
-                                .instructions
-                                .push(Instruction::new(Opcode::IndexSet, vec![]));
+                            bytecode.instructions.push(Instruction::new(
+                                Opcode::IndexSet,
+                                vec![],
+                            ));
                         }
                     }
                     _ => anyhow::bail!("invalid assignment target"),
@@ -1666,16 +1831,26 @@ impl<'a> Compiler<'a> {
                 } else {
                     PathBuf::from(path)
                 };
-                let canonical_path = resolved_path.canonicalize().map_err(|e| {
-                    anyhow::anyhow!("failed to resolve import '{}': {}", path, e)
-                })?;
+                let canonical_path =
+                    resolved_path.canonicalize().map_err(|e| {
+                        anyhow::anyhow!(
+                            "failed to resolve import '{}': {}",
+                            path,
+                            e
+                        )
+                    })?;
                 if self.imported_files.contains(&canonical_path) {
                     return Ok(());
                 }
                 self.imported_files.insert(canonical_path.clone());
-                let source = std::fs::read_to_string(&canonical_path).map_err(|e| {
-                    anyhow::anyhow!("failed to read import '{}': {}", path, e)
-                })?;
+                let source =
+                    std::fs::read_to_string(&canonical_path).map_err(|e| {
+                        anyhow::anyhow!(
+                            "failed to read import '{}': {}",
+                            path,
+                            e
+                        )
+                    })?;
                 let mut lexer = crate::Lexer::new(&source);
                 let tokens = lexer.tokenize().map_err(|e| {
                     anyhow::anyhow!(
@@ -1689,17 +1864,17 @@ impl<'a> Compiler<'a> {
                     anyhow::anyhow!("failed to parse import '{}': {}", path, e)
                 })?;
                 let old_base = self.base_path.take();
-                self.base_path = canonical_path.parent().map(|p| p.to_path_buf());
+                self.base_path =
+                    canonical_path.parent().map(|p| p.to_path_buf());
 
                 for statement in &statements {
-                    if let Statement::Constant(name, expression) = statement {
-                        if let Expression::Function(params, return_sig, _)
-                            | Expression::Proc(params, return_sig, _) = expression
-                        {
-                            if !Self::function_is_generic(params, return_sig) {
-                                self.symbol_table.define(name);
-                            }
-                        }
+                    if let Statement::Constant(name, expression) = statement
+                        && let Expression::Function(params, return_sig, _)
+                        | Expression::Proc(params, return_sig, _) =
+                            expression
+                        && !Self::function_is_generic(params, return_sig)
+                    {
+                        self.symbol_table.define(name);
                     }
                 }
 
@@ -1710,29 +1885,44 @@ impl<'a> Compiler<'a> {
                 Ok(())
             }
             Statement::InterpolatedConstant(_, _) => {
-                anyhow::bail!("InterpolatedConstant can only be used inside comptime blocks")
+                anyhow::bail!(
+                    "InterpolatedConstant can only be used inside comptime blocks"
+                )
             }
-            Statement::Extern { .. } => {
-                Ok(())
-            }
+            Statement::Extern { .. } => Ok(()),
             Statement::PushContext { context_expr, body } => {
-                bytecode.instructions.push(Instruction::new(Opcode::PushContextScope, vec![]));
+                bytecode
+                    .instructions
+                    .push(Instruction::new(Opcode::PushContextScope, vec![]));
                 self.compile_expression(context_expr, bytecode)?;
-                bytecode.instructions.push(Instruction::new(Opcode::SetContext, vec![]));
+                bytecode
+                    .instructions
+                    .push(Instruction::new(Opcode::SetContext, vec![]));
                 for statement in body {
                     self.compile_statement(statement, bytecode)?;
                 }
-                bytecode.instructions.push(Instruction::new(Opcode::PopContextScope, vec![]));
+                bytecode
+                    .instructions
+                    .push(Instruction::new(Opcode::PopContextScope, vec![]));
                 Ok(())
             }
-            Statement::PushAllocator { allocator_expr, body } => {
-                bytecode.instructions.push(Instruction::new(Opcode::PushContextScope, vec![]));
+            Statement::PushAllocator {
+                allocator_expr,
+                body,
+            } => {
+                bytecode
+                    .instructions
+                    .push(Instruction::new(Opcode::PushContextScope, vec![]));
                 self.compile_expression(allocator_expr, bytecode)?;
-                bytecode.instructions.push(Instruction::new(Opcode::SetContextField, vec![0]));
+                bytecode
+                    .instructions
+                    .push(Instruction::new(Opcode::SetContextField, vec![0]));
                 for statement in body {
                     self.compile_statement(statement, bytecode)?;
                 }
-                bytecode.instructions.push(Instruction::new(Opcode::PopContextScope, vec![]));
+                bytecode
+                    .instructions
+                    .push(Instruction::new(Opcode::PopContextScope, vec![]));
                 Ok(())
             }
         }
@@ -1752,24 +1942,30 @@ impl<'a> Compiler<'a> {
                     self.symbol_table.resolve(name).ok_or_else(|| {
                         anyhow::anyhow!("undefined variable: {}", name)
                     })?;
-                if let Some(ref symbol_type) = symbol.symbol_type {
-                    if !symbol_type.is_copy() {
-                        let is_unit_variant = if name.contains("::") {
-                            if let Some((enum_name, variant_name)) = name.split_once("::") {
-                                self.enum_defs.get(enum_name).map_or(false, |enum_def| {
-                                    enum_def.variants.iter()
+                if let Some(ref symbol_type) = symbol.symbol_type
+                    && !symbol_type.is_copy()
+                {
+                    let is_unit_variant = if name.contains("::") {
+                        if let Some((enum_name, variant_name)) =
+                            name.split_once("::")
+                        {
+                            self.enum_defs.get(enum_name).is_some_and(
+                                |enum_def| {
+                                    enum_def
+                                        .variants
+                                        .iter()
                                         .find(|v| v.name == variant_name)
-                                        .map_or(false, |v| v.fields.is_empty())
-                                })
-                            } else {
-                                false
-                            }
+                                        .is_some_and(|v| v.fields.is_empty())
+                                },
+                            )
                         } else {
                             false
-                        };
-                        if !is_unit_variant && !self.suppress_move_marking {
-                            self.moved_symbols.insert(name.clone());
                         }
+                    } else {
+                        false
+                    };
+                    if !is_unit_variant && !self.suppress_move_marking {
+                        self.moved_symbols.insert(name.clone());
                     }
                 }
                 self.load_symbol(&symbol, bytecode);
@@ -1848,7 +2044,9 @@ impl<'a> Compiler<'a> {
                 let moved_in_alternative = self.moved_symbols.clone();
 
                 self.moved_symbols = moved_before;
-                for sym in moved_in_consequence.intersection(&moved_in_alternative) {
+                for sym in
+                    moved_in_consequence.intersection(&moved_in_alternative)
+                {
                     self.moved_symbols.insert(sym.clone());
                 }
 
@@ -1873,7 +2071,8 @@ impl<'a> Compiler<'a> {
                     );
                 }
                 let outer_symbol_table = std::mem::take(&mut self.symbol_table);
-                let outer_moved_symbols = std::mem::take(&mut self.moved_symbols);
+                let outer_moved_symbols =
+                    std::mem::take(&mut self.moved_symbols);
                 self.symbol_table =
                     SymbolTable::new_enclosed(outer_symbol_table);
 
@@ -1901,7 +2100,9 @@ impl<'a> Compiler<'a> {
                     functions: std::mem::take(&mut bytecode.functions),
                     heap: std::mem::take(&mut bytecode.heap),
                     native_names: std::mem::take(&mut bytecode.native_names),
-                    global_symbols: std::mem::take(&mut bytecode.global_symbols),
+                    global_symbols: std::mem::take(
+                        &mut bytecode.global_symbols,
+                    ),
                 };
                 for statement in body {
                     self.compile_statement(statement, &mut fn_bytecode)?;
@@ -1917,18 +2118,25 @@ impl<'a> Compiler<'a> {
                 {
                     if let Some(named_params) = return_sig.named_params() {
                         if named_params.len() == 1 {
-                            if let Some(symbol) = self.symbol_table.resolve(&named_params[0].name) {
-                                fn_bytecode.instructions.push(Instruction::new(
-                                    Opcode::GetLocal,
-                                    vec![symbol.index as u16],
-                                ));
-                                fn_bytecode
-                                    .instructions
-                                    .push(Instruction::new(Opcode::ReturnValue, vec![]));
+                            if let Some(symbol) =
+                                self.symbol_table.resolve(&named_params[0].name)
+                            {
+                                fn_bytecode.instructions.push(
+                                    Instruction::new(
+                                        Opcode::GetLocal,
+                                        vec![symbol.index as u16],
+                                    ),
+                                );
+                                fn_bytecode.instructions.push(
+                                    Instruction::new(
+                                        Opcode::ReturnValue,
+                                        vec![],
+                                    ),
+                                );
                             } else {
-                                fn_bytecode
-                                    .instructions
-                                    .push(Instruction::new(Opcode::Return, vec![]));
+                                fn_bytecode.instructions.push(
+                                    Instruction::new(Opcode::Return, vec![]),
+                                );
                             }
                         } else {
                             fn_bytecode
@@ -2003,25 +2211,21 @@ impl<'a> Compiler<'a> {
                         _ => (None, false),
                     };
                     if is_ref {
-                        bytecode.instructions.push(Instruction::new(
-                            Opcode::LoadPtr,
-                            vec![],
-                        ));
+                        bytecode
+                            .instructions
+                            .push(Instruction::new(Opcode::LoadPtr, vec![]));
                     }
-                    if let Some(struct_name) = struct_name {
-                        if let Some(struct_def) =
+                    if let Some(struct_name) = struct_name
+                        && let Some(struct_def) =
                             self.struct_defs.get(&struct_name)
-                        {
-                            if let Some(&offset) =
-                                struct_def.field_offsets.get(field)
-                            {
-                                bytecode.instructions.push(Instruction::new(
-                                    Opcode::StructGet,
-                                    vec![offset as u16],
-                                ));
-                                return Ok(());
-                            }
-                        }
+                        && let Some(&offset) =
+                            struct_def.field_offsets.get(field)
+                    {
+                        bytecode.instructions.push(Instruction::new(
+                            Opcode::StructGet,
+                            vec![offset as u16],
+                        ));
+                        return Ok(());
                     }
                 } else {
                     let was_suppressing = self.suppress_move_marking;
@@ -2029,16 +2233,17 @@ impl<'a> Compiler<'a> {
                     self.compile_expression(expr, bytecode)?;
                     self.suppress_move_marking = was_suppressing;
                     let struct_type = self.infer_expression_struct_type(expr);
-                    if let Some(struct_name) = struct_type {
-                        if let Some(struct_def) = self.struct_defs.get(&struct_name) {
-                            if let Some(&offset) = struct_def.field_offsets.get(field) {
-                                bytecode.instructions.push(Instruction::new(
-                                    Opcode::StructGet,
-                                    vec![offset as u16],
-                                ));
-                                return Ok(());
-                            }
-                        }
+                    if let Some(struct_name) = struct_type
+                        && let Some(struct_def) =
+                            self.struct_defs.get(&struct_name)
+                        && let Some(&offset) =
+                            struct_def.field_offsets.get(field)
+                    {
+                        bytecode.instructions.push(Instruction::new(
+                            Opcode::StructGet,
+                            vec![offset as u16],
+                        ));
+                        return Ok(());
                     }
                 }
                 bytecode
@@ -2126,28 +2331,54 @@ impl<'a> Compiler<'a> {
                         ));
                     }
                     Expression::FieldAccess(base_expr, field) => {
-                        let (base_name, total_offset) = self.compute_field_access_offset(base_expr, field)?;
+                        let (base_name, total_offset) =
+                            self.compute_field_access_offset(base_expr, field)?;
                         if self.moved_symbols.contains(&base_name) {
-                            anyhow::bail!("cannot borrow moved value: '{}'", base_name);
+                            anyhow::bail!(
+                                "cannot borrow moved value: '{}'",
+                                base_name
+                            );
                         }
                         self.borrow_checker.try_borrow(&base_name, false)?;
-                        let symbol = self.symbol_table.resolve(&base_name).ok_or_else(|| {
-                            anyhow::anyhow!("undefined variable: {}", base_name)
-                        })?;
+                        let symbol = self
+                            .symbol_table
+                            .resolve(&base_name)
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "undefined variable: {}",
+                                    base_name
+                                )
+                            })?;
                         let opcode = match symbol.scope {
                             SymbolScope::Local => Opcode::AddressOfLocal,
                             SymbolScope::Global => Opcode::AddressOfGlobal,
-                            _ => anyhow::bail!("cannot borrow {:?}", symbol.scope),
+                            _ => anyhow::bail!(
+                                "cannot borrow {:?}",
+                                symbol.scope
+                            ),
                         };
-                        bytecode.instructions.push(Instruction::new(opcode, vec![symbol.index as u16]));
+                        bytecode.instructions.push(Instruction::new(
+                            opcode,
+                            vec![symbol.index as u16],
+                        ));
                         if total_offset > 0 {
-                            let constant_index = bytecode.constants.len() as u16;
-                            bytecode.constants.push(Value64::Integer(total_offset as i64));
-                            bytecode.instructions.push(Instruction::new(Opcode::Constant, vec![constant_index]));
-                            bytecode.instructions.push(Instruction::new(Opcode::AddI64, vec![]));
+                            let constant_index =
+                                bytecode.constants.len() as u16;
+                            bytecode
+                                .constants
+                                .push(Value64::Integer(total_offset as i64));
+                            bytecode.instructions.push(Instruction::new(
+                                Opcode::Constant,
+                                vec![constant_index],
+                            ));
+                            bytecode
+                                .instructions
+                                .push(Instruction::new(Opcode::AddI64, vec![]));
                         }
                     }
-                    _ => anyhow::bail!("can only borrow identifiers or field access"),
+                    _ => anyhow::bail!(
+                        "can only borrow identifiers or field access"
+                    ),
                 }
                 Ok(())
             }
@@ -2187,31 +2418,60 @@ impl<'a> Compiler<'a> {
                         ));
                     }
                     Expression::FieldAccess(base_expr, field) => {
-                        let (base_name, total_offset) = self.compute_field_access_offset(base_expr, field)?;
+                        let (base_name, total_offset) =
+                            self.compute_field_access_offset(base_expr, field)?;
                         if self.moved_symbols.contains(&base_name) {
-                            anyhow::bail!("cannot borrow moved value: '{}'", base_name);
+                            anyhow::bail!(
+                                "cannot borrow moved value: '{}'",
+                                base_name
+                            );
                         }
-                        let symbol = self.symbol_table.resolve(&base_name).ok_or_else(|| {
-                            anyhow::anyhow!("undefined variable: {}", base_name)
-                        })?;
+                        let symbol = self
+                            .symbol_table
+                            .resolve(&base_name)
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "undefined variable: {}",
+                                    base_name
+                                )
+                            })?;
                         if !symbol.mutable {
-                            anyhow::bail!("cannot mutably borrow immutable variable '{}'", base_name);
+                            anyhow::bail!(
+                                "cannot mutably borrow immutable variable '{}'",
+                                base_name
+                            );
                         }
                         self.borrow_checker.try_borrow(&base_name, true)?;
                         let opcode = match symbol.scope {
                             SymbolScope::Local => Opcode::AddressOfLocal,
                             SymbolScope::Global => Opcode::AddressOfGlobal,
-                            _ => anyhow::bail!("cannot borrow {:?}", symbol.scope),
+                            _ => anyhow::bail!(
+                                "cannot borrow {:?}",
+                                symbol.scope
+                            ),
                         };
-                        bytecode.instructions.push(Instruction::new(opcode, vec![symbol.index as u16]));
+                        bytecode.instructions.push(Instruction::new(
+                            opcode,
+                            vec![symbol.index as u16],
+                        ));
                         if total_offset > 0 {
-                            let constant_index = bytecode.constants.len() as u16;
-                            bytecode.constants.push(Value64::Integer(total_offset as i64));
-                            bytecode.instructions.push(Instruction::new(Opcode::Constant, vec![constant_index]));
-                            bytecode.instructions.push(Instruction::new(Opcode::AddI64, vec![]));
+                            let constant_index =
+                                bytecode.constants.len() as u16;
+                            bytecode
+                                .constants
+                                .push(Value64::Integer(total_offset as i64));
+                            bytecode.instructions.push(Instruction::new(
+                                Opcode::Constant,
+                                vec![constant_index],
+                            ));
+                            bytecode
+                                .instructions
+                                .push(Instruction::new(Opcode::AddI64, vec![]));
                         }
                     }
-                    _ => anyhow::bail!("can only borrow identifiers or field access"),
+                    _ => anyhow::bail!(
+                        "can only borrow identifiers or field access"
+                    ),
                 }
                 Ok(())
             }
@@ -2223,102 +2483,136 @@ impl<'a> Compiler<'a> {
                 Ok(())
             }
             Expression::Call(function, arguments) => {
-                if let Expression::Identifier(name) = function.as_ref() {
-                    if let Some(generic_def) = self.generic_functions.get(name).cloned() {
-                        let mut substitution = MonoSubstitution::new();
-                        for (index, param) in generic_def.parameters.iter().enumerate() {
-                            if let Some(Type::TypeParam(type_param_name)) = &param.type_annotation {
-                                if index < arguments.len() {
-                                    if let Some(inferred_type) = self.infer_expression_type(&arguments[index]) {
-                                        substitution.bind(type_param_name, inferred_type);
-                                    }
-                                }
-                            }
+                if let Expression::Identifier(name) = function.as_ref()
+                    && let Some(generic_def) =
+                        self.generic_functions.get(name).cloned()
+                {
+                    let mut substitution = MonoSubstitution::new();
+                    for (index, param) in
+                        generic_def.parameters.iter().enumerate()
+                    {
+                        if let Some(Type::TypeParam(type_param_name)) =
+                            &param.type_annotation
+                            && index < arguments.len()
+                            && let Some(inferred_type) =
+                                self.infer_expression_type(&arguments[index])
+                        {
+                            substitution.bind(type_param_name, inferred_type);
                         }
-                        let mangled_name = substitution.mangle_name(name, &generic_def.type_params);
-                        if !self.monomorphized_functions.contains(&mangled_name) {
-                            self.monomorphized_functions.insert(mangled_name.clone());
-                            let mono_params: Vec<Parameter> = generic_def.parameters.iter()
-                                .map(|p| substitution.substitute_param(p))
-                                .collect();
-                            let mono_return_sig = substitution.substitute_return_sig(&generic_def.return_sig);
-                            let mono_body: Vec<Statement> = generic_def.body.iter()
-                                .map(|s| substitution.substitute_stmt(s))
-                                .collect();
-                            let symbol = self.symbol_table.define(&mangled_name);
-                            self.validate_and_store_return_type(&mangled_name, &mono_return_sig)?;
-                            self.compile_function_with_name(
-                                &mangled_name, &mono_params, &mono_return_sig, &mono_body, bytecode,
-                            )?;
-                            let opcode = if symbol.scope == SymbolScope::Global {
-                                bytecode.global_symbols.insert(mangled_name.clone(), symbol.index);
-                                Opcode::SetGlobal
-                            } else {
-                                Opcode::SetLocal
-                            };
-                            bytecode.instructions.push(Instruction::new(opcode, vec![symbol.index as u16]));
-                        }
-                        if let Some(symbol) = self.symbol_table.resolve(&mangled_name) {
-                            self.load_symbol(&symbol, bytecode);
-                        }
-                        let is_constructor = mangled_name.ends_with("_new") || mangled_name.starts_with("new_");
-                        let is_non_consuming_builtin = matches!(mangled_name.as_str(), "len" | "first" | "last" | "print" | "assert");
-                        let was_suppressing = self.suppress_move_marking;
-                        self.suppress_move_marking = true;
-                        for arg in arguments {
-                            self.compile_expression(arg, bytecode)?;
-                            if !is_non_consuming_builtin {
-                                if let Expression::Identifier(arg_name) = arg {
-                                    if let Some(sym) = self.symbol_table.resolve(arg_name) {
-                                        if let Some(ref symbol_type) = sym.symbol_type {
-                                            if !symbol_type.is_copy() {
-                                                self.moved_symbols.insert(arg_name.clone());
-                                                if is_constructor {
-                                                    if let Some(scope) = self.scope_owned_values.last_mut() {
-                                                        scope.retain(|n| n != arg_name);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        self.suppress_move_marking = was_suppressing;
-                        bytecode.instructions.push(Instruction::new(
-                            Opcode::Call,
-                            vec![arguments.len() as u16],
-                        ));
-                        self.borrow_checker.active_borrows.clear();
-                        return Ok(());
                     }
+                    let mangled_name = substitution
+                        .mangle_name(name, &generic_def.type_params);
+                    if !self.monomorphized_functions.contains(&mangled_name) {
+                        self.monomorphized_functions
+                            .insert(mangled_name.clone());
+                        let mono_params: Vec<Parameter> = generic_def
+                            .parameters
+                            .iter()
+                            .map(|p| substitution.substitute_param(p))
+                            .collect();
+                        let mono_return_sig = substitution
+                            .substitute_return_sig(&generic_def.return_sig);
+                        let mono_body: Vec<Statement> = generic_def
+                            .body
+                            .iter()
+                            .map(|s| substitution.substitute_stmt(s))
+                            .collect();
+                        let symbol = self.symbol_table.define(&mangled_name);
+                        self.validate_and_store_return_type(
+                            &mangled_name,
+                            &mono_return_sig,
+                        )?;
+                        self.compile_function_with_name(
+                            &mangled_name,
+                            FunctionArtifact {
+                                parameters: &mono_params,
+                                return_sig: &mono_return_sig,
+                                body: &mono_body,
+                            },
+                            bytecode,
+                        )?;
+                        let opcode = if symbol.scope == SymbolScope::Global {
+                            bytecode
+                                .global_symbols
+                                .insert(mangled_name.clone(), symbol.index);
+                            Opcode::SetGlobal
+                        } else {
+                            Opcode::SetLocal
+                        };
+                        bytecode.instructions.push(Instruction::new(
+                            opcode,
+                            vec![symbol.index as u16],
+                        ));
+                    }
+                    if let Some(symbol) =
+                        self.symbol_table.resolve(&mangled_name)
+                    {
+                        self.load_symbol(&symbol, bytecode);
+                    }
+                    let is_constructor = mangled_name.ends_with("_new")
+                        || mangled_name.starts_with("new_");
+                    let is_non_consuming_builtin = matches!(
+                        mangled_name.as_str(),
+                        "len" | "first" | "last" | "print" | "assert"
+                    );
+                    let was_suppressing = self.suppress_move_marking;
+                    self.suppress_move_marking = true;
+                    for arg in arguments {
+                        self.compile_expression(arg, bytecode)?;
+                        if !is_non_consuming_builtin
+                            && let Expression::Identifier(arg_name) = arg
+                            && let Some(sym) =
+                                self.symbol_table.resolve(arg_name)
+                            && let Some(ref symbol_type) = sym.symbol_type
+                            && !symbol_type.is_copy()
+                        {
+                            self.moved_symbols.insert(arg_name.clone());
+                            if is_constructor
+                                && let Some(scope) =
+                                    self.scope_owned_values.last_mut()
+                            {
+                                scope.retain(|n| n != arg_name);
+                            }
+                        }
+                    }
+                    self.suppress_move_marking = was_suppressing;
+                    bytecode.instructions.push(Instruction::new(
+                        Opcode::Call,
+                        vec![arguments.len() as u16],
+                    ));
+                    self.borrow_checker.active_borrows.clear();
+                    return Ok(());
                 }
-                let (is_constructor, is_non_consuming_builtin) = if let Expression::Identifier(func_name) = function.as_ref() {
-                    let constructor = func_name.ends_with("_new") || func_name.starts_with("new_");
-                    let non_consuming = matches!(func_name.as_str(), "len" | "first" | "last" | "print" | "assert");
-                    (constructor, non_consuming)
-                } else {
-                    (false, false)
-                };
+                let (is_constructor, is_non_consuming_builtin) =
+                    if let Expression::Identifier(func_name) = function.as_ref()
+                    {
+                        let constructor = func_name.ends_with("_new")
+                            || func_name.starts_with("new_");
+                        let non_consuming = matches!(
+                            func_name.as_str(),
+                            "len" | "first" | "last" | "print" | "assert"
+                        );
+                        (constructor, non_consuming)
+                    } else {
+                        (false, false)
+                    };
                 self.compile_expression(function, bytecode)?;
                 let was_suppressing = self.suppress_move_marking;
                 self.suppress_move_marking = true;
                 for arg in arguments {
                     self.compile_expression(arg, bytecode)?;
-                    if !is_non_consuming_builtin {
-                        if let Expression::Identifier(name) = arg {
-                            if let Some(symbol) = self.symbol_table.resolve(name) {
-                                if let Some(ref symbol_type) = symbol.symbol_type {
-                                    if !symbol_type.is_copy() {
-                                        self.moved_symbols.insert(name.clone());
-                                        if is_constructor {
-                                            if let Some(scope) = self.scope_owned_values.last_mut() {
-                                                scope.retain(|n| n != name);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                    if !is_non_consuming_builtin
+                        && let Expression::Identifier(name) = arg
+                        && let Some(symbol) = self.symbol_table.resolve(name)
+                        && let Some(ref symbol_type) = symbol.symbol_type
+                        && !symbol_type.is_copy()
+                    {
+                        self.moved_symbols.insert(name.clone());
+                        if is_constructor
+                            && let Some(scope) =
+                                self.scope_owned_values.last_mut()
+                        {
+                            scope.retain(|n| n != name);
                         }
                     }
                 }
@@ -2360,7 +2654,8 @@ impl<'a> Compiler<'a> {
             Expression::EnumVariantInit(enum_name, variant_name, fields) => {
                 let full_name = format!("{}::{}", enum_name, variant_name);
                 if fields.is_empty() {
-                    if let Some(symbol) = self.symbol_table.resolve(&full_name) {
+                    if let Some(symbol) = self.symbol_table.resolve(&full_name)
+                    {
                         self.load_symbol(&symbol, bytecode);
                     } else {
                         let tag = self.get_variant_tag(enum_name, variant_name);
@@ -2439,26 +2734,35 @@ impl<'a> Compiler<'a> {
                 Ok(())
             }
             Expression::ContextAccess => {
-                bytecode.instructions.push(Instruction::new(Opcode::GetContext, vec![]));
+                bytecode
+                    .instructions
+                    .push(Instruction::new(Opcode::GetContext, vec![]));
                 Ok(())
             }
-            Expression::IfLet(pattern, value, consequence, alternative) => {
-                self.compile_if_let(pattern, value, consequence, alternative.as_ref(), bytecode)
-            }
+            Expression::IfLet(pattern, value, consequence, alternative) => self
+                .compile_if_let(
+                    (pattern, value, consequence, alternative.as_ref()),
+                    bytecode,
+                ),
         }
     }
 
     fn compile_if_let(
         &mut self,
-        pattern: &crate::parser::Pattern,
-        value: &Expression,
-        consequence: &[Statement],
-        alternative: Option<&Vec<Statement>>,
+        parts: (
+            &crate::parser::Pattern,
+            &Expression,
+            &[Statement],
+            Option<&Vec<Statement>>,
+        ),
         bytecode: &mut Bytecode,
     ) -> Result<()> {
+        let (pattern, value, consequence, alternative) = parts;
         let value_enum_name = match self.infer_expression_type(value) {
             Some(Type::Enum(name)) => Some(name),
-            Some(Type::Struct(name)) if self.enum_defs.contains_key(&name) => Some(name),
+            Some(Type::Struct(name)) if self.enum_defs.contains_key(&name) => {
+                Some(name)
+            }
             _ => None,
         };
         self.compile_expression(value, bytecode)?;
@@ -2468,87 +2772,148 @@ impl<'a> Compiler<'a> {
         match pattern {
             crate::parser::Pattern::Wildcard => {}
             crate::parser::Pattern::Literal(lit) => {
-                bytecode.instructions.push(Instruction::new(Opcode::Dup, vec![]));
+                bytecode
+                    .instructions
+                    .push(Instruction::new(Opcode::Dup, vec![]));
                 self.compile_literal(lit, bytecode)?;
                 let eq_opcode = match lit {
                     Literal::Integer(_) => Opcode::EqualI64,
                     _ => Opcode::Equal,
                 };
-                bytecode.instructions.push(Instruction::new(eq_opcode, vec![]));
+                bytecode
+                    .instructions
+                    .push(Instruction::new(eq_opcode, vec![]));
                 let jump_pos = bytecode.instructions.len();
-                bytecode.instructions.push(Instruction::new(Opcode::JumpNotTruthy, vec![9999]));
+                bytecode
+                    .instructions
+                    .push(Instruction::new(Opcode::JumpNotTruthy, vec![9999]));
                 jump_to_else.push(jump_pos);
             }
             crate::parser::Pattern::Identifier(name) => {
-                bytecode.instructions.push(Instruction::new(Opcode::Dup, vec![]));
+                bytecode
+                    .instructions
+                    .push(Instruction::new(Opcode::Dup, vec![]));
                 let symbol = self.symbol_table.define(name);
                 let opcode = match symbol.scope {
                     SymbolScope::Local => Opcode::SetLocal,
                     SymbolScope::Global => Opcode::SetGlobal,
                     _ => anyhow::bail!("unexpected scope"),
                 };
-                bytecode.instructions.push(Instruction::new(opcode, vec![symbol.index as u16]));
+                bytecode
+                    .instructions
+                    .push(Instruction::new(opcode, vec![symbol.index as u16]));
             }
             crate::parser::Pattern::Tuple(patterns) => {
                 for (index, pat) in patterns.iter().enumerate() {
                     match pat {
                         crate::parser::Pattern::Wildcard => {}
                         crate::parser::Pattern::Literal(lit) => {
-                            bytecode.instructions.push(Instruction::new(Opcode::Dup, vec![]));
-                            bytecode.instructions.push(Instruction::new(Opcode::TupleGet, vec![index as u16]));
+                            bytecode
+                                .instructions
+                                .push(Instruction::new(Opcode::Dup, vec![]));
+                            bytecode.instructions.push(Instruction::new(
+                                Opcode::TupleGet,
+                                vec![index as u16],
+                            ));
                             self.compile_literal(lit, bytecode)?;
-                            bytecode.instructions.push(Instruction::new(Opcode::EqualI64, vec![]));
+                            bytecode.instructions.push(Instruction::new(
+                                Opcode::EqualI64,
+                                vec![],
+                            ));
                             let jump_pos = bytecode.instructions.len();
-                            bytecode.instructions.push(Instruction::new(Opcode::JumpNotTruthy, vec![9999]));
+                            bytecode.instructions.push(Instruction::new(
+                                Opcode::JumpNotTruthy,
+                                vec![9999],
+                            ));
                             jump_to_else.push(jump_pos);
                         }
                         crate::parser::Pattern::Identifier(name) => {
-                            bytecode.instructions.push(Instruction::new(Opcode::Dup, vec![]));
-                            bytecode.instructions.push(Instruction::new(Opcode::TupleGet, vec![index as u16]));
+                            bytecode
+                                .instructions
+                                .push(Instruction::new(Opcode::Dup, vec![]));
+                            bytecode.instructions.push(Instruction::new(
+                                Opcode::TupleGet,
+                                vec![index as u16],
+                            ));
                             let symbol = self.symbol_table.define(name);
                             let opcode = match symbol.scope {
                                 SymbolScope::Local => Opcode::SetLocal,
                                 SymbolScope::Global => Opcode::SetGlobal,
                                 _ => anyhow::bail!("unexpected scope"),
                             };
-                            bytecode.instructions.push(Instruction::new(opcode, vec![symbol.index as u16]));
+                            bytecode.instructions.push(Instruction::new(
+                                opcode,
+                                vec![symbol.index as u16],
+                            ));
                         }
-                        _ => anyhow::bail!("nested patterns not supported in if let tuple"),
+                        _ => anyhow::bail!(
+                            "nested patterns not supported in if let tuple"
+                        ),
                     }
                 }
             }
-            crate::parser::Pattern::EnumVariant { enum_name, variant_name, bindings } => {
-                let effective_enum_name = enum_name.as_ref().cloned().or_else(|| value_enum_name.clone());
+            crate::parser::Pattern::EnumVariant {
+                enum_name,
+                variant_name,
+                bindings,
+            } => {
+                let effective_enum_name = enum_name
+                    .as_ref()
+                    .cloned()
+                    .or_else(|| value_enum_name.clone());
                 let tag = if let Some(en) = &effective_enum_name {
                     self.get_variant_tag(en, variant_name)
                 } else {
                     0
                 };
-                bytecode.instructions.push(Instruction::new(Opcode::Dup, vec![]));
-                bytecode.instructions.push(Instruction::new(Opcode::TaggedUnionGetTag, vec![]));
+                bytecode
+                    .instructions
+                    .push(Instruction::new(Opcode::Dup, vec![]));
+                bytecode
+                    .instructions
+                    .push(Instruction::new(Opcode::TaggedUnionGetTag, vec![]));
                 let constant_index = bytecode.constants.len() as u16;
                 bytecode.constants.push(Value64::Integer(tag as i64));
-                bytecode.instructions.push(Instruction::new(Opcode::Constant, vec![constant_index]));
-                bytecode.instructions.push(Instruction::new(Opcode::EqualI64, vec![]));
+                bytecode.instructions.push(Instruction::new(
+                    Opcode::Constant,
+                    vec![constant_index],
+                ));
+                bytecode
+                    .instructions
+                    .push(Instruction::new(Opcode::EqualI64, vec![]));
                 let jump_pos = bytecode.instructions.len();
-                bytecode.instructions.push(Instruction::new(Opcode::JumpNotTruthy, vec![9999]));
+                bytecode
+                    .instructions
+                    .push(Instruction::new(Opcode::JumpNotTruthy, vec![9999]));
                 jump_to_else.push(jump_pos);
 
-                for (offset, (_field_name, binding_name)) in bindings.iter().enumerate() {
-                    bytecode.instructions.push(Instruction::new(Opcode::Dup, vec![]));
-                    bytecode.instructions.push(Instruction::new(Opcode::TaggedUnionGetField, vec![offset as u16]));
+                for (offset, (_field_name, binding_name)) in
+                    bindings.iter().enumerate()
+                {
+                    bytecode
+                        .instructions
+                        .push(Instruction::new(Opcode::Dup, vec![]));
+                    bytecode.instructions.push(Instruction::new(
+                        Opcode::TaggedUnionGetField,
+                        vec![offset as u16],
+                    ));
                     let symbol = self.symbol_table.define(binding_name);
                     let opcode = match symbol.scope {
                         SymbolScope::Local => Opcode::SetLocal,
                         SymbolScope::Global => Opcode::SetGlobal,
                         _ => anyhow::bail!("unexpected scope"),
                     };
-                    bytecode.instructions.push(Instruction::new(opcode, vec![symbol.index as u16]));
+                    bytecode.instructions.push(Instruction::new(
+                        opcode,
+                        vec![symbol.index as u16],
+                    ));
                 }
             }
         }
 
-        bytecode.instructions.push(Instruction::new(Opcode::Pop, vec![]));
+        bytecode
+            .instructions
+            .push(Instruction::new(Opcode::Pop, vec![]));
 
         let moved_before = self.moved_symbols.clone();
         for statement in consequence {
@@ -2558,14 +2923,18 @@ impl<'a> Compiler<'a> {
         let moved_in_consequence = self.moved_symbols.clone();
 
         let jump_over_else = bytecode.instructions.len();
-        bytecode.instructions.push(Instruction::new(Opcode::Jump, vec![9999]));
+        bytecode
+            .instructions
+            .push(Instruction::new(Opcode::Jump, vec![9999]));
 
         let else_start = bytecode.instructions.len();
         for jump_pos in jump_to_else {
             bytecode.instructions[jump_pos].operands[0] = else_start as u16;
         }
 
-        bytecode.instructions.push(Instruction::new(Opcode::Pop, vec![]));
+        bytecode
+            .instructions
+            .push(Instruction::new(Opcode::Pop, vec![]));
 
         self.moved_symbols = moved_before.clone();
         if let Some(alt) = alternative {
@@ -2574,7 +2943,9 @@ impl<'a> Compiler<'a> {
             }
             self.remove_last_pop(bytecode);
         } else {
-            bytecode.instructions.push(Instruction::new(Opcode::Null, vec![]));
+            bytecode
+                .instructions
+                .push(Instruction::new(Opcode::Null, vec![]));
         }
         let moved_in_alternative = self.moved_symbols.clone();
 
@@ -2637,7 +3008,7 @@ impl<'a> Compiler<'a> {
         let mut jump_ends: Vec<usize> = Vec::new();
         let mut next_case_jumps: Vec<usize> = Vec::new();
 
-        for (_case_index, case) in cases.iter().enumerate() {
+        for case in cases.iter() {
             for jump_pos in next_case_jumps.drain(..) {
                 bytecode.instructions[jump_pos].operands[0] =
                     bytecode.instructions.len() as u16;
@@ -2777,19 +3148,26 @@ impl<'a> Compiler<'a> {
                             Opcode::TaggedUnionGetField,
                             vec![offset as u16],
                         ));
-                        let field_type = effective_enum_name.as_ref().and_then(|en| {
-                            self.enum_defs.get(en).and_then(|enum_def| {
-                                enum_def.variants.iter()
-                                    .find(|v| v.name == *variant_name)
-                                    .and_then(|variant| {
-                                        variant.fields.iter()
-                                            .find(|f| f.name == *field_name)
-                                            .map(|f| f.field_type.clone())
-                                    })
-                            })
-                        });
+                        let field_type =
+                            effective_enum_name.as_ref().and_then(|en| {
+                                self.enum_defs.get(en).and_then(|enum_def| {
+                                    enum_def
+                                        .variants
+                                        .iter()
+                                        .find(|v| v.name == *variant_name)
+                                        .and_then(|variant| {
+                                            variant
+                                                .fields
+                                                .iter()
+                                                .find(|f| f.name == *field_name)
+                                                .map(|f| f.field_type.clone())
+                                        })
+                                })
+                            });
                         self.moved_symbols.remove(binding_name);
-                        let symbol = self.symbol_table.define_with_type(binding_name, field_type);
+                        let symbol = self
+                            .symbol_table
+                            .define_with_type(binding_name, field_type);
                         let opcode = match symbol.scope {
                             SymbolScope::Local => Opcode::SetLocal,
                             SymbolScope::Global => Opcode::SetGlobal,
@@ -3151,11 +3529,14 @@ impl<'a> Compiler<'a> {
     fn compile_function_with_name(
         &mut self,
         name: &str,
-        parameters: &[Parameter],
-        return_sig: &ReturnSignature,
-        body: &[Statement],
+        function: FunctionArtifact,
         bytecode: &mut Bytecode,
     ) -> Result<()> {
+        let FunctionArtifact {
+            parameters,
+            return_sig,
+            body,
+        } = function;
         let outer_symbol_table = std::mem::take(&mut self.symbol_table);
         let outer_moved_symbols = std::mem::take(&mut self.moved_symbols);
         self.symbol_table = SymbolTable::new_enclosed(outer_symbol_table);
@@ -3201,14 +3582,17 @@ impl<'a> Compiler<'a> {
         {
             if let Some(named_params) = return_sig.named_params() {
                 if named_params.len() == 1 {
-                    if let Some(symbol) = self.symbol_table.resolve(&named_params[0].name) {
+                    if let Some(symbol) =
+                        self.symbol_table.resolve(&named_params[0].name)
+                    {
                         fn_bytecode.instructions.push(Instruction::new(
                             Opcode::GetLocal,
                             vec![symbol.index as u16],
                         ));
-                        fn_bytecode
-                            .instructions
-                            .push(Instruction::new(Opcode::ReturnValue, vec![]));
+                        fn_bytecode.instructions.push(Instruction::new(
+                            Opcode::ReturnValue,
+                            vec![],
+                        ));
                     } else {
                         fn_bytecode
                             .instructions
@@ -3273,37 +3657,41 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn infer_expression_struct_type(&self, expr: &Expression) -> Option<String> {
+    fn infer_expression_struct_type(
+        &self,
+        expr: &Expression,
+    ) -> Option<String> {
         match expr {
             Expression::Identifier(name) => {
-                if let Some(symbol) = self.symbol_table.store.get(name) {
-                    if let Some(Type::Struct(struct_name)) = &symbol.symbol_type {
-                        return Some(struct_name.clone());
-                    }
+                if let Some(symbol) = self.symbol_table.store.get(name)
+                    && let Some(Type::Struct(struct_name)) = &symbol.symbol_type
+                {
+                    return Some(struct_name.clone());
                 }
                 None
             }
             Expression::Index(array_expr, _) => {
-                if let Expression::Identifier(name) = array_expr.as_ref() {
-                    if let Some(symbol) = self.symbol_table.store.get(name) {
-                        if let Some(symbol_type) = &symbol.symbol_type {
-                            match symbol_type {
-                                Type::Array(inner, _) | Type::Slice(inner) => {
-                                    if let Type::Struct(struct_name) = inner.as_ref() {
-                                        return Some(struct_name.clone());
-                                    }
-                                }
-                                _ => {}
+                if let Expression::Identifier(name) = array_expr.as_ref()
+                    && let Some(symbol) = self.symbol_table.store.get(name)
+                    && let Some(symbol_type) = &symbol.symbol_type
+                {
+                    match symbol_type {
+                        Type::Array(inner, _) | Type::Slice(inner) => {
+                            if let Type::Struct(struct_name) = inner.as_ref() {
+                                return Some(struct_name.clone());
                             }
                         }
+                        _ => {}
                     }
                 }
                 None
             }
             Expression::FieldAccess(inner_expr, field_name) => {
-                let parent_type = self.infer_expression_struct_type(inner_expr)?;
+                let parent_type =
+                    self.infer_expression_struct_type(inner_expr)?;
                 let struct_def = self.struct_defs.get(&parent_type)?;
-                let field_def = struct_def.fields.iter().find(|f| &f.name == field_name)?;
+                let field_def =
+                    struct_def.fields.iter().find(|f| &f.name == field_name)?;
                 if let Type::Struct(struct_name) = &field_def.field_type {
                     Some(struct_name.clone())
                 } else {
@@ -3314,7 +3702,11 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn infer_field_access_type(&self, base_expr: &Expression, field_name: &str) -> Option<Type> {
+    fn infer_field_access_type(
+        &self,
+        base_expr: &Expression,
+        field_name: &str,
+    ) -> Option<Type> {
         let struct_name = match base_expr {
             Expression::Identifier(name) => {
                 if let Some(symbol) = self.symbol_table.store.get(name) {
@@ -3336,11 +3728,16 @@ impl<'a> Compiler<'a> {
             _ => None,
         }?;
         let struct_def = self.struct_defs.get(&struct_name)?;
-        let field_def = struct_def.fields.iter().find(|f| f.name == field_name)?;
+        let field_def =
+            struct_def.fields.iter().find(|f| f.name == field_name)?;
         Some(field_def.field_type.clone())
     }
 
-    fn infer_field_access_element_type(&self, base_expr: &Expression, field_name: &str) -> Option<Type> {
+    fn infer_field_access_element_type(
+        &self,
+        base_expr: &Expression,
+        field_name: &str,
+    ) -> Option<Type> {
         let struct_name = match base_expr {
             Expression::Identifier(name) => {
                 if let Some(symbol) = self.symbol_table.store.get(name) {
@@ -3362,59 +3759,87 @@ impl<'a> Compiler<'a> {
             _ => None,
         }?;
         let struct_def = self.struct_defs.get(&struct_name)?;
-        let field_def = struct_def.fields.iter().find(|f| f.name == field_name)?;
+        let field_def =
+            struct_def.fields.iter().find(|f| f.name == field_name)?;
         match &field_def.field_type {
-            Type::Array(inner, _) | Type::Slice(inner) => Some(inner.as_ref().clone()),
+            Type::Array(inner, _) | Type::Slice(inner) => {
+                Some(inner.as_ref().clone())
+            }
             _ => None,
         }
     }
 
-    fn compute_field_access_offset(&mut self, expr: &Expression, field: &str) -> Result<(String, usize)> {
+    fn compute_field_access_offset(
+        &mut self,
+        expr: &Expression,
+        field: &str,
+    ) -> Result<(String, usize)> {
         match expr {
             Expression::Identifier(name) => {
-                let symbol = self.symbol_table.resolve(name).ok_or_else(|| {
-                    anyhow::anyhow!("undefined variable: {}", name)
-                })?;
+                let symbol =
+                    self.symbol_table.resolve(name).ok_or_else(|| {
+                        anyhow::anyhow!("undefined variable: {}", name)
+                    })?;
                 let struct_name = match &symbol.symbol_type {
                     Some(Type::Struct(s)) => s.clone(),
                     Some(Type::RefMut(inner)) | Some(Type::Ref(inner)) => {
                         if let Type::Struct(s) = inner.as_ref() {
                             s.clone()
                         } else {
-                            anyhow::bail!("expected struct type for field access")
+                            anyhow::bail!(
+                                "expected struct type for field access"
+                            )
                         }
                     }
                     _ => anyhow::bail!("expected struct type for field access"),
                 };
-                let struct_def = self.struct_defs.get(&struct_name).ok_or_else(|| {
-                    anyhow::anyhow!("undefined struct: {}", struct_name)
-                })?;
-                let offset = *struct_def.field_offsets.get(field).ok_or_else(|| {
-                    anyhow::anyhow!("unknown field: {}", field)
-                })?;
+                let struct_def =
+                    self.struct_defs.get(&struct_name).ok_or_else(|| {
+                        anyhow::anyhow!("undefined struct: {}", struct_name)
+                    })?;
+                let offset =
+                    *struct_def.field_offsets.get(field).ok_or_else(|| {
+                        anyhow::anyhow!("unknown field: {}", field)
+                    })?;
                 Ok((name.clone(), offset))
             }
             Expression::FieldAccess(inner_expr, inner_field) => {
-                let (base_name, base_offset) = self.compute_field_access_offset(inner_expr, inner_field)?;
-                let inner_struct_type = self.get_field_struct_type(inner_expr, inner_field)?;
-                let struct_def = self.struct_defs.get(&inner_struct_type).ok_or_else(|| {
-                    anyhow::anyhow!("undefined struct: {}", inner_struct_type)
-                })?;
-                let field_offset = *struct_def.field_offsets.get(field).ok_or_else(|| {
-                    anyhow::anyhow!("unknown field: {}", field)
-                })?;
+                let (base_name, base_offset) =
+                    self.compute_field_access_offset(inner_expr, inner_field)?;
+                let inner_struct_type =
+                    self.get_field_struct_type(inner_expr, inner_field)?;
+                let struct_def = self
+                    .struct_defs
+                    .get(&inner_struct_type)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "undefined struct: {}",
+                            inner_struct_type
+                        )
+                    })?;
+                let field_offset =
+                    *struct_def.field_offsets.get(field).ok_or_else(|| {
+                        anyhow::anyhow!("unknown field: {}", field)
+                    })?;
                 Ok((base_name, base_offset + field_offset))
             }
-            _ => anyhow::bail!("expected identifier or field access for borrowing"),
+            _ => anyhow::bail!(
+                "expected identifier or field access for borrowing"
+            ),
         }
     }
 
-    fn get_field_struct_type(&mut self, expr: &Expression, field: &str) -> Result<String> {
+    fn get_field_struct_type(
+        &mut self,
+        expr: &Expression,
+        field: &str,
+    ) -> Result<String> {
         match expr {
             Expression::Identifier(name) => {
-                let symbol = self.symbol_table.resolve(name).ok_or_else(|| {
-                    anyhow::anyhow!("undefined variable: {}", name)
-                })?;
+                let symbol =
+                    self.symbol_table.resolve(name).ok_or_else(|| {
+                        anyhow::anyhow!("undefined variable: {}", name)
+                    })?;
                 let struct_name = match &symbol.symbol_type {
                     Some(Type::Struct(s)) => s.clone(),
                     Some(Type::RefMut(inner)) | Some(Type::Ref(inner)) => {
@@ -3426,12 +3851,17 @@ impl<'a> Compiler<'a> {
                     }
                     _ => anyhow::bail!("expected struct type"),
                 };
-                let struct_def = self.struct_defs.get(&struct_name).ok_or_else(|| {
-                    anyhow::anyhow!("undefined struct: {}", struct_name)
-                })?;
-                let field_def = struct_def.fields.iter().find(|f| f.name == field).ok_or_else(|| {
-                    anyhow::anyhow!("unknown field: {}", field)
-                })?;
+                let struct_def =
+                    self.struct_defs.get(&struct_name).ok_or_else(|| {
+                        anyhow::anyhow!("undefined struct: {}", struct_name)
+                    })?;
+                let field_def = struct_def
+                    .fields
+                    .iter()
+                    .find(|f| f.name == field)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("unknown field: {}", field)
+                    })?;
                 if let Type::Struct(s) = &field_def.field_type {
                     Ok(s.clone())
                 } else {
@@ -3439,13 +3869,19 @@ impl<'a> Compiler<'a> {
                 }
             }
             Expression::FieldAccess(inner_expr, inner_field) => {
-                let inner_type = self.get_field_struct_type(inner_expr, inner_field)?;
-                let struct_def = self.struct_defs.get(&inner_type).ok_or_else(|| {
-                    anyhow::anyhow!("undefined struct: {}", inner_type)
-                })?;
-                let field_def = struct_def.fields.iter().find(|f| f.name == field).ok_or_else(|| {
-                    anyhow::anyhow!("unknown field: {}", field)
-                })?;
+                let inner_type =
+                    self.get_field_struct_type(inner_expr, inner_field)?;
+                let struct_def =
+                    self.struct_defs.get(&inner_type).ok_or_else(|| {
+                        anyhow::anyhow!("undefined struct: {}", inner_type)
+                    })?;
+                let field_def = struct_def
+                    .fields
+                    .iter()
+                    .find(|f| f.name == field)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("unknown field: {}", field)
+                    })?;
                 if let Type::Struct(s) = &field_def.field_type {
                     Ok(s.clone())
                 } else {
@@ -3731,17 +4167,22 @@ impl<'a> Compiler<'a> {
             ReturnSignature::Single(t) => {
                 ReturnSignature::Single(Self::substitute_in_type(t, ctx))
             }
-            ReturnSignature::Named(params) => {
-                ReturnSignature::Named(
-                    params
-                        .iter()
-                        .map(|p| crate::parser::ReturnParam {
-                            name: Self::substitute_identifier(&p.name, ctx.type_var, ctx.type_name),
-                            param_type: Self::substitute_in_type(&p.param_type, ctx),
-                        })
-                        .collect(),
-                )
-            }
+            ReturnSignature::Named(params) => ReturnSignature::Named(
+                params
+                    .iter()
+                    .map(|p| crate::parser::ReturnParam {
+                        name: Self::substitute_identifier(
+                            &p.name,
+                            ctx.type_var,
+                            ctx.type_name,
+                        ),
+                        param_type: Self::substitute_in_type(
+                            &p.param_type,
+                            ctx,
+                        ),
+                    })
+                    .collect(),
+            ),
         }
     }
 
@@ -3820,7 +4261,7 @@ mod tests {
     fn test_instruction_as_bytes() -> Result<()> {
         let tests = [(
             Instruction::new(Opcode::Constant, vec![u16::MAX]),
-            vec![
+            [
                 vec![Opcode::Constant as u8],
                 u16::MAX.to_be_bytes().to_vec(),
             ]
@@ -3872,10 +4313,12 @@ mod tests {
         let mut compiler = Compiler::new(&program);
         let bytecode = compiler.compile()?;
 
-        assert!(bytecode
-            .instructions
-            .iter()
-            .any(|i| i.opcode == Opcode::GreaterThanI64));
+        assert!(
+            bytecode
+                .instructions
+                .iter()
+                .any(|i| i.opcode == Opcode::GreaterThanI64)
+        );
         Ok(())
     }
 
@@ -3890,10 +4333,12 @@ mod tests {
         let mut compiler = Compiler::new(&program);
         let bytecode = compiler.compile()?;
 
-        assert!(bytecode
-            .instructions
-            .iter()
-            .any(|i| i.opcode == Opcode::EqualBool));
+        assert!(
+            bytecode
+                .instructions
+                .iter()
+                .any(|i| i.opcode == Opcode::EqualBool)
+        );
         Ok(())
     }
 
@@ -3955,10 +4400,12 @@ mod tests {
         let mut compiler = Compiler::new(&program);
         let bytecode = compiler.compile()?;
 
-        assert!(bytecode
-            .instructions
-            .iter()
-            .any(|i| i.opcode == Opcode::AddressOfGlobal));
+        assert!(
+            bytecode
+                .instructions
+                .iter()
+                .any(|i| i.opcode == Opcode::AddressOfGlobal)
+        );
         Ok(())
     }
 
@@ -3973,14 +4420,18 @@ mod tests {
         let mut compiler = Compiler::new(&program);
         let bytecode = compiler.compile()?;
 
-        assert!(bytecode
-            .instructions
-            .iter()
-            .any(|i| i.opcode == Opcode::AddressOfGlobal));
-        assert!(bytecode
-            .instructions
-            .iter()
-            .any(|i| i.opcode == Opcode::LoadPtr));
+        assert!(
+            bytecode
+                .instructions
+                .iter()
+                .any(|i| i.opcode == Opcode::AddressOfGlobal)
+        );
+        assert!(
+            bytecode
+                .instructions
+                .iter()
+                .any(|i| i.opcode == Opcode::LoadPtr)
+        );
         Ok(())
     }
 
@@ -4079,7 +4530,11 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("second-class"), "Error should mention second-class: {}", err);
+        assert!(
+            err.contains("second-class"),
+            "Error should mention second-class: {}",
+            err
+        );
     }
 
     #[test]
@@ -4099,7 +4554,11 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("second-class"), "Error should mention second-class: {}", err);
+        assert!(
+            err.contains("second-class"),
+            "Error should mention second-class: {}",
+            err
+        );
     }
 
     #[test]
@@ -4119,7 +4578,11 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("second-class"), "Error should mention second-class: {}", err);
+        assert!(
+            err.contains("second-class"),
+            "Error should mention second-class: {}",
+            err
+        );
     }
 
     #[test]
@@ -4139,7 +4602,11 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("second-class"), "Error should mention second-class: {}", err);
+        assert!(
+            err.contains("second-class"),
+            "Error should mention second-class: {}",
+            err
+        );
     }
 
     #[test]
@@ -4157,7 +4624,11 @@ mod tests {
         let mut compiler = Compiler::new(&program);
         let result = compiler.compile();
 
-        assert!(result.is_ok(), "Reference parameters should be allowed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Reference parameters should be allowed: {:?}",
+            result
+        );
         Ok(())
     }
 
@@ -4176,7 +4647,11 @@ mod tests {
         let mut compiler = Compiler::new(&program);
         let result = compiler.compile();
 
-        assert!(result.is_ok(), "Local reference variables should be allowed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Local reference variables should be allowed: {:?}",
+            result
+        );
         Ok(())
     }
 
@@ -4196,7 +4671,11 @@ mod tests {
         let mut compiler = Compiler::new(&program);
         let result = compiler.compile();
 
-        assert!(result.is_ok(), "Raw pointers in structs should be allowed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "Raw pointers in structs should be allowed: {:?}",
+            result
+        );
         Ok(())
     }
 
@@ -4231,7 +4710,8 @@ mod tests {
     }
 
     #[test]
-    fn test_struct_field_access_on_function_return_emits_correct_offset() -> Result<()> {
+    fn test_struct_field_access_on_function_return_emits_correct_offset()
+    -> Result<()> {
         let input = r#"
             Point :: struct { x: i64, y: i64 }
             make_point :: fn() -> Point {
