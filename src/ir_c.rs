@@ -48,17 +48,24 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
     output.push('\n');
 
     for function in &module.functions {
+        if function.name == "main" {
+            continue;
+        }
+        writeln!(output, "{};", function_signature(function, &externs)?)?;
+    }
+    output.push('\n');
+
+    for function in &module.functions {
         emit_function(&mut output, function, &externs)?;
     }
 
     Ok(output)
 }
 
-fn emit_function(
-    output: &mut String,
+fn function_signature(
     function: &IrFunction,
     externs: &HashSet<String>,
-) -> Result<()> {
+) -> Result<String> {
     let is_main = function.name == "main";
     let returns_aggregate = !is_main && is_aggregate(&function.return_type);
     let return_type = if is_main {
@@ -91,11 +98,24 @@ fn emit_function(
     } else {
         c_type(&return_type)?
     };
-    writeln!(
-        output,
-        "{return_type_str} {}({param_list}) {{",
+    Ok(format!(
+        "{return_type_str} {}({param_list})",
         c_function_name(&function.name, externs)
-    )?;
+    ))
+}
+
+fn emit_function(
+    output: &mut String,
+    function: &IrFunction,
+    externs: &HashSet<String>,
+) -> Result<()> {
+    let return_type = if function.name == "main" {
+        Type::I32
+    } else {
+        function.return_type.clone()
+    };
+
+    writeln!(output, "{} {{", function_signature(function, externs)?)?;
 
     for (index, local) in function.locals.iter().enumerate() {
         if matches!(local.ty, Type::Void | Type::Unknown) {

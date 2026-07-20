@@ -480,6 +480,35 @@ main :: fn() -> i64 {
 }
 "#;
 
+const FORWARD_REFERENCES: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+main :: fn() -> i64 {
+    printf("%lld\n", is_even(10))
+    printf("%lld\n", is_odd(7))
+    printf("%lld\n", double_it(21))
+    0
+}
+
+is_even :: fn(n: i64) -> i64 {
+    if (n == 0) { 1 } else { is_odd(n - 1) }
+}
+
+is_odd :: fn(n: i64) -> i64 {
+    if (n == 0) { 0 } else { is_even(n - 1) }
+}
+
+double_it :: fn(x: i64) -> i64 { x * 2 }
+"#;
+
+#[test]
+fn native_forward_references_and_mutual_recursion() {
+    let Some(output) = compile_and_run("forward", FORWARD_REFERENCES) else {
+        return;
+    };
+    assert_eq!(output, "1\n1\n42\n");
+}
+
 #[test]
 fn native_function_pointers() {
     let Some(output) = compile_and_run("funcptr", FUNCTION_POINTERS) else {
@@ -990,6 +1019,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_widening", WIDENING_BINDINGS),
         ("diff_matchagg", MATCH_RETURNS_AGGREGATE),
         ("diff_f32", F32_OPERATIONS),
+        ("diff_forward", FORWARD_REFERENCES),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
