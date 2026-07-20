@@ -14,7 +14,6 @@ fn linker_available() -> bool {
     false
 }
 
-// A tiny deterministic PRNG so the generated corpus is reproducible.
 struct Rng {
     state: u64,
 }
@@ -27,7 +26,6 @@ impl Rng {
     }
 
     fn next(&mut self) -> u64 {
-        // splitmix64
         self.state = self.state.wrapping_add(0x9e37_79b9_7f4a_7c15);
         let mut z = self.state;
         z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
@@ -40,10 +38,6 @@ impl Rng {
     }
 }
 
-// Generate a random i64 arithmetic expression whose value is small enough that
-// it never overflows i64 (so signed-overflow UB never enters), using only
-// operators where both backends have identical, defined semantics. Divisors
-// and shift amounts are always safe literals.
 fn gen_expr(rng: &mut Rng, depth: u32) -> String {
     if depth == 0 || rng.below(3) == 0 {
         return format!("{}", rng.below(20) as i64 - 10);
@@ -54,13 +48,12 @@ fn gen_expr(rng: &mut Rng, depth: u32) -> String {
         0 => format!("({left} + {right})"),
         1 => format!("({left} - {right})"),
         2 => format!("({left} * {})", rng.below(5) as i64),
-        3 => format!("({left} % {})", rng.below(7) as i64 + 1), // non-zero
+        3 => format!("({left} % {})", rng.below(7) as i64 + 1),
         4 => format!("({left} & {})", rng.below(255) as i64),
         _ => format!("({left} | {})", rng.below(255) as i64),
     }
 }
 
-// A boolean condition over the same safe arithmetic.
 fn gen_cond(rng: &mut Rng, depth: u32) -> String {
     let left = gen_expr(rng, depth);
     let right = gen_expr(rng, depth);
@@ -92,10 +85,8 @@ fn gen_program(rng: &mut Rng, lines: usize) -> String {
 fn run_backend(name: &str, source: &str, emit_c: bool) -> String {
     let directory = std::env::temp_dir();
     let source_path = directory.join(format!("frost_fuzz_{name}.frost"));
-    let exe_path = directory.join(format!(
-        "frost_fuzz_{name}{}",
-        std::env::consts::EXE_SUFFIX
-    ));
+    let exe_path = directory
+        .join(format!("frost_fuzz_{name}{}", std::env::consts::EXE_SUFFIX));
     std::fs::write(&source_path, source).unwrap();
     let frost = env!("CARGO_BIN_EXE_frost");
     let mut command = Command::new(frost);
@@ -121,8 +112,6 @@ fn run_backend(name: &str, source: &str, emit_c: bool) -> String {
     String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n")
 }
 
-// Generate a reproducible corpus of random arithmetic/control-flow programs and
-// assert the Cranelift and C backends produce byte-identical output for each.
 #[test]
 fn fuzz_backends_agree_on_random_programs() {
     if !linker_available() {
