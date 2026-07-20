@@ -2757,6 +2757,17 @@ impl<'a> FunctionLowering<'a> {
             Expression::Dereference(pointer) => {
                 self.place_address_of_deref(pointer)
             }
+            Expression::StructInit(..)
+            | Expression::EnumVariantInit(..)
+            | Expression::Literal(Literal::Array(_)) => {
+                let (operand, ty) = self.lower_expression(place, None)?;
+                let IrOperand::Local(local) = operand else {
+                    bail!(
+                        "native backend: cannot take the address of this value"
+                    );
+                };
+                Ok((self.address_of_local(local, &ty), ty))
+            }
             other => {
                 bail!(
                     "native backend: expression is not an assignable place: {other}"
