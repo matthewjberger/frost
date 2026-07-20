@@ -137,6 +137,17 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+const RUNTIME_SOURCE: &str = include_str!("../../runtime/frost_runtime.c");
+
+fn write_runtime_source() -> Result<PathBuf> {
+    let path = std::env::temp_dir()
+        .join(format!("frost_runtime_{}.c", std::process::id()));
+    fs::write(&path, RUNTIME_SOURCE).with_context(|| {
+        format!("Failed to write runtime: {}", path.display())
+    })?;
+    Ok(path)
+}
+
 fn compile_c(
     c_path: &str,
     exe_path: &str,
@@ -146,9 +157,12 @@ fn compile_c(
         anyhow::anyhow!("No C compiler found. Please install gcc or clang.")
     })?;
 
+    let runtime_path = write_runtime_source()?;
+
     let mut cmd = Command::new(compiler);
     if compiler == "cl" {
         cmd.arg(c_path);
+        cmd.arg(&runtime_path);
         cmd.arg(format!("/Fe:{}", exe_path));
         for lib in extra_libs {
             cmd.arg(lib);
@@ -156,6 +170,7 @@ fn compile_c(
     } else {
         cmd.arg("-std=c11");
         cmd.arg(c_path);
+        cmd.arg(&runtime_path);
         cmd.arg("-o");
         cmd.arg(exe_path);
         for lib in extra_libs {
@@ -164,6 +179,7 @@ fn compile_c(
     }
 
     let output = cmd.output().context("Failed to run C compiler")?;
+    fs::remove_file(&runtime_path).ok();
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!("C compiler failed: {}", stderr);
@@ -203,16 +219,20 @@ fn link_executable(
         )
     })?;
 
+    let runtime_path = write_runtime_source()?;
+
     let mut cmd = Command::new(linker);
 
     if linker == "cl" {
         cmd.arg(object_path);
+        cmd.arg(&runtime_path);
         cmd.arg(format!("/Fe:{}", exe_path));
         for lib in extra_libs {
             cmd.arg(lib);
         }
     } else {
         cmd.arg(object_path);
+        cmd.arg(&runtime_path);
         cmd.arg("-o");
         cmd.arg(exe_path);
         for lib in extra_libs {
@@ -221,6 +241,7 @@ fn link_executable(
     }
 
     let output = cmd.output().context("Failed to run linker")?;
+    fs::remove_file(&runtime_path).ok();
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
