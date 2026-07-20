@@ -197,6 +197,26 @@ fn needs_memory(ty: &Type) -> bool {
     matches!(ty, Type::Struct(_) | Type::Array(_, _))
 }
 
+fn array_element_type(
+    annotation: Option<&Type>,
+    elements: &[Expression],
+) -> Type {
+    match annotation {
+        Some(Type::Array(inner, _)) | Some(Type::Slice(inner)) => {
+            return (**inner).clone();
+        }
+        _ => {}
+    }
+    match elements.first() {
+        Some(Expression::Literal(Literal::Integer(_))) => Type::I64,
+        Some(Expression::Literal(Literal::Float(_))) => Type::F64,
+        Some(Expression::Literal(Literal::Float32(_))) => Type::F32,
+        Some(Expression::Literal(Literal::Boolean(_)))
+        | Some(Expression::Boolean(_)) => Type::Bool,
+        _ => Type::I64,
+    }
+}
+
 fn compute_struct_layouts(
     statements: &[Statement],
 ) -> HashMap<String, StructLayout> {
@@ -434,6 +454,18 @@ impl<'a> FunctionLowering<'a> {
                     self.define_variable(name, local);
                     return Ok(());
                 }
+                if let Expression::Literal(Literal::Array(elements)) = value {
+                    let element_type =
+                        array_element_type(type_annotation.as_ref(), elements);
+                    let ty = Type::Array(
+                        Box::new(element_type.clone()),
+                        elements.len(),
+                    );
+                    let local = self.fresh_local(ty, Some(name.clone()));
+                    self.init_array(local, &element_type, elements)?;
+                    self.define_variable(name, local);
+                    return Ok(());
+                }
                 let (operand, value_type) =
                     self.lower_expression(value, type_annotation.as_ref())?;
                 let declared = type_annotation.clone().unwrap_or(value_type);
@@ -651,6 +683,11 @@ impl<'a> FunctionLowering<'a> {
             Expression::Dereference(inner) => self.lower_dereference(inner),
             Expression::FieldAccess(base, field) => {
                 self.lower_field_read(base, field)
+            }
+            Expression::Index(base, index) => {
+                let (address, element_type) =
+                    self.element_address(base, index)?;
+                self.load_from(address, element_type)
             }
             Expression::StructInit(..) => {
                 bail!(
@@ -1048,6 +1085,7 @@ impl<'a> FunctionLowering<'a> {
             Expression::FieldAccess(base, field) => {
                 self.field_address(base, field)
             }
+            Expression::Index(base, index) => self.element_address(base, index),
             Expression::Dereference(pointer) => {
                 self.place_address_of_deref(pointer)
             }
@@ -1057,6 +1095,96 @@ impl<'a> FunctionLowering<'a> {
                 )
             }
         }
+    }
+
+    fn element_address(
+        &mut self,
+        base: &Expression,
+        index: &Expression,
+    ) -> Result<(IrOperand, Type)> {
+        let (base_pointer, element_type) = self.array_base_pointer(base)?;
+        let element_size = self.builder.byte_size(&element_type);
+        let (index_operand, _) =
+            self.lower_expression(index, Some(&Type::I64))?;
+        let result =
+            self.fresh_local(Type::Ptr(Box::new(element_type.clone())), None);
+        self.emit(IrStatement::Assign(
+            result,
+            IrRvalue::ElementAddress {
+                base: base_pointer,
+                index: index_operand,
+                element_size,
+            },
+        ));
+        Ok((IrOperand::Local(result), element_type))
+    }
+
+    fn array_base_pointer(
+        &mut self,
+        base: &Expression,
+    ) -> Result<(IrOperand, Type)> {
+        let Expression::Identifier(name) = base else {
+            bail!("native backend: only variable arrays can be indexed");
+        };
+        let Some(local) = self.resolve_variable(name) else {
+            bail!("native backend: unknown variable '{name}'");
+        };
+        match self.type_of_local(local) {
+            Type::Array(element, _) => {
+                self.mark_in_memory(local);
+                let result = self
+                    .fresh_local(Type::Ptr(Box::new((*element).clone())), None);
+                self.emit(IrStatement::Assign(
+                    result,
+                    IrRvalue::AddressOf { local, offset: 0 },
+                ));
+                Ok((IrOperand::Local(result), *element))
+            }
+            Type::Ref(inner) | Type::RefMut(inner) | Type::Ptr(inner)
+                if matches!(*inner, Type::Array(_, _)) =>
+            {
+                let Type::Array(element, _) = *inner else {
+                    unreachable!()
+                };
+                Ok((IrOperand::Local(local), *element))
+            }
+            other => {
+                bail!(
+                    "native backend: '{name}' is not an array (found {other})"
+                )
+            }
+        }
+    }
+
+    fn init_array(
+        &mut self,
+        local: LocalId,
+        element_type: &Type,
+        elements: &[Expression],
+    ) -> Result<()> {
+        if needs_memory(element_type) {
+            bail!("native backend: arrays of aggregates are not supported yet");
+        }
+        let element_size = self.builder.byte_size(element_type);
+        for (index, element) in elements.iter().enumerate() {
+            let address = self
+                .fresh_local(Type::Ptr(Box::new(element_type.clone())), None);
+            self.emit(IrStatement::Assign(
+                address,
+                IrRvalue::AddressOf {
+                    local,
+                    offset: index * element_size,
+                },
+            ));
+            let (operand, value_type) =
+                self.lower_expression(element, Some(element_type))?;
+            let coerced = self.coerce(operand, &value_type, element_type);
+            self.emit(IrStatement::Store {
+                address: IrOperand::Local(address),
+                value: coerced,
+            });
+        }
+        Ok(())
     }
 
     fn place_address_of_deref(

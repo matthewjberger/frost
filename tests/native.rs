@@ -240,3 +240,38 @@ fn native_structs_and_field_access() {
     };
     assert_eq!(output, "3\n7\n200\n8\n7\n1000\n1\n");
 }
+
+const ARRAYS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+sum_array :: fn(a: &[5]i64) -> i64 {
+    mut total : i64 = 0
+    for i in 0..5 {
+        total = total + a[i]
+    }
+    total
+}
+
+main :: fn() -> i64 {
+    mut nums := [10, 20, 30, 40, 50]
+    printf("%lld\n", nums[0])
+    printf("%lld\n", nums[2])
+    nums[1] = 99
+    printf("%lld\n", nums[1])
+    mut running : i64 = 0
+    for i in 0..5 {
+        running = running + nums[i]
+    }
+    printf("%lld\n", running)
+    printf("%lld\n", sum_array(&nums))
+    0
+}
+"#;
+
+#[test]
+fn native_arrays_and_indexing() {
+    let Some(output) = compile_and_run("arrays", ARRAYS) else {
+        return;
+    };
+    assert_eq!(output, "10\n30\n99\n229\n229\n");
+}

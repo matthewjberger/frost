@@ -347,6 +347,22 @@ impl Translator<'_, '_> {
                     Ok(self.builder.ins().iadd_imm(base_value, *offset as i64))
                 }
             }
+            IrRvalue::ElementAddress {
+                base,
+                index,
+                element_size,
+            } => {
+                let base_value = self.operand(base)?;
+                let index_value = self.operand(index)?;
+                let scaled = if *element_size == 1 {
+                    index_value
+                } else {
+                    self.builder
+                        .ins()
+                        .imul_imm(index_value, *element_size as i64)
+                };
+                Ok(self.builder.ins().iadd(base_value, scaled))
+            }
             IrRvalue::Load { address, ty } => {
                 let address_value = self.operand(address)?;
                 let clif = clif_type(self.pointer_type, ty)?;
@@ -677,6 +693,10 @@ fn collect_rvalue_strings(
         }
         IrRvalue::FieldAddress { base, .. } => {
             collect_operand_strings(base, handle)
+        }
+        IrRvalue::ElementAddress { base, index, .. } => {
+            collect_operand_strings(base, handle)?;
+            collect_operand_strings(index, handle)
         }
         IrRvalue::AddressOf { .. } => Ok(()),
         IrRvalue::Binary(_, left, right) => {
