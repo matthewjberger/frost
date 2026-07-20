@@ -246,9 +246,9 @@ Frost is being reshaped toward a data-oriented language with:
 6. Generics and specialization-only comptime (monomorphization). *(Done:
    generic functions, generic structs (incl. nested `Pair<Pair<i64>>`, factory
    functions returning instances, construction inference, and generic-over-
-   instance), and `sizeof`; the pool typed surface is now a Frost library.
-   Remaining: explicit type arguments so a type parameter need not be inferred
-   from a value or borrow.)*
+   instance), `sizeof`, and explicit type arguments (`fn($T: Type, ...)` called
+   `f($Concrete, ...)`, with type parameters erased from the specialized ABI);
+   the pool typed surface is now a Frost library.)*
 7. Bounds-checked array indexing. *(Done: every fixed-size array index is
    checked against the statically-known length and aborts on out-of-range.)*
 8. Source locations in errors. *(Done for the lexer and parser: errors carry

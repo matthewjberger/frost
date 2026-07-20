@@ -1358,6 +1358,11 @@ impl<'a> Parser<'a> {
                 advance = false;
                 self.parse_sizeof()?
             }
+            Token::Dollar => {
+                advance = false;
+                self.read_token();
+                Expression::TypeValue(self.parse_type()?)
+            }
             Token::True => Expression::Boolean(true),
             Token::False => Expression::Boolean(false),
             Token::LeftBrace => {
@@ -1853,7 +1858,26 @@ impl<'a> Parser<'a> {
                 false
             };
 
-            if let Token::Identifier(name) = self.peek_nth(0) {
+            if matches!(self.peek_nth(0), Token::Dollar) {
+                self.read_token();
+                let name = match self.read_token() {
+                    Token::Identifier(name) => name.to_string(),
+                    _ => bail!("Expected type parameter name after '$'"),
+                };
+                if !matches!(self.read_token(), Token::Colon) {
+                    bail!("Expected ':' after type parameter name");
+                }
+                match self.read_token() {
+                    Token::Type => {}
+                    Token::Identifier(word) if word == "Type" => {}
+                    _ => bail!("Expected 'Type' after ':' in type parameter"),
+                }
+                parameters.push(Parameter {
+                    name: name.clone(),
+                    type_annotation: Some(Type::TypeParam(name)),
+                    mutable: false,
+                });
+            } else if let Token::Identifier(name) = self.peek_nth(0) {
                 let name = name.to_string();
                 self.read_token();
 
@@ -2186,7 +2210,26 @@ impl<'a> Parser<'a> {
                 false
             };
 
-            if let Token::Identifier(name) = self.peek_nth(0) {
+            if matches!(self.peek_nth(0), Token::Dollar) {
+                self.read_token();
+                let name = match self.read_token() {
+                    Token::Identifier(name) => name.to_string(),
+                    _ => bail!("Expected type parameter name after '$'"),
+                };
+                if !matches!(self.read_token(), Token::Colon) {
+                    bail!("Expected ':' after type parameter name");
+                }
+                match self.read_token() {
+                    Token::Type => {}
+                    Token::Identifier(word) if word == "Type" => {}
+                    _ => bail!("Expected 'Type' after ':' in type parameter"),
+                }
+                parameters.push(Parameter {
+                    name: name.clone(),
+                    type_annotation: Some(Type::TypeParam(name)),
+                    mutable: false,
+                });
+            } else if let Token::Identifier(name) = self.peek_nth(0) {
                 let name = name.to_string();
                 self.read_token();
 
