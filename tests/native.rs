@@ -701,6 +701,31 @@ fn native_generic_structs_monomorphize() {
     assert_eq!(output, "7\n7\n5\n100\n5\n9\n43\n99\n");
 }
 
+const BORROW_STRUCT_LITERAL: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Point :: struct { x: i64, y: i64 }
+
+sum :: fn(p: &Point) -> i64 { p.x + p.y }
+scaled :: fn(p: &mut Point, k: i64) -> i64 { p.x = p.x * k  p.x + p.y }
+
+main :: fn() -> i64 {
+    printf("%lld\n", sum(&Point { x = 8, y = 9 }))
+    mut q := Point { x = 3, y = 4 }
+    printf("%lld\n", scaled(&mut q, 10))
+    0
+}
+"#;
+
+#[test]
+fn native_borrow_struct_literal_at_call() {
+    let Some(output) = compile_and_run("borrow_struct", BORROW_STRUCT_LITERAL)
+    else {
+        return;
+    };
+    assert_eq!(output, "17\n34\n");
+}
+
 const BORROW_AGGREGATE_LITERAL: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -1648,6 +1673,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_linear", LINEAR_RESOURCE_NATIVE),
         ("diff_genconstruct", GENERIC_CONSTRUCTION_INFERENCE),
         ("diff_borrowlit", BORROW_AGGREGATE_LITERAL),
+        ("diff_borrowstruct", BORROW_STRUCT_LITERAL),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
