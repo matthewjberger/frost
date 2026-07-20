@@ -28,7 +28,10 @@ pub struct IrBuilder {
 }
 
 pub fn build_module(statements: &[Statement]) -> Result<IrModule> {
-    let (structs, enums) = compute_layouts(statements);
+    let synthetic_structs = expand_generic_structs(statements)?;
+    let mut layout_statements: Vec<Statement> = statements.to_vec();
+    layout_statements.extend(synthetic_structs);
+    let (structs, enums) = compute_layouts(&layout_statements);
     let mut constants = HashMap::new();
     for statement in statements {
         if let Statement::Constant(name, value) = statement
@@ -466,6 +469,266 @@ fn mangle_specialization(
         }
     }
     mangled
+}
+
+fn is_generic_instance(name: &str) -> bool {
+    name.contains('<')
+}
+
+fn split_instance(name: &str) -> Option<(String, Vec<String>)> {
+    let open = name.find('<')?;
+    if !name.ends_with('>') {
+        return None;
+    }
+    let base = name[..open].to_string();
+    let inner = &name[open + 1..name.len() - 1];
+    let mut arguments = Vec::new();
+    let mut depth = 0usize;
+    let mut current = String::new();
+    for character in inner.chars() {
+        match character {
+            '<' => {
+                depth += 1;
+                current.push(character);
+            }
+            '>' => {
+                depth -= 1;
+                current.push(character);
+            }
+            ',' if depth == 0 => {
+                arguments.push(current.trim().to_string());
+                current.clear();
+            }
+            _ => current.push(character),
+        }
+    }
+    if !current.trim().is_empty() {
+        arguments.push(current.trim().to_string());
+    }
+    Some((base, arguments))
+}
+
+fn collect_instances_in_type(ty: &Type, out: &mut Vec<String>) {
+    if let Type::Struct(name) = ty
+        && is_generic_instance(name)
+        && !out.contains(name)
+    {
+        out.push(name.clone());
+    }
+    if let Some(inner) = single_inner(ty) {
+        collect_instances_in_type(inner, out);
+    } else if let Type::Proc(params, ret) = ty {
+        for param in params {
+            collect_instances_in_type(param, out);
+        }
+        collect_instances_in_type(ret, out);
+    }
+}
+
+fn collect_instances_in_block(block: &Block, out: &mut Vec<String>) {
+    for statement in block {
+        collect_instances_in_statement(statement, out);
+    }
+}
+
+fn collect_instances_in_statement(
+    statement: &Statement,
+    out: &mut Vec<String>,
+) {
+    match statement {
+        Statement::Let {
+            type_annotation,
+            value,
+            ..
+        } => {
+            if let Some(ty) = type_annotation {
+                collect_instances_in_type(ty, out);
+            }
+            collect_instances_in_expression(value, out);
+        }
+        Statement::Return(expression) | Statement::Expression(expression) => {
+            collect_instances_in_expression(expression, out);
+        }
+        Statement::Assignment(target, value) => {
+            collect_instances_in_expression(target, out);
+            collect_instances_in_expression(value, out);
+        }
+        Statement::For(_, range, body) => {
+            collect_instances_in_expression(range, out);
+            collect_instances_in_block(body, out);
+        }
+        Statement::While(condition, body) => {
+            collect_instances_in_expression(condition, out);
+            collect_instances_in_block(body, out);
+        }
+        Statement::Defer(inner) => {
+            collect_instances_in_statement(inner, out);
+        }
+        _ => {}
+    }
+}
+
+fn collect_instances_in_expression(
+    expression: &Expression,
+    out: &mut Vec<String>,
+) {
+    match expression {
+        Expression::Sizeof(ty) => collect_instances_in_type(ty, out),
+        Expression::Prefix(_, operand)
+        | Expression::AddressOf(operand)
+        | Expression::Borrow(operand)
+        | Expression::BorrowMut(operand)
+        | Expression::Dereference(operand) => {
+            collect_instances_in_expression(operand, out);
+        }
+        Expression::Infix(left, _, right) => {
+            collect_instances_in_expression(left, out);
+            collect_instances_in_expression(right, out);
+        }
+        Expression::If(condition, consequence, alternative) => {
+            collect_instances_in_expression(condition, out);
+            collect_instances_in_block(consequence, out);
+            if let Some(block) = alternative {
+                collect_instances_in_block(block, out);
+            }
+        }
+        Expression::Call(callee, arguments) => {
+            collect_instances_in_expression(callee, out);
+            for argument in arguments {
+                collect_instances_in_expression(argument, out);
+            }
+        }
+        Expression::Index(base, index) => {
+            collect_instances_in_expression(base, out);
+            collect_instances_in_expression(index, out);
+        }
+        Expression::FieldAccess(base, _) => {
+            collect_instances_in_expression(base, out);
+        }
+        Expression::StructInit(_, fields)
+        | Expression::EnumVariantInit(_, _, fields) => {
+            for (_, value) in fields {
+                collect_instances_in_expression(value, out);
+            }
+        }
+        Expression::Range(start, end, _) => {
+            collect_instances_in_expression(start, out);
+            collect_instances_in_expression(end, out);
+        }
+        Expression::Tuple(elements) => {
+            for element in elements {
+                collect_instances_in_expression(element, out);
+            }
+        }
+        Expression::Switch(scrutinee, cases) => {
+            collect_instances_in_expression(scrutinee, out);
+            for case in cases {
+                collect_instances_in_block(&case.body, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn expand_generic_structs(statements: &[Statement]) -> Result<Vec<Statement>> {
+    let mut generic_structs: HashMap<String, (Vec<String>, Vec<StructField>)> =
+        HashMap::new();
+    for statement in statements {
+        if let Statement::Struct(name, type_params, fields) = statement
+            && !type_params.is_empty()
+        {
+            generic_structs
+                .insert(name.clone(), (type_params.clone(), fields.clone()));
+        }
+    }
+    if generic_structs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut queue: Vec<String> = Vec::new();
+    for statement in statements {
+        collect_instances_in_statement(statement, &mut queue);
+        if let Statement::Struct(_, _, fields) = statement {
+            for field in fields {
+                collect_instances_in_type(&field.field_type, &mut queue);
+            }
+        }
+        if let Statement::Extern {
+            params,
+            return_type,
+            ..
+        } = statement
+        {
+            for parameter in params {
+                if let Some(ty) = &parameter.type_annotation {
+                    collect_instances_in_type(ty, &mut queue);
+                }
+            }
+            if let Some(ty) = return_type {
+                collect_instances_in_type(ty, &mut queue);
+            }
+        }
+        if let Statement::Constant(
+            _,
+            Expression::Function(parameters, return_sig, body)
+            | Expression::Proc(parameters, return_sig, body),
+        ) = statement
+        {
+            for parameter in parameters {
+                if let Some(ty) = &parameter.type_annotation {
+                    collect_instances_in_type(ty, &mut queue);
+                }
+            }
+            if let Some(ty) = return_sig.to_type() {
+                collect_instances_in_type(&ty, &mut queue);
+            }
+            collect_instances_in_block(body, &mut queue);
+        }
+    }
+
+    let mut done: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    let mut synthetic = Vec::new();
+    while let Some(instance) = queue.pop() {
+        if !done.insert(instance.clone()) {
+            continue;
+        }
+        let Some((base, argument_strings)) = split_instance(&instance) else {
+            continue;
+        };
+        let Some((type_params, fields)) = generic_structs.get(&base) else {
+            continue;
+        };
+        if type_params.len() != argument_strings.len() {
+            bail!(
+                "native backend: generic struct '{base}' expects {} type argument(s) but {} were given",
+                type_params.len(),
+                argument_strings.len()
+            );
+        }
+        let mut subst = HashMap::new();
+        for (type_param, argument) in type_params.iter().zip(&argument_strings)
+        {
+            let argument_type = crate::parser::type_from_string(argument)?;
+            subst.insert(type_param.clone(), argument_type);
+        }
+        let concrete_fields: Vec<StructField> = fields
+            .iter()
+            .map(|field| StructField {
+                name: field.name.clone(),
+                field_type: substitute_type(&field.field_type, &subst),
+            })
+            .collect();
+        for field in &concrete_fields {
+            collect_instances_in_type(&field.field_type, &mut queue);
+        }
+        synthetic.push(Statement::Struct(
+            instance.clone(),
+            Vec::new(),
+            concrete_fields,
+        ));
+    }
+    Ok(synthetic)
 }
 
 fn substitute_block(block: &Block, subst: &HashMap<String, Type>) -> Block {
@@ -1082,9 +1345,17 @@ impl<'a> FunctionLowering<'a> {
             } => {
                 if let Expression::StructInit(struct_name, field_inits) = value
                 {
-                    let ty = Type::Struct(struct_name.clone());
+                    let layout_name = match type_annotation {
+                        Some(Type::Struct(annotated))
+                            if is_generic_instance(annotated) =>
+                        {
+                            annotated.clone()
+                        }
+                        _ => struct_name.clone(),
+                    };
+                    let ty = Type::Struct(layout_name.clone());
                     let local = self.fresh_local(ty, Some(name.clone()));
-                    self.init_struct(local, struct_name, field_inits)?;
+                    self.init_struct(local, &layout_name, field_inits)?;
                     self.define_variable(name, local);
                     return Ok(());
                 }
