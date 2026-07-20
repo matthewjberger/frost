@@ -204,7 +204,7 @@ impl Display for Token {
 
 pub const EOF_CHAR: char = '\0';
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Position {
     pub line: usize,
     pub column: usize,

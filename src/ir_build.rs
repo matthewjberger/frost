@@ -7,9 +7,10 @@ use crate::ir::{
     IrConstant, IrExtern, IrFunction, IrLocal, IrModule, IrOperand, IrRvalue,
     IrStatement, IrTerminator, IrUnOp, LocalId, StructLayout,
 };
+use crate::lexer::Position;
 use crate::parser::{
     Block, EnumVariant, Expression, Parameter, Pattern, ReturnSignature,
-    Statement, StructField, SwitchCase,
+    Spanned, Statement, StructField, SwitchCase,
 };
 use crate::types::Type;
 use crate::{Literal, Operator};
@@ -28,14 +29,30 @@ pub struct IrBuilder {
     generic_struct_defs: HashMap<String, (Vec<String>, Vec<StructField>)>,
 }
 
-pub fn build_module(statements: &[Statement]) -> Result<IrModule> {
+fn locate<T>(result: Result<T>, position: Position) -> Result<T> {
+    result.map_err(|error| {
+        let text = error.to_string();
+        if position == Position::default() || text.starts_with("at line ") {
+            error
+        } else {
+            anyhow::anyhow!(
+                "at line {}, column {}: {text}",
+                position.line,
+                position.column
+            )
+        }
+    })
+}
+
+pub fn build_module(statements: &[Spanned<Statement>]) -> Result<IrModule> {
     let synthetic_structs = expand_generic_structs(statements)?;
-    let mut layout_statements: Vec<Statement> = statements.to_vec();
+    let mut layout_statements: Vec<Statement> =
+        statements.iter().map(|s| s.node.clone()).collect();
     layout_statements.extend(synthetic_structs);
     let (structs, enums) = compute_layouts(&layout_statements);
     let mut constants = HashMap::new();
     for statement in statements {
-        if let Statement::Constant(name, value) = statement
+        if let Statement::Constant(name, value) = &statement.node
             && !matches!(value, Expression::Function(..) | Expression::Proc(..))
         {
             constants.insert(name.clone(), value.clone());
@@ -47,7 +64,7 @@ pub fn build_module(statements: &[Statement]) -> Result<IrModule> {
             name,
             Expression::Function(parameters, return_sig, body)
             | Expression::Proc(parameters, return_sig, body),
-        ) = statement
+        ) = &statement.node
             && function_is_generic(parameters)
         {
             let type_params = function_type_params(parameters);
@@ -65,7 +82,7 @@ pub fn build_module(statements: &[Statement]) -> Result<IrModule> {
 
     let mut generic_struct_defs = HashMap::new();
     for statement in statements {
-        if let Statement::Struct(name, type_params, fields) = statement
+        if let Statement::Struct(name, type_params, fields) = &statement.node
             && !type_params.is_empty()
         {
             generic_struct_defs
@@ -90,7 +107,8 @@ pub fn build_module(statements: &[Statement]) -> Result<IrModule> {
     let mut pending: Vec<Specialization> = Vec::new();
 
     for statement in statements {
-        match statement {
+        let position = statement.position;
+        match &statement.node {
             Statement::Constant(
                 name,
                 Expression::Function(parameters, return_sig, body)
@@ -102,8 +120,10 @@ pub fn build_module(statements: &[Statement]) -> Result<IrModule> {
                 if name == "main" {
                     has_main = true;
                 }
-                let (function, requests) = builder
-                    .lower_function(name, parameters, return_sig, body)?;
+                let (function, requests) = locate(
+                    builder.lower_function(name, parameters, return_sig, body),
+                    position,
+                )?;
                 functions.push(function);
                 pending.extend(requests);
             }
@@ -130,7 +150,7 @@ pub fn build_module(statements: &[Statement]) -> Result<IrModule> {
             | Statement::Enum(..)
             | Statement::TypeAlias(..)
             | Statement::Import(..) => {}
-            other => top_level.push(other.clone()),
+            _ => top_level.push(statement.clone()),
         }
     }
 
@@ -192,9 +212,9 @@ pub fn build_module(statements: &[Statement]) -> Result<IrModule> {
 }
 
 impl IrBuilder {
-    fn collect_signatures(&mut self, statements: &[Statement]) {
+    fn collect_signatures(&mut self, statements: &[Spanned<Statement>]) {
         for statement in statements {
-            match statement {
+            match &statement.node {
                 Statement::Constant(
                     name,
                     Expression::Function(parameters, return_sig, _)
@@ -255,7 +275,8 @@ impl IrBuilder {
             function.define_variable(&parameter.name, local);
         }
 
-        let has_defers = body.iter().any(|s| matches!(s, Statement::Defer(_)));
+        let has_defers =
+            body.iter().any(|s| matches!(s.node, Statement::Defer(_)));
         if has_defers {
             function.lower_body_with_defers(body, &return_type)?;
         } else {
@@ -1002,10 +1023,13 @@ fn collect_call_instances_in_expression(
     }
 }
 
-fn expand_generic_structs(statements: &[Statement]) -> Result<Vec<Statement>> {
+fn expand_generic_structs(
+    statements: &[Spanned<Statement>],
+) -> Result<Vec<Statement>> {
     let mut generic_structs: HashMap<String, (Vec<String>, Vec<StructField>)> =
         HashMap::new();
     for statement in statements {
+        let statement = &statement.node;
         if let Statement::Struct(name, type_params, fields) = statement
             && !type_params.is_empty()
         {
@@ -1020,6 +1044,7 @@ fn expand_generic_structs(statements: &[Statement]) -> Result<Vec<Statement>> {
     let mut generic_functions: HashMap<String, GenericFunction> =
         HashMap::new();
     for statement in statements {
+        let statement = &statement.node;
         if let Statement::Constant(
             name,
             Expression::Function(parameters, return_sig, body)
@@ -1045,6 +1070,7 @@ fn expand_generic_structs(statements: &[Statement]) -> Result<Vec<Statement>> {
     };
     let mut queue: Vec<String> = Vec::new();
     for statement in statements {
+        let statement = &statement.node;
         if let Statement::Constant(
             _,
             Expression::Function(parameters, _, body)
@@ -1160,7 +1186,12 @@ fn expand_generic_structs(statements: &[Statement]) -> Result<Vec<Statement>> {
 fn substitute_block(block: &Block, subst: &HashMap<String, Type>) -> Block {
     block
         .iter()
-        .map(|statement| substitute_statement(statement, subst))
+        .map(|statement| {
+            Spanned::new(
+                substitute_statement(&statement.node, subst),
+                statement.position,
+            )
+        })
         .collect()
 }
 
@@ -1309,18 +1340,24 @@ fn needs_memory(ty: &Type) -> bool {
     matches!(ty, Type::Struct(_) | Type::Array(_, _) | Type::Enum(_))
 }
 
-fn body_has_nested_return(body: &[Statement]) -> bool {
-    body.iter().any(|statement| match statement {
+fn body_has_nested_return(body: &Block) -> bool {
+    body.iter().any(|statement| match &statement.node {
         Statement::Return(_) => false,
         other => statement_contains_return(other),
     })
+}
+
+fn block_contains_return(block: &Block) -> bool {
+    block
+        .iter()
+        .any(|statement| statement_contains_return(&statement.node))
 }
 
 fn statement_contains_return(statement: &Statement) -> bool {
     match statement {
         Statement::Return(_) => true,
         Statement::While(_, body) | Statement::For(_, _, body) => {
-            body.iter().any(statement_contains_return)
+            block_contains_return(body)
         }
         Statement::Defer(inner) => statement_contains_return(inner),
         Statement::Expression(expression) => {
@@ -1333,14 +1370,12 @@ fn statement_contains_return(statement: &Statement) -> bool {
 fn expression_contains_return(expression: &Expression) -> bool {
     match expression {
         Expression::If(_, consequence, alternative) => {
-            consequence.iter().any(statement_contains_return)
-                || alternative.as_ref().is_some_and(|block| {
-                    block.iter().any(statement_contains_return)
-                })
+            block_contains_return(consequence)
+                || alternative.as_ref().is_some_and(block_contains_return)
         }
-        Expression::Switch(_, cases) => cases
-            .iter()
-            .any(|case| case.body.iter().any(statement_contains_return)),
+        Expression::Switch(_, cases) => {
+            cases.iter().any(|case| block_contains_return(&case.body))
+        }
         _ => false,
     }
 }
@@ -1674,10 +1709,16 @@ impl<'a> FunctionLowering<'a> {
         let mut result = (unit_operand(), Type::Void);
         for (index, statement) in block.iter().enumerate() {
             let is_last = index + 1 == block.len();
-            if is_last && let Statement::Expression(expression) = statement {
-                result = self.lower_expression(expression, expected)?;
+            let position = statement.position;
+            if is_last
+                && let Statement::Expression(expression) = &statement.node
+            {
+                result = locate(
+                    self.lower_expression(expression, expected),
+                    position,
+                )?;
             } else {
-                self.lower_statement(statement)?;
+                locate(self.lower_statement(&statement.node), position)?;
             }
         }
         self.pop_scope();
@@ -1696,7 +1737,7 @@ impl<'a> FunctionLowering<'a> {
         }
         let defers: Vec<&Statement> = body
             .iter()
-            .filter_map(|statement| match statement {
+            .filter_map(|statement| match &statement.node {
                 Statement::Defer(inner) => Some(inner.as_ref()),
                 _ => None,
             })
@@ -1705,17 +1746,22 @@ impl<'a> FunctionLowering<'a> {
         self.push_scope();
         for (index, statement) in body.iter().enumerate() {
             let is_last = index + 1 == body.len();
-            match statement {
+            let position = statement.position;
+            match &statement.node {
                 Statement::Defer(_) => {}
                 Statement::Return(expression) => {
-                    let operand =
-                        self.lower_return_value(expression, return_type)?;
+                    let operand = locate(
+                        self.lower_return_value(expression, return_type),
+                        position,
+                    )?;
                     self.run_defers(&defers)?;
                     self.set_terminator(IrTerminator::Return(operand));
                 }
                 Statement::Expression(expression) if is_last => {
-                    let (value, value_type) =
-                        self.lower_expression(expression, Some(return_type))?;
+                    let (value, value_type) = locate(
+                        self.lower_expression(expression, Some(return_type)),
+                        position,
+                    )?;
                     self.run_defers(&defers)?;
                     if !self.current_is_terminated() {
                         if matches!(return_type, Type::Void) {
@@ -1729,7 +1775,7 @@ impl<'a> FunctionLowering<'a> {
                         }
                     }
                 }
-                other => self.lower_statement(other)?,
+                other => locate(self.lower_statement(other), position)?,
             }
         }
         self.pop_scope();

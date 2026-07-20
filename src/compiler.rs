@@ -1,7 +1,7 @@
 use crate::{
     Expression, HeapObject, Literal, Operator, Parameter, Statement,
     StructField, Value64,
-    parser::{IdentPart, ReturnSignature},
+    parser::{IdentPart, ReturnSignature, Spanned},
     types::Type,
 };
 use anyhow::{Result, bail};
@@ -23,7 +23,7 @@ pub struct CompiledStruct {
 struct FunctionArtifact<'a> {
     parameters: &'a [Parameter],
     return_sig: &'a ReturnSignature,
-    body: &'a [Statement],
+    body: &'a [Spanned<Statement>],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -438,15 +438,22 @@ struct ComptimeForParams<'a> {
     index_var: &'a Option<String>,
     type_var: &'a str,
     types: &'a [Type],
-    body: &'a [Statement],
+    body: &'a [Spanned<Statement>],
 }
+
+type IfLetParts<'a> = (
+    &'a crate::parser::Pattern,
+    &'a Expression,
+    &'a [Spanned<Statement>],
+    Option<&'a Vec<Spanned<Statement>>>,
+);
 
 #[derive(Debug, Clone)]
 pub struct GenericFunctionDef {
     pub type_params: Vec<String>,
     pub parameters: Vec<Parameter>,
     pub return_sig: ReturnSignature,
-    pub body: Vec<Statement>,
+    pub body: Vec<Spanned<Statement>>,
 }
 
 struct MonoSubstitution {
@@ -664,7 +671,11 @@ impl MonoSubstitution {
         }
     }
 
-    fn substitute_stmt(&self, stmt: &Statement) -> Statement {
+    fn substitute_stmt(&self, stmt: &Spanned<Statement>) -> Spanned<Statement> {
+        Spanned::new(self.substitute_stmt_node(&stmt.node), stmt.position)
+    }
+
+    fn substitute_stmt_node(&self, stmt: &Statement) -> Statement {
         match stmt {
             Statement::Constant(name, expr) => {
                 Statement::Constant(name.clone(), self.substitute_expr(expr))
@@ -689,7 +700,7 @@ impl MonoSubstitution {
                 Statement::Return(self.substitute_expr(expr))
             }
             Statement::Defer(inner) => {
-                Statement::Defer(Box::new(self.substitute_stmt(inner)))
+                Statement::Defer(Box::new(self.substitute_stmt_node(inner)))
             }
             Statement::Assignment(lhs, rhs) => Statement::Assignment(
                 self.substitute_expr(lhs),
@@ -760,7 +771,7 @@ impl MonoSubstitution {
 }
 
 pub struct Compiler<'a> {
-    pub statements: Iter<'a, Statement>,
+    pub statements: Iter<'a, Spanned<Statement>>,
     pub symbol_table: SymbolTable,
     pub typed_mode: bool,
     pub struct_defs: HashMap<String, CompiledStruct>,
@@ -782,7 +793,7 @@ pub struct Compiler<'a> {
 }
 
 impl<'a> Compiler<'a> {
-    pub fn new(statements: &'a [Statement]) -> Self {
+    pub fn new(statements: &'a [Spanned<Statement>]) -> Self {
         let mut symbol_table = SymbolTable::new();
         let builtins = [
             "len",
@@ -878,7 +889,7 @@ impl<'a> Compiler<'a> {
     }
 
     pub fn new_with_path(
-        statements: &'a [Statement],
+        statements: &'a [Spanned<Statement>],
         base_path: PathBuf,
     ) -> Self {
         let mut compiler = Self::new(statements);
@@ -887,7 +898,7 @@ impl<'a> Compiler<'a> {
     }
 
     pub fn new_with_natives(
-        statements: &'a [Statement],
+        statements: &'a [Spanned<Statement>],
         native_names: &[&str],
     ) -> Self {
         let mut compiler = Self::new(statements);
@@ -901,11 +912,11 @@ impl<'a> Compiler<'a> {
     #[deprecated(
         note = "typed mode is now the default, use Compiler::new() instead"
     )]
-    pub fn new_typed(statements: &'a [Statement]) -> Self {
+    pub fn new_typed(statements: &'a [Spanned<Statement>]) -> Self {
         Self::new(statements)
     }
 
-    pub fn new_untyped(statements: &'a [Statement]) -> Self {
+    pub fn new_untyped(statements: &'a [Spanned<Statement>]) -> Self {
         let mut symbol_table = SymbolTable::new();
         let builtins = [
             "len",
@@ -1001,7 +1012,7 @@ impl<'a> Compiler<'a> {
     }
 
     pub fn new_with_state(
-        statements: &'a [Statement],
+        statements: &'a [Spanned<Statement>],
         symbol_table: SymbolTable,
     ) -> Self {
         Self {
@@ -1029,11 +1040,11 @@ impl<'a> Compiler<'a> {
 
     pub fn compile(&mut self) -> Result<Bytecode> {
         let mut bytecode = Bytecode::default();
-        let statements: Vec<Statement> =
+        let statements: Vec<Spanned<Statement>> =
             self.statements.by_ref().cloned().collect();
 
         for statement in &statements {
-            if let Statement::Constant(name, expression) = statement
+            if let Statement::Constant(name, expression) = &statement.node
                 && let Expression::Function(params, return_sig, _)
                 | Expression::Proc(params, return_sig, _) = expression
                 && !Self::function_is_generic(params, return_sig)
@@ -1868,7 +1879,8 @@ impl<'a> Compiler<'a> {
                     canonical_path.parent().map(|p| p.to_path_buf());
 
                 for statement in &statements {
-                    if let Statement::Constant(name, expression) = statement
+                    if let Statement::Constant(name, expression) =
+                        &statement.node
                         && let Expression::Function(params, return_sig, _)
                         | Expression::Proc(params, return_sig, _) =
                             expression
@@ -2512,7 +2524,7 @@ impl<'a> Compiler<'a> {
                             .collect();
                         let mono_return_sig = substitution
                             .substitute_return_sig(&generic_def.return_sig);
-                        let mono_body: Vec<Statement> = generic_def
+                        let mono_body: Vec<Spanned<Statement>> = generic_def
                             .body
                             .iter()
                             .map(|s| substitution.substitute_stmt(s))
@@ -2749,12 +2761,7 @@ impl<'a> Compiler<'a> {
 
     fn compile_if_let(
         &mut self,
-        parts: (
-            &crate::parser::Pattern,
-            &Expression,
-            &[Statement],
-            Option<&Vec<Statement>>,
-        ),
+        parts: IfLetParts,
         bytecode: &mut Bytecode,
     ) -> Result<()> {
         let (pattern, value, consequence, alternative) = parts;
@@ -3903,11 +3910,11 @@ impl<'a> Compiler<'a> {
 
     fn compile_comptime_block(
         &mut self,
-        body: &[Statement],
+        body: &[Spanned<Statement>],
         bytecode: &mut Bytecode,
     ) -> Result<()> {
         for statement in body {
-            match statement {
+            match &statement.node {
                 Statement::Constant(name, expr) => {
                     let value = self.evaluate_comptime_expr(expr)?;
                     self.comptime_constants.insert(name.clone(), value);
@@ -3945,10 +3952,10 @@ impl<'a> Compiler<'a> {
                 index,
                 type_name: &type_name,
             };
-            let expanded_body: Vec<Statement> = params
+            let expanded_body: Vec<Spanned<Statement>> = params
                 .body
                 .iter()
-                .map(|stmt| Self::substitute_in_statement(stmt, &ctx))
+                .map(|stmt| Self::substitute_in_statement_spanned(stmt, &ctx))
                 .collect();
             for statement in &expanded_body {
                 self.compile_statement(statement, bytecode)?;
@@ -4012,6 +4019,16 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    fn substitute_in_statement_spanned(
+        statement: &Spanned<Statement>,
+        ctx: &SubstitutionContext,
+    ) -> Spanned<Statement> {
+        Spanned::new(
+            Self::substitute_in_statement(&statement.node, ctx),
+            statement.position,
+        )
+    }
+
     fn substitute_in_expr(
         expr: &Expression,
         ctx: &SubstitutionContext,
@@ -4063,7 +4080,7 @@ impl<'a> Compiler<'a> {
                         .collect(),
                     Self::substitute_in_return_sig(return_sig, ctx),
                     body.iter()
-                        .map(|s| Self::substitute_in_statement(s, ctx))
+                        .map(|s| Self::substitute_in_statement_spanned(s, ctx))
                         .collect(),
                 )
             }
@@ -4074,7 +4091,7 @@ impl<'a> Compiler<'a> {
                     .collect(),
                 Self::substitute_in_return_sig(return_sig, ctx),
                 body.iter()
-                    .map(|s| Self::substitute_in_statement(s, ctx))
+                    .map(|s| Self::substitute_in_statement_spanned(s, ctx))
                     .collect(),
             ),
             Expression::FieldAccess(expr, field) => {

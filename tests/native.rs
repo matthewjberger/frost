@@ -83,6 +83,65 @@ fn run_ir_oracle(name: &str, source: &str) -> Option<String> {
     Some(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"))
 }
 
+fn compile_error(name: &str, source: &str) -> String {
+    let directory = std::env::temp_dir();
+    let source_path = directory.join(format!("frost_err_{name}.frost"));
+    let exe_path = directory
+        .join(format!("frost_err_{name}{}", std::env::consts::EXE_SUFFIX));
+    std::fs::write(&source_path, source).unwrap();
+    let frost = env!("CARGO_BIN_EXE_frost");
+    let output = Command::new(frost)
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe_path)
+        .arg(&source_path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&source_path);
+    assert!(
+        !output.status.success(),
+        "expected a compile error for {name} but it succeeded"
+    );
+    String::from_utf8_lossy(&output.stderr).to_string()
+}
+
+#[test]
+fn ownership_errors_report_a_source_line() {
+    let source = r#"
+Buffer :: struct { size: i64 }
+
+consume :: fn(b: Buffer) -> i64 { b.size }
+
+main :: fn() -> i64 {
+    buf := Buffer { size = 10 }
+    first := consume(buf)
+    second := consume(buf)
+    first + second
+}
+"#;
+    let message = compile_error("uam", source);
+    assert!(
+        message.contains("at line 9,"),
+        "expected the moved-value error at line 9, got:\n{message}"
+    );
+    assert!(message.contains("use of moved value"), "got:\n{message}");
+}
+
+#[test]
+fn lowering_errors_report_a_source_line() {
+    let source = r#"
+main :: fn() -> i64 {
+    x := no_such_function(3)
+    x
+}
+"#;
+    let message = compile_error("unknownfn", source);
+    assert!(
+        message.contains("at line 3,"),
+        "expected the unknown-variable error at line 3, got:\n{message}"
+    );
+}
+
 fn compile_and_run_status(name: &str, source: &str) -> Option<bool> {
     if !linker_available() {
         return None;
