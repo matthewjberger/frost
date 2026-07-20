@@ -10,12 +10,22 @@ A statically-typed programming language with Rust-inspired ownership and immutab
 - **Second-class references** - References can't be stored in structs/enums or returned, eliminating lifetime annotations
 - **Move checking** - Use-after-move of a non-`Copy` value is a compile error
 - **Linear resources** - A `linear` struct or enum must be consumed exactly once, replacing `Drop` with a tracked obligation
+- **Generational handles and pools** - Long-lived data lives in a pool and is referenced by a `Handle<T>`; `pool[handle]` is a place whose borrow is second-class, and a stale handle can never read a reused slot
+- **Generics via monomorphization** - Generic functions *and* generic structs specialize at compile time, plus a native `sizeof`; the pool typed surface is an ordinary Frost library
 - **Enums with data** - Tagged unions with pattern matching via `match`, including tuple patterns
 - **Typed IR with two native backends** - The AST lowers to a typed IR that both a Cranelift backend and a portable C backend emit from; a differential test checks the two agree
 - **Structs** - User-defined data types with field access, by-value passing and returning, and references
+- **Calls C directly** - `extern fn` links against libc and any C library on both backends
 
-See [docs/architecture.md](docs/architecture.md) for exactly what the native
-backend supports today versus what still runs only on the bytecode VM.
+## Documentation
+
+- [docs/memory-safety.md](docs/memory-safety.md) — how Frost guarantees memory
+  safety without a garbage collector or lifetime annotations
+- [docs/c-compatibility.md](docs/c-compatibility.md) — calling C and the C backend
+- [docs/architecture.md](docs/architecture.md) — the compiler pipeline and what
+  the native backend supports today versus the bytecode VM
+- [docs/memory_model.md](docs/memory_model.md) — copy / move / linear type categories
+- [docs/spec.md](docs/spec.md) — the detailed language reference
 
 ## Quick Start
 

@@ -1,8 +1,32 @@
 # Frost Language Specification
 
-**Version 0.1.0**
+**Version 0.2.0**
 
-Frost is a statically-typed programming language with Rust-inspired immutability defaults. It compiles to bytecode executed by a stack-based virtual machine or native code via Cranelift.
+Frost is a statically-typed, data-oriented programming language that is memory
+safe without a garbage collector and without lifetime annotations. The AST
+lowers to a typed IR that two native backends emit from — a Cranelift backend
+and a portable C backend — with a differential test asserting the two agree. A
+bytecode virtual machine also exists and serves as a reference oracle for the
+broader feature set.
+
+> **Reading order.** This file is the detailed language reference. For the
+> pieces most people want first, see the focused companion docs:
+>
+> - [memory-safety.md](memory-safety.md) — how Frost guarantees memory safety
+>   (second-class references, move checking, linear resources, generational
+>   handles) and why it needs no lifetimes or GC.
+> - [c-compatibility.md](c-compatibility.md) — calling C via `extern fn`, and
+>   the C backend as an internal lowering.
+> - [architecture.md](architecture.md) — the compiler pipeline and exactly what
+>   the native path supports today.
+> - [memory_model.md](memory_model.md) — the type categories (copy / move /
+>   linear) and allocation model.
+>
+> Some sections below still describe the original bytecode-first framing;
+> `architecture.md` is authoritative for the current native path, which adds
+> generic functions and structs (monomorphized), `sizeof`, generational pools
+> with `pool[handle]` dereference-as-borrow, linear resources, and located
+> lexer/parser errors.
 
 ---
 
