@@ -217,8 +217,16 @@ impl<'a> FunctionLowering<'a> {
 
     fn fresh_local(&mut self, ty: Type, name: Option<String>) -> LocalId {
         let id = self.locals.len();
-        self.locals.push(IrLocal { ty, name });
+        self.locals.push(IrLocal {
+            ty,
+            name,
+            in_memory: false,
+        });
         id
+    }
+
+    fn mark_in_memory(&mut self, local: LocalId) {
+        self.locals[local].in_memory = true;
     }
 
     fn new_block(&mut self) -> BlockId {
@@ -337,20 +345,7 @@ impl<'a> FunctionLowering<'a> {
                 Ok(())
             }
             Statement::Assignment(target, value) => {
-                let Expression::Identifier(name) = target else {
-                    bail!("native backend: unsupported assignment target");
-                };
-                let Some(local) = self.resolve_variable(name) else {
-                    bail!(
-                        "native backend: assignment to unknown variable '{name}'"
-                    );
-                };
-                let target_type = self.type_of_local(local);
-                let (operand, value_type) =
-                    self.lower_expression(value, Some(&target_type))?;
-                let coerced = self.coerce(operand, &value_type, &target_type);
-                self.emit(IrStatement::Assign(local, IrRvalue::Use(coerced)));
-                Ok(())
+                self.lower_assignment(target, value)
             }
             Statement::Return(expression) => {
                 let return_type = self.return_type.clone();
@@ -535,6 +530,16 @@ impl<'a> FunctionLowering<'a> {
             Expression::Call(callee, arguments) => {
                 self.lower_call(callee, arguments)
             }
+            Expression::Borrow(inner) => {
+                self.lower_address_of(inner, RefKind::Ref)
+            }
+            Expression::BorrowMut(inner) => {
+                self.lower_address_of(inner, RefKind::RefMut)
+            }
+            Expression::AddressOf(inner) => {
+                self.lower_address_of(inner, RefKind::Ptr)
+            }
+            Expression::Dereference(inner) => self.lower_dereference(inner),
             other => {
                 bail!("native backend: unsupported expression: {other}")
             }
@@ -820,6 +825,85 @@ impl<'a> FunctionLowering<'a> {
         Ok((IrOperand::Local(result), return_type))
     }
 
+    fn lower_assignment(
+        &mut self,
+        target: &Expression,
+        value: &Expression,
+    ) -> Result<()> {
+        match target {
+            Expression::Identifier(name) => {
+                let Some(local) = self.resolve_variable(name) else {
+                    bail!(
+                        "native backend: assignment to unknown variable '{name}'"
+                    );
+                };
+                let target_type = self.type_of_local(local);
+                let (operand, value_type) =
+                    self.lower_expression(value, Some(&target_type))?;
+                let coerced = self.coerce(operand, &value_type, &target_type);
+                self.emit(IrStatement::Assign(local, IrRvalue::Use(coerced)));
+                Ok(())
+            }
+            Expression::Dereference(pointer) => {
+                let (pointer_operand, pointer_type) =
+                    self.lower_expression(pointer, None)?;
+                let pointee = deref_target(&pointer_type)?;
+                let (operand, value_type) =
+                    self.lower_expression(value, Some(&pointee))?;
+                let coerced = self.coerce(operand, &value_type, &pointee);
+                self.emit(IrStatement::Store {
+                    address: pointer_operand,
+                    value: coerced,
+                });
+                Ok(())
+            }
+            other => {
+                bail!("native backend: unsupported assignment target: {other}")
+            }
+        }
+    }
+
+    fn lower_address_of(
+        &mut self,
+        inner: &Expression,
+        kind: RefKind,
+    ) -> Result<(IrOperand, Type)> {
+        let Expression::Identifier(name) = inner else {
+            bail!("native backend: can only take the address of a variable");
+        };
+        let Some(local) = self.resolve_variable(name) else {
+            bail!("native backend: address of unknown variable '{name}'");
+        };
+        self.mark_in_memory(local);
+        let pointee = self.type_of_local(local);
+        let result_type = match kind {
+            RefKind::Ref => Type::Ref(Box::new(pointee)),
+            RefKind::RefMut => Type::RefMut(Box::new(pointee)),
+            RefKind::Ptr => Type::Ptr(Box::new(pointee)),
+        };
+        let result = self.fresh_local(result_type.clone(), None);
+        self.emit(IrStatement::Assign(result, IrRvalue::AddressOf(local)));
+        Ok((IrOperand::Local(result), result_type))
+    }
+
+    fn lower_dereference(
+        &mut self,
+        pointer: &Expression,
+    ) -> Result<(IrOperand, Type)> {
+        let (pointer_operand, pointer_type) =
+            self.lower_expression(pointer, None)?;
+        let pointee = deref_target(&pointer_type)?;
+        let result = self.fresh_local(pointee.clone(), None);
+        self.emit(IrStatement::Assign(
+            result,
+            IrRvalue::Load {
+                address: pointer_operand,
+                ty: pointee.clone(),
+            },
+        ));
+        Ok((IrOperand::Local(result), pointee))
+    }
+
     fn type_of_local(&self, local: LocalId) -> Type {
         self.locals[local].ty.clone()
     }
@@ -853,6 +937,24 @@ impl<'a> FunctionLowering<'a> {
                 IrOperand::Local(result)
             }
             _ => operand,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RefKind {
+    Ref,
+    RefMut,
+    Ptr,
+}
+
+fn deref_target(pointer_type: &Type) -> Result<Type> {
+    match pointer_type {
+        Type::Ref(inner) | Type::RefMut(inner) | Type::Ptr(inner) => {
+            Ok((**inner).clone())
+        }
+        other => {
+            bail!("native backend: cannot dereference a value of type {other}")
         }
     }
 }
