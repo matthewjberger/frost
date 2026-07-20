@@ -2090,6 +2090,18 @@ impl<'a> FunctionLowering<'a> {
         &mut self,
         scrutinee: &Expression,
     ) -> Result<Option<(String, IrOperand)>> {
+        if matches!(
+            scrutinee,
+            Expression::FieldAccess(..)
+                | Expression::Index(..)
+                | Expression::Dereference(..)
+        ) {
+            let (address, ty) = self.place_address(scrutinee)?;
+            if let Some(enum_name) = self.enum_name_of(&ty) {
+                return Ok(Some((enum_name, address)));
+            }
+            return Ok(None);
+        }
         let Expression::Identifier(name) = scrutinee else {
             return Ok(None);
         };

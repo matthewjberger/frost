@@ -354,6 +354,51 @@ fn native_enums_and_match() {
     assert_eq!(output, "42\n-404\n4\n3\n0\n");
 }
 
+const MATCH_ENUM_PLACE: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+State :: enum { Idle, Running { pid: i64 }, Done { code: i64 } }
+Task :: struct { id: i64, state: State }
+
+describe :: fn(t: &Task) -> i64 {
+    match t.state {
+        case .Idle: 0
+        case .Running { pid }: pid
+        case .Done { code }: 0 - code
+    }
+}
+
+first :: fn(states: &[2]State, i: i64) -> i64 {
+    match states[i] {
+        case .Running { pid }: pid
+        case .Done { code }: code
+        case .Idle: 0 - 1
+    }
+}
+
+main :: fn() -> i64 {
+    a := Task { id = 1, state = State::Running { pid = 42 } }
+    b := Task { id = 2, state = State::Idle }
+    c := Task { id = 3, state = State::Done { code = 7 } }
+    printf("%lld\n", describe(&a))
+    printf("%lld\n", describe(&b))
+    printf("%lld\n", describe(&c))
+
+    arr := [State::Done { code = 9 }, State::Idle]
+    printf("%lld\n", first(&arr, 0))
+    printf("%lld\n", first(&arr, 1))
+    0
+}
+"#;
+
+#[test]
+fn native_match_on_enum_place() {
+    let Some(output) = compile_and_run("match_place", MATCH_ENUM_PLACE) else {
+        return;
+    };
+    assert_eq!(output, "42\n0\n-7\n9\n-1\n");
+}
+
 const BY_VALUE: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -1081,6 +1126,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_forward", FORWARD_REFERENCES),
         ("diff_constants", TOP_LEVEL_CONSTANTS),
         ("diff_fnptrarr", FUNCTION_POINTER_ARRAY),
+        ("diff_matchplace", MATCH_ENUM_PLACE),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
