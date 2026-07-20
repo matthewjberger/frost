@@ -152,11 +152,21 @@ Frost library: `make_pool(cap, sample: &$T)` sizes itself with `sizeof(T)`,
 element size, no privileged builtin
 (`examples/native/generic_pool_library.frost`).
 
+Generic structs monomorphize the same way. `Foo<Args>` in type position is
+encoded as a struct name that carries its arguments (`Pair<i64>`); because a
+struct name is only a layout-registry key and aggregates are byte buffers, the
+name never has to be a valid identifier. A pre-pass discovers every instance
+used across signatures, fields, and bodies, substitutes the generic struct's
+fields, and registers a concrete layout to fixpoint (so nested instances
+resolve). Construction uses the annotated instance type. This works over
+scalars and structs, with multiple type parameters, array fields of the
+parameter, by-reference passing, and nesting inside other structs.
+
 **Not yet in the native backend** (these fail loudly, they are not
 silently miscompiled): slices, capturing closures (the design deliberately
-uses function pointers instead), hashmaps, `comptime` blocks/loops, generic
-*struct* instantiation (`Foo<T>` type syntax), and explicit type arguments.
-These run on the bytecode VM.
+uses function pointers instead), hashmaps, `comptime` blocks/loops, and
+explicit type arguments (a type parameter is inferred from a value or borrow,
+not passed as `f<T>(...)`). These run on the bytecode VM.
 
 The emitted C is an internal detail, not an interface for external C callers,
 so Frost function names are prefixed (`frost_`) to avoid C keyword clashes;
@@ -228,8 +238,8 @@ Frost is being reshaped toward a data-oriented language with:
    whose borrow the checker scopes exactly like `&array[i]`.
 5. Struct/array/enum by-value passing and tuple patterns in the native
    backend. *(Done: all three, plus nested aggregates and arrays of structs.)*
-6. Generics and specialization-only comptime (monomorphization). *(Done for
-   generic functions and `sizeof`; the pool typed surface is now a Frost
-   library. Remaining: generic struct instantiation and explicit type
-   arguments so a type parameter need not be inferred from a sample value.)*
+6. Generics and specialization-only comptime (monomorphization). *(Done:
+   generic functions, generic structs, and `sizeof`; the pool typed surface is
+   now a Frost library. Remaining: explicit type arguments so a type parameter
+   need not be inferred from a value or borrow.)*
 7. Eventual self-hosting of the compiler in Frost.
