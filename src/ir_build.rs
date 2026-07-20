@@ -160,6 +160,7 @@ pub fn build_module(statements: &[Statement]) -> Result<IrModule> {
         let parameters: Vec<Parameter> = generic
             .parameters
             .iter()
+            .filter(|parameter| !is_type_parameter(parameter))
             .map(|parameter| Parameter {
                 name: parameter.name.clone(),
                 type_annotation: parameter
@@ -334,6 +335,13 @@ fn function_type_params(parameters: &[Parameter]) -> Vec<String> {
 
 fn function_is_generic(parameters: &[Parameter]) -> bool {
     !function_type_params(parameters).is_empty()
+}
+
+fn is_type_parameter(parameter: &Parameter) -> bool {
+    matches!(
+        &parameter.type_annotation,
+        Some(Type::TypeParam(name)) if name == &parameter.name
+    )
 }
 
 fn collect_type_params(ty: &Type, out: &mut Vec<String>) {
@@ -805,6 +813,12 @@ fn infer_call_subst(
 ) -> HashMap<String, Type> {
     let mut subst = HashMap::new();
     for (parameter, argument) in generic.parameters.iter().zip(arguments) {
+        if is_type_parameter(parameter)
+            && let Expression::TypeValue(ty) = argument
+        {
+            subst.insert(parameter.name.clone(), ty.clone());
+            continue;
+        }
         if let Some(argument_type) =
             infer_expr_type_shallow(argument, env, discovery)
         {
@@ -2370,30 +2384,35 @@ impl<'a> FunctionLowering<'a> {
             );
         }
 
-        let mut argument_operands = Vec::with_capacity(arguments.len());
-        let mut argument_types = Vec::with_capacity(arguments.len());
-        for argument in arguments {
-            let (operand, value_type) =
-                self.lower_expression(argument, None)?;
-            argument_operands.push(operand);
-            argument_types.push(value_type);
-        }
-
         let mut subst: HashMap<String, Type> = HashMap::new();
-        for (parameter, value_type) in
-            generic.parameters.iter().zip(&argument_types)
-        {
-            infer_subst_into(
-                &parameter_type(parameter),
-                value_type,
-                &generic.type_params,
-                &mut subst,
-            );
+        let mut value_operands: Vec<(IrOperand, Type)> = Vec::new();
+        for (parameter, argument) in generic.parameters.iter().zip(arguments) {
+            if is_type_parameter(parameter) {
+                let Expression::TypeValue(ty) = argument else {
+                    bail!(
+                        "native backend: type parameter '{}' of '{name}' requires a type argument like '${}'",
+                        parameter.name,
+                        parameter.name
+                    );
+                };
+                subst.insert(parameter.name.clone(), ty.clone());
+            } else {
+                let (operand, value_type) =
+                    self.lower_expression(argument, None)?;
+                infer_subst_into(
+                    &parameter_type(parameter),
+                    &value_type,
+                    &generic.type_params,
+                    &mut subst,
+                );
+                value_operands.push((operand, value_type));
+            }
         }
 
-        let parameter_types: Vec<Type> = generic
+        let value_parameter_types: Vec<Type> = generic
             .parameters
             .iter()
+            .filter(|parameter| !is_type_parameter(parameter))
             .map(|parameter| {
                 substitute_type(&parameter_type(parameter), &subst)
             })
@@ -2412,11 +2431,9 @@ impl<'a> FunctionLowering<'a> {
             subst,
         });
 
-        let mut lowered = Vec::with_capacity(arguments.len());
-        for ((operand, value_type), target) in argument_operands
-            .into_iter()
-            .zip(&argument_types)
-            .zip(&parameter_types)
+        let mut lowered = Vec::with_capacity(value_operands.len());
+        for ((operand, value_type), target) in
+            value_operands.into_iter().zip(&value_parameter_types)
         {
             if needs_memory(target) {
                 let IrOperand::Local(local) = operand else {
@@ -2426,7 +2443,7 @@ impl<'a> FunctionLowering<'a> {
                 };
                 lowered.push(self.address_of_local(local, target));
             } else {
-                lowered.push(self.coerce(operand, value_type, target));
+                lowered.push(self.coerce(operand, &value_type, target));
             }
         }
 

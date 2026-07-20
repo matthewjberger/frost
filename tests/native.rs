@@ -758,6 +758,39 @@ fn native_borrow_aggregate_literal() {
     assert_eq!(output, "42\n-1\n0\n");
 }
 
+const EXPLICIT_TYPE_ARGUMENTS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+pool_new :: extern fn(capacity: i64, elem_size: i64) -> ^u8
+pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
+pool_get :: extern fn(pool: ^u8, handle: i64) -> ^u8
+
+Entity :: struct { hp: i64, mana: i64 }
+
+size_of :: fn($T: Type) -> i64 { sizeof(T) }
+make_pool :: fn($T: Type, capacity: i64) -> ^u8 { pool_new(capacity, sizeof(T)) }
+insert :: fn(pool: ^u8, value: $T) -> Handle<T> { pool_alloc(pool, &value) }
+
+main :: fn() -> i64 {
+    printf("%lld\n", size_of($i64))
+    printf("%lld\n", size_of($Entity))
+
+    world := make_pool($Entity, 16)
+    h : Handle<Entity> = insert(world, Entity { hp = 100, mana = 30 })
+    printf("%lld\n", world[h].hp + world[h].mana)
+    0
+}
+"#;
+
+#[test]
+fn native_explicit_type_arguments() {
+    let Some(output) =
+        compile_and_run("explicit_types", EXPLICIT_TYPE_ARGUMENTS)
+    else {
+        return;
+    };
+    assert_eq!(output, "8\n16\n130\n");
+}
+
 const GENERIC_CONSTRUCTION_INFERENCE: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 pool_new :: extern fn(capacity: i64, elem_size: i64) -> ^u8
@@ -1674,6 +1707,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_genconstruct", GENERIC_CONSTRUCTION_INFERENCE),
         ("diff_borrowlit", BORROW_AGGREGATE_LITERAL),
         ("diff_borrowstruct", BORROW_STRUCT_LITERAL),
+        ("diff_explicittypes", EXPLICIT_TYPE_ARGUMENTS),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);

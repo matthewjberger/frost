@@ -160,8 +160,24 @@ main :: fn() -> i64 {
 ```
 
 `sizeof(T)` is a compile-time constant, so a generic function can size its own
-type parameter — which is exactly how the typed pool wrappers work as an
-ordinary Frost library.
+type parameter. When a type parameter can't be inferred from a value argument —
+for example a function that only uses `sizeof(T)` — declare it as `$T: Type` and
+pass the type explicitly with a leading `$`:
+
+```
+make_pool :: fn($T: Type, capacity: i64) -> ^u8 {
+    pool_new(capacity, sizeof(T))     // T is a compile-time type
+}
+
+main :: fn() -> i64 {
+    world := make_pool($Entity, 16)   // pass the type with $
+    ...
+}
+```
+
+Type parameters are erased — they drive monomorphization (`sizeof`, the return
+type, annotations in the body) and carry no runtime cost. This is how the typed
+pool wrappers work as an ordinary Frost library, with no dummy value needed.
 
 ## Higher-order code: function pointers, not closures
 
