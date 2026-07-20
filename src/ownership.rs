@@ -5,14 +5,52 @@ use anyhow::{Result, bail};
 use crate::parser::{Block, Expression, Literal, Parameter, Statement};
 use crate::types::Type;
 
-pub fn check_ownership(statements: &[Statement]) -> Result<()> {
+type Signatures = HashMap<String, Type>;
+
+pub fn check_ownership(
+    statements: &[Statement],
+    linear: &HashSet<String>,
+) -> Result<()> {
+    let signatures = collect_signatures(statements);
     for statement in statements {
-        check_statement(statement)?;
+        check_statement(statement, linear, &signatures)?;
     }
     Ok(())
 }
 
-fn check_statement(statement: &Statement) -> Result<()> {
+fn collect_signatures(statements: &[Statement]) -> Signatures {
+    let mut signatures = HashMap::new();
+    for statement in statements {
+        match statement {
+            Statement::Constant(
+                name,
+                Expression::Function(_, return_sig, _)
+                | Expression::Proc(_, return_sig, _),
+            ) => {
+                signatures.insert(
+                    name.clone(),
+                    return_sig.to_type().unwrap_or(Type::Void),
+                );
+            }
+            Statement::Extern {
+                name, return_type, ..
+            } => {
+                signatures.insert(
+                    name.clone(),
+                    return_type.clone().unwrap_or(Type::Void),
+                );
+            }
+            _ => {}
+        }
+    }
+    signatures
+}
+
+fn check_statement(
+    statement: &Statement,
+    linear: &HashSet<String>,
+    signatures: &Signatures,
+) -> Result<()> {
     match statement {
         Statement::Struct(name, _, fields) => {
             for field in fields {
@@ -53,8 +91,10 @@ fn check_statement(statement: &Statement) -> Result<()> {
                     "ownership: function '{name}' cannot return the reference type '{reference}'; references are second-class"
                 );
             }
-            check_ownership(body)?;
-            check_function_moves(params, body)?;
+            for inner in body {
+                check_statement(inner, linear, signatures)?;
+            }
+            check_function_moves(params, body, linear, signatures)?;
         }
         Statement::Extern {
             name, return_type, ..
@@ -72,28 +112,74 @@ fn check_statement(statement: &Statement) -> Result<()> {
     Ok(())
 }
 
-fn check_function_moves(params: &[Parameter], body: &Block) -> Result<()> {
+fn check_function_moves(
+    params: &[Parameter],
+    body: &Block,
+    linear: &HashSet<String>,
+    signatures: &Signatures,
+) -> Result<()> {
     let mut checker = MoveChecker {
         types: HashMap::new(),
         moved: HashSet::new(),
+        linear,
+        signatures,
+        linear_declared: Vec::new(),
     };
     for parameter in params {
         if let Some(ty) = &parameter.type_annotation {
-            checker.types.insert(parameter.name.clone(), ty.clone());
+            checker.note_binding(&parameter.name, Some(ty.clone()));
         }
     }
-    checker.check_block(body)
+    checker.check_function_body(body)?;
+    for name in &checker.linear_declared {
+        if !checker.moved.contains(name) {
+            bail!(
+                "ownership: linear value '{name}' is never consumed; a linear resource must be moved exactly once"
+            );
+        }
+    }
+    Ok(())
 }
 
-struct MoveChecker {
+struct MoveChecker<'a> {
     types: HashMap<String, Type>,
     moved: HashSet<String>,
+    linear: &'a HashSet<String>,
+    signatures: &'a Signatures,
+    linear_declared: Vec<String>,
 }
 
-impl MoveChecker {
+impl MoveChecker<'_> {
+    fn note_binding(&mut self, name: &str, ty: Option<Type>) {
+        self.moved.remove(name);
+        match ty {
+            Some(ty) => {
+                if is_linear_type(&ty, self.linear) {
+                    self.linear_declared.push(name.to_string());
+                }
+                self.types.insert(name.to_string(), ty);
+            }
+            None => {
+                self.types.remove(name);
+            }
+        }
+    }
+
     fn check_block(&mut self, block: &[Statement]) -> Result<()> {
         for statement in block {
             self.check_statement(statement)?;
+        }
+        Ok(())
+    }
+
+    fn check_function_body(&mut self, block: &[Statement]) -> Result<()> {
+        for (index, statement) in block.iter().enumerate() {
+            let is_last = index + 1 == block.len();
+            if is_last && let Statement::Expression(expression) = statement {
+                self.visit(expression, true)?;
+            } else {
+                self.check_statement(statement)?;
+            }
         }
         Ok(())
     }
@@ -107,17 +193,13 @@ impl MoveChecker {
                 ..
             } => {
                 self.visit(value, true)?;
-                let inferred =
-                    infer_type(type_annotation.as_ref(), value, &self.types);
-                self.moved.remove(name);
-                match inferred {
-                    Some(ty) => {
-                        self.types.insert(name.clone(), ty);
-                    }
-                    None => {
-                        self.types.remove(name);
-                    }
-                }
+                let inferred = infer_type(
+                    type_annotation.as_ref(),
+                    value,
+                    &self.types,
+                    self.signatures,
+                );
+                self.note_binding(name, inferred);
                 Ok(())
             }
             Statement::Constant(
@@ -126,11 +208,9 @@ impl MoveChecker {
             ) => Ok(()),
             Statement::Constant(name, value) => {
                 self.visit(value, true)?;
-                let inferred = infer_type(None, value, &self.types);
-                self.moved.remove(name);
-                if let Some(ty) = inferred {
-                    self.types.insert(name.clone(), ty);
-                }
+                let inferred =
+                    infer_type(None, value, &self.types, self.signatures);
+                self.note_binding(name, inferred);
                 Ok(())
             }
             Statement::Assignment(target, value) => {
@@ -150,7 +230,7 @@ impl MoveChecker {
             }
             Statement::For(variable, range, body) => {
                 self.visit(range, false)?;
-                self.types.insert(variable.clone(), Type::I64);
+                self.note_binding(variable, Some(Type::I64));
                 self.check_block(body)
             }
             Statement::Defer(inner) => self.check_statement(inner),
@@ -235,10 +315,18 @@ impl MoveChecker {
     }
 }
 
+fn is_linear_type(ty: &Type, linear: &HashSet<String>) -> bool {
+    match ty {
+        Type::Struct(name) | Type::Enum(name) => linear.contains(name),
+        _ => false,
+    }
+}
+
 fn infer_type(
     annotation: Option<&Type>,
     value: &Expression,
     types: &HashMap<String, Type>,
+    signatures: &Signatures,
 ) -> Option<Type> {
     if let Some(ty) = annotation {
         return Some(ty.clone());
@@ -256,6 +344,13 @@ fn infer_type(
             Some(Type::Bool)
         }
         Expression::Identifier(name) => types.get(name).cloned(),
+        Expression::Call(callee, _) => {
+            if let Expression::Identifier(name) = &**callee {
+                signatures.get(name).cloned()
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }
@@ -270,7 +365,8 @@ mod tests {
         let tokens = lexer.tokenize()?;
         let mut parser = Parser::new(&tokens);
         let statements = parser.parse()?;
-        check_ownership(&statements)
+        let linear = parser.linear_types().clone();
+        check_ownership(&statements, &linear)
     }
 
     #[test]
@@ -346,6 +442,56 @@ mod tests {
                 a := read(&p)\n\
                 b := read(&p)\n\
                 a + b\n\
+            }";
+        assert!(check(source).is_ok());
+    }
+
+    #[test]
+    fn unconsumed_linear_resource_is_rejected() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            open :: fn() -> File { File { handle = 1 } }\n\
+            run :: fn() {\n\
+                f := open()\n\
+            }";
+        assert!(check(source).is_err());
+    }
+
+    #[test]
+    fn consumed_linear_resource_is_accepted() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            open :: fn() -> File { File { handle = 1 } }\n\
+            close :: extern fn(f: File)\n\
+            run :: fn() {\n\
+                f := open()\n\
+                close(f)\n\
+            }";
+        assert!(check(source).is_ok());
+    }
+
+    #[test]
+    fn linear_resource_used_twice_is_rejected() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            open :: fn() -> File { File { handle = 1 } }\n\
+            close :: extern fn(f: File)\n\
+            run :: fn() {\n\
+                f := open()\n\
+                close(f)\n\
+                close(f)\n\
+            }";
+        assert!(check(source).is_err());
+    }
+
+    #[test]
+    fn returning_a_linear_resource_consumes_it() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            open :: fn() -> File { File { handle = 1 } }\n\
+            forward :: fn() -> File {\n\
+                f := open()\n\
+                f\n\
             }";
         assert!(check(source).is_ok());
     }

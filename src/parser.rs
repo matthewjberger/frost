@@ -779,13 +779,19 @@ pub type Program = Vec<Statement>;
 
 pub struct Parser<'a> {
     pub tokens: Iter<'a, Token>,
+    linear_types: std::collections::HashSet<String>,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(tokens: &'a [Token]) -> Self {
         Self {
             tokens: tokens.iter(),
+            linear_types: std::collections::HashSet::new(),
         }
+    }
+
+    pub fn linear_types(&self) -> &std::collections::HashSet<String> {
+        &self.linear_types
     }
 
     pub fn parse(&mut self) -> Result<Program> {
@@ -835,6 +841,7 @@ impl<'a> Parser<'a> {
                     && matches!(
                         self.peek_nth(2),
                         Token::Struct
+                            | Token::Linear
                             | Token::Enum
                             | Token::Distinct
                             | Token::Extern
@@ -1026,6 +1033,11 @@ impl<'a> Parser<'a> {
 
         if !matches!(self.read_token(), Token::DoubleColon) {
             bail!("Expected '::'");
+        }
+
+        if matches!(self.peek_nth(0), Token::Linear) {
+            self.read_token();
+            self.linear_types.insert(identifier.clone());
         }
 
         if matches!(self.peek_nth(0), Token::Struct) {

@@ -43,7 +43,8 @@ fn main() -> Result<()> {
     let mut parser = FrostParser::new(&tokens);
     let statements = parser.parse().context("Parser error")?;
 
-    check_ownership(&statements).context("Ownership error")?;
+    let linear_types = parser.linear_types().clone();
+    check_ownership(&statements, &linear_types).context("Ownership error")?;
 
     if cli.emit_c {
         let module = build_module(&statements).context("IR lowering error")?;
