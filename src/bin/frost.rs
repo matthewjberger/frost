@@ -5,8 +5,9 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use frost::{
-    Compiler, Lexer, Parser as FrostParser, VirtualMachine, build_module,
-    check_module, check_ownership, compile_ir_to_object, emit_c,
+    Compiler, Lexer, Parser as FrostParser, RunOutcome, VirtualMachine,
+    build_module, check_module, check_ownership, compile_ir_to_object, emit_c,
+    run_module,
 };
 
 #[derive(Parser)]
@@ -29,6 +30,12 @@ struct Cli {
 
     #[arg(long, help = "Emit C source instead of using the Cranelift backend")]
     emit_c: bool,
+
+    #[arg(
+        long,
+        help = "Interpret the typed IR directly (reference oracle for scalar programs)"
+    )]
+    run_ir: bool,
 }
 
 fn main() -> Result<()> {
@@ -46,6 +53,21 @@ fn main() -> Result<()> {
 
     let linear_types = parser.linear_types().clone();
     check_ownership(&statements, &linear_types).context("Ownership error")?;
+
+    if cli.run_ir {
+        let module = build_module(&statements).context("IR lowering error")?;
+        check_module(&module).context("IR type error")?;
+        match run_module(&module) {
+            RunOutcome::Output(output) => {
+                print!("{output}");
+                return Ok(());
+            }
+            RunOutcome::Unsupported(reason) => {
+                eprintln!("frost: ir interpreter declined: {reason}");
+                std::process::exit(3);
+            }
+        }
+    }
 
     if cli.emit_c {
         let module = build_module(&statements).context("IR lowering error")?;

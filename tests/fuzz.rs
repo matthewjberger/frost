@@ -112,6 +112,25 @@ fn run_backend(name: &str, source: &str, emit_c: bool) -> String {
     String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n")
 }
 
+fn run_ir(name: &str, source: &str) -> String {
+    let directory = std::env::temp_dir();
+    let source_path = directory.join(format!("frost_fuzz_{name}.frost"));
+    std::fs::write(&source_path, source).unwrap();
+    let frost = env!("CARGO_BIN_EXE_frost");
+    let output = Command::new(frost)
+        .arg("--run-ir")
+        .arg(&source_path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&source_path);
+    assert!(
+        output.status.success(),
+        "ir interpreter declined a scalar program:\n{source}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n")
+}
+
 #[test]
 fn fuzz_backends_agree_on_random_programs() {
     if !linker_available() {
@@ -125,6 +144,11 @@ fn fuzz_backends_agree_on_random_programs() {
         assert_eq!(
             native, via_c,
             "backends disagree on fuzz seed {seed}:\n{source}"
+        );
+        let interpreted = run_ir(&format!("s{seed}i"), &source);
+        assert_eq!(
+            native, interpreted,
+            "IR interpreter disagrees on fuzz seed {seed}:\n{source}"
         );
     }
 }

@@ -61,6 +61,28 @@ fn run_backend(name: &str, source: &str, emit_c: bool) -> Option<String> {
     Some(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"))
 }
 
+fn run_ir_oracle(name: &str, source: &str) -> Option<String> {
+    let directory = std::env::temp_dir();
+    let source_path = directory.join(format!("frost_oracle_{name}.frost"));
+    std::fs::write(&source_path, source).unwrap();
+    let frost = env!("CARGO_BIN_EXE_frost");
+    let output = Command::new(frost)
+        .arg("--run-ir")
+        .arg(&source_path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&source_path);
+    if output.status.code() == Some(3) {
+        return None;
+    }
+    assert!(
+        output.status.success(),
+        "ir interpreter failed for {name}:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Some(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"))
+}
+
 fn compile_and_run_status(name: &str, source: &str) -> Option<bool> {
     if !linker_available() {
         return None;
@@ -1719,5 +1741,12 @@ fn cranelift_and_c_backends_agree() {
             native, via_c,
             "Cranelift and C backends disagree on {name}"
         );
+        if let Some(interpreted) = run_ir_oracle(name, source) {
+            assert_eq!(
+                native.as_deref(),
+                Some(interpreted.as_str()),
+                "IR interpreter disagrees with the native backend on {name}"
+            );
+        }
     }
 }
