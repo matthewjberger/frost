@@ -80,6 +80,10 @@ int64_t pool_contains(void *pool_ptr, int64_t handle) {
     return pool->generations[index] == generation ? 1 : 0;
 }
 
+int64_t frost_read_i64(void *data) {
+    return *(int64_t *)data;
+}
+
 int64_t handle_index(int64_t handle) {
     return handle & 0xFFFFFFFF;
 }

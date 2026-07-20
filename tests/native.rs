@@ -656,6 +656,29 @@ fn native_generic_structs_monomorphize() {
     assert_eq!(output, "7\n7\n5\n100\n5\n9\n43\n99\n");
 }
 
+const LINEAR_RESOURCE_NATIVE: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+frost_read_i64 :: extern fn(data: File) -> i64
+
+File :: linear struct { fd: i64 }
+
+open :: fn(n: i64) -> File { File { fd = n } }
+
+main :: fn() -> i64 {
+    f := open(42)
+    printf("%lld\n", frost_read_i64(f))
+    0
+}
+"#;
+
+#[test]
+fn native_linear_resource_consumed_by_extern() {
+    let Some(output) = compile_and_run("linear", LINEAR_RESOURCE_NATIVE) else {
+        return;
+    };
+    assert_eq!(output, "42\n");
+}
+
 const GENERIC_INSTANCE_COMBINATIONS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -1515,6 +1538,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_nestedgen", NESTED_GENERIC_STRUCTS),
         ("diff_genfactory", GENERIC_FACTORIES),
         ("diff_geninstance", GENERIC_INSTANCE_COMBINATIONS),
+        ("diff_linear", LINEAR_RESOURCE_NATIVE),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);

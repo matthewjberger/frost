@@ -83,9 +83,10 @@ impl Generator {
         for external in &module.externs {
             let mut signature = self.module.make_signature();
             for parameter in &external.params {
-                signature
-                    .params
-                    .push(AbiParam::new(clif_type(pointer_type, parameter)?));
+                signature.params.push(AbiParam::new(param_abi_type(
+                    pointer_type,
+                    parameter,
+                )?));
             }
             if !matches!(external.return_type, Type::Void) {
                 signature.returns.push(AbiParam::new(clif_type(
