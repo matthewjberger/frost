@@ -656,6 +656,38 @@ fn native_generic_structs_monomorphize() {
     assert_eq!(output, "7\n7\n5\n100\n5\n9\n43\n99\n");
 }
 
+const BORROW_AGGREGATE_LITERAL: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+State :: enum { Running { pid: i64 }, Idle }
+
+pid_of :: fn(s: &State) -> i64 {
+    match s {
+        case .Running { pid }: match pid {
+            case 0: 0 - 1
+            case _: pid
+        }
+        case .Idle: 0
+    }
+}
+
+main :: fn() -> i64 {
+    printf("%lld\n", pid_of(&State::Running { pid = 42 }))
+    printf("%lld\n", pid_of(&State::Running { pid = 0 }))
+    printf("%lld\n", pid_of(&State::Idle))
+    0
+}
+"#;
+
+#[test]
+fn native_borrow_aggregate_literal() {
+    let Some(output) = compile_and_run("borrow_lit", BORROW_AGGREGATE_LITERAL)
+    else {
+        return;
+    };
+    assert_eq!(output, "42\n-1\n0\n");
+}
+
 const GENERIC_CONSTRUCTION_INFERENCE: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 pool_new :: extern fn(capacity: i64, elem_size: i64) -> ^u8
@@ -1570,6 +1602,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_geninstance", GENERIC_INSTANCE_COMBINATIONS),
         ("diff_linear", LINEAR_RESOURCE_NATIVE),
         ("diff_genconstruct", GENERIC_CONSTRUCTION_INFERENCE),
+        ("diff_borrowlit", BORROW_AGGREGATE_LITERAL),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
