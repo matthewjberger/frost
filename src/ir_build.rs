@@ -2785,9 +2785,26 @@ impl<'a> FunctionLowering<'a> {
         if let Type::Handle(element) = index_type {
             return self.pool_element_address(base, index_operand, *element);
         }
-        let (base_pointer, element_type) = self.array_base_pointer(base)?;
+        let (base_pointer, element_type, length) =
+            self.array_base_pointer(base)?;
         let element_size = self.builder.byte_size(&element_type);
         let index_operand = self.coerce(index_operand, &index_type, &Type::I64);
+        if let Some(length) = length {
+            let check_result = self.fresh_local(Type::Void, None);
+            self.emit(IrStatement::Assign(
+                check_result,
+                IrRvalue::Call {
+                    function: "frost_bounds_check".to_string(),
+                    arguments: vec![
+                        index_operand.clone(),
+                        IrOperand::Constant(IrConstant::Integer(
+                            length as i64,
+                            Type::I64,
+                        )),
+                    ],
+                },
+            ));
+        }
         let result =
             self.fresh_local(Type::Ptr(Box::new(element_type.clone())), None);
         self.emit(IrStatement::Assign(
@@ -2823,14 +2840,14 @@ impl<'a> FunctionLowering<'a> {
     fn array_base_pointer(
         &mut self,
         base: &Expression,
-    ) -> Result<(IrOperand, Type)> {
+    ) -> Result<(IrOperand, Type, Option<usize>)> {
         match base {
             Expression::Identifier(name) => {
                 let Some(local) = self.resolve_variable(name) else {
                     bail!("native backend: unknown variable '{name}'");
                 };
                 match self.type_of_local(local) {
-                    Type::Array(element, _) => {
+                    Type::Array(element, count) => {
                         self.mark_in_memory(local);
                         let result = self.fresh_local(
                             Type::Ptr(Box::new((*element).clone())),
@@ -2840,17 +2857,17 @@ impl<'a> FunctionLowering<'a> {
                             result,
                             IrRvalue::AddressOf { local, offset: 0 },
                         ));
-                        Ok((IrOperand::Local(result), *element))
+                        Ok((IrOperand::Local(result), *element, Some(count)))
                     }
                     Type::Ref(inner)
                     | Type::RefMut(inner)
                     | Type::Ptr(inner)
                         if matches!(*inner, Type::Array(_, _)) =>
                     {
-                        let Type::Array(element, _) = *inner else {
+                        let Type::Array(element, count) = *inner else {
                             unreachable!()
                         };
-                        Ok((IrOperand::Local(local), *element))
+                        Ok((IrOperand::Local(local), *element, Some(count)))
                     }
                     other => bail!(
                         "native backend: '{name}' is not an array (found {other})"
@@ -2859,18 +2876,18 @@ impl<'a> FunctionLowering<'a> {
             }
             Expression::FieldAccess(inner, field) => {
                 let (address, field_type) = self.field_address(inner, field)?;
-                let Type::Array(element, _) = field_type else {
+                let Type::Array(element, count) = field_type else {
                     bail!("native backend: field '{field}' is not an array");
                 };
-                Ok((address, *element))
+                Ok((address, *element, Some(count)))
             }
             Expression::Index(inner, index) => {
                 let (address, element_type) =
                     self.element_address(inner, index)?;
-                let Type::Array(element, _) = element_type else {
+                let Type::Array(element, count) = element_type else {
                     bail!("native backend: indexed value is not an array");
                 };
-                Ok((address, *element))
+                Ok((address, *element, Some(count)))
             }
             other => {
                 bail!("native backend: cannot index into: {other}")

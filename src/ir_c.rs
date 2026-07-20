@@ -18,14 +18,18 @@ fn c_function_name(name: &str, externs: &HashSet<String>) -> String {
 }
 
 pub fn emit_c(module: &IrModule) -> Result<String> {
-    let externs: HashSet<String> = module
+    let mut externs: HashSet<String> = module
         .externs
         .iter()
         .map(|external| external.name.clone())
         .collect();
+    externs.insert("frost_bounds_check".to_string());
 
     let mut output = String::new();
     output.push_str("#include <stdint.h>\n\n");
+    output.push_str(
+        "void frost_bounds_check(int64_t index, int64_t length);\n\n",
+    );
 
     for external in &module.externs {
         let mut params = Vec::new();
