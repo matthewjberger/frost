@@ -263,6 +263,10 @@ fn array_element_type(
         Some(Expression::Literal(Literal::Float32(_))) => Type::F32,
         Some(Expression::Literal(Literal::Boolean(_)))
         | Some(Expression::Boolean(_)) => Type::Bool,
+        Some(Expression::StructInit(name, _)) => Type::Struct(name.clone()),
+        Some(Expression::EnumVariantInit(name, _, _)) => {
+            Type::Enum(name.clone())
+        }
         _ => Type::I64,
     }
 }
@@ -1515,35 +1519,56 @@ impl<'a> FunctionLowering<'a> {
         &mut self,
         base: &Expression,
     ) -> Result<(IrOperand, Type)> {
-        let Expression::Identifier(name) = base else {
-            bail!("native backend: only variable arrays can be indexed");
-        };
-        let Some(local) = self.resolve_variable(name) else {
-            bail!("native backend: unknown variable '{name}'");
-        };
-        match self.type_of_local(local) {
-            Type::Array(element, _) => {
-                self.mark_in_memory(local);
-                let result = self
-                    .fresh_local(Type::Ptr(Box::new((*element).clone())), None);
-                self.emit(IrStatement::Assign(
-                    result,
-                    IrRvalue::AddressOf { local, offset: 0 },
-                ));
-                Ok((IrOperand::Local(result), *element))
-            }
-            Type::Ref(inner) | Type::RefMut(inner) | Type::Ptr(inner)
-                if matches!(*inner, Type::Array(_, _)) =>
-            {
-                let Type::Array(element, _) = *inner else {
-                    unreachable!()
+        match base {
+            Expression::Identifier(name) => {
+                let Some(local) = self.resolve_variable(name) else {
+                    bail!("native backend: unknown variable '{name}'");
                 };
-                Ok((IrOperand::Local(local), *element))
+                match self.type_of_local(local) {
+                    Type::Array(element, _) => {
+                        self.mark_in_memory(local);
+                        let result = self.fresh_local(
+                            Type::Ptr(Box::new((*element).clone())),
+                            None,
+                        );
+                        self.emit(IrStatement::Assign(
+                            result,
+                            IrRvalue::AddressOf { local, offset: 0 },
+                        ));
+                        Ok((IrOperand::Local(result), *element))
+                    }
+                    Type::Ref(inner)
+                    | Type::RefMut(inner)
+                    | Type::Ptr(inner)
+                        if matches!(*inner, Type::Array(_, _)) =>
+                    {
+                        let Type::Array(element, _) = *inner else {
+                            unreachable!()
+                        };
+                        Ok((IrOperand::Local(local), *element))
+                    }
+                    other => bail!(
+                        "native backend: '{name}' is not an array (found {other})"
+                    ),
+                }
+            }
+            Expression::FieldAccess(inner, field) => {
+                let (address, field_type) = self.field_address(inner, field)?;
+                let Type::Array(element, _) = field_type else {
+                    bail!("native backend: field '{field}' is not an array");
+                };
+                Ok((address, *element))
+            }
+            Expression::Index(inner, index) => {
+                let (address, element_type) =
+                    self.element_address(inner, index)?;
+                let Type::Array(element, _) = element_type else {
+                    bail!("native backend: indexed value is not an array");
+                };
+                Ok((address, *element))
             }
             other => {
-                bail!(
-                    "native backend: '{name}' is not an array (found {other})"
-                )
+                bail!("native backend: cannot index into: {other}")
             }
         }
     }
@@ -1554,9 +1579,6 @@ impl<'a> FunctionLowering<'a> {
         element_type: &Type,
         elements: &[Expression],
     ) -> Result<()> {
-        if needs_memory(element_type) {
-            bail!("native backend: arrays of aggregates are not supported yet");
-        }
         let element_size = self.builder.byte_size(element_type);
         for (index, element) in elements.iter().enumerate() {
             let address = self
@@ -1568,13 +1590,24 @@ impl<'a> FunctionLowering<'a> {
                     offset: index * element_size,
                 },
             ));
-            let (operand, value_type) =
-                self.lower_expression(element, Some(element_type))?;
-            let coerced = self.coerce(operand, &value_type, element_type);
-            self.emit(IrStatement::Store {
-                address: IrOperand::Local(address),
-                value: coerced,
-            });
+            if needs_memory(element_type) {
+                let source_local =
+                    self.materialize_field_value(element, element_type)?;
+                let source = self.address_of_local(source_local, element_type);
+                self.emit(IrStatement::Copy {
+                    destination: IrOperand::Local(address),
+                    source,
+                    size: element_size,
+                });
+            } else {
+                let (operand, value_type) =
+                    self.lower_expression(element, Some(element_type))?;
+                let coerced = self.coerce(operand, &value_type, element_type);
+                self.emit(IrStatement::Store {
+                    address: IrOperand::Local(address),
+                    value: coerced,
+                });
+            }
         }
         Ok(())
     }
@@ -1674,6 +1707,14 @@ impl<'a> FunctionLowering<'a> {
                     bail!("native backend: dereference is not a struct");
                 };
                 Ok((pointer_operand, struct_name))
+            }
+            Expression::Index(inner, index) => {
+                let (address, element_type) =
+                    self.element_address(inner, index)?;
+                let Type::Struct(struct_name) = element_type else {
+                    bail!("native backend: indexed element is not a struct");
+                };
+                Ok((address, struct_name))
             }
             other => {
                 bail!("native backend: not a struct place: {other}")

@@ -578,6 +578,42 @@ fn native_nested_structs() {
     assert_eq!(output, "5\n10\n30\n99\n119\n");
 }
 
+const DATA_LAYOUTS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Particle :: struct { x: i64, y: i64 }
+Grid :: struct { cells: [4]i64, count: i64 }
+
+main :: fn() -> i64 {
+    mut ps := [Particle { x = 1, y = 2 }, Particle { x = 3, y = 4 }, Particle { x = 5, y = 6 }]
+    printf("%lld\n", ps[0].x)
+    printf("%lld\n", ps[1].y)
+    ps[2].x = 99
+    printf("%lld\n", ps[2].x)
+
+    mut total : i64 = 0
+    for i in 0..3 {
+        total = total + ps[i].x
+    }
+    printf("%lld\n", total)
+
+    mut g := Grid { cells = [10, 20, 30, 40], count = 4 }
+    printf("%lld\n", g.cells[1])
+    g.cells[2] = 77
+    printf("%lld\n", g.cells[2])
+    printf("%lld\n", g.count)
+    0
+}
+"#;
+
+#[test]
+fn native_array_of_structs_and_struct_of_arrays() {
+    let Some(output) = compile_and_run("data_layouts", DATA_LAYOUTS) else {
+        return;
+    };
+    assert_eq!(output, "1\n4\n99\n103\n20\n77\n4\n");
+}
+
 #[test]
 fn native_showcase_examples_build_and_agree() {
     if !linker_available() {
@@ -620,6 +656,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_kitchen", KITCHEN_SINK),
         ("diff_defer", DEFER),
         ("diff_nested", NESTED_STRUCTS),
+        ("diff_layouts", DATA_LAYOUTS),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
