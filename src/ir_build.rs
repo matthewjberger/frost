@@ -155,15 +155,21 @@ impl IrBuilder {
             function.define_variable(&parameter.name, local);
         }
 
-        let (value, value_type) =
-            function.lower_block(body, Some(&return_type))?;
-
-        if !function.current_is_terminated() {
-            if matches!(return_type, Type::Void) {
-                function.set_terminator(IrTerminator::Return(None));
-            } else {
-                let operand = function.coerce(value, &value_type, &return_type);
-                function.set_terminator(IrTerminator::Return(Some(operand)));
+        let has_defers = body.iter().any(|s| matches!(s, Statement::Defer(_)));
+        if has_defers {
+            function.lower_body_with_defers(body, &return_type)?;
+        } else {
+            let (value, value_type) =
+                function.lower_block(body, Some(&return_type))?;
+            if !function.current_is_terminated() {
+                if matches!(return_type, Type::Void) {
+                    function.set_terminator(IrTerminator::Return(None));
+                } else {
+                    let operand =
+                        function.coerce(value, &value_type, &return_type);
+                    function
+                        .set_terminator(IrTerminator::Return(Some(operand)));
+                }
             }
         }
 
@@ -203,6 +209,42 @@ fn parameter_type(parameter: &Parameter) -> Type {
 
 fn needs_memory(ty: &Type) -> bool {
     matches!(ty, Type::Struct(_) | Type::Array(_, _) | Type::Enum(_))
+}
+
+fn body_has_nested_return(body: &[Statement]) -> bool {
+    body.iter().any(|statement| match statement {
+        Statement::Return(_) => false,
+        other => statement_contains_return(other),
+    })
+}
+
+fn statement_contains_return(statement: &Statement) -> bool {
+    match statement {
+        Statement::Return(_) => true,
+        Statement::While(_, body) | Statement::For(_, _, body) => {
+            body.iter().any(statement_contains_return)
+        }
+        Statement::Defer(inner) => statement_contains_return(inner),
+        Statement::Expression(expression) => {
+            expression_contains_return(expression)
+        }
+        _ => false,
+    }
+}
+
+fn expression_contains_return(expression: &Expression) -> bool {
+    match expression {
+        Expression::If(_, consequence, alternative) => {
+            consequence.iter().any(statement_contains_return)
+                || alternative.as_ref().is_some_and(|block| {
+                    block.iter().any(statement_contains_return)
+                })
+        }
+        Expression::Switch(_, cases) => cases
+            .iter()
+            .any(|case| case.body.iter().any(statement_contains_return)),
+        _ => false,
+    }
 }
 
 fn array_element_type(
@@ -518,6 +560,83 @@ impl<'a> FunctionLowering<'a> {
         }
         self.pop_scope();
         Ok(result)
+    }
+
+    fn lower_body_with_defers(
+        &mut self,
+        body: &Block,
+        return_type: &Type,
+    ) -> Result<()> {
+        if body_has_nested_return(body) {
+            bail!(
+                "native backend: a return inside a branch is not supported together with defer yet"
+            );
+        }
+        let defers: Vec<&Statement> = body
+            .iter()
+            .filter_map(|statement| match statement {
+                Statement::Defer(inner) => Some(inner.as_ref()),
+                _ => None,
+            })
+            .collect();
+
+        self.push_scope();
+        for (index, statement) in body.iter().enumerate() {
+            let is_last = index + 1 == body.len();
+            match statement {
+                Statement::Defer(_) => {}
+                Statement::Return(expression) => {
+                    let operand =
+                        self.lower_return_value(expression, return_type)?;
+                    self.run_defers(&defers)?;
+                    self.set_terminator(IrTerminator::Return(operand));
+                }
+                Statement::Expression(expression) if is_last => {
+                    let (value, value_type) =
+                        self.lower_expression(expression, Some(return_type))?;
+                    self.run_defers(&defers)?;
+                    if !self.current_is_terminated() {
+                        if matches!(return_type, Type::Void) {
+                            self.set_terminator(IrTerminator::Return(None));
+                        } else {
+                            let operand =
+                                self.coerce(value, &value_type, return_type);
+                            self.set_terminator(IrTerminator::Return(Some(
+                                operand,
+                            )));
+                        }
+                    }
+                }
+                other => self.lower_statement(other)?,
+            }
+        }
+        self.pop_scope();
+
+        if !self.current_is_terminated() {
+            self.run_defers(&defers)?;
+            self.set_terminator(IrTerminator::Return(None));
+        }
+        Ok(())
+    }
+
+    fn lower_return_value(
+        &mut self,
+        expression: &Expression,
+        return_type: &Type,
+    ) -> Result<Option<IrOperand>> {
+        if matches!(return_type, Type::Void) {
+            return Ok(None);
+        }
+        let (operand, value_type) =
+            self.lower_expression(expression, Some(return_type))?;
+        Ok(Some(self.coerce(operand, &value_type, return_type)))
+    }
+
+    fn run_defers(&mut self, defers: &[&Statement]) -> Result<()> {
+        for deferred in defers.iter().rev() {
+            self.lower_statement(deferred)?;
+        }
+        Ok(())
     }
 
     fn lower_statement(&mut self, statement: &Statement) -> Result<()> {

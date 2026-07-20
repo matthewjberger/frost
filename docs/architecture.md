@@ -101,11 +101,14 @@ correct type and operation for each value because the IR is fully typed, and
   `fn(...) -> T` parameter or local holds one, and calling through it is an
   indirect call. This is the design's "function pointers, not closures"
   higher-order story (`apply(f: fn(i64) -> i64, x: i64)`).
+- `defer`: function-scoped, run in LIFO order at each return and at the
+  trailing expression. A `return` nested inside a branch alongside `defer`
+  is rejected (it would need runtime tracking), so defers always run.
 
 **Not yet in the native backend** (these fail loudly, they are not
 silently miscompiled): slices, capturing closures (the design deliberately
-uses function pointers instead), hashmaps, `defer`, `comptime`, and
-generics. These run on the bytecode VM.
+uses function pointers instead), hashmaps, `comptime`, and generics. These
+run on the bytecode VM.
 
 The emitted C is an internal detail, not an interface for external C callers,
 so Frost function names are prefixed (`frost_`) to avoid C keyword clashes;

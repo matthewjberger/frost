@@ -521,6 +521,32 @@ fn native_combined_features() {
     assert_eq!(output, "32\n300\n49\n610\n30\n");
 }
 
+const DEFER: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+work :: fn() -> i64 {
+    printf("%lld\n", 1)
+    defer printf("%lld\n", 2)
+    defer printf("%lld\n", 3)
+    printf("%lld\n", 4)
+    99
+}
+
+main :: fn() -> i64 {
+    r := work()
+    printf("%lld\n", r)
+    0
+}
+"#;
+
+#[test]
+fn native_defer_runs_lifo_at_return() {
+    let Some(output) = compile_and_run("defer", DEFER) else {
+        return;
+    };
+    assert_eq!(output, "1\n4\n3\n2\n99\n");
+}
+
 #[test]
 fn cranelift_and_c_backends_agree() {
     let programs = [
@@ -537,6 +563,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_tuple", TUPLE_MATCH),
         ("diff_funcptr", FUNCTION_POINTERS),
         ("diff_kitchen", KITCHEN_SINK),
+        ("diff_defer", DEFER),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
