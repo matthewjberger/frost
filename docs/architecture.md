@@ -32,12 +32,12 @@ Source (.frost)
 The **bytecode VM** is the mature, default path used by the REPL and by
 `frost file.frost`. It is broad and covered by a large unit-test suite.
 
-The **typed IR** is the new spine for native compilation and, over time, the
-single place where type checking and ownership/linearity checking will be
-discharged. `--native` / `--link` lower the AST to the IR and emit machine
-code from it via Cranelift; `--emit-c` lowers the same IR to portable C.
-Because both native backends emit from one IR, a differential test compiles
-each program through both and asserts their output matches.
+The **typed IR** is the spine for native compilation and the single place
+where type checking and ownership/linearity checking are discharged.
+`--native` / `--link` lower the AST to the IR and emit machine code from it via
+Cranelift; `--emit-c` lowers the same IR to portable C; `--run-ir` interprets
+the IR directly. Because all three paths emit from one IR, a differential test
+runs each program through them and asserts their output matches.
 
 ## Typed IR
 
@@ -195,8 +195,9 @@ Frost is being reshaped toward a data-oriented language with:
   dereference-scoped temporaries; they cannot be stored or returned.
 - Free functions only, with signatures that declare their effects.
 - The typed IR as the single point where ownership, borrow, and linearity
-  checking are discharged, with the bytecode VM serving as the differential
-  oracle for the native backends.
+  checking are discharged, cross-checked by three independent execution paths:
+  the Cranelift native backend, the portable C backend, and a direct IR
+  interpreter that all must agree.
 
 ## Ownership checking
 
@@ -234,8 +235,11 @@ Frost is being reshaped toward a data-oriented language with:
 
 1. Extend ownership to move tracking and borrow exclusivity on the IR
    (second-class references are already enforced).
-2. A real type-checking pass on the IR, replacing the currently bypassed
-   `typechecker.rs`.
+2. A real type-checking pass on the IR. *(Done: `src/ir_typecheck.rs` runs on
+   the typed IR after lowering and before either backend. It validates local
+   and block id ranges, direct and indirect call arity against the gathered
+   signatures, numeric operands for arithmetic and indexing, and that non-void
+   functions return a value.)*
 3. Linear resources with path-sensitive consumption, and error enums that
    linearity makes non-ignorable.
 4. Handle-dereference-as-borrow. *(Done: `Handle<T>` is a first-class native
@@ -253,8 +257,13 @@ Frost is being reshaped toward a data-oriented language with:
    the pool typed surface is now a Frost library.)*
 7. Bounds-checked array indexing. *(Done: every fixed-size array index is
    checked against the statically-known length and aborts on out-of-range.)*
-8. Source locations in errors. *(Done for the lexer and parser: errors carry
-   `line`/`column`. Remaining: spans on AST nodes so ownership and IR-lowering
-   errors are located too, a large mechanical change of modest value now that
-   syntax errors are located.)*
-9. Eventual self-hosting of the compiler in Frost.
+8. Source locations in errors. *(Done: the lexer and parser carry
+   `line`/`column`, and a `Spanned<T>` wrapper attaches a source position to
+   every statement, so ownership and IR-lowering errors report the exact source
+   line and column, not just the enclosing function.)*
+9. A third differential oracle. *(Done: `src/ir_interp.rs` interprets the typed
+   IR directly, exposed through `--run-ir`. It validates scalar arithmetic,
+   control flow, recursion, and function pointers against the Cranelift and C
+   backends, and declines cleanly on memory and pool operations rather than
+   guessing.)*
+10. Eventual self-hosting of the compiler in Frost.
