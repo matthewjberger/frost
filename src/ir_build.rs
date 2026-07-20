@@ -486,6 +486,18 @@ fn infer_subst_into(
     }
 }
 
+fn sanitize_identifier(name: &str) -> String {
+    name.chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '_' {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 fn mangle_type(ty: &Type) -> String {
     match ty {
         Type::I8 => "i8".to_string(),
@@ -501,7 +513,7 @@ fn mangle_type(ty: &Type) -> String {
         Type::F32 => "f32".to_string(),
         Type::F64 => "f64".to_string(),
         Type::Bool => "bool".to_string(),
-        Type::Struct(name) | Type::Enum(name) => name.clone(),
+        Type::Struct(name) | Type::Enum(name) => sanitize_identifier(name),
         Type::Ptr(inner) => format!("p_{}", mangle_type(inner)),
         Type::Ref(inner) => format!("r_{}", mangle_type(inner)),
         Type::RefMut(inner) => format!("rm_{}", mangle_type(inner)),

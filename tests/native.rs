@@ -656,6 +656,53 @@ fn native_generic_structs_monomorphize() {
     assert_eq!(output, "7\n7\n5\n100\n5\n9\n43\n99\n");
 }
 
+const GENERIC_INSTANCE_COMBINATIONS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Pair :: struct($T: Type) { first: T, second: T }
+Op :: struct($T: Type) { f: fn($T) -> $T, seed: $T }
+
+inc :: fn(x: i64) -> i64 { x + 1 }
+swap :: fn(a: &mut $T, b: &mut $T) {
+    t := a^
+    a^ = b^
+    b^ = t
+}
+
+main :: fn() -> i64 {
+    arr : [3]Pair<i64> = [
+        Pair { first = 1, second = 2 },
+        Pair { first = 3, second = 4 },
+        Pair { first = 5, second = 6 }
+    ]
+    mut total : i64 = 0
+    for i in 0..3 {
+        total = total + arr[i].first + arr[i].second
+    }
+    printf("%lld\n", total)
+
+    o : Op<i64> = Op { f = inc, seed = 41 }
+    g := o.f
+    printf("%lld\n", g(o.seed))
+
+    mut x : Pair<i64> = Pair { first = 1, second = 2 }
+    mut y : Pair<i64> = Pair { first = 9, second = 8 }
+    swap(&mut x, &mut y)
+    printf("%lld\n", x.first + y.second)
+    0
+}
+"#;
+
+#[test]
+fn native_generic_instance_combinations() {
+    let Some(output) =
+        compile_and_run("gen_instance", GENERIC_INSTANCE_COMBINATIONS)
+    else {
+        return;
+    };
+    assert_eq!(output, "21\n42\n11\n");
+}
+
 const GENERIC_FACTORIES: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -1467,6 +1514,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_poolderef", POOL_HANDLE_DEREF),
         ("diff_nestedgen", NESTED_GENERIC_STRUCTS),
         ("diff_genfactory", GENERIC_FACTORIES),
+        ("diff_geninstance", GENERIC_INSTANCE_COMBINATIONS),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
