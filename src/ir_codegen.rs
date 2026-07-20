@@ -287,6 +287,7 @@ fn clif_type(pointer_type: types::Type, ty: &Type) -> Result<types::Type> {
         Type::I16 | Type::U16 => types::I16,
         Type::I32 | Type::U32 => types::I32,
         Type::I64 | Type::U64 | Type::Isize | Type::Usize => types::I64,
+        Type::Handle(_) => types::I64,
         Type::F32 => types::F32,
         Type::F64 => types::F64,
         Type::Ptr(_) | Type::Ref(_) | Type::RefMut(_) | Type::Proc(_, _) => {
