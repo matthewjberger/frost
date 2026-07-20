@@ -96,7 +96,9 @@ impl Type {
             Type::Ref(_) | Type::RefMut(_) | Type::Ptr(_) => true,
             Type::Proc(_, _) | Type::Void => true,
             Type::Array(_, _) => true,
-            Type::Str | Type::Slice(_) | Type::Struct(_) | Type::Enum(_) => false,
+            Type::Str | Type::Slice(_) | Type::Struct(_) | Type::Enum(_) => {
+                false
+            }
             Type::Distinct(inner) => inner.is_copy(),
             Type::Arena => false,
             Type::Context => false,
@@ -109,7 +111,9 @@ impl Type {
 
     pub fn needs_drop(&self) -> bool {
         match self {
-            Type::Str | Type::Slice(_) | Type::Struct(_) | Type::Enum(_) => true,
+            Type::Str | Type::Slice(_) | Type::Struct(_) | Type::Enum(_) => {
+                true
+            }
             Type::Array(inner, _) => inner.needs_drop(),
             Type::Distinct(inner) => inner.needs_drop(),
             Type::Arena => true,
@@ -282,7 +286,10 @@ mod tests {
     fn contains_reference() {
         assert!(Type::Ref(Box::new(Type::I64)).contains_reference());
         assert!(Type::RefMut(Box::new(Type::I64)).contains_reference());
-        assert!(Type::Array(Box::new(Type::Ref(Box::new(Type::I64))), 10).contains_reference());
+        assert!(
+            Type::Array(Box::new(Type::Ref(Box::new(Type::I64))), 10)
+                .contains_reference()
+        );
         assert!(!Type::Array(Box::new(Type::I64), 10).contains_reference());
         assert!(!Type::Ptr(Box::new(Type::I64)).contains_reference());
         assert!(!Type::I64.contains_reference());
