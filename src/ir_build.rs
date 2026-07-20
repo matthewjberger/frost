@@ -749,10 +749,25 @@ impl<'a> FunctionLowering<'a> {
                 Ok((IrOperand::Constant(IrConstant::Bool(*value)), Type::Bool))
             }
             Expression::Identifier(name) => {
-                let Some(local) = self.resolve_variable(name) else {
-                    bail!("native backend: unknown variable '{name}'");
-                };
-                Ok((IrOperand::Local(local), self.type_of_local(local)))
+                if let Some(local) = self.resolve_variable(name) {
+                    return Ok((
+                        IrOperand::Local(local),
+                        self.type_of_local(local),
+                    ));
+                }
+                if let Some(signature) = self.builder.signature(name) {
+                    let proc_type = Type::Proc(
+                        signature.parameters.clone(),
+                        Box::new(signature.return_type.clone()),
+                    );
+                    let result = self.fresh_local(proc_type.clone(), None);
+                    self.emit(IrStatement::Assign(
+                        result,
+                        IrRvalue::FunctionAddress(name.clone()),
+                    ));
+                    return Ok((IrOperand::Local(result), proc_type));
+                }
+                bail!("native backend: unknown variable '{name}'");
             }
             Expression::Prefix(operator, operand) => {
                 self.lower_prefix(*operator, operand, expected)
@@ -1054,12 +1069,21 @@ impl<'a> FunctionLowering<'a> {
         callee: &Expression,
         arguments: &[Expression],
     ) -> Result<(IrOperand, Type)> {
-        let Expression::Identifier(name) = callee else {
-            bail!("native backend: only direct function calls are supported");
-        };
-        let Some(signature) = self.builder.signature(name) else {
-            bail!("native backend: call to unknown function '{name}'");
-        };
+        if let Expression::Identifier(name) = callee
+            && self.resolve_variable(name).is_none()
+            && self.builder.signature(name).is_some()
+        {
+            return self.lower_direct_call(name, arguments);
+        }
+        self.lower_indirect_call(callee, arguments)
+    }
+
+    fn lower_direct_call(
+        &mut self,
+        name: &str,
+        arguments: &[Expression],
+    ) -> Result<(IrOperand, Type)> {
+        let signature = self.builder.signature(name).unwrap();
         let parameter_types = signature.parameters.clone();
         let return_type = signature.return_type.clone();
 
@@ -1087,8 +1111,60 @@ impl<'a> FunctionLowering<'a> {
         self.emit(IrStatement::Assign(
             result,
             IrRvalue::Call {
-                function: name.clone(),
+                function: name.to_string(),
                 arguments: lowered,
+            },
+        ));
+        Ok((IrOperand::Local(result), return_type))
+    }
+
+    fn lower_indirect_call(
+        &mut self,
+        callee: &Expression,
+        arguments: &[Expression],
+    ) -> Result<(IrOperand, Type)> {
+        let (callee_operand, callee_type) =
+            self.lower_expression(callee, None)?;
+        let Type::Proc(parameter_types, return_type) = callee_type else {
+            bail!(
+                "native backend: cannot call a value that is not a function pointer"
+            );
+        };
+        let return_type = *return_type;
+        if needs_memory(&return_type) {
+            bail!(
+                "native backend: indirect call returning an aggregate is not supported yet"
+            );
+        }
+
+        let mut lowered = Vec::with_capacity(arguments.len());
+        for (index, argument) in arguments.iter().enumerate() {
+            let expected = parameter_types.get(index);
+            if let Some(target) = expected
+                && needs_memory(target)
+            {
+                let address =
+                    self.aggregate_argument_address(argument, target)?;
+                lowered.push(address);
+                continue;
+            }
+            let (operand, value_type) =
+                self.lower_expression(argument, expected)?;
+            let coerced = match expected {
+                Some(target) => self.coerce(operand, &value_type, target),
+                None => operand,
+            };
+            lowered.push(coerced);
+        }
+
+        let result = self.fresh_local(return_type.clone(), None);
+        self.emit(IrStatement::Assign(
+            result,
+            IrRvalue::CallIndirect {
+                callee: callee_operand,
+                arguments: lowered,
+                parameter_types,
+                return_type: return_type.clone(),
             },
         ));
         Ok((IrOperand::Local(result), return_type))

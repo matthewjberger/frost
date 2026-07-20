@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fmt::Write;
 
 use anyhow::{Result, bail};
@@ -8,7 +9,21 @@ use crate::ir::{
 };
 use crate::types::Type;
 
+fn c_function_name(name: &str, externs: &HashSet<String>) -> String {
+    if name == "main" || externs.contains(name) {
+        name.to_string()
+    } else {
+        format!("frost_{name}")
+    }
+}
+
 pub fn emit_c(module: &IrModule) -> Result<String> {
+    let externs: HashSet<String> = module
+        .externs
+        .iter()
+        .map(|external| external.name.clone())
+        .collect();
+
     let mut output = String::new();
     output.push_str("#include <stdint.h>\n\n");
 
@@ -33,13 +48,17 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
     output.push('\n');
 
     for function in &module.functions {
-        emit_function(&mut output, function)?;
+        emit_function(&mut output, function, &externs)?;
     }
 
     Ok(output)
 }
 
-fn emit_function(output: &mut String, function: &IrFunction) -> Result<()> {
+fn emit_function(
+    output: &mut String,
+    function: &IrFunction,
+    externs: &HashSet<String>,
+) -> Result<()> {
     let is_main = function.name == "main";
     let returns_aggregate = !is_main && is_aggregate(&function.return_type);
     let return_type = if is_main {
@@ -75,7 +94,7 @@ fn emit_function(output: &mut String, function: &IrFunction) -> Result<()> {
     writeln!(
         output,
         "{return_type_str} {}({param_list}) {{",
-        function.name
+        c_function_name(&function.name, externs)
     )?;
 
     for (index, local) in function.locals.iter().enumerate() {
@@ -115,7 +134,7 @@ fn emit_function(output: &mut String, function: &IrFunction) -> Result<()> {
     for (block_index, block) in function.blocks.iter().enumerate() {
         writeln!(output, " block{block_index}:;")?;
         for statement in &block.statements {
-            emit_statement(output, function, statement)?;
+            emit_statement(output, function, statement, externs)?;
         }
         emit_terminator(output, function, &return_type, &block.terminator)?;
     }
@@ -128,13 +147,21 @@ fn emit_statement(
     output: &mut String,
     function: &IrFunction,
     statement: &IrStatement,
+    externs: &HashSet<String>,
 ) -> Result<()> {
     match statement {
         IrStatement::Assign(local, rvalue) => {
             let local_type = function.local_type(*local).clone();
             if matches!(local_type, Type::Void | Type::Unknown) {
-                if let IrRvalue::Call { .. } = rvalue {
-                    writeln!(output, "  {};", rvalue_expr(function, rvalue)?)?;
+                if matches!(
+                    rvalue,
+                    IrRvalue::Call { .. } | IrRvalue::CallIndirect { .. }
+                ) {
+                    writeln!(
+                        output,
+                        "  {};",
+                        rvalue_expr(function, rvalue, externs)?
+                    )?;
                 }
                 return Ok(());
             }
@@ -156,13 +183,18 @@ fn emit_statement(
                             args.push(operand_expr(function, argument)?);
                         }
                         args.push(format!("_{local}"));
-                        writeln!(output, "  {name}({});", args.join(", "))?;
+                        writeln!(
+                            output,
+                            "  {}({});",
+                            c_function_name(name, externs),
+                            args.join(", ")
+                        )?;
                     }
                     _ => bail!("C backend: unsupported aggregate assignment"),
                 }
                 return Ok(());
             }
-            let value = rvalue_expr(function, rvalue)?;
+            let value = rvalue_expr(function, rvalue, externs)?;
             if function.locals[*local].in_memory {
                 writeln!(
                     output,
@@ -243,7 +275,11 @@ fn emit_terminator(
     Ok(())
 }
 
-fn rvalue_expr(function: &IrFunction, rvalue: &IrRvalue) -> Result<String> {
+fn rvalue_expr(
+    function: &IrFunction,
+    rvalue: &IrRvalue,
+    externs: &HashSet<String>,
+) -> Result<String> {
     Ok(match rvalue {
         IrRvalue::Use(operand) => operand_expr(function, operand)?,
         IrRvalue::Binary(op, left, right) => {
@@ -297,7 +333,36 @@ fn rvalue_expr(function: &IrFunction, rvalue: &IrRvalue) -> Result<String> {
             for argument in arguments {
                 args.push(operand_expr(function, argument)?);
             }
-            format!("{name}({})", args.join(", "))
+            format!("{}({})", c_function_name(name, externs), args.join(", "))
+        }
+        IrRvalue::FunctionAddress(name) => {
+            format!("(void*){}", c_function_name(name, externs))
+        }
+        IrRvalue::CallIndirect {
+            callee,
+            arguments,
+            parameter_types,
+            return_type,
+        } => {
+            let return_c = c_type(return_type)?;
+            let mut param_c = Vec::new();
+            for parameter in parameter_types {
+                if is_aggregate(parameter) {
+                    param_c.push("char*".to_string());
+                } else {
+                    param_c.push(c_type(parameter)?);
+                }
+            }
+            let signature = format!("{return_c}(*)({})", param_c.join(", "));
+            let mut args = Vec::new();
+            for argument in arguments {
+                args.push(operand_expr(function, argument)?);
+            }
+            format!(
+                "(({signature})({}))({})",
+                operand_expr(function, callee)?,
+                args.join(", ")
+            )
         }
     })
 }
@@ -379,6 +444,7 @@ fn c_type(ty: &Type) -> Result<String> {
         Type::Bool => "int8_t".to_string(),
         Type::Void => "void".to_string(),
         Type::Ptr(_) | Type::Ref(_) | Type::RefMut(_) => "char*".to_string(),
+        Type::Proc(_, _) => "void*".to_string(),
         Type::Distinct(inner) => c_type(inner)?,
         other => bail!("C backend: type not supported: {other}"),
     })

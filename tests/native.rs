@@ -427,6 +427,39 @@ fn native_tuple_pattern_match() {
     assert_eq!(output, "1\n2\n3\n4\n5\n3\n7\n8\n3\n5\n11\n3\n13\n14\n15\n");
 }
 
+const FUNCTION_POINTERS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+double :: fn(x: i64) -> i64 { x * 2 }
+square :: fn(x: i64) -> i64 { x * x }
+increment :: fn(x: i64) -> i64 { x + 1 }
+
+apply :: fn(f: fn(i64) -> i64, value: i64) -> i64 {
+    f(value)
+}
+
+apply_twice :: fn(f: fn(i64) -> i64, value: i64) -> i64 {
+    f(f(value))
+}
+
+main :: fn() -> i64 {
+    printf("%lld\n", apply(double, 21))
+    printf("%lld\n", apply(square, 9))
+    printf("%lld\n", apply_twice(increment, 40))
+    g := double
+    printf("%lld\n", g(50))
+    0
+}
+"#;
+
+#[test]
+fn native_function_pointers() {
+    let Some(output) = compile_and_run("funcptr", FUNCTION_POINTERS) else {
+        return;
+    };
+    assert_eq!(output, "42\n81\n42\n100\n");
+}
+
 #[test]
 fn cranelift_and_c_backends_agree() {
     let programs = [
@@ -441,6 +474,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_byvalue", BY_VALUE),
         ("diff_retagg", RETURN_AGGREGATE),
         ("diff_tuple", TUPLE_MATCH),
+        ("diff_funcptr", FUNCTION_POINTERS),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);

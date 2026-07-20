@@ -97,10 +97,20 @@ correct type and operation for each value because the IR is fully typed, and
   literal patterns, identifier binding, and wildcard.
 - Tuple patterns in `match` (e.g. `match (i % 3, i % 5) { case (0, 0): ... }`),
   with literal, wildcard, and identifier-binding sub-patterns.
+- Function pointers: a function used as a value becomes its address, a
+  `fn(...) -> T` parameter or local holds one, and calling through it is an
+  indirect call. This is the design's "function pointers, not closures"
+  higher-order story (`apply(f: fn(i64) -> i64, x: i64)`).
 
 **Not yet in the native backend** (these fail loudly, they are not
-silently miscompiled): slices, closures, hashmaps, `defer`, `comptime`, and
+silently miscompiled): slices, capturing closures (the design deliberately
+uses function pointers instead), hashmaps, `defer`, `comptime`, and
 generics. These run on the bytecode VM.
+
+The emitted C is an internal detail, not an interface for external C callers,
+so Frost function names are prefixed (`frost_`) to avoid C keyword clashes;
+`extern` names and `main` are left untouched so FFI and the entry point link.
+Frost-to-C interop (`extern fn`) works on both the Cranelift and C paths.
 
 This replaces the previous AST-walking `codegen.rs`, which treated most
 values as `i64`, hardcoded `if`-expression result types, resolved struct
