@@ -397,7 +397,7 @@ fn operand_expr(function: &IrFunction, operand: &IrOperand) -> Result<String> {
 fn constant_expr(constant: &IrConstant) -> Result<String> {
     Ok(match constant {
         IrConstant::Integer(value, _) => format!("{value}LL"),
-        IrConstant::Float(value, Type::F32) => format!("(({value:?})f)"),
+        IrConstant::Float(value, Type::F32) => format!("((float){value:?})"),
         IrConstant::Float(value, _) => format!("((double){value:?})"),
         IrConstant::Bool(value) => {
             if *value {
