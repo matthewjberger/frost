@@ -354,6 +354,36 @@ fn native_enums_and_match() {
     assert_eq!(output, "42\n-404\n4\n3\n0\n");
 }
 
+const AGGREGATE_ASSIGNMENT: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Inner :: struct { a: i64, b: i64 }
+Outer :: struct { one: Inner, two: Inner }
+P :: struct { x: i64, y: i64 }
+
+main :: fn() -> i64 {
+    mut o := Outer { one = Inner { a = 1, b = 2 }, two = Inner { a = 3, b = 4 } }
+    o.one = o.two
+    printf("%lld\n", o.one.a)
+    printf("%lld\n", o.one.b)
+
+    mut arr := [P { x = 1, y = 2 }, P { x = 9, y = 8 }]
+    arr[0] = arr[1]
+    printf("%lld\n", arr[0].x)
+    printf("%lld\n", arr[0].y)
+    0
+}
+"#;
+
+#[test]
+fn native_aggregate_assignment_between_places() {
+    let Some(output) = compile_and_run("agg_assign", AGGREGATE_ASSIGNMENT)
+    else {
+        return;
+    };
+    assert_eq!(output, "3\n4\n9\n8\n");
+}
+
 const AGGREGATE_BY_VALUE_READS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -1162,6 +1192,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_fnptrarr", FUNCTION_POINTER_ARRAY),
         ("diff_matchplace", MATCH_ENUM_PLACE),
         ("diff_aggreads", AGGREGATE_BY_VALUE_READS),
+        ("diff_aggassign", AGGREGATE_ASSIGNMENT),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);

@@ -1432,6 +1432,21 @@ impl<'a> FunctionLowering<'a> {
         let (address, pointee) = self.place_address(target)?;
         let (operand, value_type) =
             self.lower_expression(value, Some(&pointee))?;
+        if needs_memory(&pointee) {
+            let IrOperand::Local(source_local) = operand else {
+                bail!(
+                    "native backend: aggregate assignment from a non-place value"
+                );
+            };
+            let source = self.address_of_local(source_local, &pointee);
+            let size = self.builder.byte_size(&pointee);
+            self.emit(IrStatement::Copy {
+                destination: address,
+                source,
+                size,
+            });
+            return Ok(());
+        }
         let coerced = self.coerce(operand, &value_type, &pointee);
         self.emit(IrStatement::Store {
             address,
