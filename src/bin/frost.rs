@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use frost::{
     Compiler, Lexer, Parser as FrostParser, VirtualMachine, build_module,
-    compile_ir_to_object,
+    compile_ir_to_object, emit_c,
 };
 
 #[derive(Parser)]
@@ -26,6 +26,9 @@ struct Cli {
 
     #[arg(long, help = "Additional object files or libraries to link")]
     libs: Vec<String>,
+
+    #[arg(long, help = "Emit C source instead of using the Cranelift backend")]
+    emit_c: bool,
 }
 
 fn main() -> Result<()> {
@@ -39,6 +42,39 @@ fn main() -> Result<()> {
 
     let mut parser = FrostParser::new(&tokens);
     let statements = parser.parse().context("Parser error")?;
+
+    if cli.emit_c {
+        let module = build_module(&statements).context("IR lowering error")?;
+        let c_source = emit_c(&module).context("C emission error")?;
+
+        let input_path = Path::new(&cli.file);
+        let stem = input_path.file_stem().unwrap_or_default().to_string_lossy();
+
+        if cli.link {
+            let c_path = format!("{}.c", stem);
+            fs::write(&c_path, c_source).with_context(|| {
+                format!("Failed to write C file: {}", c_path)
+            })?;
+            let exe_path = cli.output.clone().unwrap_or_else(|| {
+                if cfg!(windows) {
+                    format!("{}.exe", stem)
+                } else {
+                    stem.to_string()
+                }
+            });
+            compile_c(&c_path, &exe_path, &cli.libs)?;
+            fs::remove_file(&c_path).ok();
+            println!("Linked executable: {}", exe_path);
+        } else {
+            let c_path =
+                cli.output.clone().unwrap_or_else(|| format!("{}.c", stem));
+            fs::write(&c_path, c_source).with_context(|| {
+                format!("Failed to write C file: {}", c_path)
+            })?;
+            println!("Emitted C: {}", c_path);
+        }
+        return Ok(());
+    }
 
     if cli.native || cli.link {
         let module = build_module(&statements).context("IR lowering error")?;
@@ -95,6 +131,40 @@ fn main() -> Result<()> {
         vm.run(&bytecode.instructions).context("Runtime error")?;
     }
 
+    Ok(())
+}
+
+fn compile_c(
+    c_path: &str,
+    exe_path: &str,
+    extra_libs: &[String],
+) -> Result<()> {
+    let compiler = find_linker().ok_or_else(|| {
+        anyhow::anyhow!("No C compiler found. Please install gcc or clang.")
+    })?;
+
+    let mut cmd = Command::new(compiler);
+    if compiler == "cl" {
+        cmd.arg(c_path);
+        cmd.arg(format!("/Fe:{}", exe_path));
+        for lib in extra_libs {
+            cmd.arg(lib);
+        }
+    } else {
+        cmd.arg("-std=c11");
+        cmd.arg(c_path);
+        cmd.arg("-o");
+        cmd.arg(exe_path);
+        for lib in extra_libs {
+            cmd.arg(lib);
+        }
+    }
+
+    let output = cmd.output().context("Failed to run C compiler")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("C compiler failed: {}", stderr);
+    }
     Ok(())
 }
 

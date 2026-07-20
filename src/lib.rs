@@ -2,6 +2,7 @@ mod compiler;
 pub mod ffi;
 mod ir;
 mod ir_build;
+mod ir_c;
 mod ir_codegen;
 mod lexer;
 mod parser;
@@ -11,7 +12,7 @@ mod types;
 mod value;
 
 pub use self::{
-    compiler::*, ffi::*, ir::*, ir_build::*, ir_codegen::*, lexer::*,
+    compiler::*, ffi::*, ir::*, ir_build::*, ir_c::*, ir_codegen::*, lexer::*,
     parser::*, typechecker::*, typed_vm::*, types::*, value::*,
 };
 
