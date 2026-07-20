@@ -480,6 +480,36 @@ main :: fn() -> i64 {
 }
 "#;
 
+const TOP_LEVEL_CONSTANTS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+LIMIT :: 100
+STEP :: 5
+OFFSET :: 0 - 3
+COMPUTED :: 2 * 4 + 1
+
+main :: fn() -> i64 {
+    printf("%lld\n", LIMIT)
+    printf("%lld\n", STEP)
+    printf("%lld\n", OFFSET)
+    printf("%lld\n", COMPUTED)
+    mut total : i64 = 0
+    for i in 0..LIMIT {
+        if (i % STEP == 0) { total = total + 1 }
+    }
+    printf("%lld\n", total)
+    0
+}
+"#;
+
+#[test]
+fn native_top_level_constants() {
+    let Some(output) = compile_and_run("constants", TOP_LEVEL_CONSTANTS) else {
+        return;
+    };
+    assert_eq!(output, "100\n5\n-3\n9\n20\n");
+}
+
 const FORWARD_REFERENCES: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -1020,6 +1050,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_matchagg", MATCH_RETURNS_AGGREGATE),
         ("diff_f32", F32_OPERATIONS),
         ("diff_forward", FORWARD_REFERENCES),
+        ("diff_constants", TOP_LEVEL_CONSTANTS),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);

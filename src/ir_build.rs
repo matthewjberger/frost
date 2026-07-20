@@ -23,14 +23,24 @@ pub struct IrBuilder {
     signatures: HashMap<String, FunctionSignature>,
     structs: HashMap<String, StructLayout>,
     enums: HashMap<String, EnumLayout>,
+    constants: HashMap<String, Expression>,
 }
 
 pub fn build_module(statements: &[Statement]) -> Result<IrModule> {
     let (structs, enums) = compute_layouts(statements);
+    let mut constants = HashMap::new();
+    for statement in statements {
+        if let Statement::Constant(name, value) = statement
+            && !matches!(value, Expression::Function(..) | Expression::Proc(..))
+        {
+            constants.insert(name.clone(), value.clone());
+        }
+    }
     let mut builder = IrBuilder {
         signatures: HashMap::new(),
         structs,
         enums,
+        constants,
     };
     builder.collect_signatures(statements);
 
@@ -898,6 +908,9 @@ impl<'a> FunctionLowering<'a> {
                         IrRvalue::FunctionAddress(name.clone()),
                     ));
                     return Ok((IrOperand::Local(result), proc_type));
+                }
+                if let Some(value) = self.builder.constants.get(name).cloned() {
+                    return self.lower_expression(&value, expected);
                 }
                 bail!("native backend: unknown variable '{name}'");
             }
