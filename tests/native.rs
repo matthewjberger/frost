@@ -354,6 +354,40 @@ fn native_enums_and_match() {
     assert_eq!(output, "42\n-404\n4\n3\n0\n");
 }
 
+const AGGREGATE_BY_VALUE_READS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Inner :: struct { a: i64, b: i64 }
+Outer :: struct { tag: i64, inner: Inner }
+
+get_inner :: fn(o: &Outer) -> Inner { o.inner }
+
+main :: fn() -> i64 {
+    o := Outer { tag = 1, inner = Inner { a = 5, b = 6 } }
+    bound := o.inner
+    printf("%lld\n", bound.a)
+    printf("%lld\n", bound.b)
+
+    returned := get_inner(&o)
+    printf("%lld\n", returned.a)
+
+    arr := [Inner { a = 10, b = 20 }, Inner { a = 30, b = 40 }]
+    picked := arr[1]
+    printf("%lld\n", picked.a)
+    printf("%lld\n", picked.b)
+    0
+}
+"#;
+
+#[test]
+fn native_aggregate_by_value_reads() {
+    let Some(output) = compile_and_run("agg_reads", AGGREGATE_BY_VALUE_READS)
+    else {
+        return;
+    };
+    assert_eq!(output, "5\n6\n5\n30\n40\n");
+}
+
 const MATCH_ENUM_PLACE: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -1127,6 +1161,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_constants", TOP_LEVEL_CONSTANTS),
         ("diff_fnptrarr", FUNCTION_POINTER_ARRAY),
         ("diff_matchplace", MATCH_ENUM_PLACE),
+        ("diff_aggreads", AGGREGATE_BY_VALUE_READS),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
