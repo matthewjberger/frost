@@ -1,0 +1,40 @@
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+pool_new :: extern fn(capacity: i64, elem_size: i64) -> ^u8
+pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
+pool_get :: extern fn(pool: ^u8, handle: i64) -> ^u8
+pool_free :: extern fn(pool: ^u8, handle: i64) -> i64
+pool_contains :: extern fn(pool: ^u8, handle: i64) -> i64
+handle_index :: extern fn(handle: i64) -> i64
+handle_generation :: extern fn(handle: i64) -> i64
+
+Entity :: struct { hp: i64, mana: i64 }
+
+main :: fn() -> i64 {
+    p := pool_new(8, 16)
+
+    mut hero := Entity { hp = 100, mana = 30 }
+    mut goblin := Entity { hp = 50, mana = 10 }
+    hero_handle := pool_alloc(p, &hero)
+    goblin_handle := pool_alloc(p, &goblin)
+
+    printf("%lld\n", handle_index(hero_handle))
+    printf("%lld\n", handle_index(goblin_handle))
+
+    hero_ref : ^Entity = pool_get(p, hero_handle)
+    printf("%lld\n", hero_ref^.hp)
+    hero_ref^.hp = hero_ref^.hp - 25
+    reloaded : ^Entity = pool_get(p, hero_handle)
+    printf("%lld\n", reloaded^.hp)
+
+    printf("%lld\n", pool_contains(p, goblin_handle))
+    printf("%lld\n", pool_free(p, goblin_handle))
+    printf("%lld\n", pool_contains(p, goblin_handle))
+
+    mut orc := Entity { hp = 80, mana = 0 }
+    orc_handle := pool_alloc(p, &orc)
+    printf("%lld\n", handle_index(orc_handle))
+    printf("%lld\n", handle_generation(orc_handle))
+    printf("%lld\n", pool_contains(p, goblin_handle))
+    0
+}

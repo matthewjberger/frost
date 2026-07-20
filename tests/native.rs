@@ -771,6 +771,58 @@ fn native_integer_semantics_match() {
     assert_eq!(output, "-1\n-2\n3000000000\n-25\n30100\n15\n511\n44\n");
 }
 
+const GENERATIONAL_POOL: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+pool_new :: extern fn(capacity: i64, elem_size: i64) -> ^u8
+pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
+pool_get :: extern fn(pool: ^u8, handle: i64) -> ^u8
+pool_free :: extern fn(pool: ^u8, handle: i64) -> i64
+pool_contains :: extern fn(pool: ^u8, handle: i64) -> i64
+handle_index :: extern fn(handle: i64) -> i64
+handle_generation :: extern fn(handle: i64) -> i64
+
+Entity :: struct { hp: i64, mana: i64 }
+
+main :: fn() -> i64 {
+    p := pool_new(8, 16)
+
+    mut a := Entity { hp = 100, mana = 30 }
+    mut b := Entity { hp = 50, mana = 10 }
+    ha := pool_alloc(p, &a)
+    hb := pool_alloc(p, &b)
+
+    printf("%lld\n", handle_index(ha))
+    printf("%lld\n", handle_index(hb))
+    printf("%lld\n", handle_generation(ha))
+
+    ea : ^Entity = pool_get(p, ha)
+    printf("%lld\n", ea^.hp)
+    ea^.hp = 999
+    ea2 : ^Entity = pool_get(p, ha)
+    printf("%lld\n", ea2^.hp)
+
+    printf("%lld\n", pool_contains(p, ha))
+    printf("%lld\n", pool_free(p, ha))
+    printf("%lld\n", pool_contains(p, ha))
+
+    mut c := Entity { hp = 7, mana = 7 }
+    hc := pool_alloc(p, &c)
+    printf("%lld\n", handle_index(hc))
+    printf("%lld\n", handle_generation(hc))
+    printf("%lld\n", pool_contains(p, ha))
+    0
+}
+"#;
+
+#[test]
+fn native_generational_pool_and_handles() {
+    let Some(output) = compile_and_run("gen_pool", GENERATIONAL_POOL) else {
+        return;
+    };
+    assert_eq!(output, "0\n1\n0\n100\n999\n1\n1\n0\n0\n1\n0\n");
+}
+
 #[test]
 fn native_showcase_examples_build_and_agree() {
     if !linker_available() {
@@ -818,6 +870,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_enumval", ENUM_BY_VALUE),
         ("diff_fieldborrow", FIELD_BORROW),
         ("diff_intsem", INTEGER_SEMANTICS),
+        ("diff_genpool", GENERATIONAL_POOL),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
