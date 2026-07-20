@@ -733,6 +733,44 @@ fn native_field_borrow_and_returned_struct() {
     assert_eq!(output, "101\n2\n7\n9\n");
 }
 
+const INTEGER_SEMANTICS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+main :: fn() -> i64 {
+    a : i32 = 0 - 5
+    b : i32 = 3
+    printf("%lld\n", a / b)
+    printf("%lld\n", a % b)
+
+    big : i64 = 1000000000
+    printf("%lld\n", big * 3)
+
+    neg : i64 = 0 - 100
+    shifted : i64 = neg >> 2
+    printf("%lld\n", shifted)
+
+    wide : i16 = 30000
+    printf("%lld\n", wide + 100)
+
+    mask : i64 = 255
+    printf("%lld\n", mask & 15)
+    printf("%lld\n", mask | 256)
+
+    small : u8 = 200
+    printf("%lld\n", small + 100)
+    0
+}
+"#;
+
+#[test]
+fn native_integer_semantics_match() {
+    let Some(output) = compile_and_run("int_semantics", INTEGER_SEMANTICS)
+    else {
+        return;
+    };
+    assert_eq!(output, "-1\n-2\n3000000000\n-25\n30100\n15\n511\n44\n");
+}
+
 #[test]
 fn native_showcase_examples_build_and_agree() {
     if !linker_available() {
@@ -779,6 +817,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_payloads", AGGREGATE_PAYLOADS),
         ("diff_enumval", ENUM_BY_VALUE),
         ("diff_fieldborrow", FIELD_BORROW),
+        ("diff_intsem", INTEGER_SEMANTICS),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
