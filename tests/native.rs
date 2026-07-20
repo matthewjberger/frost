@@ -362,6 +362,43 @@ fn native_pass_struct_by_value() {
     assert_eq!(output, "7\n110\n");
 }
 
+const RETURN_AGGREGATE: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Point :: struct {
+    x: i64,
+    y: i64,
+}
+
+make_point :: fn(a: i64, b: i64) -> Point {
+    p := Point { x = a, y = b }
+    p
+}
+
+add_points :: fn(p: Point, q: Point) -> Point {
+    r := Point { x = p.x + q.x, y = p.y + q.y }
+    r
+}
+
+main :: fn() -> i64 {
+    a := make_point(3, 4)
+    printf("%lld\n", a.x)
+    printf("%lld\n", a.y)
+    sum := add_points(make_point(1, 2), make_point(10, 20))
+    printf("%lld\n", sum.x)
+    printf("%lld\n", sum.y)
+    0
+}
+"#;
+
+#[test]
+fn native_return_struct_by_value() {
+    let Some(output) = compile_and_run("retagg", RETURN_AGGREGATE) else {
+        return;
+    };
+    assert_eq!(output, "3\n4\n11\n22\n");
+}
+
 #[test]
 fn cranelift_and_c_backends_agree() {
     let programs = [
@@ -374,6 +411,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_arrays", ARRAYS),
         ("diff_enums", ENUMS),
         ("diff_byvalue", BY_VALUE),
+        ("diff_retagg", RETURN_AGGREGATE),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);

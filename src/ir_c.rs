@@ -41,6 +41,7 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
 
 fn emit_function(output: &mut String, function: &IrFunction) -> Result<()> {
     let is_main = function.name == "main";
+    let returns_aggregate = !is_main && is_aggregate(&function.return_type);
     let return_type = if is_main {
         Type::I32
     } else {
@@ -57,18 +58,24 @@ fn emit_function(output: &mut String, function: &IrFunction) -> Result<()> {
         };
         params.push(format!("{c_ty} a{index}"));
     }
+    if returns_aggregate {
+        params.push("char* __ret".to_string());
+    }
     let param_list = if params.is_empty() {
         "void".to_string()
     } else {
         params.join(", ")
     };
 
+    let return_type_str = if returns_aggregate {
+        "void".to_string()
+    } else {
+        c_type(&return_type)?
+    };
     writeln!(
         output,
-        "{} {}({}) {{",
-        c_type(&return_type)?,
-        function.name,
-        param_list
+        "{return_type_str} {}({param_list}) {{",
+        function.name
     )?;
 
     for (index, local) in function.locals.iter().enumerate() {
@@ -132,14 +139,27 @@ fn emit_statement(
                 return Ok(());
             }
             if is_aggregate(&local_type) {
-                let IrRvalue::Use(IrOperand::Local(source)) = rvalue else {
-                    bail!("C backend: unsupported aggregate assignment");
-                };
-                writeln!(
-                    output,
-                    "  __builtin_memcpy(_{local}, _{source}, {});",
-                    function.locals[*local].size.max(1)
-                )?;
+                match rvalue {
+                    IrRvalue::Use(IrOperand::Local(source)) => {
+                        writeln!(
+                            output,
+                            "  __builtin_memcpy(_{local}, _{source}, {});",
+                            function.locals[*local].size.max(1)
+                        )?;
+                    }
+                    IrRvalue::Call {
+                        function: name,
+                        arguments,
+                    } => {
+                        let mut args = Vec::new();
+                        for argument in arguments {
+                            args.push(operand_expr(function, argument)?);
+                        }
+                        args.push(format!("_{local}"));
+                        writeln!(output, "  {name}({});", args.join(", "))?;
+                    }
+                    _ => bail!("C backend: unsupported aggregate assignment"),
+                }
                 return Ok(());
             }
             let value = rvalue_expr(function, rvalue)?;
@@ -174,16 +194,27 @@ fn emit_terminator(
     return_type: &Type,
     terminator: &IrTerminator,
 ) -> Result<()> {
+    let returns_aggregate =
+        function.name != "main" && is_aggregate(&function.return_type);
     match terminator {
         IrTerminator::Return(None) | IrTerminator::Unreachable => {
-            if matches!(return_type, Type::Void) {
+            if returns_aggregate || matches!(return_type, Type::Void) {
                 writeln!(output, "  return;")?;
             } else {
                 writeln!(output, "  return 0;")?;
             }
         }
         IrTerminator::Return(Some(operand)) => {
-            if matches!(return_type, Type::Void) {
+            if returns_aggregate {
+                if let IrOperand::Local(source) = operand {
+                    writeln!(
+                        output,
+                        "  __builtin_memcpy(__ret, _{source}, {});",
+                        function.locals[*source].size.max(1)
+                    )?;
+                }
+                writeln!(output, "  return;")?;
+            } else if matches!(return_type, Type::Void) {
                 writeln!(output, "  return;")?;
             } else {
                 writeln!(

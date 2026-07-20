@@ -104,20 +104,7 @@ impl Generator {
         }
 
         for function in &module.functions {
-            let mut signature = self.module.make_signature();
-            for index in 0..function.param_count {
-                signature.params.push(AbiParam::new(param_abi_type(
-                    pointer_type,
-                    function.local_type(index),
-                )?));
-            }
-            let return_type = self.function_return_type(function);
-            if !matches!(return_type, Type::Void) {
-                signature.returns.push(AbiParam::new(clif_type(
-                    pointer_type,
-                    &return_type,
-                )?));
-            }
+            let signature = self.build_signature(function)?;
             let func_id = self.module.declare_function(
                 &function.name,
                 Linkage::Export,
@@ -152,29 +139,43 @@ impl Generator {
         }
     }
 
+    fn returns_aggregate(&self, function: &IrFunction) -> bool {
+        function.name != "main" && is_aggregate(&function.return_type)
+    }
+
+    fn build_signature(
+        &self,
+        function: &IrFunction,
+    ) -> Result<cranelift::codegen::ir::Signature> {
+        let pointer_type = self.pointer_type;
+        let mut signature = self.module.make_signature();
+        for index in 0..function.param_count {
+            signature.params.push(AbiParam::new(param_abi_type(
+                pointer_type,
+                function.local_type(index),
+            )?));
+        }
+        if self.returns_aggregate(function) {
+            signature.params.push(AbiParam::new(pointer_type));
+        } else {
+            let return_type = self.function_return_type(function);
+            if !matches!(return_type, Type::Void) {
+                signature.returns.push(AbiParam::new(clif_type(
+                    pointer_type,
+                    &return_type,
+                )?));
+            }
+        }
+        Ok(signature)
+    }
+
     fn define_function(&mut self, function: &IrFunction) -> Result<()> {
         let func_id = self.functions[&function.name];
         let pointer_type = self.pointer_type;
-        let mut context = self.module.make_context();
-
-        for index in 0..function.param_count {
-            context
-                .func
-                .signature
-                .params
-                .push(AbiParam::new(param_abi_type(
-                    pointer_type,
-                    function.local_type(index),
-                )?));
-        }
+        let returns_aggregate = self.returns_aggregate(function);
         let return_type = self.function_return_type(function);
-        if !matches!(return_type, Type::Void) {
-            context
-                .func
-                .signature
-                .returns
-                .push(AbiParam::new(clif_type(pointer_type, &return_type)?));
-        }
+        let mut context = self.module.make_context();
+        context.func.signature = self.build_signature(function)?;
 
         let mut builder_context = FunctionBuilderContext::new();
         let mut builder =
@@ -212,7 +213,9 @@ impl Generator {
 
         let memcpy = self.functions["memcpy"];
         let params = builder.block_params(entry).to_vec();
-        for (index, value) in params.iter().enumerate() {
+        for (index, value) in
+            params.iter().take(function.param_count).enumerate()
+        {
             let local = &function.locals[index];
             if is_aggregate(&local.ty) {
                 let slot = slots[&index];
@@ -229,6 +232,11 @@ impl Generator {
                 builder.def_var(Variable::new(index), *value);
             }
         }
+        let out_pointer = if returns_aggregate {
+            Some(params[function.param_count])
+        } else {
+            None
+        };
 
         {
             let mut translator = Translator {
@@ -237,6 +245,7 @@ impl Generator {
                 strings: &self.strings,
                 slots: &slots,
                 pointer_type,
+                out_pointer,
                 builder: &mut builder,
                 function,
                 return_type: return_type.clone(),
@@ -294,6 +303,7 @@ struct Translator<'a, 'b> {
     strings: &'a HashMap<String, DataId>,
     slots: &'a HashMap<usize, StackSlot>,
     pointer_type: types::Type,
+    out_pointer: Option<Value>,
     builder: &'a mut FunctionBuilder<'b>,
     function: &'a IrFunction,
     return_type: Type,
@@ -333,15 +343,24 @@ impl Translator<'_, '_> {
                     return Ok(());
                 }
                 if is_aggregate(&local_type) {
-                    let IrRvalue::Use(IrOperand::Local(source)) = rvalue else {
-                        bail!(
+                    match rvalue {
+                        IrRvalue::Use(IrOperand::Local(source)) => {
+                            let destination = self.slot_address(*local)?;
+                            let source_address = self.slot_address(*source)?;
+                            let size = self.function.locals[*local].size;
+                            self.emit_memcpy(destination, source_address, size);
+                        }
+                        IrRvalue::Call {
+                            function,
+                            arguments,
+                        } => {
+                            let out = self.slot_address(*local)?;
+                            self.emit_call_with_out(function, arguments, out)?;
+                        }
+                        _ => bail!(
                             "native backend: unsupported aggregate assignment"
-                        );
-                    };
-                    let destination = self.slot_address(*local)?;
-                    let source_address = self.slot_address(*source)?;
-                    let size = self.function.locals[*local].size;
-                    self.emit_memcpy(destination, source_address, size);
+                        ),
+                    }
                     return Ok(());
                 }
                 let value = self.rvalue(rvalue, &local_type)?;
@@ -599,6 +618,27 @@ impl Translator<'_, '_> {
         Ok(self.builder.inst_results(call).to_vec())
     }
 
+    fn emit_call_with_out(
+        &mut self,
+        function: &str,
+        arguments: &[IrOperand],
+        out: Value,
+    ) -> Result<()> {
+        let Some(func_id) = self.functions.get(function) else {
+            bail!("native backend: call to undeclared function '{function}'");
+        };
+        let func_ref = self
+            .module
+            .declare_func_in_func(*func_id, self.builder.func);
+        let mut argument_values = Vec::with_capacity(arguments.len() + 1);
+        for argument in arguments {
+            argument_values.push(self.operand(argument)?);
+        }
+        argument_values.push(out);
+        self.builder.ins().call(func_ref, &argument_values);
+        Ok(())
+    }
+
     fn terminator(
         &mut self,
         terminator: &IrTerminator,
@@ -636,6 +676,15 @@ impl Translator<'_, '_> {
     }
 
     fn emit_return(&mut self, operand: Option<&IrOperand>) -> Result<()> {
+        if let Some(out_pointer) = self.out_pointer {
+            if let Some(IrOperand::Local(source)) = operand {
+                let source_address = self.slot_address(*source)?;
+                let size = self.function.locals[*source].size;
+                self.emit_memcpy(out_pointer, source_address, size);
+            }
+            self.builder.ins().return_(&[]);
+            return Ok(());
+        }
         if matches!(self.return_type, Type::Void) {
             self.builder.ins().return_(&[]);
             return Ok(());
