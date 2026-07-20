@@ -192,3 +192,51 @@ fn native_pointers_and_references() {
     };
     assert_eq!(output, "20\n10\n21\n31\n");
 }
+
+const STRUCTS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Point :: struct {
+    x: i64,
+    y: i64,
+}
+
+read_sum :: fn(p: &Point) -> i64 {
+    p.x + p.y
+}
+
+scale :: fn(p: &mut Point, factor: i64) {
+    p.x = p.x * factor
+    p.y = p.y * factor
+}
+
+Mixed :: struct {
+    tag: i32,
+    value: i64,
+    flag: u8,
+}
+
+main :: fn() -> i64 {
+    mut p := Point { x = 3, y = 4 }
+    printf("%lld\n", p.x)
+    printf("%lld\n", read_sum(&p))
+    p.x = 100
+    scale(&mut p, 2)
+    printf("%lld\n", p.x)
+    printf("%lld\n", p.y)
+
+    m := Mixed { tag = 7, value = 1000, flag = 1 }
+    printf("%lld\n", m.tag)
+    printf("%lld\n", m.value)
+    printf("%lld\n", m.flag)
+    0
+}
+"#;
+
+#[test]
+fn native_structs_and_field_access() {
+    let Some(output) = compile_and_run("structs", STRUCTS) else {
+        return;
+    };
+    assert_eq!(output, "3\n7\n200\n8\n7\n1000\n1\n");
+}

@@ -3,10 +3,13 @@ use std::collections::HashMap;
 use anyhow::{Result, bail};
 
 use crate::ir::{
-    BlockId, IrBinOp, IrBlock, IrConstant, IrExtern, IrFunction, IrLocal,
-    IrModule, IrOperand, IrRvalue, IrStatement, IrTerminator, IrUnOp, LocalId,
+    BlockId, FieldLayout, IrBinOp, IrBlock, IrConstant, IrExtern, IrFunction,
+    IrLocal, IrModule, IrOperand, IrRvalue, IrStatement, IrTerminator, IrUnOp,
+    LocalId, StructLayout,
 };
-use crate::parser::{Block, Expression, Parameter, ReturnSignature, Statement};
+use crate::parser::{
+    Block, Expression, Parameter, ReturnSignature, Statement, StructField,
+};
 use crate::types::Type;
 use crate::{Literal, Operator};
 
@@ -17,11 +20,13 @@ struct FunctionSignature {
 
 pub struct IrBuilder {
     signatures: HashMap<String, FunctionSignature>,
+    structs: HashMap<String, StructLayout>,
 }
 
 pub fn build_module(statements: &[Statement]) -> Result<IrModule> {
     let mut builder = IrBuilder {
         signatures: HashMap::new(),
+        structs: compute_struct_layouts(statements),
     };
     builder.collect_signatures(statements);
 
@@ -172,10 +177,103 @@ impl IrBuilder {
     fn signature(&self, name: &str) -> Option<&FunctionSignature> {
         self.signatures.get(name)
     }
+
+    fn struct_layout(&self, name: &str) -> Option<&StructLayout> {
+        self.structs.get(name)
+    }
+
+    fn byte_size(&self, ty: &Type) -> usize {
+        size_and_align(ty, &self.structs)
+            .map(|(size, _)| size)
+            .unwrap_or(0)
+    }
 }
 
 fn parameter_type(parameter: &Parameter) -> Type {
     parameter.type_annotation.clone().unwrap_or(Type::I64)
+}
+
+fn needs_memory(ty: &Type) -> bool {
+    matches!(ty, Type::Struct(_) | Type::Array(_, _))
+}
+
+fn compute_struct_layouts(
+    statements: &[Statement],
+) -> HashMap<String, StructLayout> {
+    let definitions: Vec<(&String, &Vec<StructField>)> = statements
+        .iter()
+        .filter_map(|statement| match statement {
+            Statement::Struct(name, _, fields) => Some((name, fields)),
+            _ => None,
+        })
+        .collect();
+
+    let mut layouts: HashMap<String, StructLayout> = HashMap::new();
+    loop {
+        let mut progress = false;
+        for (name, fields) in &definitions {
+            if layouts.contains_key(*name) {
+                continue;
+            }
+            if let Some(layout) = try_layout(fields, &layouts) {
+                layouts.insert((*name).clone(), layout);
+                progress = true;
+            }
+        }
+        if !progress {
+            break;
+        }
+    }
+    layouts
+}
+
+fn try_layout(
+    fields: &[StructField],
+    layouts: &HashMap<String, StructLayout>,
+) -> Option<StructLayout> {
+    let mut offset = 0;
+    let mut align = 1;
+    let mut field_layouts = Vec::with_capacity(fields.len());
+    for field in fields {
+        let (field_size, field_align) =
+            size_and_align(&field.field_type, layouts)?;
+        offset = round_up(offset, field_align);
+        field_layouts.push(FieldLayout {
+            name: field.name.clone(),
+            ty: field.field_type.clone(),
+            offset,
+        });
+        offset += field_size;
+        align = align.max(field_align);
+    }
+    Some(StructLayout {
+        size: round_up(offset, align),
+        align,
+        fields: field_layouts,
+    })
+}
+
+fn size_and_align(
+    ty: &Type,
+    layouts: &HashMap<String, StructLayout>,
+) -> Option<(usize, usize)> {
+    match ty {
+        Type::Struct(name) => {
+            layouts.get(name).map(|layout| (layout.size, layout.align))
+        }
+        Type::Array(inner, count) => {
+            let (size, align) = size_and_align(inner, layouts)?;
+            Some((size * count, align))
+        }
+        other => Some((other.size_of(), other.align_of())),
+    }
+}
+
+fn round_up(value: usize, align: usize) -> usize {
+    if align == 0 {
+        return value;
+    }
+    value.div_ceil(align) * align
 }
 
 struct BlockUnderConstruction {
@@ -217,10 +315,13 @@ impl<'a> FunctionLowering<'a> {
 
     fn fresh_local(&mut self, ty: Type, name: Option<String>) -> LocalId {
         let id = self.locals.len();
+        let size = self.builder.byte_size(&ty);
+        let in_memory = needs_memory(&ty);
         self.locals.push(IrLocal {
             ty,
             name,
-            in_memory: false,
+            in_memory,
+            size,
         });
         id
     }
@@ -325,6 +426,14 @@ impl<'a> FunctionLowering<'a> {
                 value,
                 ..
             } => {
+                if let Expression::StructInit(struct_name, field_inits) = value
+                {
+                    let ty = Type::Struct(struct_name.clone());
+                    let local = self.fresh_local(ty, Some(name.clone()));
+                    self.init_struct(local, struct_name, field_inits)?;
+                    self.define_variable(name, local);
+                    return Ok(());
+                }
                 let (operand, value_type) =
                     self.lower_expression(value, type_annotation.as_ref())?;
                 let declared = type_annotation.clone().unwrap_or(value_type);
@@ -540,6 +649,14 @@ impl<'a> FunctionLowering<'a> {
                 self.lower_address_of(inner, RefKind::Ptr)
             }
             Expression::Dereference(inner) => self.lower_dereference(inner),
+            Expression::FieldAccess(base, field) => {
+                self.lower_field_read(base, field)
+            }
+            Expression::StructInit(..) => {
+                bail!(
+                    "native backend: struct literals are only supported as a variable initializer"
+                )
+            }
             other => {
                 bail!("native backend: unsupported expression: {other}")
             }
@@ -830,37 +947,29 @@ impl<'a> FunctionLowering<'a> {
         target: &Expression,
         value: &Expression,
     ) -> Result<()> {
-        match target {
-            Expression::Identifier(name) => {
-                let Some(local) = self.resolve_variable(name) else {
-                    bail!(
-                        "native backend: assignment to unknown variable '{name}'"
-                    );
-                };
-                let target_type = self.type_of_local(local);
-                let (operand, value_type) =
-                    self.lower_expression(value, Some(&target_type))?;
-                let coerced = self.coerce(operand, &value_type, &target_type);
-                self.emit(IrStatement::Assign(local, IrRvalue::Use(coerced)));
-                Ok(())
-            }
-            Expression::Dereference(pointer) => {
-                let (pointer_operand, pointer_type) =
-                    self.lower_expression(pointer, None)?;
-                let pointee = deref_target(&pointer_type)?;
-                let (operand, value_type) =
-                    self.lower_expression(value, Some(&pointee))?;
-                let coerced = self.coerce(operand, &value_type, &pointee);
-                self.emit(IrStatement::Store {
-                    address: pointer_operand,
-                    value: coerced,
-                });
-                Ok(())
-            }
-            other => {
-                bail!("native backend: unsupported assignment target: {other}")
-            }
+        if let Expression::Identifier(name) = target {
+            let Some(local) = self.resolve_variable(name) else {
+                bail!(
+                    "native backend: assignment to unknown variable '{name}'"
+                );
+            };
+            let target_type = self.type_of_local(local);
+            let (operand, value_type) =
+                self.lower_expression(value, Some(&target_type))?;
+            let coerced = self.coerce(operand, &value_type, &target_type);
+            self.emit(IrStatement::Assign(local, IrRvalue::Use(coerced)));
+            return Ok(());
         }
+
+        let (address, pointee) = self.place_address(target)?;
+        let (operand, value_type) =
+            self.lower_expression(value, Some(&pointee))?;
+        let coerced = self.coerce(operand, &value_type, &pointee);
+        self.emit(IrStatement::Store {
+            address,
+            value: coerced,
+        });
+        Ok(())
     }
 
     fn lower_address_of(
@@ -868,40 +977,243 @@ impl<'a> FunctionLowering<'a> {
         inner: &Expression,
         kind: RefKind,
     ) -> Result<(IrOperand, Type)> {
-        let Expression::Identifier(name) = inner else {
-            bail!("native backend: can only take the address of a variable");
-        };
-        let Some(local) = self.resolve_variable(name) else {
-            bail!("native backend: address of unknown variable '{name}'");
-        };
-        self.mark_in_memory(local);
-        let pointee = self.type_of_local(local);
+        let (address, pointee) = self.place_address(inner)?;
         let result_type = match kind {
             RefKind::Ref => Type::Ref(Box::new(pointee)),
             RefKind::RefMut => Type::RefMut(Box::new(pointee)),
             RefKind::Ptr => Type::Ptr(Box::new(pointee)),
         };
-        let result = self.fresh_local(result_type.clone(), None);
-        self.emit(IrStatement::Assign(result, IrRvalue::AddressOf(local)));
-        Ok((IrOperand::Local(result), result_type))
+        Ok((address, result_type))
     }
 
     fn lower_dereference(
         &mut self,
         pointer: &Expression,
     ) -> Result<(IrOperand, Type)> {
-        let (pointer_operand, pointer_type) =
-            self.lower_expression(pointer, None)?;
-        let pointee = deref_target(&pointer_type)?;
-        let result = self.fresh_local(pointee.clone(), None);
+        let (address, pointee) = self.place_address_of_deref(pointer)?;
+        self.load_from(address, pointee)
+    }
+
+    fn lower_field_read(
+        &mut self,
+        base: &Expression,
+        field: &str,
+    ) -> Result<(IrOperand, Type)> {
+        let (address, field_type) = self.field_address(base, field)?;
+        self.load_from(address, field_type)
+    }
+
+    fn load_from(
+        &mut self,
+        address: IrOperand,
+        ty: Type,
+    ) -> Result<(IrOperand, Type)> {
+        if needs_memory(&ty) {
+            bail!(
+                "native backend: reading an aggregate value by value is not supported yet"
+            );
+        }
+        let result = self.fresh_local(ty.clone(), None);
         self.emit(IrStatement::Assign(
             result,
             IrRvalue::Load {
-                address: pointer_operand,
-                ty: pointee.clone(),
+                address,
+                ty: ty.clone(),
             },
         ));
-        Ok((IrOperand::Local(result), pointee))
+        Ok((IrOperand::Local(result), ty))
+    }
+
+    fn place_address(
+        &mut self,
+        place: &Expression,
+    ) -> Result<(IrOperand, Type)> {
+        match place {
+            Expression::Identifier(name) => {
+                let Some(local) = self.resolve_variable(name) else {
+                    bail!(
+                        "native backend: address of unknown variable '{name}'"
+                    );
+                };
+                self.mark_in_memory(local);
+                let pointee = self.type_of_local(local);
+                let result = self
+                    .fresh_local(Type::Ptr(Box::new(pointee.clone())), None);
+                self.emit(IrStatement::Assign(
+                    result,
+                    IrRvalue::AddressOf { local, offset: 0 },
+                ));
+                Ok((IrOperand::Local(result), pointee))
+            }
+            Expression::FieldAccess(base, field) => {
+                self.field_address(base, field)
+            }
+            Expression::Dereference(pointer) => {
+                self.place_address_of_deref(pointer)
+            }
+            other => {
+                bail!(
+                    "native backend: expression is not an assignable place: {other}"
+                )
+            }
+        }
+    }
+
+    fn place_address_of_deref(
+        &mut self,
+        pointer: &Expression,
+    ) -> Result<(IrOperand, Type)> {
+        let (pointer_operand, pointer_type) =
+            self.lower_expression(pointer, None)?;
+        let pointee = deref_target(&pointer_type)?;
+        Ok((pointer_operand, pointee))
+    }
+
+    fn field_address(
+        &mut self,
+        base: &Expression,
+        field: &str,
+    ) -> Result<(IrOperand, Type)> {
+        let (base_pointer, struct_name) = self.struct_place(base)?;
+        let layout =
+            self.builder.struct_layout(&struct_name).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "native backend: unknown struct '{struct_name}'"
+                )
+            })?;
+        let field_layout = layout.field(field).ok_or_else(|| {
+            anyhow::anyhow!(
+                "native backend: struct '{struct_name}' has no field '{field}'"
+            )
+        })?;
+        let field_type = field_layout.ty.clone();
+        let offset = field_layout.offset;
+        let result =
+            self.fresh_local(Type::Ptr(Box::new(field_type.clone())), None);
+        self.emit(IrStatement::Assign(
+            result,
+            IrRvalue::FieldAddress {
+                base: base_pointer,
+                offset,
+            },
+        ));
+        Ok((IrOperand::Local(result), field_type))
+    }
+
+    fn struct_place(
+        &mut self,
+        base: &Expression,
+    ) -> Result<(IrOperand, String)> {
+        match base {
+            Expression::Identifier(name) => {
+                let Some(local) = self.resolve_variable(name) else {
+                    bail!("native backend: unknown variable '{name}'");
+                };
+                match self.type_of_local(local) {
+                    Type::Struct(struct_name) => {
+                        self.mark_in_memory(local);
+                        let result = self.fresh_local(
+                            Type::Ptr(Box::new(Type::Struct(
+                                struct_name.clone(),
+                            ))),
+                            None,
+                        );
+                        self.emit(IrStatement::Assign(
+                            result,
+                            IrRvalue::AddressOf { local, offset: 0 },
+                        ));
+                        Ok((IrOperand::Local(result), struct_name))
+                    }
+                    Type::Ref(inner)
+                    | Type::RefMut(inner)
+                    | Type::Ptr(inner)
+                        if matches!(*inner, Type::Struct(_)) =>
+                    {
+                        let Type::Struct(struct_name) = *inner else {
+                            unreachable!()
+                        };
+                        Ok((IrOperand::Local(local), struct_name))
+                    }
+                    other => bail!(
+                        "native backend: '{name}' is not a struct (found {other})"
+                    ),
+                }
+            }
+            Expression::FieldAccess(inner, field) => {
+                let (address, field_type) = self.field_address(inner, field)?;
+                let Type::Struct(struct_name) = field_type else {
+                    bail!("native backend: field '{field}' is not a struct");
+                };
+                Ok((address, struct_name))
+            }
+            Expression::Dereference(pointer) => {
+                let (pointer_operand, pointer_type) =
+                    self.lower_expression(pointer, None)?;
+                let pointee = deref_target(&pointer_type)?;
+                let Type::Struct(struct_name) = pointee else {
+                    bail!("native backend: dereference is not a struct");
+                };
+                Ok((pointer_operand, struct_name))
+            }
+            other => {
+                bail!("native backend: not a struct place: {other}")
+            }
+        }
+    }
+
+    fn init_struct(
+        &mut self,
+        local: LocalId,
+        struct_name: &str,
+        field_inits: &[(String, Expression)],
+    ) -> Result<()> {
+        let fields: Vec<(String, usize, Type)> = {
+            let layout =
+                self.builder.struct_layout(struct_name).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "native backend: unknown struct '{struct_name}'"
+                    )
+                })?;
+            layout
+                .fields
+                .iter()
+                .map(|field| {
+                    (field.name.clone(), field.offset, field.ty.clone())
+                })
+                .collect()
+        };
+
+        for (field_name, field_value) in field_inits {
+            let Some((_, offset, field_type)) =
+                fields.iter().find(|(name, _, _)| name == field_name)
+            else {
+                bail!(
+                    "native backend: struct '{struct_name}' has no field '{field_name}'"
+                );
+            };
+            if needs_memory(field_type) {
+                bail!(
+                    "native backend: nested aggregate struct fields are not supported yet"
+                );
+            }
+            let address =
+                self.fresh_local(Type::Ptr(Box::new(field_type.clone())), None);
+            self.emit(IrStatement::Assign(
+                address,
+                IrRvalue::AddressOf {
+                    local,
+                    offset: *offset,
+                },
+            ));
+            let (operand, value_type) =
+                self.lower_expression(field_value, Some(field_type))?;
+            let coerced = self.coerce(operand, &value_type, field_type);
+            self.emit(IrStatement::Store {
+                address: IrOperand::Local(address),
+                value: coerced,
+            });
+        }
+        Ok(())
     }
 
     fn type_of_local(&self, local: LocalId) -> Type {

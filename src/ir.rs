@@ -12,6 +12,26 @@ pub struct IrModule {
 }
 
 #[derive(Debug, Clone)]
+pub struct StructLayout {
+    pub size: usize,
+    pub align: usize,
+    pub fields: Vec<FieldLayout>,
+}
+
+impl StructLayout {
+    pub fn field(&self, name: &str) -> Option<&FieldLayout> {
+        self.fields.iter().find(|field| field.name == name)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FieldLayout {
+    pub name: String,
+    pub ty: Type,
+    pub offset: usize,
+}
+
+#[derive(Debug, Clone)]
 pub struct IrExtern {
     pub name: String,
     pub params: Vec<Type>,
@@ -39,6 +59,7 @@ pub struct IrLocal {
     pub ty: Type,
     pub name: Option<String>,
     pub in_memory: bool,
+    pub size: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -62,7 +83,14 @@ pub enum IrRvalue {
     Binary(IrBinOp, IrOperand, IrOperand),
     Unary(IrUnOp, IrOperand),
     Cast(IrOperand, Type),
-    AddressOf(LocalId),
+    AddressOf {
+        local: LocalId,
+        offset: usize,
+    },
+    FieldAddress {
+        base: IrOperand,
+        offset: usize,
+    },
     Load {
         address: IrOperand,
         ty: Type,
@@ -215,7 +243,12 @@ impl Display for IrRvalue {
             }
             IrRvalue::Unary(op, operand) => write!(f, "{op:?}({operand})"),
             IrRvalue::Cast(operand, ty) => write!(f, "{operand} as {ty}"),
-            IrRvalue::AddressOf(local) => write!(f, "&_{local}"),
+            IrRvalue::AddressOf { local, offset } => {
+                write!(f, "&_{local}+{offset}")
+            }
+            IrRvalue::FieldAddress { base, offset } => {
+                write!(f, "{base}+{offset}")
+            }
             IrRvalue::Load { address, ty } => {
                 write!(f, "load {ty} [{address}]")
             }

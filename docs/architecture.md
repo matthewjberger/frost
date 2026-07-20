@@ -80,11 +80,14 @@ correct Cranelift instruction and type for each operation.
 - References and pointers: `&`, `&mut`, `^` dereference read/write, and
   pointer/reference parameters (e.g. `swap(a: ^i64, b: ^i64)`,
   `increment(x: &mut i64)`).
+- Structs: layout with correct field alignment, construction, field read
+  and write, references to structs and to fields, and mutation through
+  `&mut Struct` (e.g. `scale(p: &mut Point, factor: i64)`).
 
 **Not yet in the native backend** (these fail loudly, they are not
-silently miscompiled): structs and field access, enums / tagged unions and
-`match`, arrays and slices, closures, hashmaps, `defer`, `comptime`, and
-generics. These run on the bytecode VM.
+silently miscompiled): passing or returning structs by value, enums /
+tagged unions and `match`, arrays and slices, closures, hashmaps, `defer`,
+`comptime`, and generics. These run on the bytecode VM.
 
 This replaces the previous AST-walking `codegen.rs`, which treated most
 values as `i64`, hardcoded `if`-expression result types, resolved struct

@@ -177,7 +177,7 @@ impl Generator {
                 continue;
             }
             if local.in_memory {
-                let size = local.ty.size_of().max(1) as u32;
+                let size = local.size.max(1) as u32;
                 let slot = builder.create_sized_stack_slot(StackSlotData::new(
                     StackSlotKind::ExplicitSlot,
                     size,
@@ -327,13 +327,25 @@ impl Translator<'_, '_> {
                 let source = self.operand_type(operand);
                 self.cast(value, &source, target)
             }
-            IrRvalue::AddressOf(local) => {
+            IrRvalue::AddressOf { local, offset } => {
                 let Some(slot) = self.slots.get(local) else {
                     bail!(
                         "native backend: address taken of a non-memory local"
                     );
                 };
-                Ok(self.builder.ins().stack_addr(self.pointer_type, *slot, 0))
+                Ok(self.builder.ins().stack_addr(
+                    self.pointer_type,
+                    *slot,
+                    *offset as i32,
+                ))
+            }
+            IrRvalue::FieldAddress { base, offset } => {
+                let base_value = self.operand(base)?;
+                if *offset == 0 {
+                    Ok(base_value)
+                } else {
+                    Ok(self.builder.ins().iadd_imm(base_value, *offset as i64))
+                }
             }
             IrRvalue::Load { address, ty } => {
                 let address_value = self.operand(address)?;
@@ -663,7 +675,10 @@ fn collect_rvalue_strings(
         IrRvalue::Load { address, .. } => {
             collect_operand_strings(address, handle)
         }
-        IrRvalue::AddressOf(_) => Ok(()),
+        IrRvalue::FieldAddress { base, .. } => {
+            collect_operand_strings(base, handle)
+        }
+        IrRvalue::AddressOf { .. } => Ok(()),
         IrRvalue::Binary(_, left, right) => {
             collect_operand_strings(left, handle)?;
             collect_operand_strings(right, handle)
