@@ -124,6 +124,13 @@ pub enum IrRvalue {
         function: String,
         arguments: Vec<IrOperand>,
     },
+    FunctionAddress(String),
+    CallIndirect {
+        callee: IrOperand,
+        arguments: Vec<IrOperand>,
+        parameter_types: Vec<Type>,
+        return_type: Type,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -291,6 +298,14 @@ impl Display for IrRvalue {
                 let args: Vec<String> =
                     arguments.iter().map(|arg| arg.to_string()).collect();
                 write!(f, "{function}({})", args.join(", "))
+            }
+            IrRvalue::FunctionAddress(name) => write!(f, "&fn {name}"),
+            IrRvalue::CallIndirect {
+                callee, arguments, ..
+            } => {
+                let args: Vec<String> =
+                    arguments.iter().map(|arg| arg.to_string()).collect();
+                write!(f, "(*{callee})({})", args.join(", "))
             }
         }
     }
