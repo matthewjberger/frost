@@ -789,6 +789,7 @@ pub struct Parser<'a> {
     linear_types: std::collections::HashSet<String>,
     positions: &'a [Position],
     consumed: usize,
+    pending_angle_close: usize,
 }
 
 impl<'a> Parser<'a> {
@@ -798,6 +799,7 @@ impl<'a> Parser<'a> {
             linear_types: std::collections::HashSet::new(),
             positions: &[],
             consumed: 0,
+            pending_angle_close: 0,
         }
     }
 
@@ -810,6 +812,34 @@ impl<'a> Parser<'a> {
             linear_types: std::collections::HashSet::new(),
             positions,
             consumed: 0,
+            pending_angle_close: 0,
+        }
+    }
+
+    fn is_type_arg_close(&self) -> bool {
+        self.pending_angle_close > 0
+            || matches!(
+                self.peek_nth(0),
+                Token::GreaterThan | Token::ShiftRight
+            )
+    }
+
+    fn consume_type_arg_close(&mut self) -> Result<()> {
+        if self.pending_angle_close > 0 {
+            self.pending_angle_close -= 1;
+            return Ok(());
+        }
+        match self.peek_nth(0) {
+            Token::GreaterThan => {
+                self.read_token();
+                Ok(())
+            }
+            Token::ShiftRight => {
+                self.read_token();
+                self.pending_angle_close += 1;
+                Ok(())
+            }
+            other => bail!("Expected '>' to close type arguments, found {other:?}"),
         }
     }
 
@@ -2320,22 +2350,19 @@ impl<'a> Parser<'a> {
                         }
                         self.read_token();
                         let inner_type = self.parse_type()?;
-                        if !matches!(self.peek_nth(0), Token::GreaterThan) {
-                            bail!("Expected '>' after Handle type parameter");
-                        }
-                        self.read_token();
+                        self.consume_type_arg_close()?;
                         Type::Handle(Box::new(inner_type))
                     }
                     _ if matches!(self.peek_nth(0), Token::LessThan) => {
                         self.read_token();
                         let mut arguments = Vec::new();
-                        while !matches!(self.peek_nth(0), Token::GreaterThan) {
+                        while !self.is_type_arg_close() {
                             arguments.push(self.parse_type()?);
                             if matches!(self.peek_nth(0), Token::Comma) {
                                 self.read_token();
                             }
                         }
-                        self.read_token();
+                        self.consume_type_arg_close()?;
                         let rendered: Vec<String> = arguments
                             .iter()
                             .map(|argument| argument.to_string())
