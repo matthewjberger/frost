@@ -698,11 +698,12 @@ impl<'a> FunctionLowering<'a> {
                 }
                 let (operand, value_type) =
                     self.lower_expression(value, type_annotation.as_ref())?;
-                let declared = type_annotation.clone().unwrap_or(value_type);
+                let declared = type_annotation
+                    .clone()
+                    .unwrap_or_else(|| value_type.clone());
+                let coerced = self.coerce(operand, &value_type, &declared);
                 let local =
                     self.fresh_local(declared.clone(), Some(name.clone()));
-                let coerced =
-                    self.coerce(operand, &self.type_of_local(local), &declared);
                 self.emit(IrStatement::Assign(local, IrRvalue::Use(coerced)));
                 self.define_variable(name, local);
                 Ok(())

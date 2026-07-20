@@ -815,6 +815,32 @@ main :: fn() -> i64 {
 }
 "#;
 
+const WIDENING_BINDINGS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+widen :: fn(x: i8) -> i64 { x }
+
+main :: fn() -> i64 {
+    a : i8 = 0 - 5
+    printf("%lld\n", widen(a))
+    b : i16 = 0 - 1000
+    c : i64 = b
+    printf("%lld\n", c)
+    small : i32 = 42
+    wide : i64 = small
+    printf("%lld\n", wide)
+    0
+}
+"#;
+
+#[test]
+fn native_widening_in_let_bindings() {
+    let Some(output) = compile_and_run("widening", WIDENING_BINDINGS) else {
+        return;
+    };
+    assert_eq!(output, "-5\n-1000\n42\n");
+}
+
 #[test]
 fn native_generational_pool_and_handles() {
     let Some(output) = compile_and_run("gen_pool", GENERATIONAL_POOL) else {
@@ -871,6 +897,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_fieldborrow", FIELD_BORROW),
         ("diff_intsem", INTEGER_SEMANTICS),
         ("diff_genpool", GENERATIONAL_POOL),
+        ("diff_widening", WIDENING_BINDINGS),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
