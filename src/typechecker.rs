@@ -1,6 +1,8 @@
 use crate::{
     Block, Expression, Literal, Operator, Parameter, Pattern, Statement,
-    StructField, parser::ReturnSignature, types::Type,
+    StructField,
+    parser::{ReturnSignature, Spanned},
+    types::Type,
 };
 use anyhow::{Result, bail};
 use std::collections::HashMap;
@@ -248,9 +250,12 @@ impl TypeChecker {
         }
     }
 
-    pub fn check_program(&mut self, statements: &[Statement]) -> Result<()> {
+    pub fn check_program(
+        &mut self,
+        statements: &[Spanned<Statement>],
+    ) -> Result<()> {
         for statement in statements {
-            self.check_statement(statement)?;
+            self.check_statement(&statement.node)?;
         }
         Ok(())
     }
@@ -769,7 +774,7 @@ impl TypeChecker {
             if let Some(ret_type) = self.check_statement(statement)? {
                 return Ok(ret_type);
             }
-            if let Statement::Expression(expr) = statement {
+            if let Statement::Expression(expr) = &statement.node {
                 last_type = self.infer_expression(expr)?;
             }
         }

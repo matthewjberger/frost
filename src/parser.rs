@@ -8,7 +8,48 @@ use std::{
 
 pub type Identifier = String;
 
-pub type Block = Vec<Statement>;
+pub type Block = Vec<Spanned<Statement>>;
+
+#[derive(Debug, Clone)]
+pub struct Spanned<T> {
+    pub node: T,
+    pub position: Position,
+}
+
+impl<T> Spanned<T> {
+    pub fn new(node: T, position: Position) -> Self {
+        Self { node, position }
+    }
+}
+
+impl<T: PartialEq> PartialEq for Spanned<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.node == other.node
+    }
+}
+
+impl<T> From<T> for Spanned<T> {
+    fn from(node: T) -> Self {
+        Self {
+            node,
+            position: Position::default(),
+        }
+    }
+}
+
+impl<T> std::ops::Deref for Spanned<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.node
+    }
+}
+
+impl<T: Display> Display for Spanned<T> {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "{}", self.node)
+    }
+}
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Parameter {
@@ -775,7 +816,7 @@ impl From<&Token> for Precedence {
     }
 }
 
-pub type Program = Vec<Statement>;
+pub type Program = Vec<Spanned<Statement>>;
 
 pub fn type_from_string(source: &str) -> Result<Type> {
     let mut lexer = crate::lexer::Lexer::new(source);
@@ -857,11 +898,18 @@ impl<'a> Parser<'a> {
         Some(self.positions[index])
     }
 
+    fn spanned_here(&self, statement: Statement) -> Spanned<Statement> {
+        Spanned::new(statement, self.current_position().unwrap_or_default())
+    }
+
     pub fn parse(&mut self) -> Result<Program> {
         let mut program = Program::new();
         loop {
+            let position = self.current_position().unwrap_or_default();
             match self.parse_statement() {
-                Ok(Some(statement)) => program.push(statement),
+                Ok(Some(statement)) => {
+                    program.push(Spanned::new(statement, position));
+                }
                 Ok(None) => break,
                 Err(error) => {
                     if let Some(position) = self.current_position() {
@@ -1928,7 +1976,7 @@ impl<'a> Parser<'a> {
                 self.parse_block()?
             } else {
                 let expr = self.parse_expression(Precedence::Lowest)?;
-                vec![Statement::Expression(expr)]
+                vec![self.spanned_here(Statement::Expression(expr))]
             };
             cases.push(SwitchCase { pattern, body });
         }
@@ -2081,7 +2129,9 @@ impl<'a> Parser<'a> {
             self.read_token();
             if matches!(self.peek_nth(0), Token::If) {
                 let else_if = self.parse_if_expression()?;
-                alternative = Some(vec![Statement::Expression(else_if)]);
+                alternative = Some(vec![
+                    self.spanned_here(Statement::Expression(else_if)),
+                ]);
             } else {
                 alternative = Some(self.parse_block()?);
             }
@@ -2113,7 +2163,9 @@ impl<'a> Parser<'a> {
             self.read_token();
             if matches!(self.peek_nth(0), Token::If) {
                 let else_if = self.parse_if_expression()?;
-                alternative = Some(vec![Statement::Expression(else_if)]);
+                alternative = Some(vec![
+                    self.spanned_here(Statement::Expression(else_if)),
+                ]);
             } else {
                 alternative = Some(self.parse_block()?);
             }
@@ -2466,8 +2518,9 @@ impl<'a> Parser<'a> {
         while self.peek_nth(0) != &Token::RightBrace
             && self.peek_nth(0) != &Token::EndOfFile
         {
+            let position = self.current_position().unwrap_or_default();
             if let Some(statement) = self.parse_statement()? {
-                statements.push(statement);
+                statements.push(Spanned::new(statement, position));
             }
         }
 
@@ -2862,7 +2915,7 @@ mod tests {
             assert_eq!(program.len(), 1);
 
             for statement in program.into_iter() {
-                match statement {
+                match statement.node {
                     Statement::Let { name, value, .. } => {
                         assert_eq!(name, *expected_identifier);
                         assert_eq!(value, *expected_expression);
@@ -2934,7 +2987,7 @@ mod tests {
             assert_eq!(program.len(), 1);
 
             if let Some(Statement::Expression(Expression::Boolean(value))) =
-                program.into_iter().next()
+                program.into_iter().next().map(|s| s.node)
             {
                 assert_eq!(value, *expected_value)
             } else {
@@ -2959,7 +3012,7 @@ mod tests {
             assert_eq!(program.len(), 1);
 
             if let Some(statement) = program.into_iter().next() {
-                match statement {
+                match statement.node {
                     Statement::Expression(expression) => {
                         assert_eq!(
                             expression,
@@ -2996,7 +3049,7 @@ mod tests {
             assert_eq!(program.len(), 1);
 
             if let Some(statement) = program.into_iter().next() {
-                match statement {
+                match statement.node {
                     Statement::Expression(expression) => {
                         assert_eq!(
                             expression,
@@ -3040,7 +3093,7 @@ mod tests {
             assert_eq!(program.len(), 1);
 
             if let Some(statement) = program.into_iter().next() {
-                match statement {
+                match statement.node {
                     Statement::Expression(expression) => {
                         assert_eq!(
                             expression,
@@ -3081,7 +3134,7 @@ mod tests {
             assert_eq!(program.len(), 1);
 
             if let Some(statement) = program.into_iter().next() {
-                match statement {
+                match statement.node {
                     Statement::Expression(expression) => {
                         assert_eq!(
                             expression,
@@ -3172,9 +3225,10 @@ mod tests {
                 Operator::LessThan,
                 Box::new(Expression::Identifier("y".to_string())),
             )),
-            vec![Statement::Expression(Expression::Identifier(
-                "x".to_string(),
-            ))],
+            vec![
+                Statement::Expression(Expression::Identifier("x".to_string()))
+                    .into(),
+            ],
             None,
         );
 
@@ -3189,12 +3243,14 @@ mod tests {
                 Operator::LessThan,
                 Box::new(Expression::Identifier("y".to_string())),
             )),
-            vec![Statement::Expression(Expression::Identifier(
-                "x".to_string(),
-            ))],
-            Some(vec![Statement::Expression(Expression::Identifier(
-                "y".to_string(),
-            ))]),
+            vec![
+                Statement::Expression(Expression::Identifier("x".to_string()))
+                    .into(),
+            ],
+            Some(vec![
+                Statement::Expression(Expression::Identifier("y".to_string()))
+                    .into(),
+            ]),
         );
 
         parse_statement("if (x < y) { x } else { y }", &expression)
@@ -3216,11 +3272,14 @@ mod tests {
                 },
             ],
             ReturnSignature::None,
-            vec![Statement::Expression(Expression::Infix(
-                Box::new(Expression::Identifier("x".to_string())),
-                Operator::Add,
-                Box::new(Expression::Identifier("y".to_string())),
-            ))],
+            vec![
+                Statement::Expression(Expression::Infix(
+                    Box::new(Expression::Identifier("x".to_string())),
+                    Operator::Add,
+                    Box::new(Expression::Identifier("y".to_string())),
+                ))
+                .into(),
+            ],
         );
         parse_statement("fn(x, y) { x + y; }", &expression)
     }
@@ -3269,7 +3328,7 @@ mod tests {
             assert_eq!(program.len(), 1);
 
             if let Some(statement) = program.into_iter().next() {
-                match statement {
+                match statement.node {
                     Statement::Expression(expression) => {
                         assert_eq!(
                             expression,
@@ -3421,7 +3480,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        match &program[0] {
+        match &program[0].node {
             Statement::Let {
                 name,
                 type_annotation,
@@ -3450,7 +3509,7 @@ mod tests {
             params,
             return_type,
             body,
-        )) = &program[0]
+        )) = &program[0].node
         {
             assert_eq!(params.len(), 2);
             assert_eq!(params[0].name, "a");
@@ -3478,7 +3537,7 @@ mod tests {
             params,
             return_type,
             body,
-        )) = &program[0]
+        )) = &program[0].node
         {
             assert_eq!(params.len(), 1);
             assert_eq!(params[0].name, "x");
@@ -3500,7 +3559,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Struct(name, type_params, fields) = &program[0] {
+        if let Statement::Struct(name, type_params, fields) = &program[0].node {
             assert_eq!(name, "Vec3");
             assert!(type_params.is_empty());
             assert_eq!(fields.len(), 3);
@@ -3540,7 +3599,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Constant(name, expr) = &program[0] {
+        if let Statement::Constant(name, expr) = &program[0].node {
             assert_eq!(name, "PI");
             assert_eq!(expr, &Expression::Literal(Literal::Integer(3)));
         } else {
@@ -3558,7 +3617,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Defer(inner) = &program[0] {
+        if let Statement::Defer(inner) = &program[0].node {
             if let Statement::Return(expr) = inner.as_ref() {
                 assert_eq!(expr, &Expression::Literal(Literal::Integer(5)));
             } else {
@@ -3579,7 +3638,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::For(iterator, range, body) = &program[0] {
+        if let Statement::For(iterator, range, body) = &program[0].node {
             assert_eq!(iterator, "i");
             if let Expression::Range(start, end, inclusive) = range {
                 assert_eq!(
@@ -3611,7 +3670,7 @@ mod tests {
 
         assert_eq!(program.len(), 1);
         if let Statement::Expression(Expression::FieldAccess(expr, field)) =
-            &program[0]
+            &program[0].node
         {
             assert_eq!(
                 expr.as_ref(),
@@ -3656,7 +3715,7 @@ mod tests {
             enum_name,
             variant_name,
             fields,
-        )) = &program[0]
+        )) = &program[0].node
         {
             assert_eq!(enum_name, "Color");
             assert_eq!(variant_name, "Green");
@@ -3676,7 +3735,9 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::Borrow(expr)) = &program[0] {
+        if let Statement::Expression(Expression::Borrow(expr)) =
+            &program[0].node
+        {
             assert_eq!(expr.as_ref(), &Expression::Identifier("x".to_string()));
         } else {
             bail!("Expected borrow expression");
@@ -3693,7 +3754,8 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::BorrowMut(expr)) = &program[0]
+        if let Statement::Expression(Expression::BorrowMut(expr)) =
+            &program[0].node
         {
             assert_eq!(expr.as_ref(), &Expression::Identifier("x".to_string()));
         } else {
@@ -3715,7 +3777,7 @@ mod tests {
             name,
             type_annotation,
             ..
-        } = &program[0]
+        } = &program[0].node
         {
             assert_eq!(name, "r");
             assert_eq!(type_annotation, &Some(Type::Ref(Box::new(Type::I64))));
@@ -3738,7 +3800,7 @@ mod tests {
             name,
             type_annotation,
             ..
-        } = &program[0]
+        } = &program[0].node
         {
             assert_eq!(name, "r");
             assert_eq!(
@@ -3761,7 +3823,7 @@ mod tests {
 
         assert_eq!(program.len(), 1);
         if let Statement::Expression(Expression::Dereference(expr)) =
-            &program[0]
+            &program[0].node
         {
             assert_eq!(expr.as_ref(), &Expression::Identifier("p".to_string()));
         } else {
@@ -3783,7 +3845,7 @@ mod tests {
             name,
             type_annotation,
             ..
-        } = &program[0]
+        } = &program[0].node
         {
             assert_eq!(name, "p");
             assert_eq!(type_annotation, &Some(Type::Ptr(Box::new(Type::I64))));
@@ -3806,7 +3868,7 @@ mod tests {
             name,
             type_annotation,
             ..
-        } = &program[0]
+        } = &program[0].node
         {
             assert_eq!(name, "arr");
             assert_eq!(
@@ -3832,7 +3894,7 @@ mod tests {
             name,
             type_annotation,
             ..
-        } = &program[0]
+        } = &program[0].node
         {
             assert_eq!(name, "slice");
             assert_eq!(
@@ -3858,7 +3920,7 @@ mod tests {
             name,
             type_annotation,
             ..
-        } = &program[0]
+        } = &program[0].node
         {
             assert_eq!(name, "callback");
             assert_eq!(
@@ -3884,7 +3946,7 @@ mod tests {
 
         assert_eq!(program.len(), 1);
         if let Statement::Expression(Expression::StructInit(name, fields)) =
-            &program[0]
+            &program[0].node
         {
             assert_eq!(name, "Point");
             assert_eq!(fields.len(), 2);
@@ -3905,7 +3967,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Assignment(lhs, rhs) = &program[0] {
+        if let Statement::Assignment(lhs, rhs) = &program[0].node {
             if let Expression::Dereference(ptr) = lhs {
                 assert_eq!(
                     ptr.as_ref(),
@@ -3930,7 +3992,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Assignment(lhs, rhs) = &program[0] {
+        if let Statement::Assignment(lhs, rhs) = &program[0].node {
             if let Expression::FieldAccess(expr, field) = lhs {
                 assert_eq!(
                     expr.as_ref(),
@@ -3956,7 +4018,8 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::Sizeof(typ)) = &program[0] {
+        if let Statement::Expression(Expression::Sizeof(typ)) = &program[0].node
+        {
             assert_eq!(*typ, Type::I64);
         } else {
             bail!("Expected sizeof expression");
@@ -3973,7 +4036,8 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::Sizeof(typ)) = &program[0] {
+        if let Statement::Expression(Expression::Sizeof(typ)) = &program[0].node
+        {
             assert_eq!(*typ, Type::Ptr(Box::new(Type::I64)));
         } else {
             bail!("Expected sizeof expression");
@@ -3992,7 +4056,7 @@ mod tests {
         let program = parser.parse()?;
 
         if let Some(statement) = program.into_iter().next() {
-            match statement {
+            match statement.node {
                 Statement::Expression(expression)
                 | Statement::Return(expression) => {
                     assert_eq!(expression, *expected_expression)
@@ -4014,7 +4078,7 @@ mod tests {
 
         assert_eq!(program.len(), 1);
         assert_eq!(
-            program[0],
+            program[0].node,
             Statement::Let {
                 name: "x".to_string(),
                 type_annotation: None,
@@ -4035,7 +4099,7 @@ mod tests {
 
         assert_eq!(program.len(), 1);
         assert_eq!(
-            program[0],
+            program[0].node,
             Statement::Let {
                 name: "x".to_string(),
                 type_annotation: Some(Type::I64),
@@ -4060,7 +4124,7 @@ mod tests {
             type_annotation: None,
             value: Expression::Function(params, _, _),
             ..
-        } = &program[0]
+        } = &program[0].node
         {
             assert_eq!(name, "add");
             assert_eq!(params.len(), 2);
@@ -4080,7 +4144,7 @@ mod tests {
 
         assert_eq!(program.len(), 1);
         assert_eq!(
-            program[0],
+            program[0].node,
             Statement::Let {
                 name: "x".to_string(),
                 type_annotation: None,
@@ -4101,7 +4165,7 @@ mod tests {
 
         assert_eq!(program.len(), 1);
         assert_eq!(
-            program[0],
+            program[0].node,
             Statement::Let {
                 name: "x".to_string(),
                 type_annotation: Some(Type::I64),
@@ -4121,7 +4185,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Let { mutable, .. } = &program[0] {
+        if let Statement::Let { mutable, .. } = &program[0].node {
             assert!(!mutable, "Declaration without mut should be immutable");
         } else {
             bail!("Expected let statement");
@@ -4169,7 +4233,7 @@ mod tests {
             type_var,
             types,
             body,
-        }) = &statements[0]
+        }) = &statements[0].node
         {
             assert!(index_var.is_none());
             assert_eq!(type_var, "T");
@@ -4194,7 +4258,7 @@ mod tests {
             type_var,
             types,
             body: _,
-        }) = &statements[0]
+        }) = &statements[0].node
         {
             assert_eq!(index_var.as_deref(), Some("index"));
             assert_eq!(type_var, "T");
@@ -4213,7 +4277,7 @@ mod tests {
         let mut parser = Parser::new(&tokens);
         let statements = parser.parse()?;
         assert_eq!(statements.len(), 1);
-        if let Statement::Let { value, .. } = &statements[0] {
+        if let Statement::Let { value, .. } = &statements[0].node {
             if let Expression::Infix(_, op, _) = value {
                 assert_eq!(*op, Operator::ShiftLeft);
             } else {
@@ -4233,7 +4297,7 @@ mod tests {
         let mut parser = Parser::new(&tokens);
         let statements = parser.parse()?;
         assert_eq!(statements.len(), 1);
-        if let Statement::Let { value, .. } = &statements[0] {
+        if let Statement::Let { value, .. } = &statements[0].node {
             if let Expression::Infix(_, op, _) = value {
                 assert_eq!(*op, Operator::BitwiseOr);
             } else {
@@ -4254,7 +4318,7 @@ mod tests {
         let mut parser = Parser::new(&tokens);
         let statements = parser.parse()?;
         assert_eq!(statements.len(), 1);
-        if let Statement::InterpolatedConstant(parts, _) = &statements[0] {
+        if let Statement::InterpolatedConstant(parts, _) = &statements[0].node {
             assert_eq!(parts.len(), 2);
             assert_eq!(parts[0], IdentPart::Literal("BIT_".to_string()));
             assert_eq!(parts[1], IdentPart::TypeVar("T".to_string()));
@@ -4272,7 +4336,7 @@ mod tests {
         let mut parser = Parser::new(&tokens);
         let statements = parser.parse()?;
         assert_eq!(statements.len(), 1);
-        if let Statement::Let { value, .. } = &statements[0] {
+        if let Statement::Let { value, .. } = &statements[0].node {
             if let Expression::Typename(typ) = value {
                 assert_eq!(format!("{}", typ), "Position");
             } else {
@@ -4297,7 +4361,7 @@ mod tests {
             name,
             type_annotation,
             ..
-        } = &program[0]
+        } = &program[0].node
         {
             assert_eq!(name, "a");
             assert_eq!(type_annotation, &Some(Type::Arena));
@@ -4320,7 +4384,7 @@ mod tests {
             name,
             type_annotation,
             ..
-        } = &program[0]
+        } = &program[0].node
         {
             assert_eq!(name, "h");
             assert_eq!(
@@ -4348,7 +4412,7 @@ mod tests {
             name,
             type_annotation,
             ..
-        } = &program[0]
+        } = &program[0].node
         {
             assert_eq!(name, "x");
             assert_eq!(
@@ -4374,7 +4438,7 @@ mod tests {
             name,
             type_annotation,
             ..
-        } = &program[0]
+        } = &program[0].node
         {
             assert_eq!(name, "x");
             assert_eq!(
@@ -4402,7 +4466,7 @@ mod tests {
             name,
             params,
             return_type,
-        } = &program[0]
+        } = &program[0].node
         {
             assert_eq!(name, "puts");
             assert_eq!(params.len(), 1);
@@ -4427,7 +4491,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Let { value, .. } = &program[0] {
+        if let Statement::Let { value, .. } = &program[0].node {
             if let Expression::Unsafe(body) = value {
                 assert_eq!(body.len(), 1);
             } else {
@@ -4448,7 +4512,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::For(_, range_expr, _) = &program[0] {
+        if let Statement::For(_, range_expr, _) = &program[0].node {
             if let Expression::Range(_, _, inclusive) = range_expr {
                 assert!(inclusive, "Expected inclusive range");
             } else {
@@ -4469,7 +4533,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::For(_, range_expr, _) = &program[0] {
+        if let Statement::For(_, range_expr, _) = &program[0].node {
             if let Expression::Range(_, _, inclusive) = range_expr {
                 assert!(!inclusive, "Expected exclusive range");
             } else {
@@ -4495,7 +4559,7 @@ mod tests {
             value,
             consequence,
             alternative,
-        )) = &program[0]
+        )) = &program[0].node
         {
             assert!(matches!(pattern, Pattern::Identifier(_)));
             assert!(matches!(
@@ -4520,7 +4584,7 @@ mod tests {
 
         assert_eq!(program.len(), 1);
         if let Statement::Expression(Expression::IfLet(_, _, _, alternative)) =
-            &program[0]
+            &program[0].node
         {
             assert!(alternative.is_some());
         } else {
@@ -4540,7 +4604,7 @@ mod tests {
         assert_eq!(program.len(), 1);
         if let Statement::Let {
             type_annotation, ..
-        } = &program[0]
+        } = &program[0].node
         {
             assert_eq!(type_annotation.as_ref(), Some(&Type::Isize));
         } else {
@@ -4560,7 +4624,7 @@ mod tests {
         assert_eq!(program.len(), 1);
         if let Statement::Let {
             type_annotation, ..
-        } = &program[0]
+        } = &program[0].node
         {
             assert_eq!(type_annotation.as_ref(), Some(&Type::Usize));
         } else {
@@ -4578,7 +4642,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Enum(name, variants) = &program[0] {
+        if let Statement::Enum(name, variants) = &program[0].node {
             assert_eq!(name, "Color");
             assert_eq!(variants.len(), 3);
             assert_eq!(variants[0].name, "Red");
@@ -4602,7 +4666,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Enum(name, variants) = &program[0] {
+        if let Statement::Enum(name, variants) = &program[0].node {
             assert_eq!(name, "Result");
             assert_eq!(variants.len(), 2);
             assert_eq!(variants[0].name, "Ok");
@@ -4629,7 +4693,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Let { value, .. } = &program[0] {
+        if let Statement::Let { value, .. } = &program[0].node {
             if let Expression::EnumVariantInit(
                 enum_name,
                 variant_name,
@@ -4657,7 +4721,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Let { value, .. } = &program[0] {
+        if let Statement::Let { value, .. } = &program[0].node {
             if let Expression::EnumVariantInit(
                 enum_name,
                 variant_name,
@@ -4692,7 +4756,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Let { value, .. } = &program[0] {
+        if let Statement::Let { value, .. } = &program[0].node {
             if let Expression::Switch(scrutinee, cases) = value {
                 if let Expression::Identifier(name) = scrutinee.as_ref() {
                     assert_eq!(name, "x");
@@ -4733,7 +4797,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Let { value, .. } = &program[0] {
+        if let Statement::Let { value, .. } = &program[0].node {
             if let Expression::Switch(_, cases) = value {
                 assert_eq!(cases.len(), 3);
                 if let Pattern::EnumVariant {
@@ -4771,7 +4835,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Let { value, .. } = &program[0] {
+        if let Statement::Let { value, .. } = &program[0].node {
             if let Expression::Switch(_, cases) = value {
                 assert_eq!(cases.len(), 2);
                 if let Pattern::EnumVariant {
@@ -4810,7 +4874,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Let { value, .. } = &program[0] {
+        if let Statement::Let { value, .. } = &program[0].node {
             if let Expression::Switch(_, cases) = value {
                 assert_eq!(cases.len(), 2);
                 if let Pattern::EnumVariant {
@@ -4848,7 +4912,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Let { value, .. } = &program[0] {
+        if let Statement::Let { value, .. } = &program[0].node {
             if let Expression::Switch(_, cases) = value {
                 assert_eq!(cases.len(), 3);
                 if let Pattern::Tuple(patterns) = &cases[0].pattern {
@@ -4892,7 +4956,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Let { value, .. } = &program[0] {
+        if let Statement::Let { value, .. } = &program[0].node {
             if let Expression::Switch(_, cases) = value {
                 assert_eq!(cases.len(), 2);
                 assert!(matches!(
@@ -4921,7 +4985,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Enum(name, variants) = &program[0] {
+        if let Statement::Enum(name, variants) = &program[0].node {
             assert_eq!(name, "Option");
             assert_eq!(variants.len(), 2);
             assert_eq!(variants[0].name, "None");
@@ -4948,7 +5012,7 @@ mod tests {
             params,
             return_sig,
             _body,
-        )) = &program[0]
+        )) = &program[0].node
         {
             assert_eq!(params.len(), 2);
             if let ReturnSignature::Named(ret_params) = return_sig {
@@ -4977,7 +5041,7 @@ mod tests {
             params,
             return_sig,
             _body,
-        )) = &program[0]
+        )) = &program[0].node
         {
             assert_eq!(params.len(), 2);
             if let ReturnSignature::Named(ret_params) = return_sig {
@@ -5029,7 +5093,7 @@ mod tests {
         if let Statement::Constant(
             name,
             Expression::Proc(params, return_sig, _body),
-        ) = &program[0]
+        ) = &program[0].node
         {
             assert_eq!(name, "identity");
             assert_eq!(params.len(), 1);
@@ -5059,7 +5123,7 @@ mod tests {
 
         assert_eq!(program.len(), 1);
         if let Statement::Constant(name, Expression::Proc(params, _, _)) =
-            &program[0]
+            &program[0].node
         {
             assert_eq!(name, "pair");
             assert_eq!(params.len(), 2);
@@ -5087,7 +5151,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Struct(name, type_params, fields) = &program[0] {
+        if let Statement::Struct(name, type_params, fields) = &program[0].node {
             assert_eq!(name, "Pair");
             assert_eq!(type_params.len(), 2);
             assert_eq!(type_params[0], "T");
@@ -5112,7 +5176,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Struct(name, type_params, fields) = &program[0] {
+        if let Statement::Struct(name, type_params, fields) = &program[0].node {
             assert_eq!(name, "Wrapper");
             assert_eq!(type_params.len(), 1);
             assert_eq!(type_params[0], "T");

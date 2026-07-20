@@ -2,26 +2,47 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result, bail};
 
-use crate::parser::{Block, Expression, Literal, Parameter, Statement};
+use crate::lexer::Position;
+use crate::parser::{
+    Block, Expression, Literal, Parameter, Spanned, Statement,
+};
 use crate::types::Type;
 
 type Signatures = HashMap<String, Type>;
 
+fn locate<T>(result: Result<T>, position: Position) -> Result<T> {
+    result.map_err(|error| {
+        let text = error.to_string();
+        if position == Position::default() || text.starts_with("at line ") {
+            error
+        } else {
+            anyhow::anyhow!(
+                "at line {}, column {}: {text}",
+                position.line,
+                position.column
+            )
+        }
+    })
+}
+
 pub fn check_ownership(
-    statements: &[Statement],
+    statements: &[Spanned<Statement>],
     linear: &HashSet<String>,
 ) -> Result<()> {
     let signatures = collect_signatures(statements);
     for statement in statements {
-        check_statement(statement, linear, &signatures)?;
+        locate(
+            check_statement(&statement.node, linear, &signatures),
+            statement.position,
+        )?;
     }
     Ok(())
 }
 
-fn collect_signatures(statements: &[Statement]) -> Signatures {
+fn collect_signatures(statements: &[Spanned<Statement>]) -> Signatures {
     let mut signatures = HashMap::new();
     for statement in statements {
-        match statement {
+        match &statement.node {
             Statement::Constant(
                 name,
                 Expression::Function(_, return_sig, _)
@@ -165,20 +186,23 @@ impl MoveChecker<'_> {
         }
     }
 
-    fn check_block(&mut self, block: &[Statement]) -> Result<()> {
+    fn check_block(&mut self, block: &Block) -> Result<()> {
         for statement in block {
-            self.check_statement(statement)?;
+            locate(self.check_statement(&statement.node), statement.position)?;
         }
         Ok(())
     }
 
-    fn check_function_body(&mut self, block: &[Statement]) -> Result<()> {
+    fn check_function_body(&mut self, block: &Block) -> Result<()> {
         for (index, statement) in block.iter().enumerate() {
             let is_last = index + 1 == block.len();
-            if is_last && let Statement::Expression(expression) = statement {
-                self.visit(expression, true)?;
+            let position = statement.position;
+            if is_last
+                && let Statement::Expression(expression) = &statement.node
+            {
+                locate(self.visit(expression, true), position)?;
             } else {
-                self.check_statement(statement)?;
+                locate(self.check_statement(&statement.node), position)?;
             }
         }
         Ok(())
