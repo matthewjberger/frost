@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use frost::{
     Compiler, Lexer, Parser as FrostParser, VirtualMachine, build_module,
-    check_ownership, compile_ir_to_object, emit_c,
+    check_module, check_ownership, compile_ir_to_object, emit_c,
 };
 
 #[derive(Parser)]
@@ -49,6 +49,7 @@ fn main() -> Result<()> {
 
     if cli.emit_c {
         let module = build_module(&statements).context("IR lowering error")?;
+        check_module(&module).context("IR type error")?;
         let c_source = emit_c(&module).context("C emission error")?;
 
         let input_path = Path::new(&cli.file);
@@ -82,6 +83,7 @@ fn main() -> Result<()> {
 
     if cli.native || cli.link {
         let module = build_module(&statements).context("IR lowering error")?;
+        check_module(&module).context("IR type error")?;
         let object_bytes = compile_ir_to_object(&module)
             .context("Native compilation error")?;
 
