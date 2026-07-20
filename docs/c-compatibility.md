@@ -3,14 +3,14 @@
 Frost has two distinct relationships with C, and it is important to keep them
 separate:
 
-1. **Frost calls C** (`extern fn`) — a first-class, supported feature. This is
+1. **Frost calls C** (`extern fn`), a first-class, supported feature. This is
    how Frost reaches `printf`, `malloc`, the pool runtime, and any C library.
-2. **Frost lowers *through* C** (`--emit-c`) — an internal implementation detail
+2. **Frost lowers *through* C** (`--emit-c`), an internal implementation detail
    of one backend. The emitted C is a compilation target, **not** an interface
    for external C code to call into.
 
-The design goal is deliberately asymmetric: **Frost → C matters; C → Frost does
-not.** Keeping that asymmetry is what lets the emitted C stay a simple, ugly
+The design is deliberately asymmetric: Frost calling C matters, and C calling
+Frost does not. Keeping that asymmetry is what lets the emitted C stay a simple
 lowering (char buffers, mangled names) without owing anyone a stable ABI.
 
 ## 1. Frost calls C: `extern fn`
@@ -33,9 +33,9 @@ main :: fn() -> i64 {
   stays `printf`) so it links against the real C library. Only *non-extern*
   Frost functions are mangled (see below).
 - **Types map to the natural C ABI.** Scalars map to their `<stdint.h>`
-  equivalents (`i32`→`int32_t`, `u8`→`uint8_t`, `f64`→`double`), and pointer /
-  reference types (`^T`, `&T`, `&mut T`) map to pointers. So an `extern`
-  signature is a direct description of the C function's ABI.
+  equivalents (`i32` to `int32_t`, `u8` to `uint8_t`, `f64` to `double`), and
+  pointer or reference types (`^T`, `&T`, `&mut T`) map to pointers. An `extern`
+  signature is therefore a direct description of the C function's ABI.
 - **Aggregate parameters are passed by pointer.** A `struct`/`enum`/array
   parameter to an `extern fn` is passed as a pointer to the value, not
   by-value-in-registers. So `close :: extern fn(f: File)` links against a C
@@ -47,8 +47,8 @@ main :: fn() -> i64 {
   `cc`/`gcc`/`clang` (or `cl` on MSVC), so C symbols resolve normally and you can
   pass extra libraries with `--libs`.
 
-This is the interop that carries real weight: Frost programs get the entire C
-ecosystem — libc, OS syscalls, third-party libraries — through `extern fn`, with
+This is the interop that carries real weight. Frost programs get the entire C
+ecosystem (libc, OS syscalls, third-party libraries) through `extern fn`, with
 no FFI glue code.
 
 ### The pool runtime is itself just linked C
@@ -66,8 +66,8 @@ pool_get   :: extern fn(pool: ^u8, handle: i64) -> ^u8
 Its interface is intentionally **scalar-only**: a pool is an opaque `^u8`
 pointer and a handle is a packed `i64`. Nothing is passed or returned by
 aggregate value, so the runtime's *natural* C ABI matches Frost's internal
-aggregate convention with zero negotiation — which is also why the identical
-compiled runtime links into both backends and they agree bit-for-bit.
+aggregate convention with zero negotiation. That is also why the identical
+compiled runtime links into both backends and they agree bit for bit.
 
 ## 2. Frost lowers through C: `--emit-c`
 
@@ -83,8 +83,9 @@ The emitted C is an **internal lowering**, and it looks like one:
 - **Aggregates are byte buffers.** A struct/enum/array local is emitted as
   `_Alignas(16) unsigned char _7[N];` and accessed through pointer casts, not as
   a named C `struct`. This is why a Frost struct type's *name* is only ever a
-  layout-registry key inside the compiler — it never has to be a valid C
-  identifier, which is what makes monomorphized names like `Pair<i64>` free.
+  layout-registry key inside the compiler. It never has to be a valid C
+  identifier, which is what lets monomorphized names like `Pair<i64>` work with
+  no extra escaping.
 - **Aggregate returns use a hidden out-pointer.** A function returning a struct
   compiles to `void f(..., char* __ret)` and `memcpy`s the result into `__ret`.
 - **Non-extern names are mangled.** Every Frost function that isn't `extern` and
@@ -96,10 +97,10 @@ The emitted C is an **internal lowering**, and it looks like one:
 
 Because of the mangling, the byte-buffer aggregates, and the out-pointer return
 convention, the emitted C is **not** a clean header you would hand to a C
-programmer. That is by design: since C → Frost is explicitly a non-goal, the
-backend is free to pick whatever lowering is simplest and fastest to emit. If
-stable C-callable exports ever become a goal, they would be a separate, opt-in
-surface — not a property the internal lowering has to preserve.
+programmer. That is intentional. Since C calling Frost is a non-goal, the backend
+is free to pick whatever lowering is simplest and fastest to emit. If stable
+C-callable exports ever become a goal, they would be a separate, opt-in surface
+rather than a property the internal lowering has to preserve.
 
 ## What "C compatible" means here
 
@@ -110,8 +111,8 @@ surface — not a property the internal lowering has to preserve.
 | Frost emits C    | Yes        | `--emit-c`, an internal lowering / differential oracle |
 | C calls Frost    | No (non-goal) | emitted C is mangled internal detail, not an API   |
 
-In one line: **Frost speaks C fluently going out, and uses C as a portable
-assembler going down, but does not promise C anything coming in.**
+In short, Frost speaks C fluently going out and uses C as a portable assembler
+going down, but it does not promise C anything coming in.
 
 ## Building
 

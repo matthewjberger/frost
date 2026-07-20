@@ -19,16 +19,16 @@ A statically-typed programming language with Rust-inspired ownership and immutab
 
 ## Documentation
 
-- [docs/tour.md](docs/tour.md) — a hands-on tour of the language by example
-- [docs/philosophy.md](docs/philosophy.md) — design philosophy, goals and
+- [docs/tour.md](docs/tour.md): a hands-on tour of the language by example
+- [docs/philosophy.md](docs/philosophy.md): design philosophy, goals and
   non-goals, and why Frost is data-oriented rather than object-oriented
-- [docs/memory-safety.md](docs/memory-safety.md) — how Frost guarantees memory
+- [docs/memory-safety.md](docs/memory-safety.md): how Frost guarantees memory
   safety without a garbage collector or lifetime annotations
-- [docs/c-compatibility.md](docs/c-compatibility.md) — calling C and the C backend
-- [docs/architecture.md](docs/architecture.md) — the compiler pipeline and what
+- [docs/c-compatibility.md](docs/c-compatibility.md): calling C and the C backend
+- [docs/architecture.md](docs/architecture.md): the compiler pipeline and what
   the native backend supports today versus the bytecode VM
-- [docs/memory_model.md](docs/memory_model.md) — copy / move / linear type categories
-- [docs/spec.md](docs/spec.md) — the detailed language reference
+- [docs/memory_model.md](docs/memory_model.md): copy / move / linear type categories
+- [docs/spec.md](docs/spec.md): the detailed language reference
 
 ## Quick Start
 
@@ -448,7 +448,7 @@ Execution   Binary
 
 ### Two Backends
 
-1. **Bytecode VM** (`compiler.rs` → `typed_vm.rs`)
+1. **Bytecode VM** (`compiler.rs` to `typed_vm.rs`)
    - Compiles Frost source to custom bytecode
    - Executed by an interpreter written in Rust
    - Used for: REPL, rapid iteration, debugging
