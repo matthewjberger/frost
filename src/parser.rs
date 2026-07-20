@@ -1582,12 +1582,23 @@ impl<'a> Parser<'a> {
 
     fn parse_address_of(&mut self) -> Result<Expression> {
         self.read_token();
-        if matches!(self.peek_nth(0), Token::Mut) {
+        let mutable = if matches!(self.peek_nth(0), Token::Mut) {
             self.read_token();
-            let expression = self.parse_expression(Precedence::Prefix)?;
+            true
+        } else {
+            false
+        };
+        let mut expression = self.parse_expression(Precedence::Prefix)?;
+        if let Expression::Identifier(name) = &expression
+            && matches!(self.peek_nth(0), Token::LeftBrace)
+            && self.peek_nth(1) != &Token::Case
+        {
+            let name = name.clone();
+            expression = self.parse_struct_init(name)?;
+        }
+        if mutable {
             Ok(Expression::BorrowMut(Box::new(expression)))
         } else {
-            let expression = self.parse_expression(Precedence::Prefix)?;
             Ok(Expression::Borrow(Box::new(expression)))
         }
     }
