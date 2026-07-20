@@ -204,15 +204,33 @@ impl Display for Token {
 
 pub const EOF_CHAR: char = '\0';
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Position {
+    pub line: usize,
+    pub column: usize,
+}
+
 pub struct Lexer<'a> {
     chars: Chars<'a>,
+    line: usize,
+    column: usize,
+    token_start: Position,
+    positions: Vec<Position>,
 }
 
 impl<'a> Lexer<'a> {
     pub fn new(input: &'a str) -> Lexer<'a> {
         Self {
             chars: input.chars(),
+            line: 1,
+            column: 1,
+            token_start: Position { line: 1, column: 1 },
+            positions: Vec::new(),
         }
+    }
+
+    pub fn positions(&self) -> &[Position] {
+        &self.positions
     }
 
     pub fn tokenize(&mut self) -> Result<Vec<Token>> {
@@ -222,6 +240,7 @@ impl<'a> Lexer<'a> {
             if let Token::EndOfFile = next_token {
                 break;
             }
+            self.positions.push(self.token_start);
             tokens.push(next_token);
         }
         Ok(tokens)
@@ -229,6 +248,10 @@ impl<'a> Lexer<'a> {
 
     fn next_token(&mut self) -> Result<Token> {
         self.skip_while(Self::is_whitespace);
+        self.token_start = Position {
+            line: self.line,
+            column: self.column,
+        };
         let first_char = self.read_char();
         let token = match first_char {
             '=' => self.next_char_or(Assign, '=', Equal),
@@ -392,7 +415,14 @@ impl<'a> Lexer<'a> {
     }
 
     fn read_char(&mut self) -> char {
-        self.chars.next().unwrap_or(EOF_CHAR)
+        let character = self.chars.next().unwrap_or(EOF_CHAR);
+        if character == '\n' {
+            self.line += 1;
+            self.column = 1;
+        } else if character != EOF_CHAR {
+            self.column += 1;
+        }
+        character
     }
 
     fn peek_nth(&self, n: usize) -> char {
