@@ -299,6 +299,11 @@ impl MoveChecker<'_> {
             }
             Expression::Switch(scrutinee, cases) => {
                 self.visit(scrutinee, false)?;
+                if let Expression::Identifier(name) = scrutinee.as_ref()
+                    && self.is_linear_variable(name)
+                {
+                    self.moved.insert(name.clone());
+                }
                 for case in cases {
                     self.check_block(&case.body)?;
                 }
@@ -306,6 +311,13 @@ impl MoveChecker<'_> {
             }
             _ => Ok(()),
         }
+    }
+
+    fn is_linear_variable(&self, name: &str) -> bool {
+        self.types
+            .get(name)
+            .map(|ty| is_linear_type(ty, self.linear))
+            .unwrap_or(false)
     }
 
     fn is_move_variable(&self, name: &str) -> bool {
@@ -559,6 +571,33 @@ mod tests {
             run :: fn() -> i64 {\n\
                 x : i64 = 7\n\
                 sum(&x, &x)\n\
+            }";
+        assert!(check(source).is_ok());
+    }
+
+    #[test]
+    fn ignored_linear_error_enum_is_rejected() {
+        let source = "\
+            Outcome :: linear enum { Ok { value: i64 }, Err { code: i64 } }\n\
+            run_step :: fn() -> Outcome { Outcome::Ok { value = 1 } }\n\
+            caller :: fn() -> i64 {\n\
+                result := run_step()\n\
+                7\n\
+            }";
+        assert!(check(source).is_err());
+    }
+
+    #[test]
+    fn matching_a_linear_error_enum_consumes_it() {
+        let source = "\
+            Outcome :: linear enum { Ok { value: i64 }, Err { code: i64 } }\n\
+            run_step :: fn() -> Outcome { Outcome::Ok { value = 1 } }\n\
+            caller :: fn() -> i64 {\n\
+                result := run_step()\n\
+                match result {\n\
+                    case .Ok { value }: value\n\
+                    case .Err { code }: 0 - code\n\
+                }\n\
             }";
         assert!(check(source).is_ok());
     }
