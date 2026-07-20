@@ -267,6 +267,9 @@ fn array_element_type(
         Some(Expression::EnumVariantInit(name, _, _)) => {
             Type::Enum(name.clone())
         }
+        Some(Expression::Literal(Literal::Array(inner))) => {
+            Type::Array(Box::new(array_element_type(None, inner)), inner.len())
+        }
         _ => Type::I64,
     }
 }
@@ -1862,11 +1865,6 @@ impl<'a> FunctionLowering<'a> {
                     "native backend: enum variant '{variant_name}' has no field '{field_name}'"
                 );
             };
-            if needs_memory(field_type) {
-                bail!(
-                    "native backend: nested aggregate enum fields are not supported yet"
-                );
-            }
             let address =
                 self.fresh_local(Type::Ptr(Box::new(field_type.clone())), None);
             self.emit(IrStatement::Assign(
@@ -1876,13 +1874,24 @@ impl<'a> FunctionLowering<'a> {
                     offset: *offset,
                 },
             ));
-            let (operand, value_type) =
-                self.lower_expression(field_value, Some(field_type))?;
-            let coerced = self.coerce(operand, &value_type, field_type);
-            self.emit(IrStatement::Store {
-                address: IrOperand::Local(address),
-                value: coerced,
-            });
+            if needs_memory(field_type) {
+                let source_local =
+                    self.materialize_field_value(field_value, field_type)?;
+                let source = self.address_of_local(source_local, field_type);
+                self.emit(IrStatement::Copy {
+                    destination: IrOperand::Local(address),
+                    source,
+                    size: self.builder.byte_size(field_type),
+                });
+            } else {
+                let (operand, value_type) =
+                    self.lower_expression(field_value, Some(field_type))?;
+                let coerced = self.coerce(operand, &value_type, field_type);
+                self.emit(IrStatement::Store {
+                    address: IrOperand::Local(address),
+                    value: coerced,
+                });
+            }
         }
         Ok(())
     }
@@ -2236,11 +2245,6 @@ impl<'a> FunctionLowering<'a> {
                             "native backend: variant '{variant_name}' has no field '{field_name}'"
                         );
                     };
-                    if needs_memory(field_type) {
-                        bail!(
-                            "native backend: binding aggregate enum fields is not supported yet"
-                        );
-                    }
                     let field_address = self.fresh_local(
                         Type::Ptr(Box::new(field_type.clone())),
                         None,
@@ -2256,13 +2260,23 @@ impl<'a> FunctionLowering<'a> {
                         field_type.clone(),
                         Some(bound_name.clone()),
                     );
-                    self.emit(IrStatement::Assign(
-                        bound,
-                        IrRvalue::Load {
-                            address: IrOperand::Local(field_address),
-                            ty: field_type.clone(),
-                        },
-                    ));
+                    if needs_memory(field_type) {
+                        let destination =
+                            self.address_of_local(bound, field_type);
+                        self.emit(IrStatement::Copy {
+                            destination,
+                            source: IrOperand::Local(field_address),
+                            size: self.builder.byte_size(field_type),
+                        });
+                    } else {
+                        self.emit(IrStatement::Assign(
+                            bound,
+                            IrRvalue::Load {
+                                address: IrOperand::Local(field_address),
+                                ty: field_type.clone(),
+                            },
+                        ));
+                    }
                     self.define_variable(bound_name, bound);
                 }
                 Ok(())
