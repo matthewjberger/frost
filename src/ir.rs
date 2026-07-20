@@ -91,6 +91,11 @@ pub enum IrRvalue {
         base: IrOperand,
         offset: usize,
     },
+    ElementAddress {
+        base: IrOperand,
+        index: IrOperand,
+        element_size: usize,
+    },
     Load {
         address: IrOperand,
         ty: Type,
@@ -248,6 +253,13 @@ impl Display for IrRvalue {
             }
             IrRvalue::FieldAddress { base, offset } => {
                 write!(f, "{base}+{offset}")
+            }
+            IrRvalue::ElementAddress {
+                base,
+                index,
+                element_size,
+            } => {
+                write!(f, "{base}+{index}*{element_size}")
             }
             IrRvalue::Load { address, ty } => {
                 write!(f, "load {ty} [{address}]")
