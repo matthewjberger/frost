@@ -1477,9 +1477,16 @@ impl<'a> FunctionLowering<'a> {
         ty: Type,
     ) -> Result<(IrOperand, Type)> {
         if needs_memory(&ty) {
-            bail!(
-                "native backend: reading an aggregate value by value is not supported yet"
-            );
+            let temp = self.fresh_local(ty.clone(), None);
+            self.mark_in_memory(temp);
+            let destination = self.address_of_local(temp, &ty);
+            let size = self.builder.byte_size(&ty);
+            self.emit(IrStatement::Copy {
+                destination,
+                source: address,
+                size,
+            });
+            return Ok((IrOperand::Local(temp), ty));
         }
         let result = self.fresh_local(ty.clone(), None);
         self.emit(IrStatement::Assign(
