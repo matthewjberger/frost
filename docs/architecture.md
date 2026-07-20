@@ -95,10 +95,12 @@ correct type and operation for each value because the IR is fully typed, and
 - Enums and tagged unions: construction, and `match` over a value or a
   reference with enum-variant patterns (binding payload fields), integer
   literal patterns, identifier binding, and wildcard.
+- Tuple patterns in `match` (e.g. `match (i % 3, i % 5) { case (0, 0): ... }`),
+  with literal, wildcard, and identifier-binding sub-patterns.
 
 **Not yet in the native backend** (these fail loudly, they are not
-silently miscompiled): tuple patterns in `match`; slices, closures,
-hashmaps, `defer`, `comptime`, and generics. These run on the bytecode VM.
+silently miscompiled): slices, closures, hashmaps, `defer`, `comptime`, and
+generics. These run on the bytecode VM.
 
 This replaces the previous AST-walking `codegen.rs`, which treated most
 values as `i64`, hardcoded `if`-expression result types, resolved struct
