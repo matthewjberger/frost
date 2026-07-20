@@ -15,7 +15,7 @@ frost program.frost --link -o program && ./program
 
 `::` declares a constant (including a function). `:=` binds an inferred local,
 `:` gives an explicit type, and `mut` makes a binding assignable. There are no
-methods — behavior lives in free functions.
+methods; behavior lives in free functions.
 
 ```
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
@@ -35,7 +35,7 @@ main :: fn() -> i64 {
 
 Integer widths (`i8`..`i64`, `u8`..`u64`), floats (`f32`, `f64`), and `bool`
 are all value (copy) types. Control flow is `if`/`else` (an expression),
-`while`, `for … in a..b`, `break`, `continue`, and `match`.
+`while`, `for i in a..b`, `break`, `continue`, and `match`.
 
 ## Structs and enums: plain data
 
@@ -71,7 +71,7 @@ over a value or a reference, binding payload fields.
 ## References are second-class
 
 `&T` and `&mut T` are borrows. They exist only as parameters and short-lived
-temporaries — you **cannot** store one in a field or return one. That single
+temporaries, and you **cannot** store one in a field or return one. That single
 rule is why Frost needs no lifetime annotations.
 
 ```
@@ -104,12 +104,12 @@ run :: fn() {
 }                 // dropping f without consuming would also be an error
 ```
 
-A `linear enum` returned from a fallible function therefore cannot be ignored —
+A `linear enum` returned from a fallible function therefore cannot be ignored,
 errors are non-ignorable by construction.
 
 ## Generational handles and pools
 
-Long-lived data lives in a pool and is referenced by a `Handle<T>` — a small
+Long-lived data lives in a pool and is referenced by a `Handle<T>`, a small
 copyable value, not a pointer. `pool[handle]` is a *place*: read and write
 through it, or borrow it. A freed-and-reused slot bumps its generation, so an
 old handle can never read the new occupant.
@@ -138,7 +138,7 @@ scope where the pool operation is valid.
 
 ## Generics: specialize at compile time
 
-Generic functions and structs monomorphize — there is no runtime dispatch. A
+Generic functions and structs monomorphize, so there is no runtime dispatch. A
 type parameter is written `$T`:
 
 ```
@@ -160,9 +160,9 @@ main :: fn() -> i64 {
 ```
 
 `sizeof(T)` is a compile-time constant, so a generic function can size its own
-type parameter. When a type parameter can't be inferred from a value argument —
-for example a function that only uses `sizeof(T)` — declare it as `$T: Type` and
-pass the type explicitly with a leading `$`:
+type parameter. When a type parameter can't be inferred from a value argument
+(for example a function that only uses `sizeof(T)`), declare it as `$T: Type`
+and pass the type explicitly with a leading `$`:
 
 ```
 make_pool :: fn($T: Type, capacity: i64) -> ^u8 {
@@ -175,7 +175,7 @@ main :: fn() -> i64 {
 }
 ```
 
-Type parameters are erased — they drive monomorphization (`sizeof`, the return
+Type parameters are erased, and they drive monomorphization (`sizeof`, the return
 type, annotations in the body) and carry no runtime cost. This is how the typed
 pool wrappers work as an ordinary Frost library, with no dummy value needed.
 
@@ -209,13 +209,13 @@ main :: fn() -> i64 {
 
 ## Calling C
 
-`extern fn` links against any C library with the natural ABI — this is how the
+`extern fn` links against any C library with the natural ABI. This is how the
 examples reach `printf`, `malloc`, and the pool runtime. See
 [c-compatibility.md](c-compatibility.md).
 
 ## Where to next
 
-- Runnable programs live in `examples/native/` — start with `game_world.frost`
+- Runnable programs live in `examples/native/`. Start with `game_world.frost`
   (an entity system) and `pool_linked_list.frost` (handles as links).
 - [architecture.md](architecture.md) explains the compiler pipeline and exactly
   what the native path supports today.

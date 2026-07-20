@@ -119,7 +119,7 @@ The interface is deliberately scalar-only: a pool is an opaque pointer and a
 handle is a packed `i64` (`generation << 32 | index`). Nothing is passed or
 returned by aggregate value, so the runtime's natural C ABI matches Frost's
 internal aggregate-return convention (a hidden out-pointer) with no ABI
-negotiation — the identical compiled runtime links into both the Cranelift
+negotiation, and the identical compiled runtime links into both the Cranelift
 and C backends, which is why they agree bit for bit.
 
 The generational guarantee is what the differential test pins down: freeing a
@@ -139,7 +139,7 @@ The native path monomorphizes generic functions. A function is generic when a
 parameter is typed `$T`; it is kept out of normal lowering and specialized on
 demand. At each call site the concrete substitution is inferred from the
 argument types, a specialized name is mangled (`identity__i64`), and a
-worklist drives specialization to fixpoint — so transitive generics and
+worklist drives specialization to fixpoint, so transitive generics and
 multiple instantiations of the same function are all emitted once. Substitution
 rewrites both `TypeParam(T)` and the bare `Struct("T")` the parser produces for
 later uses of a type parameter. This works for generics over scalars, structs
@@ -153,7 +153,7 @@ call as `$Concrete` (type parameters are then erased from the specialized ABI).
 Together these turn the pool into a Frost library:
 `make_pool($T: Type, cap) -> ^u8` sizes itself with `sizeof(T)` and is called
 `make_pool($Entity, 16)`, and `insert(pool, value: $T) -> Handle<T>` copies the
-inferred element type in — no manual element size, no privileged builtin
+inferred element type in, with no manual element size and no privileged builtin
 (`examples/native/generic_pool_library.frost`).
 
 Generic structs monomorphize the same way. `Foo<Args>` in type position is
@@ -212,7 +212,7 @@ Frost is being reshaped toward a data-oriented language with:
   single call. Multiple shared `&` borrows are fine. Because references are
   second-class, this per-call check is enough to keep mutable aliasing out.
 - **Move checking.** Per function body, a value of a move type (a struct,
-  enum, string, or slice — anything not `Copy`) is consumed when it is passed
+  enum, string, or slice, anything not `Copy`) is consumed when it is passed
   by value, assigned, or returned; using it again is a use-after-move error.
   Borrowing (`&x`), field access (`x.f`), and dereference do not consume, and
   copy types (integers, floats, bools, pointers, references, handles) are
@@ -221,13 +221,13 @@ Frost is being reshaped toward a data-oriented language with:
   (`File :: linear struct { ... }`) is a resource that must be consumed
   exactly once: the move checker's use-after-move rule gives "at most once",
   and a linear value that is still live at the end of the function that owns
-  it is a "never consumed" error. Consuming means moving it onward — returning
+  it is a "never consumed" error. Consuming means moving it onward: returning
   it, passing it by value to another function (the terminal consumer is
   typically an `extern`, which takes ownership across the FFI boundary), or
   `match`ing it (a `match` on a linear value destructures and consumes it).
   This is how the design replaces `Drop`: cleanup is an obligation the type
   system tracks rather than an implicit call. It also makes a linear error
-  enum non-ignorable — a `linear enum` returned from a fallible function must
+  enum non-ignorable, since a `linear enum` returned from a fallible function must
   be matched (or otherwise consumed), so a failure cannot be silently dropped.
 
 ### Roadmap
@@ -239,10 +239,10 @@ Frost is being reshaped toward a data-oriented language with:
 3. Linear resources with path-sensitive consumption, and error enums that
    linearity makes non-ignorable.
 4. Handle-dereference-as-borrow. *(Done: `Handle<T>` is a first-class native
-   type (a packed i64), and `pool[handle]` is a place — read/write fields
+   type (a packed i64), and `pool[handle]` is a place: read/write fields
    through it, copy the element out, or take `&`/`&mut` of it. The borrow is
-   second-class for free: storing it in a field or returning it is already
-   rejected, so a handle-deref borrow cannot escape.)*
+   second-class by the same reference rule: storing it in a field or returning
+   it is already rejected, so a handle-deref borrow cannot escape.)*
 5. Struct/array/enum by-value passing and tuple patterns in the native
    backend. *(Done: all three, plus nested aggregates and arrays of structs.)*
 6. Generics and specialization-only comptime (monomorphization). *(Done:
@@ -255,6 +255,6 @@ Frost is being reshaped toward a data-oriented language with:
    checked against the statically-known length and aborts on out-of-range.)*
 8. Source locations in errors. *(Done for the lexer and parser: errors carry
    `line`/`column`. Remaining: spans on AST nodes so ownership and IR-lowering
-   errors are located too — a large mechanical change of modest value now that
+   errors are located too, a large mechanical change of modest value now that
    syntax errors are located.)*
 9. Eventual self-hosting of the compiler in Frost.
