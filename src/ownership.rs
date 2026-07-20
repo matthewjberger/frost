@@ -265,6 +265,7 @@ impl MoveChecker<'_> {
             }
             Expression::Call(callee, arguments) => {
                 self.visit(callee, false)?;
+                check_borrow_exclusivity(arguments)?;
                 for argument in arguments {
                     self.visit(argument, true)?;
                 }
@@ -313,6 +314,39 @@ impl MoveChecker<'_> {
             .map(|ty| !ty.is_copy())
             .unwrap_or(false)
     }
+}
+
+fn check_borrow_exclusivity(arguments: &[Expression]) -> Result<()> {
+    let mut mutable: Vec<&str> = Vec::new();
+    let mut shared: Vec<&str> = Vec::new();
+    for argument in arguments {
+        match argument {
+            Expression::BorrowMut(inner) => {
+                if let Expression::Identifier(name) = &**inner {
+                    mutable.push(name);
+                }
+            }
+            Expression::Borrow(inner) => {
+                if let Expression::Identifier(name) = &**inner {
+                    shared.push(name);
+                }
+            }
+            _ => {}
+        }
+    }
+    for (index, name) in mutable.iter().enumerate() {
+        if mutable.iter().skip(index + 1).any(|other| other == name) {
+            bail!(
+                "ownership: '{name}' is borrowed as mutable more than once in a single call; mutable borrows are exclusive"
+            );
+        }
+        if shared.iter().any(|other| other == name) {
+            bail!(
+                "ownership: '{name}' is borrowed as both shared and mutable in a single call; mutable borrows are exclusive"
+            );
+        }
+    }
+    Ok(())
 }
 
 fn is_linear_type(ty: &Type, linear: &HashSet<String>) -> bool {
@@ -482,6 +516,51 @@ mod tests {
                 close(f)\n\
             }";
         assert!(check(source).is_err());
+    }
+
+    #[test]
+    fn aliased_mutable_borrows_are_rejected() {
+        let source = "\
+            add :: fn(a: &mut i64, b: &mut i64) { }\n\
+            run :: fn() {\n\
+                mut x : i64 = 0\n\
+                add(&mut x, &mut x)\n\
+            }";
+        assert!(check(source).is_err());
+    }
+
+    #[test]
+    fn shared_and_mutable_borrow_of_same_is_rejected() {
+        let source = "\
+            mix :: fn(a: &i64, b: &mut i64) { }\n\
+            run :: fn() {\n\
+                mut x : i64 = 0\n\
+                mix(&x, &mut x)\n\
+            }";
+        assert!(check(source).is_err());
+    }
+
+    #[test]
+    fn distinct_mutable_borrows_are_allowed() {
+        let source = "\
+            add :: fn(a: &mut i64, b: &mut i64) { }\n\
+            run :: fn() {\n\
+                mut x : i64 = 0\n\
+                mut y : i64 = 0\n\
+                add(&mut x, &mut y)\n\
+            }";
+        assert!(check(source).is_ok());
+    }
+
+    #[test]
+    fn multiple_shared_borrows_are_allowed() {
+        let source = "\
+            sum :: fn(a: &i64, b: &i64) -> i64 { a^ + b^ }\n\
+            run :: fn() -> i64 {\n\
+                x : i64 = 7\n\
+                sum(&x, &x)\n\
+            }";
+        assert!(check(source).is_ok());
     }
 
     #[test]

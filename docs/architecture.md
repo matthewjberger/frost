@@ -129,6 +129,10 @@ Frost is being reshaped toward a data-oriented language with:
   extern. Reference *parameters* are allowed, and `Handle<T>` (a generational
   index, not a reference) can be stored and returned freely. Because
   references cannot escape, borrow analysis stays scope-local.
+- **Borrow exclusivity.** A `&mut` borrow is exclusive: a variable cannot be
+  borrowed as mutable more than once, or as both shared and mutable, within a
+  single call. Multiple shared `&` borrows are fine. Because references are
+  second-class, this per-call check is enough to keep mutable aliasing out.
 - **Move checking.** Per function body, a value of a move type (a struct,
   enum, string, or slice — anything not `Copy`) is consumed when it is passed
   by value, assigned, or returned; using it again is a use-after-move error.
