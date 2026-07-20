@@ -331,6 +331,17 @@ fn collect_type_params(ty: &Type, out: &mut Vec<String>) {
                 out.push(name.clone());
             }
         }
+        Type::Struct(name) if is_generic_instance(name) => {
+            if let Some((_, arguments)) = split_instance(name) {
+                for argument in arguments {
+                    if let Ok(argument_type) =
+                        crate::parser::type_from_string(&argument)
+                    {
+                        collect_type_params(&argument_type, out);
+                    }
+                }
+            }
+        }
         Type::Proc(params, ret) => {
             for param in params {
                 collect_type_params(param, out);
@@ -361,6 +372,28 @@ fn single_inner(ty: &Type) -> Option<&Type> {
 
 fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
     match ty {
+        Type::Struct(name) if is_generic_instance(name) => {
+            if let Some((base, arguments)) = split_instance(name) {
+                let substituted: Vec<String> = arguments
+                    .iter()
+                    .map(|argument| {
+                        match crate::parser::type_from_string(argument) {
+                            Ok(argument_type) => {
+                                substitute_type(&argument_type, subst)
+                                    .to_string()
+                            }
+                            Err(_) => argument.clone(),
+                        }
+                    })
+                    .collect();
+                return Type::Struct(format!(
+                    "{}<{}>",
+                    base,
+                    substituted.join(", ")
+                ));
+            }
+            ty.clone()
+        }
         Type::TypeParam(name) | Type::Struct(name) => {
             if let Some(concrete) = subst.get(name) {
                 return concrete.clone();
@@ -426,6 +459,28 @@ fn infer_subst_into(
             infer_subst_into(pattern_param, concrete_param, type_params, subst);
         }
         infer_subst_into(pr, cr, type_params, subst);
+    } else if let (Type::Struct(pattern_name), Type::Struct(concrete_name)) =
+        (pattern, concrete)
+        && let (Some((pattern_base, pattern_args)), Some((concrete_base, concrete_args))) =
+            (split_instance(pattern_name), split_instance(concrete_name))
+        && pattern_base == concrete_base
+        && pattern_args.len() == concrete_args.len()
+    {
+        for (pattern_arg, concrete_arg) in
+            pattern_args.iter().zip(&concrete_args)
+        {
+            if let (Ok(pattern_type), Ok(concrete_type)) = (
+                crate::parser::type_from_string(pattern_arg),
+                crate::parser::type_from_string(concrete_arg),
+            ) {
+                infer_subst_into(
+                    &pattern_type,
+                    &concrete_type,
+                    type_params,
+                    subst,
+                );
+            }
+        }
     }
 }
 
