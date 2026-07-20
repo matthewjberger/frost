@@ -656,6 +656,39 @@ fn native_generic_structs_monomorphize() {
     assert_eq!(output, "7\n7\n5\n100\n5\n9\n43\n99\n");
 }
 
+const NESTED_GENERIC_STRUCTS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Pair :: struct($T: Type) { first: T, second: T }
+
+main :: fn() -> i64 {
+    p : Pair<Pair<i64>> = Pair {
+        first = Pair { first = 1, second = 2 },
+        second = Pair { first = 3, second = 4 }
+    }
+    printf("%lld\n", p.first.second)
+    printf("%lld\n", p.second.first)
+
+    q : Pair<Pair<Pair<i64>>> = Pair {
+        first = Pair { first = Pair { first = 5, second = 6 }, second = Pair { first = 7, second = 8 } },
+        second = Pair { first = Pair { first = 9, second = 10 }, second = Pair { first = 11, second = 12 } }
+    }
+    printf("%lld\n", q.first.first.second)
+    printf("%lld\n", q.second.second.first)
+    0
+}
+"#;
+
+#[test]
+fn native_nested_generic_structs() {
+    let Some(output) =
+        compile_and_run("nested_generics", NESTED_GENERIC_STRUCTS)
+    else {
+        return;
+    };
+    assert_eq!(output, "2\n3\n6\n11\n");
+}
+
 const GENERIC_MULTI_PARAM: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -1395,6 +1428,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_genmulti", GENERIC_MULTI_PARAM),
         ("diff_genstructs", GENERIC_STRUCTS),
         ("diff_poolderef", POOL_HANDLE_DEREF),
+        ("diff_nestedgen", NESTED_GENERIC_STRUCTS),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);

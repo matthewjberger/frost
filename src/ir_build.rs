@@ -2227,7 +2227,15 @@ impl<'a> FunctionLowering<'a> {
     ) -> Result<()> {
         match expression {
             Expression::StructInit(name, fields) => {
-                self.init_struct(local, name, fields)
+                let layout_name = match self.type_of_local(local) {
+                    Type::Struct(instance)
+                        if is_generic_instance(&instance) =>
+                    {
+                        instance
+                    }
+                    _ => name.clone(),
+                };
+                self.init_struct(local, &layout_name, fields)
             }
             Expression::EnumVariantInit(name, variant, fields) => {
                 self.init_enum(local, name, variant, fields)

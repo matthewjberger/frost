@@ -839,7 +839,9 @@ impl<'a> Parser<'a> {
                 self.pending_angle_close += 1;
                 Ok(())
             }
-            other => bail!("Expected '>' to close type arguments, found {other:?}"),
+            other => {
+                bail!("Expected '>' to close type arguments, found {other:?}")
+            }
         }
     }
 
