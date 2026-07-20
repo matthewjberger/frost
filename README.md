@@ -6,13 +6,16 @@ A statically-typed programming language with Rust-inspired ownership and immutab
 
 - **Immutable by default** - Variables are immutable unless declared with `mut`
 - **Clean syntax** - `:=` for inference, `::` for constants, `fn` for functions
-- **Ownership and borrowing** - Memory safety without garbage collection
-- **Second-class references** - References can't be stored in structs or returned, eliminating lifetime annotations
-- **Enums with data** - Tagged unions with pattern matching via `match`
-- **Dual backends** - Bytecode VM for development, Cranelift native compilation for production
-- **Structs** - User-defined data types with field access
-- **First-class functions** - Closures, higher-order functions, recursion
-- **Defer** - Cleanup statements that run at scope exit
+- **Ownership and borrowing** - Memory safety without garbage collection, enforced by a pass that runs before compilation
+- **Second-class references** - References can't be stored in structs/enums or returned, eliminating lifetime annotations
+- **Move checking** - Use-after-move of a non-`Copy` value is a compile error
+- **Linear resources** - A `linear` struct or enum must be consumed exactly once, replacing `Drop` with a tracked obligation
+- **Enums with data** - Tagged unions with pattern matching via `match`, including tuple patterns
+- **Typed IR with two native backends** - The AST lowers to a typed IR that both a Cranelift backend and a portable C backend emit from; a differential test checks the two agree
+- **Structs** - User-defined data types with field access, by-value passing and returning, and references
+
+See [docs/architecture.md](docs/architecture.md) for exactly what the native
+backend supports today versus what still runs only on the bytecode VM.
 
 ## Quick Start
 
@@ -261,6 +264,32 @@ print(value)  // 11
 ```
 
 References are second-class citizens: they cannot be stored in structs, returned from functions, or stored in arrays. This eliminates the need for lifetime annotations.
+
+### Linear Resources
+
+A struct or enum declared `linear` is a resource that must be consumed exactly
+once. It is a compile error to let a linear value go out of scope without
+consuming it, and (as with any move type) to use it after it has been moved.
+
+```rust
+File :: linear struct { handle: i64 }
+
+open :: fn(path: str) -> File { ... }
+
+// The terminal consumer takes ownership across the FFI boundary.
+close :: extern fn(f: File)
+
+use_file :: fn() {
+    f := open("data.txt")
+    // ... use f ...
+    close(f)              // consumes f; forgetting this line is an error
+    // close(f)           // ERROR: use of moved value 'f'
+}
+```
+
+Consuming a linear value means moving it onward: returning it, or passing it by
+value to another function. This replaces `Drop` with an obligation the compiler
+tracks, so cleanup can never be silently forgotten or run twice.
 
 ### Defer
 
