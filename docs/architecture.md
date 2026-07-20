@@ -157,10 +157,13 @@ Frost is being reshaped toward a data-oriented language with:
   exactly once: the move checker's use-after-move rule gives "at most once",
   and a linear value that is still live at the end of the function that owns
   it is a "never consumed" error. Consuming means moving it onward — returning
-  it, or passing it by value to another function (the terminal consumer is
-  typically an `extern`, which takes ownership across the FFI boundary). This
-  is how the design replaces `Drop`: cleanup is an obligation the type system
-  tracks rather than an implicit call.
+  it, passing it by value to another function (the terminal consumer is
+  typically an `extern`, which takes ownership across the FFI boundary), or
+  `match`ing it (a `match` on a linear value destructures and consumes it).
+  This is how the design replaces `Drop`: cleanup is an obligation the type
+  system tracks rather than an implicit call. It also makes a linear error
+  enum non-ignorable — a `linear enum` returned from a fallible function must
+  be matched (or otherwise consumed), so a failure cannot be silently dropped.
 
 ### Roadmap
 
