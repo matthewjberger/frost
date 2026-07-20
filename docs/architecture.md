@@ -116,18 +116,25 @@ Frost is being reshaped toward a data-oriented language with:
   checking are discharged, with the bytecode VM serving as the differential
   oracle for the native backends.
 
+## Ownership checking
+
+`src/ownership.rs` runs after parsing and enforces the second-class-reference
+rule the memory model rests on: a reference (`&T` / `&mut T`) cannot be
+stored in a struct or enum field, and cannot be returned from a function or
+extern. Reference *parameters* are allowed, and `Handle<T>` (a generational
+index, not a reference) can be stored and returned freely. Because references
+cannot escape, the deeper borrow analysis stays scope-local.
+
 ### Roadmap
 
-1. Structs, enums / tagged unions and `match`, and arrays in the IR and
-   native backend.
+1. Extend ownership to move tracking and borrow exclusivity on the IR
+   (second-class references are already enforced).
 2. A real type-checking pass on the IR, replacing the currently bypassed
    `typechecker.rs`.
-3. Ownership: move tracking, borrow exclusivity, and second-class reference
-   enforcement on the IR.
-4. Linear resources with path-sensitive consumption, and error enums that
+3. Linear resources with path-sensitive consumption, and error enums that
    linearity makes non-ignorable.
-5. Handle-dereference-as-borrow, unifying pool handles with the region
+4. Handle-dereference-as-borrow, unifying pool handles with the region
    checker.
-6. A C backend emitting from the same IR, plus differential testing across
-   the VM, Cranelift, and C.
-7. Eventual self-hosting of the compiler in Frost.
+5. Struct/array/enum by-value passing and tuple patterns in the native
+   backend.
+6. Eventual self-hosting of the compiler in Frost.

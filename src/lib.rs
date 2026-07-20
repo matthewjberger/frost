@@ -5,6 +5,7 @@ mod ir_build;
 mod ir_c;
 mod ir_codegen;
 mod lexer;
+mod ownership;
 mod parser;
 mod typechecker;
 mod typed_vm;
@@ -13,7 +14,7 @@ mod value;
 
 pub use self::{
     compiler::*, ffi::*, ir::*, ir_build::*, ir_c::*, ir_codegen::*, lexer::*,
-    parser::*, typechecker::*, typed_vm::*, types::*, value::*,
+    ownership::*, parser::*, typechecker::*, typed_vm::*, types::*, value::*,
 };
 
 use std::{

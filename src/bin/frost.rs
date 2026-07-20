@@ -6,7 +6,7 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use frost::{
     Compiler, Lexer, Parser as FrostParser, VirtualMachine, build_module,
-    compile_ir_to_object, emit_c,
+    check_ownership, compile_ir_to_object, emit_c,
 };
 
 #[derive(Parser)]
@@ -42,6 +42,8 @@ fn main() -> Result<()> {
 
     let mut parser = FrostParser::new(&tokens);
     let statements = parser.parse().context("Parser error")?;
+
+    check_ownership(&statements).context("Ownership error")?;
 
     if cli.emit_c {
         let module = build_module(&statements).context("IR lowering error")?;
