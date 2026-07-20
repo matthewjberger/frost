@@ -2040,8 +2040,10 @@ impl<'a> FunctionLowering<'a> {
 
         let target = result_local
             .expect("match has at least one case, so a result exists");
-        let zero = zero_operand(&result_type);
-        self.emit(IrStatement::Assign(target, IrRvalue::Use(zero)));
+        if !needs_memory(&result_type) {
+            let zero = zero_operand(&result_type);
+            self.emit(IrStatement::Assign(target, IrRvalue::Use(zero)));
+        }
         self.set_terminator(IrTerminator::Jump(merge));
 
         self.switch_to(merge);
@@ -2197,8 +2199,10 @@ impl<'a> FunctionLowering<'a> {
 
         let target = result_local
             .expect("match has at least one case, so a result exists");
-        let zero = zero_operand(&result_type);
-        self.emit(IrStatement::Assign(target, IrRvalue::Use(zero)));
+        if !needs_memory(&result_type) {
+            let zero = zero_operand(&result_type);
+            self.emit(IrStatement::Assign(target, IrRvalue::Use(zero)));
+        }
         self.set_terminator(IrTerminator::Jump(merge));
 
         self.switch_to(merge);

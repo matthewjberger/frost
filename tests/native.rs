@@ -841,6 +841,69 @@ fn native_widening_in_let_bindings() {
     assert_eq!(output, "-5\n-1000\n42\n");
 }
 
+const MATCH_RETURNS_AGGREGATE: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+P :: struct { x: i64, y: i64 }
+Opt :: enum { Some { v: i64 }, None }
+
+pick :: fn(t: i64) -> P {
+    match t {
+        case 0: P { x = 1, y = 2 }
+        case _: P { x = 9, y = 8 }
+    }
+}
+
+choose :: fn(t: i64) -> Opt {
+    match t {
+        case 0: Opt::None
+        case _: Opt::Some { v = t * 10 }
+    }
+}
+
+unwrap :: fn(o: &Opt) -> i64 {
+    match o {
+        case .Some { v }: v
+        case .None: 0 - 1
+    }
+}
+
+classify :: fn(a: i64, b: i64) -> P {
+    match (a % 2, b % 2) {
+        case (0, 0): P { x = 1, y = 1 }
+        case (_, 0): P { x = 0, y = 1 }
+        case (_, _): P { x = 0, y = 0 }
+    }
+}
+
+main :: fn() -> i64 {
+    a := pick(0)
+    b := pick(5)
+    printf("%lld\n", a.x)
+    printf("%lld\n", b.y)
+
+    none := choose(0)
+    some := choose(7)
+    printf("%lld\n", unwrap(&none))
+    printf("%lld\n", unwrap(&some))
+
+    p := classify(4, 6)
+    q := classify(3, 6)
+    printf("%lld\n", p.x)
+    printf("%lld\n", q.y)
+    0
+}
+"#;
+
+#[test]
+fn native_match_returns_aggregate_by_value() {
+    let Some(output) = compile_and_run("match_agg", MATCH_RETURNS_AGGREGATE)
+    else {
+        return;
+    };
+    assert_eq!(output, "1\n8\n-1\n70\n1\n1\n");
+}
+
 #[test]
 fn native_generational_pool_and_handles() {
     let Some(output) = compile_and_run("gen_pool", GENERATIONAL_POOL) else {
@@ -898,6 +961,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_intsem", INTEGER_SEMANTICS),
         ("diff_genpool", GENERATIONAL_POOL),
         ("diff_widening", WIDENING_BINDINGS),
+        ("diff_matchagg", MATCH_RETURNS_AGGREGATE),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
