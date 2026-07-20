@@ -1,5 +1,5 @@
 use crate::{flatten, hash, lexer::Token, types::Type};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::{
     fmt::{Display, Formatter, Result as FmtResult},
     matches,
@@ -68,11 +68,16 @@ impl ReturnSignature {
         match self {
             ReturnSignature::None => None,
             ReturnSignature::Single(t) => {
-                if t.is_second_class() { Some(t) } else { None }
+                if t.is_second_class() {
+                    Some(t)
+                } else {
+                    None
+                }
             }
-            ReturnSignature::Named(params) => {
-                params.iter().find(|p| p.param_type.is_second_class()).map(|p| &p.param_type)
-            }
+            ReturnSignature::Named(params) => params
+                .iter()
+                .find(|p| p.param_type.is_second_class())
+                .map(|p| &p.param_type),
         }
     }
 
@@ -80,11 +85,16 @@ impl ReturnSignature {
         match self {
             ReturnSignature::None => None,
             ReturnSignature::Single(t) => {
-                if t.contains_reference() { Some(t) } else { None }
+                if t.contains_reference() {
+                    Some(t)
+                } else {
+                    None
+                }
             }
-            ReturnSignature::Named(params) => {
-                params.iter().find(|p| p.param_type.contains_reference()).map(|p| &p.param_type)
-            }
+            ReturnSignature::Named(params) => params
+                .iter()
+                .find(|p| p.param_type.contains_reference())
+                .map(|p| &p.param_type),
         }
     }
 
@@ -102,7 +112,8 @@ impl Display for ReturnSignature {
             ReturnSignature::None => write!(f, ""),
             ReturnSignature::Single(t) => write!(f, " -> {}", t),
             ReturnSignature::Named(params) => {
-                let parts: Vec<String> = params.iter().map(|p| p.to_string()).collect();
+                let parts: Vec<String> =
+                    params.iter().map(|p| p.to_string()).collect();
                 write!(f, " -> ({})", parts.join(", "))
             }
         }
@@ -295,10 +306,23 @@ impl Display for Statement {
                     })
                     .collect();
                 if type_params.is_empty() {
-                    format!("{} :: struct {{ {} }}", name, field_strs.join(", "))
+                    format!(
+                        "{} :: struct {{ {} }}",
+                        name,
+                        field_strs.join(", ")
+                    )
                 } else {
-                    let params_str = type_params.iter().map(|p| format!("${}: Type", p)).collect::<Vec<_>>().join(", ");
-                    format!("{} :: struct({}) {{ {} }}", name, params_str, field_strs.join(", "))
+                    let params_str = type_params
+                        .iter()
+                        .map(|p| format!("${}: Type", p))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!(
+                        "{} :: struct({}) {{ {} }}",
+                        name,
+                        params_str,
+                        field_strs.join(", ")
+                    )
                 }
             }
             Self::Enum(name, variants) => {
@@ -349,22 +373,40 @@ impl Display for Statement {
             Self::InterpolatedConstant(parts, expr) => {
                 format!("{:?} :: {}", parts, expr)
             }
-            Self::Extern { name, params, return_type } => {
+            Self::Extern {
+                name,
+                params,
+                return_type,
+            } => {
                 let params_str = params
                     .iter()
                     .map(|p| p.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
                 match return_type {
-                    Some(typ) => format!("{} :: extern fn({}) -> {}", name, params_str, typ),
+                    Some(typ) => format!(
+                        "{} :: extern fn({}) -> {}",
+                        name, params_str, typ
+                    ),
                     None => format!("{} :: extern fn({})", name, params_str),
                 }
             }
             Self::PushContext { context_expr, body } => {
-                format!("push_context {} {{ {} }}", context_expr, flatten(body, "\n"))
+                format!(
+                    "push_context {} {{ {} }}",
+                    context_expr,
+                    flatten(body, "\n")
+                )
             }
-            Self::PushAllocator { allocator_expr, body } => {
-                format!("push_allocator({}) {{ {} }}", allocator_expr, flatten(body, "\n"))
+            Self::PushAllocator {
+                allocator_expr,
+                body,
+            } => {
+                format!(
+                    "push_allocator({}) {{ {} }}",
+                    allocator_expr,
+                    flatten(body, "\n")
+                )
             }
         };
         write!(f, "{}", statement)
@@ -617,14 +659,16 @@ impl Display for Expression {
             Self::Typename(typ) => format!("typename({})", typ),
             Self::InterpolatedIdent(parts) => format!("{:?}", parts),
             Self::Unsafe(body) => {
-                let body_str: Vec<String> = body.iter().map(|s| s.to_string()).collect();
+                let body_str: Vec<String> =
+                    body.iter().map(|s| s.to_string()).collect();
                 format!("unsafe {{ {} }}", body_str.join("; "))
             }
             Self::ContextAccess => "context".to_string(),
             Self::IfLet(pattern, value, consequence, alternative) => {
                 let alt_str = match alternative {
                     Some(alt) => {
-                        let alt_body: Vec<String> = alt.iter().map(|s| s.to_string()).collect();
+                        let alt_body: Vec<String> =
+                            alt.iter().map(|s| s.to_string()).collect();
                         format!(" else {{ {} }}", alt_body.join("; "))
                     }
                     None => String::new(),
@@ -817,7 +861,9 @@ impl<'a> Parser<'a> {
                 Some(self.parse_interpolated_constant()?)
             }
             Token::PushContext => Some(self.parse_push_context_statement()?),
-            Token::PushAllocator => Some(self.parse_push_allocator_statement()?),
+            Token::PushAllocator => {
+                Some(self.parse_push_allocator_statement()?)
+            }
             _ => Some(self.parse_expression_statement()?),
         })
     }
@@ -861,7 +907,10 @@ impl<'a> Parser<'a> {
         }
         self.read_token();
         let body = self.parse_block()?;
-        Ok(Statement::PushAllocator { allocator_expr, body })
+        Ok(Statement::PushAllocator {
+            allocator_expr,
+            body,
+        })
     }
 
     fn parse_for_statement(&mut self) -> Result<Statement> {
@@ -999,7 +1048,9 @@ impl<'a> Parser<'a> {
                     match self.read_token() {
                         Token::Type => {}
                         Token::Identifier(s) if s == "Type" => {}
-                        _ => bail!("Expected 'Type' after ':' in type parameter"),
+                        _ => {
+                            bail!("Expected 'Type' after ':' in type parameter")
+                        }
                     }
                     type_params.push(param_name);
                     if matches!(self.peek_nth(0), Token::Comma) {
@@ -1152,11 +1203,13 @@ impl<'a> Parser<'a> {
             bail!("Expected 'Return' token!");
         }
 
-        let expression = if matches!(self.peek_nth(0), Token::Semicolon | Token::RightBrace) {
-            Expression::Tuple(vec![])
-        } else {
-            self.parse_expression(Precedence::Lowest)?
-        };
+        let expression =
+            if matches!(self.peek_nth(0), Token::Semicolon | Token::RightBrace)
+            {
+                Expression::Tuple(vec![])
+            } else {
+                self.parse_expression(Precedence::Lowest)?
+            };
 
         if matches!(self.peek_nth(0), Token::Semicolon) {
             self.read_token();
@@ -1255,9 +1308,7 @@ impl<'a> Parser<'a> {
                 advance = false;
                 self.parse_unsafe_expression()?
             }
-            Token::Context => {
-                Expression::ContextAccess
-            }
+            Token::Context => Expression::ContextAccess,
             Token::EndOfFile => {
                 bail!("Unexpected end of file")
             }
@@ -1337,10 +1388,15 @@ impl<'a> Parser<'a> {
                             while self.peek_nth(0) != &Token::RightBrace {
                                 let field_name = match self.read_token() {
                                     Token::Identifier(name) => name.to_string(),
-                                    token => bail!("Expected field name in enum variant init, found {:?}", token),
+                                    token => bail!(
+                                        "Expected field name in enum variant init, found {:?}",
+                                        token
+                                    ),
                                 };
                                 if !matches!(self.read_token(), Token::Assign) {
-                                    bail!("Expected '=' after field name in enum variant init");
+                                    bail!(
+                                        "Expected '=' after field name in enum variant init"
+                                    );
                                 }
                                 let value =
                                     self.parse_expression(Precedence::Lowest)?;
@@ -1567,12 +1623,15 @@ impl<'a> Parser<'a> {
             if matches!(self.peek_nth(0), Token::LeftBrace | Token::Arrow) {
                 let return_sig = self.parse_return_signature()?;
                 let block = self.parse_block()?;
-                let has_type_annotations = parameters.iter().any(|p| p.type_annotation.is_some())
-                    || !matches!(return_sig, ReturnSignature::None);
+                let has_type_annotations =
+                    parameters.iter().any(|p| p.type_annotation.is_some())
+                        || !matches!(return_sig, ReturnSignature::None);
                 if has_type_annotations {
                     return Ok(Expression::Proc(parameters, return_sig, block));
                 } else {
-                    return Ok(Expression::Function(parameters, return_sig, block));
+                    return Ok(Expression::Function(
+                        parameters, return_sig, block,
+                    ));
                 }
             }
 
@@ -1620,7 +1679,9 @@ impl<'a> Parser<'a> {
                         saw_identifier = true;
                     }
                 }
-                Token::LeftParentheses | Token::LeftBracket | Token::LeftBrace => depth += 1,
+                Token::LeftParentheses
+                | Token::LeftBracket
+                | Token::LeftBrace => depth += 1,
                 Token::RightParentheses => {
                     if depth == 0 {
                         if has_non_param_content {
@@ -1647,16 +1708,29 @@ impl<'a> Parser<'a> {
                         saw_identifier = false;
                     }
                 }
-                Token::Integer(_) | Token::Float(_) | Token::StringLiteral(_)
-                | Token::True | Token::False => {
+                Token::Integer(_)
+                | Token::Float(_)
+                | Token::StringLiteral(_)
+                | Token::True
+                | Token::False => {
                     if depth == 0 {
                         has_non_param_content = true;
                         saw_identifier = false;
                     }
                 }
-                Token::Plus | Token::Minus | Token::Asterisk | Token::Slash
-                | Token::Equal | Token::NotEqual | Token::LessThan | Token::GreaterThan
-                | Token::And | Token::Or | Token::Percent | Token::Dot | Token::DotDot
+                Token::Plus
+                | Token::Minus
+                | Token::Asterisk
+                | Token::Slash
+                | Token::Equal
+                | Token::NotEqual
+                | Token::LessThan
+                | Token::GreaterThan
+                | Token::And
+                | Token::Or
+                | Token::Percent
+                | Token::Dot
+                | Token::DotDot
                 | Token::DotDotEqual => {
                     if depth == 0 {
                         return false;
@@ -1935,8 +2009,9 @@ impl<'a> Parser<'a> {
         let parameters = self.parse_function_parameters()?;
         let return_sig = self.parse_return_signature()?;
         let block = self.parse_block()?;
-        let has_type_annotations = parameters.iter().any(|p| p.type_annotation.is_some())
-            || !matches!(return_sig, ReturnSignature::None);
+        let has_type_annotations =
+            parameters.iter().any(|p| p.type_annotation.is_some())
+                || !matches!(return_sig, ReturnSignature::None);
         if has_type_annotations {
             Ok(Expression::Proc(parameters, return_sig, block))
         } else {
@@ -1950,12 +2025,11 @@ impl<'a> Parser<'a> {
         }
         self.read_token();
 
-        if matches!(self.peek_nth(0), Token::LeftParentheses) {
-            if let Token::Identifier(_) = self.peek_nth(1) {
-                if matches!(self.peek_nth(2), Token::Colon) {
-                    return self.parse_named_returns();
-                }
-            }
+        if matches!(self.peek_nth(0), Token::LeftParentheses)
+            && let Token::Identifier(_) = self.peek_nth(1)
+            && matches!(self.peek_nth(2), Token::Colon)
+        {
+            return self.parse_named_returns();
         }
 
         let typ = self.parse_type()?;
@@ -2139,7 +2213,9 @@ impl<'a> Parser<'a> {
                     }
                     let size = match self.read_token() {
                         Token::Integer(size) => *size as usize,
-                        token => bail!("Expected array size, found {:?}", token),
+                        token => {
+                            bail!("Expected array size, found {:?}", token)
+                        }
                     };
                     if !matches!(self.read_token(), Token::RightBracket) {
                         bail!("Expected ']' after array size");
@@ -2194,14 +2270,16 @@ impl<'a> Parser<'a> {
                         self.read_token();
                         Type::Handle(Box::new(inner_type))
                     }
-                    _ => Type::Struct(name)
+                    _ => Type::Struct(name),
                 }
             }
             Token::Dollar => {
                 self.read_token();
                 let param_name = match self.read_token() {
                     Token::Identifier(name) => name.to_string(),
-                    _ => bail!("Expected identifier after '$' in type parameter"),
+                    _ => {
+                        bail!("Expected identifier after '$' in type parameter")
+                    }
                 };
                 Type::TypeParam(param_name)
             }
@@ -2319,7 +2397,8 @@ impl<'a> Parser<'a> {
             Token::Identifier(name) => name.to_string(),
             _ => bail!("Expected identifier in comptime for"),
         };
-        let (_index_var, type_var) = if matches!(self.peek_nth(0), Token::Comma) {
+        let (_index_var, type_var) = if matches!(self.peek_nth(0), Token::Comma)
+        {
             self.read_token();
             let second_ident = match self.read_token() {
                 Token::Identifier(name) => name.to_string(),
@@ -2356,11 +2435,11 @@ impl<'a> Parser<'a> {
                 } else {
                     bail!("Expected identifier after '#' in field name");
                 }
-                if let Token::Identifier(next) = self.peek_nth(0) {
-                    if !matches!(self.peek_nth(1), Token::Colon) {
-                        name_parts.push(IdentPart::Literal(next.to_string()));
-                        self.read_token();
-                    }
+                if let Token::Identifier(next) = self.peek_nth(0)
+                    && !matches!(self.peek_nth(1), Token::Colon)
+                {
+                    name_parts.push(IdentPart::Literal(next.to_string()));
+                    self.read_token();
                 }
             }
             if !matches!(self.read_token(), Token::Colon) {
@@ -2381,15 +2460,20 @@ impl<'a> Parser<'a> {
                 for part in name_parts {
                     match part {
                         IdentPart::Literal(s) => field_name.push_str(s),
-                        IdentPart::TypeVar(v) if v == &type_var => field_name.push_str(&type_name),
+                        IdentPart::TypeVar(v) if v == &type_var => {
+                            field_name.push_str(&type_name)
+                        }
                         IdentPart::TypeVar(v) => {
                             field_name.push('#');
                             field_name.push_str(v);
                         }
                     }
                 }
-                let field_type =
-                    Self::substitute_type_var_in_type(type_template, &type_var, typ);
+                let field_type = Self::substitute_type_var_in_type(
+                    type_template,
+                    &type_var,
+                    typ,
+                );
                 result.push(StructField {
                     name: field_name,
                     field_type,
@@ -2418,53 +2502,86 @@ impl<'a> Parser<'a> {
             Type::Bool => "bool".to_string(),
             Type::Str => "str".to_string(),
             Type::Void => "void".to_string(),
-            Type::Array(inner, size) => format!("[{}; {}]", Self::type_to_name(inner), size),
+            Type::Array(inner, size) => {
+                format!("[{}; {}]", Self::type_to_name(inner), size)
+            }
             Type::Slice(inner) => format!("[{}]", Self::type_to_name(inner)),
             Type::Ref(inner) => format!("&{}", Self::type_to_name(inner)),
-            Type::RefMut(inner) => format!("&mut {}", Self::type_to_name(inner)),
+            Type::RefMut(inner) => {
+                format!("&mut {}", Self::type_to_name(inner))
+            }
             Type::Ptr(inner) => format!("^{}", Self::type_to_name(inner)),
             Type::Proc(params, ret) => {
-                let param_strs: Vec<String> = params.iter().map(Self::type_to_name).collect();
-                format!("fn({}) -> {}", param_strs.join(", "), Self::type_to_name(ret))
+                let param_strs: Vec<String> =
+                    params.iter().map(Self::type_to_name).collect();
+                format!(
+                    "fn({}) -> {}",
+                    param_strs.join(", "),
+                    Self::type_to_name(ret)
+                )
             }
-            Type::Distinct(inner) => format!("distinct {}", Self::type_to_name(inner)),
+            Type::Distinct(inner) => {
+                format!("distinct {}", Self::type_to_name(inner))
+            }
             Type::Arena => "Arena".to_string(),
             Type::Context => "Context".to_string(),
-            Type::Handle(inner) => format!("Handle<{}>", Self::type_to_name(inner)),
+            Type::Handle(inner) => {
+                format!("Handle<{}>", Self::type_to_name(inner))
+            }
             Type::Optional(inner) => format!("?{}", Self::type_to_name(inner)),
             Type::TypeParam(name) => format!("${}", name),
             Type::Unknown => "?".to_string(),
         }
     }
 
-    fn substitute_type_var_in_type(template: &Type, type_var: &str, replacement: &Type) -> Type {
+    fn substitute_type_var_in_type(
+        template: &Type,
+        type_var: &str,
+        replacement: &Type,
+    ) -> Type {
         match template {
-            Type::Struct(name) if name == &format!("#{}", type_var) => replacement.clone(),
+            Type::Struct(name) if name == &format!("#{}", type_var) => {
+                replacement.clone()
+            }
             Type::Array(inner, size) => Type::Array(
-                Box::new(Self::substitute_type_var_in_type(inner, type_var, replacement)),
+                Box::new(Self::substitute_type_var_in_type(
+                    inner,
+                    type_var,
+                    replacement,
+                )),
                 *size,
             ),
-            Type::Slice(inner) => Type::Slice(Box::new(Self::substitute_type_var_in_type(
-                inner, type_var, replacement,
-            ))),
-            Type::Ref(inner) => Type::Ref(Box::new(Self::substitute_type_var_in_type(
-                inner, type_var, replacement,
-            ))),
-            Type::RefMut(inner) => Type::RefMut(Box::new(Self::substitute_type_var_in_type(
-                inner, type_var, replacement,
-            ))),
-            Type::Ptr(inner) => Type::Ptr(Box::new(Self::substitute_type_var_in_type(
-                inner, type_var, replacement,
-            ))),
-            Type::Distinct(inner) => Type::Distinct(Box::new(Self::substitute_type_var_in_type(
-                inner, type_var, replacement,
-            ))),
+            Type::Slice(inner) => Type::Slice(Box::new(
+                Self::substitute_type_var_in_type(inner, type_var, replacement),
+            )),
+            Type::Ref(inner) => Type::Ref(Box::new(
+                Self::substitute_type_var_in_type(inner, type_var, replacement),
+            )),
+            Type::RefMut(inner) => Type::RefMut(Box::new(
+                Self::substitute_type_var_in_type(inner, type_var, replacement),
+            )),
+            Type::Ptr(inner) => Type::Ptr(Box::new(
+                Self::substitute_type_var_in_type(inner, type_var, replacement),
+            )),
+            Type::Distinct(inner) => Type::Distinct(Box::new(
+                Self::substitute_type_var_in_type(inner, type_var, replacement),
+            )),
             Type::Proc(params, ret) => Type::Proc(
                 params
                     .iter()
-                    .map(|p| Self::substitute_type_var_in_type(p, type_var, replacement))
+                    .map(|p| {
+                        Self::substitute_type_var_in_type(
+                            p,
+                            type_var,
+                            replacement,
+                        )
+                    })
                     .collect(),
-                Box::new(Self::substitute_type_var_in_type(ret, type_var, replacement)),
+                Box::new(Self::substitute_type_var_in_type(
+                    ret,
+                    type_var,
+                    replacement,
+                )),
             ),
             other => other.clone(),
         }
@@ -2544,10 +2661,11 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Expression, Literal, Parameter, Parser, Pattern, ReturnSignature, Statement, StructField,
+        Expression, Literal, Parameter, Parser, Pattern, ReturnSignature,
+        Statement, StructField,
     };
-    use crate::{lexer::Lexer, types::Type, Operator};
-    use anyhow::{bail, Result};
+    use crate::{Operator, lexer::Lexer, types::Type};
+    use anyhow::{Result, bail};
 
     #[test]
     fn test_let_statements() -> Result<()> {
@@ -2575,7 +2693,7 @@ mod tests {
         ];
 
         for (input, expected_identifier, expected_expression) in tests.iter() {
-            let mut lexer = Lexer::new(&input);
+            let mut lexer = Lexer::new(input);
             let tokens = lexer.tokenize()?;
 
             let mut parser = Parser::new(&tokens);
@@ -2647,7 +2765,7 @@ mod tests {
         let tests = [("true;", true), ("false;", false)];
 
         for (input, expected_value) in tests.iter() {
-            let mut lexer = Lexer::new(&input);
+            let mut lexer = Lexer::new(input);
             let tokens = lexer.tokenize()?;
 
             let mut parser = Parser::new(&tokens);
@@ -2672,7 +2790,7 @@ mod tests {
         let tests = [("!5;", Operator::Not, 5), ("-15;", Operator::Negate, 15)];
 
         for (input, operator, value) in tests.iter() {
-            let mut lexer = Lexer::new(&input);
+            let mut lexer = Lexer::new(input);
             let tokens = lexer.tokenize()?;
 
             let mut parser = Parser::new(&tokens);
@@ -2709,7 +2827,7 @@ mod tests {
         ];
 
         for (input, operator, value) in tests.iter() {
-            let mut lexer = Lexer::new(&input);
+            let mut lexer = Lexer::new(input);
             let tokens = lexer.tokenize()?;
 
             let mut parser = Parser::new(&tokens);
@@ -2753,7 +2871,7 @@ mod tests {
         ];
 
         for (input, left_value, operator, right_value) in tests.iter() {
-            let mut lexer = Lexer::new(&input);
+            let mut lexer = Lexer::new(input);
             let tokens = lexer.tokenize()?;
 
             let mut parser = Parser::new(&tokens);
@@ -2794,7 +2912,7 @@ mod tests {
         ];
 
         for (input, left_value, operator, right_value) in tests.iter() {
-            let mut lexer = Lexer::new(&input);
+            let mut lexer = Lexer::new(input);
             let tokens = lexer.tokenize()?;
 
             let mut parser = Parser::new(&tokens);
@@ -2982,7 +3100,7 @@ mod tests {
         ];
 
         for (input, expected_parameters) in tests.iter() {
-            let mut lexer = Lexer::new(&input);
+            let mut lexer = Lexer::new(input);
             let tokens = lexer.tokenize()?;
 
             let mut parser = Parser::new(&tokens);
@@ -3365,10 +3483,7 @@ mod tests {
             assert_eq!(variant_name, "Green");
             assert!(fields.is_empty());
         } else {
-            bail!(
-                "Expected EnumVariantInit, got {:?}",
-                program[0]
-            );
+            bail!("Expected EnumVariantInit, got {:?}", program[0]);
         }
         Ok(())
     }
@@ -3691,7 +3806,7 @@ mod tests {
         input: &str,
         expected_expression: &Expression,
     ) -> Result<()> {
-        let mut lexer = Lexer::new(&input);
+        let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize()?;
 
         let mut parser = Parser::new(&tokens);
@@ -3999,7 +4114,12 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Let { name, type_annotation, .. } = &program[0] {
+        if let Statement::Let {
+            name,
+            type_annotation,
+            ..
+        } = &program[0]
+        {
             assert_eq!(name, "a");
             assert_eq!(type_annotation, &Some(Type::Arena));
         } else {
@@ -4017,9 +4137,19 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Let { name, type_annotation, .. } = &program[0] {
+        if let Statement::Let {
+            name,
+            type_annotation,
+            ..
+        } = &program[0]
+        {
             assert_eq!(name, "h");
-            assert_eq!(type_annotation, &Some(Type::Handle(Box::new(Type::Struct("Entity".to_string())))));
+            assert_eq!(
+                type_annotation,
+                &Some(Type::Handle(Box::new(Type::Struct(
+                    "Entity".to_string()
+                ))))
+            );
         } else {
             bail!("Expected let statement with Handle type");
         }
@@ -4035,9 +4165,17 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Let { name, type_annotation, .. } = &program[0] {
+        if let Statement::Let {
+            name,
+            type_annotation,
+            ..
+        } = &program[0]
+        {
             assert_eq!(name, "x");
-            assert_eq!(type_annotation, &Some(Type::Optional(Box::new(Type::I64))));
+            assert_eq!(
+                type_annotation,
+                &Some(Type::Optional(Box::new(Type::I64)))
+            );
         } else {
             bail!("Expected let statement with Optional type");
         }
@@ -4053,11 +4191,18 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Let { name, type_annotation, .. } = &program[0] {
+        if let Statement::Let {
+            name,
+            type_annotation,
+            ..
+        } = &program[0]
+        {
             assert_eq!(name, "x");
             assert_eq!(
                 type_annotation,
-                &Some(Type::Optional(Box::new(Type::Handle(Box::new(Type::Struct("Position".to_string()))))))
+                &Some(Type::Optional(Box::new(Type::Handle(Box::new(
+                    Type::Struct("Position".to_string())
+                )))))
             );
         } else {
             bail!("Expected let statement with nested Optional<Handle> type");
@@ -4074,7 +4219,12 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Extern { name, params, return_type } = &program[0] {
+        if let Statement::Extern {
+            name,
+            params,
+            return_type,
+        } = &program[0]
+        {
             assert_eq!(name, "puts");
             assert_eq!(params.len(), 1);
             assert_eq!(params[0].name, "s");
@@ -4161,11 +4311,18 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::IfLet(pattern, value, consequence, alternative)) =
-            &program[0]
+        if let Statement::Expression(Expression::IfLet(
+            pattern,
+            value,
+            consequence,
+            alternative,
+        )) = &program[0]
         {
             assert!(matches!(pattern, Pattern::Identifier(_)));
-            assert!(matches!(value.as_ref(), Expression::Literal(Literal::Integer(42))));
+            assert!(matches!(
+                value.as_ref(),
+                Expression::Literal(Literal::Integer(42))
+            ));
             assert_eq!(consequence.len(), 1);
             assert!(alternative.is_none());
         } else {
@@ -4183,7 +4340,9 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::IfLet(_, _, _, alternative)) = &program[0] {
+        if let Statement::Expression(Expression::IfLet(_, _, _, alternative)) =
+            &program[0]
+        {
             assert!(alternative.is_some());
         } else {
             bail!("Expected if let expression with else");
@@ -4292,7 +4451,12 @@ mod tests {
 
         assert_eq!(program.len(), 1);
         if let Statement::Let { value, .. } = &program[0] {
-            if let Expression::EnumVariantInit(enum_name, variant_name, fields) = value {
+            if let Expression::EnumVariantInit(
+                enum_name,
+                variant_name,
+                fields,
+            ) = value
+            {
                 assert_eq!(enum_name, "Color");
                 assert_eq!(variant_name, "Red");
                 assert!(fields.is_empty());
@@ -4315,7 +4479,12 @@ mod tests {
 
         assert_eq!(program.len(), 1);
         if let Statement::Let { value, .. } = &program[0] {
-            if let Expression::EnumVariantInit(enum_name, variant_name, fields) = value {
+            if let Expression::EnumVariantInit(
+                enum_name,
+                variant_name,
+                fields,
+            ) = value
+            {
                 assert_eq!(enum_name, "Result");
                 assert_eq!(variant_name, "Ok");
                 assert_eq!(fields.len(), 1);
@@ -4352,8 +4521,14 @@ mod tests {
                     bail!("Expected identifier scrutinee");
                 }
                 assert_eq!(cases.len(), 3);
-                assert!(matches!(&cases[0].pattern, Pattern::Literal(Literal::Integer(1))));
-                assert!(matches!(&cases[1].pattern, Pattern::Literal(Literal::Integer(2))));
+                assert!(matches!(
+                    &cases[0].pattern,
+                    Pattern::Literal(Literal::Integer(1))
+                ));
+                assert!(matches!(
+                    &cases[1].pattern,
+                    Pattern::Literal(Literal::Integer(2))
+                ));
                 assert!(matches!(&cases[2].pattern, Pattern::Wildcard));
             } else {
                 bail!("Expected match expression");
@@ -4382,7 +4557,12 @@ mod tests {
         if let Statement::Let { value, .. } = &program[0] {
             if let Expression::Switch(_, cases) = value {
                 assert_eq!(cases.len(), 3);
-                if let Pattern::EnumVariant { enum_name, variant_name, bindings } = &cases[0].pattern {
+                if let Pattern::EnumVariant {
+                    enum_name,
+                    variant_name,
+                    bindings,
+                } = &cases[0].pattern
+                {
                     assert!(enum_name.is_none());
                     assert_eq!(variant_name, "Red");
                     assert!(bindings.is_empty());
@@ -4415,7 +4595,12 @@ mod tests {
         if let Statement::Let { value, .. } = &program[0] {
             if let Expression::Switch(_, cases) = value {
                 assert_eq!(cases.len(), 2);
-                if let Pattern::EnumVariant { enum_name, variant_name, bindings } = &cases[0].pattern {
+                if let Pattern::EnumVariant {
+                    enum_name,
+                    variant_name,
+                    bindings,
+                } = &cases[0].pattern
+                {
                     assert!(enum_name.is_none());
                     assert_eq!(variant_name, "Some");
                     assert_eq!(bindings.len(), 1);
@@ -4449,7 +4634,12 @@ mod tests {
         if let Statement::Let { value, .. } = &program[0] {
             if let Expression::Switch(_, cases) = value {
                 assert_eq!(cases.len(), 2);
-                if let Pattern::EnumVariant { enum_name, variant_name, .. } = &cases[0].pattern {
+                if let Pattern::EnumVariant {
+                    enum_name,
+                    variant_name,
+                    ..
+                } = &cases[0].pattern
+                {
                     assert_eq!(enum_name.as_ref().unwrap(), "Color");
                     assert_eq!(variant_name, "Red");
                 } else {
@@ -4484,8 +4674,14 @@ mod tests {
                 assert_eq!(cases.len(), 3);
                 if let Pattern::Tuple(patterns) = &cases[0].pattern {
                     assert_eq!(patterns.len(), 2);
-                    assert!(matches!(&patterns[0], Pattern::Literal(Literal::Integer(0))));
-                    assert!(matches!(&patterns[1], Pattern::Literal(Literal::Integer(0))));
+                    assert!(matches!(
+                        &patterns[0],
+                        Pattern::Literal(Literal::Integer(0))
+                    ));
+                    assert!(matches!(
+                        &patterns[1],
+                        Pattern::Literal(Literal::Integer(0))
+                    ));
                 } else {
                     bail!("Expected tuple pattern");
                 }
@@ -4520,8 +4716,14 @@ mod tests {
         if let Statement::Let { value, .. } = &program[0] {
             if let Expression::Switch(_, cases) = value {
                 assert_eq!(cases.len(), 2);
-                assert!(matches!(&cases[0].pattern, Pattern::Literal(Literal::Boolean(true))));
-                assert!(matches!(&cases[1].pattern, Pattern::Literal(Literal::Boolean(false))));
+                assert!(matches!(
+                    &cases[0].pattern,
+                    Pattern::Literal(Literal::Boolean(true))
+                ));
+                assert!(matches!(
+                    &cases[1].pattern,
+                    Pattern::Literal(Literal::Boolean(false))
+                ));
             } else {
                 bail!("Expected match expression");
             }
@@ -4563,7 +4765,12 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::Proc(params, return_sig, _body)) = &program[0] {
+        if let Statement::Expression(Expression::Proc(
+            params,
+            return_sig,
+            _body,
+        )) = &program[0]
+        {
             assert_eq!(params.len(), 2);
             if let ReturnSignature::Named(ret_params) = return_sig {
                 assert_eq!(ret_params.len(), 1);
@@ -4587,7 +4794,12 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::Proc(params, return_sig, _body)) = &program[0] {
+        if let Statement::Expression(Expression::Proc(
+            params,
+            return_sig,
+            _body,
+        )) = &program[0]
+        {
             assert_eq!(params.len(), 2);
             if let ReturnSignature::Named(ret_params) = return_sig {
                 assert_eq!(ret_params.len(), 2);
@@ -4635,11 +4847,18 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Constant(name, Expression::Proc(params, return_sig, _body)) = &program[0] {
+        if let Statement::Constant(
+            name,
+            Expression::Proc(params, return_sig, _body),
+        ) = &program[0]
+        {
             assert_eq!(name, "identity");
             assert_eq!(params.len(), 1);
             assert_eq!(params[0].name, "x");
-            assert_eq!(params[0].type_annotation, Some(Type::TypeParam("T".to_string())));
+            assert_eq!(
+                params[0].type_annotation,
+                Some(Type::TypeParam("T".to_string()))
+            );
             if let ReturnSignature::Single(ret_type) = return_sig {
                 assert_eq!(*ret_type, Type::Struct("T".to_string()));
             } else {
@@ -4660,11 +4879,19 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Constant(name, Expression::Proc(params, _, _)) = &program[0] {
+        if let Statement::Constant(name, Expression::Proc(params, _, _)) =
+            &program[0]
+        {
             assert_eq!(name, "pair");
             assert_eq!(params.len(), 2);
-            assert_eq!(params[0].type_annotation, Some(Type::TypeParam("T".to_string())));
-            assert_eq!(params[1].type_annotation, Some(Type::TypeParam("U".to_string())));
+            assert_eq!(
+                params[0].type_annotation,
+                Some(Type::TypeParam("T".to_string()))
+            );
+            assert_eq!(
+                params[1].type_annotation,
+                Some(Type::TypeParam("U".to_string()))
+            );
         } else {
             bail!("Expected constant function declaration");
         }
@@ -4673,7 +4900,8 @@ mod tests {
 
     #[test]
     fn parameterized_struct() -> Result<()> {
-        let input = "Pair :: struct($T: Type, $U: Type) { first: T, second: U }";
+        let input =
+            "Pair :: struct($T: Type, $U: Type) { first: T, second: U }";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize()?;
         let mut parser = Parser::new(&tokens);
