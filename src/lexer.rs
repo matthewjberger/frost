@@ -236,7 +236,16 @@ impl<'a> Lexer<'a> {
     pub fn tokenize(&mut self) -> Result<Vec<Token>> {
         let mut tokens = Vec::new();
         loop {
-            let next_token = self.next_token()?;
+            let next_token = match self.next_token() {
+                Ok(token) => token,
+                Err(error) => {
+                    return Err(anyhow::anyhow!(
+                        "at line {}, column {}: {error}",
+                        self.token_start.line,
+                        self.token_start.column
+                    ));
+                }
+            };
             if let Token::EndOfFile = next_token {
                 break;
             }
