@@ -777,6 +777,13 @@ impl From<&Token> for Precedence {
 
 pub type Program = Vec<Statement>;
 
+pub fn type_from_string(source: &str) -> Result<Type> {
+    let mut lexer = crate::lexer::Lexer::new(source);
+    let tokens = lexer.tokenize()?;
+    let mut parser = Parser::new(&tokens);
+    parser.parse_type()
+}
+
 pub struct Parser<'a> {
     pub tokens: Iter<'a, Token>,
     linear_types: std::collections::HashSet<String>,
@@ -2281,6 +2288,26 @@ impl<'a> Parser<'a> {
                         }
                         self.read_token();
                         Type::Handle(Box::new(inner_type))
+                    }
+                    _ if matches!(self.peek_nth(0), Token::LessThan) => {
+                        self.read_token();
+                        let mut arguments = Vec::new();
+                        while !matches!(self.peek_nth(0), Token::GreaterThan) {
+                            arguments.push(self.parse_type()?);
+                            if matches!(self.peek_nth(0), Token::Comma) {
+                                self.read_token();
+                            }
+                        }
+                        self.read_token();
+                        let rendered: Vec<String> = arguments
+                            .iter()
+                            .map(|argument| argument.to_string())
+                            .collect();
+                        Type::Struct(format!(
+                            "{}<{}>",
+                            name,
+                            rendered.join(", ")
+                        ))
                     }
                     _ => Type::Struct(name),
                 }

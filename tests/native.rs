@@ -613,6 +613,49 @@ fn native_generic_functions_monomorphize() {
     assert_eq!(output, "42\n9\n7\n5\n9\n200\n100\n");
 }
 
+const GENERIC_STRUCTS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Point :: struct { x: i64, y: i64 }
+Pair :: struct($T: Type) { first: T, second: T }
+Both :: struct($T: Type, $U: Type) { left: T, right: U }
+Buffer :: struct($T: Type) { data: [3]T, count: i64 }
+Wrapper :: struct { pair: Pair<i64>, tag: i64 }
+
+sum_pair :: fn(p: &Pair<i64>) -> i64 { p.first + p.second }
+
+main :: fn() -> i64 {
+    p : Pair<i64> = Pair { first = 3, second = 4 }
+    printf("%lld\n", p.first + p.second)
+    printf("%lld\n", sum_pair(&p))
+
+    pts : Pair<Point> = Pair { first = Point { x = 1, y = 2 }, second = Point { x = 3, y = 4 } }
+    printf("%lld\n", pts.first.x + pts.second.y)
+
+    mixed : Both<i64, i32> = Both { left = 100, right = 5 }
+    printf("%lld\n", mixed.left)
+    printf("%lld\n", mixed.right)
+
+    b : Buffer<i64> = Buffer { data = [7, 8, 9], count = 3 }
+    printf("%lld\n", b.data[2])
+
+    mut w := Wrapper { pair = p, tag = 99 }
+    w.pair.second = 40
+    printf("%lld\n", w.pair.first + w.pair.second)
+    printf("%lld\n", w.tag)
+    0
+}
+"#;
+
+#[test]
+fn native_generic_structs_monomorphize() {
+    let Some(output) = compile_and_run("generic_structs", GENERIC_STRUCTS)
+    else {
+        return;
+    };
+    assert_eq!(output, "7\n7\n5\n100\n5\n9\n43\n99\n");
+}
+
 const GENERIC_MULTI_PARAM: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -1304,6 +1347,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_generics", GENERIC_FUNCTIONS),
         ("diff_sizeof", SIZEOF),
         ("diff_genmulti", GENERIC_MULTI_PARAM),
+        ("diff_genstructs", GENERIC_STRUCTS),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
