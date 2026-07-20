@@ -536,6 +536,53 @@ fn native_return_struct_by_value() {
     assert_eq!(output, "3\n4\n11\n22\n");
 }
 
+const GENERIC_FUNCTIONS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Point :: struct { x: i64, y: i64 }
+
+identity :: fn(x: $T) -> T { x }
+max_of :: fn(a: $T, b: $T) -> T { if (a > b) { a } else { b } }
+first_of :: fn(a: $T, b: $T) -> T { a }
+wrap :: fn(v: $T) -> T { identity(v) }
+
+swap :: fn(a: &mut $T, b: &mut $T) {
+    t := a^
+    a^ = b^
+    b^ = t
+}
+
+main :: fn() -> i64 {
+    printf("%lld\n", identity(42))
+    printf("%lld\n", max_of(3, 9))
+
+    small : i32 = 7
+    widened : i64 = identity(small)
+    printf("%lld\n", widened)
+
+    p := first_of(Point { x = 5, y = 6 }, Point { x = 1, y = 2 })
+    printf("%lld\n", p.x)
+
+    w := wrap(Point { x = 8, y = 9 })
+    printf("%lld\n", w.y)
+
+    mut a : i64 = 100
+    mut b : i64 = 200
+    swap(&mut a, &mut b)
+    printf("%lld\n", a)
+    printf("%lld\n", b)
+    0
+}
+"#;
+
+#[test]
+fn native_generic_functions_monomorphize() {
+    let Some(output) = compile_and_run("generics", GENERIC_FUNCTIONS) else {
+        return;
+    };
+    assert_eq!(output, "42\n9\n7\n5\n9\n200\n100\n");
+}
+
 const TUPLE_MATCH: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -1193,6 +1240,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_matchplace", MATCH_ENUM_PLACE),
         ("diff_aggreads", AGGREGATE_BY_VALUE_READS),
         ("diff_aggassign", AGGREGATE_ASSIGNMENT),
+        ("diff_generics", GENERIC_FUNCTIONS),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
