@@ -5,7 +5,8 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use frost::{
-    Compiler, Lexer, Parser as FrostParser, VirtualMachine, compile_to_object,
+    Compiler, Lexer, Parser as FrostParser, VirtualMachine, build_module,
+    compile_ir_to_object,
 };
 
 #[derive(Parser)]
@@ -40,7 +41,8 @@ fn main() -> Result<()> {
     let statements = parser.parse().context("Parser error")?;
 
     if cli.native || cli.link {
-        let object_bytes = compile_to_object(&statements)
+        let module = build_module(&statements).context("IR lowering error")?;
+        let object_bytes = compile_ir_to_object(&module)
             .context("Native compilation error")?;
 
         let input_path = Path::new(&cli.file);

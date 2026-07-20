@@ -1,6 +1,8 @@
-mod codegen;
 mod compiler;
 pub mod ffi;
+mod ir;
+mod ir_build;
+mod ir_codegen;
 mod lexer;
 mod parser;
 mod typechecker;
@@ -9,8 +11,8 @@ mod types;
 mod value;
 
 pub use self::{
-    codegen::*, compiler::*, ffi::*, lexer::*, parser::*, typechecker::*,
-    typed_vm::*, types::*, value::*,
+    compiler::*, ffi::*, ir::*, ir_build::*, ir_codegen::*, lexer::*,
+    parser::*, typechecker::*, typed_vm::*, types::*, value::*,
 };
 
 use std::{
