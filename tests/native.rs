@@ -656,6 +656,43 @@ fn native_generic_structs_monomorphize() {
     assert_eq!(output, "7\n7\n5\n100\n5\n9\n43\n99\n");
 }
 
+const GENERIC_FACTORIES: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Pair :: struct($T: Type) { first: T, second: T }
+Box :: struct($T: Type) { value: T }
+Tagged :: enum { Some { p: Pair<i64> }, None }
+
+make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
+wrap :: fn(x: $T) -> Box<T> { Box { value = x } }
+unwrap :: fn(b: Box<$T>) -> $T { b.value }
+
+main :: fn() -> i64 {
+    p := make_pair(3, 4)
+    printf("%lld\n", p.first + p.second)
+
+    b := wrap(99)
+    printf("%lld\n", unwrap(b))
+
+    w := Tagged::Some { p = Pair { first = 5, second = 6 } }
+    r := match w {
+        case .Some { p }: p.first + p.second
+        case .None: 0
+    }
+    printf("%lld\n", r)
+    0
+}
+"#;
+
+#[test]
+fn native_generic_factories_and_payloads() {
+    let Some(output) = compile_and_run("generic_factories", GENERIC_FACTORIES)
+    else {
+        return;
+    };
+    assert_eq!(output, "7\n99\n11\n");
+}
+
 const NESTED_GENERIC_STRUCTS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -1429,6 +1466,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_genstructs", GENERIC_STRUCTS),
         ("diff_poolderef", POOL_HANDLE_DEREF),
         ("diff_nestedgen", NESTED_GENERIC_STRUCTS),
+        ("diff_genfactory", GENERIC_FACTORIES),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
