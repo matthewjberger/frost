@@ -1,8 +1,8 @@
 use crate::{
-    parser::ReturnSignature, types::Type, Block, Expression, Literal, Operator, Parameter,
-    Pattern, Statement, StructField,
+    Block, Expression, Literal, Operator, Parameter, Pattern, Statement,
+    StructField, parser::ReturnSignature, types::Type,
 };
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -242,7 +242,10 @@ impl TypeChecker {
                 return_type: Type::Void,
             },
         );
-        Self { env, in_unsafe: false }
+        Self {
+            env,
+            in_unsafe: false,
+        }
     }
 
     pub fn check_program(&mut self, statements: &[Statement]) -> Result<()> {
@@ -371,7 +374,10 @@ impl TypeChecker {
                 }
                 Ok(None)
             }
-            Statement::PushAllocator { allocator_expr, body } => {
+            Statement::PushAllocator {
+                allocator_expr,
+                body,
+            } => {
                 self.infer_expression(allocator_expr)?;
                 for statement in body {
                     self.check_statement(statement)?;
@@ -512,12 +518,15 @@ impl TypeChecker {
                 Ok(Type::Struct(name.clone()))
             }
             Expression::Sizeof(_) => Ok(Type::I64),
-            Expression::Range(start, _end, _inclusive) => self.infer_expression(start),
+            Expression::Range(start, _end, _inclusive) => {
+                self.infer_expression(start)
+            }
             Expression::Switch(scrutinee, cases) => {
                 let scrutinee_type = self.infer_expression(scrutinee)?;
                 let mut result_type = Type::Unknown;
                 for case in cases {
-                    if let Pattern::EnumVariant { bindings, .. } = &case.pattern {
+                    if let Pattern::EnumVariant { bindings, .. } = &case.pattern
+                    {
                         for (field_name, _) in bindings {
                             self.env.define(field_name, Type::Unknown);
                         }
@@ -675,7 +684,8 @@ impl TypeChecker {
 
         if let Some(named_params) = return_sig.named_params() {
             for ret_param in named_params {
-                self.env.define(&ret_param.name, ret_param.param_type.clone());
+                self.env
+                    .define(&ret_param.name, ret_param.param_type.clone());
             }
         }
 
@@ -686,7 +696,9 @@ impl TypeChecker {
         let declared_return = return_sig.to_type();
         if let Some(ref declared) = declared_return {
             if !self.in_unsafe && declared.is_reference() {
-                bail!("functions cannot return references - return an owned value instead");
+                bail!(
+                    "functions cannot return references - return an owned value instead"
+                );
             }
             if !self.types_compatible(declared, &body_type) {
                 bail!(
@@ -703,7 +715,9 @@ impl TypeChecker {
             .collect();
         let ret = declared_return.unwrap_or(body_type.clone());
         if !self.in_unsafe && ret.is_reference() {
-            bail!("functions cannot return references - return an owned value instead");
+            bail!(
+                "functions cannot return references - return an owned value instead"
+            );
         }
         Ok(Type::Proc(param_types, Box::new(ret)))
     }
@@ -766,7 +780,9 @@ impl TypeChecker {
         if *expected == Type::Unknown || *actual == Type::Unknown {
             return true;
         }
-        if matches!(expected, Type::TypeParam(_)) || matches!(actual, Type::TypeParam(_)) {
+        if matches!(expected, Type::TypeParam(_))
+            || matches!(actual, Type::TypeParam(_))
+        {
             return true;
         }
         if expected == actual {
@@ -779,9 +795,8 @@ impl TypeChecker {
             return true;
         }
         match (expected, actual) {
-            (Type::Struct(name1), Type::Enum(name2)) | (Type::Enum(name1), Type::Struct(name2)) => {
-                name1 == name2
-            }
+            (Type::Struct(name1), Type::Enum(name2))
+            | (Type::Enum(name1), Type::Struct(name2)) => name1 == name2,
             _ => false,
         }
     }
@@ -899,10 +914,10 @@ mod tests {
 
     #[test]
     fn check_function_param_types() {
-        assert!(check(
-            "add := fn(a: i64, b: i64) -> i64 { a + b }; add(1, 2);"
-        )
-        .is_ok());
+        assert!(
+            check("add := fn(a: i64, b: i64) -> i64 { a + b }; add(1, 2);")
+                .is_ok()
+        );
     }
 
     #[test]
@@ -992,9 +1007,7 @@ mod tests {
     #[test]
     fn check_cannot_return_reference() {
         assert!(check_fails("f :: fn() -> &i64 { x := 1; &x };"));
-        assert!(check_fails(
-            "f :: fn() -> &mut i64 { mut x := 1; &mut x };"
-        ));
+        assert!(check_fails("f :: fn() -> &mut i64 { mut x := 1; &mut x };"));
     }
 
     #[test]
@@ -1020,41 +1033,48 @@ mod tests {
 
     #[test]
     fn check_enum_variant_init_unit() {
-        assert!(check(
-            r#"
+        assert!(
+            check(
+                r#"
             Color :: enum { Red, Green, Blue }
             c := Color::Red
         "#
-        )
-        .is_ok());
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn check_enum_variant_init_data() {
-        assert!(check(
-            r#"
+        assert!(
+            check(
+                r#"
             Result :: enum { Ok { value: i64 }, Err { code: i64 } }
             r := Result::Ok { value = 42 }
         "#
-        )
-        .is_ok());
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn check_enum_with_type_annotation() {
-        assert!(check(
-            r#"
+        assert!(
+            check(
+                r#"
             Color :: enum { Red, Green, Blue }
             c : Color = Color::Green
         "#
-        )
-        .is_ok());
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn check_switch_on_enum() {
-        assert!(check(
-            r#"
+        assert!(
+            check(
+                r#"
             Color :: enum { Red, Green, Blue }
             c := Color::Red
             x := match c {
@@ -1063,14 +1083,16 @@ mod tests {
                 case .Blue: 2
             }
         "#
-        )
-        .is_ok());
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn check_switch_with_bindings() {
-        assert!(check(
-            r#"
+        assert!(
+            check(
+                r#"
             Option :: enum { None, Some { value: i64 } }
             opt := Option::Some { value = 42 }
             x := match opt {
@@ -1078,14 +1100,16 @@ mod tests {
                 case .None: 0
             }
         "#
-        )
-        .is_ok());
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn check_switch_integer_patterns() {
-        assert!(check(
-            r#"
+        assert!(
+            check(
+                r#"
             x := 5
             result := match x {
                 case 1: "one"
@@ -1093,41 +1117,47 @@ mod tests {
                 case _: "other"
             }
         "#
-        )
-        .is_ok());
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn check_switch_bool_patterns() {
-        assert!(check(
-            r#"
+        assert!(
+            check(
+                r#"
             flag := true
             x := match flag {
                 case true: 1
                 case false: 0
             }
         "#
-        )
-        .is_ok());
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn check_enum_in_function_return() {
-        assert!(check(
-            r#"
+        assert!(
+            check(
+                r#"
             Color :: enum { Red, Green, Blue }
             get_color :: fn() -> Color {
                 Color::Red
             }
         "#
-        )
-        .is_ok());
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn check_enum_in_function_param() {
-        assert!(check(
-            r#"
+        assert!(
+            check(
+                r#"
             Color :: enum { Red, Green, Blue }
             process :: fn(c: Color) -> i64 {
                 match c {
@@ -1137,51 +1167,60 @@ mod tests {
                 }
             }
         "#
-        )
-        .is_ok());
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn check_isize_arithmetic() {
-        assert!(check(
-            r#"
+        assert!(
+            check(
+                r#"
             x: isize = 42
             y: isize = 10
             z := x + y
         "#
-        )
-        .is_ok());
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn check_usize_arithmetic() {
-        assert!(check(
-            r#"
+        assert!(
+            check(
+                r#"
             x: usize = 42
             y: usize = 10
             z := x + y
         "#
-        )
-        .is_ok());
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn check_generic_function_definition() {
-        assert!(check(
-            r#"
+        assert!(
+            check(
+                r#"
             identity :: fn(x: $T) -> T { x }
         "#
-        )
-        .is_ok());
+            )
+            .is_ok()
+        );
     }
 
     #[test]
     fn check_generic_function_multiple_params() {
-        assert!(check(
-            r#"
+        assert!(
+            check(
+                r#"
             first :: fn(a: $T, b: $U) -> T { a }
         "#
-        )
-        .is_ok());
+            )
+            .is_ok()
+        );
     }
 }

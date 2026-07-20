@@ -14,7 +14,11 @@ fn run_code(code: &str) -> Result<()> {
     let mut compiler = Compiler::new(&program);
     let bytecode = compiler.compile()?;
 
-    let mut vm = VirtualMachine::new(bytecode.constants, bytecode.functions, bytecode.heap);
+    let mut vm = VirtualMachine::new(
+        bytecode.constants,
+        bytecode.functions,
+        bytecode.heap,
+    );
     vm.run(&bytecode.instructions)?;
 
     Ok(())

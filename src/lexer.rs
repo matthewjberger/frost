@@ -1,5 +1,5 @@
 use self::Token::*;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::{
     fmt::{Display, Formatter, Result as FmtResult},
     str::Chars,
