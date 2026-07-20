@@ -1,5 +1,10 @@
 # Frost Memory Model
 
+> This document describes the **type categories** and allocation model. For how
+> those categories are turned into compile-time *guarantees* (no dangling
+> references, no use-after-move, no leaks, no use-after-free through a stale
+> handle), see [memory-safety.md](memory-safety.md).
+
 ## Design Goals
 
 1. Memory safety without lifetime annotations

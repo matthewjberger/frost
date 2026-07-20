@@ -1,0 +1,119 @@
+# C Compatibility
+
+Frost has two distinct relationships with C, and it is important to keep them
+separate:
+
+1. **Frost calls C** (`extern fn`) — a first-class, supported feature. This is
+   how Frost reaches `printf`, `malloc`, the pool runtime, and any C library.
+2. **Frost lowers *through* C** (`--emit-c`) — an internal implementation detail
+   of one backend. The emitted C is a compilation target, **not** an interface
+   for external C code to call into.
+
+The design goal is deliberately asymmetric: **Frost → C matters; C → Frost does
+not.** Keeping that asymmetry is what lets the emitted C stay a simple, ugly
+lowering (char buffers, mangled names) without owing anyone a stable ABI.
+
+## 1. Frost calls C: `extern fn`
+
+An `extern fn` declares a function implemented outside Frost, linked at build
+time. It is available on **both** native backends (Cranelift and C).
+
+```
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+malloc :: extern fn(size: i64) -> ^u8
+free   :: extern fn(ptr: ^u8)
+
+main :: fn() -> i64 {
+    printf("%lld\n", 42)
+    0
+}
+```
+
+- **Names are preserved.** An `extern` symbol keeps its exact name (`printf`
+  stays `printf`) so it links against the real C library. Only *non-extern*
+  Frost functions are mangled (see below).
+- **Types map to the natural C ABI.** Scalars map to their `<stdint.h>`
+  equivalents (`i32`→`int32_t`, `u8`→`uint8_t`, `f64`→`double`), and pointer /
+  reference types (`^T`, `&T`, `&mut T`) map to pointers. So an `extern`
+  signature is a direct description of the C function's ABI.
+- **The linker gets a real C compiler.** Both backends finish by invoking
+  `cc`/`gcc`/`clang` (or `cl` on MSVC), so C symbols resolve normally and you can
+  pass extra libraries with `--libs`.
+
+This is the interop that carries real weight: Frost programs get the entire C
+ecosystem — libc, OS syscalls, third-party libraries — through `extern fn`, with
+no FFI glue code.
+
+### The pool runtime is itself just linked C
+
+The generational pool runtime (`runtime/frost_runtime.c`) is an ordinary C file
+that both backends link automatically. Programs reach it through the same
+`extern fn` mechanism:
+
+```
+pool_new   :: extern fn(capacity: i64, elem_size: i64) -> ^u8
+pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
+pool_get   :: extern fn(pool: ^u8, handle: i64) -> ^u8
+```
+
+Its interface is intentionally **scalar-only**: a pool is an opaque `^u8`
+pointer and a handle is a packed `i64`. Nothing is passed or returned by
+aggregate value, so the runtime's *natural* C ABI matches Frost's internal
+aggregate convention with zero negotiation — which is also why the identical
+compiled runtime links into both backends and they agree bit-for-bit.
+
+## 2. Frost lowers through C: `--emit-c`
+
+`--emit-c` selects the portable-C backend instead of Cranelift. It emits a
+single `.c` file and compiles it with the system C compiler. This exists for
+portability (anywhere with a C compiler) and as the second half of the
+**differential oracle**: every test program is compiled through *both* Cranelift
+and C, run, and the outputs are asserted equal. Two independent backends that
+must agree catch miscompilations that a single backend would hide.
+
+The emitted C is an **internal lowering**, and it looks like one:
+
+- **Aggregates are byte buffers.** A struct/enum/array local is emitted as
+  `_Alignas(16) unsigned char _7[N];` and accessed through pointer casts, not as
+  a named C `struct`. This is why a Frost struct type's *name* is only ever a
+  layout-registry key inside the compiler — it never has to be a valid C
+  identifier, which is what makes monomorphized names like `Pair<i64>` free.
+- **Aggregate returns use a hidden out-pointer.** A function returning a struct
+  compiles to `void f(..., char* __ret)` and `memcpy`s the result into `__ret`.
+- **Non-extern names are mangled.** Every Frost function that isn't `extern` and
+  isn't `main` is prefixed (`frost_`) so it can never collide with a C keyword or
+  library symbol. `extern` names and `main` are left untouched so FFI and the
+  entry point link.
+- **Function prototypes are emitted up front**, so forward references and mutual
+  recursion compile regardless of definition order.
+
+Because of the mangling, the byte-buffer aggregates, and the out-pointer return
+convention, the emitted C is **not** a clean header you would hand to a C
+programmer. That is by design: since C → Frost is explicitly a non-goal, the
+backend is free to pick whatever lowering is simplest and fastest to emit. If
+stable C-callable exports ever become a goal, they would be a separate, opt-in
+surface — not a property the internal lowering has to preserve.
+
+## What "C compatible" means here
+
+| Direction        | Supported? | Mechanism                                            |
+| ---------------- | ---------- | ---------------------------------------------------- |
+| Frost calls C    | Yes        | `extern fn`, natural C ABI, real linker              |
+| Frost links C    | Yes        | pool runtime + `--libs`, compiled and linked by `cc` |
+| Frost emits C    | Yes        | `--emit-c`, an internal lowering / differential oracle |
+| C calls Frost    | No (non-goal) | emitted C is mangled internal detail, not an API   |
+
+In one line: **Frost speaks C fluently going out, and uses C as a portable
+assembler going down, but does not promise C anything coming in.**
+
+## Building
+
+```
+frost program.frost --link -o program            # Cranelift backend, links an executable
+frost program.frost --emit-c --link -o program   # C backend, same result via emitted C
+frost program.frost --emit-c -o program.c         # just emit the C, don't link
+frost program.frost --link -o program --libs -lm  # link extra libraries
+```
+
+Both `--link` paths automatically compile and link `runtime/frost_runtime.c`, so
+pool programs work without any extra flags.
