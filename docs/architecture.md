@@ -180,6 +180,9 @@ not handle.
 
 ## Direction
 
+See [philosophy.md](philosophy.md) for the design philosophy, goals and
+non-goals, and why Frost is data-oriented rather than object-oriented.
+
 Frost is being reshaped toward a data-oriented language with:
 
 - Plain data (copy/move), **linear resources** that must be consumed exactly
