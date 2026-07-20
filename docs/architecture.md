@@ -91,7 +91,9 @@ correct type and operation for each value because the IR is fully typed, and
   the caller), and returning aggregates by value (via a hidden out-pointer),
   including passing an aggregate-returning call directly as an argument.
 - Fixed-size arrays: array literals, indexed read and write with static or
-  runtime indices, and references to arrays (e.g. `sum(a: &[5]i64)`).
+  runtime indices, and references to arrays (e.g. `sum(a: &[5]i64)`). Every
+  index is bounds-checked against the statically-known length; an out-of-range
+  index aborts (see [memory-safety.md](memory-safety.md)).
 - Enums and tagged unions: construction, and `match` over a value or a
   reference with enum-variant patterns (binding payload fields), integer
   literal patterns, identifier binding, and wildcard.
@@ -242,11 +244,15 @@ Frost is being reshaped toward a data-oriented language with:
 5. Struct/array/enum by-value passing and tuple patterns in the native
    backend. *(Done: all three, plus nested aggregates and arrays of structs.)*
 6. Generics and specialization-only comptime (monomorphization). *(Done:
-   generic functions, generic structs, and `sizeof`; the pool typed surface is
-   now a Frost library. Remaining: explicit type arguments so a type parameter
-   need not be inferred from a value or borrow.)*
-7. Source locations in errors. *(Done for the lexer and parser: errors carry
+   generic functions, generic structs (incl. nested `Pair<Pair<i64>>`, factory
+   functions returning instances, construction inference, and generic-over-
+   instance), and `sizeof`; the pool typed surface is now a Frost library.
+   Remaining: explicit type arguments so a type parameter need not be inferred
+   from a value or borrow.)*
+7. Bounds-checked array indexing. *(Done: every fixed-size array index is
+   checked against the statically-known length and aborts on out-of-range.)*
+8. Source locations in errors. *(Done for the lexer and parser: errors carry
    `line`/`column`. Remaining: spans on AST nodes so ownership and IR-lowering
    errors are located too — a large mechanical change of modest value now that
    syntax errors are located.)*
-8. Eventual self-hosting of the compiler in Frost.
+9. Eventual self-hosting of the compiler in Frost.
