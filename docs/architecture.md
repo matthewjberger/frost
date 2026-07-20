@@ -118,12 +118,19 @@ Frost is being reshaped toward a data-oriented language with:
 
 ## Ownership checking
 
-`src/ownership.rs` runs after parsing and enforces the second-class-reference
-rule the memory model rests on: a reference (`&T` / `&mut T`) cannot be
-stored in a struct or enum field, and cannot be returned from a function or
-extern. Reference *parameters* are allowed, and `Handle<T>` (a generational
-index, not a reference) can be stored and returned freely. Because references
-cannot escape, the deeper borrow analysis stays scope-local.
+`src/ownership.rs` runs after parsing and enforces two rules:
+
+- **Second-class references.** A reference (`&T` / `&mut T`) cannot be stored
+  in a struct or enum field, and cannot be returned from a function or
+  extern. Reference *parameters* are allowed, and `Handle<T>` (a generational
+  index, not a reference) can be stored and returned freely. Because
+  references cannot escape, borrow analysis stays scope-local.
+- **Move checking.** Per function body, a value of a move type (a struct,
+  enum, string, or slice — anything not `Copy`) is consumed when it is passed
+  by value, assigned, or returned; using it again is a use-after-move error.
+  Borrowing (`&x`), field access (`x.f`), and dereference do not consume, and
+  copy types (integers, floats, bools, pointers, references, handles) are
+  never moved.
 
 ### Roadmap
 
