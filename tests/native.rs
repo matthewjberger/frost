@@ -536,6 +536,36 @@ fn native_return_struct_by_value() {
     assert_eq!(output, "3\n4\n11\n22\n");
 }
 
+const SIZEOF: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Point :: struct { x: i64, y: i64 }
+Entity :: struct { hp: i64, mana: i64, name: i64 }
+
+measure :: fn(sample: $T) -> i64 { sizeof(T) }
+
+main :: fn() -> i64 {
+    printf("%lld\n", sizeof(i64))
+    printf("%lld\n", sizeof(i32))
+    printf("%lld\n", sizeof(Point))
+    printf("%lld\n", sizeof([4]i64))
+    p := Point { x = 1, y = 2 }
+    e := Entity { hp = 1, mana = 2, name = 3 }
+    printf("%lld\n", measure(p))
+    printf("%lld\n", measure(e))
+    printf("%lld\n", measure(42))
+    0
+}
+"#;
+
+#[test]
+fn native_sizeof_including_generic() {
+    let Some(output) = compile_and_run("sizeof", SIZEOF) else {
+        return;
+    };
+    assert_eq!(output, "8\n4\n16\n32\n16\n24\n8\n");
+}
+
 const GENERIC_FUNCTIONS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -1241,6 +1271,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_aggreads", AGGREGATE_BY_VALUE_READS),
         ("diff_aggassign", AGGREGATE_ASSIGNMENT),
         ("diff_generics", GENERIC_FUNCTIONS),
+        ("diff_sizeof", SIZEOF),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);

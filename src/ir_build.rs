@@ -1344,6 +1344,13 @@ impl<'a> FunctionLowering<'a> {
             Expression::Call(callee, arguments) => {
                 self.lower_call(callee, arguments)
             }
+            Expression::Sizeof(ty) => {
+                let size = self.builder.byte_size(ty) as i64;
+                Ok((
+                    IrOperand::Constant(IrConstant::Integer(size, Type::I64)),
+                    Type::I64,
+                ))
+            }
             Expression::Borrow(inner) => {
                 self.lower_address_of(inner, RefKind::Ref)
             }
