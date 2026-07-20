@@ -1,0 +1,44 @@
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+pool_new :: extern fn(capacity: i64, elem_size: i64) -> ^u8
+pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
+pool_get :: extern fn(pool: ^u8, handle: i64) -> ^u8
+pool_contains :: extern fn(pool: ^u8, handle: i64) -> i64
+pool_free :: extern fn(pool: ^u8, handle: i64) -> i64
+
+Kind :: enum { Hero, Monster { threat: i64 } }
+Entity :: struct { hp: i64, kind: Kind }
+
+make_pool :: fn(capacity: i64, sample: &$T) -> ^u8 { pool_new(capacity, sizeof(T)) }
+spawn :: fn(world: ^u8, value: $T) -> Handle<T> { pool_alloc(world, &value) }
+
+threat_of :: fn(e: &Entity) -> i64 {
+    match e^.kind {
+        case .Hero: 0
+        case .Monster { threat }: threat
+    }
+}
+
+main :: fn() -> i64 {
+    zero := Entity { hp = 0, kind = Kind::Hero }
+    world := make_pool(16, &zero)
+
+    mut handles : [3]Handle<Entity> = [0, 0, 0]
+    handles[0] = spawn(world, Entity { hp = 100, kind = Kind::Hero })
+    handles[1] = spawn(world, Entity { hp = 40, kind = Kind::Monster { threat = 7 } })
+    handles[2] = spawn(world, Entity { hp = 60, kind = Kind::Monster { threat = 3 } })
+
+    mut total_threat : i64 = 0
+    for i in 0..3 {
+        total_threat = total_threat + threat_of(&world[handles[i]])
+    }
+    printf("%lld\n", total_threat)
+
+    world[handles[1]].hp = world[handles[1]].hp - 15
+    printf("%lld\n", world[handles[1]].hp)
+
+    pool_free(world, handles[1])
+    printf("%lld\n", pool_contains(world, handles[1]))
+    printf("%lld\n", pool_contains(world, handles[0]))
+    0
+}
