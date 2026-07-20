@@ -32,6 +32,26 @@ pub struct FieldLayout {
 }
 
 #[derive(Debug, Clone)]
+pub struct EnumLayout {
+    pub size: usize,
+    pub align: usize,
+    pub variants: Vec<EnumVariantLayout>,
+}
+
+impl EnumLayout {
+    pub fn variant(&self, name: &str) -> Option<&EnumVariantLayout> {
+        self.variants.iter().find(|variant| variant.name == name)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct EnumVariantLayout {
+    pub name: String,
+    pub tag: u32,
+    pub fields: Vec<FieldLayout>,
+}
+
+#[derive(Debug, Clone)]
 pub struct IrExtern {
     pub name: String,
     pub params: Vec<Type>,

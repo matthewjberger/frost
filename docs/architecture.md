@@ -85,10 +85,13 @@ correct Cranelift instruction and type for each operation.
   `&mut Struct` (e.g. `scale(p: &mut Point, factor: i64)`).
 - Fixed-size arrays: array literals, indexed read and write with static or
   runtime indices, and references to arrays (e.g. `sum(a: &[5]i64)`).
+- Enums and tagged unions: construction, and `match` over a value or a
+  reference with enum-variant patterns (binding payload fields), integer
+  literal patterns, identifier binding, and wildcard.
 
 **Not yet in the native backend** (these fail loudly, they are not
-silently miscompiled): passing or returning structs and arrays by value,
-enums / tagged unions and `match`, slices, closures, hashmaps, `defer`,
+silently miscompiled): passing or returning structs, arrays, and enums by
+value; tuple patterns in `match`; slices, closures, hashmaps, `defer`,
 `comptime`, and generics. These run on the bytecode VM.
 
 This replaces the previous AST-walking `codegen.rs`, which treated most
