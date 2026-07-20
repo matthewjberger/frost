@@ -1,0 +1,37 @@
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+pool_new :: extern fn(capacity: i64, elem_size: i64) -> ^u8
+pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
+pool_get :: extern fn(pool: ^u8, handle: i64) -> ^u8
+
+Node :: struct { value: i64, next: i64 }
+
+push_front :: fn(pool: ^u8, head: i64, value: i64) -> i64 {
+    mut node := Node { value = value, next = head }
+    pool_alloc(pool, &node)
+}
+
+sum_list :: fn(pool: ^u8, head: i64) -> i64 {
+    mut total : i64 = 0
+    mut current : i64 = head
+    while (current >= 0) {
+        n : ^Node = pool_get(pool, current)
+        total = total + n^.value
+        current = n^.next
+    }
+    total
+}
+
+main :: fn() -> i64 {
+    pool := pool_new(16, 16)
+    mut head : i64 = 0 - 1
+    head = push_front(pool, head, 10)
+    head = push_front(pool, head, 20)
+    head = push_front(pool, head, 30)
+
+    printf("%lld\n", sum_list(pool, head))
+
+    front : ^Node = pool_get(pool, head)
+    printf("%lld\n", front^.value)
+    0
+}
