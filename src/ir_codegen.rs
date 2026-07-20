@@ -106,7 +106,7 @@ impl Generator {
         for function in &module.functions {
             let mut signature = self.module.make_signature();
             for index in 0..function.param_count {
-                signature.params.push(AbiParam::new(clif_type(
+                signature.params.push(AbiParam::new(param_abi_type(
                     pointer_type,
                     function.local_type(index),
                 )?));
@@ -127,6 +127,20 @@ impl Generator {
             self.return_types
                 .insert(function.name.clone(), function.return_type.clone());
         }
+
+        if !self.functions.contains_key("memcpy") {
+            let mut signature = self.module.make_signature();
+            signature.params.push(AbiParam::new(pointer_type));
+            signature.params.push(AbiParam::new(pointer_type));
+            signature.params.push(AbiParam::new(pointer_type));
+            signature.returns.push(AbiParam::new(pointer_type));
+            let func_id = self.module.declare_function(
+                "memcpy",
+                Linkage::Import,
+                &signature,
+            )?;
+            self.functions.insert("memcpy".to_string(), func_id);
+        }
         Ok(())
     }
 
@@ -144,10 +158,14 @@ impl Generator {
         let mut context = self.module.make_context();
 
         for index in 0..function.param_count {
-            context.func.signature.params.push(AbiParam::new(clif_type(
-                pointer_type,
-                function.local_type(index),
-            )?));
+            context
+                .func
+                .signature
+                .params
+                .push(AbiParam::new(param_abi_type(
+                    pointer_type,
+                    function.local_type(index),
+                )?));
         }
         let return_type = self.function_return_type(function);
         if !matches!(return_type, Type::Void) {
@@ -192,9 +210,20 @@ impl Generator {
             }
         }
 
+        let memcpy = self.functions["memcpy"];
         let params = builder.block_params(entry).to_vec();
         for (index, value) in params.iter().enumerate() {
-            if let Some(slot) = slots.get(&index) {
+            let local = &function.locals[index];
+            if is_aggregate(&local.ty) {
+                let slot = slots[&index];
+                let destination =
+                    builder.ins().stack_addr(pointer_type, slot, 0);
+                let size =
+                    builder.ins().iconst(pointer_type, local.size as i64);
+                let memcpy_ref =
+                    self.module.declare_func_in_func(memcpy, builder.func);
+                builder.ins().call(memcpy_ref, &[destination, *value, size]);
+            } else if let Some(slot) = slots.get(&index) {
                 builder.ins().stack_store(*value, *slot, 0);
             } else {
                 builder.def_var(Variable::new(index), *value);
@@ -231,6 +260,18 @@ impl Generator {
     }
 }
 
+fn is_aggregate(ty: &Type) -> bool {
+    matches!(ty, Type::Struct(_) | Type::Enum(_) | Type::Array(_, _))
+}
+
+fn param_abi_type(pointer_type: types::Type, ty: &Type) -> Result<types::Type> {
+    if is_aggregate(ty) {
+        Ok(pointer_type)
+    } else {
+        clif_type(pointer_type, ty)
+    }
+}
+
 fn clif_type(pointer_type: types::Type, ty: &Type) -> Result<types::Type> {
     Ok(match ty {
         Type::I8 | Type::U8 | Type::Bool => types::I8,
@@ -259,6 +300,24 @@ struct Translator<'a, 'b> {
 }
 
 impl Translator<'_, '_> {
+    fn slot_address(&mut self, local: usize) -> Result<Value> {
+        let slot = self.slots.get(&local).ok_or_else(|| {
+            anyhow::anyhow!("native backend: aggregate local is not in memory")
+        })?;
+        Ok(self.builder.ins().stack_addr(self.pointer_type, *slot, 0))
+    }
+
+    fn emit_memcpy(&mut self, destination: Value, source: Value, size: usize) {
+        let size_value =
+            self.builder.ins().iconst(self.pointer_type, size as i64);
+        let memcpy = self.functions["memcpy"];
+        let memcpy_ref =
+            self.module.declare_func_in_func(memcpy, self.builder.func);
+        self.builder
+            .ins()
+            .call(memcpy_ref, &[destination, source, size_value]);
+    }
+
     fn statement(&mut self, statement: &IrStatement) -> Result<()> {
         match statement {
             IrStatement::Assign(local, rvalue) => {
@@ -271,6 +330,18 @@ impl Translator<'_, '_> {
                     {
                         self.emit_call(function, arguments)?;
                     }
+                    return Ok(());
+                }
+                if is_aggregate(&local_type) {
+                    let IrRvalue::Use(IrOperand::Local(source)) = rvalue else {
+                        bail!(
+                            "native backend: unsupported aggregate assignment"
+                        );
+                    };
+                    let destination = self.slot_address(*local)?;
+                    let source_address = self.slot_address(*source)?;
+                    let size = self.function.locals[*local].size;
+                    self.emit_memcpy(destination, source_address, size);
                     return Ok(());
                 }
                 let value = self.rvalue(rvalue, &local_type)?;

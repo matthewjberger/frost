@@ -326,6 +326,43 @@ fn native_enums_and_match() {
     assert_eq!(output, "42\n-404\n4\n3\n0\n");
 }
 
+const BY_VALUE: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Point :: struct {
+    x: i64,
+    y: i64,
+}
+
+manhattan :: fn(p: Point) -> i64 {
+    p.x + p.y
+}
+
+scaled_sum :: fn(p: Point, factor: i64) -> i64 {
+    mut copy := p
+    copy.x = copy.x * factor
+    copy.y = copy.y * factor
+    copy.x + copy.y
+}
+
+main :: fn() -> i64 {
+    origin := Point { x = 3, y = 4 }
+    printf("%lld\n", manhattan(origin))
+    other := Point { x = 5, y = 6 }
+    printf("%lld\n", scaled_sum(other, 10))
+    printf("%lld\n", manhattan(other))
+    0
+}
+"#;
+
+#[test]
+fn native_pass_struct_by_value() {
+    let Some(output) = compile_and_run("byvalue", BY_VALUE) else {
+        return;
+    };
+    assert_eq!(output, "7\n110\n11\n");
+}
+
 #[test]
 fn cranelift_and_c_backends_agree() {
     let programs = [
@@ -337,6 +374,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_structs", STRUCTS),
         ("diff_arrays", ARRAYS),
         ("diff_enums", ENUMS),
+        ("diff_byvalue", BY_VALUE),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);

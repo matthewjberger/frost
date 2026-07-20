@@ -49,8 +49,13 @@ fn emit_function(output: &mut String, function: &IrFunction) -> Result<()> {
 
     let mut params = Vec::new();
     for index in 0..function.param_count {
-        params
-            .push(format!("{} a{index}", c_type(function.local_type(index))?));
+        let ty = function.local_type(index);
+        let c_ty = if is_aggregate(ty) {
+            "char*".to_string()
+        } else {
+            c_type(ty)?
+        };
+        params.push(format!("{c_ty} a{index}"));
     }
     let param_list = if params.is_empty() {
         "void".to_string()
@@ -83,7 +88,13 @@ fn emit_function(output: &mut String, function: &IrFunction) -> Result<()> {
 
     for index in 0..function.param_count {
         let local = &function.locals[index];
-        if local.in_memory {
+        if is_aggregate(&local.ty) {
+            writeln!(
+                output,
+                "  __builtin_memcpy(_{index}, a{index}, {});",
+                local.size.max(1)
+            )?;
+        } else if local.in_memory {
             writeln!(
                 output,
                 "  *({}*)_{index} = a{index};",
@@ -118,6 +129,17 @@ fn emit_statement(
                 if let IrRvalue::Call { .. } = rvalue {
                     writeln!(output, "  {};", rvalue_expr(function, rvalue)?)?;
                 }
+                return Ok(());
+            }
+            if is_aggregate(&local_type) {
+                let IrRvalue::Use(IrOperand::Local(source)) = rvalue else {
+                    bail!("C backend: unsupported aggregate assignment");
+                };
+                writeln!(
+                    output,
+                    "  __builtin_memcpy(_{local}, _{source}, {});",
+                    function.locals[*local].size.max(1)
+                )?;
                 return Ok(());
             }
             let value = rvalue_expr(function, rvalue)?;
@@ -305,6 +327,10 @@ fn binary_operator(op: IrBinOp) -> &'static str {
         IrBinOp::GreaterThan => ">",
         IrBinOp::GreaterThanOrEqual => ">=",
     }
+}
+
+fn is_aggregate(ty: &Type) -> bool {
+    matches!(ty, Type::Struct(_) | Type::Enum(_) | Type::Array(_, _))
 }
 
 fn c_type(ty: &Type) -> Result<String> {

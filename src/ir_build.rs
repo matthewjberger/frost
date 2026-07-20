@@ -1063,9 +1063,22 @@ impl<'a> FunctionLowering<'a> {
         let parameter_types = signature.parameters.clone();
         let return_type = signature.return_type.clone();
 
+        if needs_memory(&return_type) {
+            bail!(
+                "native backend: returning an aggregate by value is not supported yet"
+            );
+        }
+
         let mut lowered = Vec::with_capacity(arguments.len());
         for (index, argument) in arguments.iter().enumerate() {
             let expected = parameter_types.get(index);
+            if let Some(target) = expected
+                && needs_memory(target)
+            {
+                let (address, _) = self.place_address(argument)?;
+                lowered.push(address);
+                continue;
+            }
             let (operand, value_type) =
                 self.lower_expression(argument, expected)?;
             let coerced = match expected {
