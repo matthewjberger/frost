@@ -231,15 +231,19 @@ Frost is being reshaped toward a data-oriented language with:
    `typechecker.rs`.
 3. Linear resources with path-sensitive consumption, and error enums that
    linearity makes non-ignorable.
-4. Handle-dereference-as-borrow, unifying pool handles with the region
-   checker. The runtime and the generational guarantee are in place (native
-   pools, differential-tested); the remaining work is the first-class
-   `Pool<T>` / `Handle<T>` surface where `pool[handle]` is a place expression
-   whose borrow the checker scopes exactly like `&array[i]`.
+4. Handle-dereference-as-borrow. *(Done: `Handle<T>` is a first-class native
+   type (a packed i64), and `pool[handle]` is a place — read/write fields
+   through it, copy the element out, or take `&`/`&mut` of it. The borrow is
+   second-class for free: storing it in a field or returning it is already
+   rejected, so a handle-deref borrow cannot escape.)*
 5. Struct/array/enum by-value passing and tuple patterns in the native
    backend. *(Done: all three, plus nested aggregates and arrays of structs.)*
 6. Generics and specialization-only comptime (monomorphization). *(Done:
    generic functions, generic structs, and `sizeof`; the pool typed surface is
    now a Frost library. Remaining: explicit type arguments so a type parameter
    need not be inferred from a value or borrow.)*
-7. Eventual self-hosting of the compiler in Frost.
+7. Source locations in errors. *(Done for the lexer and parser: errors carry
+   `line`/`column`. Remaining: spans on AST nodes so ownership and IR-lowering
+   errors are located too — a large mechanical change of modest value now that
+   syntax errors are located.)*
+8. Eventual self-hosting of the compiler in Frost.
