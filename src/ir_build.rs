@@ -2474,6 +2474,14 @@ impl<'a> FunctionLowering<'a> {
             }
             let (operand, value_type) =
                 self.lower_expression(argument, expected)?;
+            if let Some(Type::Ref(inner) | Type::RefMut(inner)) = expected
+                && needs_memory(&value_type)
+                && value_type == **inner
+            {
+                bail!(
+                    "native backend: cannot pass a '{value_type}' by value to a reference parameter '&{value_type}'; take a reference with '&' or '&mut'"
+                );
+            }
             let coerced = match expected {
                 Some(target) => self.coerce(operand, &value_type, target),
                 None => operand,
@@ -2531,6 +2539,14 @@ impl<'a> FunctionLowering<'a> {
             }
             let (operand, value_type) =
                 self.lower_expression(argument, expected)?;
+            if let Some(Type::Ref(inner) | Type::RefMut(inner)) = expected
+                && needs_memory(&value_type)
+                && value_type == **inner
+            {
+                bail!(
+                    "native backend: cannot pass a '{value_type}' by value to a reference parameter '&{value_type}'; take a reference with '&' or '&mut'"
+                );
+            }
             let coerced = match expected {
                 Some(target) => self.coerce(operand, &value_type, target),
                 None => operand,
