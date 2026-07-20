@@ -1,4 +1,4 @@
-use crate::{flatten, hash, lexer::Token, types::Type};
+use crate::{flatten, hash, lexer::Position, lexer::Token, types::Type};
 use anyhow::{Result, bail};
 use std::{
     fmt::{Display, Formatter, Result as FmtResult},
@@ -787,6 +787,8 @@ pub fn type_from_string(source: &str) -> Result<Type> {
 pub struct Parser<'a> {
     pub tokens: Iter<'a, Token>,
     linear_types: std::collections::HashSet<String>,
+    positions: &'a [Position],
+    consumed: usize,
 }
 
 impl<'a> Parser<'a> {
@@ -794,6 +796,20 @@ impl<'a> Parser<'a> {
         Self {
             tokens: tokens.iter(),
             linear_types: std::collections::HashSet::new(),
+            positions: &[],
+            consumed: 0,
+        }
+    }
+
+    pub fn with_positions(
+        tokens: &'a [Token],
+        positions: &'a [Position],
+    ) -> Self {
+        Self {
+            tokens: tokens.iter(),
+            linear_types: std::collections::HashSet::new(),
+            positions,
+            consumed: 0,
         }
     }
 
@@ -801,10 +817,31 @@ impl<'a> Parser<'a> {
         &self.linear_types
     }
 
+    fn current_position(&self) -> Option<Position> {
+        if self.positions.is_empty() {
+            return None;
+        }
+        let index = self.consumed.min(self.positions.len() - 1);
+        Some(self.positions[index])
+    }
+
     pub fn parse(&mut self) -> Result<Program> {
         let mut program = Program::new();
-        while let Some(statement) = self.parse_statement()? {
-            program.push(statement);
+        loop {
+            match self.parse_statement() {
+                Ok(Some(statement)) => program.push(statement),
+                Ok(None) => break,
+                Err(error) => {
+                    if let Some(position) = self.current_position() {
+                        return Err(anyhow::anyhow!(
+                            "at line {}, column {}: {error}",
+                            position.line,
+                            position.column
+                        ));
+                    }
+                    return Err(error);
+                }
+            }
         }
         Ok(program)
     }
@@ -2360,6 +2397,7 @@ impl<'a> Parser<'a> {
     }
 
     fn read_token(&mut self) -> &Token {
+        self.consumed += 1;
         self.tokens.next().unwrap_or(&Token::EndOfFile)
     }
 
@@ -3500,6 +3538,25 @@ mod tests {
         } else {
             bail!("Expected field access expression");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn parse_errors_carry_a_source_location() -> Result<()> {
+        let input = "main :: fn() -> i64 {\n    x := 5\n    y := @\n    0\n}";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let positions = lexer.positions().to_vec();
+        let mut parser = Parser::with_positions(&tokens, &positions);
+        let error = parser.parse().unwrap_err().to_string();
+        assert!(
+            error.contains("line 3"),
+            "expected a line 3 location, got: {error}"
+        );
+        assert!(
+            error.contains("column"),
+            "expected a column in the error, got: {error}"
+        );
         Ok(())
     }
 

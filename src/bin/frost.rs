@@ -39,8 +39,9 @@ fn main() -> Result<()> {
 
     let mut lexer = Lexer::new(&source);
     let tokens = lexer.tokenize().context("Lexer error")?;
+    let positions = lexer.positions().to_vec();
 
-    let mut parser = FrostParser::new(&tokens);
+    let mut parser = FrostParser::with_positions(&tokens, &positions);
     let statements = parser.parse().context("Parser error")?;
 
     let linear_types = parser.linear_types().clone();
