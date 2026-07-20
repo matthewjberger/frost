@@ -147,11 +147,13 @@ by value, and references.
 
 `sizeof(T)` lowers to a compile-time integer from the IR's layout, and because
 substitution runs first, `sizeof(T)` inside a generic function becomes
-`sizeof(Concrete)` and then a constant. Together these turn the pool into a
-Frost library: `make_pool(cap, sample: &$T)` sizes itself with `sizeof(T)`,
-`insert(pool, value: $T)` copies the inferred element type in, and
-`fetch(pool, h, sample: &$T) -> ^T` hands back a typed pointer — no manual
-element size, no privileged builtin
+`sizeof(Concrete)` and then a constant. When a type parameter can't be inferred
+from a value argument, it is declared `$T: Type` and passed explicitly at the
+call as `$Concrete` (type parameters are then erased from the specialized ABI).
+Together these turn the pool into a Frost library:
+`make_pool($T: Type, cap) -> ^u8` sizes itself with `sizeof(T)` and is called
+`make_pool($Entity, 16)`, and `insert(pool, value: $T) -> Handle<T>` copies the
+inferred element type in — no manual element size, no privileged builtin
 (`examples/native/generic_pool_library.frost`).
 
 Generic structs monomorphize the same way. `Foo<Args>` in type position is
