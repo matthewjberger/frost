@@ -61,6 +61,51 @@ fn run_backend(name: &str, source: &str, emit_c: bool) -> Option<String> {
     Some(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"))
 }
 
+fn compile_and_run_status(name: &str, source: &str) -> Option<bool> {
+    if !linker_available() {
+        return None;
+    }
+    let directory = std::env::temp_dir();
+    let source_path = directory.join(format!("frost_native_{name}.frost"));
+    let exe_path = directory.join(format!(
+        "frost_native_{name}{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    std::fs::write(&source_path, source).unwrap();
+    let frost = env!("CARGO_BIN_EXE_frost");
+    let compile = Command::new(frost)
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe_path)
+        .arg(&source_path)
+        .output()
+        .unwrap();
+    assert!(compile.status.success(), "compilation failed for {name}");
+    let run = Command::new(&exe_path).output().unwrap();
+    let _ = std::fs::remove_file(&source_path);
+    let _ = std::fs::remove_file(&exe_path);
+    Some(run.status.success())
+}
+
+const OUT_OF_BOUNDS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+main :: fn() -> i64 {
+    arr := [10, 20, 30]
+    mut i : i64 = 5
+    printf("%lld\n", arr[i])
+    0
+}
+"#;
+
+#[test]
+fn native_out_of_bounds_index_aborts() {
+    let Some(succeeded) = compile_and_run_status("oob", OUT_OF_BOUNDS) else {
+        return;
+    };
+    assert!(!succeeded, "out-of-bounds index should abort at runtime");
+}
+
 const ARITHMETIC: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 

@@ -27,6 +27,9 @@ local rules.
 5. **No use-after-free through a stale handle.** A generational handle whose slot
    has been freed and reused reports "not contained"; it can never silently read
    a live value.
+6. **No out-of-bounds array access.** Every array index is bounds-checked against
+   the array's statically-known length; an out-of-range index aborts with a
+   diagnostic rather than reading or writing past the array.
 
 The first four are enforced statically. The fifth is enforced by a runtime
 generation check that is *cheap* (one integer compare) precisely because the
@@ -180,6 +183,27 @@ scoped temporary the compiler will not let you save.
 
 ---
 
+## 6. Bounds-checked indexing → no out-of-bounds access
+
+A fixed-size array `[N]T` carries its length `N` in its type, so every index
+expression `a[i]` is compiled with a check against that known length before the
+address is computed:
+
+```
+arr := [10, 20, 30]
+arr[5]   // aborts: "frost: index 5 out of bounds for length 3"
+```
+
+The check is a single call to a tiny runtime routine
+(`frost_bounds_check(index, length)`) that aborts if the index is out of range.
+The comparison is unsigned, so a negative index (which would wrap to a huge
+unsigned value) is caught too. Valid accesses are unaffected. This turns what
+would be a silent out-of-bounds read or write — the classic C memory-safety hole
+— into a loud, deterministic abort.
+
+Pool access does not need this check: `pool[handle]` is guarded by the
+generational check instead (§5).
+
 ## Why this is enough (and why it is small)
 
 Traditional borrow checking spends most of its complexity on **lifetimes**:
@@ -194,6 +218,7 @@ references cannot escape — and in exchange deletes that entire machinery:
 | Mutable aliasing             | Per-call borrow exclusivity (sufficient, not just necessary) |
 | Leak / double-free / drop    | Linear resources: consume exactly once                 |
 | Use-after-free via heap       | Generational handles: stale handle detected at access  |
+| Out-of-bounds access          | Array length is known; every index is bounds-checked   |
 | Ignored error                | Linear error enums are non-ignorable                   |
 
 None of these requires lifetime variables, region inference, or a runtime GC.
@@ -209,8 +234,6 @@ Honesty about the current implementation:
   pointers; code that uses them takes on the corresponding responsibility. The
   safe surface — references, handles, linear resources — is what the guarantees
   above cover.
-- **Bounds checking** on array/pool indexing is not yet inserted; an
-  out-of-range index is undefined behavior today (a planned addition).
 - The static checks run on the AST; **integer overflow** follows the backend's C
   semantics (wrapping for unsigned, two's-complement for signed) rather than
   trapping.

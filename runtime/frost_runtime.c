@@ -1,6 +1,16 @@
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+void frost_bounds_check(int64_t index, int64_t length) {
+    if ((uint64_t)index >= (uint64_t)length) {
+        fprintf(stderr,
+                "frost: index %lld out of bounds for length %lld\n",
+                (long long)index, (long long)length);
+        abort();
+    }
+}
 
 typedef struct {
     unsigned char *storage;
