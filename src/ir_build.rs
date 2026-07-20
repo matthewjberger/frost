@@ -461,8 +461,10 @@ fn infer_subst_into(
         infer_subst_into(pr, cr, type_params, subst);
     } else if let (Type::Struct(pattern_name), Type::Struct(concrete_name)) =
         (pattern, concrete)
-        && let (Some((pattern_base, pattern_args)), Some((concrete_base, concrete_args))) =
-            (split_instance(pattern_name), split_instance(concrete_name))
+        && let (
+            Some((pattern_base, pattern_args)),
+            Some((concrete_base, concrete_args)),
+        ) = (split_instance(pattern_name), split_instance(concrete_name))
         && pattern_base == concrete_base
         && pattern_args.len() == concrete_args.len()
     {
@@ -2387,10 +2389,13 @@ impl<'a> FunctionLowering<'a> {
         base: &Expression,
         index: &Expression,
     ) -> Result<(IrOperand, Type)> {
+        let (index_operand, index_type) = self.lower_expression(index, None)?;
+        if let Type::Handle(element) = index_type {
+            return self.pool_element_address(base, index_operand, *element);
+        }
         let (base_pointer, element_type) = self.array_base_pointer(base)?;
         let element_size = self.builder.byte_size(&element_type);
-        let (index_operand, _) =
-            self.lower_expression(index, Some(&Type::I64))?;
+        let index_operand = self.coerce(index_operand, &index_type, &Type::I64);
         let result =
             self.fresh_local(Type::Ptr(Box::new(element_type.clone())), None);
         self.emit(IrStatement::Assign(
@@ -2399,6 +2404,25 @@ impl<'a> FunctionLowering<'a> {
                 base: base_pointer,
                 index: index_operand,
                 element_size,
+            },
+        ));
+        Ok((IrOperand::Local(result), element_type))
+    }
+
+    fn pool_element_address(
+        &mut self,
+        base: &Expression,
+        handle_operand: IrOperand,
+        element_type: Type,
+    ) -> Result<(IrOperand, Type)> {
+        let (pool_operand, _) = self.lower_expression(base, None)?;
+        let result =
+            self.fresh_local(Type::Ptr(Box::new(element_type.clone())), None);
+        self.emit(IrStatement::Assign(
+            result,
+            IrRvalue::Call {
+                function: "pool_get".to_string(),
+                arguments: vec![pool_operand, handle_operand],
             },
         ));
         Ok((IrOperand::Local(result), element_type))

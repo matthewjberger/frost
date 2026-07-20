@@ -715,6 +715,52 @@ fn native_tuple_pattern_match() {
     assert_eq!(output, "1\n2\n3\n4\n5\n3\n7\n8\n3\n5\n11\n3\n13\n14\n15\n");
 }
 
+const POOL_HANDLE_DEREF: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+pool_new :: extern fn(capacity: i64, elem_size: i64) -> ^u8
+pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
+pool_get :: extern fn(pool: ^u8, handle: i64) -> ^u8
+
+Entity :: struct { hp: i64, mana: i64 }
+
+heal :: fn(e: &mut Entity, amount: i64) {
+    e.hp = e.hp + amount
+}
+total :: fn(e: &Entity) -> i64 {
+    e.hp + e.mana
+}
+
+main :: fn() -> i64 {
+    world := pool_new(8, 16)
+
+    mut a := Entity { hp = 50, mana = 10 }
+    ha : Handle<Entity> = pool_alloc(world, &a)
+    mut b := Entity { hp = 20, mana = 5 }
+    hb : Handle<Entity> = pool_alloc(world, &b)
+
+    printf("%lld\n", world[ha].hp)
+    world[ha].hp = 60
+    printf("%lld\n", world[ha].hp)
+
+    heal(&mut world[ha], 15)
+    printf("%lld\n", world[ha].hp)
+    printf("%lld\n", total(&world[ha]))
+
+    copy := world[hb]
+    printf("%lld\n", copy.mana)
+    printf("%lld\n", total(&world[hb]))
+    0
+}
+"#;
+
+#[test]
+fn native_pool_handle_deref_as_place() {
+    let Some(output) = compile_and_run("pool_deref", POOL_HANDLE_DEREF) else {
+        return;
+    };
+    assert_eq!(output, "50\n60\n75\n85\n5\n25\n");
+}
+
 const FUNCTION_POINTERS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -1348,6 +1394,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_sizeof", SIZEOF),
         ("diff_genmulti", GENERIC_MULTI_PARAM),
         ("diff_genstructs", GENERIC_STRUCTS),
+        ("diff_poolderef", POOL_HANDLE_DEREF),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
