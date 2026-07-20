@@ -19,6 +19,7 @@ A statically-typed programming language with Rust-inspired ownership and immutab
 
 ## Documentation
 
+- [docs/tour.md](docs/tour.md) — a hands-on tour of the language by example
 - [docs/philosophy.md](docs/philosophy.md) — design philosophy, goals and
   non-goals, and why Frost is data-oriented rather than object-oriented
 - [docs/memory-safety.md](docs/memory-safety.md) — how Frost guarantees memory
