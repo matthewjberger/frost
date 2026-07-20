@@ -614,6 +614,47 @@ fn native_array_of_structs_and_struct_of_arrays() {
     assert_eq!(output, "1\n4\n99\n103\n20\n77\n4\n");
 }
 
+const AGGREGATE_PAYLOADS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Point :: struct { x: i64, y: i64 }
+
+Node :: enum {
+    Leaf { value: i64 },
+    Pair { location: Point, weight: i64 },
+}
+
+describe :: fn(n: &Node) -> i64 {
+    match n {
+        case .Leaf { value }: value
+        case .Pair { location, weight }: location.x + location.y + weight
+    }
+}
+
+main :: fn() -> i64 {
+    leaf := Node::Leaf { value = 7 }
+    pair := Node::Pair { location = Point { x = 3, y = 4 }, weight = 100 }
+    printf("%lld\n", describe(&leaf))
+    printf("%lld\n", describe(&pair))
+
+    mut grid := [[1, 2, 3], [4, 5, 6]]
+    printf("%lld\n", grid[0][2])
+    printf("%lld\n", grid[1][1])
+    grid[1][2] = 99
+    printf("%lld\n", grid[1][2])
+    0
+}
+"#;
+
+#[test]
+fn native_aggregate_enum_payloads_and_2d_arrays() {
+    let Some(output) = compile_and_run("agg_payloads", AGGREGATE_PAYLOADS)
+    else {
+        return;
+    };
+    assert_eq!(output, "7\n107\n3\n5\n99\n");
+}
+
 #[test]
 fn native_showcase_examples_build_and_agree() {
     if !linker_available() {
@@ -657,6 +698,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_defer", DEFER),
         ("diff_nested", NESTED_STRUCTS),
         ("diff_layouts", DATA_LAYOUTS),
+        ("diff_payloads", AGGREGATE_PAYLOADS),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
