@@ -460,6 +460,67 @@ fn native_function_pointers() {
     assert_eq!(output, "42\n81\n42\n100\n");
 }
 
+const KITCHEN_SINK: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Vec3 :: struct { x: i64, y: i64, z: i64 }
+
+Shape :: enum {
+    Circle { radius: i64 },
+    Box { side: i64 },
+}
+
+area :: fn(s: &Shape) -> i64 {
+    match s {
+        case .Circle { radius }: 3 * radius * radius
+        case .Box { side }: side * side
+    }
+}
+
+dot :: fn(a: &Vec3, b: &Vec3) -> i64 {
+    a.x * b.x + a.y * b.y + a.z * b.z
+}
+
+fib :: fn(n: i64) -> i64 {
+    if (n < 2) { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+triple :: fn(x: i64) -> i64 { x * 3 }
+
+apply_to_array :: fn(f: fn(i64) -> i64, values: &[4]i64) -> i64 {
+    mut total : i64 = 0
+    for i in 0..4 {
+        total = total + f(values[i])
+    }
+    total
+}
+
+main :: fn() -> i64 {
+    a := Vec3 { x = 1, y = 2, z = 3 }
+    b := Vec3 { x = 4, y = 5, z = 6 }
+    printf("%lld\n", dot(&a, &b))
+
+    c := Shape::Circle { radius = 10 }
+    sq := Shape::Box { side = 7 }
+    printf("%lld\n", area(&c))
+    printf("%lld\n", area(&sq))
+
+    printf("%lld\n", fib(15))
+
+    nums := [1, 2, 3, 4]
+    printf("%lld\n", apply_to_array(triple, &nums))
+    0
+}
+"#;
+
+#[test]
+fn native_combined_features() {
+    let Some(output) = compile_and_run("kitchen", KITCHEN_SINK) else {
+        return;
+    };
+    assert_eq!(output, "32\n300\n49\n610\n30\n");
+}
+
 #[test]
 fn cranelift_and_c_backends_agree() {
     let programs = [
@@ -475,6 +536,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_retagg", RETURN_AGGREGATE),
         ("diff_tuple", TUPLE_MATCH),
         ("diff_funcptr", FUNCTION_POINTERS),
+        ("diff_kitchen", KITCHEN_SINK),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
