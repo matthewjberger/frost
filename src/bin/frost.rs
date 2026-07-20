@@ -2,9 +2,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
-use frost::{compile_to_object, Compiler, Lexer, Parser as FrostParser, VirtualMachine};
+use frost::{
+    Compiler, Lexer, Parser as FrostParser, VirtualMachine, build_module,
+    compile_ir_to_object,
+};
 
 #[derive(Parser)]
 #[command(name = "frost")]
@@ -38,7 +41,9 @@ fn main() -> Result<()> {
     let statements = parser.parse().context("Parser error")?;
 
     if cli.native || cli.link {
-        let object_bytes = compile_to_object(&statements).context("Native compilation error")?;
+        let module = build_module(&statements).context("IR lowering error")?;
+        let object_bytes = compile_ir_to_object(&module)
+            .context("Native compilation error")?;
 
         let input_path = Path::new(&cli.file);
         let stem = input_path.file_stem().unwrap_or_default().to_string_lossy();
@@ -49,8 +54,9 @@ fn main() -> Result<()> {
             cli.output.clone().unwrap_or_else(|| format!("{}.o", stem))
         };
 
-        fs::write(&object_path, object_bytes)
-            .with_context(|| format!("Failed to write object file: {}", object_path))?;
+        fs::write(&object_path, object_bytes).with_context(|| {
+            format!("Failed to write object file: {}", object_path)
+        })?;
 
         if cli.link {
             let exe_path = cli.output.clone().unwrap_or_else(|| {
@@ -113,9 +119,15 @@ fn find_linker() -> Option<&'static str> {
     None
 }
 
-fn link_executable(object_path: &str, exe_path: &str, extra_libs: &[String]) -> Result<()> {
+fn link_executable(
+    object_path: &str,
+    exe_path: &str,
+    extra_libs: &[String],
+) -> Result<()> {
     let linker = find_linker().ok_or_else(|| {
-        anyhow::anyhow!("No suitable linker found. Please install gcc, clang, or MSVC.")
+        anyhow::anyhow!(
+            "No suitable linker found. Please install gcc, clang, or MSVC."
+        )
     })?;
 
     let mut cmd = Command::new(linker);

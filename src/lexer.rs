@@ -1,5 +1,5 @@
 use self::Token::*;
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::{
     fmt::{Display, Formatter, Result as FmtResult},
     str::Chars,
@@ -325,15 +325,36 @@ impl<'a> Lexer<'a> {
                 }
             }
             '"' => {
-                let literal = self.take_while(|x| x != '"');
-                match self.peek_nth(0) {
-                    EOF_CHAR => bail!(
-                        "Reached end of file while scanning string. Expected closing delimiter '\"'."
-                    ),
-                    '"' => {
-                        self.read_char();
+                let mut literal = String::new();
+                loop {
+                    match self.peek_nth(0) {
+                        EOF_CHAR => bail!(
+                            "Reached end of file while scanning string. Expected closing delimiter '\"'."
+                        ),
+                        '"' => {
+                            self.read_char();
+                            break;
+                        }
+                        '\\' => {
+                            self.read_char();
+                            let escaped = self.read_char();
+                            let resolved = match escaped {
+                                'n' => '\n',
+                                't' => '\t',
+                                'r' => '\r',
+                                '0' => '\0',
+                                '\\' => '\\',
+                                '"' => '"',
+                                '\'' => '\'',
+                                other => bail!(
+                                    "Unknown escape sequence '\\{}' in string literal",
+                                    other
+                                ),
+                            };
+                            literal.push(resolved);
+                        }
+                        _ => literal.push(self.read_char()),
                     }
-                    _ => bail!("String literal is missing closing delimiter"),
                 }
                 StringLiteral(literal)
             }

@@ -350,8 +350,10 @@ frost/
 │   ├── parser.rs       # AST parser
 │   ├── compiler.rs     # Bytecode compiler
 │   ├── typed_vm.rs     # Virtual machine
-│   ├── typechecker.rs  # Type checking
-│   ├── codegen.rs      # Cranelift native backend
+│   ├── typechecker.rs  # Type checking (being reworked onto the IR)
+│   ├── ir.rs           # Typed IR definitions
+│   ├── ir_build.rs     # AST -> typed IR lowering
+│   ├── ir_codegen.rs   # Typed IR -> Cranelift native backend
 │   ├── types.rs        # Type definitions
 │   └── value.rs        # Runtime values
 ├── repl/
@@ -363,6 +365,10 @@ frost/
 ```
 
 ## Architecture
+
+See [docs/architecture.md](docs/architecture.md) for the authoritative,
+up-to-date description of the compiler, including the typed IR and the exact
+subset the native backend supports today.
 
 Frost has a **dual-backend architecture** designed for different use cases:
 
@@ -405,10 +411,13 @@ Execution   Binary
    - Executed by an interpreter written in Rust
    - Used for: REPL, rapid iteration, debugging
 
-2. **Native Codegen** (`codegen.rs` via Cranelift)
-   - Compiles Frost source to machine code
+2. **Native Codegen** (`ir_build.rs` + `ir_codegen.rs` via Cranelift)
+   - Lowers the AST to a typed IR, then emits machine code with Cranelift
    - Produces `.o` object files or linked executables
-   - Used for: production builds, performance-critical code
+   - Supports a growing subset (scalars, control flow, functions, casts,
+     `extern` C interop, references and pointers); anything outside that
+     subset fails loudly rather than miscompiling. See
+     [docs/architecture.md](docs/architecture.md).
 
 ### Why Both?
 
