@@ -1613,6 +1613,10 @@ impl<'a> FunctionLowering<'a> {
             bail!("native backend: match with no cases");
         }
 
+        if let Expression::Tuple(elements) = scrutinee {
+            return self.lower_tuple_match(elements, cases, expected);
+        }
+
         let enum_info = self.enum_scrutinee_address(scrutinee)?;
 
         let (enum_address, enum_name, tag_operand, scalar) =
@@ -1787,6 +1791,119 @@ impl<'a> FunctionLowering<'a> {
         }
 
         Ok(None)
+    }
+
+    fn lower_tuple_match(
+        &mut self,
+        elements: &[Expression],
+        cases: &[SwitchCase],
+        expected: Option<&Type>,
+    ) -> Result<(IrOperand, Type)> {
+        let mut values = Vec::with_capacity(elements.len());
+        for element in elements {
+            values.push(self.lower_expression(element, None)?);
+        }
+
+        let merge = self.new_block();
+        let mut result_local: Option<LocalId> = None;
+        let mut result_type = Type::Void;
+
+        for case in cases {
+            let case_block = self.new_block();
+            let next_block = self.new_block();
+
+            let patterns: Vec<&Pattern> = match &case.pattern {
+                Pattern::Tuple(patterns) => patterns.iter().collect(),
+                Pattern::Wildcard | Pattern::Identifier(_) => Vec::new(),
+                other => bail!(
+                    "native backend: unsupported tuple match pattern: {other:?}"
+                ),
+            };
+
+            let mut condition: Option<LocalId> = None;
+            for (pattern, (value, value_type)) in
+                patterns.iter().zip(values.iter())
+            {
+                if let Pattern::Literal(literal) = pattern {
+                    let (literal_operand, _) =
+                        self.lower_literal(literal, Some(value_type))?;
+                    let test = self.fresh_local(Type::Bool, None);
+                    self.emit(IrStatement::Assign(
+                        test,
+                        IrRvalue::Binary(
+                            IrBinOp::Equal,
+                            value.clone(),
+                            literal_operand,
+                        ),
+                    ));
+                    condition = Some(match condition {
+                        None => test,
+                        Some(previous) => {
+                            let combined = self.fresh_local(Type::Bool, None);
+                            self.emit(IrStatement::Assign(
+                                combined,
+                                IrRvalue::Binary(
+                                    IrBinOp::BitwiseAnd,
+                                    IrOperand::Local(previous),
+                                    IrOperand::Local(test),
+                                ),
+                            ));
+                            combined
+                        }
+                    });
+                }
+            }
+
+            match condition {
+                Some(local) => self.set_terminator(IrTerminator::Branch {
+                    condition: IrOperand::Local(local),
+                    then_block: case_block,
+                    else_block: next_block,
+                }),
+                None => self.set_terminator(IrTerminator::Jump(case_block)),
+            }
+
+            self.switch_to(case_block);
+            self.push_scope();
+            for (pattern, (value, value_type)) in
+                patterns.iter().zip(values.iter())
+            {
+                if let Pattern::Identifier(name) = pattern {
+                    let bound = self
+                        .fresh_local(value_type.clone(), Some(name.clone()));
+                    self.emit(IrStatement::Assign(
+                        bound,
+                        IrRvalue::Use(value.clone()),
+                    ));
+                    self.define_variable(name, bound);
+                }
+            }
+            let (value, value_type) = self.lower_block(&case.body, expected)?;
+            if result_local.is_none() {
+                result_type = match expected {
+                    Some(ty) if !matches!(ty, Type::Void) => ty.clone(),
+                    _ => value_type.clone(),
+                };
+                result_local =
+                    Some(self.fresh_local(result_type.clone(), None));
+            }
+            let target = result_local.unwrap();
+            let coerced = self.coerce(value, &value_type, &result_type);
+            self.emit(IrStatement::Assign(target, IrRvalue::Use(coerced)));
+            self.pop_scope();
+            self.set_terminator(IrTerminator::Jump(merge));
+
+            self.switch_to(next_block);
+        }
+
+        let target = result_local
+            .expect("match has at least one case, so a result exists");
+        let zero = zero_operand(&result_type);
+        self.emit(IrStatement::Assign(target, IrRvalue::Use(zero)));
+        self.set_terminator(IrTerminator::Jump(merge));
+
+        self.switch_to(merge);
+        Ok((IrOperand::Local(target), result_type))
     }
 
     fn bind_pattern(

@@ -399,6 +399,34 @@ fn native_return_struct_by_value() {
     assert_eq!(output, "3\n4\n11\n22\n");
 }
 
+const TUPLE_MATCH: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+classify :: fn(i: i64) -> i64 {
+    match (i % 3, i % 5) {
+        case (0, 0): 15
+        case (0, _): 3
+        case (_, 0): 5
+        case (_, _): i
+    }
+}
+
+main :: fn() -> i64 {
+    for i in 1..16 {
+        printf("%lld\n", classify(i))
+    }
+    0
+}
+"#;
+
+#[test]
+fn native_tuple_pattern_match() {
+    let Some(output) = compile_and_run("tuple", TUPLE_MATCH) else {
+        return;
+    };
+    assert_eq!(output, "1\n2\n3\n4\n5\n3\n7\n8\n3\n5\n11\n3\n13\n14\n15\n");
+}
+
 #[test]
 fn cranelift_and_c_backends_agree() {
     let programs = [
@@ -412,6 +440,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_enums", ENUMS),
         ("diff_byvalue", BY_VALUE),
         ("diff_retagg", RETURN_AGGREGATE),
+        ("diff_tuple", TUPLE_MATCH),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
