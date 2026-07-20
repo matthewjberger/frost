@@ -3,12 +3,13 @@ use std::collections::HashMap;
 use anyhow::{Result, bail};
 
 use crate::ir::{
-    BlockId, FieldLayout, IrBinOp, IrBlock, IrConstant, IrExtern, IrFunction,
-    IrLocal, IrModule, IrOperand, IrRvalue, IrStatement, IrTerminator, IrUnOp,
-    LocalId, StructLayout,
+    BlockId, EnumLayout, EnumVariantLayout, FieldLayout, IrBinOp, IrBlock,
+    IrConstant, IrExtern, IrFunction, IrLocal, IrModule, IrOperand, IrRvalue,
+    IrStatement, IrTerminator, IrUnOp, LocalId, StructLayout,
 };
 use crate::parser::{
-    Block, Expression, Parameter, ReturnSignature, Statement, StructField,
+    Block, EnumVariant, Expression, Parameter, Pattern, ReturnSignature,
+    Statement, StructField, SwitchCase,
 };
 use crate::types::Type;
 use crate::{Literal, Operator};
@@ -21,12 +22,15 @@ struct FunctionSignature {
 pub struct IrBuilder {
     signatures: HashMap<String, FunctionSignature>,
     structs: HashMap<String, StructLayout>,
+    enums: HashMap<String, EnumLayout>,
 }
 
 pub fn build_module(statements: &[Statement]) -> Result<IrModule> {
+    let (structs, enums) = compute_layouts(statements);
     let mut builder = IrBuilder {
         signatures: HashMap::new(),
-        structs: compute_struct_layouts(statements),
+        structs,
+        enums,
     };
     builder.collect_signatures(statements);
 
@@ -182,8 +186,12 @@ impl IrBuilder {
         self.structs.get(name)
     }
 
+    fn enum_layout(&self, name: &str) -> Option<&EnumLayout> {
+        self.enums.get(name)
+    }
+
     fn byte_size(&self, ty: &Type) -> usize {
-        size_and_align(ty, &self.structs)
+        size_and_align(ty, &self.structs, &self.enums)
             .map(|(size, _)| size)
             .unwrap_or(0)
     }
@@ -194,7 +202,7 @@ fn parameter_type(parameter: &Parameter) -> Type {
 }
 
 fn needs_memory(ty: &Type) -> bool {
-    matches!(ty, Type::Struct(_) | Type::Array(_, _))
+    matches!(ty, Type::Struct(_) | Type::Array(_, _) | Type::Enum(_))
 }
 
 fn array_element_type(
@@ -217,26 +225,43 @@ fn array_element_type(
     }
 }
 
-fn compute_struct_layouts(
-    statements: &[Statement],
-) -> HashMap<String, StructLayout> {
-    let definitions: Vec<(&String, &Vec<StructField>)> = statements
+type LayoutMaps = (HashMap<String, StructLayout>, HashMap<String, EnumLayout>);
+
+fn compute_layouts(statements: &[Statement]) -> LayoutMaps {
+    let struct_defs: Vec<(&String, &Vec<StructField>)> = statements
         .iter()
         .filter_map(|statement| match statement {
             Statement::Struct(name, _, fields) => Some((name, fields)),
             _ => None,
         })
         .collect();
+    let enum_defs: Vec<(&String, &Vec<EnumVariant>)> = statements
+        .iter()
+        .filter_map(|statement| match statement {
+            Statement::Enum(name, variants) => Some((name, variants)),
+            _ => None,
+        })
+        .collect();
 
-    let mut layouts: HashMap<String, StructLayout> = HashMap::new();
+    let mut structs: HashMap<String, StructLayout> = HashMap::new();
+    let mut enums: HashMap<String, EnumLayout> = HashMap::new();
     loop {
         let mut progress = false;
-        for (name, fields) in &definitions {
-            if layouts.contains_key(*name) {
+        for (name, fields) in &struct_defs {
+            if structs.contains_key(*name) {
                 continue;
             }
-            if let Some(layout) = try_layout(fields, &layouts) {
-                layouts.insert((*name).clone(), layout);
+            if let Some(layout) = try_struct_layout(fields, &structs, &enums) {
+                structs.insert((*name).clone(), layout);
+                progress = true;
+            }
+        }
+        for (name, variants) in &enum_defs {
+            if enums.contains_key(*name) {
+                continue;
+            }
+            if let Some(layout) = try_enum_layout(variants, &structs, &enums) {
+                enums.insert((*name).clone(), layout);
                 progress = true;
             }
         }
@@ -244,19 +269,20 @@ fn compute_struct_layouts(
             break;
         }
     }
-    layouts
+    (structs, enums)
 }
 
-fn try_layout(
+fn try_struct_layout(
     fields: &[StructField],
-    layouts: &HashMap<String, StructLayout>,
+    structs: &HashMap<String, StructLayout>,
+    enums: &HashMap<String, EnumLayout>,
 ) -> Option<StructLayout> {
     let mut offset = 0;
     let mut align = 1;
     let mut field_layouts = Vec::with_capacity(fields.len());
     for field in fields {
         let (field_size, field_align) =
-            size_and_align(&field.field_type, layouts)?;
+            size_and_align(&field.field_type, structs, enums)?;
         offset = round_up(offset, field_align);
         field_layouts.push(FieldLayout {
             name: field.name.clone(),
@@ -273,16 +299,72 @@ fn try_layout(
     })
 }
 
+fn try_enum_layout(
+    variants: &[EnumVariant],
+    structs: &HashMap<String, StructLayout>,
+    enums: &HashMap<String, EnumLayout>,
+) -> Option<EnumLayout> {
+    let tag_size = 4;
+    let mut payload_align = 1;
+    for variant in variants {
+        if let Some(fields) = &variant.fields {
+            for field in fields {
+                let (_, field_align) =
+                    size_and_align(&field.field_type, structs, enums)?;
+                payload_align = payload_align.max(field_align);
+            }
+        }
+    }
+    let payload_offset = round_up(tag_size, payload_align);
+
+    let mut variant_layouts = Vec::with_capacity(variants.len());
+    let mut max_end = payload_offset;
+    for (index, variant) in variants.iter().enumerate() {
+        let mut offset = payload_offset;
+        let mut field_layouts = Vec::new();
+        if let Some(fields) = &variant.fields {
+            for field in fields {
+                let (field_size, field_align) =
+                    size_and_align(&field.field_type, structs, enums)?;
+                offset = round_up(offset, field_align);
+                field_layouts.push(FieldLayout {
+                    name: field.name.clone(),
+                    ty: field.field_type.clone(),
+                    offset,
+                });
+                offset += field_size;
+            }
+        }
+        max_end = max_end.max(offset);
+        variant_layouts.push(EnumVariantLayout {
+            name: variant.name.clone(),
+            tag: index as u32,
+            fields: field_layouts,
+        });
+    }
+
+    let align = payload_align.max(tag_size);
+    Some(EnumLayout {
+        size: round_up(max_end, align),
+        align,
+        variants: variant_layouts,
+    })
+}
+
 fn size_and_align(
     ty: &Type,
-    layouts: &HashMap<String, StructLayout>,
+    structs: &HashMap<String, StructLayout>,
+    enums: &HashMap<String, EnumLayout>,
 ) -> Option<(usize, usize)> {
     match ty {
         Type::Struct(name) => {
-            layouts.get(name).map(|layout| (layout.size, layout.align))
+            structs.get(name).map(|layout| (layout.size, layout.align))
+        }
+        Type::Enum(name) => {
+            enums.get(name).map(|layout| (layout.size, layout.align))
         }
         Type::Array(inner, count) => {
-            let (size, align) = size_and_align(inner, layouts)?;
+            let (size, align) = size_and_align(inner, structs, enums)?;
             Some((size * count, align))
         }
         other => Some((other.size_of(), other.align_of())),
@@ -463,6 +545,23 @@ impl<'a> FunctionLowering<'a> {
                     );
                     let local = self.fresh_local(ty, Some(name.clone()));
                     self.init_array(local, &element_type, elements)?;
+                    self.define_variable(name, local);
+                    return Ok(());
+                }
+                if let Expression::EnumVariantInit(
+                    enum_name,
+                    variant_name,
+                    field_inits,
+                ) = value
+                {
+                    let ty = Type::Enum(enum_name.clone());
+                    let local = self.fresh_local(ty, Some(name.clone()));
+                    self.init_enum(
+                        local,
+                        enum_name,
+                        variant_name,
+                        field_inits,
+                    )?;
                     self.define_variable(name, local);
                     return Ok(());
                 }
@@ -689,9 +788,17 @@ impl<'a> FunctionLowering<'a> {
                     self.element_address(base, index)?;
                 self.load_from(address, element_type)
             }
+            Expression::Switch(scrutinee, cases) => {
+                self.lower_match(scrutinee, cases, expected)
+            }
             Expression::StructInit(..) => {
                 bail!(
                     "native backend: struct literals are only supported as a variable initializer"
+                )
+            }
+            Expression::EnumVariantInit(..) => {
+                bail!(
+                    "native backend: enum values are only supported as a variable initializer"
                 )
             }
             other => {
@@ -1344,6 +1451,363 @@ impl<'a> FunctionLowering<'a> {
         Ok(())
     }
 
+    fn init_enum(
+        &mut self,
+        local: LocalId,
+        enum_name: &str,
+        variant_name: &str,
+        field_inits: &[(String, Expression)],
+    ) -> Result<()> {
+        let (tag, fields): (u32, Vec<(String, usize, Type)>) = {
+            let layout =
+                self.builder.enum_layout(enum_name).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "native backend: unknown enum '{enum_name}'"
+                    )
+                })?;
+            let variant = layout.variant(variant_name).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "native backend: enum '{enum_name}' has no variant '{variant_name}'"
+                )
+            })?;
+            (
+                variant.tag,
+                variant
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        (field.name.clone(), field.offset, field.ty.clone())
+                    })
+                    .collect(),
+            )
+        };
+
+        let tag_address =
+            self.fresh_local(Type::Ptr(Box::new(Type::I32)), None);
+        self.emit(IrStatement::Assign(
+            tag_address,
+            IrRvalue::AddressOf { local, offset: 0 },
+        ));
+        self.emit(IrStatement::Store {
+            address: IrOperand::Local(tag_address),
+            value: IrOperand::Constant(IrConstant::Integer(
+                tag as i64,
+                Type::I32,
+            )),
+        });
+
+        for (field_name, field_value) in field_inits {
+            let Some((_, offset, field_type)) =
+                fields.iter().find(|(name, _, _)| name == field_name)
+            else {
+                bail!(
+                    "native backend: enum variant '{variant_name}' has no field '{field_name}'"
+                );
+            };
+            if needs_memory(field_type) {
+                bail!(
+                    "native backend: nested aggregate enum fields are not supported yet"
+                );
+            }
+            let address =
+                self.fresh_local(Type::Ptr(Box::new(field_type.clone())), None);
+            self.emit(IrStatement::Assign(
+                address,
+                IrRvalue::AddressOf {
+                    local,
+                    offset: *offset,
+                },
+            ));
+            let (operand, value_type) =
+                self.lower_expression(field_value, Some(field_type))?;
+            let coerced = self.coerce(operand, &value_type, field_type);
+            self.emit(IrStatement::Store {
+                address: IrOperand::Local(address),
+                value: coerced,
+            });
+        }
+        Ok(())
+    }
+
+    fn lower_match(
+        &mut self,
+        scrutinee: &Expression,
+        cases: &[SwitchCase],
+        expected: Option<&Type>,
+    ) -> Result<(IrOperand, Type)> {
+        if cases.is_empty() {
+            bail!("native backend: match with no cases");
+        }
+
+        let enum_info = self.enum_scrutinee_address(scrutinee)?;
+
+        let (enum_address, enum_name, tag_operand, scalar) =
+            if let Some((name, address)) = enum_info {
+                let tag = self.fresh_local(Type::I32, None);
+                self.emit(IrStatement::Assign(
+                    tag,
+                    IrRvalue::Load {
+                        address: address.clone(),
+                        ty: Type::I32,
+                    },
+                ));
+                (Some(address), Some(name), Some(IrOperand::Local(tag)), None)
+            } else {
+                let (value, value_type) =
+                    self.lower_expression(scrutinee, None)?;
+                (None, None, None, Some((value, value_type)))
+            };
+
+        let merge = self.new_block();
+        let mut result_local: Option<LocalId> = None;
+        let mut result_type = Type::Void;
+
+        for case in cases {
+            let case_block = self.new_block();
+            let next_block = self.new_block();
+
+            match &case.pattern {
+                Pattern::Wildcard | Pattern::Identifier(_) => {
+                    self.set_terminator(IrTerminator::Jump(case_block));
+                }
+                Pattern::Literal(literal) => {
+                    let Some((value, value_type)) = &scalar else {
+                        bail!(
+                            "native backend: literal pattern requires a scalar match value"
+                        );
+                    };
+                    let (literal_operand, _) =
+                        self.lower_literal(literal, Some(value_type))?;
+                    let condition = self.fresh_local(Type::Bool, None);
+                    self.emit(IrStatement::Assign(
+                        condition,
+                        IrRvalue::Binary(
+                            IrBinOp::Equal,
+                            value.clone(),
+                            literal_operand,
+                        ),
+                    ));
+                    self.set_terminator(IrTerminator::Branch {
+                        condition: IrOperand::Local(condition),
+                        then_block: case_block,
+                        else_block: next_block,
+                    });
+                }
+                Pattern::EnumVariant { variant_name, .. } => {
+                    let Some(tag) = &tag_operand else {
+                        bail!(
+                            "native backend: enum variant pattern requires an enum match value"
+                        );
+                    };
+                    let enum_name = enum_name.as_ref().unwrap();
+                    let variant_tag = self
+                        .builder
+                        .enum_layout(enum_name)
+                        .and_then(|layout| layout.variant(variant_name))
+                        .map(|variant| variant.tag)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "native backend: enum '{enum_name}' has no variant '{variant_name}'"
+                            )
+                        })?;
+                    let condition = self.fresh_local(Type::Bool, None);
+                    self.emit(IrStatement::Assign(
+                        condition,
+                        IrRvalue::Binary(
+                            IrBinOp::Equal,
+                            tag.clone(),
+                            IrOperand::Constant(IrConstant::Integer(
+                                variant_tag as i64,
+                                Type::I32,
+                            )),
+                        ),
+                    ));
+                    self.set_terminator(IrTerminator::Branch {
+                        condition: IrOperand::Local(condition),
+                        then_block: case_block,
+                        else_block: next_block,
+                    });
+                }
+                Pattern::Tuple(_) => {
+                    bail!(
+                        "native backend: tuple patterns are not supported yet"
+                    );
+                }
+            }
+
+            self.switch_to(case_block);
+            self.push_scope();
+            self.bind_pattern(
+                &case.pattern,
+                enum_address.as_ref(),
+                enum_name.as_deref(),
+                scalar.as_ref(),
+            )?;
+            let (value, value_type) = self.lower_block(&case.body, expected)?;
+            if result_local.is_none() {
+                result_type = match expected {
+                    Some(ty) if !matches!(ty, Type::Void) => ty.clone(),
+                    _ => value_type.clone(),
+                };
+                result_local =
+                    Some(self.fresh_local(result_type.clone(), None));
+            }
+            let target = result_local.unwrap();
+            let coerced = self.coerce(value, &value_type, &result_type);
+            self.emit(IrStatement::Assign(target, IrRvalue::Use(coerced)));
+            self.pop_scope();
+            self.set_terminator(IrTerminator::Jump(merge));
+
+            self.switch_to(next_block);
+        }
+
+        let target = result_local
+            .expect("match has at least one case, so a result exists");
+        let zero = zero_operand(&result_type);
+        self.emit(IrStatement::Assign(target, IrRvalue::Use(zero)));
+        self.set_terminator(IrTerminator::Jump(merge));
+
+        self.switch_to(merge);
+        Ok((IrOperand::Local(target), result_type))
+    }
+
+    fn enum_name_of(&self, ty: &Type) -> Option<String> {
+        match ty {
+            Type::Enum(name) => Some(name.clone()),
+            Type::Struct(name) if self.builder.enum_layout(name).is_some() => {
+                Some(name.clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn enum_scrutinee_address(
+        &mut self,
+        scrutinee: &Expression,
+    ) -> Result<Option<(String, IrOperand)>> {
+        let Expression::Identifier(name) = scrutinee else {
+            return Ok(None);
+        };
+        let Some(local) = self.resolve_variable(name) else {
+            return Ok(None);
+        };
+        let ty = self.type_of_local(local);
+
+        if let Some(enum_name) = self.enum_name_of(&ty) {
+            self.mark_in_memory(local);
+            let address = self.fresh_local(
+                Type::Ptr(Box::new(Type::Enum(enum_name.clone()))),
+                None,
+            );
+            self.emit(IrStatement::Assign(
+                address,
+                IrRvalue::AddressOf { local, offset: 0 },
+            ));
+            return Ok(Some((enum_name, IrOperand::Local(address))));
+        }
+
+        if let Type::Ref(inner) | Type::RefMut(inner) | Type::Ptr(inner) = &ty
+            && let Some(enum_name) = self.enum_name_of(inner)
+        {
+            return Ok(Some((enum_name, IrOperand::Local(local))));
+        }
+
+        Ok(None)
+    }
+
+    fn bind_pattern(
+        &mut self,
+        pattern: &Pattern,
+        enum_address: Option<&IrOperand>,
+        enum_name: Option<&str>,
+        scalar: Option<&(IrOperand, Type)>,
+    ) -> Result<()> {
+        match pattern {
+            Pattern::EnumVariant {
+                variant_name,
+                bindings,
+                ..
+            } => {
+                let (Some(address), Some(enum_name)) =
+                    (enum_address, enum_name)
+                else {
+                    bail!(
+                        "native backend: enum pattern on a non-enum match value"
+                    );
+                };
+                let fields: Vec<(String, usize, Type)> = self
+                    .builder
+                    .enum_layout(enum_name)
+                    .and_then(|layout| layout.variant(variant_name))
+                    .map(|variant| {
+                        variant
+                            .fields
+                            .iter()
+                            .map(|field| {
+                                (
+                                    field.name.clone(),
+                                    field.offset,
+                                    field.ty.clone(),
+                                )
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for (field_name, bound_name) in bindings {
+                    let Some((_, offset, field_type)) =
+                        fields.iter().find(|(name, _, _)| name == field_name)
+                    else {
+                        bail!(
+                            "native backend: variant '{variant_name}' has no field '{field_name}'"
+                        );
+                    };
+                    if needs_memory(field_type) {
+                        bail!(
+                            "native backend: binding aggregate enum fields is not supported yet"
+                        );
+                    }
+                    let field_address = self.fresh_local(
+                        Type::Ptr(Box::new(field_type.clone())),
+                        None,
+                    );
+                    self.emit(IrStatement::Assign(
+                        field_address,
+                        IrRvalue::FieldAddress {
+                            base: address.clone(),
+                            offset: *offset,
+                        },
+                    ));
+                    let bound = self.fresh_local(
+                        field_type.clone(),
+                        Some(bound_name.clone()),
+                    );
+                    self.emit(IrStatement::Assign(
+                        bound,
+                        IrRvalue::Load {
+                            address: IrOperand::Local(field_address),
+                            ty: field_type.clone(),
+                        },
+                    ));
+                    self.define_variable(bound_name, bound);
+                }
+                Ok(())
+            }
+            Pattern::Identifier(name) => {
+                if let Some((value, value_type)) = scalar {
+                    let bound = self
+                        .fresh_local(value_type.clone(), Some(name.clone()));
+                    self.emit(IrStatement::Assign(
+                        bound,
+                        IrRvalue::Use(value.clone()),
+                    ));
+                    self.define_variable(name, bound);
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
     fn type_of_local(&self, local: LocalId) -> Type {
         self.locals[local].ty.clone()
     }
@@ -1401,6 +1865,19 @@ fn deref_target(pointer_type: &Type) -> Result<Type> {
 
 fn unit_operand() -> IrOperand {
     IrOperand::Constant(IrConstant::Unit)
+}
+
+fn zero_operand(ty: &Type) -> IrOperand {
+    match ty {
+        Type::F32 | Type::F64 => {
+            IrOperand::Constant(IrConstant::Float(0.0, ty.clone()))
+        }
+        Type::Bool => IrOperand::Constant(IrConstant::Bool(false)),
+        _ if is_integer(ty) => {
+            IrOperand::Constant(IrConstant::Integer(0, ty.clone()))
+        }
+        _ => IrOperand::Constant(IrConstant::Integer(0, Type::I64)),
+    }
 }
 
 fn is_integer(ty: &Type) -> bool {

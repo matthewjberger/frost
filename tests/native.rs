@@ -275,3 +275,46 @@ fn native_arrays_and_indexing() {
     };
     assert_eq!(output, "10\n30\n99\n229\n229\n");
 }
+
+const ENUMS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Result :: enum {
+    Ok { value: i64 },
+    Err { code: i64 },
+}
+
+unwrap_or_neg :: fn(r: &Result) -> i64 {
+    match r {
+        case .Ok { value }: value
+        case .Err { code }: 0 - code
+    }
+}
+
+grade :: fn(score: i64) -> i64 {
+    match score {
+        case 90: 4
+        case 80: 3
+        case _: 0
+    }
+}
+
+main :: fn() -> i64 {
+    ok := Result::Ok { value = 42 }
+    err := Result::Err { code = 404 }
+    printf("%lld\n", unwrap_or_neg(&ok))
+    printf("%lld\n", unwrap_or_neg(&err))
+    printf("%lld\n", grade(90))
+    printf("%lld\n", grade(80))
+    printf("%lld\n", grade(50))
+    0
+}
+"#;
+
+#[test]
+fn native_enums_and_match() {
+    let Some(output) = compile_and_run("enums", ENUMS) else {
+        return;
+    };
+    assert_eq!(output, "42\n-404\n4\n3\n0\n");
+}
