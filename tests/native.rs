@@ -656,6 +656,36 @@ fn native_generic_structs_monomorphize() {
     assert_eq!(output, "7\n7\n5\n100\n5\n9\n43\n99\n");
 }
 
+const GENERIC_CONSTRUCTION_INFERENCE: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+pool_new :: extern fn(capacity: i64, elem_size: i64) -> ^u8
+pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
+pool_get :: extern fn(pool: ^u8, handle: i64) -> ^u8
+
+Pair :: struct($T: Type) { first: T, second: T }
+
+main :: fn() -> i64 {
+    inferred := Pair { first = 30, second = 12 }
+    printf("%lld\n", inferred.first + inferred.second)
+
+    pool := pool_new(4, 16)
+    mut v := Pair { first = 3, second = 4 }
+    h : Handle<Pair<i64>> = pool_alloc(pool, &v)
+    printf("%lld\n", pool[h].first + pool[h].second)
+    0
+}
+"#;
+
+#[test]
+fn native_generic_construction_inference() {
+    let Some(output) =
+        compile_and_run("gen_construct", GENERIC_CONSTRUCTION_INFERENCE)
+    else {
+        return;
+    };
+    assert_eq!(output, "42\n7\n");
+}
+
 const LINEAR_RESOURCE_NATIVE: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 frost_read_i64 :: extern fn(data: File) -> i64
@@ -1539,6 +1569,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_genfactory", GENERIC_FACTORIES),
         ("diff_geninstance", GENERIC_INSTANCE_COMBINATIONS),
         ("diff_linear", LINEAR_RESOURCE_NATIVE),
+        ("diff_genconstruct", GENERIC_CONSTRUCTION_INFERENCE),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
