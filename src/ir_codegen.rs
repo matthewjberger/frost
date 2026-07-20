@@ -252,7 +252,9 @@ impl Generator {
             };
 
             for (block_index, ir_block) in function.blocks.iter().enumerate() {
-                translator.builder.switch_to_block(clif_blocks[block_index]);
+                if block_index != function.entry {
+                    translator.builder.switch_to_block(clif_blocks[block_index]);
+                }
                 for statement in &ir_block.statements {
                     translator.statement(statement)?;
                 }
