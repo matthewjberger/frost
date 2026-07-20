@@ -1711,11 +1711,6 @@ impl<'a> FunctionLowering<'a> {
                     "native backend: struct '{struct_name}' has no field '{field_name}'"
                 );
             };
-            if needs_memory(field_type) {
-                bail!(
-                    "native backend: nested aggregate struct fields are not supported yet"
-                );
-            }
             let address =
                 self.fresh_local(Type::Ptr(Box::new(field_type.clone())), None);
             self.emit(IrStatement::Assign(
@@ -1725,15 +1720,52 @@ impl<'a> FunctionLowering<'a> {
                     offset: *offset,
                 },
             ));
-            let (operand, value_type) =
-                self.lower_expression(field_value, Some(field_type))?;
-            let coerced = self.coerce(operand, &value_type, field_type);
-            self.emit(IrStatement::Store {
-                address: IrOperand::Local(address),
-                value: coerced,
-            });
+            if needs_memory(field_type) {
+                let source_local =
+                    self.materialize_field_value(field_value, field_type)?;
+                let source = self.address_of_local(source_local, field_type);
+                self.emit(IrStatement::Copy {
+                    destination: IrOperand::Local(address),
+                    source,
+                    size: self.builder.byte_size(field_type),
+                });
+            } else {
+                let (operand, value_type) =
+                    self.lower_expression(field_value, Some(field_type))?;
+                let coerced = self.coerce(operand, &value_type, field_type);
+                self.emit(IrStatement::Store {
+                    address: IrOperand::Local(address),
+                    value: coerced,
+                });
+            }
         }
         Ok(())
+    }
+
+    fn materialize_field_value(
+        &mut self,
+        expression: &Expression,
+        field_type: &Type,
+    ) -> Result<LocalId> {
+        match expression {
+            Expression::StructInit(..)
+            | Expression::EnumVariantInit(..)
+            | Expression::Literal(Literal::Array(_)) => {
+                let temp = self.fresh_local(field_type.clone(), None);
+                self.materialize_aggregate(temp, expression)?;
+                Ok(temp)
+            }
+            _ => {
+                let (operand, _) =
+                    self.lower_expression(expression, Some(field_type))?;
+                let IrOperand::Local(local) = operand else {
+                    bail!(
+                        "native backend: cannot initialize an aggregate field from this value"
+                    );
+                };
+                Ok(local)
+            }
+        }
     }
 
     fn init_enum(

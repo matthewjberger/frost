@@ -548,6 +548,36 @@ fn native_defer_runs_lifo_at_return() {
     assert_eq!(output, "1\n4\n3\n2\n99\n");
 }
 
+const NESTED_STRUCTS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Inner :: struct { a: i64, b: i64 }
+Outer :: struct { tag: i64, inner: Inner }
+
+sum_inner :: fn(o: &Outer) -> i64 {
+    o.inner.a + o.inner.b
+}
+
+main :: fn() -> i64 {
+    mut o := Outer { tag = 5, inner = Inner { a = 10, b = 20 } }
+    printf("%lld\n", o.tag)
+    printf("%lld\n", o.inner.a)
+    printf("%lld\n", sum_inner(&o))
+    o.inner.a = 99
+    printf("%lld\n", o.inner.a)
+    printf("%lld\n", sum_inner(&o))
+    0
+}
+"#;
+
+#[test]
+fn native_nested_structs() {
+    let Some(output) = compile_and_run("nested", NESTED_STRUCTS) else {
+        return;
+    };
+    assert_eq!(output, "5\n10\n30\n99\n119\n");
+}
+
 #[test]
 fn native_showcase_examples_build_and_agree() {
     if !linker_available() {
@@ -589,6 +619,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_funcptr", FUNCTION_POINTERS),
         ("diff_kitchen", KITCHEN_SINK),
         ("diff_defer", DEFER),
+        ("diff_nested", NESTED_STRUCTS),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
