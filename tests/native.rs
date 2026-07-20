@@ -154,3 +154,41 @@ fn native_strings_and_escapes() {
     };
     assert_eq!(output, "line one\nline\ttwo\n");
 }
+
+const POINTERS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+swap :: fn(a: ^i64, b: ^i64) {
+    temp := a^
+    a^ = b^
+    b^ = temp
+}
+
+increment :: fn(x: &mut i64) {
+    x^ = x^ + 1
+}
+
+read_sum :: fn(a: &i64, b: &i64) -> i64 {
+    a^ + b^
+}
+
+main :: fn() -> i64 {
+    mut x : i64 = 10
+    mut y : i64 = 20
+    swap(&x, &y)
+    printf("%lld\n", x)
+    printf("%lld\n", y)
+    increment(&mut x)
+    printf("%lld\n", x)
+    printf("%lld\n", read_sum(&x, &y))
+    0
+}
+"#;
+
+#[test]
+fn native_pointers_and_references() {
+    let Some(output) = compile_and_run("pointers", POINTERS) else {
+        return;
+    };
+    assert_eq!(output, "20\n10\n21\n31\n");
+}

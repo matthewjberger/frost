@@ -38,6 +38,7 @@ impl IrFunction {
 pub struct IrLocal {
     pub ty: Type,
     pub name: Option<String>,
+    pub in_memory: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +50,10 @@ pub struct IrBlock {
 #[derive(Debug, Clone)]
 pub enum IrStatement {
     Assign(LocalId, IrRvalue),
+    Store {
+        address: IrOperand,
+        value: IrOperand,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +62,11 @@ pub enum IrRvalue {
     Binary(IrBinOp, IrOperand, IrOperand),
     Unary(IrUnOp, IrOperand),
     Cast(IrOperand, Type),
+    AddressOf(LocalId),
+    Load {
+        address: IrOperand,
+        ty: Type,
+    },
     Call {
         function: String,
         arguments: Vec<IrOperand>,
@@ -189,6 +199,9 @@ impl Display for IrStatement {
             IrStatement::Assign(local, rvalue) => {
                 write!(f, "_{local} = {rvalue}")
             }
+            IrStatement::Store { address, value } => {
+                write!(f, "store {value} -> [{address}]")
+            }
         }
     }
 }
@@ -202,6 +215,10 @@ impl Display for IrRvalue {
             }
             IrRvalue::Unary(op, operand) => write!(f, "{op:?}({operand})"),
             IrRvalue::Cast(operand, ty) => write!(f, "{operand} as {ty}"),
+            IrRvalue::AddressOf(local) => write!(f, "&_{local}"),
+            IrRvalue::Load { address, ty } => {
+                write!(f, "load {ty} [{address}]")
+            }
             IrRvalue::Call {
                 function,
                 arguments,

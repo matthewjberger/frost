@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::{Result, bail};
+use cranelift::codegen::ir::StackSlot;
 use cranelift::prelude::*;
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
@@ -170,19 +171,34 @@ impl Generator {
         builder.append_block_params_for_function_params(entry);
         builder.switch_to_block(entry);
 
+        let mut slots: HashMap<usize, StackSlot> = HashMap::new();
         for (index, local) in function.locals.iter().enumerate() {
             if matches!(local.ty, Type::Void | Type::Unknown) {
                 continue;
             }
-            builder.declare_var(
-                Variable::new(index),
-                clif_type(pointer_type, &local.ty)?,
-            );
+            if local.in_memory {
+                let size = local.ty.size_of().max(1) as u32;
+                let slot = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    size,
+                    0,
+                ));
+                slots.insert(index, slot);
+            } else {
+                builder.declare_var(
+                    Variable::new(index),
+                    clif_type(pointer_type, &local.ty)?,
+                );
+            }
         }
 
         let params = builder.block_params(entry).to_vec();
         for (index, value) in params.iter().enumerate() {
-            builder.def_var(Variable::new(index), *value);
+            if let Some(slot) = slots.get(&index) {
+                builder.ins().stack_store(*value, *slot, 0);
+            } else {
+                builder.def_var(Variable::new(index), *value);
+            }
         }
 
         {
@@ -190,6 +206,7 @@ impl Generator {
                 module: &mut self.module,
                 functions: &self.functions,
                 strings: &self.strings,
+                slots: &slots,
                 pointer_type,
                 builder: &mut builder,
                 function,
@@ -234,6 +251,7 @@ struct Translator<'a, 'b> {
     module: &'a mut ObjectModule,
     functions: &'a HashMap<String, FuncId>,
     strings: &'a HashMap<String, DataId>,
+    slots: &'a HashMap<usize, StackSlot>,
     pointer_type: types::Type,
     builder: &'a mut FunctionBuilder<'b>,
     function: &'a IrFunction,
@@ -256,7 +274,22 @@ impl Translator<'_, '_> {
                     return Ok(());
                 }
                 let value = self.rvalue(rvalue, &local_type)?;
-                self.builder.def_var(Variable::new(*local), value);
+                if let Some(slot) = self.slots.get(local) {
+                    self.builder.ins().stack_store(value, *slot, 0);
+                } else {
+                    self.builder.def_var(Variable::new(*local), value);
+                }
+                Ok(())
+            }
+            IrStatement::Store { address, value } => {
+                let address_value = self.operand(address)?;
+                let value_value = self.operand(value)?;
+                self.builder.ins().store(
+                    MemFlags::new(),
+                    value_value,
+                    address_value,
+                    0,
+                );
                 Ok(())
             }
         }
@@ -293,6 +326,24 @@ impl Translator<'_, '_> {
                 let value = self.operand(operand)?;
                 let source = self.operand_type(operand);
                 self.cast(value, &source, target)
+            }
+            IrRvalue::AddressOf(local) => {
+                let Some(slot) = self.slots.get(local) else {
+                    bail!(
+                        "native backend: address taken of a non-memory local"
+                    );
+                };
+                Ok(self.builder.ins().stack_addr(self.pointer_type, *slot, 0))
+            }
+            IrRvalue::Load { address, ty } => {
+                let address_value = self.operand(address)?;
+                let clif = clif_type(self.pointer_type, ty)?;
+                Ok(self.builder.ins().load(
+                    clif,
+                    MemFlags::new(),
+                    address_value,
+                    0,
+                ))
             }
             IrRvalue::Call {
                 function,
@@ -505,7 +556,15 @@ impl Translator<'_, '_> {
     fn operand(&mut self, operand: &IrOperand) -> Result<Value> {
         match operand {
             IrOperand::Local(local) => {
-                Ok(self.builder.use_var(Variable::new(*local)))
+                if let Some(slot) = self.slots.get(local) {
+                    let clif = clif_type(
+                        self.pointer_type,
+                        self.function.local_type(*local),
+                    )?;
+                    Ok(self.builder.ins().stack_load(clif, *slot, 0))
+                } else {
+                    Ok(self.builder.use_var(Variable::new(*local)))
+                }
             }
             IrOperand::Constant(constant) => self.constant(constant),
         }
@@ -574,8 +633,15 @@ fn collect_strings(
     for function in &module.functions {
         for block in &function.blocks {
             for statement in &block.statements {
-                let IrStatement::Assign(_, rvalue) = statement;
-                collect_rvalue_strings(rvalue, handle)?;
+                match statement {
+                    IrStatement::Assign(_, rvalue) => {
+                        collect_rvalue_strings(rvalue, handle)?;
+                    }
+                    IrStatement::Store { address, value } => {
+                        collect_operand_strings(address, handle)?;
+                        collect_operand_strings(value, handle)?;
+                    }
+                }
             }
             if let IrTerminator::Return(Some(operand)) = &block.terminator {
                 collect_operand_strings(operand, handle)?;
@@ -594,6 +660,10 @@ fn collect_rvalue_strings(
             collect_operand_strings(operand, handle)
         }
         IrRvalue::Cast(operand, _) => collect_operand_strings(operand, handle),
+        IrRvalue::Load { address, .. } => {
+            collect_operand_strings(address, handle)
+        }
+        IrRvalue::AddressOf(_) => Ok(()),
         IrRvalue::Binary(_, left, right) => {
             collect_operand_strings(left, handle)?;
             collect_operand_strings(right, handle)
