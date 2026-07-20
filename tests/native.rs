@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::process::Command;
 
 fn linker_available() -> bool {
@@ -545,6 +546,30 @@ fn native_defer_runs_lifo_at_return() {
         return;
     };
     assert_eq!(output, "1\n4\n3\n2\n99\n");
+}
+
+#[test]
+fn native_showcase_examples_build_and_agree() {
+    if !linker_available() {
+        return;
+    }
+    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join("native");
+    let mut checked = 0;
+    for entry in std::fs::read_dir(&directory).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|e| e.to_str()) != Some("frost") {
+            continue;
+        }
+        let stem = path.file_stem().unwrap().to_string_lossy().into_owned();
+        let source = std::fs::read_to_string(&path).unwrap();
+        let native = run_backend(&format!("ex_{stem}"), &source, false);
+        let via_c = run_backend(&format!("ex_{stem}_c"), &source, true);
+        assert_eq!(native, via_c, "backends disagree on example {stem}");
+        checked += 1;
+    }
+    assert!(checked > 0, "no native examples were found");
 }
 
 #[test]

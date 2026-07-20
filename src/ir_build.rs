@@ -925,15 +925,16 @@ impl<'a> FunctionLowering<'a> {
             Expression::Switch(scrutinee, cases) => {
                 self.lower_match(scrutinee, cases, expected)
             }
-            Expression::StructInit(..) => {
-                bail!(
-                    "native backend: struct literals are only supported as a variable initializer"
-                )
-            }
-            Expression::EnumVariantInit(..) => {
-                bail!(
-                    "native backend: enum values are only supported as a variable initializer"
-                )
+            Expression::StructInit(struct_name, _)
+            | Expression::EnumVariantInit(struct_name, _, _) => {
+                let ty = if matches!(expression, Expression::StructInit(..)) {
+                    Type::Struct(struct_name.clone())
+                } else {
+                    Type::Enum(struct_name.clone())
+                };
+                let temp = self.fresh_local(ty.clone(), None);
+                self.materialize_aggregate(temp, expression)?;
+                Ok((IrOperand::Local(temp), ty))
             }
             other => {
                 bail!("native backend: unsupported expression: {other}")
