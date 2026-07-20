@@ -24,6 +24,7 @@ pub struct IrBuilder {
     structs: HashMap<String, StructLayout>,
     enums: HashMap<String, EnumLayout>,
     constants: HashMap<String, Expression>,
+    generic_functions: HashMap<String, GenericFunction>,
 }
 
 pub fn build_module(statements: &[Statement]) -> Result<IrModule> {
@@ -36,11 +37,34 @@ pub fn build_module(statements: &[Statement]) -> Result<IrModule> {
             constants.insert(name.clone(), value.clone());
         }
     }
+    let mut generic_functions = HashMap::new();
+    for statement in statements {
+        if let Statement::Constant(
+            name,
+            Expression::Function(parameters, return_sig, body)
+            | Expression::Proc(parameters, return_sig, body),
+        ) = statement
+            && function_is_generic(parameters)
+        {
+            let type_params = function_type_params(parameters);
+            generic_functions.insert(
+                name.clone(),
+                GenericFunction {
+                    type_params,
+                    parameters: parameters.clone(),
+                    return_sig: return_sig.clone(),
+                    body: body.clone(),
+                },
+            );
+        }
+    }
+
     let mut builder = IrBuilder {
         signatures: HashMap::new(),
         structs,
         enums,
         constants,
+        generic_functions,
     };
     builder.collect_signatures(statements);
 
@@ -48,6 +72,7 @@ pub fn build_module(statements: &[Statement]) -> Result<IrModule> {
     let mut externs = Vec::new();
     let mut top_level = Vec::new();
     let mut has_main = false;
+    let mut pending: Vec<Specialization> = Vec::new();
 
     for statement in statements {
         match statement {
@@ -56,13 +81,16 @@ pub fn build_module(statements: &[Statement]) -> Result<IrModule> {
                 Expression::Function(parameters, return_sig, body)
                 | Expression::Proc(parameters, return_sig, body),
             ) => {
+                if function_is_generic(parameters) {
+                    continue;
+                }
                 if name == "main" {
                     has_main = true;
                 }
-                functions.push(
-                    builder
-                        .lower_function(name, parameters, return_sig, body)?,
-                );
+                let (function, requests) = builder
+                    .lower_function(name, parameters, return_sig, body)?;
+                functions.push(function);
+                pending.extend(requests);
             }
             Statement::Extern {
                 name,
@@ -93,12 +121,55 @@ pub fn build_module(statements: &[Statement]) -> Result<IrModule> {
 
     if !has_main && !top_level.is_empty() {
         let empty_params: Vec<Parameter> = Vec::new();
-        functions.push(builder.lower_function(
+        let (function, requests) = builder.lower_function(
             "main",
             &empty_params,
             &ReturnSignature::Single(Type::I64),
             &top_level,
-        )?);
+        )?;
+        functions.push(function);
+        pending.extend(requests);
+    }
+
+    let mut emitted: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    while let Some(specialization) = pending.pop() {
+        if !emitted.insert(specialization.mangled_name.clone()) {
+            continue;
+        }
+        let generic = builder
+            .generic_functions
+            .get(&specialization.generic_name)
+            .expect("specialization references a known generic function")
+            .clone();
+        let parameters: Vec<Parameter> = generic
+            .parameters
+            .iter()
+            .map(|parameter| Parameter {
+                name: parameter.name.clone(),
+                type_annotation: parameter
+                    .type_annotation
+                    .as_ref()
+                    .map(|ty| substitute_type(ty, &specialization.subst)),
+                mutable: parameter.mutable,
+            })
+            .collect();
+        let return_sig = match generic.return_sig.to_type() {
+            Some(ty) => ReturnSignature::Single(substitute_type(
+                &ty,
+                &specialization.subst,
+            )),
+            None => ReturnSignature::None,
+        };
+        let body = substitute_block(&generic.body, &specialization.subst);
+        let (function, requests) = builder.lower_function(
+            &specialization.mangled_name,
+            &parameters,
+            &return_sig,
+            &body,
+        )?;
+        functions.push(function);
+        pending.extend(requests);
     }
 
     Ok(IrModule { functions, externs })
@@ -113,6 +184,9 @@ impl IrBuilder {
                     Expression::Function(parameters, return_sig, _)
                     | Expression::Proc(parameters, return_sig, _),
                 ) => {
+                    if function_is_generic(parameters) {
+                        continue;
+                    }
                     self.signatures.insert(
                         name.clone(),
                         FunctionSignature {
@@ -155,7 +229,7 @@ impl IrBuilder {
         parameters: &[Parameter],
         return_sig: &ReturnSignature,
         body: &Block,
-    ) -> Result<IrFunction> {
+    ) -> Result<(IrFunction, Vec<Specialization>)> {
         let return_type = return_sig.to_type().unwrap_or(Type::Void);
         let mut function = FunctionLowering::new(self, return_type.clone());
 
@@ -183,15 +257,19 @@ impl IrBuilder {
             }
         }
 
+        let specializations = std::mem::take(&mut function.specializations);
         let (locals, blocks) = function.finish();
-        Ok(IrFunction {
-            name: name.to_string(),
-            param_count: parameters.len(),
-            return_type,
-            locals,
-            blocks,
-            entry: 0,
-        })
+        Ok((
+            IrFunction {
+                name: name.to_string(),
+                param_count: parameters.len(),
+                return_type,
+                locals,
+                blocks,
+                entry: 0,
+            },
+            specializations,
+        ))
     }
 
     fn signature(&self, name: &str) -> Option<&FunctionSignature> {
@@ -215,6 +293,327 @@ impl IrBuilder {
 
 fn parameter_type(parameter: &Parameter) -> Type {
     parameter.type_annotation.clone().unwrap_or(Type::I64)
+}
+
+#[derive(Clone)]
+struct GenericFunction {
+    type_params: Vec<String>,
+    parameters: Vec<Parameter>,
+    return_sig: ReturnSignature,
+    body: Block,
+}
+
+struct Specialization {
+    generic_name: String,
+    mangled_name: String,
+    subst: HashMap<String, Type>,
+}
+
+fn function_type_params(parameters: &[Parameter]) -> Vec<String> {
+    let mut names = Vec::new();
+    for parameter in parameters {
+        collect_type_params(&parameter_type(parameter), &mut names);
+    }
+    names
+}
+
+fn function_is_generic(parameters: &[Parameter]) -> bool {
+    !function_type_params(parameters).is_empty()
+}
+
+fn collect_type_params(ty: &Type, out: &mut Vec<String>) {
+    match ty {
+        Type::TypeParam(name) => {
+            if !out.contains(name) {
+                out.push(name.clone());
+            }
+        }
+        Type::Proc(params, ret) => {
+            for param in params {
+                collect_type_params(param, out);
+            }
+            collect_type_params(ret, out);
+        }
+        _ => {
+            if let Some(inner) = single_inner(ty) {
+                collect_type_params(inner, out);
+            }
+        }
+    }
+}
+
+fn single_inner(ty: &Type) -> Option<&Type> {
+    match ty {
+        Type::Ptr(inner)
+        | Type::Ref(inner)
+        | Type::RefMut(inner)
+        | Type::Array(inner, _)
+        | Type::Slice(inner)
+        | Type::Optional(inner)
+        | Type::Handle(inner)
+        | Type::Distinct(inner) => Some(inner),
+        _ => None,
+    }
+}
+
+fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
+    match ty {
+        Type::TypeParam(name) | Type::Struct(name) => {
+            if let Some(concrete) = subst.get(name) {
+                return concrete.clone();
+            }
+            ty.clone()
+        }
+        Type::Ptr(inner) => Type::Ptr(Box::new(substitute_type(inner, subst))),
+        Type::Ref(inner) => Type::Ref(Box::new(substitute_type(inner, subst))),
+        Type::RefMut(inner) => {
+            Type::RefMut(Box::new(substitute_type(inner, subst)))
+        }
+        Type::Array(inner, size) => {
+            Type::Array(Box::new(substitute_type(inner, subst)), *size)
+        }
+        Type::Slice(inner) => {
+            Type::Slice(Box::new(substitute_type(inner, subst)))
+        }
+        Type::Optional(inner) => {
+            Type::Optional(Box::new(substitute_type(inner, subst)))
+        }
+        Type::Handle(inner) => {
+            Type::Handle(Box::new(substitute_type(inner, subst)))
+        }
+        Type::Distinct(inner) => {
+            Type::Distinct(Box::new(substitute_type(inner, subst)))
+        }
+        Type::Proc(params, ret) => Type::Proc(
+            params.iter().map(|p| substitute_type(p, subst)).collect(),
+            Box::new(substitute_type(ret, subst)),
+        ),
+        other => other.clone(),
+    }
+}
+
+fn infer_subst_into(
+    pattern: &Type,
+    concrete: &Type,
+    type_params: &[String],
+    subst: &mut HashMap<String, Type>,
+) {
+    match pattern {
+        Type::TypeParam(name) => {
+            subst
+                .entry(name.clone())
+                .or_insert_with(|| concrete.clone());
+            return;
+        }
+        Type::Struct(name) if type_params.contains(name) => {
+            subst
+                .entry(name.clone())
+                .or_insert_with(|| concrete.clone());
+            return;
+        }
+        _ => {}
+    }
+    if let (Some(pattern_inner), Some(concrete_inner)) =
+        (single_inner(pattern), single_inner(concrete))
+    {
+        infer_subst_into(pattern_inner, concrete_inner, type_params, subst);
+    } else if let (Type::Proc(pp, pr), Type::Proc(cp, cr)) = (pattern, concrete)
+    {
+        for (pattern_param, concrete_param) in pp.iter().zip(cp) {
+            infer_subst_into(pattern_param, concrete_param, type_params, subst);
+        }
+        infer_subst_into(pr, cr, type_params, subst);
+    }
+}
+
+fn mangle_type(ty: &Type) -> String {
+    match ty {
+        Type::I8 => "i8".to_string(),
+        Type::I16 => "i16".to_string(),
+        Type::I32 => "i32".to_string(),
+        Type::I64 => "i64".to_string(),
+        Type::Isize => "isize".to_string(),
+        Type::U8 => "u8".to_string(),
+        Type::U16 => "u16".to_string(),
+        Type::U32 => "u32".to_string(),
+        Type::U64 => "u64".to_string(),
+        Type::Usize => "usize".to_string(),
+        Type::F32 => "f32".to_string(),
+        Type::F64 => "f64".to_string(),
+        Type::Bool => "bool".to_string(),
+        Type::Struct(name) | Type::Enum(name) => name.clone(),
+        Type::Ptr(inner) => format!("p_{}", mangle_type(inner)),
+        Type::Ref(inner) => format!("r_{}", mangle_type(inner)),
+        Type::RefMut(inner) => format!("rm_{}", mangle_type(inner)),
+        Type::Array(inner, size) => format!("a{}_{}", size, mangle_type(inner)),
+        Type::Handle(inner) => format!("h_{}", mangle_type(inner)),
+        Type::Proc(_, _) => "proc".to_string(),
+        other => format!("{other}"),
+    }
+}
+
+fn mangle_specialization(
+    name: &str,
+    type_params: &[String],
+    subst: &HashMap<String, Type>,
+) -> String {
+    let mut mangled = name.to_string();
+    for type_param in type_params {
+        mangled.push_str("__");
+        match subst.get(type_param) {
+            Some(concrete) => mangled.push_str(&mangle_type(concrete)),
+            None => mangled.push_str("unknown"),
+        }
+    }
+    mangled
+}
+
+fn substitute_block(block: &Block, subst: &HashMap<String, Type>) -> Block {
+    block
+        .iter()
+        .map(|statement| substitute_statement(statement, subst))
+        .collect()
+}
+
+fn substitute_statement(
+    statement: &Statement,
+    subst: &HashMap<String, Type>,
+) -> Statement {
+    match statement {
+        Statement::Let {
+            name,
+            type_annotation,
+            value,
+            mutable,
+        } => Statement::Let {
+            name: name.clone(),
+            type_annotation: type_annotation
+                .as_ref()
+                .map(|ty| substitute_type(ty, subst)),
+            value: substitute_expression(value, subst),
+            mutable: *mutable,
+        },
+        Statement::Return(expression) => {
+            Statement::Return(substitute_expression(expression, subst))
+        }
+        Statement::Expression(expression) => {
+            Statement::Expression(substitute_expression(expression, subst))
+        }
+        Statement::Assignment(target, value) => Statement::Assignment(
+            substitute_expression(target, subst),
+            substitute_expression(value, subst),
+        ),
+        Statement::For(variable, range, body) => Statement::For(
+            variable.clone(),
+            substitute_expression(range, subst),
+            substitute_block(body, subst),
+        ),
+        Statement::While(condition, body) => Statement::While(
+            substitute_expression(condition, subst),
+            substitute_block(body, subst),
+        ),
+        Statement::Defer(inner) => {
+            Statement::Defer(Box::new(substitute_statement(inner, subst)))
+        }
+        other => other.clone(),
+    }
+}
+
+fn substitute_expression(
+    expression: &Expression,
+    subst: &HashMap<String, Type>,
+) -> Expression {
+    match expression {
+        Expression::Prefix(operator, operand) => Expression::Prefix(
+            *operator,
+            Box::new(substitute_expression(operand, subst)),
+        ),
+        Expression::Infix(left, operator, right) => Expression::Infix(
+            Box::new(substitute_expression(left, subst)),
+            *operator,
+            Box::new(substitute_expression(right, subst)),
+        ),
+        Expression::If(condition, consequence, alternative) => Expression::If(
+            Box::new(substitute_expression(condition, subst)),
+            substitute_block(consequence, subst),
+            alternative
+                .as_ref()
+                .map(|block| substitute_block(block, subst)),
+        ),
+        Expression::Call(callee, arguments) => Expression::Call(
+            Box::new(substitute_expression(callee, subst)),
+            arguments
+                .iter()
+                .map(|argument| substitute_expression(argument, subst))
+                .collect(),
+        ),
+        Expression::Index(base, index) => Expression::Index(
+            Box::new(substitute_expression(base, subst)),
+            Box::new(substitute_expression(index, subst)),
+        ),
+        Expression::FieldAccess(base, field) => Expression::FieldAccess(
+            Box::new(substitute_expression(base, subst)),
+            field.clone(),
+        ),
+        Expression::AddressOf(inner) => {
+            Expression::AddressOf(Box::new(substitute_expression(inner, subst)))
+        }
+        Expression::Borrow(inner) => {
+            Expression::Borrow(Box::new(substitute_expression(inner, subst)))
+        }
+        Expression::BorrowMut(inner) => {
+            Expression::BorrowMut(Box::new(substitute_expression(inner, subst)))
+        }
+        Expression::Dereference(inner) => Expression::Dereference(Box::new(
+            substitute_expression(inner, subst),
+        )),
+        Expression::StructInit(name, fields) => Expression::StructInit(
+            name.clone(),
+            fields
+                .iter()
+                .map(|(field, value)| {
+                    (field.clone(), substitute_expression(value, subst))
+                })
+                .collect(),
+        ),
+        Expression::EnumVariantInit(name, variant, fields) => {
+            Expression::EnumVariantInit(
+                name.clone(),
+                variant.clone(),
+                fields
+                    .iter()
+                    .map(|(field, value)| {
+                        (field.clone(), substitute_expression(value, subst))
+                    })
+                    .collect(),
+            )
+        }
+        Expression::Sizeof(ty) => {
+            Expression::Sizeof(substitute_type(ty, subst))
+        }
+        Expression::Range(start, end, inclusive) => Expression::Range(
+            Box::new(substitute_expression(start, subst)),
+            Box::new(substitute_expression(end, subst)),
+            *inclusive,
+        ),
+        Expression::Tuple(elements) => Expression::Tuple(
+            elements
+                .iter()
+                .map(|element| substitute_expression(element, subst))
+                .collect(),
+        ),
+        Expression::Switch(scrutinee, cases) => Expression::Switch(
+            Box::new(substitute_expression(scrutinee, subst)),
+            cases
+                .iter()
+                .map(|case| SwitchCase {
+                    pattern: case.pattern.clone(),
+                    body: substitute_block(&case.body, subst),
+                })
+                .collect(),
+        ),
+        other => other.clone(),
+    }
 }
 
 fn needs_memory(ty: &Type) -> bool {
@@ -470,6 +869,7 @@ struct FunctionLowering<'a> {
     loops: Vec<LoopTargets>,
     current: BlockId,
     return_type: Type,
+    specializations: Vec<Specialization>,
 }
 
 impl<'a> FunctionLowering<'a> {
@@ -486,6 +886,7 @@ impl<'a> FunctionLowering<'a> {
             loops: Vec::new(),
             current: 0,
             return_type,
+            specializations: Vec::new(),
         }
     }
 
@@ -1230,11 +1631,109 @@ impl<'a> FunctionLowering<'a> {
     ) -> Result<(IrOperand, Type)> {
         if let Expression::Identifier(name) = callee
             && self.resolve_variable(name).is_none()
-            && self.builder.signature(name).is_some()
         {
-            return self.lower_direct_call(name, arguments);
+            if self.builder.generic_functions.contains_key(name) {
+                return self.lower_generic_call(name, arguments);
+            }
+            if self.builder.signature(name).is_some() {
+                return self.lower_direct_call(name, arguments);
+            }
         }
         self.lower_indirect_call(callee, arguments)
+    }
+
+    fn lower_generic_call(
+        &mut self,
+        name: &str,
+        arguments: &[Expression],
+    ) -> Result<(IrOperand, Type)> {
+        let generic = self
+            .builder
+            .generic_functions
+            .get(name)
+            .expect("generic function exists")
+            .clone();
+
+        if arguments.len() != generic.parameters.len() {
+            bail!(
+                "native backend: generic function '{name}' expects {} argument(s) but {} were given",
+                generic.parameters.len(),
+                arguments.len()
+            );
+        }
+
+        let mut argument_operands = Vec::with_capacity(arguments.len());
+        let mut argument_types = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            let (operand, value_type) =
+                self.lower_expression(argument, None)?;
+            argument_operands.push(operand);
+            argument_types.push(value_type);
+        }
+
+        let mut subst: HashMap<String, Type> = HashMap::new();
+        for (parameter, value_type) in
+            generic.parameters.iter().zip(&argument_types)
+        {
+            infer_subst_into(
+                &parameter_type(parameter),
+                value_type,
+                &generic.type_params,
+                &mut subst,
+            );
+        }
+
+        let parameter_types: Vec<Type> = generic
+            .parameters
+            .iter()
+            .map(|parameter| {
+                substitute_type(&parameter_type(parameter), &subst)
+            })
+            .collect();
+        let return_type = generic
+            .return_sig
+            .to_type()
+            .map(|ty| substitute_type(&ty, &subst))
+            .unwrap_or(Type::Void);
+        let mangled_name =
+            mangle_specialization(name, &generic.type_params, &subst);
+
+        self.specializations.push(Specialization {
+            generic_name: name.to_string(),
+            mangled_name: mangled_name.clone(),
+            subst,
+        });
+
+        let mut lowered = Vec::with_capacity(arguments.len());
+        for ((operand, value_type), target) in argument_operands
+            .into_iter()
+            .zip(&argument_types)
+            .zip(&parameter_types)
+        {
+            if needs_memory(target) {
+                let IrOperand::Local(local) = operand else {
+                    bail!(
+                        "native backend: aggregate argument to generic call is not a place"
+                    );
+                };
+                lowered.push(self.address_of_local(local, target));
+            } else {
+                lowered.push(self.coerce(operand, value_type, target));
+            }
+        }
+
+        let result = self.fresh_local(return_type.clone(), None);
+        if needs_memory(&return_type) {
+            self.mark_in_memory(result);
+        }
+        self.emit(IrStatement::Assign(
+            result,
+            IrRvalue::Call {
+                function: mangled_name,
+                arguments: lowered,
+            },
+        ));
+        Ok((IrOperand::Local(result), return_type))
     }
 
     fn lower_direct_call(
