@@ -1,0 +1,53 @@
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+pool_new :: extern fn(capacity: i64, elem_size: i64) -> ^u8
+pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
+pool_get :: extern fn(pool: ^u8, handle: i64) -> ^u8
+pool_free :: extern fn(pool: ^u8, handle: i64) -> i64
+pool_contains :: extern fn(pool: ^u8, handle: i64) -> i64
+
+Stats :: struct { hp: i64, xp: i64, slot: i64 }
+Unit :: struct { id: i64, stats: Stats }
+
+main :: fn() -> i64 {
+    p := pool_new(4, 32)
+
+    mut handles := [0, 0, 0, 0]
+    for i in 0..4 {
+        mut u := Unit { id = i, stats = Stats { hp = i * 10, xp = i, slot = i } }
+        handles[i] = pool_alloc(p, &u)
+    }
+
+    mut alive : i64 = 0
+    for i in 0..4 {
+        if (pool_contains(p, handles[i]) == 1) {
+            alive = alive + 1
+        }
+    }
+    printf("%lld\n", alive)
+
+    mut extra := Unit { id = 4, stats = Stats { hp = 1, xp = 1, slot = 1 } }
+    exhausted := pool_alloc(p, &extra)
+    printf("%lld\n", exhausted)
+
+    printf("%lld\n", pool_free(p, handles[1]))
+    printf("%lld\n", pool_free(p, handles[3]))
+
+    mut sum_hp : i64 = 0
+    for i in 0..4 {
+        if (pool_contains(p, handles[i]) == 1) {
+            u : ^Unit = pool_get(p, handles[i])
+            sum_hp = sum_hp + u^.stats.hp
+        }
+    }
+    printf("%lld\n", sum_hp)
+
+    mut r := Unit { id = 99, stats = Stats { hp = 500, xp = 0, slot = 0 } }
+    h_new := pool_alloc(p, &r)
+    printf("%lld\n", pool_contains(p, h_new))
+    printf("%lld\n", pool_contains(p, handles[3]))
+    reborn : ^Unit = pool_get(p, h_new)
+    printf("%lld\n", reborn^.id)
+    printf("%lld\n", reborn^.stats.hp)
+    0
+}
