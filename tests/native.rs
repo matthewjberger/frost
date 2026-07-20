@@ -15,6 +15,10 @@ fn linker_available() -> bool {
 }
 
 fn compile_and_run(name: &str, source: &str) -> Option<String> {
+    run_backend(name, source, false)
+}
+
+fn run_backend(name: &str, source: &str, emit_c: bool) -> Option<String> {
     if !linker_available() {
         return None;
     }
@@ -28,16 +32,19 @@ fn compile_and_run(name: &str, source: &str) -> Option<String> {
     std::fs::write(&source_path, source).unwrap();
 
     let frost = env!("CARGO_BIN_EXE_frost");
-    let compile = Command::new(frost)
+    let mut command = Command::new(frost);
+    if emit_c {
+        command.arg("--emit-c");
+    }
+    command
         .arg("--link")
         .arg("-o")
         .arg(&exe_path)
-        .arg(&source_path)
-        .output()
-        .unwrap();
+        .arg(&source_path);
+    let compile = command.output().unwrap();
     assert!(
         compile.status.success(),
-        "compilation failed for {name}:\n{}",
+        "compilation failed for {name} (emit_c={emit_c}):\n{}",
         String::from_utf8_lossy(&compile.stderr)
     );
 
@@ -317,4 +324,29 @@ fn native_enums_and_match() {
         return;
     };
     assert_eq!(output, "42\n-404\n4\n3\n0\n");
+}
+
+#[test]
+fn cranelift_and_c_backends_agree() {
+    let programs = [
+        ("diff_arith", ARITHMETIC),
+        ("diff_floats", FLOATS),
+        ("diff_widths", WIDTHS),
+        ("diff_strings", STRINGS),
+        ("diff_pointers", POINTERS),
+        ("diff_structs", STRUCTS),
+        ("diff_arrays", ARRAYS),
+        ("diff_enums", ENUMS),
+    ];
+    for (name, source) in programs {
+        let native = run_backend(name, source, false);
+        let via_c = run_backend(name, source, true);
+        if native.is_none() {
+            return;
+        }
+        assert_eq!(
+            native, via_c,
+            "Cranelift and C backends disagree on {name}"
+        );
+    }
 }

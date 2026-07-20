@@ -35,7 +35,9 @@ The **bytecode VM** is the mature, default path used by the REPL and by
 The **typed IR** is the new spine for native compilation and, over time, the
 single place where type checking and ownership/linearity checking will be
 discharged. `--native` / `--link` lower the AST to the IR and emit machine
-code from it.
+code from it via Cranelift; `--emit-c` lowers the same IR to portable C.
+Because both native backends emit from one IR, a differential test compiles
+each program through both and asserts their output matches.
 
 ## Typed IR
 
@@ -59,11 +61,13 @@ translation so each value carries a real type. Anything outside the supported
 subset fails loudly with a `native backend: ...` error rather than emitting
 incorrect code.
 
-## Native backend (Cranelift)
+## Native backends
 
-`src/ir_codegen.rs` emits a relocatable object from the IR and links it with
-the system C toolchain. Because it emits from the typed IR, it uses the
-correct Cranelift instruction and type for each operation.
+`src/ir_codegen.rs` emits a relocatable object from the IR via Cranelift and
+links it with the system C toolchain. `src/ir_c.rs` emits portable C from the
+same IR (`--emit-c`), which the system C compiler builds. Both use the
+correct type and operation for each value because the IR is fully typed, and
+`tests/native.rs` checks that the two backends agree on every program.
 
 **Working today**, verified by running native binaries (`tests/native.rs`):
 
