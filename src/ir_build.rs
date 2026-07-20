@@ -1206,6 +1206,14 @@ impl<'a> FunctionLowering<'a> {
         let parameter_types = signature.parameters.clone();
         let return_type = signature.return_type.clone();
 
+        if arguments.len() != parameter_types.len() {
+            bail!(
+                "native backend: function '{name}' expects {} argument(s) but {} were given",
+                parameter_types.len(),
+                arguments.len()
+            );
+        }
+
         let mut lowered = Vec::with_capacity(arguments.len());
         for (index, argument) in arguments.iter().enumerate() {
             let expected = parameter_types.get(index);
@@ -1253,6 +1261,13 @@ impl<'a> FunctionLowering<'a> {
         if needs_memory(&return_type) {
             bail!(
                 "native backend: indirect call returning an aggregate is not supported yet"
+            );
+        }
+        if arguments.len() != parameter_types.len() {
+            bail!(
+                "native backend: function pointer expects {} argument(s) but {} were given",
+                parameter_types.len(),
+                arguments.len()
             );
         }
 
