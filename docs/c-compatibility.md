@@ -36,6 +36,13 @@ main :: fn() -> i64 {
   equivalents (`i32`→`int32_t`, `u8`→`uint8_t`, `f64`→`double`), and pointer /
   reference types (`^T`, `&T`, `&mut T`) map to pointers. So an `extern`
   signature is a direct description of the C function's ABI.
+- **Aggregate parameters are passed by pointer.** A `struct`/`enum`/array
+  parameter to an `extern fn` is passed as a pointer to the value, not
+  by-value-in-registers. So `close :: extern fn(f: File)` links against a C
+  `void close(File* f)`. This matches the common C convention (most APIs take
+  structs by pointer) and is how a `linear` resource's terminal consumer works
+  natively: the `extern` takes ownership across the boundary, receiving a
+  pointer to the moved-in aggregate.
 - **The linker gets a real C compiler.** Both backends finish by invoking
   `cc`/`gcc`/`clang` (or `cl` on MSVC), so C symbols resolve normally and you can
   pass extra libraries with `--libs`.

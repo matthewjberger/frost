@@ -30,7 +30,12 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
     for external in &module.externs {
         let mut params = Vec::new();
         for (index, param) in external.params.iter().enumerate() {
-            params.push(format!("{} a{index}", c_type(param)?));
+            let c_ty = if is_aggregate(param) {
+                "char*".to_string()
+            } else {
+                c_type(param)?
+            };
+            params.push(format!("{c_ty} a{index}"));
         }
         let params = if params.is_empty() {
             "void".to_string()
