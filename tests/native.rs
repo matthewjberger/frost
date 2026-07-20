@@ -125,6 +125,33 @@ fn native_float_operations() {
     assert_eq!(output, "1\n1\n0\n");
 }
 
+const F32_OPERATIONS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+scale :: fn(x: f32, k: f32) -> f32 { x * k }
+
+main :: fn() -> i64 {
+    a : f32 = 1.5
+    b : f32 = 2.5
+    c : f32 = a + b
+    printf("%lld\n", if (c == 4.0) { 1 } else { 0 })
+    widened : f64 = c
+    printf("%lld\n", if (widened == 4.0) { 1 } else { 0 })
+    printf("%lld\n", if (scale(3.0, 2.5) == 7.5) { 1 } else { 0 })
+    arr : [3]f32 = [1.5, 2.5, 3.0]
+    printf("%lld\n", if (arr[1] == 2.5) { 1 } else { 0 })
+    0
+}
+"#;
+
+#[test]
+fn native_f32_operations() {
+    let Some(output) = compile_and_run("f32ops", F32_OPERATIONS) else {
+        return;
+    };
+    assert_eq!(output, "1\n1\n1\n1\n");
+}
+
 const WIDTHS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -962,6 +989,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_genpool", GENERATIONAL_POOL),
         ("diff_widening", WIDENING_BINDINGS),
         ("diff_matchagg", MATCH_RETURNS_AGGREGATE),
+        ("diff_f32", F32_OPERATIONS),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
