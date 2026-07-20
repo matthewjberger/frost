@@ -399,6 +399,16 @@ impl Translator<'_, '_> {
                 );
                 Ok(())
             }
+            IrStatement::Copy {
+                destination,
+                source,
+                size,
+            } => {
+                let destination_value = self.operand(destination)?;
+                let source_value = self.operand(source)?;
+                self.emit_memcpy(destination_value, source_value, *size);
+                Ok(())
+            }
         }
     }
 
@@ -867,6 +877,14 @@ fn collect_strings(
                     IrStatement::Store { address, value } => {
                         collect_operand_strings(address, handle)?;
                         collect_operand_strings(value, handle)?;
+                    }
+                    IrStatement::Copy {
+                        destination,
+                        source,
+                        ..
+                    } => {
+                        collect_operand_strings(destination, handle)?;
+                        collect_operand_strings(source, handle)?;
                     }
                 }
             }

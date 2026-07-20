@@ -95,6 +95,11 @@ pub enum IrStatement {
         address: IrOperand,
         value: IrOperand,
     },
+    Copy {
+        destination: IrOperand,
+        source: IrOperand,
+        size: usize,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -261,6 +266,13 @@ impl Display for IrStatement {
             }
             IrStatement::Store { address, value } => {
                 write!(f, "store {value} -> [{address}]")
+            }
+            IrStatement::Copy {
+                destination,
+                source,
+                size,
+            } => {
+                write!(f, "copy {size} bytes [{source}] -> [{destination}]")
             }
         }
     }

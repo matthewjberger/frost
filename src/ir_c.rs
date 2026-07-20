@@ -217,6 +217,19 @@ fn emit_statement(
             )?;
             Ok(())
         }
+        IrStatement::Copy {
+            destination,
+            source,
+            size,
+        } => {
+            writeln!(
+                output,
+                "  __builtin_memcpy({}, {}, {size});",
+                operand_expr(function, destination)?,
+                operand_expr(function, source)?
+            )?;
+            Ok(())
+        }
     }
 }
 
