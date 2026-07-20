@@ -699,6 +699,40 @@ fn native_enum_returned_by_value() {
     assert_eq!(output, "8\n-1\n");
 }
 
+const FIELD_BORROW: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Point :: struct { x: i64, y: i64 }
+
+bump :: fn(field: &mut i64) {
+    field^ = field^ + 100
+}
+
+origin :: fn() -> Point {
+    Point { x = 7, y = 9 }
+}
+
+main :: fn() -> i64 {
+    mut p := Point { x = 1, y = 2 }
+    bump(&mut p.x)
+    printf("%lld\n", p.x)
+    printf("%lld\n", p.y)
+
+    q := origin()
+    printf("%lld\n", q.x)
+    printf("%lld\n", q.y)
+    0
+}
+"#;
+
+#[test]
+fn native_field_borrow_and_returned_struct() {
+    let Some(output) = compile_and_run("field_borrow", FIELD_BORROW) else {
+        return;
+    };
+    assert_eq!(output, "101\n2\n7\n9\n");
+}
+
 #[test]
 fn native_showcase_examples_build_and_agree() {
     if !linker_available() {
@@ -744,6 +778,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_layouts", DATA_LAYOUTS),
         ("diff_payloads", AGGREGATE_PAYLOADS),
         ("diff_enumval", ENUM_BY_VALUE),
+        ("diff_fieldborrow", FIELD_BORROW),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
