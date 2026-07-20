@@ -406,9 +406,14 @@ fn size_and_align(
     enums: &HashMap<String, EnumLayout>,
 ) -> Option<(usize, usize)> {
     match ty {
-        Type::Struct(name) => {
-            structs.get(name).map(|layout| (layout.size, layout.align))
-        }
+        // A named type from an annotation parses as `Struct`, even when it
+        // names an enum, so fall back to the enum registry.
+        Type::Struct(name) => structs
+            .get(name)
+            .map(|layout| (layout.size, layout.align))
+            .or_else(|| {
+                enums.get(name).map(|layout| (layout.size, layout.align))
+            }),
         Type::Enum(name) => {
             enums.get(name).map(|layout| (layout.size, layout.align))
         }

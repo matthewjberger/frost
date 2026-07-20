@@ -655,6 +655,50 @@ fn native_aggregate_enum_payloads_and_2d_arrays() {
     assert_eq!(output, "7\n107\n3\n5\n99\n");
 }
 
+const ENUM_BY_VALUE: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Option :: enum {
+    Some { value: i64 },
+    None,
+}
+
+find_first_even :: fn(a: &[6]i64) -> Option {
+    for i in 0..6 {
+        if (a[i] % 2 == 0) {
+            return Option::Some { value = a[i] }
+        }
+    }
+    Option::None
+}
+
+unwrap_or :: fn(o: &Option, fallback: i64) -> i64 {
+    match o {
+        case .Some { value }: value
+        case .None: fallback
+    }
+}
+
+main :: fn() -> i64 {
+    data := [1, 3, 5, 8, 9, 10]
+    r := find_first_even(&data)
+    printf("%lld\n", unwrap_or(&r, 0 - 1))
+
+    odds := [1, 3, 5, 7, 9, 11]
+    r2 := find_first_even(&odds)
+    printf("%lld\n", unwrap_or(&r2, 0 - 1))
+    0
+}
+"#;
+
+#[test]
+fn native_enum_returned_by_value() {
+    let Some(output) = compile_and_run("enum_byval", ENUM_BY_VALUE) else {
+        return;
+    };
+    assert_eq!(output, "8\n-1\n");
+}
+
 #[test]
 fn native_showcase_examples_build_and_agree() {
     if !linker_available() {
@@ -699,6 +743,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_nested", NESTED_STRUCTS),
         ("diff_layouts", DATA_LAYOUTS),
         ("diff_payloads", AGGREGATE_PAYLOADS),
+        ("diff_enumval", ENUM_BY_VALUE),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
