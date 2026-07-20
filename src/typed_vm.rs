@@ -4,7 +4,7 @@ use crate::{
     CompiledFunction, HeapObject, Instruction, Opcode, TypedBuiltIn,
     TypedClosure, Value64,
 };
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::collections::HashMap;
 
 const STACK_SIZE: usize = 2048;
@@ -356,15 +356,18 @@ impl VirtualMachine {
         let main_fn_index = self.functions.len() as u32;
         self.functions.push(main_fn);
 
-        let default_allocator_idx = self.allocate_heap(HeapObject::Arena(ArenaData::new(65536)));
-        let default_temp_allocator_idx = self.allocate_heap(HeapObject::Arena(ArenaData::new(65536)));
+        let default_allocator_idx =
+            self.allocate_heap(HeapObject::Arena(ArenaData::new(65536)));
+        let default_temp_allocator_idx =
+            self.allocate_heap(HeapObject::Arena(ArenaData::new(65536)));
         let default_context = RuntimeContext {
             allocator: Value64::HeapRef(default_allocator_idx),
             temp_allocator: Value64::HeapRef(default_temp_allocator_idx),
             logger: Value64::Null,
         };
 
-        let main_frame = Frame::new_with_context(main_fn_index, 0, vec![], default_context);
+        let main_frame =
+            Frame::new_with_context(main_fn_index, 0, vec![], default_context);
         self.push_frame(main_frame);
 
         while self.frame_index > 0 {
@@ -635,48 +638,68 @@ impl VirtualMachine {
                             Opcode::NotEqual,
                         ) => l != r,
                         (Value64::HeapRef(l), Value64::HeapRef(r), op) => {
-                            match (&self.heap[l as usize], &self.heap[r as usize]) {
-                                (HeapObject::String(ls), HeapObject::String(rs)) => {
-                                    match op {
+                            match (
+                                &self.heap[l as usize],
+                                &self.heap[r as usize],
+                            ) {
+                                (
+                                    HeapObject::String(ls),
+                                    HeapObject::String(rs),
+                                ) => match op {
+                                    Opcode::Equal => ls == rs,
+                                    Opcode::NotEqual => ls != rs,
+                                    Opcode::GreaterThan => ls > rs,
+                                    _ => unreachable!(),
+                                },
+                                _ => bail!("unsupported heap comparison"),
+                            }
+                        }
+                        (Value64::Integer(addr), Value64::HeapRef(r), op)
+                            if (addr as u64) & 0x80000000 != 0 =>
+                        {
+                            let stack_addr =
+                                (addr as u64 & !0x80000000) as usize;
+                            if let Value64::HeapRef(l) = self.stack[stack_addr]
+                            {
+                                match (
+                                    &self.heap[l as usize],
+                                    &self.heap[r as usize],
+                                ) {
+                                    (
+                                        HeapObject::String(ls),
+                                        HeapObject::String(rs),
+                                    ) => match op {
                                         Opcode::Equal => ls == rs,
                                         Opcode::NotEqual => ls != rs,
                                         Opcode::GreaterThan => ls > rs,
                                         _ => unreachable!(),
-                                    }
-                                }
-                                _ => bail!("unsupported heap comparison"),
-                            }
-                        }
-                        (Value64::Integer(addr), Value64::HeapRef(r), op) if (addr as u64) & 0x80000000 != 0 => {
-                            let stack_addr = (addr as u64 & !0x80000000) as usize;
-                            if let Value64::HeapRef(l) = self.stack[stack_addr] {
-                                match (&self.heap[l as usize], &self.heap[r as usize]) {
-                                    (HeapObject::String(ls), HeapObject::String(rs)) => {
-                                        match op {
-                                            Opcode::Equal => ls == rs,
-                                            Opcode::NotEqual => ls != rs,
-                                            Opcode::GreaterThan => ls > rs,
-                                            _ => unreachable!(),
-                                        }
-                                    }
+                                    },
                                     _ => bail!("unsupported heap comparison"),
                                 }
                             } else {
                                 bail!("expected string reference")
                             }
                         }
-                        (Value64::HeapRef(l), Value64::Integer(addr), op) if (addr as u64) & 0x80000000 != 0 => {
-                            let stack_addr = (addr as u64 & !0x80000000) as usize;
-                            if let Value64::HeapRef(r) = self.stack[stack_addr] {
-                                match (&self.heap[l as usize], &self.heap[r as usize]) {
-                                    (HeapObject::String(ls), HeapObject::String(rs)) => {
-                                        match op {
-                                            Opcode::Equal => ls == rs,
-                                            Opcode::NotEqual => ls != rs,
-                                            Opcode::GreaterThan => ls > rs,
-                                            _ => unreachable!(),
-                                        }
-                                    }
+                        (Value64::HeapRef(l), Value64::Integer(addr), op)
+                            if (addr as u64) & 0x80000000 != 0 =>
+                        {
+                            let stack_addr =
+                                (addr as u64 & !0x80000000) as usize;
+                            if let Value64::HeapRef(r) = self.stack[stack_addr]
+                            {
+                                match (
+                                    &self.heap[l as usize],
+                                    &self.heap[r as usize],
+                                ) {
+                                    (
+                                        HeapObject::String(ls),
+                                        HeapObject::String(rs),
+                                    ) => match op {
+                                        Opcode::Equal => ls == rs,
+                                        Opcode::NotEqual => ls != rs,
+                                        Opcode::GreaterThan => ls > rs,
+                                        _ => unreachable!(),
+                                    },
                                     _ => bail!("unsupported heap comparison"),
                                 }
                             } else {
@@ -867,7 +890,9 @@ impl VirtualMachine {
                                 let value = self.globals[global_idx];
                                 self.push(value)?;
                             } else {
-                                bail!("heap pointer access not supported in typed VM yet");
+                                bail!(
+                                    "heap pointer access not supported in typed VM yet"
+                                );
                             }
                         }
                         _ => bail!("LoadPtr requires an integer pointer"),
@@ -886,7 +911,9 @@ impl VirtualMachine {
                                 let global_idx = addr & 0x3FFFFFFF;
                                 self.globals[global_idx] = value;
                             } else {
-                                bail!("heap pointer store not supported in typed VM yet");
+                                bail!(
+                                    "heap pointer store not supported in typed VM yet"
+                                );
                             }
                         }
                         _ => bail!("StorePtr requires an integer pointer"),
@@ -959,10 +986,9 @@ impl VirtualMachine {
                         Value64::HeapRef(idx) => {
                             if let HeapObject::Struct(_, fields) =
                                 &mut self.heap[idx as usize]
+                                && offset < fields.len()
                             {
-                                if offset < fields.len() {
-                                    fields[offset] = value;
-                                }
+                                fields[offset] = value;
                             }
                             self.push(struct_val)?;
                         }
@@ -979,12 +1005,11 @@ impl VirtualMachine {
                 Opcode::TaggedUnionSetTag => {
                     let tag = instruction.operands[0] as u32;
                     let union_val = self.stack[self.stack_pointer - 1];
-                    if let Value64::HeapRef(idx) = union_val {
-                        if let HeapObject::TaggedUnion(t, _) =
+                    if let Value64::HeapRef(idx) = union_val
+                        && let HeapObject::TaggedUnion(t, _) =
                             &mut self.heap[idx as usize]
-                        {
-                            *t = tag;
-                        }
+                    {
+                        *t = tag;
                     }
                 }
                 Opcode::TaggedUnionGetTag => {
@@ -996,13 +1021,17 @@ impl VirtualMachine {
                             {
                                 self.push(Value64::Integer(*tag as i64))?;
                             } else {
-                                bail!("TaggedUnionGetTag requires a tagged union");
+                                bail!(
+                                    "TaggedUnionGetTag requires a tagged union"
+                                );
                             }
                         }
                         Value64::Integer(tag) => {
                             self.push(Value64::Integer(tag))?;
                         }
-                        _ => bail!("TaggedUnionGetTag requires a heap reference or integer"),
+                        _ => bail!(
+                            "TaggedUnionGetTag requires a heap reference or integer"
+                        ),
                     }
                 }
                 Opcode::TaggedUnionGetField => {
@@ -1030,14 +1059,12 @@ impl VirtualMachine {
                     let offset = instruction.operands[0] as usize;
                     let value = self.pop()?;
                     let union_val = self.stack[self.stack_pointer - 1];
-                    if let Value64::HeapRef(idx) = union_val {
-                        if let HeapObject::TaggedUnion(_, fields) =
+                    if let Value64::HeapRef(idx) = union_val
+                        && let HeapObject::TaggedUnion(_, fields) =
                             &mut self.heap[idx as usize]
-                        {
-                            if offset < fields.len() {
-                                fields[offset] = value;
-                            }
-                        }
+                        && offset < fields.len()
+                    {
+                        fields[offset] = value;
                     }
                 }
                 Opcode::TupleAlloc => {
@@ -1087,20 +1114,33 @@ impl VirtualMachine {
                         context.temp_allocator,
                         context.logger,
                     ];
-                    let heap_index = self.allocate_heap(HeapObject::Struct("Context".to_string(), fields));
+                    let heap_index = self.allocate_heap(HeapObject::Struct(
+                        "Context".to_string(),
+                        fields,
+                    ));
                     self.push(Value64::HeapRef(heap_index))?;
                 }
                 Opcode::SetContext => {
                     let context_val = self.pop()?;
-                    if let Value64::HeapRef(idx) = context_val {
-                        if let HeapObject::Struct(_, fields) = &self.heap[idx as usize] {
-                            let new_context = RuntimeContext {
-                                allocator: fields.first().copied().unwrap_or(Value64::Null),
-                                temp_allocator: fields.get(1).copied().unwrap_or(Value64::Null),
-                                logger: fields.get(2).copied().unwrap_or(Value64::Null),
-                            };
-                            self.current_frame_mut().context = new_context;
-                        }
+                    if let Value64::HeapRef(idx) = context_val
+                        && let HeapObject::Struct(_, fields) =
+                            &self.heap[idx as usize]
+                    {
+                        let new_context = RuntimeContext {
+                            allocator: fields
+                                .first()
+                                .copied()
+                                .unwrap_or(Value64::Null),
+                            temp_allocator: fields
+                                .get(1)
+                                .copied()
+                                .unwrap_or(Value64::Null),
+                            logger: fields
+                                .get(2)
+                                .copied()
+                                .unwrap_or(Value64::Null),
+                        };
+                        self.current_frame_mut().context = new_context;
                     }
                 }
                 Opcode::GetContextField => {
@@ -1119,7 +1159,10 @@ impl VirtualMachine {
                     let value = self.pop()?;
                     match field_index {
                         0 => self.current_frame_mut().context.allocator = value,
-                        1 => self.current_frame_mut().context.temp_allocator = value,
+                        1 => {
+                            self.current_frame_mut().context.temp_allocator =
+                                value
+                        }
                         2 => self.current_frame_mut().context.logger = value,
                         _ => {}
                     }
@@ -1160,8 +1203,12 @@ impl VirtualMachine {
 
                     let base_pointer = self.stack_pointer - num_args;
                     let caller_context = self.current_frame().context.clone();
-                    let frame =
-                        Frame::new_with_context(function_index, base_pointer, free_values, caller_context);
+                    let frame = Frame::new_with_context(
+                        function_index,
+                        base_pointer,
+                        free_values,
+                        caller_context,
+                    );
                     self.push_frame(frame);
                     self.stack_pointer = base_pointer + num_locals;
 
@@ -1933,7 +1980,9 @@ impl VirtualMachine {
                 }
                 let arena_ref = args[0].as_heap_ref();
                 let value = args[1];
-                if let HeapObject::Arena(arena) = &mut self.heap[arena_ref as usize] {
+                if let HeapObject::Arena(arena) =
+                    &mut self.heap[arena_ref as usize]
+                {
                     match arena.alloc(value) {
                         Some(index) => Value64::Integer(index as i64),
                         None => Value64::Null,
@@ -1947,7 +1996,9 @@ impl VirtualMachine {
                     bail!("wrong number of arguments for arena_reset");
                 }
                 let arena_ref = args[0].as_heap_ref();
-                if let HeapObject::Arena(arena) = &mut self.heap[arena_ref as usize] {
+                if let HeapObject::Arena(arena) =
+                    &mut self.heap[arena_ref as usize]
+                {
                     arena.reset();
                     Value64::Null
                 } else {
@@ -1960,7 +2011,8 @@ impl VirtualMachine {
                 }
                 let arena_ref = args[0].as_heap_ref();
                 let index = args[1].as_i64() as usize;
-                if let HeapObject::Arena(arena) = &self.heap[arena_ref as usize] {
+                if let HeapObject::Arena(arena) = &self.heap[arena_ref as usize]
+                {
                     if index < arena.next_index {
                         arena.storage[index]
                     } else {
@@ -1985,7 +2037,9 @@ impl VirtualMachine {
                 }
                 let pool_ref = args[0].as_heap_ref();
                 let value = args[1];
-                if let HeapObject::Pool(pool) = &mut self.heap[pool_ref as usize] {
+                if let HeapObject::Pool(pool) =
+                    &mut self.heap[pool_ref as usize]
+                {
                     match pool.alloc(value) {
                         Some((index, generation)) => {
                             let handle = HeapObject::Handle(index, generation);
@@ -2004,7 +2058,9 @@ impl VirtualMachine {
                 }
                 let pool_ref = args[0].as_heap_ref();
                 let handle_ref = args[1].as_heap_ref();
-                let (index, generation) = if let HeapObject::Handle(i, g) = &self.heap[handle_ref as usize] {
+                let (index, generation) = if let HeapObject::Handle(i, g) =
+                    &self.heap[handle_ref as usize]
+                {
                     (*i, *g)
                 } else {
                     bail!("second argument to pool_get must be a Handle");
@@ -2024,12 +2080,16 @@ impl VirtualMachine {
                 }
                 let pool_ref = args[0].as_heap_ref();
                 let handle_ref = args[1].as_heap_ref();
-                let (index, generation) = if let HeapObject::Handle(i, g) = &self.heap[handle_ref as usize] {
+                let (index, generation) = if let HeapObject::Handle(i, g) =
+                    &self.heap[handle_ref as usize]
+                {
                     (*i, *g)
                 } else {
                     bail!("second argument to pool_free must be a Handle");
                 };
-                if let HeapObject::Pool(pool) = &mut self.heap[pool_ref as usize] {
+                if let HeapObject::Pool(pool) =
+                    &mut self.heap[pool_ref as usize]
+                {
                     Value64::Bool(pool.free(index, generation))
                 } else {
                     bail!("first argument to pool_free must be a Pool");
@@ -2040,7 +2100,9 @@ impl VirtualMachine {
                     bail!("wrong number of arguments for handle_index");
                 }
                 let handle_ref = args[0].as_heap_ref();
-                if let HeapObject::Handle(index, _) = &self.heap[handle_ref as usize] {
+                if let HeapObject::Handle(index, _) =
+                    &self.heap[handle_ref as usize]
+                {
                     Value64::Integer(*index as i64)
                 } else {
                     bail!("argument to handle_index must be a Handle");
@@ -2051,7 +2113,9 @@ impl VirtualMachine {
                     bail!("wrong number of arguments for handle_generation");
                 }
                 let handle_ref = args[0].as_heap_ref();
-                if let HeapObject::Handle(_, generation) = &self.heap[handle_ref as usize] {
+                if let HeapObject::Handle(_, generation) =
+                    &self.heap[handle_ref as usize]
+                {
                     Value64::Integer(*generation as i64)
                 } else {
                     bail!("argument to handle_generation must be a Handle");
@@ -2063,7 +2127,8 @@ impl VirtualMachine {
                 }
                 match (args[0], args[1]) {
                     (Value64::HeapRef(idx), Value64::Integer(pos)) => {
-                        if let HeapObject::String(s) = &self.heap[idx as usize] {
+                        if let HeapObject::String(s) = &self.heap[idx as usize]
+                        {
                             let pos = pos as usize;
                             if pos >= s.len() {
                                 Value64::Integer(-1)
@@ -2090,7 +2155,9 @@ impl VirtualMachine {
                 if !condition {
                     let message = if args.len() == 2 {
                         if let Value64::HeapRef(idx) = args[1] {
-                            if let HeapObject::String(s) = &self.heap[idx as usize] {
+                            if let HeapObject::String(s) =
+                                &self.heap[idx as usize]
+                            {
                                 s.clone()
                             } else {
                                 "assertion failed".to_string()
@@ -2111,7 +2178,9 @@ impl VirtualMachine {
                 }
                 let allocator_ref = self.current_frame().context.allocator;
                 if let Value64::HeapRef(arena_idx) = allocator_ref {
-                    if let HeapObject::Arena(arena) = &mut self.heap[arena_idx as usize] {
+                    if let HeapObject::Arena(arena) =
+                        &mut self.heap[arena_idx as usize]
+                    {
                         match arena.alloc(args[0]) {
                             Some(index) => Value64::Integer(index as i64),
                             None => bail!("alloc failed: arena is full"),
@@ -2127,9 +2196,12 @@ impl VirtualMachine {
                 if args.len() != 1 {
                     bail!("temp_alloc takes 1 argument");
                 }
-                let temp_allocator_ref = self.current_frame().context.temp_allocator;
+                let temp_allocator_ref =
+                    self.current_frame().context.temp_allocator;
                 if let Value64::HeapRef(arena_idx) = temp_allocator_ref {
-                    if let HeapObject::Arena(arena) = &mut self.heap[arena_idx as usize] {
+                    if let HeapObject::Arena(arena) =
+                        &mut self.heap[arena_idx as usize]
+                    {
                         match arena.alloc(args[0]) {
                             Some(index) => Value64::Integer(index as i64),
                             None => bail!("temp_alloc failed: arena is full"),
@@ -2189,7 +2261,9 @@ impl VirtualMachine {
                         let hash_key = self.hash_key(index)?;
                         hash.get(&hash_key).copied().unwrap_or(Value64::Null)
                     }
-                    _ => bail!("index operator not supported for this heap type"),
+                    _ => {
+                        bail!("index operator not supported for this heap type")
+                    }
                 };
                 if let Value64::HeapRef(ref_idx) = value {
                     self.inc_ref(ref_idx);
@@ -2214,7 +2288,11 @@ impl VirtualMachine {
                 match &mut self.heap[idx as usize] {
                     HeapObject::Array(elements) => {
                         if i < 0 || i as usize >= elements.len() {
-                            bail!("array index out of bounds: {} (len: {})", i, elements.len());
+                            bail!(
+                                "array index out of bounds: {} (len: {})",
+                                i,
+                                elements.len()
+                            );
                         }
                         elements[i as usize] = value;
                     }
@@ -2312,17 +2390,30 @@ impl VirtualMachine {
         }
     }
 
-    pub fn create_struct(&mut self, name: &str, fields: Vec<Value64>) -> Value64 {
-        let heap_index = self.allocate_heap(HeapObject::Struct(name.to_string(), fields));
+    pub fn create_struct(
+        &mut self,
+        name: &str,
+        fields: Vec<Value64>,
+    ) -> Value64 {
+        let heap_index =
+            self.allocate_heap(HeapObject::Struct(name.to_string(), fields));
         Value64::HeapRef(heap_index)
     }
 
-    pub fn get_struct_field(&self, struct_ref: Value64, field_index: usize) -> Result<Value64> {
+    pub fn get_struct_field(
+        &self,
+        struct_ref: Value64,
+        field_index: usize,
+    ) -> Result<Value64> {
         match struct_ref {
             Value64::HeapRef(idx) => {
-                if let HeapObject::Struct(_, fields) = &self.heap[idx as usize] {
+                if let HeapObject::Struct(_, fields) = &self.heap[idx as usize]
+                {
                     fields.get(field_index).copied().ok_or_else(|| {
-                        anyhow::anyhow!("field index {} out of bounds", field_index)
+                        anyhow::anyhow!(
+                            "field index {} out of bounds",
+                            field_index
+                        )
                     })
                 } else {
                     bail!("expected struct, got different heap object")
@@ -2820,12 +2911,11 @@ impl VirtualMachine {
             Opcode::TaggedUnionSetTag => {
                 let tag = instruction.operands[0] as u32;
                 let union_val = self.stack[self.stack_pointer - 1];
-                if let Value64::HeapRef(idx) = union_val {
-                    if let HeapObject::TaggedUnion(t, _) =
+                if let Value64::HeapRef(idx) = union_val
+                    && let HeapObject::TaggedUnion(t, _) =
                         &mut self.heap[idx as usize]
-                    {
-                        *t = tag;
-                    }
+                {
+                    *t = tag;
                 }
             }
             Opcode::TaggedUnionGetTag => {
@@ -2843,7 +2933,9 @@ impl VirtualMachine {
                     Value64::Integer(tag) => {
                         self.push(Value64::Integer(tag))?;
                     }
-                    _ => bail!("TaggedUnionGetTag requires a heap reference or integer"),
+                    _ => bail!(
+                        "TaggedUnionGetTag requires a heap reference or integer"
+                    ),
                 }
             }
             Opcode::TaggedUnionGetField => {
@@ -2869,14 +2961,12 @@ impl VirtualMachine {
                 let offset = instruction.operands[0] as usize;
                 let value = self.pop()?;
                 let union_val = self.stack[self.stack_pointer - 1];
-                if let Value64::HeapRef(idx) = union_val {
-                    if let HeapObject::TaggedUnion(_, fields) =
+                if let Value64::HeapRef(idx) = union_val
+                    && let HeapObject::TaggedUnion(_, fields) =
                         &mut self.heap[idx as usize]
-                    {
-                        if offset < fields.len() {
-                            fields[offset] = value;
-                        }
-                    }
+                    && offset < fields.len()
+                {
+                    fields[offset] = value;
                 }
             }
             Opcode::TupleAlloc => {
@@ -2926,20 +3016,30 @@ impl VirtualMachine {
                     context.temp_allocator,
                     context.logger,
                 ];
-                let heap_index = self.allocate_heap(HeapObject::Struct("Context".to_string(), fields));
+                let heap_index = self.allocate_heap(HeapObject::Struct(
+                    "Context".to_string(),
+                    fields,
+                ));
                 self.push(Value64::HeapRef(heap_index))?;
             }
             Opcode::SetContext => {
                 let context_val = self.pop()?;
-                if let Value64::HeapRef(idx) = context_val {
-                    if let HeapObject::Struct(_, fields) = &self.heap[idx as usize] {
-                        let new_context = RuntimeContext {
-                            allocator: fields.first().copied().unwrap_or(Value64::Null),
-                            temp_allocator: fields.get(1).copied().unwrap_or(Value64::Null),
-                            logger: fields.get(2).copied().unwrap_or(Value64::Null),
-                        };
-                        self.current_frame_mut().context = new_context;
-                    }
+                if let Value64::HeapRef(idx) = context_val
+                    && let HeapObject::Struct(_, fields) =
+                        &self.heap[idx as usize]
+                {
+                    let new_context = RuntimeContext {
+                        allocator: fields
+                            .first()
+                            .copied()
+                            .unwrap_or(Value64::Null),
+                        temp_allocator: fields
+                            .get(1)
+                            .copied()
+                            .unwrap_or(Value64::Null),
+                        logger: fields.get(2).copied().unwrap_or(Value64::Null),
+                    };
+                    self.current_frame_mut().context = new_context;
                 }
             }
             Opcode::GetContextField => {
@@ -2958,7 +3058,9 @@ impl VirtualMachine {
                 let value = self.pop()?;
                 match field_index {
                     0 => self.current_frame_mut().context.allocator = value,
-                    1 => self.current_frame_mut().context.temp_allocator = value,
+                    1 => {
+                        self.current_frame_mut().context.temp_allocator = value
+                    }
                     2 => self.current_frame_mut().context.logger = value,
                     _ => {}
                 }
@@ -3014,10 +3116,10 @@ mod tests {
         );
         vm.run(&bytecode.instructions)?;
         let result = vm.last_popped()?;
-        if let Value64::HeapRef(index) = result {
-            if let HeapObject::String(s) = &vm.heap[index as usize] {
-                return Ok(s.clone());
-            }
+        if let Value64::HeapRef(index) = result
+            && let HeapObject::String(s) = &vm.heap[index as usize]
+        {
+            return Ok(s.clone());
         }
         bail!("Expected string result, got {:?}", result)
     }
@@ -3099,7 +3201,7 @@ mod tests {
     #[test]
     fn test_typed_vm_float_arithmetic() -> Result<()> {
         let tests = [
-            ("3.14", Value64::Float(3.14)),
+            ("3.5", Value64::Float(3.5)),
             ("2.5 + 1.5", Value64::Float(4.0)),
             ("2.0 * 3.0", Value64::Float(6.0)),
             ("-3.5", Value64::Float(-3.5)),
@@ -3243,8 +3345,14 @@ mod tests {
     fn test_functions_and_closures() -> Result<()> {
         let tests = [
             ("add := fn(a, b) { a + b }; add(2, 3)", Value64::Integer(5)),
-            ("fac := fn(n) { if (n < 2) { 1 } else { n * fac(n - 1) } }; fac(5)", Value64::Integer(120)),
-            ("make := fn(x) { fn(y) { x + y } }; add5 := make(5); add5(3)", Value64::Integer(8)),
+            (
+                "fac := fn(n) { if (n < 2) { 1 } else { n * fac(n - 1) } }; fac(5)",
+                Value64::Integer(120),
+            ),
+            (
+                "make := fn(x) { fn(y) { x + y } }; add5 := make(5); add5(3)",
+                Value64::Integer(8),
+            ),
         ];
 
         for (input, expected) in tests {
@@ -3562,8 +3670,8 @@ mod tests {
         let result = run_vm_test_string("to_string(42)")?;
         assert_eq!(result, "42");
 
-        let result = run_vm_test_string("to_string(3.14)")?;
-        assert_eq!(result, "3.14");
+        let result = run_vm_test_string("to_string(3.5)")?;
+        assert_eq!(result, "3.5");
 
         let result = run_vm_test(r#"parse_int("123")"#)?;
         assert_eq!(result, Value64::Integer(123));
@@ -3616,7 +3724,7 @@ mod tests {
             ("x := 10; y := 20; x + y", Value64::Integer(30)),
             ("x : i64 = 42; x", Value64::Integer(42)),
             ("add := fn(a, b) { a + b }; add(3, 4)", Value64::Integer(7)),
-            ("PI :: 3.14; PI", Value64::Float(3.14)),
+            ("PI :: 3.5; PI", Value64::Float(3.5)),
         ];
 
         for (input, expected) in tests {
@@ -3668,7 +3776,7 @@ mod tests {
 
     #[test]
     fn test_constant_immutability_error() {
-        let input = "PI :: 3.14; PI = 3.0; PI";
+        let input = "PI :: 3.5; PI = 3.0; PI";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(&tokens);
@@ -3809,10 +3917,22 @@ mod tests {
     #[test]
     fn test_tuple_pattern_matching() -> Result<()> {
         let tests = [
-            ("match (0, 0) { case (0, 0): 1 case (0, _): 2 case (_, 0): 3 case (_, _): 4 }", Value64::Integer(1)),
-            ("match (0, 1) { case (0, 0): 1 case (0, _): 2 case (_, 0): 3 case (_, _): 4 }", Value64::Integer(2)),
-            ("match (1, 0) { case (0, 0): 1 case (0, _): 2 case (_, 0): 3 case (_, _): 4 }", Value64::Integer(3)),
-            ("match (1, 1) { case (0, 0): 1 case (0, _): 2 case (_, 0): 3 case (_, _): 4 }", Value64::Integer(4)),
+            (
+                "match (0, 0) { case (0, 0): 1 case (0, _): 2 case (_, 0): 3 case (_, _): 4 }",
+                Value64::Integer(1),
+            ),
+            (
+                "match (0, 1) { case (0, 0): 1 case (0, _): 2 case (_, 0): 3 case (_, _): 4 }",
+                Value64::Integer(2),
+            ),
+            (
+                "match (1, 0) { case (0, 0): 1 case (0, _): 2 case (_, 0): 3 case (_, _): 4 }",
+                Value64::Integer(3),
+            ),
+            (
+                "match (1, 1) { case (0, 0): 1 case (0, _): 2 case (_, 0): 3 case (_, _): 4 }",
+                Value64::Integer(4),
+            ),
         ];
 
         for (input, expected) in tests {
@@ -4098,7 +4218,12 @@ mod tests {
 
         for (input, expected) in tests {
             let result = run_vm_test(input)?;
-            assert_eq!(result, Value64::Integer(expected), "Failed for input: {}", input);
+            assert_eq!(
+                result,
+                Value64::Integer(expected),
+                "Failed for input: {}",
+                input
+            );
         }
         Ok(())
     }
@@ -4592,11 +4717,14 @@ mod tests {
         );
         vm.run(&bytecode.instructions)?;
 
-        let input_struct = vm.create_struct("Input", vec![
-            Value64::Float(100.0),
-            Value64::Float(200.0),
-            Value64::Float(0.016),
-        ]);
+        let input_struct = vm.create_struct(
+            "Input",
+            vec![
+                Value64::Float(100.0),
+                Value64::Float(200.0),
+                Value64::Float(0.016),
+            ],
+        );
 
         let output = vm.call_global(update_idx, &[input_struct])?;
 
@@ -4622,8 +4750,8 @@ mod tests {
         let mut compiler = Compiler::new(&program);
         let bytecode = compiler.compile()?;
 
-        assert!(bytecode.global_symbols.get("foo").is_some());
-        assert!(bytecode.global_symbols.get("bar").is_none());
+        assert!(bytecode.global_symbols.contains_key("foo"));
+        assert!(!bytecode.global_symbols.contains_key("bar"));
 
         Ok(())
     }
@@ -4681,7 +4809,7 @@ mod tests {
         let integer = Value64::Integer(42);
         assert!(vm.get_struct_field(integer, 0).is_err());
 
-        let float = Value64::Float(3.14);
+        let float = Value64::Float(3.5);
         assert!(vm.get_struct_field(float, 0).is_err());
 
         let boolean = Value64::Bool(true);
@@ -4874,7 +5002,7 @@ mod tests {
             idx1 + idx2 + idx3
         "#;
         let result = run_vm_test(input)?;
-        assert_eq!(result, Value64::Integer(0 + 1 + 2));
+        assert_eq!(result, Value64::Integer(1 + 2));
         Ok(())
     }
 
@@ -4889,7 +5017,7 @@ mod tests {
             idx1 + idx2
         "#;
         let result = run_vm_test(input)?;
-        assert_eq!(result, Value64::Integer(0 + 1));
+        assert_eq!(result, Value64::Integer(1));
         Ok(())
     }
 
@@ -4905,7 +5033,7 @@ mod tests {
             idx_before + idx_after
         "#;
         let result = run_vm_test(input)?;
-        assert_eq!(result, Value64::Integer(0 + 1));
+        assert_eq!(result, Value64::Integer(1));
         Ok(())
     }
 

@@ -1,7 +1,8 @@
 use crate::{
-    types::Type, Expression, Literal, Operator, Parameter, Statement, StructField,
+    Expression, Literal, Operator, Parameter, Statement, StructField,
+    types::Type,
 };
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use cranelift::prelude::*;
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
@@ -45,8 +46,9 @@ impl CodegenContext {
         flag_builder.set("opt_level", "speed")?;
         flag_builder.set("is_pic", "true")?;
 
-        let isa_builder = cranelift_native::builder()
-            .map_err(|msg| anyhow::anyhow!("Failed to create ISA builder: {}", msg))?;
+        let isa_builder = cranelift_native::builder().map_err(|msg| {
+            anyhow::anyhow!("Failed to create ISA builder: {}", msg)
+        })?;
         let isa = isa_builder.finish(settings::Flags::new(flag_builder))?;
 
         let builder = ObjectBuilder::new(
@@ -71,16 +73,29 @@ impl CodegenContext {
                 Statement::Struct(name, _type_params, fields) => {
                     self.compile_struct_definition(name, fields)?;
                 }
-                Statement::Extern { name, params, return_type } => {
-                    self.declare_extern_function(name, params, return_type.as_ref())?;
+                Statement::Extern {
+                    name,
+                    params,
+                    return_type,
+                } => {
+                    self.declare_extern_function(
+                        name,
+                        params,
+                        return_type.as_ref(),
+                    )?;
                 }
-                Statement::Constant(name, expr) => {
-                    if let Expression::Function(params, ret_sig, body)
-                    | Expression::Proc(params, ret_sig, body) = expr
-                    {
-                        let ret_type = ret_sig.to_type();
-                        self.compile_function(name, params, ret_type.as_ref(), body)?;
-                    }
+                Statement::Constant(
+                    name,
+                    Expression::Function(params, ret_sig, body)
+                    | Expression::Proc(params, ret_sig, body),
+                ) => {
+                    let ret_type = ret_sig.to_type();
+                    self.compile_function(
+                        name,
+                        params,
+                        ret_type.as_ref(),
+                        body,
+                    )?;
                 }
                 _ => {}
             }
@@ -93,7 +108,11 @@ impl CodegenContext {
                     Statement::Struct(..) => {}
                     Statement::Extern { .. } => {}
                     Statement::Constant(_name, expr) => {
-                        if matches!(expr, Expression::Function(_, _, _) | Expression::Proc(_, _, _)) {
+                        if matches!(
+                            expr,
+                            Expression::Function(_, _, _)
+                                | Expression::Proc(_, _, _)
+                        ) {
                             continue;
                         }
                         global_body.push(statement.clone());
@@ -112,7 +131,11 @@ impl CodegenContext {
         Ok(())
     }
 
-    fn compile_struct_definition(&mut self, name: &str, fields: &[StructField]) -> Result<()> {
+    fn compile_struct_definition(
+        &mut self,
+        name: &str,
+        fields: &[StructField],
+    ) -> Result<()> {
         let mut field_offsets = HashMap::new();
         let mut offset = 0;
 
@@ -121,11 +144,14 @@ impl CodegenContext {
             offset += self.type_size(&field.field_type);
         }
 
-        self.structs.insert(name.to_string(), CompiledStructInfo {
-            fields: fields.to_vec(),
-            field_offsets,
-            size: offset,
-        });
+        self.structs.insert(
+            name.to_string(),
+            CompiledStructInfo {
+                fields: fields.to_vec(),
+                field_offsets,
+                size: offset,
+            },
+        );
 
         Ok(())
     }
@@ -158,7 +184,9 @@ impl CodegenContext {
             Type::F32 => types::F32,
             Type::F64 => types::F64,
             Type::Bool => types::I8,
-            Type::Ptr(_) | Type::Ref(_) | Type::RefMut(_) => self.module.isa().pointer_type(),
+            Type::Ptr(_) | Type::Ref(_) | Type::RefMut(_) => {
+                self.module.isa().pointer_type()
+            }
             _ => types::I64,
         }
     }
@@ -181,10 +209,12 @@ impl CodegenContext {
         }
 
         if let Some(ret) = return_type {
-            sig.returns.push(AbiParam::new(self.frost_type_to_cranelift(ret)));
+            sig.returns
+                .push(AbiParam::new(self.frost_type_to_cranelift(ret)));
         }
 
-        let func_id = self.module.declare_function(name, Linkage::Import, &sig)?;
+        let func_id =
+            self.module.declare_function(name, Linkage::Import, &sig)?;
         self.functions.insert(name.to_string(), func_id);
 
         Ok(())
@@ -209,10 +239,12 @@ impl CodegenContext {
         }
 
         if let Some(ret) = return_type {
-            sig.returns.push(AbiParam::new(self.frost_type_to_cranelift(ret)));
+            sig.returns
+                .push(AbiParam::new(self.frost_type_to_cranelift(ret)));
         }
 
-        let func_id = self.module.declare_function(name, Linkage::Export, &sig)?;
+        let func_id =
+            self.module.declare_function(name, Linkage::Export, &sig)?;
         self.functions.insert(name.to_string(), func_id);
 
         let mut ctx = self.module.make_context();
@@ -220,7 +252,8 @@ impl CodegenContext {
 
         let mut func_ctx = FunctionBuilderContext::new();
         {
-            let mut builder = FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
+            let mut builder =
+                FunctionBuilder::new(&mut ctx.func, &mut func_ctx);
 
             let entry_block = builder.create_block();
             builder.append_block_params_for_function_params(entry_block);
@@ -243,7 +276,8 @@ impl CodegenContext {
             };
 
             for (index, param) in params.iter().enumerate() {
-                let param_value = translator.builder.block_params(entry_block)[index];
+                let param_value =
+                    translator.builder.block_params(entry_block)[index];
                 let param_type = param
                     .type_annotation
                     .as_ref()
@@ -311,9 +345,17 @@ impl<'a> FunctionTranslator<'a> {
         }
     }
 
-    fn translate_statement(&mut self, statement: &Statement) -> Result<Option<Value>> {
+    fn translate_statement(
+        &mut self,
+        statement: &Statement,
+    ) -> Result<Option<Value>> {
         match statement {
-            Statement::Let { name, type_annotation, value, mutable: _ } => {
+            Statement::Let {
+                name,
+                type_annotation,
+                value,
+                mutable: _,
+            } => {
                 let val = self.translate_expression(value)?;
                 let ty = type_annotation
                     .as_ref()
@@ -378,7 +420,13 @@ impl<'a> FunctionTranslator<'a> {
 
                 self.builder.switch_to_block(header_block);
                 let cond_val = self.translate_expression(condition)?;
-                self.builder.ins().brif(cond_val, body_block, &[], exit_block, &[]);
+                self.builder.ins().brif(
+                    cond_val,
+                    body_block,
+                    &[],
+                    exit_block,
+                    &[],
+                );
 
                 self.builder.switch_to_block(body_block);
                 self.loop_exit_blocks.push(exit_block);
@@ -423,8 +471,15 @@ impl<'a> FunctionTranslator<'a> {
                     } else {
                         IntCC::SignedLessThan
                     };
-                    let cond = self.builder.ins().icmp(compare, current, end_val);
-                    self.builder.ins().brif(cond, body_block, &[], exit_block, &[]);
+                    let cond =
+                        self.builder.ins().icmp(compare, current, end_val);
+                    self.builder.ins().brif(
+                        cond,
+                        body_block,
+                        &[],
+                        exit_block,
+                        &[],
+                    );
 
                     self.builder.switch_to_block(body_block);
                     self.loop_exit_blocks.push(exit_block);
@@ -463,7 +518,8 @@ impl<'a> FunctionTranslator<'a> {
             }
 
             Statement::Continue => {
-                if let Some(&continue_block) = self.loop_continue_blocks.last() {
+                if let Some(&continue_block) = self.loop_continue_blocks.last()
+                {
                     self.builder.ins().jump(continue_block, &[]);
                     let unreachable = self.builder.create_block();
                     self.builder.switch_to_block(unreachable);
@@ -538,7 +594,9 @@ impl<'a> FunctionTranslator<'a> {
 
                 self.builder.append_block_param(merge_bb, types::I64);
 
-                self.builder.ins().brif(cond_val, then_bb, &[], else_bb, &[]);
+                self.builder
+                    .ins()
+                    .brif(cond_val, then_bb, &[], else_bb, &[]);
 
                 self.builder.switch_to_block(then_bb);
                 self.builder.seal_block(then_bb);
@@ -577,16 +635,18 @@ impl<'a> FunctionTranslator<'a> {
                     arg_vals.push(self.translate_expression(arg)?);
                 }
 
-                if let Expression::Identifier(name) = func.as_ref() {
-                    if let Some(&func_id) = self.functions.get(name) {
-                        let local_callee = self.module.declare_func_in_func(func_id, self.builder.func);
-                        let call = self.builder.ins().call(local_callee, &arg_vals);
-                        let results = self.builder.inst_results(call);
-                        if results.is_empty() {
-                            return Ok(self.builder.ins().iconst(types::I64, 0));
-                        }
-                        return Ok(results[0]);
+                if let Expression::Identifier(name) = func.as_ref()
+                    && let Some(&func_id) = self.functions.get(name)
+                {
+                    let local_callee = self
+                        .module
+                        .declare_func_in_func(func_id, self.builder.func);
+                    let call = self.builder.ins().call(local_callee, &arg_vals);
+                    let results = self.builder.inst_results(call);
+                    if results.is_empty() {
+                        return Ok(self.builder.ins().iconst(types::I64, 0));
                     }
+                    return Ok(results[0]);
                 }
 
                 Ok(self.builder.ins().iconst(types::I64, 0))
@@ -604,18 +664,22 @@ impl<'a> FunctionTranslator<'a> {
                 self.translate_field_access(obj, field)
             }
 
-            Expression::AddressOf(inner) | Expression::Borrow(inner) | Expression::BorrowMut(inner) => {
-                if let Expression::Identifier(name) = inner.as_ref() {
-                    if let Some(&var) = self.variables.get(name) {
-                        let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
-                            StackSlotKind::ExplicitSlot,
-                            8,
-                            0,
-                        ));
-                        let val = self.builder.use_var(var);
-                        self.builder.ins().stack_store(val, slot, 0);
-                        return Ok(self.builder.ins().stack_addr(self.pointer_type, slot, 0));
-                    }
+            Expression::AddressOf(inner)
+            | Expression::Borrow(inner)
+            | Expression::BorrowMut(inner) => {
+                if let Expression::Identifier(name) = inner.as_ref()
+                    && let Some(&var) = self.variables.get(name)
+                {
+                    let slot = self.builder.create_sized_stack_slot(
+                        StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 0),
+                    );
+                    let val = self.builder.use_var(var);
+                    self.builder.ins().stack_store(val, slot, 0);
+                    return Ok(self.builder.ins().stack_addr(
+                        self.pointer_type,
+                        slot,
+                        0,
+                    ));
                 }
                 bail!("Cannot take address of expression")
             }
@@ -628,20 +692,32 @@ impl<'a> FunctionTranslator<'a> {
             Expression::StructInit(name, fields) => {
                 let struct_info = self.structs.get(name).cloned();
                 if let Some(info) = struct_info {
-                    let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
-                        StackSlotKind::ExplicitSlot,
-                        info.size as u32,
-                        0,
-                    ));
+                    let slot = self.builder.create_sized_stack_slot(
+                        StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            info.size as u32,
+                            0,
+                        ),
+                    );
 
                     for (field_name, field_expr) in fields {
                         let val = self.translate_expression(field_expr)?;
-                        if let Some(&offset) = info.field_offsets.get(field_name) {
-                            self.builder.ins().stack_store(val, slot, offset as i32);
+                        if let Some(&offset) =
+                            info.field_offsets.get(field_name)
+                        {
+                            self.builder.ins().stack_store(
+                                val,
+                                slot,
+                                offset as i32,
+                            );
                         }
                     }
 
-                    Ok(self.builder.ins().stack_addr(self.pointer_type, slot, 0))
+                    Ok(self.builder.ins().stack_addr(
+                        self.pointer_type,
+                        slot,
+                        0,
+                    ))
                 } else {
                     bail!("Unknown struct: {}", name)
                 }
@@ -715,7 +791,9 @@ impl<'a> FunctionTranslator<'a> {
 
     fn translate_literal(&mut self, lit: &Literal) -> Result<Value> {
         match lit {
-            Literal::Integer(n) => Ok(self.builder.ins().iconst(types::I64, *n)),
+            Literal::Integer(n) => {
+                Ok(self.builder.ins().iconst(types::I64, *n))
+            }
             Literal::Float(f) => Ok(self.builder.ins().f64const(*f)),
             Literal::Float32(f) => Ok(self.builder.ins().f32const(*f)),
             Literal::String(s) => {
@@ -725,7 +803,12 @@ impl<'a> FunctionTranslator<'a> {
                     let name = format!(".str.{}", *self.string_counter);
                     *self.string_counter += 1;
 
-                    let data_id = self.module.declare_data(&name, Linkage::Local, false, false)?;
+                    let data_id = self.module.declare_data(
+                        &name,
+                        Linkage::Local,
+                        false,
+                        false,
+                    )?;
                     let mut data_desc = DataDescription::new();
                     let mut bytes = s.as_bytes().to_vec();
                     bytes.push(0);
@@ -735,8 +818,13 @@ impl<'a> FunctionTranslator<'a> {
                     data_id
                 };
 
-                let local_data = self.module.declare_data_in_func(data_id, self.builder.func);
-                let ptr = self.builder.ins().symbol_value(self.pointer_type, local_data);
+                let local_data = self
+                    .module
+                    .declare_data_in_func(data_id, self.builder.func);
+                let ptr = self
+                    .builder
+                    .ins()
+                    .symbol_value(self.pointer_type, local_data);
                 Ok(ptr)
             }
             Literal::Array(elements) => {
@@ -744,32 +832,46 @@ impl<'a> FunctionTranslator<'a> {
                     return Ok(self.builder.ins().iconst(self.pointer_type, 0));
                 }
 
-                let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    (elements.len() * 8) as u32,
-                    0,
-                ));
+                let slot =
+                    self.builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        (elements.len() * 8) as u32,
+                        0,
+                    ));
 
                 for (index, elem) in elements.iter().enumerate() {
                     let val = self.translate_expression(elem)?;
-                    self.builder.ins().stack_store(val, slot, (index * 8) as i32);
+                    self.builder.ins().stack_store(
+                        val,
+                        slot,
+                        (index * 8) as i32,
+                    );
                 }
 
                 Ok(self.builder.ins().stack_addr(self.pointer_type, slot, 0))
             }
-            Literal::Boolean(b) => Ok(self.builder.ins().iconst(types::I64, if *b { 1 } else { 0 })),
+            Literal::Boolean(b) => Ok(self
+                .builder
+                .ins()
+                .iconst(types::I64, if *b { 1 } else { 0 })),
             Literal::HashMap(pairs) => {
-                let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    (pairs.len() * 16) as u32,
-                    0,
-                ));
+                let slot =
+                    self.builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        (pairs.len() * 16) as u32,
+                        0,
+                    ));
                 Ok(self.builder.ins().stack_addr(self.pointer_type, slot, 0))
             }
         }
     }
 
-    fn translate_binop(&mut self, op: Operator, lhs: Value, rhs: Value) -> Result<Value> {
+    fn translate_binop(
+        &mut self,
+        op: Operator,
+        lhs: Value,
+        rhs: Value,
+    ) -> Result<Value> {
         match op {
             Operator::Add => Ok(self.builder.ins().iadd(lhs, rhs)),
             Operator::Subtract => Ok(self.builder.ins().isub(lhs, rhs)),
@@ -786,19 +888,29 @@ impl<'a> FunctionTranslator<'a> {
                 Ok(self.builder.ins().uextend(types::I64, cmp))
             }
             Operator::LessThan => {
-                let cmp = self.builder.ins().icmp(IntCC::SignedLessThan, lhs, rhs);
+                let cmp =
+                    self.builder.ins().icmp(IntCC::SignedLessThan, lhs, rhs);
                 Ok(self.builder.ins().uextend(types::I64, cmp))
             }
             Operator::LessThanOrEqual => {
-                let cmp = self.builder.ins().icmp(IntCC::SignedLessThanOrEqual, lhs, rhs);
+                let cmp = self.builder.ins().icmp(
+                    IntCC::SignedLessThanOrEqual,
+                    lhs,
+                    rhs,
+                );
                 Ok(self.builder.ins().uextend(types::I64, cmp))
             }
             Operator::GreaterThan => {
-                let cmp = self.builder.ins().icmp(IntCC::SignedGreaterThan, lhs, rhs);
+                let cmp =
+                    self.builder.ins().icmp(IntCC::SignedGreaterThan, lhs, rhs);
                 Ok(self.builder.ins().uextend(types::I64, cmp))
             }
             Operator::GreaterThanOrEqual => {
-                let cmp = self.builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, lhs, rhs);
+                let cmp = self.builder.ins().icmp(
+                    IntCC::SignedGreaterThanOrEqual,
+                    lhs,
+                    rhs,
+                );
                 Ok(self.builder.ins().uextend(types::I64, cmp))
             }
 
@@ -813,13 +925,17 @@ impl<'a> FunctionTranslator<'a> {
         }
     }
 
-    fn translate_field_access(&mut self, obj: &Expression, field: &str) -> Result<Value> {
+    fn translate_field_access(
+        &mut self,
+        obj: &Expression,
+        field: &str,
+    ) -> Result<Value> {
         let base = self.translate_expression(obj)?;
 
-        if let Expression::Identifier(name) = obj {
-            if let Some(var) = self.variables.get(name) {
-                let _ = var;
-            }
+        if let Expression::Identifier(name) = obj
+            && let Some(var) = self.variables.get(name)
+        {
+            let _ = var;
         }
 
         for (struct_name, info) in self.structs.iter() {
@@ -830,17 +946,30 @@ impl<'a> FunctionTranslator<'a> {
                 } else {
                     base
                 };
-                return Ok(self.builder.ins().load(types::I64, MemFlags::new(), ptr, 0));
+                return Ok(self.builder.ins().load(
+                    types::I64,
+                    MemFlags::new(),
+                    ptr,
+                    0,
+                ));
             }
         }
 
-        Ok(self.builder.ins().load(types::I64, MemFlags::new(), base, 0))
+        Ok(self
+            .builder
+            .ins()
+            .load(types::I64, MemFlags::new(), base, 0))
     }
 
-    fn translate_field_store(&mut self, obj: &Expression, field: &str, val: Value) -> Result<()> {
+    fn translate_field_store(
+        &mut self,
+        obj: &Expression,
+        field: &str,
+        val: Value,
+    ) -> Result<()> {
         let base = self.translate_expression(obj)?;
 
-        for (_, info) in self.structs.iter() {
+        for info in self.structs.values() {
             if let Some(&offset) = info.field_offsets.get(field) {
                 let ptr = if offset > 0 {
                     self.builder.ins().iadd_imm(base, offset as i64)
