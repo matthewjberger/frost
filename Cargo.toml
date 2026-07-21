@@ -4,10 +4,6 @@ version = "0.1.0"
 authors = ["Matthew J. Berger <matthewberger@nevada.unr.edu>"]
 edition = "2024"
 
-[workspace]
-members = ["repl"]
-default-members = [".", "repl"]
-
 [dependencies]
 anyhow = "1.0.40"
 clap = { version = "4", features = ["derive"] }
