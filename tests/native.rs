@@ -184,6 +184,28 @@ main :: fn() -> i64 {
 }
 
 #[test]
+fn discarding_a_linear_value_is_a_compile_error() {
+    let source = r#"
+Resource :: linear struct { id: i64 }
+
+make :: fn(id: i64) -> Resource { Resource { id = id } }
+drop_it :: extern fn(r: Resource)
+
+main :: fn() -> i64 {
+    r := make(1)
+    make(2)
+    drop_it(r)
+    0
+}
+"#;
+    let message = compile_error("discard_linear", source);
+    assert!(
+        message.contains("never consumed") || message.contains("linear"),
+        "expected a discarded-linear error, got:\n{message}"
+    );
+}
+
+#[test]
 fn reference_escape_errors_report_a_source_line() {
     let source = r#"
 leak :: fn(x: &i64) -> &i64 { x }
