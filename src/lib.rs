@@ -9,7 +9,6 @@ mod ir_typecheck;
 mod lexer;
 mod ownership;
 mod parser;
-mod typechecker;
 mod typed_vm;
 mod types;
 mod value;
@@ -17,7 +16,7 @@ mod value;
 pub use self::{
     compiler::*, ffi::*, ir::*, ir_build::*, ir_c::*, ir_codegen::*,
     ir_interp::*, ir_typecheck::*, lexer::*, ownership::*, parser::*,
-    typechecker::*, typed_vm::*, types::*, value::*,
+    typed_vm::*, types::*, value::*,
 };
 
 use std::fmt::Display;
