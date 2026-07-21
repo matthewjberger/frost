@@ -32,6 +32,25 @@ void frost_emit_int(int64_t value) {
     printf("%lld", (long long)value);
 }
 
+void frost_test_start(const char *name) {
+    printf("test %s ... ", name);
+    fflush(stdout);
+}
+
+void frost_test_ok(void) {
+    printf("ok\n");
+    fflush(stdout);
+}
+
+void frost_assert(int8_t condition) {
+    if (!condition) {
+        printf("FAILED\n");
+        fflush(stdout);
+        fprintf(stderr, "frost: assertion failed\n");
+        abort();
+    }
+}
+
 typedef struct {
     unsigned char *storage;
     uint32_t *generations;

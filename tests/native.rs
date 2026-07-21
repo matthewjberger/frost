@@ -435,6 +435,48 @@ fn bootstrap_minifrost_emits_working_c() {
     assert_eq!(output, "55\n120\n55\n111\n");
 }
 
+fn run_test_mode(name: &str, source: &str) -> Option<(String, bool)> {
+    c_compiler()?;
+    let directory = std::env::temp_dir();
+    let source_path = directory.join(format!("frost_tm_{name}.frost"));
+    std::fs::write(&source_path, source).unwrap();
+    let frost = env!("CARGO_BIN_EXE_frost");
+    let output = Command::new(frost)
+        .arg("--test")
+        .arg(&source_path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&source_path);
+    Some((
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        output.status.success(),
+    ))
+}
+
+#[test]
+fn in_module_tests_report_pass() {
+    let source = "add :: fn(a: i64, b: i64) -> i64 { a + b }\n\
+                  test \"adds\" { assert(add(2, 3) == 5) }\n\
+                  test \"identity\" { assert(add(7, 0) == 7) }\n";
+    let Some((output, ok)) = run_test_mode("pass", source) else {
+        return;
+    };
+    assert!(ok, "expected passing tests, got:\n{output}");
+    assert!(output.contains("test adds ... ok"), "got:\n{output}");
+    assert!(output.contains("test identity ... ok"), "got:\n{output}");
+    assert!(output.contains("all tests passed"), "got:\n{output}");
+}
+
+#[test]
+fn in_module_tests_report_failure() {
+    let source = "test \"fails\" { assert(1 == 2) }\n";
+    let Some((output, ok)) = run_test_mode("fail", source) else {
+        return;
+    };
+    assert!(!ok, "a failing assert should exit non-zero");
+    assert!(output.contains("FAILED"), "got:\n{output}");
+}
+
 const STRINGS: &str = r#"
 puts :: extern fn(s: ^i8) -> i32
 

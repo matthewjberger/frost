@@ -279,6 +279,20 @@ name :: extern fn(params)             // foreign function returning void
 import "path"                         // bring another source file into scope
 ```
 
+### 5.4 Tests
+
+A `test` block declares a named unit test.
+
+```
+test "name" { Stmt* }
+```
+
+`test` is a contextual keyword, recognized only when followed by a string
+literal and a block, so it remains usable as an ordinary identifier elsewhere.
+Inside a test, `assert(cond)` aborts the test when `cond` is false. `frost --test
+file.frost` compiles the file, runs each test in declaration order, and exits
+non-zero if any assertion fails.
+
 ---
 
 ## 6. Expressions
