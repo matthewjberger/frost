@@ -1,9 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result, bail};
 
 use crate::ir::{
-    BlockId, IrFunction, IrModule, IrStatement, IrTerminator, LocalId,
+    BlockId, IrFunction, IrModule, IrOperand, IrRvalue, IrStatement,
+    IrTerminator, LocalId,
 };
 
 const UNOWNED: u8 = 1;
@@ -61,12 +62,92 @@ fn check_function(function: &IrFunction) -> Result<()> {
         }
     }
 
+    let referenced = referenced_locals(function);
     for (block_id, entry) in block_entry.iter().enumerate() {
         if let Some(entry) = entry {
-            report_block(function, block_id, entry.clone())?;
+            report_block(function, block_id, entry.clone(), &referenced)?;
         }
     }
     Ok(())
+}
+
+fn referenced_locals(function: &IrFunction) -> HashSet<LocalId> {
+    let mut referenced = HashSet::new();
+    for block in &function.blocks {
+        for statement in &block.statements {
+            match statement {
+                IrStatement::Assign(_, rvalue) => {
+                    collect_rvalue(rvalue, &mut referenced);
+                }
+                IrStatement::Store { address, value } => {
+                    collect_operand(address, &mut referenced);
+                    collect_operand(value, &mut referenced);
+                }
+                IrStatement::Copy {
+                    destination,
+                    source,
+                    ..
+                } => {
+                    collect_operand(destination, &mut referenced);
+                    collect_operand(source, &mut referenced);
+                }
+                IrStatement::Consume(_) => {}
+            }
+        }
+        match &block.terminator {
+            IrTerminator::Return(Some(operand)) => {
+                collect_operand(operand, &mut referenced);
+            }
+            IrTerminator::Branch { condition, .. } => {
+                collect_operand(condition, &mut referenced);
+            }
+            _ => {}
+        }
+    }
+    referenced
+}
+
+fn collect_operand(operand: &IrOperand, referenced: &mut HashSet<LocalId>) {
+    if let IrOperand::Local(local) = operand {
+        referenced.insert(*local);
+    }
+}
+
+fn collect_rvalue(rvalue: &IrRvalue, referenced: &mut HashSet<LocalId>) {
+    match rvalue {
+        IrRvalue::Use(operand)
+        | IrRvalue::Unary(_, operand)
+        | IrRvalue::Cast(operand, _) => collect_operand(operand, referenced),
+        IrRvalue::Binary(_, left, right) => {
+            collect_operand(left, referenced);
+            collect_operand(right, referenced);
+        }
+        IrRvalue::AddressOf { local, .. } => {
+            referenced.insert(*local);
+        }
+        IrRvalue::FieldAddress { base, .. } => {
+            collect_operand(base, referenced);
+        }
+        IrRvalue::ElementAddress { base, index, .. } => {
+            collect_operand(base, referenced);
+            collect_operand(index, referenced);
+        }
+        IrRvalue::Load { address, .. } => collect_operand(address, referenced),
+        IrRvalue::Call { arguments, .. } => {
+            for argument in arguments {
+                collect_operand(argument, referenced);
+            }
+        }
+        IrRvalue::CallIndirect {
+            callee, arguments, ..
+        } => {
+            collect_operand(callee, referenced);
+            for argument in arguments {
+                collect_operand(argument, referenced);
+            }
+        }
+        IrRvalue::FunctionAddress(_) => {}
+    }
 }
 
 fn transfer_block(
@@ -98,6 +179,7 @@ fn report_block(
     function: &IrFunction,
     block_id: BlockId,
     mut state: State,
+    referenced: &HashSet<LocalId>,
 ) -> Result<()> {
     for statement in &function.blocks[block_id].statements {
         if let IrStatement::Consume(local) = statement {
@@ -122,13 +204,20 @@ fn report_block(
             if local < function.param_count {
                 continue;
             }
-            if function.locals[local].name.is_none() {
+            if owned & OWNED == 0 {
                 continue;
             }
-            if owned & OWNED != 0 {
+            let discarded = function.locals[local].name.is_none()
+                && !referenced.contains(&local);
+            if function.locals[local].name.is_some() {
                 let name = local_name(function, local);
                 bail!(
                     "linearity: linear value {name} is not consumed on every path before return"
+                );
+            }
+            if discarded {
+                bail!(
+                    "linearity: a linear value is created but never consumed"
                 );
             }
         }
@@ -229,5 +318,32 @@ mod tests {
             "{PRELUDE}run :: fn() {{ f := open()  mut i : i64 = 0  while (i < 3) {{ close(f)  i = i + 1 }} }}"
         );
         assert!(check(&source).is_err());
+    }
+
+    #[test]
+    fn ir_rejects_a_discarded_linear() {
+        let source = format!("{PRELUDE}run :: fn() {{ open() }}");
+        assert!(check(&source).is_err());
+    }
+
+    #[test]
+    fn ir_rejects_a_discarded_linear_in_the_middle_of_a_body() {
+        let source =
+            format!("{PRELUDE}run :: fn() {{ f := open()  open()  close(f) }}");
+        assert!(check(&source).is_err());
+    }
+
+    #[test]
+    fn ir_accepts_a_temporary_passed_straight_by_value() {
+        let source = format!("{PRELUDE}run :: fn() {{ close(open()) }}");
+        assert!(check(&source).is_ok());
+    }
+
+    #[test]
+    fn ir_accepts_returning_a_fresh_temporary() {
+        let source = format!(
+            "{PRELUDE}make :: fn() -> File {{ open() }}\nrun :: fn() {{ close(make()) }}"
+        );
+        assert!(check(&source).is_ok());
     }
 }
