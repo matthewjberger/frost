@@ -1,0 +1,48 @@
+// A dynamic arena: the same bump allocator, but its backing buffer comes from a
+// single call to the operating system instead of a fixed inline array. malloc is
+// the one platform extern at the floor of docs/allocators.md, and everything
+// above it is Frost. The arena is a `linear` resource, so the compiler requires
+// it be destroyed exactly once (arena_destroy, which frees the one allocation);
+// forgetting the destroy is a compile error, which is how a dynamic allocation
+// is kept from leaking without a garbage collector.
+
+malloc :: extern fn(size: i64) -> ^u8
+free :: extern fn(pointer: ^u8)
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Arena :: linear struct {
+    data: ^u8,
+    cap: i64,
+    offset: i64,
+}
+
+arena_new :: fn(cap: i64) -> Arena {
+    Arena { data = malloc(cap), cap = cap, offset = 0 }
+}
+
+arena_destroy :: fn(a: Arena) {
+    free(a.data)
+}
+
+alloc_int :: fn(a: &mut Arena) -> ^i64 {
+    slot := ptr_to(a.data[a.offset])
+    a.offset = a.offset + sizeof(i64)
+    ptr_cast($i64, slot)
+}
+
+main :: fn() -> i64 {
+    mut a := arena_new(256)
+
+    p := alloc_int(&mut a)
+    p^ = 42
+    q := alloc_int(&mut a)
+    q^ = 100
+
+    printf("%lld\n", p^)          // 42
+    printf("%lld\n", q^)          // 100
+    printf("%lld\n", p^ + q^)     // 142
+    printf("%lld\n", a.offset)    // 16, two 8-byte allocations
+
+    arena_destroy(a)              // frees the single OS allocation; required
+    0
+}
