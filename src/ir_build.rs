@@ -2398,6 +2398,13 @@ impl<'a> FunctionLowering<'a> {
         arguments: &[Expression],
     ) -> Result<(IrOperand, Type)> {
         if let Expression::Identifier(name) = callee
+            && name == "assert"
+            && self.resolve_variable(name).is_none()
+            && self.builder.signature("frost_assert").is_some()
+        {
+            return self.lower_direct_call("frost_assert", arguments);
+        }
+        if let Expression::Identifier(name) = callee
             && self.resolve_variable(name).is_none()
         {
             if self.builder.generic_functions.contains_key(name) {

@@ -5,9 +5,10 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use frost::{
-    Compiler, Lexer, Parser as FrostParser, RunOutcome, VirtualMachine,
-    build_module, check_module, check_ownership, compile_ir_to_object, emit_c,
-    run_module,
+    Compiler, Expression, Lexer, Literal, Parameter, Parser as FrostParser,
+    Position, ReturnSignature, RunOutcome, Spanned, Statement, Type,
+    VirtualMachine, build_module, check_module, check_ownership,
+    compile_ir_to_object, emit_c, run_module,
 };
 
 #[derive(Parser)]
@@ -36,6 +37,66 @@ struct Cli {
         help = "Interpret the typed IR directly (reference oracle for scalar programs)"
     )]
     run_ir: bool,
+
+    #[arg(long, help = "Compile and run the file's `test` blocks")]
+    test: bool,
+}
+
+fn test_harness(tests: &[(String, String)]) -> Vec<Spanned<Statement>> {
+    let spanned = |statement| Spanned::new(statement, Position::default());
+    let call = |name: &str, arguments: Vec<Expression>| {
+        Expression::Call(
+            Box::new(Expression::Identifier(name.to_string())),
+            arguments,
+        )
+    };
+    let call_stmt = |name: &str, arguments: Vec<Expression>| {
+        spanned(Statement::Expression(call(name, arguments)))
+    };
+    let param = |name: &str, ty: Type| Parameter {
+        name: name.to_string(),
+        type_annotation: Some(ty),
+        mutable: false,
+    };
+    let external = |name: &str, params: Vec<Parameter>| {
+        spanned(Statement::Extern {
+            name: name.to_string(),
+            params,
+            return_type: None,
+        })
+    };
+
+    let mut items = vec![
+        external(
+            "frost_test_start",
+            vec![param("name", Type::Ptr(Box::new(Type::I8)))],
+        ),
+        external("frost_test_ok", Vec::new()),
+        external("frost_assert", vec![param("cond", Type::Bool)]),
+    ];
+
+    let mut body = Vec::new();
+    for (test_name, function_name) in tests {
+        body.push(call_stmt(
+            "frost_test_start",
+            vec![Expression::Literal(Literal::String(test_name.clone()))],
+        ));
+        body.push(call_stmt(function_name, Vec::new()));
+        body.push(call_stmt("frost_test_ok", Vec::new()));
+    }
+    body.push(spanned(Statement::Expression(Expression::Literal(
+        Literal::Integer(0),
+    ))));
+
+    items.push(spanned(Statement::Constant(
+        "main".to_string(),
+        Expression::Function(
+            Vec::new(),
+            ReturnSignature::Single(Type::I64),
+            body,
+        ),
+    )));
+    items
 }
 
 fn main() -> Result<()> {
@@ -52,7 +113,51 @@ fn main() -> Result<()> {
     let statements = parser.parse().context("Parser error")?;
 
     let linear_types = parser.linear_types().clone();
+    let tests = parser.tests().to_vec();
     check_ownership(&statements, &linear_types).context("Ownership error")?;
+
+    if cli.test {
+        if tests.is_empty() {
+            println!("no tests found in {}", cli.file);
+            return Ok(());
+        }
+        let mut augmented = statements.clone();
+        augmented.extend(test_harness(&tests));
+        check_ownership(&augmented, &linear_types)
+            .context("Ownership error")?;
+        let module = build_module(&augmented).context("IR lowering error")?;
+        check_module(&module).context("IR type error")?;
+        let object_bytes = compile_ir_to_object(&module)
+            .context("Native compilation error")?;
+
+        let stem = Path::new(&cli.file)
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let directory = std::env::temp_dir();
+        let object_path = directory.join(format!("frost_test_{stem}.o"));
+        let exe_path = directory
+            .join(format!("frost_test_{stem}{}", std::env::consts::EXE_SUFFIX));
+        fs::write(&object_path, object_bytes)?;
+        link_executable(
+            &object_path.to_string_lossy(),
+            &exe_path.to_string_lossy(),
+            &cli.libs,
+        )?;
+        fs::remove_file(&object_path).ok();
+
+        println!("running {} test(s)", tests.len());
+        let status = Command::new(&exe_path)
+            .status()
+            .context("Failed to run test executable")?;
+        fs::remove_file(&exe_path).ok();
+        if status.success() {
+            println!("all tests passed");
+            return Ok(());
+        }
+        std::process::exit(1);
+    }
 
     if cli.run_ir {
         let module = build_module(&statements).context("IR lowering error")?;

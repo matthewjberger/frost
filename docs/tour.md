@@ -207,6 +207,24 @@ main :: fn() -> i64 {
 }
 ```
 
+## Tests
+
+A `test` block is a named unit test, and `assert` fails it when the condition is
+false. Run every test in a file with `frost --test file.frost`.
+
+```
+add :: fn(a: i64, b: i64) -> i64 { a + b }
+
+test "addition" {
+    assert(add(2, 3) == 5)
+    assert(add(0, 0) == 0)
+}
+```
+
+The runner compiles the file, runs each test, and prints one line per test. A
+failing assertion aborts that test and the run exits non-zero, so `frost --test`
+works as a build gate.
+
 ## Calling C
 
 `extern fn` links against any C library with the natural ABI. This is how the

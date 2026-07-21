@@ -822,6 +822,7 @@ pub fn type_from_string(source: &str) -> Result<Type> {
 pub struct Parser<'a> {
     pub tokens: Iter<'a, Token>,
     linear_types: std::collections::HashSet<String>,
+    tests: Vec<(String, String)>,
     positions: &'a [Position],
     consumed: usize,
     pending_angle_close: usize,
@@ -832,6 +833,7 @@ impl<'a> Parser<'a> {
         Self {
             tokens: tokens.iter(),
             linear_types: std::collections::HashSet::new(),
+            tests: Vec::new(),
             positions: &[],
             consumed: 0,
             pending_angle_close: 0,
@@ -845,10 +847,15 @@ impl<'a> Parser<'a> {
         Self {
             tokens: tokens.iter(),
             linear_types: std::collections::HashSet::new(),
+            tests: Vec::new(),
             positions,
             consumed: 0,
             pending_angle_close: 0,
         }
+    }
+
+    pub fn tests(&self) -> &[(String, String)] {
+        &self.tests
     }
 
     fn is_type_arg_close(&self) -> bool {
@@ -896,6 +903,23 @@ impl<'a> Parser<'a> {
         Spanned::new(statement, self.current_position().unwrap_or_default())
     }
 
+    fn parse_test_statement(&mut self) -> Result<Statement> {
+        self.read_token();
+        let name = match self.read_token() {
+            Token::StringLiteral(text) => text.clone(),
+            other => {
+                bail!("Expected a string literal after 'test', found {other:?}")
+            }
+        };
+        let body = self.parse_block()?;
+        let function_name = format!("__frost_test_{}", self.tests.len());
+        self.tests.push((name, function_name.clone()));
+        Ok(Statement::Constant(
+            function_name,
+            Expression::Function(Vec::new(), ReturnSignature::None, body),
+        ))
+    }
+
     pub fn parse(&mut self) -> Result<Program> {
         let mut program = Program::new();
         loop {
@@ -923,6 +947,13 @@ impl<'a> Parser<'a> {
     pub fn parse_statement(&mut self) -> Result<Option<Statement>> {
         Ok(match self.peek_nth(0) {
             Token::EndOfFile => None,
+            Token::Identifier(name)
+                if name == "test"
+                    && matches!(self.peek_nth(1), Token::StringLiteral(_))
+                    && matches!(self.peek_nth(2), Token::LeftBrace) =>
+            {
+                Some(self.parse_test_statement()?)
+            }
             Token::Return => Some(self.parse_return_statement()?),
             Token::Defer => Some(self.parse_defer_statement()?),
             Token::For => Some(self.parse_for_statement()?),
