@@ -80,6 +80,7 @@ pub struct IrLocal {
     pub name: Option<String>,
     pub in_memory: bool,
     pub size: usize,
+    pub linear: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +101,7 @@ pub enum IrStatement {
         source: IrOperand,
         size: usize,
     },
+    Consume(LocalId),
 }
 
 #[derive(Debug, Clone)]
@@ -274,6 +276,7 @@ impl Display for IrStatement {
             } => {
                 write!(f, "copy {size} bytes [{source}] -> [{destination}]")
             }
+            IrStatement::Consume(local) => write!(f, "consume _{local}"),
         }
     }
 }

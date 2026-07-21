@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result, bail};
 
@@ -27,6 +27,7 @@ pub struct IrBuilder {
     constants: HashMap<String, Expression>,
     generic_functions: HashMap<String, GenericFunction>,
     generic_struct_defs: HashMap<String, (Vec<String>, Vec<StructField>)>,
+    linear: HashSet<String>,
     anon_counter: std::cell::Cell<usize>,
 }
 
@@ -52,7 +53,10 @@ fn locate<T>(result: Result<T>, position: Position) -> Result<T> {
     })
 }
 
-pub fn build_module(statements: &[Spanned<Statement>]) -> Result<IrModule> {
+pub fn build_module(
+    statements: &[Spanned<Statement>],
+    linear: &HashSet<String>,
+) -> Result<IrModule> {
     let synthetic_structs = expand_generic_structs(statements)?;
     let mut layout_statements: Vec<Statement> =
         statements.iter().map(|s| s.node.clone()).collect();
@@ -105,6 +109,7 @@ pub fn build_module(statements: &[Spanned<Statement>]) -> Result<IrModule> {
         constants,
         generic_functions,
         generic_struct_defs,
+        linear: linear.clone(),
         anon_counter: std::cell::Cell::new(0),
     };
     builder.collect_signatures(statements);
@@ -354,6 +359,13 @@ impl IrBuilder {
         size_and_align(ty, &self.structs, &self.enums)
             .map(|(size, _)| size)
             .unwrap_or(0)
+    }
+
+    fn type_is_linear(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Struct(name) | Type::Enum(name) => self.linear.contains(name),
+            _ => false,
+        }
     }
 }
 
@@ -1645,11 +1657,13 @@ impl<'a> FunctionLowering<'a> {
         let id = self.locals.len();
         let size = self.builder.byte_size(&ty);
         let in_memory = needs_memory(&ty);
+        let linear = self.builder.type_is_linear(&ty);
         self.locals.push(IrLocal {
             ty,
             name,
             in_memory,
             size,
+            linear,
         });
         id
     }
@@ -2064,6 +2078,9 @@ impl<'a> FunctionLowering<'a> {
             }
             Expression::Identifier(name) => {
                 if let Some(local) = self.resolve_variable(name) {
+                    if self.locals[local].linear {
+                        self.emit(IrStatement::Consume(local));
+                    }
                     return Ok((
                         IrOperand::Local(local),
                         self.type_of_local(local),
@@ -2724,8 +2741,16 @@ impl<'a> FunctionLowering<'a> {
             return Ok(self.address_of_local(slice_local, target));
         }
         match argument {
-            Expression::Identifier(_)
-            | Expression::FieldAccess(..)
+            Expression::Identifier(name) => {
+                if let Some(local) = self.resolve_variable(name)
+                    && self.locals[local].linear
+                {
+                    self.emit(IrStatement::Consume(local));
+                }
+                let (address, _) = self.place_address(argument)?;
+                Ok(address)
+            }
+            Expression::FieldAccess(..)
             | Expression::Index(..)
             | Expression::Dereference(_) => {
                 let (address, _) = self.place_address(argument)?;
