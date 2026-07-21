@@ -674,6 +674,7 @@ main :: fn() -> i64 {
     if (pool_contains(world, foe)) { printf("%lld\n", 1) }
     pool_free(world, foe)
     if (pool_contains(world, foe)) { printf("%lld\n", 9) } else { printf("%lld\n", 0) }
+    pool_destroy(world)
     0
 }
 "#;
@@ -684,6 +685,36 @@ fn native_typed_pool_surface() {
         return;
     };
     assert_eq!(output, "100\n40\n75\n1\n0\n");
+}
+
+#[test]
+fn native_undestroyed_pool_is_rejected() {
+    let source = "\
+Entity :: struct { hp: i64 }\n\
+main :: fn() -> i64 {\n\
+    world : Pool<Entity> = pool_new($Entity, 4)\n\
+    0\n\
+}\n";
+    let message = compile_error("undestroyed_pool", source);
+    assert!(
+        message.contains("never consumed") || message.contains("linear"),
+        "a pool that is never destroyed should be a linear-resource error, got:\n{message}"
+    );
+}
+
+#[test]
+fn native_binding_a_void_value_is_rejected() {
+    let source = "\
+noop :: fn() { }\n\
+main :: fn() -> i64 {\n\
+    x := noop()\n\
+    0\n\
+}\n";
+    let message = compile_error("bind_void", source);
+    assert!(
+        message.contains("void"),
+        "binding a void value should be rejected, got:\n{message}"
+    );
 }
 
 const STR_OUT_OF_BOUNDS: &str = r#"

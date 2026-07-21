@@ -105,7 +105,7 @@ impl Type {
             Type::Arena => false,
             Type::Context => false,
             Type::Handle(_) => true,
-            Type::Pool(_) => true,
+            Type::Pool(_) => false,
             Type::Optional(inner) => inner.is_copy(),
             Type::TypeParam(_) => false,
             Type::Unknown => false,
@@ -307,12 +307,11 @@ mod tests {
     }
 
     #[test]
-    fn pool_is_a_copyable_pointer_handle() {
+    fn pool_is_a_linear_pointer_handle() {
         let pool = Type::Pool(Box::new(Type::Struct("Entity".to_string())));
         assert_eq!(pool.size_of(), 8);
         assert_eq!(pool.align_of(), 8);
-        assert!(pool.is_copy());
-        assert!(!pool.needs_drop());
+        assert!(!pool.is_copy());
         assert_eq!(pool.to_string(), "Pool<Entity>");
     }
 

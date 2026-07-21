@@ -27,6 +27,7 @@
 pool_new       :: extern fn(capacity: i64, elem_size: i64) -> ^u8
 pool_alloc     :: extern fn(pool: ^u8, value: ^u8) -> i64
 pool_get       :: extern fn(pool: ^u8, handle: i64) -> ^u8
+pool_destroy   :: extern fn(pool: ^u8)
 frost_byte_at  :: extern fn(s: ^i8, i: i64) -> i64
 frost_str_len  :: extern fn(s: ^i8) -> i64
 frost_emit_str :: extern fn(s: ^i8)
@@ -560,7 +561,14 @@ parse_function :: fn(p: &mut Parser) -> i64 {
     if (is_main_name(p.src, name_offset, name_length)) {
         is_main = 1
     }
-    p.local_first = p.sym_total
+    // Reclaim the previous function's local symbols. The AST already holds each
+    // local's resolved index, so the table is only needed while this function is
+    // parsing. Reusing a fresh pool bounds symbol memory to one function's
+    // locals rather than the whole program.
+    pool_destroy(p.syms)
+    p.syms = pool_new(256, 16)
+    p.sym_total = 0
+    p.local_first = 0
     skip_ws(p)
     p.pos = p.pos + 1
     params := parse_params(p)
@@ -835,8 +843,8 @@ main :: fn() -> i64 {
     "
 
     arena := pool_new(4096, 48)
-    syms := pool_new(512, 16)
-    fns := pool_new(64, 16)
+    syms := pool_new(256, 16)
+    fns := pool_new(1024, 16)
     mut parser := Parser {
         src = source,
         len = frost_str_len(source),

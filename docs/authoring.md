@@ -109,7 +109,8 @@ and the wildcard `_` all work.
   write, or borrow, `pool_contains(pool, handle)` tests liveness, and
   `pool_free(pool, handle)` releases a slot. No `extern` declarations are needed.
   A freed slot bumps its generation, so a stale handle can never read the new
-  occupant.
+  occupant. A `Pool<T>` is a linear resource, so you must `pool_destroy(pool)` it
+  exactly once; forgetting is a compile error.
 
 ## Generics
 
@@ -236,6 +237,7 @@ main :: fn() -> i64 {
 
     world[player].hp = world[player].hp + delta(&world[goblin].kind)
     printf("%lld\n", world[player].hp)          // 85
+    pool_destroy(world)
     0
 }
 ```
