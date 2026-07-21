@@ -280,5 +280,14 @@ Frost is being reshaped toward a data-oriented language with:
     surface (a pool-backed AST arena, integer node indices instead of pointers,
     second-class references). It reads source, builds an AST, and emits a C
     translation unit that compiles and runs, so a Frost-written code generator
-    now emits native code end to end. The remaining step is widening the accepted
-    language toward the full surface until the compiler can compile Frost.)*
+    now emits native code end to end. It accepts user-defined functions with
+    parameters, `return`, calls, and recursion, each emitted as a C function with
+    its own frame. The remaining step is widening the accepted language toward
+    the full surface until the compiler can compile Frost.)*
+11. Parser error recovery. *(Done: the parser recovers at top-level statement
+    boundaries instead of stopping at the first error, so one malformed
+    declaration no longer discards the rest of the file. `parse_recovering`
+    returns the statements that parsed plus a `Diagnostic` per error, and the
+    plain `parse` entry point reports them all at once. This is the foundation an
+    editor integration would build on, though the language server itself is not
+    yet in scope.)*
