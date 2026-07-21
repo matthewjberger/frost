@@ -138,13 +138,16 @@ roadmap, the order is:
    interface, on top of raw-pointer indexing `p[i]` which landed here.)* The pool
    rebuilt over an arena in Frost with `pool[handle]` staying the one
    compiler-supported place deref remains.
-5. **The OS extern** and a freestanding path. *(The OS extern is done: a dynamic
+5. **The OS extern and a freestanding path.** *(Done. The OS extern: a dynamic
    arena roots its backing in one `malloc` and is a `linear` resource the compiler
    requires be destroyed, so a dynamic allocation cannot leak without a collector,
-   `examples/native/dynamic_arena.frost`. The memory model above it is Frost, so a
-   static arena needs no allocator runtime. A full freestanding link, no libc and
-   no C runtime with a custom entry point and syscall I/O, is a separate
-   build-mode feature, not a language one, and is left for its own effort.)*
+   `examples/native/dynamic_arena.frost`. Freestanding: `frost --link
+   --freestanding` links no C standard library, only a minimal runtime, a custom
+   entry point per platform, and the one OS call for process exit. A static-arena
+   program (`examples/freestanding.frost`) computes its result and returns it as
+   the exit code, and the executable imports only the platform exit function.
+   Windows, Linux, and macOS each get their own entry, the same per-target shape
+   Rust uses.)*
 6. **Remove the compiler-special pool surface**, freeing the `Pool` and `pool_*`
    names. *(Done: `Type::Pool` and the pool built-ins are gone; a pool is a struct
    a program writes, and the runtime pool is an opt-in `extern` library like
