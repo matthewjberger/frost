@@ -101,6 +101,7 @@ pub enum IrStatement {
         source: IrOperand,
         size: usize,
     },
+    Own(LocalId),
     Consume(LocalId),
 }
 
@@ -276,6 +277,7 @@ impl Display for IrStatement {
             } => {
                 write!(f, "copy {size} bytes [{source}] -> [{destination}]")
             }
+            IrStatement::Own(local) => write!(f, "own _{local}"),
             IrStatement::Consume(local) => write!(f, "consume _{local}"),
         }
     }

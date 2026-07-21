@@ -3626,6 +3626,7 @@ impl<'a> FunctionLowering<'a> {
         element_type: &Type,
         elements: &[Expression],
     ) -> Result<()> {
+        self.mark_owned(local);
         let element_size = self.builder.byte_size(element_type);
         for (index, element) in elements.iter().enumerate() {
             let address = self
@@ -3769,12 +3770,19 @@ impl<'a> FunctionLowering<'a> {
         }
     }
 
+    fn mark_owned(&mut self, local: LocalId) {
+        if self.locals[local].linear {
+            self.emit(IrStatement::Own(local));
+        }
+    }
+
     fn init_struct(
         &mut self,
         local: LocalId,
         struct_name: &str,
         field_inits: &[(String, Expression)],
     ) -> Result<()> {
+        self.mark_owned(local);
         let fields: Vec<(String, usize, Type)> = {
             let layout =
                 self.builder.struct_layout(struct_name).ok_or_else(|| {
@@ -3863,6 +3871,7 @@ impl<'a> FunctionLowering<'a> {
         variant_name: &str,
         field_inits: &[(String, Expression)],
     ) -> Result<()> {
+        self.mark_owned(local);
         let (tag, fields): (u32, Vec<(String, usize, Type)>) = {
             let layout =
                 self.builder.enum_layout(enum_name).ok_or_else(|| {

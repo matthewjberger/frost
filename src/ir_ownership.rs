@@ -91,7 +91,7 @@ fn referenced_locals(function: &IrFunction) -> HashSet<LocalId> {
                     collect_operand(destination, &mut referenced);
                     collect_operand(source, &mut referenced);
                 }
-                IrStatement::Consume(_) => {}
+                IrStatement::Own(_) | IrStatement::Consume(_) => {}
             }
         }
         match &block.terminator {
@@ -163,7 +163,7 @@ fn transfer_block(
 
 fn apply(state: &mut State, statement: &IrStatement) {
     match statement {
-        IrStatement::Assign(local, _) => {
+        IrStatement::Assign(local, _) | IrStatement::Own(local) => {
             if state.contains_key(local) {
                 state.insert(*local, OWNED);
             }
@@ -345,5 +345,26 @@ mod tests {
             "{PRELUDE}make :: fn() -> File {{ open() }}\nrun :: fn() {{ close(make()) }}"
         );
         assert!(check(&source).is_ok());
+    }
+
+    #[test]
+    fn ir_accepts_a_linear_moved_into_a_field_then_consumed() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            Box :: linear struct { inner: File }\n\
+            open :: fn() -> File { File { handle = 1 } }\n\
+            sink :: extern fn(b: Box)\n\
+            run :: fn() { f := open()  b := Box { inner = f }  sink(b) }";
+        assert!(check(source).is_ok());
+    }
+
+    #[test]
+    fn ir_rejects_leaking_an_aggregate_that_holds_a_linear() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            Box :: linear struct { inner: File }\n\
+            open :: fn() -> File { File { handle = 1 } }\n\
+            run :: fn() { f := open()  b := Box { inner = f } }";
+        assert!(check(source).is_err());
     }
 }

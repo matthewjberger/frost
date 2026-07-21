@@ -95,7 +95,7 @@ fn check_statement(
             check_operand(function, destination)?;
             check_operand(function, source)?;
         }
-        IrStatement::Consume(local) => {
+        IrStatement::Own(local) | IrStatement::Consume(local) => {
             check_local(function, *local)?;
         }
     }

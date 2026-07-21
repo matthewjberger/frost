@@ -262,7 +262,7 @@ fn emit_statement(
             )?;
             Ok(())
         }
-        IrStatement::Consume(_) => Ok(()),
+        IrStatement::Own(_) | IrStatement::Consume(_) => Ok(()),
     }
 }
 
