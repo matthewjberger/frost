@@ -19,6 +19,8 @@ A statically-typed programming language with Rust-inspired ownership and immutab
 
 ## Documentation
 
+- [docs/authoring.md](docs/authoring.md): the dense practical guide to writing
+  correct Frost fast, and the best single document to start from
 - [docs/tour.md](docs/tour.md): a hands-on tour of the language by example
 - [docs/coming-from-rust.md](docs/coming-from-rust.md): a detailed guide for
   Rust programmers, mapping every reflex to its Frost equivalent

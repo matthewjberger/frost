@@ -296,6 +296,30 @@ Inside a test, `assert(cond)` aborts the test when `cond` is false. `frost --tes
 file.frost` compiles the file, runs each test in declaration order, and exits
 non-zero if any assertion fails.
 
+### 5.5 Modules and exports
+
+A source file is a module. `import "path"` brings another file in, resolved
+relative to the importing file, and each file is pulled in once even through a
+diamond of imports.
+
+Top-level items are private to their file by default. A file lists what it offers
+with an `export` line at the top.
+
+```
+export area, Shape
+
+Shape :: enum { Circle { r: i64 }, Rect { w: i64, h: i64 } }
+area :: fn(s: &Shape) -> i64 { ... }
+scale :: fn(x: i64) -> i64 { ... }   // private, not exported
+```
+
+Only the names on an `export` line are visible to importers. A file with no
+`export` line exports nothing. A private item is fully usable inside its own
+file, so an exported function may call a private helper, but an importer cannot
+name that helper, and two files may share a private name without colliding.
+There is no `pub` and no per-item visibility marker. The `export` line is the
+only control, and struct fields are always public (3.2).
+
 ---
 
 ## 6. Expressions
