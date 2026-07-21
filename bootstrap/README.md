@@ -7,10 +7,11 @@ So it is a real code generator written in Frost that emits native code, the same
 way Frost's own primary backend emits C and links it.
 
 It is deliberately scoped to what the native language expresses today, and it is
-written the way the language wants you to write a compiler: a pool-backed arena
+written the way the language wants you to write a compiler: a Frost-native arena
 for the AST, integer indices instead of heap pointers between nodes, and free
 functions over that data. There are no closures and no dynamic collections, and
-every reference is second-class.
+every reference is second-class. Its memory comes from the language's own
+allocator, not a runtime pool.
 
 ## The language it compiles
 
@@ -35,19 +36,21 @@ to single letters.
    source bytes directly through two tiny runtime helpers, `frost_byte_at` and
    `frost_str_len`. Source is held as a `^i8` pointer, which is a copy type, so
    it threads through the parser freely.
-2. **The AST is a pool of `Node` records.** Each node names its children by
-   their arena index, the data-oriented replacement for pointers between heap
-   nodes. Sibling statements, function parameters, and call arguments are each
-   linked through a `next` field into their own singly linked lists. The pool
-   gives a growable, zero-initialized arena with no manual allocation.
-3. **Names are interned through two symbol tables.** An identifier occurrence is
-   a byte range into the source (offset plus length). Because the language has no
-   string type, the tables intern those ranges to small integer indices by
-   comparing bytes directly, the data-oriented stand-in for a hash map keyed by
-   strings. Each function has its own local table, so its variables become
-   `v[0]`, `v[1]`, ... in that function's frame, and a single global table maps
-   function names to the `mf_<index>` of their emitted C functions. The tables
-   live in their own pools, so no fixed-size array has to be sized in advance.
+2. **The AST lives in a Frost-native arena of `Node` records.** The arena is a
+   generic `Arena<$T>`, a bump allocator over one `malloc`, written in the
+   language itself (`docs/allocators.md`): `arena_push` appends a node and
+   returns its index, `arena_at` turns an index back into a `^Node`. A node names
+   its children by that index, the data-oriented replacement for pointers between
+   heap nodes, and sibling statements, parameters, and call arguments are threaded
+   through a `next` field into singly linked lists. No runtime pool is involved.
+3. **Names are interned through two symbol-table arenas.** An identifier
+   occurrence is a byte range into the source (offset plus length). Because the
+   language has no string type, the tables intern those ranges to small integer
+   indices by comparing bytes directly, the data-oriented stand-in for a hash map
+   keyed by strings. Each function has its own local table, reset by zeroing the
+   arena's count, so its variables become `v[0]`, `v[1]`, ... in that function's
+   frame, and a single global table maps function names to the `mf_<index>` of
+   their emitted C functions.
 4. **The mutable parser cursor** lives in a `Parser` struct threaded by `&mut`
    through the recursive-descent functions, which is the second-class-reference
    way to carry mutable state without storing a borrow anywhere.
