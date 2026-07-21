@@ -101,8 +101,10 @@ accessor, not a C runtime. Concretely:
   aborting on mismatch the same way bounds checking does. This is the same class
   of codegen the compiler already does for arrays, with no runtime call.
 - **Dynamic pools are an opt-in at the edge.** A heap-backed pool is a pool over
-  a caller-provided buffer or one `extern` allocation (`malloc` / `mmap` /
-  `VirtualAlloc`). Fixed-capacity pools, the common case, need nothing external.
+  a caller-provided buffer or one `extern` allocation. Fixed-capacity pools, the
+  common case, need nothing external. The allocator layer under this, an arena as
+  the primary allocator with the pool as its fixed-size specialization, is in
+  `docs/allocators.md`.
 - **The C runtime shrinks.** What stays in C is `printf`-style FFI, the string
   and emit helpers the bootstrap compiler uses, `frost_assert`, and
   `frost_bounds_check`. The pool functions and the generational logic leave C,
@@ -127,6 +129,11 @@ abort discipline rather than a foreign definition.
    boilerplate from pool creation.
 4. **Retire the C pool runtime** and the auto-declared `pool_*` built-ins, freeing
    the `Pool` type name and the `pool_*` function names for user code.
+
+This roadmap is a slice of the larger allocator plan in `docs/allocators.md`,
+which puts the pool on top of an arena and pushes the one remaining OS call to
+the edge. The merged ordering there starts with slices and value generics, the
+same two features this roadmap needs.
 
 ### The honest caveat
 

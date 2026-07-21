@@ -43,6 +43,8 @@ compiles to native code through Cranelift or through portable C.
   the native backend supports today
 - [docs/native-pools.md](docs/native-pools.md): a spike writing a generational
   pool in pure Frost, and the plan to move the memory model out of the C runtime
+- [docs/allocators.md](docs/allocators.md): the layered allocator strategy (arena,
+  pool, and the one platform call), and where it sits on the roadmap
 - [docs/spec.md](docs/spec.md): the language reference and grammar
 
 ## A first program
