@@ -478,7 +478,7 @@ fn bootstrap_minifrost_emits_working_c() {
     let Some(output) = compile_c_and_run("minifrost", &c_source) else {
         return;
     };
-    assert_eq!(output, "55\n120\n55\n3\n14\n11\n4\n11\n11\n16\n");
+    assert_eq!(output, "55\n120\n55\n3\n14\n11\n4\n11\n11\n16\n100\n200\n999\n");
 }
 
 fn run_test_mode(name: &str, source: &str) -> Option<(String, bool)> {
