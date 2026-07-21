@@ -381,6 +381,28 @@ fn native_wrapping_and_unary() {
     assert_eq!(output, "44\n705032704\n-42\n");
 }
 
+const ANON_FUNCTIONS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+apply :: fn(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
+
+main :: fn() -> i64 {
+    printf("%lld\n", apply(fn(a: i64) -> i64 { a + 1 }, 41))
+    printf("%lld\n", apply(fn(a: i64) -> i64 { a * a }, 9))
+    g := fn(a: i64) -> i64 { a - 3 }
+    printf("%lld\n", g(50))
+    0
+}
+"#;
+
+#[test]
+fn native_anonymous_functions() {
+    let Some(output) = compile_and_run("anon", ANON_FUNCTIONS) else {
+        return;
+    };
+    assert_eq!(output, "42\n81\n47\n");
+}
+
 const MINIFROST: &str = include_str!("../bootstrap/minifrost.frost");
 
 fn c_compiler() -> Option<&'static str> {
@@ -1929,6 +1951,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_floats", FLOATS),
         ("diff_widths", WIDTHS),
         ("diff_wrapping", WRAPPING_AND_UNARY),
+        ("diff_anon", ANON_FUNCTIONS),
         ("diff_minifrost", MINIFROST),
         ("diff_strings", STRINGS),
         ("diff_pointers", POINTERS),

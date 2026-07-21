@@ -27,6 +27,14 @@ pub struct IrBuilder {
     constants: HashMap<String, Expression>,
     generic_functions: HashMap<String, GenericFunction>,
     generic_struct_defs: HashMap<String, (Vec<String>, Vec<StructField>)>,
+    anon_counter: std::cell::Cell<usize>,
+}
+
+struct AnonRequest {
+    name: String,
+    parameters: Vec<Parameter>,
+    return_sig: ReturnSignature,
+    body: Block,
 }
 
 fn locate<T>(result: Result<T>, position: Position) -> Result<T> {
@@ -97,6 +105,7 @@ pub fn build_module(statements: &[Spanned<Statement>]) -> Result<IrModule> {
         constants,
         generic_functions,
         generic_struct_defs,
+        anon_counter: std::cell::Cell::new(0),
     };
     builder.collect_signatures(statements);
 
@@ -105,6 +114,7 @@ pub fn build_module(statements: &[Spanned<Statement>]) -> Result<IrModule> {
     let mut top_level = Vec::new();
     let mut has_main = false;
     let mut pending: Vec<Specialization> = Vec::new();
+    let mut pending_anon: Vec<AnonRequest> = Vec::new();
 
     for statement in statements {
         let position = statement.position;
@@ -120,12 +130,13 @@ pub fn build_module(statements: &[Spanned<Statement>]) -> Result<IrModule> {
                 if name == "main" {
                     has_main = true;
                 }
-                let (function, requests) = locate(
+                let (function, requests, anon) = locate(
                     builder.lower_function(name, parameters, return_sig, body),
                     position,
                 )?;
                 functions.push(function);
                 pending.extend(requests);
+                pending_anon.extend(anon);
             }
             Statement::Extern {
                 name,
@@ -156,7 +167,7 @@ pub fn build_module(statements: &[Spanned<Statement>]) -> Result<IrModule> {
 
     if !has_main && !top_level.is_empty() {
         let empty_params: Vec<Parameter> = Vec::new();
-        let (function, requests) = builder.lower_function(
+        let (function, requests, anon) = builder.lower_function(
             "main",
             &empty_params,
             &ReturnSignature::Single(Type::I64),
@@ -164,48 +175,64 @@ pub fn build_module(statements: &[Spanned<Statement>]) -> Result<IrModule> {
         )?;
         functions.push(function);
         pending.extend(requests);
+        pending_anon.extend(anon);
     }
 
     let mut emitted: std::collections::HashSet<String> =
         std::collections::HashSet::new();
-    while let Some(specialization) = pending.pop() {
-        if !emitted.insert(specialization.mangled_name.clone()) {
-            continue;
+    loop {
+        if let Some(specialization) = pending.pop() {
+            if !emitted.insert(specialization.mangled_name.clone()) {
+                continue;
+            }
+            let generic = builder
+                .generic_functions
+                .get(&specialization.generic_name)
+                .expect("specialization references a known generic function")
+                .clone();
+            let parameters: Vec<Parameter> = generic
+                .parameters
+                .iter()
+                .filter(|parameter| !is_type_parameter(parameter))
+                .map(|parameter| Parameter {
+                    name: parameter.name.clone(),
+                    type_annotation: parameter
+                        .type_annotation
+                        .as_ref()
+                        .map(|ty| substitute_type(ty, &specialization.subst)),
+                    mutable: parameter.mutable,
+                })
+                .collect();
+            let return_sig = match generic.return_sig.to_type() {
+                Some(ty) => ReturnSignature::Single(substitute_type(
+                    &ty,
+                    &specialization.subst,
+                )),
+                None => ReturnSignature::None,
+            };
+            let body = substitute_block(&generic.body, &specialization.subst);
+            let (function, requests, anon) = builder.lower_function(
+                &specialization.mangled_name,
+                &parameters,
+                &return_sig,
+                &body,
+            )?;
+            functions.push(function);
+            pending.extend(requests);
+            pending_anon.extend(anon);
+        } else if let Some(request) = pending_anon.pop() {
+            let (function, requests, anon) = builder.lower_function(
+                &request.name,
+                &request.parameters,
+                &request.return_sig,
+                &request.body,
+            )?;
+            functions.push(function);
+            pending.extend(requests);
+            pending_anon.extend(anon);
+        } else {
+            break;
         }
-        let generic = builder
-            .generic_functions
-            .get(&specialization.generic_name)
-            .expect("specialization references a known generic function")
-            .clone();
-        let parameters: Vec<Parameter> = generic
-            .parameters
-            .iter()
-            .filter(|parameter| !is_type_parameter(parameter))
-            .map(|parameter| Parameter {
-                name: parameter.name.clone(),
-                type_annotation: parameter
-                    .type_annotation
-                    .as_ref()
-                    .map(|ty| substitute_type(ty, &specialization.subst)),
-                mutable: parameter.mutable,
-            })
-            .collect();
-        let return_sig = match generic.return_sig.to_type() {
-            Some(ty) => ReturnSignature::Single(substitute_type(
-                &ty,
-                &specialization.subst,
-            )),
-            None => ReturnSignature::None,
-        };
-        let body = substitute_block(&generic.body, &specialization.subst);
-        let (function, requests) = builder.lower_function(
-            &specialization.mangled_name,
-            &parameters,
-            &return_sig,
-            &body,
-        )?;
-        functions.push(function);
-        pending.extend(requests);
     }
 
     Ok(IrModule { functions, externs })
@@ -265,7 +292,7 @@ impl IrBuilder {
         parameters: &[Parameter],
         return_sig: &ReturnSignature,
         body: &Block,
-    ) -> Result<(IrFunction, Vec<Specialization>)> {
+    ) -> Result<(IrFunction, Vec<Specialization>, Vec<AnonRequest>)> {
         let return_type = return_sig.to_type().unwrap_or(Type::Void);
         let mut function = FunctionLowering::new(self, return_type.clone());
 
@@ -295,6 +322,7 @@ impl IrBuilder {
         }
 
         let specializations = std::mem::take(&mut function.specializations);
+        let anonymous = std::mem::take(&mut function.anonymous);
         let (locals, blocks) = function.finish();
         Ok((
             IrFunction {
@@ -306,6 +334,7 @@ impl IrBuilder {
                 entry: 0,
             },
             specializations,
+            anonymous,
         ))
     }
 
@@ -1594,6 +1623,7 @@ struct FunctionLowering<'a> {
     current: BlockId,
     return_type: Type,
     specializations: Vec<Specialization>,
+    anonymous: Vec<AnonRequest>,
 }
 
 impl<'a> FunctionLowering<'a> {
@@ -1611,6 +1641,7 @@ impl<'a> FunctionLowering<'a> {
             current: 0,
             return_type,
             specializations: Vec::new(),
+            anonymous: Vec::new(),
         }
     }
 
@@ -2078,6 +2109,28 @@ impl<'a> FunctionLowering<'a> {
                     return self.lower_expression(&value, expected);
                 }
                 bail!("native backend: unknown variable '{name}'");
+            }
+            Expression::Function(parameters, return_sig, body)
+            | Expression::Proc(parameters, return_sig, body) => {
+                let id = self.builder.anon_counter.get();
+                self.builder.anon_counter.set(id + 1);
+                let name = format!("__anon_{id}");
+                let param_types: Vec<Type> =
+                    parameters.iter().map(parameter_type).collect();
+                let return_type = return_sig.to_type().unwrap_or(Type::Void);
+                let proc_type = Type::Proc(param_types, Box::new(return_type));
+                self.anonymous.push(AnonRequest {
+                    name: name.clone(),
+                    parameters: parameters.clone(),
+                    return_sig: return_sig.clone(),
+                    body: body.clone(),
+                });
+                let result = self.fresh_local(proc_type.clone(), None);
+                self.emit(IrStatement::Assign(
+                    result,
+                    IrRvalue::FunctionAddress(name),
+                ));
+                Ok((IrOperand::Local(result), proc_type))
             }
             Expression::Prefix(operator, operand) => {
                 self.lower_prefix(*operator, operand, expected)
