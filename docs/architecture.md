@@ -90,6 +90,10 @@ correct type and operation for each value because the IR is fully typed, and
 - `str`, a byte-slice view (pointer plus length): string-literal values,
   `str_len` in constant time, bounds-checked byte indexing `s[i]`, and passing
   and returning `str` by value.
+- `[]T` slices, the same fat-pointer view generalized to any element: an array
+  coerces to a slice of the whole array (`view : []i64 = arr`, or an array
+  passed to a `[]T` parameter), `s[i]` is bounds-checked against the runtime
+  length, `slice_len(s)` reads the length, and slices pass and return by value.
 - References and pointers: `&`, `&mut`, `^` dereference read/write, and
   pointer/reference parameters (e.g. `swap(a: ^i64, b: ^i64)`,
   `increment(x: &mut i64)`).
@@ -176,7 +180,7 @@ scalars and structs, with multiple type parameters, array fields of the
 parameter, by-reference passing, and nesting inside other structs.
 
 **Not yet in the native backend** (these fail loudly, they are not silently
-miscompiled): slices. Capturing closures are absent by design,
+miscompiled): growable or heap-backed collections. Capturing closures are absent by design,
 since the language uses function pointers and non-capturing function literals,
 both of which the native backend supports. There is no other backend to fall
 back to, so an unsupported construct is a compile error.

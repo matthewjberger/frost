@@ -97,9 +97,11 @@ Two language features gate the allocator stack, and both are already on the pool
 roadmap:
 
 - **Slices** (`[]T`, and specifically `[]u8`). An allocator operates over a byte
-  slice, a pointer plus a length. Slices exist in the type system but are not yet
-  in the native backend, so this is the first dependency. It also subsumes the
-  raw `^u8` the current pool runtime passes around.
+  slice, a pointer plus a length. This is **done**: `[]T` is a fat-pointer view
+  in the native backend, an array coerces to a slice, indexing is bounds-checked,
+  and `slice_len` reads the length (`docs/architecture.md`,
+  `examples/native/slices.frost`). It subsumes the raw `^u8` the current pool
+  runtime passes around.
 - **Value generics** (`$N` as a value). A static arena is `Arena<N>` and a static
   pool is `Pool<T, N>`, both sized at compile time with no allocation at all.
   This is the same feature the pool roadmap needs for `[N]T` storage.
@@ -118,7 +120,7 @@ The allocator stack is the foundation under the pool work. Merged with the pool
 roadmap, the order is:
 
 1. **Slices** in the native backend (`[]T`, `[]u8`), the byte view every
-   allocator needs.
+   allocator needs. *(Done.)*
 2. **Value generics** (`$N`), so arenas and pools are sized without allocation.
 3. **Arena allocator** (revive `Arena`): a linear bump allocator over a `[]u8`,
    with reset and marker rollback.

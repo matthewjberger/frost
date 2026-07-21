@@ -1,0 +1,38 @@
+// Slices: a `[]T` is a view of a run of `T`, a data pointer plus a length. It is
+// a copy value, sixteen bytes, the same fat-pointer shape as `str` (which is
+// `[]u8`). An array coerces to a slice of the whole array, indexing is
+// bounds-checked against the runtime length, and `slice_len` reads the length in
+// constant time. A slice is the byte view every allocator needs (docs/allocators.md).
+
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+sum :: fn(numbers: []i64) -> i64 {
+    mut total : i64 = 0
+    mut i : i64 = 0
+    while (i < slice_len(numbers)) {
+        total = total + numbers[i]
+        i = i + 1
+    }
+    total
+}
+
+largest :: fn(numbers: []i64) -> i64 {
+    mut best := numbers[0]
+    mut i : i64 = 1
+    while (i < slice_len(numbers)) {
+        if (numbers[i] > best) { best = numbers[i] }
+        i = i + 1
+    }
+    best
+}
+
+main :: fn() -> i64 {
+    scores := [40, 10, 90, 30, 70]
+    view : []i64 = scores
+
+    printf("%lld\n", slice_len(view))   // 5
+    printf("%lld\n", sum(view))         // 240
+    printf("%lld\n", largest(view))     // 90
+    printf("%lld\n", sum(scores))       // 240, the array coerces to a slice
+    0
+}

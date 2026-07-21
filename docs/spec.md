@@ -181,7 +181,10 @@ wider type.
   carry named fields, and one enum may mix both.
 - **Fixed arrays** `[N]T` are `N` contiguous `T`. The length is part of the type
   and every index is bounds-checked (10.4).
-- **Slices** `[]T` are a pointer/length view of a run of `T`.
+- **Slices** `[]T` are a pointer/length view of a run of `T`, sixteen bytes and a
+  copy value, the same fat-pointer shape as `str` (which is `[]u8`). An array
+  coerces to a slice of the whole array, `s[i]` is bounds-checked against the
+  runtime length (10.4), and `slice_len(s)` reads the length in constant time.
 
 Aggregates are **move** types (chapter 8), copied by value at call and return
 boundaries unless passed by borrow, with no `Copy` derive.
