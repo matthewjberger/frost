@@ -2529,6 +2529,17 @@ impl<'a> FunctionLowering<'a> {
             && !self.builder.generic_functions.contains_key(name)
         {
             match name.as_str() {
+                "ptr_to" => return self.lower_ptr_to(arguments),
+                "ptr_cast" => return self.lower_ptr_cast(arguments),
+                _ => {}
+            }
+        }
+        if let Expression::Identifier(name) = callee
+            && self.resolve_variable(name).is_none()
+            && self.builder.signature(name).is_none()
+            && !self.builder.generic_functions.contains_key(name)
+        {
+            match name.as_str() {
                 "pool_new" => return self.lower_pool_new(arguments),
                 "pool_alloc" => return self.lower_pool_alloc(arguments),
                 "pool_contains" => {
@@ -3391,6 +3402,42 @@ impl<'a> FunctionLowering<'a> {
         let base = self.slice_value_address(&arguments[0])?;
         let length = self.str_field(base, SLICE_LEN_OFFSET, Type::Usize);
         Ok((length, Type::Usize))
+    }
+
+    // A first-class raw pointer to a place. `&x` is a second-class reference;
+    // ptr_to gives the same address as a `^T` that may be stored and returned.
+    fn lower_ptr_to(
+        &mut self,
+        arguments: &[Expression],
+    ) -> Result<(IrOperand, Type)> {
+        if arguments.len() != 1 {
+            bail!("native backend: ptr_to expects one place argument");
+        }
+        let (address, pointee) = self.place_address(&arguments[0])?;
+        Ok((address, Type::Ptr(Box::new(pointee))))
+    }
+
+    // Reinterpret a pointer value as `^T`. A pointer is a pointer at the ABI, so
+    // this is a retype with no runtime cost.
+    fn lower_ptr_cast(
+        &mut self,
+        arguments: &[Expression],
+    ) -> Result<(IrOperand, Type)> {
+        if arguments.len() != 2 {
+            bail!(
+                "native backend: ptr_cast expects a type and a pointer, as in ptr_cast($T, p)"
+            );
+        }
+        let Expression::TypeValue(target) = &arguments[0] else {
+            bail!(
+                "native backend: ptr_cast's first argument must be a type, as in $Entity"
+            );
+        };
+        let target = Type::Ptr(Box::new(target.clone()));
+        let (pointer, _) = self.lower_expression(&arguments[1], None)?;
+        let result = self.fresh_local(target.clone(), None);
+        self.emit(IrStatement::Assign(result, IrRvalue::Use(pointer)));
+        Ok((IrOperand::Local(result), target))
     }
 
     fn place_address(

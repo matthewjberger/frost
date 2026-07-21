@@ -687,6 +687,55 @@ fn native_typed_pool_surface() {
     assert_eq!(output, "100\n40\n75\n1\n0\n");
 }
 
+const ARENA: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Point :: struct { x: i64, y: i64 }
+
+Arena :: struct($N: usize) {
+    data: [N]u8,
+    offset: i64,
+}
+
+alloc_point :: fn(a: &mut Arena<128>) -> ^Point {
+    slot := ptr_to(a.data[a.offset])
+    a.offset = a.offset + sizeof(Point)
+    ptr_cast($Point, slot)
+}
+
+alloc_int :: fn(a: &mut Arena<128>) -> ^i64 {
+    slot := ptr_to(a.data[a.offset])
+    a.offset = a.offset + sizeof(i64)
+    ptr_cast($i64, slot)
+}
+
+main :: fn() -> i64 {
+    mut arena : Arena<128> = Arena { data = [0; 128], offset = 0 }
+    p : ^Point = alloc_point(&mut arena)
+    p^.x = 3
+    p^.y = 4
+    q : ^i64 = alloc_int(&mut arena)
+    q^ = 99
+    printf("%lld\n", p^.x)
+    printf("%lld\n", q^)
+    printf("%lld\n", arena.offset)
+    arena.offset = 0
+    r : ^i64 = alloc_int(&mut arena)
+    r^ = 7
+    printf("%lld\n", r^)
+    printf("%lld\n", arena.offset)
+    0
+}
+"#;
+
+#[test]
+fn native_frost_arena_allocator() {
+    let Some(output) = compile_and_run("arena", ARENA) else {
+        return;
+    };
+    assert_eq!(output, "3\n99\n24\n7\n8\n");
+}
+
 const VALUE_GENERICS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -2373,6 +2422,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_nativepool", NATIVE_POOL),
         ("diff_slices", SLICES),
         ("diff_valuegenerics", VALUE_GENERICS),
+        ("diff_arena", ARENA),
         ("diff_widening", WIDENING_BINDINGS),
         ("diff_matchagg", MATCH_RETURNS_AGGREGATE),
         ("diff_f32", F32_OPERATIONS),

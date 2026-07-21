@@ -111,9 +111,12 @@ roadmap:
 
 ## Disposition of the vestigial types
 
-- **`Arena`** becomes the real bump allocator described here (layer 3), rather
-  than the inert placeholder it is today. It keeps its name.
-- **`Context`** is removed. It is dead (not even parseable), and the ambient
+- **`Arena`** is now a Frost struct name, not a compiler type. The inert
+  `Type::Arena` placeholder was removed so a program (or the standard library)
+  can define its own `Arena` struct, which is exactly what
+  `examples/native/arena.frost` does. The arena is language code, so the compiler
+  has no business reserving the name.
+- **`Context`** is removed. It was dead (not even parseable), and the ambient
   context it stood for is explicitly rejected above in favor of passing
   allocators by reference.
 
@@ -126,8 +129,9 @@ roadmap, the order is:
    allocator needs. *(Done.)*
 2. **Value generics** (`$N`), so arenas and pools are sized without allocation.
    *(Done.)*
-3. **Arena allocator** (revive `Arena`): a linear bump allocator over a `[]u8`,
-   with reset and marker rollback.
+3. **Arena allocator**: a bump allocator over a byte buffer, with reset and marker
+   rollback. *(Done, as Frost code: `examples/native/arena.frost`, on the new
+   `ptr_to`/`ptr_cast` primitives and the `[0; N]` repeat literal.)*
 4. **The allocator interface** and the pool rebuilt over an arena or static
    buffer in Frost, with `pool[handle]` staying the one compiler-supported place
    deref.
@@ -153,15 +157,13 @@ scoped precisely rather than discovered mid-flight.
   backend sees it, so the blast radius stayed in the parser and the substitution,
   exactly as scoped. Both transient forms are unreachable in lowered code.
 
-- **A Frost-library arena needs two more primitives.** To bump-allocate over a
-  `[]u8` and hand back a typed pointer, library code needs a pointer cast
-  (`^u8` to `^T`) and pointer offset arithmetic (`base + offset`), neither of
-  which Frost exposes today (indexing is the only pointer arithmetic, and casts
-  are numeric-only). The alternative is to make `arena_alloc($T, arena)` a
-  compiler built-in like the pool operations, which works but adds built-in
-  surface the roadmap is trying to shed. The cast and offset primitives are the
-  smaller, more roadmap-aligned addition, and they are independently useful.
-
-Neither is a small addition, and both are best done deliberately. Slices, the one
-step that generalized cleanly from existing machinery, is done; the rest are
-genuine language features with the shape recorded above.
+- **A Frost-library arena needed two primitives, now added.** Bump-allocating
+  over a byte buffer and handing back a typed pointer needs a first-class raw
+  address and a pointer reinterpret. Those are `ptr_to(place) -> ^T` (the same
+  address as `&`, but a first-class `^T` that may be stored and returned) and
+  `ptr_cast($T, p) -> ^T` (a no-cost retype). With them the arena is Frost code:
+  the storage and the bump logic live in the language, and the compiler provides
+  only the raw address-of and the reinterpret. See
+  `examples/native/arena.frost`. Constructing the backing buffer uses the repeat
+  array literal `[0; N]`, which also landed here and covers the zeroed-array case
+  the pool roadmap wanted.
