@@ -346,6 +346,7 @@ mod tests {
             name: None,
             in_memory: false,
             linear: false,
+            position: Default::default(),
         }
     }
 

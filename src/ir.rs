@@ -1,5 +1,6 @@
 use std::fmt::{self, Display, Formatter};
 
+use crate::lexer::Position;
 use crate::types::Type;
 
 pub type LocalId = usize;
@@ -81,6 +82,7 @@ pub struct IrLocal {
     pub in_memory: bool,
     pub size: usize,
     pub linear: bool,
+    pub position: Position,
 }
 
 #[derive(Debug, Clone)]

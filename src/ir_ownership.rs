@@ -1,11 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 
 use crate::ir::{
     BlockId, IrFunction, IrModule, IrOperand, IrRvalue, IrStatement,
     IrTerminator, LocalId,
 };
+use crate::lexer::Position;
 
 const UNOWNED: u8 = 1;
 const OWNED: u8 = 2;
@@ -186,14 +187,16 @@ fn report_block(
             let current = state.get(local).copied().unwrap_or(UNOWNED);
             if current != OWNED {
                 let name = local_name(function, *local);
-                if current == CONSUMED {
-                    bail!(
+                let message = if current == CONSUMED {
+                    format!(
                         "linearity: linear value {name} is consumed more than once"
-                    );
-                }
-                bail!(
-                    "linearity: linear value {name} may be consumed more than once or before it holds a resource"
-                );
+                    )
+                } else {
+                    format!(
+                        "linearity: linear value {name} may be consumed more than once or before it holds a resource"
+                    )
+                };
+                return Err(located(function, *local, message));
             }
         }
         apply(&mut state, statement);
@@ -207,22 +210,44 @@ fn report_block(
             if owned & OWNED == 0 {
                 continue;
             }
-            let discarded = function.locals[local].name.is_none()
-                && !referenced.contains(&local);
             if function.locals[local].name.is_some() {
                 let name = local_name(function, local);
-                bail!(
-                    "linearity: linear value {name} is not consumed on every path before return"
-                );
+                return Err(located(
+                    function,
+                    local,
+                    format!(
+                        "linearity: linear value {name} is not consumed on every path before return"
+                    ),
+                ));
             }
-            if discarded {
-                bail!(
+            if !referenced.contains(&local) {
+                return Err(located(
+                    function,
+                    local,
                     "linearity: a linear value is created but never consumed"
-                );
+                        .to_string(),
+                ));
             }
         }
     }
     Ok(())
+}
+
+fn located(
+    function: &IrFunction,
+    local: LocalId,
+    message: String,
+) -> anyhow::Error {
+    let position = function.locals[local].position;
+    if position == Position::default() {
+        anyhow::anyhow!("{message}")
+    } else {
+        anyhow::anyhow!(
+            "at line {}, column {}: {message}",
+            position.line,
+            position.column
+        )
+    }
 }
 
 fn local_name(function: &IrFunction, local: LocalId) -> String {
