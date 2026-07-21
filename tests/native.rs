@@ -687,6 +687,61 @@ fn native_typed_pool_surface() {
     assert_eq!(output, "100\n40\n75\n1\n0\n");
 }
 
+const SLICES: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+sum :: fn(s: []i64) -> i64 {
+    mut total : i64 = 0
+    mut i : i64 = 0
+    n := slice_len(s)
+    while (i < n) {
+        total = total + s[i]
+        i = i + 1
+    }
+    total
+}
+
+main :: fn() -> i64 {
+    arr := [10, 20, 30, 40]
+    view : []i64 = arr
+    printf("%lld\n", slice_len(view))
+    printf("%lld\n", view[2])
+    printf("%lld\n", sum(view))
+    printf("%lld\n", sum(arr))
+    0
+}
+"#;
+
+#[test]
+fn native_slices() {
+    let Some(output) = compile_and_run("slices", SLICES) else {
+        return;
+    };
+    assert_eq!(output, "4\n30\n100\n100\n");
+}
+
+const SLICE_OUT_OF_BOUNDS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+main :: fn() -> i64 {
+    arr := [1, 2, 3]
+    view : []i64 = arr
+    mut i : i64 = 7
+    printf("%lld\n", view[i])
+    0
+}
+"#;
+
+#[test]
+fn native_slice_index_is_bounds_checked() {
+    let Some(succeeded) =
+        compile_and_run_status("sliceoob", SLICE_OUT_OF_BOUNDS)
+    else {
+        return;
+    };
+    assert!(!succeeded, "an out-of-range slice index should abort");
+}
+
 const NATIVE_POOL: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -2269,6 +2324,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_genpool", GENERATIONAL_POOL),
         ("diff_typedpool", TYPED_POOL),
         ("diff_nativepool", NATIVE_POOL),
+        ("diff_slices", SLICES),
         ("diff_widening", WIDENING_BINDINGS),
         ("diff_matchagg", MATCH_RETURNS_AGGREGATE),
         ("diff_f32", F32_OPERATIONS),

@@ -1372,12 +1372,20 @@ fn substitute_expression(
 fn needs_memory(ty: &Type) -> bool {
     matches!(
         ty,
-        Type::Struct(_) | Type::Array(_, _) | Type::Enum(_) | Type::Str
+        Type::Struct(_)
+            | Type::Array(_, _)
+            | Type::Enum(_)
+            | Type::Str
+            | Type::Slice(_)
     )
 }
 
+// A str and a slice share the same fat-pointer layout: a data pointer at offset
+// 0 and a usize length at offset 8.
 const STR_PTR_OFFSET: usize = 0;
 const STR_LEN_OFFSET: usize = 8;
+const SLICE_PTR_OFFSET: usize = 0;
+const SLICE_LEN_OFFSET: usize = 8;
 
 fn str_byte_ptr_type() -> Type {
     Type::Ptr(Box::new(Type::U8))
@@ -2499,6 +2507,14 @@ impl<'a> FunctionLowering<'a> {
             return self.lower_str_len(arguments);
         }
         if let Expression::Identifier(name) = callee
+            && name == "slice_len"
+            && self.resolve_variable(name).is_none()
+            && self.builder.signature(name).is_none()
+            && !self.builder.generic_functions.contains_key(name)
+        {
+            return self.lower_slice_len(arguments);
+        }
+        if let Expression::Identifier(name) = callee
             && self.resolve_variable(name).is_none()
             && self.builder.signature(name).is_none()
             && !self.builder.generic_functions.contains_key(name)
@@ -2754,6 +2770,24 @@ impl<'a> FunctionLowering<'a> {
         argument: &Expression,
         target: &Type,
     ) -> Result<IrOperand> {
+        // Passing a `[N]T` array where a `[]T` slice is wanted: build the slice
+        // view and hand over its address, rather than the array's.
+        if let Type::Slice(element) = target
+            && let Some(Type::Array(array_element, count)) =
+                self.place_type(argument)
+            && array_element == *element
+            && let Expression::Identifier(name) = argument
+            && let Some(array_local) = self.resolve_variable(name)
+        {
+            let slice =
+                self.build_slice_from_array(array_local, element, count);
+            let IrOperand::Local(slice_local) = slice else {
+                bail!(
+                    "native backend: slice construction did not yield a place"
+                );
+            };
+            return Ok(self.address_of_local(slice_local, target));
+        }
         match argument {
             Expression::Identifier(_)
             | Expression::FieldAccess(..)
@@ -3228,6 +3262,128 @@ impl<'a> FunctionLowering<'a> {
         Ok((IrOperand::Local(element), Type::U8))
     }
 
+    // Build a `[]T` fat pointer viewing the whole of an in-memory `[N]T` array:
+    // the data pointer is the array's address, the length is the element count.
+    fn build_slice_from_array(
+        &mut self,
+        array_local: LocalId,
+        element: &Type,
+        count: usize,
+    ) -> IrOperand {
+        self.mark_in_memory(array_local);
+        let array_type = Type::Array(Box::new(element.clone()), count);
+        let base = self.address_of_local(array_local, &array_type);
+        let slice_type = Type::Slice(Box::new(element.clone()));
+        let slice_local = self.fresh_local(slice_type, None);
+        self.mark_in_memory(slice_local);
+        let ptr_type = Type::Ptr(Box::new(element.clone()));
+        let ptr_slot = self.fresh_local(Type::Ptr(Box::new(ptr_type)), None);
+        self.emit(IrStatement::Assign(
+            ptr_slot,
+            IrRvalue::AddressOf {
+                local: slice_local,
+                offset: SLICE_PTR_OFFSET,
+            },
+        ));
+        self.emit(IrStatement::Store {
+            address: IrOperand::Local(ptr_slot),
+            value: base,
+        });
+        let len_slot = self.fresh_local(Type::Ptr(Box::new(Type::Usize)), None);
+        self.emit(IrStatement::Assign(
+            len_slot,
+            IrRvalue::AddressOf {
+                local: slice_local,
+                offset: SLICE_LEN_OFFSET,
+            },
+        ));
+        self.emit(IrStatement::Store {
+            address: IrOperand::Local(len_slot),
+            value: IrOperand::Constant(IrConstant::Integer(
+                count as i64,
+                Type::Usize,
+            )),
+        });
+        IrOperand::Local(slice_local)
+    }
+
+    fn slice_value_address(
+        &mut self,
+        expression: &Expression,
+    ) -> Result<IrOperand> {
+        if matches!(self.place_type(expression), Some(Type::Slice(_))) {
+            let (address, _) = self.place_address(expression)?;
+            return Ok(address);
+        }
+        let (operand, value_type) = self.lower_expression(expression, None)?;
+        let Type::Slice(_) = value_type else {
+            bail!("native backend: expected a slice value, found {value_type}");
+        };
+        let IrOperand::Local(local) = operand else {
+            bail!("native backend: slice value is not addressable");
+        };
+        self.mark_in_memory(local);
+        Ok(self.address_of_local(local, &value_type))
+    }
+
+    fn slice_element_of(&self, base: &Expression) -> Option<Type> {
+        match self.place_type(base) {
+            Some(Type::Slice(element)) => Some(*element),
+            _ => None,
+        }
+    }
+
+    fn slice_element_address(
+        &mut self,
+        base: &Expression,
+        index_operand: IrOperand,
+        index_type: Type,
+        element: Type,
+    ) -> Result<(IrOperand, Type)> {
+        let slice_address = self.slice_value_address(base)?;
+        let element_ptr = Type::Ptr(Box::new(element.clone()));
+        let data = self.str_field(
+            slice_address.clone(),
+            SLICE_PTR_OFFSET,
+            element_ptr.clone(),
+        );
+        let length =
+            self.str_field(slice_address, SLICE_LEN_OFFSET, Type::Usize);
+        let index = self.coerce(index_operand, &index_type, &Type::I64);
+        let length = self.coerce(length, &Type::Usize, &Type::I64);
+        let check = self.fresh_local(Type::Void, None);
+        self.emit(IrStatement::Assign(
+            check,
+            IrRvalue::Call {
+                function: "frost_bounds_check".to_string(),
+                arguments: vec![index.clone(), length],
+            },
+        ));
+        let element_size = self.builder.byte_size(&element);
+        let result = self.fresh_local(element_ptr, None);
+        self.emit(IrStatement::Assign(
+            result,
+            IrRvalue::ElementAddress {
+                base: data,
+                index,
+                element_size,
+            },
+        ));
+        Ok((IrOperand::Local(result), element))
+    }
+
+    fn lower_slice_len(
+        &mut self,
+        arguments: &[Expression],
+    ) -> Result<(IrOperand, Type)> {
+        if arguments.len() != 1 {
+            bail!("native backend: slice_len expects one argument");
+        }
+        let base = self.slice_value_address(&arguments[0])?;
+        let length = self.str_field(base, SLICE_LEN_OFFSET, Type::Usize);
+        Ok((length, Type::Usize))
+    }
+
     fn place_address(
         &mut self,
         place: &Expression,
@@ -3286,6 +3442,14 @@ impl<'a> FunctionLowering<'a> {
         }
         if matches!(self.place_type(base), Some(Type::Str)) {
             return self.str_byte_address(base, index_operand, index_type);
+        }
+        if let Some(element) = self.slice_element_of(base) {
+            return self.slice_element_address(
+                base,
+                index_operand,
+                index_type,
+                element,
+            );
         }
         let (base_pointer, element_type, length) =
             self.array_base_pointer(base)?;
@@ -4206,6 +4370,17 @@ impl<'a> FunctionLowering<'a> {
     ) -> IrOperand {
         if from == to || matches!(to, Type::Void | Type::Unknown) {
             return operand;
+        }
+        if let (Type::Array(from_element, count), Type::Slice(to_element)) =
+            (from, to)
+            && from_element == to_element
+            && let IrOperand::Local(array_local) = operand
+        {
+            return self.build_slice_from_array(
+                array_local,
+                from_element,
+                *count,
+            );
         }
         match &operand {
             IrOperand::Constant(IrConstant::Integer(value, _))

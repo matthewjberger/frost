@@ -499,7 +499,11 @@ fn binary_operator(op: IrBinOp) -> &'static str {
 fn is_aggregate(ty: &Type) -> bool {
     matches!(
         ty,
-        Type::Struct(_) | Type::Enum(_) | Type::Array(_, _) | Type::Str
+        Type::Struct(_)
+            | Type::Enum(_)
+            | Type::Array(_, _)
+            | Type::Str
+            | Type::Slice(_)
     )
 }
 
