@@ -7,8 +7,8 @@ use clap::Parser;
 use frost::{
     Expression, Lexer, Literal, Parameter, Parser as FrostParser, Position,
     ReturnSignature, RunOutcome, Spanned, Statement, Type, build_module,
-    check_module, check_ownership, compile_ir_to_object, emit_c,
-    resolve_imports, run_module,
+    check_linearity, check_module, check_ownership, compile_ir_to_object,
+    emit_c, resolve_imports, run_module,
 };
 
 #[derive(Parser)]
@@ -143,8 +143,10 @@ fn main() -> Result<()> {
         augmented.extend(test_harness(&tests));
         check_ownership(&augmented, &linear_types)
             .context("Ownership error")?;
-        let module = build_module(&augmented).context("IR lowering error")?;
+        let module = build_module(&augmented, &linear_types)
+            .context("IR lowering error")?;
         check_module(&module).context("IR type error")?;
+        check_linearity(&module).context("Linearity error")?;
         let object_bytes = compile_ir_to_object(&module)
             .context("Native compilation error")?;
 
@@ -179,8 +181,10 @@ fn main() -> Result<()> {
     }
 
     if cli.run_ir {
-        let module = build_module(&statements).context("IR lowering error")?;
+        let module = build_module(&statements, &linear_types)
+            .context("IR lowering error")?;
         check_module(&module).context("IR type error")?;
+        check_linearity(&module).context("Linearity error")?;
         match run_module(&module) {
             RunOutcome::Output(output) => {
                 print!("{output}");
@@ -194,8 +198,10 @@ fn main() -> Result<()> {
     }
 
     if cli.emit_c {
-        let module = build_module(&statements).context("IR lowering error")?;
+        let module = build_module(&statements, &linear_types)
+            .context("IR lowering error")?;
         check_module(&module).context("IR type error")?;
+        check_linearity(&module).context("Linearity error")?;
         let c_source = emit_c(&module).context("C emission error")?;
 
         let input_path = Path::new(&cli.file);
@@ -228,8 +234,10 @@ fn main() -> Result<()> {
     }
 
     if cli.native || cli.link {
-        let module = build_module(&statements).context("IR lowering error")?;
+        let module = build_module(&statements, &linear_types)
+            .context("IR lowering error")?;
         check_module(&module).context("IR type error")?;
+        check_linearity(&module).context("Linearity error")?;
         let object_bytes = compile_ir_to_object(&module)
             .context("Native compilation error")?;
 
@@ -269,8 +277,10 @@ fn main() -> Result<()> {
             println!("Compiled to: {}", object_path);
         }
     } else {
-        let module = build_module(&statements).context("IR lowering error")?;
+        let module = build_module(&statements, &linear_types)
+            .context("IR lowering error")?;
         check_module(&module).context("IR type error")?;
+        check_linearity(&module).context("Linearity error")?;
         let object_bytes = compile_ir_to_object(&module)
             .context("Native compilation error")?;
         let stem = Path::new(&cli.file)

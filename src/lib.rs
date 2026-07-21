@@ -4,6 +4,7 @@ mod ir_build;
 mod ir_c;
 mod ir_codegen;
 mod ir_interp;
+mod ir_ownership;
 mod ir_typecheck;
 mod lexer;
 mod ownership;
@@ -12,7 +13,8 @@ mod types;
 
 pub use self::{
     imports::*, ir::*, ir_build::*, ir_c::*, ir_codegen::*, ir_interp::*,
-    ir_typecheck::*, lexer::*, ownership::*, parser::*, types::*,
+    ir_ownership::*, ir_typecheck::*, lexer::*, ownership::*, parser::*,
+    types::*,
 };
 
 use std::fmt::Display;

@@ -95,6 +95,9 @@ fn check_statement(
             check_operand(function, destination)?;
             check_operand(function, source)?;
         }
+        IrStatement::Consume(local) => {
+            check_local(function, *local)?;
+        }
     }
     Ok(())
 }
@@ -342,6 +345,7 @@ mod tests {
             ty,
             name: None,
             in_memory: false,
+            linear: false,
         }
     }
 
