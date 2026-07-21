@@ -27,15 +27,18 @@ allocator, not a runtime pool.
 - `if (expr) { ... } else { ... }` and `while (expr) { ... }`.
 - Statements separated by whitespace or `;`.
 
-Identifiers are lowercase letter runs (`sum`, `count`, `fib`), no longer limited
-to single letters.
+Identifiers are letter runs that may include underscores, uppercase letters, and
+digits after the first character (`sum`, `count`, `fib`, `is_main`, `Node`).
 
 ## How it works
 
-1. **Lexing and parsing are fused** into a recursive-descent parser that reads
-   source bytes directly through two tiny runtime helpers, `frost_byte_at` and
-   `frost_str_len`. Source is held as a `^i8` pointer, which is a copy type, so
-   it threads through the parser freely.
+1. **A lexer runs first,** turning the source into a flat `Arena<Token>` in one
+   pass through `frost_byte_at`. It drops whitespace and `//` comments, reads
+   integer and string literals, classifies identifier runs that spell a keyword
+   to their own token kind, and lexes every operator and punctuation mark
+   greedily (so `::`, `:=`, `->`, `<=`, `&&` are single tokens). Each token keeps
+   the byte range it came from, which is how identifiers stay interned by range.
+   The parser then reads token kinds rather than raw bytes.
 2. **The AST lives in a Frost-native arena of `Node` records.** The arena is a
    generic `Arena<$T>`, a bump allocator over one `malloc`, written in the
    language itself (`docs/allocators.md`): `arena_push` appends a node and

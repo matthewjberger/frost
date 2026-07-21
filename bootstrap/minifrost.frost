@@ -62,15 +62,56 @@ OP_NE  :: 10
 OP_AND :: 11
 OP_OR  :: 12
 
-// Keyword codes.
-KW_NONE   :: 0
-KW_LET    :: 1
-KW_PRINT  :: 2
-KW_IF     :: 3
-KW_ELSE   :: 4
-KW_WHILE  :: 5
-KW_FN     :: 6
-KW_RETURN :: 7
+// Token kinds. The lexer turns the source into a flat arena of these before the
+// parser runs, so the parser peeks token kinds rather than raw bytes. Identifier
+// runs that spell a keyword are classified to their keyword kind while lexing.
+TOK_EOF       :: 0
+TOK_INT       :: 1
+TOK_IDENT     :: 2
+TOK_STR       :: 3
+TOK_KW_FN     :: 10
+TOK_KW_LET    :: 11
+TOK_KW_IF     :: 12
+TOK_KW_ELSE   :: 13
+TOK_KW_WHILE  :: 14
+TOK_KW_RETURN :: 15
+TOK_KW_PRINT  :: 16
+TOK_KW_STRUCT :: 17
+TOK_KW_MATCH  :: 18
+TOK_KW_CASE   :: 19
+TOK_KW_EXTERN :: 20
+TOK_KW_TRUE   :: 21
+TOK_KW_FALSE  :: 22
+TOK_KW_MUT    :: 23
+TOK_LPAREN    :: 40
+TOK_RPAREN    :: 41
+TOK_LBRACE    :: 42
+TOK_RBRACE    :: 43
+TOK_LBRACKET  :: 44
+TOK_RBRACKET  :: 45
+TOK_COMMA     :: 46
+TOK_DOT       :: 47
+TOK_COLON     :: 48
+TOK_COLONCOLON :: 49
+TOK_COLONEQ   :: 50
+TOK_ARROW     :: 51
+TOK_CARET     :: 52
+TOK_AMP       :: 53
+TOK_ASSIGN    :: 54
+TOK_PLUS      :: 55
+TOK_MINUS     :: 56
+TOK_STAR      :: 57
+TOK_SLASH     :: 58
+TOK_PERCENT   :: 59
+TOK_LT        :: 60
+TOK_LE        :: 61
+TOK_GT        :: 62
+TOK_GE        :: 63
+TOK_EQEQ      :: 64
+TOK_NE        :: 65
+TOK_ANDAND    :: 66
+TOK_OROR      :: 67
+TOK_DOLLAR    :: 68
 
 // Character codes (the language has no character literals).
 CH_TAB     :: 9
@@ -98,6 +139,19 @@ CH_PIPE    :: 124
 CH_RBRACE  :: 125
 CH_LOWER_A :: 97
 CH_LOWER_Z :: 122
+CH_DQUOTE     :: 34
+CH_DOLLAR     :: 36
+CH_DOT        :: 46
+CH_COLON      :: 58
+CH_UPPER_A    :: 65
+CH_UPPER_Z    :: 90
+CH_LBRACKET   :: 91
+CH_RBRACKET   :: 93
+CH_CARET      :: 94
+CH_UNDERSCORE :: 95
+CH_BACKSLASH  :: 92
+CH_LOWER_N    :: 110
+CH_LOWER_T    :: 116
 
 Node :: struct {
     kind: i64,
@@ -112,6 +166,16 @@ Node :: struct {
 Sym :: struct {
     off: i64,
     len: i64,
+}
+
+// A lexed token. `off`/`len` are the byte range in the source (used to intern
+// identifiers and to re-emit string literals); `value` holds the parsed integer
+// for a TOK_INT. `kind` is one of the TOK_ constants.
+Token :: struct {
+    kind: i64,
+    off: i64,
+    len: i64,
+    value: i64,
 }
 
 // A growable, index-addressed arena over a single heap allocation. This is the
@@ -143,98 +207,223 @@ arena_at :: fn(a: &Arena<$T>, id: i64) -> ^T {
 
 Parser :: struct {
     src: ^i8,
-    len: i64,
-    pos: i64,
+    tokens: Arena<Token>,
+    ti: i64,
     arena: Arena<Node>,
     syms: Arena<Sym>,
     fns: Arena<Sym>,
-}
-
-is_space :: fn(c: i64) -> bool {
-    c == CH_SPACE || c == CH_TAB || c == CH_LF || c == CH_CR || c == CH_SEMI
 }
 
 is_digit :: fn(c: i64) -> bool {
     c >= CH_0 && c <= CH_9
 }
 
-is_alpha :: fn(c: i64) -> bool {
-    c >= CH_LOWER_A && c <= CH_LOWER_Z
+is_ident_start :: fn(c: i64) -> bool {
+    (c >= CH_LOWER_A && c <= CH_LOWER_Z)
+        || (c >= CH_UPPER_A && c <= CH_UPPER_Z)
+        || c == CH_UNDERSCORE
 }
 
-peek :: fn(p: &mut Parser) -> i64 {
-    if (p.pos >= p.len) {
+is_ident_cont :: fn(c: i64) -> bool {
+    is_ident_start(c) || (c >= CH_0 && c <= CH_9)
+}
+
+// ---------------------------------------------------------------------------
+// Lexer. One pass over the source builds a flat arena of tokens: identifiers
+// (keywords classified to their own kind), integer and string literals, and
+// every operator and punctuation mark. Whitespace and `//` comments are dropped
+// here so the parser never sees them.
+// ---------------------------------------------------------------------------
+
+byte_of :: fn(src: ^i8, index: i64, len: i64) -> i64 {
+    if (index >= len) {
         return 0 - 1
     }
-    frost_byte_at(p.src, p.pos)
+    frost_byte_at(src, index)
 }
 
-peek_at :: fn(p: &mut Parser, offset: i64) -> i64 {
-    index := p.pos + offset
-    if (index >= p.len) {
-        return 0 - 1
+str_range_eq :: fn(src: ^i8, off: i64, len: i64, word: ^i8) -> bool {
+    if (frost_str_len(word) != len) {
+        return false
     }
-    frost_byte_at(p.src, index)
+    mut k : i64 = 0
+    while (k < len) {
+        if (frost_byte_at(src, off + k) != frost_byte_at(word, k)) {
+            return false
+        }
+        k = k + 1
+    }
+    true
 }
 
-skip_ws :: fn(p: &mut Parser) {
-    while (is_space(peek(p))) {
-        p.pos = p.pos + 1
-    }
+classify_ident :: fn(src: ^i8, off: i64, len: i64) -> i64 {
+    if (str_range_eq(src, off, len, "fn")) { return TOK_KW_FN }
+    if (str_range_eq(src, off, len, "if")) { return TOK_KW_IF }
+    if (str_range_eq(src, off, len, "let")) { return TOK_KW_LET }
+    if (str_range_eq(src, off, len, "mut")) { return TOK_KW_MUT }
+    if (str_range_eq(src, off, len, "else")) { return TOK_KW_ELSE }
+    if (str_range_eq(src, off, len, "case")) { return TOK_KW_CASE }
+    if (str_range_eq(src, off, len, "true")) { return TOK_KW_TRUE }
+    if (str_range_eq(src, off, len, "print")) { return TOK_KW_PRINT }
+    if (str_range_eq(src, off, len, "while")) { return TOK_KW_WHILE }
+    if (str_range_eq(src, off, len, "match")) { return TOK_KW_MATCH }
+    if (str_range_eq(src, off, len, "false")) { return TOK_KW_FALSE }
+    if (str_range_eq(src, off, len, "return")) { return TOK_KW_RETURN }
+    if (str_range_eq(src, off, len, "struct")) { return TOK_KW_STRUCT }
+    if (str_range_eq(src, off, len, "extern")) { return TOK_KW_EXTERN }
+    TOK_IDENT
 }
 
-alpha_run_len :: fn(p: &mut Parser) -> i64 {
-    mut length : i64 = 0
-    while (is_alpha(peek_at(p, length))) {
-        length = length + 1
-    }
-    length
+push_token :: fn(tokens: &mut Arena<Token>, kind: i64, off: i64, len: i64,
+    value: i64) {
+    id := arena_push(tokens, Token { kind = kind, off = off, len = len,
+        value = value })
+    id
 }
 
-keyword_at :: fn(p: &mut Parser, length: i64) -> i64 {
-    first := peek_at(p, 0)
-    if (length == 2) {
-        if (first == 105 && peek_at(p, 1) == 102) {
-            return KW_IF
-        }
-        if (first == 102 && peek_at(p, 1) == 110) {
-            return KW_FN
-        }
-        return KW_NONE
+lex_operator :: fn(src: ^i8, i: i64, len: i64, tokens: &mut Arena<Token>) -> i64 {
+    c := byte_of(src, i, len)
+    d := byte_of(src, i + 1, len)
+    if (c == CH_COLON && d == CH_COLON) {
+        push_token(tokens, TOK_COLONCOLON, i, 2, 0)
+        return i + 2
     }
-    if (length == 3) {
-        if (first == 108 && peek_at(p, 1) == 101 && peek_at(p, 2) == 116) {
-            return KW_LET
-        }
-        return KW_NONE
+    if (c == CH_COLON && d == CH_EQ) {
+        push_token(tokens, TOK_COLONEQ, i, 2, 0)
+        return i + 2
     }
-    if (length == 4) {
-        if (first == 101 && peek_at(p, 1) == 108 && peek_at(p, 2) == 115
-            && peek_at(p, 3) == 101) {
-            return KW_ELSE
-        }
-        return KW_NONE
+    if (c == CH_MINUS && d == CH_GT) {
+        push_token(tokens, TOK_ARROW, i, 2, 0)
+        return i + 2
     }
-    if (length == 5) {
-        if (first == 112 && peek_at(p, 1) == 114 && peek_at(p, 2) == 105
-            && peek_at(p, 3) == 110 && peek_at(p, 4) == 116) {
-            return KW_PRINT
-        }
-        if (first == 119 && peek_at(p, 1) == 104 && peek_at(p, 2) == 105
-            && peek_at(p, 3) == 108 && peek_at(p, 4) == 101) {
-            return KW_WHILE
-        }
-        return KW_NONE
+    if (c == CH_LT && d == CH_EQ) {
+        push_token(tokens, TOK_LE, i, 2, 0)
+        return i + 2
     }
-    if (length == 6) {
-        if (first == 114 && peek_at(p, 1) == 101 && peek_at(p, 2) == 116
-            && peek_at(p, 3) == 117 && peek_at(p, 4) == 114
-            && peek_at(p, 5) == 110) {
-            return KW_RETURN
-        }
-        return KW_NONE
+    if (c == CH_GT && d == CH_EQ) {
+        push_token(tokens, TOK_GE, i, 2, 0)
+        return i + 2
     }
-    KW_NONE
+    if (c == CH_EQ && d == CH_EQ) {
+        push_token(tokens, TOK_EQEQ, i, 2, 0)
+        return i + 2
+    }
+    if (c == CH_BANG && d == CH_EQ) {
+        push_token(tokens, TOK_NE, i, 2, 0)
+        return i + 2
+    }
+    if (c == CH_AMP && d == CH_AMP) {
+        push_token(tokens, TOK_ANDAND, i, 2, 0)
+        return i + 2
+    }
+    if (c == CH_PIPE && d == CH_PIPE) {
+        push_token(tokens, TOK_OROR, i, 2, 0)
+        return i + 2
+    }
+    mut kind : i64 = TOK_EOF
+    if (c == CH_LPAREN) { kind = TOK_LPAREN }
+    if (c == CH_RPAREN) { kind = TOK_RPAREN }
+    if (c == CH_LBRACE) { kind = TOK_LBRACE }
+    if (c == CH_RBRACE) { kind = TOK_RBRACE }
+    if (c == CH_LBRACKET) { kind = TOK_LBRACKET }
+    if (c == CH_RBRACKET) { kind = TOK_RBRACKET }
+    if (c == CH_COMMA) { kind = TOK_COMMA }
+    if (c == CH_DOT) { kind = TOK_DOT }
+    if (c == CH_COLON) { kind = TOK_COLON }
+    if (c == CH_CARET) { kind = TOK_CARET }
+    if (c == CH_AMP) { kind = TOK_AMP }
+    if (c == CH_EQ) { kind = TOK_ASSIGN }
+    if (c == CH_PLUS) { kind = TOK_PLUS }
+    if (c == CH_MINUS) { kind = TOK_MINUS }
+    if (c == CH_STAR) { kind = TOK_STAR }
+    if (c == CH_SLASH) { kind = TOK_SLASH }
+    if (c == CH_PERCENT) { kind = TOK_PERCENT }
+    if (c == CH_LT) { kind = TOK_LT }
+    if (c == CH_GT) { kind = TOK_GT }
+    if (c == CH_DOLLAR) { kind = TOK_DOLLAR }
+    push_token(tokens, kind, i, 1, 0)
+    i + 1
+}
+
+tokenize :: fn(src: ^i8, len: i64, tokens: &mut Arena<Token>) {
+    mut i : i64 = 0
+    while (i < len) {
+        c := byte_of(src, i, len)
+        if (c == CH_SPACE || c == CH_TAB || c == CH_LF || c == CH_CR
+            || c == CH_SEMI) {
+            i = i + 1
+        } else if (c == CH_SLASH && byte_of(src, i + 1, len) == CH_SLASH) {
+            while (i < len && byte_of(src, i, len) != CH_LF) {
+                i = i + 1
+            }
+        } else if (is_digit(c)) {
+            start := i
+            mut value : i64 = 0
+            while (is_digit(byte_of(src, i, len))) {
+                value = value * 10 + (byte_of(src, i, len) - CH_0)
+                i = i + 1
+            }
+            push_token(tokens, TOK_INT, start, i - start, value)
+        } else if (is_ident_start(c)) {
+            start := i
+            while (is_ident_cont(byte_of(src, i, len))) {
+                i = i + 1
+            }
+            length := i - start
+            push_token(tokens, classify_ident(src, start, length), start,
+                length, 0)
+        } else if (c == CH_DQUOTE) {
+            start := i
+            i = i + 1
+            while (i < len && byte_of(src, i, len) != CH_DQUOTE) {
+                if (byte_of(src, i, len) == CH_BACKSLASH) {
+                    i = i + 1
+                }
+                i = i + 1
+            }
+            i = i + 1
+            push_token(tokens, TOK_STR, start + 1, i - start - 2, 0)
+        } else {
+            i = lex_operator(src, i, len, tokens)
+        }
+    }
+    push_token(tokens, TOK_EOF, len, 0, 0)
+}
+
+// ---------------------------------------------------------------------------
+// Token cursor. The parser reads token kinds through these rather than bytes.
+// ---------------------------------------------------------------------------
+
+peek_kind :: fn(p: &mut Parser, offset: i64) -> i64 {
+    index := p.ti + offset
+    if (index >= p.tokens.count) {
+        return TOK_EOF
+    }
+    entry : ^Token = arena_at(&p.tokens, index)
+    entry^.kind
+}
+
+cur :: fn(p: &mut Parser) -> i64 {
+    peek_kind(p, 0)
+}
+
+cur_off :: fn(p: &mut Parser) -> i64 {
+    entry : ^Token = arena_at(&p.tokens, p.ti)
+    entry^.off
+}
+
+cur_len :: fn(p: &mut Parser) -> i64 {
+    entry : ^Token = arena_at(&p.tokens, p.ti)
+    entry^.len
+}
+
+cur_val :: fn(p: &mut Parser) -> i64 {
+    entry : ^Token = arena_at(&p.tokens, p.ti)
+    entry^.value
+}
+
+advance :: fn(p: &mut Parser) {
+    p.ti = p.ti + 1
 }
 
 // ---------------------------------------------------------------------------
@@ -321,39 +510,34 @@ set_next :: fn(p: &mut Parser, id: i64, next_id: i64) {
 }
 
 parse_number :: fn(p: &mut Parser) -> i64 {
-    mut value : i64 = 0
-    while (is_digit(peek(p))) {
-        value = value * 10 + (peek(p) - CH_0)
-        p.pos = p.pos + 1
-    }
+    value := cur_val(p)
+    advance(p)
     new_node(p, NODE_NUM, 0, 0, value)
 }
 
 parse_local_ref :: fn(p: &mut Parser) -> i64 {
-    offset := p.pos
-    length := alpha_run_len(p)
-    p.pos = p.pos + length
+    offset := cur_off(p)
+    length := cur_len(p)
+    advance(p)
     intern_local(p, offset, length)
 }
 
 parse_factor :: fn(p: &mut Parser) -> i64 {
-    skip_ws(p)
-    c := peek(p)
-    if (is_digit(c)) {
+    kind := cur(p)
+    if (kind == TOK_INT) {
         return parse_number(p)
     }
-    if (c == CH_LPAREN) {
-        p.pos = p.pos + 1
+    if (kind == TOK_LPAREN) {
+        advance(p)
         inner := parse_expr(p)
-        skip_ws(p)
-        p.pos = p.pos + 1
+        advance(p)
         return inner
     }
-    offset := p.pos
-    length := alpha_run_len(p)
-    p.pos = p.pos + length
-    if (peek(p) == CH_LPAREN) {
-        p.pos = p.pos + 1
+    offset := cur_off(p)
+    length := cur_len(p)
+    advance(p)
+    if (cur(p) == TOK_LPAREN) {
+        advance(p)
         args := parse_arg_list(p)
         fn_index := intern_global(p, offset, length)
         return new_node(p, NODE_CALL, args, 0, fn_index)
@@ -365,8 +549,7 @@ parse_factor :: fn(p: &mut Parser) -> i64 {
 parse_arg_list :: fn(p: &mut Parser) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
-    skip_ws(p)
-    while (peek(p) != CH_RPAREN && peek(p) != (0 - 1)) {
+    while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
         value := parse_expr(p)
         arg := new_node(p, NODE_ARG, value, 0, 0)
         if (head == (0 - 1)) {
@@ -376,86 +559,79 @@ parse_arg_list :: fn(p: &mut Parser) -> i64 {
             set_next(p, tail, arg)
             tail = arg
         }
-        skip_ws(p)
-        if (peek(p) == CH_COMMA) {
-            p.pos = p.pos + 1
-            skip_ws(p)
+        if (cur(p) == TOK_COMMA) {
+            advance(p)
         }
     }
-    p.pos = p.pos + 1
+    advance(p)
     head
 }
 
 parse_mul :: fn(p: &mut Parser) -> i64 {
     mut left := parse_factor(p)
-    skip_ws(p)
-    mut c := peek(p)
-    while (c == CH_STAR || c == CH_SLASH || c == CH_PERCENT) {
+    mut kind := cur(p)
+    while (kind == TOK_STAR || kind == TOK_SLASH || kind == TOK_PERCENT) {
         mut op : i64 = OP_MUL
-        if (c == CH_SLASH) {
+        if (kind == TOK_SLASH) {
             op = OP_DIV
         }
-        if (c == CH_PERCENT) {
+        if (kind == TOK_PERCENT) {
             op = OP_MOD
         }
-        p.pos = p.pos + 1
+        advance(p)
         right := parse_factor(p)
         left = new_node(p, NODE_BIN, left, right, op)
-        skip_ws(p)
-        c = peek(p)
+        kind = cur(p)
     }
     left
 }
 
 parse_add :: fn(p: &mut Parser) -> i64 {
     mut left := parse_mul(p)
-    skip_ws(p)
-    mut c := peek(p)
-    while (c == CH_PLUS || c == CH_MINUS) {
+    mut kind := cur(p)
+    while (kind == TOK_PLUS || kind == TOK_MINUS) {
         mut op : i64 = OP_ADD
-        if (c == CH_MINUS) {
+        if (kind == TOK_MINUS) {
             op = OP_SUB
         }
-        p.pos = p.pos + 1
+        advance(p)
         right := parse_mul(p)
         left = new_node(p, NODE_BIN, left, right, op)
-        skip_ws(p)
-        c = peek(p)
+        kind = cur(p)
     }
     left
 }
 
 parse_cmp :: fn(p: &mut Parser) -> i64 {
     left := parse_add(p)
-    skip_ws(p)
-    c := peek(p)
-    if (c == CH_LT) {
-        p.pos = p.pos + 1
-        mut op : i64 = OP_LT
-        if (peek(p) == CH_EQ) {
-            op = OP_LE
-            p.pos = p.pos + 1
-        }
+    kind := cur(p)
+    if (kind == TOK_LT) {
+        advance(p)
         right := parse_add(p)
-        return new_node(p, NODE_BIN, left, right, op)
+        return new_node(p, NODE_BIN, left, right, OP_LT)
     }
-    if (c == CH_GT) {
-        p.pos = p.pos + 1
-        mut op : i64 = OP_GT
-        if (peek(p) == CH_EQ) {
-            op = OP_GE
-            p.pos = p.pos + 1
-        }
+    if (kind == TOK_LE) {
+        advance(p)
         right := parse_add(p)
-        return new_node(p, NODE_BIN, left, right, op)
+        return new_node(p, NODE_BIN, left, right, OP_LE)
     }
-    if (c == CH_EQ) {
-        p.pos = p.pos + 2
+    if (kind == TOK_GT) {
+        advance(p)
+        right := parse_add(p)
+        return new_node(p, NODE_BIN, left, right, OP_GT)
+    }
+    if (kind == TOK_GE) {
+        advance(p)
+        right := parse_add(p)
+        return new_node(p, NODE_BIN, left, right, OP_GE)
+    }
+    if (kind == TOK_EQEQ) {
+        advance(p)
         right := parse_add(p)
         return new_node(p, NODE_BIN, left, right, OP_EQ)
     }
-    if (c == CH_BANG) {
-        p.pos = p.pos + 2
+    if (kind == TOK_NE) {
+        advance(p)
         right := parse_add(p)
         return new_node(p, NODE_BIN, left, right, OP_NE)
     }
@@ -464,92 +640,75 @@ parse_cmp :: fn(p: &mut Parser) -> i64 {
 
 parse_and :: fn(p: &mut Parser) -> i64 {
     mut left := parse_cmp(p)
-    skip_ws(p)
-    while (peek(p) == CH_AMP && peek_at(p, 1) == CH_AMP) {
-        p.pos = p.pos + 2
+    while (cur(p) == TOK_ANDAND) {
+        advance(p)
         right := parse_cmp(p)
         left = new_node(p, NODE_BIN, left, right, OP_AND)
-        skip_ws(p)
     }
     left
 }
 
 parse_expr :: fn(p: &mut Parser) -> i64 {
     mut left := parse_and(p)
-    skip_ws(p)
-    while (peek(p) == CH_PIPE && peek_at(p, 1) == CH_PIPE) {
-        p.pos = p.pos + 2
+    while (cur(p) == TOK_OROR) {
+        advance(p)
         right := parse_and(p)
         left = new_node(p, NODE_BIN, left, right, OP_OR)
-        skip_ws(p)
     }
     left
 }
 
 parse_block :: fn(p: &mut Parser) -> i64 {
-    skip_ws(p)
-    p.pos = p.pos + 1
-    head := parse_stmt_list(p, CH_RBRACE)
-    skip_ws(p)
-    p.pos = p.pos + 1
+    advance(p)
+    head := parse_stmt_list(p, TOK_RBRACE)
+    advance(p)
     head
 }
 
 parse_stmt :: fn(p: &mut Parser) -> i64 {
-    skip_ws(p)
-    run := alpha_run_len(p)
-    keyword := keyword_at(p, run)
+    kind := cur(p)
 
-    if (keyword == KW_LET) {
-        p.pos = p.pos + 3
-        skip_ws(p)
+    if (kind == TOK_KW_LET) {
+        advance(p)
         variable := parse_local_ref(p)
-        skip_ws(p)
-        p.pos = p.pos + 1
+        advance(p)
         value := parse_expr(p)
         return new_node(p, NODE_LET, value, 0, variable)
     }
-    if (keyword == KW_PRINT) {
-        p.pos = p.pos + 5
+    if (kind == TOK_KW_PRINT) {
+        advance(p)
         value := parse_expr(p)
         return new_node(p, NODE_PRINT, value, 0, 0)
     }
-    if (keyword == KW_RETURN) {
-        p.pos = p.pos + 6
+    if (kind == TOK_KW_RETURN) {
+        advance(p)
         value := parse_expr(p)
         return new_node(p, NODE_RETURN, value, 0, 0)
     }
-    if (keyword == KW_IF) {
-        p.pos = p.pos + 2
-        skip_ws(p)
-        p.pos = p.pos + 1
+    if (kind == TOK_KW_IF) {
+        advance(p)
+        advance(p)
         condition := parse_expr(p)
-        skip_ws(p)
-        p.pos = p.pos + 1
+        advance(p)
         then_head := parse_block(p)
-        skip_ws(p)
         mut else_head : i64 = 0 - 1
-        run_else := alpha_run_len(p)
-        if (keyword_at(p, run_else) == KW_ELSE) {
-            p.pos = p.pos + 4
+        if (cur(p) == TOK_KW_ELSE) {
+            advance(p)
             else_head = parse_block(p)
         }
         return new_node(p, NODE_IF, condition, then_head, else_head)
     }
-    if (keyword == KW_WHILE) {
-        p.pos = p.pos + 5
-        skip_ws(p)
-        p.pos = p.pos + 1
+    if (kind == TOK_KW_WHILE) {
+        advance(p)
+        advance(p)
         condition := parse_expr(p)
-        skip_ws(p)
-        p.pos = p.pos + 1
+        advance(p)
         body := parse_block(p)
         return new_node(p, NODE_WHILE, condition, body, 0)
     }
 
     variable := parse_local_ref(p)
-    skip_ws(p)
-    p.pos = p.pos + 1
+    advance(p)
     value := parse_expr(p)
     new_node(p, NODE_ASSIGN, value, 0, variable)
 }
@@ -557,8 +716,7 @@ parse_stmt :: fn(p: &mut Parser) -> i64 {
 parse_stmt_list :: fn(p: &mut Parser, terminator: i64) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
-    skip_ws(p)
-    while (peek(p) != terminator && peek(p) != (0 - 1)) {
+    while (cur(p) != terminator && cur(p) != TOK_EOF) {
         statement := parse_stmt(p)
         if (head == (0 - 1)) {
             head = statement
@@ -567,7 +725,6 @@ parse_stmt_list :: fn(p: &mut Parser, terminator: i64) -> i64 {
             set_next(p, tail, statement)
             tail = statement
         }
-        skip_ws(p)
     }
     head
 }
@@ -575,8 +732,7 @@ parse_stmt_list :: fn(p: &mut Parser, terminator: i64) -> i64 {
 parse_params :: fn(p: &mut Parser) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
-    skip_ws(p)
-    while (peek(p) != CH_RPAREN && peek(p) != (0 - 1)) {
+    while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
         local := parse_local_ref(p)
         param := new_node(p, NODE_PARAM, 0, 0, local)
         if (head == (0 - 1)) {
@@ -586,23 +742,19 @@ parse_params :: fn(p: &mut Parser) -> i64 {
             set_next(p, tail, param)
             tail = param
         }
-        skip_ws(p)
-        if (peek(p) == CH_COMMA) {
-            p.pos = p.pos + 1
-            skip_ws(p)
+        if (cur(p) == TOK_COMMA) {
+            advance(p)
         }
     }
-    p.pos = p.pos + 1
+    advance(p)
     head
 }
 
 parse_function :: fn(p: &mut Parser) -> i64 {
-    skip_ws(p)
-    p.pos = p.pos + 2
-    skip_ws(p)
-    name_offset := p.pos
-    name_length := alpha_run_len(p)
-    p.pos = p.pos + name_length
+    advance(p)
+    name_offset := cur_off(p)
+    name_length := cur_len(p)
+    advance(p)
     fn_index := intern_global(p, name_offset, name_length)
     mut is_main : i64 = 0
     if (is_main_name(p.src, name_offset, name_length)) {
@@ -613,8 +765,7 @@ parse_function :: fn(p: &mut Parser) -> i64 {
     // parsing. Resetting the arena's count reuses the same buffer, bounding
     // symbol memory to one function's locals rather than the whole program.
     p.syms.count = 0
-    skip_ws(p)
-    p.pos = p.pos + 1
+    advance(p)
     params := parse_params(p)
     body := parse_block(p)
     new_func_node(p, body, params, fn_index, is_main)
@@ -623,9 +774,7 @@ parse_function :: fn(p: &mut Parser) -> i64 {
 parse_program :: fn(p: &mut Parser) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
-    skip_ws(p)
-    mut run := alpha_run_len(p)
-    while (keyword_at(p, run) == KW_FN) {
+    while (cur(p) == TOK_KW_FN) {
         func := parse_function(p)
         if (head == (0 - 1)) {
             head = func
@@ -634,8 +783,6 @@ parse_program :: fn(p: &mut Parser) -> i64 {
             set_next(p, tail, func)
             tail = func
         }
-        skip_ws(p)
-        run = alpha_run_len(p)
     }
     head
 }
@@ -902,12 +1049,13 @@ main :: fn() -> i64 {
 
     mut parser := Parser {
         src = source,
-        len = frost_str_len(source),
-        pos = 0,
+        tokens = arena_make($Token, 8192),
+        ti = 0,
         arena = arena_make($Node, 4096),
         syms = arena_make($Sym, 256),
         fns = arena_make($Sym, 1024),
     }
+    tokenize(source, frost_str_len(source), &mut parser.tokens)
     program := parse_program(&mut parser)
 
     frost_emit_str("#include <stdio.h>\n")
