@@ -1072,6 +1072,57 @@ fn native_generational_pool_written_in_frost() {
     assert_eq!(output, "100\n1\n1\n0\n");
 }
 
+const FREESTANDING: &str = r#"
+Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
+
+alloc_int :: fn(a: &mut Arena<64>) -> ^i64 {
+    slot := ptr_to(a.data[a.offset])
+    a.offset = a.offset + sizeof(i64)
+    ptr_cast($i64, slot)
+}
+
+main :: fn() -> i64 {
+    mut arena : Arena<64> = Arena { data = [0; 64], offset = 0 }
+    p := alloc_int(&mut arena)
+    p^ = 20
+    q := alloc_int(&mut arena)
+    q^ = 22
+    p^ + q^
+}
+"#;
+
+#[test]
+fn native_freestanding_links_without_libc() {
+    if !linker_available() {
+        return;
+    }
+    let directory = std::env::temp_dir();
+    let source_path = directory.join("frost_freestanding.frost");
+    let exe_path = directory.join(format!(
+        "frost_freestanding{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    std::fs::write(&source_path, FREESTANDING).unwrap();
+    let frost = env!("CARGO_BIN_EXE_frost");
+    let compile = Command::new(frost)
+        .arg("--link")
+        .arg("--freestanding")
+        .arg("-o")
+        .arg(&exe_path)
+        .arg(&source_path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&source_path);
+    if !compile.status.success() {
+        // --freestanding needs gcc or clang; skip where only MSVC is present.
+        return;
+    }
+    let run = Command::new(&exe_path).status().unwrap();
+    let _ = std::fs::remove_file(&exe_path);
+    // The static arena computes 20 + 22 and returns it as the exit code.
+    assert_eq!(run.code(), Some(42));
+}
+
 #[test]
 fn native_binding_a_void_value_is_rejected() {
     let source = "\

@@ -81,6 +81,9 @@ frost --link -o program program.frost
 # Emit portable C instead of using Cranelift
 frost --emit-c -o program.c program.frost
 
+# Link with no C standard library (a static-arena program needs no runtime)
+frost --link --freestanding -o program program.frost
+
 # Interpret the typed IR directly (the reference oracle)
 frost --run-ir program.frost
 

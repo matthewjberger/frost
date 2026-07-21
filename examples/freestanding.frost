@@ -1,0 +1,34 @@
+// A freestanding program: compile it with `frost --link --freestanding` and it
+// links against no C standard library at all, only the operating system's own
+// process-exit call. Everything it does, a static arena and pointer writes, is
+// the language's own memory model with no runtime, so the safety checks trap
+// instead of printing and the result comes back as the process exit code rather
+// than through printf.
+//
+//   frost --link --freestanding -o prog examples/freestanding.frost
+//   ./prog ; echo $?     # 42
+//
+// The resulting executable imports only the platform's exit function (ExitProcess
+// on Windows, the exit syscall on Linux), nothing else. This is the payoff of a
+// memory model that lives in the language: a fixed or static-arena Frost program
+// reaches a libc-free target.
+
+Arena :: struct($N: usize) {
+    data: [N]u8,
+    offset: i64,
+}
+
+alloc_int :: fn(a: &mut Arena<64>) -> ^i64 {
+    slot := ptr_to(a.data[a.offset])
+    a.offset = a.offset + sizeof(i64)
+    ptr_cast($i64, slot)
+}
+
+main :: fn() -> i64 {
+    mut arena : Arena<64> = Arena { data = [0; 64], offset = 0 }
+    p := alloc_int(&mut arena)
+    p^ = 20
+    q := alloc_int(&mut arena)
+    q^ = 22
+    p^ + q^                 // 42, returned as the process exit code
+}

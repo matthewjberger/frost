@@ -40,6 +40,12 @@ struct Cli {
 
     #[arg(long, help = "Compile and run the file's `test` blocks")]
     test: bool,
+
+    #[arg(
+        long,
+        help = "Link with no libc: a minimal freestanding runtime and a custom entry point"
+    )]
+    freestanding: bool,
 }
 
 fn test_harness(tests: &[(String, String)]) -> Vec<Spanned<Statement>> {
@@ -156,6 +162,7 @@ fn main() -> Result<()> {
             &object_path.to_string_lossy(),
             &exe_path.to_string_lossy(),
             &cli.libs,
+            false,
         )?;
         fs::remove_file(&object_path).ok();
 
@@ -248,7 +255,12 @@ fn main() -> Result<()> {
                 }
             });
 
-            link_executable(&object_path, &exe_path, &cli.libs)?;
+            link_executable(
+                &object_path,
+                &exe_path,
+                &cli.libs,
+                cli.freestanding,
+            )?;
 
             fs::remove_file(&object_path).ok();
 
@@ -275,6 +287,7 @@ fn main() -> Result<()> {
             &object_path.to_string_lossy(),
             &exe_path.to_string_lossy(),
             &cli.libs,
+            false,
         )?;
         fs::remove_file(&object_path).ok();
         let status = Command::new(&exe_path)
@@ -290,6 +303,17 @@ fn main() -> Result<()> {
 }
 
 const RUNTIME_SOURCE: &str = include_str!("../../runtime/frost_runtime.c");
+const FREESTANDING_SOURCE: &str =
+    include_str!("../../runtime/frost_freestanding.c");
+
+fn write_runtime_source_named(source: &str, name: &str) -> Result<PathBuf> {
+    let path =
+        std::env::temp_dir().join(format!("{name}_{}.c", std::process::id()));
+    fs::write(&path, source).with_context(|| {
+        format!("Failed to write runtime: {}", path.display())
+    })?;
+    Ok(path)
+}
 
 fn write_runtime_source() -> Result<PathBuf> {
     let path = std::env::temp_dir()
@@ -360,10 +384,39 @@ fn find_linker() -> Option<&'static str> {
     None
 }
 
+#[cfg(target_os = "windows")]
+fn add_freestanding_link_args(cmd: &mut Command) {
+    // Windows: exit through kernel32, entry mainCRTStartup. No C runtime.
+    cmd.arg("-lkernel32");
+    cmd.arg("-e").arg("mainCRTStartup");
+}
+
+#[cfg(target_os = "linux")]
+fn add_freestanding_link_args(cmd: &mut Command) {
+    // Linux: the runtime's _start is the entry, exit is a raw syscall. No libc.
+    cmd.arg("-e").arg("_start");
+}
+
+#[cfg(target_os = "macos")]
+fn add_freestanding_link_args(cmd: &mut Command) {
+    // macOS: entry _start, exit via syscall, but macOS always routes syscalls
+    // through libSystem, so link that one library and nothing else.
+    cmd.arg("-e").arg("_start");
+    cmd.arg("-lSystem");
+}
+
+#[cfg(not(any(
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "macos"
+)))]
+fn add_freestanding_link_args(_cmd: &mut Command) {}
+
 fn link_executable(
     object_path: &str,
     exe_path: &str,
     extra_libs: &[String],
+    freestanding: bool,
 ) -> Result<()> {
     let linker = find_linker().ok_or_else(|| {
         anyhow::anyhow!(
@@ -371,7 +424,15 @@ fn link_executable(
         )
     })?;
 
-    let runtime_path = write_runtime_source()?;
+    if freestanding && linker == "cl" {
+        bail!("--freestanding is supported with gcc or clang, not MSVC");
+    }
+
+    let runtime_path = if freestanding {
+        write_runtime_source_named(FREESTANDING_SOURCE, "frost_freestanding")?
+    } else {
+        write_runtime_source()?
+    };
 
     let mut cmd = Command::new(linker);
 
@@ -383,12 +444,22 @@ fn link_executable(
             cmd.arg(lib);
         }
     } else {
+        if freestanding {
+            cmd.arg("-nostdlib");
+        }
         cmd.arg(object_path);
         cmd.arg(&runtime_path);
         cmd.arg("-o");
         cmd.arg(exe_path);
         for lib in extra_libs {
             cmd.arg(lib);
+        }
+        if freestanding {
+            // The freestanding runtime supplies the platform's entry point; the
+            // linker just needs the matching entry symbol and, where the OS
+            // requires it, the one library that exposes process exit. This is the
+            // per-target floor, the same shape Rust's targets use.
+            add_freestanding_link_args(&mut cmd);
         }
     }
 
