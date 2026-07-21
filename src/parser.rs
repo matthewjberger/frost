@@ -823,6 +823,7 @@ pub struct Parser<'a> {
     pub tokens: Iter<'a, Token>,
     linear_types: std::collections::HashSet<String>,
     tests: Vec<(String, String)>,
+    exports: Vec<String>,
     positions: &'a [Position],
     consumed: usize,
     pending_angle_close: usize,
@@ -834,6 +835,7 @@ impl<'a> Parser<'a> {
             tokens: tokens.iter(),
             linear_types: std::collections::HashSet::new(),
             tests: Vec::new(),
+            exports: Vec::new(),
             positions: &[],
             consumed: 0,
             pending_angle_close: 0,
@@ -848,6 +850,7 @@ impl<'a> Parser<'a> {
             tokens: tokens.iter(),
             linear_types: std::collections::HashSet::new(),
             tests: Vec::new(),
+            exports: Vec::new(),
             positions,
             consumed: 0,
             pending_angle_close: 0,
@@ -856,6 +859,29 @@ impl<'a> Parser<'a> {
 
     pub fn tests(&self) -> &[(String, String)] {
         &self.tests
+    }
+
+    pub fn exports(&self) -> &[String] {
+        &self.exports
+    }
+
+    fn parse_export_line(&mut self) -> Result<()> {
+        self.read_token();
+        loop {
+            let token = self.read_token().clone();
+            match token {
+                Token::Identifier(name) => self.exports.push(name),
+                other => bail!(
+                    "Expected an identifier in export list, found {other:?}"
+                ),
+            }
+            if matches!(self.peek_nth(0), Token::Comma) {
+                self.read_token();
+            } else {
+                break;
+            }
+        }
+        Ok(())
     }
 
     fn is_type_arg_close(&self) -> bool {
@@ -945,6 +971,13 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse_statement(&mut self) -> Result<Option<Statement>> {
+        if let Token::Identifier(name) = self.peek_nth(0)
+            && name == "export"
+            && matches!(self.peek_nth(1), Token::Identifier(_))
+        {
+            self.parse_export_line()?;
+            return self.parse_statement();
+        }
         Ok(match self.peek_nth(0) {
             Token::EndOfFile => None,
             Token::Identifier(name)

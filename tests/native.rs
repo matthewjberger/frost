@@ -500,7 +500,7 @@ fn native_import_resolves_across_files() {
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(
         directory.join("helper.frost"),
-        "triple :: fn(x: i64) -> i64 { x * 3 }\n",
+        "export triple\ntriple :: fn(x: i64) -> i64 { x * 3 }\n",
     )
     .unwrap();
     let main_path = directory.join("main.frost");
@@ -529,6 +529,64 @@ fn native_import_resolves_across_files() {
     let run = Command::new(&exe_path).output().unwrap();
     let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
     assert_eq!(output, "42\n");
+}
+
+fn frost_compiles(dir: &std::path::Path, main: &str) -> (bool, String) {
+    let exe = dir.join(format!("out{}", std::env::consts::EXE_SUFFIX));
+    let output = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe)
+        .arg(dir.join(main))
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if !output.status.success() {
+        return (false, stderr);
+    }
+    let run = Command::new(&exe).output().unwrap();
+    (
+        true,
+        String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"),
+    )
+}
+
+#[test]
+fn module_export_hides_private_items() {
+    if !linker_available() {
+        return;
+    }
+    let dir = std::env::temp_dir().join("frost_export_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("lib.frost"),
+        "export area\n\
+         scale :: fn(x: i64) -> i64 { x * 2 }\n\
+         area :: fn(w: i64, h: i64) -> i64 { scale(w) * h }\n",
+    )
+    .unwrap();
+
+    std::fs::write(
+        dir.join("uses_public.frost"),
+        "import \"lib.frost\"\n\
+         printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
+         main :: fn() -> i64 { printf(\"%lld\\n\", area(3, 5)) 0 }\n",
+    )
+    .unwrap();
+    let (ok, out) = frost_compiles(&dir, "uses_public.frost");
+    assert!(ok, "public import should compile: {out}");
+    assert_eq!(out, "30\n");
+
+    std::fs::write(
+        dir.join("uses_private.frost"),
+        "import \"lib.frost\"\n\
+         printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
+         main :: fn() -> i64 { printf(\"%lld\\n\", scale(10)) 0 }\n",
+    )
+    .unwrap();
+    let (ok, err) = frost_compiles(&dir, "uses_private.frost");
+    assert!(!ok, "using a private item should fail to compile");
+    assert!(err.contains("scale"), "error should mention scale: {err}");
 }
 
 #[test]
