@@ -127,8 +127,8 @@ abort discipline rather than a foreign definition.
    of the C `pool_get`.
 3. **Zeroed or default aggregate construction**, to remove the array-literal
    boilerplate from pool creation.
-4. **Retire the C pool runtime** and the auto-declared `pool_*` built-ins, freeing
-   the `Pool` type name and the `pool_*` function names for user code.
+4. **Remove the compiler-special pool surface**, freeing the `Pool` type name and
+   the `pool_*` function names for user code. *(Done.)*
 
 This roadmap is a slice of the larger allocator plan in `docs/allocators.md`,
 which puts the pool on top of an arena and pushes the one remaining OS call to
