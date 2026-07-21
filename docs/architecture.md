@@ -287,8 +287,11 @@ Frost is being reshaped toward a data-oriented language with:
     translation unit that compiles and runs, so a Frost-written code generator
     now emits native code end to end. It accepts user-defined functions with
     parameters, `return`, calls, and recursion, each emitted as a C function with
-    its own frame. The remaining step is widening the accepted language toward
-    the full surface until the compiler can compile Frost.)*
+    its own frame, and multi-character identifiers resolved through pool-backed
+    symbol tables (a per-function local table and a global function table that
+    intern source byte ranges by comparison, the data-oriented stand-in for a
+    string-keyed map). The remaining step is widening the accepted language
+    toward the full surface until the compiler can compile Frost.)*
 11. Parser error recovery. *(Done: the parser recovers at statement boundaries
     instead of stopping at the first error, at the top level and inside function
     bodies alike, so one malformed statement no longer discards the rest of the

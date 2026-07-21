@@ -14,17 +14,20 @@ every reference is second-class.
 
 ## The language it compiles
 
-- Functions `fn name(p, q) { ... }`, with single-letter names and parameters,
+- Functions `fn name(p, q) { ... }`, with multi-character names and parameters,
   called as `name(args)` inside any expression, including recursively.
 - `return expr`.
-- The function named `m` is the entry point and becomes C `main`.
-- Integer variables `a` through `z`, local to each function.
+- The function named `main` is the entry point and becomes C `main`.
+- Multi-character integer variables, local to each function.
 - Arithmetic (`+ - * / %`) with precedence, and parentheses.
 - Comparisons (`< > <= >= == !=`).
-- `let v = expr` and `v = expr`.
+- `let name = expr` and `name = expr`.
 - `print expr`.
 - `if (expr) { ... } else { ... }` and `while (expr) { ... }`.
 - Statements separated by whitespace or `;`.
+
+Identifiers are lowercase letter runs (`sum`, `count`, `fib`), no longer limited
+to single letters.
 
 ## How it works
 
@@ -37,16 +40,24 @@ every reference is second-class.
    nodes. Sibling statements, function parameters, and call arguments are each
    linked through a `next` field into their own singly linked lists. The pool
    gives a growable, zero-initialized arena with no manual allocation.
-3. **The mutable parser cursor** lives in a `Parser` struct threaded by `&mut`
+3. **Names are interned through two symbol tables.** An identifier occurrence is
+   a byte range into the source (offset plus length). Because the language has no
+   string type, the tables intern those ranges to small integer indices by
+   comparing bytes directly, the data-oriented stand-in for a hash map keyed by
+   strings. Each function has its own local table, so its variables become
+   `v[0]`, `v[1]`, ... in that function's frame, and a single global table maps
+   function names to the `mf_<index>` of their emitted C functions. The tables
+   live in their own pools, so no fixed-size array has to be sized in advance.
+4. **The mutable parser cursor** lives in a `Parser` struct threaded by `&mut`
    through the recursive-descent functions, which is the second-class-reference
    way to carry mutable state without storing a borrow anywhere.
-4. **Code generation** walks the arena, dispatching on `node.kind`, and emits C
+5. **Code generation** walks the arena, dispatching on `node.kind`, and emits C
    text through two runtime helpers (`frost_emit_str`, `frost_emit_int`). Each
    Mini-Frost function becomes a C function that takes `int64_t` parameters and
-   holds its variables in its own fixed `int64_t v[26]`, so calls get a fresh
-   frame and recursion works. Prototypes are emitted ahead of the definitions,
-   so functions may call each other in any order. The function `m` is emitted as
-   C `main`.
+   holds its variables in its own fixed `int64_t v[64]`, indexed by the local
+   symbol table, so calls get a fresh frame and recursion works. Prototypes are
+   emitted ahead of the definitions, so functions may call each other in any
+   order. The function `main` is emitted as C `main`.
 
 ## Building and running
 
@@ -56,9 +67,10 @@ frost --link -o minifrost bootstrap/minifrost.frost
 cc out.c -o out && ./out     # compile the emitted C to native and run it
 ```
 
-The embedded sample program defines a recursive `fib` and a recursive
-factorial, then an entry function that prints `fib(10)` (55), `5!` (120), and
-the sum `1..10` (55), so the compiled output prints:
+The embedded sample program defines a recursive `fib` and a recursive `fact`,
+then a `main` that prints `fib(10)` (55), `fact(5)` (120), and the sum `1..10`
+(55) accumulated in variables named `sum` and `index`, so the compiled output
+prints:
 
 ```
 55
@@ -78,7 +90,7 @@ This is a working code generator written in Frost: source to AST to emitted C to
 a native executable. It is not a full self-hosting compiler, because it accepts a
 small subset rather than all of Frost. What it establishes is that the
 data-oriented native language is expressive enough to write real compiler-shaped
-programs end to end, including functions, recursion, and code emission. Widening
-the accepted language further (multi-character names and a symbol table, more
-types, structs) toward the full surface is the path from here to compiling Frost
-itself.
+programs end to end, including functions, recursion, multi-character names
+resolved through symbol tables, and code emission. Widening the accepted language
+further (more types, structs, expressions as statements) toward the full surface
+is the path from here to compiling Frost itself.
