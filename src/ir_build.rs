@@ -1629,6 +1629,7 @@ struct FunctionLowering<'a> {
     current: BlockId,
     return_type: Type,
     active_defers: Vec<Statement>,
+    current_position: Position,
     specializations: Vec<Specialization>,
     anonymous: Vec<AnonRequest>,
 }
@@ -1648,6 +1649,7 @@ impl<'a> FunctionLowering<'a> {
             current: 0,
             return_type,
             active_defers: Vec::new(),
+            current_position: Position::default(),
             specializations: Vec::new(),
             anonymous: Vec::new(),
         }
@@ -1664,6 +1666,7 @@ impl<'a> FunctionLowering<'a> {
             in_memory,
             size,
             linear,
+            position: self.current_position,
         });
         id
     }
@@ -1751,6 +1754,7 @@ impl<'a> FunctionLowering<'a> {
         for (index, statement) in block.iter().enumerate() {
             let is_last = index + 1 == block.len();
             let position = statement.position;
+            self.current_position = position;
             if is_last
                 && let Statement::Expression(expression) = &statement.node
             {
@@ -1776,6 +1780,7 @@ impl<'a> FunctionLowering<'a> {
         for (index, statement) in body.iter().enumerate() {
             let is_last = index + 1 == body.len();
             let position = statement.position;
+            self.current_position = position;
             match &statement.node {
                 Statement::Defer(inner) => {
                     self.active_defers.push((**inner).clone());
