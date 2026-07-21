@@ -21,7 +21,7 @@ allocator, not a runtime pool.
 - The function named `main` is the entry point and becomes C `main`.
 - Multi-character integer variables, local to each function.
 - Arithmetic (`+ - * / %`) with precedence, and parentheses.
-- Comparisons (`< > <= >= == !=`).
+- Comparisons (`< > <= >= == !=`) and boolean `&&` and `||`.
 - `let name = expr` and `name = expr`.
 - `print expr`.
 - `if (expr) { ... } else { ... }` and `while (expr) { ... }`.
