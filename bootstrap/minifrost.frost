@@ -1,24 +1,29 @@
-// Mini-Frost: a small compiler written in Frost, in the data-oriented style.
+// Mini-Frost: a compiler written in Frost, in the data-oriented style.
 //
 // It reads a program written in a Frost-like subset (integer variables a..z,
 // arithmetic and comparisons, `let`, assignment, `print`, `if`/`else`, and
 // `while`), builds an abstract syntax tree in a pool-backed arena, and then
-// walks that tree to run it. The whole thing is written against the native
-// data-oriented surface: no closures, no dynamic collections, references are
-// second-class, and every mutable working set is either a pool (the AST arena)
-// or a fixed array (the variable environment).
+// walks that tree to emit a C translation unit. Compiling and running that C
+// produces the program's output, so this is a real code generator written in
+// Frost that emits native code, the same way Frost's own primary backend emits
+// C and links it.
+//
+// The whole thing is written against the native data-oriented surface: no
+// closures, no dynamic collections, references are second-class, and every
+// mutable working set is either a pool (the AST arena) or a fixed struct field.
 //
 // The AST is stored as a pool of Node records. A node names its children by
 // their arena index (a plain integer), which is the data-oriented replacement
 // for pointers between heap nodes. Sibling statements are threaded through a
 // `next` field into a singly linked list.
 
-printf        :: extern fn(fmt: ^i8, value: i64) -> i32
-pool_new      :: extern fn(capacity: i64, elem_size: i64) -> ^u8
-pool_alloc    :: extern fn(pool: ^u8, value: ^u8) -> i64
-pool_get      :: extern fn(pool: ^u8, handle: i64) -> ^u8
-frost_byte_at :: extern fn(s: ^i8, i: i64) -> i64
-frost_str_len :: extern fn(s: ^i8) -> i64
+pool_new       :: extern fn(capacity: i64, elem_size: i64) -> ^u8
+pool_alloc     :: extern fn(pool: ^u8, value: ^u8) -> i64
+pool_get       :: extern fn(pool: ^u8, handle: i64) -> ^u8
+frost_byte_at  :: extern fn(s: ^i8, i: i64) -> i64
+frost_str_len  :: extern fn(s: ^i8) -> i64
+frost_emit_str :: extern fn(s: ^i8)
+frost_emit_int :: extern fn(value: i64)
 
 // Node kinds.
 NODE_NUM    :: 0
@@ -88,10 +93,6 @@ Parser :: struct {
     len: i64,
     pos: i64,
     arena: ^u8,
-}
-
-Env :: struct {
-    slots: [26]i64,
 }
 
 is_space :: fn(c: i64) -> bool {
@@ -365,69 +366,91 @@ parse_stmt_list :: fn(p: &mut Parser, terminator: i64) -> i64 {
     head
 }
 
-apply :: fn(op: i64, left: i64, right: i64) -> i64 {
+// ---------------------------------------------------------------------------
+// Code generation: walk the arena and emit a C translation unit.
+// ---------------------------------------------------------------------------
+
+emit_op :: fn(op: i64) {
     match op {
-        case 0: left + right
-        case 1: left - right
-        case 2: left * right
-        case 3: left / right
-        case 4: left % right
-        case 5: if (left < right) { 1 } else { 0 }
-        case 6: if (left > right) { 1 } else { 0 }
-        case 7: if (left <= right) { 1 } else { 0 }
-        case 8: if (left >= right) { 1 } else { 0 }
-        case 9: if (left == right) { 1 } else { 0 }
-        case _: if (left != right) { 1 } else { 0 }
+        case 0: frost_emit_str(" + ")
+        case 1: frost_emit_str(" - ")
+        case 2: frost_emit_str(" * ")
+        case 3: frost_emit_str(" / ")
+        case 4: frost_emit_str(" % ")
+        case 5: frost_emit_str(" < ")
+        case 6: frost_emit_str(" > ")
+        case 7: frost_emit_str(" <= ")
+        case 8: frost_emit_str(" >= ")
+        case 9: frost_emit_str(" == ")
+        case _: frost_emit_str(" != ")
     }
 }
 
-eval_expr :: fn(arena: ^u8, env: &mut Env, id: i64) -> i64 {
+emit_expr :: fn(arena: ^u8, id: i64) {
     node : ^Node = pool_get(arena, id)
     kind := node^.kind
-    match kind {
-        case 0: node^.val
-        case 1: env.slots[node^.val]
-        case _: {
-            left := eval_expr(arena, env, node^.a)
-            right := eval_expr(arena, env, node^.b)
-            apply(node^.val, left, right)
-        }
+    if (kind == NODE_NUM) {
+        frost_emit_int(node^.val)
+        return
     }
+    if (kind == NODE_VAR) {
+        frost_emit_str("v[")
+        frost_emit_int(node^.val)
+        frost_emit_str("]")
+        return
+    }
+    frost_emit_str("(")
+    emit_expr(arena, node^.a)
+    emit_op(node^.val)
+    emit_expr(arena, node^.b)
+    frost_emit_str(")")
 }
 
-exec_stmt :: fn(arena: ^u8, env: &mut Env, id: i64) {
+emit_stmt :: fn(arena: ^u8, id: i64) {
     node : ^Node = pool_get(arena, id)
     kind := node^.kind
     if (kind == NODE_LET || kind == NODE_ASSIGN) {
-        value := eval_expr(arena, env, node^.a)
-        env.slots[node^.val] = value
+        frost_emit_str("v[")
+        frost_emit_int(node^.val)
+        frost_emit_str("] = ")
+        emit_expr(arena, node^.a)
+        frost_emit_str(";\n")
         return
     }
     if (kind == NODE_PRINT) {
-        value := eval_expr(arena, env, node^.a)
-        printf("%lld\n", value)
+        frost_emit_str("printf(\"%lld\\n\", (long long)(")
+        emit_expr(arena, node^.a)
+        frost_emit_str("));\n")
         return
     }
     if (kind == NODE_IF) {
-        if (eval_expr(arena, env, node^.a) != 0) {
-            exec_list(arena, env, node^.b)
-        } else {
-            exec_list(arena, env, node^.val)
+        frost_emit_str("if (")
+        emit_expr(arena, node^.a)
+        frost_emit_str(") {\n")
+        emit_list(arena, node^.b)
+        frost_emit_str("}")
+        if (node^.val != (0 - 1)) {
+            frost_emit_str(" else {\n")
+            emit_list(arena, node^.val)
+            frost_emit_str("}")
         }
+        frost_emit_str("\n")
         return
     }
     if (kind == NODE_WHILE) {
-        while (eval_expr(arena, env, node^.a) != 0) {
-            exec_list(arena, env, node^.b)
-        }
+        frost_emit_str("while (")
+        emit_expr(arena, node^.a)
+        frost_emit_str(") {\n")
+        emit_list(arena, node^.b)
+        frost_emit_str("}\n")
         return
     }
 }
 
-exec_list :: fn(arena: ^u8, env: &mut Env, head: i64) {
+emit_list :: fn(arena: ^u8, head: i64) {
     mut id := head
     while (id != (0 - 1)) {
-        exec_stmt(arena, env, id)
+        emit_stmt(arena, id)
         node : ^Node = pool_get(arena, id)
         id = node^.next
     }
@@ -464,12 +487,11 @@ main :: fn() -> i64 {
     }
     head := parse_stmt_list(&mut parser, 0 - 1)
 
-    mut env := Env {
-        slots = [
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        ],
-    }
-    exec_list(parser.arena, &mut env, head)
+    frost_emit_str("#include <stdio.h>\n")
+    frost_emit_str("#include <stdint.h>\n")
+    frost_emit_str("int main(void) {\n")
+    frost_emit_str("int64_t v[26] = {0};\n")
+    emit_list(parser.arena, head)
+    frost_emit_str("return 0;\n}\n")
     0
 }

@@ -1,15 +1,16 @@
 # Mini-Frost: a compiler written in Frost
 
 `minifrost.frost` is a small compiler, written in Frost, for a Frost-like
-subset language. It is the self-hosting milestone: a non-trivial, compiler-
-shaped program written entirely in the data-oriented native surface, compiled
-to native code by the Frost compiler, and exercised by the test suite.
+subset language. It reads a Mini-Frost program, builds an AST, and emits a C
+translation unit; compiling and running that C reproduces the program's output.
+So it is a real code generator written in Frost that emits native code, the same
+way Frost's own primary backend emits C and links it.
 
 It is deliberately scoped to what the native language expresses today, and it is
 written the way the language wants you to write a compiler: a pool-backed arena
-for the AST, integer indices instead of heap pointers between nodes, fixed
-arrays for the variable environment, and free functions over that data. There
-are no closures and no dynamic collections, and every reference is second-class.
+for the AST, integer indices instead of heap pointers between nodes, and free
+functions over that data. There are no closures and no dynamic collections, and
+every reference is second-class.
 
 ## The language it compiles
 
@@ -34,19 +35,22 @@ are no closures and no dynamic collections, and every reference is second-class.
 3. **The mutable parser cursor** lives in a `Parser` struct threaded by `&mut`
    through the recursive-descent functions, which is the second-class-reference
    way to carry mutable state without storing a borrow anywhere.
-4. **Evaluation** walks the arena, dispatching on `node.kind` with `match`, and
-   keeps variables in a fixed `[26]i64` environment.
+4. **Code generation** walks the arena, dispatching on `node.kind`, and emits C
+   text through two runtime helpers (`frost_emit_str`, `frost_emit_int`).
+   Variables become slots in a fixed C array, and Mini-Frost statements map
+   directly to C statements.
 
 ## Building and running
 
 ```
 frost --link -o minifrost bootstrap/minifrost.frost
-./minifrost
+./minifrost > out.c          # the Frost-written compiler emits C
+cc out.c -o out && ./out     # compile the emitted C to native and run it
 ```
 
 The embedded sample program computes the sum `1..10` (55), `5!` (120),
-`fib(10)` by iteration (55), and takes an `if` branch (111), so a correct run
-prints:
+`fib(10)` by iteration (55), and takes an `if` branch (111), so the compiled
+output prints:
 
 ```
 55
@@ -55,19 +59,18 @@ prints:
 111
 ```
 
-The same program produces identical output through the portable C backend
-(`--emit-c`). The IR interpreter declines it by design, because it uses pools
-and pointers, which the interpreter does not model. The
-`bootstrap_minifrost_compiler_runs` test in `tests/native.rs` compiles and runs
-it on every build.
+The compiler itself produces identical C through both of Frost's backends
+(`--link` and `--emit-c`), which the differential test checks. The
+`bootstrap_minifrost_emits_working_c` test in `tests/native.rs` runs the whole
+pipeline on every build: it compiles the Frost-written compiler, runs it to emit
+C, compiles that C, runs the result, and checks the output.
 
 ## Scope and what is next
 
-This is the front-to-evaluation pipeline of a compiler (source to AST to result)
-written in Frost. It is not yet a Frost compiler emitting native code from
-Frost; that would additionally require a code generator written in Frost, which
-is a larger undertaking. What it does establish is that the data-oriented native
-language is expressive enough to write real compiler-shaped programs: arena
-allocation, tree building and walking, and recursive descent all work in the
-intended style. Extending the accepted language (functions, more types) and,
-eventually, adding a backend are the natural next steps.
+This is a working code generator written in Frost: source to AST to emitted C to
+a native executable. It is not a full self-hosting compiler, because it accepts a
+small subset rather than all of Frost. What it establishes is that the
+data-oriented native language is expressive enough to write real compiler-shaped
+programs end to end, including code emission. Widening the accepted language
+(functions, more types, structs) toward the full surface is the path from here
+to compiling Frost itself.
