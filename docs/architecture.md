@@ -284,10 +284,13 @@ Frost is being reshaped toward a data-oriented language with:
     parameters, `return`, calls, and recursion, each emitted as a C function with
     its own frame. The remaining step is widening the accepted language toward
     the full surface until the compiler can compile Frost.)*
-11. Parser error recovery. *(Done: the parser recovers at top-level statement
-    boundaries instead of stopping at the first error, so one malformed
-    declaration no longer discards the rest of the file. `parse_recovering`
-    returns the statements that parsed plus a `Diagnostic` per error, and the
-    plain `parse` entry point reports them all at once. This is the foundation an
+11. Parser error recovery. *(Done: the parser recovers at statement boundaries
+    instead of stopping at the first error, at the top level and inside function
+    bodies alike, so one malformed statement no longer discards the rest of the
+    file or the rest of the enclosing block. `parse_recovering` returns the
+    statements that parsed plus a `Diagnostic` per error, and the plain `parse`
+    entry point reports them all at once. Synchronization skips to the next
+    statement start (a declaration, an assignment, or a leading keyword) and
+    always makes progress, so recovery cannot loop. This is the foundation an
     editor integration would build on, though the language server itself is not
     yet in scope.)*
