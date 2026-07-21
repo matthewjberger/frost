@@ -103,14 +103,15 @@ and the wildcard `_` all work.
   consumed exactly once. Consume it by returning it, passing it by value, or
   matching it. Forgetting is a compile error.
 - **Handles and pools** are how you model long-lived, shared, or linked data. A
-  `Pool<T>` is a contiguous arena, made with `pool_new($T, capacity)`, and a
-  `Handle<T>` (an index plus a generation) is a copy value you store and pass.
-  `pool_alloc(pool, value)` returns a handle, `pool[handle]` is a place you read,
-  write, or borrow, `pool_contains(pool, handle)` tests liveness, and
-  `pool_free(pool, handle)` releases a slot. No `extern` declarations are needed.
+  pool is a contiguous arena of same-typed elements addressed by a `Handle<T>`
+  (an index plus a generation, a copy value you store and pass) rather than a
+  pointer. A pool is not a built-in type, it is a struct you write: a value-generic
+  array of storage plus a free list, with the generational handle and the
+  stale-handle check as ordinary code (`examples/native/generic_slab.frost`).
   A freed slot bumps its generation, so a stale handle can never read the new
-  occupant. A `Pool<T>` is a linear resource, so you must `pool_destroy(pool)` it
-  exactly once; forgetting is a compile error.
+  occupant. The runtime also offers a ready-made generational pool you opt into
+  with `extern fn pool_new`/`pool_alloc`/`pool_get`, and then `pool[handle]` is a
+  place you read, write, or borrow.
 
 ## Generics
 
@@ -121,8 +122,13 @@ type at the call site with a leading `$`.
 ```
 Pair :: struct($T: Type) { first: T, second: T }
 make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
+```
 
-world : Pool<Entity> = pool_new($Entity, 16)
+A parameter may also be a value, written `$N: usize`, used to size a fixed array
+field. `Slab<Entity, 16>` then has `[16]Entity` storage, chosen at compile time.
+
+```
+Slab :: struct($T: Type, $N: usize) { items: [N]T, count: i64 }
 ```
 
 Generics monomorphize, so there is no runtime dispatch.
@@ -215,7 +221,10 @@ cheap to grep, and hard to get subtly wrong.
 ## A complete program
 
 ```
-printf :: extern fn(fmt: ^i8, value: i64) -> i32
+printf     :: extern fn(fmt: ^i8, value: i64) -> i32
+pool_new   :: extern fn(capacity: i64, elem_size: i64) -> ^u8
+pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
+pool_get   :: extern fn(pool: ^u8, handle: i64) -> ^u8
 
 Kind   :: enum { Player, Enemy { damage: i64 } }
 Entity :: struct { hp: i64, kind: Kind }
@@ -228,16 +237,15 @@ delta :: fn(k: &Kind) -> i64 {
 }
 
 main :: fn() -> i64 {
-    world : Pool<Entity> = pool_new($Entity, 16)
-    player := pool_alloc(world, Entity { hp = 100, kind = Kind::Player })
-    goblin := pool_alloc(
-        world,
-        Entity { hp = 30, kind = Kind::Enemy { damage = 15 } },
-    )
+    world := pool_new(16, sizeof(Entity))
+
+    mut hero := Entity { hp = 100, kind = Kind::Player }
+    player : Handle<Entity> = pool_alloc(world, &hero)
+    mut foe := Entity { hp = 30, kind = Kind::Enemy { damage = 15 } }
+    goblin : Handle<Entity> = pool_alloc(world, &foe)
 
     world[player].hp = world[player].hp + delta(&world[goblin].kind)
     printf("%lld\n", world[player].hp)          // 85
-    pool_destroy(world)
     0
 }
 ```

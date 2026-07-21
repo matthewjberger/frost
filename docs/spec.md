@@ -212,12 +212,9 @@ hand back typed memory from a byte buffer; ordinary code does not need them.
 (index plus generation), not a pointer, that unlike a reference may be stored in
 fields and returned.
 
-`Pool<T>` is the pool itself, a pointer-sized value created with
-`pool_new($T, capacity)`, indexed by `Handle<T>`, and carrying a typed set of
-operations (chapter 10.1). It is a **linear** resource (chapter 9): it must be
-destroyed exactly once with `pool_destroy`, so unlike a handle it is not a copy
-value. It may be moved (passed by value, returned, stored), and moving it is what
-consumes it.
+A pool is not a built-in type. It is an ordinary struct a program writes for
+itself, an array of storage indexed by `Handle<T>` (chapter 10.1). The compiler
+provides the pieces to build one, not the pool itself.
 
 ### 3.5 Function types
 
@@ -529,32 +526,23 @@ rather than relying on `defer`.
 ### 10.1 Pools
 
 A pool is a contiguous, fixed-capacity arena of same-typed elements addressed by
-`Handle<T>` rather than pointer. `Pool<T>` is a first-class type, a copy value the
-size of a pointer, with a typed surface the compiler provides directly over the
-runtime in `runtime/frost_runtime.c`. No `extern fn` declarations are needed.
+`Handle<T>` rather than pointer. A pool is not a language type: it is a struct a
+program writes for itself, holding the storage and a free list, with the
+generational `(generation << 32) | index` handle and the stale-handle check as
+ordinary code. `examples/native/generic_slab.frost` is a pool generic over both
+element type and capacity, built on value generics (`[N]T` storage, 11.1a) and
+slices (`slice_len` to recover the capacity). The compiler provides the pieces,
+arrays, handles, value generics, `ptr_to`/`ptr_cast`, and the byte buffer, not
+the pool itself. This is the data-oriented memory model expressed in the
+language, and the direction is written up in `docs/native-pools.md` and
+`docs/allocators.md`.
 
-| Operation | Meaning |
-| --- | --- |
-| `pool_new($T, capacity) -> Pool<T>` | allocate a pool of `capacity` slots, self-sizing from `sizeof(T)` |
-| `pool_alloc(pool, value) -> Handle<T>` | copy `value` (a `T`) into a free slot and return its handle |
-| `pool[handle]` | the slot's element, a place (10.2) |
-| `pool_contains(pool, handle) -> bool` | whether the handle still names a live slot |
-| `pool_free(pool, handle)` | release the slot and bump its generation (10.3) |
-| `pool_destroy(pool)` | release the whole pool, consuming it |
-
-`Pool<T>` is a **linear** resource (chapter 9): it must be consumed exactly once,
-by `pool_destroy`, and a pool that is never destroyed is a compile error. The
-other operations borrow the pool rather than consume it, so it stays usable
-between `pool_new` and `pool_destroy`, and using a pool after `pool_destroy` is a
-use-after-move error. The pool is fixed-capacity on purpose: it never moves in
-memory, so a `pool[handle]` borrow and a `pool_alloc` cannot invalidate each
-other.
-
-The runtime functions still exist and may be called through `extern fn` for
-low-level use, but the typed operations above are the intended surface. A name is
-only treated as a pool operation when the program has not declared or bound it
-itself, so an explicit `extern fn pool_alloc` keeps the raw, non-linear `^u8`
-behavior.
+The runtime in `runtime/frost_runtime.c` offers a ready-made generational pool
+(`pool_new`, `pool_alloc`, `pool_get`, `pool_free`, `pool_contains`,
+`pool_destroy`), reachable as an opt-in library by declaring the functions with
+`extern fn`, the way `malloc` is. Nothing about it is compiler-special. When a
+pool from it is indexed by a `Handle<T>`, `pool[handle]` lowers to its `pool_get`
+(10.2).
 
 ### 10.2 `pool[handle]` is a place
 

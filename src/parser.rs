@@ -2489,15 +2489,6 @@ impl<'a> Parser<'a> {
                         self.consume_type_arg_close()?;
                         Type::Handle(Box::new(inner_type))
                     }
-                    "Pool" => {
-                        if !matches!(self.peek_nth(0), Token::LessThan) {
-                            bail!("Expected '<' after 'Pool'");
-                        }
-                        self.read_token();
-                        let inner_type = self.parse_type()?;
-                        self.consume_type_arg_close()?;
-                        Type::Pool(Box::new(inner_type))
-                    }
                     _ if matches!(self.peek_nth(0), Token::LessThan) => {
                         self.read_token();
                         let mut arguments = Vec::new();
