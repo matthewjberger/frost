@@ -130,10 +130,10 @@ keyword. This is the mechanism by which redeclaring a variable, or assigning to
 one that was never introduced, can be turned into a diagnostic instead of a
 silent success.
 
-*Implementation status.* The operators are distinct today, which is the
-syntactic prerequisite. The current checker does not yet reject a re-`:=` of an
-existing name or an `=` to an undeclared one. Making those loud is a planned
-checker rule that the syntax already enables.
+*Implementation status.* Assigning with `=` to a name that was never introduced
+is already a located compile error. Redeclaring a name with `:=` still shadows,
+as it does in Rust. Whether to forbid that shadowing is an open design choice the
+distinct operators make easy to enforce either way.
 
 ## 4. `=` for struct fields frees `:` for types
 
