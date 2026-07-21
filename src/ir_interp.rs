@@ -41,7 +41,7 @@ fn unsupported<T>(reason: impl Into<String>) -> Eval<T> {
     Err(Signal::Unsupported(reason.into()))
 }
 
-const MAX_DEPTH: usize = 20_000;
+const MAX_DEPTH: usize = 2_000;
 
 pub fn run_module(module: &IrModule) -> RunOutcome {
     let Some(entry) = module.functions.iter().find(|f| f.name == "main") else {
@@ -581,5 +581,245 @@ fn default_value(ty: &Type) -> Value {
         Value::Float(0.0)
     } else {
         Value::Int(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::{IrBlock, IrLocal};
+
+    fn ok(result: Eval<Value>) -> Value {
+        match result {
+            Ok(value) => value,
+            Err(Signal::Unsupported(reason)) => {
+                panic!("unexpected decline: {reason}")
+            }
+        }
+    }
+
+    fn int(value: i64) -> Value {
+        Value::Int(value)
+    }
+
+    #[test]
+    fn normalize_wraps_and_sign_extends() {
+        assert_eq!(normalize(300, 8, false), 44);
+        assert_eq!(normalize(200, 8, true), -56);
+        assert_eq!(normalize(-1, 64, false), -1);
+        assert_eq!(normalize(5, 32, true), 5);
+        assert_eq!(normalize(256, 8, false), 0);
+    }
+
+    #[test]
+    fn binary_unsigned_add_wraps_at_width() {
+        assert_eq!(
+            ok(binary(IrBinOp::Add, int(200), int(100), &Type::U8)).as_i64(),
+            44
+        );
+        assert_eq!(
+            ok(binary(
+                IrBinOp::Add,
+                int(4_000_000_000),
+                int(1_000_000_000),
+                &Type::U32
+            ))
+            .as_i64(),
+            705_032_704
+        );
+    }
+
+    #[test]
+    fn binary_signed_add_wraps_at_width() {
+        assert_eq!(
+            ok(binary(IrBinOp::Add, int(100), int(100), &Type::I8)).as_i64(),
+            -56
+        );
+    }
+
+    #[test]
+    fn binary_division_respects_signedness() {
+        assert_eq!(
+            ok(binary(IrBinOp::Divide, int(-7), int(2), &Type::I64)).as_i64(),
+            -3
+        );
+        assert_eq!(
+            ok(binary(IrBinOp::Modulo, int(-7), int(2), &Type::I64)).as_i64(),
+            -1
+        );
+        assert_eq!(
+            ok(binary(IrBinOp::Divide, int(200), int(3), &Type::U8)).as_i64(),
+            66
+        );
+    }
+
+    #[test]
+    fn binary_comparison_respects_signedness() {
+        assert_eq!(
+            ok(binary(IrBinOp::LessThan, int(-1), int(1), &Type::I64)).as_i64(),
+            1
+        );
+        assert_eq!(
+            ok(binary(IrBinOp::LessThan, int(-1), int(1), &Type::U64)).as_i64(),
+            0
+        );
+        assert_eq!(
+            ok(binary(
+                IrBinOp::GreaterThanOrEqual,
+                int(5),
+                int(5),
+                &Type::I64
+            ))
+            .as_i64(),
+            1
+        );
+    }
+
+    #[test]
+    fn binary_shift_in_and_out_of_range() {
+        assert_eq!(
+            ok(binary(IrBinOp::ShiftLeft, int(1), int(10), &Type::I64))
+                .as_i64(),
+            1024
+        );
+        assert!(
+            binary(IrBinOp::ShiftLeft, int(1), int(64), &Type::I64).is_err()
+        );
+        assert!(
+            binary(IrBinOp::ShiftRight, int(1), int(-1), &Type::I64).is_err()
+        );
+    }
+
+    #[test]
+    fn binary_division_by_zero_declines() {
+        assert!(binary(IrBinOp::Divide, int(1), int(0), &Type::I64).is_err());
+        assert!(binary(IrBinOp::Modulo, int(1), int(0), &Type::I64).is_err());
+    }
+
+    #[test]
+    fn binary_float_arithmetic_and_rounding() {
+        assert_eq!(
+            ok(binary(
+                IrBinOp::Add,
+                Value::Float(1.5),
+                Value::Float(1.5),
+                &Type::F64
+            ))
+            .as_f64(),
+            3.0
+        );
+        let rounded = ok(binary(
+            IrBinOp::Add,
+            Value::Float(0.1),
+            Value::Float(0.0),
+            &Type::F32,
+        ))
+        .as_f64();
+        assert_eq!(rounded, 0.1_f32 as f64);
+    }
+
+    #[test]
+    fn cast_between_int_and_float() {
+        assert_eq!(cast(int(3), &Type::I64, &Type::F64).as_f64(), 3.0);
+        assert_eq!(cast(Value::Float(3.9), &Type::F64, &Type::I64).as_i64(), 3);
+        assert_eq!(cast(int(300), &Type::I64, &Type::U8).as_i64(), 44);
+        assert_eq!(
+            cast(Value::Float(0.1), &Type::F64, &Type::F32).as_f64(),
+            0.1_f32 as f64
+        );
+    }
+
+    #[test]
+    fn unary_negate_and_not() {
+        assert_eq!(unary(IrUnOp::Negate, int(5), &Type::I64).as_i64(), -5);
+        assert_eq!(
+            unary(IrUnOp::Negate, Value::Float(2.0), &Type::F64).as_f64(),
+            -2.0
+        );
+        assert_eq!(unary(IrUnOp::Not, int(0), &Type::Bool).as_i64(), 1);
+        assert_eq!(unary(IrUnOp::Not, int(1), &Type::Bool).as_i64(), 0);
+    }
+
+    fn scalar_local(ty: Type) -> IrLocal {
+        IrLocal {
+            size: ty.size_of(),
+            ty,
+            name: None,
+            in_memory: false,
+        }
+    }
+
+    #[test]
+    fn run_module_interprets_printf() {
+        let module = IrModule {
+            externs: Vec::new(),
+            functions: vec![IrFunction {
+                name: "main".to_string(),
+                param_count: 0,
+                return_type: Type::I64,
+                locals: vec![scalar_local(Type::I32)],
+                blocks: vec![IrBlock {
+                    statements: vec![IrStatement::Assign(
+                        0,
+                        IrRvalue::Call {
+                            function: "printf".to_string(),
+                            arguments: vec![
+                                IrOperand::Constant(IrConstant::CString(
+                                    "value=%lld\n".to_string(),
+                                )),
+                                IrOperand::Constant(IrConstant::Integer(
+                                    42,
+                                    Type::I64,
+                                )),
+                            ],
+                        },
+                    )],
+                    terminator: IrTerminator::Return(Some(
+                        IrOperand::Constant(IrConstant::Integer(0, Type::I64)),
+                    )),
+                }],
+                entry: 0,
+            }],
+        };
+        match run_module(&module) {
+            RunOutcome::Output(output) => assert_eq!(output, "value=42\n"),
+            RunOutcome::Unsupported(reason) => panic!("declined: {reason}"),
+        }
+    }
+
+    #[test]
+    fn run_module_declines_on_memory_ops() {
+        let module = IrModule {
+            externs: Vec::new(),
+            functions: vec![IrFunction {
+                name: "main".to_string(),
+                param_count: 0,
+                return_type: Type::I64,
+                locals: vec![scalar_local(Type::I64)],
+                blocks: vec![IrBlock {
+                    statements: vec![IrStatement::Store {
+                        address: IrOperand::Local(0),
+                        value: IrOperand::Constant(IrConstant::Integer(
+                            1,
+                            Type::I64,
+                        )),
+                    }],
+                    terminator: IrTerminator::Return(Some(
+                        IrOperand::Constant(IrConstant::Integer(0, Type::I64)),
+                    )),
+                }],
+                entry: 0,
+            }],
+        };
+        assert!(matches!(run_module(&module), RunOutcome::Unsupported(_)));
+    }
+
+    #[test]
+    fn run_module_declines_without_main() {
+        let module = IrModule {
+            externs: Vec::new(),
+            functions: Vec::new(),
+        };
+        assert!(matches!(run_module(&module), RunOutcome::Unsupported(_)));
     }
 }
