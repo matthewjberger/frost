@@ -451,12 +451,12 @@ value alongside the function pointer, the same pattern C uses.
 
 ## Compile-time evaluation
 
-Beyond `sizeof`, Frost has a small comptime facility for specialization. A
-`comptime` block runs at compile time, and a comptime loop over a list of types
-can stamp out per-type code. This is the specialization-only slice of what Rust
-spreads across const generics, `const fn`, and macros. It is intentionally
-narrow. Comptime exists to drive monomorphization, not to be a second
-interpreter you write programs in.
+Frost has no general compile-time interpreter and no macros. The only
+compile-time machinery is `sizeof(T)`, a constant, and monomorphization. A
+generic function or struct written with `$T` type parameters is stamped out once
+per concrete type at the call site (chapter 11 of the spec), the way Rust
+monomorphizes generics. That is the whole of it. There is nothing here that
+corresponds to `const fn`, const generics as values, or macro expansion.
 
 ## Calling C
 

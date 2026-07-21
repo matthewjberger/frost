@@ -10,34 +10,40 @@ partial, and what is not built yet.
 Source (.frost)
       |
       v
-   Lexer            src/lexer.rs      -> tokens
+   Lexer            src/lexer.rs        -> tokens
       |
       v
-   Parser           src/parser.rs     -> AST
+   Parser           src/parser.rs       -> AST
       |
-      +-----------------------------+
-      |                             |
-      v                             v
-  Bytecode compiler            Typed IR
-  src/compiler.rs              src/ir.rs, src/ir_build.rs
-      |                             |
-      v                             v
-  Bytecode VM                  Native codegen
-  src/typed_vm.rs              src/ir_codegen.rs (Cranelift)
-      |                             |
-      v                             v
-  Interpreted run              Object file -> linked executable
+      v
+   Import resolver  src/imports.rs      -> one flat, module-scoped AST
+      |
+      v
+   Ownership check  src/ownership.rs
+      |
+      v
+   Typed IR         src/ir.rs, src/ir_build.rs, src/ir_typecheck.rs
+      |
+      +--------------------+--------------------+
+      v                    v                    v
+  Cranelift            Portable C           IR interpreter
+  src/ir_codegen.rs    src/ir_c.rs          src/ir_interp.rs
+      |                    |                    |
+      v                    v                    v
+  object -> exe        C -> exe             direct run
 ```
 
-The **bytecode VM** is the mature, default path used by the REPL and by
-`frost file.frost`. It is broad and covered by a large unit-test suite.
+The **typed IR** is the single spine. Type checking, and ownership and
+linearity checking, are discharged before it, and every backend emits from it.
+`--native` / `--link` lower to the IR and emit machine code via Cranelift.
+`--emit-c` lowers the same IR to portable C. `--run-ir` interprets the IR
+directly. With no flag, `frost file.frost` compiles, links, and runs the program
+natively. Because all three backends emit from one IR, a differential test runs
+each program through them and asserts their output matches.
 
-The **typed IR** is the spine for native compilation and the single place
-where type checking and ownership/linearity checking are discharged.
-`--native` / `--link` lower the AST to the IR and emit machine code from it via
-Cranelift. `--emit-c` lowers the same IR to portable C. `--run-ir` interprets
-the IR directly. Because all three paths emit from one IR, a differential test
-runs each program through them and asserts their output matches.
+There is one execution surface. An earlier bytecode VM was retired once the
+native path covered the language, so the data-oriented native language is the
+only language.
 
 ## Typed IR
 
@@ -166,11 +172,11 @@ resolve). Construction uses the annotated instance type. This works over
 scalars and structs, with multiple type parameters, array fields of the
 parameter, by-reference passing, and nesting inside other structs.
 
-**Not yet in the native backend** (these fail loudly, they are not
-silently miscompiled): slices, capturing closures (the design deliberately
-uses function pointers instead), hashmaps, `comptime` blocks/loops, and
-explicit type arguments (a type parameter is inferred from a value or borrow,
-not passed as `f<T>(...)`). These run on the bytecode VM.
+**Not yet in the native backend** (these fail loudly, they are not silently
+miscompiled): slices. Capturing closures are absent by design,
+since the language uses function pointers and non-capturing function literals,
+both of which the native backend supports. There is no other backend to fall
+back to, so an unsupported construct is a compile error.
 
 The emitted C is an internal detail, not an interface for external C callers,
 so Frost function names are prefixed (`frost_`) to avoid C keyword clashes.
@@ -249,7 +255,7 @@ Frost is being reshaped toward a data-oriented language with:
    it is already rejected, so a handle-deref borrow cannot escape.)*
 5. Struct/array/enum by-value passing and tuple patterns in the native
    backend. *(Done: all three, plus nested aggregates and arrays of structs.)*
-6. Generics and specialization-only comptime (monomorphization). *(Done:
+6. Generics by monomorphization. *(Done:
    generic functions, generic structs (incl. nested `Pair<Pair<i64>>`, factory
    functions returning instances, construction inference, and generic-over-
    instance), `sizeof`, and explicit type arguments (`fn($T: Type, ...)` called

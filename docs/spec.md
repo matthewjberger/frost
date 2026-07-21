@@ -2,13 +2,10 @@
 
 This is the reference specification for the Frost language as implemented by the
 native, data-oriented compiler (the `--native`, `--link`, `--emit-c`, and
-`--run-ir` paths). It is normative for that language.
-
-The current parser also accepts an older, larger surface aimed at the bytecode
-VM (a `let` keyword, hashmap literals, capturing function values, context and
-allocator statements). Those forms are called out as **legacy** where they touch
-the grammar. They are not part of the specified language, and new code targets
-what this document describes.
+`--run-ir` paths). It is normative for that language. There is one language and
+one parser. The older bytecode VM and every syntactic form that existed only to
+serve it have been removed, so the parser accepts exactly what this document
+describes.
 
 The specification has two halves. The prose chapters (1 through 12) describe the
 lexical structure, types, declarations, expressions, statements, and static
@@ -109,7 +106,7 @@ Reserved words of the specified language:
 
 ```
 fn struct enum match case if else while for in mut return break continue
-defer extern import linear distinct comptime unsafe sizeof
+defer extern import linear distinct type unsafe sizeof
 ```
 
 Reserved primitive type names, each its own token:
@@ -118,10 +115,11 @@ Reserved primitive type names, each its own token:
 i8 i16 i32 i64 isize   u8 u16 u32 u64 usize   f32 f64   bool str void
 ```
 
-The lexer additionally reserves the legacy words `let`, `using`, `type`,
-`typename`, `context`, `push_context`, and `push_allocator`. These belong to the
-legacy surface. Note that `Type` (capitalized), used in `$T: Type` (chapter 11),
-is an ordinary identifier recognized in that position, not a keyword.
+`test` and `export` are not reserved. They are recognized contextually, `test`
+only at the start of a top-level test declaration and `export` only on a
+top-level export line, so both remain usable as ordinary identifiers elsewhere.
+`Type` (capitalized), used in `$T: Type` (chapter 11), is likewise an ordinary
+identifier recognized in that position, not a keyword.
 
 ### 2.5 Literals
 
@@ -396,12 +394,9 @@ begins. Patterns:
 `match` works over a value or a reference. Matching a value of a `linear` type
 consumes it (chapter 9).
 
-### 6.8 `sizeof`, `comptime`, and `unsafe`
+### 6.8 `sizeof` and `unsafe`
 
 - `sizeof(T)` is a compile-time constant.
-- `comptime { ... }` runs a block at compile time. A comptime `for` over a list
-  of types specializes code per type. Comptime drives monomorphization, not a
-  general compile-time interpreter.
 - `unsafe { ... }` is a block whose body may use unchecked operations.
 
 ### 6.9 Ranges
@@ -687,7 +682,6 @@ Primary =
     | IfExpr
     | MatchExpr
     | "fn" "(" Params? ")" ( "->" Type )? Block
-    | "comptime" ( Block | ComptimeFor )
     | "unsafe" Block
 ```
 
@@ -781,14 +775,6 @@ bitwise operators tighter than comparison, which differs from C. Write explicit
 parentheses in mixed expressions. A conformance-minded style parenthesizes any
 combination of `==`/`!=`, the comparisons, and the bitwise operators.
 
-### 13.9 Legacy forms (not part of the specified language)
-
-The current parser also accepts, for the bytecode VM, the `let` binding keyword,
-hashmap literals `{ key : value, ... }`, capturing function values used as
-closures, `push_context` and `push_allocator` statements, `context` expressions,
-`using`, `typename(...)`, and interpolated identifiers/constants with `#`. These
-are outside this specification and slated for removal.
-
 ---
 
 ## 14. Appendix
@@ -819,12 +805,11 @@ Specified language:
 
 ```
 fn struct enum match case if else while for in mut return break continue
-defer extern import linear distinct comptime unsafe sizeof
+defer extern import linear distinct type unsafe sizeof
 ```
 
 Primitive type names are `i8 i16 i32 i64 isize u8 u16 u32 u64 usize f32 f64 bool
-str void`. The wildcard is `_`. Legacy reserved words are `let using type typename
-context push_context push_allocator`.
+str void`. The wildcard is `_`. `test` and `export` are contextual, not reserved.
 
 ### 14.3 String escapes
 
