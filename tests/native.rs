@@ -391,6 +391,8 @@ main :: fn() -> i64 {
     printf("%lld\n", apply(fn(a: i64) -> i64 { a * a }, 9))
     g := fn(a: i64) -> i64 { a - 3 }
     printf("%lld\n", g(50))
+    ops := [fn(a: i64) -> i64 { a + 1 }, fn(a: i64) -> i64 { a * 2 }]
+    printf("%lld\n", ops[1](10))
     0
 }
 "#;
@@ -400,7 +402,7 @@ fn native_anonymous_functions() {
     let Some(output) = compile_and_run("anon", ANON_FUNCTIONS) else {
         return;
     };
-    assert_eq!(output, "42\n81\n47\n");
+    assert_eq!(output, "42\n81\n47\n20\n");
 }
 
 const MINIFROST: &str = include_str!("../bootstrap/minifrost.frost");

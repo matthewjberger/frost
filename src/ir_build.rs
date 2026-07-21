@@ -1438,6 +1438,13 @@ fn array_element_type(
                 Box::new(signature.return_type.clone()),
             )
         }
+        Some(
+            Expression::Function(parameters, return_sig, _)
+            | Expression::Proc(parameters, return_sig, _),
+        ) => Type::Proc(
+            parameters.iter().map(parameter_type).collect(),
+            Box::new(return_sig.to_type().unwrap_or(Type::Void)),
+        ),
         Some(Expression::Literal(Literal::Array(inner))) => Type::Array(
             Box::new(array_element_type(None, inner, signatures)),
             inner.len(),
