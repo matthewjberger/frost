@@ -266,4 +266,9 @@ Frost is being reshaped toward a data-oriented language with:
    control flow, recursion, and function pointers against the Cranelift and C
    backends, and declines cleanly on memory and pool operations rather than
    guessing.)*
-10. Eventual self-hosting of the compiler in Frost.
+10. Self-hosting the compiler in Frost. *(Started: `bootstrap/minifrost.frost`
+    is a compiler for a Frost-like subset, written in the data-oriented native
+    surface (a pool-backed AST arena, integer node indices instead of pointers,
+    fixed-array environments, second-class references), compiled to native code
+    and checked by the test suite. It covers source to AST to evaluation;
+    emitting native code from a Frost-written backend is the remaining step.)*
