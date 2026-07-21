@@ -100,12 +100,11 @@ There is one function-literal syntax, and "named function" is that literal given
 a name. Nobody had to design anonymous functions as a feature. They are what the
 grammar produces when you omit the name.
 
-*Implementation status.* The parser accepts a function literal wherever an
-expression is allowed, so the forms above parse. The native backend today lowers
-function values that refer to a named top-level function (function pointers).
-Lowering an anonymous literal written inline at a call site is a planned step,
-not yet done. The design property (one syntax, no separate closure grammar)
-holds regardless.
+*Implementation status.* The forms above compile and run on both native
+backends. An anonymous function literal is lifted to a synthetic top-level
+function and referenced by its address, so passing one inline or binding it to a
+name both work. There is no capture, which is what keeps this pure lambda
+lifting rather than a closure.
 
 **Caveat. Functions, not closures.** This gives anonymous functions for free,
 but not closures in the capturing sense. Whether `fn(x) { x + y }` may capture
