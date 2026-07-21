@@ -9,6 +9,23 @@ use crate::ir::{
 };
 use crate::types::Type;
 
+const POOL_RUNTIME: &[(&str, &str)] = &[
+    (
+        "pool_new",
+        "void* pool_new(int64_t capacity, int64_t elem_size);",
+    ),
+    ("pool_alloc", "int64_t pool_alloc(void* pool, void* value);"),
+    ("pool_get", "void* pool_get(void* pool, int64_t handle);"),
+    (
+        "pool_contains",
+        "int64_t pool_contains(void* pool, int64_t handle);",
+    ),
+    (
+        "pool_free",
+        "int64_t pool_free(void* pool, int64_t handle);",
+    ),
+];
+
 fn c_function_name(name: &str, externs: &HashSet<String>) -> String {
     if name == "main" || externs.contains(name) {
         name.to_string()
@@ -25,11 +42,22 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
         .collect();
     externs.insert("frost_bounds_check".to_string());
 
+    let user_externs: HashSet<&str> =
+        module.externs.iter().map(|e| e.name.as_str()).collect();
+
     let mut output = String::new();
     output.push_str("#include <stdint.h>\n\n");
     output.push_str(
         "void frost_bounds_check(int64_t index, int64_t length);\n\n",
     );
+
+    for (name, prototype) in POOL_RUNTIME {
+        externs.insert((*name).to_string());
+        if !user_externs.contains(name) {
+            writeln!(output, "{prototype}")?;
+        }
+    }
+    output.push('\n');
 
     for external in &module.externs {
         let mut params = Vec::new();
@@ -489,7 +517,7 @@ fn c_type(ty: &Type) -> Result<String> {
         Type::Bool => "int8_t".to_string(),
         Type::Void => "void".to_string(),
         Type::Ptr(_) | Type::Ref(_) | Type::RefMut(_) => "char*".to_string(),
-        Type::Proc(_, _) => "void*".to_string(),
+        Type::Proc(_, _) | Type::Pool(_) => "void*".to_string(),
         Type::Handle(_) => "int64_t".to_string(),
         Type::Distinct(inner) => c_type(inner)?,
         other => bail!("C backend: type not supported: {other}"),

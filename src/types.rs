@@ -29,6 +29,7 @@ pub enum Type {
     Arena,
     Context,
     Handle(Box<Type>),
+    Pool(Box<Type>),
     Optional(Box<Type>),
     TypeParam(String),
     Unknown,
@@ -53,6 +54,7 @@ impl Type {
             Type::Arena => 24,
             Type::Context => 24,
             Type::Handle(_) => 8,
+            Type::Pool(_) => 8,
             Type::Optional(inner) => 1 + inner.size_of(),
             Type::TypeParam(_) => 0,
             Type::Unknown => 0,
@@ -82,6 +84,7 @@ impl Type {
             Type::Arena => 8,
             Type::Context => 8,
             Type::Handle(_) => 4,
+            Type::Pool(_) => 8,
             Type::Optional(inner) => inner.align_of(),
             Type::TypeParam(_) => 1,
             Type::Unknown => 1,
@@ -102,6 +105,7 @@ impl Type {
             Type::Arena => false,
             Type::Context => false,
             Type::Handle(_) => true,
+            Type::Pool(_) => true,
             Type::Optional(inner) => inner.is_copy(),
             Type::TypeParam(_) => false,
             Type::Unknown => false,
@@ -177,6 +181,7 @@ impl Display for Type {
             Type::Arena => write!(f, "Arena"),
             Type::Context => write!(f, "Context"),
             Type::Handle(inner) => write!(f, "Handle<{}>", inner),
+            Type::Pool(inner) => write!(f, "Pool<{}>", inner),
             Type::Optional(inner) => write!(f, "?{}", inner),
             Type::TypeParam(name) => write!(f, "${}", name),
             Type::Unknown => write!(f, "?"),
@@ -299,6 +304,16 @@ mod tests {
         assert!(Type::RefMut(Box::new(Type::I64)).is_second_class());
         assert!(!Type::Ptr(Box::new(Type::I64)).is_second_class());
         assert!(!Type::I64.is_second_class());
+    }
+
+    #[test]
+    fn pool_is_a_copyable_pointer_handle() {
+        let pool = Type::Pool(Box::new(Type::Struct("Entity".to_string())));
+        assert_eq!(pool.size_of(), 8);
+        assert_eq!(pool.align_of(), 8);
+        assert!(pool.is_copy());
+        assert!(!pool.needs_drop());
+        assert_eq!(pool.to_string(), "Pool<Entity>");
     }
 
     #[test]
