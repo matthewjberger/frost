@@ -138,8 +138,13 @@ roadmap, the order is:
    interface, on top of raw-pointer indexing `p[i]` which landed here.)* The pool
    rebuilt over an arena in Frost with `pool[handle]` staying the one
    compiler-supported place deref remains.
-5. **The OS extern** (`os_alloc`/`os_free`) and a freestanding demo that roots
-   everything in a static arena with no libc.
+5. **The OS extern** and a freestanding path. *(The OS extern is done: a dynamic
+   arena roots its backing in one `malloc` and is a `linear` resource the compiler
+   requires be destroyed, so a dynamic allocation cannot leak without a collector,
+   `examples/native/dynamic_arena.frost`. The memory model above it is Frost, so a
+   static arena needs no allocator runtime. A full freestanding link, no libc and
+   no C runtime with a custom entry point and syscall I/O, is a separate
+   build-mode feature, not a language one, and is left for its own effort.)*
 6. **Retire the C pool runtime** and remove `Context`, freeing the reserved names
    and leaving C only for genuine FFI.
 

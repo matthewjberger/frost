@@ -687,6 +687,46 @@ fn native_typed_pool_surface() {
     assert_eq!(output, "100\n40\n75\n1\n0\n");
 }
 
+const DYNAMIC_ARENA: &str = r#"
+malloc :: extern fn(size: i64) -> ^u8
+free :: extern fn(pointer: ^u8)
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Arena :: linear struct { data: ^u8, cap: i64, offset: i64 }
+
+arena_new :: fn(cap: i64) -> Arena {
+    Arena { data = malloc(cap), cap = cap, offset = 0 }
+}
+
+arena_destroy :: fn(a: Arena) { free(a.data) }
+
+alloc_int :: fn(a: &mut Arena) -> ^i64 {
+    slot := ptr_to(a.data[a.offset])
+    a.offset = a.offset + sizeof(i64)
+    ptr_cast($i64, slot)
+}
+
+main :: fn() -> i64 {
+    mut a := arena_new(256)
+    p := alloc_int(&mut a)
+    p^ = 42
+    q := alloc_int(&mut a)
+    q^ = 100
+    printf("%lld\n", p^ + q^)
+    printf("%lld\n", a.offset)
+    arena_destroy(a)
+    0
+}
+"#;
+
+#[test]
+fn native_dynamic_arena_over_malloc() {
+    let Some(output) = compile_and_run("dynarena", DYNAMIC_ARENA) else {
+        return;
+    };
+    assert_eq!(output, "142\n16\n");
+}
+
 const ALLOCATOR_INTERFACE: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -2465,6 +2505,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_valuegenerics", VALUE_GENERICS),
         ("diff_arena", ARENA),
         ("diff_allociface", ALLOCATOR_INTERFACE),
+        ("diff_dynarena", DYNAMIC_ARENA),
         ("diff_widening", WIDENING_BINDINGS),
         ("diff_matchagg", MATCH_RETURNS_AGGREGATE),
         ("diff_f32", F32_OPERATIONS),

@@ -146,13 +146,23 @@ fn check_function_moves(
         signatures,
         linear_declared: Vec::new(),
     };
+    let mut param_names: HashSet<&str> = HashSet::new();
     for parameter in params {
         if let Some(ty) = &parameter.type_annotation {
             checker.note_binding(&parameter.name, Some(ty.clone()));
         }
+        param_names.insert(parameter.name.as_str());
     }
     checker.check_function_body(body)?;
     for name in &checker.linear_declared {
+        // A linear parameter arrives already owned: the caller consumed it by
+        // passing it in. This function may pass it on, return it, or be its
+        // terminal owner (a destructor that unpacks it), so a parameter carries
+        // no consume-here obligation. Only a linear local, created in this body,
+        // must be consumed, otherwise it leaks.
+        if param_names.contains(name.as_str()) {
+            continue;
+        }
         if !checker.moved.contains(name) {
             bail!(
                 "ownership: linear value '{name}' is never consumed; a linear resource must be moved exactly once"
@@ -691,6 +701,34 @@ mod tests {
                 world : Pool<Entity> = pool_new($Entity, 4)\n\
                 pool_destroy(world)\n\
                 a := pool_alloc(world, Entity { hp = 1 })\n\
+            }";
+        assert!(check(source).is_err());
+    }
+
+    #[test]
+    fn a_linear_destructor_may_be_written_in_frost() {
+        // The destructor takes the linear value by value and unpacks it; the
+        // parameter is not passed on, and that is allowed.
+        let source = "\
+            Arena :: linear struct { data: i64 }\n\
+            free :: extern fn(handle: i64)\n\
+            make :: fn() -> Arena { Arena { data = 1 } }\n\
+            destroy :: fn(a: Arena) { free(a.data) }\n\
+            run :: fn() {\n\
+                a := make()\n\
+                destroy(a)\n\
+            }";
+        assert!(check(source).is_ok());
+    }
+
+    #[test]
+    fn forgetting_to_destroy_a_linear_local_is_still_rejected() {
+        let source = "\
+            Arena :: linear struct { data: i64 }\n\
+            make :: fn() -> Arena { Arena { data = 1 } }\n\
+            destroy :: fn(a: Arena) { }\n\
+            run :: fn() {\n\
+                a := make()\n\
             }";
         assert!(check(source).is_err());
     }
