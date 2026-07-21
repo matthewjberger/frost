@@ -14,7 +14,11 @@ every reference is second-class.
 
 ## The language it compiles
 
-- Integer variables `a` through `z`.
+- Functions `fn name(p, q) { ... }`, with single-letter names and parameters,
+  called as `name(args)` inside any expression, including recursively.
+- `return expr`.
+- The function named `m` is the entry point and becomes C `main`.
+- Integer variables `a` through `z`, local to each function.
 - Arithmetic (`+ - * / %`) with precedence, and parentheses.
 - Comparisons (`< > <= >= == !=`).
 - `let v = expr` and `v = expr`.
@@ -30,15 +34,19 @@ every reference is second-class.
    it threads through the parser freely.
 2. **The AST is a pool of `Node` records.** Each node names its children by
    their arena index, the data-oriented replacement for pointers between heap
-   nodes. Sibling statements are linked through a `next` field. The pool gives a
-   growable, zero-initialized arena with no manual allocation.
+   nodes. Sibling statements, function parameters, and call arguments are each
+   linked through a `next` field into their own singly linked lists. The pool
+   gives a growable, zero-initialized arena with no manual allocation.
 3. **The mutable parser cursor** lives in a `Parser` struct threaded by `&mut`
    through the recursive-descent functions, which is the second-class-reference
    way to carry mutable state without storing a borrow anywhere.
 4. **Code generation** walks the arena, dispatching on `node.kind`, and emits C
-   text through two runtime helpers (`frost_emit_str`, `frost_emit_int`).
-   Variables become slots in a fixed C array, and Mini-Frost statements map
-   directly to C statements.
+   text through two runtime helpers (`frost_emit_str`, `frost_emit_int`). Each
+   Mini-Frost function becomes a C function that takes `int64_t` parameters and
+   holds its variables in its own fixed `int64_t v[26]`, so calls get a fresh
+   frame and recursion works. Prototypes are emitted ahead of the definitions,
+   so functions may call each other in any order. The function `m` is emitted as
+   C `main`.
 
 ## Building and running
 
@@ -48,15 +56,14 @@ frost --link -o minifrost bootstrap/minifrost.frost
 cc out.c -o out && ./out     # compile the emitted C to native and run it
 ```
 
-The embedded sample program computes the sum `1..10` (55), `5!` (120),
-`fib(10)` by iteration (55), and takes an `if` branch (111), so the compiled
-output prints:
+The embedded sample program defines a recursive `fib` and a recursive
+factorial, then an entry function that prints `fib(10)` (55), `5!` (120), and
+the sum `1..10` (55), so the compiled output prints:
 
 ```
 55
 120
 55
-111
 ```
 
 The compiler itself produces identical C through both of Frost's backends
@@ -71,6 +78,7 @@ This is a working code generator written in Frost: source to AST to emitted C to
 a native executable. It is not a full self-hosting compiler, because it accepts a
 small subset rather than all of Frost. What it establishes is that the
 data-oriented native language is expressive enough to write real compiler-shaped
-programs end to end, including code emission. Widening the accepted language
-(functions, more types, structs) toward the full surface is the path from here
-to compiling Frost itself.
+programs end to end, including functions, recursion, and code emission. Widening
+the accepted language further (multi-character names and a symbol table, more
+types, structs) toward the full surface is the path from here to compiling Frost
+itself.

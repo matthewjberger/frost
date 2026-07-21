@@ -34,6 +34,14 @@ NODE_ASSIGN :: 4
 NODE_PRINT  :: 5
 NODE_IF     :: 6
 NODE_WHILE  :: 7
+NODE_RETURN :: 8
+NODE_CALL   :: 9
+NODE_FUNC   :: 10
+NODE_PARAM  :: 11
+NODE_ARG    :: 12
+
+// The function whose name is the letter `m` becomes C `main`.
+MAIN_NAME :: 12
 
 // Binary operator codes.
 OP_ADD :: 0
@@ -49,12 +57,14 @@ OP_EQ  :: 9
 OP_NE  :: 10
 
 // Keyword codes.
-KW_NONE  :: 0
-KW_LET   :: 1
-KW_PRINT :: 2
-KW_IF    :: 3
-KW_ELSE  :: 4
-KW_WHILE :: 5
+KW_NONE   :: 0
+KW_LET    :: 1
+KW_PRINT  :: 2
+KW_IF     :: 3
+KW_ELSE   :: 4
+KW_WHILE  :: 5
+KW_FN     :: 6
+KW_RETURN :: 7
 
 // Character codes (the language has no character literals).
 CH_TAB     :: 9
@@ -68,6 +78,7 @@ CH_RPAREN  :: 41
 CH_STAR    :: 42
 CH_PLUS    :: 43
 CH_MINUS   :: 45
+CH_COMMA   :: 44
 CH_SLASH   :: 47
 CH_0       :: 48
 CH_9       :: 57
@@ -142,6 +153,17 @@ keyword_at :: fn(p: &mut Parser, length: i64) -> i64 {
         if (first == 105 && peek_at(p, 1) == 102) {
             return KW_IF
         }
+        if (first == 102 && peek_at(p, 1) == 110) {
+            return KW_FN
+        }
+        return KW_NONE
+    }
+    if (length == 6) {
+        if (first == 114 && peek_at(p, 1) == 101 && peek_at(p, 2) == 116
+            && peek_at(p, 3) == 117 && peek_at(p, 4) == 114
+            && peek_at(p, 5) == 110) {
+            return KW_RETURN
+        }
         return KW_NONE
     }
     if (length == 3) {
@@ -201,9 +223,38 @@ parse_factor :: fn(p: &mut Parser) -> i64 {
         p.pos = p.pos + 1
         return inner
     }
-    variable := c - CH_LOWER_A
+    name := c - CH_LOWER_A
     p.pos = p.pos + 1
-    new_node(p, NODE_VAR, 0, 0, variable)
+    if (peek(p) == CH_LPAREN) {
+        p.pos = p.pos + 1
+        args := parse_arg_list(p)
+        return new_node(p, NODE_CALL, args, 0, name)
+    }
+    new_node(p, NODE_VAR, 0, 0, name)
+}
+
+parse_arg_list :: fn(p: &mut Parser) -> i64 {
+    mut head : i64 = 0 - 1
+    mut tail : i64 = 0 - 1
+    skip_ws(p)
+    while (peek(p) != CH_RPAREN && peek(p) != (0 - 1)) {
+        value := parse_expr(p)
+        arg := new_node(p, NODE_ARG, value, 0, 0)
+        if (head == (0 - 1)) {
+            head = arg
+            tail = arg
+        } else {
+            set_next(p, tail, arg)
+            tail = arg
+        }
+        skip_ws(p)
+        if (peek(p) == CH_COMMA) {
+            p.pos = p.pos + 1
+            skip_ws(p)
+        }
+    }
+    p.pos = p.pos + 1
+    head
 }
 
 parse_mul :: fn(p: &mut Parser) -> i64 {
@@ -312,6 +363,11 @@ parse_stmt :: fn(p: &mut Parser) -> i64 {
         value := parse_expr(p)
         return new_node(p, NODE_PRINT, value, 0, 0)
     }
+    if (keyword == KW_RETURN) {
+        p.pos = p.pos + 6
+        value := parse_expr(p)
+        return new_node(p, NODE_RETURN, value, 0, 0)
+    }
     if (keyword == KW_IF) {
         p.pos = p.pos + 2
         skip_ws(p)
@@ -366,6 +422,64 @@ parse_stmt_list :: fn(p: &mut Parser, terminator: i64) -> i64 {
     head
 }
 
+parse_params :: fn(p: &mut Parser) -> i64 {
+    mut head : i64 = 0 - 1
+    mut tail : i64 = 0 - 1
+    skip_ws(p)
+    while (peek(p) != CH_RPAREN && peek(p) != (0 - 1)) {
+        letter := peek(p) - CH_LOWER_A
+        p.pos = p.pos + 1
+        param := new_node(p, NODE_PARAM, 0, 0, letter)
+        if (head == (0 - 1)) {
+            head = param
+            tail = param
+        } else {
+            set_next(p, tail, param)
+            tail = param
+        }
+        skip_ws(p)
+        if (peek(p) == CH_COMMA) {
+            p.pos = p.pos + 1
+            skip_ws(p)
+        }
+    }
+    p.pos = p.pos + 1
+    head
+}
+
+parse_function :: fn(p: &mut Parser) -> i64 {
+    skip_ws(p)
+    p.pos = p.pos + 2
+    skip_ws(p)
+    name := peek(p) - CH_LOWER_A
+    p.pos = p.pos + 1
+    skip_ws(p)
+    p.pos = p.pos + 1
+    params := parse_params(p)
+    body := parse_block(p)
+    new_node(p, NODE_FUNC, body, params, name)
+}
+
+parse_program :: fn(p: &mut Parser) -> i64 {
+    mut head : i64 = 0 - 1
+    mut tail : i64 = 0 - 1
+    skip_ws(p)
+    mut run := alpha_run_len(p)
+    while (keyword_at(p, run) == KW_FN) {
+        func := parse_function(p)
+        if (head == (0 - 1)) {
+            head = func
+            tail = func
+        } else {
+            set_next(p, tail, func)
+            tail = func
+        }
+        skip_ws(p)
+        run = alpha_run_len(p)
+    }
+    head
+}
+
 // ---------------------------------------------------------------------------
 // Code generation: walk the arena and emit a C translation unit.
 // ---------------------------------------------------------------------------
@@ -399,11 +513,35 @@ emit_expr :: fn(arena: ^u8, id: i64) {
         frost_emit_str("]")
         return
     }
+    if (kind == NODE_CALL) {
+        frost_emit_str("mf_")
+        frost_emit_int(node^.val)
+        frost_emit_str("(")
+        emit_args(arena, node^.a)
+        frost_emit_str(")")
+        return
+    }
     frost_emit_str("(")
     emit_expr(arena, node^.a)
     emit_op(node^.val)
     emit_expr(arena, node^.b)
     frost_emit_str(")")
+}
+
+emit_args :: fn(arena: ^u8, head: i64) {
+    mut id := head
+    mut first : bool = true
+    while (id != (0 - 1)) {
+        if (first == false) {
+            frost_emit_str(", ")
+        }
+        first = false
+        node : ^Node = pool_get(arena, id)
+        value := node^.a
+        next_id := node^.next
+        emit_expr(arena, value)
+        id = next_id
+    }
 }
 
 emit_stmt :: fn(arena: ^u8, id: i64) {
@@ -421,6 +559,12 @@ emit_stmt :: fn(arena: ^u8, id: i64) {
         frost_emit_str("printf(\"%lld\\n\", (long long)(")
         emit_expr(arena, node^.a)
         frost_emit_str("));\n")
+        return
+    }
+    if (kind == NODE_RETURN) {
+        frost_emit_str("return (")
+        emit_expr(arena, node^.a)
+        frost_emit_str(");\n")
         return
     }
     if (kind == NODE_IF) {
@@ -456,26 +600,128 @@ emit_list :: fn(arena: ^u8, head: i64) {
     }
 }
 
+emit_param_types :: fn(arena: ^u8, head: i64) {
+    if (head == (0 - 1)) {
+        frost_emit_str("void")
+        return
+    }
+    mut id := head
+    mut first : bool = true
+    while (id != (0 - 1)) {
+        if (first == false) {
+            frost_emit_str(", ")
+        }
+        first = false
+        frost_emit_str("int64_t")
+        node : ^Node = pool_get(arena, id)
+        id = node^.next
+    }
+}
+
+emit_param_signature :: fn(arena: ^u8, head: i64) {
+    if (head == (0 - 1)) {
+        frost_emit_str("void")
+        return
+    }
+    mut id := head
+    mut index : i64 = 0
+    while (id != (0 - 1)) {
+        if (index != 0) {
+            frost_emit_str(", ")
+        }
+        frost_emit_str("int64_t a")
+        frost_emit_int(index)
+        index = index + 1
+        node : ^Node = pool_get(arena, id)
+        id = node^.next
+    }
+}
+
+emit_param_copies :: fn(arena: ^u8, head: i64) {
+    mut id := head
+    mut index : i64 = 0
+    while (id != (0 - 1)) {
+        node : ^Node = pool_get(arena, id)
+        letter := node^.val
+        next_id := node^.next
+        frost_emit_str("v[")
+        frost_emit_int(letter)
+        frost_emit_str("] = a")
+        frost_emit_int(index)
+        frost_emit_str(";\n")
+        index = index + 1
+        id = next_id
+    }
+}
+
+emit_prototypes :: fn(arena: ^u8, head: i64) {
+    mut id := head
+    while (id != (0 - 1)) {
+        node : ^Node = pool_get(arena, id)
+        name := node^.val
+        params := node^.b
+        next_id := node^.next
+        if (name != MAIN_NAME) {
+            frost_emit_str("int64_t mf_")
+            frost_emit_int(name)
+            frost_emit_str("(")
+            emit_param_types(arena, params)
+            frost_emit_str(");\n")
+        }
+        id = next_id
+    }
+}
+
+emit_function :: fn(arena: ^u8, id: i64) {
+    node : ^Node = pool_get(arena, id)
+    name := node^.val
+    body := node^.a
+    params := node^.b
+    if (name == MAIN_NAME) {
+        frost_emit_str("int main(void) {\n")
+    } else {
+        frost_emit_str("int64_t mf_")
+        frost_emit_int(name)
+        frost_emit_str("(")
+        emit_param_signature(arena, params)
+        frost_emit_str(") {\n")
+    }
+    frost_emit_str("int64_t v[26] = {0};\n")
+    emit_param_copies(arena, params)
+    emit_list(arena, body)
+    frost_emit_str("return 0;\n}\n")
+}
+
+emit_program :: fn(arena: ^u8, head: i64) {
+    emit_prototypes(arena, head)
+    mut id := head
+    while (id != (0 - 1)) {
+        emit_function(arena, id)
+        node : ^Node = pool_get(arena, id)
+        id = node^.next
+    }
+}
+
 main :: fn() -> i64 {
     source : ^i8 = "
-        let s = 0
-        let i = 1
-        while (i <= 10) { s = s + i i = i + 1 }
-        print s
+        fn f(n) {
+            if (n < 2) { return n }
+            return f(n - 1) + f(n - 2)
+        }
 
-        let f = 1
-        let k = 1
-        while (k <= 5) { f = f * k k = k + 1 }
-        print f
+        fn g(n) {
+            if (n < 1) { return 1 }
+            return n * g(n - 1)
+        }
 
-        let a = 0
-        let b = 1
-        let j = 0
-        while (j < 10) { let t = a + b a = b b = t j = j + 1 }
-        print a
-
-        let x = 7
-        if (x > 3) { print 111 } else { print 222 }
+        fn m() {
+            print f(10)
+            print g(5)
+            let s = 0
+            let i = 1
+            while (i <= 10) { s = s + i i = i + 1 }
+            print s
+        }
     "
 
     arena := pool_new(4096, 40)
@@ -485,13 +731,10 @@ main :: fn() -> i64 {
         pos = 0,
         arena = arena,
     }
-    head := parse_stmt_list(&mut parser, 0 - 1)
+    program := parse_program(&mut parser)
 
     frost_emit_str("#include <stdio.h>\n")
     frost_emit_str("#include <stdint.h>\n")
-    frost_emit_str("int main(void) {\n")
-    frost_emit_str("int64_t v[26] = {0};\n")
-    emit_list(parser.arena, head)
-    frost_emit_str("return 0;\n}\n")
+    emit_program(parser.arena, program)
     0
 }
