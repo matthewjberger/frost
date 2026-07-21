@@ -687,6 +687,81 @@ fn native_typed_pool_surface() {
     assert_eq!(output, "100\n40\n75\n1\n0\n");
 }
 
+const NATIVE_POOL: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Entity :: struct { hp: i64, mana: i64 }
+
+Slab :: struct {
+    storage: [4]Entity,
+    generations: [4]i64,
+    free_list: [4]i64,
+    free_count: i64,
+}
+
+hpack :: fn(index: i64, generation: i64) -> i64 { (generation << 32) | index }
+hindex :: fn(handle: i64) -> i64 { handle & 4294967295 }
+hgen :: fn(handle: i64) -> i64 { handle >> 32 }
+
+slab_reset :: fn(p: &mut Slab) {
+    mut i : i64 = 0
+    while (i < 4) { p.generations[i] = 0 p.free_list[i] = 3 - i i = i + 1 }
+    p.free_count = 4
+}
+
+slab_insert :: fn(p: &mut Slab, value: Entity) -> i64 {
+    p.free_count = p.free_count - 1
+    index := p.free_list[p.free_count]
+    p.storage[index] = value
+    hpack(index, p.generations[index])
+}
+
+slab_alive :: fn(p: &Slab, handle: i64) -> bool {
+    p.generations[hindex(handle)] == hgen(handle)
+}
+
+slab_read :: fn(p: &Slab, handle: i64) -> Entity { p.storage[hindex(handle)] }
+
+slab_release :: fn(p: &mut Slab, handle: i64) {
+    index := hindex(handle)
+    p.generations[index] = p.generations[index] + 1
+    p.free_list[p.free_count] = index
+    p.free_count = p.free_count + 1
+}
+
+main :: fn() -> i64 {
+    mut world : Slab = Slab {
+        storage = [
+            Entity { hp = 0, mana = 0 }, Entity { hp = 0, mana = 0 },
+            Entity { hp = 0, mana = 0 }, Entity { hp = 0, mana = 0 },
+        ],
+        generations = [0, 0, 0, 0],
+        free_list = [0, 0, 0, 0],
+        free_count = 0,
+    }
+    slab_reset(&mut world)
+    hero := slab_insert(&mut world, Entity { hp = 100, mana = 30 })
+    foe := slab_insert(&mut world, Entity { hp = 40, mana = 10 })
+    a := slab_read(&world, hero)
+    printf("%lld\n", a.hp)
+    if (slab_alive(&world, foe)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    slab_release(&mut world, foe)
+    reused := slab_insert(&mut world, Entity { hp = 7, mana = 7 })
+    if (slab_alive(&world, reused)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    if (slab_alive(&world, foe)) { printf("%lld\n", 9) } else { printf("%lld\n", 0) }
+    0
+}
+"#;
+
+#[test]
+fn native_generational_pool_written_in_frost() {
+    let Some(output) = compile_and_run("nativepool", NATIVE_POOL) else {
+        return;
+    };
+    // insert, read, live-before-free, reused-slot-live, stale-handle-dead
+    assert_eq!(output, "100\n1\n1\n0\n");
+}
+
 #[test]
 fn native_undestroyed_pool_is_rejected() {
     let source = "\
@@ -2193,6 +2268,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_intsem", INTEGER_SEMANTICS),
         ("diff_genpool", GENERATIONAL_POOL),
         ("diff_typedpool", TYPED_POOL),
+        ("diff_nativepool", NATIVE_POOL),
         ("diff_widening", WIDENING_BINDINGS),
         ("diff_matchagg", MATCH_RETURNS_AGGREGATE),
         ("diff_f32", F32_OPERATIONS),
