@@ -141,48 +141,61 @@ fn check_function_moves(
 ) -> Result<()> {
     let mut checker = MoveChecker {
         types: HashMap::new(),
-        moved: HashSet::new(),
+        states: HashMap::new(),
         linear,
         signatures,
         linear_declared: Vec::new(),
+        params: HashSet::new(),
     };
-    let mut param_names: HashSet<&str> = HashSet::new();
     for parameter in params {
         if let Some(ty) = &parameter.type_annotation {
             checker.note_binding(&parameter.name, Some(ty.clone()));
         }
-        param_names.insert(parameter.name.as_str());
+        checker.params.insert(parameter.name.clone());
     }
-    checker.check_function_body(body)?;
-    for name in &checker.linear_declared {
-        // A linear parameter arrives already owned: the caller consumed it by
-        // passing it in. This function may pass it on, return it, or be its
-        // terminal owner (a destructor that unpacks it), so a parameter carries
-        // no consume-here obligation. Only a linear local, created in this body,
-        // must be consumed, otherwise it leaks.
-        if param_names.contains(name.as_str()) {
-            continue;
-        }
-        if !checker.moved.contains(name) {
-            bail!(
-                "ownership: linear value '{name}' is never consumed; a linear resource must be moved exactly once"
-            );
+    let diverges = checker.check_function_body(body)?;
+    if !diverges {
+        for name in &checker.linear_declared {
+            if checker.params.contains(name) {
+                continue;
+            }
+            if checker.state_of(name) != MoveState::Moved {
+                bail!(
+                    "ownership: linear value '{name}' is never consumed; a linear resource must be moved exactly once"
+                );
+            }
         }
     }
     Ok(())
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MoveState {
+    Live,
+    Moved,
+    MaybeMoved,
+}
+
+fn join_state(left: MoveState, right: MoveState) -> MoveState {
+    if left == right {
+        left
+    } else {
+        MoveState::MaybeMoved
+    }
+}
+
 struct MoveChecker<'a> {
     types: HashMap<String, Type>,
-    moved: HashSet<String>,
+    states: HashMap<String, MoveState>,
     linear: &'a HashSet<String>,
     signatures: &'a Signatures,
     linear_declared: Vec<String>,
+    params: HashSet<String>,
 }
 
 impl MoveChecker<'_> {
     fn note_binding(&mut self, name: &str, ty: Option<Type>) {
-        self.moved.remove(name);
+        self.states.insert(name.to_string(), MoveState::Live);
         match ty {
             Some(ty) => {
                 if is_linear_type(&ty, self.linear) {
@@ -196,29 +209,53 @@ impl MoveChecker<'_> {
         }
     }
 
-    fn check_block(&mut self, block: &Block) -> Result<()> {
-        for statement in block {
-            locate(self.check_statement(&statement.node), statement.position)?;
-        }
-        Ok(())
+    fn state_of(&self, name: &str) -> MoveState {
+        self.states.get(name).copied().unwrap_or(MoveState::Live)
     }
 
-    fn check_function_body(&mut self, block: &Block) -> Result<()> {
+    fn check_block(&mut self, block: &Block) -> Result<bool> {
+        let mut diverges = false;
+        for statement in block {
+            diverges = locate(
+                self.check_statement(&statement.node),
+                statement.position,
+            )?;
+            if diverges {
+                break;
+            }
+        }
+        Ok(diverges)
+    }
+
+    fn check_function_body(&mut self, block: &Block) -> Result<bool> {
+        let mut diverges = false;
         for (index, statement) in block.iter().enumerate() {
             let is_last = index + 1 == block.len();
             let position = statement.position;
             if is_last
                 && let Statement::Expression(expression) = &statement.node
             {
-                locate(self.visit(expression, true), position)?;
+                if matches!(
+                    expression,
+                    Expression::If(..) | Expression::Switch(..)
+                ) {
+                    diverges =
+                        locate(self.check_conditional(expression), position)?;
+                } else {
+                    locate(self.visit(expression, true), position)?;
+                }
             } else {
-                locate(self.check_statement(&statement.node), position)?;
+                diverges =
+                    locate(self.check_statement(&statement.node), position)?;
+                if diverges {
+                    break;
+                }
             }
         }
-        Ok(())
+        Ok(diverges)
     }
 
-    fn check_statement(&mut self, statement: &Statement) -> Result<()> {
+    fn check_statement(&mut self, statement: &Statement) -> Result<bool> {
         match statement {
             Statement::Let {
                 name,
@@ -234,52 +271,236 @@ impl MoveChecker<'_> {
                     self.signatures,
                 );
                 self.note_binding(name, inferred);
-                Ok(())
+                Ok(false)
             }
             Statement::Constant(
                 _,
                 Expression::Function(..) | Expression::Proc(..),
-            ) => Ok(()),
+            ) => Ok(false),
             Statement::Constant(name, value) => {
                 self.visit(value, true)?;
                 let inferred =
                     infer_type(None, value, &self.types, self.signatures);
                 self.note_binding(name, inferred);
-                Ok(())
+                Ok(false)
             }
             Statement::Assignment(target, value) => {
                 self.visit(value, true)?;
                 if let Expression::Identifier(name) = target {
-                    self.moved.remove(name);
+                    self.states.insert(name.clone(), MoveState::Live);
                 } else {
                     self.visit(target, false)?;
                 }
-                Ok(())
+                Ok(false)
             }
-            Statement::Return(expression) => self.visit(expression, true),
-            Statement::Expression(expression) => self.visit(expression, false),
+            Statement::Return(expression) => {
+                self.visit(expression, true)?;
+                self.check_return_leaks()?;
+                Ok(true)
+            }
+            Statement::Expression(expression) => {
+                if matches!(
+                    expression,
+                    Expression::If(..) | Expression::Switch(..)
+                ) {
+                    self.check_conditional(expression)
+                } else {
+                    self.visit(expression, false)?;
+                    Ok(false)
+                }
+            }
             Statement::While(condition, body) => {
                 self.visit(condition, false)?;
-                self.check_block(body)
+                self.check_loop_body(body)?;
+                Ok(false)
             }
             Statement::For(variable, range, body) => {
                 self.visit(range, false)?;
                 self.note_binding(variable, Some(Type::I64));
-                self.check_block(body)
+                self.check_loop_body(body)?;
+                Ok(false)
             }
-            Statement::Defer(inner) => self.check_statement(inner),
-            _ => Ok(()),
+            Statement::Defer(inner) => {
+                self.check_statement(inner)?;
+                Ok(false)
+            }
+            _ => Ok(false),
         }
+    }
+
+    fn check_return_leaks(&self) -> Result<()> {
+        for name in &self.linear_declared {
+            if self.params.contains(name) {
+                continue;
+            }
+            if self.state_of(name) != MoveState::Moved {
+                bail!(
+                    "ownership: linear value '{name}' is not consumed before this return; a linear resource must be consumed exactly once on every path"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn check_loop_body(&mut self, body: &Block) -> Result<()> {
+        let before = self.states.clone();
+        let marker = self.linear_declared.len();
+        self.check_block(body)?;
+        let inner: Vec<String> = self.linear_declared.split_off(marker);
+        self.enforce_scope_consumed(&inner, false)?;
+        for name in &inner {
+            self.states.remove(name);
+            self.types.remove(name);
+        }
+        for name in before.keys() {
+            let previous = before.get(name).copied().unwrap_or(MoveState::Live);
+            if previous == MoveState::Live
+                && self.state_of(name) != MoveState::Live
+                && self.is_linear_variable(name)
+            {
+                bail!(
+                    "ownership: linear value '{name}' is consumed inside a loop; a linear resource must be consumed exactly once, not once per iteration"
+                );
+            }
+        }
+        self.states = before;
+        Ok(())
+    }
+
+    fn enforce_scope_consumed(
+        &self,
+        inner: &[String],
+        diverges: bool,
+    ) -> Result<()> {
+        if diverges {
+            return Ok(());
+        }
+        for name in inner {
+            if self.params.contains(name) {
+                continue;
+            }
+            if self.state_of(name) != MoveState::Moved {
+                bail!(
+                    "ownership: linear value '{name}' is never consumed; a linear resource must be moved exactly once"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn check_conditional(&mut self, expression: &Expression) -> Result<bool> {
+        match expression {
+            Expression::If(condition, consequence, alternative) => {
+                self.check_if(condition, consequence, alternative.as_ref())
+            }
+            Expression::Switch(scrutinee, cases) => {
+                self.check_switch(scrutinee, cases)
+            }
+            _ => {
+                self.visit(expression, false)?;
+                Ok(false)
+            }
+        }
+    }
+
+    fn check_arm(
+        &mut self,
+        block: &Block,
+    ) -> Result<(HashMap<String, MoveState>, bool)> {
+        let marker = self.linear_declared.len();
+        let diverges = self.check_block(block)?;
+        let states = self.states.clone();
+        let inner: Vec<String> = self.linear_declared.split_off(marker);
+        self.enforce_scope_consumed(&inner, diverges)?;
+        Ok((states, diverges))
+    }
+
+    fn check_if(
+        &mut self,
+        condition: &Expression,
+        consequence: &Block,
+        alternative: Option<&Block>,
+    ) -> Result<bool> {
+        self.visit(condition, false)?;
+        let before = self.states.clone();
+
+        let (then_states, then_diverges) = self.check_arm(consequence)?;
+
+        self.states = before.clone();
+        let (else_states, else_diverges) = match alternative {
+            Some(block) => self.check_arm(block)?,
+            None => (before.clone(), false),
+        };
+
+        self.states = self.merge_arms(
+            &before,
+            &[(then_states, then_diverges), (else_states, else_diverges)],
+        );
+        Ok(then_diverges && else_diverges)
+    }
+
+    fn check_switch(
+        &mut self,
+        scrutinee: &Expression,
+        cases: &[crate::parser::SwitchCase],
+    ) -> Result<bool> {
+        self.visit(scrutinee, false)?;
+        if let Expression::Identifier(name) = scrutinee
+            && self.is_linear_variable(name)
+        {
+            self.states.insert(name.clone(), MoveState::Moved);
+        }
+        let before = self.states.clone();
+        let mut arms = Vec::new();
+        for case in cases {
+            self.states = before.clone();
+            arms.push(self.check_arm(&case.body)?);
+        }
+        let all_diverge =
+            !arms.is_empty() && arms.iter().all(|(_, diverges)| *diverges);
+        self.states = self.merge_arms(&before, &arms);
+        Ok(all_diverge)
+    }
+
+    fn merge_arms(
+        &self,
+        before: &HashMap<String, MoveState>,
+        arms: &[(HashMap<String, MoveState>, bool)],
+    ) -> HashMap<String, MoveState> {
+        let live: Vec<&HashMap<String, MoveState>> = arms
+            .iter()
+            .filter(|(_, diverges)| !diverges)
+            .map(|(states, _)| states)
+            .collect();
+        if live.is_empty() {
+            return before.clone();
+        }
+        let mut result = before.clone();
+        for name in before.keys() {
+            let mut merged: Option<MoveState> = None;
+            for states in &live {
+                let state =
+                    states.get(name).copied().unwrap_or(MoveState::Live);
+                merged = Some(match merged {
+                    Some(previous) => join_state(previous, state),
+                    None => state,
+                });
+            }
+            if let Some(state) = merged {
+                result.insert(name.clone(), state);
+            }
+        }
+        result
     }
 
     fn visit(&mut self, expression: &Expression, moving: bool) -> Result<()> {
         match expression {
             Expression::Identifier(name) => {
-                if self.moved.contains(name) {
+                if self.state_of(name) != MoveState::Live {
                     bail!("ownership: use of moved value '{name}'");
                 }
                 if moving && self.is_move_variable(name) {
-                    self.moved.insert(name.clone());
+                    self.states.insert(name.clone(), MoveState::Moved);
                 }
                 Ok(())
             }
@@ -331,24 +552,8 @@ impl MoveChecker<'_> {
                 }
                 Ok(())
             }
-            Expression::If(condition, consequence, alternative) => {
-                self.visit(condition, false)?;
-                self.check_block(consequence)?;
-                if let Some(alternative) = alternative {
-                    self.check_block(alternative)?;
-                }
-                Ok(())
-            }
-            Expression::Switch(scrutinee, cases) => {
-                self.visit(scrutinee, false)?;
-                if let Expression::Identifier(name) = scrutinee.as_ref()
-                    && self.is_linear_variable(name)
-                {
-                    self.moved.insert(name.clone());
-                }
-                for case in cases {
-                    self.check_block(&case.body)?;
-                }
+            Expression::If(..) | Expression::Switch(..) => {
+                self.check_conditional(expression)?;
                 Ok(())
             }
             _ => Ok(()),
@@ -692,5 +897,91 @@ mod tests {
                 f\n\
             }";
         assert!(check(source).is_ok());
+    }
+
+    #[test]
+    fn linear_consumed_on_both_if_branches_is_accepted() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            open :: fn() -> File { File { handle = 1 } }\n\
+            close :: extern fn(f: File)\n\
+            run :: fn() {\n\
+                f := open()\n\
+                if (1 == 1) { close(f) } else { close(f) }\n\
+            }";
+        assert!(check(source).is_ok());
+    }
+
+    #[test]
+    fn linear_consumed_on_every_match_arm_is_accepted() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            Flag :: enum { A, B }\n\
+            open :: fn() -> File { File { handle = 1 } }\n\
+            close :: extern fn(f: File)\n\
+            run :: fn() {\n\
+                f := open()\n\
+                flag := Flag::A\n\
+                match flag { case .A: close(f)  case .B: close(f) }\n\
+            }";
+        assert!(check(source).is_ok());
+    }
+
+    #[test]
+    fn linear_consumed_on_only_one_if_branch_is_rejected() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            open :: fn() -> File { File { handle = 1 } }\n\
+            close :: extern fn(f: File)\n\
+            run :: fn() {\n\
+                f := open()\n\
+                if (1 == 1) { close(f) }\n\
+            }";
+        assert!(check(source).is_err());
+    }
+
+    #[test]
+    fn linear_consumed_on_only_one_match_arm_is_rejected() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            Flag :: enum { A, B }\n\
+            open :: fn() -> File { File { handle = 1 } }\n\
+            close :: extern fn(f: File)\n\
+            noop :: extern fn()\n\
+            run :: fn() {\n\
+                f := open()\n\
+                flag := Flag::A\n\
+                match flag { case .A: close(f)  case .B: noop() }\n\
+            }";
+        assert!(check(source).is_err());
+    }
+
+    #[test]
+    fn linear_leaked_on_an_early_return_is_rejected() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            open :: fn() -> File { File { handle = 1 } }\n\
+            close :: extern fn(f: File)\n\
+            run :: fn() -> i64 {\n\
+                f := open()\n\
+                if (1 == 1) { return 0 }\n\
+                close(f)\n\
+                0\n\
+            }";
+        assert!(check(source).is_err());
+    }
+
+    #[test]
+    fn linear_consumed_inside_a_loop_is_rejected() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            open :: fn() -> File { File { handle = 1 } }\n\
+            close :: extern fn(f: File)\n\
+            run :: fn() {\n\
+                f := open()\n\
+                mut i : i64 = 0\n\
+                while (i < 3) { close(f)  i = i + 1 }\n\
+            }";
+        assert!(check(source).is_err());
     }
 }
