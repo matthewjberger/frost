@@ -12,6 +12,15 @@ void frost_bounds_check(int64_t index, int64_t length) {
     }
 }
 
+void frost_generation_check(int64_t stored, int64_t expected) {
+    if (stored != expected) {
+        fprintf(stderr,
+                "frost: stale handle, slot generation %lld but handle expected %lld\n",
+                (long long)stored, (long long)expected);
+        abort();
+    }
+}
+
 int64_t frost_byte_at(const char *text, int64_t index) {
     return (int64_t)(unsigned char)text[index];
 }

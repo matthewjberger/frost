@@ -835,6 +835,113 @@ fn native_value_generic_struct() {
     assert_eq!(output, "3\n20\n60\n");
 }
 
+const SLAB_DEREF: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Entity :: struct { hp: i64, mana: i64 }
+
+Slab :: struct($T: Type, $N: usize) {
+    storage: [N]T,
+    generations: [N]i64,
+    free_list: [N]i64,
+    free_count: i64,
+}
+
+reset :: fn(s: &mut Slab<Entity, 4>) {
+    mut i : i64 = 0
+    while (i < 4) { s.generations[i] = 0  s.free_list[i] = 3 - i  i = i + 1 }
+    s.free_count = 4
+}
+insert :: fn(s: &mut Slab<Entity, 4>, value: Entity) -> i64 {
+    s.free_count = s.free_count - 1
+    index := s.free_list[s.free_count]
+    s.storage[index] = value
+    packed := (s.generations[index] << 32) | index
+    packed
+}
+release :: fn(s: &mut Slab<Entity, 4>, handle: i64) {
+    index := handle & 4294967295
+    s.generations[index] = s.generations[index] + 1
+    s.free_list[s.free_count] = index
+    s.free_count = s.free_count + 1
+}
+
+main :: fn() -> i64 {
+    mut world : Slab<Entity, 4> = Slab {
+        storage = [Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}],
+        generations = [0,0,0,0], free_list = [0,0,0,0], free_count = 0,
+    }
+    reset(&mut world)
+    hero : Handle<Entity> = insert(&mut world, Entity{hp=100, mana=30})
+    foe : Handle<Entity> = insert(&mut world, Entity{hp=40, mana=10})
+    printf("%lld\n", world[hero].hp)
+    world[hero].hp = world[hero].hp - 25
+    printf("%lld\n", world[hero].hp)
+    printf("%lld\n", world[foe].mana)
+    0
+}
+"#;
+
+#[test]
+fn native_slab_handle_place_deref() {
+    let Some(output) = compile_and_run("slabderef", SLAB_DEREF) else {
+        return;
+    };
+    assert_eq!(output, "100\n75\n10\n");
+}
+
+const SLAB_STALE_HANDLE: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Entity :: struct { hp: i64 }
+
+Slab :: struct($T: Type, $N: usize) {
+    storage: [N]T,
+    generations: [N]i64,
+    free_list: [N]i64,
+    free_count: i64,
+}
+
+reset :: fn(s: &mut Slab<Entity, 4>) {
+    mut i : i64 = 0
+    while (i < 4) { s.generations[i] = 0  s.free_list[i] = 3 - i  i = i + 1 }
+    s.free_count = 4
+}
+insert :: fn(s: &mut Slab<Entity, 4>, value: Entity) -> i64 {
+    s.free_count = s.free_count - 1
+    index := s.free_list[s.free_count]
+    s.storage[index] = value
+    packed := (s.generations[index] << 32) | index
+    packed
+}
+release :: fn(s: &mut Slab<Entity, 4>, handle: i64) {
+    index := handle & 4294967295
+    s.generations[index] = s.generations[index] + 1
+    s.free_list[s.free_count] = index
+    s.free_count = s.free_count + 1
+}
+
+main :: fn() -> i64 {
+    mut w : Slab<Entity, 4> = Slab { storage=[Entity{hp=0},Entity{hp=0},Entity{hp=0},Entity{hp=0}], generations=[0,0,0,0], free_list=[0,0,0,0], free_count=0 }
+    reset(&mut w)
+    old : Handle<Entity> = insert(&mut w, Entity{hp=100})
+    release(&mut w, old)
+    insert(&mut w, Entity{hp=7})
+    printf("%lld\n", w[old].hp)
+    0
+}
+"#;
+
+#[test]
+fn native_slab_stale_handle_aborts() {
+    let Some(succeeded) =
+        compile_and_run_status("slabstale", SLAB_STALE_HANDLE)
+    else {
+        return;
+    };
+    assert!(!succeeded, "a stale handle into a slab should abort");
+}
+
 const SLICES: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -2457,6 +2564,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_genpool", GENERATIONAL_POOL),
         ("diff_nativepool", NATIVE_POOL),
         ("diff_slices", SLICES),
+        ("diff_slabderef", SLAB_DEREF),
         ("diff_valuegenerics", VALUE_GENERICS),
         ("diff_arena", ARENA),
         ("diff_allociface", ALLOCATOR_INTERFACE),

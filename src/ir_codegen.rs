@@ -130,17 +130,19 @@ impl Generator {
             self.functions.insert("memcpy".to_string(), func_id);
         }
 
-        if !self.functions.contains_key("frost_bounds_check") {
+        for name in ["frost_bounds_check", "frost_generation_check"] {
+            if self.functions.contains_key(name) {
+                continue;
+            }
             let mut signature = self.module.make_signature();
             signature.params.push(AbiParam::new(types::I64));
             signature.params.push(AbiParam::new(types::I64));
             let func_id = self.module.declare_function(
-                "frost_bounds_check",
+                name,
                 Linkage::Import,
                 &signature,
             )?;
-            self.functions
-                .insert("frost_bounds_check".to_string(), func_id);
+            self.functions.insert(name.to_string(), func_id);
         }
 
         Ok(())
