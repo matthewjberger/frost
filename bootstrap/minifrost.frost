@@ -56,6 +56,8 @@ NODE_ADDROF     :: 18
 NODE_PTR_CAST   :: 19
 NODE_SIZEOF     :: 20
 NODE_EXPRSTMT   :: 21
+NODE_MATCH      :: 22
+NODE_CASE       :: 23
 
 // Type codes. A type is one i64. The primitives are small constants; a struct is
 // STRUCT_BASE plus its table index; a pointer to a type T (also how a `&`/`&mut`
@@ -262,6 +264,7 @@ Parser :: struct {
     structs: Arena<StructDef>,
     fields: Arena<StructField>,
     locals: Arena<LocalVar>,
+    no_struct_lit: bool,
 }
 
 is_digit :: fn(c: i64) -> bool {
@@ -655,6 +658,16 @@ new_type_node :: fn(p: &mut Parser, kind: i64, expr: i64, ty: i64) -> i64 {
     )
 }
 
+// One arm of a match: `a` is the body statement, `val` the integer pattern, and
+// `c` a flag marking the `_` default arm.
+new_case :: fn(p: &mut Parser, body: i64, value: i64, is_default: i64) -> i64 {
+    arena_push(
+        &mut p.arena,
+        Node { kind = NODE_CASE, a = body, b = 0, c = is_default, val = value,
+            next = 0 - 1 },
+    )
+}
+
 parse_number :: fn(p: &mut Parser) -> i64 {
     value := cur_val(p)
     advance(p)
@@ -712,7 +725,7 @@ parse_primary :: fn(p: &mut Parser) -> i64 {
         fn_index := intern_global(p, offset, length)
         return new_node(p, NODE_CALL, args, 0, fn_index)
     }
-    if (cur(p) == TOK_LBRACE) {
+    if (cur(p) == TOK_LBRACE && p.no_struct_lit == false) {
         struct_index := type_code_for(p, offset, length)
         advance(p)
         inits := parse_field_inits(p)
@@ -939,9 +952,49 @@ parse_type_annotation :: fn(p: &mut Parser) -> i64 {
     parse_type(p)
 }
 
+// A match `match expr { case N: stmt  case _: stmt }`. The scrutinee is parsed
+// with struct literals suppressed so the `{` opening the arms is not mistaken
+// for one. Each arm holds a single statement.
+parse_match :: fn(p: &mut Parser) -> i64 {
+    advance(p)
+    p.no_struct_lit = true
+    scrutinee := parse_expr(p)
+    p.no_struct_lit = false
+    advance(p)
+    mut head : i64 = 0 - 1
+    mut tail : i64 = 0 - 1
+    while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
+        advance(p)
+        mut is_default : i64 = 0
+        mut value : i64 = 0
+        if (cur(p) == TOK_INT) {
+            value = cur_val(p)
+            advance(p)
+        } else {
+            is_default = 1
+            advance(p)
+        }
+        advance(p)
+        body := parse_stmt(p)
+        case_node := new_case(p, body, value, is_default)
+        if (head == (0 - 1)) {
+            head = case_node
+            tail = case_node
+        } else {
+            set_next(p, tail, case_node)
+            tail = case_node
+        }
+    }
+    advance(p)
+    new_node(p, NODE_MATCH, scrutinee, head, 0)
+}
+
 parse_stmt :: fn(p: &mut Parser) -> i64 {
     kind := cur(p)
 
+    if (kind == TOK_KW_MATCH) {
+        return parse_match(p)
+    }
     if (kind == TOK_KW_MUT) {
         advance(p)
         offset := cur_off(p)
@@ -1467,6 +1520,33 @@ emit_stmt :: fn(p: &mut Parser, id: i64) {
         frost_emit_str(";\n")
         return
     }
+    if (kind == NODE_MATCH) {
+        scrutinee := node^.a
+        cases := node^.b
+        frost_emit_str("switch (")
+        emit_expr(p, scrutinee)
+        frost_emit_str(") {\n")
+        mut cid := cases
+        while (cid != (0 - 1)) {
+            cnode : ^Node = arena_at(&p.arena, cid)
+            is_default := cnode^.c
+            value := cnode^.val
+            body := cnode^.a
+            next_case := cnode^.next
+            if (is_default == 1) {
+                frost_emit_str("default: {\n")
+            } else {
+                frost_emit_str("case ")
+                frost_emit_int(value)
+                frost_emit_str(": {\n")
+            }
+            emit_stmt(p, body)
+            frost_emit_str("} break;\n")
+            cid = next_case
+        }
+        frost_emit_str("}\n")
+        return
+    }
     if (kind == NODE_PRINT) {
         value := node^.a
         frost_emit_str("printf(\"%lld\\n\", (long long)(")
@@ -1657,6 +1737,16 @@ main :: fn() -> i64 {
             b^.x = b^.x + 1
         }
 
+        classify :: fn(n: i64) -> i64 {
+            mut result : i64 = 0
+            match n {
+                case 0: result = 100
+                case 1: result = 200
+                case _: result = 999
+            }
+            return result
+        }
+
         main :: fn() -> i64 {
             print fib(10)
             print fact(5)
@@ -1676,6 +1766,9 @@ main :: fn() -> i64 {
             q := ptr_cast($Point, ptr)
             print q^.x
             print sizeof(Point)
+            print classify(0)
+            print classify(1)
+            print classify(7)
         }
     "
 
@@ -1688,6 +1781,7 @@ main :: fn() -> i64 {
         structs = arena_make($StructDef, 256),
         fields = arena_make($StructField, 1024),
         locals = arena_make($LocalVar, 256),
+        no_struct_lit = false,
     }
     tokenize(source, frost_str_len(source), &mut parser.tokens)
     program := parse_program(&mut parser)
