@@ -729,6 +729,22 @@ pub fn type_from_string(source: &str) -> Result<Type> {
     parser.parse_type()
 }
 
+#[derive(Debug, Clone)]
+pub struct Diagnostic {
+    pub position: Position,
+    pub message: String,
+}
+
+impl std::fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "at line {}, column {}: {}",
+            self.position.line, self.position.column, self.message
+        )
+    }
+}
+
 pub struct Parser<'a> {
     pub tokens: Iter<'a, Token>,
     linear_types: std::collections::HashSet<String>,
@@ -857,7 +873,25 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse(&mut self) -> Result<Program> {
+        let (program, diagnostics) = self.parse_recovering();
+        if diagnostics.is_empty() {
+            return Ok(program);
+        }
+        let combined = diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        Err(anyhow::anyhow!(combined))
+    }
+
+    /// Parse the whole token stream, recovering at statement boundaries so a
+    /// single malformed statement does not discard the rest of the file. The
+    /// returned program holds every statement that parsed, and the diagnostics
+    /// list holds one entry per error encountered.
+    pub fn parse_recovering(&mut self) -> (Program, Vec<Diagnostic>) {
         let mut program = Program::new();
+        let mut diagnostics = Vec::new();
         loop {
             let position = self.current_position().unwrap_or_default();
             match self.parse_statement() {
@@ -866,18 +900,46 @@ impl<'a> Parser<'a> {
                 }
                 Ok(None) => break,
                 Err(error) => {
-                    if let Some(position) = self.current_position() {
-                        return Err(anyhow::anyhow!(
-                            "at line {}, column {}: {error}",
-                            position.line,
-                            position.column
-                        ));
+                    diagnostics.push(Diagnostic {
+                        position: self.current_position().unwrap_or(position),
+                        message: error.to_string(),
+                    });
+                    self.synchronize();
+                    if matches!(self.peek_nth(0), Token::EndOfFile) {
+                        break;
                     }
-                    return Err(error);
                 }
             }
         }
-        Ok(program)
+        (program, diagnostics)
+    }
+
+    /// After an error, skip tokens until the next token begins a top-level item
+    /// (a `name ::` declaration, or an `import`, `export`, or `test`). At least
+    /// one token is always consumed so recovery cannot loop.
+    fn synchronize(&mut self) {
+        if !matches!(self.peek_nth(0), Token::EndOfFile) {
+            self.read_token();
+        }
+        while !matches!(self.peek_nth(0), Token::EndOfFile) {
+            if self.at_statement_boundary() {
+                return;
+            }
+            self.read_token();
+        }
+    }
+
+    fn at_statement_boundary(&self) -> bool {
+        match self.peek_nth(0) {
+            Token::Import => true,
+            Token::Identifier(name) if name == "export" || name == "test" => {
+                true
+            }
+            Token::Identifier(_) => {
+                matches!(self.peek_nth(1), Token::DoubleColon)
+            }
+            _ => false,
+        }
     }
 
     pub fn parse_statement(&mut self) -> Result<Option<Statement>> {
@@ -4526,6 +4588,78 @@ mod tests {
         } else {
             bail!("Expected struct declaration");
         }
+        Ok(())
+    }
+
+    fn constant_names(program: &[super::Spanned<Statement>]) -> Vec<String> {
+        program
+            .iter()
+            .filter_map(|statement| match &statement.node {
+                Statement::Constant(name, _) => Some(name.clone()),
+                Statement::Struct(name, _, _) => Some(name.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn recovery_keeps_declarations_after_a_bad_one() -> Result<()> {
+        let input = "first :: fn(a: i64 { a }\nsecond :: fn() -> i64 { 7 }\n";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let positions = lexer.positions().to_vec();
+        let mut parser = Parser::with_positions(&tokens, &positions);
+        let (program, diagnostics) = parser.parse_recovering();
+        assert!(
+            !diagnostics.is_empty(),
+            "the malformed declaration should produce a diagnostic"
+        );
+        let names = constant_names(&program);
+        assert!(
+            names.iter().any(|name| name == "second"),
+            "recovery should keep 'second', got {names:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn recovery_reports_every_bad_declaration() -> Result<()> {
+        let input = "a :: fn(x: i64 { x }\n\
+                     good :: fn() -> i64 { 1 }\n\
+                     b :: fn(y: i64 { y }\n";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let positions = lexer.positions().to_vec();
+        let mut parser = Parser::with_positions(&tokens, &positions);
+        let (program, diagnostics) = parser.parse_recovering();
+        assert_eq!(
+            diagnostics.len(),
+            2,
+            "each malformed declaration should be reported: {diagnostics:?}"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.position.line > 0),
+            "diagnostics should carry a source position"
+        );
+        let names = constant_names(&program);
+        assert!(
+            names.iter().any(|name| name == "good"),
+            "the valid declaration between the errors should survive"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn clean_input_produces_no_diagnostics() -> Result<()> {
+        let input = "a :: fn() -> i64 { 1 }\nb :: fn() -> i64 { 2 }\n";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let (program, diagnostics) = parser.parse_recovering();
+        assert!(diagnostics.is_empty(), "clean input has no diagnostics");
+        assert_eq!(program.len(), 2);
         Ok(())
     }
 }
