@@ -15,17 +15,21 @@ allocator, not a runtime pool.
 
 ## The language it compiles
 
-- Functions `fn name(p, q) { ... }`, with multi-character names and parameters,
-  called as `name(args)` inside any expression, including recursively.
-- `return expr`.
+A subset of Frost's own syntax.
+
+- Definitions `name :: fn(p: i64, q: i64) -> i64 { ... }`, called as `name(args)`
+  inside any expression, including recursively. Parameter and return types are
+  parsed (everything is `i64` today) and every function lowers to an `int64_t` C
+  function.
 - The function named `main` is the entry point and becomes C `main`.
-- Multi-character integer variables, local to each function.
+- Locals `x := expr` and `mut x : i64 = expr`, reassignment `x = expr`. Each
+  local becomes a named C variable of its own.
+- `return expr`.
 - Arithmetic (`+ - * / %`) with precedence, and parentheses.
 - Comparisons (`< > <= >= == !=`) and boolean `&&` and `||`.
-- `let name = expr` and `name = expr`.
-- `print expr`.
+- `print expr` (a temporary convenience, to be replaced by `extern` calls once
+  those are supported).
 - `if (expr) { ... } else { ... }` and `while (expr) { ... }`.
-- Statements separated by whitespace or `;`.
 
 Identifiers are letter runs that may include underscores, uppercase letters, and
 digits after the first character (`sum`, `count`, `fib`, `is_main`, `Node`).
@@ -46,24 +50,23 @@ digits after the first character (`sum`, `count`, `fib`, `is_main`, `Node`).
    its children by that index, the data-oriented replacement for pointers between
    heap nodes, and sibling statements, parameters, and call arguments are threaded
    through a `next` field into singly linked lists. No runtime pool is involved.
-3. **Names are interned through two symbol-table arenas.** An identifier
-   occurrence is a byte range into the source (offset plus length). Because the
-   language has no string type, the tables intern those ranges to small integer
-   indices by comparing bytes directly, the data-oriented stand-in for a hash map
-   keyed by strings. Each function has its own local table, reset by zeroing the
-   arena's count, so its variables become `v[0]`, `v[1]`, ... in that function's
-   frame, and a single global table maps function names to the `mf_<index>` of
-   their emitted C functions.
+3. **Locals are named; function names are interned.** An identifier occurrence
+   is a byte range into the source (offset plus length). A local reference stores
+   that range on its AST node, and code generation re-emits the bytes, so a local
+   becomes a named C variable and no local symbol table is needed. Function names
+   go through one global table that interns each range to a small integer, and a
+   function is emitted as `mf_<index>`, which gives a stable name and keeps user
+   names from colliding with the C runtime.
 4. **The mutable parser cursor** lives in a `Parser` struct threaded by `&mut`
    through the recursive-descent functions, which is the second-class-reference
    way to carry mutable state without storing a borrow anywhere.
 5. **Code generation** walks the arena, dispatching on `node.kind`, and emits C
-   text through two runtime helpers (`frost_emit_str`, `frost_emit_int`). Each
-   Mini-Frost function becomes a C function that takes `int64_t` parameters and
-   holds its variables in its own fixed `int64_t v[64]`, indexed by the local
-   symbol table, so calls get a fresh frame and recursion works. Prototypes are
-   emitted ahead of the definitions, so functions may call each other in any
-   order. The function `main` is emitted as C `main`.
+   text through the runtime helpers (`frost_emit_str`, `frost_emit_int`, and
+   `frost_emit_char` for identifier bytes). Each function becomes a C function
+   taking named `int64_t` parameters, and its locals are declared where they are
+   bound, so recursion just works with no explicit frame. Prototypes are emitted
+   ahead of the definitions, so functions may call each other in any order. The
+   function `main` is emitted as C `main`.
 
 ## Building and running
 

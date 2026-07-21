@@ -41,6 +41,10 @@ void frost_emit_int(int64_t value) {
     printf("%lld", (long long)value);
 }
 
+void frost_emit_char(int64_t byte) {
+    putchar((int)byte);
+}
+
 void frost_test_start(const char *name) {
     printf("test %s ... ", name);
     fflush(stdout);
