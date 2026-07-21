@@ -8,7 +8,7 @@ use frost::{
     Compiler, Expression, Lexer, Literal, Parameter, Parser as FrostParser,
     Position, ReturnSignature, RunOutcome, Spanned, Statement, Type,
     VirtualMachine, build_module, check_module, check_ownership,
-    compile_ir_to_object, emit_c, run_module,
+    compile_ir_to_object, emit_c, resolve_imports, run_module,
 };
 
 #[derive(Parser)]
@@ -110,10 +110,22 @@ fn main() -> Result<()> {
     let positions = lexer.positions().to_vec();
 
     let mut parser = FrostParser::with_positions(&tokens, &positions);
-    let statements = parser.parse().context("Parser error")?;
+    let parsed = parser.parse().context("Parser error")?;
 
-    let linear_types = parser.linear_types().clone();
-    let tests = parser.tests().to_vec();
+    let base_dir = Path::new(&cli.file)
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    let resolved = resolve_imports(
+        parsed,
+        &base_dir,
+        parser.linear_types().clone(),
+        parser.tests().to_vec(),
+    )
+    .context("Import error")?;
+    let statements = resolved.statements;
+    let linear_types = resolved.linear_types;
+    let tests = resolved.tests;
     check_ownership(&statements, &linear_types).context("Ownership error")?;
 
     if cli.test {

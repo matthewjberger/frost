@@ -492,6 +492,46 @@ fn in_module_tests_report_pass() {
 }
 
 #[test]
+fn native_import_resolves_across_files() {
+    if !linker_available() {
+        return;
+    }
+    let directory = std::env::temp_dir().join("frost_import_test");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("helper.frost"),
+        "triple :: fn(x: i64) -> i64 { x * 3 }\n",
+    )
+    .unwrap();
+    let main_path = directory.join("main.frost");
+    std::fs::write(
+        &main_path,
+        "import \"helper.frost\"\n\
+         printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
+         main :: fn() -> i64 { printf(\"%lld\\n\", triple(14)) 0 }\n",
+    )
+    .unwrap();
+    let exe_path =
+        directory.join(format!("imp_main{}", std::env::consts::EXE_SUFFIX));
+    let frost = env!("CARGO_BIN_EXE_frost");
+    let compile = Command::new(frost)
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe_path)
+        .arg(&main_path)
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "import compile failed:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(&exe_path).output().unwrap();
+    let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+    assert_eq!(output, "42\n");
+}
+
+#[test]
 fn in_module_tests_report_failure() {
     let source = "test \"fails\" { assert(1 == 2) }\n";
     let Some((output, ok)) = run_test_mode("fail", source) else {
