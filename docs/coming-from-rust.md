@@ -77,7 +77,10 @@ total = total + 1
 
 A block is an expression whose value is its trailing expression, the same rule
 as Rust. `return` exists for early exit. Statements are separated by newlines;
-semicolons are not required.
+semicolons are not required. Line comments start with `//`, as in Rust.
+
+Program entry is `main :: fn() -> i64`, and its return value is the process exit
+code, which is why the examples end in a bare `0`.
 
 There are no attributes, no `#[derive(..)]`, and no macros. What you write is
 what runs.
@@ -107,15 +110,16 @@ Higher-order code uses function pointers, covered below. There are no closures.
 The scalar types are what you expect: `i8`, `i16`, `i32`, `i64`, `isize`, their
 unsigned `u*` counterparts, `f32`, `f64`, and `bool`. These are all copy types.
 
-Two differences from Rust matter:
+The difference that will bite first: **arithmetic wraps at the type width with
+two's-complement semantics, and is never checked for overflow.** Rust panics on
+overflow in debug and wraps in release; Frost always wraps, like Rust's
+`wrapping_add` family. A `u8` holding `200` plus `100` is `44`, and an `i32` at
+`2000000000` doubled is `-294967296`. Do not rely on overflow being caught.
+(There are no `_` digit separators, either.)
 
-- **Arithmetic wraps at the type width with two's-complement semantics, and
-  there are no overflow checks in any build.** Rust panics on overflow in debug
-  and wraps in release; Frost always wraps, like Rust's `wrapping_add` family. A
-  `u8` holding `200` plus `100` is `44`, in every backend, always.
-- **Integer types do not coerce implicitly in arithmetic.** An operation is
-  performed at the width of its operands. Widening happens at a typed binding
-  (`widened : f64 = some_f32`), not silently inside an expression.
+Mixed-width integer arithmetic is permitted, with the narrower operand widening
+to the wider one, so `an_i32 + an_i64` is an `i64`. This is looser than Rust,
+which would reject the mismatch and make you write an `as` cast.
 
 `str` exists in the type system, but Frost has no rich string library. String
 literals are C-compatible and are used mainly to talk to C (`^i8`, a pointer to
@@ -327,9 +331,13 @@ or interlinked data lives in a **pool** and is named by a **`Handle<T>`**, a
 small copyable value that is an index plus a generation, not a pointer.
 
 ```
+pool_new   :: extern fn(capacity: i64, elem_size: i64) -> ^u8
+pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
+pool_get   :: extern fn(pool: ^u8, handle: i64) -> ^u8
+
 Entity :: struct { hp: i64, mana: i64 }
 
-world := make_pool($Entity, 16)
+world := pool_new(16, 16)
 mut hero := Entity { hp = 100, mana = 30 }
 h : Handle<Entity> = pool_alloc(world, &hero)
 
@@ -339,7 +347,11 @@ world[h].hp = world[h].hp - 25      // pool[handle] is a place you can write
 
 `pool[handle]` is a **place**: you can read a field, write a field, copy the
 element out, or take a `&`/`&mut` of it. The borrow you get is second-class like
-any other, so it cannot escape the pool operation.
+any other, so it cannot escape the pool operation. The subscript lowers to the
+pool runtime, so the `pool_*` functions it uses (`pool_get` here) must be
+declared as `extern fn`, as shown. The generic pool wrappers in
+`examples/native/` package this so you can write `make_pool($Entity, 16)`
+instead of wiring the runtime by hand.
 
 The generation is what makes this safe without a borrow checker. Freeing a slot
 bumps its generation counter; a handle carries the generation it was minted
@@ -487,7 +499,7 @@ files pulled in by `import`, not as a module tree with visibility rules.
 | `Box`, `Rc`, `Arc`, `RefCell` | Pools and `Handle<T>` (generational indices) |
 | `Vec`, `HashMap`, `String` | Fixed arrays and pools; no general collections or string library |
 | `#[derive(..)]`, macros, attributes | None; write what you need explicitly |
-| `?` operator, `Result`, panics | `linear enum` returns that cannot be ignored |
+| `?`, `Result`, `#[must_use]` | `linear enum` returns that must be consumed |
 | Overflow checks in debug | None; arithmetic always wraps at width |
 | `unsafe` blocks and raw pointers | `^T` raw pointers as the explicit escape hatch |
 | Async, generics over const, GATs | Out of scope |
