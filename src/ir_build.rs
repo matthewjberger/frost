@@ -3357,6 +3357,13 @@ impl<'a> FunctionLowering<'a> {
     ) -> Result<(IrOperand, Type)> {
         let (index_operand, index_type) = self.lower_expression(index, None)?;
         if let Type::Handle(element) = index_type {
+            if let Some(struct_name) = self.slab_shaped_base(base) {
+                return self.slab_place_deref(
+                    base,
+                    &struct_name,
+                    index_operand,
+                );
+            }
             return self.pool_element_address(base, index_operand, *element);
         }
         if matches!(self.place_type(base), Some(Type::Str)) {
@@ -3428,6 +3435,169 @@ impl<'a> FunctionLowering<'a> {
             },
         ));
         Ok((IrOperand::Local(result), element_type))
+    }
+
+    // A struct is "slab-shaped" when it has a `storage` array and a parallel
+    // `generations` array, the layout of a generational pool. Indexing such a
+    // struct by a Handle is a validated place-deref, generated inline.
+    fn slab_shaped_base(&self, base: &Expression) -> Option<String> {
+        let Type::Struct(name) = self.probe_type(base)? else {
+            return None;
+        };
+        let layout = self.builder.struct_layout(&name)?;
+        let is_array_field = |field: &str| {
+            layout
+                .field(field)
+                .is_some_and(|field| matches!(field.ty, Type::Array(..)))
+        };
+        if is_array_field("storage") && is_array_field("generations") {
+            Some(name)
+        } else {
+            None
+        }
+    }
+
+    // Address of `struct.field[index]` where `field` is an array at `offset`.
+    fn slab_field_element_address(
+        &mut self,
+        struct_address: IrOperand,
+        field_offset: usize,
+        element: &Type,
+        index: IrOperand,
+    ) -> IrOperand {
+        let field_address =
+            self.fresh_local(Type::Ptr(Box::new(element.clone())), None);
+        self.emit(IrStatement::Assign(
+            field_address,
+            IrRvalue::FieldAddress {
+                base: struct_address,
+                offset: field_offset,
+            },
+        ));
+        let element_size = self.builder.byte_size(element);
+        let result =
+            self.fresh_local(Type::Ptr(Box::new(element.clone())), None);
+        self.emit(IrStatement::Assign(
+            result,
+            IrRvalue::ElementAddress {
+                base: IrOperand::Local(field_address),
+                index,
+                element_size,
+            },
+        ));
+        IrOperand::Local(result)
+    }
+
+    fn slab_place_deref(
+        &mut self,
+        base: &Expression,
+        struct_name: &str,
+        handle: IrOperand,
+    ) -> Result<(IrOperand, Type)> {
+        let (storage_offset, element, count, generations_offset) = {
+            let layout =
+                self.builder.struct_layout(struct_name).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "native backend: unknown slab '{struct_name}'"
+                    )
+                })?;
+            let storage = layout.field("storage").ok_or_else(|| {
+                anyhow::anyhow!("native backend: slab has no 'storage' field")
+            })?;
+            let generations = layout.field("generations").ok_or_else(|| {
+                anyhow::anyhow!(
+                    "native backend: slab has no 'generations' field"
+                )
+            })?;
+            let Type::Array(inner, count) = &storage.ty else {
+                bail!("native backend: slab 'storage' is not an array");
+            };
+            (
+                storage.offset,
+                (**inner).clone(),
+                *count,
+                generations.offset,
+            )
+        };
+
+        let (struct_address, _) = self.struct_place(base)?;
+
+        // The handle is a `Handle<T>`, opaque and non-numeric; reinterpret it as
+        // the i64 it is at the ABI before taking it apart.
+        let raw_handle = self.fresh_local(Type::I64, None);
+        self.emit(IrStatement::Assign(raw_handle, IrRvalue::Use(handle)));
+        let raw_handle = IrOperand::Local(raw_handle);
+
+        let index = self.fresh_local(Type::I64, None);
+        self.emit(IrStatement::Assign(
+            index,
+            IrRvalue::Binary(
+                IrBinOp::BitwiseAnd,
+                raw_handle.clone(),
+                IrOperand::Constant(IrConstant::Integer(
+                    0xffff_ffff,
+                    Type::I64,
+                )),
+            ),
+        ));
+        let generation = self.fresh_local(Type::I64, None);
+        self.emit(IrStatement::Assign(
+            generation,
+            IrRvalue::Binary(
+                IrBinOp::ShiftRight,
+                raw_handle,
+                IrOperand::Constant(IrConstant::Integer(32, Type::I64)),
+            ),
+        ));
+
+        let bounds = self.fresh_local(Type::Void, None);
+        self.emit(IrStatement::Assign(
+            bounds,
+            IrRvalue::Call {
+                function: "frost_bounds_check".to_string(),
+                arguments: vec![
+                    IrOperand::Local(index),
+                    IrOperand::Constant(IrConstant::Integer(
+                        count as i64,
+                        Type::I64,
+                    )),
+                ],
+            },
+        ));
+
+        let generation_slot = self.slab_field_element_address(
+            struct_address.clone(),
+            generations_offset,
+            &Type::I64,
+            IrOperand::Local(index),
+        );
+        let stored = self.fresh_local(Type::I64, None);
+        self.emit(IrStatement::Assign(
+            stored,
+            IrRvalue::Load {
+                address: generation_slot,
+                ty: Type::I64,
+            },
+        ));
+        let generation_check = self.fresh_local(Type::Void, None);
+        self.emit(IrStatement::Assign(
+            generation_check,
+            IrRvalue::Call {
+                function: "frost_generation_check".to_string(),
+                arguments: vec![
+                    IrOperand::Local(stored),
+                    IrOperand::Local(generation),
+                ],
+            },
+        ));
+
+        let element_address = self.slab_field_element_address(
+            struct_address,
+            storage_offset,
+            &element,
+            IrOperand::Local(index),
+        );
+        Ok((element_address, element))
     }
 
     fn array_base_pointer(

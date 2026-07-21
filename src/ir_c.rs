@@ -27,9 +27,12 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
 
     let mut output = String::new();
     output.push_str("#include <stdint.h>\n\n");
+    output
+        .push_str("void frost_bounds_check(int64_t index, int64_t length);\n");
     output.push_str(
-        "void frost_bounds_check(int64_t index, int64_t length);\n\n",
+        "void frost_generation_check(int64_t stored, int64_t expected);\n\n",
     );
+    externs.insert("frost_generation_check".to_string());
 
     for external in &module.externs {
         let mut params = Vec::new();
