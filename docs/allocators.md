@@ -145,8 +145,10 @@ roadmap, the order is:
    static arena needs no allocator runtime. A full freestanding link, no libc and
    no C runtime with a custom entry point and syscall I/O, is a separate
    build-mode feature, not a language one, and is left for its own effort.)*
-6. **Retire the C pool runtime** and remove `Context`, freeing the reserved names
-   and leaving C only for genuine FFI.
+6. **Remove the compiler-special pool surface**, freeing the `Pool` and `pool_*`
+   names. *(Done: `Type::Pool` and the pool built-ins are gone; a pool is a struct
+   a program writes, and the runtime pool is an opt-in `extern` library like
+   `malloc`. The `Context` type is also removed.)*
 
 The payoff is the same as for the pool, one layer down: the memory model is Frost
 code the language can inspect and own, fixed and static configurations reach
