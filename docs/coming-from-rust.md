@@ -12,13 +12,13 @@ document is the practical bridge.
 
 ## The one idea to internalize first
 
-Rust makes references safe with a borrow checker built on **lifetimes**: a
+Rust makes references safe with a borrow checker built on **lifetimes**. A
 reference carries a region `'a`, and the compiler proves no reference outlives
 its referent. That machinery is the price of letting references be first-class
 values you can store in structs, return from functions, and thread through data
 structures.
 
-Frost makes a different trade. References are **second-class**: a `&T` or
+Frost makes a different trade. References are **second-class**. A `&T` or
 `&mut T` exists only as a function parameter or a short-lived local, and it can
 never be stored in a field, put in an array, or returned. Because a borrow can
 never escape the scope it was created in, there is nothing to annotate and
@@ -76,8 +76,8 @@ total = total + 1
 ```
 
 A block is an expression whose value is its trailing expression, the same rule
-as Rust. `return` exists for early exit. Statements are separated by newlines;
-semicolons are not required. Line comments start with `//`, as in Rust.
+as Rust. `return` exists for early exit. Statements are separated by newlines.
+Semicolons are not required. Line comments start with `//`, as in Rust.
 
 Program entry is `main :: fn() -> i64`, and its return value is the process exit
 code, which is why the examples end in a bare `0`.
@@ -100,19 +100,20 @@ dot :: fn(a: &Vec3, b: &Vec3) -> i64 {
 ```
 
 Where Rust would write `a.dot(&b)`, Frost writes `dot(&a, &b)`. This is not a
-missing feature; it is the design. Separating data from the code that walks it
+missing feature. It is the design. Separating data from the code that walks it
 is what keeps the memory layout visible and the control flow explicit.
 
 Higher-order code uses function pointers, covered below. There are no closures.
 
 ## Types and arithmetic
 
-The scalar types are what you expect: `i8`, `i16`, `i32`, `i64`, `isize`, their
-unsigned `u*` counterparts, `f32`, `f64`, and `bool`. These are all copy types.
+The scalar types are what you expect. They are `i8`, `i16`, `i32`, `i64`,
+`isize`, their unsigned `u*` counterparts, `f32`, `f64`, and `bool`. These are
+all copy types.
 
-The difference that will bite first: **arithmetic wraps at the type width with
-two's-complement semantics, and is never checked for overflow.** Rust panics on
-overflow in debug and wraps in release; Frost always wraps, like Rust's
+The difference that will bite first is that **arithmetic wraps at the type width
+with two's-complement semantics, and is never checked for overflow.** Rust panics on
+overflow in debug and wraps in release. Frost always wraps, like Rust's
 `wrapping_add` family. A `u8` holding `200` plus `100` is `44`, and an `i32` at
 `2000000000` doubled is `-294967296`. Do not rely on overflow being caught.
 (There are no `_` digit separators, either.)
@@ -124,14 +125,14 @@ which would reject the mismatch and make you write an `as` cast.
 `str` exists in the type system, but Frost has no rich string library. String
 literals are C-compatible and are used mainly to talk to C (`^i8`, a pointer to
 bytes). If you are coming from Rust expecting `String` and `&str` with UTF-8
-methods, there is no equivalent; text handling is deliberately out of scope for
+methods, there is no equivalent. Text handling is deliberately out of scope for
 the systems core.
 
 Aggregates (`struct`, `enum`, fixed arrays) pass and return **by value**,
 copied at the call boundary, unless you pass a borrow. There is no implicit
 boxing and no hidden heap allocation anywhere.
 
-Fixed-size arrays are written `[N]T` and **every index is bounds-checked**; an
+Fixed-size arrays are written `[N]T` and **every index is bounds-checked**. An
 out-of-range access aborts at runtime rather than reading past the end. This is
 always on, with no `get`/`get_unchecked` split.
 
@@ -194,15 +195,15 @@ fizz :: fn(i: i64) -> i64 {
 
 `match` can be taken over a value or over a reference. Matching a value of a
 `linear` type consumes it (see below). There is no `#[derive(Debug)]`,
-`PartialEq`, or the rest; equality and printing are not free, and printing is
+`PartialEq`, or the rest. Equality and printing are not free, and printing is
 usually done by handing values to C's `printf`.
 
 ## The borrow system without lifetimes
 
 This is the section a Rust programmer should read twice.
 
-`&T` and `&mut T` are borrows with the same meaning as in Rust: shared and
-exclusive access. The exclusivity rule is also familiar: within a single call
+`&T` and `&mut T` are borrows with the same meaning as in Rust, shared and
+exclusive access. The exclusivity rule is also familiar. Within a single call
 you may take many `&` borrows or exactly one `&mut`, never both. Passing the
 same variable as two `&mut` arguments to one call is rejected.
 
@@ -212,7 +213,7 @@ What is different is that borrows are **second-class**. Concretely:
 - A reference cannot be returned from a function.
 - A reference cannot be put in an array or otherwise made to outlive the call.
 
-Reference **parameters** are fine, and this is the point: you pass data in by
+Reference **parameters** are fine, and this is the point. You pass data in by
 borrow, operate on it, and the borrow dies at the end of the call. Because a
 borrow can never escape, the analysis is entirely scope-local. There is nothing
 like Rust's `fn longest<'a>(x: &'a str, y: &'a str) -> &'a str` because you
@@ -233,10 +234,10 @@ scale :: fn(p: &mut Point, k: i64) {
 
 Deref rules to keep straight, since they differ slightly from Rust's `*`:
 
-- For a reference to an aggregate, member access is direct: `p.x` where
+- For a reference to an aggregate, member access is direct, as in `p.x` where
   `p: &mut Point`. There is no `(*p).x` and no explicit deref needed for fields.
 - To read or write the whole pointee, especially a reference to a scalar, use
-  the postfix `^` operator: given `a: &mut i64`, `a^` is the value and
+  the postfix `^` operator. Given `a: &mut i64`, `a^` is the value and
   `a^ = 7` writes it.
 
 The Rust move you cannot make is "return a borrow into my own data" or "stash a
@@ -273,8 +274,8 @@ consume(buf)
 ```
 
 Copy-ness is decided by the **type category**, not by a `Copy` derive. Scalars,
-pointers, references, and handles are copy; aggregates are move. There is no
-`#[derive(Clone)]` and no `.clone()`; if you want a second copy of an aggregate,
+pointers, references, and handles are copy. Aggregates are move. There is no
+`#[derive(Clone)]` and no `.clone()`. If you want a second copy of an aggregate,
 you construct one.
 
 The larger divergence is how cleanup works. Frost has **no `Drop`**. In its
@@ -295,17 +296,17 @@ run :: fn() {
 
 A `linear` value that reaches the end of its scope without being consumed is a
 compile error, the mirror image of a leaked `Drop`. Consuming means moving it
-onward: returning it, passing it by value (often to an `extern` that takes
-ownership across the FFI boundary), or `match`ing it.
+onward. That means returning it, passing it by value (often to an `extern` that
+takes ownership across the FFI boundary), or `match`ing it.
 
 Two consequences a Rust programmer will appreciate:
 
 - Cleanup is a checked obligation you can see in the code, not an implicit call
   that runs at a brace you have to imagine. There is no drop order to reason
-  about and no `mem::forget` footgun; forgetting is simply a compile error.
+  about and no `mem::forget` footgun. Forgetting is simply a compile error.
 - A `linear enum` returned from a fallible function **cannot be ignored**. Where
-  Rust leans on `#[must_use]` as a lint, Frost makes must-use a type rule:
-  the result has to be consumed, so a failure cannot be silently dropped.
+  Rust leans on `#[must_use]` as a lint, Frost makes must-use a type rule.
+  The result has to be consumed, so a failure cannot be silently dropped.
 
 ### `defer` for scope-exit actions
 
@@ -320,7 +321,7 @@ work :: fn() {
 ```
 
 Think of it as Go's `defer` rather than a Rust guard object. For resources with
-real ownership, prefer a `linear` type; use `defer` for local, best-effort
+real ownership, prefer a `linear` type. Use `defer` for local, best-effort
 scope-exit actions.
 
 ## Handles and pools: the replacement for `Rc`, `Arc`, and back-references
@@ -345,7 +346,7 @@ printf("%lld\n", world[h].hp)       // 100
 world[h].hp = world[h].hp - 25      // pool[handle] is a place you can write
 ```
 
-`pool[handle]` is a **place**: you can read a field, write a field, copy the
+`pool[handle]` is a **place**. You can read a field, write a field, copy the
 element out, or take a `&`/`&mut` of it. The borrow you get is second-class like
 any other, so it cannot escape the pool operation. The subscript lowers to the
 pool runtime, so the `pool_*` functions it uses (`pool_get` here) must be
@@ -354,14 +355,14 @@ declared as `extern fn`, as shown. The generic pool wrappers in
 instead of wiring the runtime by hand.
 
 The generation is what makes this safe without a borrow checker. Freeing a slot
-bumps its generation counter; a handle carries the generation it was minted
-with; and a lookup with a stale generation fails instead of reading whoever
+bumps its generation counter. A handle carries the generation it was minted
+with, and a lookup with a stale generation fails instead of reading whoever
 reused the slot. This is the same idea as the `slotmap` and `generational-arena`
 crates in the Rust ecosystem, promoted to a language primitive. It gives you the
 "weak reference that safely goes dangling" behavior without any reference
 counting or runtime borrow tracking.
 
-The mental substitution is direct: a `Handle<T>` is what you store in fields and
+The mental substitution is direct. A `Handle<T>` is what you store in fields and
 return from functions, precisely the things a `&T` may not do. A linked list, a
 scene graph, or an entity system is a pool of nodes linked by handles.
 
@@ -379,12 +380,12 @@ The guarantees, and how each is achieved, are:
 | No use-after-free of pooled data | Generational handles reject stale lookups |
 | No out-of-bounds array access | Every fixed-array index is bounds-checked |
 
-Raw pointers (`^T`) sit outside this set by design; they are the explicit,
+Raw pointers (`^T`) sit outside this set by design. They are the explicit,
 opt-in escape hatch, the way `unsafe` raw pointers are in Rust.
 
 ## Generics without traits
 
-Generics monomorphize, exactly as in Rust: each instantiation is compiled to
+Generics monomorphize, exactly as in Rust. Each instantiation is compiled to
 specialized code with no runtime dispatch. The differences are in how you spell
 them and, more importantly, in what you cannot say.
 
@@ -418,7 +419,7 @@ world := make_pool($Entity, 16)     // like make_pool::<Entity>(16)
 
 `sizeof(T)` is a compile-time constant, so a generic function can size its own
 type parameter. Type parameters are erased after monomorphization and carry no
-runtime cost; they drive the specialization and then vanish from the ABI.
+runtime cost. They drive the specialization and then vanish from the ABI.
 
 The big thing you cannot say is a **bound**. There are **no traits, so no trait
 bounds, no `where` clauses, no associated types, and no `dyn Trait`.** A generic
@@ -450,11 +451,11 @@ value alongside the function pointer, the same pattern C uses.
 
 ## Compile-time evaluation
 
-Beyond `sizeof`, Frost has a small comptime facility for specialization: a
+Beyond `sizeof`, Frost has a small comptime facility for specialization. A
 `comptime` block runs at compile time, and a comptime loop over a list of types
 can stamp out per-type code. This is the specialization-only slice of what Rust
 spreads across const generics, `const fn`, and macros. It is intentionally
-narrow: comptime exists to drive monomorphization, not to be a second
+narrow. Comptime exists to drive monomorphization, not to be a second
 interpreter you write programs in.
 
 ## Calling C
@@ -471,11 +472,11 @@ Frost scalar types map to the natural C types, aggregates pass by the platform
 ABI, and a `^T` is a C pointer. This is how the examples reach `printf`,
 `malloc`, and the pool runtime.
 
-One asymmetry to note, coming from Rust's `extern "C"` and `#[no_mangle]`:
-**Frost calls C, but C does not call Frost.** There is no stable exported ABI
+One asymmetry to note, coming from Rust's `extern "C"` and `#[no_mangle]`, is
+that **Frost calls C, but C does not call Frost.** There is no stable exported ABI
 and no attribute to expose a Frost function to a C caller. The C that the
 compiler emits internally is a lowering detail, not an interface. If you need a
-library other languages link against, that is out of scope; the asymmetry is
+library other languages link against, that is out of scope. The asymmetry is
 what keeps the backend simple. See [c-compatibility.md](c-compatibility.md) for
 the full type mapping.
 
@@ -483,7 +484,7 @@ the full type mapping.
 
 Source is brought together with `import`. There is no `mod`, no `pub`/`use`
 visibility system, and no crate graph in the Rust sense. This is the least
-developed part of the surface today; for now, think of a program as a set of
+developed part of the surface today. For now, think of a program as a set of
 files pulled in by `import`, not as a module tree with visibility rules.
 
 ## What a Rust program leans on that Frost omits, and what to use instead
@@ -506,18 +507,18 @@ files pulled in by `import`, not as a module tree with visibility rules.
 
 ## Gotchas checklist for the first hour
 
-- `if` and `while` conditions need parentheses: `if (x > 5) { .. }`.
-- Struct fields are set with `=`, not `:`: `Point { x = 1, y = 2 }`.
-- Match arms are `case <pattern>: <expr>`, and variant patterns lead with a dot:
-  `case .Circle { radius }:`.
-- There is no `let`; use `:=`, `:`, or `::`.
+- `if` and `while` conditions need parentheses, as in `if (x > 5) { .. }`.
+- Struct fields are set with `=`, not `:`, as in `Point { x = 1, y = 2 }`.
+- Match arms are `case <pattern>: <expr>`, and variant patterns lead with a dot,
+  as in `case .Circle { radius }:`.
+- There is no `let`. Use `:=`, `:`, or `::`.
 - Every function, type, and constant is declared with `::`.
-- To deref a reference-to-scalar or a raw pointer, use postfix `^`: `a^`,
-  `p^.field`. Field access through a reference-to-struct is direct: `p.field`.
-- You cannot return or store a `&T`; use a `Handle<T>` for anything that must
+- To deref a reference-to-scalar or a raw pointer, use postfix `^`, as in `a^`,
+  `p^.field`. Field access through a reference-to-struct is direct, as in `p.field`.
+- You cannot return or store a `&T`. Use a `Handle<T>` for anything that must
   live beyond the call.
 - A `linear` value must be consumed on every path, or it is a compile error.
-- Integer arithmetic wraps; do not rely on overflow being caught.
+- Integer arithmetic wraps. Do not rely on overflow being caught.
 
 ## A worked example: a tiny entity system
 
@@ -562,7 +563,7 @@ main :: fn() -> i64 {
 }
 ```
 
-Notice what is doing the work: entities are stored by value in the pool,
+Notice what is doing the work. Entities are stored by value in the pool,
 handles are the things that get passed around and stored, borrows (`&ge^.kind`)
 are used only for the duration of a call, and freeing a slot invalidates old
 handles by generation rather than by any lifetime the compiler had to track.
@@ -571,11 +572,11 @@ like something missing and starts feeling like something removed.
 
 ## Where to go next
 
-- [philosophy.md](philosophy.md): why the language is shaped this way.
-- [memory-safety.md](memory-safety.md): the safety guarantees in depth.
-- [c-compatibility.md](c-compatibility.md): the C type mapping and FFI details.
-- [architecture.md](architecture.md): the compiler pipeline, the typed IR, and
+- [philosophy.md](philosophy.md), why the language is shaped this way.
+- [memory-safety.md](memory-safety.md), the safety guarantees in depth.
+- [c-compatibility.md](c-compatibility.md), the C type mapping and FFI details.
+- [architecture.md](architecture.md), the compiler pipeline, the typed IR, and
   the three backends that must agree.
-- `examples/native/`: runnable programs, starting with `game_world.frost` and
+- `examples/native/`, runnable programs, starting with `game_world.frost` and
   `pool_linked_list.frost`.
 ```

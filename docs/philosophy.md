@@ -7,17 +7,17 @@ taking that seriously.
 
 ## Data-oriented design, not object-oriented programming
 
-Object-oriented programming organizes code around **objects**: bundles of data
+Object-oriented programming organizes code around **objects**, bundles of data
 and the methods that act on them, related by inheritance, reached through
 references, and freed by destructors or a garbage collector. It optimizes for a
 particular human intuition ("a `Player` *is a* `Character` and *has an*
-`Inventory`") and pays for it in indirection: virtual dispatch, pointer chasing,
+`Inventory`") and pays for it in indirection, virtual dispatch, pointer chasing,
 scattered allocations, hidden lifetimes, and cache-hostile memory layouts.
 
-Data-oriented design starts from the opposite question: **what does the data
+Data-oriented design starts from the opposite question. **What does the data
 look like, and how does it flow?** The layout of memory is the primary design
 artifact, and the code is written to transform that layout efficiently. The
-practical consequences run through all of Frost:
+practical consequences run through all of Frost.
 
 | Concern            | Object-oriented default            | Frost (data-oriented)                                  |
 | ------------------ | ---------------------------------- | ------------------------------------------------------ |
@@ -37,7 +37,7 @@ actual work predictable.
 
 ### Which OOP features are deliberately absent
 
-- **No classes, methods, or `self`.** Structs are data; functions are functions.
+- **No classes, methods, or `self`.** Structs are data. Functions are functions.
 - **No inheritance or interfaces.** Reuse comes from composition and generics.
 - **No virtual dispatch.** Higher-order code uses function pointers (chosen
   explicitly), and polymorphism is resolved at compile time by monomorphization.
@@ -84,7 +84,7 @@ actual work predictable.
 - **Not lifetime-annotated.** Frost will not grow lifetime variables or region
   syntax. The second-class-reference rule is the deliberate trade that removes
   the need for them.
-- **Not a stable C-callable ABI.** Frost calls C; C does not call Frost. The
+- **Not a stable C-callable ABI.** Frost calls C. C does not call Frost. The
   emitted C is an internal lowering, and it is not an interface anyone should
   link against. That asymmetry is what keeps the backend simple.
 - **Not maximally general.** Frost intentionally omits capturing closures
@@ -96,11 +96,11 @@ actual work predictable.
 ## Why this project exists: de-risking a from-scratch language
 
 Frost is being completed **in place** as a de-risking vehicle. The goal is to
-prove out the *hard* parts of this design on a real, running implementation:
+prove out the *hard* parts of this design on a real, running implementation,
 ownership without lifetimes, linear resources replacing `Drop`, generational
 handles unified with a borrow discipline, a typed IR feeding multiple backends,
 and specialization-only generics, before building a new language in a similar
-way. The bar for "done" is not features for their own sake; it is confidence
+way. The bar for "done" is not features for their own sake. It is confidence
 that the bones of the design hold up when they meet real code and a real code
 generator.
 
@@ -111,7 +111,7 @@ the design has been driven to running, differential-tested code.
 
 ## In brief
 
-Frost organizes programs around data and the functions that transform it: plain
+Frost organizes programs around data and the functions that transform it, plain
 structs, free functions, enums with `match`, monomorphized generics, generational
 handles, and linearly-tracked resources. It is memory-safe without a garbage
 collector or lifetime annotations because references are second-class and

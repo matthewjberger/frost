@@ -7,7 +7,7 @@ native, data-oriented compiler (the `--native`, `--link`, `--emit-c`, and
 The current parser also accepts an older, larger surface aimed at the bytecode
 VM (a `let` keyword, hashmap literals, capturing function values, context and
 allocator statements). Those forms are called out as **legacy** where they touch
-the grammar; they are not part of the specified language, and new code targets
+the grammar. They are not part of the specified language, and new code targets
 what this document describes.
 
 The specification has two halves. The prose chapters (1 through 12) describe the
@@ -40,7 +40,7 @@ disciplined EBNF that the hand-written recursive-descent parser is held against.
 
 Grammar rules use EBNF:
 
-- `x y` is `x` followed by `y`; `x | y` is `x` or `y`.
+- `x y` is `x` followed by `y`. `x | y` is `x` or `y`.
 - `x?` optional, `x*` zero or more, `x+` one or more, `( ... )` groups.
 - Terminals are literal spellings in `code font` (`::`, `fn`, `->`) or token
   classes in UPPERCASE (`IDENT`, `INTEGER`, `STRING`).
@@ -50,16 +50,16 @@ Grammar rules use EBNF:
 
 The language is parsed by recursive descent with a Pratt (precedence-climbing)
 expression parser and **bounded lookahead**. Statement and type selection is
-decided by the first one to three tokens; the specific lookahead each decision
+decided by the first one to three tokens. The specific lookahead each decision
 uses is stated in the grammar. Expression parsing is driven by the operator
 precedence table in 14.1. The parser does not backtrack past a committed
-production, with one bounded exception: it may scan ahead a fixed number of
+production, with one bounded exception. It may scan ahead a fixed number of
 tokens to decide whether a parenthesized group is a function parameter list
 (13.6).
 
 This discipline is the contract. The reference parser (`src/parser.rs`), the
 self-hosted parser (`bootstrap/`), and this grammar are three views of one
-language; a disagreement between them is a bug in whichever diverges from the
+language. A disagreement between them is a bug in whichever diverges from the
 intent expressed here.
 
 ### 1.3 Conformance
@@ -77,19 +77,19 @@ programmer.
 
 ### 2.1 Source
 
-Source text is UTF-8. Tokens are formed by maximal munch: at each point the
-lexer takes the longest token that matches. Identifiers are ASCII:
-`[A-Za-z_][A-Za-z0-9_]*`; there are no Unicode identifiers.
+Source text is UTF-8. Tokens are formed by maximal munch. At each point the
+lexer takes the longest token that matches. Identifiers are ASCII,
+`[A-Za-z_][A-Za-z0-9_]*`. There are no Unicode identifiers.
 
 ### 2.2 Whitespace and comments
 
 Whitespace (space, tab, carriage return, newline) separates tokens and is
 otherwise insignificant. Frost is not whitespace-sensitive and has no automatic
-semicolon insertion; statement terminators (`;`) are always optional. There are
+semicolon insertion. Statement terminators (`;`) are always optional. There are
 two comment forms:
 
-- Line comment: `//` to end of line.
-- Block comment: `/* ... */`. Block comments do not nest, and an unterminated
+- Line comment, `//` to end of line.
+- Block comment, `/* ... */`. Block comments do not nest, and an unterminated
   block comment is an error.
 
 ### 2.3 Identifiers and the wildcard
@@ -117,28 +117,28 @@ i8 i16 i32 i64 isize   u8 u16 u32 u64 usize   f32 f64   bool str void
 ```
 
 The lexer additionally reserves the legacy words `let`, `using`, `type`,
-`typename`, `context`, `push_context`, and `push_allocator`; these belong to the
+`typename`, `context`, `push_context`, and `push_allocator`. These belong to the
 legacy surface. Note that `Type` (capitalized), used in `$T: Type` (chapter 11),
 is an ordinary identifier recognized in that position, not a keyword.
 
 ### 2.5 Literals
 
-**Integer**: `INTEGER = DIGIT+`. Decimal only; no digit separators, no
-hexadecimal, octal, or binary prefixes. Integer literals are non-negative; a
+**Integer**. `INTEGER = DIGIT+`. Decimal only. No digit separators, no
+hexadecimal, octal, or binary prefixes. Integer literals are non-negative. A
 negative value is the prefix `-` applied to one. An integer literal takes its
 type from context, defaulting to `i64`.
 
-**Float**: `FLOAT = DIGIT+ "." DIGIT+`, with an optional `f` or `f32` suffix that
-makes it an `f32`; otherwise it is `f64`. A `.` is only taken as a decimal point
+**Float**. `FLOAT = DIGIT+ "." DIGIT+`, with an optional `f` or `f32` suffix that
+makes it an `f32`, otherwise it is `f64`. A `.` is only taken as a decimal point
 when the following character is not another `.`, so `0..10` lexes as a range.
 There is no exponent notation and no leading-dot form.
 
-**String**: delimited by `"`, with escapes `\n`, `\t`, `\r`, `\0`, `\\`, `\"`,
+**String**. Delimited by `"`, with escapes `\n`, `\t`, `\r`, `\0`, `\\`, `\"`,
 `\'`. Any other escape is an error. There are no numeric or Unicode escapes. A
 string literal has type `str`, and where `^i8` is expected it denotes a pointer
 to its NUL-terminated bytes, which is how string literals interoperate with C.
 
-**Boolean**: `true`, `false`, of type `bool`.
+**Boolean**. `true`, `false`, of type `bool`.
 
 ### 2.6 Operators and punctuation
 
@@ -168,67 +168,67 @@ parser splits when it closes nested generic arguments (11.4).
 
 All scalar types are **copy** types (chapter 8). Integer arithmetic wraps at the
 type width with two's-complement semantics and is never checked for overflow.
-Mixed-width integer arithmetic is permitted; the narrower operand widens to the
+Mixed-width integer arithmetic is permitted. The narrower operand widens to the
 wider type.
 
 ### 3.2 Aggregate types
 
-- **Structs** `Name`, declared `Name :: struct { field: T, ... }`: exactly their
-  fields in declaration order, with natural alignment.
-- **Enums** `Name`, declared `Name :: enum { Variant, Variant { f: T }, ... }`: a
-  discriminant plus the active variant's payload. Variants may be unit or carry
-  named fields, and one enum may mix both.
-- **Fixed arrays** `[N]T`: `N` contiguous `T`. The length is part of the type and
-  every index is bounds-checked (10.4).
-- **Slices** `[]T`: a pointer/length view of a run of `T`.
+- **Structs** `Name`, declared `Name :: struct { field: T, ... }`, are exactly
+  their fields in declaration order, with natural alignment.
+- **Enums** `Name`, declared `Name :: enum { Variant, Variant { f: T }, ... }`,
+  are a discriminant plus the active variant's payload. Variants may be unit or
+  carry named fields, and one enum may mix both.
+- **Fixed arrays** `[N]T` are `N` contiguous `T`. The length is part of the type
+  and every index is bounds-checked (10.4).
+- **Slices** `[]T` are a pointer/length view of a run of `T`.
 
-Aggregates are **move** types (chapter 8): copied by value at call and return
+Aggregates are **move** types (chapter 8), copied by value at call and return
 boundaries unless passed by borrow, with no `Copy` derive.
 
 ### 3.3 Reference and pointer types
 
-- `&T` shared (immutable) borrow; `&mut T` exclusive (mutable) borrow.
+- `&T` shared (immutable) borrow. `&mut T` exclusive (mutable) borrow.
 - `^T` raw pointer, unchecked, for FFI and low-level libraries.
 
-References are **second-class** (chapter 8): only parameters and short-lived
+References are **second-class** (chapter 8), only parameters and short-lived
 locals, never stored or returned. Raw pointers are first-class copy values that
 may be stored and returned and carry no safety guarantee.
 
 ### 3.4 Handle types
 
-`Handle<T>` names an element of a pool of `T` (chapter 10): a small copy value
+`Handle<T>` names an element of a pool of `T` (chapter 10), a small copy value
 (index plus generation), not a pointer, that unlike a reference may be stored in
 fields and returned.
 
 ### 3.5 Function types
 
-`fn(T1, ...) -> R` is a function pointer. There are no closure types; a
+`fn(T1, ...) -> R` is a function pointer. There are no closure types. A
 function-typed value is always a plain pointer to a function.
 
 ### 3.6 Other type forms
 
-- `distinct T`: a nominal type with `T`'s representation, not interchangeable
+- `distinct T` is a nominal type with `T`'s representation, not interchangeable
   with `T`.
-- `?T`: an optional `T`.
-- `$T`: a type parameter (chapter 11).
-- `Name<T, ...>`: a generic instantiation (chapter 11).
+- `?T` is an optional `T`.
+- `$T` is a type parameter (chapter 11).
+- `Name<T, ...>` is a generic instantiation (chapter 11).
 
 ---
 
 ## 4. The type system
 
-Frost is statically typed with light local inference; every binding, parameter,
+Frost is statically typed with light local inference. Every binding, parameter,
 and expression has a compile-time type.
 
-- `:=` infers a local's type from its initializer; `:` gives it explicitly.
+- `:=` infers a local's type from its initializer. `:` gives it explicitly.
 - Function parameter and return types are always explicit.
-- A binary operation requires compatible operand types; integer widths widen to
+- A binary operation requires compatible operand types. Integer widths widen to
   a common width, and a comparison yields `bool`.
 - A call requires the argument count and types to match the signature. Passing
   an aggregate where a reference is expected, or the reverse, is an error.
 
 Type checking runs on the typed intermediate representation after lowering
-(`src/ir_typecheck.rs`): it validates operand types, call arity, and that a
+(`src/ir_typecheck.rs`). It validates operand types, call arity, and that a
 non-`void` function returns a value on every path.
 
 ---
@@ -236,8 +236,8 @@ non-`void` function returns a value on every path.
 ## 5. Declarations and bindings
 
 A program is a sequence of statements. The top-level meaningful statements are
-declarations: constants (including functions, structs, and enums), externs, and
-imports.
+declarations. These are constants (including functions, structs, and enums),
+externs, and imports.
 
 ### 5.1 Binding forms
 
@@ -251,7 +251,7 @@ imports.
 Bindings are immutable unless `mut`. A `mut` local is reassigned with `=`.
 
 The parser distinguishes `name : Type = ...` (a typed binding) from
-`name :: ...` (a constant) by one token of lookahead after the first `:`: a
+`name :: ...` (a constant) by one token of lookahead after the first `:`. A
 second `:` means a constant.
 
 ### 5.2 Constants and items
@@ -283,22 +283,23 @@ import "path"                         // bring another source file into scope
 
 ### 6.1 Primary expressions
 
-Integer, float, string, and boolean literals; identifiers; parenthesized
-expressions `( Expr )`; array literals `[ e, ... ]`.
+The primary expressions are integer, float, string, and boolean literals,
+identifiers, parenthesized expressions `( Expr )`, and array literals
+`[ e, ... ]`.
 
 ### 6.2 Operators
 
 Prefix `-` (negate) and `!` (logical not). Binary operators, grouped by the
-precedence in 14.1: `||`, `&&`, `==` `!=`, `<` `<=` `>` `>=`, `|`, `&`, `<<`
+precedence in 14.1, are `||`, `&&`, `==` `!=`, `<` `<=` `>` `>=`, `|`, `&`, `<<`
 `>>`, `+` `-`, `*` `/` `%`, and the range operators `..` and `..=`. All binary
 operators are left-associative.
 
 ### 6.3 References and dereference
 
-- `&expr` shared borrow; `&mut expr` exclusive borrow.
+- `&expr` shared borrow. `&mut expr` exclusive borrow.
 - `expr^` dereferences a reference or raw pointer to its pointee value and is
   assignable (`p^ = v`). Member access through a reference to an aggregate is
-  direct (`r.field`); through a raw pointer it is written `p^.field`.
+  direct (`r.field`). Through a raw pointer it is written `p^.field`.
 
 ### 6.4 Calls, indexing, and field access
 
@@ -324,7 +325,7 @@ if ( Cond ) Block
 if ( Cond ) Block else Block
 ```
 
-The condition is parenthesized. `if` is an expression; both arms are blocks and
+The condition is parenthesized. `if` is an expression. Both arms are blocks and
 their trailing expressions are the value.
 
 ### 6.7 `match` expression
@@ -338,16 +339,16 @@ match Scrutinee {
 ```
 
 An arm is `case`, a pattern, `:`, then an expression or block. There is no
-separator between arms; an arm ends where the next `case` or the closing `}`
+separator between arms. An arm ends where the next `case` or the closing `}`
 begins. Patterns:
 
-- Variant, shorthand: `.Variant` or `.Variant { field, field }`, binding each
+- Variant, shorthand, `.Variant` or `.Variant { field, field }`, binding each
   named field to a same-named local.
-- Variant, qualified: `Enum::Variant` with the same optional field list.
-- Value: an integer, float, string, or boolean literal (`case 90:`).
-- Tuple: `( P, P, ... )`.
-- Binding: a bare identifier.
-- Wildcard: `_`.
+- Variant, qualified, `Enum::Variant` with the same optional field list.
+- Value, an integer, float, string, or boolean literal (`case 90:`).
+- Tuple, `( P, P, ... )`.
+- Binding, a bare identifier.
+- Wildcard, `_`.
 
 `match` works over a value or a reference. Matching a value of a `linear` type
 consumes it (chapter 9).
@@ -355,7 +356,7 @@ consumes it (chapter 9).
 ### 6.8 `sizeof`, `comptime`, and `unsafe`
 
 - `sizeof(T)` is a compile-time constant.
-- `comptime { ... }` runs a block at compile time; a comptime `for` over a list
+- `comptime { ... }` runs a block at compile time. A comptime `for` over a list
   of types specializes code per type. Comptime drives monomorphization, not a
   general compile-time interpreter.
 - `unsafe { ... }` is a block whose body may use unchecked operations.
@@ -372,16 +373,16 @@ lowest-binding binary form.
 A block `{ Stmt* }` is a sequence of statements and is itself an expression whose
 value is its trailing expression (or `void`).
 
-- **Expression statement**: an expression evaluated for effect.
-- **Binding**: the forms in 5.1.
-- **Assignment**: `Place = Expr`, where `Place` is a `mut` local, a field, an
+- **Expression statement**, an expression evaluated for effect.
+- **Binding**, the forms in 5.1.
+- **Assignment**, `Place = Expr`, where `Place` is a `mut` local, a field, an
   index, or a dereference.
-- **`return`**: `return` or `return Expr`.
-- **`while`**: `while ( Cond ) Block`.
-- **`for`**: `for name in Expr Block` iterates `name` over the value of `Expr`,
+- **`return`**, `return` or `return Expr`.
+- **`while`**, `while ( Cond ) Block`.
+- **`for`**, `for name in Expr Block` iterates `name` over the value of `Expr`,
   normally a range.
-- **`break`**, **`continue`**: loop control.
-- **`defer`**: `defer Stmt` runs `Stmt` at scope exit, LIFO (chapter 9.3).
+- **`break`** and **`continue`** are loop control.
+- **`defer`**, `defer Stmt` runs `Stmt` at scope exit, LIFO (chapter 9.3).
 
 ---
 
@@ -394,9 +395,9 @@ borrow rules run after parsing (`src/ownership.rs`).
 
 Each type is **copy** or **move**. Scalars, pointers, references, function
 pointers, and handles are copy. Structs, enums, strings, and slices are move. A
-move value is consumed when passed by value, assigned, or returned; using it
+move value is consumed when passed by value, assigned, or returned. Using it
 after is a use-after-move error. There is no `Copy`/`Clone` derive and no
-implicit deep copy; a second copy of an aggregate is constructed explicitly.
+implicit deep copy. A second copy of an aggregate is constructed explicitly.
 
 ### 8.2 Second-class references
 
@@ -425,16 +426,16 @@ intended replacement for an escaping borrow.
 ### 9.1 The linear rule
 
 A struct or enum declared `linear` must be consumed **exactly once**. The move
-rule gives "at most once"; linearity adds "at least once": a linear value still
+rule gives "at most once". Linearity adds "at least once". A linear value still
 live at the end of its owning scope is a compile error.
 
 ### 9.2 Consuming
 
-A linear value is consumed by moving it onward: returning it, passing it by value
-(often to an `extern` that takes ownership across the FFI boundary), or
-`match`ing it. This replaces destructors: cleanup is a tracked obligation, never
-an implicit call, and a `linear enum` returned from a fallible function cannot be
-silently dropped, so errors are non-ignorable by construction.
+A linear value is consumed by moving it onward, whether by returning it, passing
+it by value (often to an `extern` that takes ownership across the FFI boundary),
+or `match`ing it. This replaces destructors. Cleanup is a tracked obligation,
+never an implicit call, and a `linear enum` returned from a fallible function
+cannot be silently dropped, so errors are non-ignorable by construction.
 
 ### 9.3 `defer`
 
@@ -451,12 +452,12 @@ rather than relying on `defer`.
 A pool is a contiguous, fixed-capacity arena of same-typed elements addressed by
 `Handle<T>` rather than pointer. The pool runtime (`pool_new`, `pool_alloc`,
 `pool_get`, `pool_free`, `pool_contains`, `pool_destroy`) is provided by
-`runtime/frost_runtime.c` and declared with `extern fn`; a typed library wraps it
+`runtime/frost_runtime.c` and declared with `extern fn`. A typed library wraps it
 so `make_pool($T, capacity)` and `pool[handle]` read idiomatically.
 
 ### 10.2 `pool[handle]` is a place
 
-`pool[handle]` is a place: read a field, write a field, copy the element out, or
+`pool[handle]` is a place. Read a field, write a field, copy the element out, or
 take a `&`/`&mut` of it. The borrow obtained is second-class and cannot escape
 the pool operation.
 
@@ -469,7 +470,7 @@ a stale handle can never read or write freed-and-reused data.
 
 ### 10.4 Bounds checking
 
-Every fixed-array index is checked against the statically known length; an
+Every fixed-array index is checked against the statically known length. An
 out-of-range index aborts (`frost_bounds_check`). There is no unchecked-index
 form.
 
@@ -505,7 +506,7 @@ the contextual word `Type` (or the keyword `type`).
 
 ### 11.2 Monomorphization
 
-Generics specialize at compile time; each concrete instantiation compiles to its
+Generics specialize at compile time. Each concrete instantiation compiles to its
 own code, with no runtime dispatch and no boxing. Type parameters are erased from
 the specialized ABI once monomorphization chooses concrete types.
 
@@ -547,7 +548,7 @@ Frost scalar types map to the natural C types, `^T` is a C pointer, and
 aggregates pass by the platform ABI. String literals denote NUL-terminated bytes
 for `^i8` parameters.
 
-The FFI is asymmetric: **Frost calls C, but C does not call Frost.** There is no
+The FFI is asymmetric. **Frost calls C, but C does not call Frost.** There is no
 stable exported ABI and no attribute to expose a Frost function to a C caller.
 The emitted C is an internal lowering, not an interface. This keeps the backend
 simple.
@@ -580,9 +581,9 @@ Statement =
 ```
 
 The `mut` / `:=` / `: =` / `::` forms are selected by the token after the
-identifier: `:=` (inferred binding), `:` then a non-`:` (typed binding), `::`
-(constant). The last alternative covers expression statements and assignments to
-a place.
+identifier. These are `:=` (inferred binding), `:` then a non-`:` (typed
+binding), and `::` (constant). The last alternative covers expression statements
+and assignments to a place.
 
 ### 13.2 Constants and items
 
@@ -622,7 +623,7 @@ The trailing expression of a block, if any, is its value.
 ### 13.4 Expressions
 
 Expressions are parsed by precedence climbing. `Expr` denotes an expression at
-the lowest precedence; the operator table in 14.1 governs grouping.
+the lowest precedence. The operator table in 14.1 governs grouping.
 
 ```
 Expr    = Prefix ( InfixOp Expr )*           // resolved by precedence (14.1)
@@ -726,7 +727,7 @@ Type =
     | "$" IDENT                              // type parameter
 ```
 
-A type is a single prefix-constructed form; nesting comes from the recursive
+A type is a single prefix-constructed form. Nesting comes from the recursive
 constructors (`^`, `&`, `[]`, `?`, `distinct`, `fn`), not a postfix loop. Closing
 `>` in the generic forms accepts a split `>>` (11.4).
 
@@ -734,14 +735,14 @@ constructors (`^`, `&`, `[]`, `?`, `distinct`, `fn`), not a postfix loop. Closin
 
 The precedence ladder (14.1) places comparison tighter than equality and the
 bitwise operators tighter than comparison, which differs from C. Write explicit
-parentheses in mixed expressions; a conformance-minded style parenthesizes any
+parentheses in mixed expressions. A conformance-minded style parenthesizes any
 combination of `==`/`!=`, the comparisons, and the bitwise operators.
 
 ### 13.9 Legacy forms (not part of the specified language)
 
-The current parser also accepts, for the bytecode VM: the `let` binding keyword;
-hashmap literals `{ key : value, ... }`; capturing function values used as
-closures; `push_context` and `push_allocator` statements; `context` expressions;
+The current parser also accepts, for the bytecode VM, the `let` binding keyword,
+hashmap literals `{ key : value, ... }`, capturing function values used as
+closures, `push_context` and `push_allocator` statements, `context` expressions,
 `using`, `typename(...)`, and interpolated identifiers/constants with `#`. These
 are outside this specification and slated for removal.
 
@@ -751,7 +752,7 @@ are outside this specification and slated for removal.
 
 ### 14.1 Operator precedence
 
-Lowest to highest binding; all binary operators are left-associative. This table
+Lowest to highest binding. All binary operators are left-associative. This table
 is normative and matches the reference parser's precedence mapping.
 
 | Level | Operators | Notes |
@@ -778,9 +779,9 @@ fn struct enum match case if else while for in mut return break continue
 defer extern import linear distinct comptime unsafe sizeof
 ```
 
-Primitive type names: `i8 i16 i32 i64 isize u8 u16 u32 u64 usize f32 f64 bool
-str void`. Wildcard: `_`. Legacy reserved words: `let using type typename context
-push_context push_allocator`.
+Primitive type names are `i8 i16 i32 i64 isize u8 u16 u32 u64 usize f32 f64 bool
+str void`. The wildcard is `_`. Legacy reserved words are `let using type typename
+context push_context push_allocator`.
 
 ### 14.3 String escapes
 
@@ -788,8 +789,8 @@ push_context push_allocator`.
 
 ### 14.4 Related documents
 
-- [tour.md](tour.md): the language by example.
-- [coming-from-rust.md](coming-from-rust.md): a guide for Rust programmers.
-- [memory-safety.md](memory-safety.md): the safety guarantees in depth.
-- [philosophy.md](philosophy.md): the design rationale.
-- [architecture.md](architecture.md): the compiler pipeline.
+- [tour.md](tour.md), the language by example.
+- [coming-from-rust.md](coming-from-rust.md), a guide for Rust programmers.
+- [memory-safety.md](memory-safety.md), the safety guarantees in depth.
+- [philosophy.md](philosophy.md), the design rationale.
+- [architecture.md](architecture.md), the compiler pipeline.
