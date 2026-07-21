@@ -10,9 +10,11 @@
 //
 // The whole thing is written against the native data-oriented surface: no
 // closures, no dynamic collections, references are second-class, and every
-// mutable working set is a pool (the AST arena and two symbol tables).
+// mutable working set is an arena (the AST and two symbol tables). The arenas
+// are the language's own allocator (docs/allocators.md), a generic bump
+// allocator over one `malloc` per arena, not a runtime pool.
 //
-// The AST is stored as a pool of Node records. A node names its children by
+// The AST is stored in an arena of Node records. A node names its children by
 // their arena index (a plain integer), which is the data-oriented replacement
 // for pointers between heap nodes. Sibling statements, parameters, and call
 // arguments are each threaded through a `next` field into a singly linked list.
@@ -24,10 +26,7 @@
 // names (a name becomes the `mf_<index>` of its emitted C function). This is the
 // data-oriented replacement for a hash map keyed by strings.
 
-pool_new       :: extern fn(capacity: i64, elem_size: i64) -> ^u8
-pool_alloc     :: extern fn(pool: ^u8, value: ^u8) -> i64
-pool_get       :: extern fn(pool: ^u8, handle: i64) -> ^u8
-pool_destroy   :: extern fn(pool: ^u8)
+malloc         :: extern fn(size: i64) -> ^u8
 frost_byte_at  :: extern fn(s: ^i8, i: i64) -> i64
 frost_str_len  :: extern fn(s: ^i8) -> i64
 frost_emit_str :: extern fn(s: ^i8)
@@ -111,16 +110,40 @@ Sym :: struct {
     len: i64,
 }
 
+// A growable, index-addressed arena over a single heap allocation. This is the
+// data-oriented allocator from docs/allocators.md, generic over its element:
+// arena_push appends and returns the element's index, arena_at turns an index
+// back into a pointer. The compiler is asked only for the raw memory (malloc)
+// and the pointer reinterpret; the bump logic is here.
+Arena :: struct($T: Type) {
+    data: ^T,
+    cap: i64,
+    count: i64,
+}
+
+arena_make :: fn($T: Type, cap: i64) -> Arena<T> {
+    bytes := malloc(cap * sizeof(T))
+    Arena { data = ptr_cast($T, bytes), cap = cap, count = 0 }
+}
+
+arena_push :: fn(a: &mut Arena<$T>, value: $T) -> i64 {
+    id := a.count
+    a.data[id] = value
+    a.count = a.count + 1
+    id
+}
+
+arena_at :: fn(a: &Arena<$T>, id: i64) -> ^T {
+    ptr_to(a.data[id])
+}
+
 Parser :: struct {
     src: ^i8,
     len: i64,
     pos: i64,
-    arena: ^u8,
-    syms: ^u8,
-    fns: ^u8,
-    local_first: i64,
-    sym_total: i64,
-    fn_total: i64,
+    arena: Arena<Node>,
+    syms: Arena<Sym>,
+    fns: Arena<Sym>,
 }
 
 is_space :: fn(c: i64) -> bool {
@@ -228,37 +251,29 @@ bytes_equal :: fn(src: ^i8, first: i64, second: i64, length: i64) -> bool {
 }
 
 intern_local :: fn(p: &mut Parser, offset: i64, length: i64) -> i64 {
-    mut i := p.local_first
-    while (i < p.sym_total) {
-        entry : ^Sym = pool_get(p.syms, i)
-        if (entry^.len == length
-            && bytes_equal(p.src, entry^.off, offset, length)) {
-            return i - p.local_first
-        }
-        i = i + 1
-    }
-    mut sym := Sym { off = offset, len = length }
-    pool_alloc(p.syms, &sym)
-    index := p.sym_total - p.local_first
-    p.sym_total = p.sym_total + 1
-    index
-}
-
-intern_global :: fn(p: &mut Parser, offset: i64, length: i64) -> i64 {
     mut i : i64 = 0
-    while (i < p.fn_total) {
-        entry : ^Sym = pool_get(p.fns, i)
+    while (i < p.syms.count) {
+        entry : ^Sym = arena_at(&p.syms, i)
         if (entry^.len == length
             && bytes_equal(p.src, entry^.off, offset, length)) {
             return i
         }
         i = i + 1
     }
-    mut sym := Sym { off = offset, len = length }
-    pool_alloc(p.fns, &sym)
-    index := p.fn_total
-    p.fn_total = p.fn_total + 1
-    index
+    arena_push(&mut p.syms, Sym { off = offset, len = length })
+}
+
+intern_global :: fn(p: &mut Parser, offset: i64, length: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < p.fns.count) {
+        entry : ^Sym = arena_at(&p.fns, i)
+        if (entry^.len == length
+            && bytes_equal(p.src, entry^.off, offset, length)) {
+            return i
+        }
+        i = i + 1
+    }
+    arena_push(&mut p.fns, Sym { off = offset, len = length })
 }
 
 is_main_name :: fn(src: ^i8, offset: i64, length: i64) -> bool {
@@ -275,25 +290,29 @@ is_main_name :: fn(src: ^i8, offset: i64, length: i64) -> bool {
 // ---------------------------------------------------------------------------
 
 new_node :: fn(p: &mut Parser, kind: i64, a: i64, b: i64, val: i64) -> i64 {
-    mut node := Node { kind = kind, a = a, b = b, c = 0, val = val, next = 0 - 1 }
-    pool_alloc(p.arena, &node)
+    arena_push(
+        &mut p.arena,
+        Node { kind = kind, a = a, b = b, c = 0, val = val, next = 0 - 1 },
+    )
 }
 
 new_func_node :: fn(p: &mut Parser, body: i64, params: i64, fn_index: i64,
     is_main: i64) -> i64 {
-    mut node := Node {
-        kind = NODE_FUNC,
-        a = body,
-        b = params,
-        c = is_main,
-        val = fn_index,
-        next = 0 - 1,
-    }
-    pool_alloc(p.arena, &node)
+    arena_push(
+        &mut p.arena,
+        Node {
+            kind = NODE_FUNC,
+            a = body,
+            b = params,
+            c = is_main,
+            val = fn_index,
+            next = 0 - 1,
+        },
+    )
 }
 
 set_next :: fn(p: &mut Parser, id: i64, next_id: i64) {
-    node : ^Node = pool_get(p.arena, id)
+    node : ^Node = arena_at(&p.arena, id)
     node^.next = next_id
 }
 
@@ -563,12 +582,9 @@ parse_function :: fn(p: &mut Parser) -> i64 {
     }
     // Reclaim the previous function's local symbols. The AST already holds each
     // local's resolved index, so the table is only needed while this function is
-    // parsing. Reusing a fresh pool bounds symbol memory to one function's
-    // locals rather than the whole program.
-    pool_destroy(p.syms)
-    p.syms = pool_new(256, 16)
-    p.sym_total = 0
-    p.local_first = 0
+    // parsing. Resetting the arena's count reuses the same buffer, bounding
+    // symbol memory to one function's locals rather than the whole program.
+    p.syms.count = 0
     skip_ws(p)
     p.pos = p.pos + 1
     params := parse_params(p)
@@ -616,8 +632,8 @@ emit_op :: fn(op: i64) {
     }
 }
 
-emit_expr :: fn(arena: ^u8, id: i64) {
-    node : ^Node = pool_get(arena, id)
+emit_expr :: fn(arena: &Arena<Node>, id: i64) {
+    node : ^Node = arena_at(arena, id)
     kind := node^.kind
     if (kind == NODE_NUM) {
         frost_emit_int(node^.val)
@@ -644,7 +660,7 @@ emit_expr :: fn(arena: ^u8, id: i64) {
     frost_emit_str(")")
 }
 
-emit_args :: fn(arena: ^u8, head: i64) {
+emit_args :: fn(arena: &Arena<Node>, head: i64) {
     mut id := head
     mut first : bool = true
     while (id != (0 - 1)) {
@@ -652,7 +668,7 @@ emit_args :: fn(arena: ^u8, head: i64) {
             frost_emit_str(", ")
         }
         first = false
-        node : ^Node = pool_get(arena, id)
+        node : ^Node = arena_at(arena, id)
         value := node^.a
         next_id := node^.next
         emit_expr(arena, value)
@@ -660,8 +676,8 @@ emit_args :: fn(arena: ^u8, head: i64) {
     }
 }
 
-emit_stmt :: fn(arena: ^u8, id: i64) {
-    node : ^Node = pool_get(arena, id)
+emit_stmt :: fn(arena: &Arena<Node>, id: i64) {
+    node : ^Node = arena_at(arena, id)
     kind := node^.kind
     if (kind == NODE_LET || kind == NODE_ASSIGN) {
         frost_emit_str("v[")
@@ -707,16 +723,16 @@ emit_stmt :: fn(arena: ^u8, id: i64) {
     }
 }
 
-emit_list :: fn(arena: ^u8, head: i64) {
+emit_list :: fn(arena: &Arena<Node>, head: i64) {
     mut id := head
     while (id != (0 - 1)) {
         emit_stmt(arena, id)
-        node : ^Node = pool_get(arena, id)
+        node : ^Node = arena_at(arena, id)
         id = node^.next
     }
 }
 
-emit_param_types :: fn(arena: ^u8, head: i64) {
+emit_param_types :: fn(arena: &Arena<Node>, head: i64) {
     if (head == (0 - 1)) {
         frost_emit_str("void")
         return
@@ -729,12 +745,12 @@ emit_param_types :: fn(arena: ^u8, head: i64) {
         }
         first = false
         frost_emit_str("int64_t")
-        node : ^Node = pool_get(arena, id)
+        node : ^Node = arena_at(arena, id)
         id = node^.next
     }
 }
 
-emit_param_signature :: fn(arena: ^u8, head: i64) {
+emit_param_signature :: fn(arena: &Arena<Node>, head: i64) {
     if (head == (0 - 1)) {
         frost_emit_str("void")
         return
@@ -748,16 +764,16 @@ emit_param_signature :: fn(arena: ^u8, head: i64) {
         frost_emit_str("int64_t a")
         frost_emit_int(index)
         index = index + 1
-        node : ^Node = pool_get(arena, id)
+        node : ^Node = arena_at(arena, id)
         id = node^.next
     }
 }
 
-emit_param_copies :: fn(arena: ^u8, head: i64) {
+emit_param_copies :: fn(arena: &Arena<Node>, head: i64) {
     mut id := head
     mut index : i64 = 0
     while (id != (0 - 1)) {
-        node : ^Node = pool_get(arena, id)
+        node : ^Node = arena_at(arena, id)
         slot := node^.val
         next_id := node^.next
         frost_emit_str("v[")
@@ -770,10 +786,10 @@ emit_param_copies :: fn(arena: ^u8, head: i64) {
     }
 }
 
-emit_prototypes :: fn(arena: ^u8, head: i64) {
+emit_prototypes :: fn(arena: &Arena<Node>, head: i64) {
     mut id := head
     while (id != (0 - 1)) {
-        node : ^Node = pool_get(arena, id)
+        node : ^Node = arena_at(arena, id)
         fn_index := node^.val
         params := node^.b
         is_main := node^.c
@@ -789,8 +805,8 @@ emit_prototypes :: fn(arena: ^u8, head: i64) {
     }
 }
 
-emit_function :: fn(arena: ^u8, id: i64) {
-    node : ^Node = pool_get(arena, id)
+emit_function :: fn(arena: &Arena<Node>, id: i64) {
+    node : ^Node = arena_at(arena, id)
     fn_index := node^.val
     body := node^.a
     params := node^.b
@@ -810,12 +826,12 @@ emit_function :: fn(arena: ^u8, id: i64) {
     frost_emit_str("return 0;\n}\n")
 }
 
-emit_program :: fn(arena: ^u8, head: i64) {
+emit_program :: fn(arena: &Arena<Node>, head: i64) {
     emit_prototypes(arena, head)
     mut id := head
     while (id != (0 - 1)) {
         emit_function(arena, id)
-        node : ^Node = pool_get(arena, id)
+        node : ^Node = arena_at(arena, id)
         id = node^.next
     }
 }
@@ -842,24 +858,18 @@ main :: fn() -> i64 {
         }
     "
 
-    arena := pool_new(4096, 48)
-    syms := pool_new(256, 16)
-    fns := pool_new(1024, 16)
     mut parser := Parser {
         src = source,
         len = frost_str_len(source),
         pos = 0,
-        arena = arena,
-        syms = syms,
-        fns = fns,
-        local_first = 0,
-        sym_total = 0,
-        fn_total = 0,
+        arena = arena_make($Node, 4096),
+        syms = arena_make($Sym, 256),
+        fns = arena_make($Sym, 1024),
     }
     program := parse_program(&mut parser)
 
     frost_emit_str("#include <stdio.h>\n")
     frost_emit_str("#include <stdint.h>\n")
-    emit_program(parser.arena, program)
+    emit_program(&parser.arena, program)
     0
 }
