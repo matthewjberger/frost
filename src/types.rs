@@ -96,9 +96,8 @@ impl Type {
             Type::Ref(_) | Type::RefMut(_) | Type::Ptr(_) => true,
             Type::Proc(_, _) | Type::Void => true,
             Type::Array(_, _) => true,
-            Type::Str | Type::Slice(_) | Type::Struct(_) | Type::Enum(_) => {
-                false
-            }
+            Type::Str => true,
+            Type::Slice(_) | Type::Struct(_) | Type::Enum(_) => false,
             Type::Distinct(inner) => inner.is_copy(),
             Type::Arena => false,
             Type::Context => false,
@@ -111,9 +110,8 @@ impl Type {
 
     pub fn needs_drop(&self) -> bool {
         match self {
-            Type::Str | Type::Slice(_) | Type::Struct(_) | Type::Enum(_) => {
-                true
-            }
+            Type::Str => false,
+            Type::Slice(_) | Type::Struct(_) | Type::Enum(_) => true,
             Type::Array(inner, _) => inner.needs_drop(),
             Type::Distinct(inner) => inner.needs_drop(),
             Type::Arena => true,
@@ -301,6 +299,15 @@ mod tests {
         assert!(Type::RefMut(Box::new(Type::I64)).is_second_class());
         assert!(!Type::Ptr(Box::new(Type::I64)).is_second_class());
         assert!(!Type::I64.is_second_class());
+    }
+
+    #[test]
+    fn str_is_a_copyable_view() {
+        assert_eq!(Type::Str.size_of(), 16);
+        assert_eq!(Type::Str.align_of(), 8);
+        assert!(Type::Str.is_copy());
+        assert!(!Type::Str.needs_drop());
+        assert!(!Type::Str.contains_reference());
     }
 
     #[test]

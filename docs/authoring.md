@@ -92,9 +92,13 @@ and the wildcard `_` all work.
   short-lived local, but it cannot be stored in a field, put in an array, or
   returned. This is why Frost needs no lifetimes. When you want something that
   outlives a call, use a `Handle<T>`, not a reference.
-- **Move checking.** Structs, enums, strings, and slices move when passed by
-  value, assigned, or returned. Using one after it moves is an error. Scalars,
-  pointers, and handles are copy.
+- **Move checking.** Structs, enums, and slices move when passed by value,
+  assigned, or returned. Using one after it moves is an error. Scalars,
+  pointers, handles, and `str` are copy.
+- **`str` is a byte view.** A string literal is a `str`, a pointer plus length
+  that owns nothing. `str_len(s)` is its length and `s[i]` is a bounds-checked
+  `u8`. Passing `"..."` where `^i8` is expected hands C a NUL-terminated pointer,
+  which is how the literal reaches `printf` and friends.
 - **Linear resources replace `Drop`.** A `linear struct` or `linear enum` must be
   consumed exactly once. Consume it by returning it, passing it by value, or
   matching it. Forgetting is a compile error.

@@ -87,6 +87,9 @@ correct type and operation for each value because the IR is fully typed, and
   integer/float conversions.
 - `extern fn` C interop, including string-literal arguments with escape
   sequences (e.g. `puts`, `printf`).
+- `str`, a byte-slice view (pointer plus length): string-literal values,
+  `str_len` in constant time, bounds-checked byte indexing `s[i]`, and passing
+  and returning `str` by value.
 - References and pointers: `&`, `&mut`, `^` dereference read/write, and
   pointer/reference parameters (e.g. `swap(a: ^i64, b: ^i64)`,
   `increment(x: &mut i64)`).
@@ -219,11 +222,11 @@ Frost is being reshaped toward a data-oriented language with:
   single call. Multiple shared `&` borrows are fine. Because references are
   second-class, this per-call check is enough to keep mutable aliasing out.
 - **Move checking.** Per function body, a value of a move type (a struct,
-  enum, string, or slice, anything not `Copy`) is consumed when it is passed
-  by value, assigned, or returned. Using it again is a use-after-move error.
-  Borrowing (`&x`), field access (`x.f`), and dereference do not consume, and
-  copy types (integers, floats, bools, pointers, references, handles) are
-  never moved.
+  enum, or slice, anything not `Copy`) is consumed when it is passed by value,
+  assigned, or returned. Using it again is a use-after-move error. Borrowing
+  (`&x`), field access (`x.f`), and dereference do not consume, and copy types
+  (integers, floats, bools, pointers, references, handles, and `str`) are never
+  moved.
 - **Linear resources.** A struct or enum declared `linear`
   (`File :: linear struct { ... }`) is a resource that must be consumed
   exactly once. The move checker's use-after-move rule gives "at most once",

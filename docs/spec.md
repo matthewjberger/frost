@@ -135,8 +135,9 @@ There is no exponent notation and no leading-dot form.
 
 **String**. Delimited by `"`, with escapes `\n`, `\t`, `\r`, `\0`, `\\`, `\"`,
 `\'`. Any other escape is an error. There are no numeric or Unicode escapes. A
-string literal has type `str`, and where `^i8` is expected it denotes a pointer
-to its NUL-terminated bytes, which is how string literals interoperate with C.
+string literal has type `str` (3.7) and denotes a view of its bytes. Where `^i8`
+is expected it instead denotes a pointer to the same bytes with a trailing NUL,
+which is how string literals interoperate with C.
 
 **Boolean**. `true`, `false`, of type `bool`.
 
@@ -215,6 +216,30 @@ function-typed value is always a plain pointer to a function.
 - `?T` is an optional `T`.
 - `$T` is a type parameter (chapter 11).
 - `Name<T, ...>` is a generic instantiation (chapter 11).
+
+### 3.7 Strings
+
+`str` is an immutable, non-owning view of a run of bytes. It is a pointer and a
+length, sixteen bytes, laid out as the byte pointer at offset 0 and the length
+(a `usize`) at offset 8. It owns nothing, so it is a **copy** type (chapter 8),
+freely duplicated with no move and nothing to release. In this it is the byte
+form of a slice (`[]u8`).
+
+- A string literal is a `str` pointing into read-only data, with the length
+  fixed at compile time.
+- `str_len(s)` returns the byte length in constant time, reading the length
+  field rather than scanning.
+- `s[i]` reads the byte at index `i` as a `u8` and is bounds-checked against the
+  length (10.4), the same rule as array indexing.
+- Passing a `str` to a function copies the pointer and length by value.
+
+`str` carries no NUL terminator and may contain a NUL byte. Crossing to C is
+therefore an explicit conversion, not an automatic one. The single affordance is
+the string literal, which the compiler also emits NUL-terminated so that a
+literal used where `^i8` is expected passes as a C string at no cost (2.5).
+
+Owned or growable text is not a language type. It is an ordinary struct over an
+array or a pool that a program borrows as a `str`.
 
 ---
 

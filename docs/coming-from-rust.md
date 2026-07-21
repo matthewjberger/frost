@@ -122,11 +122,18 @@ Mixed-width integer arithmetic is permitted, with the narrower operand widening
 to the wider one, so `an_i32 + an_i64` is an `i64`. This is looser than Rust,
 which would reject the mismatch and make you write an `as` cast.
 
-`str` exists in the type system, but Frost has no rich string library. String
-literals are C-compatible and are used mainly to talk to C (`^i8`, a pointer to
-bytes). If you are coming from Rust expecting `String` and `&str` with UTF-8
-methods, there is no equivalent. Text handling is deliberately out of scope for
-the systems core.
+`str` is a byte-slice view, a pointer and a length, and it is the analogue of
+Rust's `&str` rather than `String`. It owns nothing, so it is a copy type you can
+duplicate freely. A string literal is a `str` into read-only data. `str_len(s)`
+is the constant-time length and `s[i]` is a bounds-checked `u8`, the same
+indexing rule as arrays. Unlike Rust there is no owned `String` in the language
+and no UTF-8 method library, `str` is just bytes. An owned or growable buffer is
+something you build as a struct over an array or pool and borrow back as a `str`.
+
+Crossing to C is explicit, since a `str` carries no NUL terminator. The one
+shortcut is the string literal, which the compiler also lays down NUL-terminated,
+so a literal passed where `^i8` is expected reaches C as a plain pointer at no
+cost. That is why the FFI examples below pass `"..."` straight to `printf`.
 
 Aggregates (`struct`, `enum`, fixed arrays) pass and return **by value**,
 copied at the call boundary, unless you pass a borrow. There is no implicit

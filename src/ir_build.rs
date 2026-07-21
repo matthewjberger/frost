@@ -1366,7 +1366,17 @@ fn substitute_expression(
 }
 
 fn needs_memory(ty: &Type) -> bool {
-    matches!(ty, Type::Struct(_) | Type::Array(_, _) | Type::Enum(_))
+    matches!(
+        ty,
+        Type::Struct(_) | Type::Array(_, _) | Type::Enum(_) | Type::Str
+    )
+}
+
+const STR_PTR_OFFSET: usize = 0;
+const STR_LEN_OFFSET: usize = 8;
+
+fn str_byte_ptr_type() -> Type {
+    Type::Ptr(Box::new(Type::U8))
 }
 
 fn body_has_nested_return(body: &Block) -> bool {
@@ -2249,10 +2259,17 @@ impl<'a> FunctionLowering<'a> {
             Literal::Boolean(value) => {
                 Ok((IrOperand::Constant(IrConstant::Bool(*value)), Type::Bool))
             }
-            Literal::String(value) => Ok((
-                IrOperand::Constant(IrConstant::CString(value.clone())),
-                Type::Ptr(Box::new(Type::I8)),
-            )),
+            Literal::String(value) => {
+                if matches!(expected, Some(Type::Ptr(_))) {
+                    return Ok((
+                        IrOperand::Constant(IrConstant::CString(value.clone())),
+                        Type::Ptr(Box::new(Type::I8)),
+                    ));
+                }
+                let local = self.fresh_local(Type::Str, None);
+                self.build_str_value(local, value);
+                Ok((IrOperand::Local(local), Type::Str))
+            }
             other => {
                 bail!("native backend: unsupported literal: {other}")
             }
@@ -2463,6 +2480,14 @@ impl<'a> FunctionLowering<'a> {
             && self.builder.signature("frost_assert").is_some()
         {
             return self.lower_direct_call("frost_assert", arguments);
+        }
+        if let Expression::Identifier(name) = callee
+            && name == "str_len"
+            && self.resolve_variable(name).is_none()
+            && self.builder.signature(name).is_none()
+            && !self.builder.generic_functions.contains_key(name)
+        {
+            return self.lower_str_len(arguments);
         }
         if let Expression::Identifier(name) = callee
             && self.resolve_variable(name).is_none()
@@ -2875,6 +2900,137 @@ impl<'a> FunctionLowering<'a> {
         Ok((IrOperand::Local(result), ty))
     }
 
+    fn build_str_value(&mut self, local: LocalId, text: &str) {
+        self.mark_in_memory(local);
+        let ptr_slot =
+            self.fresh_local(Type::Ptr(Box::new(str_byte_ptr_type())), None);
+        self.emit(IrStatement::Assign(
+            ptr_slot,
+            IrRvalue::AddressOf {
+                local,
+                offset: STR_PTR_OFFSET,
+            },
+        ));
+        self.emit(IrStatement::Store {
+            address: IrOperand::Local(ptr_slot),
+            value: IrOperand::Constant(IrConstant::CString(text.to_string())),
+        });
+        let len_slot = self.fresh_local(Type::Ptr(Box::new(Type::Usize)), None);
+        self.emit(IrStatement::Assign(
+            len_slot,
+            IrRvalue::AddressOf {
+                local,
+                offset: STR_LEN_OFFSET,
+            },
+        ));
+        self.emit(IrStatement::Store {
+            address: IrOperand::Local(len_slot),
+            value: IrOperand::Constant(IrConstant::Integer(
+                text.len() as i64,
+                Type::Usize,
+            )),
+        });
+    }
+
+    fn place_type(&self, place: &Expression) -> Option<Type> {
+        match place {
+            Expression::Identifier(name) => self
+                .resolve_variable(name)
+                .map(|local| self.type_of_local(local)),
+            _ => None,
+        }
+    }
+
+    fn str_value_address(
+        &mut self,
+        expression: &Expression,
+    ) -> Result<IrOperand> {
+        if matches!(self.place_type(expression), Some(Type::Str)) {
+            let (address, _) = self.place_address(expression)?;
+            return Ok(address);
+        }
+        let (operand, value_type) =
+            self.lower_expression(expression, Some(&Type::Str))?;
+        if value_type != Type::Str {
+            bail!("native backend: expected a str value, found {value_type}");
+        }
+        let IrOperand::Local(local) = operand else {
+            bail!("native backend: str value is not addressable");
+        };
+        self.mark_in_memory(local);
+        Ok(self.address_of_local(local, &Type::Str))
+    }
+
+    fn str_field(
+        &mut self,
+        base: IrOperand,
+        offset: usize,
+        field_type: Type,
+    ) -> IrOperand {
+        let slot =
+            self.fresh_local(Type::Ptr(Box::new(field_type.clone())), None);
+        self.emit(IrStatement::Assign(
+            slot,
+            IrRvalue::FieldAddress { base, offset },
+        ));
+        let result = self.fresh_local(field_type.clone(), None);
+        self.emit(IrStatement::Assign(
+            result,
+            IrRvalue::Load {
+                address: IrOperand::Local(slot),
+                ty: field_type,
+            },
+        ));
+        IrOperand::Local(result)
+    }
+
+    fn lower_str_len(
+        &mut self,
+        arguments: &[Expression],
+    ) -> Result<(IrOperand, Type)> {
+        if arguments.len() != 1 {
+            bail!("native backend: str_len expects one argument");
+        }
+        let base = self.str_value_address(&arguments[0])?;
+        let length = self.str_field(base, STR_LEN_OFFSET, Type::Usize);
+        Ok((length, Type::Usize))
+    }
+
+    fn str_byte_address(
+        &mut self,
+        base: &Expression,
+        index_operand: IrOperand,
+        index_type: Type,
+    ) -> Result<(IrOperand, Type)> {
+        let str_address = self.str_value_address(base)?;
+        let data = self.str_field(
+            str_address.clone(),
+            STR_PTR_OFFSET,
+            str_byte_ptr_type(),
+        );
+        let length = self.str_field(str_address, STR_LEN_OFFSET, Type::Usize);
+        let index = self.coerce(index_operand, &index_type, &Type::I64);
+        let length = self.coerce(length, &Type::Usize, &Type::I64);
+        let check = self.fresh_local(Type::Void, None);
+        self.emit(IrStatement::Assign(
+            check,
+            IrRvalue::Call {
+                function: "frost_bounds_check".to_string(),
+                arguments: vec![index.clone(), length],
+            },
+        ));
+        let element = self.fresh_local(str_byte_ptr_type(), None);
+        self.emit(IrStatement::Assign(
+            element,
+            IrRvalue::ElementAddress {
+                base: data,
+                index,
+                element_size: 1,
+            },
+        ));
+        Ok((IrOperand::Local(element), Type::U8))
+    }
+
     fn place_address(
         &mut self,
         place: &Expression,
@@ -2930,6 +3086,9 @@ impl<'a> FunctionLowering<'a> {
         let (index_operand, index_type) = self.lower_expression(index, None)?;
         if let Type::Handle(element) = index_type {
             return self.pool_element_address(base, index_operand, *element);
+        }
+        if matches!(self.place_type(base), Some(Type::Str)) {
+            return self.str_byte_address(base, index_operand, index_type);
         }
         let (base_pointer, element_type, length) =
             self.array_base_pointer(base)?;

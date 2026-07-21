@@ -617,6 +617,67 @@ fn native_strings_and_escapes() {
     assert_eq!(output, "line one\nline\ttwo\n");
 }
 
+const STR_VIEW: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+first_byte :: fn(s: str) -> i64 {
+    s[0]
+}
+
+pick :: fn(flag: i64) -> str {
+    if (flag == 0) {
+        return "yes"
+    }
+    return "longer"
+}
+
+main :: fn() -> i64 {
+    greeting := "Frost"
+    n := str_len(greeting)
+    printf("%lld\n", n)
+    mut i : i64 = 0
+    while (i < n) {
+        printf("%lld\n", greeting[i])
+        i = i + 1
+    }
+    printf("%lld\n", first_byte(greeting))
+    chosen := pick(0)
+    printf("%lld\n", str_len(chosen))
+    printf("%lld\n", chosen[0])
+    other := pick(1)
+    printf("%lld\n", str_len(other))
+    0
+}
+"#;
+
+#[test]
+fn native_str_is_a_length_carrying_view() {
+    let Some(output) = compile_and_run("strview", STR_VIEW) else {
+        return;
+    };
+    assert_eq!(output, "5\n70\n114\n111\n115\n116\n70\n3\n121\n6\n");
+}
+
+const STR_OUT_OF_BOUNDS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+main :: fn() -> i64 {
+    greeting := "hi"
+    mut i : i64 = 5
+    printf("%lld\n", greeting[i])
+    0
+}
+"#;
+
+#[test]
+fn native_str_index_is_bounds_checked() {
+    let Some(succeeded) = compile_and_run_status("stroob", STR_OUT_OF_BOUNDS)
+    else {
+        return;
+    };
+    assert!(!succeeded, "an out-of-range str index should abort");
+}
+
 const POINTERS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -2054,6 +2115,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_anon", ANON_FUNCTIONS),
         ("diff_minifrost", MINIFROST),
         ("diff_strings", STRINGS),
+        ("diff_strview", STR_VIEW),
         ("diff_pointers", POINTERS),
         ("diff_structs", STRUCTS),
         ("diff_arrays", ARRAYS),
