@@ -1,1890 +1,795 @@
-# Frost Language Specification
+# The Frost Language Specification
 
-**Version 0.2.0**
+This is the reference specification for the Frost language as implemented by the
+native, data-oriented compiler (the `--native`, `--link`, `--emit-c`, and
+`--run-ir` paths). It is normative for that language.
 
-Frost is a statically-typed, data-oriented programming language that is memory
-safe without a garbage collector and without lifetime annotations. The AST
-lowers to a typed IR that two native backends emit from, a Cranelift backend and
-a portable C backend, with a differential test asserting the two agree. A
-bytecode virtual machine also exists and serves as a reference oracle for the
-broader feature set.
+The current parser also accepts an older, larger surface aimed at the bytecode
+VM (a `let` keyword, hashmap literals, capturing function values, context and
+allocator statements). Those forms are called out as **legacy** where they touch
+the grammar; they are not part of the specified language, and new code targets
+what this document describes.
 
-> **Reading order.** This file is the detailed language reference. For the
-> pieces most people want first, see the focused companion docs:
->
-> - [memory-safety.md](memory-safety.md): how Frost guarantees memory safety
->   (second-class references, move checking, linear resources, generational
->   handles) and why it needs no lifetimes or GC.
-> - [c-compatibility.md](c-compatibility.md): calling C via `extern fn`, and
->   the C backend as an internal lowering.
-> - [architecture.md](architecture.md): the compiler pipeline and exactly what
->   the native path supports today.
-> - [memory_model.md](memory_model.md): the type categories (copy / move /
->   linear) and allocation model.
->
-> Some sections below still describe the original bytecode-first framing;
-> `architecture.md` is authoritative for the current native path, which adds
-> generic functions and structs (monomorphized), `sizeof`, generational pools
-> with `pool[handle]` dereference-as-borrow, linear resources, and located
-> lexer/parser errors.
+The specification has two halves. The prose chapters (1 through 12) describe the
+lexical structure, types, declarations, expressions, statements, and static
+semantics. The grammar chapter (13) gives the syntax in one place, in a
+disciplined EBNF that the hand-written recursive-descent parser is held against.
 
----
+## Contents
 
-## Table of Contents
-
-1. [Lexical Structure](#1-lexical-structure)
-2. [Types](#2-types)
-3. [Declarations](#3-declarations)
-4. [Expressions](#4-expressions)
-5. [Statements](#5-statements)
-6. [Operators](#6-operators)
-7. [Control Flow](#7-control-flow)
-8. [Functions](#8-functions)
-9. [Structs](#9-structs)
-10. [Enums](#10-enums)
-11. [Pointers and References](#11-pointers-and-references)
-12. [Ownership and Borrowing](#12-ownership-and-borrowing)
-13. [Arrays and Collections](#13-arrays-and-collections)
-14. [Built-in Functions](#14-built-in-functions)
-15. [Foreign Function Interface](#15-foreign-function-interface)
-16. [Runtime Semantics](#16-runtime-semantics)
-17. [Grammar Summary](#17-grammar-summary)
+1. Notation and conformance
+2. Lexical structure
+3. Types
+4. The type system
+5. Declarations and bindings
+6. Expressions
+7. Statements
+8. Ownership and borrowing
+9. Linear resources
+10. Handles, pools, and the memory model
+11. Generics and compile-time specialization
+12. The foreign function interface
+13. Grammar
+14. Appendix: precedence, keywords, escapes
 
 ---
 
-## 1. Lexical Structure
+## 1. Notation and conformance
 
-### 1.1 Keywords
+### 1.1 Grammar notation
 
-```
-break    case        comptime    continue    defer    distinct    else    enum
-extern   false       fn          for         if       in          mut     match
-return   sizeof      struct      true        unsafe   using       while
-```
+Grammar rules use EBNF:
 
-### 1.2 Type Keywords
+- `x y` is `x` followed by `y`; `x | y` is `x` or `y`.
+- `x?` optional, `x*` zero or more, `x+` one or more, `( ... )` groups.
+- Terminals are literal spellings in `code font` (`::`, `fn`, `->`) or token
+  classes in UPPERCASE (`IDENT`, `INTEGER`, `STRING`).
+- Nonterminals are `PascalCase`.
 
-```
-i8    i16    i32    i64
-u8    u16    u32    u64
-f32   f64
-bool  str    void
-Arena    Pool    Handle
-```
+### 1.2 Parsing discipline
 
-### 1.3 Operators and Punctuation
+The language is parsed by recursive descent with a Pratt (precedence-climbing)
+expression parser and **bounded lookahead**. Statement and type selection is
+decided by the first one to three tokens; the specific lookahead each decision
+uses is stated in the grammar. Expression parsing is driven by the operator
+precedence table in 14.1. The parser does not backtrack past a committed
+production, with one bounded exception: it may scan ahead a fixed number of
+tokens to decide whether a parenthesized group is a function parameter list
+(13.6).
 
-| Symbol | Name |
-|--------|------|
-| `+` | Addition |
-| `-` | Subtraction / Negation |
-| `*` | Multiplication |
-| `/` | Division |
-| `%` | Modulo |
-| `==` | Equal |
-| `!=` | Not Equal |
-| `<` | Less Than |
-| `>` | Greater Than |
-| `<=` | Less Than or Equal |
-| `>=` | Greater Than or Equal |
-| `!` | Logical NOT |
-| `&&` | Logical AND (short-circuiting) |
-| `||` | Logical OR (short-circuiting) |
-| `&` | Bitwise AND / Address-of |
-| `|` | Bitwise OR |
-| `<<` | Shift Left |
-| `>>` | Shift Right |
-| `^` | Dereference (postfix) |
-| `:=` | Declaration with inference |
-| `=` | Assignment |
-| `::` | Constant declaration |
-| `:` | Type annotation |
-| `->` | Return type annotation |
-| `.` | Field access |
-| `..` | Range |
-| `;` | Statement terminator |
-| `,` | Separator |
-| `(` `)` | Grouping / Function call |
-| `{` `}` | Block / Struct / HashMap |
-| `[` `]` | Array / Index |
-| `_` | Wildcard pattern |
+This discipline is the contract. The reference parser (`src/parser.rs`), the
+self-hosted parser (`bootstrap/`), and this grammar are three views of one
+language; a disagreement between them is a bug in whichever diverges from the
+intent expressed here.
 
-### 1.4 Identifiers
+### 1.3 Conformance
 
-Identifiers begin with a letter or underscore, followed by letters, digits, or underscores.
-
-```
-identifier = (letter | "_") (letter | digit | "_")*
-letter     = "a".."z" | "A".."Z"
-digit      = "0".."9"
-```
-
-Examples: `x`, `count`, `my_variable`, `Vec3`, `_private`, `x1`
-
-### 1.5 Literals
-
-**Integer Literals**
-```frost
-42
-0
--17
-```
-
-**Float Literals**
-```frost
-3.14
-0.5
--2.718
-```
-
-**String Literals**
-```frost
-"hello"
-"hello world"
-"with \"escapes\""
-```
-
-**Boolean Literals**
-```frost
-true
-false
-```
-
-### 1.6 Comments
-
-**Single-line comments:**
-```frost
-// This is a single-line comment
-x := 5  // Inline comment
-```
-
-**Block comments:**
-```frost
-/* This is a block comment */
-
-/*
-   Multi-line
-   block comment
-*/
-```
+A conforming program is one this grammar accepts and whose static semantics
+(chapters 4, 8, 9, 10, 11) hold. A conforming implementation rejects
+non-conforming programs with a diagnostic and compiles conforming programs to
+code with the behavior described here. Constructs marked *unchecked* (raw
+pointer operations, `extern` calls) place their correctness obligation on the
+programmer.
 
 ---
 
-## 2. Types
+## 2. Lexical structure
 
-### 2.1 Primitive Types
+### 2.1 Source
 
-| Type | Size | Description |
-|------|------|-------------|
-| `i8` | 1 byte | Signed 8-bit integer |
-| `i16` | 2 bytes | Signed 16-bit integer |
-| `i32` | 4 bytes | Signed 32-bit integer |
-| `i64` | 8 bytes | Signed 64-bit integer |
-| `u8` | 1 byte | Unsigned 8-bit integer |
-| `u16` | 2 bytes | Unsigned 16-bit integer |
-| `u32` | 4 bytes | Unsigned 32-bit integer |
-| `u64` | 8 bytes | Unsigned 64-bit integer |
-| `f32` | 4 bytes | 32-bit floating point |
-| `f64` | 8 bytes | 64-bit floating point |
-| `bool` | 1 byte | Boolean (true/false) |
-| `str` | 16 bytes | String (pointer + length) |
-| `void` | 0 bytes | No value |
+Source text is UTF-8. Tokens are formed by maximal munch: at each point the
+lexer takes the longest token that matches. Identifiers are ASCII:
+`[A-Za-z_][A-Za-z0-9_]*`; there are no Unicode identifiers.
 
-### 2.2 Pointer Types
+### 2.2 Whitespace and comments
 
-Pointer types are written with the caret prefix:
+Whitespace (space, tab, carriage return, newline) separates tokens and is
+otherwise insignificant. Frost is not whitespace-sensitive and has no automatic
+semicolon insertion; statement terminators (`;`) are always optional. There are
+two comment forms:
 
-```frost
-^i64        // Pointer to i64
-^str        // Pointer to string
-^^i32       // Pointer to pointer to i32
+- Line comment: `//` to end of line.
+- Block comment: `/* ... */`. Block comments do not nest, and an unterminated
+  block comment is an error.
+
+### 2.3 Identifiers and the wildcard
+
+```
+IDENT = ( LETTER | "_" ) ( LETTER | DIGIT | "_" )*
 ```
 
-### 2.3 Reference Types
+The single underscore `_` is a distinct token, the wildcard, and is not a
+binding name.
 
-Reference types represent borrowed values:
+### 2.4 Keywords
 
-```frost
-&i64        // Immutable reference to i64
-&mut i64    // Mutable reference to i64
-&Point      // Immutable reference to Point struct
-&mut str    // Mutable reference to string
+Reserved words of the specified language:
+
+```
+fn struct enum match case if else while for in mut return break continue
+defer extern import linear distinct comptime unsafe sizeof
 ```
 
-References are created with the borrow operators (`&` and `&mut`) and dereferenced with the postfix `^` operator.
+Reserved primitive type names, each its own token:
 
-### 2.4 Array Types
-
-Fixed-size arrays:
-```frost
-[10]i64     // Array of 10 i64 values
-[5][5]f32   // 2D array (5x5 matrix of f32)
+```
+i8 i16 i32 i64 isize   u8 u16 u32 u64 usize   f32 f64   bool str void
 ```
 
-Slice types (dynamic size):
-```frost
-[]i64       // Slice of i64
-[]str       // Slice of strings
+The lexer additionally reserves the legacy words `let`, `using`, `type`,
+`typename`, `context`, `push_context`, and `push_allocator`; these belong to the
+legacy surface. Note that `Type` (capitalized), used in `$T: Type` (chapter 11),
+is an ordinary identifier recognized in that position, not a keyword.
+
+### 2.5 Literals
+
+**Integer**: `INTEGER = DIGIT+`. Decimal only; no digit separators, no
+hexadecimal, octal, or binary prefixes. Integer literals are non-negative; a
+negative value is the prefix `-` applied to one. An integer literal takes its
+type from context, defaulting to `i64`.
+
+**Float**: `FLOAT = DIGIT+ "." DIGIT+`, with an optional `f` or `f32` suffix that
+makes it an `f32`; otherwise it is `f64`. A `.` is only taken as a decimal point
+when the following character is not another `.`, so `0..10` lexes as a range.
+There is no exponent notation and no leading-dot form.
+
+**String**: delimited by `"`, with escapes `\n`, `\t`, `\r`, `\0`, `\\`, `\"`,
+`\'`. Any other escape is an error. There are no numeric or Unicode escapes. A
+string literal has type `str`, and where `^i8` is expected it denotes a pointer
+to its NUL-terminated bytes, which is how string literals interoperate with C.
+
+**Boolean**: `true`, `false`, of type `bool`.
+
+### 2.6 Operators and punctuation
+
+```
+::  :=  :   =   ->  ..  ..=  .   ^   $   ?   #
++   -   *   /   %   &   |   &&  ||  <<  >>
+==  !=  <   <=  >   >=  !
+(   )   {   }   [   ]   ,   ;
 ```
 
-### 2.5 Function Types
-
-```frost
-fn(i64, i64) -> i64    // Function taking two i64, returning i64
-fn(f32) -> f32         // Function taking f32, returning f32
-fn()                   // Function with no params, no return
-```
-
-### 2.6 Struct Types
-
-Named struct types are declared with the `struct` keyword:
-
-```frost
-Point :: struct {
-    x: i64,
-    y: i64,
-}
-```
-
-### 2.7 Enum Types
-
-Named enum types are declared with the `enum` keyword:
-
-```frost
-Color :: enum {
-    Red,
-    Green,
-    Blue,
-}
-```
-
-### 2.8 Distinct Types
-
-Distinct types create type-safe wrappers:
-
-```frost
-UserId :: distinct i64
-Temperature :: distinct f32
-```
-
-### 2.9 Arena Type
-
-Arenas provide region-based memory allocation:
-
-```frost
-frame : Arena = Arena::new(megabytes(4));
-ptr := frame.alloc(Position { x = 0.0, y = 0.0 });
-frame.reset();  // Free all allocations at once
-```
-
-### 2.10 Pool and Handle Types
-
-Pools provide object storage with generational handles:
-
-```frost
-entities : Pool<Entity> = Pool::new(1024);
-handle := entities.alloc(Entity { health = 100 });
-
-// Safe access - returns null if handle is stale
-if let Some(e) = entities.get(handle) {
-    print(e.health);
-}
-
-entities.free(handle);
-entities.get(handle);  // Returns null (generation mismatch)
-```
-
-Handle properties:
-- `Handle<T>` is Copy (just two u32s: index + generation)
-- Can be stored in structs and returned from functions
-- Access is O(1) with generation check
-- Dangling handles return null, never crash
-
-### 2.11 Optional Type
-
-Optional types represent values that may or may not exist:
-
-```frost
-?i64       // Optional i64
-?Point     // Optional Point
-```
-
-### 2.12 Type Inference
-
-When no explicit type is provided, types are inferred from the initializer:
-
-| Literal | Inferred Type |
-|---------|---------------|
-| `42` | `i64` |
-| `3.14` | `f64` |
-| `"hello"` | `str` |
-| `true` / `false` | `bool` |
-| `[1, 2, 3]` | Array |
+`&mut` is two tokens (`&` then `mut`). `>>` is a single shift token that the
+parser splits when it closes nested generic arguments (11.4).
 
 ---
 
-## 3. Declarations
+## 3. Types
 
-### 3.1 Variable Declarations
+### 3.1 Scalar types
 
-**Immutable with type inference:**
-```frost
-x := 5
-name := "Alice"
+| Type | Meaning | Size (bytes) |
+| --- | --- | --- |
+| `i8` `i16` `i32` `i64` `isize` | signed integers | 1, 2, 4, 8, 8 |
+| `u8` `u16` `u32` `u64` `usize` | unsigned integers | 1, 2, 4, 8, 8 |
+| `f32` `f64` | IEEE floats | 4, 8 |
+| `bool` | boolean | 1 |
+| `void` | the unit/empty type | 0 |
+
+All scalar types are **copy** types (chapter 8). Integer arithmetic wraps at the
+type width with two's-complement semantics and is never checked for overflow.
+Mixed-width integer arithmetic is permitted; the narrower operand widens to the
+wider type.
+
+### 3.2 Aggregate types
+
+- **Structs** `Name`, declared `Name :: struct { field: T, ... }`: exactly their
+  fields in declaration order, with natural alignment.
+- **Enums** `Name`, declared `Name :: enum { Variant, Variant { f: T }, ... }`: a
+  discriminant plus the active variant's payload. Variants may be unit or carry
+  named fields, and one enum may mix both.
+- **Fixed arrays** `[N]T`: `N` contiguous `T`. The length is part of the type and
+  every index is bounds-checked (10.4).
+- **Slices** `[]T`: a pointer/length view of a run of `T`.
+
+Aggregates are **move** types (chapter 8): copied by value at call and return
+boundaries unless passed by borrow, with no `Copy` derive.
+
+### 3.3 Reference and pointer types
+
+- `&T` shared (immutable) borrow; `&mut T` exclusive (mutable) borrow.
+- `^T` raw pointer, unchecked, for FFI and low-level libraries.
+
+References are **second-class** (chapter 8): only parameters and short-lived
+locals, never stored or returned. Raw pointers are first-class copy values that
+may be stored and returned and carry no safety guarantee.
+
+### 3.4 Handle types
+
+`Handle<T>` names an element of a pool of `T` (chapter 10): a small copy value
+(index plus generation), not a pointer, that unlike a reference may be stored in
+fields and returned.
+
+### 3.5 Function types
+
+`fn(T1, ...) -> R` is a function pointer. There are no closure types; a
+function-typed value is always a plain pointer to a function.
+
+### 3.6 Other type forms
+
+- `distinct T`: a nominal type with `T`'s representation, not interchangeable
+  with `T`.
+- `?T`: an optional `T`.
+- `$T`: a type parameter (chapter 11).
+- `Name<T, ...>`: a generic instantiation (chapter 11).
+
+---
+
+## 4. The type system
+
+Frost is statically typed with light local inference; every binding, parameter,
+and expression has a compile-time type.
+
+- `:=` infers a local's type from its initializer; `:` gives it explicitly.
+- Function parameter and return types are always explicit.
+- A binary operation requires compatible operand types; integer widths widen to
+  a common width, and a comparison yields `bool`.
+- A call requires the argument count and types to match the signature. Passing
+  an aggregate where a reference is expected, or the reverse, is an error.
+
+Type checking runs on the typed intermediate representation after lowering
+(`src/ir_typecheck.rs`): it validates operand types, call arity, and that a
+non-`void` function returns a value on every path.
+
+---
+
+## 5. Declarations and bindings
+
+A program is a sequence of statements. The top-level meaningful statements are
+declarations: constants (including functions, structs, and enums), externs, and
+imports.
+
+### 5.1 Binding forms
+
+| Form | Meaning |
+| --- | --- |
+| `name := expr` | bind a local, type inferred |
+| `name : Type = expr` | bind a local, type explicit |
+| `mut name := expr` / `mut name : Type = expr` | bind a mutable local |
+| `NAME :: expr` | declare a constant, evaluated once |
+
+Bindings are immutable unless `mut`. A `mut` local is reassigned with `=`.
+
+The parser distinguishes `name : Type = ...` (a typed binding) from
+`name :: ...` (a constant) by one token of lookahead after the first `:`: a
+second `:` means a constant.
+
+### 5.2 Constants and items
+
+`::` declares a constant. Functions, structs, enums, and type aliases are all
+constants:
+
+```
+NAME  :: <expr>                       // value constant
+f     :: fn(params) -> R { body }     // function
+Point :: struct { x: i64, y: i64 }    // struct
+Shape :: enum { A, B { n: i64 } }     // enum
+Meters :: distinct i64                // distinct type
 ```
 
-**Immutable with explicit type:**
-```frost
-x : i64 = 42
-ratio : f64 = 0.5
+A `linear` qualifier may precede `struct` or `enum` (chapter 9).
+
+### 5.3 Externs and imports
+
 ```
-
-**Mutable variables:**
-```frost
-mut counter := 0
-mut value : i64 = 100
-```
-
-Variables are immutable by default. Use `mut` to allow reassignment.
-
-### 3.2 Constant Declarations
-
-Constants use the `::` operator and cannot be reassigned:
-
-```frost
-PI :: 3.14159
-MAX_SIZE :: 1024
-GREETING :: "Hello"
-```
-
-### 3.3 Function Declarations
-
-Functions are first-class values assigned to variables or constants:
-
-```frost
-add := fn(a, b) { a + b }
-
-multiply :: fn(x: i64, y: i64) -> i64 {
-    x * y
-}
-```
-
-### 3.4 Struct Declarations
-
-```frost
-Vec3 :: struct {
-    x: f32,
-    y: f32,
-    z: f32,
-}
-
-Person :: struct {
-    name: str,
-    age: i64,
-}
-```
-
-### 3.5 Enum Declarations
-
-```frost
-Direction :: enum {
-    North,
-    South,
-    East,
-    West,
-}
-
-Status :: enum {
-    Ok,
-    Error,
-    Pending,
-}
+name :: extern fn(params) -> R        // foreign function (chapter 12)
+name :: extern fn(params)             // foreign function returning void
+import "path"                         // bring another source file into scope
 ```
 
 ---
 
-## 4. Expressions
+## 6. Expressions
 
-### 4.1 Primary Expressions
+### 6.1 Primary expressions
 
-**Identifiers:**
-```frost
-x
-myVariable
+Integer, float, string, and boolean literals; identifiers; parenthesized
+expressions `( Expr )`; array literals `[ e, ... ]`.
+
+### 6.2 Operators
+
+Prefix `-` (negate) and `!` (logical not). Binary operators, grouped by the
+precedence in 14.1: `||`, `&&`, `==` `!=`, `<` `<=` `>` `>=`, `|`, `&`, `<<`
+`>>`, `+` `-`, `*` `/` `%`, and the range operators `..` and `..=`. All binary
+operators are left-associative.
+
+### 6.3 References and dereference
+
+- `&expr` shared borrow; `&mut expr` exclusive borrow.
+- `expr^` dereferences a reference or raw pointer to its pointee value and is
+  assignable (`p^ = v`). Member access through a reference to an aggregate is
+  direct (`r.field`); through a raw pointer it is written `p^.field`.
+
+### 6.4 Calls, indexing, and field access
+
+- `f(a, b, ...)` calls a function or function pointer.
+- `a[i]` indexes an array, slice, or pool (for a pool, `i` is a `Handle`).
+- `e.field` accesses a struct field or, on an enum place, a variant field.
+
+### 6.5 Construction
+
+```
+Point { x = 1, y = 2 }                // struct literal (fields use =)
+Shape::Circle { radius = 5 }          // enum variant with payload
+Shape::Player                         // unit variant
 ```
 
-**Literals:**
-```frost
-42
-3.14
-"string"
-true
+Struct and enum-variant construction are recognized only when the operand to the
+left of `{` or `::` is a bare identifier.
+
+### 6.6 `if` expression
+
+```
+if ( Cond ) Block
+if ( Cond ) Block else Block
 ```
 
-**Grouped expressions:**
-```frost
-(x + y) * z
+The condition is parenthesized. `if` is an expression; both arms are blocks and
+their trailing expressions are the value.
+
+### 6.7 `match` expression
+
+```
+match Scrutinee {
+    case Pattern : Expr
+    case Pattern : Block
+    ...
+}
 ```
 
-### 4.2 Function Calls
+An arm is `case`, a pattern, `:`, then an expression or block. There is no
+separator between arms; an arm ends where the next `case` or the closing `}`
+begins. Patterns:
 
-```frost
-add(5, 3)
-print("Hello")
-len(array)
-```
+- Variant, shorthand: `.Variant` or `.Variant { field, field }`, binding each
+  named field to a same-named local.
+- Variant, qualified: `Enum::Variant` with the same optional field list.
+- Value: an integer, float, string, or boolean literal (`case 90:`).
+- Tuple: `( P, P, ... )`.
+- Binding: a bare identifier.
+- Wildcard: `_`.
 
-### 4.3 Field Access
+`match` works over a value or a reference. Matching a value of a `linear` type
+consumes it (chapter 9).
 
-```frost
-point.x
-person.name
-nested.inner.value
-```
+### 6.8 `sizeof`, `comptime`, and `unsafe`
 
-### 4.4 Index Expressions
+- `sizeof(T)` is a compile-time constant.
+- `comptime { ... }` runs a block at compile time; a comptime `for` over a list
+  of types specializes code per type. Comptime drives monomorphization, not a
+  general compile-time interpreter.
+- `unsafe { ... }` is a block whose body may use unchecked operations.
 
-```frost
-array[0]
-matrix[i][j]
-map["key"]
-```
+### 6.9 Ranges
 
-### 4.5 Struct Initialization
-
-```frost
-Point { x = 10, y = 20 }
-Vec3 { x = 1.0, y = 2.0, z = 3.0 }
-```
-
-### 4.6 Array Literals
-
-```frost
-[1, 2, 3]
-[1 + 2, 3 * 4, 5]
-[]
-```
-
-### 4.7 HashMap Literals
-
-```frost
-{ "name": "Alice", "age": 30 }
-{ 1: "one", 2: "two" }
-{}
-```
-
-### 4.8 Function Literals
-
-```frost
-fn(x, y) { x + y }
-fn(n: i64) -> i64 { n * 2 }
-fn(x: f64) -> f64 { x * x }
-```
-
-### 4.9 If Expressions
-
-If expressions return values:
-
-```frost
-result := if (x > 0) { "positive" } else { "non-positive" }
-
-max := if (a > b) { a } else { b }
-```
-
-### 4.10 Address-of Expression
-
-```frost
-&x
-&array[0]
-```
-
-### 4.11 Dereference Expression
-
-```frost
-ptr^
-pointer^
-```
-
-### 4.12 Sizeof Expression
-
-```frost
-sizeof(i64)      // 8
-sizeof(^i32)     // 8 (pointer size)
-sizeof(Vec3)     // Size of struct
-```
-
-### 4.13 Range Expressions
-
-Range expressions are used in for loops:
-
-```frost
-0..10      // 0 to 9 (exclusive end)
-start..end
-```
-
-### 4.14 Scoped Identifiers
-
-For enum variants:
-
-```frost
-Color::Red
-Direction::North
-```
+`a..b` is half-open, `a..=b` inclusive. Ranges appear in `for` and are the
+lowest-binding binary form.
 
 ---
 
-## 5. Statements
+## 7. Statements
 
-### 5.1 Expression Statements
+A block `{ Stmt* }` is a sequence of statements and is itself an expression whose
+value is its trailing expression (or `void`).
 
-Any expression followed by a semicolon:
-
-```frost
-print("hello");
-x + y;
-```
-
-### 5.2 Declaration Statements
-
-```frost
-x := 5;
-mut counter := 0;
-PI :: 3.14;
-```
-
-### 5.3 Assignment Statements
-
-```frost
-x = 10;
-point.x = 5;
-ptr^ = 42;
-```
-
-Assignment requires the target to be mutable or a pointer dereference.
-
-### 5.4 Return Statements
-
-```frost
-return 42
-return value
-return
-```
-
-### 5.5 Defer Statements
-
-Defer executes a statement when the enclosing scope exits (LIFO order):
-
-```frost
-defer print("cleanup")
-defer close(file)
-```
-
-Multiple defers execute in reverse order:
-
-```frost
-defer print("first")   // Executes third
-defer print("second")  // Executes second
-defer print("third")   // Executes first
-```
-
-### 5.6 For Statements
-
-```frost
-for i in 0..10 {
-    print(i)
-}
-
-for x in start..end {
-    // body
-}
-```
-
-### 5.7 Break Statements
-
-Exit the innermost loop immediately:
-
-```frost
-for i in 0..100 {
-    if (i == 10) {
-        break
-    }
-    print(i)
-}
-// Prints 0-9, then exits
-```
-
-### 5.8 Continue Statements
-
-Skip to the next iteration of the innermost loop:
-
-```frost
-for i in 0..10 {
-    if (i % 2 == 0) {
-        continue
-    }
-    print(i)
-}
-// Prints only odd numbers: 1, 3, 5, 7, 9
-```
+- **Expression statement**: an expression evaluated for effect.
+- **Binding**: the forms in 5.1.
+- **Assignment**: `Place = Expr`, where `Place` is a `mut` local, a field, an
+  index, or a dereference.
+- **`return`**: `return` or `return Expr`.
+- **`while`**: `while ( Cond ) Block`.
+- **`for`**: `for name in Expr Block` iterates `name` over the value of `Expr`,
+  normally a range.
+- **`break`**, **`continue`**: loop control.
+- **`defer`**: `defer Stmt` runs `Stmt` at scope exit, LIFO (chapter 9.3).
 
 ---
 
-## 6. Operators
+## 8. Ownership and borrowing
 
-### 6.1 Arithmetic Operators
+Frost is memory-safe without a garbage collector and without lifetimes. The
+borrow rules run after parsing (`src/ownership.rs`).
 
-| Operator | Description | Example |
-|----------|-------------|---------|
-| `+` | Addition | `5 + 3` |
-| `-` | Subtraction | `5 - 3` |
-| `*` | Multiplication | `5 * 3` |
-| `/` | Division | `10 / 2` |
-| `%` | Modulo | `10 % 3` |
+### 8.1 Copy and move
 
-### 6.2 Comparison Operators
+Each type is **copy** or **move**. Scalars, pointers, references, function
+pointers, and handles are copy. Structs, enums, strings, and slices are move. A
+move value is consumed when passed by value, assigned, or returned; using it
+after is a use-after-move error. There is no `Copy`/`Clone` derive and no
+implicit deep copy; a second copy of an aggregate is constructed explicitly.
 
-| Operator | Description | Example |
-|----------|-------------|---------|
-| `==` | Equal | `x == y` |
-| `!=` | Not equal | `x != y` |
-| `<` | Less than | `x < y` |
-| `>` | Greater than | `x > y` |
-| `<=` | Less than or equal | `x <= y` |
-| `>=` | Greater than or equal | `x >= y` |
+### 8.2 Second-class references
 
-### 6.3 Logical Operators
+A reference (`&T` or `&mut T`) cannot be stored in a struct or enum field, placed
+in an array, or returned. Reference *parameters* are allowed. Because a borrow
+cannot escape its call, borrow analysis is scope-local, and Frost has no lifetime
+annotations, lifetime variables, or borrow regions.
 
-| Operator | Description | Example |
-|----------|-------------|---------|
-| `&&` | Logical AND (short-circuiting) | `a && b` |
-| `||` | Logical OR (short-circuiting) | `a || b` |
-| `!` | Logical NOT | `!flag` |
+### 8.3 Borrow exclusivity
 
-Short-circuit evaluation:
-- `&&` evaluates the right operand only if the left is truthy
-- `||` evaluates the right operand only if the left is falsy
+Within one call, a value may be borrowed by any number of shared `&` borrows or
+by exactly one `&mut`, never both at once. Passing the same variable as two
+`&mut` arguments to one call is rejected. This per-call check suffices to prevent
+mutable aliasing precisely because references cannot escape.
 
-```frost
-x > 0 && x < 10       // true if x is in range (1, 9)
-name == "" || len(name) > 100  // true if invalid
-```
+### 8.4 Reference escape through returns
 
-### 6.4 Unary Operators
-
-| Operator | Description | Example |
-|----------|-------------|---------|
-| `-` | Negation | `-x` |
-| `!` | Logical NOT | `!flag` |
-| `&` | Address-of | `&x` |
-
-### 6.5 Postfix Operators
-
-| Operator | Description | Example |
-|----------|-------------|---------|
-| `^` | Dereference | `ptr^` |
-| `()` | Function call | `f(x)` |
-| `[]` | Index | `arr[i]` |
-| `.` | Field access | `obj.field` |
-
-### 6.6 Operator Precedence
-
-From lowest to highest:
-
-1. Range (`..`)
-2. Logical OR (`||`)
-3. Logical AND (`&&`)
-4. Equality (`==`, `!=`)
-5. Comparison (`<`, `>`, `<=`, `>=`)
-6. Additive (`+`, `-`)
-7. Multiplicative (`*`, `/`, `%`)
-8. Unary prefix (`!`, `-`, `&`, `sizeof`)
-9. Postfix (`()`, `[]`, `.`, `^`, `::`)
+A function or `extern` whose return type contains a reference is rejected.
+`Handle<T>` is not a reference and may be returned and stored freely, the
+intended replacement for an escaping borrow.
 
 ---
 
-## 7. Control Flow
+## 9. Linear resources
 
-### 7.1 If Expressions
+### 9.1 The linear rule
 
-Basic if:
-```frost
-if (condition) {
-    // then branch
-}
-```
+A struct or enum declared `linear` must be consumed **exactly once**. The move
+rule gives "at most once"; linearity adds "at least once": a linear value still
+live at the end of its owning scope is a compile error.
 
-If-else:
-```frost
-if (condition) {
-    // then branch
-} else {
-    // else branch
-}
-```
+### 9.2 Consuming
 
-If as expression:
-```frost
-result := if (x > 0) { x } else { -x }
-```
+A linear value is consumed by moving it onward: returning it, passing it by value
+(often to an `extern` that takes ownership across the FFI boundary), or
+`match`ing it. This replaces destructors: cleanup is a tracked obligation, never
+an implicit call, and a `linear enum` returned from a fallible function cannot be
+silently dropped, so errors are non-ignorable by construction.
 
-Else if chains:
-```frost
-if (x > 0) {
-    "positive"
-} else if (x < 0) {
-    "negative"
-} else {
-    "zero"
-}
-```
+### 9.3 `defer`
 
-Multiple conditions:
-```frost
-if (score >= 90) {
-    "A"
-} else if (score >= 80) {
-    "B"
-} else if (score >= 70) {
-    "C"
-} else if (score >= 60) {
-    "D"
-} else {
-    "F"
-}
-```
-
-### 7.2 For Loops
-
-Range-based for loop:
-```frost
-for i in 0..10 {
-    print(i)
-}
-```
-
-The range `start..end` iterates from `start` to `end - 1` (exclusive end).
-
-Nested loops:
-```frost
-for i in 0..10 {
-    for j in 0..10 {
-        // body
-    }
-}
-```
-
-### 7.3 While Loops
-
-Condition-based loops:
-```frost
-mut i := 0;
-while (i < 10) {
-    print(i);
-    i = i + 1;
-}
-```
-
-### 7.4 Break and Continue
-
-**Break** exits the innermost loop:
-```frost
-for i in 0..100 {
-    if (i == 10) {
-        break  // Exit loop when i reaches 10
-    }
-}
-```
-
-**Continue** skips to the next iteration:
-```frost
-for i in 0..10 {
-    if (i % 2 == 0) {
-        continue  // Skip even numbers
-    }
-    print(i)  // Only prints odd numbers
-}
-```
-
-### 7.5 Match Expressions
-
-Match expressions provide pattern matching:
-
-```frost
-result := match x {
-    case 1: "one"
-    case 2: "two"
-    case _: "other"
-}
-```
-
-Match on enum variants:
-
-```frost
-Result :: enum {
-    Ok { value: i64 },
-    Err { code: i64 },
-}
-
-msg := match result {
-    case .Ok { value }: value
-    case .Err { code }: 0 - code
-}
-```
-
-### 7.6 Pattern Matching
-
-Patterns can be:
-
-**Literals:**
-```frost
-match x {
-    case 0: "zero"
-    case 1: "one"
-    case _: "other"
-}
-```
-
-**Wildcards:**
-```frost
-match x {
-    case _: "anything"
-}
-```
-
-**Identifiers (binding):**
-```frost
-match x {
-    case n: n * 2  // Binds x to n
-}
-```
-
-**Enum variants:**
-```frost
-match result {
-    case .Ok { value }: value
-    case .Err { code }: code
-}
-```
-
-**Tuples:**
-```frost
-match (a, b) {
-    case (0, 0): "both zero"
-    case (0, _): "a is zero"
-    case (_, 0): "b is zero"
-    case (_, _): "neither zero"
-}
-```
-
-### 7.7 Tuple Expressions
-
-Tuples group multiple values:
-
-```frost
-pair := (1, 2)
-triple := ("hello", 42, true)
-```
-
-Tuples are commonly used with match for multi-value pattern matching:
-
-```frost
-for i in 1..101 {
-    result := match (i % 3, i % 5) {
-        case (0, 0): "FizzBuzz"
-        case (0, _): "Fizz"
-        case (_, 0): "Buzz"
-        case (_, _): i
-    };
-    print(result);
-}
-```
+`defer` runs a statement at scope exit in LIFO order, for local best-effort
+cleanup. Owned resources should be `linear` types, which the compiler checks,
+rather than relying on `defer`.
 
 ---
 
-## 8. Functions
+## 10. Handles, pools, and the memory model
 
-### 8.1 Function Syntax
+### 10.1 Pools
 
-Anonymous function:
-```frost
-fn(parameters) { body }
-fn(parameters) -> return_type { body }
-```
+A pool is a contiguous, fixed-capacity arena of same-typed elements addressed by
+`Handle<T>` rather than pointer. The pool runtime (`pool_new`, `pool_alloc`,
+`pool_get`, `pool_free`, `pool_contains`, `pool_destroy`) is provided by
+`runtime/frost_runtime.c` and declared with `extern fn`; a typed library wraps it
+so `make_pool($T, capacity)` and `pool[handle]` read idiomatically.
 
-Named function (via binding):
-```frost
-add := fn(a, b) { a + b }
+### 10.2 `pool[handle]` is a place
 
-multiply :: fn(x: i64, y: i64) -> i64 {
-    x * y
-}
-```
+`pool[handle]` is a place: read a field, write a field, copy the element out, or
+take a `&`/`&mut` of it. The borrow obtained is second-class and cannot escape
+the pool operation.
 
-### 8.2 Typed Functions
+### 10.3 Generational safety
 
-Functions with type annotations:
+A handle carries the generation of the slot it was minted for. Freeing a slot
+increments its generation. A lookup whose handle generation does not match the
+slot's current generation fails rather than returning the slot's new occupant, so
+a stale handle can never read or write freed-and-reused data.
 
-```frost
-fn(x: i64, y: i64) -> i64 { x + y }
+### 10.4 Bounds checking
 
-operation :: fn(a: i64, b: i64) -> i64 {
-    return a * b
-}
-```
+Every fixed-array index is checked against the statically known length; an
+out-of-range index aborts (`frost_bounds_check`). There is no unchecked-index
+form.
 
-### 8.3 Parameters
+### 10.5 The six guarantees
 
-Untyped parameters:
-```frost
-fn(a, b) { a + b }
-```
+| Guarantee | Mechanism |
+| --- | --- |
+| No dangling references | references are second-class (8.2) |
+| No use-after-move | move checking (8.1) |
+| No mutable aliasing | per-call borrow exclusivity (8.3) |
+| No leaked resources | linear consume-exactly-once (9.1) |
+| No use-after-free of pooled data | generational handles (10.3) |
+| No out-of-bounds array access | bounds checking (10.4) |
 
-Typed parameters:
-```frost
-fn(a: i64, b: i64) { a + b }
-```
-
-### 8.4 Return Types
-
-Implicit return (last expression):
-```frost
-fn(x) { x * 2 }    // Returns x * 2
-```
-
-Explicit return type:
-```frost
-fn(x: i64) -> i64 { x * 2 }
-```
-
-Explicit return statement:
-```frost
-fn(x) {
-    if (x < 0) { return 0 }
-    x * 2
-}
-```
-
-### 8.5 Closures
-
-Functions capture variables from enclosing scopes:
-
-```frost
-make_adder := fn(n) {
-    fn(x) { x + n }    // Captures n
-}
-
-add5 := make_adder(5)
-print(add5(3))         // 8
-```
-
-### 8.6 Recursion
-
-Functions can call themselves:
-
-```frost
-factorial := fn(n) {
-    if (n <= 1) { 1 } else { n * factorial(n - 1) }
-}
-
-fib := fn(n) {
-    if (n < 2) { n } else { fib(n - 1) + fib(n - 2) }
-}
-```
+Raw pointers (`^T`) are outside these guarantees by design.
 
 ---
 
-## 9. Structs
+## 11. Generics and compile-time specialization
 
-### 9.1 Declaration
+### 11.1 Type parameters
 
-```frost
-Point :: struct {
-    x: i64,
-    y: i64,
-}
+A type parameter is written `$T`. It may appear on a function's parameters and on
+a struct declaration:
 
-Vec3 :: struct {
-    x: f32,
-    y: f32,
-    z: f32,
-}
+```
+Pair :: struct($T: Type) { first: T, second: T }
+make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
 ```
 
-### 9.2 Initialization
+In a parameter or struct type-parameter position, `$` IDENT `:` is followed by
+the contextual word `Type` (or the keyword `type`).
 
-```frost
-p := Point { x = 10, y = 20 }
-v := Vec3 { x = 1.0, y = 2.0, z = 3.0 }
+### 11.2 Monomorphization
+
+Generics specialize at compile time; each concrete instantiation compiles to its
+own code, with no runtime dispatch and no boxing. Type parameters are erased from
+the specialized ABI once monomorphization chooses concrete types.
+
+### 11.3 Explicit type arguments
+
+There is no turbofish. A type is passed as an ordinary argument by writing `$`
+before it, which forms a type value:
+
+```
+make_pool :: fn($T: Type, capacity: i64) -> ^u8 { pool_new(capacity, sizeof(T)) }
+world := make_pool($Entity, 16)
 ```
 
-### 9.3 Field Access
+### 11.4 Nested generic arguments
 
-```frost
-x_value := p.x
-y_value := p.y
-```
+Generic arguments are delimited by `<` and `>`. Because `>>` lexes as one shift
+token, the parser splits it when it closes two nested argument lists, so
+`Pair<Pair<i64>>` parses correctly. This splitting is wired into the `Handle<T>`
+and `Name<...>` type forms.
 
-### 9.4 Field Assignment
+### 11.5 No bounds
 
-```frost
-p.x = 100
-p.y = 200
-```
-
-Note: Struct field assignment modifies the variable holding the struct.
+There are no traits, and therefore no trait bounds, `where` clauses, associated
+types, or dynamic dispatch. A generic body type-checks once specialized. To
+abstract over an operation, pass a function pointer.
 
 ---
 
-## 10. Enums
+## 12. The foreign function interface
 
-### 10.1 Simple Enums
+An `extern fn` declares a function with C linkage:
 
-Simple enums have variants without data:
-
-```frost
-Color :: enum {
-    Red,
-    Green,
-    Blue,
-}
-
-Status :: enum {
-    Ok,
-    Error,
-    Pending,
-}
+```
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+malloc :: extern fn(size: i64) -> ^u8
 ```
 
-### 10.2 Tagged Unions (Enums with Data)
+Frost scalar types map to the natural C types, `^T` is a C pointer, and
+aggregates pass by the platform ABI. String literals denote NUL-terminated bytes
+for `^i8` parameters.
 
-Enum variants can carry named fields:
-
-```frost
-Result :: enum {
-    Ok { value: i64 },
-    Err { code: i64, message: str },
-    None,
-}
-
-Shape :: enum {
-    Circle { radius: f64 },
-    Rectangle { width: f64, height: f64 },
-    Point,
-}
-```
-
-### 10.3 Variant Access
-
-```frost
-color := Color::Red
-status := Status::Ok
-```
-
-### 10.4 Tagged Union Construction
-
-```frost
-r := Result::Ok { value = 42 }
-err := Result::Err { code = 404, message = "Not found" }
-circle := Shape::Circle { radius = 5.0 }
-```
-
-### 10.5 Representation
-
-Enum variants are represented as consecutive integers starting from 0:
-- `Color::Red` = 0
-- `Color::Green` = 1
-- `Color::Blue` = 2
-
-Tagged unions are represented as a tag (u32) plus field values.
+The FFI is asymmetric: **Frost calls C, but C does not call Frost.** There is no
+stable exported ABI and no attribute to expose a Frost function to a C caller.
+The emitted C is an internal lowering, not an interface. This keeps the backend
+simple.
 
 ---
 
-## 11. Pointers and References
+## 13. Grammar
 
-### 11.1 Pointer Types
+This chapter is the complete syntax of the specified language. Legacy forms the
+current parser also accepts are listed in 13.9 and are not part of the language.
 
-```frost
-p : ^i64       // Pointer to i64
-pp : ^^i64     // Pointer to pointer to i64
+### 13.1 Program and statements
+
+```
+Program   = Statement*
+
+Statement =
+      "return" Expr? ";"?
+    | "defer" Statement
+    | "for" IDENT "in" Expr Block
+    | "while" "(" Expr ")" Block
+    | "break" ";"?
+    | "continue" ";"?
+    | "import" STRING ";"?
+    | "mut" IDENT ( ":=" Expr | ":" Type "=" Expr ) ";"?
+    | IDENT ":=" Expr ";"?
+    | IDENT ":" Type "=" Expr ";"?           // lookahead: ":" not followed by ":"
+    | IDENT "::" ConstBody ";"?
+    | Expr ( "=" Expr )? ";"?                 // expression statement or assignment
 ```
 
-### 11.2 Reference Types
+The `mut` / `:=` / `: =` / `::` forms are selected by the token after the
+identifier: `:=` (inferred binding), `:` then a non-`:` (typed binding), `::`
+(constant). The last alternative covers expression statements and assignments to
+a place.
 
-References are safe borrows of values:
+### 13.2 Constants and items
 
-```frost
-r : &i64       // Immutable reference to i64
-mr : &mut i64  // Mutable reference to i64
+```
+ConstBody =
+      "linear"? "struct" GenericParams? "{" StructFields? "}"
+    | "linear"? "enum" "{" EnumVariants? "}"
+    | "distinct" Type
+    | "extern" "fn" "(" Params? ")" ( "->" Type )?
+    | Expr                                    // function literal, or a value
+
+GenericParams = "(" TypeParam ( "," TypeParam )* ")"
+TypeParam     = "$" IDENT ":" ( "Type" | "type" )
+
+StructFields  = StructField ( "," StructField )* ","?
+StructField   = IDENT ":" Type
+
+EnumVariants  = EnumVariant ( "," EnumVariant )* ","?
+EnumVariant   = IDENT ( "{" ( IDENT ":" Type ( "," IDENT ":" Type )* )? "}" )?
+
+Params        = Param ( "," Param )*
+Param         = "$" IDENT ":" ( "Type" | "type" )
+              | IDENT ( ":" Type )?
 ```
 
-### 11.3 Borrow Operators
+A `Name :: fn(...) { ... }` item is the `Expr` alternative of `ConstBody`, whose
+expression is a function literal (13.6).
 
-**Immutable borrow:**
-```frost
-x := 42
-r := &x        // r is an immutable reference to x
-print(r^)      // Read through reference
+### 13.3 Blocks
+
+```
+Block = "{" Statement* "}"
 ```
 
-**Mutable borrow:**
-```frost
-mut y := 100
-mr := &mut y   // mr is a mutable reference to y
-mr^ = 200      // Write through mutable reference
+The trailing expression of a block, if any, is its value.
+
+### 13.4 Expressions
+
+Expressions are parsed by precedence climbing. `Expr` denotes an expression at
+the lowest precedence; the operator table in 14.1 governs grouping.
+
+```
+Expr    = Prefix ( InfixOp Expr )*           // resolved by precedence (14.1)
+
+Prefix =
+      Primary
+    | "-" Expr
+    | "!" Expr
+    | "&" "mut"? Expr                         // borrow / mutable borrow
+    | "$" Type                                // type value (11.3)
+    | "sizeof" "(" Type ")"
+
+Primary =
+      INTEGER | FLOAT | STRING | "true" | "false"
+    | IDENT
+    | "(" Grouped                             // group, tuple, or function literal
+    | "[" ( Expr ( "," Expr )* )? "]"         // array literal
+    | IfExpr
+    | MatchExpr
+    | "fn" "(" Params? ")" ( "->" Type )? Block
+    | "comptime" ( Block | ComptimeFor )
+    | "unsafe" Block
 ```
 
-### 11.4 Dereference Operator
+Postfix and infix forms, applied by the precedence loop:
 
-The dereference operator is postfix `^`:
+```
+InfixOp = "||" | "&&" | "==" | "!=" | "<" | "<=" | ">" | ">="
+        | "|"  | "&"  | "<<" | ">>" | "+" | "-" | "*" | "/" | "%"
 
-```frost
-value := r^    // Read value at reference/pointer
-mr^ = 100      // Write value through mutable reference/pointer
+Postfix =
+      Expr ".." Expr                          // range (half-open)
+    | Expr "..=" Expr                         // range (inclusive)
+    | Expr "[" Expr "]"                       // index
+    | Expr "(" ( Expr ( "," Expr )* )? ")"    // call
+    | Expr "." IDENT                          // field access
+    | Expr "^"                                // dereference (assignable place)
+    | IDENT "{" StructInit? "}"              // struct literal (bare identifier)
+    | IDENT "::" IDENT ( "{" StructInit? "}" )?   // enum variant (bare identifier)
+
+StructInit = IDENT "=" Expr ( "," IDENT "=" Expr )* ","?
 ```
 
-### 11.5 Pointer Arithmetic
+`Expr "^"` and the struct/enum-init forms are only entered when the left operand
+is the appropriate shape (a place for `^`, a bare identifier for `{`/`::`). The
+struct-literal `{` is disambiguated from a `match` body by checking that the
+token after `{` is not `case`.
 
-Pointer arithmetic is not directly supported. Use array indexing instead.
+### 13.5 `if` and `match`
+
+```
+IfExpr    = "if" "(" Expr ")" Block ( "else" Block )?
+
+MatchExpr = "match" Expr "{" MatchArm* "}"
+MatchArm  = "case" Pattern ":" ( Block | Expr )
+
+Pattern =
+      "_"
+    | INTEGER | FLOAT | STRING | "true" | "false"
+    | "." IDENT ( "{" IDENT ( "," IDENT )* "}" )?
+    | IDENT "::" IDENT ( "{" IDENT ( "," IDENT )* "}" )?
+    | "(" Pattern ( "," Pattern )* ")"
+    | IDENT
+```
+
+### 13.6 Parenthesized groups and function literals
+
+A `(` begins one of three things, chosen by a bounded look-ahead scan
+(`looks_like_function_params`, at most a fixed number of tokens, depth-tracked):
+
+```
+Grouped =
+      ")" ( "->" Type )? Block               // zero-parameter function literal
+    | ")"                                     // empty tuple  ()
+    | Params ")" ( ( "->" Type )? Block )?    // function literal (if a body follows)
+    | Expr ( "," Expr )* ")"                  // tuple, or a parenthesized expression
+```
+
+A `:` at group depth zero marks a parameter list. When a parameter-shaped group
+is not followed by a body, its contents are reinterpreted as expressions (a
+single expression, or a tuple).
+
+### 13.7 Types
+
+```
+Type =
+      "i8" | "i16" | "i32" | "i64" | "isize"
+    | "u8" | "u16" | "u32" | "u64" | "usize"
+    | "f32" | "f64" | "bool" | "str" | "void"
+    | "^" Type                               // raw pointer
+    | "&" "mut"? Type                        // reference
+    | "[" "]" Type                           // slice
+    | "[" INTEGER "]" Type                   // array (size first)
+    | "[" Type ";" INTEGER "]"               // array (element first)
+    | "fn" "(" ( Type ( "," Type )* )? ")" ( "->" Type )?
+    | "distinct" Type
+    | "?" Type
+    | "Handle" "<" Type ">"
+    | IDENT "<" Type ( "," Type )* ">"       // generic instantiation
+    | IDENT                                  // named type
+    | "$" IDENT                              // type parameter
+```
+
+A type is a single prefix-constructed form; nesting comes from the recursive
+constructors (`^`, `&`, `[]`, `?`, `distinct`, `fn`), not a postfix loop. Closing
+`>` in the generic forms accepts a split `>>` (11.4).
+
+### 13.8 Comparison and equality precedence
+
+The precedence ladder (14.1) places comparison tighter than equality and the
+bitwise operators tighter than comparison, which differs from C. Write explicit
+parentheses in mixed expressions; a conformance-minded style parenthesizes any
+combination of `==`/`!=`, the comparisons, and the bitwise operators.
+
+### 13.9 Legacy forms (not part of the specified language)
+
+The current parser also accepts, for the bytecode VM: the `let` binding keyword;
+hashmap literals `{ key : value, ... }`; capturing function values used as
+closures; `push_context` and `push_allocator` statements; `context` expressions;
+`using`, `typename(...)`, and interpolated identifiers/constants with `#`. These
+are outside this specification and slated for removal.
 
 ---
 
-## 12. Ownership and Borrowing
-
-Frost implements an ownership system inspired by Rust, providing memory safety without garbage collection.
-
-### 12.1 Ownership Rules
-
-1. Each value has a single owner (the variable that holds it)
-2. When the owner goes out of scope, the value is dropped
-3. Ownership can be transferred (moved) to another variable
-
-### 12.2 Copy vs Move Types
-
-**Copy types** are duplicated when assigned or passed to functions:
-- All primitive types: `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `f32`, `f64`, `bool`
-- References: `&T`, `&mut T`
-- Pointers: `^T`
-- Function types: `fn(...) -> T`
-
-```frost
-x := 42
-y := x     // x is copied, both x and y are valid
-print(x)   // OK
-print(y)   // OK
-```
-
-**Move types** transfer ownership when assigned or passed:
-- Strings: `str`
-- Structs
-- Enums
-- Arrays and slices
-
-```frost
-Point :: struct { x: i64, y: i64 }
-
-p := Point { x = 10, y = 20 }
-q := p     // p is moved to q
-// print(p.x)  // ERROR: use of moved value 'p'
-print(q.x)    // OK
-```
-
-### 12.3 Borrowing Rules
-
-Borrowing allows temporary access to a value without taking ownership:
-
-1. **Multiple immutable borrows are allowed:**
-```frost
-x := 42
-r1 := &x
-r2 := &x   // OK: multiple immutable borrows
-print(r1^ + r2^)
-```
-
-2. **Mutable borrows are exclusive:**
-```frost
-mut x := 42
-r := &mut x
-// s := &mut x  // ERROR: cannot borrow as mutable more than once
-// t := &x      // ERROR: cannot borrow as immutable while mutably borrowed
-```
-
-3. **Cannot borrow moved values:**
-```frost
-Point :: struct { x: i64, y: i64 }
-take :: fn(p: Point) { print(p.x) }
-
-p := Point { x = 1, y = 2 }
-take(p)     // p is moved
-// r := &p  // ERROR: cannot borrow moved value
-```
-
-4. **Mutable borrows require mutable variables:**
-```frost
-x := 42       // immutable
-// r := &mut x  // ERROR: cannot mutably borrow immutable variable
-
-mut y := 42   // mutable
-r := &mut y   // OK
-```
-
-5. **References are second-class citizens:**
-```frost
-// ERROR: functions cannot return references
-bad :: fn() -> &i64 {
-    x := 42
-    return &x  // would be dangling
-}
-
-// ERROR: cannot store references in structs
-BadStruct :: struct {
-    ref: &i64,  // ERROR
-}
-
-// ERROR: cannot store references in arrays
-refs := [&a, &b, &c];  // ERROR
-
-// OK: return owned values instead
-good :: fn() -> i64 {
-    x := 42
-    return x
-}
-
-// OK: functions can accept references as parameters
-read :: fn(r: &i64) -> i64 {
-    r^
-}
-
-// OK: use Handle<T> for persistent references
-entities : Pool<Entity> = Pool::new(1024);
-handle := entities.alloc(entity);  // Can be stored, returned, etc.
-```
-
-This restriction ensures memory safety without requiring lifetime annotations.
-
-### 12.4 Scope-based Lifetimes
-
-Borrows are valid until the end of their scope:
-
-```frost
-mut x := 10
-{
-    r := &x      // borrow starts
-    print(r^)
-}                // borrow ends here
-x = 20           // OK: no active borrows
-```
-
-### 12.5 Field Access and Ownership
-
-Accessing fields of a struct does not move the struct:
-
-```frost
-Point :: struct { x: i64, y: i64 }
-
-p := Point { x = 10, y = 20 }
-sum := p.x + p.y   // OK: field access doesn't move
-print(p.x)         // OK: p is still valid
-```
-
-### 12.6 Automatic Drop
-
-Values that implement drop are automatically cleaned up when they go out of scope:
-
-```frost
-{
-    s := some_struct();   // s is created
-    // use s...
-}                         // s is automatically dropped here
-```
-
-In loops, values defined within the loop body are dropped at the end of each iteration:
-
-```frost
-for i in 0..10 {
-    temp := create_value()   // created
-    use(temp)
-}                            // temp dropped each iteration
-```
-
-### 12.7 Unsafe Blocks
-
-Unsafe blocks disable certain safety checks:
-
-```frost
-result := unsafe {
-    // Inside unsafe:
-    // - Can return references from functions
-    // - Other reference restrictions relaxed
-    dangerous_operation()
-}
-```
-
-Unsafe blocks should be used sparingly and only when necessary for FFI or low-level operations.
-
----
-
-## 13. Arrays and Collections
-
-### 13.1 Array Literals
-
-```frost
-numbers := [1, 2, 3, 4, 5]
-empty := []
-mixed := [1 + 2, 3 * 4]
-```
-
-### 13.2 Array Indexing
-
-```frost
-first := numbers[0]
-last := numbers[len(numbers) - 1]
-```
-
-### 13.3 HashMap Literals
-
-```frost
-map := { "name": "Alice", "city": "Boston" }
-scores := { "alice": 100, "bob": 85 }
-empty_map := {}
-```
-
-### 13.4 HashMap Indexing
-
-```frost
-name := map["name"]
-score := scores["alice"]
-```
-
----
-
-## 14. Built-in Functions
-
-### 14.1 Array Functions
-
-| Function | Description | Example |
-|----------|-------------|---------|
-| `len(array)` | Returns length | `len([1,2,3])` = 3 |
-| `first(array)` | Returns first element | `first([1,2,3])` = 1 |
-| `last(array)` | Returns last element | `last([1,2,3])` = 3 |
-| `rest(array)` | Returns all but first | `rest([1,2,3])` = [2,3] |
-| `push(array, value)` | Appends value | `push([1,2], 3)` = [1,2,3] |
-
-### 14.2 I/O Functions
-
-| Function | Description | Example |
-|----------|-------------|---------|
-| `print(value)` | Prints to stdout | `print("hello")` |
-
-### 14.3 Memory Management
-
-Memory is managed automatically through ownership and the Drop system (see Section 12). There are no manual allocation or deallocation functions - values are allocated when created and freed automatically when they go out of scope.
-
----
-
-## 15. Foreign Function Interface
-
-### 15.1 Extern Function Declarations
-
-External C functions can be declared using `extern fn`:
-
-```frost
-puts :: extern fn(s: ^i8) -> i32
-printf :: extern fn(fmt: ^i8) -> i32
-malloc :: extern fn(size: u64) -> ^u8
-free :: extern fn(ptr: ^u8)
-```
-
-When compiled to native code, these link against the C library:
-
-```frost
-puts :: extern fn(s: ^i8) -> i32
-
-main :: fn() -> i64 {
-    puts("Hello from Frost!");
-    0
-}
-```
-
-Compile and link:
-```bash
-frost --link -o hello hello.frost
-./hello
-```
-
-### 15.2 Native Function Registration (Bytecode VM)
-
-Native functions are registered from the host language (Rust):
-
-```rust
-let mut registry = NativeRegistry::new();
-
-registry.register("sin", 1, |args, _handles| {
-    let value = args[0].as_f64();
-    Ok(Value64::Float(value.sin()))
-});
-
-registry.register("custom_add", 2, |args, _handles| {
-    let a = args[0].as_i64();
-    let b = args[1].as_i64();
-    Ok(Value64::Integer(a + b))
-});
-```
-
-### 15.2 Calling Native Functions
-
-From Frost code, native functions are called like regular functions:
-
-```frost
-result := sin(3.14159)
-sum := custom_add(10, 20)
-```
-
-### 15.3 Handle Registry
-
-For opaque native objects:
-
-```rust
-// Store a native object
-let handle = handles.store(MyNativeType { ... });
-
-// Retrieve later
-if let Some(obj) = handles.get::<MyNativeType>(handle) {
-    // Use obj
-}
-
-// Free when done
-handles.free(handle);
-```
-
-### 15.4 Value Marshaling
-
-All values are passed as `Value64`:
-
-| Frost Type | Value64 Variant |
-|------------|-----------------|
-| Integer | `Value64::Integer(i64)` |
-| Float | `Value64::Float(f64)` |
-| Boolean | `Value64::Bool(bool)` |
-| Null | `Value64::Null` |
-| Heap objects | `Value64::HeapRef(u32)` |
-
----
-
-## 16. Runtime Semantics
-
-### 16.1 Execution Model
-
-Frost supports two execution modes:
-
-**Bytecode VM** (default):
-- Interpreted execution via stack-based virtual machine
-- Full feature support including arenas, pools, handles
-- Good for development and REPL
-
-**Native Compilation** (via Cranelift):
-- Compiles to native machine code
-- Produces real executables
-- Links against libc for I/O
-
-```bash
-# Bytecode VM (default)
-frost program.frost
-
-# Native compilation
-frost --native -o program.o program.frost    # Object file
-frost --link -o program program.frost        # Executable
-```
-
-### 16.2 Bytecode VM Details
-
-The bytecode VM provides:
-- **Stack**: 2,048 value slots
-- **Globals**: 65,536 variable slots
-- **Call frames**: 1,024 maximum depth
-
-### 16.3 Value Representation
-
-All values are 64 bits:
+## 14. Appendix
+
+### 14.1 Operator precedence
+
+Lowest to highest binding; all binary operators are left-associative. This table
+is normative and matches the reference parser's precedence mapping.
+
+| Level | Operators | Notes |
+| --- | --- | --- |
+| Range | `..` `..=` | range construction |
+| LogicalOr | `\|\|` | |
+| LogicalAnd | `&&` | tighter than `\|\|` |
+| Equals | `==` `!=` | |
+| Comparison | `<` `<=` `>` `>=` | tighter than equality |
+| BitwiseOr | `\|` | |
+| BitwiseAnd | `&` | |
+| Shift | `<<` `>>` | |
+| Sum | `+` `-` | |
+| Product | `*` `/` `%` | |
+| Prefix | `-` `!` `&` `&mut` | unary |
+| Call / Index / Access | `f(...)` `a[i]` `.` `^` `::` | tightest |
+
+### 14.2 Keywords
+
+Specified language:
 
 ```
-Value64:
-  - Integer(i64)      64-bit signed integer
-  - Float(f64)        64-bit floating point
-  - Bool(bool)        Boolean
-  - Null              Null value
-  - HeapRef(u32)      Reference to heap object
+fn struct enum match case if else while for in mut return break continue
+defer extern import linear distinct comptime unsafe sizeof
 ```
 
-### 16.4 Heap Objects
+Primitive type names: `i8 i16 i32 i64 isize u8 u16 u32 u64 usize f32 f64 bool
+str void`. Wildcard: `_`. Legacy reserved words: `let using type typename context
+push_context push_allocator`.
 
-Complex values are heap-allocated:
+### 14.3 String escapes
 
-- `String` - String data
-- `Array` - Dynamic array of values
-- `HashMap` - Key-value map
-- `Closure` - Function with captured variables
-- `Struct` - Struct instance with fields
-- `NativeFunction` - FFI function reference
-- `NativeHandle` - Opaque native object
+`\n` `\t` `\r` `\0` `\\` `\"` `\'`. Any other escape is an error.
 
-### 16.5 Truthiness
+### 14.4 Related documents
 
-Values evaluate to boolean in conditions:
-
-| Value | Truthy |
-|-------|--------|
-| `true` | Yes |
-| `false` | No |
-| `null` | No |
-| Integer 0 | No |
-| Other integers | Yes |
-| All other values | Yes |
-
-### 16.6 Mutability
-
-Variables are immutable by default:
-
-```frost
-x := 5
-x = 10      // ERROR: cannot assign to immutable variable
-
-mut y := 5
-y = 10      // OK
-```
-
-### 16.7 Scope
-
-Variables are lexically scoped:
-
-```frost
-x := 1
-{
-    x := 2    // Shadows outer x
-    print(x)  // 2
-}
-print(x)      // 1
-```
-
-### 16.8 Defer Execution
-
-Defer statements execute in LIFO order when scope exits:
-
-```frost
-{
-    defer print("A")
-    defer print("B")
-    defer print("C")
-    // Prints: C, B, A when block exits
-}
-```
-
----
-
-## 17. Grammar Summary
-
-```ebnf
-program        = statement* ;
-
-statement      = let_statement
-               | const_statement
-               | struct_decl
-               | enum_decl
-               | return_statement
-               | defer_statement
-               | for_statement
-               | break_statement
-               | continue_statement
-               | assignment
-               | expression_stmt ;
-
-break_statement = "break" ";" ;
-continue_statement = "continue" ";" ;
-
-let_statement  = ["mut"] IDENT (":=" expression | ":" type "=" expression) ";" ;
-const_statement = IDENT "::" expression ";" ;
-struct_decl    = IDENT "::" "struct" "{" struct_fields "}" ;
-enum_decl      = IDENT "::" "enum" "{" enum_variants "}" ;
-enum_variant   = IDENT ["{" struct_fields "}"] ;
-return_statement = "return" [expression] ;
-defer_statement = "defer" statement ;
-for_statement  = "for" IDENT "in" range "{" statement* "}" ;
-assignment     = lvalue "=" expression ";" ;
-expression_stmt = expression ";" ;
-
-expression     = if_expr
-               | fn_expr
-               | match_expr
-               | infix_expr ;
-
-if_expr        = "if" "(" expression ")" block ["else" (if_expr | block)] ;
-fn_expr        = "fn" "(" [params] ")" ["->" type] block ;
-match_expr     = "match" expression "{" match_case+ "}" ;
-match_case     = "case" pattern ":" (block | expression) ;
-
-pattern        = "_"
-               | literal
-               | IDENT
-               | "." IDENT ["{" bindings "}"]
-               | IDENT "::" IDENT ["{" bindings "}"]
-               | "(" pattern ("," pattern)* ")" ;
-
-bindings       = IDENT ("," IDENT)* ;
-
-infix_expr     = prefix_expr (binary_op prefix_expr)* ;
-prefix_expr    = unary_op* postfix_expr ;
-postfix_expr   = primary (call_args | index | "." IDENT | "^")* ;
-
-primary        = IDENT
-               | INTEGER
-               | FLOAT
-               | STRING
-               | "true" | "false"
-               | "(" expression ")"
-               | "(" expression "," expression+ ")"
-               | array_literal
-               | hashmap_literal
-               | struct_init
-               | scoped_ident
-               | enum_variant_init
-               | "sizeof" "(" type ")"
-               | "&" expression
-               | "&" "mut" expression ;
-
-array_literal  = "[" [expression ("," expression)*] "]" ;
-hashmap_literal = "{" [pair ("," pair)*] "}" ;
-struct_init    = IDENT "{" [field_init ("," field_init)*] "}" ;
-enum_variant_init = IDENT "::" IDENT "{" [field_init ("," field_init)*] "}" ;
-scoped_ident   = IDENT "::" IDENT ;
-
-range          = expression ".." expression ;
-call_args      = "(" [expression ("," expression)*] ")" ;
-index          = "[" expression "]" ;
-
-type           = primitive_type
-               | "^" type
-               | "&" type
-               | "&" "mut" type
-               | "[" [INTEGER] "]" type
-               | "fn" "(" [type_list] ")" ["->" type]
-               | IDENT ;
-
-primitive_type = "i8" | "i16" | "i32" | "i64"
-               | "u8" | "u16" | "u32" | "u64"
-               | "f32" | "f64"
-               | "bool" | "str" | "void" ;
-
-binary_op      = "+" | "-" | "*" | "/" | "%"
-               | "==" | "!=" | "<" | ">" | "<=" | ">="
-               | "&&" | "||"
-               | ".." ;
-
-unary_op       = "-" | "!" | "&" ;
-
-block          = "{" statement* [expression] "}" ;
-```
-
----
-
-## Appendix A: Example Programs
-
-### A.1 Hello World
-
-```frost
-print("Hello, World!")
-```
-
-### A.2 Factorial
-
-```frost
-factorial := fn(n) {
-    if (n <= 1) { 1 } else { n * factorial(n - 1) }
-}
-
-print(factorial(5))  // 120
-```
-
-### A.3 FizzBuzz
-
-Using match with tuple patterns:
-
-```frost
-for i in 1..101 {
-    result := match (i % 3, i % 5) {
-        case (0, 0): "FizzBuzz"
-        case (0, _): "Fizz"
-        case (_, 0): "Buzz"
-        case (_, _): i
-    };
-    print(result);
-}
-```
-
-Using if-else (alternative):
-
-```frost
-for i in 1..101 {
-    if (i % 15 == 0) {
-        print("FizzBuzz")
-    } else if (i % 3 == 0) {
-        print("Fizz")
-    } else if (i % 5 == 0) {
-        print("Buzz")
-    } else {
-        print(i)
-    }
-}
-```
-
-### A.4 Higher-Order Functions
-
-```frost
-make_adder := fn(n) {
-    fn(x) { x + n }
-}
-
-add5 := make_adder(5)
-add10 := make_adder(10)
-
-print(add5(3))   // 8
-print(add10(3))  // 13
-```
-
-### A.5 Structs
-
-```frost
-Point :: struct {
-    x: i64,
-    y: i64,
-}
-
-distance_squared := fn(p: Point) -> i64 {
-    p.x * p.x + p.y * p.y
-}
-
-origin := Point { x = 0, y = 0 }
-p := Point { x = 3, y = 4 }
-
-print(distance_squared(p))  // 25
-```
-
-### A.6 Working with Arrays
-
-```frost
-numbers := [1, 2, 3, 4, 5]
-
-print(len(numbers))    // 5
-print(first(numbers))  // 1
-print(last(numbers))   // 5
-
-more := push(numbers, 6)
-print(len(more))       // 6
-```
-
-### A.7 Defer for Cleanup
-
-```frost
-process := fn() {
-    print("Starting")
-    defer print("Cleanup 1")
-    defer print("Cleanup 2")
-    print("Working")
-    42
-}
-
-result := process()
-// Output:
-// Starting
-// Working
-// Cleanup 2
-// Cleanup 1
-```
-
-### A.8 Pointers
-
-```frost
-swap := fn(a: ^i64, b: ^i64) {
-    temp := a^
-    a^ = b^
-    b^ = temp
-}
-
-mut x := 10
-mut y := 20
-swap(&x, &y)
-print(x)  // 20
-print(y)  // 10
-```
-
-### A.9 Tagged Unions with Pattern Matching
-
-```frost
-Result :: enum {
-    Ok { value: i64 },
-    Err { code: i64 },
-}
-
-unwrap := fn(r: Result) -> i64 {
-    match r {
-        case .Ok { value }: value
-        case .Err { code }: {
-            print("Error occurred");
-            0 - code
-        }
-    }
-}
-
-success := Result::Ok { value = 42 }
-failure := Result::Err { code = 404 }
-
-print(unwrap(success))  // 42
-print(unwrap(failure))  // Error occurred, -404
-```
-
----
-
-## Appendix B: Opcode Reference
-
-| Opcode | Operands | Description |
-|--------|----------|-------------|
-| `Constant` | index | Push constant |
-| `Pop` | - | Discard top |
-| `Add`, `Sub`, `Mul`, `Div`, `Mod` | - | Generic arithmetic |
-| `AddI64`, `SubI64`, etc. | - | Typed integer arithmetic |
-| `AddF64`, `SubF64`, etc. | - | Typed float arithmetic |
-| `True`, `False`, `Null` | - | Push literals |
-| `Equal`, `NotEqual`, `GreaterThan` | - | Comparison |
-| `EqualI64`, etc. | - | Typed comparison |
-| `Minus`, `Bang` | - | Unary operators |
-| `NegateI64`, `NegateF64` | - | Typed negation |
-| `Jump` | addr | Unconditional jump |
-| `JumpNotTruthy` | addr | Conditional jump |
-| `GetGlobal`, `SetGlobal` | index | Global variable access |
-| `GetLocal`, `SetLocal` | index | Local variable access |
-| `GetBuiltin` | index | Built-in function |
-| `GetNative` | index | Native function |
-| `GetFree` | index | Closure free variable |
-| `Array` | count | Create array |
-| `Hash` | count | Create hashmap |
-| `Index` | - | Array/map access |
-| `Call` | argc | Function call |
-| `Closure` | fn, free | Create closure |
-| `ReturnValue`, `Return` | - | Return from function |
-| `CurrentClosure` | - | Self-reference |
-| `LoadPtr`, `StorePtr` | - | Pointer operations |
-| `AddressOfLocal`, `AddressOfGlobal` | index | Take address |
-| `Alloc`, `Free` | - | Memory management |
-| `StructAlloc` | size | Allocate struct |
-| `StructGet`, `StructSet` | offset | Struct field access |
-| `TaggedUnionAlloc` | num_fields | Allocate tagged union |
-| `TaggedUnionSetTag` | tag | Set tag on tagged union |
-| `TaggedUnionGetTag` | - | Get tag from tagged union |
-| `TaggedUnionGetField` | offset | Get field from tagged union |
-| `TaggedUnionSetField` | offset | Set field on tagged union |
-| `TupleAlloc` | size | Allocate tuple (pops N values) |
-| `TupleGet` | index | Get element from tuple |
-| `Dup` | - | Duplicate top of stack |
-| `Drop` | - | Drop a heap-allocated value (ownership cleanup) |
-
----
-
-*End of Frost Language Specification*
+- [tour.md](tour.md): the language by example.
+- [coming-from-rust.md](coming-from-rust.md): a guide for Rust programmers.
+- [memory-safety.md](memory-safety.md): the safety guarantees in depth.
+- [philosophy.md](philosophy.md): the design rationale.
+- [architecture.md](architecture.md): the compiler pipeline.
