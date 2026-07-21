@@ -392,4 +392,41 @@ mod tests {
             run :: fn() { f := open()  b := Box { inner = f } }";
         assert!(check(source).is_err());
     }
+
+    #[test]
+    fn ir_rejects_an_ignored_linear_enum_result() {
+        let source = "\
+            Outcome :: linear enum { Ok { value: i64 }, Err { code: i64 } }\n\
+            run_step :: fn() -> Outcome { Outcome::Ok { value = 1 } }\n\
+            caller :: fn() -> i64 { result := run_step()  7 }";
+        assert!(check(source).is_err());
+    }
+
+    #[test]
+    fn ir_rejects_consumption_on_only_one_match_arm() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            Flag :: enum { A, B }\n\
+            open :: fn() -> File { File { handle = 1 } }\n\
+            close :: extern fn(f: File)\n\
+            noop :: extern fn()\n\
+            run :: fn() { f := open()  flag := Flag::A  match flag { case .A: close(f)  case .B: noop() } }";
+        assert!(check(source).is_err());
+    }
+
+    #[test]
+    fn ir_rejects_a_leak_on_an_early_return() {
+        let source = format!(
+            "{PRELUDE}run :: fn() -> i64 {{ f := open()  if (1 == 1) {{ return 0 }}  close(f)  0 }}"
+        );
+        assert!(check(&source).is_err());
+    }
+
+    #[test]
+    fn ir_rejects_a_linear_left_unconsumed_by_a_break() {
+        let source = format!(
+            "{PRELUDE}run :: fn() {{ f := open()  mut i : i64 = 0  while (i < 3) {{ break  close(f) }} }}"
+        );
+        assert!(check(&source).is_err());
+    }
 }

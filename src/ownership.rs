@@ -144,29 +144,14 @@ fn check_function_moves(
         states: HashMap::new(),
         linear,
         signatures,
-        linear_declared: Vec::new(),
-        params: HashSet::new(),
         in_defer: false,
     };
     for parameter in params {
         if let Some(ty) = &parameter.type_annotation {
             checker.note_binding(&parameter.name, Some(ty.clone()));
         }
-        checker.params.insert(parameter.name.clone());
     }
-    let diverges = checker.check_function_body(body)?;
-    if !diverges {
-        for name in &checker.linear_declared {
-            if checker.params.contains(name) {
-                continue;
-            }
-            if !is_consumed(checker.state_of(name)) {
-                bail!(
-                    "ownership: linear value '{name}' is never consumed; a linear resource must be moved exactly once"
-                );
-            }
-        }
-    }
+    checker.check_function_body(body)?;
     Ok(())
 }
 
@@ -186,17 +171,11 @@ fn join_state(left: MoveState, right: MoveState) -> MoveState {
     }
 }
 
-fn is_consumed(state: MoveState) -> bool {
-    matches!(state, MoveState::Moved | MoveState::Deferred)
-}
-
 struct MoveChecker<'a> {
     types: HashMap<String, Type>,
     states: HashMap<String, MoveState>,
     linear: &'a HashSet<String>,
     signatures: &'a Signatures,
-    linear_declared: Vec<String>,
-    params: HashSet<String>,
     in_defer: bool,
 }
 
@@ -205,9 +184,6 @@ impl MoveChecker<'_> {
         self.states.insert(name.to_string(), MoveState::Live);
         match ty {
             Some(ty) => {
-                if is_linear_type(&ty, self.linear) {
-                    self.linear_declared.push(name.to_string());
-                }
                 self.types.insert(name.to_string(), ty);
             }
             None => {
@@ -302,7 +278,6 @@ impl MoveChecker<'_> {
             }
             Statement::Return(expression) => {
                 self.visit(expression, true)?;
-                self.check_return_leaks()?;
                 Ok(true)
             }
             Statement::Expression(expression) => {
@@ -340,30 +315,9 @@ impl MoveChecker<'_> {
         }
     }
 
-    fn check_return_leaks(&self) -> Result<()> {
-        for name in &self.linear_declared {
-            if self.params.contains(name) {
-                continue;
-            }
-            if !is_consumed(self.state_of(name)) {
-                bail!(
-                    "ownership: linear value '{name}' is not consumed before this return; a linear resource must be consumed exactly once on every path"
-                );
-            }
-        }
-        Ok(())
-    }
-
     fn check_loop_body(&mut self, body: &Block) -> Result<()> {
         let before = self.states.clone();
-        let marker = self.linear_declared.len();
         self.check_block(body)?;
-        let inner: Vec<String> = self.linear_declared.split_off(marker);
-        self.enforce_scope_consumed(&inner, false)?;
-        for name in &inner {
-            self.states.remove(name);
-            self.types.remove(name);
-        }
         for name in before.keys() {
             let previous = before.get(name).copied().unwrap_or(MoveState::Live);
             if previous == MoveState::Live
@@ -381,27 +335,6 @@ impl MoveChecker<'_> {
             }
         }
         self.states = before;
-        Ok(())
-    }
-
-    fn enforce_scope_consumed(
-        &self,
-        inner: &[String],
-        diverges: bool,
-    ) -> Result<()> {
-        if diverges {
-            return Ok(());
-        }
-        for name in inner {
-            if self.params.contains(name) {
-                continue;
-            }
-            if !is_consumed(self.state_of(name)) {
-                bail!(
-                    "ownership: linear value '{name}' is never consumed; a linear resource must be moved exactly once"
-                );
-            }
-        }
         Ok(())
     }
 
@@ -424,11 +357,8 @@ impl MoveChecker<'_> {
         &mut self,
         block: &Block,
     ) -> Result<(HashMap<String, MoveState>, bool)> {
-        let marker = self.linear_declared.len();
         let diverges = self.check_block(block)?;
         let states = self.states.clone();
-        let inner: Vec<String> = self.linear_declared.split_off(marker);
-        self.enforce_scope_consumed(&inner, diverges)?;
         Ok((states, diverges))
     }
 
@@ -783,17 +713,6 @@ mod tests {
     }
 
     #[test]
-    fn unconsumed_linear_resource_is_rejected() {
-        let source = "\
-            File :: linear struct { handle: i64 }\n\
-            open :: fn() -> File { File { handle = 1 } }\n\
-            run :: fn() {\n\
-                f := open()\n\
-            }";
-        assert!(check(source).is_err());
-    }
-
-    #[test]
     fn consumed_linear_resource_is_accepted() {
         let source = "\
             File :: linear struct { handle: i64 }\n\
@@ -866,18 +785,6 @@ mod tests {
     }
 
     #[test]
-    fn ignored_linear_error_enum_is_rejected() {
-        let source = "\
-            Outcome :: linear enum { Ok { value: i64 }, Err { code: i64 } }\n\
-            run_step :: fn() -> Outcome { Outcome::Ok { value = 1 } }\n\
-            caller :: fn() -> i64 {\n\
-                result := run_step()\n\
-                7\n\
-            }";
-        assert!(check(source).is_err());
-    }
-
-    #[test]
     fn matching_a_linear_error_enum_consumes_it() {
         let source = "\
             Outcome :: linear enum { Ok { value: i64 }, Err { code: i64 } }\n\
@@ -906,18 +813,6 @@ mod tests {
                 destroy(a)\n\
             }";
         assert!(check(source).is_ok());
-    }
-
-    #[test]
-    fn forgetting_to_destroy_a_linear_local_is_still_rejected() {
-        let source = "\
-            Arena :: linear struct { data: i64 }\n\
-            make :: fn() -> Arena { Arena { data = 1 } }\n\
-            destroy :: fn(a: Arena) { }\n\
-            run :: fn() {\n\
-                a := make()\n\
-            }";
-        assert!(check(source).is_err());
     }
 
     #[test]
@@ -958,50 +853,6 @@ mod tests {
                 match flag { case .A: close(f)  case .B: close(f) }\n\
             }";
         assert!(check(source).is_ok());
-    }
-
-    #[test]
-    fn linear_consumed_on_only_one_if_branch_is_rejected() {
-        let source = "\
-            File :: linear struct { handle: i64 }\n\
-            open :: fn() -> File { File { handle = 1 } }\n\
-            close :: extern fn(f: File)\n\
-            run :: fn() {\n\
-                f := open()\n\
-                if (1 == 1) { close(f) }\n\
-            }";
-        assert!(check(source).is_err());
-    }
-
-    #[test]
-    fn linear_consumed_on_only_one_match_arm_is_rejected() {
-        let source = "\
-            File :: linear struct { handle: i64 }\n\
-            Flag :: enum { A, B }\n\
-            open :: fn() -> File { File { handle = 1 } }\n\
-            close :: extern fn(f: File)\n\
-            noop :: extern fn()\n\
-            run :: fn() {\n\
-                f := open()\n\
-                flag := Flag::A\n\
-                match flag { case .A: close(f)  case .B: noop() }\n\
-            }";
-        assert!(check(source).is_err());
-    }
-
-    #[test]
-    fn linear_leaked_on_an_early_return_is_rejected() {
-        let source = "\
-            File :: linear struct { handle: i64 }\n\
-            open :: fn() -> File { File { handle = 1 } }\n\
-            close :: extern fn(f: File)\n\
-            run :: fn() -> i64 {\n\
-                f := open()\n\
-                if (1 == 1) { return 0 }\n\
-                close(f)\n\
-                0\n\
-            }";
-        assert!(check(source).is_err());
     }
 
     #[test]
@@ -1085,19 +936,5 @@ mod tests {
                 7\n\
             }";
         assert!(check(source).is_ok());
-    }
-
-    #[test]
-    fn a_break_arm_does_not_leave_the_linear_unconsumed_check_unsound() {
-        let source = "\
-            File :: linear struct { handle: i64 }\n\
-            open :: fn() -> File { File { handle = 1 } }\n\
-            close :: extern fn(f: File)\n\
-            run :: fn() {\n\
-                f := open()\n\
-                mut i : i64 = 0\n\
-                while (i < 3) { break  close(f) }\n\
-            }";
-        assert!(check(source).is_err());
     }
 }

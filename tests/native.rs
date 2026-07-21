@@ -178,7 +178,7 @@ main :: fn() -> i64 {
         "expected a located linear error, got:\n{message}"
     );
     assert!(
-        message.contains("never consumed"),
+        message.contains("consumed"),
         "expected a linear-not-consumed error, got:\n{message}"
     );
 }
