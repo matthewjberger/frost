@@ -1,0 +1,85 @@
+// A generational slab that is generic over both its element type and its
+// capacity, using value generics ($N: usize) to size its storage. Slab<$T, $N>
+// stores [N]T elements with a parallel [N]i64 of generation counters and a free
+// list, exactly the pool from examples/native/native_pool.frost but no longer
+// hard-coded to one type and one size. The capacity is recovered inside the
+// functions with slice_len over the storage, so nothing repeats the 4.
+
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Entity :: struct { hp: i64, mana: i64 }
+
+Slab :: struct($T: Type, $N: usize) {
+    storage: [N]T,
+    generations: [N]i64,
+    free_list: [N]i64,
+    free_count: i64,
+}
+
+hpack :: fn(index: i64, generation: i64) -> i64 { (generation << 32) | index }
+hindex :: fn(handle: i64) -> i64 { handle & 4294967295 }
+hgen :: fn(handle: i64) -> i64 { handle >> 32 }
+
+capacity :: fn(s: &Slab<Entity, 4>) -> i64 {
+    view : []Entity = s.storage
+    slice_len(view)
+}
+
+slab_reset :: fn(s: &mut Slab<Entity, 4>) {
+    n := capacity(s)
+    mut i : i64 = 0
+    while (i < n) {
+        s.generations[i] = 0
+        s.free_list[i] = n - 1 - i
+        i = i + 1
+    }
+    s.free_count = n
+}
+
+slab_insert :: fn(s: &mut Slab<Entity, 4>, value: Entity) -> i64 {
+    s.free_count = s.free_count - 1
+    index := s.free_list[s.free_count]
+    s.storage[index] = value
+    hpack(index, s.generations[index])
+}
+
+slab_alive :: fn(s: &Slab<Entity, 4>, handle: i64) -> bool {
+    s.generations[hindex(handle)] == hgen(handle)
+}
+
+slab_hp :: fn(s: &Slab<Entity, 4>, handle: i64) -> i64 {
+    s.storage[hindex(handle)].hp
+}
+
+slab_release :: fn(s: &mut Slab<Entity, 4>, handle: i64) {
+    index := hindex(handle)
+    s.generations[index] = s.generations[index] + 1
+    s.free_list[s.free_count] = index
+    s.free_count = s.free_count + 1
+}
+
+main :: fn() -> i64 {
+    mut world : Slab<Entity, 4> = Slab {
+        storage = [
+            Entity { hp = 0, mana = 0 }, Entity { hp = 0, mana = 0 },
+            Entity { hp = 0, mana = 0 }, Entity { hp = 0, mana = 0 },
+        ],
+        generations = [0, 0, 0, 0],
+        free_list = [0, 0, 0, 0],
+        free_count = 0,
+    }
+    slab_reset(&mut world)
+
+    printf("%lld\n", capacity(&world))          // 4
+    hero := slab_insert(&mut world, Entity { hp = 100, mana = 30 })
+    foe := slab_insert(&mut world, Entity { hp = 40, mana = 10 })
+    printf("%lld\n", slab_hp(&world, hero))      // 100
+    printf("%lld\n", slab_hp(&world, foe))       // 40
+
+    if (slab_alive(&world, foe)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    slab_release(&mut world, foe)
+    reused := slab_insert(&mut world, Entity { hp = 7, mana = 7 })
+    if (slab_alive(&world, reused)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    if (slab_alive(&world, foe)) { printf("%lld\n", 9) } else { printf("%lld\n", 0) }
+    0
+}

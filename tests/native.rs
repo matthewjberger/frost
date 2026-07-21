@@ -687,6 +687,53 @@ fn native_typed_pool_surface() {
     assert_eq!(output, "100\n40\n75\n1\n0\n");
 }
 
+const VALUE_GENERICS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Buffer :: struct($T: Type, $N: usize) {
+    data: [N]T,
+    len: i64,
+}
+
+push :: fn(b: &mut Buffer<i64, 4>, value: i64) {
+    b.data[b.len] = value
+    b.len = b.len + 1
+}
+
+total :: fn(b: &Buffer<i64, 4>) -> i64 {
+    view : []i64 = b.data
+    mut sum : i64 = 0
+    mut i : i64 = 0
+    while (i < b.len) {
+        sum = sum + view[i]
+        i = i + 1
+    }
+    sum
+}
+
+main :: fn() -> i64 {
+    mut b : Buffer<i64, 4> = Buffer {
+        data = [0, 0, 0, 0],
+        len = 0,
+    }
+    push(&mut b, 10)
+    push(&mut b, 20)
+    push(&mut b, 30)
+    printf("%lld\n", b.len)
+    printf("%lld\n", b.data[1])
+    printf("%lld\n", total(&b))
+    0
+}
+"#;
+
+#[test]
+fn native_value_generic_struct() {
+    let Some(output) = compile_and_run("valuegenerics", VALUE_GENERICS) else {
+        return;
+    };
+    assert_eq!(output, "3\n20\n60\n");
+}
+
 const SLICES: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -2325,6 +2372,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_typedpool", TYPED_POOL),
         ("diff_nativepool", NATIVE_POOL),
         ("diff_slices", SLICES),
+        ("diff_valuegenerics", VALUE_GENERICS),
         ("diff_widening", WIDENING_BINDINGS),
         ("diff_matchagg", MATCH_RETURNS_AGGREGATE),
         ("diff_f32", F32_OPERATIONS),

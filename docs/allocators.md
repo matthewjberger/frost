@@ -102,9 +102,12 @@ roadmap:
   and `slice_len` reads the length (`docs/architecture.md`,
   `examples/native/slices.frost`). It subsumes the raw `^u8` the current pool
   runtime passes around.
-- **Value generics** (`$N` as a value). A static arena is `Arena<N>` and a static
-  pool is `Pool<T, N>`, both sized at compile time with no allocation at all.
-  This is the same feature the pool roadmap needs for `[N]T` storage.
+- **Value generics** (`$N` as a value). This is **done**: a struct may take a
+  value parameter `$N: usize`, size a field `[N]T` with it, and be instantiated
+  concretely (`Slab<Entity, 4>`), monomorphized like a type parameter. A static
+  pool is `Slab<T, N>` sized at compile time with no allocation, and the capacity
+  is recovered inside functions with `slice_len` over the storage
+  (`examples/native/generic_slab.frost`).
 
 ## Disposition of the vestigial types
 
@@ -122,6 +125,7 @@ roadmap, the order is:
 1. **Slices** in the native backend (`[]T`, `[]u8`), the byte view every
    allocator needs. *(Done.)*
 2. **Value generics** (`$N`), so arenas and pools are sized without allocation.
+   *(Done.)*
 3. **Arena allocator** (revive `Arena`): a linear bump allocator over a `[]u8`,
    with reset and marker rollback.
 4. **The allocator interface** and the pool rebuilt over an arena or static
@@ -142,14 +146,12 @@ that asks the operating system for a block of bytes.
 Building slices clarified exactly what each later step needs, so they can be
 scoped precisely rather than discovered mid-flight.
 
-- **Value generics (`$N`) touch the type representation.** Their point is sizing
-  `[N]T` where `N` is a call-site value, so the array type must carry a symbolic
-  size until monomorphization resolves it. `Type::Array` currently holds a
-  concrete `usize`, and that size is read directly by `size_of`, both backends,
-  and the lowering, so the type needs a size that is either concrete or a
-  parameter name, with substitution filling it in per instantiation. This is the
-  most invasive change in the roadmap and should be its own focused effort, not a
-  rider on another change.
+- **Value generics (`$N`) are done.** The array type gained a transient symbolic
+  form, `ArrayGeneric(element, size_param)`, produced by the parser for `[N]T`,
+  and a `ConstUsize(n)` type for a value argument. Substitution resolves
+  `ArrayGeneric` against the parameter binding into a concrete `Array` before any
+  backend sees it, so the blast radius stayed in the parser and the substitution,
+  exactly as scoped. Both transient forms are unreachable in lowered code.
 
 - **A Frost-library arena needs two more primitives.** To bump-allocate over a
   `[]u8` and hand back a typed pointer, library code needs a pointer cast
