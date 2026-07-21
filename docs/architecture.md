@@ -24,6 +24,9 @@ Source (.frost)
       v
    Typed IR         src/ir.rs, src/ir_build.rs, src/ir_typecheck.rs
       |
+      v
+   Linearity check  src/ir_ownership.rs   (dataflow over the IR CFG)
+      |
       +--------------------+--------------------+
       v                    v                    v
   Cranelift            Portable C           IR interpreter
@@ -33,8 +36,9 @@ Source (.frost)
   object -> exe        C -> exe             direct run
 ```
 
-The **typed IR** is the single spine. Type checking, and ownership and
-linearity checking, are discharged before it, and every backend emits from it.
+The **typed IR** is the single spine. Reference and move checking are discharged
+before it on the AST, type checking and the linear consume discipline are
+discharged on the IR itself, and every backend emits from it.
 `--native` / `--link` lower to the IR and emit machine code via Cranelift.
 `--emit-c` lowers the same IR to portable C. `--run-ir` interprets the IR
 directly. With no flag, `frost file.frost` compiles, links, and runs the program
@@ -233,21 +237,42 @@ Frost is being reshaped toward a data-oriented language with:
   moved.
 - **Linear resources.** A struct or enum declared `linear`
   (`File :: linear struct { ... }`) is a resource that must be consumed
-  exactly once. The move checker's use-after-move rule gives "at most once",
-  and a linear value that is still live at the end of the function that owns
-  it is a "never consumed" error. Consuming means moving it onward, returning
-  it, passing it by value to another function (the terminal consumer is
-  typically an `extern`, which takes ownership across the FFI boundary), or
-  `match`ing it (a `match` on a linear value destructures and consumes it).
-  This is how the design replaces `Drop`. Cleanup is an obligation the type
-  system tracks rather than an implicit call. It also makes a linear error
-  enum non-ignorable, since a `linear enum` returned from a fallible function must
-  be matched (or otherwise consumed), so a failure cannot be silently dropped.
+  exactly once. The move checker's use-after-move rule gives "at most once".
+  The "exactly once" half, the leak check, is discharged separately on the IR
+  (see below). Consuming means moving it onward, returning it, passing it by
+  value to another function (the terminal consumer is typically an `extern`,
+  which takes ownership across the FFI boundary), or `match`ing it (a `match`
+  on a linear value destructures and consumes it). This is how the design
+  replaces `Drop`. Cleanup is an obligation the type system tracks rather than
+  an implicit call. It also makes a linear error enum non-ignorable, since a
+  `linear enum` returned from a fallible function must be matched (or otherwise
+  consumed), so a failure cannot be silently dropped.
+
+## Linearity checking on the IR
+
+`src/ir_ownership.rs` discharges the "consumed exactly once" discipline as a
+dataflow pass over each function's control-flow graph, which is where the design
+always intended ownership to be checked. Lowering marks a local as linear when
+its type is a `linear` struct or enum, emits an `own` marker where such a value
+is constructed, and emits a `consume` marker where it is moved (an identifier
+read, or an aggregate passed by value, which lowers to an address and would
+otherwise be invisible). Both markers are metadata that every backend skips.
+
+The pass runs a forward dataflow to a fixpoint over an unowned / owned / consumed
+lattice, joining at merge points, so it handles `if`, `match`, and loop back
+edges directly rather than by structured approximation. It reports a value
+consumed more than once, consumed before it holds a resource, or a linear local
+still owned on a path to a return (a leak), each located at the source line the
+value was created on. A leak is caught here; a use-after-move is caught on the
+AST; both point at a line.
 
 ### Roadmap
 
-1. Extend ownership to move tracking and borrow exclusivity on the IR
-   (second-class references are already enforced).
+1. Discharge ownership on the IR. *(Partly done: the linear consume discipline
+   now runs as a CFG dataflow pass in `src/ir_ownership.rs`. Move tracking and
+   borrow exclusivity stay on the AST, where the move-versus-borrow distinction
+   the IR erases is still visible; second-class references keep that analysis
+   scope-local.)*
 2. A real type-checking pass on the IR. *(Done: `src/ir_typecheck.rs` runs on
    the typed IR after lowering and before either backend. It validates local
    and block id ranges, direct and indirect call arity against the gathered
