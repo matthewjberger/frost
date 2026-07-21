@@ -34,19 +34,27 @@ frost_emit_int :: extern fn(value: i64)
 frost_emit_char :: extern fn(byte: i64)
 
 // Node kinds.
-NODE_NUM    :: 0
-NODE_VAR    :: 1
-NODE_BIN    :: 2
-NODE_LET    :: 3
-NODE_ASSIGN :: 4
-NODE_PRINT  :: 5
-NODE_IF     :: 6
-NODE_WHILE  :: 7
-NODE_RETURN :: 8
-NODE_CALL   :: 9
-NODE_FUNC   :: 10
-NODE_PARAM  :: 11
-NODE_ARG    :: 12
+NODE_NUM        :: 0
+NODE_VAR        :: 1
+NODE_BIN        :: 2
+NODE_LET        :: 3
+NODE_ASSIGN     :: 4
+NODE_PRINT      :: 5
+NODE_IF         :: 6
+NODE_WHILE      :: 7
+NODE_RETURN     :: 8
+NODE_CALL       :: 9
+NODE_FUNC       :: 10
+NODE_PARAM      :: 11
+NODE_ARG        :: 12
+NODE_STRUCT_LIT :: 13
+NODE_FIELD      :: 14
+NODE_FIELD_INIT :: 15
+
+// Type codes. A local, parameter, or field has a type, represented as an i64:
+// TY_I64 for the primitive, or a non-negative index into the struct table for a
+// struct type. Everything the language can express so far is one of these.
+TY_I64 :: 0 - 1
 
 // Binary operator codes.
 OP_ADD :: 0
@@ -179,6 +187,32 @@ Token :: struct {
     value: i64,
 }
 
+// A struct declaration: its name (byte range) and a linked list of fields in the
+// field arena. `field_head` is the first field's index, or -1 for an empty struct.
+StructDef :: struct {
+    name_off: i64,
+    name_len: i64,
+    field_head: i64,
+}
+
+// One field of a struct: its name (byte range), its type code, and the next
+// field's index in the field arena.
+StructField :: struct {
+    name_off: i64,
+    name_len: i64,
+    ty: i64,
+    next: i64,
+}
+
+// A local's type binding during code generation. The table is rebuilt per
+// function and maps a local's name (byte range) to its type code, so a field
+// access or a `:=` can be typed by walking it.
+LocalVar :: struct {
+    name_off: i64,
+    name_len: i64,
+    ty: i64,
+}
+
 // A growable, index-addressed arena over a single heap allocation. This is the
 // data-oriented allocator from docs/allocators.md, generic over its element:
 // arena_push appends and returns the element's index, arena_at turns an index
@@ -212,6 +246,9 @@ Parser :: struct {
     ti: i64,
     arena: Arena<Node>,
     fns: Arena<Sym>,
+    structs: Arena<StructDef>,
+    fields: Arena<StructField>,
+    locals: Arena<LocalVar>,
 }
 
 is_digit :: fn(c: i64) -> bool {
@@ -508,13 +545,66 @@ set_next :: fn(p: &mut Parser, id: i64, next_id: i64) {
     node^.next = next_id
 }
 
+// A field access `base.name`: `a` is the base expression, `val`/`c` the field
+// name's byte range.
+new_field_node :: fn(p: &mut Parser, base: i64, offset: i64, length: i64) -> i64 {
+    arena_push(
+        &mut p.arena,
+        Node { kind = NODE_FIELD, a = base, b = 0, c = length, val = offset,
+            next = 0 - 1 },
+    )
+}
+
+// A struct literal `Name { ... }`: `val` is the struct's table index and `a` is
+// the head of a linked list of NODE_FIELD_INIT nodes.
+new_struct_lit :: fn(p: &mut Parser, struct_index: i64, inits: i64) -> i64 {
+    arena_push(
+        &mut p.arena,
+        Node { kind = NODE_STRUCT_LIT, a = inits, b = 0, c = 0,
+            val = struct_index, next = 0 - 1 },
+    )
+}
+
+// One `name = value` inside a struct literal: `a` is the value, `val`/`c` the
+// field name's byte range, `next` the following initializer.
+new_field_init :: fn(p: &mut Parser, value: i64, offset: i64, length: i64) -> i64 {
+    arena_push(
+        &mut p.arena,
+        Node { kind = NODE_FIELD_INIT, a = value, b = 0, c = length,
+            val = offset, next = 0 - 1 },
+    )
+}
+
+set_field_next :: fn(p: &mut Parser, id: i64, next_id: i64) {
+    field : ^StructField = arena_at(&p.fields, id)
+    field^.next = next_id
+}
+
+// Resolve a type name (byte range) to a type code: TY_I64 for `i64` (and, for
+// now, any other primitive name), otherwise the index of the named struct.
+type_code_for :: fn(p: &mut Parser, offset: i64, length: i64) -> i64 {
+    if (str_range_eq(p.src, offset, length, "i64")) {
+        return TY_I64
+    }
+    mut i : i64 = 0
+    while (i < p.structs.count) {
+        entry : ^StructDef = arena_at(&p.structs, i)
+        if (entry^.name_len == length
+            && bytes_equal(p.src, entry^.name_off, offset, length)) {
+            return i
+        }
+        i = i + 1
+    }
+    TY_I64
+}
+
 parse_number :: fn(p: &mut Parser) -> i64 {
     value := cur_val(p)
     advance(p)
     new_node(p, NODE_NUM, 0, 0, value)
 }
 
-parse_factor :: fn(p: &mut Parser) -> i64 {
+parse_primary :: fn(p: &mut Parser) -> i64 {
     kind := cur(p)
     if (kind == TOK_INT) {
         return parse_number(p)
@@ -534,7 +624,51 @@ parse_factor :: fn(p: &mut Parser) -> i64 {
         fn_index := intern_global(p, offset, length)
         return new_node(p, NODE_CALL, args, 0, fn_index)
     }
+    if (cur(p) == TOK_LBRACE) {
+        struct_index := type_code_for(p, offset, length)
+        advance(p)
+        inits := parse_field_inits(p)
+        return new_struct_lit(p, struct_index, inits)
+    }
     new_named_node(p, NODE_VAR, 0, offset, length)
+}
+
+// A factor is a primary followed by any number of `.field` accesses.
+parse_factor :: fn(p: &mut Parser) -> i64 {
+    mut node := parse_primary(p)
+    while (cur(p) == TOK_DOT) {
+        advance(p)
+        offset := cur_off(p)
+        length := cur_len(p)
+        advance(p)
+        node = new_field_node(p, node, offset, length)
+    }
+    node
+}
+
+parse_field_inits :: fn(p: &mut Parser) -> i64 {
+    mut head : i64 = 0 - 1
+    mut tail : i64 = 0 - 1
+    while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
+        offset := cur_off(p)
+        length := cur_len(p)
+        advance(p)
+        advance(p)
+        value := parse_expr(p)
+        init := new_field_init(p, value, offset, length)
+        if (head == (0 - 1)) {
+            head = init
+            tail = init
+        } else {
+            set_next(p, tail, init)
+            tail = init
+        }
+        if (cur(p) == TOK_COMMA) {
+            advance(p)
+        }
+    }
+    advance(p)
+    head
 }
 
 parse_arg_list :: fn(p: &mut Parser) -> i64 {
@@ -656,16 +790,19 @@ parse_block :: fn(p: &mut Parser) -> i64 {
     head
 }
 
-// Consume a type: any `&`/`&mut`/`^` prefixes, a name, and a balanced `<...>`
-// argument list. Types carry no meaning yet (everything lowers to int64_t), so
-// they are parsed and discarded, but the shape is the real Frost one.
-skip_type :: fn(p: &mut Parser) {
+// Parse a type and return its type code: any `&`/`&mut`/`^` prefixes are
+// consumed (pointer-ness is not tracked yet, so the pointee type code is
+// returned), a name is resolved through the struct table, and a `<...>`
+// argument list is consumed and treated as i64 (generics come later).
+parse_type :: fn(p: &mut Parser) -> i64 {
     while (cur(p) == TOK_AMP || cur(p) == TOK_CARET) {
         advance(p)
         if (cur(p) == TOK_KW_MUT) {
             advance(p)
         }
     }
+    offset := cur_off(p)
+    length := cur_len(p)
     advance(p)
     if (cur(p) == TOK_LT) {
         mut depth : i64 = 0
@@ -677,17 +814,18 @@ skip_type :: fn(p: &mut Parser) {
                 depth = depth - 1
                 if (depth == 0) {
                     advance(p)
-                    return
+                    return TY_I64
                 }
             }
             advance(p)
         }
     }
+    type_code_for(p, offset, length)
 }
 
-skip_type_annotation :: fn(p: &mut Parser) {
+parse_type_annotation :: fn(p: &mut Parser) -> i64 {
     advance(p)
-    skip_type(p)
+    parse_type(p)
 }
 
 parse_stmt :: fn(p: &mut Parser) -> i64 {
@@ -699,7 +837,7 @@ parse_stmt :: fn(p: &mut Parser) -> i64 {
         length := cur_len(p)
         advance(p)
         if (cur(p) == TOK_COLON) {
-            skip_type_annotation(p)
+            parse_type_annotation(p)
             advance(p)
         } else {
             advance(p)
@@ -749,14 +887,25 @@ parse_stmt :: fn(p: &mut Parser) -> i64 {
         return new_named_node(p, NODE_LET, value, offset, length)
     }
     if (next == TOK_COLON) {
-        skip_type_annotation(p)
+        parse_type_annotation(p)
         advance(p)
         value := parse_expr(p)
         return new_named_node(p, NODE_LET, value, offset, length)
     }
+
+    // Assignment. The target is a place expression, a variable or a chain of
+    // field accesses, so `p = e` and `p.x = e` share one path.
+    mut place := new_named_node(p, NODE_VAR, 0, offset, length)
+    while (cur(p) == TOK_DOT) {
+        advance(p)
+        field_offset := cur_off(p)
+        field_length := cur_len(p)
+        advance(p)
+        place = new_field_node(p, place, field_offset, field_length)
+    }
     advance(p)
     value := parse_expr(p)
-    new_named_node(p, NODE_ASSIGN, value, offset, length)
+    new_node(p, NODE_ASSIGN, place, value, 0)
 }
 
 parse_stmt_list :: fn(p: &mut Parser, terminator: i64) -> i64 {
@@ -782,8 +931,12 @@ parse_params :: fn(p: &mut Parser) -> i64 {
         offset := cur_off(p)
         length := cur_len(p)
         advance(p)
-        skip_type_annotation(p)
-        param := new_named_node(p, NODE_PARAM, 0, offset, length)
+        ty := parse_type_annotation(p)
+        param := arena_push(
+            &mut p.arena,
+            Node { kind = NODE_PARAM, a = 0, b = ty, c = length, val = offset,
+                next = 0 - 1 },
+        )
         if (head == (0 - 1)) {
             head = param
             tail = param
@@ -799,8 +952,9 @@ parse_params :: fn(p: &mut Parser) -> i64 {
     head
 }
 
-// A definition is `name :: fn(params) -> ret { body }`. The name and `::` and
-// `fn` are consumed here; an optional `-> type` return annotation is skipped.
+// A definition is `name :: fn(params) -> ret { body }`. The name, `::`, and `fn`
+// are consumed here; an optional `-> type` return annotation is parsed and
+// discarded (every function still lowers to an int64_t C function).
 parse_function :: fn(p: &mut Parser) -> i64 {
     name_offset := cur_off(p)
     name_length := cur_len(p)
@@ -816,23 +970,67 @@ parse_function :: fn(p: &mut Parser) -> i64 {
     params := parse_params(p)
     if (cur(p) == TOK_ARROW) {
         advance(p)
-        skip_type(p)
+        parse_type(p)
     }
     body := parse_block(p)
     new_func_node(p, body, params, fn_index, is_main)
+}
+
+// A struct definition `name :: struct { field : Type, ... }`. Registered in the
+// struct table so later type annotations and literals can resolve it.
+parse_struct :: fn(p: &mut Parser) {
+    name_offset := cur_off(p)
+    name_length := cur_len(p)
+    advance(p)
+    advance(p)
+    advance(p)
+    advance(p)
+    mut head : i64 = 0 - 1
+    mut tail : i64 = 0 - 1
+    while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
+        field_offset := cur_off(p)
+        field_length := cur_len(p)
+        advance(p)
+        field_ty := parse_type_annotation(p)
+        field := arena_push(
+            &mut p.fields,
+            StructField { name_off = field_offset, name_len = field_length,
+                ty = field_ty, next = 0 - 1 },
+        )
+        if (head == (0 - 1)) {
+            head = field
+            tail = field
+        } else {
+            set_field_next(p, tail, field)
+            tail = field
+        }
+        if (cur(p) == TOK_COMMA) {
+            advance(p)
+        }
+    }
+    advance(p)
+    arena_push(
+        &mut p.structs,
+        StructDef { name_off = name_offset, name_len = name_length,
+            field_head = head },
+    )
 }
 
 parse_program :: fn(p: &mut Parser) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     while (cur(p) == TOK_IDENT) {
-        func := parse_function(p)
-        if (head == (0 - 1)) {
-            head = func
-            tail = func
+        if (peek_kind(p, 2) == TOK_KW_STRUCT) {
+            parse_struct(p)
         } else {
-            set_next(p, tail, func)
-            tail = func
+            func := parse_function(p)
+            if (head == (0 - 1)) {
+                head = func
+                tail = func
+            } else {
+                set_next(p, tail, func)
+                tail = func
+            }
         }
     }
     head
@@ -870,33 +1068,149 @@ emit_source :: fn(src: ^i8, off: i64, len: i64) {
     }
 }
 
-emit_expr :: fn(src: ^i8, arena: &Arena<Node>, id: i64) {
-    node : ^Node = arena_at(arena, id)
+// ---------------------------------------------------------------------------
+// Types during code generation. A local's type is recorded when it is bound, so
+// a later `:=` or field access can be typed by walking the expression.
+// ---------------------------------------------------------------------------
+
+lookup_local :: fn(p: &mut Parser, off: i64, len: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < p.locals.count) {
+        entry : ^LocalVar = arena_at(&p.locals, i)
+        if (entry^.name_len == len
+            && bytes_equal(p.src, entry^.name_off, off, len)) {
+            return entry^.ty
+        }
+        i = i + 1
+    }
+    TY_I64
+}
+
+record_local :: fn(p: &mut Parser, off: i64, len: i64, ty: i64) {
+    arena_push(&mut p.locals, LocalVar { name_off = off, name_len = len, ty = ty })
+}
+
+field_type :: fn(p: &mut Parser, struct_ty: i64, off: i64, len: i64) -> i64 {
+    if (struct_ty == TY_I64) {
+        return TY_I64
+    }
+    def : ^StructDef = arena_at(&p.structs, struct_ty)
+    mut fid := def^.field_head
+    while (fid != (0 - 1)) {
+        field : ^StructField = arena_at(&p.fields, fid)
+        if (field^.name_len == len
+            && bytes_equal(p.src, field^.name_off, off, len)) {
+            return field^.ty
+        }
+        fid = field^.next
+    }
+    TY_I64
+}
+
+type_of :: fn(p: &mut Parser, id: i64) -> i64 {
+    node : ^Node = arena_at(&p.arena, id)
+    kind := node^.kind
+    if (kind == NODE_STRUCT_LIT) {
+        return node^.val
+    }
+    if (kind == NODE_VAR) {
+        return lookup_local(p, node^.val, node^.c)
+    }
+    if (kind == NODE_FIELD) {
+        base := node^.a
+        off := node^.val
+        len := node^.c
+        base_ty := type_of(p, base)
+        return field_type(p, base_ty, off, len)
+    }
+    TY_I64
+}
+
+emit_ctype :: fn(p: &mut Parser, ty: i64) {
+    if (ty == TY_I64) {
+        frost_emit_str("int64_t")
+        return
+    }
+    def : ^StructDef = arena_at(&p.structs, ty)
+    frost_emit_str("struct ")
+    emit_source(p.src, def^.name_off, def^.name_len)
+}
+
+emit_struct_lit :: fn(p: &mut Parser, struct_index: i64, inits: i64) {
+    def : ^StructDef = arena_at(&p.structs, struct_index)
+    name_off := def^.name_off
+    name_len := def^.name_len
+    frost_emit_str("(struct ")
+    emit_source(p.src, name_off, name_len)
+    frost_emit_str("){ ")
+    mut id := inits
+    mut first : bool = true
+    while (id != (0 - 1)) {
+        if (first == false) {
+            frost_emit_str(", ")
+        }
+        first = false
+        node : ^Node = arena_at(&p.arena, id)
+        off := node^.val
+        len := node^.c
+        value := node^.a
+        next_id := node^.next
+        frost_emit_str(".")
+        emit_source(p.src, off, len)
+        frost_emit_str(" = ")
+        emit_expr(p, value)
+        id = next_id
+    }
+    frost_emit_str(" }")
+}
+
+emit_expr :: fn(p: &mut Parser, id: i64) {
+    node : ^Node = arena_at(&p.arena, id)
     kind := node^.kind
     if (kind == NODE_NUM) {
         frost_emit_int(node^.val)
         return
     }
     if (kind == NODE_VAR) {
-        emit_source(src, node^.val, node^.c)
+        emit_source(p.src, node^.val, node^.c)
         return
     }
     if (kind == NODE_CALL) {
+        fn_index := node^.val
+        args := node^.a
         frost_emit_str("mf_")
-        frost_emit_int(node^.val)
+        frost_emit_int(fn_index)
         frost_emit_str("(")
-        emit_args(src, arena, node^.a)
+        emit_args(p, args)
         frost_emit_str(")")
         return
     }
+    if (kind == NODE_FIELD) {
+        base := node^.a
+        off := node^.val
+        len := node^.c
+        emit_expr(p, base)
+        frost_emit_str(".")
+        emit_source(p.src, off, len)
+        return
+    }
+    if (kind == NODE_STRUCT_LIT) {
+        struct_index := node^.val
+        inits := node^.a
+        emit_struct_lit(p, struct_index, inits)
+        return
+    }
+    left := node^.a
+    op := node^.val
+    right := node^.b
     frost_emit_str("(")
-    emit_expr(src, arena, node^.a)
-    emit_op(node^.val)
-    emit_expr(src, arena, node^.b)
+    emit_expr(p, left)
+    emit_op(op)
+    emit_expr(p, right)
     frost_emit_str(")")
 }
 
-emit_args :: fn(src: ^i8, arena: &Arena<Node>, head: i64) {
+emit_args :: fn(p: &mut Parser, head: i64) {
     mut id := head
     mut first : bool = true
     while (id != (0 - 1)) {
@@ -904,78 +1218,93 @@ emit_args :: fn(src: ^i8, arena: &Arena<Node>, head: i64) {
             frost_emit_str(", ")
         }
         first = false
-        node : ^Node = arena_at(arena, id)
+        node : ^Node = arena_at(&p.arena, id)
         value := node^.a
         next_id := node^.next
-        emit_expr(src, arena, value)
+        emit_expr(p, value)
         id = next_id
     }
 }
 
-emit_stmt :: fn(src: ^i8, arena: &Arena<Node>, id: i64) {
-    node : ^Node = arena_at(arena, id)
+emit_stmt :: fn(p: &mut Parser, id: i64) {
+    node : ^Node = arena_at(&p.arena, id)
     kind := node^.kind
     if (kind == NODE_LET) {
-        frost_emit_str("int64_t ")
-        emit_source(src, node^.val, node^.c)
+        value := node^.a
+        off := node^.val
+        len := node^.c
+        ty := type_of(p, value)
+        emit_ctype(p, ty)
+        frost_emit_str(" ")
+        emit_source(p.src, off, len)
         frost_emit_str(" = ")
-        emit_expr(src, arena, node^.a)
+        emit_expr(p, value)
         frost_emit_str(";\n")
+        record_local(p, off, len, ty)
         return
     }
     if (kind == NODE_ASSIGN) {
-        emit_source(src, node^.val, node^.c)
+        place := node^.a
+        value := node^.b
+        emit_expr(p, place)
         frost_emit_str(" = ")
-        emit_expr(src, arena, node^.a)
+        emit_expr(p, value)
         frost_emit_str(";\n")
         return
     }
     if (kind == NODE_PRINT) {
+        value := node^.a
         frost_emit_str("printf(\"%lld\\n\", (long long)(")
-        emit_expr(src, arena, node^.a)
+        emit_expr(p, value)
         frost_emit_str("));\n")
         return
     }
     if (kind == NODE_RETURN) {
+        value := node^.a
         frost_emit_str("return (")
-        emit_expr(src, arena, node^.a)
+        emit_expr(p, value)
         frost_emit_str(");\n")
         return
     }
     if (kind == NODE_IF) {
+        cond := node^.a
+        then_head := node^.b
+        else_head := node^.val
         frost_emit_str("if (")
-        emit_expr(src, arena, node^.a)
+        emit_expr(p, cond)
         frost_emit_str(") {\n")
-        emit_list(src, arena, node^.b)
+        emit_list(p, then_head)
         frost_emit_str("}")
-        if (node^.val != (0 - 1)) {
+        if (else_head != (0 - 1)) {
             frost_emit_str(" else {\n")
-            emit_list(src, arena, node^.val)
+            emit_list(p, else_head)
             frost_emit_str("}")
         }
         frost_emit_str("\n")
         return
     }
     if (kind == NODE_WHILE) {
+        cond := node^.a
+        body := node^.b
         frost_emit_str("while (")
-        emit_expr(src, arena, node^.a)
+        emit_expr(p, cond)
         frost_emit_str(") {\n")
-        emit_list(src, arena, node^.b)
+        emit_list(p, body)
         frost_emit_str("}\n")
         return
     }
 }
 
-emit_list :: fn(src: ^i8, arena: &Arena<Node>, head: i64) {
+emit_list :: fn(p: &mut Parser, head: i64) {
     mut id := head
     while (id != (0 - 1)) {
-        emit_stmt(src, arena, id)
-        node : ^Node = arena_at(arena, id)
+        emit_stmt(p, id)
+        node : ^Node = arena_at(&p.arena, id)
         id = node^.next
     }
 }
 
-emit_param_types :: fn(arena: &Arena<Node>, head: i64) {
+emit_param_signature :: fn(p: &mut Parser, head: i64) {
     if (head == (0 - 1)) {
         frost_emit_str("void")
         return
@@ -987,35 +1316,35 @@ emit_param_types :: fn(arena: &Arena<Node>, head: i64) {
             frost_emit_str(", ")
         }
         first = false
-        frost_emit_str("int64_t")
-        node : ^Node = arena_at(arena, id)
-        id = node^.next
+        node : ^Node = arena_at(&p.arena, id)
+        ty := node^.b
+        off := node^.val
+        len := node^.c
+        next_id := node^.next
+        emit_ctype(p, ty)
+        frost_emit_str(" ")
+        emit_source(p.src, off, len)
+        id = next_id
     }
 }
 
-emit_param_signature :: fn(src: ^i8, arena: &Arena<Node>, head: i64) {
-    if (head == (0 - 1)) {
-        frost_emit_str("void")
-        return
-    }
+record_params :: fn(p: &mut Parser, head: i64) {
     mut id := head
-    mut first : bool = true
     while (id != (0 - 1)) {
-        if (first == false) {
-            frost_emit_str(", ")
-        }
-        first = false
-        node : ^Node = arena_at(arena, id)
-        frost_emit_str("int64_t ")
-        emit_source(src, node^.val, node^.c)
-        id = node^.next
+        node : ^Node = arena_at(&p.arena, id)
+        ty := node^.b
+        off := node^.val
+        len := node^.c
+        next_id := node^.next
+        record_local(p, off, len, ty)
+        id = next_id
     }
 }
 
-emit_prototypes :: fn(arena: &Arena<Node>, head: i64) {
+emit_prototypes :: fn(p: &mut Parser, head: i64) {
     mut id := head
     while (id != (0 - 1)) {
-        node : ^Node = arena_at(arena, id)
+        node : ^Node = arena_at(&p.arena, id)
         fn_index := node^.val
         params := node^.b
         is_main := node^.c
@@ -1024,38 +1353,69 @@ emit_prototypes :: fn(arena: &Arena<Node>, head: i64) {
             frost_emit_str("int64_t mf_")
             frost_emit_int(fn_index)
             frost_emit_str("(")
-            emit_param_types(arena, params)
+            emit_param_signature(p, params)
             frost_emit_str(");\n")
         }
         id = next_id
     }
 }
 
-emit_function :: fn(src: ^i8, arena: &Arena<Node>, id: i64) {
-    node : ^Node = arena_at(arena, id)
+emit_struct_decls :: fn(p: &mut Parser) {
+    mut i : i64 = 0
+    while (i < p.structs.count) {
+        def : ^StructDef = arena_at(&p.structs, i)
+        name_off := def^.name_off
+        name_len := def^.name_len
+        field_head := def^.field_head
+        frost_emit_str("struct ")
+        emit_source(p.src, name_off, name_len)
+        frost_emit_str(" {\n")
+        mut fid := field_head
+        while (fid != (0 - 1)) {
+            field : ^StructField = arena_at(&p.fields, fid)
+            fty := field^.ty
+            off := field^.name_off
+            len := field^.name_len
+            next_field := field^.next
+            emit_ctype(p, fty)
+            frost_emit_str(" ")
+            emit_source(p.src, off, len)
+            frost_emit_str(";\n")
+            fid = next_field
+        }
+        frost_emit_str("};\n")
+        i = i + 1
+    }
+}
+
+emit_function :: fn(p: &mut Parser, id: i64) {
+    node : ^Node = arena_at(&p.arena, id)
     fn_index := node^.val
     body := node^.a
     params := node^.b
     is_main := node^.c
+    p.locals.count = 0
+    record_params(p, params)
     if (is_main == 1) {
         frost_emit_str("int main(void) {\n")
     } else {
         frost_emit_str("int64_t mf_")
         frost_emit_int(fn_index)
         frost_emit_str("(")
-        emit_param_signature(src, arena, params)
+        emit_param_signature(p, params)
         frost_emit_str(") {\n")
     }
-    emit_list(src, arena, body)
+    emit_list(p, body)
     frost_emit_str("return 0;\n}\n")
 }
 
-emit_program :: fn(src: ^i8, arena: &Arena<Node>, head: i64) {
-    emit_prototypes(arena, head)
+emit_program :: fn(p: &mut Parser, head: i64) {
+    emit_struct_decls(p)
+    emit_prototypes(p, head)
     mut id := head
     while (id != (0 - 1)) {
-        emit_function(src, arena, id)
-        node : ^Node = arena_at(arena, id)
+        emit_function(p, id)
+        node : ^Node = arena_at(&p.arena, id)
         id = node^.next
     }
 }
@@ -1072,14 +1432,10 @@ main :: fn() -> i64 {
             return n * fact(n - 1)
         }
 
-        inrange :: fn(x: i64) -> i64 {
-            if (x >= 1 && x <= 10) { return 1 }
-            return 0
-        }
+        Point :: struct { x: i64, y: i64 }
 
-        outside :: fn(x: i64) -> i64 {
-            if (x < 0 || x > 100) { return 1 }
-            return 0
+        sum_point :: fn(pt: Point) -> i64 {
+            return pt.x + pt.y
         }
 
         main :: fn() -> i64 {
@@ -1089,8 +1445,10 @@ main :: fn() -> i64 {
             mut index : i64 = 1
             while (index <= 10) { sum = sum + index  index = index + 1 }
             print sum
-            print inrange(5)
-            print outside(200)
+            p := Point { x = 3, y = 4 }
+            print p.x
+            p.x = 10
+            print sum_point(p)
         }
     "
 
@@ -1100,12 +1458,15 @@ main :: fn() -> i64 {
         ti = 0,
         arena = arena_make($Node, 4096),
         fns = arena_make($Sym, 1024),
+        structs = arena_make($StructDef, 256),
+        fields = arena_make($StructField, 1024),
+        locals = arena_make($LocalVar, 256),
     }
     tokenize(source, frost_str_len(source), &mut parser.tokens)
     program := parse_program(&mut parser)
 
     frost_emit_str("#include <stdio.h>\n")
     frost_emit_str("#include <stdint.h>\n")
-    emit_program(parser.src, &parser.arena, program)
+    emit_program(&mut parser, program)
     0
 }
