@@ -335,6 +335,7 @@ impl MoveChecker<'_> {
                 result?;
                 Ok(false)
             }
+            Statement::Break | Statement::Continue => Ok(true),
             _ => Ok(false),
         }
     }
@@ -1069,5 +1070,34 @@ mod tests {
                 while (i < 3) { p := make()  take(p)  i = i + 1 }\n\
             }";
         assert!(check(source).is_ok());
+    }
+
+    #[test]
+    fn a_linear_consumed_by_defer_survives_a_nested_return() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            open :: fn() -> File { File { handle = 1 } }\n\
+            close :: extern fn(f: File)\n\
+            run :: fn(flag: i64) -> i64 {\n\
+                f := open()\n\
+                defer close(f)\n\
+                if (flag == 0) { return 5 }\n\
+                7\n\
+            }";
+        assert!(check(source).is_ok());
+    }
+
+    #[test]
+    fn a_break_arm_does_not_leave_the_linear_unconsumed_check_unsound() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            open :: fn() -> File { File { handle = 1 } }\n\
+            close :: extern fn(f: File)\n\
+            run :: fn() {\n\
+                f := open()\n\
+                mut i : i64 = 0\n\
+                while (i < 3) { break  close(f) }\n\
+            }";
+        assert!(check(source).is_err());
     }
 }

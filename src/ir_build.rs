@@ -1396,46 +1396,6 @@ fn str_byte_ptr_type() -> Type {
     Type::Ptr(Box::new(Type::U8))
 }
 
-fn body_has_nested_return(body: &Block) -> bool {
-    body.iter().any(|statement| match &statement.node {
-        Statement::Return(_) => false,
-        other => statement_contains_return(other),
-    })
-}
-
-fn block_contains_return(block: &Block) -> bool {
-    block
-        .iter()
-        .any(|statement| statement_contains_return(&statement.node))
-}
-
-fn statement_contains_return(statement: &Statement) -> bool {
-    match statement {
-        Statement::Return(_) => true,
-        Statement::While(_, body) | Statement::For(_, _, body) => {
-            block_contains_return(body)
-        }
-        Statement::Defer(inner) => statement_contains_return(inner),
-        Statement::Expression(expression) => {
-            expression_contains_return(expression)
-        }
-        _ => false,
-    }
-}
-
-fn expression_contains_return(expression: &Expression) -> bool {
-    match expression {
-        Expression::If(_, consequence, alternative) => {
-            block_contains_return(consequence)
-                || alternative.as_ref().is_some_and(block_contains_return)
-        }
-        Expression::Switch(_, cases) => {
-            cases.iter().any(|case| block_contains_return(&case.body))
-        }
-        _ => false,
-    }
-}
-
 fn array_element_type(
     annotation: Option<&Type>,
     elements: &[Expression],
@@ -1656,6 +1616,7 @@ struct FunctionLowering<'a> {
     loops: Vec<LoopTargets>,
     current: BlockId,
     return_type: Type,
+    active_defers: Vec<Statement>,
     specializations: Vec<Specialization>,
     anonymous: Vec<AnonRequest>,
 }
@@ -1674,6 +1635,7 @@ impl<'a> FunctionLowering<'a> {
             loops: Vec::new(),
             current: 0,
             return_type,
+            active_defers: Vec::new(),
             specializations: Vec::new(),
             anonymous: Vec::new(),
         }
@@ -1795,77 +1757,52 @@ impl<'a> FunctionLowering<'a> {
         body: &Block,
         return_type: &Type,
     ) -> Result<()> {
-        if body_has_nested_return(body) {
-            bail!(
-                "native backend: a return inside a branch is not supported together with defer yet"
-            );
-        }
-        let defers: Vec<&Statement> = body
-            .iter()
-            .filter_map(|statement| match &statement.node {
-                Statement::Defer(inner) => Some(inner.as_ref()),
-                _ => None,
-            })
-            .collect();
-
+        let outer_defers = self.active_defers.len();
         self.push_scope();
         for (index, statement) in body.iter().enumerate() {
             let is_last = index + 1 == body.len();
             let position = statement.position;
             match &statement.node {
-                Statement::Defer(_) => {}
-                Statement::Return(expression) => {
-                    let operand = locate(
-                        self.lower_return_value(expression, return_type),
-                        position,
-                    )?;
-                    self.run_defers(&defers)?;
-                    self.set_terminator(IrTerminator::Return(operand));
+                Statement::Defer(inner) => {
+                    self.active_defers.push((**inner).clone());
                 }
                 Statement::Expression(expression) if is_last => {
                     let (value, value_type) = locate(
                         self.lower_expression(expression, Some(return_type)),
                         position,
                     )?;
-                    self.run_defers(&defers)?;
                     if !self.current_is_terminated() {
-                        if matches!(return_type, Type::Void) {
-                            self.set_terminator(IrTerminator::Return(None));
+                        let operand = if matches!(return_type, Type::Void) {
+                            None
                         } else {
-                            let operand =
-                                self.coerce(value, &value_type, return_type);
-                            self.set_terminator(IrTerminator::Return(Some(
-                                operand,
-                            )));
-                        }
+                            Some(self.coerce(value, &value_type, return_type))
+                        };
+                        self.emit_return(operand)?;
                     }
                 }
                 other => locate(self.lower_statement(other), position)?,
+            }
+            if self.current_is_terminated() {
+                break;
             }
         }
         self.pop_scope();
 
         if !self.current_is_terminated() {
-            self.run_defers(&defers)?;
-            self.set_terminator(IrTerminator::Return(None));
+            self.emit_return(None)?;
         }
+        self.active_defers.truncate(outer_defers);
         Ok(())
     }
 
-    fn lower_return_value(
-        &mut self,
-        expression: &Expression,
-        return_type: &Type,
-    ) -> Result<Option<IrOperand>> {
-        if matches!(return_type, Type::Void) {
-            return Ok(None);
-        }
-        let (operand, value_type) =
-            self.lower_expression(expression, Some(return_type))?;
-        Ok(Some(self.coerce(operand, &value_type, return_type)))
+    fn emit_return(&mut self, operand: Option<IrOperand>) -> Result<()> {
+        self.run_active_defers()?;
+        self.set_terminator(IrTerminator::Return(operand));
+        Ok(())
     }
 
-    fn run_defers(&mut self, defers: &[&Statement]) -> Result<()> {
+    fn run_active_defers(&mut self) -> Result<()> {
+        let defers = self.active_defers.clone();
         for deferred in defers.iter().rev() {
             self.lower_statement(deferred)?;
         }
@@ -1967,13 +1904,13 @@ impl<'a> FunctionLowering<'a> {
             Statement::Return(expression) => {
                 let return_type = self.return_type.clone();
                 if matches!(return_type, Type::Void) {
-                    self.set_terminator(IrTerminator::Return(None));
+                    self.emit_return(None)?;
                 } else {
                     let (operand, value_type) =
                         self.lower_expression(expression, Some(&return_type))?;
                     let coerced =
                         self.coerce(operand, &value_type, &return_type);
-                    self.set_terminator(IrTerminator::Return(Some(coerced)));
+                    self.emit_return(Some(coerced))?;
                 }
                 Ok(())
             }
