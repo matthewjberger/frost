@@ -142,6 +142,40 @@ impl Generator {
             self.functions
                 .insert("frost_bounds_check".to_string(), func_id);
         }
+
+        let pool_runtime: [(&str, &[types::Type], Option<types::Type>); 5] = [
+            ("pool_new", &[types::I64, types::I64], Some(pointer_type)),
+            (
+                "pool_alloc",
+                &[pointer_type, pointer_type],
+                Some(types::I64),
+            ),
+            ("pool_get", &[pointer_type, types::I64], Some(pointer_type)),
+            (
+                "pool_contains",
+                &[pointer_type, types::I64],
+                Some(types::I64),
+            ),
+            ("pool_free", &[pointer_type, types::I64], Some(types::I64)),
+        ];
+        for (name, params, return_type) in pool_runtime {
+            if self.functions.contains_key(name) {
+                continue;
+            }
+            let mut signature = self.module.make_signature();
+            for param in params {
+                signature.params.push(AbiParam::new(*param));
+            }
+            if let Some(return_type) = return_type {
+                signature.returns.push(AbiParam::new(return_type));
+            }
+            let func_id = self.module.declare_function(
+                name,
+                Linkage::Import,
+                &signature,
+            )?;
+            self.functions.insert(name.to_string(), func_id);
+        }
         Ok(())
     }
 
@@ -311,9 +345,11 @@ fn clif_type(pointer_type: types::Type, ty: &Type) -> Result<types::Type> {
         Type::Handle(_) => types::I64,
         Type::F32 => types::F32,
         Type::F64 => types::F64,
-        Type::Ptr(_) | Type::Ref(_) | Type::RefMut(_) | Type::Proc(_, _) => {
-            pointer_type
-        }
+        Type::Ptr(_)
+        | Type::Ref(_)
+        | Type::RefMut(_)
+        | Type::Proc(_, _)
+        | Type::Pool(_) => pointer_type,
         Type::Distinct(inner) => clif_type(pointer_type, inner)?,
         other => {
             bail!("native backend: type not supported in codegen: {other}")

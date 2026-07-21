@@ -198,11 +198,16 @@ References are **second-class** (chapter 8), only parameters and short-lived
 locals, never stored or returned. Raw pointers are first-class copy values that
 may be stored and returned and carry no safety guarantee.
 
-### 3.4 Handle types
+### 3.4 Handle and pool types
 
 `Handle<T>` names an element of a pool of `T` (chapter 10), a small copy value
 (index plus generation), not a pointer, that unlike a reference may be stored in
 fields and returned.
+
+`Pool<T>` is the pool itself, a copy value the size of a pointer. It is created
+with `pool_new($T, capacity)`, indexed by `Handle<T>`, and carries a typed set of
+operations (chapter 10.1). Like a handle it may be stored in fields, passed, and
+returned.
 
 ### 3.5 Function types
 
@@ -513,10 +518,22 @@ rather than relying on `defer`.
 ### 10.1 Pools
 
 A pool is a contiguous, fixed-capacity arena of same-typed elements addressed by
-`Handle<T>` rather than pointer. The pool runtime (`pool_new`, `pool_alloc`,
-`pool_get`, `pool_free`, `pool_contains`, `pool_destroy`) is provided by
-`runtime/frost_runtime.c` and declared with `extern fn`. A typed library wraps it
-so `make_pool($T, capacity)` and `pool[handle]` read idiomatically.
+`Handle<T>` rather than pointer. `Pool<T>` is a first-class type, a copy value the
+size of a pointer, with a typed surface the compiler provides directly over the
+runtime in `runtime/frost_runtime.c`. No `extern fn` declarations are needed.
+
+| Operation | Meaning |
+| --- | --- |
+| `pool_new($T, capacity) -> Pool<T>` | allocate a pool of `capacity` slots, self-sizing from `sizeof(T)` |
+| `pool_alloc(pool, value) -> Handle<T>` | copy `value` (a `T`) into a free slot and return its handle |
+| `pool[handle]` | the slot's element, a place (10.2) |
+| `pool_contains(pool, handle) -> bool` | whether the handle still names a live slot |
+| `pool_free(pool, handle)` | release the slot and bump its generation (10.3) |
+
+The runtime functions still exist and may be called through `extern fn` for
+low-level use, but the typed operations above are the intended surface. A name is
+only treated as a pool operation when the program has not declared or bound it
+itself, so an explicit `extern fn pool_alloc` keeps the raw behavior.
 
 ### 10.2 `pool[handle]` is a place
 

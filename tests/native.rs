@@ -658,6 +658,34 @@ fn native_str_is_a_length_carrying_view() {
     assert_eq!(output, "5\n70\n114\n111\n115\n116\n70\n3\n121\n6\n");
 }
 
+const TYPED_POOL: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Entity :: struct { hp: i64, mana: i64 }
+
+main :: fn() -> i64 {
+    world : Pool<Entity> = pool_new($Entity, 8)
+    hero := pool_alloc(world, Entity { hp = 100, mana = 30 })
+    foe := pool_alloc(world, Entity { hp = 40, mana = 10 })
+    printf("%lld\n", world[hero].hp)
+    printf("%lld\n", world[foe].hp)
+    world[hero].hp = world[hero].hp - 25
+    printf("%lld\n", world[hero].hp)
+    if (pool_contains(world, foe)) { printf("%lld\n", 1) }
+    pool_free(world, foe)
+    if (pool_contains(world, foe)) { printf("%lld\n", 9) } else { printf("%lld\n", 0) }
+    0
+}
+"#;
+
+#[test]
+fn native_typed_pool_surface() {
+    let Some(output) = compile_and_run("typedpool", TYPED_POOL) else {
+        return;
+    };
+    assert_eq!(output, "100\n40\n75\n1\n0\n");
+}
+
 const STR_OUT_OF_BOUNDS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -2133,6 +2161,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_fieldborrow", FIELD_BORROW),
         ("diff_intsem", INTEGER_SEMANTICS),
         ("diff_genpool", GENERATIONAL_POOL),
+        ("diff_typedpool", TYPED_POOL),
         ("diff_widening", WIDENING_BINDINGS),
         ("diff_matchagg", MATCH_RETURNS_AGGREGATE),
         ("diff_f32", F32_OPERATIONS),

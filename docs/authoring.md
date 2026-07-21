@@ -103,10 +103,13 @@ and the wildcard `_` all work.
   consumed exactly once. Consume it by returning it, passing it by value, or
   matching it. Forgetting is a compile error.
 - **Handles and pools** are how you model long-lived, shared, or linked data. A
-  pool is a contiguous arena, and a `Handle<T>` (an index plus a generation) is a
-  copy value you store and pass. `pool[handle]` is a place you read, write, or
-  borrow. A freed slot bumps its generation, so a stale handle can never read the
-  new occupant.
+  `Pool<T>` is a contiguous arena, made with `pool_new($T, capacity)`, and a
+  `Handle<T>` (an index plus a generation) is a copy value you store and pass.
+  `pool_alloc(pool, value)` returns a handle, `pool[handle]` is a place you read,
+  write, or borrow, `pool_contains(pool, handle)` tests liveness, and
+  `pool_free(pool, handle)` releases a slot. No `extern` declarations are needed.
+  A freed slot bumps its generation, so a stale handle can never read the new
+  occupant.
 
 ## Generics
 
@@ -118,8 +121,7 @@ type at the call site with a leading `$`.
 Pair :: struct($T: Type) { first: T, second: T }
 make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
 
-make_pool :: fn($T: Type, capacity: i64) -> ^u8 { pool_new(capacity, sizeof(T)) }
-world := make_pool($Entity, 16)
+world : Pool<Entity> = pool_new($Entity, 16)
 ```
 
 Generics monomorphize, so there is no runtime dispatch.
@@ -212,10 +214,7 @@ cheap to grep, and hard to get subtly wrong.
 ## A complete program
 
 ```
-printf     :: extern fn(fmt: ^i8, value: i64) -> i32
-pool_new   :: extern fn(capacity: i64, elem_size: i64) -> ^u8
-pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
-pool_get   :: extern fn(pool: ^u8, handle: i64) -> ^u8
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 Kind   :: enum { Player, Enemy { damage: i64 } }
 Entity :: struct { hp: i64, kind: Kind }
@@ -228,16 +227,15 @@ delta :: fn(k: &Kind) -> i64 {
 }
 
 main :: fn() -> i64 {
-    world := pool_new(16, 24)
-    mut player := Entity { hp = 100, kind = Kind::Player }
-    ph := pool_alloc(world, &player)
-    mut goblin := Entity { hp = 30, kind = Kind::Enemy { damage = 15 } }
-    gh := pool_alloc(world, &goblin)
+    world : Pool<Entity> = pool_new($Entity, 16)
+    player := pool_alloc(world, Entity { hp = 100, kind = Kind::Player })
+    goblin := pool_alloc(
+        world,
+        Entity { hp = 30, kind = Kind::Enemy { damage = 15 } },
+    )
 
-    pe : ^Entity = pool_get(world, ph)
-    ge : ^Entity = pool_get(world, gh)
-    pe^.hp = pe^.hp + delta(&ge^.kind)
-    printf("%lld\n", pe^.hp)          // 85
+    world[player].hp = world[player].hp + delta(&world[goblin].kind)
+    printf("%lld\n", world[player].hp)          // 85
     0
 }
 ```

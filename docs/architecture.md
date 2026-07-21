@@ -256,19 +256,24 @@ Frost is being reshaped toward a data-oriented language with:
    would be caught before codegen rather than miscompiled.)*
 3. Linear resources with path-sensitive consumption, and error enums that
    linearity makes non-ignorable.
-4. Handle-dereference-as-borrow. *(Done: `Handle<T>` is a first-class native
-   type (a packed i64), and `pool[handle]` is a place. Read/write fields
-   through it, copy the element out, or take `&`/`&mut` of it. The borrow is
-   second-class by the same reference rule. Storing it in a field or returning
-   it is already rejected, so a handle-deref borrow cannot escape.)*
+4. Handle-dereference-as-borrow, and a first-class pool type. *(Done: `Handle<T>`
+   is a first-class native type (a packed i64), and `pool[handle]` is a place.
+   Read/write fields through it, copy the element out, or take `&`/`&mut` of it.
+   The borrow is second-class by the same reference rule. Storing it in a field
+   or returning it is already rejected, so a handle-deref borrow cannot escape.
+   `Pool<T>` is likewise a first-class type (a pointer-sized copy value) with
+   compiler-provided typed operations: `pool_new($T, capacity)`,
+   `pool_alloc(pool, value)`, `pool_contains`, and `pool_free`, all lowering to
+   the runtime with no `extern fn` declarations. The names fall back to raw
+   externs when the program declares them itself, so the older untyped `^u8`
+   surface still works.)*
 5. Struct/array/enum by-value passing and tuple patterns in the native
    backend. *(Done: all three, plus nested aggregates and arrays of structs.)*
 6. Generics by monomorphization. *(Done:
    generic functions, generic structs (incl. nested `Pair<Pair<i64>>`, factory
    functions returning instances, construction inference, and generic-over-
    instance), `sizeof`, and explicit type arguments (`fn($T: Type, ...)` called
-   `f($Concrete, ...)`, with type parameters erased from the specialized ABI).
-   The pool typed surface is now a Frost library.)*
+   `f($Concrete, ...)`, with type parameters erased from the specialized ABI).)*
 7. Bounds-checked array indexing. *(Done: every fixed-size array index is
    checked against the statically-known length and aborts on out-of-range.)*
 8. Source locations in errors. *(Done: the lexer and parser carry
