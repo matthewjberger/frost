@@ -1,36 +1,37 @@
 // Mini-Frost: a compiler written in Frost, in the data-oriented style.
 //
-// It reads a program written in a Frost-like subset (multi-character variables,
-// arithmetic and comparisons, `let`, assignment, `print`, `if`/`else`, `while`,
-// and user-defined functions with `return`, calls, and recursion), builds an
-// abstract syntax tree in a pool-backed arena, and then walks that tree to emit
-// a C translation unit. Compiling and running that C produces the program's
-// output, so this is a real code generator written in Frost that emits native
-// code, the same way Frost's own primary backend emits C and links it.
+// It reads a program written in a subset of Frost's own syntax (definitions of
+// the form `name :: fn(p: i64) -> i64 { ... }`, `x := e` and `mut x : i64 = e`
+// locals, assignment, `print`, `if`/`else`, `while`, arithmetic, comparisons,
+// and boolean operators, with calls and recursion), lexes it into a token
+// stream, parses that into an abstract syntax tree in an arena, and walks the
+// tree to emit a C translation unit. Compiling and running that C produces the
+// program's output, so this is a real code generator written in Frost that emits
+// native code, the same way Frost's own primary backend emits C and links it.
 //
 // The whole thing is written against the native data-oriented surface: no
 // closures, no dynamic collections, references are second-class, and every
-// mutable working set is an arena (the AST and two symbol tables). The arenas
-// are the language's own allocator (docs/allocators.md), a generic bump
-// allocator over one `malloc` per arena, not a runtime pool.
+// mutable working set is an arena (the token stream, the AST, and the function
+// table). The arenas are the language's own allocator (docs/allocators.md), a
+// generic bump allocator over one `malloc` per arena, not a runtime pool.
 //
 // The AST is stored in an arena of Node records. A node names its children by
 // their arena index (a plain integer), which is the data-oriented replacement
 // for pointers between heap nodes. Sibling statements, parameters, and call
 // arguments are each threaded through a `next` field into a singly linked list.
 //
-// Identifiers are multi-character. An occurrence is a byte range into the source
-// (offset + length). Two symbol tables intern those ranges to small integer
-// indices by byte comparison: one per function for locals (each local becomes a
-// slot in the function's `int64_t v[64]`), and one global table for function
-// names (a name becomes the `mf_<index>` of its emitted C function). This is the
-// data-oriented replacement for a hash map keyed by strings.
+// Identifiers are byte ranges into the source (offset + length). A local is
+// emitted as its own name in the generated C, so no local symbol table is
+// needed. Function names are interned to small integer indices through one
+// global table, and a name becomes the `mf_<index>` of its emitted C function,
+// which also keeps user names from colliding with the C runtime.
 
 malloc         :: extern fn(size: i64) -> ^u8
 frost_byte_at  :: extern fn(s: ^i8, i: i64) -> i64
 frost_str_len  :: extern fn(s: ^i8) -> i64
 frost_emit_str :: extern fn(s: ^i8)
 frost_emit_int :: extern fn(value: i64)
+frost_emit_char :: extern fn(byte: i64)
 
 // Node kinds.
 NODE_NUM    :: 0
@@ -210,7 +211,6 @@ Parser :: struct {
     tokens: Arena<Token>,
     ti: i64,
     arena: Arena<Node>,
-    syms: Arena<Sym>,
     fns: Arena<Sym>,
 }
 
@@ -443,19 +443,6 @@ bytes_equal :: fn(src: ^i8, first: i64, second: i64, length: i64) -> bool {
     true
 }
 
-intern_local :: fn(p: &mut Parser, offset: i64, length: i64) -> i64 {
-    mut i : i64 = 0
-    while (i < p.syms.count) {
-        entry : ^Sym = arena_at(&p.syms, i)
-        if (entry^.len == length
-            && bytes_equal(p.src, entry^.off, offset, length)) {
-            return i
-        }
-        i = i + 1
-    }
-    arena_push(&mut p.syms, Sym { off = offset, len = length })
-}
-
 intern_global :: fn(p: &mut Parser, offset: i64, length: i64) -> i64 {
     mut i : i64 = 0
     while (i < p.fns.count) {
@@ -489,6 +476,18 @@ new_node :: fn(p: &mut Parser, kind: i64, a: i64, b: i64, val: i64) -> i64 {
     )
 }
 
+// A node that names a local by its source byte range: `val` is the offset and
+// `c` is the length, so code generation re-emits the identifier text directly.
+// This is what lets locals become named C variables instead of `v[]` slots.
+new_named_node :: fn(p: &mut Parser, kind: i64, child: i64, offset: i64,
+    length: i64) -> i64 {
+    arena_push(
+        &mut p.arena,
+        Node { kind = kind, a = child, b = 0, c = length, val = offset,
+            next = 0 - 1 },
+    )
+}
+
 new_func_node :: fn(p: &mut Parser, body: i64, params: i64, fn_index: i64,
     is_main: i64) -> i64 {
     arena_push(
@@ -515,13 +514,6 @@ parse_number :: fn(p: &mut Parser) -> i64 {
     new_node(p, NODE_NUM, 0, 0, value)
 }
 
-parse_local_ref :: fn(p: &mut Parser) -> i64 {
-    offset := cur_off(p)
-    length := cur_len(p)
-    advance(p)
-    intern_local(p, offset, length)
-}
-
 parse_factor :: fn(p: &mut Parser) -> i64 {
     kind := cur(p)
     if (kind == TOK_INT) {
@@ -542,8 +534,7 @@ parse_factor :: fn(p: &mut Parser) -> i64 {
         fn_index := intern_global(p, offset, length)
         return new_node(p, NODE_CALL, args, 0, fn_index)
     }
-    local := intern_local(p, offset, length)
-    new_node(p, NODE_VAR, 0, 0, local)
+    new_named_node(p, NODE_VAR, 0, offset, length)
 }
 
 parse_arg_list :: fn(p: &mut Parser) -> i64 {
@@ -665,15 +656,56 @@ parse_block :: fn(p: &mut Parser) -> i64 {
     head
 }
 
+// Consume a type: any `&`/`&mut`/`^` prefixes, a name, and a balanced `<...>`
+// argument list. Types carry no meaning yet (everything lowers to int64_t), so
+// they are parsed and discarded, but the shape is the real Frost one.
+skip_type :: fn(p: &mut Parser) {
+    while (cur(p) == TOK_AMP || cur(p) == TOK_CARET) {
+        advance(p)
+        if (cur(p) == TOK_KW_MUT) {
+            advance(p)
+        }
+    }
+    advance(p)
+    if (cur(p) == TOK_LT) {
+        mut depth : i64 = 0
+        while (cur(p) != TOK_EOF) {
+            if (cur(p) == TOK_LT) {
+                depth = depth + 1
+            }
+            if (cur(p) == TOK_GT) {
+                depth = depth - 1
+                if (depth == 0) {
+                    advance(p)
+                    return
+                }
+            }
+            advance(p)
+        }
+    }
+}
+
+skip_type_annotation :: fn(p: &mut Parser) {
+    advance(p)
+    skip_type(p)
+}
+
 parse_stmt :: fn(p: &mut Parser) -> i64 {
     kind := cur(p)
 
-    if (kind == TOK_KW_LET) {
+    if (kind == TOK_KW_MUT) {
         advance(p)
-        variable := parse_local_ref(p)
+        offset := cur_off(p)
+        length := cur_len(p)
         advance(p)
+        if (cur(p) == TOK_COLON) {
+            skip_type_annotation(p)
+            advance(p)
+        } else {
+            advance(p)
+        }
         value := parse_expr(p)
-        return new_node(p, NODE_LET, value, 0, variable)
+        return new_named_node(p, NODE_LET, value, offset, length)
     }
     if (kind == TOK_KW_PRINT) {
         advance(p)
@@ -707,10 +739,24 @@ parse_stmt :: fn(p: &mut Parser) -> i64 {
         return new_node(p, NODE_WHILE, condition, body, 0)
     }
 
-    variable := parse_local_ref(p)
+    offset := cur_off(p)
+    length := cur_len(p)
+    advance(p)
+    next := cur(p)
+    if (next == TOK_COLONEQ) {
+        advance(p)
+        value := parse_expr(p)
+        return new_named_node(p, NODE_LET, value, offset, length)
+    }
+    if (next == TOK_COLON) {
+        skip_type_annotation(p)
+        advance(p)
+        value := parse_expr(p)
+        return new_named_node(p, NODE_LET, value, offset, length)
+    }
     advance(p)
     value := parse_expr(p)
-    new_node(p, NODE_ASSIGN, value, 0, variable)
+    new_named_node(p, NODE_ASSIGN, value, offset, length)
 }
 
 parse_stmt_list :: fn(p: &mut Parser, terminator: i64) -> i64 {
@@ -733,8 +779,11 @@ parse_params :: fn(p: &mut Parser) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
-        local := parse_local_ref(p)
-        param := new_node(p, NODE_PARAM, 0, 0, local)
+        offset := cur_off(p)
+        length := cur_len(p)
+        advance(p)
+        skip_type_annotation(p)
+        param := new_named_node(p, NODE_PARAM, 0, offset, length)
         if (head == (0 - 1)) {
             head = param
             tail = param
@@ -750,23 +799,25 @@ parse_params :: fn(p: &mut Parser) -> i64 {
     head
 }
 
+// A definition is `name :: fn(params) -> ret { body }`. The name and `::` and
+// `fn` are consumed here; an optional `-> type` return annotation is skipped.
 parse_function :: fn(p: &mut Parser) -> i64 {
-    advance(p)
     name_offset := cur_off(p)
     name_length := cur_len(p)
+    advance(p)
+    advance(p)
     advance(p)
     fn_index := intern_global(p, name_offset, name_length)
     mut is_main : i64 = 0
     if (is_main_name(p.src, name_offset, name_length)) {
         is_main = 1
     }
-    // Reclaim the previous function's local symbols. The AST already holds each
-    // local's resolved index, so the table is only needed while this function is
-    // parsing. Resetting the arena's count reuses the same buffer, bounding
-    // symbol memory to one function's locals rather than the whole program.
-    p.syms.count = 0
     advance(p)
     params := parse_params(p)
+    if (cur(p) == TOK_ARROW) {
+        advance(p)
+        skip_type(p)
+    }
     body := parse_block(p)
     new_func_node(p, body, params, fn_index, is_main)
 }
@@ -774,7 +825,7 @@ parse_function :: fn(p: &mut Parser) -> i64 {
 parse_program :: fn(p: &mut Parser) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
-    while (cur(p) == TOK_KW_FN) {
+    while (cur(p) == TOK_IDENT) {
         func := parse_function(p)
         if (head == (0 - 1)) {
             head = func
@@ -809,7 +860,17 @@ emit_op :: fn(op: i64) {
     }
 }
 
-emit_expr :: fn(arena: &Arena<Node>, id: i64) {
+// Re-emit an identifier from the source by its byte range, so a local reference
+// becomes the variable's own name in the generated C.
+emit_source :: fn(src: ^i8, off: i64, len: i64) {
+    mut k : i64 = 0
+    while (k < len) {
+        frost_emit_char(frost_byte_at(src, off + k))
+        k = k + 1
+    }
+}
+
+emit_expr :: fn(src: ^i8, arena: &Arena<Node>, id: i64) {
     node : ^Node = arena_at(arena, id)
     kind := node^.kind
     if (kind == NODE_NUM) {
@@ -817,27 +878,25 @@ emit_expr :: fn(arena: &Arena<Node>, id: i64) {
         return
     }
     if (kind == NODE_VAR) {
-        frost_emit_str("v[")
-        frost_emit_int(node^.val)
-        frost_emit_str("]")
+        emit_source(src, node^.val, node^.c)
         return
     }
     if (kind == NODE_CALL) {
         frost_emit_str("mf_")
         frost_emit_int(node^.val)
         frost_emit_str("(")
-        emit_args(arena, node^.a)
+        emit_args(src, arena, node^.a)
         frost_emit_str(")")
         return
     }
     frost_emit_str("(")
-    emit_expr(arena, node^.a)
+    emit_expr(src, arena, node^.a)
     emit_op(node^.val)
-    emit_expr(arena, node^.b)
+    emit_expr(src, arena, node^.b)
     frost_emit_str(")")
 }
 
-emit_args :: fn(arena: &Arena<Node>, head: i64) {
+emit_args :: fn(src: ^i8, arena: &Arena<Node>, head: i64) {
     mut id := head
     mut first : bool = true
     while (id != (0 - 1)) {
@@ -848,43 +907,50 @@ emit_args :: fn(arena: &Arena<Node>, head: i64) {
         node : ^Node = arena_at(arena, id)
         value := node^.a
         next_id := node^.next
-        emit_expr(arena, value)
+        emit_expr(src, arena, value)
         id = next_id
     }
 }
 
-emit_stmt :: fn(arena: &Arena<Node>, id: i64) {
+emit_stmt :: fn(src: ^i8, arena: &Arena<Node>, id: i64) {
     node : ^Node = arena_at(arena, id)
     kind := node^.kind
-    if (kind == NODE_LET || kind == NODE_ASSIGN) {
-        frost_emit_str("v[")
-        frost_emit_int(node^.val)
-        frost_emit_str("] = ")
-        emit_expr(arena, node^.a)
+    if (kind == NODE_LET) {
+        frost_emit_str("int64_t ")
+        emit_source(src, node^.val, node^.c)
+        frost_emit_str(" = ")
+        emit_expr(src, arena, node^.a)
+        frost_emit_str(";\n")
+        return
+    }
+    if (kind == NODE_ASSIGN) {
+        emit_source(src, node^.val, node^.c)
+        frost_emit_str(" = ")
+        emit_expr(src, arena, node^.a)
         frost_emit_str(";\n")
         return
     }
     if (kind == NODE_PRINT) {
         frost_emit_str("printf(\"%lld\\n\", (long long)(")
-        emit_expr(arena, node^.a)
+        emit_expr(src, arena, node^.a)
         frost_emit_str("));\n")
         return
     }
     if (kind == NODE_RETURN) {
         frost_emit_str("return (")
-        emit_expr(arena, node^.a)
+        emit_expr(src, arena, node^.a)
         frost_emit_str(");\n")
         return
     }
     if (kind == NODE_IF) {
         frost_emit_str("if (")
-        emit_expr(arena, node^.a)
+        emit_expr(src, arena, node^.a)
         frost_emit_str(") {\n")
-        emit_list(arena, node^.b)
+        emit_list(src, arena, node^.b)
         frost_emit_str("}")
         if (node^.val != (0 - 1)) {
             frost_emit_str(" else {\n")
-            emit_list(arena, node^.val)
+            emit_list(src, arena, node^.val)
             frost_emit_str("}")
         }
         frost_emit_str("\n")
@@ -892,18 +958,18 @@ emit_stmt :: fn(arena: &Arena<Node>, id: i64) {
     }
     if (kind == NODE_WHILE) {
         frost_emit_str("while (")
-        emit_expr(arena, node^.a)
+        emit_expr(src, arena, node^.a)
         frost_emit_str(") {\n")
-        emit_list(arena, node^.b)
+        emit_list(src, arena, node^.b)
         frost_emit_str("}\n")
         return
     }
 }
 
-emit_list :: fn(arena: &Arena<Node>, head: i64) {
+emit_list :: fn(src: ^i8, arena: &Arena<Node>, head: i64) {
     mut id := head
     while (id != (0 - 1)) {
-        emit_stmt(arena, id)
+        emit_stmt(src, arena, id)
         node : ^Node = arena_at(arena, id)
         id = node^.next
     }
@@ -927,39 +993,22 @@ emit_param_types :: fn(arena: &Arena<Node>, head: i64) {
     }
 }
 
-emit_param_signature :: fn(arena: &Arena<Node>, head: i64) {
+emit_param_signature :: fn(src: ^i8, arena: &Arena<Node>, head: i64) {
     if (head == (0 - 1)) {
         frost_emit_str("void")
         return
     }
     mut id := head
-    mut index : i64 = 0
+    mut first : bool = true
     while (id != (0 - 1)) {
-        if (index != 0) {
+        if (first == false) {
             frost_emit_str(", ")
         }
-        frost_emit_str("int64_t a")
-        frost_emit_int(index)
-        index = index + 1
+        first = false
         node : ^Node = arena_at(arena, id)
+        frost_emit_str("int64_t ")
+        emit_source(src, node^.val, node^.c)
         id = node^.next
-    }
-}
-
-emit_param_copies :: fn(arena: &Arena<Node>, head: i64) {
-    mut id := head
-    mut index : i64 = 0
-    while (id != (0 - 1)) {
-        node : ^Node = arena_at(arena, id)
-        slot := node^.val
-        next_id := node^.next
-        frost_emit_str("v[")
-        frost_emit_int(slot)
-        frost_emit_str("] = a")
-        frost_emit_int(index)
-        frost_emit_str(";\n")
-        index = index + 1
-        id = next_id
     }
 }
 
@@ -982,7 +1031,7 @@ emit_prototypes :: fn(arena: &Arena<Node>, head: i64) {
     }
 }
 
-emit_function :: fn(arena: &Arena<Node>, id: i64) {
+emit_function :: fn(src: ^i8, arena: &Arena<Node>, id: i64) {
     node : ^Node = arena_at(arena, id)
     fn_index := node^.val
     body := node^.a
@@ -994,20 +1043,18 @@ emit_function :: fn(arena: &Arena<Node>, id: i64) {
         frost_emit_str("int64_t mf_")
         frost_emit_int(fn_index)
         frost_emit_str("(")
-        emit_param_signature(arena, params)
+        emit_param_signature(src, arena, params)
         frost_emit_str(") {\n")
     }
-    frost_emit_str("int64_t v[64] = {0};\n")
-    emit_param_copies(arena, params)
-    emit_list(arena, body)
+    emit_list(src, arena, body)
     frost_emit_str("return 0;\n}\n")
 }
 
-emit_program :: fn(arena: &Arena<Node>, head: i64) {
+emit_program :: fn(src: ^i8, arena: &Arena<Node>, head: i64) {
     emit_prototypes(arena, head)
     mut id := head
     while (id != (0 - 1)) {
-        emit_function(arena, id)
+        emit_function(src, arena, id)
         node : ^Node = arena_at(arena, id)
         id = node^.next
     }
@@ -1015,32 +1062,32 @@ emit_program :: fn(arena: &Arena<Node>, head: i64) {
 
 main :: fn() -> i64 {
     source : ^i8 = "
-        fn fib(n) {
+        fib :: fn(n: i64) -> i64 {
             if (n < 2) { return n }
             return fib(n - 1) + fib(n - 2)
         }
 
-        fn fact(n) {
+        fact :: fn(n: i64) -> i64 {
             if (n < 1) { return 1 }
             return n * fact(n - 1)
         }
 
-        fn inrange(x) {
+        inrange :: fn(x: i64) -> i64 {
             if (x >= 1 && x <= 10) { return 1 }
             return 0
         }
 
-        fn outside(x) {
+        outside :: fn(x: i64) -> i64 {
             if (x < 0 || x > 100) { return 1 }
             return 0
         }
 
-        fn main() {
+        main :: fn() -> i64 {
             print fib(10)
             print fact(5)
-            let sum = 0
-            let index = 1
-            while (index <= 10) { sum = sum + index index = index + 1 }
+            mut sum : i64 = 0
+            mut index : i64 = 1
+            while (index <= 10) { sum = sum + index  index = index + 1 }
             print sum
             print inrange(5)
             print outside(200)
@@ -1052,7 +1099,6 @@ main :: fn() -> i64 {
         tokens = arena_make($Token, 8192),
         ti = 0,
         arena = arena_make($Node, 4096),
-        syms = arena_make($Sym, 256),
         fns = arena_make($Sym, 1024),
     }
     tokenize(source, frost_str_len(source), &mut parser.tokens)
@@ -1060,6 +1106,6 @@ main :: fn() -> i64 {
 
     frost_emit_str("#include <stdio.h>\n")
     frost_emit_str("#include <stdint.h>\n")
-    emit_program(&parser.arena, program)
+    emit_program(parser.src, &parser.arena, program)
     0
 }
