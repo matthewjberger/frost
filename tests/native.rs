@@ -2197,6 +2197,36 @@ fn native_defer_runs_lifo_at_return() {
     assert_eq!(output, "1\n4\n3\n2\n99\n");
 }
 
+const DEFER_NESTED_RETURN: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+work :: fn(which: i64) -> i64 {
+    defer printf("%lld\n", 8)
+    defer printf("%lld\n", 9)
+    if (which == 0) {
+        printf("%lld\n", 1)
+        return 100
+    }
+    printf("%lld\n", 2)
+    200
+}
+
+main :: fn() -> i64 {
+    printf("%lld\n", work(0))
+    printf("%lld\n", work(1))
+    0
+}
+"#;
+
+#[test]
+fn native_defer_runs_on_a_nested_early_return() {
+    let Some(output) = compile_and_run("defer_nested", DEFER_NESTED_RETURN)
+    else {
+        return;
+    };
+    assert_eq!(output, "1\n9\n8\n100\n2\n9\n8\n200\n");
+}
+
 const NESTED_STRUCTS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -2606,6 +2636,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_funcptr", FUNCTION_POINTERS),
         ("diff_kitchen", KITCHEN_SINK),
         ("diff_defer", DEFER),
+        ("diff_defernested", DEFER_NESTED_RETURN),
         ("diff_nested", NESTED_STRUCTS),
         ("diff_layouts", DATA_LAYOUTS),
         ("diff_payloads", AGGREGATE_PAYLOADS),
