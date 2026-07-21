@@ -132,9 +132,12 @@ roadmap, the order is:
 3. **Arena allocator**: a bump allocator over a byte buffer, with reset and marker
    rollback. *(Done, as Frost code: `examples/native/arena.frost`, on the new
    `ptr_to`/`ptr_cast` primitives and the `[0; N]` repeat literal.)*
-4. **The allocator interface** and the pool rebuilt over an arena or static
-   buffer in Frost, with `pool[handle]` staying the one compiler-supported place
-   deref.
+4. **The allocator interface**: an allocator is a function-pointer struct plus
+   state, so a data structure can be backed by any of them.
+   *(Done: `examples/native/allocator.frost`, a bump allocator implementing the
+   interface, on top of raw-pointer indexing `p[i]` which landed here.)* The pool
+   rebuilt over an arena in Frost with `pool[handle]` staying the one
+   compiler-supported place deref remains.
 5. **The OS extern** (`os_alloc`/`os_free`) and a freestanding demo that roots
    everything in a static arena with no libc.
 6. **Retire the C pool runtime** and remove `Context`, freeing the reserved names

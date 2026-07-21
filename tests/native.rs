@@ -687,6 +687,47 @@ fn native_typed_pool_surface() {
     assert_eq!(output, "100\n40\n75\n1\n0\n");
 }
 
+const ALLOCATOR_INTERFACE: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Bump :: struct { data: ^u8, cap: i64, offset: i64 }
+
+bump_take :: fn(state: ^u8, size: i64) -> ^u8 {
+    b := ptr_cast($Bump, state)
+    slot := ptr_to(b^.data[b^.offset])
+    b^.offset = b^.offset + size
+    slot
+}
+
+Allocator :: struct { take: fn(^u8, i64) -> ^u8, state: ^u8 }
+
+alloc :: fn(a: &Allocator, size: i64) -> ^u8 {
+    a.take(a.state, size)
+}
+
+main :: fn() -> i64 {
+    mut backing : [64]u8 = [0; 64]
+    mut bump : Bump = Bump { data = ptr_to(backing[0]), cap = 64, offset = 0 }
+    a : Allocator = Allocator { take = bump_take, state = ptr_cast($u8, ptr_to(bump)) }
+    p := ptr_cast($i64, alloc(&a, 8))
+    p^ = 42
+    q := ptr_cast($i64, alloc(&a, 8))
+    q^ = 7
+    printf("%lld\n", p^ + q^)
+    printf("%lld\n", bump.offset)
+    0
+}
+"#;
+
+#[test]
+fn native_allocator_interface() {
+    let Some(output) = compile_and_run("allociface", ALLOCATOR_INTERFACE)
+    else {
+        return;
+    };
+    assert_eq!(output, "49\n16\n");
+}
+
 const ARENA: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -2423,6 +2464,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_slices", SLICES),
         ("diff_valuegenerics", VALUE_GENERICS),
         ("diff_arena", ARENA),
+        ("diff_allociface", ALLOCATOR_INTERFACE),
         ("diff_widening", WIDENING_BINDINGS),
         ("diff_matchagg", MATCH_RETURNS_AGGREGATE),
         ("diff_f32", F32_OPERATIONS),

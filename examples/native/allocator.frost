@@ -1,0 +1,55 @@
+// The allocator interface: an allocator is a value, so a data structure can be
+// backed by any of them and the backing can be swapped. Following the Odin model
+// (docs/allocators.md), an Allocator is a function pointer plus the allocator's
+// own state, no closures and no vtable. Frost's function pointers express this
+// directly. Here a bump allocator over a byte buffer implements the interface,
+// and `alloc` allocates through the interface without naming the bump at all.
+
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Bump :: struct {
+    data: ^u8,
+    cap: i64,
+    offset: i64,
+}
+
+// The bump's take function matches the Allocator interface: (state, size) -> ptr.
+bump_take :: fn(state: ^u8, size: i64) -> ^u8 {
+    b := ptr_cast($Bump, state)
+    slot := ptr_to(b^.data[b^.offset])
+    b^.offset = b^.offset + size
+    slot
+}
+
+Allocator :: struct {
+    take: fn(^u8, i64) -> ^u8,
+    state: ^u8,
+}
+
+alloc :: fn(a: &Allocator, size: i64) -> ^u8 {
+    a.take(a.state, size)
+}
+
+main :: fn() -> i64 {
+    mut backing : [64]u8 = [0; 64]
+    mut bump : Bump = Bump {
+        data = ptr_to(backing[0]),
+        cap = 64,
+        offset = 0,
+    }
+    a : Allocator = Allocator {
+        take = bump_take,
+        state = ptr_cast($u8, ptr_to(bump)),
+    }
+
+    p := ptr_cast($i64, alloc(&a, 8))
+    p^ = 42
+    q := ptr_cast($i64, alloc(&a, 8))
+    q^ = 7
+
+    printf("%lld\n", p^)            // 42
+    printf("%lld\n", q^)            // 7
+    printf("%lld\n", p^ + q^)       // 49
+    printf("%lld\n", bump.offset)   // 16, two 8-byte allocations
+    0
+}
