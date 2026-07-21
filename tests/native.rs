@@ -142,6 +142,65 @@ main :: fn() -> i64 {
     );
 }
 
+#[test]
+fn borrow_exclusivity_errors_report_a_source_line() {
+    let source = r#"
+add_both :: fn(a: &mut i64, b: &mut i64) -> i64 { a^ + b^ }
+
+main :: fn() -> i64 {
+    mut value : i64 = 1
+    total := add_both(&mut value, &mut value)
+    total
+}
+"#;
+    let message = compile_error("exclusivity", source);
+    assert!(
+        message.contains("at line 6,"),
+        "expected the exclusivity error at line 6, got:\n{message}"
+    );
+}
+
+#[test]
+fn linear_not_consumed_errors_report_a_source_line() {
+    let source = r#"
+Resource :: linear struct { id: i64 }
+
+make :: fn(id: i64) -> Resource { Resource { id = id } }
+
+main :: fn() -> i64 {
+    r := make(7)
+    0
+}
+"#;
+    let message = compile_error("linear", source);
+    assert!(
+        message.contains("at line"),
+        "expected a located linear error, got:\n{message}"
+    );
+    assert!(
+        message.contains("never consumed"),
+        "expected a linear-not-consumed error, got:\n{message}"
+    );
+}
+
+#[test]
+fn reference_escape_errors_report_a_source_line() {
+    let source = r#"
+leak :: fn(x: &i64) -> &i64 { x }
+
+main :: fn() -> i64 { 0 }
+"#;
+    let message = compile_error("refescape", source);
+    assert!(
+        message.contains("at line"),
+        "expected a located reference-escape error, got:\n{message}"
+    );
+    assert!(
+        message.contains("second-class") || message.contains("reference"),
+        "expected a reference-escape error, got:\n{message}"
+    );
+}
+
 fn compile_and_run_status(name: &str, source: &str) -> Option<bool> {
     if !linker_available() {
         return None;
@@ -296,6 +355,30 @@ fn native_integer_widths_and_casts() {
         return;
     };
     assert_eq!(output, "300\n150\n");
+}
+
+const WRAPPING_AND_UNARY: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+main :: fn() -> i64 {
+    a : u8 = 200
+    b : u8 = 100
+    printf("%lld\n", a + b)
+    d : u32 = 4000000000
+    e : u32 = 1000000000
+    printf("%lld\n", d + e)
+    g : i64 = 42
+    printf("%lld\n", -g)
+    0
+}
+"#;
+
+#[test]
+fn native_wrapping_and_unary() {
+    let Some(output) = compile_and_run("wrapping", WRAPPING_AND_UNARY) else {
+        return;
+    };
+    assert_eq!(output, "44\n705032704\n-42\n");
 }
 
 const STRINGS: &str = r#"
@@ -1749,6 +1832,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_arith", ARITHMETIC),
         ("diff_floats", FLOATS),
         ("diff_widths", WIDTHS),
+        ("diff_wrapping", WRAPPING_AND_UNARY),
         ("diff_strings", STRINGS),
         ("diff_pointers", POINTERS),
         ("diff_structs", STRUCTS),

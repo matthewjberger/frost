@@ -1,4 +1,4 @@
-use crate::{flatten, hash, lexer::Position, lexer::Token, types::Type};
+use crate::{flatten, lexer::Position, lexer::Token, types::Type};
 use anyhow::{Result, bail};
 use std::{
     fmt::{Display, Formatter, Result as FmtResult},
@@ -28,8 +28,8 @@ impl<T: PartialEq> PartialEq for Spanned<T> {
     }
 }
 
-impl<T> From<T> for Spanned<T> {
-    fn from(node: T) -> Self {
+impl From<Statement> for Spanned<Statement> {
+    fn from(node: Statement) -> Self {
         Self {
             node,
             position: Position::default(),
@@ -496,12 +496,6 @@ pub enum Expression {
     Unsafe(Block),
     ContextAccess,
     IfLet(Pattern, Box<Expression>, Block, Option<Block>),
-}
-
-impl Expression {
-    pub fn hash(&self) -> u64 {
-        hash(&format!("{:?}", self))
-    }
 }
 
 impl Display for Expression {
