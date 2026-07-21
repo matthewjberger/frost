@@ -288,7 +288,10 @@ impl Generator {
 }
 
 fn is_aggregate(ty: &Type) -> bool {
-    matches!(ty, Type::Struct(_) | Type::Enum(_) | Type::Array(_, _))
+    matches!(
+        ty,
+        Type::Struct(_) | Type::Enum(_) | Type::Array(_, _) | Type::Str
+    )
 }
 
 fn param_abi_type(pointer_type: types::Type, ty: &Type) -> Result<types::Type> {
