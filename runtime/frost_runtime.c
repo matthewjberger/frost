@@ -12,6 +12,18 @@ void frost_bounds_check(int64_t index, int64_t length) {
     }
 }
 
+int64_t frost_byte_at(const char *text, int64_t index) {
+    return (int64_t)(unsigned char)text[index];
+}
+
+int64_t frost_str_len(const char *text) {
+    int64_t length = 0;
+    while (text[length] != 0) {
+        length++;
+    }
+    return length;
+}
+
 typedef struct {
     unsigned char *storage;
     uint32_t *generations;

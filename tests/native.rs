@@ -381,6 +381,16 @@ fn native_wrapping_and_unary() {
     assert_eq!(output, "44\n705032704\n-42\n");
 }
 
+const MINIFROST: &str = include_str!("../bootstrap/minifrost.frost");
+
+#[test]
+fn bootstrap_minifrost_compiler_runs() {
+    let Some(output) = compile_and_run("minifrost", MINIFROST) else {
+        return;
+    };
+    assert_eq!(output, "55\n120\n55\n111\n");
+}
+
 const STRINGS: &str = r#"
 puts :: extern fn(s: ^i8) -> i32
 
@@ -1833,6 +1843,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_floats", FLOATS),
         ("diff_widths", WIDTHS),
         ("diff_wrapping", WRAPPING_AND_UNARY),
+        ("diff_minifrost", MINIFROST),
         ("diff_strings", STRINGS),
         ("diff_pointers", POINTERS),
         ("diff_structs", STRUCTS),

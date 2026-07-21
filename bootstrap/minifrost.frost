@@ -1,0 +1,475 @@
+// Mini-Frost: a small compiler written in Frost, in the data-oriented style.
+//
+// It reads a program written in a Frost-like subset (integer variables a..z,
+// arithmetic and comparisons, `let`, assignment, `print`, `if`/`else`, and
+// `while`), builds an abstract syntax tree in a pool-backed arena, and then
+// walks that tree to run it. The whole thing is written against the native
+// data-oriented surface: no closures, no dynamic collections, references are
+// second-class, and every mutable working set is either a pool (the AST arena)
+// or a fixed array (the variable environment).
+//
+// The AST is stored as a pool of Node records. A node names its children by
+// their arena index (a plain integer), which is the data-oriented replacement
+// for pointers between heap nodes. Sibling statements are threaded through a
+// `next` field into a singly linked list.
+
+printf        :: extern fn(fmt: ^i8, value: i64) -> i32
+pool_new      :: extern fn(capacity: i64, elem_size: i64) -> ^u8
+pool_alloc    :: extern fn(pool: ^u8, value: ^u8) -> i64
+pool_get      :: extern fn(pool: ^u8, handle: i64) -> ^u8
+frost_byte_at :: extern fn(s: ^i8, i: i64) -> i64
+frost_str_len :: extern fn(s: ^i8) -> i64
+
+// Node kinds.
+NODE_NUM    :: 0
+NODE_VAR    :: 1
+NODE_BIN    :: 2
+NODE_LET    :: 3
+NODE_ASSIGN :: 4
+NODE_PRINT  :: 5
+NODE_IF     :: 6
+NODE_WHILE  :: 7
+
+// Binary operator codes.
+OP_ADD :: 0
+OP_SUB :: 1
+OP_MUL :: 2
+OP_DIV :: 3
+OP_MOD :: 4
+OP_LT  :: 5
+OP_GT  :: 6
+OP_LE  :: 7
+OP_GE  :: 8
+OP_EQ  :: 9
+OP_NE  :: 10
+
+// Keyword codes.
+KW_NONE  :: 0
+KW_LET   :: 1
+KW_PRINT :: 2
+KW_IF    :: 3
+KW_ELSE  :: 4
+KW_WHILE :: 5
+
+// Character codes (the language has no character literals).
+CH_TAB     :: 9
+CH_LF      :: 10
+CH_CR      :: 13
+CH_SPACE   :: 32
+CH_BANG    :: 33
+CH_PERCENT :: 37
+CH_LPAREN  :: 40
+CH_RPAREN  :: 41
+CH_STAR    :: 42
+CH_PLUS    :: 43
+CH_MINUS   :: 45
+CH_SLASH   :: 47
+CH_0       :: 48
+CH_9       :: 57
+CH_SEMI    :: 59
+CH_LT      :: 60
+CH_EQ      :: 61
+CH_GT      :: 62
+CH_LBRACE  :: 123
+CH_RBRACE  :: 125
+CH_LOWER_A :: 97
+CH_LOWER_Z :: 122
+
+Node :: struct {
+    kind: i64,
+    a: i64,
+    b: i64,
+    val: i64,
+    next: i64,
+}
+
+Parser :: struct {
+    src: ^i8,
+    len: i64,
+    pos: i64,
+    arena: ^u8,
+}
+
+Env :: struct {
+    slots: [26]i64,
+}
+
+is_space :: fn(c: i64) -> bool {
+    c == CH_SPACE || c == CH_TAB || c == CH_LF || c == CH_CR || c == CH_SEMI
+}
+
+is_digit :: fn(c: i64) -> bool {
+    c >= CH_0 && c <= CH_9
+}
+
+is_alpha :: fn(c: i64) -> bool {
+    c >= CH_LOWER_A && c <= CH_LOWER_Z
+}
+
+peek :: fn(p: &mut Parser) -> i64 {
+    if (p.pos >= p.len) {
+        return 0 - 1
+    }
+    frost_byte_at(p.src, p.pos)
+}
+
+peek_at :: fn(p: &mut Parser, offset: i64) -> i64 {
+    index := p.pos + offset
+    if (index >= p.len) {
+        return 0 - 1
+    }
+    frost_byte_at(p.src, index)
+}
+
+skip_ws :: fn(p: &mut Parser) {
+    while (is_space(peek(p))) {
+        p.pos = p.pos + 1
+    }
+}
+
+alpha_run_len :: fn(p: &mut Parser) -> i64 {
+    mut length : i64 = 0
+    while (is_alpha(peek_at(p, length))) {
+        length = length + 1
+    }
+    length
+}
+
+keyword_at :: fn(p: &mut Parser, length: i64) -> i64 {
+    first := peek_at(p, 0)
+    if (length == 2) {
+        if (first == 105 && peek_at(p, 1) == 102) {
+            return KW_IF
+        }
+        return KW_NONE
+    }
+    if (length == 3) {
+        if (first == 108 && peek_at(p, 1) == 101 && peek_at(p, 2) == 116) {
+            return KW_LET
+        }
+        return KW_NONE
+    }
+    if (length == 4) {
+        if (first == 101 && peek_at(p, 1) == 108 && peek_at(p, 2) == 115
+            && peek_at(p, 3) == 101) {
+            return KW_ELSE
+        }
+        return KW_NONE
+    }
+    if (length == 5) {
+        if (first == 112) {
+            return KW_PRINT
+        }
+        if (first == 119) {
+            return KW_WHILE
+        }
+        return KW_NONE
+    }
+    KW_NONE
+}
+
+new_node :: fn(p: &mut Parser, kind: i64, a: i64, b: i64, val: i64) -> i64 {
+    mut node := Node { kind = kind, a = a, b = b, val = val, next = 0 - 1 }
+    pool_alloc(p.arena, &node)
+}
+
+set_next :: fn(p: &mut Parser, id: i64, next_id: i64) {
+    node : ^Node = pool_get(p.arena, id)
+    node^.next = next_id
+}
+
+parse_number :: fn(p: &mut Parser) -> i64 {
+    mut value : i64 = 0
+    while (is_digit(peek(p))) {
+        value = value * 10 + (peek(p) - CH_0)
+        p.pos = p.pos + 1
+    }
+    new_node(p, NODE_NUM, 0, 0, value)
+}
+
+parse_factor :: fn(p: &mut Parser) -> i64 {
+    skip_ws(p)
+    c := peek(p)
+    if (is_digit(c)) {
+        return parse_number(p)
+    }
+    if (c == CH_LPAREN) {
+        p.pos = p.pos + 1
+        inner := parse_expr(p)
+        skip_ws(p)
+        p.pos = p.pos + 1
+        return inner
+    }
+    variable := c - CH_LOWER_A
+    p.pos = p.pos + 1
+    new_node(p, NODE_VAR, 0, 0, variable)
+}
+
+parse_mul :: fn(p: &mut Parser) -> i64 {
+    mut left := parse_factor(p)
+    skip_ws(p)
+    mut c := peek(p)
+    while (c == CH_STAR || c == CH_SLASH || c == CH_PERCENT) {
+        mut op : i64 = OP_MUL
+        if (c == CH_SLASH) {
+            op = OP_DIV
+        }
+        if (c == CH_PERCENT) {
+            op = OP_MOD
+        }
+        p.pos = p.pos + 1
+        right := parse_factor(p)
+        left = new_node(p, NODE_BIN, left, right, op)
+        skip_ws(p)
+        c = peek(p)
+    }
+    left
+}
+
+parse_add :: fn(p: &mut Parser) -> i64 {
+    mut left := parse_mul(p)
+    skip_ws(p)
+    mut c := peek(p)
+    while (c == CH_PLUS || c == CH_MINUS) {
+        mut op : i64 = OP_ADD
+        if (c == CH_MINUS) {
+            op = OP_SUB
+        }
+        p.pos = p.pos + 1
+        right := parse_mul(p)
+        left = new_node(p, NODE_BIN, left, right, op)
+        skip_ws(p)
+        c = peek(p)
+    }
+    left
+}
+
+parse_expr :: fn(p: &mut Parser) -> i64 {
+    left := parse_add(p)
+    skip_ws(p)
+    c := peek(p)
+    if (c == CH_LT) {
+        p.pos = p.pos + 1
+        mut op : i64 = OP_LT
+        if (peek(p) == CH_EQ) {
+            op = OP_LE
+            p.pos = p.pos + 1
+        }
+        right := parse_add(p)
+        return new_node(p, NODE_BIN, left, right, op)
+    }
+    if (c == CH_GT) {
+        p.pos = p.pos + 1
+        mut op : i64 = OP_GT
+        if (peek(p) == CH_EQ) {
+            op = OP_GE
+            p.pos = p.pos + 1
+        }
+        right := parse_add(p)
+        return new_node(p, NODE_BIN, left, right, op)
+    }
+    if (c == CH_EQ) {
+        p.pos = p.pos + 2
+        right := parse_add(p)
+        return new_node(p, NODE_BIN, left, right, OP_EQ)
+    }
+    if (c == CH_BANG) {
+        p.pos = p.pos + 2
+        right := parse_add(p)
+        return new_node(p, NODE_BIN, left, right, OP_NE)
+    }
+    left
+}
+
+parse_block :: fn(p: &mut Parser) -> i64 {
+    skip_ws(p)
+    p.pos = p.pos + 1
+    head := parse_stmt_list(p, CH_RBRACE)
+    skip_ws(p)
+    p.pos = p.pos + 1
+    head
+}
+
+parse_stmt :: fn(p: &mut Parser) -> i64 {
+    skip_ws(p)
+    c := peek(p)
+    run := alpha_run_len(p)
+    keyword := keyword_at(p, run)
+
+    if (keyword == KW_LET) {
+        p.pos = p.pos + 3
+        skip_ws(p)
+        variable := peek(p) - CH_LOWER_A
+        p.pos = p.pos + 1
+        skip_ws(p)
+        p.pos = p.pos + 1
+        value := parse_expr(p)
+        return new_node(p, NODE_LET, value, 0, variable)
+    }
+    if (keyword == KW_PRINT) {
+        p.pos = p.pos + 5
+        value := parse_expr(p)
+        return new_node(p, NODE_PRINT, value, 0, 0)
+    }
+    if (keyword == KW_IF) {
+        p.pos = p.pos + 2
+        skip_ws(p)
+        p.pos = p.pos + 1
+        condition := parse_expr(p)
+        skip_ws(p)
+        p.pos = p.pos + 1
+        then_head := parse_block(p)
+        skip_ws(p)
+        mut else_head : i64 = 0 - 1
+        run_else := alpha_run_len(p)
+        if (keyword_at(p, run_else) == KW_ELSE) {
+            p.pos = p.pos + 4
+            else_head = parse_block(p)
+        }
+        return new_node(p, NODE_IF, condition, then_head, else_head)
+    }
+    if (keyword == KW_WHILE) {
+        p.pos = p.pos + 5
+        skip_ws(p)
+        p.pos = p.pos + 1
+        condition := parse_expr(p)
+        skip_ws(p)
+        p.pos = p.pos + 1
+        body := parse_block(p)
+        return new_node(p, NODE_WHILE, condition, body, 0)
+    }
+
+    variable := c - CH_LOWER_A
+    p.pos = p.pos + 1
+    skip_ws(p)
+    p.pos = p.pos + 1
+    value := parse_expr(p)
+    new_node(p, NODE_ASSIGN, value, 0, variable)
+}
+
+parse_stmt_list :: fn(p: &mut Parser, terminator: i64) -> i64 {
+    mut head : i64 = 0 - 1
+    mut tail : i64 = 0 - 1
+    skip_ws(p)
+    while (peek(p) != terminator && peek(p) != (0 - 1)) {
+        statement := parse_stmt(p)
+        if (head == (0 - 1)) {
+            head = statement
+            tail = statement
+        } else {
+            set_next(p, tail, statement)
+            tail = statement
+        }
+        skip_ws(p)
+    }
+    head
+}
+
+apply :: fn(op: i64, left: i64, right: i64) -> i64 {
+    match op {
+        case 0: left + right
+        case 1: left - right
+        case 2: left * right
+        case 3: left / right
+        case 4: left % right
+        case 5: if (left < right) { 1 } else { 0 }
+        case 6: if (left > right) { 1 } else { 0 }
+        case 7: if (left <= right) { 1 } else { 0 }
+        case 8: if (left >= right) { 1 } else { 0 }
+        case 9: if (left == right) { 1 } else { 0 }
+        case _: if (left != right) { 1 } else { 0 }
+    }
+}
+
+eval_expr :: fn(arena: ^u8, env: &mut Env, id: i64) -> i64 {
+    node : ^Node = pool_get(arena, id)
+    kind := node^.kind
+    match kind {
+        case 0: node^.val
+        case 1: env.slots[node^.val]
+        case _: {
+            left := eval_expr(arena, env, node^.a)
+            right := eval_expr(arena, env, node^.b)
+            apply(node^.val, left, right)
+        }
+    }
+}
+
+exec_stmt :: fn(arena: ^u8, env: &mut Env, id: i64) {
+    node : ^Node = pool_get(arena, id)
+    kind := node^.kind
+    if (kind == NODE_LET || kind == NODE_ASSIGN) {
+        value := eval_expr(arena, env, node^.a)
+        env.slots[node^.val] = value
+        return
+    }
+    if (kind == NODE_PRINT) {
+        value := eval_expr(arena, env, node^.a)
+        printf("%lld\n", value)
+        return
+    }
+    if (kind == NODE_IF) {
+        if (eval_expr(arena, env, node^.a) != 0) {
+            exec_list(arena, env, node^.b)
+        } else {
+            exec_list(arena, env, node^.val)
+        }
+        return
+    }
+    if (kind == NODE_WHILE) {
+        while (eval_expr(arena, env, node^.a) != 0) {
+            exec_list(arena, env, node^.b)
+        }
+        return
+    }
+}
+
+exec_list :: fn(arena: ^u8, env: &mut Env, head: i64) {
+    mut id := head
+    while (id != (0 - 1)) {
+        exec_stmt(arena, env, id)
+        node : ^Node = pool_get(arena, id)
+        id = node^.next
+    }
+}
+
+main :: fn() -> i64 {
+    source : ^i8 = "
+        let s = 0
+        let i = 1
+        while (i <= 10) { s = s + i i = i + 1 }
+        print s
+
+        let f = 1
+        let k = 1
+        while (k <= 5) { f = f * k k = k + 1 }
+        print f
+
+        let a = 0
+        let b = 1
+        let j = 0
+        while (j < 10) { let t = a + b a = b b = t j = j + 1 }
+        print a
+
+        let x = 7
+        if (x > 3) { print 111 } else { print 222 }
+    "
+
+    arena := pool_new(4096, 40)
+    mut parser := Parser {
+        src = source,
+        len = frost_str_len(source),
+        pos = 0,
+        arena = arena,
+    }
+    head := parse_stmt_list(&mut parser, 0 - 1)
+
+    mut env := Env {
+        slots = [
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ],
+    }
+    exec_list(parser.arena, &mut env, head)
+    0
+}
