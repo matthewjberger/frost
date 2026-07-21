@@ -187,6 +187,9 @@ wider type.
 Aggregates are **move** types (chapter 8), copied by value at call and return
 boundaries unless passed by borrow, with no `Copy` derive.
 
+Frost has no visibility modifiers. There is no `pub` and no private. Every struct
+field is public and reachable, and there is nothing to specify.
+
 ### 3.3 Reference and pointer types
 
 - `&T` shared (immutable) borrow. `&mut T` exclusive (mutable) borrow.
