@@ -1227,11 +1227,19 @@ impl<'a> Parser<'a> {
                     if !matches!(self.read_token(), Token::Colon) {
                         bail!("Expected ':' after type parameter name");
                     }
-                    match self.read_token() {
-                        Token::Type => {}
-                        Token::Identifier(s) if s == "Type" => {}
+                    // `$T: Type` is a type parameter; `$N: usize` (or any other
+                    // integer type) is a value parameter, resolved to a concrete
+                    // integer at instantiation. Both are recorded by name here;
+                    // the argument kind decides which is which.
+                    match self.peek_nth(0) {
+                        Token::Type => {
+                            self.read_token();
+                        }
+                        Token::Identifier(s) if s == "Type" => {
+                            self.read_token();
+                        }
                         _ => {
-                            bail!("Expected 'Type' after ':' in type parameter")
+                            self.parse_type()?;
                         }
                     }
                     type_params.push(param_name);
@@ -2378,6 +2386,13 @@ impl<'a> Parser<'a> {
                         bail!("Expected ']' after array size");
                     }
                     Type::Array(Box::new(self.parse_type()?), size)
+                } else if let Token::Identifier(size_param) = self.peek_nth(0)
+                    && matches!(self.peek_nth(1), Token::RightBracket)
+                {
+                    let size_param = size_param.to_string();
+                    self.read_token();
+                    self.read_token();
+                    Type::ArrayGeneric(Box::new(self.parse_type()?), size_param)
                 } else {
                     let element_type = self.parse_type()?;
                     if !matches!(self.read_token(), Token::Semicolon) {
@@ -2425,6 +2440,11 @@ impl<'a> Parser<'a> {
                 self.read_token();
                 Type::Optional(Box::new(self.parse_type()?))
             }
+            Token::Integer(value) => {
+                let value = *value as usize;
+                self.read_token();
+                Type::ConstUsize(value)
+            }
             Token::Identifier(name) => {
                 let name = name.to_string();
                 self.read_token();
@@ -2452,7 +2472,13 @@ impl<'a> Parser<'a> {
                         self.read_token();
                         let mut arguments = Vec::new();
                         while !self.is_type_arg_close() {
-                            arguments.push(self.parse_type()?);
+                            if let Token::Integer(value) = self.peek_nth(0) {
+                                let value = *value as usize;
+                                self.read_token();
+                                arguments.push(Type::ConstUsize(value));
+                            } else {
+                                arguments.push(self.parse_type()?);
+                            }
                             if matches!(self.peek_nth(0), Token::Comma) {
                                 self.read_token();
                             }

@@ -279,7 +279,10 @@ Frost is being reshaped toward a data-oriented language with:
    generic functions, generic structs (incl. nested `Pair<Pair<i64>>`, factory
    functions returning instances, construction inference, and generic-over-
    instance), `sizeof`, and explicit type arguments (`fn($T: Type, ...)` called
-   `f($Concrete, ...)`, with type parameters erased from the specialized ABI).)*
+   `f($Concrete, ...)`, with type parameters erased from the specialized ABI).
+   Value parameters too (`struct($T: Type, $N: usize)` sizing a `[N]T` field),
+   resolved to a concrete array size at instantiation, so a slab can be generic
+   over both element type and capacity.)*
 7. Bounds-checked array indexing. *(Done: every fixed-size array index is
    checked against the statically-known length and aborts on out-of-range.)*
 8. Source locations in errors. *(Done: the lexer and parser carry

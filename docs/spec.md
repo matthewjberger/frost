@@ -599,6 +599,23 @@ make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
 In a parameter or struct type-parameter position, `$` IDENT `:` is followed by
 the contextual word `Type` (or the keyword `type`).
 
+### 11.1a Value parameters
+
+A struct parameter written `$N: usize` (or another integer type) is a value
+parameter rather than a type parameter. It is a compile-time integer, and its
+main use is sizing a fixed array field:
+
+```
+Slab :: struct($T: Type, $N: usize) { storage: [N]T, used: i64 }
+world : Slab<Entity, 4> = ...
+```
+
+An instantiation supplies an integer where a value parameter stands
+(`Slab<Entity, 4>`), and monomorphization resolves `[N]T` to the concrete
+`[4]Entity` for that instance. To recover the size inside a function, coerce the
+array to a slice and read `slice_len` (3.2), so the number is written once. Value
+parameters are erased from the specialized type the same way type parameters are.
+
 ### 11.2 Monomorphization
 
 Generics specialize at compile time. Each concrete instantiation compiles to its

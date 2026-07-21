@@ -478,6 +478,15 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
         Type::Array(inner, size) => {
             Type::Array(Box::new(substitute_type(inner, subst)), *size)
         }
+        Type::ArrayGeneric(inner, size_param) => {
+            let inner = substitute_type(inner, subst);
+            match subst.get(size_param) {
+                Some(Type::ConstUsize(size)) => {
+                    Type::Array(Box::new(inner), *size)
+                }
+                _ => Type::ArrayGeneric(Box::new(inner), size_param.clone()),
+            }
+        }
         Type::Slice(inner) => {
             Type::Slice(Box::new(substitute_type(inner, subst)))
         }

@@ -21,6 +21,8 @@ pub enum Type {
     Ref(Box<Type>),
     RefMut(Box<Type>),
     Array(Box<Type>, usize),
+    ArrayGeneric(Box<Type>, String),
+    ConstUsize(usize),
     Slice(Box<Type>),
     Proc(Vec<Type>, Box<Type>),
     Struct(String),
@@ -45,6 +47,7 @@ impl Type {
             Type::Str => 16,
             Type::Void => 0,
             Type::Array(inner, count) => inner.size_of() * count,
+            Type::ArrayGeneric(..) | Type::ConstUsize(_) => 0,
             Type::Slice(_) => 16,
             Type::Proc(_, _) => 8,
             Type::Struct(_) => 0,
@@ -75,6 +78,7 @@ impl Type {
             Type::Str | Type::Slice(_) => 8,
             Type::Void => 1,
             Type::Array(inner, _) => inner.align_of(),
+            Type::ArrayGeneric(..) | Type::ConstUsize(_) => 1,
             Type::Proc(_, _) => 8,
             Type::Struct(_) => 8,
             Type::Enum(_) => 4,
@@ -96,6 +100,7 @@ impl Type {
             Type::Ref(_) | Type::RefMut(_) | Type::Ptr(_) => true,
             Type::Proc(_, _) | Type::Void => true,
             Type::Array(_, _) => true,
+            Type::ArrayGeneric(..) | Type::ConstUsize(_) => false,
             Type::Str | Type::Slice(_) => true,
             Type::Struct(_) | Type::Enum(_) => false,
             Type::Distinct(inner) => inner.is_copy(),
@@ -164,6 +169,10 @@ impl Display for Type {
             Type::Ref(inner) => write!(f, "&{}", inner),
             Type::RefMut(inner) => write!(f, "&mut {}", inner),
             Type::Array(inner, size) => write!(f, "[{}]{}", size, inner),
+            Type::ArrayGeneric(inner, size) => {
+                write!(f, "[{}]{}", size, inner)
+            }
+            Type::ConstUsize(value) => write!(f, "{}", value),
             Type::Slice(inner) => write!(f, "[]{}", inner),
             Type::Proc(params, ret) => {
                 let param_strs: Vec<String> =

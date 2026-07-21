@@ -118,10 +118,10 @@ abort discipline rather than a foreign definition.
 
 ### Roadmap
 
-1. **Value generics** (`$N` as a value parameter). The highest-leverage next
-   language feature. Without it every pool is per-size. This is a natural
-   data-oriented feature, in the same family as Zig's `comptime` sizes and Rust's
-   const generics.
+1. **Value generics** (`$N` as a value parameter). *(Done.)* A struct takes
+   `$N: usize`, sizes `[N]T` with it, and instantiates concretely
+   (`Slab<Entity, 4>`). See `examples/native/generic_slab.frost`, a generational
+   pool generic over both element type and capacity.
 2. **Compiler place-deref over a Frost aggregate.** Teach `pool[handle]` to
    target a pool struct's `storage` field plus a generation check inline, instead
    of the C `pool_get`.
