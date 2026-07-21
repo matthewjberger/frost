@@ -41,6 +41,8 @@ compiles to native code through Cranelift or through portable C.
 - [docs/c-compatibility.md](docs/c-compatibility.md): calling C and the C backend
 - [docs/architecture.md](docs/architecture.md): the compiler pipeline and what
   the native backend supports today
+- [docs/native-pools.md](docs/native-pools.md): a spike writing a generational
+  pool in pure Frost, and the plan to move the memory model out of the C runtime
 - [docs/spec.md](docs/spec.md): the language reference and grammar
 
 ## A first program
