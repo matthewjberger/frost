@@ -120,7 +120,7 @@ impl<'a> Interpreter<'a> {
                 locals[*local] = value;
                 Ok(())
             }
-            IrStatement::Consume(_) => Ok(()),
+            IrStatement::Own(_) | IrStatement::Consume(_) => Ok(()),
             IrStatement::Store { .. } | IrStatement::Copy { .. } => {
                 unsupported("memory store or copy")
             }

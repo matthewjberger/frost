@@ -438,7 +438,7 @@ impl Translator<'_, '_> {
                 self.emit_memcpy(destination_value, source_value, *size);
                 Ok(())
             }
-            IrStatement::Consume(_) => Ok(()),
+            IrStatement::Own(_) | IrStatement::Consume(_) => Ok(()),
         }
     }
 
@@ -916,7 +916,7 @@ fn collect_strings(
                         collect_operand_strings(destination, handle)?;
                         collect_operand_strings(source, handle)?;
                     }
-                    IrStatement::Consume(_) => {}
+                    IrStatement::Own(_) | IrStatement::Consume(_) => {}
                 }
             }
             if let IrTerminator::Return(Some(operand)) = &block.terminator {
