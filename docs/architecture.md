@@ -248,7 +248,12 @@ Frost is being reshaped toward a data-oriented language with:
    the typed IR after lowering and before either backend. It validates local
    and block id ranges, direct and indirect call arity against the gathered
    signatures, numeric operands for arithmetic and indexing, and that non-void
-   functions return a value.)*
+   functions return a value. It also enforces the IR's pointer discipline: loads,
+   stores, field access, and element access all go through a pointer-typed
+   operand; casts stay between numeric types; and an indirect call targets a
+   function-pointer value. These checks hold across the whole native corpus, so a
+   lowering bug that produced a load from a non-pointer or a cast to a struct
+   would be caught before codegen rather than miscompiled.)*
 3. Linear resources with path-sensitive consumption, and error enums that
    linearity makes non-ignorable.
 4. Handle-dereference-as-borrow. *(Done: `Handle<T>` is a first-class native

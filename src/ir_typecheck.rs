@@ -93,6 +93,7 @@ fn check_statement(
         IrStatement::Store { address, value } => {
             check_operand(function, address)?;
             check_operand(function, value)?;
+            require_pointer(function, address, "store address")?;
         }
         IrStatement::Copy {
             destination,
@@ -124,15 +125,31 @@ fn check_rvalue(
         IrRvalue::Unary(_, operand) => {
             check_operand(function, operand)?;
         }
-        IrRvalue::Cast(operand, _) => check_operand(function, operand)?,
+        IrRvalue::Cast(operand, target) => {
+            check_operand(function, operand)?;
+            require_numeric(function, operand)?;
+            if !is_numeric(target) {
+                bail!(
+                    "cast in '{}' targets non-numeric type {target}",
+                    function.name
+                );
+            }
+        }
         IrRvalue::AddressOf { local, .. } => check_local(function, *local)?,
-        IrRvalue::FieldAddress { base, .. } => check_operand(function, base)?,
+        IrRvalue::FieldAddress { base, .. } => {
+            check_operand(function, base)?;
+            require_pointer(function, base, "field access base")?;
+        }
         IrRvalue::ElementAddress { base, index, .. } => {
             check_operand(function, base)?;
             check_operand(function, index)?;
+            require_pointer(function, base, "element access base")?;
             require_numeric(function, index)?;
         }
-        IrRvalue::Load { address, .. } => check_operand(function, address)?,
+        IrRvalue::Load { address, .. } => {
+            check_operand(function, address)?;
+            require_pointer(function, address, "load address")?;
+        }
         IrRvalue::Call {
             function: callee,
             arguments,
@@ -177,6 +194,13 @@ fn check_rvalue(
             ..
         } => {
             check_operand(function, callee)?;
+            if !matches!(operand_type(function, callee), Type::Proc(_, _)) {
+                bail!(
+                    "indirect call in '{}' calls a value of non-function type {}",
+                    function.name,
+                    operand_type(function, callee)
+                );
+            }
             for argument in arguments {
                 check_operand(function, argument)?;
             }
@@ -277,6 +301,22 @@ fn require_numeric(function: &IrFunction, operand: &IrOperand) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn require_pointer(
+    function: &IrFunction,
+    operand: &IrOperand,
+    role: &str,
+) -> Result<()> {
+    let ty = operand_type(function, operand);
+    if !is_pointer(&ty) {
+        bail!("{role} in '{}' has non-pointer type {ty}", function.name);
+    }
+    Ok(())
+}
+
+fn is_pointer(ty: &Type) -> bool {
+    matches!(ty, Type::Ptr(_) | Type::Ref(_) | Type::RefMut(_))
 }
 
 fn is_numeric(ty: &Type) -> bool {
@@ -411,6 +451,71 @@ mod tests {
     fn rejects_missing_return_value() {
         let module =
             single_block(Type::I64, vec![], vec![], IrTerminator::Return(None));
+        assert!(check_module(&module).is_err());
+    }
+
+    #[test]
+    fn rejects_load_from_a_non_pointer() {
+        let module = single_block(
+            Type::I64,
+            vec![local(Type::I64), local(Type::I64)],
+            vec![IrStatement::Assign(
+                0,
+                IrRvalue::Load {
+                    address: IrOperand::Local(1),
+                    ty: Type::I64,
+                },
+            )],
+            IrTerminator::Return(Some(IrOperand::Local(0))),
+        );
+        assert!(check_module(&module).is_err());
+    }
+
+    #[test]
+    fn accepts_load_through_a_pointer() {
+        let module = single_block(
+            Type::I64,
+            vec![local(Type::I64), local(Type::Ptr(Box::new(Type::I64)))],
+            vec![IrStatement::Assign(
+                0,
+                IrRvalue::Load {
+                    address: IrOperand::Local(1),
+                    ty: Type::I64,
+                },
+            )],
+            IrTerminator::Return(Some(IrOperand::Local(0))),
+        );
+        assert!(check_module(&module).is_ok());
+    }
+
+    #[test]
+    fn rejects_store_to_a_non_pointer() {
+        let module = single_block(
+            Type::I64,
+            vec![local(Type::I64), local(Type::I64)],
+            vec![IrStatement::Store {
+                address: IrOperand::Local(1),
+                value: integer(5),
+            }],
+            IrTerminator::Return(Some(IrOperand::Local(0))),
+        );
+        assert!(check_module(&module).is_err());
+    }
+
+    #[test]
+    fn rejects_cast_to_a_non_numeric_type() {
+        let module = single_block(
+            Type::I64,
+            vec![local(Type::I64), local(Type::I64)],
+            vec![IrStatement::Assign(
+                0,
+                IrRvalue::Cast(
+                    IrOperand::Local(1),
+                    Type::Struct("Point".to_string()),
+                ),
+            )],
+            IrTerminator::Return(Some(IrOperand::Local(0))),
+        );
         assert!(check_module(&module).is_err());
     }
 }
