@@ -291,10 +291,10 @@ impl MoveChecker<'_> {
                 self.visit(callee, false)?;
                 check_borrow_exclusivity(arguments)?;
                 if let Expression::Identifier(name) = callee.as_ref()
-                    && let Some(pool_borrows) = pool_operation_borrows(name)
+                    && let Some(borrows) = builtin_borrows_first_argument(name)
                 {
                     for (index, argument) in arguments.iter().enumerate() {
-                        self.visit(argument, !(pool_borrows && index == 0))?;
+                        self.visit(argument, !(borrows && index == 0))?;
                     }
                     return Ok(());
                 }
@@ -393,12 +393,15 @@ fn check_borrow_exclusivity(arguments: &[Expression]) -> Result<()> {
     Ok(())
 }
 
-/// A pool operation's first argument is the pool. `pool_destroy` consumes it;
-/// every other operation borrows it (the pool stays usable). Returns `None` for
-/// names that are not pool operations, so their arguments move normally.
-fn pool_operation_borrows(name: &str) -> Option<bool> {
+/// Some built-ins take their first argument by reference rather than by value.
+/// `ptr_to` and the pool query and mutate operations borrow it (the value stays
+/// usable), while `pool_destroy` consumes it. Returns `Some(true)` for a borrow,
+/// `Some(false)` for a consume, and `None` for ordinary calls whose arguments
+/// move normally.
+fn builtin_borrows_first_argument(name: &str) -> Option<bool> {
     match name {
-        "pool_alloc" | "pool_contains" | "pool_free" | "pool_get" => Some(true),
+        "pool_alloc" | "pool_contains" | "pool_free" | "pool_get"
+        | "ptr_to" => Some(true),
         "pool_destroy" => Some(false),
         _ => None,
     }

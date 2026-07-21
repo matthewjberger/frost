@@ -3022,6 +3022,61 @@ impl<'a> FunctionLowering<'a> {
         }
     }
 
+    // Best-effort static type of a place expression, without lowering it. Used to
+    // recognize a raw-pointer base for indexing. Handles the identifier, deref,
+    // and field-access chains that a pointer flows through.
+    fn probe_type(&self, expression: &Expression) -> Option<Type> {
+        match expression {
+            Expression::Identifier(name) => self
+                .resolve_variable(name)
+                .map(|local| self.type_of_local(local)),
+            Expression::Dereference(inner) => {
+                deref_target(&self.probe_type(inner)?).ok()
+            }
+            Expression::FieldAccess(base, field) => {
+                let base_type = self.probe_type(base)?;
+                let struct_name = match base_type {
+                    Type::Struct(name) => name,
+                    Type::Ref(inner)
+                    | Type::RefMut(inner)
+                    | Type::Ptr(inner) => match *inner {
+                        Type::Struct(name) => name,
+                        _ => return None,
+                    },
+                    _ => return None,
+                };
+                self.builder
+                    .struct_layout(&struct_name)?
+                    .field(field)
+                    .map(|field| field.ty.clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn raw_pointer_element_address(
+        &mut self,
+        base: &Expression,
+        pointee: Type,
+        index_operand: IrOperand,
+        index_type: Type,
+    ) -> Result<(IrOperand, Type)> {
+        let (base_pointer, _) = self.lower_expression(base, None)?;
+        let element_size = self.builder.byte_size(&pointee);
+        let index = self.coerce(index_operand, &index_type, &Type::I64);
+        let result =
+            self.fresh_local(Type::Ptr(Box::new(pointee.clone())), None);
+        self.emit(IrStatement::Assign(
+            result,
+            IrRvalue::ElementAddress {
+                base: base_pointer,
+                index,
+                element_size,
+            },
+        ));
+        Ok((IrOperand::Local(result), pointee))
+    }
+
     fn str_value_address(
         &mut self,
         expression: &Expression,
@@ -3505,6 +3560,14 @@ impl<'a> FunctionLowering<'a> {
                 index_operand,
                 index_type,
                 element,
+            );
+        }
+        if let Some(Type::Ptr(pointee)) = self.probe_type(base) {
+            return self.raw_pointer_element_address(
+                base,
+                *pointee,
+                index_operand,
+                index_type,
             );
         }
         let (base_pointer, element_type, length) =
