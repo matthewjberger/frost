@@ -24,5 +24,6 @@ main :: fn() -> i64 {
     } else {
         printf("%lld\n", 0)
     }
+    pool_destroy(world)
     0
 }

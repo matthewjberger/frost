@@ -143,7 +143,7 @@ impl Generator {
                 .insert("frost_bounds_check".to_string(), func_id);
         }
 
-        let pool_runtime: [(&str, &[types::Type], Option<types::Type>); 5] = [
+        let pool_runtime: [(&str, &[types::Type], Option<types::Type>); 6] = [
             ("pool_new", &[types::I64, types::I64], Some(pointer_type)),
             (
                 "pool_alloc",
@@ -157,6 +157,7 @@ impl Generator {
                 Some(types::I64),
             ),
             ("pool_free", &[pointer_type, types::I64], Some(types::I64)),
+            ("pool_destroy", &[pointer_type], None),
         ];
         for (name, params, return_type) in pool_runtime {
             if self.functions.contains_key(name) {

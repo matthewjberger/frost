@@ -290,6 +290,14 @@ impl MoveChecker<'_> {
             Expression::Call(callee, arguments) => {
                 self.visit(callee, false)?;
                 check_borrow_exclusivity(arguments)?;
+                if let Expression::Identifier(name) = callee.as_ref()
+                    && let Some(pool_borrows) = pool_operation_borrows(name)
+                {
+                    for (index, argument) in arguments.iter().enumerate() {
+                        self.visit(argument, !(pool_borrows && index == 0))?;
+                    }
+                    return Ok(());
+                }
                 for argument in arguments {
                     self.visit(argument, true)?;
                 }
@@ -385,9 +393,21 @@ fn check_borrow_exclusivity(arguments: &[Expression]) -> Result<()> {
     Ok(())
 }
 
+/// A pool operation's first argument is the pool. `pool_destroy` consumes it;
+/// every other operation borrows it (the pool stays usable). Returns `None` for
+/// names that are not pool operations, so their arguments move normally.
+fn pool_operation_borrows(name: &str) -> Option<bool> {
+    match name {
+        "pool_alloc" | "pool_contains" | "pool_free" | "pool_get" => Some(true),
+        "pool_destroy" => Some(false),
+        _ => None,
+    }
+}
+
 fn is_linear_type(ty: &Type, linear: &HashSet<String>) -> bool {
     match ty {
         Type::Struct(name) | Type::Enum(name) => linear.contains(name),
+        Type::Pool(_) => true,
         _ => false,
     }
 }
@@ -624,6 +644,52 @@ mod tests {
                 }\n\
             }";
         assert!(check(source).is_ok());
+    }
+
+    #[test]
+    fn undestroyed_pool_is_rejected() {
+        let source = "\
+            Entity :: struct { hp: i64 }\n\
+            run :: fn() {\n\
+                world : Pool<Entity> = pool_new($Entity, 4)\n\
+            }";
+        assert!(check(source).is_err());
+    }
+
+    #[test]
+    fn destroyed_pool_is_accepted() {
+        let source = "\
+            Entity :: struct { hp: i64 }\n\
+            run :: fn() {\n\
+                world : Pool<Entity> = pool_new($Entity, 4)\n\
+                pool_destroy(world)\n\
+            }";
+        assert!(check(source).is_ok());
+    }
+
+    #[test]
+    fn pool_can_be_used_repeatedly_before_destroy() {
+        let source = "\
+            Entity :: struct { hp: i64 }\n\
+            run :: fn() {\n\
+                world : Pool<Entity> = pool_new($Entity, 4)\n\
+                a := pool_alloc(world, Entity { hp = 1 })\n\
+                b := pool_alloc(world, Entity { hp = 2 })\n\
+                pool_destroy(world)\n\
+            }";
+        assert!(check(source).is_ok());
+    }
+
+    #[test]
+    fn pool_use_after_destroy_is_rejected() {
+        let source = "\
+            Entity :: struct { hp: i64 }\n\
+            run :: fn() {\n\
+                world : Pool<Entity> = pool_new($Entity, 4)\n\
+                pool_destroy(world)\n\
+                a := pool_alloc(world, Entity { hp = 1 })\n\
+            }";
+        assert!(check(source).is_err());
     }
 
     #[test]

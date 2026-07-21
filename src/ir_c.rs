@@ -24,6 +24,7 @@ const POOL_RUNTIME: &[(&str, &str)] = &[
         "pool_free",
         "int64_t pool_free(void* pool, int64_t handle);",
     ),
+    ("pool_destroy", "void pool_destroy(void* pool);"),
 ];
 
 fn c_function_name(name: &str, externs: &HashSet<String>) -> String {

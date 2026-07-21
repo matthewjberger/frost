@@ -204,10 +204,12 @@ may be stored and returned and carry no safety guarantee.
 (index plus generation), not a pointer, that unlike a reference may be stored in
 fields and returned.
 
-`Pool<T>` is the pool itself, a copy value the size of a pointer. It is created
-with `pool_new($T, capacity)`, indexed by `Handle<T>`, and carries a typed set of
-operations (chapter 10.1). Like a handle it may be stored in fields, passed, and
-returned.
+`Pool<T>` is the pool itself, a pointer-sized value created with
+`pool_new($T, capacity)`, indexed by `Handle<T>`, and carrying a typed set of
+operations (chapter 10.1). It is a **linear** resource (chapter 9): it must be
+destroyed exactly once with `pool_destroy`, so unlike a handle it is not a copy
+value. It may be moved (passed by value, returned, stored), and moving it is what
+consumes it.
 
 ### 3.5 Function types
 
@@ -529,11 +531,21 @@ runtime in `runtime/frost_runtime.c`. No `extern fn` declarations are needed.
 | `pool[handle]` | the slot's element, a place (10.2) |
 | `pool_contains(pool, handle) -> bool` | whether the handle still names a live slot |
 | `pool_free(pool, handle)` | release the slot and bump its generation (10.3) |
+| `pool_destroy(pool)` | release the whole pool, consuming it |
+
+`Pool<T>` is a **linear** resource (chapter 9): it must be consumed exactly once,
+by `pool_destroy`, and a pool that is never destroyed is a compile error. The
+other operations borrow the pool rather than consume it, so it stays usable
+between `pool_new` and `pool_destroy`, and using a pool after `pool_destroy` is a
+use-after-move error. The pool is fixed-capacity on purpose: it never moves in
+memory, so a `pool[handle]` borrow and a `pool_alloc` cannot invalidate each
+other.
 
 The runtime functions still exist and may be called through `extern fn` for
 low-level use, but the typed operations above are the intended surface. A name is
 only treated as a pool operation when the program has not declared or bound it
-itself, so an explicit `extern fn pool_alloc` keeps the raw behavior.
+itself, so an explicit `extern fn pool_alloc` keeps the raw, non-linear `^u8`
+behavior.
 
 ### 10.2 `pool[handle]` is a place
 

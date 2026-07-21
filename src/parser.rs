@@ -976,12 +976,19 @@ impl<'a> Parser<'a> {
             | Token::Break
             | Token::Continue
             | Token::Import => true,
+            // An identifier begins a statement when it opens a binding, an
+            // assignment, or an expression statement (a call `f(...)`, a place
+            // assignment `p^ = ...` / `a[i] = ...` / `s.f = ...`).
             Token::Identifier(_) => matches!(
                 self.peek_nth(1),
                 Token::ColonAssign
                     | Token::Colon
                     | Token::DoubleColon
                     | Token::Assign
+                    | Token::LeftParentheses
+                    | Token::Caret
+                    | Token::LeftBracket
+                    | Token::Dot
             ),
             _ => false,
         }
@@ -4758,6 +4765,38 @@ mod tests {
         assert!(
             bindings.contains(&"x") && bindings.contains(&"z"),
             "recovery inside the block should keep 'x' and 'z', got {bindings:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn recovery_anchors_on_a_call_statement() -> Result<()> {
+        let input = "main :: fn() -> i64 {\n\
+                     bad := )\n\
+                     log(bad)\n\
+                     0\n\
+                     }\n";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let positions = lexer.positions().to_vec();
+        let mut parser = Parser::with_positions(&tokens, &positions);
+        let (program, diagnostics) = parser.parse_recovering();
+        assert!(!diagnostics.is_empty());
+        let (Statement::Constant(_, Expression::Function(_, _, body))
+        | Statement::Constant(_, Expression::Proc(_, _, body))) =
+            &program[0].node
+        else {
+            bail!("expected a function constant");
+        };
+        let has_call = body.iter().any(|statement| {
+            matches!(
+                &statement.node,
+                Statement::Expression(Expression::Call(..))
+            )
+        });
+        assert!(
+            has_call,
+            "recovery should anchor on the call statement 'log(bad)' and keep it"
         );
         Ok(())
     }

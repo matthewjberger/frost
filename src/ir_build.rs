@@ -1925,6 +1925,11 @@ impl<'a> FunctionLowering<'a> {
                 }
                 let (operand, value_type) =
                     self.lower_expression(value, type_annotation.as_ref())?;
+                if matches!(value_type, Type::Void) {
+                    bail!(
+                        "native backend: cannot bind '{name}' to a void value; this expression produces no value"
+                    );
+                }
                 let declared = type_annotation
                     .clone()
                     .unwrap_or_else(|| value_type.clone());
@@ -2505,6 +2510,9 @@ impl<'a> FunctionLowering<'a> {
                     return self.lower_pool_contains(arguments);
                 }
                 "pool_free" => return self.lower_pool_free(arguments),
+                "pool_destroy" => {
+                    return self.lower_pool_destroy(arguments);
+                }
                 _ => {}
             }
         }
@@ -3048,7 +3056,10 @@ impl<'a> FunctionLowering<'a> {
         let (pool_operand, pool_type) = self.lower_expression(pool, None)?;
         let Type::Pool(element) = pool_type else {
             bail!(
-                "native backend: {operation}'s first argument must be a Pool<T>"
+                "native backend: {operation} expects a Pool<T>, but its pool argument has type '{pool_type}'. \
+                 The typed pool surface (pool_new($T, capacity), pool_alloc, pool_contains, pool_free, pool_destroy) \
+                 and the raw '^u8' extern surface cannot be mixed: either create the pool with pool_new so it is a Pool<T>, \
+                 or declare every pool function as 'extern fn' and use the raw surface throughout"
             );
         };
         Ok((pool_operand, *element))
@@ -3145,6 +3156,26 @@ impl<'a> FunctionLowering<'a> {
             IrRvalue::Call {
                 function: "pool_free".to_string(),
                 arguments: vec![pool_operand, handle],
+            },
+        ));
+        Ok((IrOperand::Local(result), Type::Void))
+    }
+
+    fn lower_pool_destroy(
+        &mut self,
+        arguments: &[Expression],
+    ) -> Result<(IrOperand, Type)> {
+        if arguments.len() != 1 {
+            bail!("native backend: pool_destroy expects a pool");
+        }
+        let (pool_operand, _) =
+            self.pool_element_of(&arguments[0], "pool_destroy")?;
+        let result = self.fresh_local(Type::Void, None);
+        self.emit(IrStatement::Assign(
+            result,
+            IrRvalue::Call {
+                function: "pool_destroy".to_string(),
+                arguments: vec![pool_operand],
             },
         ));
         Ok((IrOperand::Local(result), Type::Void))
