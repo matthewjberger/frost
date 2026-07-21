@@ -136,3 +136,30 @@ The payoff is the same as for the pool, one layer down: the memory model is Fros
 code the language can inspect and own, fixed and static configurations reach
 freestanding targets, and the only thing left in C is the single platform call
 that asks the operating system for a block of bytes.
+
+## Implementation notes on the remaining steps
+
+Building slices clarified exactly what each later step needs, so they can be
+scoped precisely rather than discovered mid-flight.
+
+- **Value generics (`$N`) touch the type representation.** Their point is sizing
+  `[N]T` where `N` is a call-site value, so the array type must carry a symbolic
+  size until monomorphization resolves it. `Type::Array` currently holds a
+  concrete `usize`, and that size is read directly by `size_of`, both backends,
+  and the lowering, so the type needs a size that is either concrete or a
+  parameter name, with substitution filling it in per instantiation. This is the
+  most invasive change in the roadmap and should be its own focused effort, not a
+  rider on another change.
+
+- **A Frost-library arena needs two more primitives.** To bump-allocate over a
+  `[]u8` and hand back a typed pointer, library code needs a pointer cast
+  (`^u8` to `^T`) and pointer offset arithmetic (`base + offset`), neither of
+  which Frost exposes today (indexing is the only pointer arithmetic, and casts
+  are numeric-only). The alternative is to make `arena_alloc($T, arena)` a
+  compiler built-in like the pool operations, which works but adds built-in
+  surface the roadmap is trying to shed. The cast and offset primitives are the
+  smaller, more roadmap-aligned addition, and they are independently useful.
+
+Neither is a small addition, and both are best done deliberately. Slices, the one
+step that generalized cleanly from existing machinery, is done; the rest are
+genuine language features with the shape recorded above.
