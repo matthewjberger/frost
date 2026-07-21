@@ -753,6 +753,7 @@ pub struct Parser<'a> {
     positions: &'a [Position],
     consumed: usize,
     pending_angle_close: usize,
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl<'a> Parser<'a> {
@@ -765,6 +766,7 @@ impl<'a> Parser<'a> {
             positions: &[],
             consumed: 0,
             pending_angle_close: 0,
+            diagnostics: Vec::new(),
         }
     }
 
@@ -780,6 +782,7 @@ impl<'a> Parser<'a> {
             positions,
             consumed: 0,
             pending_angle_close: 0,
+            diagnostics: Vec::new(),
         }
     }
 
@@ -888,10 +891,10 @@ impl<'a> Parser<'a> {
     /// Parse the whole token stream, recovering at statement boundaries so a
     /// single malformed statement does not discard the rest of the file. The
     /// returned program holds every statement that parsed, and the diagnostics
-    /// list holds one entry per error encountered.
+    /// list holds one entry per error encountered, at the top level and inside
+    /// function bodies alike.
     pub fn parse_recovering(&mut self) -> (Program, Vec<Diagnostic>) {
         let mut program = Program::new();
-        let mut diagnostics = Vec::new();
         loop {
             let position = self.current_position().unwrap_or_default();
             match self.parse_statement() {
@@ -900,10 +903,7 @@ impl<'a> Parser<'a> {
                 }
                 Ok(None) => break,
                 Err(error) => {
-                    diagnostics.push(Diagnostic {
-                        position: self.current_position().unwrap_or(position),
-                        message: error.to_string(),
-                    });
+                    self.record_error(position, &error);
                     self.synchronize();
                     if matches!(self.peek_nth(0), Token::EndOfFile) {
                         break;
@@ -911,12 +911,20 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        (program, diagnostics)
+        (program, std::mem::take(&mut self.diagnostics))
     }
 
-    /// After an error, skip tokens until the next token begins a top-level item
-    /// (a `name ::` declaration, or an `import`, `export`, or `test`). At least
-    /// one token is always consumed so recovery cannot loop.
+    fn record_error(&mut self, fallback: Position, error: &anyhow::Error) {
+        let position = self.current_position().unwrap_or(fallback);
+        self.diagnostics.push(Diagnostic {
+            position,
+            message: error.to_string(),
+        });
+    }
+
+    /// After a top-level error, skip tokens until the next token begins a
+    /// top-level item (a `name ::` declaration, or an `import`, `export`, or
+    /// `test`). At least one token is always consumed so recovery cannot loop.
     fn synchronize(&mut self) {
         if !matches!(self.peek_nth(0), Token::EndOfFile) {
             self.read_token();
@@ -938,6 +946,43 @@ impl<'a> Parser<'a> {
             Token::Identifier(_) => {
                 matches!(self.peek_nth(1), Token::DoubleColon)
             }
+            _ => false,
+        }
+    }
+
+    /// After an error inside a block, skip tokens until the next token begins a
+    /// statement or closes the block, without crossing the block's own closing
+    /// brace. At least one token is always consumed so recovery cannot loop.
+    fn synchronize_in_block(&mut self) {
+        if !matches!(self.peek_nth(0), Token::EndOfFile | Token::RightBrace) {
+            self.read_token();
+        }
+        while !matches!(self.peek_nth(0), Token::EndOfFile | Token::RightBrace)
+        {
+            if self.at_block_statement_boundary() {
+                return;
+            }
+            self.read_token();
+        }
+    }
+
+    fn at_block_statement_boundary(&self) -> bool {
+        match self.peek_nth(0) {
+            Token::Mut
+            | Token::Return
+            | Token::Defer
+            | Token::For
+            | Token::While
+            | Token::Break
+            | Token::Continue
+            | Token::Import => true,
+            Token::Identifier(_) => matches!(
+                self.peek_nth(1),
+                Token::ColonAssign
+                    | Token::Colon
+                    | Token::DoubleColon
+                    | Token::Assign
+            ),
             _ => false,
         }
     }
@@ -2437,8 +2482,15 @@ impl<'a> Parser<'a> {
             && self.peek_nth(0) != &Token::EndOfFile
         {
             let position = self.current_position().unwrap_or_default();
-            if let Some(statement) = self.parse_statement()? {
-                statements.push(Spanned::new(statement, position));
+            match self.parse_statement() {
+                Ok(Some(statement)) => {
+                    statements.push(Spanned::new(statement, position));
+                }
+                Ok(None) => break,
+                Err(error) => {
+                    self.record_error(position, &error);
+                    self.synchronize_in_block();
+                }
             }
         }
 
@@ -3224,7 +3276,7 @@ mod tests {
 
     #[test]
     fn parse_errors_carry_a_source_location() -> Result<()> {
-        let input = "main :: fn() -> i64 {\n    x := 5\n    y := @\n    0\n}";
+        let input = "main :: fn() -> i64 {\n    x := 5\n    y := )\n    0\n}";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize()?;
         let positions = lexer.positions().to_vec();
@@ -4660,6 +4712,66 @@ mod tests {
         let (program, diagnostics) = parser.parse_recovering();
         assert!(diagnostics.is_empty(), "clean input has no diagnostics");
         assert_eq!(program.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn recovery_keeps_statements_after_a_bad_one_in_a_block() -> Result<()> {
+        let input = "main :: fn() -> i64 {\n\
+                     x := 1\n\
+                     y := )\n\
+                     z := 3\n\
+                     z\n\
+                     }\n";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let positions = lexer.positions().to_vec();
+        let mut parser = Parser::with_positions(&tokens, &positions);
+        let (program, diagnostics) = parser.parse_recovering();
+        assert!(
+            !diagnostics.is_empty(),
+            "the malformed statement should produce a diagnostic"
+        );
+        let (Statement::Constant(name, Expression::Function(_, _, body))
+        | Statement::Constant(name, Expression::Proc(_, _, body))) =
+            &program[0].node
+        else {
+            bail!("expected a function constant");
+        };
+        assert_eq!(name, "main");
+        let bindings: Vec<&str> = body
+            .iter()
+            .filter_map(|statement| match &statement.node {
+                Statement::Let { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            bindings.contains(&"x") && bindings.contains(&"z"),
+            "recovery inside the block should keep 'x' and 'z', got {bindings:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn recovery_inside_a_block_keeps_later_declarations() -> Result<()> {
+        let input = "first :: fn() -> i64 {\n\
+                     bad := )\n\
+                     0\n\
+                     }\n\
+                     second :: fn() -> i64 { 7 }\n";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let positions = lexer.positions().to_vec();
+        let mut parser = Parser::with_positions(&tokens, &positions);
+        let (program, diagnostics) = parser.parse_recovering();
+        assert!(!diagnostics.is_empty());
+        let names = constant_names(&program);
+        assert!(
+            names.iter().any(|name| name == "first")
+                && names.iter().any(|name| name == "second"),
+            "both functions should survive a body error, got {names:?}"
+        );
         Ok(())
     }
 }
