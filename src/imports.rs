@@ -231,20 +231,6 @@ impl Renamer {
                 self.expression(condition, scope);
                 self.block(body, scope);
             }
-            Statement::InterpolatedConstant(_, value) => {
-                self.expression(value, scope)
-            }
-            Statement::PushContext { context_expr, body } => {
-                self.expression(context_expr, scope);
-                self.block(body, scope);
-            }
-            Statement::PushAllocator {
-                allocator_expr,
-                body,
-            } => {
-                self.expression(allocator_expr, scope);
-                self.block(body, scope);
-            }
             Statement::Break | Statement::Continue | Statement::Import(_) => {}
         }
     }
@@ -265,10 +251,7 @@ impl Renamer {
                     *name = mangled;
                 }
             }
-            Expression::Literal(_)
-            | Expression::Boolean(_)
-            | Expression::InterpolatedIdent(_)
-            | Expression::ContextAccess => {}
+            Expression::Literal(_) | Expression::Boolean(_) => {}
             Expression::Prefix(_, operand)
             | Expression::AddressOf(operand)
             | Expression::Borrow(operand)
@@ -288,18 +271,6 @@ impl Renamer {
             Expression::If(condition, consequence, alternative) => {
                 self.expression(condition, scope);
                 self.block(consequence, scope);
-                if let Some(block) = alternative {
-                    self.block(block, scope);
-                }
-            }
-            Expression::IfLet(pattern, value, consequence, alternative) => {
-                self.expression(value, scope);
-                scope.push(HashSet::new());
-                self.pattern(pattern, scope);
-                for statement in consequence.iter_mut() {
-                    self.statement(&mut statement.node, scope);
-                }
-                scope.pop();
                 if let Some(block) = alternative {
                     self.block(block, scope);
                 }
@@ -336,9 +307,7 @@ impl Renamer {
                     self.expression(value, scope);
                 }
             }
-            Expression::Sizeof(ty)
-            | Expression::Typename(ty)
-            | Expression::TypeValue(ty) => self.ty(ty),
+            Expression::Sizeof(ty) | Expression::TypeValue(ty) => self.ty(ty),
             Expression::Tuple(elements) => {
                 for element in elements.iter_mut() {
                     self.expression(element, scope);
@@ -350,10 +319,7 @@ impl Renamer {
                     self.switch_case(case, scope);
                 }
             }
-            Expression::ComptimeBlock(body) | Expression::Unsafe(body) => {
-                self.block(body, scope)
-            }
-            Expression::ComptimeFor { body, .. } => self.block(body, scope),
+            Expression::Unsafe(body) => self.block(body, scope),
         }
     }
 

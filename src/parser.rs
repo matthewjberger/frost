@@ -301,19 +301,10 @@ pub enum Statement {
     Break,
     Continue,
     Import(String),
-    InterpolatedConstant(Vec<IdentPart>, Expression),
     Extern {
         name: Identifier,
         params: Vec<Parameter>,
         return_type: Option<Type>,
-    },
-    PushContext {
-        context_expr: Expression,
-        body: Block,
-    },
-    PushAllocator {
-        allocator_expr: Expression,
-        body: Block,
     },
 }
 
@@ -411,9 +402,6 @@ impl Display for Statement {
             Self::Break => "break".to_string(),
             Self::Continue => "continue".to_string(),
             Self::Import(path) => format!("import \"{}\"", path),
-            Self::InterpolatedConstant(parts, expr) => {
-                format!("{:?} :: {}", parts, expr)
-            }
             Self::Extern {
                 name,
                 params,
@@ -432,32 +420,9 @@ impl Display for Statement {
                     None => format!("{} :: extern fn({})", name, params_str),
                 }
             }
-            Self::PushContext { context_expr, body } => {
-                format!(
-                    "push_context {} {{ {} }}",
-                    context_expr,
-                    flatten(body, "\n")
-                )
-            }
-            Self::PushAllocator {
-                allocator_expr,
-                body,
-            } => {
-                format!(
-                    "push_allocator({}) {{ {} }}",
-                    allocator_expr,
-                    flatten(body, "\n")
-                )
-            }
         };
         write!(f, "{}", statement)
     }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum IdentPart {
-    Literal(String),
-    TypeVar(String),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -483,19 +448,8 @@ pub enum Expression {
     Switch(Box<Expression>, Vec<SwitchCase>),
     Tuple(Vec<Expression>),
     EnumVariantInit(Identifier, Identifier, Vec<(Identifier, Expression)>),
-    ComptimeBlock(Block),
-    ComptimeFor {
-        index_var: Option<Identifier>,
-        type_var: Identifier,
-        types: Vec<Type>,
-        body: Block,
-    },
     TypeValue(Type),
-    Typename(Type),
-    InterpolatedIdent(Vec<IdentPart>),
     Unsafe(Block),
-    ContextAccess,
-    IfLet(Pattern, Box<Expression>, Block, Option<Block>),
 }
 
 impl Display for Expression {
@@ -676,47 +630,11 @@ impl Display for Expression {
                     field_strs.join(", ")
                 )
             }
-            Self::ComptimeBlock(body) => {
-                format!("comptime {{ {:?} }}", body)
-            }
-            Self::ComptimeFor {
-                index_var,
-                type_var,
-                types,
-                body,
-            } => {
-                format!(
-                    "comptime for {:?}, {} in {:?} {{ {:?} }}",
-                    index_var, type_var, types, body
-                )
-            }
             Self::TypeValue(typ) => format!("{}", typ),
-            Self::Typename(typ) => format!("typename({})", typ),
-            Self::InterpolatedIdent(parts) => format!("{:?}", parts),
             Self::Unsafe(body) => {
                 let body_str: Vec<String> =
                     body.iter().map(|s| s.to_string()).collect();
                 format!("unsafe {{ {} }}", body_str.join("; "))
-            }
-            Self::ContextAccess => "context".to_string(),
-            Self::IfLet(pattern, value, consequence, alternative) => {
-                let alt_str = match alternative {
-                    Some(alt) => {
-                        let alt_body: Vec<String> =
-                            alt.iter().map(|s| s.to_string()).collect();
-                        format!(" else {{ {} }}", alt_body.join("; "))
-                    }
-                    None => String::new(),
-                };
-                let consequence_str: Vec<String> =
-                    consequence.iter().map(|s| s.to_string()).collect();
-                format!(
-                    "if let {:?} = {} {{ {} }}{}",
-                    pattern,
-                    value,
-                    consequence_str.join("; "),
-                    alt_str
-                )
             }
         };
         write!(f, "{}", expression)
@@ -731,7 +649,6 @@ pub enum Literal {
     Boolean(bool),
     String(String),
     Array(Vec<Expression>),
-    HashMap(Vec<(Expression, Expression)>),
 }
 
 impl Display for Literal {
@@ -746,13 +663,6 @@ impl Display for Literal {
                 let expressions =
                     array.iter().map(|e| e.to_string()).collect::<Vec<_>>();
                 format!("[{}]", expressions.join(", "))
-            }
-            Self::HashMap(key_value_pairs) => {
-                let pairs: Vec<String> = key_value_pairs
-                    .iter()
-                    .map(|(key, value)| format!("{}: {}", key, value))
-                    .collect();
-                format!("{{ {} }}", pairs.join(", "))
             }
         };
         write!(f, "{}", literal)
@@ -1042,17 +952,6 @@ impl<'a> Parser<'a> {
             {
                 Some(self.parse_constant_or_struct_statement()?)
             }
-            Token::Identifier(_)
-                if matches!(self.peek_nth(1), Token::Hash)
-                    && matches!(self.peek_nth(2), Token::Identifier(_))
-                    && matches!(self.peek_nth(3), Token::DoubleColon) =>
-            {
-                Some(self.parse_interpolated_constant()?)
-            }
-            Token::PushContext => Some(self.parse_push_context_statement()?),
-            Token::PushAllocator => {
-                Some(self.parse_push_allocator_statement()?)
-            }
             _ => Some(self.parse_expression_statement()?),
         })
     }
@@ -1075,31 +974,6 @@ impl<'a> Parser<'a> {
             .parse_statement()?
             .ok_or_else(|| anyhow::anyhow!("Expected statement after defer"))?;
         Ok(Statement::Defer(Box::new(statement)))
-    }
-
-    fn parse_push_context_statement(&mut self) -> Result<Statement> {
-        self.read_token();
-        let context_expr = self.parse_expression(Precedence::Lowest)?;
-        let body = self.parse_block()?;
-        Ok(Statement::PushContext { context_expr, body })
-    }
-
-    fn parse_push_allocator_statement(&mut self) -> Result<Statement> {
-        self.read_token();
-        if !matches!(self.peek_nth(0), Token::LeftParentheses) {
-            bail!("Expected '(' after 'push_allocator'");
-        }
-        self.read_token();
-        let allocator_expr = self.parse_expression(Precedence::Lowest)?;
-        if !matches!(self.peek_nth(0), Token::RightParentheses) {
-            bail!("Expected ')' after allocator expression");
-        }
-        self.read_token();
-        let body = self.parse_block()?;
-        Ok(Statement::PushAllocator {
-            allocator_expr,
-            body,
-        })
     }
 
     fn parse_for_statement(&mut self) -> Result<Statement> {
@@ -1258,10 +1132,7 @@ impl<'a> Parser<'a> {
             }
             let mut fields = Vec::new();
             while self.peek_nth(0) != &Token::RightBrace {
-                if matches!(self.peek_nth(0), Token::Comptime) {
-                    let expanded = self.parse_comptime_struct_fields()?;
-                    fields.extend(expanded);
-                } else {
+                {
                     let field_name = match self.read_token() {
                         Token::Identifier(name) => name.to_string(),
                         _ => bail!("Expected field name"),
@@ -1434,13 +1305,7 @@ impl<'a> Parser<'a> {
         let mut advance = true;
         let mut expression = match self.peek_nth(0) {
             Token::Identifier(identifier) => {
-                let base = identifier.to_string();
-                if matches!(self.peek_nth(1), Token::Hash) {
-                    advance = false;
-                    self.parse_interpolated_identifier(base)?
-                } else {
-                    Expression::Identifier(base)
-                }
+                Expression::Identifier(identifier.to_string())
             }
             Token::StringLiteral(string) => {
                 Expression::Literal(Literal::String(string.to_string()))
@@ -1471,10 +1336,6 @@ impl<'a> Parser<'a> {
             }
             Token::True => Expression::Boolean(true),
             Token::False => Expression::Boolean(false),
-            Token::LeftBrace => {
-                advance = false;
-                self.parse_hashmap_literal()?
-            }
             Token::LeftBracket => {
                 advance = false;
                 self.parse_array_literal()?
@@ -1495,19 +1356,10 @@ impl<'a> Parser<'a> {
                 advance = false;
                 self.parse_match_expression()?
             }
-            Token::Comptime => {
-                advance = false;
-                self.parse_comptime_expression()?
-            }
-            Token::Typename => {
-                advance = false;
-                self.parse_typename_expression()?
-            }
             Token::Unsafe => {
                 advance = false;
                 self.parse_unsafe_expression()?
             }
-            Token::Context => Expression::ContextAccess,
             Token::EndOfFile => {
                 bail!("Unexpected end of file")
             }
@@ -1731,19 +1583,10 @@ impl<'a> Parser<'a> {
         expression: Expression,
     ) -> Result<Expression> {
         self.read_token();
-        let mut field_name = match self.read_token() {
+        let field_name = match self.read_token() {
             Token::Identifier(name) => name.to_string(),
             token => bail!("Expected field name after '.', found {:?}", token),
         };
-        while matches!(self.peek_nth(0), Token::Hash) {
-            self.read_token();
-            field_name.push('#');
-            if let Token::Identifier(var_name) = self.read_token() {
-                field_name.push_str(var_name);
-            } else {
-                bail!("Expected identifier after '#' in field name");
-            }
-        }
         Ok(Expression::FieldAccess(Box::new(expression), field_name))
     }
 
@@ -1777,22 +1620,6 @@ impl<'a> Parser<'a> {
         }
         self.read_token();
         Ok(Expression::StructInit(struct_name, fields))
-    }
-
-    fn parse_hashmap_literal(&mut self) -> Result<Expression> {
-        let mut pairs = Vec::new();
-        self.read_token(); // {
-        while self.peek_nth(0) != &Token::RightBrace {
-            let key = self.parse_expression(Precedence::Lowest)?;
-            self.read_token(); // :
-            let value = self.parse_expression(Precedence::Lowest)?;
-            if matches!(self.peek_nth(0), &Token::Comma) {
-                self.read_token();
-            }
-            pairs.push((key, value));
-        }
-        self.read_token(); // }
-        Ok(Expression::Literal(Literal::HashMap(pairs)))
     }
 
     fn parse_expression_list(
@@ -2173,10 +2000,6 @@ impl<'a> Parser<'a> {
     fn parse_if_expression(&mut self) -> Result<Expression> {
         self.read_token();
 
-        if matches!(self.peek_nth(0), Token::Let) {
-            return self.parse_if_let_expression();
-        }
-
         if !matches!(self.peek_nth(0), Token::LeftParentheses) {
             bail!("Expected a left parentheses in if expression!");
         }
@@ -2206,41 +2029,6 @@ impl<'a> Parser<'a> {
 
         Ok(Expression::If(
             Box::new(condition),
-            consequence,
-            alternative,
-        ))
-    }
-
-    fn parse_if_let_expression(&mut self) -> Result<Expression> {
-        self.read_token();
-
-        let pattern = self.parse_pattern()?;
-
-        if !matches!(self.peek_nth(0), Token::Assign) {
-            bail!("Expected '=' after pattern in if let expression");
-        }
-        self.read_token();
-
-        let value = self.parse_expression(Precedence::Range)?;
-
-        let consequence = self.parse_block()?;
-
-        let mut alternative = None;
-        if matches!(self.peek_nth(0), Token::Else) {
-            self.read_token();
-            if matches!(self.peek_nth(0), Token::If) {
-                let else_if = self.parse_if_expression()?;
-                alternative = Some(vec![
-                    self.spanned_here(Statement::Expression(else_if)),
-                ]);
-            } else {
-                alternative = Some(self.parse_block()?);
-            }
-        }
-
-        Ok(Expression::IfLet(
-            pattern,
-            Box::new(value),
             consequence,
             alternative,
         ))
@@ -2570,14 +2358,6 @@ impl<'a> Parser<'a> {
                 };
                 Type::TypeParam(param_name)
             }
-            Token::Hash => {
-                self.read_token();
-                let var_name = match self.read_token() {
-                    Token::Identifier(name) => name.to_string(),
-                    _ => bail!("Expected identifier after '#' in type"),
-                };
-                Type::Struct(format!("#{}", var_name))
-            }
             token => bail!("Expected type, found {:?}", token),
         };
         Ok(base_type)
@@ -2617,277 +2397,6 @@ impl<'a> Parser<'a> {
         self.tokens.clone().nth(n).unwrap_or(&Token::EndOfFile)
     }
 
-    fn parse_comptime_expression(&mut self) -> Result<Expression> {
-        self.read_token();
-        if matches!(self.peek_nth(0), Token::For) {
-            self.parse_comptime_for()
-        } else if matches!(self.peek_nth(0), Token::LeftBrace) {
-            let body = self.parse_block()?;
-            Ok(Expression::ComptimeBlock(body))
-        } else {
-            bail!("Expected 'for' or '{{' after 'comptime'")
-        }
-    }
-
-    fn parse_comptime_for(&mut self) -> Result<Expression> {
-        self.read_token();
-        let first_ident = match self.read_token() {
-            Token::Identifier(name) => name.to_string(),
-            _ => bail!("Expected identifier in comptime for"),
-        };
-        let (index_var, type_var) = if matches!(self.peek_nth(0), Token::Comma)
-        {
-            self.read_token();
-            let second_ident = match self.read_token() {
-                Token::Identifier(name) => name.to_string(),
-                _ => bail!("Expected type variable after ','"),
-            };
-            (Some(first_ident), second_ident)
-        } else {
-            (None, first_ident)
-        };
-        if !matches!(self.read_token(), Token::In) {
-            bail!("Expected 'in' in comptime for");
-        }
-        if !matches!(self.read_token(), Token::LeftBracket) {
-            bail!("Expected '[' for type list in comptime for");
-        }
-        let types = self.parse_type_list()?;
-        if !matches!(self.read_token(), Token::RightBracket) {
-            bail!("Expected ']' after type list");
-        }
-        let body = self.parse_block()?;
-        Ok(Expression::ComptimeFor {
-            index_var,
-            type_var,
-            types,
-            body,
-        })
-    }
-
-    fn parse_type_list(&mut self) -> Result<Vec<Type>> {
-        let mut types = Vec::new();
-        while !matches!(self.peek_nth(0), Token::RightBracket) {
-            let typ = self.parse_type()?;
-            types.push(typ);
-            if matches!(self.peek_nth(0), Token::Comma) {
-                self.read_token();
-            }
-        }
-        Ok(types)
-    }
-
-    fn parse_comptime_struct_fields(&mut self) -> Result<Vec<StructField>> {
-        self.read_token();
-        if !matches!(self.read_token(), Token::For) {
-            bail!("Expected 'for' after 'comptime' in struct field generation");
-        }
-        let first_ident = match self.read_token() {
-            Token::Identifier(name) => name.to_string(),
-            _ => bail!("Expected identifier in comptime for"),
-        };
-        let (_index_var, type_var) = if matches!(self.peek_nth(0), Token::Comma)
-        {
-            self.read_token();
-            let second_ident = match self.read_token() {
-                Token::Identifier(name) => name.to_string(),
-                _ => bail!("Expected type variable after ','"),
-            };
-            (Some(first_ident), second_ident)
-        } else {
-            (None, first_ident)
-        };
-        if !matches!(self.read_token(), Token::In) {
-            bail!("Expected 'in' in comptime for");
-        }
-        if !matches!(self.read_token(), Token::LeftBracket) {
-            bail!("Expected '[' for type list in comptime for");
-        }
-        let types = self.parse_type_list()?;
-        if !matches!(self.read_token(), Token::RightBracket) {
-            bail!("Expected ']' after type list");
-        }
-        if !matches!(self.read_token(), Token::LeftBrace) {
-            bail!("Expected '{{' for comptime struct field body");
-        }
-        let mut field_templates = Vec::new();
-        while self.peek_nth(0) != &Token::RightBrace {
-            let first_part = match self.read_token() {
-                Token::Identifier(name) => name.to_string(),
-                _ => bail!("Expected field name in comptime struct fields"),
-            };
-            let mut name_parts = vec![IdentPart::Literal(first_part)];
-            while matches!(self.peek_nth(0), Token::Hash) {
-                self.read_token();
-                if let Token::Identifier(var_name) = self.read_token() {
-                    name_parts.push(IdentPart::TypeVar(var_name.to_string()));
-                } else {
-                    bail!("Expected identifier after '#' in field name");
-                }
-                if let Token::Identifier(next) = self.peek_nth(0)
-                    && !matches!(self.peek_nth(1), Token::Colon)
-                {
-                    name_parts.push(IdentPart::Literal(next.to_string()));
-                    self.read_token();
-                }
-            }
-            if !matches!(self.read_token(), Token::Colon) {
-                bail!("Expected ':' after field name");
-            }
-            let field_type = self.parse_type()?;
-            field_templates.push((name_parts, field_type));
-            if matches!(self.peek_nth(0), Token::Comma) {
-                self.read_token();
-            }
-        }
-        self.read_token();
-        let mut result = Vec::new();
-        for typ in &types {
-            let type_name = Self::type_to_name(typ);
-            for (name_parts, type_template) in &field_templates {
-                let mut field_name = String::new();
-                for part in name_parts {
-                    match part {
-                        IdentPart::Literal(s) => field_name.push_str(s),
-                        IdentPart::TypeVar(v) if v == &type_var => {
-                            field_name.push_str(&type_name)
-                        }
-                        IdentPart::TypeVar(v) => {
-                            field_name.push('#');
-                            field_name.push_str(v);
-                        }
-                    }
-                }
-                let field_type = Self::substitute_type_var_in_type(
-                    type_template,
-                    &type_var,
-                    typ,
-                );
-                result.push(StructField {
-                    name: field_name,
-                    field_type,
-                });
-            }
-        }
-        Ok(result)
-    }
-
-    fn type_to_name(typ: &Type) -> String {
-        match typ {
-            Type::Struct(name) => name.clone(),
-            Type::Enum(name) => name.clone(),
-            Type::I8 => "i8".to_string(),
-            Type::I16 => "i16".to_string(),
-            Type::I32 => "i32".to_string(),
-            Type::I64 => "i64".to_string(),
-            Type::Isize => "isize".to_string(),
-            Type::U8 => "u8".to_string(),
-            Type::U16 => "u16".to_string(),
-            Type::U32 => "u32".to_string(),
-            Type::U64 => "u64".to_string(),
-            Type::Usize => "usize".to_string(),
-            Type::F32 => "f32".to_string(),
-            Type::F64 => "f64".to_string(),
-            Type::Bool => "bool".to_string(),
-            Type::Str => "str".to_string(),
-            Type::Void => "void".to_string(),
-            Type::Array(inner, size) => {
-                format!("[{}; {}]", Self::type_to_name(inner), size)
-            }
-            Type::Slice(inner) => format!("[{}]", Self::type_to_name(inner)),
-            Type::Ref(inner) => format!("&{}", Self::type_to_name(inner)),
-            Type::RefMut(inner) => {
-                format!("&mut {}", Self::type_to_name(inner))
-            }
-            Type::Ptr(inner) => format!("^{}", Self::type_to_name(inner)),
-            Type::Proc(params, ret) => {
-                let param_strs: Vec<String> =
-                    params.iter().map(Self::type_to_name).collect();
-                format!(
-                    "fn({}) -> {}",
-                    param_strs.join(", "),
-                    Self::type_to_name(ret)
-                )
-            }
-            Type::Distinct(inner) => {
-                format!("distinct {}", Self::type_to_name(inner))
-            }
-            Type::Arena => "Arena".to_string(),
-            Type::Context => "Context".to_string(),
-            Type::Handle(inner) => {
-                format!("Handle<{}>", Self::type_to_name(inner))
-            }
-            Type::Optional(inner) => format!("?{}", Self::type_to_name(inner)),
-            Type::TypeParam(name) => format!("${}", name),
-            Type::Unknown => "?".to_string(),
-        }
-    }
-
-    fn substitute_type_var_in_type(
-        template: &Type,
-        type_var: &str,
-        replacement: &Type,
-    ) -> Type {
-        match template {
-            Type::Struct(name) if name == &format!("#{}", type_var) => {
-                replacement.clone()
-            }
-            Type::Array(inner, size) => Type::Array(
-                Box::new(Self::substitute_type_var_in_type(
-                    inner,
-                    type_var,
-                    replacement,
-                )),
-                *size,
-            ),
-            Type::Slice(inner) => Type::Slice(Box::new(
-                Self::substitute_type_var_in_type(inner, type_var, replacement),
-            )),
-            Type::Ref(inner) => Type::Ref(Box::new(
-                Self::substitute_type_var_in_type(inner, type_var, replacement),
-            )),
-            Type::RefMut(inner) => Type::RefMut(Box::new(
-                Self::substitute_type_var_in_type(inner, type_var, replacement),
-            )),
-            Type::Ptr(inner) => Type::Ptr(Box::new(
-                Self::substitute_type_var_in_type(inner, type_var, replacement),
-            )),
-            Type::Distinct(inner) => Type::Distinct(Box::new(
-                Self::substitute_type_var_in_type(inner, type_var, replacement),
-            )),
-            Type::Proc(params, ret) => Type::Proc(
-                params
-                    .iter()
-                    .map(|p| {
-                        Self::substitute_type_var_in_type(
-                            p,
-                            type_var,
-                            replacement,
-                        )
-                    })
-                    .collect(),
-                Box::new(Self::substitute_type_var_in_type(
-                    ret,
-                    type_var,
-                    replacement,
-                )),
-            ),
-            other => other.clone(),
-        }
-    }
-
-    fn parse_typename_expression(&mut self) -> Result<Expression> {
-        self.read_token();
-        if !matches!(self.read_token(), Token::LeftParentheses) {
-            bail!("Expected '(' after 'typename'");
-        }
-        let typ = self.parse_type()?;
-        if !matches!(self.read_token(), Token::RightParentheses) {
-            bail!("Expected ')' after type in typename");
-        }
-        Ok(Expression::Typename(typ))
-    }
-
     fn parse_unsafe_expression(&mut self) -> Result<Expression> {
         self.read_token();
         if !matches!(self.peek_nth(0), Token::LeftBrace) {
@@ -2895,55 +2404,6 @@ impl<'a> Parser<'a> {
         }
         let body = self.parse_block()?;
         Ok(Expression::Unsafe(body))
-    }
-
-    fn parse_interpolated_identifier(
-        &mut self,
-        first_part: String,
-    ) -> Result<Expression> {
-        let mut parts = vec![IdentPart::Literal(first_part)];
-        self.read_token();
-        while matches!(self.peek_nth(0), Token::Hash) {
-            self.read_token();
-            if let Token::Identifier(var_name) = self.read_token() {
-                parts.push(IdentPart::TypeVar(var_name.to_string()));
-            } else {
-                bail!("Expected identifier after '#'");
-            }
-            if let Token::Identifier(next) = self.peek_nth(0) {
-                parts.push(IdentPart::Literal(next.to_string()));
-                self.read_token();
-            }
-        }
-        Ok(Expression::InterpolatedIdent(parts))
-    }
-
-    fn parse_interpolated_constant(&mut self) -> Result<Statement> {
-        let first_part = match self.read_token() {
-            Token::Identifier(name) => name.to_string(),
-            _ => bail!("Expected identifier at start of interpolated constant"),
-        };
-        let mut parts = vec![IdentPart::Literal(first_part)];
-        while matches!(self.peek_nth(0), Token::Hash) {
-            self.read_token();
-            if let Token::Identifier(var_name) = self.read_token() {
-                parts.push(IdentPart::TypeVar(var_name.to_string()));
-            } else {
-                bail!("Expected identifier after '#' in interpolated constant");
-            }
-            if let Token::Identifier(next) = self.peek_nth(0) {
-                parts.push(IdentPart::Literal(next.to_string()));
-                self.read_token();
-            }
-        }
-        if !matches!(self.read_token(), Token::DoubleColon) {
-            bail!("Expected '::' in interpolated constant declaration");
-        }
-        let value = self.parse_expression(Precedence::Lowest)?;
-        if matches!(self.peek_nth(0), Token::Semicolon) {
-            self.read_token();
-        }
-        Ok(Statement::InterpolatedConstant(parts, value))
     }
 }
 
@@ -3485,65 +2945,6 @@ mod tests {
                     Box::new(Expression::Literal(Literal::Integer(1))),
                 )),
             ),
-        )
-    }
-
-    #[test]
-    fn hashmap_literal() -> Result<()> {
-        parse_statement(
-            r#"{"one": 1, "two": 2, "three": 3}"#,
-            &Expression::Literal(Literal::HashMap(vec![
-                (
-                    Expression::Literal(Literal::String("one".to_string())),
-                    Expression::Literal(Literal::Integer(1)),
-                ),
-                (
-                    Expression::Literal(Literal::String("two".to_string())),
-                    Expression::Literal(Literal::Integer(2)),
-                ),
-                (
-                    Expression::Literal(Literal::String("three".to_string())),
-                    Expression::Literal(Literal::Integer(3)),
-                ),
-            ])),
-        )
-    }
-
-    #[test]
-    fn empty_hashmap_literal() -> Result<()> {
-        parse_statement("{}", &Expression::Literal(Literal::HashMap(vec![])))
-    }
-
-    #[test]
-    fn hashmap_literal_with_expressions() -> Result<()> {
-        parse_statement(
-            "{\"one\": 0 + 1, \"two\": 10 - 8, \"three\": 15 / 5}",
-            &Expression::Literal(Literal::HashMap(vec![
-                (
-                    Expression::Literal(Literal::String("one".to_string())),
-                    Expression::Infix(
-                        Box::new(Expression::Literal(Literal::Integer(0))),
-                        Operator::Add,
-                        Box::new(Expression::Literal(Literal::Integer(1))),
-                    ),
-                ),
-                (
-                    Expression::Literal(Literal::String("two".to_string())),
-                    Expression::Infix(
-                        Box::new(Expression::Literal(Literal::Integer(10))),
-                        Operator::Subtract,
-                        Box::new(Expression::Literal(Literal::Integer(8))),
-                    ),
-                ),
-                (
-                    Expression::Literal(Literal::String("three".to_string())),
-                    Expression::Infix(
-                        Box::new(Expression::Literal(Literal::Integer(15))),
-                        Operator::Divide,
-                        Box::new(Expression::Literal(Literal::Integer(5))),
-                    ),
-                ),
-            ])),
         )
     }
 
@@ -4296,56 +3697,6 @@ mod tests {
     }
 
     #[test]
-    fn comptime_for_loop() -> Result<()> {
-        let input =
-            "comptime for T in [Position, Velocity] { print(typename(T)) }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let statements = parser.parse()?;
-        assert_eq!(statements.len(), 1);
-        if let Statement::Expression(Expression::ComptimeFor {
-            index_var,
-            type_var,
-            types,
-            body,
-        }) = &statements[0].node
-        {
-            assert!(index_var.is_none());
-            assert_eq!(type_var, "T");
-            assert_eq!(types.len(), 2);
-            assert_eq!(body.len(), 1);
-        } else {
-            bail!("Expected ComptimeFor expression");
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn comptime_for_with_index() -> Result<()> {
-        let input = "comptime for index, T in [A, B, C] { x := index }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let statements = parser.parse()?;
-        assert_eq!(statements.len(), 1);
-        if let Statement::Expression(Expression::ComptimeFor {
-            index_var,
-            type_var,
-            types,
-            body: _,
-        }) = &statements[0].node
-        {
-            assert_eq!(index_var.as_deref(), Some("index"));
-            assert_eq!(type_var, "T");
-            assert_eq!(types.len(), 3);
-        } else {
-            bail!("Expected ComptimeFor expression with index");
-        }
-        Ok(())
-    }
-
-    #[test]
     fn shift_operators() -> Result<()> {
         let input = "x := 1 << 2";
         let mut lexer = Lexer::new(input);
@@ -4378,45 +3729,6 @@ mod tests {
                 assert_eq!(*op, Operator::BitwiseOr);
             } else {
                 bail!("Expected Infix expression");
-            }
-        } else {
-            bail!("Expected Let statement");
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn interpolated_constant() -> Result<()> {
-        use super::IdentPart;
-        let input = "BIT_#T :: 1 << 2";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let statements = parser.parse()?;
-        assert_eq!(statements.len(), 1);
-        if let Statement::InterpolatedConstant(parts, _) = &statements[0].node {
-            assert_eq!(parts.len(), 2);
-            assert_eq!(parts[0], IdentPart::Literal("BIT_".to_string()));
-            assert_eq!(parts[1], IdentPart::TypeVar("T".to_string()));
-        } else {
-            bail!("Expected InterpolatedConstant statement");
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn typename_expression() -> Result<()> {
-        let input = "x := typename(Position)";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let statements = parser.parse()?;
-        assert_eq!(statements.len(), 1);
-        if let Statement::Let { value, .. } = &statements[0].node {
-            if let Expression::Typename(typ) = value {
-                assert_eq!(format!("{}", typ), "Position");
-            } else {
-                bail!("Expected Typename expression");
             }
         } else {
             bail!("Expected Let statement");
@@ -4617,54 +3929,6 @@ mod tests {
             }
         } else {
             bail!("Expected for statement");
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn if_let_expression() -> Result<()> {
-        let input = "if let x = 42 { print(x) }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::IfLet(
-            pattern,
-            value,
-            consequence,
-            alternative,
-        )) = &program[0].node
-        {
-            assert!(matches!(pattern, Pattern::Identifier(_)));
-            assert!(matches!(
-                value.as_ref(),
-                Expression::Literal(Literal::Integer(42))
-            ));
-            assert_eq!(consequence.len(), 1);
-            assert!(alternative.is_none());
-        } else {
-            bail!("Expected if let expression");
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn if_let_with_else() -> Result<()> {
-        let input = "if let x = 42 { print(x) } else { print(0) }";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::IfLet(_, _, _, alternative)) =
-            &program[0].node
-        {
-            assert!(alternative.is_some());
-        } else {
-            bail!("Expected if let expression with else");
         }
         Ok(())
     }
