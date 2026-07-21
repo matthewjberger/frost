@@ -496,9 +496,6 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
         Type::Handle(inner) => {
             Type::Handle(Box::new(substitute_type(inner, subst)))
         }
-        Type::Pool(inner) => {
-            Type::Pool(Box::new(substitute_type(inner, subst)))
-        }
         Type::Distinct(inner) => {
             Type::Distinct(Box::new(substitute_type(inner, subst)))
         }
@@ -601,7 +598,6 @@ fn mangle_type(ty: &Type) -> String {
         Type::RefMut(inner) => format!("rm_{}", mangle_type(inner)),
         Type::Array(inner, size) => format!("a{}_{}", size, mangle_type(inner)),
         Type::Handle(inner) => format!("h_{}", mangle_type(inner)),
-        Type::Pool(inner) => format!("pool_{}", mangle_type(inner)),
         Type::Proc(_, _) => "proc".to_string(),
         other => format!("{other}"),
     }
@@ -2536,24 +2532,6 @@ impl<'a> FunctionLowering<'a> {
         }
         if let Expression::Identifier(name) = callee
             && self.resolve_variable(name).is_none()
-            && self.builder.signature(name).is_none()
-            && !self.builder.generic_functions.contains_key(name)
-        {
-            match name.as_str() {
-                "pool_new" => return self.lower_pool_new(arguments),
-                "pool_alloc" => return self.lower_pool_alloc(arguments),
-                "pool_contains" => {
-                    return self.lower_pool_contains(arguments);
-                }
-                "pool_free" => return self.lower_pool_free(arguments),
-                "pool_destroy" => {
-                    return self.lower_pool_destroy(arguments);
-                }
-                _ => {}
-            }
-        }
-        if let Expression::Identifier(name) = callee
-            && self.resolve_variable(name).is_none()
         {
             if self.builder.generic_functions.contains_key(name) {
                 return self.lower_generic_call(name, arguments);
@@ -3118,176 +3096,6 @@ impl<'a> FunctionLowering<'a> {
             },
         ));
         IrOperand::Local(result)
-    }
-
-    fn lower_pool_new(
-        &mut self,
-        arguments: &[Expression],
-    ) -> Result<(IrOperand, Type)> {
-        if arguments.len() != 2 {
-            bail!(
-                "native backend: pool_new expects a type and a capacity, as in pool_new($Entity, 8)"
-            );
-        }
-        let Expression::TypeValue(element) = &arguments[0] else {
-            bail!(
-                "native backend: pool_new's first argument must be a type, as in $Entity"
-            );
-        };
-        let element = element.clone();
-        let (capacity, capacity_type) =
-            self.lower_expression(&arguments[1], Some(&Type::I64))?;
-        let capacity = self.coerce(capacity, &capacity_type, &Type::I64);
-        let element_size = self.builder.byte_size(&element) as i64;
-        let pool_type = Type::Pool(Box::new(element));
-        let result = self.fresh_local(pool_type.clone(), None);
-        self.emit(IrStatement::Assign(
-            result,
-            IrRvalue::Call {
-                function: "pool_new".to_string(),
-                arguments: vec![
-                    capacity,
-                    IrOperand::Constant(IrConstant::Integer(
-                        element_size,
-                        Type::I64,
-                    )),
-                ],
-            },
-        ));
-        Ok((IrOperand::Local(result), pool_type))
-    }
-
-    fn pool_element_of(
-        &mut self,
-        pool: &Expression,
-        operation: &str,
-    ) -> Result<(IrOperand, Type)> {
-        let (pool_operand, pool_type) = self.lower_expression(pool, None)?;
-        let Type::Pool(element) = pool_type else {
-            bail!(
-                "native backend: {operation} expects a Pool<T>, but its pool argument has type '{pool_type}'. \
-                 The typed pool surface (pool_new($T, capacity), pool_alloc, pool_contains, pool_free, pool_destroy) \
-                 and the raw '^u8' extern surface cannot be mixed: either create the pool with pool_new so it is a Pool<T>, \
-                 or declare every pool function as 'extern fn' and use the raw surface throughout"
-            );
-        };
-        Ok((pool_operand, *element))
-    }
-
-    fn address_of_value(
-        &mut self,
-        expression: &Expression,
-        ty: &Type,
-    ) -> Result<IrOperand> {
-        if needs_memory(ty) {
-            return self.aggregate_argument_address(expression, ty);
-        }
-        let (value, value_type) =
-            self.lower_expression(expression, Some(ty))?;
-        let value = self.coerce(value, &value_type, ty);
-        let temp = self.fresh_local(ty.clone(), None);
-        self.mark_in_memory(temp);
-        let address = self.address_of_local(temp, ty);
-        self.emit(IrStatement::Store {
-            address: address.clone(),
-            value,
-        });
-        Ok(address)
-    }
-
-    fn lower_pool_alloc(
-        &mut self,
-        arguments: &[Expression],
-    ) -> Result<(IrOperand, Type)> {
-        if arguments.len() != 2 {
-            bail!(
-                "native backend: pool_alloc expects a pool and a value, as in pool_alloc(world, entity)"
-            );
-        }
-        let (pool_operand, element) =
-            self.pool_element_of(&arguments[0], "pool_alloc")?;
-        let value_address = self.address_of_value(&arguments[1], &element)?;
-        let handle_type = Type::Handle(Box::new(element));
-        let result = self.fresh_local(handle_type.clone(), None);
-        self.emit(IrStatement::Assign(
-            result,
-            IrRvalue::Call {
-                function: "pool_alloc".to_string(),
-                arguments: vec![pool_operand, value_address],
-            },
-        ));
-        Ok((IrOperand::Local(result), handle_type))
-    }
-
-    fn lower_pool_contains(
-        &mut self,
-        arguments: &[Expression],
-    ) -> Result<(IrOperand, Type)> {
-        if arguments.len() != 2 {
-            bail!("native backend: pool_contains expects a pool and a handle");
-        }
-        let (pool_operand, _) =
-            self.pool_element_of(&arguments[0], "pool_contains")?;
-        let (handle, _) = self.lower_expression(&arguments[1], None)?;
-        let raw = self.fresh_local(Type::I64, None);
-        self.emit(IrStatement::Assign(
-            raw,
-            IrRvalue::Call {
-                function: "pool_contains".to_string(),
-                arguments: vec![pool_operand, handle],
-            },
-        ));
-        let result = self.fresh_local(Type::Bool, None);
-        self.emit(IrStatement::Assign(
-            result,
-            IrRvalue::Binary(
-                IrBinOp::NotEqual,
-                IrOperand::Local(raw),
-                IrOperand::Constant(IrConstant::Integer(0, Type::I64)),
-            ),
-        ));
-        Ok((IrOperand::Local(result), Type::Bool))
-    }
-
-    fn lower_pool_free(
-        &mut self,
-        arguments: &[Expression],
-    ) -> Result<(IrOperand, Type)> {
-        if arguments.len() != 2 {
-            bail!("native backend: pool_free expects a pool and a handle");
-        }
-        let (pool_operand, _) =
-            self.pool_element_of(&arguments[0], "pool_free")?;
-        let (handle, _) = self.lower_expression(&arguments[1], None)?;
-        let result = self.fresh_local(Type::Void, None);
-        self.emit(IrStatement::Assign(
-            result,
-            IrRvalue::Call {
-                function: "pool_free".to_string(),
-                arguments: vec![pool_operand, handle],
-            },
-        ));
-        Ok((IrOperand::Local(result), Type::Void))
-    }
-
-    fn lower_pool_destroy(
-        &mut self,
-        arguments: &[Expression],
-    ) -> Result<(IrOperand, Type)> {
-        if arguments.len() != 1 {
-            bail!("native backend: pool_destroy expects a pool");
-        }
-        let (pool_operand, _) =
-            self.pool_element_of(&arguments[0], "pool_destroy")?;
-        let result = self.fresh_local(Type::Void, None);
-        self.emit(IrStatement::Assign(
-            result,
-            IrRvalue::Call {
-                function: "pool_destroy".to_string(),
-                arguments: vec![pool_operand],
-            },
-        ));
-        Ok((IrOperand::Local(result), Type::Void))
     }
 
     fn lower_str_len(

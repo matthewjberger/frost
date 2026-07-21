@@ -403,16 +403,12 @@ fn check_borrow_exclusivity(arguments: &[Expression]) -> Result<()> {
     Ok(())
 }
 
-/// Some built-ins take their first argument by reference rather than by value.
-/// `ptr_to` and the pool query and mutate operations borrow it (the value stays
-/// usable), while `pool_destroy` consumes it. Returns `Some(true)` for a borrow,
-/// `Some(false)` for a consume, and `None` for ordinary calls whose arguments
-/// move normally.
+/// `ptr_to` takes the address of its argument, which borrows rather than moves
+/// it. Returns `Some(true)` for that borrow, and `None` for ordinary calls whose
+/// arguments move normally.
 fn builtin_borrows_first_argument(name: &str) -> Option<bool> {
     match name {
-        "pool_alloc" | "pool_contains" | "pool_free" | "pool_get"
-        | "ptr_to" => Some(true),
-        "pool_destroy" => Some(false),
+        "ptr_to" => Some(true),
         _ => None,
     }
 }
@@ -420,7 +416,6 @@ fn builtin_borrows_first_argument(name: &str) -> Option<bool> {
 fn is_linear_type(ty: &Type, linear: &HashSet<String>) -> bool {
     match ty {
         Type::Struct(name) | Type::Enum(name) => linear.contains(name),
-        Type::Pool(_) => true,
         _ => false,
     }
 }
@@ -657,52 +652,6 @@ mod tests {
                 }\n\
             }";
         assert!(check(source).is_ok());
-    }
-
-    #[test]
-    fn undestroyed_pool_is_rejected() {
-        let source = "\
-            Entity :: struct { hp: i64 }\n\
-            run :: fn() {\n\
-                world : Pool<Entity> = pool_new($Entity, 4)\n\
-            }";
-        assert!(check(source).is_err());
-    }
-
-    #[test]
-    fn destroyed_pool_is_accepted() {
-        let source = "\
-            Entity :: struct { hp: i64 }\n\
-            run :: fn() {\n\
-                world : Pool<Entity> = pool_new($Entity, 4)\n\
-                pool_destroy(world)\n\
-            }";
-        assert!(check(source).is_ok());
-    }
-
-    #[test]
-    fn pool_can_be_used_repeatedly_before_destroy() {
-        let source = "\
-            Entity :: struct { hp: i64 }\n\
-            run :: fn() {\n\
-                world : Pool<Entity> = pool_new($Entity, 4)\n\
-                a := pool_alloc(world, Entity { hp = 1 })\n\
-                b := pool_alloc(world, Entity { hp = 2 })\n\
-                pool_destroy(world)\n\
-            }";
-        assert!(check(source).is_ok());
-    }
-
-    #[test]
-    fn pool_use_after_destroy_is_rejected() {
-        let source = "\
-            Entity :: struct { hp: i64 }\n\
-            run :: fn() {\n\
-                world : Pool<Entity> = pool_new($Entity, 4)\n\
-                pool_destroy(world)\n\
-                a := pool_alloc(world, Entity { hp = 1 })\n\
-            }";
-        assert!(check(source).is_err());
     }
 
     #[test]

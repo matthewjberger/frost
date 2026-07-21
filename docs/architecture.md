@@ -265,14 +265,12 @@ Frost is being reshaped toward a data-oriented language with:
    Read/write fields through it, copy the element out, or take `&`/`&mut` of it.
    The borrow is second-class by the same reference rule. Storing it in a field
    or returning it is already rejected, so a handle-deref borrow cannot escape.
-   `Pool<T>` is likewise a first-class type (a pointer-sized value) with
-   compiler-provided typed operations: `pool_new($T, capacity)`,
-   `pool_alloc(pool, value)`, `pool_contains`, `pool_free`, and `pool_destroy`,
-   all lowering to the runtime with no `extern fn` declarations. A `Pool<T>` is a
-   linear resource: every operation except `pool_destroy` borrows it, so it stays
-   usable, but it must be destroyed exactly once or the move checker rejects the
-   program. The names fall back to raw externs when the program declares them
-   itself, so the older untyped, non-linear `^u8` surface still works.)*
+   A pool is not a compiler type. A program writes its own: a value-generic
+   struct of `[N]T` storage plus a generational free list, all Frost code
+   (`examples/native/generic_slab.frost`), on top of slices, value generics, and
+   `ptr_to`/`ptr_cast`. The runtime pool functions are an opt-in `extern`
+   library, like `malloc`, and `pool[handle]` lowers to `pool_get` when a pool is
+   indexed by a handle. See `docs/native-pools.md` and `docs/allocators.md`.)*
 5. Struct/array/enum by-value passing and tuple patterns in the native
    backend. *(Done: all three, plus nested aggregates and arrays of structs.)*
 6. Generics by monomorphization. *(Done:

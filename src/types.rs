@@ -29,7 +29,6 @@ pub enum Type {
     Enum(String),
     Distinct(Box<Type>),
     Handle(Box<Type>),
-    Pool(Box<Type>),
     Optional(Box<Type>),
     TypeParam(String),
     Unknown,
@@ -53,7 +52,6 @@ impl Type {
             Type::Enum(_) => 4,
             Type::Distinct(inner) => inner.size_of(),
             Type::Handle(_) => 8,
-            Type::Pool(_) => 8,
             Type::Optional(inner) => 1 + inner.size_of(),
             Type::TypeParam(_) => 0,
             Type::Unknown => 0,
@@ -82,7 +80,6 @@ impl Type {
             Type::Enum(_) => 4,
             Type::Distinct(inner) => inner.align_of(),
             Type::Handle(_) => 4,
-            Type::Pool(_) => 8,
             Type::Optional(inner) => inner.align_of(),
             Type::TypeParam(_) => 1,
             Type::Unknown => 1,
@@ -102,7 +99,6 @@ impl Type {
             Type::Struct(_) | Type::Enum(_) => false,
             Type::Distinct(inner) => inner.is_copy(),
             Type::Handle(_) => true,
-            Type::Pool(_) => false,
             Type::Optional(inner) => inner.is_copy(),
             Type::TypeParam(_) => false,
             Type::Unknown => false,
@@ -178,7 +174,6 @@ impl Display for Type {
             Type::Enum(name) => write!(f, "{}", name),
             Type::Distinct(inner) => write!(f, "distinct {}", inner),
             Type::Handle(inner) => write!(f, "Handle<{}>", inner),
-            Type::Pool(inner) => write!(f, "Pool<{}>", inner),
             Type::Optional(inner) => write!(f, "?{}", inner),
             Type::TypeParam(name) => write!(f, "${}", name),
             Type::Unknown => write!(f, "?"),
@@ -304,12 +299,11 @@ mod tests {
     }
 
     #[test]
-    fn pool_is_a_linear_pointer_handle() {
-        let pool = Type::Pool(Box::new(Type::Struct("Entity".to_string())));
-        assert_eq!(pool.size_of(), 8);
-        assert_eq!(pool.align_of(), 8);
-        assert!(!pool.is_copy());
-        assert_eq!(pool.to_string(), "Pool<Entity>");
+    fn handle_is_a_copyable_value() {
+        let handle = Type::Handle(Box::new(Type::Struct("Entity".to_string())));
+        assert_eq!(handle.size_of(), 8);
+        assert!(handle.is_copy());
+        assert_eq!(handle.to_string(), "Handle<Entity>");
     }
 
     #[test]
