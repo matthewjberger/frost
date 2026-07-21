@@ -24,6 +24,14 @@ int64_t frost_str_len(const char *text) {
     return length;
 }
 
+void frost_emit_str(const char *text) {
+    fputs(text, stdout);
+}
+
+void frost_emit_int(int64_t value) {
+    printf("%lld", (long long)value);
+}
+
 typedef struct {
     unsigned char *storage;
     uint32_t *generations;

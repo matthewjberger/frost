@@ -383,9 +383,53 @@ fn native_wrapping_and_unary() {
 
 const MINIFROST: &str = include_str!("../bootstrap/minifrost.frost");
 
+fn c_compiler() -> Option<&'static str> {
+    for compiler in ["gcc", "clang", "cc"] {
+        let found = Command::new(compiler)
+            .arg("--version")
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false);
+        if found {
+            return Some(compiler);
+        }
+    }
+    None
+}
+
+fn compile_c_and_run(name: &str, c_source: &str) -> Option<String> {
+    let compiler = c_compiler()?;
+    let directory = std::env::temp_dir();
+    let c_path = directory.join(format!("frost_emitted_{name}.c"));
+    let exe_path = directory.join(format!(
+        "frost_emitted_{name}{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    std::fs::write(&c_path, c_source).unwrap();
+    let compile = Command::new(compiler)
+        .arg("-std=c11")
+        .arg(&c_path)
+        .arg("-o")
+        .arg(&exe_path)
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "emitted C failed to compile for {name}:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(&exe_path).output().unwrap();
+    let _ = std::fs::remove_file(&c_path);
+    let _ = std::fs::remove_file(&exe_path);
+    Some(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"))
+}
+
 #[test]
-fn bootstrap_minifrost_compiler_runs() {
-    let Some(output) = compile_and_run("minifrost", MINIFROST) else {
+fn bootstrap_minifrost_emits_working_c() {
+    let Some(c_source) = compile_and_run("minifrost", MINIFROST) else {
+        return;
+    };
+    let Some(output) = compile_c_and_run("minifrost", &c_source) else {
         return;
     };
     assert_eq!(output, "55\n120\n55\n111\n");
