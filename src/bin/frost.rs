@@ -5,10 +5,10 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use frost::{
-    Compiler, Expression, Lexer, Literal, Parameter, Parser as FrostParser,
-    Position, ReturnSignature, RunOutcome, Spanned, Statement, Type,
-    VirtualMachine, build_module, check_module, check_ownership,
-    compile_ir_to_object, emit_c, resolve_imports, run_module,
+    Expression, Lexer, Literal, Parameter, Parser as FrostParser, Position,
+    ReturnSignature, RunOutcome, Spanned, Statement, Type, build_module,
+    check_module, check_ownership, compile_ir_to_object, emit_c,
+    resolve_imports, run_module,
 };
 
 #[derive(Parser)]
@@ -257,23 +257,33 @@ fn main() -> Result<()> {
             println!("Compiled to: {}", object_path);
         }
     } else {
-        let base_path = PathBuf::from(&cli.file)
-            .canonicalize()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-        let mut compiler = if let Some(base) = base_path {
-            Compiler::new_with_path(&statements, base)
-        } else {
-            Compiler::new(&statements)
-        };
-        let bytecode = compiler.compile().context("Compiler error")?;
-
-        let mut vm = VirtualMachine::new(
-            bytecode.constants,
-            bytecode.functions,
-            bytecode.heap,
-        );
-        vm.run(&bytecode.instructions).context("Runtime error")?;
+        let module = build_module(&statements).context("IR lowering error")?;
+        check_module(&module).context("IR type error")?;
+        let object_bytes = compile_ir_to_object(&module)
+            .context("Native compilation error")?;
+        let stem = Path::new(&cli.file)
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let directory = std::env::temp_dir();
+        let object_path = directory.join(format!("frost_run_{stem}.o"));
+        let exe_path = directory
+            .join(format!("frost_run_{stem}{}", std::env::consts::EXE_SUFFIX));
+        fs::write(&object_path, object_bytes)?;
+        link_executable(
+            &object_path.to_string_lossy(),
+            &exe_path.to_string_lossy(),
+            &cli.libs,
+        )?;
+        fs::remove_file(&object_path).ok();
+        let status = Command::new(&exe_path)
+            .status()
+            .context("Failed to run executable")?;
+        fs::remove_file(&exe_path).ok();
+        if !status.success() {
+            std::process::exit(status.code().unwrap_or(1));
+        }
     }
 
     Ok(())

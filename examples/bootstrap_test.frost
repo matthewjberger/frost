@@ -1,4 +1,0 @@
-// Minimal test for the bootstrap compiler
-print("Hello from bootstrap!");
-x := 5 + 3;
-print(x);

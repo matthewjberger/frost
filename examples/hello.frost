@@ -1,8 +1,0 @@
-puts :: extern fn(s: ^i8) -> i32
-
-main :: fn() -> i64 {
-    puts("Hello from Frost!");
-    puts("This is native compiled code.");
-    puts("No runtime needed - just libc!");
-    0
-}
