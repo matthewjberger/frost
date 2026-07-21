@@ -146,6 +146,7 @@ fn check_function_moves(
         signatures,
         linear_declared: Vec::new(),
         params: HashSet::new(),
+        in_defer: false,
     };
     for parameter in params {
         if let Some(ty) = &parameter.type_annotation {
@@ -159,7 +160,7 @@ fn check_function_moves(
             if checker.params.contains(name) {
                 continue;
             }
-            if checker.state_of(name) != MoveState::Moved {
+            if !is_consumed(checker.state_of(name)) {
                 bail!(
                     "ownership: linear value '{name}' is never consumed; a linear resource must be moved exactly once"
                 );
@@ -174,6 +175,7 @@ enum MoveState {
     Live,
     Moved,
     MaybeMoved,
+    Deferred,
 }
 
 fn join_state(left: MoveState, right: MoveState) -> MoveState {
@@ -184,6 +186,10 @@ fn join_state(left: MoveState, right: MoveState) -> MoveState {
     }
 }
 
+fn is_consumed(state: MoveState) -> bool {
+    matches!(state, MoveState::Moved | MoveState::Deferred)
+}
+
 struct MoveChecker<'a> {
     types: HashMap<String, Type>,
     states: HashMap<String, MoveState>,
@@ -191,6 +197,7 @@ struct MoveChecker<'a> {
     signatures: &'a Signatures,
     linear_declared: Vec<String>,
     params: HashSet<String>,
+    in_defer: bool,
 }
 
 impl MoveChecker<'_> {
@@ -321,7 +328,11 @@ impl MoveChecker<'_> {
                 Ok(false)
             }
             Statement::Defer(inner) => {
-                self.check_statement(inner)?;
+                let was_in_defer = self.in_defer;
+                self.in_defer = true;
+                let result = self.check_statement(inner);
+                self.in_defer = was_in_defer;
+                result?;
                 Ok(false)
             }
             _ => Ok(false),
@@ -333,7 +344,7 @@ impl MoveChecker<'_> {
             if self.params.contains(name) {
                 continue;
             }
-            if self.state_of(name) != MoveState::Moved {
+            if !is_consumed(self.state_of(name)) {
                 bail!(
                     "ownership: linear value '{name}' is not consumed before this return; a linear resource must be consumed exactly once on every path"
                 );
@@ -356,10 +367,15 @@ impl MoveChecker<'_> {
             let previous = before.get(name).copied().unwrap_or(MoveState::Live);
             if previous == MoveState::Live
                 && self.state_of(name) != MoveState::Live
-                && self.is_linear_variable(name)
+                && self.is_move_variable(name)
             {
+                if self.is_linear_variable(name) {
+                    bail!(
+                        "ownership: linear value '{name}' is consumed inside a loop; a linear resource must be consumed exactly once, not once per iteration"
+                    );
+                }
                 bail!(
-                    "ownership: linear value '{name}' is consumed inside a loop; a linear resource must be consumed exactly once, not once per iteration"
+                    "ownership: value '{name}' is moved inside a loop; it would be used after move on a later iteration"
                 );
             }
         }
@@ -379,7 +395,7 @@ impl MoveChecker<'_> {
             if self.params.contains(name) {
                 continue;
             }
-            if self.state_of(name) != MoveState::Moved {
+            if !is_consumed(self.state_of(name)) {
                 bail!(
                     "ownership: linear value '{name}' is never consumed; a linear resource must be moved exactly once"
                 );
@@ -496,11 +512,27 @@ impl MoveChecker<'_> {
     fn visit(&mut self, expression: &Expression, moving: bool) -> Result<()> {
         match expression {
             Expression::Identifier(name) => {
-                if self.state_of(name) != MoveState::Live {
-                    bail!("ownership: use of moved value '{name}'");
-                }
-                if moving && self.is_move_variable(name) {
-                    self.states.insert(name.clone(), MoveState::Moved);
+                match self.state_of(name) {
+                    MoveState::Live => {
+                        if moving && self.is_move_variable(name) {
+                            let consumed = if self.in_defer {
+                                MoveState::Deferred
+                            } else {
+                                MoveState::Moved
+                            };
+                            self.states.insert(name.clone(), consumed);
+                        }
+                    }
+                    MoveState::Deferred => {
+                        if moving {
+                            bail!(
+                                "ownership: value '{name}' is already scheduled for consumption by a later defer; it cannot be moved again"
+                            );
+                        }
+                    }
+                    MoveState::Moved | MoveState::MaybeMoved => {
+                        bail!("ownership: use of moved value '{name}'");
+                    }
                 }
                 Ok(())
             }
@@ -983,5 +1015,59 @@ mod tests {
                 while (i < 3) { close(f)  i = i + 1 }\n\
             }";
         assert!(check(source).is_err());
+    }
+
+    #[test]
+    fn reading_a_deferred_linear_value_is_accepted() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            open :: fn() -> File { File { handle = 1 } }\n\
+            close :: extern fn(f: File)\n\
+            run :: fn() -> i64 {\n\
+                f := open()\n\
+                defer close(f)\n\
+                f.handle\n\
+            }";
+        assert!(check(source).is_ok());
+    }
+
+    #[test]
+    fn moving_a_deferred_value_again_is_rejected() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            open :: fn() -> File { File { handle = 1 } }\n\
+            close :: extern fn(f: File)\n\
+            run :: fn() {\n\
+                f := open()\n\
+                defer close(f)\n\
+                close(f)\n\
+            }";
+        assert!(check(source).is_err());
+    }
+
+    #[test]
+    fn moving_an_owned_value_inside_a_loop_is_rejected() {
+        let source = "\
+            Point :: struct { x: i64, y: i64 }\n\
+            take :: fn(p: Point) -> i64 { p.x }\n\
+            run :: fn() {\n\
+                p := Point { x = 1, y = 2 }\n\
+                mut i : i64 = 0\n\
+                while (i < 3) { take(p)  i = i + 1 }\n\
+            }";
+        assert!(check(source).is_err());
+    }
+
+    #[test]
+    fn moving_a_value_declared_inside_a_loop_is_accepted() {
+        let source = "\
+            Point :: struct { x: i64, y: i64 }\n\
+            take :: fn(p: Point) -> i64 { p.x }\n\
+            make :: fn() -> Point { Point { x = 5, y = 6 } }\n\
+            run :: fn() {\n\
+                mut i : i64 = 0\n\
+                while (i < 3) { p := make()  take(p)  i = i + 1 }\n\
+            }";
+        assert!(check(source).is_ok());
     }
 }
