@@ -90,6 +90,9 @@ actual work predictable.
 - **Not maximally general.** Frost intentionally omits capturing closures
   (function pointers instead), exceptions (errors are linear enum returns), and
   implicit conversions that hide cost.
+- **Not access-controlled.** There are no visibility modifiers. Every struct
+  field is public, there is no `pub` or private, and the module system needs no
+  visibility rules. Encapsulation by field privacy is out of scope.
 - **Not a research vehicle for a novel type theory.** The type system is a means
   to make data-oriented code safe and fast, not an end in itself.
 

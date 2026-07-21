@@ -503,6 +503,7 @@ files pulled in by `import`, not as a module tree with visibility rules.
 | `?`, `Result`, `#[must_use]` | `linear enum` returns that must be consumed |
 | Overflow checks in debug | None; arithmetic always wraps at width |
 | `unsafe` blocks and raw pointers | `^T` raw pointers as the explicit escape hatch |
+| `pub`, `pub(crate)`, field privacy | None; every struct field is public |
 | Async, generics over const, GATs | Out of scope |
 
 ## Gotchas checklist for the first hour

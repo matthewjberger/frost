@@ -209,6 +209,16 @@ rather than an implicit destructor quietly firing. For generated code,
 "everything that happens is written down" is an auditability win. Nothing happens
 that is not literally in the source.
 
+## 11. No visibility modifiers
+
+Frost has no `pub`, no private, and no visibility keywords at all. Every struct
+field is public, and there is nothing to specify. Rust threads `pub` through
+fields, functions, modules, and re-exports, with `pub(crate)` and `pub(super)`
+refinements on top. Frost drops the entire axis. A struct is its fields and they
+are all reachable, so there is one fewer decision per field and one fewer piece
+of grammar. This also means the module system needs no visibility rules. Bringing
+a file in with `import` makes its names available, and that is the whole story.
+
 ## Honest tradeoffs
 
 **Unbounded generics.** `$T` with no bounds means generic errors surface at
@@ -240,6 +250,7 @@ some syntax (capture lists).
 | Raw pointer types | Two | One |
 | Generic call syntax | Turbofish workaround | `$` sigil, no ambiguity |
 | Cleanup | Invisible `Drop` at scope exit | Explicit consumer, enforced by linearity |
+| Visibility | `pub`, `pub(crate)`, private by default | None, all fields public |
 
 Almost every difference reduces context-sensitivity, overloaded symbols, or
 invisible compiler behavior. That is the design thesis. Code that is cheap to
