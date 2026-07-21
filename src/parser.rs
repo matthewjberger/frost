@@ -1893,6 +1893,10 @@ impl<'a> Parser<'a> {
     fn parse_function_parameters_inner(&mut self) -> Result<Vec<Parameter>> {
         let mut parameters = Vec::new();
         while self.peek_nth(0) != &Token::RightParentheses {
+            if matches!(self.peek_nth(0), Token::EndOfFile) {
+                bail!("Unexpected end of input in parameter list");
+            }
+
             let mutable = if matches!(self.peek_nth(0), Token::Mut) {
                 self.read_token();
                 true
@@ -1936,6 +1940,11 @@ impl<'a> Parser<'a> {
                     type_annotation,
                     mutable,
                 });
+            } else {
+                bail!(
+                    "Expected a parameter name in parameter list, found {:?}",
+                    self.peek_nth(0)
+                );
             }
 
             if matches!(self.peek_nth(0), Token::Comma) {
@@ -2249,6 +2258,10 @@ impl<'a> Parser<'a> {
 
         let mut parameters = Vec::new();
         while self.peek_nth(0) != &Token::RightParentheses {
+            if matches!(self.peek_nth(0), Token::EndOfFile) {
+                bail!("Unexpected end of input in parameter list");
+            }
+
             let mutable = if matches!(self.peek_nth(0), Token::Mut) {
                 self.read_token();
                 true
@@ -2292,6 +2305,11 @@ impl<'a> Parser<'a> {
                     type_annotation,
                     mutable,
                 });
+            } else {
+                bail!(
+                    "Expected a parameter name in parameter list, found {:?}",
+                    self.peek_nth(0)
+                );
             }
 
             if matches!(self.peek_nth(0), Token::Comma) {

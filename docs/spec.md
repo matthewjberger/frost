@@ -60,7 +60,9 @@ tokens to decide whether a parenthesized group is a function parameter list
 This discipline is the contract. The reference parser (`src/parser.rs`), the
 self-hosted parser (`bootstrap/`), and this grammar are three views of one
 language. A disagreement between them is a bug in whichever diverges from the
-intent expressed here.
+intent expressed here. A conformance test (`tests/grammar.rs`) feeds a corpus of
+accepted and rejected forms through the reference parser on every build, so the
+grammar and the parser cannot drift apart unnoticed.
 
 ### 1.3 Conformance
 
