@@ -201,6 +201,11 @@ References are **second-class** (chapter 8), only parameters and short-lived
 locals, never stored or returned. Raw pointers are first-class copy values that
 may be stored and returned and carry no safety guarantee.
 
+`ptr_to(place)` yields a first-class `^T` to a place, the raw-pointer counterpart
+of `&` that may be stored and returned. `ptr_cast($T, p)` reinterprets a pointer
+as `^T` at no runtime cost. These are the low-level tools an allocator uses to
+hand back typed memory from a byte buffer; ordinary code does not need them.
+
 ### 3.4 Handle and pool types
 
 `Handle<T>` names an element of a pool of `T` (chapter 10), a small copy value
@@ -360,8 +365,9 @@ only control, and struct fields are always public (3.2).
 ### 6.1 Primary expressions
 
 The primary expressions are integer, float, string, and boolean literals,
-identifiers, parenthesized expressions `( Expr )`, and array literals
-`[ e, ... ]`.
+identifiers, parenthesized expressions `( Expr )`, and array literals, either the
+listed form `[ e, ... ]` or the repeat form `[ e ; N ]` for `N` copies of `e`
+(the way a large or zeroed backing buffer is written, e.g. `[0; 256]`).
 
 ### 6.2 Operators
 
@@ -753,6 +759,7 @@ Primary =
     | IDENT
     | "(" Grouped                             // group, tuple, or function literal
     | "[" ( Expr ( "," Expr )* )? "]"         // array literal
+    | "[" Expr ";" INTEGER "]"                // repeat array literal
     | IfExpr
     | MatchExpr
     | "fn" "(" Params? ")" ( "->" Type )? Block

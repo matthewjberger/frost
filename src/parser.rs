@@ -1640,7 +1640,38 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_array_literal(&mut self) -> Result<Expression> {
-        let elements = self.parse_expression_list(&Token::RightBracket)?;
+        self.read_token();
+        if matches!(self.peek_nth(0), Token::RightBracket) {
+            self.read_token();
+            return Ok(Expression::Literal(Literal::Array(Vec::new())));
+        }
+        let first = self.parse_expression(Precedence::Lowest)?;
+        if matches!(self.peek_nth(0), Token::Semicolon) {
+            self.read_token();
+            let count = match self.read_token() {
+                Token::Integer(value) => *value as usize,
+                token => bail!(
+                    "Expected a count after ';' in an array literal, found {token:?}"
+                ),
+            };
+            if !matches!(self.read_token(), Token::RightBracket) {
+                bail!("Expected ']' after an array repeat count");
+            }
+            return Ok(Expression::Literal(Literal::Array(vec![first; count])));
+        }
+        let mut elements = vec![first];
+        if matches!(self.peek_nth(0), Token::Comma) {
+            self.read_token();
+        }
+        while self.peek_nth(0) != &Token::RightBracket
+            && self.peek_nth(0) != &Token::EndOfFile
+        {
+            elements.push(self.parse_expression(Precedence::Lowest)?);
+            if matches!(self.peek_nth(0), Token::Comma) {
+                self.read_token();
+            }
+        }
+        self.read_token();
         Ok(Expression::Literal(Literal::Array(elements)))
     }
 
@@ -2449,7 +2480,6 @@ impl<'a> Parser<'a> {
                 let name = name.to_string();
                 self.read_token();
                 match name.as_str() {
-                    "Arena" => Type::Arena,
                     "Handle" => {
                         if !matches!(self.peek_nth(0), Token::LessThan) {
                             bail!("Expected '<' after 'Handle'");
@@ -3888,29 +3918,6 @@ mod tests {
             }
         } else {
             bail!("Expected Let statement");
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn arena_type_annotation() -> Result<()> {
-        let input = "a : Arena = x;";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Let {
-            name,
-            type_annotation,
-            ..
-        } = &program[0].node
-        {
-            assert_eq!(name, "a");
-            assert_eq!(type_annotation, &Some(Type::Arena));
-        } else {
-            bail!("Expected let statement with Arena type");
         }
         Ok(())
     }

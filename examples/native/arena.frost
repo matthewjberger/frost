@@ -1,0 +1,69 @@
+// A bump (arena) allocator written entirely in Frost, no runtime. The arena is a
+// value-generic byte buffer (`[N]u8`) plus a bump offset. arena_alloc carves the
+// next slot out of the buffer with ptr_to (a first-class raw pointer to the byte
+// at the current offset), bumps the offset by the value's size, and reinterprets
+// the pointer as `^T` with ptr_cast. Freeing is resetting the offset to a saved
+// marker, which reclaims everything allocated since in one move.
+//
+// This is the arena layer of docs/allocators.md, in the language: the storage and
+// the bump logic are Frost, and the only primitives the compiler provides are a
+// raw address-of and a pointer reinterpret. Allocations here are 8-byte aligned
+// because every type used is, so the running offset stays aligned; a general
+// arena would round the offset up to each value's alignment.
+
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Point :: struct { x: i64, y: i64 }
+
+Arena :: struct($N: usize) {
+    data: [N]u8,
+    offset: i64,
+}
+
+arena_mark :: fn(a: &Arena<256>) -> i64 {
+    a.offset
+}
+
+arena_reset :: fn(a: &mut Arena<256>, mark: i64) {
+    a.offset = mark
+}
+
+alloc_point :: fn(a: &mut Arena<256>) -> ^Point {
+    slot := ptr_to(a.data[a.offset])
+    a.offset = a.offset + sizeof(Point)
+    ptr_cast($Point, slot)
+}
+
+alloc_int :: fn(a: &mut Arena<256>) -> ^i64 {
+    slot := ptr_to(a.data[a.offset])
+    a.offset = a.offset + sizeof(i64)
+    ptr_cast($i64, slot)
+}
+
+main :: fn() -> i64 {
+    mut arena : Arena<256> = Arena {
+        data = [0; 256],
+        offset = 0,
+    }
+
+    p : ^Point = alloc_point(&mut arena)
+    p^.x = 3
+    p^.y = 4
+    q : ^i64 = alloc_int(&mut arena)
+    q^ = 99
+
+    printf("%lld\n", p^.x)            // 3
+    printf("%lld\n", p^.y)            // 4
+    printf("%lld\n", q^)              // 99
+    printf("%lld\n", arena.offset)    // 24 = Point(16) + i64(8)
+
+    // Roll back to the start and reuse the same bytes.
+    saved := arena_mark(&arena)
+    arena_reset(&mut arena, 0)
+    r : ^i64 = alloc_int(&mut arena)
+    r^ = 7
+    printf("%lld\n", r^)              // 7
+    printf("%lld\n", arena.offset)    // 8, the buffer was reclaimed
+    printf("%lld\n", saved)           // 24, the earlier high-water mark
+    0
+}
