@@ -17,22 +17,22 @@ one decision plus a small number of local rules.
 1. **No dangling references.** A reference can never outlive the value it points
    at. References cannot be stored or returned, so they exist only for the
    duration of a single call.
-2. **No use-after-move.** A non-`Copy` value is consumed when moved; using it
+2. **No use-after-move.** A non-`Copy` value is consumed when moved. Using it
    again is a compile error.
 3. **No mutable aliasing.** Within a call, a value cannot be borrowed `&mut`
    more than once, nor `&mut` and `&` at the same time.
-4. **No leaked resources.** A `linear` value must be consumed exactly once; a
+4. **No leaked resources.** A `linear` value must be consumed exactly once. A
    live-but-unconsumed linear value at end of scope is a compile error.
 5. **No use-after-free through a stale handle.** A generational handle whose slot
-   has been freed and reused reports "not contained"; it can never silently read
+   has been freed and reused reports "not contained". It can never silently read
    a live value.
 6. **No out-of-bounds array access.** Every array index is bounds-checked against
-   the array's statically-known length; an out-of-range index aborts with a
+   the array's statically-known length. An out-of-range index aborts with a
    diagnostic rather than reading or writing past the array.
 
 The first four hold statically. The fifth uses a runtime generation check that
-stays cheap (one integer compare) because the static rules keep handles honest:
-a handle is plain copyable data, not a reference, so the compiler never has to
+stays cheap (one integer compare) because the static rules keep handles honest.
+A handle is plain copyable data, not a reference, so the compiler never has to
 track its lifetime. The sixth is a single compile-time-known length compare on
 each array access.
 
@@ -40,7 +40,7 @@ each array access.
 
 ## 1. Second-class references, so no dangling pointers
 
-A reference type (`&T`, `&mut T`) is **second-class**: it may appear only as a
+A reference type (`&T`, `&mut T`) is **second-class**. It may appear only as a
 *parameter mode* or a *dereference-scoped temporary*. Concretely, the ownership
 pass rejects:
 
@@ -60,7 +60,7 @@ That is what lets the borrow analysis stay entirely scope-local.
 
 The same rule is what makes `pool[handle]` sound (see section 5). Dereferencing a
 handle yields a `&mut T` or `&T` borrow, and that borrow is second-class by the
-same rule: you cannot stash it in a struct or return it, so it cannot dangle
+same rule. You cannot stash it in a struct or return it, so it cannot dangle
 past the pool operation.
 
 Enforced in `check_ownership` via `Type::contains_reference()` on declared
@@ -123,16 +123,16 @@ open  :: fn() -> File { File { handle = 1 } }
 close :: extern fn(f: File)              // terminal consumer, across the FFI boundary
 ```
 
-- **At most once** comes from the move checker (section 2): consuming a linear
+- **At most once** comes from the move checker (section 2). Consuming a linear
   value moves it, so a second use is a use-after-move error, and there is no
   double-free.
-- **At least once** is the new rule: a linear value still live at the end of the
+- **At least once** is the new rule. A linear value still live at the end of the
   function that owns it is a "never consumed" error, and there is no leak.
 
-Consuming means moving the value onward: returning it, passing it by value to
+Consuming means moving the value onward, returning it, passing it by value to
 another function (typically an `extern` that takes ownership across the FFI
 boundary), or `match`ing it (a `match` on a linear value destructures and
-consumes it). This is how Frost **replaces `Drop`**: cleanup is an obligation the
+consumes it). This is how Frost **replaces `Drop`**. Cleanup is an obligation the
 type system tracks, not an implicit call inserted behind your back.
 
 There is a useful consequence. A `linear enum` returned from a fallible function
@@ -155,7 +155,7 @@ generation)` pair, which is plain copyable data you *can* freely store and retur
 - `pool_free` bumps the slot's generation and returns it to the free list.
 - Any later access checks the handle's generation against the slot's current
   generation. If they differ, the handle is **stale** and the access fails
-  (`pool_contains` returns 0; a checked get returns nothing).
+  (`pool_contains` returns 0, a checked get returns nothing).
 
 ```
 h := pool_alloc(world, &entity)   // slot 0, generation 0
@@ -171,7 +171,7 @@ use-after-free detection without a GC and without reference counting.
 
 ### Handle-dereference-as-borrow
 
-`pool[handle]` is a **place**: you can read and write fields through it
+`pool[handle]` is a **place**. You can read and write fields through it
 (`world[h].hp = 60`), copy the element out (`e := world[h]`), or take a borrow
 of it (`&world[h]`, `&mut world[h]`) to pass to a function. The element type is
 recovered from the handle's `Handle<T>`, so the pool itself stays a raw pointer.
@@ -179,7 +179,7 @@ recovered from the handle's `Handle<T>`, so the pool itself stays a raw pointer.
 The borrow you get is a **second-class reference** (section 1). Storing it in a
 struct or returning it is already rejected, so a handle-deref borrow cannot
 escape the region where the pool operation is valid. Handles unify with the
-reference discipline: the *handle* is data you keep; the *borrow* through it is a
+reference discipline. The *handle* is data you keep. The *borrow* through it is a
 scoped temporary the compiler will not let you save.
 
 ---
@@ -202,15 +202,15 @@ unsigned value) is caught too. Valid accesses are unaffected. A silent
 out-of-bounds read or write, the classic C memory-safety hole, becomes a loud,
 deterministic abort.
 
-Pool access does not need this check: `pool[handle]` is guarded by the
+Pool access does not need this check. `pool[handle]` is guarded by the
 generational check instead (section 5).
 
 ## Why this is enough, and why it is small
 
-Traditional borrow checking spends most of its complexity on **lifetimes**:
+Traditional borrow checking spends most of its complexity on **lifetimes**,
 inferring how long each reference is valid, relating those regions to each other,
 and threading them through generics. Frost pays a different price up front, that
-references cannot escape, and in exchange deletes that entire machinery:
+references cannot escape, and in exchange deletes that entire machinery.
 
 | Hazard                       | How Frost removes it                                   |
 | ---------------------------- | ------------------------------------------------------ |
@@ -223,7 +223,7 @@ references cannot escape, and in exchange deletes that entire machinery:
 | Ignored error                | Linear error enums are non-ignorable                   |
 
 None of these requires lifetime variables, region inference, or a runtime GC.
-The analysis is a single AST pass; the only per-value runtime cost is one integer
+The analysis is a single AST pass. The only per-value runtime cost is one integer
 compare per handle access and one per array index.
 
 ## What is not yet guarded

@@ -31,8 +31,7 @@ A statically-typed programming language with Rust-inspired ownership and immutab
 - [docs/c-compatibility.md](docs/c-compatibility.md): calling C and the C backend
 - [docs/architecture.md](docs/architecture.md): the compiler pipeline and what
   the native backend supports today versus the bytecode VM
-- [docs/memory_model.md](docs/memory_model.md): copy / move / linear type categories
-- [docs/spec.md](docs/spec.md): the detailed language reference
+- [docs/spec.md](docs/spec.md): the language reference and grammar
 
 ## Quick Start
 

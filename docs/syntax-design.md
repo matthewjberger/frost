@@ -1,17 +1,17 @@
 # Frost vs Rust: Syntax Design Advantages
 
 This is an analysis of the syntax differences between Rust and Frost, read
-through one lens: Frost is a minimal, borrow-checked, procedurally oriented
+through one lens. Frost is a minimal, borrow-checked, procedurally oriented
 language designed so that code is cheap to parse, cheap to grep, and hard to
 generate subtly wrong. That last property matters when a large language model is
-a primary author, but none of it is model-specific; it is the ordinary payoff of
+a primary author, but none of it is model-specific. It is the ordinary payoff of
 fewer symbols that mean multiple things, fewer special-case grammar rules, and
 nothing invisible.
 
-A note on honesty: a few points below are properties of the grammar and the
+A note on honesty. A few points below are properties of the grammar and the
 design that the implementation has not fully caught up to yet. Those are marked
 inline. Everything else describes the language as it compiles today. For the
-normative rules see [spec.md](spec.md); for a broader Rust-to-Frost guide see
+normative rules see [spec.md](spec.md). For a broader Rust-to-Frost guide see
 [coming-from-rust.md](coming-from-rust.md).
 
 ## The Rosetta table
@@ -43,11 +43,11 @@ normative rules see [spec.md](spec.md); for a broader Rust-to-Frost guide see
 ## 1. Uniform declaration syntax
 
 `MAX :: 10`, `add :: fn(...)`, `Point :: struct {...}`, `Shape :: enum {...}`,
-and `name :: extern fn(...)` are all the same grammar production:
+and `name :: extern fn(...)` are all the same grammar production,
 `identifier :: value`. Rust has five different keyword-first forms (`const`,
 `fn`, `struct`, `enum`, and `extern` blocks), each with its own parse rules.
 
-The uniform form means:
+The uniform form means the following.
 
 **The name always comes first and left-aligned.** Answering "where is Point
 defined" is searching for `Point ::`, no matter what kind of thing Point is. In
@@ -83,8 +83,8 @@ add :: fn(a: i64, b: i64) -> i64 { a + b }
 ```
 
 This is the same shape as `MAX :: 10`. The right-hand side,
-`fn(a: i64, b: i64) -> i64 { a + b }`, is a complete function-valued expression;
-the binding just names it. So the anonymous form falls out of the grammar: delete
+`fn(a: i64, b: i64) -> i64 { a + b }`, is a complete function-valued expression.
+The binding just names it. So the anonymous form falls out of the grammar. Delete
 the name and what remains is already a legal expression.
 
 ```
@@ -97,24 +97,24 @@ callbacks := [
 ```
 
 There is one function-literal syntax, and "named function" is that literal given
-a name. Nobody had to design anonymous functions as a feature; they are what the
+a name. Nobody had to design anonymous functions as a feature. They are what the
 grammar produces when you omit the name.
 
 *Implementation status.* The parser accepts a function literal wherever an
 expression is allowed, so the forms above parse. The native backend today lowers
-function values that refer to a named top-level function (function pointers);
-lowering an anonymous literal written inline at a call site is a planned step,
+function values that refer to a named top-level function (function pointers).
+Lowering an anonymous literal written inline at a call site is a planned step,
 not yet done. The design property (one syntax, no separate closure grammar)
 holds regardless.
 
-**Caveat: functions, not closures.** This gives anonymous functions for free,
+**Caveat. Functions, not closures.** This gives anonymous functions for free,
 but not closures in the capturing sense. Whether `fn(x) { x + y }` may capture
 `y` from the enclosing scope, and how (by value, by borrow, with what lifetime),
 is a semantic decision the uniform syntax does not answer. Jai and Odin, which
-use this syntax, mostly punt on capture: nested function literals cannot close
+use this syntax, mostly punt on capture. Nested function literals cannot close
 over locals, precisely because capture drags in the ownership questions that
 forced Rust's closure machinery (`Fn`/`FnMut`/`FnOnce`, `move`) into existence. A
-borrow-checked language has to pick: either no capture (functions are plain
+borrow-checked language has to pick, either no capture (functions are plain
 pointers, maximally simple), or explicit capture lists, which reintroduce some
 syntax but keep the "everything is written down" property. Frost currently takes
 the first path.
@@ -133,14 +133,14 @@ silent success.
 
 *Implementation status.* The operators are distinct today, which is the
 syntactic prerequisite. The current checker does not yet reject a re-`:=` of an
-existing name or an `=` to an undeclared one; making those loud is a planned
+existing name or an `=` to an undeclared one. Making those loud is a planned
 checker rule that the syntax already enables.
 
 ## 4. `=` for struct fields frees `:` for types
 
 `Point { x = 1, y = 2 }` uses `=` for field initialization, so `:` only ever
 means type ascription. Rust overloads `:` for both type annotation and struct
-field init, which is part of why Rust never shipped general type ascription: the
+field init, which is part of why Rust never shipped general type ascription. The
 grammar collides. One symbol, one meaning is exactly the kind of local
 unambiguity that helps both parsers and model authors. When you see `:` in Frost
 it always means the same thing.
@@ -148,7 +148,7 @@ it always means the same thing.
 ## 5. Mandatory parentheses on conditions
 
 `if (x > 5)` rather than `if x > 5`. It sounds like a downgrade, but Rust's
-paren-free `if` created a real ambiguity: in `if x == Foo { }`, is `Foo {` the
+paren-free `if` created a real ambiguity. In `if x == Foo { }`, is `Foo {` the
 start of a struct literal or the start of the if-body? Rust resolves it with a
 special rule banning struct literals in condition position. `if (cond) { }` is
 context-free with no such carve-out. Slightly more typing, a meaningfully simpler
@@ -190,24 +190,24 @@ match s {
 ```
 
 This Swift-style inferred enum scoping is fewer tokens, and pattern code does not
-break when the enum is renamed: every arm keeps working.
+break when the enum is renamed. Every arm keeps working.
 
 ## 9. `foo($u32)` instead of turbofish
 
-The turbofish `foo::<T>()` exists because `foo<T>()` collides with `a < b > (c)`:
-with angle brackets, Rust cannot tell `<` for generics apart from `<` for
+The turbofish `foo::<T>()` exists because `foo<T>()` collides with `a < b > (c)`.
+With angle brackets, Rust cannot tell `<` for generics apart from `<` for
 less-than in expression position. Frost passes a type as an ordinary argument
 marked with `$` (`foo($u32)`), sidestepping the `<` disambiguation entirely, one
 of the ugliest corners of Rust's grammar.
 
 ## 10. Linear structs instead of `Drop`
 
-This one is semantic more than syntactic, but the surface effect matters: nothing
+This one is semantic more than syntactic, but the surface effect matters. Nothing
 invisible runs at scope exit. Rust's `Drop` fires automatically and silently when
 a value leaves scope. A Frost `linear` type makes you call the cleanup yourself,
 and forgetting to consume a linear value is a type error at the point of the leak
 rather than an implicit destructor quietly firing. For generated code,
-"everything that happens is written down" is an auditability win: nothing happens
+"everything that happens is written down" is an auditability win. Nothing happens
 that is not literally in the source.
 
 ## Honest tradeoffs
@@ -243,5 +243,5 @@ some syntax (capture lists).
 | Cleanup | Invisible `Drop` at scope exit | Explicit consumer, enforced by linearity |
 
 Almost every difference reduces context-sensitivity, overloaded symbols, or
-invisible compiler behavior. That is the design thesis: code that is cheap to
+invisible compiler behavior. That is the design thesis. Code that is cheap to
 parse, cheap to grep, and hard to generate almost-right-but-subtly-wrong.

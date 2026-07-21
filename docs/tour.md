@@ -2,7 +2,7 @@
 
 This is a hands-on walk through the language by example. Every snippet below
 compiles and runs on both native backends. For the *why* behind these choices,
-see [philosophy.md](philosophy.md); for the safety rules, see
+see [philosophy.md](philosophy.md). For the safety rules, see
 [memory-safety.md](memory-safety.md).
 
 Run a program with:
@@ -15,7 +15,7 @@ frost program.frost --link -o program && ./program
 
 `::` declares a constant (including a function). `:=` binds an inferred local,
 `:` gives an explicit type, and `mut` makes a binding assignable. There are no
-methods; behavior lives in free functions.
+methods. Behavior lives in free functions.
 
 ```
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
@@ -39,7 +39,7 @@ are all value (copy) types. Control flow is `if`/`else` (an expression),
 
 ## Structs and enums: plain data
 
-A `struct` is just its fields; an `enum` is a tagged union with payloads.
+A `struct` is just its fields. An `enum` is a tagged union with payloads.
 Neither carries methods.
 
 ```
@@ -88,7 +88,7 @@ Raw pointers `^T` exist as an explicit, unchecked escape hatch for FFI.
 
 ## Move checking and linear resources
 
-Non-`Copy` values (structs, enums) *move* when passed by value; using one again
+Non-`Copy` values (structs, enums) *move* when passed by value. Using one again
 is a compile error. A `linear` type must be consumed **exactly once**, which is
 how Frost replaces destructors:
 
@@ -110,7 +110,7 @@ errors are non-ignorable by construction.
 ## Generational handles and pools
 
 Long-lived data lives in a pool and is referenced by a `Handle<T>`, a small
-copyable value, not a pointer. `pool[handle]` is a *place*: read and write
+copyable value, not a pointer. `pool[handle]` is a *place*. Read and write
 through it, or borrow it. A freed-and-reused slot bumps its generation, so an
 old handle can never read the new occupant.
 
@@ -181,7 +181,7 @@ pool wrappers work as an ordinary Frost library, with no dummy value needed.
 
 ## Higher-order code: function pointers, not closures
 
-Functions are values; a `fn(...) -> T` parameter holds one. There are no
+Functions are values. A `fn(...) -> T` parameter holds one. There are no
 capturing closures.
 
 ```

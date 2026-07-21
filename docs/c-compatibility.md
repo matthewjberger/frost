@@ -9,7 +9,7 @@ separate:
    of one backend. The emitted C is a compilation target, **not** an interface
    for external C code to call into.
 
-The design is deliberately asymmetric: Frost calling C matters, and C calling
+The design is deliberately asymmetric. Frost calling C matters, and C calling
 Frost does not. Keeping that asymmetry is what lets the emitted C stay a simple
 lowering (char buffers, mangled names) without owing anyone a stable ABI.
 
@@ -41,7 +41,7 @@ main :: fn() -> i64 {
   by-value-in-registers. So `close :: extern fn(f: File)` links against a C
   `void close(File* f)`. This matches the common C convention (most APIs take
   structs by pointer) and is how a `linear` resource's terminal consumer works
-  natively: the `extern` takes ownership across the boundary, receiving a
+  natively. The `extern` takes ownership across the boundary, receiving a
   pointer to the moved-in aggregate.
 - **The linker gets a real C compiler.** Both backends finish by invoking
   `cc`/`gcc`/`clang` (or `cl` on MSVC), so C symbols resolve normally and you can
@@ -63,7 +63,7 @@ pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
 pool_get   :: extern fn(pool: ^u8, handle: i64) -> ^u8
 ```
 
-Its interface is intentionally **scalar-only**: a pool is an opaque `^u8`
+Its interface is intentionally **scalar-only**. A pool is an opaque `^u8`
 pointer and a handle is a packed `i64`. Nothing is passed or returned by
 aggregate value, so the runtime's *natural* C ABI matches Frost's internal
 aggregate convention with zero negotiation. That is also why the identical
@@ -74,7 +74,7 @@ compiled runtime links into both backends and they agree bit for bit.
 `--emit-c` selects the portable-C backend instead of Cranelift. It emits a
 single `.c` file and compiles it with the system C compiler. This exists for
 portability (anywhere with a C compiler) and as the second half of the
-**differential oracle**: every test program is compiled through *both* Cranelift
+**differential oracle**. Every test program is compiled through *both* Cranelift
 and C, run, and the outputs are asserted equal. Two independent backends that
 must agree catch miscompilations that a single backend would hide.
 
