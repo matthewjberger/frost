@@ -1570,11 +1570,31 @@ parse_field_inits :: fn(mut p: Parser) -> i64 {
     head
 }
 
+// A struct answered by a call has nowhere to live, and a struct is passed on by
+// its address, so one handed straight to another call is bound first. The
+// binding is what the address is taken of.
+hold_struct_result :: fn(mut p: Parser, value: i64) -> i64 {
+    node : ^Node = arena_at(p.arena, value)
+    if (node^.kind != NODE_CALL) {
+        return value
+    }
+    callee : ^Sym = arena_at(p.fns, node^.val)
+    if (is_struct_ty(callee^.ret_type) == false) {
+        return value
+    }
+    name_off := synth_numbered(p, "__arg", p.match_count)
+    name_len := 5 + digits_in(p.match_count)
+    p.match_count = p.match_count + 1
+    bind := new_let_node(p, value, name_off, name_len, 0 - 1)
+    arena_push(p.pending, LocalVar { name_off = bind, name_len = bind, ty = 0 })
+    new_named_node(p, NODE_VAR, 0, name_off, name_len)
+}
+
 parse_arg_list :: fn(mut p: Parser) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
-        value := parse_expr(p)
+        value := hold_struct_result(p, parse_expr(p))
         arg := new_node(p, NODE_ARG, value, 0, 0)
         if (head == (0 - 1)) {
             head = arg
@@ -2198,6 +2218,12 @@ parse_params :: fn(mut p: Parser) -> i64 {
             }
             if (auto_borrow == 1) {
                 ty = POINTER_BASE + ty
+            }
+            // A `move` parameter takes the value itself however wide it is, and
+            // is marked so, since whether a read parameter borrows depends on
+            // the type it was given and a `move` never does.
+            if (mode == 2) {
+                auto_borrow = 2
             }
             param := arena_push(
                 p.arena,
@@ -3004,7 +3030,18 @@ emit_struct_lit :: fn(mut p: Parser, struct_ty: i64, inits: i64) {
         frost_emit_str(".")
         emit_source(p.src, off, len)
         frost_emit_str(" = ")
-        emit_expr(p, value)
+        // A struct handed to a generic arrives as an address, since that is how
+        // a read parameter of struct type travels, so storing it into a field
+        // of struct type reads through it.
+        field_ty := field_type(p, struct_ty, off, len)
+        value_ty := type_of(p, value)
+        if (is_struct_ty(field_ty) && is_pointer(value_ty)) {
+            frost_emit_str("(*(")
+            emit_expr(p, value)
+            frost_emit_str("))")
+        } else {
+            emit_expr(p, value)
+        }
         id = next_id
     }
     frost_emit_str(" }")
@@ -3185,8 +3222,19 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                 if (param_auto == 1 && is_pointer(arg_ty) == false) {
                     borrow = 1
                 }
+                // A generic function's parameter list belongs to whichever
+                // instantiation was parsed last, so it cannot say how this call
+                // passes its arguments. The rule is the same one the parameter
+                // modes encode: a read of a struct borrows, everything else is
+                // passed as it is.
+                if (generic_fn_of(p, fn_index) >= 0) {
+                    borrow = 0
+                    if (param_auto != 2 && is_struct_ty(arg_ty)) {
+                        borrow = 1
+                    }
+                }
                 // A struct handed to a parameter that does not borrow is moved.
-                if (param_auto == 0 && is_struct_ty(arg_ty)) {
+                if (param_auto != 1 && is_struct_ty(arg_ty)) {
                     moves = 1
                 }
                 // Check the argument against the parameter. A generic
