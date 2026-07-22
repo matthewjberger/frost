@@ -1,0 +1,28 @@
+// Failure sets. A function that can fail says so in its signature, and `?`
+// hands a failure on to its caller rather than checking it here.
+
+ParseError :: struct { at: i64 }
+
+digit_of :: fn(c: i64) -> i64 ! ParseError {
+    if (c < 48 || c > 57) {
+        return ParseError { at = c }
+    }
+    c - 48
+}
+
+two_digits :: fn(high: i64, low: i64) -> i64 ! ParseError {
+    tens := digit_of(high)?
+    ones := digit_of(low)?
+    tens * 10 + ones
+}
+
+main :: fn() -> i64 {
+    good := two_digits(52, 55)
+    print good.tag
+    print good.value
+
+    bad := two_digits(52, 90)
+    print bad.tag
+    print bad.error.at
+    0
+}
