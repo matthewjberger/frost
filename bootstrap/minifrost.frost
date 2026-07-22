@@ -332,6 +332,7 @@ Parser :: struct {
     no_struct_lit: bool,
     last_type_was_generic: i64,
     moved: Arena<LocalVar>,
+    label_id: i64,
     current_ret: i64,
     current_fn_off: i64,
     current_fn_len: i64,
@@ -2624,6 +2625,427 @@ emit_mono_prototype :: fn(mut p: Parser, id: i64, arg: i64, ret: i64) {
     frost_emit_str(");\n")
 }
 
+// ---------------------------------------------------------------------------
+// Native backend. Emits x64 assembly instead of C, so a build no longer pays for
+// a C compiler parsing and optimizing generated source. Selected with
+// MINIFROST_BACKEND=asm; the C path stays the default until this covers the
+// whole language.
+//
+// Windows x64: integer arguments arrive in rcx, rdx, r8, r9, the caller reserves
+// a 32 byte shadow area, and rsp is 16 byte aligned at every call. Expressions
+// evaluate into rax with r11 as scratch, and temporaries move through the stack
+// 16 bytes at a time so that alignment never drifts.
+//
+// Scalar subset for now: integers, locals, arithmetic, comparisons, if, while,
+// calls and print. Anything else is refused rather than mis-emitted.
+// ---------------------------------------------------------------------------
+
+ASM_FRAME :: 544
+
+cstr_eq :: fn(a: ^i8, b: ^i8) -> bool {
+    la := frost_str_len(a)
+    lb := frost_str_len(b)
+    if (la != lb) {
+        return false
+    }
+    mut i : i64 = 0
+    while (i < la) {
+        if (frost_byte_at(a, i) != frost_byte_at(b, i)) {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+new_label :: fn(mut p: Parser) -> i64 {
+    id := p.label_id
+    p.label_id = id + 1
+    id
+}
+
+emit_label :: fn(name: ^i8, id: i64) {
+    frost_emit_str(name)
+    frost_emit_int(id)
+}
+
+// Locals are recorded in order, so the nth sits at -(8 * (n + 1)) from rbp. The
+// bottom 32 bytes of the frame stay free as the shadow area for calls.
+local_slot :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < p.locals.count) {
+        entry : ^LocalVar = arena_at(p.locals, i)
+        if (entry^.name_len == len
+            && bytes_equal(p.src, entry^.name_off, off, len)) {
+            return 0 - (8 * (i + 1))
+        }
+        i = i + 1
+    }
+    0 - 8
+}
+
+asm_unsupported :: fn(what: ^i8) {
+    frost_error("minifrost: the native backend does not handle ")
+    frost_error(what)
+    frost_error(" yet")
+    frost_die()
+}
+
+emit_asm_push :: fn() {
+    frost_emit_str("    subq $16, %rsp\n")
+    frost_emit_str("    movq %rax, (%rsp)\n")
+}
+
+emit_asm_pop_rax :: fn() {
+    frost_emit_str("    movq (%rsp), %rax\n")
+    frost_emit_str("    addq $16, %rsp\n")
+}
+
+emit_asm_pop_arg :: fn(index: i64) {
+    frost_emit_str("    movq (%rsp), ")
+    emit_asm_arg_reg(index)
+    frost_emit_str("\n")
+    frost_emit_str("    addq $16, %rsp\n")
+}
+
+// A comparison leaves 0 or 1 in rax.
+emit_asm_compare :: fn(setcc: ^i8) {
+    frost_emit_str("    cmpq %r11, %rax\n")
+    frost_emit_str("    ")
+    frost_emit_str(setcc)
+    frost_emit_str(" %al\n")
+    frost_emit_str("    movzbq %al, %rax\n")
+}
+
+emit_asm_binop :: fn(op: i64) {
+    if (op == 0) {
+        frost_emit_str("    addq %r11, %rax\n")
+        return
+    }
+    if (op == 1) {
+        frost_emit_str("    subq %r11, %rax\n")
+        return
+    }
+    if (op == 2) {
+        frost_emit_str("    imulq %r11, %rax\n")
+        return
+    }
+    if (op == 3) {
+        frost_emit_str("    cqto\n")
+        frost_emit_str("    idivq %r11\n")
+        return
+    }
+    if (op == 4) {
+        frost_emit_str("    cqto\n")
+        frost_emit_str("    idivq %r11\n")
+        frost_emit_str("    movq %rdx, %rax\n")
+        return
+    }
+    if (op == 5) {
+        emit_asm_compare("setl")
+        return
+    }
+    if (op == 6) {
+        emit_asm_compare("setg")
+        return
+    }
+    if (op == 7) {
+        emit_asm_compare("setle")
+        return
+    }
+    if (op == 8) {
+        emit_asm_compare("setge")
+        return
+    }
+    if (op == 9) {
+        emit_asm_compare("sete")
+        return
+    }
+    if (op == 10) {
+        emit_asm_compare("setne")
+        return
+    }
+    // `&&` and `||` over 0/1 values are the bitwise operations.
+    if (op == 11) {
+        frost_emit_str("    andq %r11, %rax\n")
+        return
+    }
+    frost_emit_str("    orq %r11, %rax\n")
+}
+
+emit_asm_arg_reg :: fn(index: i64) {
+    if (index == 0) {
+        frost_emit_str("%rcx")
+        return
+    }
+    if (index == 1) {
+        frost_emit_str("%rdx")
+        return
+    }
+    if (index == 2) {
+        frost_emit_str("%r8")
+        return
+    }
+    frost_emit_str("%r9")
+}
+
+emit_asm_expr :: fn(mut p: Parser, id: i64) {
+    node : ^Node = arena_at(p.arena, id)
+    kind := node^.kind
+    if (kind == NODE_NUM) {
+        frost_emit_str("    movq $")
+        frost_emit_int(node^.val)
+        frost_emit_str(", %rax\n")
+        return
+    }
+    if (kind == NODE_VAR) {
+        off := node^.val
+        len := node^.c
+        if (is_const(p, off, len)) {
+            frost_emit_str("    movq $")
+            frost_emit_int(const_value(p, off, len))
+            frost_emit_str(", %rax\n")
+            return
+        }
+        frost_emit_str("    movq ")
+        frost_emit_int(local_slot(p, off, len))
+        frost_emit_str("(%rbp), %rax\n")
+        return
+    }
+    if (kind == NODE_BIN) {
+        emit_asm_expr(p, node^.a)
+        emit_asm_push()
+        emit_asm_expr(p, node^.b)
+        frost_emit_str("    movq %rax, %r11\n")
+        emit_asm_pop_rax()
+        emit_asm_binop(node^.val)
+        return
+    }
+    if (kind == NODE_CALL) {
+        emit_asm_call(p, node^.a, node^.val)
+        return
+    }
+    asm_unsupported("this expression")
+}
+
+// Arguments evaluate right to left onto the stack and only then land in the
+// registers the ABI names, so an argument that is itself a call cannot clobber
+// one already computed.
+emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
+    mut count : i64 = 0
+    mut id := args
+    while (id != (0 - 1)) {
+        node : ^Node = arena_at(p.arena, id)
+        count = count + 1
+        id = node^.next
+    }
+    if (count > 4) {
+        asm_unsupported("a call with more than four arguments")
+    }
+    mut i : i64 = count - 1
+    while (i >= 0) {
+        mut walk := args
+        mut k : i64 = 0
+        while (k < i) {
+            wnode : ^Node = arena_at(p.arena, walk)
+            walk = wnode^.next
+            k = k + 1
+        }
+        anode : ^Node = arena_at(p.arena, walk)
+        emit_asm_expr(p, anode^.a)
+        emit_asm_push()
+        i = i - 1
+    }
+    mut r : i64 = 0
+    while (r < count) {
+        emit_asm_pop_arg(r)
+        r = r + 1
+    }
+    frost_emit_str("    subq $32, %rsp\n")
+    frost_emit_str("    call ")
+    sym : ^Sym = arena_at(p.fns, fn_index)
+    if (sym^.is_extern == 1) {
+        emit_source(p.src, sym^.off, sym^.len)
+    } else {
+        frost_emit_str("mf_")
+        frost_emit_int(fn_index)
+    }
+    frost_emit_str("\n")
+    frost_emit_str("    addq $32, %rsp\n")
+}
+
+emit_asm_stmt :: fn(mut p: Parser, id: i64) {
+    node : ^Node = arena_at(p.arena, id)
+    kind := node^.kind
+    if (kind == NODE_LET) {
+        value := node^.a
+        off := node^.val
+        len := node^.c
+        emit_asm_expr(p, value)
+        record_local(p, off, len, TY_I64)
+        frost_emit_str("    movq %rax, ")
+        frost_emit_int(local_slot(p, off, len))
+        frost_emit_str("(%rbp)\n")
+        return
+    }
+    if (kind == NODE_ASSIGN) {
+        place : ^Node = arena_at(p.arena, node^.a)
+        place_kind := place^.kind
+        place_off := place^.val
+        place_len := place^.c
+        if (place_kind != NODE_VAR) {
+            asm_unsupported("this assignment target")
+        }
+        emit_asm_expr(p, node^.b)
+        frost_emit_str("    movq %rax, ")
+        frost_emit_int(local_slot(p, place_off, place_len))
+        frost_emit_str("(%rbp)\n")
+        return
+    }
+    if (kind == NODE_RETURN) {
+        value := node^.a
+        if (value == (0 - 1)) {
+            frost_emit_str("    movq $0, %rax\n")
+        } else {
+            emit_asm_expr(p, value)
+        }
+        frost_emit_str("    leave\n")
+        frost_emit_str("    ret\n")
+        return
+    }
+    if (kind == NODE_PRINT) {
+        emit_asm_expr(p, node^.a)
+        frost_emit_str("    movq %rax, %rdx\n")
+        frost_emit_str("    leaq .Lfmt(%rip), %rcx\n")
+        frost_emit_str("    subq $32, %rsp\n")
+        frost_emit_str("    call printf\n")
+        frost_emit_str("    addq $32, %rsp\n")
+        return
+    }
+    if (kind == NODE_IF) {
+        else_id := new_label(p)
+        end_id := new_label(p)
+        emit_asm_expr(p, node^.a)
+        frost_emit_str("    cmpq $0, %rax\n")
+        frost_emit_str("    je ")
+        emit_label(".Lelse", else_id)
+        frost_emit_str("\n")
+        emit_asm_block(p, node^.b)
+        frost_emit_str("    jmp ")
+        emit_label(".Lend", end_id)
+        frost_emit_str("\n")
+        emit_label(".Lelse", else_id)
+        frost_emit_str(":\n")
+        else_head := node^.val
+        if (else_head != (0 - 1)) {
+            emit_asm_block(p, else_head)
+        }
+        emit_label(".Lend", end_id)
+        frost_emit_str(":\n")
+        return
+    }
+    if (kind == NODE_WHILE) {
+        top_id := new_label(p)
+        end_id := new_label(p)
+        emit_label(".Ltop", top_id)
+        frost_emit_str(":\n")
+        emit_asm_expr(p, node^.a)
+        frost_emit_str("    cmpq $0, %rax\n")
+        frost_emit_str("    je ")
+        emit_label(".Lend", end_id)
+        frost_emit_str("\n")
+        emit_asm_block(p, node^.b)
+        frost_emit_str("    jmp ")
+        emit_label(".Ltop", top_id)
+        frost_emit_str("\n")
+        emit_label(".Lend", end_id)
+        frost_emit_str(":\n")
+        return
+    }
+    if (kind == NODE_EXPRSTMT) {
+        emit_asm_expr(p, node^.a)
+        return
+    }
+    asm_unsupported("this statement")
+}
+
+emit_asm_block :: fn(mut p: Parser, head: i64) {
+    mut id := head
+    while (id != (0 - 1)) {
+        node : ^Node = arena_at(p.arena, id)
+        next_id := node^.next
+        emit_asm_stmt(p, id)
+        id = next_id
+    }
+}
+
+emit_asm_function :: fn(mut p: Parser, id: i64) {
+    node : ^Node = arena_at(p.arena, id)
+    fn_index := node^.val
+    body := node^.a
+    params := node^.b
+    is_main := node^.c
+    p.locals.count = 0
+    p.moved.count = 0
+    frost_emit_str("    .globl ")
+    if (is_main == 1) {
+        frost_emit_str("main\n")
+        frost_emit_str("main:\n")
+    } else {
+        frost_emit_str("mf_")
+        frost_emit_int(fn_index)
+        frost_emit_str("\n")
+        frost_emit_str("mf_")
+        frost_emit_int(fn_index)
+        frost_emit_str(":\n")
+    }
+    frost_emit_str("    pushq %rbp\n")
+    frost_emit_str("    movq %rsp, %rbp\n")
+    frost_emit_str("    subq $")
+    frost_emit_int(ASM_FRAME)
+    frost_emit_str(", %rsp\n")
+
+    // Spill the incoming register arguments into their slots.
+    mut pid := params
+    mut index : i64 = 0
+    while (pid != (0 - 1)) {
+        pnode : ^Node = arena_at(p.arena, pid)
+        off := pnode^.val
+        len := pnode^.c
+        next_id := pnode^.next
+        record_local(p, off, len, TY_I64)
+        frost_emit_str("    movq ")
+        emit_asm_arg_reg(index)
+        frost_emit_str(", ")
+        frost_emit_int(local_slot(p, off, len))
+        frost_emit_str("(%rbp)\n")
+        index = index + 1
+        pid = next_id
+    }
+
+    emit_asm_block(p, body)
+    frost_emit_str("    movq $0, %rax\n")
+    frost_emit_str("    leave\n")
+    frost_emit_str("    ret\n")
+}
+
+emit_asm_program :: fn(mut p: Parser, head: i64) {
+    frost_emit_str("    .text\n")
+    mut id := head
+    while (id != (0 - 1)) {
+        node : ^Node = arena_at(p.arena, id)
+        kind := node^.kind
+        next_id := node^.next
+        if (kind == NODE_FUNC) {
+            emit_asm_function(p, id)
+        }
+        id = next_id
+    }
+    frost_emit_str("    .data\n")
+    frost_emit_str(".Lfmt:\n")
+    frost_emit_str("    .asciz \"%lld\\n\"\n")
+}
+
 emit_program :: fn(mut p: Parser, head: i64) {
     emit_struct_decls(p)
     emit_extern_prototypes(p, head)
@@ -2848,6 +3270,7 @@ main :: fn() -> i64 {
         no_struct_lit = false,
         last_type_was_generic = 0,
         moved = arena_make($LocalVar, 4096),
+        label_id = 0,
         current_ret = 0,
         current_fn_off = 0,
         current_fn_len = 0,
@@ -2856,6 +3279,11 @@ main :: fn() -> i64 {
     program := parse_program(parser)
     check_calls(parser)
 
+    backend := frost_getenv("MINIFROST_BACKEND")
+    if (cstr_eq(backend, "asm")) {
+        emit_asm_program(parser, program)
+        return 0
+    }
     frost_emit_str("#include <stdio.h>\n")
     frost_emit_str("#include <stdint.h>\n")
     emit_program(parser, program)
