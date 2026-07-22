@@ -3,8 +3,9 @@
 Frost has two compilers. `src/*.rs` is the reference compiler, written in Rust,
 implementing the full language. `bootstrap/minifrost.frost` is a compiler written
 in Frost that compiles a subset of Frost, and it self-hosts: it compiles its own
-2579 lines to a byte-identical fixpoint across three stages, checked by
-`bootstrap_minifrost_self_hosts`.
+source to a byte-identical fixpoint across three stages, checked by
+`bootstrap_minifrost_self_hosts`. It checks the programs it compiles rather than
+leaving that to whatever compiles its output.
 
 Finishing the self-hosted compiler means growing the Frost-written one until it
 implements the whole language and can compile a full Frost-written compiler.
@@ -89,14 +90,17 @@ Second-order levers, worth doing but small next to the above:
 
 ## What is left in the Frost-written compiler
 
-minifrost today is a translator, not a checker: it emits C and lets the C
-compiler catch type errors. In dependency order:
+minifrost checks its own programs now rather than deferring to whatever compiles
+its output. In dependency order, what is done and what remains:
 
 1. **Self type-checking.** Required before (3), because once minifrost stops
    emitting C there is no C compiler behind it to catch anything.
 
-   Done, and free: minifrost still self-compiles its own 2600 lines in 23 ms with
-   all of these running.
+   Done, and free. Every check was measured by running the build before and after
+   it back to back: the self-compile time is identical either way. The absolute
+   number moves with machine load (23 ms on a quiet machine, about 69 ms on a
+   busy one), so compare builds against each other rather than against a number
+   written down here.
 
    - Undefined calls and argument count. A name becomes defined when its `fn` or
      `extern fn` is parsed, so a name only ever called does not exist. Every node
@@ -107,6 +111,7 @@ compiler catch type errors. In dependency order:
    - Unknown struct fields, naming the struct and the field.
    - Return types, against the function's declared return type.
    - Argument types, against the parameter list.
+   - Assignment types, against the place.
 
    Compatibility is deliberately lenient where the emitted C is lenient. Scalars
    and pointers convert freely and a type parameter matches anything, because it
@@ -116,8 +121,6 @@ compiler catch type errors. In dependency order:
    parameter types are placeholders bound per instantiation and carry nothing to
    check against, and an auto-borrowed argument is a value whose address is taken
    at the call, so it answers to the pointee rather than the pointer.
-
-   - Assignment types, against the place.
 
    Left: the scope tracking is emit-time rather than a separate semantic pass,
    which is enough for these checks but would need reworking for flow-sensitive
@@ -139,7 +142,9 @@ compiler catch type errors. In dependency order:
    `close :: extern fn(move f: File)`. A function that takes a linear value by
    `move` and only reads a field out of it is correctly rejected, because the
    resource dies there.
-3. **Native backend.** The speed payoff above, unblocked by (1).
+
+3. **Native backend.** The speed payoff above, now unblocked: (1) is done, so
+   there is a checker behind the compiler once it stops emitting C.
 4. **Failure sets, allocation sources, regions.** `-> T ! E` with `?`,
    `uses`/`with`, and the arena escape check. These reuse minifrost's existing
    enum and match machinery and mirror the desugars in `src/failure_sets.rs`,
