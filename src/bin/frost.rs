@@ -423,8 +423,13 @@ fn compile_c(
 
     let runtime_path = runtime_object(compiler, false)?;
 
+    // The C is an intermediate, so it is compiled the way an intermediate
+    // should be. Without this the C path ran unoptimized while the Cranelift
+    // path asked for speed, which made the two backends answer the same thing
+    // at very different cost and made the C path a poor measurement.
     let mut cmd = Command::new(compiler);
     if compiler == "cl" {
+        cmd.arg("/O2");
         cmd.arg(c_path);
         cmd.arg(&runtime_path);
         cmd.arg(format!("/Fe:{}", exe_path));
@@ -433,6 +438,7 @@ fn compile_c(
         }
     } else {
         cmd.arg("-std=c11");
+        cmd.arg("-O2");
         cmd.arg(c_path);
         cmd.arg(&runtime_path);
         cmd.arg("-o");
