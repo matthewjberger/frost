@@ -2223,6 +2223,12 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
     if (kind == NODE_ASSIGN) {
         place := node^.a
         value := node^.b
+        place_ty := type_of(p, place)
+        value_ty := type_of(p, value)
+        if (types_compatible(value_ty, place_ty) == false) {
+            frost_error("minifrost: assigning a value of the wrong type")
+            frost_die()
+        }
         emit_expr(p, place)
         frost_emit_str(" = ")
         emit_expr(p, value)
