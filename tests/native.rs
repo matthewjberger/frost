@@ -4187,6 +4187,62 @@ fn a_compile_time_function_argument_specializes_and_calls_directly() {
     );
 }
 
+// A compile-time function parameter may say what signature it needs, and then
+// the mismatch is reported against the parameter list rather than against a
+// line inside the specialized body that the reader never wrote.
+#[test]
+fn a_compile_time_function_argument_may_declare_its_signature() {
+    let source = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+ascending :: fn(a: i64, b: i64) -> bool { a < b }
+
+best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
+    mut result := x
+    if (before(y, result)) { result = y }
+    result
+}
+
+main :: fn() -> i64 {
+    printf("%lld\n", best($i64, $ascending, 7, 3))
+    0
+}
+"#;
+    let Some(output) = compile_and_run("constfnbound", source) else {
+        return;
+    };
+    assert_eq!(output, "3\n");
+}
+
+#[test]
+fn a_compile_time_function_argument_is_checked_against_its_signature() {
+    let source = "\
+wrong :: fn(a: i64) -> i64 { a }
+best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T) -> $T { x }
+main :: fn() -> i64 { best($i64, $wrong, 1) }
+";
+    let message = compile_error("constfnbadsig", source);
+    assert!(
+        message.contains("'wrong'")
+            && message.contains("proc(i64, i64) -> bool"),
+        "expected the signature mismatch to name both signatures:\n{message}"
+    );
+}
+
+#[test]
+fn a_type_given_where_a_function_is_declared_is_rejected() {
+    let source = "\
+Point :: struct { x: i64 }
+best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T) -> $T { x }
+main :: fn() -> i64 { best($i64, $Point, 1) }
+";
+    let message = compile_error("constfnnotafn", source);
+    assert!(
+        message.contains("needs a function as its argument"),
+        "expected a function to be required:\n{message}"
+    );
+}
+
 // The C the compiler emits for a program, for tests that need to look at the
 // shape of the lowering rather than only at what it prints.
 fn emit_c_source(name: &str, source: &str) -> Option<String> {

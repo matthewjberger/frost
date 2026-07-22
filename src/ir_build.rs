@@ -207,6 +207,7 @@ pub fn build_module(
                         .map(|ty| substitute_type(ty, &specialization.subst)),
                     mutable: parameter.mutable,
                     mode: parameter.mode,
+                    compile_time_signature: None,
                 })
                 .collect();
             let return_sig = ReturnSignature {
@@ -2568,6 +2569,11 @@ impl<'a> FunctionLowering<'a> {
 
         let mut subst: HashMap<String, Type> = HashMap::new();
         let mut plans: Vec<ArgPlan> = Vec::new();
+        // Checked after the loop rather than inside it. A declared signature
+        // may name type parameters that other arguments bind, and value
+        // arguments are what bind most of them, so `subst` is not complete
+        // until every argument has been walked.
+        let mut signature_checks: Vec<(&Parameter, String)> = Vec::new();
         for (index, (parameter, argument)) in
             generic.parameters.iter().zip(arguments).enumerate()
         {
@@ -2606,6 +2612,16 @@ impl<'a> FunctionLowering<'a> {
                     }
                     other => other.clone(),
                 };
+                if parameter.compile_time_signature.is_some() {
+                    let Type::ConstFn(target) = &bound else {
+                        bail!(
+                            "native backend: '{}' of '{name}' is declared as a function, so it needs a function as its argument, not the type '{}'",
+                            parameter.name,
+                            bound
+                        );
+                    };
+                    signature_checks.push((parameter, target.clone()));
+                }
                 subst.insert(parameter.name.clone(), bound);
                 continue;
             }
@@ -2655,6 +2671,29 @@ impl<'a> FunctionLowering<'a> {
                     &mut subst,
                 );
                 plans.push(ArgPlan::Value(operand, value_type));
+            }
+        }
+
+        for (parameter, target) in signature_checks {
+            let Some(declared) = parameter.compile_time_signature.as_ref()
+            else {
+                continue;
+            };
+            let expected = substitute_type(declared, &subst);
+            let Some(signature) = self.builder.signature(&target) else {
+                continue;
+            };
+            let actual = Type::Proc(
+                signature.parameters.clone(),
+                Box::new(signature.return_type.clone()),
+            );
+            if actual != expected {
+                bail!(
+                    "native backend: '{}' given to '{name}' as '{}' has the signature '{actual}', but '{}' is declared as '{expected}'",
+                    target,
+                    parameter.name,
+                    parameter.name
+                );
             }
         }
 

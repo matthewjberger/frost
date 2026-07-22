@@ -604,7 +604,9 @@ make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
 ```
 
 In a parameter or struct type-parameter position, `$` IDENT `:` is followed by
-the contextual word `Type` (or the keyword `type`).
+the contextual word `Type` (or the keyword `type`). In a function's parameter
+list it may instead be followed by a function signature, which declares a
+compile-time function parameter (11.1b).
 
 ### 11.1a Value parameters
 
@@ -622,6 +624,41 @@ An instantiation supplies an integer where a value parameter stands
 `[4]Entity` for that instance. To recover the size inside a function, coerce the
 array to a slice and read `slice_len` (3.2), so the number is written once. Value
 parameters are erased from the specialized type the same way type parameters are.
+
+### 11.1b Compile-time function parameters
+
+A parameter written `$f: Type` whose argument names a declared function is a
+compile-time function parameter. The specialization calls it directly, with no
+function pointer and no indirect call:
+
+```
+ascending :: fn(a: i64, b: i64) -> bool { a < b }
+
+best :: fn($T: Type, $before: Type, move x: $T, move y: $T) -> $T {
+    mut result := x
+    if (before(y, result)) { result = y }
+    result
+}
+
+smallest := best($i64, $ascending, 7, 3)
+```
+
+Written `$f: Type` the parameter accepts a function of any signature, and a
+mismatch surfaces inside the specialized body. Writing the signature instead
+states what the argument has to be:
+
+```
+best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T
+```
+
+The bound is checked at the call, with that call's type arguments substituted
+into it, so `T` in the bound means what it means at the call. A function whose
+signature differs, or a type where a function is required, is an error reported
+against the parameter list.
+
+This is the only form of bound in the language, and it bounds one parameter kind
+against one signature. It is not a trait, has no coherence or orphan rules, and
+involves no solving.
 
 ### 11.2 Monomorphization
 
@@ -646,11 +683,15 @@ token, the parser splits it when it closes two nested argument lists, so
 `Pair<Pair<i64>>` parses correctly. This splitting is wired into the `Handle<T>`
 and `Name<...>` type forms.
 
-### 11.5 No bounds
+### 11.5 No traits
 
-There are no traits, and therefore no trait bounds, `where` clauses, associated
-types, or dynamic dispatch. A generic body type-checks once specialized. To
-abstract over an operation, pass a function pointer.
+There are no traits, and therefore no `where` clauses, associated types, trait
+objects, or dynamic dispatch. A generic body type-checks once specialized.
+
+To abstract over an operation, pass it as a compile-time function parameter
+(11.1b), which keeps the call direct. A type parameter written `$T: Type` carries
+no bound of its own: what a body requires of `T` is whatever its code does with
+it, and that is checked when the specialization is compiled.
 
 ---
 
@@ -724,8 +765,9 @@ EnumVariants  = EnumVariant ( "," EnumVariant )* ","?
 EnumVariant   = IDENT ( "{" ( IDENT ":" Type ( "," IDENT ":" Type )* )? "}" )?
 
 Params        = Param ( "," Param )*
-Param         = "$" IDENT ":" ( "Type" | "type" )
+Param         = "$" IDENT ":" ( "Type" | "type" | ProcType )
               | IDENT ( ":" Type )?
+ProcType      = "fn" "(" ( Type ( "," Type )* )? ")" ( "->" Type )?
 ```
 
 A `Name :: fn(...) { ... }` item is the `Expr` alternative of `ConstBody`, whose
