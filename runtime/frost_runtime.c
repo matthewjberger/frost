@@ -203,3 +203,12 @@ void frost_die(void) {
     fputc('\n', stderr);
     exit(1);
 }
+
+/* Which calling convention the native backend must emit for. */
+int64_t frost_is_windows(void) {
+#ifdef _WIN32
+    return 1;
+#else
+    return 0;
+#endif
+}
