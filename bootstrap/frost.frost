@@ -158,6 +158,8 @@ TOK_NE        :: 65
 TOK_ANDAND    :: 66
 TOK_OROR      :: 67
 TOK_DOLLAR    :: 68
+TOK_BANG      :: 69
+TOK_QUESTION  :: 70
 
 // Character codes (the language has no character literals).
 CH_TAB     :: 9
@@ -165,6 +167,7 @@ CH_LF      :: 10
 CH_CR      :: 13
 CH_SPACE   :: 32
 CH_BANG    :: 33
+CH_QUESTION :: 63
 CH_PERCENT :: 37
 CH_AMP     :: 38
 CH_LPAREN  :: 40
@@ -401,6 +404,13 @@ Parser :: struct {
     modules: Arena<Module>,
     exports: Arena<Export>,
     export_names: ^i8,
+    result_ty: i64,
+    failure_ty: i64,
+    pending: Arena<LocalVar>,
+    try_count: i64,
+    name_tag: i64,
+    name_value: i64,
+    name_error: i64,
     synth_next: i64,
     prov_kind: i64,
     prov_off: i64,
@@ -535,6 +545,8 @@ lex_operator :: fn(src: ^i8, i: i64, len: i64, mut tokens: Arena<Token>) -> i64 
     if (c == CH_PLUS) { kind = TOK_PLUS }
     if (c == CH_MINUS) { kind = TOK_MINUS }
     if (c == CH_STAR) { kind = TOK_STAR }
+    if (c == CH_BANG) { kind = TOK_BANG }
+    if (c == CH_QUESTION) { kind = TOK_QUESTION }
     if (c == CH_SLASH) { kind = TOK_SLASH }
     if (c == CH_PERCENT) { kind = TOK_PERCENT }
     if (c == CH_LT) { kind = TOK_LT }
@@ -851,6 +863,56 @@ source_with_room :: fn(text: ^i8) -> ^i8 {
     }
     frost_byte_set(buffer, length, 0)
     buffer
+}
+
+// Copy a literal name into the room past the source and answer its offset, for
+// a name the compiler needs that no source spells.
+synth_literal :: fn(mut p: Parser, word: ^i8) -> i64 {
+    start := p.synth_next
+    length := frost_str_len(word)
+    mut k : i64 = 0
+    while (k < length) {
+        frost_byte_set(p.src, start + k, frost_byte_at(word, k))
+        k = k + 1
+    }
+    frost_byte_set(p.src, start + length, 0)
+    p.synth_next = start + length + 1
+    start
+}
+
+digits_in :: fn(number: i64) -> i64 {
+    mut value := number
+    mut digits : i64 = 1
+    while (value >= 10) {
+        value = value / 10
+        digits = digits + 1
+    }
+    digits
+}
+
+// A name with a number after it, so each `?` and each failure set gets one of
+// its own. Its length is the word's plus the number's digits.
+synth_numbered :: fn(mut p: Parser, word: ^i8, number: i64) -> i64 {
+    start := synth_literal(p, word)
+    digits := digits_in(number)
+    mut scale : i64 = 1
+    mut left : i64 = 1
+    while (left < digits) {
+        scale = scale * 10
+        left = left + 1
+    }
+    mut value := number
+    mut written : i64 = 0
+    while (written < digits) {
+        digit := value / scale
+        frost_byte_set(p.src, p.synth_next - 1 + written, CH_0 + digit)
+        value = value - digit * scale
+        scale = scale / 10
+        written = written + 1
+    }
+    frost_byte_set(p.src, p.synth_next - 1 + digits, 0)
+    p.synth_next = p.synth_next + digits
+    start
 }
 
 // The binding a `uses Arena` function draws: the capability type's name with
@@ -1328,11 +1390,74 @@ resolve_lit_type :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
 }
 
 // Apply any trailing `.field`, `^` deref, and `[index]` operators to a node.
+// `e?` where the enclosing function answers with a failure set: bind the
+// result, hand the failure on if that is what it holds, and stand for the value
+// otherwise. The three statements are queued for the block being parsed, which
+// is what lets a `?` sit anywhere an expression can rather than only where a
+// statement can.
+lower_try :: fn(mut p: Parser, value: i64) -> i64 {
+    if (p.result_ty == (0 - 1)) {
+        frost_error("frost: '?' needs a function that declares a failure set")
+        frost_die()
+    }
+    name_off := synth_numbered(p, "__try", p.try_count)
+    name_len := 5 + digits_in(p.try_count)
+    p.try_count = p.try_count + 1
+
+    bind := new_let_node(p, value, name_off, name_len, 0 - 1)
+    held := new_named_node(p, NODE_VAR, 0, name_off, name_len)
+    tag := new_field_node(p, held, p.name_tag, 3)
+    zero := new_node(p, NODE_NUM, 0, 0, 0)
+    failed := new_node(p, NODE_BIN, tag, zero, OP_NE)
+    carried := new_field_node(
+        p,
+        new_named_node(p, NODE_VAR, 0, name_off, name_len),
+        p.name_error,
+        5,
+    )
+    hand_on := new_node(
+        p,
+        NODE_RETURN,
+        new_result_value(p, p.result_ty, 1, p.name_error, 5, carried),
+        0,
+        0,
+    )
+    guard := new_node(p, NODE_IF, failed, hand_on, 0 - 1)
+    arena_push(p.pending, LocalVar { name_off = bind, name_len = guard, ty = 0 })
+    new_field_node(
+        p,
+        new_named_node(p, NODE_VAR, 0, name_off, name_len),
+        p.name_value,
+        5,
+    )
+}
+
+// A body's last expression is its answer, so in a fallible function that value
+// is the ok side of the failure set just as an explicit `return` is.
+wrap_trailing_ok :: fn(mut p: Parser, body: i64) {
+    if (body == (0 - 1)) {
+        return
+    }
+    mut id := body
+    mut last := body
+    while (id != (0 - 1)) {
+        last = id
+        id = node_next(p, id)
+    }
+    node : ^Node = arena_at(p.arena, last)
+    if (node^.kind == NODE_EXPRSTMT) {
+        node^.a = wrap_result(p, node^.a)
+    }
+}
+
 parse_postfix :: fn(mut p: Parser, start: i64) -> i64 {
     mut node := start
     while (cur(p) == TOK_DOT || cur(p) == TOK_CARET
-        || cur(p) == TOK_LBRACKET) {
-        if (cur(p) == TOK_DOT) {
+        || cur(p) == TOK_QUESTION || cur(p) == TOK_LBRACKET) {
+        if (cur(p) == TOK_QUESTION) {
+            advance(p)
+            node = lower_try(p, node)
+        } else if (cur(p) == TOK_DOT) {
             advance(p)
             offset := cur_off(p)
             length := cur_len(p)
@@ -1712,7 +1837,10 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         if (cur(p) == TOK_RBRACE) {
             return new_node(p, NODE_RETURN, 0 - 1, 0, 0)
         }
-        value := parse_expr(p)
+        mut value := parse_expr(p)
+        if (p.result_ty != (0 - 1)) {
+            value = wrap_result(p, value)
+        }
         return new_node(p, NODE_RETURN, value, 0, 0)
     }
     if (kind == TOK_KW_IF) {
@@ -1788,7 +1916,25 @@ parse_stmt_list :: fn(mut p: Parser, terminator: i64) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     while (cur(p) != terminator && cur(p) != TOK_EOF) {
+        mark := p.pending.count
         statement := parse_stmt(p)
+        // Anything a `?` inside this statement queued goes in ahead of it, in
+        // the order the `?`s were written.
+        mut q := mark
+        while (q < p.pending.count) {
+            queued : ^LocalVar = arena_at(p.pending, q)
+            bind := queued^.name_off
+            guard := queued^.name_len
+            if (head == (0 - 1)) {
+                head = bind
+            } else {
+                set_next(p, tail, bind)
+            }
+            set_next(p, bind, guard)
+            tail = guard
+            q = q + 1
+        }
+        p.pending.count = mark
         if (head == (0 - 1)) {
             head = statement
             tail = statement
@@ -1896,6 +2042,20 @@ parse_function :: fn(mut p: Parser) -> i64 {
         advance(p)
         ret = parse_type(p)
     }
+    // `-> T ! E` answers with a T or fails with an E. The function's real
+    // return type is the struct standing for the pair, so everything after this
+    // handles an ordinary struct return.
+    mut failure : i64 = 0 - 1
+    if (cur(p) == TOK_BANG) {
+        advance(p)
+        failure = parse_type(p)
+        ret = synth_result_struct(p, ret, failure)
+    }
+    p.result_ty = ret
+    p.failure_ty = failure
+    if (failure == (0 - 1)) {
+        p.result_ty = 0 - 1
+    }
     p.last_return_type = ret
     set_ret_type(p, fn_index, ret)
     // `-> T uses A` draws an allocation capability. It is an implicit trailing
@@ -1917,6 +2077,9 @@ parse_function :: fn(mut p: Parser) -> i64 {
         set_uses(p, fn_index, cap_ty, binding, cap_name_len)
     }
     body := parse_block(p)
+    if (p.result_ty != (0 - 1)) {
+        wrap_trailing_ok(p, body)
+    }
     new_func_node(p, body, params, fn_index, is_main)
 }
 
@@ -1976,6 +2139,98 @@ parse_struct :: fn(mut p: Parser) {
                 is_linear = linear_flag },
         )
     }
+}
+
+// ---------------------------------------------------------------------------
+// Failure sets. `-> T ! E` says a function answers with a T or fails with an E,
+// and `e?` hands the failure on. Both lower to what the compiler already has: a
+// failure set is a struct carrying which of the two it holds beside both, and
+// `?` is a binding, a test and a return, written out where the call sits.
+//
+// A tag beside both payloads rather than a space-saving union: the two are
+// never both live, but reading either one is then a plain field of a plain
+// struct, which every backend already does.
+// ---------------------------------------------------------------------------
+
+// The field names a failure set's struct uses, made once and shared.
+result_field_names :: fn(mut p: Parser) {
+    if (p.name_tag == 0) {
+        p.name_tag = synth_literal(p, "tag")
+        p.name_value = synth_literal(p, "value")
+        p.name_error = synth_literal(p, "error")
+    }
+}
+
+// The struct standing for `T ! E`, made fresh per function so its payload types
+// are the ones that function declared.
+synth_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
+    result_field_names(p)
+    tag := arena_push(
+        p.fields,
+        StructField { name_off = p.name_tag, name_len = 3, ty = TY_I64,
+            next = 0 - 1 },
+    )
+    value := arena_push(
+        p.fields,
+        StructField { name_off = p.name_value, name_len = 5, ty = ok,
+            next = 0 - 1 },
+    )
+    bad_field := arena_push(
+        p.fields,
+        StructField { name_off = p.name_error, name_len = 5, ty = bad,
+            next = 0 - 1 },
+    )
+    set_next_field(p, tag, value)
+    set_next_field(p, value, bad_field)
+    name := synth_numbered(p, "__Result", p.structs.count)
+    index := arena_push(
+        p.structs,
+        StructDef { name_off = name, name_len = 8 + digits_in(p.structs.count),
+            field_head = tag, is_generic = 0, tparam_off = 0, tparam_len = 0,
+            field_token = 0, instance_id = 0 - 1, is_linear = 0 },
+    )
+    STRUCT_BASE + index
+}
+
+set_next_field :: fn(mut p: Parser, id: i64, following: i64) {
+    field : ^StructField = arena_at(p.fields, id)
+    field^.next = following
+}
+
+// Which side of the failure set a returned value is. Building the error type is
+// how a function fails; anything else is the value it answers with. A value
+// already of the error type but not built here reads as an ok value, the same
+// way the reference compiler reads it.
+returns_failure :: fn(mut p: Parser, value: i64) -> bool {
+    if (p.failure_ty == (0 - 1)) {
+        return false
+    }
+    node : ^Node = arena_at(p.arena, value)
+    node^.kind == NODE_STRUCT_LIT && node^.val == p.failure_ty
+}
+
+// Wrap a returned value as whichever side of the failure set it is.
+wrap_result :: fn(mut p: Parser, value: i64) -> i64 {
+    if (returns_failure(p, value)) {
+        return new_result_value(p, p.result_ty, 1, p.name_error, 5, value)
+    }
+    new_result_value(p, p.result_ty, 0, p.name_value, 5, value)
+}
+
+// `Result { tag = <which>, <name> = <payload> }`, the value a fallible function
+// answers with. The other payload is left alone, since which one is live is
+// exactly what the tag says.
+new_result_value :: fn(mut p: Parser, result_ty: i64, which: i64, name_off: i64,
+    name_len: i64, payload: i64) -> i64 {
+    which_node := arena_push(
+        p.arena,
+        Node { kind = NODE_NUM, a = 0, b = 0, c = 0, val = which,
+            next = 0 - 1 },
+    )
+    tag_init := new_field_init(p, which_node, p.name_tag, 3)
+    payload_init := new_field_init(p, payload, name_off, name_len)
+    set_next(p, tag_init, payload_init)
+    new_struct_lit(p, result_ty, tag_init)
 }
 
 // An extern declaration `name :: extern fn(params) -> ret`. The name is marked
@@ -4434,7 +4689,7 @@ check_region_block :: fn(mut p: Parser, head: i64) {
         }
         if (kind == NODE_IF) {
             check_region_block(p, node^.b)
-            check_region_block(p, node^.c)
+            check_region_block(p, node^.val)
         }
         if (kind == NODE_WHILE) {
             check_region_block(p, node^.b)
@@ -4662,6 +4917,13 @@ main :: fn() -> i64 {
         modules = modules,
         exports = exports,
         export_names = export_names,
+        result_ty = 0 - 1,
+        failure_ty = 0 - 1,
+        pending = arena_make($LocalVar, 4096),
+        try_count = 0,
+        name_tag = 0,
+        name_value = 0,
+        name_error = 0,
         synth_next = 0,
         prov_kind = 0,
         prov_off = 0,
