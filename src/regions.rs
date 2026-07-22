@@ -294,3 +294,189 @@ impl<'a> Region<'a> {
         }
     }
 }
+
+// The frame check. A function's locals die when it returns, so a pointer or a
+// slice into one of them may not be the thing it answers with. This is the same
+// question the region check asks about an arena, asked about the frame instead,
+// and it is what stops `ptr_to(local)` and a slice over a local array from
+// outliving the storage they name.
+//
+// Provenance again rather than rooting: a local holding a pointer it was handed
+// is fine to return, and only a pointer formed from this frame's own storage is
+// not.
+pub fn check_frame_escapes(program: &Program) -> Result<()> {
+    for statement in program {
+        if let Statement::Constant(
+            name,
+            Expression::Function(_, signature, body)
+            | Expression::Proc(_, signature, body),
+        ) = &statement.node
+        {
+            let escapes = match &signature.kind {
+                ReturnKind::Single(ty) => is_borrowed_view(ty),
+                ReturnKind::Fallible(ty, _) => is_borrowed_view(ty),
+                _ => false,
+            };
+            let mut frame = Frame {
+                function: name.clone(),
+                storage: HashSet::new(),
+                materialized: HashSet::new(),
+                bound: HashSet::new(),
+                answers_view: escapes,
+            };
+            frame.check(body)?;
+        }
+    }
+    Ok(())
+}
+
+// A type that names storage it does not own: a raw pointer or a slice.
+fn is_borrowed_view(ty: &Type) -> bool {
+    matches!(ty, Type::Ptr(_) | Type::Slice(_))
+}
+
+struct Frame {
+    function: String,
+    // Locals whose storage is this frame's.
+    storage: HashSet<String>,
+    // Locals that built their value here rather than being handed one, so a
+    // view of them is a view of this frame.
+    materialized: HashSet<String>,
+    // Locals holding something that points into this frame.
+    bound: HashSet<String>,
+    // Whether this function answers with a pointer or a slice at all.
+    answers_view: bool,
+}
+
+impl Frame {
+    fn check(&mut self, block: &Block) -> Result<()> {
+        for (index, statement) in block.iter().enumerate() {
+            let last = index + 1 == block.len();
+            match &statement.node {
+                Statement::Let {
+                    name,
+                    value,
+                    type_annotation,
+                    ..
+                } => {
+                    let views_frame =
+                        type_annotation.as_ref().is_some_and(is_borrowed_view)
+                            && self.views_this_frame(value);
+                    if self.points_into_frame(value) || views_frame {
+                        self.bound.insert(name.clone());
+                    }
+                    if materializes(value) {
+                        self.materialized.insert(name.clone());
+                    }
+                    self.storage.insert(name.clone());
+                }
+                Statement::Return(value) => {
+                    if self.points_into_frame(value) {
+                        bail!(self.escape());
+                    }
+                }
+                Statement::Expression(value) if last => {
+                    if self.points_into_frame(value) {
+                        bail!(self.escape());
+                    }
+                }
+                Statement::While(_, body) | Statement::With(_, body) => {
+                    self.check(body)?
+                }
+                Statement::Expression(Expression::If(
+                    _,
+                    consequence,
+                    alternative,
+                )) => {
+                    self.check(consequence)?;
+                    if let Some(block) = alternative {
+                        self.check(block)?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn escape(&self) -> String {
+        format!(
+            "region: '{}' answers with a pointer into its own frame; the storage it names dies when the call returns",
+            self.function
+        )
+    }
+
+    // Whether a value points into this frame: an address taken of storage here,
+    // a binding already known to hold one, or, when the function answers with a
+    // slice, a view of storage here.
+    fn points_into_frame(&self, expression: &Expression) -> bool {
+        match expression {
+            Expression::AddressOf(place)
+            | Expression::Borrow(place)
+            | Expression::BorrowMut(place) => self.rooted_here(place),
+            Expression::Identifier(name) => {
+                self.bound.contains(name)
+                    || (self.answers_view && self.materialized.contains(name))
+            }
+            Expression::Index(base, _) | Expression::FieldAccess(base, _) => {
+                self.points_into_frame(base)
+            }
+            // `ptr_to(x)` is how an address is written, and `ptr_cast` keeps
+            // pointing where it pointed.
+            Expression::Call(callee, arguments) => {
+                let Expression::Identifier(name) = callee.as_ref() else {
+                    return false;
+                };
+                match name.as_str() {
+                    "ptr_to" => {
+                        arguments.iter().any(|place| self.rooted_here(place))
+                    }
+                    "ptr_cast" => arguments
+                        .iter()
+                        .any(|inner| self.points_into_frame(inner)),
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    // Whether a value is a view of storage built in this frame, which is what
+    // makes a slice over a local array escape while a slice handed in does not.
+    fn views_this_frame(&self, expression: &Expression) -> bool {
+        match expression {
+            Expression::Identifier(name) => {
+                self.materialized.contains(name) || self.bound.contains(name)
+            }
+            Expression::Index(base, _)
+            | Expression::FieldAccess(base, _)
+            | Expression::Range(base, _, _) => self.views_this_frame(base),
+            _ => false,
+        }
+    }
+
+    // Whether a place names storage belonging to this frame.
+    fn rooted_here(&self, place: &Expression) -> bool {
+        match place {
+            Expression::Identifier(name) => self.storage.contains(name),
+            Expression::Index(base, _)
+            | Expression::FieldAccess(base, _)
+            | Expression::Borrow(base)
+            | Expression::BorrowMut(base) => self.rooted_here(base),
+            _ => false,
+        }
+    }
+}
+
+// Whether a binding's value is storage built here rather than one handed in. An
+// array or a struct written out lands in this frame; anything else came from
+// somewhere that outlives it.
+fn materializes(expression: &Expression) -> bool {
+    matches!(
+        expression,
+        Expression::Literal(crate::parser::Literal::Array(_))
+            | Expression::Tuple(_)
+            | Expression::StructInit(..)
+            | Expression::EnumVariantInit(..)
+    )
+}

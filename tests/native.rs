@@ -145,7 +145,7 @@ main :: fn() -> i64 {
 #[test]
 fn borrow_exclusivity_errors_report_a_source_line() {
     let source = r#"
-add_both :: fn(mut a: i64, mut b: i64) -> i64 { a^ + b^ }
+add_both :: fn(mut a: i64, mut b: i64) -> i64 { a + b }
 
 main :: fn() -> i64 {
     mut value : i64 = 1
@@ -2524,7 +2524,7 @@ swap :: fn(a: ^i64, b: ^i64) {
 }
 
 increment :: fn(mut x: i64) {
-    x^ = x^ + 1
+    x = x + 1
 }
 
 read_sum :: fn(a: i64, b: i64) -> i64 {
@@ -3740,7 +3740,7 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 Point :: struct { x: i64, y: i64 }
 
 bump :: fn(mut field: i64) {
-    field^ = field^ + 100
+    field = field + 100
 }
 
 origin :: fn() -> Point {
@@ -4050,4 +4050,87 @@ fn cranelift_and_c_backends_agree() {
             );
         }
     }
+}
+
+// A `mut` parameter of a scalar type is a reference the body never asked for,
+// so the body reads through it. This used to fail with an internal IR error.
+#[test]
+fn mut_parameter_on_a_scalar_writes_through() {
+    let source = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+bump :: fn(mut n: i64) { n = n + 1 }
+
+twice :: fn(mut n: i64) {
+    bump(n)
+    bump(n)
+}
+
+main :: fn() -> i64 {
+    mut x : i64 = 5
+    bump(x)
+    printf("%lld\n", x)
+    twice(x)
+    printf("%lld\n", x)
+    0
+}
+"#;
+    let Some(output) = compile_and_run("mutscalar", source) else {
+        return;
+    };
+    assert_eq!(output, "6\n8\n");
+}
+
+// A function's locals die when it returns, so a pointer or a slice into one of
+// them may not be the thing it answers with.
+#[test]
+fn a_pointer_into_the_frame_may_not_be_returned() {
+    let source = "leak :: fn() -> ^i64 {\n\
+                  \x20   mut local : i64 = 42\n\
+                  \x20   ptr_to(local)\n}\n\
+                  main :: fn() -> i64 { 0 }\n";
+    let message = compile_error("frameptr", source);
+    assert!(
+        message.contains("pointer into its own frame"),
+        "expected a frame escape error, got:\n{message}"
+    );
+}
+
+#[test]
+fn a_slice_over_a_local_may_not_be_returned() {
+    let source = "leak :: fn() -> []i64 {\n\
+                  \x20   arr := [11, 22, 33]\n\
+                  \x20   view : []i64 = arr\n\
+                  \x20   view\n}\n\
+                  main :: fn() -> i64 { 0 }\n";
+    let message = compile_error("frameslice", source);
+    assert!(
+        message.contains("pointer into its own frame"),
+        "expected a frame escape error, got:\n{message}"
+    );
+}
+
+// A pointer a function was handed is not its frame's, so passing it back out is
+// fine and must not be caught by the frame check.
+#[test]
+fn a_pointer_handed_in_may_be_returned() {
+    let source = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+pass_through :: fn(p: ^i64) -> ^i64 {
+    held := p
+    held
+}
+
+main :: fn() -> i64 {
+    mut n : i64 = 7
+    q := pass_through(ptr_to(n))
+    printf("%lld\n", q^)
+    0
+}
+"#;
+    let Some(output) = compile_and_run("framepass", source) else {
+        return;
+    };
+    assert_eq!(output, "7\n");
 }

@@ -116,6 +116,145 @@ fn rewrite_block(
     }
 }
 
+// Read a `mut` scalar parameter through the reference it became, everywhere the
+// body names it. A binding of the same name inside the body is a different
+// thing and stops the rewrite from there on.
+type Bound = Vec<Vec<String>>;
+
+fn shadowed(name: &str, bound: &Bound) -> bool {
+    bound
+        .iter()
+        .any(|frame| frame.iter().any(|held| held == name))
+}
+
+fn read_through_block(
+    block: &mut Block,
+    through: &[String],
+    bound: &mut Bound,
+) {
+    bound.push(Vec::new());
+    for statement in block.iter_mut() {
+        read_through_statement(&mut statement.node, through, bound);
+    }
+    bound.pop();
+}
+
+fn read_through_statement(
+    statement: &mut Statement,
+    through: &[String],
+    bound: &mut Bound,
+) {
+    match statement {
+        Statement::Let {
+            name,
+            value,
+            type_annotation: _,
+            mutable: _,
+        } => {
+            read_through_expression(value, through, bound);
+            if let Some(frame) = bound.last_mut() {
+                frame.push(name.clone());
+            }
+        }
+        Statement::Constant(_, value)
+        | Statement::Return(value)
+        | Statement::Expression(value) => {
+            read_through_expression(value, through, bound)
+        }
+        Statement::Assignment(place, value) => {
+            read_through_expression(place, through, bound);
+            read_through_expression(value, through, bound);
+        }
+        Statement::Defer(inner) => {
+            read_through_statement(inner, through, bound)
+        }
+        Statement::For(variable, iterable, body) => {
+            read_through_expression(iterable, through, bound);
+            bound.push(vec![variable.clone()]);
+            read_through_block(body, through, bound);
+            bound.pop();
+        }
+        Statement::While(condition, body) => {
+            read_through_expression(condition, through, bound);
+            read_through_block(body, through, bound);
+        }
+        Statement::With(_, body) => read_through_block(body, through, bound),
+        // Declarations name types rather than values, so nothing to read.
+        Statement::Struct(..)
+        | Statement::Enum(..)
+        | Statement::TypeAlias(..)
+        | Statement::Extern { .. }
+        | Statement::Break
+        | Statement::Continue
+        | Statement::Import(_) => {}
+    }
+}
+
+fn read_through_expression(
+    expression: &mut Expression,
+    through: &[String],
+    bound: &mut Bound,
+) {
+    if let Expression::Identifier(name) = expression
+        && through.iter().any(|held| held == name)
+        && !shadowed(name, bound)
+    {
+        *expression = Expression::Dereference(Box::new(expression.clone()));
+        return;
+    }
+    match expression {
+        Expression::Prefix(_, inner)
+        | Expression::AddressOf(inner)
+        | Expression::Borrow(inner)
+        | Expression::BorrowMut(inner)
+        | Expression::Try(inner)
+        | Expression::Dereference(inner)
+        | Expression::FieldAccess(inner, _) => {
+            read_through_expression(inner, through, bound)
+        }
+        Expression::Infix(left, _, right)
+        | Expression::Index(left, right)
+        | Expression::Range(left, right, _) => {
+            read_through_expression(left, through, bound);
+            read_through_expression(right, through, bound);
+        }
+        Expression::Call(callee, arguments) => {
+            read_through_expression(callee, through, bound);
+            for argument in arguments.iter_mut() {
+                read_through_expression(argument, through, bound);
+            }
+        }
+        Expression::If(condition, consequence, alternative) => {
+            read_through_expression(condition, through, bound);
+            read_through_block(consequence, through, bound);
+            if let Some(block) = alternative {
+                read_through_block(block, through, bound);
+            }
+        }
+        Expression::StructInit(_, fields)
+        | Expression::EnumVariantInit(_, _, fields) => {
+            for (_, value) in fields.iter_mut() {
+                read_through_expression(value, through, bound);
+            }
+        }
+        Expression::Tuple(items) => {
+            for item in items.iter_mut() {
+                read_through_expression(item, through, bound);
+            }
+        }
+        Expression::Switch(scrutinee, cases) => {
+            read_through_expression(scrutinee, through, bound);
+            for case in cases.iter_mut() {
+                read_through_block(&mut case.body, through, bound);
+            }
+        }
+        Expression::Unsafe(body) => read_through_block(body, through, bound),
+        // A nested function has parameters of its own and does not see these.
+        Expression::Function(..) | Expression::Proc(..) => {}
+        _ => {}
+    }
+}
+
 fn rewrite_expression(
     expression: &mut Expression,
     signatures: &HashMap<String, Vec<Option<Type>>>,
@@ -123,9 +262,34 @@ fn rewrite_expression(
     match expression {
         Expression::Function(params, ret, body)
         | Expression::Proc(params, ret, body) => {
+            // A `mut` parameter of a copy type is a reference the body never
+            // asked for. A struct one reads through itself, since a field
+            // access derefs on the way, but a scalar is used as a whole value
+            // and has to be read through explicitly.
+            let through: Vec<String> = params
+                .iter()
+                .filter(|parameter| {
+                    !is_type_parameter(parameter)
+                        && parameter.mode == ParamMode::Write
+                        && parameter.type_annotation.as_ref().is_some_and(
+                            |ty| {
+                                ty.is_copy()
+                                    && !matches!(
+                                        ty,
+                                        Type::Ref(_) | Type::RefMut(_)
+                                    )
+                            },
+                        )
+                })
+                .map(|parameter| parameter.name.clone())
+                .collect();
             rewrite_parameters(params);
             let _ = ret;
             rewrite_block(body, signatures);
+            if !through.is_empty() {
+                let mut bound: Vec<Vec<String>> = Vec::new();
+                read_through_block(body, &through, &mut bound);
+            }
         }
         Expression::Call(callee, arguments) => {
             rewrite_expression(callee, signatures);
