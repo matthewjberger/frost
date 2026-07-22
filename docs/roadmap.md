@@ -10,38 +10,20 @@ Competitive with Jai and Odin, which in practice means a full build in the
 100,000 lines per second range rather than merely "fast for a compiler". That is
 a number to measure against, not a feeling.
 
-Where Frost stands today, from `just bench-scaling` on 57,607 lines:
+Where Frost stands today, from `just bench-scaling` on 58,107 lines:
 
 | stage | rate |
 | --- | --- |
-| front end (`--emit-c`, 395 ms) | ~146,000 lines/sec |
-| full build (`--native`, 1.11 s) | ~52,000 lines/sec |
+| front end (`--emit-c`, 318 ms) | ~183,000 lines/sec |
+| full build (`--native`, 349 ms) | ~166,000 lines/sec |
 
-So the front end already clears the bar and the whole build is roughly half of
-it, and the entire gap is the backend. That is worth stating plainly because it
-tells you what not to work on: parse, parameter modes, regions, ownership, IR
-lowering, type checking and monomorphization are not the problem and optimizing
-them would be motion without progress. Cranelift and object emission are the
-problem.
+Both clear the bar, and the backend is no longer the gap: on that program code
+generation is 64 ms of a 349 ms build, with the front end holding the rest. That
+tells you what not to work on next. Cranelift is done being the problem.
 
-Measured further, with `FROST_TIMINGS=1`, the backend splits like this:
-
-| program | code generation | object emission |
-| --- | --- | --- |
-| 6,401 functions | 779 ms | 1 ms |
-| 10,241 functions | 1,285 ms | 4 ms |
-
-Object emission is free. Essentially all of the backend is Cranelift compiling
-one function at a time, which is per-function work on independent inputs. So
-parallel code generation attacks the dominant cost directly, and it is the right
-unit rather than the wrong one: even once modules become compilation units, the
-functions inside a module still compile one at a time and still parallelize.
-
-That measurement changed the order below. The first version of this document put
-separate compilation first on the argument that per-function parallelism would be
-designed twice. That argument was wrong, and it was wrong in the direction of
-doing the harder thing first for a reason that did not survive contact with a
-twenty-line measurement.
+Before item 1 landed the same program took 1.11 s, or about 52,000 lines per
+second, and the backend was 1,285 ms of it. The remaining work on speed is the
+shape question, item 3, not a constant factor.
 
 ## 3. Separate compilation
 
@@ -133,73 +115,67 @@ answer is that registering borrows for longer than a call, which is the first
 thing in the language that does, and it may want to be a linear obligation
 (register/unregister as a consumed pair) rather than a borrow.
 
-## 1. Parallel code generation (landed, and not yet paying)
+## 1. Parallel code generation (done)
 
-**Landed, and it does not pay yet.** Code generation runs on every thread the
-machine has, correctness is carried by the differential oracle, and the win is
-1,285 ms to about 1,060 ms on sixteen threads at 10,241 functions. That is 1.2x
-from 16x the threads, and it is not understood.
-
-What has been ruled out by measurement, so nobody re-runs it:
-
-| suspect | measured | verdict |
-| --- | --- | --- |
-| serial declaration | 9 ms | not it |
-| serial defining | 3 ms | not it |
-| object emission | 4 ms | not it |
-| allocator contention | mimalloc changed nothing | not it |
-
-The sweep has been run, with `FROST_THREADS=n`, on 10,241 functions:
+Code generation runs on every thread the machine has, correctness is carried by
+the differential oracle, and both self-hosting fixpoints still hold byte for
+byte. The sweep, with `FROST_THREADS=n`, on 10,401 functions:
 
 | threads | 1 | 2 | 4 | 8 | 16 |
 | --- | --- | --- | --- | --- | --- |
-| code generation | 1,215 ms | 1,203 ms | 1,091 ms | 1,072 ms | 1,032 ms |
+| code generation | 385 ms | 218 ms | 111 ms | 65 ms | 55 ms |
 
-It flattens immediately. Amdahl on those numbers puts the parallel fraction near
-0.2, and the measured serial tail is 16 ms out of 1,200, so the serial work is
-not where the timer says it is. Two more things were tried and did not move it:
-one ISA per thread rather than a shared one, and mimalloc as the global
-allocator.
+That is 7.0x on a machine with eight physical cores, which is about as close to
+linear as this gets.
 
-What did help, and is kept, is not cloning each function's IR out of the context
+**It took two false starts, both worth recording.** The first landed version won
+only 1.2x from sixteen threads, and a processor-time-against-wall-time reading
+said total CPU was roughly flat across thread counts. That reading was correct
+and the conclusion drawn from it, that the threads were somehow serialized, was
+wrong. What settled it was a timer inside each worker:
+
+```
+worker 641 functions, build 2 ms, compile 25 ms, wall 28 ms      (x15)
+worker 641 functions, build 30 ms, compile 989 ms, wall 1019 ms   (x1)
+```
+
+Fifteen threads did their share in 28 ms. One took 989 ms for the same count of
+functions. Nothing was serialized; one function was 97% of the work, because
+`bench/generate.py` emitted a `main` with ten thousand call sites and a single
+function cannot be split across threads. Fifteen threads doing 28 ms each adds
+only ~400 ms of CPU over a 1,000 ms wall, which is exactly the 1.3x ratio that
+had been read as evidence of serialization. The benchmark was the bug.
+
+The generator now fans its calls through intermediate functions, which is the
+shape real code has. That alone took 1,021 ms to 211 ms.
+
+**The second false start** was static chunking. With `main` fixed the expensive
+functions still clustered, since `chunks(per_thread)` is contiguous and the
+module's function list is ordered, so one thread got all of them: 209 ms against
+31 ms for the rest. Cost per function varies by more than an order of magnitude,
+so the split is now a shared atomic cursor handing out one function at a time,
+with results sorted back into module order so the object does not depend on how
+the threads interleaved. That took 211 ms to 55 ms.
+
+The lesson worth keeping is that both wrong turns came from trusting a summary
+statistic over a per-worker measurement. Whole-process CPU time could not
+distinguish "threads are serialized" from "one thread has all the work", and
+those want opposite fixes.
+
+What else helped and is kept: not cloning each function's IR out of the context
 to hand to `define_function_bytes`. That backend uses the function only to
 resolve relocation targets against its imported names, so the value is moved out
-with `mem::replace` rather than deep copied, worth about 130 ms at this size.
+with `mem::replace` rather than deep copied, worth about 130 ms at the old size.
 
-Then the assumption underneath all of that was checked, and it was wrong.
-Comparing processor time against wall time for the whole run:
+Ruled out by measurement along the way, so nobody re-runs them: serial
+declaration (9 ms), serial defining (3 ms), object emission (3 ms), allocator
+contention (mimalloc changed nothing), and one ISA per thread against a shared
+one (flat, and kept anyway since it is free).
 
-| threads | wall | cpu | ratio |
-| --- | --- | --- | --- |
-| 1 | 1,349 ms | 1,313 ms | 1.0 |
-| 4 | 1,227 ms | 1,328 ms | 1.1 |
-| 16 | 1,211 ms | 1,578 ms | 1.3 |
-
-Sixteen threads genuinely working would put processor time many times above wall
-time. It is 1.3x, and total processor time is roughly flat across thread counts,
-which says the work is not being split at all. The extra 265 ms at sixteen
-threads is about what sixteen `make_isa` calls cost, so that is overhead rather
-than progress.
-
-So this was never a scaling problem. The threads are spawned and the work is
-chunked evenly, but something serializes them, and the earlier readings were
-measuring one thread doing everything while fifteen waited. That is a different
-and more tractable question than "why does parallelism not help", and it is where
-the next session starts:
-
-- Confirm the chunking is what it is believed to be, by printing chunk count and
-  per-chunk length rather than trusting `div_ceil`.
-- Put a timer inside one worker around `build_function` and around
-  `Context::compile` separately, so it is known which half is stuck.
-- Suspect the heap first despite mimalloc measuring flat, since that test only
-  proved the global allocator changed, not that Cranelift's allocations went
-  through it.
-
-**Why it was first.** It is where the time is. Code generation is 1,285 ms of a 1,289 ms
-backend at 10,241 functions, and the work is per-function on independent inputs,
-so this is the one change that moves the number that misses the target. It is not
-made redundant by separate compilation either, since functions within a module
-still compile one at a time.
+**The remaining serial floor** is a single large function, which no amount of
+threading divides. It does not bind on real code, where the self-hosted compiler
+is 244 functions and 6 ms of code generation, but it is the thing that would
+bind first if it ever bound.
 
 **The API path, already verified.** `Module::declare_func_in_func` only reads
 `self.declarations()` despite taking `&mut self`, so it can be replicated against
