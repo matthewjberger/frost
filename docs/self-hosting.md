@@ -76,6 +76,64 @@ exists in Frost in `examples/native/native_pool.frost`, and `--freestanding`
 already links with no libc, but it needs a prelude mechanism so a Frost-written
 runtime is compiled into every program.
 
+## Scaling past one file
+
+The worry with whole-program monomorphization is that it is a compile-time bomb:
+generics specialize per type, specializations are a cross product, and there is
+no incremental or separate compilation to bound the work. Measured rather than
+argued, with `just bench-scaling`:
+
+| program | front end (`--emit-c`) | with Cranelift (`--native`) |
+| --- | --- | --- |
+| 907 lines | 13 ms | 23 ms |
+| 3,607 lines | 28 ms | 61 ms |
+| 14,407 lines | 81 ms | 210 ms |
+| 57,607 lines | 395 ms | 1.11 s |
+| 640 specializations | 15 ms | 45 ms |
+| 2,560 specializations | 37 ms | 190 ms |
+| 10,240 specializations | 152 ms | 1.38 s |
+
+Read the ratios rather than the absolutes, since about 10 ms of each figure is
+process startup. Four times the input costs roughly four to five times the time
+on both curves, so the pipeline is close to linear with a mild superlinear term
+that grows with function count, and that term is heavier in the backend than in
+the front end: from 2,560 to 10,240 specializations the front end grows 4.1x and
+the whole build grows 7.3x.
+
+So the front end holds up. Parse, parameter modes, regions, ownership, IR
+lowering, type checking, monomorphization to fixpoint and C emission together
+stay near-linear because every one of them is a local pass: no traits to solve,
+no lifetimes to infer, no global inference, and the specialization worklist
+dedups through a hash set rather than a scan. 57k lines through the whole front
+end is 395 ms.
+
+The backend is where the superlinear term lives. Reusing one `Context` and one
+`FunctionBuilderContext` across the module rather than allocating a pair per
+function, which is how Cranelift is meant to be used, measured flat, so it is not
+allocation churn on our side. It is inside code generation or symbol emission at
+high function counts.
+
+That points the work at the backend rather than at incremental compilation of a
+front end that is already fast:
+
+1. **Compile functions in parallel.** The type system is local and
+   signature-based, so once signatures are collected functions are independent.
+   This is the direct answer to the measurement above and a large part of why the
+   language was designed the way it is.
+2. **Separate compilation per module.** Imports flatten into one AST today, which
+   is what makes a program's cost whole-program. Module boundaries would also
+   bound monomorphization, since a specialization need only be emitted once per
+   module that needs it.
+3. **Cache specializations across builds.** Worth doing only after (1) and (2),
+   and only if measurement still asks for it.
+
+None of this is urgent at the sizes Frost compiles today. What matters is that
+the shape is measured rather than assumed, and that the measurement is a command
+rather than a memory. The first version of this table was wrong because the
+generated programs happened to name a function `f32`, so the compiler rejected
+them at line 292 and the timings were of a parse error. Re-run the benchmark
+before trusting any of it.
+
 Second-order levers, worth doing but small next to the above:
 
 2. Parse each generic template to AST once and substitute types per
