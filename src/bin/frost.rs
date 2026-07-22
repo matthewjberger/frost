@@ -217,7 +217,13 @@ fn main() -> Result<()> {
         let stem = input_path.file_stem().unwrap_or_default().to_string_lossy();
 
         if cli.link {
-            let c_path = format!("{}.c", stem);
+            // The C is an intermediate on the way to the executable, so it
+            // belongs in the temp directory rather than the working one, where
+            // it would collide with a concurrent build and outlive a failure.
+            let c_path = std::env::temp_dir()
+                .join(format!("{stem}_{}.c", std::process::id()))
+                .to_string_lossy()
+                .into_owned();
             fs::write(&c_path, c_source).with_context(|| {
                 format!("Failed to write C file: {}", c_path)
             })?;
