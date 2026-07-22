@@ -693,8 +693,9 @@ mod tests {
         let mut lexer = Lexer::new(source);
         let tokens = lexer.tokenize()?;
         let mut parser = Parser::new(&tokens);
-        let statements = parser.parse()?;
+        let mut statements = parser.parse()?;
         let linear = parser.linear_types().clone();
+        crate::param_modes::lower_param_modes(&mut statements);
         check_ownership(&statements, &linear)
     }
 
@@ -718,7 +719,8 @@ mod tests {
 
     #[test]
     fn reference_parameters_are_allowed() {
-        let source = "read :: fn(x: &i64) -> i64 { x^ }";
+        let source = "Point :: struct { x: i64, y: i64 }\n\
+            read :: fn(p: Point) -> i64 { p.x }";
         assert!(check(source).is_ok());
     }
 
@@ -738,7 +740,7 @@ mod tests {
     fn use_after_move_of_struct_is_rejected() {
         let source = "\
             Point :: struct { x: i64, y: i64 }\n\
-            take :: fn(p: Point) -> i64 { p.x }\n\
+            take :: fn(move p: Point) -> i64 { p.x }\n\
             run :: fn() -> i64 {\n\
                 p := Point { x = 1, y = 2 }\n\
                 a := take(p)\n\
@@ -765,11 +767,11 @@ mod tests {
     fn borrowing_does_not_move() {
         let source = "\
             Point :: struct { x: i64, y: i64 }\n\
-            read :: fn(p: &Point) -> i64 { p.x }\n\
+            read :: fn(p: Point) -> i64 { p.x }\n\
             run :: fn() -> i64 {\n\
                 p := Point { x = 1, y = 2 }\n\
-                a := read(&p)\n\
-                b := read(&p)\n\
+                a := read(p)\n\
+                b := read(p)\n\
                 a + b\n\
             }";
         assert!(check(source).is_ok());
@@ -805,10 +807,10 @@ mod tests {
     #[test]
     fn aliased_mutable_borrows_are_rejected() {
         let source = "\
-            add :: fn(a: &mut i64, b: &mut i64) { }\n\
+            add :: fn(mut a: i64, mut b: i64) { }\n\
             run :: fn() {\n\
                 mut x : i64 = 0\n\
-                add(&mut x, &mut x)\n\
+                add(x, x)\n\
             }";
         assert!(check(source).is_err());
     }
@@ -816,10 +818,11 @@ mod tests {
     #[test]
     fn shared_and_mutable_borrow_of_same_is_rejected() {
         let source = "\
-            mix :: fn(a: &i64, b: &mut i64) { }\n\
+            Point :: struct { x: i64, y: i64 }\n\
+            mix :: fn(a: Point, b: mut Point) { }\n\
             run :: fn() {\n\
-                mut x : i64 = 0\n\
-                mix(&x, &mut x)\n\
+                mut x : Point = Point { x = 0, y = 0 }\n\
+                mix(x, x)\n\
             }";
         assert!(check(source).is_err());
     }
@@ -827,11 +830,11 @@ mod tests {
     #[test]
     fn distinct_mutable_borrows_are_allowed() {
         let source = "\
-            add :: fn(a: &mut i64, b: &mut i64) { }\n\
+            add :: fn(mut a: i64, mut b: i64) { }\n\
             run :: fn() {\n\
                 mut x : i64 = 0\n\
                 mut y : i64 = 0\n\
-                add(&mut x, &mut y)\n\
+                add(x, y)\n\
             }";
         assert!(check(source).is_ok());
     }
@@ -839,10 +842,11 @@ mod tests {
     #[test]
     fn multiple_shared_borrows_are_allowed() {
         let source = "\
-            sum :: fn(a: &i64, b: &i64) -> i64 { a^ + b^ }\n\
+            Point :: struct { x: i64, y: i64 }\n\
+            sum :: fn(a: Point, b: Point) -> i64 { a.x + b.x }\n\
             run :: fn() -> i64 {\n\
-                x : i64 = 7\n\
-                sum(&x, &x)\n\
+                p : Point = Point { x = 7, y = 0 }\n\
+                sum(p, p)\n\
             }";
         assert!(check(source).is_ok());
     }
@@ -964,7 +968,7 @@ mod tests {
     fn moving_an_owned_value_inside_a_loop_is_rejected() {
         let source = "\
             Point :: struct { x: i64, y: i64 }\n\
-            take :: fn(p: Point) -> i64 { p.x }\n\
+            take :: fn(move p: Point) -> i64 { p.x }\n\
             run :: fn() {\n\
                 p := Point { x = 1, y = 2 }\n\
                 mut i : i64 = 0\n\

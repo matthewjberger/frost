@@ -32,7 +32,7 @@ fn grammar_accepts_specified_constructs() {
         "area :: fn(s: i64) -> i64 {\n match s {\n case 0: 1\n case _: 0\n }\n }",
         "shape :: fn(s: i64) -> i64 {\n match s {\n case .Circle { r }: r\n case .Rect { w, h }: w\n case _: 0\n }\n }",
         "tup :: fn(x: i64) -> i64 {\n match (x % 3, x % 5) {\n case (0, 0): 1\n case (_, _): 0\n }\n }",
-        "ptrs :: fn(a: ^i8, b: &i64, c: &mut i64, d: []i64, e: [4]i64, h: Handle<i64>, o: ?i64) -> i64 { 0 }",
+        "ptrs :: fn(a: ^i8, b: i64, mut c: i64, d: []i64, e: [4]i64, h: Handle<i64>, o: ?i64) -> i64 { 0 }",
         "nested :: fn(p: Pair<Pair<i64>>) -> i64 { 0 }",
         "make :: fn($T: Type, n: i64) -> i64 { sizeof(T) }",
         "callit :: fn() -> i64 { make($i64, 8) }",

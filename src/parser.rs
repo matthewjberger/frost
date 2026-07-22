@@ -1549,8 +1549,9 @@ impl<'a> Parser<'a> {
                 self.parse_prefix_expression()?
             }
             Token::Ampersand => {
-                advance = false;
-                self.parse_address_of()?
+                bail!(
+                    "a borrow `&`/`&mut` is not surface syntax; pass a plain value and the compiler borrows for the parameter mode, or take a raw pointer with ptr_to(x)"
+                );
             }
             Token::Sizeof => {
                 advance = false;
@@ -1803,29 +1804,6 @@ impl<'a> Parser<'a> {
             Box::new(expression),
             Box::new(index_expression),
         ))
-    }
-
-    fn parse_address_of(&mut self) -> Result<Expression> {
-        self.read_token();
-        let mutable = if matches!(self.peek_nth(0), Token::Mut) {
-            self.read_token();
-            true
-        } else {
-            false
-        };
-        let mut expression = self.parse_expression(Precedence::Prefix)?;
-        if let Expression::Identifier(name) = &expression
-            && matches!(self.peek_nth(0), Token::LeftBrace)
-            && self.peek_nth(1) != &Token::Case
-        {
-            let name = name.clone();
-            expression = self.parse_struct_init(name)?;
-        }
-        if mutable {
-            Ok(Expression::BorrowMut(Box::new(expression)))
-        } else {
-            Ok(Expression::Borrow(Box::new(expression)))
-        }
     }
 
     fn parse_sizeof(&mut self) -> Result<Expression> {
@@ -2542,13 +2520,9 @@ impl<'a> Parser<'a> {
                 Type::Ptr(Box::new(self.parse_type()?))
             }
             Token::Ampersand => {
-                self.read_token();
-                if matches!(self.peek_nth(0), Token::Mut) {
-                    self.read_token();
-                    Type::RefMut(Box::new(self.parse_type()?))
-                } else {
-                    Type::Ref(Box::new(self.parse_type()?))
-                }
+                bail!(
+                    "a reference is not a surface type; use a parameter mode (`mut` to write, `move` to take, unmarked to read), or a raw pointer `^T`"
+                );
             }
             Token::LeftBracket => {
                 self.read_token();
@@ -3538,90 +3512,25 @@ mod tests {
     }
 
     #[test]
-    fn borrow_expression() -> Result<()> {
-        let input = "&x";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
+    fn borrow_expression_is_rejected() {
+        let mut lexer = Lexer::new("f :: fn() -> i64 { x := 1; &x }");
+        let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::Borrow(expr)) =
-            &program[0].node
-        {
-            assert_eq!(expr.as_ref(), &Expression::Identifier("x".to_string()));
-        } else {
-            bail!("Expected borrow expression");
-        }
-        Ok(())
+        assert!(
+            parser.parse().is_err(),
+            "a `&` borrow is no longer surface syntax"
+        );
     }
 
     #[test]
-    fn borrow_mut_expression() -> Result<()> {
-        let input = "&mut x";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
+    fn reference_type_is_rejected() {
+        let mut lexer = Lexer::new("f :: fn(x: &i64) -> i64 { 0 }");
+        let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::BorrowMut(expr)) =
-            &program[0].node
-        {
-            assert_eq!(expr.as_ref(), &Expression::Identifier("x".to_string()));
-        } else {
-            bail!("Expected borrow mut expression");
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn ref_type_annotation() -> Result<()> {
-        let input = "r : &i64 = x;";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Let {
-            name,
-            type_annotation,
-            ..
-        } = &program[0].node
-        {
-            assert_eq!(name, "r");
-            assert_eq!(type_annotation, &Some(Type::Ref(Box::new(Type::I64))));
-        } else {
-            bail!("Expected let statement with ref type");
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn ref_mut_type_annotation() -> Result<()> {
-        let input = "r : &mut i64 = x;";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Let {
-            name,
-            type_annotation,
-            ..
-        } = &program[0].node
-        {
-            assert_eq!(name, "r");
-            assert_eq!(
-                type_annotation,
-                &Some(Type::RefMut(Box::new(Type::I64)))
-            );
-        } else {
-            bail!("Expected let statement with ref mut type");
-        }
-        Ok(())
+        assert!(
+            parser.parse().is_err(),
+            "a `&` reference is no longer a surface type"
+        );
     }
 
     #[test]
