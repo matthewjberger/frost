@@ -45,6 +45,29 @@ void frost_emit_char(int64_t byte) {
     putchar((int)byte);
 }
 
+const char *frost_getenv(const char *name) {
+    const char *value = getenv(name);
+    if (value == 0) {
+        return "";
+    }
+    return value;
+}
+
+const char *frost_read_file(const char *path) {
+    FILE *file = fopen(path, "rb");
+    if (file == 0) {
+        return "";
+    }
+    fseek(file, 0, SEEK_END);
+    long length = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    char *buffer = (char *)malloc((size_t)length + 1);
+    size_t read = fread(buffer, 1, (size_t)length, file);
+    buffer[read] = 0;
+    fclose(file);
+    return buffer;
+}
+
 void frost_test_start(const char *name) {
     printf("test %s ... ", name);
     fflush(stdout);
