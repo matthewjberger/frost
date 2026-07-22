@@ -33,6 +33,7 @@ frost_emit_str  :: extern fn(s: ^i8)
 frost_emit_int  :: extern fn(value: i64)
 frost_emit_char :: extern fn(byte: i64)
 frost_read_file :: extern fn(path: ^i8) -> ^i8
+frost_byte_set  :: extern fn(buffer: ^i8, index: i64, value: i64)
 
 // Diagnostics. The emitted C goes to stdout, so an error is composed on stderr
 // piece by piece and frost_die ends the process.
@@ -71,6 +72,7 @@ NODE_CASE       :: 23
 NODE_EXTERN     :: 24
 NODE_STRLIT     :: 25
 NODE_TYPEVAL    :: 26
+NODE_WITH       :: 27
 
 // Type codes. A type is one i64. The primitives are small constants; a struct is
 // STRUCT_BASE plus its table index; a pointer to a type T (also how a borrow
@@ -123,6 +125,8 @@ TOK_KW_FALSE  :: 22
 TOK_KW_MUT    :: 23
 TOK_KW_MOVE   :: 24
 TOK_KW_LINEAR :: 25
+TOK_KW_USES   :: 26
+TOK_KW_WITH   :: 27
 TOK_LPAREN    :: 40
 TOK_RPAREN    :: 41
 TOK_LBRACE    :: 42
@@ -205,6 +209,9 @@ Node :: struct {
 // An interned function name: a byte range into the source, a flag marking it as
 // an `extern` (so calls emit its real name rather than mf_<index>), and its
 // return type so a call expression can be typed.
+// `cap_off`/`cap_len` name the allocation capability a `uses` function draws:
+// the synthesized binding its body sees and its callers must supply. `uses_ty`
+// is the capability's type, or -1 for a function that allocates from nothing.
 Sym :: struct {
     off: i64,
     len: i64,
@@ -212,6 +219,9 @@ Sym :: struct {
     ret_type: i64,
     params: i64,
     defined: i64,
+    uses_ty: i64,
+    cap_off: i64,
+    cap_len: i64,
 }
 
 // A compile-time integer constant `name :: value`, inlined at each use.
@@ -348,6 +358,10 @@ Parser :: struct {
     current_ret: i64,
     current_fn_off: i64,
     current_fn_len: i64,
+    synth_next: i64,
+    prov_kind: i64,
+    prov_off: i64,
+    prov_len: i64,
 }
 
 is_digit :: fn(c: i64) -> bool {
@@ -409,6 +423,8 @@ classify_ident :: fn(src: ^i8, off: i64, len: i64) -> i64 {
     if (str_range_eq(src, off, len, "return")) { return TOK_KW_RETURN }
     if (str_range_eq(src, off, len, "struct")) { return TOK_KW_STRUCT }
     if (str_range_eq(src, off, len, "extern")) { return TOK_KW_EXTERN }
+    if (str_range_eq(src, off, len, "uses")) { return TOK_KW_USES }
+    if (str_range_eq(src, off, len, "with")) { return TOK_KW_WITH }
     TOK_IDENT
 }
 
@@ -570,6 +586,43 @@ advance :: fn(mut p: Parser) {
 // global.
 // ---------------------------------------------------------------------------
 
+// Room past the source's terminator for names the compiler makes up. A name is
+// an offset and a length into the source everywhere in this compiler, so a
+// synthesized one has to live in the source too rather than in a table of its
+// own. The lexer stops at the terminator, so nothing here is ever read as code.
+SYNTH_ROOM :: 65536
+
+source_with_room :: fn(text: ^i8) -> ^i8 {
+    length := frost_str_len(text)
+    buffer := ptr_cast($i8, malloc(length + SYNTH_ROOM + 1))
+    mut k : i64 = 0
+    while (k < length) {
+        frost_byte_set(buffer, k, frost_byte_at(text, k))
+        k = k + 1
+    }
+    frost_byte_set(buffer, length, 0)
+    buffer
+}
+
+// The binding a `uses Arena` function draws: the capability type's name with
+// its first letter lowercased, so `uses Arena<256>` binds `arena` and the body
+// names it the way the caller's `with arena` block does.
+synth_capability_name :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    start := p.synth_next
+    mut k : i64 = 0
+    while (k < len) {
+        mut byte := frost_byte_at(p.src, off + k)
+        if (k == 0 && byte >= CH_UPPER_A && byte <= CH_UPPER_Z) {
+            byte = byte + 32
+        }
+        frost_byte_set(p.src, start + k, byte)
+        k = k + 1
+    }
+    frost_byte_set(p.src, start + len, 0)
+    p.synth_next = start + len + 1
+    start
+}
+
 bytes_equal :: fn(src: ^i8, first: i64, second: i64, length: i64) -> bool {
     mut k : i64 = 0
     while (k < length) {
@@ -594,7 +647,8 @@ intern_global :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     arena_push(
         p.fns,
         Sym { off = offset, len = length, is_extern = 0, ret_type = TY_I64,
-            params = 0 - 1, defined = 0 },
+            params = 0 - 1, defined = 0, uses_ty = 0 - 1, cap_off = 0,
+            cap_len = 0 },
     )
 }
 
@@ -619,6 +673,32 @@ set_ret_type :: fn(mut p: Parser, fn_index: i64, ret: i64) {
 set_params :: fn(mut p: Parser, fn_index: i64, params: i64) {
     entry : ^Sym = arena_at(p.fns, fn_index)
     entry^.params = params
+}
+
+set_uses :: fn(mut p: Parser, fn_index: i64, ty: i64, off: i64, len: i64) {
+    entry : ^Sym = arena_at(p.fns, fn_index)
+    entry^.uses_ty = ty
+    entry^.cap_off = off
+    entry^.cap_len = len
+}
+
+node_next :: fn(mut p: Parser, id: i64) -> i64 {
+    node : ^Node = arena_at(p.arena, id)
+    node^.next
+}
+
+append_node :: fn(mut p: Parser, head: i64, extra: i64) -> i64 {
+    if (head == (0 - 1)) {
+        return extra
+    }
+    mut tail := head
+    mut following := node_next(p, tail)
+    while (following != (0 - 1)) {
+        tail = following
+        following = node_next(p, tail)
+    }
+    set_next(p, tail, extra)
+    head
 }
 
 record_generic_fn :: fn(mut p: Parser, fn_index: i64, tparam_off: i64,
@@ -1365,6 +1445,17 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         body := parse_block(p)
         return new_node(p, NODE_WHILE, condition, body, 0)
     }
+    // `with arena { ... }` supplies an allocation capability to everything the
+    // block calls. The block is the region: it is a plain scope once the calls
+    // inside it have been handed the arena.
+    if (kind == TOK_KW_WITH) {
+        advance(p)
+        name_offset := cur_off(p)
+        name_length := cur_len(p)
+        advance(p)
+        body := parse_block(p)
+        return new_named_node(p, NODE_WITH, body, name_offset, name_length)
+    }
 
     // A local binding `x := e` or `x : T = e` is recognised by the token after
     // the name, so the name is not consumed early for the other cases.
@@ -1502,7 +1593,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
         is_main = 1
     }
     advance(p)
-    params := parse_params(p)
+    mut params := parse_params(p)
     set_params(p, fn_index, params)
     mark_defined(p, fn_index)
     mut ret : i64 = TY_VOID
@@ -1512,6 +1603,24 @@ parse_function :: fn(mut p: Parser) -> i64 {
     }
     p.last_return_type = ret
     set_ret_type(p, fn_index, ret)
+    // `-> T uses A` draws an allocation capability. It is an implicit trailing
+    // parameter that borrows the source, so after this the function is ordinary
+    // and only the call sites need to know to supply it.
+    if (cur(p) == TOK_KW_USES) {
+        advance(p)
+        cap_name_off := cur_off(p)
+        cap_name_len := cur_len(p)
+        cap_ty := parse_type(p)
+        binding := synth_capability_name(p, cap_name_off, cap_name_len)
+        capability := arena_push(
+            p.arena,
+            Node { kind = NODE_PARAM, a = 1, b = POINTER_BASE + cap_ty,
+                c = cap_name_len, val = binding, next = 0 - 1 },
+        )
+        params = append_node(p, params, capability)
+        set_params(p, fn_index, params)
+        set_uses(p, fn_index, cap_ty, binding, cap_name_len)
+    }
     body := parse_block(p)
     new_func_node(p, body, params, fn_index, is_main)
 }
@@ -2209,6 +2318,14 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
         }
         id = next_id
     }
+    // The capability is the last argument, supplied by the caller's context
+    // rather than written at the call.
+    if (sym^.uses_ty >= 0) {
+        if (first == false) {
+            frost_emit_str(", ")
+        }
+        emit_capability_argument(p, fn_index)
+    }
 }
 
 // The generic-fns index of a function, or -1 if it is not generic.
@@ -2424,6 +2541,64 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         frost_emit_str("}\n")
         return
     }
+    if (kind == NODE_WITH) {
+        held_kind := p.prov_kind
+        held_off := p.prov_off
+        held_len := p.prov_len
+        set_provider(p, PROVIDER_REGION, node^.val, node^.c)
+        frost_emit_str("{\n")
+        emit_list(p, node^.a)
+        frost_emit_str("}\n")
+        set_provider(p, held_kind, held_off, held_len)
+        return
+    }
+}
+
+// The provider in force while a block is emitted: where a call to a `uses`
+// function gets its capability. A `uses` function forwards the one it was
+// handed; a `with` block supplies the arena it names; anywhere else there is
+// none and such a call is an error.
+PROVIDER_NONE    :: 0
+PROVIDER_FORWARD :: 1
+PROVIDER_REGION  :: 2
+
+set_provider :: fn(mut p: Parser, kind: i64, off: i64, len: i64) {
+    p.prov_kind = kind
+    p.prov_off = off
+    p.prov_len = len
+}
+
+// A `uses` function forwards the capability it was handed. Anything else starts
+// with none, so a `uses` call from outside a region is caught rather than
+// silently allocating from somewhere unnamed.
+begin_provider :: fn(mut p: Parser, fn_index: i64) {
+    sym : ^Sym = arena_at(p.fns, fn_index)
+    if (sym^.uses_ty >= 0) {
+        set_provider(p, PROVIDER_FORWARD, sym^.cap_off, sym^.cap_len)
+        return
+    }
+    set_provider(p, PROVIDER_NONE, 0, 0)
+}
+
+// The capability a call to `fn_index` is handed, emitted as an argument. A
+// forwarded one is already a pointer and passes straight through; a region
+// supplies the arena by address, the way any borrow is passed.
+emit_capability_argument :: fn(mut p: Parser, fn_index: i64) {
+    if (p.prov_kind == PROVIDER_NONE) {
+        sym : ^Sym = arena_at(p.fns, fn_index)
+        frost_error("frost: calling '")
+        frost_error_src(p.src, sym^.off, sym^.len)
+        frost_error("' needs an allocation capability, so declare `uses` on ")
+        frost_error("the caller or wrap the call in a `with` block")
+        frost_die()
+    }
+    if (p.prov_kind == PROVIDER_REGION) {
+        frost_emit_str("(&(")
+        emit_source(p.src, p.prov_off, p.prov_len)
+        frost_emit_str("))")
+        return
+    }
+    emit_source(p.src, p.prov_off, p.prov_len)
 }
 
 emit_list :: fn(mut p: Parser, head: i64) {
@@ -2482,7 +2657,13 @@ emit_prototypes :: fn(mut p: Parser, head: i64) {
         is_main := node^.c
         next_id := node^.next
         if (kind == NODE_FUNC && is_main == 0) {
-            frost_emit_str("int64_t mf_")
+            sym : ^Sym = arena_at(p.fns, fn_index)
+            if (sym^.ret_type == TY_VOID) {
+                frost_emit_str("int64_t")
+            } else {
+                emit_ctype(p, sym^.ret_type)
+            }
+            frost_emit_str(" mf_")
             frost_emit_int(fn_index)
             frost_emit_str("(")
             emit_param_signature(p, params)
@@ -2589,10 +2770,20 @@ emit_function :: fn(mut p: Parser, id: i64) {
     p.locals.count = 0
     p.moved.count = 0
     record_params(p, params)
+    begin_provider(p, fn_index)
     if (is_main == 1) {
         frost_emit_str("int main(void) {\n")
     } else {
-        frost_emit_str("int64_t mf_")
+        // The declared return type, so a function may return a pointer or a
+        // struct rather than everything answering as an integer. A function
+        // that declares nothing still lowers to int64_t, since the body falls
+        // through to `return 0`.
+        if (sym^.ret_type == TY_VOID) {
+            frost_emit_str("int64_t")
+        } else {
+            emit_ctype(p, sym^.ret_type)
+        }
+        frost_emit_str(" mf_")
         frost_emit_int(fn_index)
         frost_emit_str("(")
         emit_param_signature(p, params)
@@ -2617,6 +2808,7 @@ emit_mono_function :: fn(mut p: Parser, id: i64, arg: i64, ret: i64) {
     p.locals.count = 0
     p.moved.count = 0
     record_params(p, params)
+    begin_provider(p, fn_index)
     emit_ctype(p, ret)
     frost_emit_str(" mf_")
     frost_emit_int(fn_index)
@@ -3150,8 +3342,33 @@ count_value_args :: fn(mut p: Parser, args: i64) -> i64 {
 // computed. The first four travel in registers; the rest sit above the shadow
 // area the callee is entitled to, and the whole call frame stays 16 byte
 // aligned.
+// The capability a call is handed, left in %rax ready to be pushed. A forwarded
+// one is already a pointer; a region supplies the arena by address.
+emit_asm_capability :: fn(mut p: Parser, fn_index: i64) {
+    if (p.prov_kind == PROVIDER_NONE) {
+        sym : ^Sym = arena_at(p.fns, fn_index)
+        frost_error("frost: calling '")
+        frost_error_src(p.src, sym^.off, sym^.len)
+        frost_error("' needs an allocation capability, so declare `uses` on ")
+        frost_error("the caller or wrap the call in a `with` block")
+        frost_die()
+    }
+    slot := local_slot(p, p.prov_off, p.prov_len)
+    if (p.prov_kind == PROVIDER_REGION) {
+        asm_i("leaq ", slot, "(%rbp), %rax")
+        return
+    }
+    asm_i("movq ", slot, "(%rbp), %rax")
+}
+
 emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
-    count := count_value_args(p, args)
+    callee : ^Sym = arena_at(p.fns, fn_index)
+    mut capability : i64 = 0
+    if (callee^.uses_ty >= 0) {
+        capability = 1
+    }
+    value_count := count_value_args(p, args)
+    count := value_count + capability
     ret := call_ret_type(p, args, fn_index)
     mut sret : i64 = 0
     mut result_slot : i64 = 0
@@ -3160,7 +3377,13 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         result_slot = alloc_temp(p, type_size(p, ret))
     }
 
-    mut i : i64 = count - 1
+    // Arguments are pushed last to first, so the capability, being last, goes
+    // first and lands in the highest slot.
+    if (capability == 1) {
+        emit_asm_capability(p, fn_index)
+        emit_asm_push()
+    }
+    mut i : i64 = value_count - 1
     while (i >= 0) {
         emit_asm_expr(p, nth_value_arg(p, args, i))
         emit_asm_push()
@@ -3332,6 +3555,15 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
     }
     if (kind == NODE_EXPRSTMT) {
         emit_asm_expr(p, node^.a)
+        return
+    }
+    if (kind == NODE_WITH) {
+        held_kind := p.prov_kind
+        held_off := p.prov_off
+        held_len := p.prov_len
+        set_provider(p, PROVIDER_REGION, node^.val, node^.c)
+        emit_asm_block(p, node^.a)
+        set_provider(p, held_kind, held_off, held_len)
         return
     }
     // A match is a chain of comparisons against the scrutinee, which is kept in
@@ -3526,6 +3758,7 @@ emit_asm_function :: fn(mut p: Parser, id: i64) {
     is_main := node^.c
     sym : ^Sym = arena_at(p.fns, fn_index)
     ret := sym^.ret_type
+    begin_provider(p, fn_index)
     frost_emit_str("    .globl ")
     if (is_main == 1) {
         frost_emit_str("main\n")
@@ -3547,6 +3780,7 @@ emit_asm_mono_function :: fn(mut p: Parser, id: i64, arg: i64, ret: i64) {
     fn_index := node^.val
     body := node^.a
     params := node^.b
+    begin_provider(p, fn_index)
     frost_emit_str("    .globl mf_")
     frost_emit_int(fn_index)
     frost_emit_str("_t")
@@ -3733,7 +3967,12 @@ check_calls :: fn(mut p: Parser) {
                 frost_error("'")
                 frost_die()
             }
-            expected := count_params(p, params)
+            // The capability is supplied by the caller's context rather than
+            // written at the call, so it is not one of the arguments counted.
+            mut expected := count_params(p, params)
+            if (sym^.uses_ty >= 0) {
+                expected = expected - 1
+            }
             got := count_args(p, args)
             if (expected != got) {
                 frost_error("frost: '")
@@ -3832,6 +4071,9 @@ main :: fn() -> i64 {
         }
     "
     }
+    // Work from a copy with room past the terminator, so a name the compiler
+    // synthesizes can live in the source like every other name.
+    source = source_with_room(source)
 
     mut parser := Parser {
         src = source,
@@ -3863,7 +4105,14 @@ main :: fn() -> i64 {
         current_ret = 0,
         current_fn_off = 0,
         current_fn_len = 0,
+        synth_next = 0,
+        prov_kind = 0,
+        prov_off = 0,
+        prov_len = 0,
     }
+    // Names the compiler synthesizes go past the source's terminator, so the
+    // first free byte is one past the text.
+    parser.synth_next = frost_str_len(source) + 1
     // The host convention by default; FROST_ABI overrides it so the other
     // target's output can be inspected from either host.
     parser.abi_windows = frost_is_windows()

@@ -161,11 +161,30 @@ its output. In dependency order, what is done and what remains:
      loop and to a `^Node` in the next, so `node^.next` typed as a scalar and
      read offset zero, and the walk over the top-level list never reached its
      end.
-4. **Failure sets, allocation sources, regions.** `-> T ! E` with `?`,
-   `uses`/`with`, and the arena escape check. These reuse the self-hosted compiler's existing
-   enum and match machinery and mirror the desugars in `src/failure_sets.rs`,
-   `src/allocation_sources.rs`, and `src/regions.rs`.
-5. **Imports and modules.** the self-hosted compiler is single-file today; a multi-file
+4. **Allocation sources.** Done. `uses A` on a function and `with a { }` around
+   a call, mirroring `src/allocation_sources.rs`.
+
+   The capability is an implicit trailing parameter that borrows its source, so
+   after parsing the function is ordinary and only the call sites know to supply
+   one. A `uses` function forwards what it was handed, a `with` block supplies
+   the arena it names by address, and a call with neither in reach is rejected.
+
+   This needed a name the compiler makes up rather than reads, since the binding
+   is the capability type's name lowercased and no source spells it. A name here
+   is an offset and a length into the source everywhere, so rather than add a
+   second kind of name, the source is copied into a buffer with room past its
+   terminator and synthesized names are written there. The lexer stops at the
+   terminator, so nothing in that room is ever read as code.
+
+   Fixing this also removed a limitation worth naming: a plain function used to
+   lower to `int64_t` whatever it returned, so it could not return a pointer.
+   It now emits its declared return type.
+
+5. **Failure sets and regions.** `-> T ! E` with `?`, and the arena escape
+   check. Failure sets reuse the enum and match machinery and mirror
+   `src/failure_sets.rs`; the region check mirrors `src/regions.rs` and can key
+   off the `with` blocks the compiler now parses.
+6. **Imports and modules.** the self-hosted compiler is single-file today; a multi-file
    compiler needs this to compile itself.
 
 Param modes are already done: the self-hosted compiler lowers `mut`/`move`/read to pointers and

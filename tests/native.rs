@@ -1158,6 +1158,69 @@ fn self_hosted_rejects_a_use_after_move() {
     );
 }
 
+// `uses A` and `with a { }` in the self-hosted compiler: the capability is an
+// implicit trailing parameter, forwarded from one `uses` function to the next
+// and supplied by the region at the top.
+const SELF_HOSTED_ALLOCATION_SOURCES: &str = "Arena :: struct { offset: i64 }\n\
+     bump :: fn(mut a: Arena, amount: i64) -> i64 {\n\
+     \x20   a.offset = a.offset + amount\n    a.offset\n}\n\
+     take :: fn(amount: i64) -> i64 uses Arena { bump(arena, amount) }\n\
+     nested :: fn() -> i64 uses Arena { take(10) + take(32) }\n\
+     main :: fn() -> i64 {\n\
+     \x20   mut arena : Arena = Arena { offset = 0 }\n\
+     \x20   mut result : i64 = 0\n\
+     \x20   with arena { result = nested() }\n\
+     \x20   print result\n    print arena.offset\n    0\n}\n";
+
+#[test]
+fn self_hosted_allocation_sources_through_c() {
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_selfalloc_input.frost");
+    std::fs::write(&input, SELF_HOSTED_ALLOCATION_SOURCES).unwrap();
+    let Some(c_source) = compile_and_run_with_input(
+        "selfalloc",
+        SELF_HOSTED,
+        input.to_str().unwrap(),
+    ) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    assert!(
+        c_source.contains("struct Arena* arena"),
+        "the capability did not become a parameter:\n{c_source}"
+    );
+    let Some(output) = compile_c_and_run("selfalloc", &c_source) else {
+        return;
+    };
+    assert_eq!(output, "52\n42\n");
+}
+
+#[test]
+fn self_hosted_allocation_sources_natively() {
+    let Some(output) =
+        selfhosted_native_output("alloc", SELF_HOSTED_ALLOCATION_SOURCES)
+    else {
+        return;
+    };
+    assert_eq!(output, "52\n42\n");
+}
+
+// A `uses` call with no capability in reach is rejected rather than allocating
+// from somewhere unnamed.
+#[test]
+fn self_hosted_rejects_a_uses_call_with_no_capability() {
+    let source = "Arena :: struct { offset: i64 }\n\
+                  grab :: fn() -> i64 uses Arena { 1 }\n\
+                  main :: fn() -> i64 { grab() }\n";
+    let Some(message) = self_hosted_rejects("nocapability", source) else {
+        return;
+    };
+    assert!(
+        message.contains("needs an allocation capability"),
+        "expected a missing-capability error, got:\n{message}"
+    );
+}
+
 #[test]
 fn self_hosted_rejects_a_linear_value_never_consumed() {
     let source = "File :: linear struct { h: i64 }\n\
