@@ -1651,6 +1651,83 @@ fn self_hosted_reevaluates_a_try_in_a_loop_condition() {
     assert_eq!(output, "2\n");
 }
 
+// A generic function used with a type that no generic struct was written with.
+// Instantiation used to be driven by the struct instances alone, so this was
+// called and never emitted, and the program failed to link.
+#[test]
+fn self_hosted_emits_a_generic_function_with_no_struct_instance() {
+    let source = "Box :: struct($T: Type) { value: $T }\n\
+                  wrap :: fn($T: Type, v: $T) -> Box<T> { Box { value = v } }\n\
+                  unwrap :: fn(b: Box<$T>) -> $T { b^.value }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   b := wrap($i64, 41)\n\
+                  \x20   print unwrap(b) + 1\n    0\n}\n";
+    let Some(output) = selfhosted_native_output("genericonly", source) else {
+        return;
+    };
+    assert_eq!(output, "42\n");
+}
+
+// Everything the two self-hosted backends can express, run through both. They
+// answer the same thing or one of them is wrong.
+#[test]
+fn self_hosted_backends_agree() {
+    let source = "malloc :: extern fn(size: i64) -> ^i8\n\
+         Inner :: struct { a: i64, b: i64 }\n\
+         Outer :: struct { first: i64, mid: Inner, last: i64 }\n\
+         Bytes :: struct { flag: i8, count: i64, mark: i8 }\n\
+         Kind :: enum { None, One { x: i64 }, Two { x: i64, y: i64 } }\n\
+         Box :: struct($T: Type) { value: $T }\n\
+         wrap :: fn($T: Type, v: $T) -> Box<T> { Box { value = v } }\n\
+         unwrap :: fn(b: Box<$T>) -> $T { b^.value }\n\
+         sum_kind :: fn(k: Kind) -> i64 {\n\
+         \x20   match k {\n        case .None: 0\n\
+         \x20       case .One { x }: x\n        case .Two { x, y }: x + y\n    }\n}\n\
+         bump :: fn(mut o: Outer) -> i64 {\n\
+         \x20   o.mid.b = o.mid.b + 1\n    o.mid.b\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut o : Outer = Outer { first = 1, mid = Inner { a = 2, b = 3 }, last = 4 }\n\
+         \x20   print bump(o)\n    print o.mid.b\n    print sizeof(Outer)\n\
+         \x20   mut bs : Bytes = Bytes { flag = 1, count = 77, mark = 2 }\n\
+         \x20   print bs.flag\n    print bs.count\n    bs.mark = 5\n\
+         \x20   print bs.mark\n    print sizeof(Bytes)\n\
+         \x20   print sum_kind(Kind::None)\n\
+         \x20   print sum_kind(Kind::One { x = 6 })\n\
+         \x20   print sum_kind(Kind::Two { x = 6, y = 7 })\n\
+         \x20   b := wrap($i64, 41)\n    print unwrap(b) + 1\n\
+         \x20   buf := malloc(8)\n    buf[0] = 65\n    buf[1] = 66\n\
+         \x20   print buf[0]\n    print buf[1]\n\
+         \x20   mut acc : i64 = 0\n    mut i : i64 = 0\n\
+         \x20   while (i < 5) {\n\
+         \x20       if (i % 2 == 0) { acc = acc + i } else { acc = acc - i }\n\
+         \x20       i = i + 1\n    }\n\
+         \x20   print acc\n    print (3 < 4) && (5 >= 5)\n\
+         \x20   print 17 / 5\n    print 0 - 17 % 5\n    0\n}\n";
+    let expected =
+        "4\n4\n32\n1\n77\n5\n24\n0\n6\n13\n42\n65\n66\n2\n1\n3\n-2\n";
+
+    let Some(native) = selfhosted_native_output("agree", source) else {
+        return;
+    };
+    assert_eq!(native, expected, "the native backend disagrees");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_agree_input.frost");
+    std::fs::write(&input, source).unwrap();
+    let Some(c_source) = compile_and_run_with_input(
+        "agree",
+        SELF_HOSTED,
+        input.to_str().unwrap(),
+    ) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("agree", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, expected, "the C backend disagrees");
+}
+
 #[test]
 fn self_hosted_rejects_a_linear_value_never_consumed() {
     let source = "File :: linear struct { h: i64 }\n\
