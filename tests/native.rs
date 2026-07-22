@@ -537,6 +537,35 @@ main :: fn() -> i64 {
     );
 }
 
+// A `uses` function may not leak an arena pointer into one of its parameters:
+// the pointer would outlive the arena once the function returns. Caught without
+// lifetimes, by flow alone.
+#[test]
+fn region_pointer_leak_into_parameter_is_rejected() {
+    let source = r#"
+Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
+Reg :: struct { ptr: ^i64 }
+
+alloc_int :: fn(mut a: Arena<256>) -> ^i64 {
+    slot := ptr_to(a.data[a.offset])
+    a.offset = a.offset + sizeof(i64)
+    ptr_cast($i64, slot)
+}
+
+stash :: fn(mut r: Reg) -> i64 uses Arena<256> {
+    r.ptr = alloc_int(arena)
+    0
+}
+
+main :: fn() -> i64 { 0 }
+"#;
+    let message = compile_error("region_leak", source);
+    assert!(
+        message.contains("region") && message.contains("escapes"),
+        "expected a region-escape error, got:\n{message}"
+    );
+}
+
 // Calling a `uses` function with no capability in scope is rejected.
 #[test]
 fn allocation_source_without_capability_is_rejected() {
