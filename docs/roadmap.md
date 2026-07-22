@@ -25,33 +25,33 @@ Before item 1 landed the same program took 1.11 s, or about 52,000 lines per
 second, and the backend was 1,285 ms of it. The remaining work on speed is the
 shape question, item 3, not a constant factor.
 
-## 3. Separate compilation
+## 3. Separate compilation (designed, not built)
+
+The design is written down in
+[separate-compilation.md](separate-compilation.md). The short version: a module
+is a file, its interface is its `export` line, and a specialization is emitted in
+the module that instantiates it, which keeps the existing visibility rule as the
+interface rather than inventing a second one.
+
+Two findings from writing it that were not obvious going in:
+
+- **A generic's body is part of its interface**, unavoidably, because the caller
+  chooses the type arguments and so the caller instantiates the template. That
+  means changing a generic's body is an interface change and rebuilds every
+  module that instantiates it, while changing an ordinary body is not.
+- **Private symbol names currently depend on import traversal order.**
+  `resolve_into` hands out `module_tag` by visit order, so a private `helper` is
+  `__m3_helper` in one program and `__m7_helper` in another. A module's symbols
+  have to be a property of the module before any of this is possible, and that
+  is step 1 because it is verifiable entirely on its own.
+
+The build order, the full interface contents, and the open questions are all in
+that document. It is not started.
 
 **Why third rather than first.** It is the shape the speed goal requires *as
 programs grow*, which is a different claim from the constant factor item 1
-closes. Parallelism makes today's builds fast; this is what stops the curve
-turning over. `src/imports.rs` flattens every import into one
-AST, so a program's cost is whole-program by construction: monomorphization runs
-to fixpoint over everything, and there is nothing to compile independently. Every
-other scaling lever is a constant factor on top of that shape.
-
-It also bounds monomorphization, which is the thing that actually grows. A
-specialization need only be emitted once per module that needs it, rather than
-once per program.
-
-**The design decision to make.** What a module boundary means. The candidate that
-fits the rest of the language: a module is a file, its interface is its `export`
-line, and a specialization is emitted in the module that instantiates it. That
-keeps the existing visibility rule as the interface rather than inventing a
-second one.
-
-**What it forces.** A generic's body has to be checkable without seeing every
-caller, which is the one argument for bounds that Frost does not already have an
-answer to. See item 2, which is why it comes next rather than first.
-
-**Do not** start this by writing code. Start by writing down what a module's
-compiled artifact contains and what has to be in it for a caller to compile
-against it without the body.
+closed. Parallelism made today's builds fast; this is what stops the curve
+turning over.
 
 ## 2. Bounds on compile-time arguments (done)
 
@@ -121,12 +121,54 @@ once per instantiation inside code the user never writes, rather than appearing
 at every call site in user code. The user writes a typed `mut ctx: Ctx` and the
 perimeter holds everywhere a person is looking.
 
-**What to settle before building it.** Who owns the context for the lifetime of
-the registration, since it outlives the call that registers it. That is a region
-question and `src/regions.rs` already has the machinery to ask it. The likely
-answer is that registering borrows for longer than a call, which is the first
-thing in the language that does, and it may want to be a linear obligation
-(register/unregister as a consumed pair) rather than a borrow.
+**Who owns the context, settled.** This was the open question, and the answer is
+that **registration moves the context in and unregistration moves it back out**,
+with the registration itself a `linear` value. Not a borrow.
+
+```
+Ctx :: struct { hits: i64 }
+Registration :: linear struct { token: i64, ctx: Ctx }
+
+on_event :: fn(mut ctx: Ctx, code: i64) { ctx.hits = ctx.hits + code }
+
+register   :: extern fn($handler: Type, move ctx: Ctx) -> Registration uses CallbackAbi
+unregister :: fn(move r: Registration) -> Ctx
+
+run :: fn() -> i64 {
+    r := register($on_event, Ctx { hits = 0 })
+    pump_events()
+    done := unregister(r)      // forgetting this is a compile error
+    done.hits
+}
+```
+
+Three things fall out, and each is a reason to prefer this over a borrow.
+
+- **No new machinery.** A borrow that outlives its call would be the first thing
+  in the language that does, and inventing it means inventing the region
+  annotation the whole design is built on not having. Moving needs nothing new:
+  `check_ownership` already stops the caller touching a moved value, and
+  `check_linearity` already forces a `linear` value to be consumed exactly once.
+- **The aliasing guarantee is the one you want.** While registered, the callback
+  may fire at any moment, so the caller must not be reading or writing the
+  context. Having moved it in, the caller *cannot*, and that is enforced by the
+  checker that already exists rather than by a comment.
+- **Forgetting to unregister becomes a compile error**, which is a real bug class
+  in every C callback API. A dangling callback into freed context is the exact
+  failure this is meant to prevent, and linearity prevents it at the source
+  rather than at the trampoline.
+
+**The fire-and-forget case**, where the library never gives the callback back,
+does not get an exception. The registration is still linear, and a program that
+means to abandon it says so with a terminal consumer that takes it and returns
+nothing. "I am deliberately leaking this" is a thing worth having to write.
+
+**What is left to settle** is smaller and is now implementation rather than
+design: what `token` holds for a library whose unregister takes something other
+than an integer, and whether `uses CallbackAbi` is the right spelling for "this
+extern wants a trampoline" or whether it should be inferred from a `$handler`
+parameter on an `extern fn`. The second is a syntax question with no consequences
+for the safety argument.
 
 ## 1. Parallel code generation (done)
 

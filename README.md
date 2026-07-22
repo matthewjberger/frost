@@ -57,6 +57,9 @@ compiles to native code through Cranelift or through portable C.
 - [docs/allocators.md](docs/allocators.md): the layered allocator strategy (arena,
   pool, and the one platform call), and where it sits on the roadmap
 - [docs/spec.md](docs/spec.md): the language reference and grammar
+- [docs/roadmap.md](docs/roadmap.md): what is left, in the order to do it
+- [docs/separate-compilation.md](docs/separate-compilation.md): the module
+  boundary design, written down and not yet built
 
 ## A first program
 
