@@ -58,6 +58,8 @@ NODE_SIZEOF     :: 20
 NODE_EXPRSTMT   :: 21
 NODE_MATCH      :: 22
 NODE_CASE       :: 23
+NODE_EXTERN     :: 24
+NODE_STRLIT     :: 25
 
 // Type codes. A type is one i64. The primitives are small constants; a struct is
 // STRUCT_BASE plus its table index; a pointer to a type T (also how a `&`/`&mut`
@@ -186,10 +188,19 @@ Node :: struct {
     next: i64,
 }
 
-// An interned identifier: a byte range into the source.
+// An interned function name: a byte range into the source, plus a flag marking
+// it as an `extern` (so calls to it emit its real name rather than mf_<index>).
 Sym :: struct {
     off: i64,
     len: i64,
+    is_extern: i64,
+}
+
+// A compile-time integer constant `name :: value`, inlined at each use.
+ConstDef :: struct {
+    name_off: i64,
+    name_len: i64,
+    value: i64,
 }
 
 // A lexed token. `off`/`len` are the byte range in the source (used to intern
@@ -264,6 +275,7 @@ Parser :: struct {
     structs: Arena<StructDef>,
     fields: Arena<StructField>,
     locals: Arena<LocalVar>,
+    consts: Arena<ConstDef>,
     no_struct_lit: bool,
 }
 
@@ -506,7 +518,49 @@ intern_global :: fn(p: &mut Parser, offset: i64, length: i64) -> i64 {
         }
         i = i + 1
     }
-    arena_push(&mut p.fns, Sym { off = offset, len = length })
+    arena_push(&mut p.fns, Sym { off = offset, len = length, is_extern = 0 })
+}
+
+mark_extern :: fn(p: &mut Parser, fn_index: i64) {
+    entry : ^Sym = arena_at(&p.fns, fn_index)
+    entry^.is_extern = 1
+}
+
+// Register `name :: value` in the constant table. Duplicate names are harmless
+// since lookup takes the first.
+register_const :: fn(p: &mut Parser, offset: i64, length: i64, value: i64) {
+    arena_push(
+        &mut p.consts,
+        ConstDef { name_off = offset, name_len = length, value = value },
+    )
+}
+
+// If a name is a declared constant, return its value through `out` (as the
+// return) and true; otherwise false. Consts are looked up by byte comparison.
+const_value :: fn(p: &mut Parser, offset: i64, length: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < p.consts.count) {
+        entry : ^ConstDef = arena_at(&p.consts, i)
+        if (entry^.name_len == length
+            && bytes_equal(p.src, entry^.name_off, offset, length)) {
+            return entry^.value
+        }
+        i = i + 1
+    }
+    0 - 1
+}
+
+is_const :: fn(p: &mut Parser, offset: i64, length: i64) -> bool {
+    mut i : i64 = 0
+    while (i < p.consts.count) {
+        entry : ^ConstDef = arena_at(&p.consts, i)
+        if (entry^.name_len == length
+            && bytes_equal(p.src, entry^.name_off, offset, length)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
 }
 
 is_main_name :: fn(src: ^i8, offset: i64, length: i64) -> bool {
@@ -678,6 +732,12 @@ parse_primary :: fn(p: &mut Parser) -> i64 {
     kind := cur(p)
     if (kind == TOK_INT) {
         return parse_number(p)
+    }
+    if (kind == TOK_STR) {
+        offset := cur_off(p)
+        length := cur_len(p)
+        advance(p)
+        return new_named_node(p, NODE_STRLIT, 0, offset, length)
     }
     if (kind == TOK_AMP) {
         advance(p)
@@ -1181,20 +1241,70 @@ parse_struct :: fn(p: &mut Parser) {
     )
 }
 
+// An extern declaration `name :: extern fn(params) -> ret`. The name is marked
+// extern so calls emit it verbatim, and the node carries params and return type
+// so a C prototype can be emitted. `val` is the fn index, `b` the params, `c`
+// the return type.
+parse_extern :: fn(p: &mut Parser) -> i64 {
+    name_offset := cur_off(p)
+    name_length := cur_len(p)
+    advance(p)
+    advance(p)
+    advance(p)
+    advance(p)
+    fn_index := intern_global(p, name_offset, name_length)
+    mark_extern(p, fn_index)
+    advance(p)
+    params := parse_params(p)
+    mut ret : i64 = TY_VOID
+    if (cur(p) == TOK_ARROW) {
+        advance(p)
+        ret = parse_type(p)
+    }
+    arena_push(
+        &mut p.arena,
+        Node { kind = NODE_EXTERN, a = 0, b = params, c = ret, val = fn_index,
+            next = 0 - 1 },
+    )
+}
+
+// A constant `name :: value`, registered for inlining at use sites.
+parse_const :: fn(p: &mut Parser) {
+    name_offset := cur_off(p)
+    name_length := cur_len(p)
+    advance(p)
+    advance(p)
+    value := cur_val(p)
+    advance(p)
+    register_const(p, name_offset, name_length, value)
+}
+
 parse_program :: fn(p: &mut Parser) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     while (cur(p) == TOK_IDENT) {
-        if (peek_kind(p, 2) == TOK_KW_STRUCT) {
+        third := peek_kind(p, 2)
+        if (third == TOK_KW_STRUCT) {
             parse_struct(p)
-        } else {
-            func := parse_function(p)
+        } else if (third == TOK_KW_EXTERN) {
+            item := parse_extern(p)
             if (head == (0 - 1)) {
-                head = func
-                tail = func
+                head = item
+                tail = item
             } else {
-                set_next(p, tail, func)
-                tail = func
+                set_next(p, tail, item)
+                tail = item
+            }
+        } else if (third == TOK_INT) {
+            parse_const(p)
+        } else {
+            item := parse_function(p)
+            if (head == (0 - 1)) {
+                head = item
+                tail = item
+            } else {
+                set_next(p, tail, item)
+                tail = item
             }
         }
     }
@@ -1282,6 +1392,9 @@ field_type :: fn(p: &mut Parser, base_ty: i64, off: i64, len: i64) -> i64 {
 type_of :: fn(p: &mut Parser, id: i64) -> i64 {
     node : ^Node = arena_at(&p.arena, id)
     kind := node^.kind
+    if (kind == NODE_STRLIT) {
+        return POINTER_BASE + TY_I8
+    }
     if (kind == NODE_STRUCT_LIT) {
         return node^.val
     }
@@ -1332,11 +1445,11 @@ emit_ctype :: fn(p: &mut Parser, ty: i64) {
         return
     }
     if (ty == TY_I8) {
-        frost_emit_str("int8_t")
+        frost_emit_str("char")
         return
     }
     if (ty == TY_U8) {
-        frost_emit_str("uint8_t")
+        frost_emit_str("unsigned char")
         return
     }
     if (ty == TY_BOOL) {
@@ -1388,14 +1501,31 @@ emit_expr :: fn(p: &mut Parser, id: i64) {
         return
     }
     if (kind == NODE_VAR) {
+        off := node^.val
+        len := node^.c
+        if (is_const(p, off, len)) {
+            frost_emit_int(const_value(p, off, len))
+        } else {
+            emit_source(p.src, off, len)
+        }
+        return
+    }
+    if (kind == NODE_STRLIT) {
+        frost_emit_str("\"")
         emit_source(p.src, node^.val, node^.c)
+        frost_emit_str("\"")
         return
     }
     if (kind == NODE_CALL) {
         fn_index := node^.val
         args := node^.a
-        frost_emit_str("mf_")
-        frost_emit_int(fn_index)
+        sym : ^Sym = arena_at(&p.fns, fn_index)
+        if (sym^.is_extern == 1) {
+            emit_source(p.src, sym^.off, sym^.len)
+        } else {
+            frost_emit_str("mf_")
+            frost_emit_int(fn_index)
+        }
         frost_emit_str("(")
         emit_args(p, args)
         frost_emit_str(")")
@@ -1640,13 +1770,38 @@ emit_prototypes :: fn(p: &mut Parser, head: i64) {
     mut id := head
     while (id != (0 - 1)) {
         node : ^Node = arena_at(&p.arena, id)
+        kind := node^.kind
         fn_index := node^.val
         params := node^.b
         is_main := node^.c
         next_id := node^.next
-        if (is_main == 0) {
+        if (kind == NODE_FUNC && is_main == 0) {
             frost_emit_str("int64_t mf_")
             frost_emit_int(fn_index)
+            frost_emit_str("(")
+            emit_param_signature(p, params)
+            frost_emit_str(");\n")
+        }
+        id = next_id
+    }
+}
+
+emit_extern_prototypes :: fn(p: &mut Parser, head: i64) {
+    mut id := head
+    while (id != (0 - 1)) {
+        node : ^Node = arena_at(&p.arena, id)
+        kind := node^.kind
+        fn_index := node^.val
+        params := node^.b
+        ret := node^.c
+        next_id := node^.next
+        if (kind == NODE_EXTERN) {
+            sym : ^Sym = arena_at(&p.fns, fn_index)
+            name_off := sym^.off
+            name_len := sym^.len
+            emit_ctype(p, ret)
+            frost_emit_str(" ")
+            emit_source(p.src, name_off, name_len)
             frost_emit_str("(")
             emit_param_signature(p, params)
             frost_emit_str(");\n")
@@ -1706,17 +1861,26 @@ emit_function :: fn(p: &mut Parser, id: i64) {
 
 emit_program :: fn(p: &mut Parser, head: i64) {
     emit_struct_decls(p)
+    emit_extern_prototypes(p, head)
     emit_prototypes(p, head)
     mut id := head
     while (id != (0 - 1)) {
-        emit_function(p, id)
         node : ^Node = arena_at(&p.arena, id)
-        id = node^.next
+        kind := node^.kind
+        next_id := node^.next
+        if (kind == NODE_FUNC) {
+            emit_function(p, id)
+        }
+        id = next_id
     }
 }
 
 main :: fn() -> i64 {
     source : ^i8 = "
+        strlen :: extern fn(s: ^i8) -> i64
+
+        ANSWER :: 42
+
         fib :: fn(n: i64) -> i64 {
             if (n < 2) { return n }
             return fib(n - 1) + fib(n - 2)
@@ -1769,6 +1933,8 @@ main :: fn() -> i64 {
             print classify(0)
             print classify(1)
             print classify(7)
+            print strlen(\"hello\")
+            print ANSWER
         }
     "
 
@@ -1781,6 +1947,7 @@ main :: fn() -> i64 {
         structs = arena_make($StructDef, 256),
         fields = arena_make($StructField, 1024),
         locals = arena_make($LocalVar, 256),
+        consts = arena_make($ConstDef, 512),
         no_struct_lit = false,
     }
     tokenize(source, frost_str_len(source), &mut parser.tokens)
