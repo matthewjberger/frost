@@ -149,12 +149,29 @@ What has been ruled out by measurement, so nobody re-runs it:
 | object emission | 4 ms | not it |
 | allocator contention | mimalloc changed nothing | not it |
 
-So the serial tail is 16 ms against a second of parallel work, and Amdahl does
-not explain it. The remaining candidates are that this machine's sixteen threads
-are eight cores with SMT and Cranelift's compile is memory-bound enough that SMT
-buys nothing, or that something inside `Context::compile` shares state. The next
-step is a thread-count sweep, 1, 2, 4, 8, 16, which separates those two answers
-in one run: memory-bound work flattens gradually, a shared lock flattens at two.
+The sweep has been run, with `FROST_THREADS=n`, on 10,241 functions:
+
+| threads | 1 | 2 | 4 | 8 | 16 |
+| --- | --- | --- | --- | --- | --- |
+| code generation | 1,215 ms | 1,203 ms | 1,091 ms | 1,072 ms | 1,032 ms |
+
+It flattens immediately. Amdahl on those numbers puts the parallel fraction near
+0.2, and the measured serial tail is 16 ms out of 1,200, so the serial work is
+not where the timer says it is. Two more things were tried and did not move it:
+one ISA per thread rather than a shared one, and mimalloc as the global
+allocator.
+
+What did help, and is kept, is not cloning each function's IR out of the context
+to hand to `define_function_bytes`. That backend uses the function only to
+resolve relocation targets against its imported names, so the value is moved out
+with `mem::replace` rather than deep copied, worth about 130 ms at this size.
+
+So the honest state is that the mechanism is correct and in place, the serial
+phases are measured and tiny, and the parallel phase does not scale for a reason
+that is not yet found. The next things to try, in order: check whether the
+threads are genuinely concurrent by watching CPU utilization during a run, since
+everything so far assumes they are; then look for shared state inside
+`Context::compile` rather than around it.
 
 **Why it was first.** It is where the time is. Code generation is 1,285 ms of a 1,289 ms
 backend at 10,241 functions, and the work is per-function on independent inputs,
