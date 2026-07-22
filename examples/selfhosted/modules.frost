@@ -1,0 +1,10 @@
+// Imports. The imported file's declarations join this one's, and a file lands
+// in the program once however many times it is named.
+
+import "lib/shapes.frost"
+
+main :: fn() -> i64 {
+    r := Rect { width = 3, height = 4 }
+    print area(r)
+    0
+}

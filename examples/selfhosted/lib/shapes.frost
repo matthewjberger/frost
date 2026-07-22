@@ -1,0 +1,10 @@
+// A module. Only what it exports can be named from outside it, so `scale`
+// below belongs to this file alone.
+
+export Rect, area
+
+Rect :: struct { width: i64, height: i64 }
+
+scale :: fn(n: i64) -> i64 { n * 2 }
+
+area :: fn(r: Rect) -> i64 { scale(r^.width * r^.height) }
