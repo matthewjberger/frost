@@ -50,7 +50,7 @@ Shape :: enum {
     Rect { width: i64, height: i64 },
 }
 
-area :: fn(s: &Shape) -> i64 {
+area :: fn(s: Shape) -> i64 {
     match s {
         case .Circle { radius }: 3 * radius * radius
         case .Rect { width, height }: width * height
@@ -60,31 +60,44 @@ area :: fn(s: &Shape) -> i64 {
 main :: fn() -> i64 {
     p := Point { x = 3, y = 4 }
     printf("%lld\n", p.x + p.y)              // 7
-    printf("%lld\n", area(&Shape::Rect { width = 4, height = 5 }))  // 20
+    printf("%lld\n", area(Shape::Rect { width = 4, height = 5 }))  // 20
     0
 }
 ```
 
-Structs pass and return by value (copied at the boundary), and `match` works
-over a value or a reference, binding payload fields.
+Structs pass and return by value, and `match` binds payload fields.
 
-## References are second-class
+## Borrowing is a parameter mode
 
-`&T` and `&mut T` are borrows. They exist only as parameters and short-lived
-temporaries, and you **cannot** store one in a field or return one. That single
-rule is why Frost needs no lifetime annotations.
+There is no `&` in the language. How a parameter is passed is a property of the
+parameter, written on its declaration, and the call site says nothing:
+
+| mode | written | means |
+| --- | --- | --- |
+| read | `p: Point` | borrowed to read, the default |
+| write | `mut p: Point` | borrowed to mutate in place |
+| move | `move p: Point` | ownership transferred |
 
 ```
-scale :: fn(p: &mut Point, k: i64) {   // borrow to mutate in place
+scale :: fn(mut p: Point, k: i64) {   // borrowed to mutate in place
     p.x = p.x * k
     p.y = p.y * k
 }
 
-// Bad :: struct { r: &Point }         // rejected: reference stored in a field
-// bad :: fn(p: &Point) -> &Point { p } // rejected: reference returned
+main :: fn() -> i64 {
+    mut p := Point { x = 3, y = 4 }
+    scale(p, 2)                       // no sigil at the call
+    printf("%lld\n", p.x)             // 6
+    0
+}
 ```
 
-Raw pointers `^T` exist as an explicit, unchecked escape hatch for FFI.
+Because a borrow is only ever a parameter, it cannot be stored in a field or
+returned. There is no reference type to write in either position. That single
+rule is why Frost needs no lifetime annotations.
+
+Raw pointers `^T` exist as an explicit, unchecked escape hatch for FFI, and
+`ptr_to(x)` is how you take one.
 
 ## Move checking and linear resources
 
@@ -124,7 +137,7 @@ Entity :: struct { hp: i64, mana: i64 }
 main :: fn() -> i64 {
     world := pool_new(16, 16)
     mut hero := Entity { hp = 100, mana = 30 }
-    h : Handle<Entity> = pool_alloc(world, &hero)
+    h : Handle<Entity> = pool_alloc(world, ptr_to(hero))
 
     printf("%lld\n", world[h].hp)   // 100
     world[h].hp = world[h].hp - 25
@@ -133,8 +146,8 @@ main :: fn() -> i64 {
 }
 ```
 
-The borrow you get from `&world[h]` is second-class, so it cannot escape the
-scope where the pool operation is valid.
+Passing `world[h]` to a function borrows it, and that borrow is a parameter mode
+like any other, so it cannot escape the scope where the pool operation is valid.
 
 ## Generics: specialize at compile time
 
@@ -145,7 +158,7 @@ type parameter is written `$T`:
 Pair :: struct($T: Type) { first: T, second: T }
 
 make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
-swap      :: fn(a: &mut $T, b: &mut $T) { t := a^  a^ = b^  b^ = t }
+swap      :: fn(mut a: $T, mut b: $T) { t := a  a = b  b = t }
 
 main :: fn() -> i64 {
     p := make_pair(3, 4)               // Pair<i64> inferred
@@ -153,7 +166,7 @@ main :: fn() -> i64 {
 
     mut x : i64 = 1
     mut y : i64 = 2
-    swap(&mut x, &mut y)
+    swap(x, y)
     printf("%lld\n", x)                // 2
     0
 }
@@ -179,10 +192,30 @@ Type parameters are erased, and they drive monomorphization (`sizeof`, the retur
 type, annotations in the body) and carry no runtime cost. This is how the typed
 pool wrappers work as an ordinary Frost library, with no dummy value needed.
 
-## Higher-order code: function pointers, not closures
+## Higher-order code: no traits, no closures
 
-Functions are values. A `fn(...) -> T` parameter holds one. There are no
-capturing closures.
+A generic algorithm takes the operation it needs as a compile-time function
+parameter, which is Frost's answer to what a trait bound expresses. The
+parameter can state the signature it requires, and the call inside the
+specialization is direct rather than through a pointer:
+
+```
+ascending :: fn(a: i64, b: i64) -> bool { a < b }
+
+best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
+    mut result := x
+    if (before(y, result)) { result = y }
+    result
+}
+
+main :: fn() -> i64 {
+    printf("%lld\n", best($i64, $ascending, 7, 3))   // 3
+    0
+}
+```
+
+When the function genuinely varies at runtime, it is an ordinary value: a
+`fn(...) -> T` parameter holds a pointer. There are no capturing closures.
 
 ```
 apply :: fn(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }

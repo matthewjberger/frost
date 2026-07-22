@@ -2901,9 +2901,9 @@ first_of :: fn(move a: $T, move b: $T) -> T { a }
 wrap :: fn(move v: $T) -> T { identity(v) }
 
 swap :: fn(mut a: $T, mut b: $T) {
-    t := a^
-    a^ = b^
-    b^ = t
+    t := a
+    a = b
+    b = t
 }
 
 main :: fn() -> i64 {
@@ -3131,9 +3131,9 @@ Op :: struct($T: Type) { f: fn($T) -> $T, seed: $T }
 
 inc :: fn(x: i64) -> i64 { x + 1 }
 swap :: fn(mut a: $T, mut b: $T) {
-    t := a^
-    a^ = b^
-    b^ = t
+    t := a
+    a = b
+    b = t
 }
 
 main :: fn() -> i64 {
@@ -4185,6 +4185,77 @@ fn a_compile_time_function_argument_specializes_and_calls_directly() {
         c_source.contains("= frost_cmp("),
         "expected a direct call to the comparator:\n{c_source}"
     );
+}
+
+// Naming a `mut` parameter means the caller's value, whatever the type and
+// whether or not the type came from a type parameter. This used to hold only
+// for concrete scalars: a `mut x: $T` bound to a scalar, and a `mut x: Struct`,
+// both assigned to the body's own reference instead of through it, so the
+// caller saw nothing and no error was reported.
+#[test]
+fn a_mut_parameter_writes_back_through_every_shape() {
+    let source = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Point :: struct { x: i64, y: i64 }
+
+swap_scalar :: fn(mut a: i64, mut b: i64) { t := a  a = b  b = t }
+swap_generic :: fn(mut a: $T, mut b: $T) { t := a  a = b  b = t }
+replace :: fn(mut p: Point, move q: Point) { p = q }
+
+main :: fn() -> i64 {
+    mut x : i64 = 1
+    mut y : i64 = 2
+    swap_scalar(x, y)
+    printf("%lld\n", x)
+
+    mut m : i64 = 3
+    mut n : i64 = 4
+    swap_generic(m, n)
+    printf("%lld\n", m)
+
+    mut a := Point { x = 1, y = 2 }
+    mut b := Point { x = 9, y = 8 }
+    swap_generic(a, b)
+    printf("%lld\n", a.x)
+
+    mut c := Point { x = 5, y = 6 }
+    replace(c, Point { x = 7, y = 0 })
+    printf("%lld\n", c.x)
+    0
+}
+"#;
+    let Some(output) = compile_and_run("mutwriteback", source) else {
+        return;
+    };
+    assert_eq!(output, "2\n4\n9\n7\n");
+}
+
+// A read-mode `$T` parameter bound to a copy type is passed by value, exactly
+// as a concrete copy-typed parameter is. It used to stay a reference, which
+// failed the moment the body stored it anywhere.
+#[test]
+fn a_read_mode_type_parameter_bound_to_a_scalar_is_a_value() {
+    let source = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Pair :: struct($T: Type) { first: T, second: T }
+make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
+
+main :: fn() -> i64 {
+    p := make_pair(3, 4)
+    printf("%lld\n", p.first + p.second)
+    m : i64 = 10
+    n : i64 = 11
+    q := make_pair(m, n)
+    printf("%lld\n", q.first + q.second)
+    0
+}
+"#;
+    let Some(output) = compile_and_run("readmodevalue", source) else {
+        return;
+    };
+    assert_eq!(output, "7\n21\n");
 }
 
 // A compile-time function parameter may say what signature it needs, and then

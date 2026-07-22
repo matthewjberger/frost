@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 
 use crate::ir::{
     BlockId, EnumLayout, EnumVariantLayout, FieldLayout, IrBinOp, IrBlock,
@@ -201,10 +201,15 @@ pub fn build_module(
                 .filter(|parameter| !is_type_parameter(parameter))
                 .map(|parameter| Parameter {
                     name: parameter.name.clone(),
-                    type_annotation: parameter
-                        .type_annotation
-                        .as_ref()
-                        .map(|ty| substitute_type(ty, &specialization.subst)),
+                    type_annotation: parameter.type_annotation.as_ref().map(
+                        |ty| {
+                            specialized_param_type(
+                                ty,
+                                &specialization.subst,
+                                parameter.mode,
+                            )
+                        },
+                    ),
                     mutable: parameter.mutable,
                     mode: parameter.mode,
                     compile_time_signature: None,
@@ -415,6 +420,51 @@ fn function_is_generic(parameters: &[Parameter]) -> bool {
     !function_type_params(parameters).is_empty()
 }
 
+// Whether an argument bound to a read-mode `$T` parameter should be passed by
+// value. A scalar literal counts even though `probe_type` cannot name it, since
+// it is not a place and has no address to borrow in the first place.
+fn argument_is_copy_value(
+    probed: Option<&Type>,
+    argument: &Expression,
+) -> bool {
+    if let Some(ty) = probed {
+        return ty.is_copy();
+    }
+    matches!(
+        argument,
+        Expression::Literal(
+            Literal::Integer(_)
+                | Literal::Float(_)
+                | Literal::Float32(_)
+                | Literal::Boolean(_)
+        )
+    )
+}
+
+// The type a specialized parameter has, which is not simply the substituted
+// one. `lower_param_modes` turns a read-mode parameter into `Ref(T)` only when
+// `T` is not copy, and it has to guess for `$T` because the answer arrives with
+// the call. Guessing "reference" is the safe direction there, since it can be
+// dropped here once the substitution says the type is copy, whereas a missing
+// reference could not be added back.
+fn specialized_param_type(
+    declared: &Type,
+    subst: &HashMap<String, Type>,
+    mode: crate::parser::ParamMode,
+) -> Type {
+    let substituted = substitute_type(declared, subst);
+    match (&substituted, declared) {
+        (Type::Ref(inner), Type::Ref(under))
+            if mode == crate::parser::ParamMode::Read
+                && matches!(under.as_ref(), Type::TypeParam(_))
+                && inner.is_copy() =>
+        {
+            inner.as_ref().clone()
+        }
+        _ => substituted,
+    }
+}
+
 fn is_type_parameter(parameter: &Parameter) -> bool {
     matches!(
         &parameter.type_annotation,
@@ -555,6 +605,16 @@ fn infer_subst_into(
             return;
         }
         _ => {}
+    }
+    // A reference parameter matched against a value argument. That is the
+    // auto-borrow at a call site, where the caller hands over a place and the
+    // callee takes its address, so inference has to look through the reference
+    // to see the type the parameter is generic over.
+    if let Type::Ref(pattern_inner) | Type::RefMut(pattern_inner) = pattern
+        && !matches!(concrete, Type::Ref(_) | Type::RefMut(_) | Type::Ptr(_))
+    {
+        infer_subst_into(pattern_inner, concrete, type_params, subst);
+        return;
     }
     if let (Some(pattern_inner), Some(concrete_inner)) =
         (single_inner(pattern), single_inner(concrete))
@@ -1228,7 +1288,12 @@ fn expand_generic_structs(
         let mut subst = HashMap::new();
         for (type_param, argument) in type_params.iter().zip(&argument_strings)
         {
-            let argument_type = crate::parser::type_from_string(argument)?;
+            let argument_type = crate::parser::type_from_string(argument)
+                .with_context(|| {
+                    format!(
+                        "native backend: type argument '{argument}' of '{instance}'"
+                    )
+                })?;
             subst.insert(type_param.clone(), argument_type);
         }
         let concrete_fields: Vec<StructField> = fields
@@ -2625,7 +2690,27 @@ impl<'a> FunctionLowering<'a> {
                 subst.insert(parameter.name.clone(), bound);
                 continue;
             }
-            let param_ty = parameter_type(parameter);
+            // A read-mode `$T` parameter became `Ref(T)` before `T` was known.
+            // Had `T` been written out as a copy type it would have stayed a
+            // value, so once the argument says it is one, this parameter is a
+            // value too. Otherwise the body ends up holding a reference where
+            // the concrete function would hold the value, which is a type error
+            // the moment it is stored anywhere.
+            let param_ty = match parameter_type(parameter) {
+                Type::Ref(inner)
+                    if matches!(
+                        inner.as_ref(),
+                        Type::TypeParam(param)
+                            if generic.type_params.contains(param)
+                    ) && argument_is_copy_value(
+                        self.probe_type(argument).as_ref(),
+                        argument,
+                    ) =>
+                {
+                    *inner
+                }
+                other => other,
+            };
             // Auto-borrow: a value place passed to a `read`/`mut` reference
             // parameter has its address taken; an argument that is already a
             // reference is forwarded as-is. The type parameter is inferred from

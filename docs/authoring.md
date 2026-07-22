@@ -54,8 +54,8 @@ its return value is the process exit code.
 Scalars are `i8 i16 i32 i64 isize`, `u8 u16 u32 u64 usize`, `f32 f64`, `bool`,
 and `void`. Integer arithmetic wraps at the type width and is never overflow
 checked. Aggregates are structs, enums, fixed arrays `[N]T`, and slices `[]T`.
-References are `&T` and `&mut T`, a raw pointer is `^T`, and `Handle<T>` names an
-element of a pool.
+A raw pointer is `^T` and `Handle<T>` names an element of a pool. There is no
+reference type to write: borrowing is a parameter mode (see below).
 
 ## Structs, enums, and match
 
@@ -68,7 +68,7 @@ Shape :: enum {
     Rect { width: i64, height: i64 },
 }
 
-area :: fn(s: &Shape) -> i64 {
+area :: fn(s: Shape) -> i64 {
     match s {
         case .Circle { radius }: 3 * radius * radius
         case .Rect { width, height }: width * height
@@ -78,7 +78,7 @@ area :: fn(s: &Shape) -> i64 {
 main :: fn() -> i64 {
     p := Point { x = 3, y = 4 }
     c := Shape::Circle { radius = 5 }
-    area(&c)
+    area(c)
 }
 ```
 
@@ -88,10 +88,13 @@ and the wildcard `_` all work.
 
 ## Ownership in one page
 
-- **References are second-class.** A `&T` or `&mut T` may be a parameter or a
-  short-lived local, but it cannot be stored in a field, put in an array, or
-  returned. This is why Frost needs no lifetimes. When you want something that
-  outlives a call, use a `Handle<T>`, not a reference.
+- **Borrowing is a parameter mode.** `p: T` borrows to read, `mut p: T` borrows
+  to mutate in place, `move p: T` takes ownership. The call site writes nothing:
+  `scale(p, 2)`, not `scale(&mut p, 2)`. Since a borrow exists only as a
+  parameter, it cannot be stored in a field, put in an array, or returned, and
+  there is no reference type to write in those positions anyway. This is why
+  Frost needs no lifetimes. When you want something that outlives a call, use a
+  `Handle<T>`. For a raw address, `ptr_to(x)` gives a `^T`, outside the checks.
 - **Move checking.** Structs, enums, and slices move when passed by value,
   assigned, or returned. Using one after it moves is an error. Scalars,
   pointers, handles, and `str` are copy.
@@ -179,12 +182,12 @@ top. There is no `pub` anywhere.
 // geometry.frost
 export area, Shape
 Shape :: enum { Circle { r: i64 }, Rect { w: i64, h: i64 } }
-area :: fn(s: &Shape) -> i64 { ... }
+area :: fn(s: Shape) -> i64 { ... }
 scale :: fn(x: i64) -> i64 { ... }   // private, not exported
 
 // main.frost
 import "geometry.frost"
-main :: fn() -> i64 { area(&Shape::Circle { r = 5 }) }
+main :: fn() -> i64 { area(Shape::Circle { r = 5 }) }
 ```
 
 A private item is usable inside its own file, so `area` may call `scale`, but an
@@ -216,9 +219,10 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 - Struct fields are set with `=`, not `:`. `Point { x = 1, y = 2 }`.
 - Match arms are `case pattern: body`, and variant patterns lead with a dot.
 - There is no `let`. Use `:=`, `:`, or `::`.
-- Deref a reference-to-scalar or a raw pointer with postfix `^`. `p^`, `p^.field`.
-  Field access through a reference to a struct is direct, `r.field`.
-- You cannot return or store a `&T`. Use a `Handle<T>`.
+- Deref a raw pointer with postfix `^`. `p^`, `p^.field`. Field access on a
+  borrowed struct parameter is direct, `r.field`.
+- There is no `&`. Borrowing is written on the parameter, not at the call.
+- You cannot return or store a borrow. Use a `Handle<T>`.
 - A `linear` value must be consumed on every path.
 - Integer arithmetic wraps. Do not rely on overflow being caught.
 - There is no `pub`. Control visibility with the `export` line, not per item.
@@ -234,8 +238,9 @@ cheap to grep, and hard to get subtly wrong.
 - Nothing runs invisibly. There is no `Drop` at scope exit, no auto-deref, no
   hidden allocation, and no implicit copy of a large value. What happens is
   written down.
-- Second-class references remove lifetimes, so there is no annotation to get
-  wrong. When a reference will not do, the answer is always a handle.
+- Borrowing as a parameter mode removes lifetimes, so there is no annotation to
+  get wrong, and no sigil to choose at a call. When a borrow will not do, the
+  answer is always a handle.
 - Private-by-default with an explicit export line means a module's surface is one
   line you can read, and nothing leaks by accident.
 
@@ -250,7 +255,7 @@ pool_get   :: extern fn(pool: ^u8, handle: i64) -> ^u8
 Kind   :: enum { Player, Enemy { damage: i64 } }
 Entity :: struct { hp: i64, kind: Kind }
 
-delta :: fn(k: &Kind) -> i64 {
+delta :: fn(k: Kind) -> i64 {
     match k {
         case .Player: 0
         case .Enemy { damage }: 0 - damage
@@ -261,11 +266,11 @@ main :: fn() -> i64 {
     world := pool_new(16, sizeof(Entity))
 
     mut hero := Entity { hp = 100, kind = Kind::Player }
-    player : Handle<Entity> = pool_alloc(world, &hero)
+    player : Handle<Entity> = pool_alloc(world, ptr_to(hero))
     mut foe := Entity { hp = 30, kind = Kind::Enemy { damage = 15 } }
-    goblin : Handle<Entity> = pool_alloc(world, &foe)
+    goblin : Handle<Entity> = pool_alloc(world, ptr_to(foe))
 
-    world[player].hp = world[player].hp + delta(&world[goblin].kind)
+    world[player].hp = world[player].hp + delta(world[goblin].kind)
     printf("%lld\n", world[player].hp)          // 85
     0
 }
