@@ -26,12 +26,14 @@
 // global table, and a name becomes the `mf_<index>` of its emitted C function,
 // which also keeps user names from colliding with the C runtime.
 
-malloc         :: extern fn(size: i64) -> ^u8
-frost_byte_at  :: extern fn(s: ^i8, i: i64) -> i64
-frost_str_len  :: extern fn(s: ^i8) -> i64
-frost_emit_str :: extern fn(s: ^i8)
-frost_emit_int :: extern fn(value: i64)
+malloc          :: extern fn(size: i64) -> ^u8
+frost_byte_at   :: extern fn(s: ^i8, i: i64) -> i64
+frost_str_len   :: extern fn(s: ^i8) -> i64
+frost_emit_str  :: extern fn(s: ^i8)
+frost_emit_int  :: extern fn(value: i64)
 frost_emit_char :: extern fn(byte: i64)
+frost_read_file :: extern fn(path: ^i8) -> ^i8
+frost_getenv    :: extern fn(name: ^i8) -> ^i8
 
 // Node kinds.
 NODE_NUM        :: 0
@@ -190,12 +192,14 @@ Node :: struct {
     next: i64,
 }
 
-// An interned function name: a byte range into the source, plus a flag marking
-// it as an `extern` (so calls to it emit its real name rather than mf_<index>).
+// An interned function name: a byte range into the source, a flag marking it as
+// an `extern` (so calls emit its real name rather than mf_<index>), and its
+// return type so a call expression can be typed.
 Sym :: struct {
     off: i64,
     len: i64,
     is_extern: i64,
+    ret_type: i64,
 }
 
 // A compile-time integer constant `name :: value`, inlined at each use.
@@ -555,12 +559,20 @@ intern_global :: fn(p: &mut Parser, offset: i64, length: i64) -> i64 {
         }
         i = i + 1
     }
-    arena_push(&mut p.fns, Sym { off = offset, len = length, is_extern = 0 })
+    arena_push(
+        &mut p.fns,
+        Sym { off = offset, len = length, is_extern = 0, ret_type = TY_I64 },
+    )
 }
 
 mark_extern :: fn(p: &mut Parser, fn_index: i64) {
     entry : ^Sym = arena_at(&p.fns, fn_index)
     entry^.is_extern = 1
+}
+
+set_ret_type :: fn(p: &mut Parser, fn_index: i64, ret: i64) {
+    entry : ^Sym = arena_at(&p.fns, fn_index)
+    entry^.ret_type = ret
 }
 
 record_generic_fn :: fn(p: &mut Parser, fn_index: i64, tparam_off: i64,
@@ -638,6 +650,18 @@ new_named_node :: fn(p: &mut Parser, kind: i64, child: i64, offset: i64,
         &mut p.arena,
         Node { kind = kind, a = child, b = 0, c = length, val = offset,
             next = 0 - 1 },
+    )
+}
+
+// A local binding. `b` carries the annotated type, or -1 to infer the type from
+// the initializer. An annotation wins because a generic call cannot be typed
+// precisely from the callee alone (`entry : ^Token = arena_at(...)`).
+new_let_node :: fn(p: &mut Parser, value: i64, offset: i64, length: i64,
+    annotation: i64) -> i64 {
+    arena_push(
+        &mut p.arena,
+        Node { kind = NODE_LET, a = value, b = annotation, c = length,
+            val = offset, next = 0 - 1 },
     )
 }
 
@@ -801,6 +825,14 @@ parse_primary :: fn(p: &mut Parser) -> i64 {
     kind := cur(p)
     if (kind == TOK_INT) {
         return parse_number(p)
+    }
+    if (kind == TOK_KW_TRUE) {
+        advance(p)
+        return new_node(p, NODE_NUM, 0, 0, 1)
+    }
+    if (kind == TOK_KW_FALSE) {
+        advance(p)
+        return new_node(p, NODE_NUM, 0, 0, 0)
     }
     if (kind == TOK_STR) {
         offset := cur_off(p)
@@ -1243,14 +1275,15 @@ parse_stmt :: fn(p: &mut Parser) -> i64 {
         offset := cur_off(p)
         length := cur_len(p)
         advance(p)
+        mut ann : i64 = 0 - 1
         if (cur(p) == TOK_COLON) {
-            parse_type_annotation(p)
+            ann = parse_type_annotation(p)
             advance(p)
         } else {
             advance(p)
         }
         value := parse_expr(p)
-        return new_named_node(p, NODE_LET, value, offset, length)
+        return new_let_node(p, value, offset, length, ann)
     }
     if (kind == TOK_KW_PRINT) {
         advance(p)
@@ -1259,6 +1292,9 @@ parse_stmt :: fn(p: &mut Parser) -> i64 {
     }
     if (kind == TOK_KW_RETURN) {
         advance(p)
+        if (cur(p) == TOK_RBRACE) {
+            return new_node(p, NODE_RETURN, 0 - 1, 0, 0)
+        }
         value := parse_expr(p)
         return new_node(p, NODE_RETURN, value, 0, 0)
     }
@@ -1271,7 +1307,11 @@ parse_stmt :: fn(p: &mut Parser) -> i64 {
         mut else_head : i64 = 0 - 1
         if (cur(p) == TOK_KW_ELSE) {
             advance(p)
-            else_head = parse_block(p)
+            if (cur(p) == TOK_KW_IF) {
+                else_head = parse_stmt(p)
+            } else {
+                else_head = parse_block(p)
+            }
         }
         return new_node(p, NODE_IF, condition, then_head, else_head)
     }
@@ -1292,16 +1332,16 @@ parse_stmt :: fn(p: &mut Parser) -> i64 {
         advance(p)
         advance(p)
         value := parse_expr(p)
-        return new_named_node(p, NODE_LET, value, offset, length)
+        return new_let_node(p, value, offset, length, 0 - 1)
     }
     if (cur(p) == TOK_IDENT && peek_kind(p, 1) == TOK_COLON) {
         offset := cur_off(p)
         length := cur_len(p)
         advance(p)
-        parse_type_annotation(p)
+        ann := parse_type_annotation(p)
         advance(p)
         value := parse_expr(p)
-        return new_named_node(p, NODE_LET, value, offset, length)
+        return new_let_node(p, value, offset, length, ann)
     }
 
     // Otherwise the statement starts with a full expression. If `=` follows it is
@@ -1396,6 +1436,7 @@ parse_function :: fn(p: &mut Parser) -> i64 {
         ret = parse_type(p)
     }
     p.last_return_type = ret
+    set_ret_type(p, fn_index, ret)
     body := parse_block(p)
     new_func_node(p, body, params, fn_index, is_main)
 }
@@ -1470,6 +1511,7 @@ parse_extern :: fn(p: &mut Parser) -> i64 {
         advance(p)
         ret = parse_type(p)
     }
+    set_ret_type(p, fn_index, ret)
     arena_push(
         &mut p.arena,
         Node { kind = NODE_EXTERN, a = 0, b = params, c = ret, val = fn_index,
@@ -1568,6 +1610,35 @@ emit_source :: fn(src: ^i8, off: i64, len: i64) {
     }
 }
 
+// Emit the content of a string literal for C. Frost and C share escape syntax,
+// so a backslash escape is passed through whole; the one difference is that Frost
+// allows raw newlines and tabs inside a string, which C forbids, so those are
+// escaped.
+emit_string_content :: fn(src: ^i8, off: i64, len: i64) {
+    mut k : i64 = 0
+    while (k < len) {
+        b := frost_byte_at(src, off + k)
+        if (b == CH_BACKSLASH) {
+            frost_emit_char(b)
+            k = k + 1
+            if (k < len) {
+                frost_emit_char(frost_byte_at(src, off + k))
+            }
+        } else if (b == CH_LF) {
+            frost_emit_char(CH_BACKSLASH)
+            frost_emit_char(CH_LOWER_N)
+        } else if (b == CH_TAB) {
+            frost_emit_char(CH_BACKSLASH)
+            frost_emit_char(CH_LOWER_T)
+        } else if (b == CH_CR) {
+            k = k
+        } else {
+            frost_emit_char(b)
+        }
+        k = k + 1
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Types during code generation. A local's type is recorded when it is bound, so
 // a later `:=` or field access can be typed by walking the expression.
@@ -1625,6 +1696,10 @@ type_of :: fn(p: &mut Parser, id: i64) -> i64 {
     }
     if (kind == NODE_VAR) {
         return lookup_local(p, node^.val, node^.c)
+    }
+    if (kind == NODE_CALL) {
+        sym : ^Sym = arena_at(&p.fns, node^.val)
+        return sym^.ret_type
     }
     if (kind == NODE_FIELD) {
         base := node^.a
@@ -1747,7 +1822,7 @@ emit_expr :: fn(p: &mut Parser, id: i64) {
     }
     if (kind == NODE_STRLIT) {
         frost_emit_str("\"")
-        emit_source(p.src, node^.val, node^.c)
+        emit_string_content(p.src, node^.val, node^.c)
         frost_emit_str("\"")
         return
     }
@@ -1967,9 +2042,13 @@ emit_stmt :: fn(p: &mut Parser, id: i64) {
     kind := node^.kind
     if (kind == NODE_LET) {
         value := node^.a
+        annotation := node^.b
         off := node^.val
         len := node^.c
-        ty := type_of(p, value)
+        mut ty := annotation
+        if (annotation == (0 - 1)) {
+            ty = type_of(p, value)
+        }
         emit_ctype(p, ty)
         frost_emit_str(" ")
         emit_source(p.src, off, len)
@@ -2029,9 +2108,13 @@ emit_stmt :: fn(p: &mut Parser, id: i64) {
     }
     if (kind == NODE_RETURN) {
         value := node^.a
-        frost_emit_str("return (")
-        emit_expr(p, value)
-        frost_emit_str(");\n")
+        if (value == (0 - 1)) {
+            frost_emit_str("return 0;\n")
+        } else {
+            frost_emit_str("return (")
+            emit_expr(p, value)
+            frost_emit_str(");\n")
+        }
         return
     }
     if (kind == NODE_IF) {
@@ -2196,7 +2279,7 @@ emit_function_body :: fn(p: &mut Parser, body: i64) {
         kind := node^.kind
         next_id := node^.next
         if (next_id == (0 - 1)) {
-            if (kind == NODE_EXPRSTMT) {
+            if (kind == NODE_EXPRSTMT && type_of(p, node^.a) != TY_VOID) {
                 frost_emit_str("return (")
                 emit_expr(p, node^.a)
                 frost_emit_str(");\n")
@@ -2318,7 +2401,13 @@ emit_program :: fn(p: &mut Parser, head: i64) {
 }
 
 main :: fn() -> i64 {
-    source : ^i8 = "
+    // Compile the file named by the MINIFROST_INPUT environment variable when it
+    // is set (the self-hosting fixpoint feeds minifrost.frost itself through
+    // here), and otherwise fall back to the built-in demonstration program.
+    input_path := frost_getenv("MINIFROST_INPUT")
+    mut source : ^i8 = frost_read_file(input_path)
+    if (frost_str_len(source) == 0) {
+        source = "
         strlen :: extern fn(s: ^i8) -> i64
 
         ANSWER :: 42
@@ -2393,19 +2482,20 @@ main :: fn() -> i64 {
             print box_get(&h.item)
         }
     "
+    }
 
     mut parser := Parser {
         src = source,
-        tokens = arena_make($Token, 8192),
+        tokens = arena_make($Token, 262144),
         ti = 0,
-        arena = arena_make($Node, 4096),
-        fns = arena_make($Sym, 1024),
-        structs = arena_make($StructDef, 256),
-        fields = arena_make($StructField, 1024),
-        locals = arena_make($LocalVar, 256),
-        consts = arena_make($ConstDef, 512),
-        instances = arena_make($Instance, 256),
-        generic_fns = arena_make($GenericFn, 64),
+        arena = arena_make($Node, 262144),
+        fns = arena_make($Sym, 8192),
+        structs = arena_make($StructDef, 4096),
+        fields = arena_make($StructField, 8192),
+        locals = arena_make($LocalVar, 4096),
+        consts = arena_make($ConstDef, 4096),
+        instances = arena_make($Instance, 4096),
+        generic_fns = arena_make($GenericFn, 256),
         type_param_off = 0,
         type_param_len = 0,
         type_binding = 0,

@@ -1,35 +1,43 @@
-# Mini-Frost: a compiler written in Frost
+# Mini-Frost: a self-hosting compiler written in Frost
 
-`minifrost.frost` is a small compiler, written in Frost, for a Frost-like
-subset language. It reads a Mini-Frost program, builds an AST, and emits a C
-translation unit; compiling and running that C reproduces the program's output.
-So it is a real code generator written in Frost that emits native code, the same
-way Frost's own primary backend emits C and links it.
+`minifrost.frost` is a compiler, written in Frost, for a subset of Frost. It
+lexes the source, parses it, and emits a C translation unit; compiling and
+running that C reproduces the program's output. So it is a real code generator
+written in Frost that emits native code, the same way Frost's own primary
+backend emits C and links it.
 
-It is deliberately scoped to what the native language expresses today, and it is
-written the way the language wants you to write a compiler: a Frost-native arena
-for the AST, integer indices instead of heap pointers between nodes, and free
-functions over that data. There are no closures and no dynamic collections, and
-every reference is second-class. Its memory comes from the language's own
-allocator, not a runtime pool.
+**It self-hosts.** The subset it accepts is large enough to include its own
+source, so minifrost compiles minifrost.frost. The C that produces builds a
+second compiler which compiles the same source again, and the two translation
+units are byte-identical, the classic three-stage bootstrap fixpoint. The
+`bootstrap_minifrost_self_hosts` test in `tests/native.rs` checks it.
+
+It is written the way the language wants a compiler written: Frost-native arenas
+for the tokens, the AST, and the symbol tables, integer indices instead of heap
+pointers between nodes, and free functions over that data. There are no closures
+and no dynamic collections, every reference is second-class, and its memory comes
+from the language's own allocator, not a runtime pool.
 
 ## The language it compiles
 
-A subset of Frost's own syntax.
+A subset of Frost's own syntax, large enough to write this compiler in.
 
-- Definitions `name :: fn(p: i64, q: i64) -> i64 { ... }`, called as `name(args)`
-  inside any expression, including recursively. Parameter and return types are
-  parsed (everything is `i64` today) and every function lowers to an `int64_t` C
-  function.
-- The function named `main` is the entry point and becomes C `main`.
-- Locals `x := expr` and `mut x : i64 = expr`, reassignment `x = expr`. Each
-  local becomes a named C variable of its own.
-- `return expr`.
-- Arithmetic (`+ - * / %`) with precedence, and parentheses.
-- Comparisons (`< > <= >= == !=`) and boolean `&&` and `||`.
-- `print expr` (a temporary convenience, to be replaced by `extern` calls once
-  those are supported).
-- `if (expr) { ... } else { ... }` and `while (expr) { ... }`.
+- Definitions `name :: fn(p: T, q: T) -> R { ... }` with typed parameters and a
+  return type, called recursively. Constants `name :: value`, and `extern`
+  declarations `name :: extern fn(...) -> R` that lower to a C prototype and call.
+- Structs `Name :: struct { field: T, ... }`, struct literals, field access and
+  assignment, and structs passed by value.
+- Generics by monomorphization: `Name :: struct($T: Type) { ... }` and generic
+  functions over `$T`, instantiated per concrete type argument.
+- Types `i64`, `i8`, `u8`, `bool`, pointers `^T`, and references `&T`/`&mut T`,
+  with `e^` deref, `e[i]` indexing, `ptr_to`/`ptr_cast`/`sizeof`, and field
+  access that auto-dereferences a pointer or reference base.
+- Locals `x := e` and `mut x : T = e` (an annotation wins over inference),
+  assignment to any place, and an implicit return from a trailing expression.
+- `if`/`else` (and `else if`), `while`, `match` on integers to a `switch`,
+  arithmetic and comparisons, boolean `&&`/`||`, string literals, `true`/`false`.
+- `print expr` as a built-in convenience (the demonstration program uses it; the
+  compiler's own source uses `extern` emit functions instead).
 
 Identifiers are letter runs that may include underscores, uppercase letters, and
 digits after the first character (`sum`, `count`, `fib`, `is_main`, `Node`).

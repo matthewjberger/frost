@@ -484,6 +484,120 @@ fn bootstrap_minifrost_emits_working_c() {
     );
 }
 
+// Compile emitted C together with the runtime into an executable, returning its
+// path. The caller runs it (optionally with environment variables) and removes it.
+fn compile_c_with_runtime(name: &str, c_source: &str) -> Option<PathBuf> {
+    let compiler = c_compiler()?;
+    let directory = std::env::temp_dir();
+    let c_path = directory.join(format!("frost_selfhost_{name}.c"));
+    let exe_path = directory.join(format!(
+        "frost_selfhost_{name}{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    std::fs::write(&c_path, c_source).unwrap();
+    let runtime =
+        format!("{}/runtime/frost_runtime.c", env!("CARGO_MANIFEST_DIR"));
+    let compile = Command::new(compiler)
+        .arg("-std=c11")
+        .arg(&c_path)
+        .arg(&runtime)
+        .arg("-o")
+        .arg(&exe_path)
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "self-hosted C failed to compile for {name}:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let _ = std::fs::remove_file(&c_path);
+    Some(exe_path)
+}
+
+// The self-hosting fixpoint: minifrost compiles its own source, the resulting
+// compiler compiles that source again, and the two emitted translation units are
+// byte-identical (the classic three-stage bootstrap check).
+#[test]
+fn bootstrap_minifrost_self_hosts() {
+    if c_compiler().is_none() {
+        return;
+    }
+    let source_file =
+        format!("{}/bootstrap/minifrost.frost", env!("CARGO_MANIFEST_DIR"));
+
+    // Stage 1: the frost-hosted minifrost compiles minifrost.frost.
+    let Some(gen1_c) =
+        compile_and_run_with_input("selfhost1", MINIFROST, &source_file)
+    else {
+        return;
+    };
+    assert!(
+        gen1_c.lines().count() > 1000,
+        "self-hosted output implausibly small ({} lines)",
+        gen1_c.lines().count()
+    );
+
+    // Stage 2: build a compiler from that C and have it compile the source again.
+    let Some(gen1_exe) = compile_c_with_runtime("gen1", &gen1_c) else {
+        return;
+    };
+    let gen2 = Command::new(&gen1_exe)
+        .env("MINIFROST_INPUT", &source_file)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&gen1_exe);
+    assert!(
+        gen2.status.success(),
+        "self-hosted compiler exited with failure"
+    );
+    let gen2_c = String::from_utf8_lossy(&gen2.stdout).replace("\r\n", "\n");
+
+    assert_eq!(gen1_c, gen2_c, "self-hosting is not a fixpoint");
+}
+
+// Compile a Frost program to a native executable, run it with MINIFROST_INPUT
+// set, and return its stdout.
+fn compile_and_run_with_input(
+    name: &str,
+    source: &str,
+    input: &str,
+) -> Option<String> {
+    if !linker_available() {
+        return None;
+    }
+    let directory = std::env::temp_dir();
+    let source_path = directory.join(format!("frost_native_{name}.frost"));
+    let exe_path = directory.join(format!(
+        "frost_native_{name}{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    std::fs::write(&source_path, source).unwrap();
+    let frost = env!("CARGO_BIN_EXE_frost");
+    let compile = Command::new(frost)
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe_path)
+        .arg(&source_path)
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "compilation failed for {name}:\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(&exe_path)
+        .env("MINIFROST_INPUT", input)
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "native binary {name} exited with failure"
+    );
+    let _ = std::fs::remove_file(&source_path);
+    let _ = std::fs::remove_file(&exe_path);
+    Some(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"))
+}
+
 fn run_test_mode(name: &str, source: &str) -> Option<(String, bool)> {
     c_compiler()?;
     let directory = std::env::temp_dir();
