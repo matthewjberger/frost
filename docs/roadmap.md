@@ -148,10 +148,58 @@ relocs)` exists in cranelift-module 0.116 and is the seam for handing back
 separately compiled code. So: declare serially, build and `Context::compile` in
 parallel, `define_function_bytes` serially.
 
-**The cost.** `Generator` reaches the module in eight places (`make_signature`
-five times, `declare_func_in_func` five, `declare_data_in_func` once) and would
-need to carry a `(call_conv, ModuleDeclarations)` handle instead of
-`&mut ObjectModule`. That is a real refactor of the backend's core, and the class
+**The shape, worked out.** `Generator` touches the module in fifteen places, but
+only eight of them need the real thing, and they are all in `declare_strings`,
+`declare_functions`, and the last two lines of `define_function`. The other seven
+are `make_signature` and the two `*_in_func` helpers, which need nothing but the
+call convention and the declarations. So the split is clean:
+
+```rust
+struct Decls {
+    call_conv: isa::CallConv,
+    // Signature and whether the symbol is colocated, per declared function.
+    functions: HashMap<FuncId, (Signature, bool)>,
+    data: HashMap<DataId, bool>,
+}
+```
+
+with the two helpers replicating the module's own implementations exactly, both
+verified against cranelift-module 0.116:
+
+```rust
+fn declare_func_in_func(&self, id: FuncId, func: &mut ir::Function) -> ir::FuncRef {
+    let (signature, colocated) = &self.functions[&id];
+    let signature = func.import_signature(signature.clone());
+    let name = func.declare_imported_user_function(ir::UserExternalName {
+        namespace: 0,
+        index: id.as_u32(),
+    });
+    func.import_function(ir::ExtFuncData {
+        name: ir::ExternalName::user(name),
+        signature,
+        colocated: *colocated,
+    })
+}
+// data is the same with namespace 1, create_global_value and
+// GlobalValueData::Symbol { offset: Imm64::new(0), tls: false }
+```
+
+Name the field `module` and the seven translation sites do not change at all.
+
+**The three phases.** Declare serially as now. Then, per thread over a chunk of
+functions, build the `ir::Function` and call
+`context.compile(isa, &mut ControlPlane::default())`, keeping
+`code.buffer.data().to_vec()`, `code.buffer.relocs().to_vec()` and
+`code.alignment` so nothing borrows the context across the join. Then serially
+`module.define_function_bytes(func_id, &func, alignment as u64, &bytes,
+&relocs)`. `std::thread::scope` over chunks avoids taking a dependency on rayon
+for what is one `map`.
+
+Note that `Module::define_function` compiles inside itself, which is why the
+compile has to move to `Context::compile` explicitly. That is the whole reason
+this is a refactor rather than a loop change.
+
+**The cost.** That is a real refactor of the backend's core, and the class
 of bug it invites is the one that passes the test suite and corrupts output, the
 way the sret register and the byte-stride bugs both did. Do it with the
 differential oracle running, not after.
