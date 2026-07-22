@@ -68,6 +68,10 @@ const char *frost_read_file(const char *path) {
     return buffer;
 }
 
+void frost_byte_set(char *buffer, int64_t index, int64_t value) {
+    buffer[index] = (char)value;
+}
+
 void frost_test_start(const char *name) {
     printf("test %s ... ", name);
     fflush(stdout);
