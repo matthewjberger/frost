@@ -145,11 +145,11 @@ main :: fn() -> i64 {
 #[test]
 fn borrow_exclusivity_errors_report_a_source_line() {
     let source = r#"
-add_both :: fn(a: &mut i64, b: &mut i64) -> i64 { a^ + b^ }
+add_both :: fn(mut a: i64, mut b: i64) -> i64 { a^ + b^ }
 
 main :: fn() -> i64 {
     mut value : i64 = 1
-    total := add_both(&mut value, &mut value)
+    total := add_both(value, value)
     total
 }
 "#;
@@ -202,24 +202,6 @@ main :: fn() -> i64 {
     assert!(
         message.contains("never consumed") || message.contains("linear"),
         "expected a discarded-linear error, got:\n{message}"
-    );
-}
-
-#[test]
-fn reference_escape_errors_report_a_source_line() {
-    let source = r#"
-leak :: fn(x: &i64) -> &i64 { x }
-
-main :: fn() -> i64 { 0 }
-"#;
-    let message = compile_error("refescape", source);
-    assert!(
-        message.contains("at line"),
-        "expected a located reference-escape error, got:\n{message}"
-    );
-    assert!(
-        message.contains("second-class") || message.contains("reference"),
-        "expected a reference-escape error, got:\n{message}"
     );
 }
 
@@ -485,7 +467,7 @@ Arena :: struct($N: usize) {
     offset: i64,
 }
 
-alloc_int :: fn(a: &mut Arena<256>) -> ^i64 {
+alloc_int :: fn(mut a: Arena<256>) -> ^i64 {
     slot := ptr_to(a.data[a.offset])
     a.offset = a.offset + sizeof(i64)
     ptr_cast($i64, slot)
@@ -942,7 +924,7 @@ arena_new :: fn(cap: i64) -> Arena {
 
 arena_destroy :: fn(move a: Arena) { free(a.data) }
 
-alloc_int :: fn(a: &mut Arena) -> ^i64 {
+alloc_int :: fn(mut a: Arena) -> ^i64 {
     slot := ptr_to(a.data[a.offset])
     a.offset = a.offset + sizeof(i64)
     ptr_cast($i64, slot)
@@ -950,9 +932,9 @@ alloc_int :: fn(a: &mut Arena) -> ^i64 {
 
 main :: fn() -> i64 {
     mut a := arena_new(256)
-    p := alloc_int(&mut a)
+    p := alloc_int(a)
     p^ = 42
-    q := alloc_int(&mut a)
+    q := alloc_int(a)
     q^ = 100
     printf("%lld\n", p^ + q^)
     printf("%lld\n", a.offset)
@@ -983,7 +965,7 @@ bump_take :: fn(state: ^u8, size: i64) -> ^u8 {
 
 Allocator :: struct { take: fn(^u8, i64) -> ^u8, state: ^u8 }
 
-alloc :: fn(a: &Allocator, size: i64) -> ^u8 {
+alloc :: fn(a: Allocator, size: i64) -> ^u8 {
     a.take(a.state, size)
 }
 
@@ -991,9 +973,9 @@ main :: fn() -> i64 {
     mut backing : [64]u8 = [0; 64]
     mut bump : Bump = Bump { data = ptr_to(backing[0]), cap = 64, offset = 0 }
     a : Allocator = Allocator { take = bump_take, state = ptr_cast($u8, ptr_to(bump)) }
-    p := ptr_cast($i64, alloc(&a, 8))
+    p := ptr_cast($i64, alloc(a, 8))
     p^ = 42
-    q := ptr_cast($i64, alloc(&a, 8))
+    q := ptr_cast($i64, alloc(a, 8))
     q^ = 7
     printf("%lld\n", p^ + q^)
     printf("%lld\n", bump.offset)
@@ -1020,13 +1002,13 @@ Arena :: struct($N: usize) {
     offset: i64,
 }
 
-alloc_point :: fn(a: &mut Arena<128>) -> ^Point {
+alloc_point :: fn(mut a: Arena<128>) -> ^Point {
     slot := ptr_to(a.data[a.offset])
     a.offset = a.offset + sizeof(Point)
     ptr_cast($Point, slot)
 }
 
-alloc_int :: fn(a: &mut Arena<128>) -> ^i64 {
+alloc_int :: fn(mut a: Arena<128>) -> ^i64 {
     slot := ptr_to(a.data[a.offset])
     a.offset = a.offset + sizeof(i64)
     ptr_cast($i64, slot)
@@ -1034,16 +1016,16 @@ alloc_int :: fn(a: &mut Arena<128>) -> ^i64 {
 
 main :: fn() -> i64 {
     mut arena : Arena<128> = Arena { data = [0; 128], offset = 0 }
-    p : ^Point = alloc_point(&mut arena)
+    p : ^Point = alloc_point(arena)
     p^.x = 3
     p^.y = 4
-    q : ^i64 = alloc_int(&mut arena)
+    q : ^i64 = alloc_int(arena)
     q^ = 99
     printf("%lld\n", p^.x)
     printf("%lld\n", q^)
     printf("%lld\n", arena.offset)
     arena.offset = 0
-    r : ^i64 = alloc_int(&mut arena)
+    r : ^i64 = alloc_int(arena)
     r^ = 7
     printf("%lld\n", r^)
     printf("%lld\n", arena.offset)
@@ -1067,12 +1049,12 @@ Buffer :: struct($T: Type, $N: usize) {
     len: i64,
 }
 
-push :: fn(b: &mut Buffer<i64, 4>, value: i64) {
+push :: fn(mut b: Buffer<i64, 4>, value: i64) {
     b.data[b.len] = value
     b.len = b.len + 1
 }
 
-total :: fn(b: &Buffer<i64, 4>) -> i64 {
+total :: fn(b: Buffer<i64, 4>) -> i64 {
     view : []i64 = b.data
     mut sum : i64 = 0
     mut i : i64 = 0
@@ -1088,12 +1070,12 @@ main :: fn() -> i64 {
         data = [0, 0, 0, 0],
         len = 0,
     }
-    push(&mut b, 10)
-    push(&mut b, 20)
-    push(&mut b, 30)
+    push(b, 10)
+    push(b, 20)
+    push(b, 30)
     printf("%lld\n", b.len)
     printf("%lld\n", b.data[1])
-    printf("%lld\n", total(&b))
+    printf("%lld\n", total(b))
     0
 }
 "#;
@@ -1118,19 +1100,19 @@ Slab :: struct($T: Type, $N: usize) {
     free_count: i64,
 }
 
-reset :: fn(s: &mut Slab<Entity, 4>) {
+reset :: fn(mut s: Slab<Entity, 4>) {
     mut i : i64 = 0
     while (i < 4) { s.generations[i] = 0  s.free_list[i] = 3 - i  i = i + 1 }
     s.free_count = 4
 }
-insert :: fn(s: &mut Slab<Entity, 4>, move value: Entity) -> i64 {
+insert :: fn(mut s: Slab<Entity, 4>, move value: Entity) -> i64 {
     s.free_count = s.free_count - 1
     index := s.free_list[s.free_count]
     s.storage[index] = value
     packed := (s.generations[index] << 32) | index
     packed
 }
-release :: fn(s: &mut Slab<Entity, 4>, handle: i64) {
+release :: fn(mut s: Slab<Entity, 4>, handle: i64) {
     index := handle & 4294967295
     s.generations[index] = s.generations[index] + 1
     s.free_list[s.free_count] = index
@@ -1142,9 +1124,9 @@ main :: fn() -> i64 {
         storage = [Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}],
         generations = [0,0,0,0], free_list = [0,0,0,0], free_count = 0,
     }
-    reset(&mut world)
-    hero : Handle<Entity> = insert(&mut world, Entity{hp=100, mana=30})
-    foe : Handle<Entity> = insert(&mut world, Entity{hp=40, mana=10})
+    reset(world)
+    hero : Handle<Entity> = insert(world, Entity{hp=100, mana=30})
+    foe : Handle<Entity> = insert(world, Entity{hp=40, mana=10})
     printf("%lld\n", world[hero].hp)
     world[hero].hp = world[hero].hp - 25
     printf("%lld\n", world[hero].hp)
@@ -1173,19 +1155,19 @@ Slab :: struct($T: Type, $N: usize) {
     free_count: i64,
 }
 
-reset :: fn(s: &mut Slab<Entity, 4>) {
+reset :: fn(mut s: Slab<Entity, 4>) {
     mut i : i64 = 0
     while (i < 4) { s.generations[i] = 0  s.free_list[i] = 3 - i  i = i + 1 }
     s.free_count = 4
 }
-insert :: fn(s: &mut Slab<Entity, 4>, move value: Entity) -> i64 {
+insert :: fn(mut s: Slab<Entity, 4>, move value: Entity) -> i64 {
     s.free_count = s.free_count - 1
     index := s.free_list[s.free_count]
     s.storage[index] = value
     packed := (s.generations[index] << 32) | index
     packed
 }
-release :: fn(s: &mut Slab<Entity, 4>, handle: i64) {
+release :: fn(mut s: Slab<Entity, 4>, handle: i64) {
     index := handle & 4294967295
     s.generations[index] = s.generations[index] + 1
     s.free_list[s.free_count] = index
@@ -1194,10 +1176,10 @@ release :: fn(s: &mut Slab<Entity, 4>, handle: i64) {
 
 main :: fn() -> i64 {
     mut w : Slab<Entity, 4> = Slab { storage=[Entity{hp=0},Entity{hp=0},Entity{hp=0},Entity{hp=0}], generations=[0,0,0,0], free_list=[0,0,0,0], free_count=0 }
-    reset(&mut w)
-    old : Handle<Entity> = insert(&mut w, Entity{hp=100})
-    release(&mut w, old)
-    insert(&mut w, Entity{hp=7})
+    reset(w)
+    old : Handle<Entity> = insert(w, Entity{hp=100})
+    release(w, old)
+    insert(w, Entity{hp=7})
     printf("%lld\n", w[old].hp)
     0
 }
@@ -1284,26 +1266,26 @@ hpack :: fn(index: i64, generation: i64) -> i64 { (generation << 32) | index }
 hindex :: fn(handle: i64) -> i64 { handle & 4294967295 }
 hgen :: fn(handle: i64) -> i64 { handle >> 32 }
 
-slab_reset :: fn(p: &mut Slab) {
+slab_reset :: fn(mut p: Slab) {
     mut i : i64 = 0
     while (i < 4) { p.generations[i] = 0 p.free_list[i] = 3 - i i = i + 1 }
     p.free_count = 4
 }
 
-slab_insert :: fn(p: &mut Slab, move value: Entity) -> i64 {
+slab_insert :: fn(mut p: Slab, move value: Entity) -> i64 {
     p.free_count = p.free_count - 1
     index := p.free_list[p.free_count]
     p.storage[index] = value
     hpack(index, p.generations[index])
 }
 
-slab_alive :: fn(p: &Slab, handle: i64) -> bool {
+slab_alive :: fn(p: Slab, handle: i64) -> bool {
     p.generations[hindex(handle)] == hgen(handle)
 }
 
-slab_read :: fn(p: &Slab, handle: i64) -> Entity { p.storage[hindex(handle)] }
+slab_read :: fn(p: Slab, handle: i64) -> Entity { p.storage[hindex(handle)] }
 
-slab_release :: fn(p: &mut Slab, handle: i64) {
+slab_release :: fn(mut p: Slab, handle: i64) {
     index := hindex(handle)
     p.generations[index] = p.generations[index] + 1
     p.free_list[p.free_count] = index
@@ -1320,16 +1302,16 @@ main :: fn() -> i64 {
         free_list = [0, 0, 0, 0],
         free_count = 0,
     }
-    slab_reset(&mut world)
-    hero := slab_insert(&mut world, Entity { hp = 100, mana = 30 })
-    foe := slab_insert(&mut world, Entity { hp = 40, mana = 10 })
-    a := slab_read(&world, hero)
+    slab_reset(world)
+    hero := slab_insert(world, Entity { hp = 100, mana = 30 })
+    foe := slab_insert(world, Entity { hp = 40, mana = 10 })
+    a := slab_read(world, hero)
     printf("%lld\n", a.hp)
-    if (slab_alive(&world, foe)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
-    slab_release(&mut world, foe)
-    reused := slab_insert(&mut world, Entity { hp = 7, mana = 7 })
-    if (slab_alive(&world, reused)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
-    if (slab_alive(&world, foe)) { printf("%lld\n", 9) } else { printf("%lld\n", 0) }
+    if (slab_alive(world, foe)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    slab_release(world, foe)
+    reused := slab_insert(world, Entity { hp = 7, mana = 7 })
+    if (slab_alive(world, reused)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    if (slab_alive(world, foe)) { printf("%lld\n", 9) } else { printf("%lld\n", 0) }
     0
 }
 "#;
@@ -1346,7 +1328,7 @@ fn native_generational_pool_written_in_frost() {
 const FREESTANDING: &str = r#"
 Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
 
-alloc_int :: fn(a: &mut Arena<64>) -> ^i64 {
+alloc_int :: fn(mut a: Arena<64>) -> ^i64 {
     slot := ptr_to(a.data[a.offset])
     a.offset = a.offset + sizeof(i64)
     ptr_cast($i64, slot)
@@ -1354,9 +1336,9 @@ alloc_int :: fn(a: &mut Arena<64>) -> ^i64 {
 
 main :: fn() -> i64 {
     mut arena : Arena<64> = Arena { data = [0; 64], offset = 0 }
-    p := alloc_int(&mut arena)
+    p := alloc_int(arena)
     p^ = 20
-    q := alloc_int(&mut arena)
+    q := alloc_int(arena)
     q^ = 22
     p^ + q^
 }
@@ -1438,23 +1420,23 @@ swap :: fn(a: ^i64, b: ^i64) {
     b^ = temp
 }
 
-increment :: fn(x: &mut i64) {
+increment :: fn(mut x: i64) {
     x^ = x^ + 1
 }
 
-read_sum :: fn(a: &i64, b: &i64) -> i64 {
-    a^ + b^
+read_sum :: fn(a: i64, b: i64) -> i64 {
+    a + b
 }
 
 main :: fn() -> i64 {
     mut x : i64 = 10
     mut y : i64 = 20
-    swap(&x, &y)
+    swap(ptr_to(x), ptr_to(y))
     printf("%lld\n", x)
     printf("%lld\n", y)
-    increment(&mut x)
+    increment(x)
     printf("%lld\n", x)
-    printf("%lld\n", read_sum(&x, &y))
+    printf("%lld\n", read_sum(x, y))
     0
 }
 "#;
@@ -1475,11 +1457,11 @@ Point :: struct {
     y: i64,
 }
 
-read_sum :: fn(p: &Point) -> i64 {
+read_sum :: fn(p: Point) -> i64 {
     p.x + p.y
 }
 
-scale :: fn(p: &mut Point, factor: i64) {
+scale :: fn(mut p: Point, factor: i64) {
     p.x = p.x * factor
     p.y = p.y * factor
 }
@@ -1493,9 +1475,9 @@ Mixed :: struct {
 main :: fn() -> i64 {
     mut p := Point { x = 3, y = 4 }
     printf("%lld\n", p.x)
-    printf("%lld\n", read_sum(&p))
+    printf("%lld\n", read_sum(p))
     p.x = 100
-    scale(&mut p, 2)
+    scale(p, 2)
     printf("%lld\n", p.x)
     printf("%lld\n", p.y)
 
@@ -1518,7 +1500,7 @@ fn native_structs_and_field_access() {
 const ARRAYS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
-sum_array :: fn(a: &[5]i64) -> i64 {
+sum_array :: fn(a: [5]i64) -> i64 {
     mut total : i64 = 0
     for i in 0..5 {
         total = total + a[i]
@@ -1537,7 +1519,7 @@ main :: fn() -> i64 {
         running = running + nums[i]
     }
     printf("%lld\n", running)
-    printf("%lld\n", sum_array(&nums))
+    printf("%lld\n", sum_array(nums))
     0
 }
 "#;
@@ -1558,7 +1540,7 @@ Result :: enum {
     Err { code: i64 },
 }
 
-unwrap_or_neg :: fn(r: &Result) -> i64 {
+unwrap_or_neg :: fn(r: Result) -> i64 {
     match r {
         case .Ok { value }: value
         case .Err { code }: 0 - code
@@ -1576,8 +1558,8 @@ grade :: fn(score: i64) -> i64 {
 main :: fn() -> i64 {
     ok := Result::Ok { value = 42 }
     err := Result::Err { code = 404 }
-    printf("%lld\n", unwrap_or_neg(&ok))
-    printf("%lld\n", unwrap_or_neg(&err))
+    printf("%lld\n", unwrap_or_neg(ok))
+    printf("%lld\n", unwrap_or_neg(err))
     printf("%lld\n", grade(90))
     printf("%lld\n", grade(80))
     printf("%lld\n", grade(50))
@@ -1629,7 +1611,7 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 Inner :: struct { a: i64, b: i64 }
 Outer :: struct { tag: i64, inner: Inner }
 
-get_inner :: fn(o: &Outer) -> Inner { o.inner }
+get_inner :: fn(o: Outer) -> Inner { o.inner }
 
 main :: fn() -> i64 {
     o := Outer { tag = 1, inner = Inner { a = 5, b = 6 } }
@@ -1637,7 +1619,7 @@ main :: fn() -> i64 {
     printf("%lld\n", bound.a)
     printf("%lld\n", bound.b)
 
-    returned := get_inner(&o)
+    returned := get_inner(o)
     printf("%lld\n", returned.a)
 
     arr := [Inner { a = 10, b = 20 }, Inner { a = 30, b = 40 }]
@@ -1663,7 +1645,7 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 State :: enum { Idle, Running { pid: i64 }, Done { code: i64 } }
 Task :: struct { id: i64, state: State }
 
-describe :: fn(t: &Task) -> i64 {
+describe :: fn(t: Task) -> i64 {
     match t.state {
         case .Idle: 0
         case .Running { pid }: pid
@@ -1671,7 +1653,7 @@ describe :: fn(t: &Task) -> i64 {
     }
 }
 
-first :: fn(states: &[2]State, i: i64) -> i64 {
+first :: fn(states: [2]State, i: i64) -> i64 {
     match states[i] {
         case .Running { pid }: pid
         case .Done { code }: code
@@ -1683,13 +1665,13 @@ main :: fn() -> i64 {
     a := Task { id = 1, state = State::Running { pid = 42 } }
     b := Task { id = 2, state = State::Idle }
     c := Task { id = 3, state = State::Done { code = 7 } }
-    printf("%lld\n", describe(&a))
-    printf("%lld\n", describe(&b))
-    printf("%lld\n", describe(&c))
+    printf("%lld\n", describe(a))
+    printf("%lld\n", describe(b))
+    printf("%lld\n", describe(c))
 
     arr := [State::Done { code = 9 }, State::Idle]
-    printf("%lld\n", first(&arr, 0))
-    printf("%lld\n", first(&arr, 1))
+    printf("%lld\n", first(arr, 0))
+    printf("%lld\n", first(arr, 1))
     0
 }
 "#;
@@ -1815,7 +1797,7 @@ max_of :: fn(move a: $T, move b: $T) -> T { if (a > b) { a } else { b } }
 first_of :: fn(move a: $T, move b: $T) -> T { a }
 wrap :: fn(move v: $T) -> T { identity(v) }
 
-swap :: fn(a: &mut $T, b: &mut $T) {
+swap :: fn(mut a: $T, mut b: $T) {
     t := a^
     a^ = b^
     b^ = t
@@ -1837,7 +1819,7 @@ main :: fn() -> i64 {
 
     mut a : i64 = 100
     mut b : i64 = 200
-    swap(&mut a, &mut b)
+    swap(a, b)
     printf("%lld\n", a)
     printf("%lld\n", b)
     0
@@ -1861,12 +1843,12 @@ Both :: struct($T: Type, $U: Type) { left: T, right: U }
 Buffer :: struct($T: Type) { data: [3]T, count: i64 }
 Wrapper :: struct { pair: Pair<i64>, tag: i64 }
 
-sum_pair :: fn(p: &Pair<i64>) -> i64 { p.first + p.second }
+sum_pair :: fn(p: Pair<i64>) -> i64 { p.first + p.second }
 
 main :: fn() -> i64 {
     p : Pair<i64> = Pair { first = 3, second = 4 }
     printf("%lld\n", p.first + p.second)
-    printf("%lld\n", sum_pair(&p))
+    printf("%lld\n", sum_pair(p))
 
     pts : Pair<Point> = Pair { first = Point { x = 1, y = 2 }, second = Point { x = 3, y = 4 } }
     printf("%lld\n", pts.first.x + pts.second.y)
@@ -1900,13 +1882,13 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 Point :: struct { x: i64, y: i64 }
 
-sum :: fn(p: &Point) -> i64 { p.x + p.y }
-scaled :: fn(p: &mut Point, k: i64) -> i64 { p.x = p.x * k  p.x + p.y }
+sum :: fn(p: Point) -> i64 { p.x + p.y }
+scaled :: fn(mut p: Point, k: i64) -> i64 { p.x = p.x * k  p.x + p.y }
 
 main :: fn() -> i64 {
-    printf("%lld\n", sum(&Point { x = 8, y = 9 }))
+    printf("%lld\n", sum(Point { x = 8, y = 9 }))
     mut q := Point { x = 3, y = 4 }
-    printf("%lld\n", scaled(&mut q, 10))
+    printf("%lld\n", scaled(q, 10))
     0
 }
 "#;
@@ -1925,7 +1907,7 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 State :: enum { Running { pid: i64 }, Idle }
 
-pid_of :: fn(s: &State) -> i64 {
+pid_of :: fn(s: State) -> i64 {
     match s {
         case .Running { pid }: match pid {
             case 0: 0 - 1
@@ -1936,9 +1918,9 @@ pid_of :: fn(s: &State) -> i64 {
 }
 
 main :: fn() -> i64 {
-    printf("%lld\n", pid_of(&State::Running { pid = 42 }))
-    printf("%lld\n", pid_of(&State::Running { pid = 0 }))
-    printf("%lld\n", pid_of(&State::Idle))
+    printf("%lld\n", pid_of(State::Running { pid = 42 }))
+    printf("%lld\n", pid_of(State::Running { pid = 0 }))
+    printf("%lld\n", pid_of(State::Idle))
     0
 }
 "#;
@@ -1962,7 +1944,7 @@ Entity :: struct { hp: i64, mana: i64 }
 
 size_of :: fn($T: Type) -> i64 { sizeof(T) }
 make_pool :: fn($T: Type, capacity: i64) -> ^u8 { pool_new(capacity, sizeof(T)) }
-insert :: fn(pool: ^u8, move value: $T) -> Handle<T> { pool_alloc(pool, &value) }
+insert :: fn(pool: ^u8, move value: $T) -> Handle<T> { pool_alloc(pool, ptr_to(value)) }
 
 main :: fn() -> i64 {
     printf("%lld\n", size_of($i64))
@@ -1999,7 +1981,7 @@ main :: fn() -> i64 {
 
     pool := pool_new(4, 16)
     mut v := Pair { first = 3, second = 4 }
-    h : Handle<Pair<i64>> = pool_alloc(pool, &v)
+    h : Handle<Pair<i64>> = pool_alloc(pool, ptr_to(v))
     printf("%lld\n", pool[h].first + pool[h].second)
     0
 }
@@ -2045,7 +2027,7 @@ Pair :: struct($T: Type) { first: T, second: T }
 Op :: struct($T: Type) { f: fn($T) -> $T, seed: $T }
 
 inc :: fn(x: i64) -> i64 { x + 1 }
-swap :: fn(a: &mut $T, b: &mut $T) {
+swap :: fn(mut a: $T, mut b: $T) {
     t := a^
     a^ = b^
     b^ = t
@@ -2069,7 +2051,7 @@ main :: fn() -> i64 {
 
     mut x : Pair<i64> = Pair { first = 1, second = 2 }
     mut y : Pair<i64> = Pair { first = 9, second = 8 }
-    swap(&mut x, &mut y)
+    swap(x, y)
     printf("%lld\n", x.first + y.second)
     0
 }
@@ -2222,10 +2204,10 @@ pool_get :: extern fn(pool: ^u8, handle: i64) -> ^u8
 
 Entity :: struct { hp: i64, mana: i64 }
 
-heal :: fn(e: &mut Entity, amount: i64) {
+heal :: fn(mut e: Entity, amount: i64) {
     e.hp = e.hp + amount
 }
-total :: fn(e: &Entity) -> i64 {
+total :: fn(e: Entity) -> i64 {
     e.hp + e.mana
 }
 
@@ -2233,21 +2215,21 @@ main :: fn() -> i64 {
     world := pool_new(8, 16)
 
     mut a := Entity { hp = 50, mana = 10 }
-    ha : Handle<Entity> = pool_alloc(world, &a)
+    ha : Handle<Entity> = pool_alloc(world, ptr_to(a))
     mut b := Entity { hp = 20, mana = 5 }
-    hb : Handle<Entity> = pool_alloc(world, &b)
+    hb : Handle<Entity> = pool_alloc(world, ptr_to(b))
 
     printf("%lld\n", world[ha].hp)
     world[ha].hp = 60
     printf("%lld\n", world[ha].hp)
 
-    heal(&mut world[ha], 15)
+    heal(world[ha], 15)
     printf("%lld\n", world[ha].hp)
-    printf("%lld\n", total(&world[ha]))
+    printf("%lld\n", total(world[ha]))
 
     copy := world[hb]
     printf("%lld\n", copy.mana)
-    printf("%lld\n", total(&world[hb]))
+    printf("%lld\n", total(world[hb]))
     0
 }
 "#;
@@ -2391,14 +2373,14 @@ Shape :: enum {
     Box { side: i64 },
 }
 
-area :: fn(s: &Shape) -> i64 {
+area :: fn(s: Shape) -> i64 {
     match s {
         case .Circle { radius }: 3 * radius * radius
         case .Box { side }: side * side
     }
 }
 
-dot :: fn(a: &Vec3, b: &Vec3) -> i64 {
+dot :: fn(a: Vec3, b: Vec3) -> i64 {
     a.x * b.x + a.y * b.y + a.z * b.z
 }
 
@@ -2408,7 +2390,7 @@ fib :: fn(n: i64) -> i64 {
 
 triple :: fn(x: i64) -> i64 { x * 3 }
 
-apply_to_array :: fn(f: fn(i64) -> i64, values: &[4]i64) -> i64 {
+apply_to_array :: fn(f: fn(i64) -> i64, values: [4]i64) -> i64 {
     mut total : i64 = 0
     for i in 0..4 {
         total = total + f(values[i])
@@ -2419,17 +2401,17 @@ apply_to_array :: fn(f: fn(i64) -> i64, values: &[4]i64) -> i64 {
 main :: fn() -> i64 {
     a := Vec3 { x = 1, y = 2, z = 3 }
     b := Vec3 { x = 4, y = 5, z = 6 }
-    printf("%lld\n", dot(&a, &b))
+    printf("%lld\n", dot(a, b))
 
     c := Shape::Circle { radius = 10 }
     sq := Shape::Box { side = 7 }
-    printf("%lld\n", area(&c))
-    printf("%lld\n", area(&sq))
+    printf("%lld\n", area(c))
+    printf("%lld\n", area(sq))
 
     printf("%lld\n", fib(15))
 
     nums := [1, 2, 3, 4]
-    printf("%lld\n", apply_to_array(triple, &nums))
+    printf("%lld\n", apply_to_array(triple, nums))
     0
 }
 "#;
@@ -2504,7 +2486,7 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 Inner :: struct { a: i64, b: i64 }
 Outer :: struct { tag: i64, inner: Inner }
 
-sum_inner :: fn(o: &Outer) -> i64 {
+sum_inner :: fn(o: Outer) -> i64 {
     o.inner.a + o.inner.b
 }
 
@@ -2512,10 +2494,10 @@ main :: fn() -> i64 {
     mut o := Outer { tag = 5, inner = Inner { a = 10, b = 20 } }
     printf("%lld\n", o.tag)
     printf("%lld\n", o.inner.a)
-    printf("%lld\n", sum_inner(&o))
+    printf("%lld\n", sum_inner(o))
     o.inner.a = 99
     printf("%lld\n", o.inner.a)
-    printf("%lld\n", sum_inner(&o))
+    printf("%lld\n", sum_inner(o))
     0
 }
 "#;
@@ -2574,7 +2556,7 @@ Node :: enum {
     Pair { location: Point, weight: i64 },
 }
 
-describe :: fn(n: &Node) -> i64 {
+describe :: fn(n: Node) -> i64 {
     match n {
         case .Leaf { value }: value
         case .Pair { location, weight }: location.x + location.y + weight
@@ -2584,8 +2566,8 @@ describe :: fn(n: &Node) -> i64 {
 main :: fn() -> i64 {
     leaf := Node::Leaf { value = 7 }
     pair := Node::Pair { location = Point { x = 3, y = 4 }, weight = 100 }
-    printf("%lld\n", describe(&leaf))
-    printf("%lld\n", describe(&pair))
+    printf("%lld\n", describe(leaf))
+    printf("%lld\n", describe(pair))
 
     mut grid := [[1, 2, 3], [4, 5, 6]]
     printf("%lld\n", grid[0][2])
@@ -2613,7 +2595,7 @@ Option :: enum {
     None,
 }
 
-find_first_even :: fn(a: &[6]i64) -> Option {
+find_first_even :: fn(a: [6]i64) -> Option {
     for i in 0..6 {
         if (a[i] % 2 == 0) {
             return Option::Some { value = a[i] }
@@ -2622,7 +2604,7 @@ find_first_even :: fn(a: &[6]i64) -> Option {
     Option::None
 }
 
-unwrap_or :: fn(o: &Option, fallback: i64) -> i64 {
+unwrap_or :: fn(o: Option, fallback: i64) -> i64 {
     match o {
         case .Some { value }: value
         case .None: fallback
@@ -2631,12 +2613,12 @@ unwrap_or :: fn(o: &Option, fallback: i64) -> i64 {
 
 main :: fn() -> i64 {
     data := [1, 3, 5, 8, 9, 10]
-    r := find_first_even(&data)
-    printf("%lld\n", unwrap_or(&r, 0 - 1))
+    r := find_first_even(data)
+    printf("%lld\n", unwrap_or(r, 0 - 1))
 
     odds := [1, 3, 5, 7, 9, 11]
-    r2 := find_first_even(&odds)
-    printf("%lld\n", unwrap_or(&r2, 0 - 1))
+    r2 := find_first_even(odds)
+    printf("%lld\n", unwrap_or(r2, 0 - 1))
     0
 }
 "#;
@@ -2654,7 +2636,7 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 Point :: struct { x: i64, y: i64 }
 
-bump :: fn(field: &mut i64) {
+bump :: fn(mut field: i64) {
     field^ = field^ + 100
 }
 
@@ -2664,7 +2646,7 @@ origin :: fn() -> Point {
 
 main :: fn() -> i64 {
     mut p := Point { x = 1, y = 2 }
-    bump(&mut p.x)
+    bump(p.x)
     printf("%lld\n", p.x)
     printf("%lld\n", p.y)
 
@@ -2739,8 +2721,8 @@ main :: fn() -> i64 {
 
     mut a := Entity { hp = 100, mana = 30 }
     mut b := Entity { hp = 50, mana = 10 }
-    ha := pool_alloc(p, &a)
-    hb := pool_alloc(p, &b)
+    ha := pool_alloc(p, ptr_to(a))
+    hb := pool_alloc(p, ptr_to(b))
 
     printf("%lld\n", handle_index(ha))
     printf("%lld\n", handle_index(hb))
@@ -2757,7 +2739,7 @@ main :: fn() -> i64 {
     printf("%lld\n", pool_contains(p, ha))
 
     mut c := Entity { hp = 7, mana = 7 }
-    hc := pool_alloc(p, &c)
+    hc := pool_alloc(p, ptr_to(c))
     printf("%lld\n", handle_index(hc))
     printf("%lld\n", handle_generation(hc))
     printf("%lld\n", pool_contains(p, ha))
@@ -2811,7 +2793,7 @@ choose :: fn(t: i64) -> Opt {
     }
 }
 
-unwrap :: fn(o: &Opt) -> i64 {
+unwrap :: fn(o: Opt) -> i64 {
     match o {
         case .Some { v }: v
         case .None: 0 - 1
@@ -2834,8 +2816,8 @@ main :: fn() -> i64 {
 
     none := choose(0)
     some := choose(7)
-    printf("%lld\n", unwrap(&none))
-    printf("%lld\n", unwrap(&some))
+    printf("%lld\n", unwrap(none))
+    printf("%lld\n", unwrap(some))
 
     p := classify(4, 6)
     q := classify(3, 6)
