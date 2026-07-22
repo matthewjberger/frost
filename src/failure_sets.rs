@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 
 use crate::lexer::Position;
 use crate::parser::{
-    Block, EnumVariant, Expression, Pattern, Program, ReturnSignature, Spanned,
+    Block, EnumVariant, Expression, Pattern, Program, ReturnKind, Spanned,
     Statement, StructField, SwitchCase,
 };
 use crate::types::Type;
@@ -45,7 +45,7 @@ pub fn lower_failure_sets(program: &mut Program) -> Result<()> {
             name,
             Expression::Function(_, sig, _) | Expression::Proc(_, sig, _),
         ) = &statement.node
-            && let ReturnSignature::Fallible(value, error) = sig
+            && let ReturnKind::Fallible(value, error) = &sig.kind
         {
             let result = lowerer.result_enum(value, error);
             lowerer.fallible.insert(name.clone(), result);
@@ -60,9 +60,9 @@ pub fn lower_failure_sets(program: &mut Program) -> Result<()> {
             Expression::Function(_, sig, body) | Expression::Proc(_, sig, body),
         ) = &mut statement.node
         {
-            if let ReturnSignature::Fallible(_, error) = sig.clone() {
+            if let ReturnKind::Fallible(_, error) = sig.kind.clone() {
                 let result = lowerer.fallible.get(name).unwrap().clone();
-                *sig = ReturnSignature::Single(Type::Enum(result.clone()));
+                sig.kind = ReturnKind::Single(Type::Enum(result.clone()));
                 lowerer.rewrite_block(body, &result, &error);
             } else if block_has_try(body) {
                 bail!(
