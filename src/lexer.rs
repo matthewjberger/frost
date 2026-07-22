@@ -92,7 +92,9 @@ pub enum Token {
     TypeVoid,
     Underscore,
     Unsafe,
+    Uses,
     While,
+    With,
 }
 
 impl Display for Token {
@@ -182,7 +184,9 @@ impl Display for Token {
             TypeVoid => "void".to_string(),
             Underscore => "_".to_string(),
             Unsafe => "unsafe".to_string(),
+            Uses => "uses".to_string(),
             While => "while".to_string(),
+            With => "with".to_string(),
         };
         write!(f, "{}", symbol)
     }
@@ -506,6 +510,8 @@ impl<'a> Lexer<'a> {
             "str" => TypeStr,
             "void" => TypeVoid,
             "unsafe" => Unsafe,
+            "uses" => Uses,
+            "with" => With,
             _ => Identifier(identifier.to_string()),
         }
     }

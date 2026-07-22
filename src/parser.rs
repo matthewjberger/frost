@@ -93,7 +93,7 @@ impl Display for ReturnParam {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum ReturnSignature {
+pub enum ReturnKind {
     None,
     Single(Type),
     Named(Vec<ReturnParam>),
@@ -102,49 +102,66 @@ pub enum ReturnSignature {
     Fallible(Type, Type),
 }
 
+// The whole output contract of a function: what it returns (the kind), and the
+// allocation sources it draws from (`uses A`). A failure set lives in the kind
+// as `Fallible`. Allocation sources are the capabilities the caller must supply,
+// threaded in by the allocation-sources lowering pass.
+#[derive(Debug, PartialEq, Clone)]
+pub struct ReturnSignature {
+    pub kind: ReturnKind,
+    pub uses: Vec<Type>,
+}
+
 impl ReturnSignature {
+    pub fn plain(kind: ReturnKind) -> Self {
+        Self {
+            kind,
+            uses: Vec::new(),
+        }
+    }
+
     pub fn to_type(&self) -> Option<Type> {
-        match self {
-            ReturnSignature::None => None,
-            ReturnSignature::Single(t) => Some(t.clone()),
-            ReturnSignature::Named(params) => {
+        match &self.kind {
+            ReturnKind::None => None,
+            ReturnKind::Single(t) => Some(t.clone()),
+            ReturnKind::Named(params) => {
                 if params.len() == 1 {
                     Some(params[0].param_type.clone())
                 } else {
                     Some(Type::Struct(format!("__tuple{}", params.len())))
                 }
             }
-            ReturnSignature::Fallible(value, _) => Some(value.clone()),
+            ReturnKind::Fallible(value, _) => Some(value.clone()),
         }
     }
 
     // The error enum of a fallible return, if any.
     pub fn failure_type(&self) -> Option<&Type> {
-        match self {
-            ReturnSignature::Fallible(_, error) => Some(error),
+        match &self.kind {
+            ReturnKind::Fallible(_, error) => Some(error),
             _ => None,
         }
     }
 
     pub fn is_named(&self) -> bool {
-        matches!(self, ReturnSignature::Named(_))
+        matches!(self.kind, ReturnKind::Named(_))
     }
 
     pub fn has_second_class(&self) -> Option<&Type> {
-        match self {
-            ReturnSignature::None => None,
-            ReturnSignature::Single(t) => {
+        match &self.kind {
+            ReturnKind::None => None,
+            ReturnKind::Single(t) => {
                 if t.is_second_class() {
                     Some(t)
                 } else {
                     None
                 }
             }
-            ReturnSignature::Named(params) => params
+            ReturnKind::Named(params) => params
                 .iter()
                 .find(|p| p.param_type.is_second_class())
                 .map(|p| &p.param_type),
-            ReturnSignature::Fallible(value, _) => {
+            ReturnKind::Fallible(value, _) => {
                 if value.is_second_class() {
                     Some(value)
                 } else {
@@ -155,20 +172,20 @@ impl ReturnSignature {
     }
 
     pub fn contains_reference(&self) -> Option<&Type> {
-        match self {
-            ReturnSignature::None => None,
-            ReturnSignature::Single(t) => {
+        match &self.kind {
+            ReturnKind::None => None,
+            ReturnKind::Single(t) => {
                 if t.contains_reference() {
                     Some(t)
                 } else {
                     None
                 }
             }
-            ReturnSignature::Named(params) => params
+            ReturnKind::Named(params) => params
                 .iter()
                 .find(|p| p.param_type.contains_reference())
                 .map(|p| &p.param_type),
-            ReturnSignature::Fallible(value, _) => {
+            ReturnKind::Fallible(value, _) => {
                 if value.contains_reference() {
                     Some(value)
                 } else {
@@ -179,27 +196,37 @@ impl ReturnSignature {
     }
 
     pub fn named_params(&self) -> Option<&Vec<ReturnParam>> {
-        match self {
-            ReturnSignature::Named(params) => Some(params),
+        match &self.kind {
+            ReturnKind::Named(params) => Some(params),
             _ => None,
         }
     }
 }
 
+// A function whose signature declares a return, a failure set, or an allocation
+// source is a `proc` (fully typed), not a bare `fn`.
+fn signature_is_typed(signature: &ReturnSignature) -> bool {
+    !matches!(signature.kind, ReturnKind::None) || !signature.uses.is_empty()
+}
+
 impl Display for ReturnSignature {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        match self {
-            ReturnSignature::None => write!(f, ""),
-            ReturnSignature::Single(t) => write!(f, " -> {}", t),
-            ReturnSignature::Fallible(value, error) => {
-                write!(f, " -> {} ! {}", value, error)
+        match &self.kind {
+            ReturnKind::None => write!(f, "")?,
+            ReturnKind::Single(t) => write!(f, " -> {}", t)?,
+            ReturnKind::Fallible(value, error) => {
+                write!(f, " -> {} ! {}", value, error)?
             }
-            ReturnSignature::Named(params) => {
+            ReturnKind::Named(params) => {
                 let parts: Vec<String> =
                     params.iter().map(|p| p.to_string()).collect();
-                write!(f, " -> ({})", parts.join(", "))
+                write!(f, " -> ({})", parts.join(", "))?
             }
         }
+        for capability in &self.uses {
+            write!(f, " uses {}", capability)?;
+        }
+        Ok(())
     }
 }
 
@@ -340,6 +367,9 @@ pub enum Statement {
     Assignment(Expression, Expression),
     For(Identifier, Expression, Block),
     While(Expression, Block),
+    // `with arena { ... }`: inside the block, `arena` supplies the allocation
+    // capability threaded into `uses` calls. The block is a region.
+    With(Identifier, Block),
     Break,
     Continue,
     Import(String),
@@ -440,6 +470,11 @@ impl Display for Statement {
                 let body_str: Vec<String> =
                     body.iter().map(|s| s.to_string()).collect();
                 format!("while ({}) {{ {} }}", condition, body_str.join("; "))
+            }
+            Self::With(capability, body) => {
+                let body_str: Vec<String> =
+                    body.iter().map(|s| s.to_string()).collect();
+                format!("with {} {{ {} }}", capability, body_str.join("; "))
             }
             Self::Break => "break".to_string(),
             Self::Continue => "continue".to_string(),
@@ -918,7 +953,11 @@ impl<'a> Parser<'a> {
         self.tests.push((name, function_name.clone()));
         Ok(Statement::Constant(
             function_name,
-            Expression::Function(Vec::new(), ReturnSignature::None, body),
+            Expression::Function(
+                Vec::new(),
+                ReturnSignature::plain(ReturnKind::None),
+                body,
+            ),
         ))
     }
 
@@ -1062,6 +1101,7 @@ impl<'a> Parser<'a> {
             Token::Defer => Some(self.parse_defer_statement()?),
             Token::For => Some(self.parse_for_statement()?),
             Token::While => Some(self.parse_while_statement()?),
+            Token::With => Some(self.parse_with_statement()?),
             Token::Break => {
                 self.read_token();
                 if matches!(self.peek_nth(0), Token::Semicolon) {
@@ -1174,6 +1214,23 @@ impl<'a> Parser<'a> {
         let body = self.parse_block()?;
 
         Ok(Statement::While(condition, body))
+    }
+
+    fn parse_with_statement(&mut self) -> Result<Statement> {
+        self.read_token();
+
+        let capability = match self.read_token() {
+            Token::Identifier(name) => name.to_string(),
+            other => {
+                bail!(
+                    "Expected a capability variable after 'with', found {other}"
+                )
+            }
+        };
+
+        let body = self.parse_block()?;
+
+        Ok(Statement::With(capability, body))
     }
 
     fn parse_mutable_declaration(&mut self) -> Result<Statement> {
@@ -1862,12 +1919,15 @@ impl<'a> Parser<'a> {
         if looks_like_params {
             let parameters = self.parse_function_parameters_inner()?;
 
-            if matches!(self.peek_nth(0), Token::LeftBrace | Token::Arrow) {
+            if matches!(
+                self.peek_nth(0),
+                Token::LeftBrace | Token::Arrow | Token::Uses
+            ) {
                 let return_sig = self.parse_return_signature()?;
                 let block = self.parse_block()?;
                 let has_type_annotations =
                     parameters.iter().any(|p| p.type_annotation.is_some())
-                        || !matches!(return_sig, ReturnSignature::None);
+                        || signature_is_typed(&return_sig);
                 if has_type_annotations {
                     return Ok(Expression::Proc(parameters, return_sig, block));
                 } else {
@@ -2253,7 +2313,7 @@ impl<'a> Parser<'a> {
         let block = self.parse_block()?;
         let has_type_annotations =
             parameters.iter().any(|p| p.type_annotation.is_some())
-                || !matches!(return_sig, ReturnSignature::None);
+                || signature_is_typed(&return_sig);
         if has_type_annotations {
             Ok(Expression::Proc(parameters, return_sig, block))
         } else {
@@ -2262,8 +2322,22 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_return_signature(&mut self) -> Result<ReturnSignature> {
+        let kind = self.parse_return_kind()?;
+        let mut uses = Vec::new();
+        while matches!(self.peek_nth(0), Token::Uses) {
+            self.read_token();
+            uses.push(self.parse_type()?);
+            while matches!(self.peek_nth(0), Token::Comma) {
+                self.read_token();
+                uses.push(self.parse_type()?);
+            }
+        }
+        Ok(ReturnSignature { kind, uses })
+    }
+
+    fn parse_return_kind(&mut self) -> Result<ReturnKind> {
         if !matches!(self.peek_nth(0), Token::Arrow) {
-            return Ok(ReturnSignature::None);
+            return Ok(ReturnKind::None);
         }
         self.read_token();
 
@@ -2278,12 +2352,12 @@ impl<'a> Parser<'a> {
         if matches!(self.peek_nth(0), Token::Bang) {
             self.read_token();
             let error = self.parse_type()?;
-            return Ok(ReturnSignature::Fallible(typ, error));
+            return Ok(ReturnKind::Fallible(typ, error));
         }
-        Ok(ReturnSignature::Single(typ))
+        Ok(ReturnKind::Single(typ))
     }
 
-    fn parse_named_returns(&mut self) -> Result<ReturnSignature> {
+    fn parse_named_returns(&mut self) -> Result<ReturnKind> {
         if !matches!(self.peek_nth(0), Token::LeftParentheses) {
             bail!("Expected '(' for named returns");
         }
@@ -2316,7 +2390,7 @@ impl<'a> Parser<'a> {
         }
         self.read_token();
 
-        Ok(ReturnSignature::Named(returns))
+        Ok(ReturnKind::Named(returns))
     }
 
     fn parse_function_parameters(&mut self) -> Result<Vec<Parameter>> {
@@ -2658,7 +2732,7 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Expression, Literal, ParamMode, Parameter, Parser, Pattern,
+        Expression, Literal, ParamMode, Parameter, Parser, Pattern, ReturnKind,
         ReturnSignature, Statement, StructField,
     };
     use crate::{Operator, lexer::Lexer, types::Type};
@@ -3057,7 +3131,7 @@ mod tests {
                     mode: ParamMode::Read,
                 },
             ],
-            ReturnSignature::None,
+            ReturnSignature::plain(ReturnKind::None),
             vec![
                 Statement::Expression(Expression::Infix(
                     Box::new(Expression::Identifier("x".to_string())),
@@ -3124,7 +3198,7 @@ mod tests {
                             expression,
                             Expression::Function(
                                 expected_parameters.to_vec(),
-                                ReturnSignature::None,
+                                ReturnSignature::plain(ReturnKind::None),
                                 Vec::new()
                             )
                         )
@@ -3247,7 +3321,10 @@ mod tests {
             assert_eq!(params[0].type_annotation, Some(Type::I64));
             assert_eq!(params[1].name, "b");
             assert_eq!(params[1].type_annotation, Some(Type::I32));
-            assert_eq!(return_type, &ReturnSignature::Single(Type::Bool));
+            assert_eq!(
+                return_type,
+                &ReturnSignature::plain(ReturnKind::Single(Type::Bool))
+            );
             assert_eq!(body.len(), 1);
         } else {
             bail!("Expected typed function expression");
@@ -3273,7 +3350,10 @@ mod tests {
             assert_eq!(params.len(), 1);
             assert_eq!(params[0].name, "x");
             assert_eq!(params[0].type_annotation, Some(Type::I64));
-            assert_eq!(return_type, &ReturnSignature::Single(Type::I64));
+            assert_eq!(
+                return_type,
+                &ReturnSignature::plain(ReturnKind::Single(Type::I64))
+            );
             assert_eq!(body.len(), 1);
         } else {
             bail!("Expected typed function expression");
@@ -4586,7 +4666,7 @@ mod tests {
         )) = &program[0].node
         {
             assert_eq!(params.len(), 2);
-            if let ReturnSignature::Named(ret_params) = return_sig {
+            if let ReturnKind::Named(ret_params) = &return_sig.kind {
                 assert_eq!(ret_params.len(), 1);
                 assert_eq!(ret_params[0].name, "result");
                 assert_eq!(ret_params[0].param_type, Type::I64);
@@ -4615,7 +4695,7 @@ mod tests {
         )) = &program[0].node
         {
             assert_eq!(params.len(), 2);
-            if let ReturnSignature::Named(ret_params) = return_sig {
+            if let ReturnKind::Named(ret_params) = &return_sig.kind {
                 assert_eq!(ret_params.len(), 2);
                 assert_eq!(ret_params[0].name, "quotient");
                 assert_eq!(ret_params[0].param_type, Type::I64);
@@ -4632,23 +4712,24 @@ mod tests {
 
     #[test]
     fn return_signature_to_type_single() {
-        let sig = ReturnSignature::Single(Type::I64);
+        let sig = ReturnSignature::plain(ReturnKind::Single(Type::I64));
         assert_eq!(sig.to_type(), Some(Type::I64));
     }
 
     #[test]
     fn return_signature_to_type_named_single() {
         use super::ReturnParam;
-        let sig = ReturnSignature::Named(vec![ReturnParam {
-            name: "x".to_string(),
-            param_type: Type::I64,
-        }]);
+        let sig =
+            ReturnSignature::plain(ReturnKind::Named(vec![ReturnParam {
+                name: "x".to_string(),
+                param_type: Type::I64,
+            }]));
         assert_eq!(sig.to_type(), Some(Type::I64));
     }
 
     #[test]
     fn return_signature_to_type_none() {
-        let sig = ReturnSignature::None;
+        let sig = ReturnSignature::plain(ReturnKind::None);
         assert_eq!(sig.to_type(), None);
     }
 
@@ -4673,7 +4754,7 @@ mod tests {
                 params[0].type_annotation,
                 Some(Type::TypeParam("T".to_string()))
             );
-            if let ReturnSignature::Single(ret_type) = return_sig {
+            if let ReturnKind::Single(ret_type) = &return_sig.kind {
                 assert_eq!(*ret_type, Type::Struct("T".to_string()));
             } else {
                 bail!("Expected single return type");

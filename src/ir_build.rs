@@ -9,8 +9,8 @@ use crate::ir::{
 };
 use crate::lexer::Position;
 use crate::parser::{
-    Block, EnumVariant, Expression, Parameter, Pattern, ReturnSignature,
-    Spanned, Statement, StructField, SwitchCase,
+    Block, EnumVariant, Expression, Parameter, Pattern, ReturnKind,
+    ReturnSignature, Spanned, Statement, StructField, SwitchCase,
 };
 use crate::types::Type;
 use crate::{Literal, Operator};
@@ -175,7 +175,7 @@ pub fn build_module(
         let (function, requests, anon) = builder.lower_function(
             "main",
             &empty_params,
-            &ReturnSignature::Single(Type::I64),
+            &ReturnSignature::plain(ReturnKind::Single(Type::I64)),
             &top_level,
         )?;
         functions.push(function);
@@ -209,12 +209,20 @@ pub fn build_module(
                     mode: parameter.mode,
                 })
                 .collect();
-            let return_sig = match generic.return_sig.to_type() {
-                Some(ty) => ReturnSignature::Single(substitute_type(
-                    &ty,
-                    &specialization.subst,
-                )),
-                None => ReturnSignature::None,
+            let return_sig = ReturnSignature {
+                kind: match generic.return_sig.to_type() {
+                    Some(ty) => ReturnKind::Single(substitute_type(
+                        &ty,
+                        &specialization.subst,
+                    )),
+                    None => ReturnKind::None,
+                },
+                uses: generic
+                    .return_sig
+                    .uses
+                    .iter()
+                    .map(|ty| substitute_type(ty, &specialization.subst))
+                    .collect(),
             };
             let body = substitute_block(&generic.body, &specialization.subst);
             let (function, requests, anon) = builder.lower_function(

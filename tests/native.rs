@@ -477,6 +477,70 @@ fn native_failure_sets() {
     assert_eq!(output, "43\n-1\n");
 }
 
+const ALLOCATION_SOURCES: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Arena :: struct($N: usize) {
+    data: [N]u8,
+    offset: i64,
+}
+
+alloc_int :: fn(a: &mut Arena<256>) -> ^i64 {
+    slot := ptr_to(a.data[a.offset])
+    a.offset = a.offset + sizeof(i64)
+    ptr_cast($i64, slot)
+}
+
+make_two :: fn() -> i64 uses Arena<256> {
+    p := alloc_int(arena)
+    p^ = 10
+    q := alloc_int(arena)
+    q^ = 32
+    p^ + q^
+}
+
+forward :: fn() -> i64 uses Arena<256> {
+    make_two()
+}
+
+main :: fn() -> i64 {
+    mut arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
+    mut result : i64 = 0
+    with arena {
+        result = forward()
+    }
+    printf("%lld\n", result)
+    0
+}
+"#;
+
+// `uses Arena<256>` declares an allocation source; the capability is threaded
+// implicitly through a `uses` call (`forward` forwards to `make_two`) and
+// supplied by a `with` block at the root. No arena is passed by hand.
+#[test]
+fn native_allocation_sources() {
+    let Some(output) = compile_and_run("alloc_sources", ALLOCATION_SOURCES)
+    else {
+        return;
+    };
+    assert_eq!(output, "42\n");
+}
+
+// Calling a `uses` function with no capability in scope is rejected.
+#[test]
+fn allocation_source_without_capability_is_rejected() {
+    let source = r#"
+Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
+make :: fn() -> i64 uses Arena<256> { 7 }
+main :: fn() -> i64 { make() }
+"#;
+    let message = compile_error("alloc_no_cap", source);
+    assert!(
+        message.contains("allocation capability"),
+        "expected a missing-capability error, got:\n{message}"
+    );
+}
+
 // A `mut` parameter is written and a value parameter read, both called with a
 // plain value and no `&`/`&mut` -- the compiler borrows for the mut parameter.
 #[test]
@@ -2866,6 +2930,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_fnptrarr", FUNCTION_POINTER_ARRAY),
         ("diff_matchplace", MATCH_ENUM_PLACE),
         ("diff_failuresets", FAILURE_SETS),
+        ("diff_allocsources", ALLOCATION_SOURCES),
         ("diff_aggreads", AGGREGATE_BY_VALUE_READS),
         ("diff_aggassign", AGGREGATE_ASSIGNMENT),
         ("diff_generics", GENERIC_FUNCTIONS),

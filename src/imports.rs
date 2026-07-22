@@ -231,6 +231,12 @@ impl Renamer {
                 self.expression(condition, scope);
                 self.block(body, scope);
             }
+            Statement::With(capability, body) => {
+                if let Some(mangled) = self.mapped(capability, scope) {
+                    *capability = mangled;
+                }
+                self.block(body, scope);
+            }
             Statement::Break | Statement::Continue | Statement::Import(_) => {}
         }
     }
