@@ -127,6 +127,7 @@ TOK_KW_MOVE   :: 24
 TOK_KW_LINEAR :: 25
 TOK_KW_USES   :: 26
 TOK_KW_WITH   :: 27
+TOK_KW_IMPORT :: 28
 TOK_LPAREN    :: 40
 TOK_RPAREN    :: 41
 TOK_LBRACE    :: 42
@@ -446,6 +447,7 @@ classify_ident :: fn(src: ^i8, off: i64, len: i64) -> i64 {
     if (str_range_eq(src, off, len, "extern")) { return TOK_KW_EXTERN }
     if (str_range_eq(src, off, len, "uses")) { return TOK_KW_USES }
     if (str_range_eq(src, off, len, "with")) { return TOK_KW_WITH }
+    if (str_range_eq(src, off, len, "import")) { return TOK_KW_IMPORT }
     TOK_IDENT
 }
 
@@ -607,11 +609,155 @@ advance :: fn(mut p: Parser) {
 // global.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Imports. `import "path"` names a file whose declarations join this one's.
+// Every file's text reaches one buffer, so a name stays what it is everywhere
+// else in this compiler, an offset and a length into a single source, and the
+// rest of the compiler never learns that more than one file was involved.
+//
+// A file lands in the buffer once however many times it is named, which is what
+// separates this from a textual include: the second `import` of a file is a
+// reference to what is already there, not a second copy. Imports are found by
+// token rather than by scanning the text, so the word `import` inside a string
+// or a comment is not one.
+// ---------------------------------------------------------------------------
+
+Module :: struct {
+    path: ^i8,
+}
+
+module_seen :: fn(mut modules: Arena<Module>, path: ^i8) -> bool {
+    mut i : i64 = 0
+    while (i < modules.count) {
+        entry : ^Module = arena_at(modules, i)
+        if (cstr_eq(entry^.path, path)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+// A path named by an import, resolved against the directory of the file that
+// named it.
+join_path :: fn(parent: ^i8, src: ^i8, off: i64, len: i64) -> ^i8 {
+    parent_len := frost_str_len(parent)
+    mut cut : i64 = 0
+    mut k : i64 = 0
+    while (k < parent_len) {
+        c := frost_byte_at(parent, k)
+        if (c == CH_SLASH || c == CH_BACKSLASH) {
+            cut = k + 1
+        }
+        k = k + 1
+    }
+    out := ptr_cast($i8, malloc(cut + len + 1))
+    k = 0
+    while (k < cut) {
+        frost_byte_set(out, k, frost_byte_at(parent, k))
+        k = k + 1
+    }
+    k = 0
+    while (k < len) {
+        frost_byte_set(out, cut + k, frost_byte_at(src, off + k))
+        k = k + 1
+    }
+    frost_byte_set(out, cut + len, 0)
+    out
+}
+
+// Copy a file's text into the buffer at `at`, terminated, and answer where the
+// next one starts.
+append_text :: fn(buffer: ^i8, at: i64, text: ^i8) -> i64 {
+    length := frost_str_len(text)
+    mut k : i64 = 0
+    while (k < length) {
+        frost_byte_set(buffer, at + k, frost_byte_at(text, k))
+        k = k + 1
+    }
+    frost_byte_set(buffer, at + length, CH_LF)
+    frost_byte_set(buffer, at + length + 1, 0)
+    at + length + 1
+}
+
+// Place a file and everything it imports, imports first. A struct's name is
+// resolved where it is written rather than looked up later, so a file has to
+// reach the buffer after everything it depends on. A file already placed is
+// skipped, which is what makes a diamond one copy and a cycle terminate.
+place_module :: fn(buffer: ^i8, at: i64, path: ^i8, mut modules: Arena<Module>,
+    mut scratch: Arena<Token>) -> i64 {
+    if (module_seen(modules, path)) {
+        return at
+    }
+    arena_push(modules, Module { path = path })
+    text := frost_read_file(path)
+    if (frost_str_len(text) == 0) {
+        frost_error("frost: cannot read '")
+        frost_error(path)
+        frost_error("'")
+        frost_die()
+    }
+    // Read this file's imports out before recursing, since the recursion needs
+    // the scratch tokens for the file it descends into.
+    mut children := arena_make($Module, 256)
+    scratch.count = 0
+    tokenize(text, frost_str_len(text), scratch)
+    mut i : i64 = 0
+    while (i + 1 < scratch.count) {
+        entry : ^Token = arena_at(scratch, i)
+        named : ^Token = arena_at(scratch, i + 1)
+        if (entry^.kind == TOK_KW_IMPORT && named^.kind == TOK_STR) {
+            arena_push(
+                children,
+                Module { path = join_path(path, text, named^.off, named^.len) },
+            )
+        }
+        i = i + 1
+    }
+    mut here := at
+    mut c : i64 = 0
+    while (c < children.count) {
+        child : ^Module = arena_at(children, c)
+        here = place_module(buffer, here, child^.path, modules, scratch)
+        c = c + 1
+    }
+    append_text(buffer, here, text)
+}
+
+resolve_imports :: fn(buffer: ^i8, root: ^i8, mut modules: Arena<Module>,
+    mut scratch: Arena<Token>) -> i64 {
+    length := place_module(buffer, 0, root, modules, scratch)
+    // Every imported file's text is in the buffer now, so the imports have
+    // nothing left to say. Blanking them leaves the parser one plain program
+    // and every offset where it was.
+    scratch.count = 0
+    tokenize(buffer, length, scratch)
+    mut j : i64 = 0
+    while (j + 1 < scratch.count) {
+        entry : ^Token = arena_at(scratch, j)
+        named : ^Token = arena_at(scratch, j + 1)
+        if (entry^.kind == TOK_KW_IMPORT && named^.kind == TOK_STR) {
+            mut b := entry^.off
+            last := named^.off + named^.len
+            while (b <= last) {
+                frost_byte_set(buffer, b, CH_SPACE)
+                b = b + 1
+            }
+        }
+        j = j + 1
+    }
+    scratch.count = 0
+    length
+}
+
 // Room past the source's terminator for names the compiler makes up. A name is
 // an offset and a length into the source everywhere in this compiler, so a
 // synthesized one has to live in the source too rather than in a table of its
 // own. The lexer stops at the terminator, so nothing here is ever read as code.
 SYNTH_ROOM :: 65536
+
+// Room for the root file and everything it imports, laid end to end.
+SOURCE_ROOM :: 8388608
 
 source_with_room :: fn(text: ^i8) -> ^i8 {
     length := frost_str_len(text)
@@ -2021,8 +2167,10 @@ type_of :: fn(mut p: Parser, id: i64) -> i64 {
         return lookup_local(p, node^.val, node^.c)
     }
     if (kind == NODE_CALL) {
-        sym : ^Sym = arena_at(p.fns, node^.val)
-        return sym^.ret_type
+        // A generic function's declared return type still mentions its type
+        // parameter, so a call answers with the concrete type recorded for the
+        // instantiation it names.
+        return call_ret_type(p, node^.a, node^.val)
     }
     if (kind == NODE_FIELD) {
         base := node^.a
@@ -3302,6 +3450,26 @@ record_mono_ret :: fn(mut p: Parser, fn_index: i64, arg: i64, ret: i64) {
         MonoRet { fn_index = fn_index, arg = arg, ret = ret })
 }
 
+// Work out every monomorphization's concrete return type. A call needs it to
+// type its result and to know whether to hand in a buffer for a struct, and the
+// template's own return type still mentions the type parameter. This runs
+// before anything is checked or emitted, so both backends see the same answer.
+record_mono_rets :: fn(mut p: Parser) {
+    mut gi : i64 = 0
+    while (gi < p.generic_fns.count) {
+        mut ii : i64 = 0
+        while (ii < p.instances.count) {
+            inst : ^Instance = arena_at(p.instances, ii)
+            arg := inst^.arg
+            node := parse_generic_instance(p, gi, arg)
+            fnode : ^Node = arena_at(p.arena, node)
+            record_mono_ret(p, fnode^.val, arg, p.last_return_type)
+            ii = ii + 1
+        }
+        gi = gi + 1
+    }
+}
+
 mono_ret_type :: fn(mut p: Parser, fn_index: i64, arg: i64) -> i64 {
     mut i : i64 = 0
     while (i < p.mono_rets.count) {
@@ -3820,23 +3988,6 @@ emit_asm_mono_function :: fn(mut p: Parser, id: i64, arg: i64, ret: i64) {
 }
 
 emit_asm_program :: fn(mut p: Parser, head: i64) {
-    // Work out every monomorphization's concrete return type first, because a
-    // call needs it to know whether to hand in a result buffer, and the
-    // template's own return type still mentions the type parameter.
-    mut gi : i64 = 0
-    while (gi < p.generic_fns.count) {
-        mut ii : i64 = 0
-        while (ii < p.instances.count) {
-            inst : ^Instance = arena_at(p.instances, ii)
-            arg := inst^.arg
-            node := parse_generic_instance(p, gi, arg)
-            fnode : ^Node = arena_at(p.arena, node)
-            record_mono_ret(p, fnode^.val, arg, p.last_return_type)
-            ii = ii + 1
-        }
-        gi = gi + 1
-    }
-
     asm(".text")
     mut id := head
     while (id != (0 - 1)) {
@@ -3849,7 +4000,7 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
         id = next_id
     }
 
-    gi = 0
+    mut gi : i64 = 0
     while (gi < p.generic_fns.count) {
         mut ii : i64 = 0
         while (ii < p.instances.count) {
@@ -4243,7 +4394,16 @@ main :: fn() -> i64 {
     // is set (the self-hosting fixpoint feeds frost.frost itself through
     // here), and otherwise fall back to the built-in demonstration program.
     input_path := frost_getenv("FROST_INPUT")
-    mut source : ^i8 = frost_read_file(input_path)
+    mut source : ^i8 = ""
+    if (frost_str_len(input_path) != 0) {
+        // One buffer holds the root file and everything it imports, so a name
+        // is an offset into a single source no matter which file wrote it.
+        buffer := ptr_cast($i8, malloc(SOURCE_ROOM + SYNTH_ROOM))
+        mut modules := arena_make($Module, 1024)
+        mut scratch := arena_make($Token, 262144)
+        resolve_imports(buffer, input_path, modules, scratch)
+        source = buffer
+    }
     if (frost_str_len(source) == 0) {
         source = "
         strlen :: extern fn(s: ^i8) -> i64
@@ -4321,9 +4481,11 @@ main :: fn() -> i64 {
         }
     "
     }
-    // Work from a copy with room past the terminator, so a name the compiler
-    // synthesizes can live in the source like every other name.
-    source = source_with_room(source)
+    // The demo program is a literal with nowhere to write, so it needs the same
+    // copy with room past the terminator that an imported source already has.
+    if (frost_str_len(input_path) == 0) {
+        source = source_with_room(source)
+    }
 
     mut parser := Parser {
         src = source,
@@ -4380,6 +4542,7 @@ main :: fn() -> i64 {
     }
     tokenize(source, frost_str_len(source), parser.tokens)
     program := parse_program(parser)
+    record_mono_rets(parser)
     check_calls(parser)
     check_regions(parser)
 
