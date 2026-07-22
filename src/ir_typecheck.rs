@@ -287,10 +287,30 @@ fn require_block(
     Ok(())
 }
 
+// Where an operand came from, so a type error points at source rather than only
+// naming the function it happened in. A local carries the position it was bound
+// at; a constant carries none, and the message stands on its own.
+fn at(function: &IrFunction, operand: &IrOperand) -> String {
+    let IrOperand::Local(id) = operand else {
+        return String::new();
+    };
+    let Some(local) = function.locals.get(*id) else {
+        return String::new();
+    };
+    if local.position == crate::lexer::Position::default() {
+        return String::new();
+    }
+    format!(
+        "at line {}, column {}: ",
+        local.position.line, local.position.column
+    )
+}
+
 fn require_numeric(function: &IrFunction, operand: &IrOperand) -> Result<()> {
     if !is_numeric(&operand_type(function, operand)) {
         bail!(
-            "arithmetic operand in '{}' has non-numeric type {}",
+            "{}arithmetic operand in '{}' has non-numeric type {}",
+            at(function, operand),
             function.name,
             operand_type(function, operand)
         );
@@ -305,7 +325,11 @@ fn require_pointer(
 ) -> Result<()> {
     let ty = operand_type(function, operand);
     if !is_pointer(&ty) {
-        bail!("{role} in '{}' has non-pointer type {ty}", function.name);
+        bail!(
+            "{}{role} in '{}' has non-pointer type {ty}",
+            at(function, operand),
+            function.name
+        );
     }
     Ok(())
 }
