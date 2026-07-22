@@ -747,7 +747,10 @@ fn self_hosted_native_backend_emits_working_assembly() {
         .arg(&compiler_source)
         .output()
         .unwrap();
-    assert!(build.status.success(), "the self-hosted compiler failed to build");
+    assert!(
+        build.status.success(),
+        "the self-hosted compiler failed to build"
+    );
 
     let program = "fib :: fn(n: i64) -> i64 {\n\
                    \x20   if (n < 2) { return n }\n\
@@ -798,6 +801,139 @@ fn self_hosted_native_backend_emits_working_assembly() {
     let _ = std::fs::remove_file(&exe_path);
 
     assert_eq!(output, "0\n1\n1\n2\n3\n5\n8\n13\n21\n34\n42\n");
+}
+
+// Put a program through the self-hosted compiler's native backend, assemble the
+// result and run it, returning what it printed. Nothing here goes through a C
+// compiler except the assembler and linker.
+fn selfhosted_native_output(name: &str, source: &str) -> Option<String> {
+    let compiler = build_self_hosted_compiler()?;
+    let directory = std::env::temp_dir();
+    let input = directory.join(format!("frost_nb_{name}.frost"));
+    std::fs::write(&input, source).unwrap();
+
+    let emit = Command::new(&compiler)
+        .env("FROST_BACKEND", "asm")
+        .env("FROST_INPUT", &input)
+        .output()
+        .unwrap();
+    assert!(
+        emit.status.success(),
+        "native backend refused {name}:\n{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+
+    let asm_path = directory.join(format!("frost_nb_{name}.s"));
+    let exe_path = directory
+        .join(format!("frost_nb_{name}{}", std::env::consts::EXE_SUFFIX));
+    std::fs::write(&asm_path, String::from_utf8_lossy(&emit.stdout).as_ref())
+        .unwrap();
+    let assembled = Command::new(c_compiler().unwrap())
+        .arg(&asm_path)
+        .arg("-o")
+        .arg(&exe_path)
+        .output()
+        .unwrap();
+    assert!(
+        assembled.status.success(),
+        "emitted assembly for {name} did not assemble:\n{}",
+        String::from_utf8_lossy(&assembled.stderr)
+    );
+
+    let run = Command::new(&exe_path).output().unwrap();
+    assert!(run.status.success(), "{name} exited with failure");
+    let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&asm_path);
+    let _ = std::fs::remove_file(&exe_path);
+    Some(output)
+}
+
+fn build_self_hosted_compiler() -> Option<PathBuf> {
+    if c_compiler().is_none() || !linker_available() {
+        return None;
+    }
+    let directory = std::env::temp_dir();
+    let compiler = directory
+        .join(format!("frost_selfhosted{}", std::env::consts::EXE_SUFFIX));
+    let source = directory.join("frost_selfhosted.frost");
+    std::fs::write(&source, SELF_HOSTED).unwrap();
+    let frost = env!("CARGO_BIN_EXE_frost");
+    let build = Command::new(frost)
+        .arg("--link")
+        .arg("-o")
+        .arg(&compiler)
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "the self-hosted compiler failed to build:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let _ = std::fs::remove_file(&source);
+    Some(compiler)
+}
+
+// Each language feature the native backend generates code for, checked by
+// running the program it produces.
+#[test]
+fn native_backend_covers_the_language() {
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            "arith",
+            "main :: fn() -> i64 {\n    print 2 + 3 * 4\n    print 20 / 6\n    print 20 % 6\n    print 0 - 7\n    0\n}\n",
+            "14\n3\n2\n-7\n",
+        ),
+        (
+            "compare",
+            "main :: fn() -> i64 {\n    print 1 < 2\n    print 2 <= 2\n    print 3 > 4\n    print 3 >= 4\n    print 5 == 5\n    print 5 != 5\n    0\n}\n",
+            "1\n1\n0\n0\n1\n0\n",
+        ),
+        (
+            "recursion",
+            "fib :: fn(n: i64) -> i64 {\n    if (n < 2) { return n }\n    return fib(n - 1) + fib(n - 2)\n}\nmain :: fn() -> i64 {\n    print fib(12)\n    0\n}\n",
+            "144\n",
+        ),
+        (
+            "loops",
+            "main :: fn() -> i64 {\n    mut total : i64 = 0\n    mut i : i64 = 1\n    while (i <= 100) {\n        total = total + i\n        i = i + 1\n    }\n    print total\n    0\n}\n",
+            "5050\n",
+        ),
+        (
+            "structs",
+            "P :: struct { x: i64, y: i64 }\nsum :: fn(q: P) -> i64 { return q.x + q.y }\nbump :: fn(mut q: P) { q.x = q.x + 100 }\nmain :: fn() -> i64 {\n    mut a : P = P { x = 3, y = 4 }\n    print sum(a)\n    bump(a)\n    print a.x\n    b := a\n    print b.x\n    print sizeof(P)\n    0\n}\n",
+            "7\n103\n103\n16\n",
+        ),
+        (
+            "pointers",
+            "P :: struct { x: i64, y: i64 }\nmain :: fn() -> i64 {\n    mut a : P = P { x = 3, y = 4 }\n    r : ^P = ptr_to(a)\n    print r^.y\n    r^.y = 55\n    print a.y\n    0\n}\n",
+            "4\n55\n",
+        ),
+        (
+            "match",
+            "classify :: fn(n: i64) -> i64 {\n    mut r : i64 = 0\n    match n {\n        case 0: r = 100\n        case 1: r = 200\n        case _: r = 300\n    }\n    return r\n}\nmain :: fn() -> i64 {\n    print classify(0)\n    print classify(1)\n    print classify(9)\n    0\n}\n",
+            "100\n200\n300\n",
+        ),
+        (
+            "manyargs",
+            "six :: fn(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64) -> i64 {\n    return a + b + c + d + e + f\n}\nmain :: fn() -> i64 {\n    print six(1, 2, 3, 4, 5, 6)\n    print six(10, 20, 30, 40, 50, 60)\n    0\n}\n",
+            "21\n210\n",
+        ),
+        (
+            "nested_calls",
+            "add :: fn(a: i64, b: i64) -> i64 { return a + b }\nmain :: fn() -> i64 {\n    print add(add(1, 2), add(3, 4))\n    0\n}\n",
+            "10\n",
+        ),
+    ];
+
+    for (name, source, expected) in cases {
+        let Some(output) = selfhosted_native_output(name, source) else {
+            return;
+        };
+        assert_eq!(&output, expected, "native backend output for {name}");
+    }
 }
 
 // Build the self-hosted compiler, feed it a program, and return what it wrote to stderr after
