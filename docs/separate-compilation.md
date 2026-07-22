@@ -186,6 +186,11 @@ rather than after.
    unexported type produced a name the importer could not resolve, and such a
    program simply did not compile.
 
+   The whole test suite runs a second time under it, in CI and as
+   `just test-interfaces`, so the sufficiency claim is checked on every commit
+   rather than the day the compiler starts relying on it. That gate was itself
+   checked by breaking the interface closure and confirming it fails.
+
    What is left is making it the way builds work rather than a check on them,
    and that needs each module to emit its own object file, because an interface
    deliberately drops a module's unexported, unreached declarations.
