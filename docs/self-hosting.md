@@ -180,11 +180,23 @@ its output. In dependency order, what is done and what remains:
    lower to `int64_t` whatever it returned, so it could not return a pointer.
    It now emits its declared return type.
 
-5. **Failure sets and regions.** `-> T ! E` with `?`, and the arena escape
-   check. Failure sets reuse the enum and match machinery and mirror
-   `src/failure_sets.rs`; the region check mirrors `src/regions.rs` and can key
-   off the `with` blocks the compiler now parses.
-6. **Imports and modules.** the self-hosted compiler is single-file today; a multi-file
+5. **Regions.** Done, mirroring `src/regions.rs`. A `with` block is a region and
+   a raw pointer derived from its arena may not be stored outside the block or
+   returned. A binding declared inside may hold one, since it dies with the
+   block, and reading through it is the point.
+
+   No lifetimes and no region types on pointers, just a walk over the block
+   tracking which names hold arena pointers. A dereference deliberately does not
+   propagate: it reads the value there, and reading out of the region is what
+   the region is for.
+
+   Left: the interprocedural half, where a `uses` function stores an arena
+   pointer into one of its own parameters.
+
+6. **Failure sets.** `-> T ! E` with `?`, mirroring `src/failure_sets.rs`. This
+   one needs enums with payloads first, which the bootstrap subset skipped,
+   since the desugar synthesizes a Result enum and matches on it.
+7. **Imports and modules.** the self-hosted compiler is single-file today; a multi-file
    compiler needs this to compile itself.
 
 Param modes are already done: the self-hosted compiler lowers `mut`/`move`/read to pointers and

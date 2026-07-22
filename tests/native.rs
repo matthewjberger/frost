@@ -1221,6 +1221,62 @@ fn self_hosted_rejects_a_uses_call_with_no_capability() {
     );
 }
 
+// Regions in the self-hosted compiler: a raw pointer into the arena may not
+// outlive the `with` block it was taken in.
+#[test]
+fn self_hosted_rejects_a_region_pointer_stored_outside() {
+    let source = "Arena :: struct { offset: i64 }\n\
+                  alloc :: fn() -> ^i64 uses Arena { ptr_to(arena^.offset) }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   mut arena : Arena = Arena { offset = 0 }\n\
+                  \x20   mut escaped : ^i64 = ptr_to(arena.offset)\n\
+                  \x20   with arena { escaped = alloc() }\n\
+                  \x20   escaped^\n}\n";
+    let Some(message) = self_hosted_rejects("regionstore", source) else {
+        return;
+    };
+    assert!(
+        message.contains("escapes its region"),
+        "expected a region escape error, got:\n{message}"
+    );
+}
+
+#[test]
+fn self_hosted_rejects_a_returned_region_pointer() {
+    let source = "Arena :: struct { offset: i64 }\n\
+                  alloc :: fn() -> ^i64 uses Arena { ptr_to(arena^.offset) }\n\
+                  grab :: fn() -> ^i64 {\n\
+                  \x20   mut arena : Arena = Arena { offset = 0 }\n\
+                  \x20   with arena { return alloc() }\n\
+                  \x20   ptr_to(arena.offset)\n}\n\
+                  main :: fn() -> i64 { 0 }\n";
+    let Some(message) = self_hosted_rejects("regionreturn", source) else {
+        return;
+    };
+    assert!(
+        message.contains("being returned"),
+        "expected a returned-pointer region error, got:\n{message}"
+    );
+}
+
+// A binding declared inside the region may hold a region pointer, and reading
+// through it is what the region is for, so this must be accepted.
+#[test]
+fn self_hosted_accepts_a_region_pointer_held_inside() {
+    let source = "Arena :: struct { offset: i64 }\n\
+                  alloc :: fn() -> ^i64 uses Arena { ptr_to(arena^.offset) }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   mut arena : Arena = Arena { offset = 7 }\n\
+                  \x20   mut result : i64 = 0\n\
+                  \x20   with arena {\n        held := alloc()\n\
+                  \x20       result = held^\n    }\n\
+                  \x20   print result\n    0\n}\n";
+    let Some(output) = selfhosted_native_output("regionheld", source) else {
+        return;
+    };
+    assert_eq!(output, "7\n");
+}
+
 #[test]
 fn self_hosted_rejects_a_linear_value_never_consumed() {
     let source = "File :: linear struct { h: i64 }\n\
