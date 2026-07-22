@@ -128,6 +128,7 @@ TOK_KW_LINEAR :: 25
 TOK_KW_USES   :: 26
 TOK_KW_WITH   :: 27
 TOK_KW_IMPORT :: 28
+TOK_KW_EXPORT :: 29
 TOK_LPAREN    :: 40
 TOK_RPAREN    :: 41
 TOK_LBRACE    :: 42
@@ -293,6 +294,23 @@ StructField :: struct {
     next: i64,
 }
 
+// One source file. A name is an offset into the buffer every file's text was
+// laid into, and a module's range is what says which file wrote it.
+Module :: struct {
+    path: ^i8,
+    start: i64,
+    finish: i64,
+}
+
+// A name a module offers to whoever imports it, from an `export a, b` line. A
+// top-level name not listed is the module's own: another file naming it is
+// naming something else, and two modules may each keep one of the same name.
+Export :: struct {
+    module: i64,
+    off: i64,
+    len: i64,
+}
+
 // A local's type binding during code generation. The table is rebuilt per
 // function and maps a local's name (byte range) to its type code, so a field
 // access or a `:=` can be typed by walking it.
@@ -380,6 +398,9 @@ Parser :: struct {
     region_off: i64,
     region_len: i64,
     region_returns: i64,
+    modules: Arena<Module>,
+    exports: Arena<Export>,
+    export_names: ^i8,
     synth_next: i64,
     prov_kind: i64,
     prov_off: i64,
@@ -448,6 +469,7 @@ classify_ident :: fn(src: ^i8, off: i64, len: i64) -> i64 {
     if (str_range_eq(src, off, len, "uses")) { return TOK_KW_USES }
     if (str_range_eq(src, off, len, "with")) { return TOK_KW_WITH }
     if (str_range_eq(src, off, len, "import")) { return TOK_KW_IMPORT }
+    if (str_range_eq(src, off, len, "export")) { return TOK_KW_EXPORT }
     TOK_IDENT
 }
 
@@ -622,10 +644,6 @@ advance :: fn(mut p: Parser) {
 // or a comment is not one.
 // ---------------------------------------------------------------------------
 
-Module :: struct {
-    path: ^i8,
-}
-
 module_seen :: fn(mut modules: Arena<Module>, path: ^i8) -> bool {
     mut i : i64 = 0
     while (i < modules.count) {
@@ -689,7 +707,7 @@ place_module :: fn(buffer: ^i8, at: i64, path: ^i8, mut modules: Arena<Module>,
     if (module_seen(modules, path)) {
         return at
     }
-    arena_push(modules, Module { path = path })
+    mine := arena_push(modules, Module { path = path, start = 0, finish = 0 })
     text := frost_read_file(path)
     if (frost_str_len(text) == 0) {
         frost_error("frost: cannot read '")
@@ -709,7 +727,8 @@ place_module :: fn(buffer: ^i8, at: i64, path: ^i8, mut modules: Arena<Module>,
         if (entry^.kind == TOK_KW_IMPORT && named^.kind == TOK_STR) {
             arena_push(
                 children,
-                Module { path = join_path(path, text, named^.off, named^.len) },
+                Module { path = join_path(path, text, named^.off, named^.len),
+                    start = 0, finish = 0 },
             )
         }
         i = i + 1
@@ -721,15 +740,46 @@ place_module :: fn(buffer: ^i8, at: i64, path: ^i8, mut modules: Arena<Module>,
         here = place_module(buffer, here, child^.path, modules, scratch)
         c = c + 1
     }
-    append_text(buffer, here, text)
+    finish := append_text(buffer, here, text)
+    // The range is known only now, since everything this file imports went in
+    // ahead of it. It is what tells a name which file wrote it.
+    placed : ^Module = arena_at(modules, mine)
+    placed^.start = here
+    placed^.finish = finish
+    finish
 }
 
-resolve_imports :: fn(buffer: ^i8, root: ^i8, mut modules: Arena<Module>,
+// Which module a byte belongs to. A program compiled from a single file has no
+// modules recorded, and everything in it belongs to the root.
+module_at :: fn(mut modules: Arena<Module>, offset: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < modules.count) {
+        entry : ^Module = arena_at(modules, i)
+        if (offset >= entry^.start && offset < entry^.finish) {
+            return i
+        }
+        i = i + 1
+    }
+    0
+}
+
+blank_range :: fn(buffer: ^i8, from: i64, through: i64) {
+    mut b := from
+    while (b <= through) {
+        frost_byte_set(buffer, b, CH_SPACE)
+        b = b + 1
+    }
+}
+
+resolve_imports :: fn(buffer: ^i8, root: ^i8, names: ^i8,
+    mut modules: Arena<Module>, mut exports: Arena<Export>,
     mut scratch: Arena<Token>) -> i64 {
+    mut named_at : i64 = 0
     length := place_module(buffer, 0, root, modules, scratch)
     // Every imported file's text is in the buffer now, so the imports have
-    // nothing left to say. Blanking them leaves the parser one plain program
-    // and every offset where it was.
+    // nothing left to say, and an export line has said it once it is recorded.
+    // Blanking both leaves the parser one plain program with every offset where
+    // it was.
     scratch.count = 0
     tokenize(buffer, length, scratch)
     mut j : i64 = 0
@@ -737,12 +787,44 @@ resolve_imports :: fn(buffer: ^i8, root: ^i8, mut modules: Arena<Module>,
         entry : ^Token = arena_at(scratch, j)
         named : ^Token = arena_at(scratch, j + 1)
         if (entry^.kind == TOK_KW_IMPORT && named^.kind == TOK_STR) {
-            mut b := entry^.off
-            last := named^.off + named^.len
-            while (b <= last) {
-                frost_byte_set(buffer, b, CH_SPACE)
-                b = b + 1
+            blank_range(buffer, entry^.off, named^.off + named^.len)
+        }
+        if (entry^.kind == TOK_KW_EXPORT) {
+            owner := module_at(modules, entry^.off)
+            mut k := j + 1
+            mut through := entry^.off + entry^.len - 1
+            mut listing : bool = true
+            while (listing) {
+                listed : ^Token = arena_at(scratch, k)
+                if (listed^.kind != TOK_IDENT) {
+                    listing = false
+                } else {
+                    // The name is copied out because the line it is written
+                    // on is about to be blanked.
+                    mut b : i64 = 0
+                    while (b < listed^.len) {
+                        frost_byte_set(names, named_at + b,
+                            frost_byte_at(buffer, listed^.off + b))
+                        b = b + 1
+                    }
+                    arena_push(
+                        exports,
+                        Export { module = owner, off = named_at,
+                            len = listed^.len },
+                    )
+                    named_at = named_at + listed^.len
+                    through = listed^.off + listed^.len - 1
+                    k = k + 1
+                    following : ^Token = arena_at(scratch, k)
+                    if (following^.kind == TOK_COMMA) {
+                        through = following^.off
+                        k = k + 1
+                    } else {
+                        listing = false
+                    }
+                }
             }
+            blank_range(buffer, entry^.off, through)
         }
         j = j + 1
     }
@@ -790,6 +872,21 @@ synth_capability_name :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
     start
 }
 
+// The same comparison across two buffers, for a name kept somewhere other than
+// the source it was read from.
+bytes_equal_across :: fn(first: ^i8, first_off: i64, second: ^i8,
+    second_off: i64, length: i64) -> bool {
+    mut k : i64 = 0
+    while (k < length) {
+        if (frost_byte_at(first, first_off + k)
+            != frost_byte_at(second, second_off + k)) {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
 bytes_equal :: fn(src: ^i8, first: i64, second: i64, length: i64) -> bool {
     mut k : i64 = 0
     while (k < length) {
@@ -806,7 +903,8 @@ intern_global :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     while (i < p.fns.count) {
         entry : ^Sym = arena_at(p.fns, i)
         if (entry^.len == length
-            && bytes_equal(p.src, entry^.off, offset, length)) {
+            && bytes_equal(p.src, entry^.off, offset, length)
+            && name_visible(p, entry^.off, entry^.len, offset)) {
             return i
         }
         i = i + 1
@@ -886,6 +984,32 @@ register_const :: fn(mut p: Parser, offset: i64, length: i64, value: i64) {
     )
 }
 
+// Whether a declaration whose name sits at `decl_off` may be named from
+// `use_off`. A file's own names are its own to use; another file's are only
+// what it exported. The declaration's offset is what says which file wrote it,
+// so no table has to carry an owner.
+//
+// A program compiled from one file has one module and every name is in it, so
+// this answers true on the first comparison and costs nothing.
+name_visible :: fn(mut p: Parser, decl_off: i64, decl_len: i64, use_off: i64)
+    -> bool {
+    owner := module_at(p.modules, decl_off)
+    if (owner == module_at(p.modules, use_off)) {
+        return true
+    }
+    mut i : i64 = 0
+    while (i < p.exports.count) {
+        entry : ^Export = arena_at(p.exports, i)
+        if (entry^.module == owner && entry^.len == decl_len
+            && bytes_equal_across(p.export_names, entry^.off, p.src, decl_off,
+                decl_len)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
 // If a name is a declared constant, return its value through `out` (as the
 // return) and true; otherwise false. Consts are looked up by byte comparison.
 const_value :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
@@ -893,7 +1017,8 @@ const_value :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     while (i < p.consts.count) {
         entry : ^ConstDef = arena_at(p.consts, i)
         if (entry^.name_len == length
-            && bytes_equal(p.src, entry^.name_off, offset, length)) {
+            && bytes_equal(p.src, entry^.name_off, offset, length)
+            && name_visible(p, entry^.name_off, entry^.name_len, offset)) {
             return entry^.value
         }
         i = i + 1
@@ -906,7 +1031,8 @@ is_const :: fn(mut p: Parser, offset: i64, length: i64) -> bool {
     while (i < p.consts.count) {
         entry : ^ConstDef = arena_at(p.consts, i)
         if (entry^.name_len == length
-            && bytes_equal(p.src, entry^.name_off, offset, length)) {
+            && bytes_equal(p.src, entry^.name_off, offset, length)
+            && name_visible(p, entry^.name_off, entry^.name_len, offset)) {
             return true
         }
         i = i + 1
@@ -1050,7 +1176,8 @@ type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     while (i < p.structs.count) {
         entry : ^StructDef = arena_at(p.structs, i)
         if (entry^.is_generic == 0 && entry^.name_len == length
-            && bytes_equal(p.src, entry^.name_off, offset, length)) {
+            && bytes_equal(p.src, entry^.name_off, offset, length)
+            && name_visible(p, entry^.name_off, entry^.name_len, offset)) {
             return STRUCT_BASE + i
         }
         i = i + 1
@@ -1064,7 +1191,8 @@ generic_index_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     while (i < p.structs.count) {
         entry : ^StructDef = arena_at(p.structs, i)
         if (entry^.is_generic == 1 && entry^.name_len == length
-            && bytes_equal(p.src, entry^.name_off, offset, length)) {
+            && bytes_equal(p.src, entry^.name_off, offset, length)
+            && name_visible(p, entry^.name_off, entry^.name_len, offset)) {
             return i
         }
         i = i + 1
@@ -2205,14 +2333,20 @@ type_of :: fn(mut p: Parser, id: i64) -> i64 {
     TY_I64
 }
 
-// Emit a struct's C name: its source name, plus `_<instance_id>` when it is a
-// monomorphized instance, so `Arena<Node>` and `Arena<Sym>` get distinct names.
+// A struct's C name: its source name, plus the module that declared it when
+// that is not the root, since two files may each keep a private struct of the
+// same name, and plus `_<instance_id>` for a monomorphized instance.
 emit_struct_name :: fn(mut p: Parser, struct_index: i64) {
     def : ^StructDef = arena_at(p.structs, struct_index)
     name_off := def^.name_off
     name_len := def^.name_len
     instance_id := def^.instance_id
     emit_source(p.src, name_off, name_len)
+    owner := module_at(p.modules, name_off)
+    if (owner > 0) {
+        frost_emit_str("_m")
+        frost_emit_int(owner)
+    }
     if (instance_id >= 0) {
         frost_emit_str("_")
         frost_emit_int(instance_id)
@@ -4395,13 +4529,16 @@ main :: fn() -> i64 {
     // here), and otherwise fall back to the built-in demonstration program.
     input_path := frost_getenv("FROST_INPUT")
     mut source : ^i8 = ""
+    mut modules : Arena<Module> = arena_make($Module, 1024)
+    mut exports : Arena<Export> = arena_make($Export, 4096)
+    export_names := ptr_cast($i8, malloc(SYNTH_ROOM))
     if (frost_str_len(input_path) != 0) {
         // One buffer holds the root file and everything it imports, so a name
         // is an offset into a single source no matter which file wrote it.
         buffer := ptr_cast($i8, malloc(SOURCE_ROOM + SYNTH_ROOM))
-        mut modules := arena_make($Module, 1024)
-        mut scratch := arena_make($Token, 262144)
-        resolve_imports(buffer, input_path, modules, scratch)
+        mut scratch : Arena<Token> = arena_make($Token, 262144)
+        resolve_imports(buffer, input_path, export_names, modules, exports,
+            scratch)
         source = buffer
     }
     if (frost_str_len(source) == 0) {
@@ -4522,6 +4659,9 @@ main :: fn() -> i64 {
         region_off = 0,
         region_len = 0,
         region_returns = 0,
+        modules = modules,
+        exports = exports,
+        export_names = export_names,
         synth_next = 0,
         prov_kind = 0,
         prov_off = 0,

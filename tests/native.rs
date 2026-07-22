@@ -1329,13 +1329,15 @@ fn self_hosted_resolves_imports() {
     std::fs::create_dir_all(&library).unwrap();
     std::fs::write(
         library.join("math.frost"),
-        "Pair :: struct { a: i64, b: i64 }\n\
+        "export square, Pair\n\
+         Pair :: struct { a: i64, b: i64 }\n\
          square :: fn(n: i64) -> i64 { n * n }\n",
     )
     .unwrap();
     std::fs::write(
         library.join("extra.frost"),
-        "import \"math.frost\"\n\
+        "export cube\n\
+         import \"math.frost\"\n\
          cube :: fn(n: i64) -> i64 { n * square(n) }\n",
     )
     .unwrap();
@@ -1380,7 +1382,9 @@ fn self_hosted_survives_an_import_cycle() {
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(
         directory.join("second.frost"),
-        "import \"first.frost\"\nbeta :: fn() -> i64 { 4 }\n",
+        "export beta\n\
+         import \"first.frost\"\n\
+         beta :: fn() -> i64 { 4 }\n",
     )
     .unwrap();
     let root = directory.join("first.frost");
@@ -1409,6 +1413,76 @@ fn self_hosted_survives_an_import_cycle() {
     let _ = std::fs::remove_dir_all(&directory);
     let _ = std::fs::remove_file(&compiler);
     assert_eq!(output, "7\n");
+}
+
+// A module offers what it exports and keeps the rest. Two files each keep a
+// private `secret` and a private-or-exported `Thing`, and neither sees the
+// other's, so the names do not collide and the root reaches only the exports.
+#[test]
+fn self_hosted_keeps_unexported_names_private() {
+    let Some(compiler) = build_self_hosted_compiler("visibility") else {
+        return;
+    };
+    let directory = std::env::temp_dir().join("frost_visibility_test");
+    let library = directory.join("lib");
+    std::fs::create_dir_all(&library).unwrap();
+    std::fs::write(
+        library.join("a.frost"),
+        "export helper, Thing\n\
+         Thing :: struct { value: i64 }\n\
+         secret :: fn() -> i64 { 11 }\n\
+         helper :: fn() -> i64 { secret() }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        library.join("b.frost"),
+        "export other\n\
+         Thing :: struct { value: i64, extra: i64 }\n\
+         secret :: fn() -> i64 { 22 }\n\
+         other :: fn() -> i64 { secret() }\n",
+    )
+    .unwrap();
+    let root = directory.join("app.frost");
+    let program = "import \"lib/a.frost\"\n\
+                   import \"lib/b.frost\"\n\
+                   main :: fn() -> i64 {\n\
+                   \x20   print helper()\n    print other()\n\
+                   \x20   t := Thing { value = 5 }\n    print t.value\n    0\n}\n";
+    std::fs::write(&root, program).unwrap();
+
+    let emit = Command::new(&compiler)
+        .env("FROST_INPUT", &root)
+        .output()
+        .unwrap();
+    assert!(
+        emit.status.success(),
+        "exports were not honoured:\n{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let c_source = String::from_utf8_lossy(&emit.stdout).replace("\r\n", "\n");
+    let Some(output) = compile_c_and_run("visibility", &c_source) else {
+        return;
+    };
+    assert_eq!(output, "11\n22\n5\n");
+
+    // Naming what a module kept to itself is naming nothing.
+    std::fs::write(
+        &root,
+        "import \"lib/a.frost\"\nmain :: fn() -> i64 { secret() }\n",
+    )
+    .unwrap();
+    let refused = Command::new(&compiler)
+        .env("FROST_INPUT", &root)
+        .output()
+        .unwrap();
+    let message = String::from_utf8_lossy(&refused.stderr).to_string();
+
+    let _ = std::fs::remove_dir_all(&directory);
+    let _ = std::fs::remove_file(&compiler);
+    assert!(
+        !refused.status.success() && message.contains("undefined function"),
+        "a private name was reachable from another file: {message}"
+    );
 }
 
 #[test]
