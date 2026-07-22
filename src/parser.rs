@@ -1964,7 +1964,7 @@ impl<'a> Parser<'a> {
                     self.read_token();
                     ParamMode::Move
                 }
-                _ => ParamMode::Move,
+                _ => ParamMode::Read,
             };
 
             if matches!(self.peek_nth(0), Token::Dollar) {
@@ -2297,7 +2297,7 @@ impl<'a> Parser<'a> {
                     self.read_token();
                     ParamMode::Move
                 }
-                _ => ParamMode::Move,
+                _ => ParamMode::Read,
             };
 
             if matches!(self.peek_nth(0), Token::Dollar) {
@@ -3005,13 +3005,13 @@ mod tests {
                     name: "x".to_string(),
                     type_annotation: None,
                     mutable: false,
-                    mode: ParamMode::Move,
+                    mode: ParamMode::Read,
                 },
                 Parameter {
                     name: "y".to_string(),
                     type_annotation: None,
                     mutable: false,
-                    mode: ParamMode::Move,
+                    mode: ParamMode::Read,
                 },
             ],
             ReturnSignature::None,
@@ -3037,7 +3037,7 @@ mod tests {
                     name: "x".to_string(),
                     type_annotation: None,
                     mutable: false,
-                    mode: ParamMode::Move,
+                    mode: ParamMode::Read,
                 }],
             ),
             (
@@ -3047,19 +3047,19 @@ mod tests {
                         name: "x".to_string(),
                         type_annotation: None,
                         mutable: false,
-                        mode: ParamMode::Move,
+                        mode: ParamMode::Read,
                     },
                     Parameter {
                         name: "y".to_string(),
                         type_annotation: None,
                         mutable: false,
-                        mode: ParamMode::Move,
+                        mode: ParamMode::Read,
                     },
                     Parameter {
                         name: "z".to_string(),
                         type_annotation: None,
                         mutable: false,
-                        mode: ParamMode::Move,
+                        mode: ParamMode::Read,
                     },
                 ],
             ),

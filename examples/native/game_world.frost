@@ -10,7 +10,7 @@ Kind :: enum { Hero, Monster { threat: i64 } }
 Entity :: struct { hp: i64, kind: Kind }
 
 make_pool :: fn(capacity: i64, sample: &$T) -> ^u8 { pool_new(capacity, sizeof(T)) }
-spawn :: fn(world: ^u8, value: $T) -> Handle<T> { pool_alloc(world, &value) }
+spawn :: fn(world: ^u8, move value: $T) -> Handle<T> { pool_alloc(world, &value) }
 
 threat_of :: fn(e: &Entity) -> i64 {
     match e^.kind {

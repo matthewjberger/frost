@@ -31,7 +31,7 @@ slab_reset :: fn(s: &mut Slab<Entity, 4>) {
     s.free_count = 4
 }
 
-slab_insert :: fn(s: &mut Slab<Entity, 4>, value: Entity) -> i64 {
+slab_insert :: fn(s: &mut Slab<Entity, 4>, move value: Entity) -> i64 {
     s.free_count = s.free_count - 1
     index := s.free_list[s.free_count]
     s.storage[index] = value

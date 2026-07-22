@@ -110,7 +110,7 @@ fn ownership_errors_report_a_source_line() {
     let source = r#"
 Buffer :: struct { size: i64 }
 
-consume :: fn(b: Buffer) -> i64 { b.size }
+consume :: fn(move b: Buffer) -> i64 { b.size }
 
 main :: fn() -> i64 {
     buf := Buffer { size = 10 }
@@ -837,7 +837,7 @@ arena_new :: fn(cap: i64) -> Arena {
     Arena { data = malloc(cap), cap = cap, offset = 0 }
 }
 
-arena_destroy :: fn(a: Arena) { free(a.data) }
+arena_destroy :: fn(move a: Arena) { free(a.data) }
 
 alloc_int :: fn(a: &mut Arena) -> ^i64 {
     slot := ptr_to(a.data[a.offset])
@@ -1020,7 +1020,7 @@ reset :: fn(s: &mut Slab<Entity, 4>) {
     while (i < 4) { s.generations[i] = 0  s.free_list[i] = 3 - i  i = i + 1 }
     s.free_count = 4
 }
-insert :: fn(s: &mut Slab<Entity, 4>, value: Entity) -> i64 {
+insert :: fn(s: &mut Slab<Entity, 4>, move value: Entity) -> i64 {
     s.free_count = s.free_count - 1
     index := s.free_list[s.free_count]
     s.storage[index] = value
@@ -1075,7 +1075,7 @@ reset :: fn(s: &mut Slab<Entity, 4>) {
     while (i < 4) { s.generations[i] = 0  s.free_list[i] = 3 - i  i = i + 1 }
     s.free_count = 4
 }
-insert :: fn(s: &mut Slab<Entity, 4>, value: Entity) -> i64 {
+insert :: fn(s: &mut Slab<Entity, 4>, move value: Entity) -> i64 {
     s.free_count = s.free_count - 1
     index := s.free_list[s.free_count]
     s.storage[index] = value
@@ -1187,7 +1187,7 @@ slab_reset :: fn(p: &mut Slab) {
     p.free_count = 4
 }
 
-slab_insert :: fn(p: &mut Slab, value: Entity) -> i64 {
+slab_insert :: fn(p: &mut Slab, move value: Entity) -> i64 {
     p.free_count = p.free_count - 1
     index := p.free_list[p.free_count]
     p.storage[index] = value
@@ -1678,7 +1678,7 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 Point :: struct { x: i64, y: i64 }
 Entity :: struct { hp: i64, mana: i64, name: i64 }
 
-measure :: fn(sample: $T) -> i64 { sizeof(T) }
+measure :: fn(move sample: $T) -> i64 { sizeof(T) }
 
 main :: fn() -> i64 {
     printf("%lld\n", sizeof(i64))
@@ -1707,10 +1707,10 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 Point :: struct { x: i64, y: i64 }
 
-identity :: fn(x: $T) -> T { x }
-max_of :: fn(a: $T, b: $T) -> T { if (a > b) { a } else { b } }
-first_of :: fn(a: $T, b: $T) -> T { a }
-wrap :: fn(v: $T) -> T { identity(v) }
+identity :: fn(move x: $T) -> T { x }
+max_of :: fn(move a: $T, move b: $T) -> T { if (a > b) { a } else { b } }
+first_of :: fn(move a: $T, move b: $T) -> T { a }
+wrap :: fn(move v: $T) -> T { identity(v) }
 
 swap :: fn(a: &mut $T, b: &mut $T) {
     t := a^
@@ -1859,7 +1859,7 @@ Entity :: struct { hp: i64, mana: i64 }
 
 size_of :: fn($T: Type) -> i64 { sizeof(T) }
 make_pool :: fn($T: Type, capacity: i64) -> ^u8 { pool_new(capacity, sizeof(T)) }
-insert :: fn(pool: ^u8, value: $T) -> Handle<T> { pool_alloc(pool, &value) }
+insert :: fn(pool: ^u8, move value: $T) -> Handle<T> { pool_alloc(pool, &value) }
 
 main :: fn() -> i64 {
     printf("%lld\n", size_of($i64))
@@ -1989,9 +1989,9 @@ Pair :: struct($T: Type) { first: T, second: T }
 Box :: struct($T: Type) { value: T }
 Tagged :: enum { Some { p: Pair<i64> }, None }
 
-make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
-wrap :: fn(x: $T) -> Box<T> { Box { value = x } }
-unwrap :: fn(b: Box<$T>) -> $T { b.value }
+make_pair :: fn(move a: $T, move b: $T) -> Pair<T> { Pair { first = a, second = b } }
+wrap :: fn(move x: $T) -> Box<T> { Box { value = x } }
+unwrap :: fn(move b: Box<$T>) -> $T { b.value }
 
 main :: fn() -> i64 {
     p := make_pair(3, 4)
@@ -2057,9 +2057,9 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 Pair :: struct { a: i64, b: i64 }
 
-dup :: fn(x: $T) -> T { x }
-pick_first :: fn(a: $T, b: $U) -> T { a }
-second :: fn(a: $T, b: $U) -> U { b }
+dup :: fn(move x: $T) -> T { x }
+pick_first :: fn(move a: $T, move b: $U) -> T { a }
+second :: fn(move a: $T, move b: $U) -> U { b }
 
 main :: fn() -> i64 {
     p := dup(Pair { a = 3, b = 4 })

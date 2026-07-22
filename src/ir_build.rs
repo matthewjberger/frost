@@ -2624,7 +2624,8 @@ impl<'a> FunctionLowering<'a> {
             // value place passed to it takes its address here. An argument that
             // is already a reference (a reference-typed local passed onward) or
             // an explicit borrow is left alone, so nothing is double-referenced.
-            if let Some(expected @ (Type::Ref(_) | Type::RefMut(_))) = expected
+            if let Some(reference @ (Type::Ref(inner) | Type::RefMut(inner))) =
+                expected
             {
                 let already_reference = matches!(
                     argument,
@@ -2632,14 +2633,12 @@ impl<'a> FunctionLowering<'a> {
                         | Expression::BorrowMut(_)
                         | Expression::AddressOf(_)
                 ) || self.probe_type(argument).as_ref()
-                    == Some(expected);
+                    == Some(reference);
                 if !already_reference {
-                    let kind = if matches!(expected, Type::RefMut(_)) {
-                        RefKind::RefMut
-                    } else {
-                        RefKind::Ref
-                    };
-                    let (address, _) = self.lower_address_of(argument, kind)?;
+                    let pointee = (**inner).clone();
+                    let address = self.aggregate_argument_address(
+                        argument, &pointee, false,
+                    )?;
                     lowered.push(address);
                     continue;
                 }
@@ -2648,7 +2647,7 @@ impl<'a> FunctionLowering<'a> {
                 && needs_memory(target)
             {
                 let address =
-                    self.aggregate_argument_address(argument, target)?;
+                    self.aggregate_argument_address(argument, target, true)?;
                 lowered.push(address);
                 continue;
             }
@@ -2713,7 +2712,8 @@ impl<'a> FunctionLowering<'a> {
             // value place passed to it takes its address here. An argument that
             // is already a reference (a reference-typed local passed onward) or
             // an explicit borrow is left alone, so nothing is double-referenced.
-            if let Some(expected @ (Type::Ref(_) | Type::RefMut(_))) = expected
+            if let Some(reference @ (Type::Ref(inner) | Type::RefMut(inner))) =
+                expected
             {
                 let already_reference = matches!(
                     argument,
@@ -2721,14 +2721,12 @@ impl<'a> FunctionLowering<'a> {
                         | Expression::BorrowMut(_)
                         | Expression::AddressOf(_)
                 ) || self.probe_type(argument).as_ref()
-                    == Some(expected);
+                    == Some(reference);
                 if !already_reference {
-                    let kind = if matches!(expected, Type::RefMut(_)) {
-                        RefKind::RefMut
-                    } else {
-                        RefKind::Ref
-                    };
-                    let (address, _) = self.lower_address_of(argument, kind)?;
+                    let pointee = (**inner).clone();
+                    let address = self.aggregate_argument_address(
+                        argument, &pointee, false,
+                    )?;
                     lowered.push(address);
                     continue;
                 }
@@ -2737,7 +2735,7 @@ impl<'a> FunctionLowering<'a> {
                 && needs_memory(target)
             {
                 let address =
-                    self.aggregate_argument_address(argument, target)?;
+                    self.aggregate_argument_address(argument, target, true)?;
                 lowered.push(address);
                 continue;
             }
@@ -2775,6 +2773,7 @@ impl<'a> FunctionLowering<'a> {
         &mut self,
         argument: &Expression,
         target: &Type,
+        consume: bool,
     ) -> Result<IrOperand> {
         // Passing a `[N]T` array where a `[]T` slice is wanted: build the slice
         // view and hand over its address, rather than the array's.
@@ -2796,7 +2795,8 @@ impl<'a> FunctionLowering<'a> {
         }
         match argument {
             Expression::Identifier(name) => {
-                if let Some(local) = self.resolve_variable(name)
+                if consume
+                    && let Some(local) = self.resolve_variable(name)
                     && self.locals[local].linear
                 {
                     self.emit(IrStatement::Consume(local));
