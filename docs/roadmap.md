@@ -24,18 +24,31 @@ lowering, type checking and monomorphization are not the problem and optimizing
 them would be motion without progress. Cranelift and object emission are the
 problem.
 
-It also sets the bar for the work below. Item 1 is what stops the curve turning
-over as programs grow, and item 4 is what closes the constant factor. Neither on
-its own gets there.
+Measured further, with `FROST_TIMINGS=1`, the backend splits like this:
 
-The ordering matters more than it looks. Three of these four items touch the same
-seam, and doing them in the wrong order means designing the same thing twice and
-throwing one away.
+| program | code generation | object emission |
+| --- | --- | --- |
+| 6,401 functions | 779 ms | 1 ms |
+| 10,241 functions | 1,285 ms | 4 ms |
 
-## 1. Separate compilation
+Object emission is free. Essentially all of the backend is Cranelift compiling
+one function at a time, which is per-function work on independent inputs. So
+parallel code generation attacks the dominant cost directly, and it is the right
+unit rather than the wrong one: even once modules become compilation units, the
+functions inside a module still compile one at a time and still parallelize.
 
-**Why first.** It is the shape the speed goal requires, and it is the frame the
-other backend work sits inside. `src/imports.rs` flattens every import into one
+That measurement changed the order below. The first version of this document put
+separate compilation first on the argument that per-function parallelism would be
+designed twice. That argument was wrong, and it was wrong in the direction of
+doing the harder thing first for a reason that did not survive contact with a
+twenty-line measurement.
+
+## 3. Separate compilation
+
+**Why third rather than first.** It is the shape the speed goal requires *as
+programs grow*, which is a different claim from the constant factor item 1
+closes. Parallelism makes today's builds fast; this is what stops the curve
+turning over. `src/imports.rs` flattens every import into one
 AST, so a program's cost is whole-program by construction: monomorphization runs
 to fixpoint over everything, and there is nothing to compile independently. Every
 other scaling lever is a constant factor on top of that shape.
@@ -120,20 +133,13 @@ answer is that registering borrows for longer than a call, which is the first
 thing in the language that does, and it may want to be a linear obligation
 (register/unregister as a consumed pair) rather than a borrow.
 
-## 4. Parallel code generation
+## 1. Parallel code generation
 
-**Why last, and why not first.** It is the measured win: at 10,240
-specializations the backend is 1.23 s of a 1.38 s build, and the front end is
-near-linear while the backend is not. But per-function parallelism inside one
-object file is the wrong unit if item 1 lands, because modules are the natural
-compilation unit and per-module parallelism falls out of separate compilation for
-free. Building per-function threading first means designing it twice.
-
-**Measure before building either.** Split the backend's time between
-`define_function` (Cranelift compiling, parallelizable) and `module.finish()` /
-`emit()` (object writing, serial by nature). Twenty lines of instrumentation, and
-it decides whether parallelism pays at all. If the cost is in `emit()`, the
-answer is more compilation units, which is item 1 again.
+**Why first.** It is where the time is. Code generation is 1,285 ms of a 1,289 ms
+backend at 10,241 functions, and the work is per-function on independent inputs,
+so this is the one change that moves the number that misses the target. It is not
+made redundant by separate compilation either, since functions within a module
+still compile one at a time.
 
 **The API path, already verified.** `Module::declare_func_in_func` only reads
 `self.declarations()` despite taking `&mut self`, so it can be replicated against
