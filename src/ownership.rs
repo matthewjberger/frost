@@ -536,6 +536,11 @@ impl MoveChecker<'_> {
                     _ => None,
                 };
                 check_borrow_exclusivity(arguments, param_types)?;
+                // A callee with no signature here is a compile-time function
+                // parameter, whose target is only known once the generic is
+                // specialized. It says nothing about ownership yet, and the
+                // specialized body answers for it afterwards.
+                let known = param_types.is_some();
                 for (index, argument) in arguments.iter().enumerate() {
                     let borrows = param_types
                         .and_then(|types| types.get(index))
@@ -543,7 +548,7 @@ impl MoveChecker<'_> {
                             matches!(ty, Some(Type::Ref(_) | Type::RefMut(_)))
                         })
                         .unwrap_or(false);
-                    self.visit(argument, !borrows)?;
+                    self.visit(argument, known && !borrows)?;
                 }
                 Ok(())
             }
