@@ -97,6 +97,9 @@ pub enum ReturnSignature {
     None,
     Single(Type),
     Named(Vec<ReturnParam>),
+    // `-> T ! E`: succeeds with T or fails with the error enum E. The failure set
+    // is E; the value type is T.
+    Fallible(Type, Type),
 }
 
 impl ReturnSignature {
@@ -111,6 +114,15 @@ impl ReturnSignature {
                     Some(Type::Struct(format!("__tuple{}", params.len())))
                 }
             }
+            ReturnSignature::Fallible(value, _) => Some(value.clone()),
+        }
+    }
+
+    // The error enum of a fallible return, if any.
+    pub fn failure_type(&self) -> Option<&Type> {
+        match self {
+            ReturnSignature::Fallible(_, error) => Some(error),
+            _ => None,
         }
     }
 
@@ -132,6 +144,13 @@ impl ReturnSignature {
                 .iter()
                 .find(|p| p.param_type.is_second_class())
                 .map(|p| &p.param_type),
+            ReturnSignature::Fallible(value, _) => {
+                if value.is_second_class() {
+                    Some(value)
+                } else {
+                    None
+                }
+            }
         }
     }
 
@@ -149,6 +168,13 @@ impl ReturnSignature {
                 .iter()
                 .find(|p| p.param_type.contains_reference())
                 .map(|p| &p.param_type),
+            ReturnSignature::Fallible(value, _) => {
+                if value.contains_reference() {
+                    Some(value)
+                } else {
+                    None
+                }
+            }
         }
     }
 
@@ -165,6 +191,9 @@ impl Display for ReturnSignature {
         match self {
             ReturnSignature::None => write!(f, ""),
             ReturnSignature::Single(t) => write!(f, " -> {}", t),
+            ReturnSignature::Fallible(value, error) => {
+                write!(f, " -> {} ! {}", value, error)
+            }
             ReturnSignature::Named(params) => {
                 let parts: Vec<String> =
                     params.iter().map(|p| p.to_string()).collect();
@@ -463,11 +492,15 @@ pub enum Expression {
     EnumVariantInit(Identifier, Identifier, Vec<(Identifier, Expression)>),
     TypeValue(Type),
     Unsafe(Block),
+    // `expr?`: on a fallible expression, unwrap the value or propagate the
+    // failure to the enclosing fallible function.
+    Try(Box<Expression>),
 }
 
 impl Display for Expression {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         let expression = match self {
+            Self::Try(inner) => format!("{}?", inner),
             Self::Identifier(identifier) => identifier.to_string(),
             Self::Literal(literal) => literal.to_string(),
             Self::Boolean(boolean) => boolean.to_string(),
@@ -726,6 +759,7 @@ impl From<&Token> for Precedence {
             Token::LeftBracket => Self::Index,
             Token::Dot => Self::FieldAccess,
             Token::Caret => Self::FieldAccess,
+            Token::Question => Self::FieldAccess,
             Token::LeftBrace => Self::Range,
             Token::DoubleColon => Self::FieldAccess,
             _ => Self::Lowest,
@@ -1552,6 +1586,10 @@ impl<'a> Parser<'a> {
                 Token::Caret => {
                     expression = self.parse_dereference(expression.clone())?;
                 }
+                Token::Question => {
+                    self.read_token();
+                    expression = Expression::Try(Box::new(expression.clone()));
+                }
                 Token::LeftBrace => {
                     if self.peek_nth(1) == &Token::Case {
                         return Ok(expression);
@@ -2237,6 +2275,11 @@ impl<'a> Parser<'a> {
         }
 
         let typ = self.parse_type()?;
+        if matches!(self.peek_nth(0), Token::Bang) {
+            self.read_token();
+            let error = self.parse_type()?;
+            return Ok(ReturnSignature::Fallible(typ, error));
+        }
         Ok(ReturnSignature::Single(typ))
     }
 
