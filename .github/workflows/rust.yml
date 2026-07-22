@@ -20,3 +20,11 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Run tests
         run: cargo test --verbose
+      # The same suite with every imported module reduced to what its interface
+      # says it offers. Separate compilation is only sound if that is
+      # sufficient, so it is checked on every commit rather than the day the
+      # compiler starts relying on it. See docs/separate-compilation.md.
+      - name: Run tests building imports from interfaces
+        run: cargo test --verbose
+        env:
+          FROST_BUILD_FROM_INTERFACES: "1"
