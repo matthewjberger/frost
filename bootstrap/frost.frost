@@ -129,6 +129,7 @@ TOK_KW_USES   :: 26
 TOK_KW_WITH   :: 27
 TOK_KW_IMPORT :: 28
 TOK_KW_EXPORT :: 29
+TOK_KW_ENUM   :: 30
 TOK_LPAREN    :: 40
 TOK_RPAREN    :: 41
 TOK_LBRACE    :: 42
@@ -314,6 +315,17 @@ Export :: struct {
     len: i64,
 }
 
+// One variant of an enum: which enum it belongs to, its name, and the tag that
+// stands for it. An enum is laid out as a struct carrying the tag beside every
+// variant's fields, each named for the variant it came from, so a variant is a
+// tag value and a set of field names rather than a type of its own.
+Variant :: struct {
+    enum_ty: i64,
+    name_off: i64,
+    name_len: i64,
+    tag: i64,
+}
+
 // A local's type binding during code generation. The table is rebuilt per
 // function and maps a local's name (byte range) to its type code, so a field
 // access or a `:=` can be typed by walking it.
@@ -406,6 +418,8 @@ Parser :: struct {
     export_names: ^i8,
     result_ty: i64,
     failure_ty: i64,
+    variants: Arena<Variant>,
+    match_count: i64,
     pending: Arena<LocalVar>,
     try_count: i64,
     name_tag: i64,
@@ -480,6 +494,7 @@ classify_ident :: fn(src: ^i8, off: i64, len: i64) -> i64 {
     if (str_range_eq(src, off, len, "with")) { return TOK_KW_WITH }
     if (str_range_eq(src, off, len, "import")) { return TOK_KW_IMPORT }
     if (str_range_eq(src, off, len, "export")) { return TOK_KW_EXPORT }
+    if (str_range_eq(src, off, len, "enum")) { return TOK_KW_ENUM }
     TOK_IDENT
 }
 
@@ -915,6 +930,29 @@ synth_numbered :: fn(mut p: Parser, word: ^i8, number: i64) -> i64 {
     start
 }
 
+// Two source names joined by an underscore, for a field that belongs to one
+// variant of an enum: `Enemy` and `damage` become `Enemy_damage`. Two variants
+// may each carry a `damage` and they stay apart.
+synth_join :: fn(mut p: Parser, first_off: i64, first_len: i64, second_off: i64,
+    second_len: i64) -> i64 {
+    start := p.synth_next
+    mut k : i64 = 0
+    while (k < first_len) {
+        frost_byte_set(p.src, start + k, frost_byte_at(p.src, first_off + k))
+        k = k + 1
+    }
+    frost_byte_set(p.src, start + first_len, CH_UNDERSCORE)
+    k = 0
+    while (k < second_len) {
+        frost_byte_set(p.src, start + first_len + 1 + k,
+            frost_byte_at(p.src, second_off + k))
+        k = k + 1
+    }
+    frost_byte_set(p.src, start + first_len + 1 + second_len, 0)
+    p.synth_next = start + first_len + second_len + 2
+    start
+}
+
 // The binding a `uses Arena` function draws: the capability type's name with
 // its first letter lowercased, so `uses Arena<256>` binds `arena` and the body
 // names it the way the caller's `with arena` block does.
@@ -1328,6 +1366,21 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         ty := parse_type(p)
         return new_type_node(p, NODE_TYPEVAL, 0, ty)
     }
+    // A match used where a value is wanted: bind a name, let each arm assign to
+    // it, and stand for the name. The match itself is queued for the block,
+    // which is the same road a `?` takes.
+    if (kind == TOK_KW_MATCH) {
+        name_off := synth_numbered(p, "__value", p.match_count)
+        name_len := 7 + digits_in(p.match_count)
+        p.match_count = p.match_count + 1
+        seed := new_node(p, NODE_NUM, 0, 0, 0)
+        bind := new_let_node(p, seed, name_off, name_len, 0 - 1)
+        chosen := parse_match(p)
+        assign_case_values(p, chosen, name_off, name_len)
+        arena_push(p.pending, LocalVar { name_off = bind, name_len = chosen,
+            ty = 0 })
+        return new_named_node(p, NODE_VAR, 0, name_off, name_len)
+    }
     if (kind == TOK_LPAREN) {
         advance(p)
         inner := parse_expr(p)
@@ -1337,6 +1390,11 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     offset := cur_off(p)
     length := cur_len(p)
     advance(p)
+    // `Kind::Enemy { ... }` names a variant of an enum.
+    if (cur(p) == TOK_COLONCOLON) {
+        advance(p)
+        return parse_variant_value(p, offset, length)
+    }
     if (cur(p) == TOK_LPAREN) {
         if (str_range_eq(p.src, offset, length, "ptr_to")) {
             advance(p)
@@ -1772,28 +1830,126 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64) -> i64 {
 // A match `match expr { case N: stmt  case _: stmt }`. The scrutinee is parsed
 // with struct literals suppressed so the `{` opening the arms is not mistaken
 // for one. Each arm holds a single statement.
+// `case .Enemy { damage }:` matches the tag and binds each named field from the
+// variant's own field in the scrutinee. The bindings are ordinary lets at the
+// top of the arm, so the body sees them as it would any local.
+parse_variant_case :: fn(mut p: Parser, subject: i64) -> i64 {
+    variant_off := cur_off(p)
+    variant_len := cur_len(p)
+    advance(p)
+    index := find_variant(p, 0 - 1, variant_off, variant_len)
+    if (index < 0) {
+        frost_error("frost: no enum has a variant '")
+        frost_error_src(p.src, variant_off, variant_len)
+        frost_error("'")
+        frost_die()
+    }
+    entry : ^Variant = arena_at(p.variants, index)
+    tag := entry^.tag
+    mut bindings : i64 = 0 - 1
+    mut tail : i64 = 0 - 1
+    if (cur(p) == TOK_LBRACE) {
+        advance(p)
+        while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
+            field_off := cur_off(p)
+            field_len := cur_len(p)
+            advance(p)
+            qualified := synth_join(p, variant_off, variant_len, field_off,
+                field_len)
+            read := new_field_node(p, subject, qualified,
+                variant_len + field_len + 1)
+            bind := new_let_node(p, read, field_off, field_len, 0 - 1)
+            if (bindings == (0 - 1)) {
+                bindings = bind
+            } else {
+                set_next(p, tail, bind)
+            }
+            tail = bind
+            if (cur(p) == TOK_COMMA) {
+                advance(p)
+            }
+        }
+        advance(p)
+    }
+    advance(p)
+    body := parse_arm(p)
+    if (bindings == (0 - 1)) {
+        return new_case(p, body, tag, 0)
+    }
+    set_next(p, tail, body)
+    new_case(p, bindings, tag, 0)
+}
+
+// Turn each arm's trailing expression into an assignment to the name standing
+// for the match's value. An arm that already does something else is left as it
+// is, since it was not producing a value in the first place.
+assign_case_values :: fn(mut p: Parser, match_node: i64, name_off: i64,
+    name_len: i64) {
+    node : ^Node = arena_at(p.arena, match_node)
+    mut cid := node^.b
+    while (cid != (0 - 1)) {
+        case_node : ^Node = arena_at(p.arena, cid)
+        mut last := case_node^.a
+        mut following := node_next(p, last)
+        while (following != (0 - 1)) {
+            last = following
+            following = node_next(p, last)
+        }
+        body : ^Node = arena_at(p.arena, last)
+        // An arm that ends in something with no value, a call to a void
+        // function say, was never producing one, so it is left as it is.
+        if (body^.kind == NODE_EXPRSTMT && type_of(p, body^.a) != TY_VOID) {
+            place := new_named_node(p, NODE_VAR, 0, name_off, name_len)
+            body^.kind = NODE_ASSIGN
+            body^.b = body^.a
+            body^.a = place
+        }
+        cid = case_node^.next
+    }
+}
+
 parse_match :: fn(mut p: Parser) -> i64 {
     advance(p)
     p.no_struct_lit = true
-    scrutinee := parse_expr(p)
+    mut scrutinee := parse_expr(p)
     p.no_struct_lit = false
     advance(p)
+    // A variant pattern matches on which variant the value holds, so the thing
+    // switched on is the tag rather than the value itself. The value is bound
+    // first, since the arms read fields out of it too.
+    mut subject : i64 = 0 - 1
+    if (peek_kind(p, 1) == TOK_DOT) {
+        name_off := synth_numbered(p, "__match", p.match_count)
+        name_len := 7 + digits_in(p.match_count)
+        p.match_count = p.match_count + 1
+        bind := new_let_node(p, scrutinee, name_off, name_len, 0 - 1)
+        arena_push(p.pending, LocalVar { name_off = bind, name_len = bind,
+            ty = 0 })
+        subject = new_named_node(p, NODE_VAR, 0, name_off, name_len)
+        scrutinee = new_field_node(p, subject, p.name_tag, 3)
+    }
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
         advance(p)
         mut is_default : i64 = 0
         mut value : i64 = 0
-        if (cur(p) == TOK_INT) {
-            value = cur_val(p)
+        mut case_node : i64 = 0 - 1
+        if (cur(p) == TOK_DOT) {
             advance(p)
+            case_node = parse_variant_case(p, subject)
         } else {
-            is_default = 1
+            if (cur(p) == TOK_INT) {
+                value = cur_val(p)
+                advance(p)
+            } else {
+                is_default = 1
+                advance(p)
+            }
             advance(p)
+            body := parse_arm(p)
+            case_node = new_case(p, body, value, is_default)
         }
-        advance(p)
-        body := parse_stmt(p)
-        case_node := new_case(p, body, value, is_default)
         if (head == (0 - 1)) {
             head = case_node
             tail = case_node
@@ -1809,9 +1965,6 @@ parse_match :: fn(mut p: Parser) -> i64 {
 parse_stmt :: fn(mut p: Parser) -> i64 {
     kind := cur(p)
 
-    if (kind == TOK_KW_MATCH) {
-        return parse_match(p)
-    }
     if (kind == TOK_KW_MUT) {
         advance(p)
         offset := cur_off(p)
@@ -1912,36 +2065,63 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     new_unary(p, NODE_EXPRSTMT, expr)
 }
 
+// Everything a `?` or a match queued while this statement was being parsed goes
+// in ahead of it, in the order it was written. Each queued entry is a run of
+// one or two statements, given by its first and last.
+flush_pending :: fn(mut p: Parser, mark: i64, statement: i64) -> i64 {
+    mut head : i64 = 0 - 1
+    mut tail : i64 = 0 - 1
+    mut q := mark
+    while (q < p.pending.count) {
+        queued : ^LocalVar = arena_at(p.pending, q)
+        first := queued^.name_off
+        last := queued^.name_len
+        if (head == (0 - 1)) {
+            head = first
+        } else {
+            set_next(p, tail, first)
+        }
+        if (first != last) {
+            set_next(p, first, last)
+        }
+        tail = last
+        q = q + 1
+    }
+    p.pending.count = mark
+    if (head == (0 - 1)) {
+        return statement
+    }
+    set_next(p, tail, statement)
+    head
+}
+
+// The statement a match arm runs, with anything its own parse queued placed
+// ahead of it rather than hoisted out of the arm.
+parse_arm :: fn(mut p: Parser) -> i64 {
+    mark := p.pending.count
+    statement := parse_stmt(p)
+    flush_pending(p, mark, statement)
+}
+
 parse_stmt_list :: fn(mut p: Parser, terminator: i64) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     while (cur(p) != terminator && cur(p) != TOK_EOF) {
         mark := p.pending.count
-        statement := parse_stmt(p)
-        // Anything a `?` inside this statement queued goes in ahead of it, in
-        // the order the `?`s were written.
-        mut q := mark
-        while (q < p.pending.count) {
-            queued : ^LocalVar = arena_at(p.pending, q)
-            bind := queued^.name_off
-            guard := queued^.name_len
-            if (head == (0 - 1)) {
-                head = bind
-            } else {
-                set_next(p, tail, bind)
-            }
-            set_next(p, bind, guard)
-            tail = guard
-            q = q + 1
+        parsed := parse_stmt(p)
+        statement := flush_pending(p, mark, parsed)
+        mut last := statement
+        mut following := node_next(p, last)
+        while (following != (0 - 1)) {
+            last = following
+            following = node_next(p, last)
         }
-        p.pending.count = mark
         if (head == (0 - 1)) {
             head = statement
-            tail = statement
         } else {
             set_next(p, tail, statement)
-            tail = statement
         }
+        tail = last
     }
     head
 }
@@ -2142,6 +2322,150 @@ parse_struct :: fn(mut p: Parser) {
 }
 
 // ---------------------------------------------------------------------------
+// Enums. `Kind :: enum { Player, Enemy { damage: i64 } }` is a struct carrying
+// a tag beside every variant's fields, each field named for the variant it came
+// from. A variant is then a tag value and a set of field names rather than a
+// type of its own, which is why construction, field access and matching all
+// reduce to what the compiler already does with structs and integers.
+//
+// The variants sit side by side rather than overlapping, so an enum is as wide
+// as all of them together. Overlapping them would be a union, which the C
+// backend cannot express as a plain struct, and the space is not what this
+// compiler is short of.
+// ---------------------------------------------------------------------------
+
+// The variant of `enum_ty` with this name, or -1. A pattern written `.Circle`
+// names no enum, so a variant is found by its own name; two enums that each
+// carry a variant of the same name are told apart by the scrutinee's type when
+// there is one.
+find_variant :: fn(mut p: Parser, enum_ty: i64, off: i64, len: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < p.variants.count) {
+        entry : ^Variant = arena_at(p.variants, i)
+        if (entry^.name_len == len
+            && bytes_equal(p.src, entry^.name_off, off, len)) {
+            if (enum_ty == (0 - 1) || entry^.enum_ty == enum_ty) {
+                return i
+            }
+        }
+        i = i + 1
+    }
+    0 - 1
+}
+
+// `Name :: enum { A, B { x: i64 } }`. The fields of every variant are laid out
+// in one struct behind a tag, each under the name of the variant it came from.
+parse_enum :: fn(mut p: Parser) {
+    name_offset := cur_off(p)
+    name_length := cur_len(p)
+    advance(p)
+    advance(p)
+    advance(p)
+    advance(p)
+    result_field_names(p)
+    tag_field := arena_push(
+        p.fields,
+        StructField { name_off = p.name_tag, name_len = 3, ty = TY_I64,
+            next = 0 - 1 },
+    )
+    mut tail := tag_field
+    // The enum's own index is known before its fields are, since a variant has
+    // to record which enum it belongs to.
+    enum_index := p.structs.count
+    enum_ty := STRUCT_BASE + enum_index
+    mut tag : i64 = 0
+    while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
+        variant_off := cur_off(p)
+        variant_len := cur_len(p)
+        advance(p)
+        arena_push(
+            p.variants,
+            Variant { enum_ty = enum_ty, name_off = variant_off,
+                name_len = variant_len, tag = tag },
+        )
+        if (cur(p) == TOK_LBRACE) {
+            advance(p)
+            while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
+                field_off := cur_off(p)
+                field_len := cur_len(p)
+                advance(p)
+                field_ty := parse_type_annotation(p)
+                qualified := synth_join(p, variant_off, variant_len, field_off,
+                    field_len)
+                field := arena_push(
+                    p.fields,
+                    StructField { name_off = qualified,
+                        name_len = variant_len + field_len + 1, ty = field_ty,
+                        next = 0 - 1 },
+                )
+                set_next_field(p, tail, field)
+                tail = field
+                if (cur(p) == TOK_COMMA) {
+                    advance(p)
+                }
+            }
+            advance(p)
+        }
+        if (cur(p) == TOK_COMMA) {
+            advance(p)
+        }
+        tag = tag + 1
+    }
+    advance(p)
+    arena_push(
+        p.structs,
+        StructDef { name_off = name_offset, name_len = name_length,
+            field_head = tag_field, is_generic = 0, tparam_off = 0,
+            tparam_len = 0, field_token = 0, instance_id = 0 - 1,
+            is_linear = 0 },
+    )
+}
+
+// `Kind::Enemy { damage = 15 }`, or `Kind::Player` with nothing to carry. The
+// value is the enum's struct with the variant's tag and the fields it was
+// given, under the names the declaration gave them.
+parse_variant_value :: fn(mut p: Parser, enum_off: i64, enum_len: i64) -> i64 {
+    enum_ty := resolve_lit_type(p, enum_off, enum_len)
+    variant_off := cur_off(p)
+    variant_len := cur_len(p)
+    advance(p)
+    index := find_variant(p, enum_ty, variant_off, variant_len)
+    if (index < 0) {
+        frost_error("frost: '")
+        frost_error_src(p.src, enum_off, enum_len)
+        frost_error("' has no variant '")
+        frost_error_src(p.src, variant_off, variant_len)
+        frost_error("'")
+        frost_die()
+    }
+    entry : ^Variant = arena_at(p.variants, index)
+    tag_value := new_node(p, NODE_NUM, 0, 0, entry^.tag)
+    head := new_field_init(p, tag_value, p.name_tag, 3)
+    mut tail := head
+    if (cur(p) == TOK_LBRACE && p.no_struct_lit == false) {
+        advance(p)
+        while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
+            field_off := cur_off(p)
+            field_len := cur_len(p)
+            advance(p)
+            advance(p)
+            value := parse_expr(p)
+            qualified := synth_join(p, variant_off, variant_len, field_off,
+                field_len)
+            init := new_field_init(p, value, qualified,
+                variant_len + field_len + 1)
+            set_next(p, tail, init)
+            tail = init
+            if (cur(p) == TOK_COMMA) {
+                advance(p)
+            }
+        }
+        advance(p)
+    }
+    new_struct_lit(p, enum_ty, head)
+}
+
+// ---------------------------------------------------------------------------
 // Failure sets. `-> T ! E` says a function answers with a T or fails with an E,
 // and `e?` hands the failure on. Both lower to what the compiler already has: a
 // failure set is a struct carrying which of the two it holds beside both, and
@@ -2279,7 +2603,9 @@ parse_program :: fn(mut p: Parser) -> i64 {
     mut tail : i64 = 0 - 1
     while (cur(p) == TOK_IDENT) {
         third := peek_kind(p, 2)
-        if (third == TOK_KW_STRUCT || third == TOK_KW_LINEAR) {
+        if (third == TOK_KW_ENUM) {
+            parse_enum(p)
+        } else if (third == TOK_KW_STRUCT || third == TOK_KW_LINEAR) {
             parse_struct(p)
         } else if (third == TOK_KW_EXTERN) {
             item := parse_extern(p)
@@ -3037,7 +3363,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
                 frost_emit_int(value)
                 frost_emit_str(": {\n")
             }
-            emit_stmt(p, body)
+            emit_list(p, body)
             frost_emit_str("} break;\n")
             cid = next_case
         }
@@ -3476,7 +3802,27 @@ struct_field_count :: fn(mut p: Parser, struct_ty: i64) -> i64 {
 // A struct is as wide as its fields laid end to end. A field may itself be a
 // struct, so this cannot just count them: Parser carries eleven arenas, and an
 // arena is three words, not one.
+// A byte-wide type is one byte. Everything else this compiler has is a word,
+// and a struct is its fields laid end to end, each on its own alignment.
+is_byte_ty :: fn(ty: i64) -> bool {
+    (ty == TY_I8 || ty == TY_U8) && is_pointer(ty) == false
+}
+
+align_up :: fn(offset: i64, alignment: i64) -> i64 {
+    (offset + alignment - 1) / alignment * alignment
+}
+
+align_of :: fn(mut p: Parser, ty: i64) -> i64 {
+    if (is_byte_ty(ty)) {
+        return 1
+    }
+    8
+}
+
 type_size :: fn(mut p: Parser, ty: i64) -> i64 {
+    if (is_byte_ty(ty)) {
+        return 1
+    }
     if (is_struct_ty(ty) == false) {
         return 8
     }
@@ -3485,10 +3831,11 @@ type_size :: fn(mut p: Parser, ty: i64) -> i64 {
     mut total : i64 = 0
     while (fid != (0 - 1)) {
         field : ^StructField = arena_at(p.fields, fid)
-        total = total + type_size(p, field^.ty)
+        total = align_up(total, align_of(p, field^.ty))
+            + type_size(p, field^.ty)
         fid = field^.next
     }
-    total
+    align_up(total, 8)
 }
 
 field_offset :: fn(mut p: Parser, struct_ty: i64, off: i64, len: i64) -> i64 {
@@ -3504,6 +3851,7 @@ field_offset :: fn(mut p: Parser, struct_ty: i64, off: i64, len: i64) -> i64 {
     mut running : i64 = 0
     while (fid != (0 - 1)) {
         field : ^StructField = arena_at(p.fields, fid)
+        running = align_up(running, align_of(p, field^.ty))
         if (field^.name_len == len
             && bytes_equal(p.src, field^.name_off, off, len)) {
             return running
@@ -3569,7 +3917,7 @@ local_slot :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
     mut found : i64 = 0 - 8
     while (i < p.locals.count) {
         entry : ^LocalVar = arena_at(p.locals, i)
-        running = running + type_size(p, entry^.ty)
+        running = running + align_up(type_size(p, entry^.ty), 8)
         if (entry^.name_len == len
             && bytes_equal(p.src, entry^.name_off, off, len)) {
             found = 0 - running
@@ -3791,7 +4139,9 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
     if (kind == NODE_FIELD || kind == NODE_DEREF || kind == NODE_INDEX) {
         emit_asm_addr(p, id)
         result := type_of(p, id)
-        if (is_struct_ty(result) == false) {
+        if (is_byte_ty(result)) {
+            asm("movzbq (%rax), %rax")
+        } else if (is_struct_ty(result) == false) {
             asm("movq (%rax), %rax")
         }
         return
@@ -4065,7 +4415,11 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         }
         asm("movq %rax, %r11")
         emit_asm_pop_rax()
-        asm("movq %r11, (%rax)")
+        if (is_byte_ty(place_ty)) {
+            asm("movb %r11b, (%rax)")
+        } else {
+            asm("movq %r11, (%rax)")
+        }
         return
     }
     if (kind == NODE_RETURN) {
@@ -4161,7 +4515,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
             body := cnode^.a
             next_case := cnode^.next
             if (is_default == 1) {
-                emit_asm_stmt(p, body)
+                emit_asm_block(p, body)
                 frost_emit_str("    jmp ")
                 emit_label(".Lend", end_id)
                 frost_emit_str("\n")
@@ -4172,7 +4526,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
                 frost_emit_str("    jne ")
                 emit_label(".Lcase", skip_id)
                 frost_emit_str("\n")
-                emit_asm_stmt(p, body)
+                emit_asm_block(p, body)
                 frost_emit_str("    jmp ")
                 emit_label(".Lend", end_id)
                 frost_emit_str("\n")
@@ -4919,6 +5273,8 @@ main :: fn() -> i64 {
         export_names = export_names,
         result_ty = 0 - 1,
         failure_ty = 0 - 1,
+        variants = arena_make($Variant, 4096),
+        match_count = 0,
         pending = arena_make($LocalVar, 4096),
         try_count = 0,
         name_tag = 0,

@@ -1,0 +1,24 @@
+// Enums with payloads. An enum is a tag beside every variant's fields, so
+// matching on one is matching on the tag and reading the fields it names.
+
+Shape :: enum {
+    Circle { radius: i64 },
+    Rectangle { width: i64, height: i64 },
+    Point,
+}
+
+area :: fn(s: Shape) -> i64 {
+    match s {
+        case .Circle { radius }: 3 * radius * radius
+        case .Rectangle { width, height }: width * height
+        case .Point: 0
+    }
+}
+
+main :: fn() -> i64 {
+    print area(Shape::Circle { radius = 5 })
+    print area(Shape::Rectangle { width = 4, height = 6 })
+    print area(Shape::Point)
+    print sizeof(Shape)
+    0
+}

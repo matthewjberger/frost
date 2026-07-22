@@ -10,9 +10,8 @@ than leaving that to whatever compiles its output.
 
 The checklist below is finished. Every item is done: self type-checking,
 ownership and linearity, the native backend, allocation sources, regions,
-failure sets and imports. What each one cost and what it turned up is recorded
-under it, since the same shapes come up again. One thing the language has that
-the self-hosted compiler still does not is enums with payloads.
+failure sets, imports and enums. What each one cost and what it turned up is
+recorded under it, since the same shapes come up again.
 
 ## Compile speed
 
@@ -226,8 +225,29 @@ its output. In dependency order:
    already provides: `__Result<n>` per failure set, `__try<n>` per `?`, and the
    three field names.
 
-   Left: general enums with payloads, which the language has and the bootstrap
-   subset still skips. Failure sets no longer depend on them.
+8. **Enums with payloads.** Done. `Kind :: enum { Player, Enemy { damage: i64 } }`,
+   `Kind::Enemy { damage = 15 }`, and `case .Enemy { damage }:` in a match.
+
+   An enum is a struct carrying a tag beside every variant's fields, each field
+   named for the variant it came from, so two variants may each carry a
+   `damage` and they stay apart. A variant is then a tag value and a set of
+   field names rather than a type of its own, which is why construction, field
+   access and matching all reduce to what the compiler already did with structs
+   and integers. The variants sit side by side rather than overlapping: a union
+   is what would save the space, and the C backend cannot express one as a plain
+   struct.
+
+   A variant pattern also made `match` an expression rather than a statement. It
+   binds a name, each arm assigns to it, and the match is queued for the block
+   the same way a `?` is. An arm ending in something with no value is left alone,
+   since it was not producing one.
+
+   The one thing this turned up is a bug of its own, fixed with it: the native
+   backend treated every scalar as a word, so `^i8` indexing strode eight bytes
+   at a time and `sizeof(i8)` answered 8. A byte-wide type is one byte now,
+   struct fields sit on their own alignment, and a byte is loaded and stored
+   with byte instructions. The C backend was always right here, which is how
+   this survived so long.
 7. **Imports.** Done. `import "path"` names a file whose declarations join this
    one's.
 

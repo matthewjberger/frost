@@ -1555,6 +1555,81 @@ fn self_hosted_rejects_a_try_outside_a_fallible_function() {
     );
 }
 
+// Enums with payloads in the self-hosted compiler: variants with fields, a
+// variant with none, construction, a match that binds a variant's fields, and
+// the match standing for a value.
+const SELF_HOSTED_ENUMS: &str = "Shape :: enum {\n\
+     \x20   Circle { radius: i64 },\n\
+     \x20   Rectangle { width: i64, height: i64 },\n\
+     \x20   Point,\n}\n\
+     area :: fn(s: Shape) -> i64 {\n\
+     \x20   match s {\n\
+     \x20       case .Circle { radius }: 3 * radius * radius\n\
+     \x20       case .Rectangle { width, height }: width * height\n\
+     \x20       case .Point: 0\n    }\n}\n\
+     main :: fn() -> i64 {\n\
+     \x20   c := Shape::Circle { radius = 5 }\n\
+     \x20   r := Shape::Rectangle { width = 4, height = 6 }\n\
+     \x20   pt := Shape::Point\n\
+     \x20   print area(c)\n    print area(r)\n    print area(pt)\n\
+     \x20   print sizeof(Shape)\n    0\n}\n";
+
+#[test]
+fn self_hosted_enums_through_c() {
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_selfenum_input.frost");
+    std::fs::write(&input, SELF_HOSTED_ENUMS).unwrap();
+    let Some(c_source) = compile_and_run_with_input(
+        "selfenum",
+        SELF_HOSTED,
+        input.to_str().unwrap(),
+    ) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(output) = compile_c_and_run("selfenum", &c_source) else {
+        return;
+    };
+    assert_eq!(output, "75\n24\n0\n32\n");
+}
+
+#[test]
+fn self_hosted_enums_natively() {
+    let Some(output) = selfhosted_native_output("enums", SELF_HOSTED_ENUMS)
+    else {
+        return;
+    };
+    assert_eq!(output, "75\n24\n0\n32\n");
+}
+
+#[test]
+fn self_hosted_rejects_an_unknown_variant() {
+    let source = "Kind :: enum { Player, Enemy { damage: i64 } }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   k := Kind::Wizard\n    0\n}\n";
+    let Some(message) = self_hosted_rejects("badvariant", source) else {
+        return;
+    };
+    assert!(
+        message.contains("has no variant"),
+        "expected an unknown-variant error, got:\n{message}"
+    );
+}
+
+// A byte pointer strides one byte at a time, and a byte-wide type is one byte
+// wide. The native backend used to read eight bytes for each.
+#[test]
+fn self_hosted_native_indexes_bytes() {
+    let source = "main :: fn() -> i64 {\n\
+                  \x20   s : ^i8 = \"hello\"\n\
+                  \x20   print s[0]\n    print s[1]\n    print s[4]\n\
+                  \x20   print sizeof(i8)\n    0\n}\n";
+    let Some(output) = selfhosted_native_output("bytes", source) else {
+        return;
+    };
+    assert_eq!(output, "104\n101\n111\n1\n");
+}
+
 #[test]
 fn self_hosted_rejects_a_linear_value_never_consumed() {
     let source = "File :: linear struct { h: i64 }\n\
