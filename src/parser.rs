@@ -10,7 +10,7 @@ pub type Identifier = String;
 
 pub type Block = Vec<Spanned<Statement>>;
 
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct Spanned<T> {
     pub node: T,
     pub position: Position,
@@ -55,7 +55,9 @@ impl<T: Display> Display for Spanned<T> {
 // `mut` an exclusive borrow, `move` takes ownership. These are the surface; a
 // later pass turns them into the reference types the rest of the compiler
 // already handles and inserts the borrows at call sites.
-#[derive(Debug, PartialEq, Clone, Copy, Default)]
+#[derive(
+    serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone, Copy, Default,
+)]
 pub enum ParamMode {
     #[default]
     Read,
@@ -63,7 +65,7 @@ pub enum ParamMode {
     Move,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
 pub struct Parameter {
     pub name: Identifier,
     pub type_annotation: Option<Type>,
@@ -86,7 +88,7 @@ impl Display for Parameter {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
 pub struct ReturnParam {
     pub name: Identifier,
     pub param_type: Type,
@@ -98,7 +100,7 @@ impl Display for ReturnParam {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
 pub enum ReturnKind {
     None,
     Single(Type),
@@ -112,7 +114,7 @@ pub enum ReturnKind {
 // allocation sources it draws from (`uses A`). A failure set lives in the kind
 // as `Fallible`. Allocation sources are the capabilities the caller must supply,
 // threaded in by the allocation-sources lowering pass.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
 pub struct ReturnSignature {
     pub kind: ReturnKind,
     pub uses: Vec<Type>,
@@ -236,25 +238,25 @@ impl Display for ReturnSignature {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
 pub struct StructField {
     pub name: Identifier,
     pub field_type: Type,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
 pub struct EnumVariant {
     pub name: Identifier,
     pub fields: Option<Vec<StructField>>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
 pub struct SwitchCase {
     pub pattern: Pattern,
     pub body: Block,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
 pub enum Pattern {
     Wildcard,
     Literal(Literal),
@@ -267,7 +269,9 @@ pub enum Pattern {
     Tuple(Vec<Pattern>),
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(
+    serde::Serialize, serde::Deserialize, Debug, PartialEq, Copy, Clone,
+)]
 pub enum Operator {
     Add,
     And,
@@ -355,7 +359,7 @@ impl Display for Operator {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
 pub enum Statement {
     Let {
         name: Identifier,
@@ -508,7 +512,7 @@ impl Display for Statement {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
 pub enum Expression {
     Identifier(Identifier),
     Literal(Literal),
@@ -728,7 +732,7 @@ impl Display for Expression {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
 pub enum Literal {
     Integer(i64),
     Float(f64),

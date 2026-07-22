@@ -108,20 +108,36 @@ rather than after.
 
 ## The order to build it in
 
-1. **Make symbol names a property of the module.** Content-derived module tags,
-   no format work, no new files. Verifiable on its own: the same module imported
-   from two different programs produces byte-identical symbols.
+1. **Make symbol names a property of the module.** *Done.* The tag is an FNV-1a
+   hash of the module's path relative to the project root, computed in
+   `module_tag` in `src/imports.rs`. FNV is written out rather than taken from
+   the standard library because the hash has to mean the same thing in every
+   build of the compiler, and `DefaultHasher` promises only consistency within
+   one version. The test compiles the same module reached first in one program
+   and second in another and compares the tags, and it was checked against both
+   failure modes: a traversal-order counter fails it, and so does a constant.
 2. **Write the interface out and read it back**, while still compiling the whole
-   program. The compiler produces an interface per module and then ignores it,
-   except for a check that reading it back gives the same answers as reading the
-   source. This is the differential oracle for this feature, and it is what keeps
-   the class of bug that "passes the test suite and corrupts output" out.
-3. **Make monomorphization per-module.** Still one build, still one object, but
-   the specialization sets are computed per module and the linker folds the
-   duplicates. Correctness is carried by the existing tests and the fixpoint.
-4. **Compile a module from interfaces alone.** Only now does the compiler stop
-   reading imported source. Everything it needs is already written down and
-   already verified to agree with the source.
+   program. *Done.* `src/interface.rs` derives a `ModuleInterface` at the one
+   place a module is parsed, which is what stops it drifting from the source it
+   describes. Three checks run under `FROST_CHECK_INTERFACES`, which the test
+   suite sets on every compilation: it survives a JSON round trip, it declares
+   everything it exports, and it is closed, meaning every name a carried
+   declaration reaches and this module declares is carried too. Serialization is
+   serde and JSON, marked replaceable.
+3. **Make monomorphization per-module.** *Not started, and the next thing.*
+   `expand_generic_structs` and the specialization loop in `src/ir_build.rs` walk
+   every statement in the flattened program. The blocker is that flattening
+   throws away which module a statement came from, so **the first move is to keep
+   that**, most likely by carrying the module identity on `Spanned` alongside the
+   position, or by keeping the resolved program as a list of modules rather than
+   one statement vector. Until a statement knows its module, nothing downstream
+   can be made per-module.
+4. **Compile a module from interfaces alone.** Only then does the compiler stop
+   reading imported source. Note the ordering constraint that emerged from step
+   2: an interface deliberately drops a module's unexported, unreached
+   declarations, so a program cannot be built from interfaces until each module
+   contributes its own object file. Step 4 therefore implies separate object
+   emission, and cannot be done before step 3.
 5. **Cache and skip.** Rebuild a module only when its own source or an imported
    interface hash changes. This is the step that pays, and it pays only because
    the four before it made it a scheduling question rather than a correctness one.

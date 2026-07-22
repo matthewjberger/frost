@@ -1,6 +1,8 @@
 mod allocation_sources;
 mod failure_sets;
 mod imports;
+mod interface;
+mod interface_names;
 mod ir;
 mod ir_build;
 mod ir_c;
@@ -16,9 +18,10 @@ mod regions;
 mod types;
 
 pub use self::{
-    allocation_sources::*, failure_sets::*, imports::*, ir::*, ir_build::*,
-    ir_c::*, ir_codegen::*, ir_interp::*, ir_ownership::*, ir_typecheck::*,
-    lexer::*, ownership::*, param_modes::*, parser::*, regions::*, types::*,
+    allocation_sources::*, failure_sets::*, imports::*, interface::*, ir::*,
+    ir_build::*, ir_c::*, ir_codegen::*, ir_interp::*, ir_ownership::*,
+    ir_typecheck::*, lexer::*, ownership::*, param_modes::*, parser::*,
+    regions::*, types::*,
 };
 
 use std::fmt::Display;

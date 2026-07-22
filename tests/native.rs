@@ -37,7 +37,11 @@ fn run_backend(name: &str, source: &str, emit_c: bool) -> Option<String> {
     if emit_c {
         command.arg("--emit-c");
     }
+    // The interface oracle from docs/separate-compilation.md runs on every test
+    // compilation, so a module whose interface would not describe it is caught
+    // here rather than when something tries to compile against one.
     command
+        .env("FROST_CHECK_INTERFACES", "1")
         .arg("--link")
         .arg("-o")
         .arg(&exe_path)
