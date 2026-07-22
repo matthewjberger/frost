@@ -40,6 +40,7 @@ frost_error     :: extern fn(text: ^i8)
 frost_error_src :: extern fn(text: ^i8, offset: i64, length: i64)
 frost_error_int :: extern fn(value: i64)
 frost_die       :: extern fn()
+frost_is_windows :: extern fn() -> i64
 frost_getenv    :: extern fn(name: ^i8) -> ^i8
 
 // Node kinds.
@@ -339,6 +340,7 @@ Parser :: struct {
     last_type_was_generic: i64,
     moved: Arena<LocalVar>,
     label_id: i64,
+    abi_windows: i64,
     asm_temp: i64,
     asm_ret: i64,
     sret_slot: i64,
@@ -2682,6 +2684,20 @@ asm_jump :: fn(op: ^i8, name: ^i8, id: i64) {
     frost_emit_str("\n")
 }
 
+abi_arg_regs :: fn(mut p: Parser) -> i64 {
+    if (p.abi_windows == 1) {
+        return 4
+    }
+    6
+}
+
+abi_shadow :: fn(mut p: Parser) -> i64 {
+    if (p.abi_windows == 1) {
+        return 32
+    }
+    0
+}
+
 ASM_FRAME :: 4096
 
 // Every field in this compiler is a word, so a struct is one 8 byte slot per
@@ -2860,9 +2876,9 @@ emit_asm_pop_rax :: fn() {
     asm("addq $16, %rsp")
 }
 
-emit_asm_pop_arg :: fn(index: i64) {
+emit_asm_pop_arg :: fn(mut p: Parser, index: i64) {
     frost_emit_str("    movq (%rsp), ")
-    emit_asm_arg_reg(index)
+    emit_asm_arg_reg(p, index)
     frost_emit_str("\n")
     asm("addq $16, %rsp")
 }
@@ -2932,19 +2948,19 @@ emit_asm_binop :: fn(op: i64) {
     asm("orq %r11, %rax")
 }
 
-emit_asm_arg_reg :: fn(index: i64) {
-    if (index == 0) {
-        frost_emit_str("%rcx")
+emit_asm_arg_reg :: fn(mut p: Parser, index: i64) {
+    if (p.abi_windows == 1) {
+        if (index == 0) { frost_emit_str("%rcx")  return }
+        if (index == 1) { frost_emit_str("%rdx")  return }
+        if (index == 2) { frost_emit_str("%r8")   return }
+        frost_emit_str("%r9")
         return
     }
-    if (index == 1) {
-        frost_emit_str("%rdx")
-        return
-    }
-    if (index == 2) {
-        frost_emit_str("%r8")
-        return
-    }
+    if (index == 0) { frost_emit_str("%rdi")  return }
+    if (index == 1) { frost_emit_str("%rsi")  return }
+    if (index == 2) { frost_emit_str("%rdx")  return }
+    if (index == 3) { frost_emit_str("%rcx")  return }
+    if (index == 4) { frost_emit_str("%r8")   return }
     frost_emit_str("%r9")
 }
 
@@ -3133,17 +3149,23 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     }
 
     total := count + sret
+    regs := abi_arg_regs(p)
+    shadow := abi_shadow(p)
     mut spill : i64 = 0
-    if (total > 4) {
-        spill = ((total - 4) * 8 + 15) / 16 * 16
+    if (total > regs) {
+        spill = ((total - regs) * 8 + 15) / 16 * 16
     }
-    frame := 32 + spill
+    frame := shadow + spill
     asm_i("subq $", frame, ", %rsp")
 
     // The hidden result pointer, when there is one, occupies the first slot and
     // pushes every real argument along by one.
     if (sret == 1) {
-        asm_i("leaq ", result_slot, "(%rbp), %rcx")
+        frost_emit_str("    leaq ")
+        frost_emit_int(result_slot)
+        frost_emit_str("(%rbp), ")
+        emit_asm_arg_reg(p, 0)
+        frost_emit_str("\n")
     }
     mut r : i64 = 0
     while (r < count) {
@@ -3151,18 +3173,21 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         frost_emit_str("    movq ")
         frost_emit_int(frame + 16 * r)
         frost_emit_str("(%rsp), ")
-        if (dest < 4) {
-            emit_asm_arg_reg(dest)
+        if (dest < regs) {
+            emit_asm_arg_reg(p, dest)
             frost_emit_str("\n")
         } else {
             frost_emit_str("%r10\n")
-            asm_i("movq %r10, ", 32 + 8 * (dest - 4), "(%rsp)")
+            asm_i("movq %r10, ", shadow + 8 * (dest - regs), "(%rsp)")
         }
         r = r + 1
     }
 
-    frost_emit_str("    call ")
     sym : ^Sym = arena_at(p.fns, fn_index)
+    if (p.abi_windows == 0 && sym^.is_extern == 1) {
+        asm("movb $0, %al")
+    }
+    frost_emit_str("    call ")
     if (generic_fn_of(p, fn_index) >= 0) {
         frost_emit_str("mf_")
         frost_emit_int(fn_index)
@@ -3228,12 +3253,22 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         return
     }
     if (kind == NODE_PRINT) {
+        shadow := abi_shadow(p)
         emit_asm_expr(p, node^.a)
-        asm("movq %rax, %rdx")
-        asm("leaq .Lfmt(%rip), %rcx")
-        asm("subq $32, %rsp")
+        // printf takes the format then the value, in whichever registers this
+        // convention names, and System V wants the vector register count in al.
+        frost_emit_str("    movq %rax, ")
+        emit_asm_arg_reg(p, 1)
+        frost_emit_str("\n")
+        frost_emit_str("    leaq .Lfmt(%rip), ")
+        emit_asm_arg_reg(p, 0)
+        frost_emit_str("\n")
+        if (p.abi_windows == 0) {
+            asm("movb $0, %al")
+        }
+        asm_i("subq $", shadow, ", %rsp")
         asm("call printf")
-        asm("addq $32, %rsp")
+        asm_i("addq $", shadow, ", %rsp")
         return
     }
     if (kind == NODE_IF) {
@@ -3407,6 +3442,8 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
     asm_i("subq $", left, ", %rsp")
 
     // A struct result arrives as a hidden pointer ahead of the real arguments.
+    regs := abi_arg_regs(p)
+    shadow := abi_shadow(p)
     mut shift : i64 = 0
     if (is_struct_ty(ret)) {
         shift = 1
@@ -3431,24 +3468,24 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
         // A struct argument travels as an address, so a parameter that owns one
         // copies it into its own slot rather than keeping the caller's pointer.
         if (is_struct_ty(ptype)) {
-            if (place < 4) {
+            if (place < regs) {
                 frost_emit_str("    movq ")
-                emit_asm_arg_reg(place)
+                emit_asm_arg_reg(p, place)
                 frost_emit_str(", %r11\n")
             } else {
-                asm_i("movq ", 48 + 8 * (place - 4), "(%rbp), %r11")
+                asm_i("movq ", 16 + shadow + 8 * (place - regs), "(%rbp), %r11")
             }
             asm_i("leaq ", slot, "(%rbp), %r10")
             emit_asm_copy(type_size(p, ptype))
         } else {
-            if (place < 4) {
+            if (place < regs) {
                 frost_emit_str("    movq ")
-                emit_asm_arg_reg(place)
+                emit_asm_arg_reg(p, place)
                 frost_emit_str(", ")
                 frost_emit_int(slot)
                 frost_emit_str("(%rbp)\n")
             } else {
-                asm_i("movq ", 48 + 8 * (place - 4), "(%rbp), %r10")
+                asm_i("movq ", 16 + shadow + 8 * (place - regs), "(%rbp), %r10")
                 asm_i("movq %r10, ", slot, "(%rbp)")
             }
         }
@@ -3799,6 +3836,7 @@ main :: fn() -> i64 {
         last_type_was_generic = 0,
         moved = arena_make($LocalVar, 4096),
         label_id = 0,
+        abi_windows = 0,
         asm_temp = 0,
         asm_ret = 0,
         sret_slot = 0,
@@ -3806,6 +3844,16 @@ main :: fn() -> i64 {
         current_ret = 0,
         current_fn_off = 0,
         current_fn_len = 0,
+    }
+    // The host convention by default; FROST_ABI overrides it so the other
+    // target's output can be inspected from either host.
+    parser.abi_windows = frost_is_windows()
+    abi := frost_getenv("FROST_ABI")
+    if (cstr_eq(abi, "sysv")) {
+        parser.abi_windows = 0
+    }
+    if (cstr_eq(abi, "win")) {
+        parser.abi_windows = 1
     }
     tokenize(source, frost_str_len(source), parser.tokens)
     program := parse_program(parser)
