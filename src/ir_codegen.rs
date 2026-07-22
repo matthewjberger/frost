@@ -60,11 +60,10 @@ pub fn compile_ir_to_object(module: &IrModule) -> Result<Vec<u8>> {
         .filter(|count| *count > 0)
         .unwrap_or(available);
     let threads = requested.min(module.functions.len().max(1));
-    let per_thread = module.functions.len().div_ceil(threads.max(1));
     let mut compiled: Vec<Compiled> =
         Vec::with_capacity(module.functions.len());
 
-    if threads <= 1 || per_thread == 0 {
+    if threads <= 1 {
         let mut context = cranelift::codegen::Context::new();
         let mut builder_context = FunctionBuilderContext::new();
         for function in &module.functions {
@@ -77,44 +76,68 @@ pub fn compile_ir_to_object(module: &IrModule) -> Result<Vec<u8>> {
             )?);
         }
     } else {
-        let chunks: Vec<&[IrFunction]> =
-            module.functions.chunks(per_thread).collect();
-        let results: Vec<Result<Vec<Compiled>>> = std::thread::scope(|scope| {
-            let handles: Vec<_> = chunks
-                .into_iter()
-                .map(|chunk| {
-                    scope.spawn(move || {
-                        let isa = make_isa()?;
-                        let isa = isa.as_ref();
-                        let mut context = cranelift::codegen::Context::new();
-                        let mut builder_context = FunctionBuilderContext::new();
-                        let mut out = Vec::with_capacity(chunk.len());
-                        for function in chunk {
-                            out.push(compile_one(
-                                generator,
-                                isa,
-                                function,
-                                &mut context,
-                                &mut builder_context,
-                            )?);
-                        }
-                        Ok(out)
+        // Functions are handed out one at a time from a shared cursor rather
+        // than split into equal chunks up front. Cost per function varies by
+        // more than an order of magnitude and the expensive ones sit next to
+        // each other in the module, so any static split leaves one thread
+        // holding all of them while the rest finish early and wait.
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let next = &next;
+        let results: Vec<Result<Vec<(usize, Compiled)>>> =
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = (0..threads)
+                    .map(|_| {
+                        scope.spawn(move || {
+                            let isa = make_isa()?;
+                            let isa = isa.as_ref();
+                            let mut context =
+                                cranelift::codegen::Context::new();
+                            let mut builder_context =
+                                FunctionBuilderContext::new();
+                            let mut out = Vec::new();
+                            loop {
+                                let index = next.fetch_add(
+                                    1,
+                                    std::sync::atomic::Ordering::Relaxed,
+                                );
+                                let Some(function) =
+                                    module.functions.get(index)
+                                else {
+                                    break;
+                                };
+                                out.push((
+                                    index,
+                                    compile_one(
+                                        generator,
+                                        isa,
+                                        function,
+                                        &mut context,
+                                        &mut builder_context,
+                                    )?,
+                                ));
+                            }
+                            Ok(out)
+                        })
                     })
-                })
-                .collect();
-            handles
-                .into_iter()
-                .map(|handle| match handle.join() {
-                    Ok(result) => result,
-                    Err(_) => bail!(
-                        "native backend: a code generation thread panicked"
-                    ),
-                })
-                .collect()
-        });
+                    .collect();
+                handles
+                    .into_iter()
+                    .map(|handle| match handle.join() {
+                        Ok(result) => result,
+                        Err(_) => bail!(
+                            "native backend: a code generation thread panicked"
+                        ),
+                    })
+                    .collect()
+            });
+        // Sorted back into module order, so the object a build produces does
+        // not depend on how the threads happened to interleave.
+        let mut ordered: Vec<(usize, Compiled)> = Vec::new();
         for result in results {
-            compiled.extend(result?);
+            ordered.extend(result?);
         }
+        ordered.sort_by_key(|(index, _)| *index);
+        compiled.extend(ordered.into_iter().map(|(_, unit)| unit));
     }
 
     let generated = started.elapsed();
