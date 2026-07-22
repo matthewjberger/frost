@@ -256,6 +256,7 @@ impl Renamer {
             | Expression::AddressOf(operand)
             | Expression::Borrow(operand)
             | Expression::BorrowMut(operand)
+            | Expression::Try(operand)
             | Expression::Dereference(operand) => {
                 self.expression(operand, scope)
             }
