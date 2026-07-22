@@ -1,15 +1,18 @@
 # Self-hosting and compile speed
 
 Frost has two compilers. `src/*.rs` is the reference compiler, written in Rust,
-implementing the full language. `bootstrap/frost.frost` is a compiler written
-in Frost that compiles a subset of Frost, and it self-hosts: it compiles its own
-source to a byte-identical fixpoint across three stages, checked by
-`self_hosting_is_a_fixpoint`. It checks the programs it compiles rather than
-leaving that to whatever compiles its output.
+implementing the full language. `bootstrap/frost.frost` is a compiler written in
+Frost, and it self-hosts twice over: through its C backend and through its own
+x64 backend, each compiling its own source to a byte-identical fixpoint across
+three stages, checked by `self_hosting_is_a_fixpoint` and
+`native_self_hosting_is_a_fixpoint`. It checks the programs it compiles rather
+than leaving that to whatever compiles its output.
 
-Finishing the self-hosted compiler means growing the Frost-written one until it
-implements the whole language and can compile a full Frost-written compiler.
-Because the spec is deliberately small and closed, this is a finite checklist.
+The checklist below is finished. Every item is done: self type-checking,
+ownership and linearity, the native backend, allocation sources, regions,
+failure sets and imports. What each one cost and what it turned up is recorded
+under it, since the same shapes come up again. One thing the language has that
+the self-hosted compiler still does not is enums with payloads.
 
 ## Compile speed
 
@@ -90,10 +93,10 @@ Second-order levers, worth doing but small next to the above:
    instantiations, and specialization-only comptime means code generation cannot
    run away.
 
-## What is left in the Frost-written compiler
+## The checklist
 
 the self-hosted compiler checks its own programs now rather than deferring to whatever compiles
-its output. In dependency order, what is done and what remains:
+its output. In dependency order:
 
 1. **Self type-checking.** Required before (3), because once the self-hosted compiler stops
    emitting C there is no C compiler behind it to catch anything.
