@@ -1415,6 +1415,101 @@ fn self_hosted_survives_an_import_cycle() {
     assert_eq!(output, "7\n");
 }
 
+// A module's private symbols are a property of the module, not of the order it
+// happened to be reached in. This is step 1 of docs/separate-compilation.md and
+// the thing the rest of it cannot be built without: a module compiled once has
+// to produce the symbols every other module will link against. The tag used to
+// be a counter handed out in import traversal order, so the same file's private
+// `secret` was `__m0_secret` reached first and `__m1_secret` reached second, and
+// adding an unrelated import silently renamed everything after it.
+#[test]
+fn a_modules_private_symbols_do_not_depend_on_import_order() {
+    let directory = std::env::temp_dir().join("frost_module_identity");
+    let library = directory.join("lib");
+    std::fs::create_dir_all(&library).unwrap();
+    // Distinct private names, so a symbol can be traced back to the module that
+    // kept it. Same-named privates would only show that two symbols exist, not
+    // which module each belongs to.
+    std::fs::write(
+        library.join("shared.frost"),
+        "export shared\n\
+         secret_shared :: fn() -> i64 { 11 }\n\
+         shared :: fn() -> i64 { secret_shared() }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        library.join("other.frost"),
+        "export other\n\
+         secret_other :: fn() -> i64 { 22 }\n\
+         other :: fn() -> i64 { secret_other() }\n",
+    )
+    .unwrap();
+
+    // The same module, reached first in one program and second in the other.
+    let alone = directory.join("alone.frost");
+    std::fs::write(
+        &alone,
+        "import \"lib/shared.frost\"\nmain :: fn() -> i64 { shared() }\n",
+    )
+    .unwrap();
+    let after = directory.join("after.frost");
+    std::fs::write(
+        &after,
+        "import \"lib/other.frost\"\n\
+         import \"lib/shared.frost\"\n\
+         main :: fn() -> i64 { other() + shared() }\n",
+    )
+    .unwrap();
+
+    // The tag a named private got, from the `__m<tag>_<name>` in the emitted C.
+    let tag_of = |source_path: &std::path::Path, label: &str, private: &str| {
+        let c_path = directory.join(format!("{label}.c"));
+        let frost = env!("CARGO_BIN_EXE_frost");
+        let emitted = Command::new(frost)
+            .arg("--emit-c")
+            .arg("-o")
+            .arg(&c_path)
+            .arg(source_path)
+            .output()
+            .unwrap();
+        assert!(
+            emitted.status.success(),
+            "compiling {label} failed:\n{}",
+            String::from_utf8_lossy(&emitted.stderr)
+        );
+        let c_source = std::fs::read_to_string(&c_path).unwrap();
+        let suffix = format!("_{private}");
+        c_source
+            .match_indices("__m")
+            .map(|(start, _)| {
+                let rest = &c_source[start..];
+                let end = rest
+                    .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+                    .unwrap_or(rest.len());
+                rest[..end].to_string()
+            })
+            .find(|name| name.ends_with(&suffix))
+            .map(|name| name[3..name.len() - suffix.len()].to_string())
+            .unwrap_or_else(|| panic!("no mangled '{private}' in {label}"))
+    };
+
+    // Reached first in one program, second in the other.
+    let alone_shared = tag_of(&alone, "alone", "secret_shared");
+    let after_shared = tag_of(&after, "after", "secret_shared");
+    let after_other = tag_of(&after, "after2", "secret_other");
+    let _ = std::fs::remove_dir_all(&directory);
+
+    assert_eq!(
+        alone_shared, after_shared,
+        "the same module got a different tag depending on when it was reached"
+    );
+    // And two different modules do not share a tag, which a constant would.
+    assert_ne!(
+        after_shared, after_other,
+        "two different modules got the same tag"
+    );
+}
+
 // A module offers what it exports and keeps the rest. Two files each keep a
 // private `secret` and a private-or-exported `Thing`, and neither sees the
 // other's, so the names do not collide and the root reaches only the exports.

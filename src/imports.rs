@@ -24,27 +24,55 @@ pub fn resolve_imports(
     tests: Vec<(String, String)>,
 ) -> Result<Resolved> {
     let mut seen = HashSet::new();
-    let mut module_tag = 0usize;
     let mut resolved = Resolved {
         statements: Vec::new(),
         linear_types,
         tests,
     };
-    resolve_into(
-        statements,
-        base_dir,
-        &mut seen,
-        &mut module_tag,
-        &mut resolved,
-    )?;
+    // The directory of the file named on the command line is the project root,
+    // and a module's identity is its path relative to that. See the "what is a
+    // project root" question in docs/separate-compilation.md, which this is the
+    // smallest answer to.
+    let root = base_dir.canonicalize().unwrap_or_else(|_| base_dir.into());
+    resolve_into(statements, base_dir, &root, &mut seen, &mut resolved)?;
     Ok(resolved)
+}
+
+// The tag that distinguishes one module's private names from another's. It has
+// to be a property of the module and nothing else. It used to be a counter
+// handed out in import traversal order, which meant the same file's private
+// `helper` was `__m3_helper` in one program and `__m7_helper` in another, and
+// adding an unrelated import renamed every symbol downstream of it. Separate
+// compilation cannot work on top of that, since a module compiled once has to
+// produce the symbols every other module expects to link against.
+fn module_tag(path: &Path, root: &Path) -> String {
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    // Path separators differ by platform and the identity must not, so the
+    // components are joined rather than the string taken as it is.
+    let joined: Vec<String> = relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    format!("{:016x}", fnv1a(joined.join("/").as_bytes()))
+}
+
+// FNV-1a, written out rather than taken from the standard library because the
+// hash has to mean the same thing in every build of the compiler, and
+// `DefaultHasher` promises only that it is consistent within one version.
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in bytes {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 fn resolve_into(
     statements: Vec<Spanned<Statement>>,
     base_dir: &Path,
+    root: &Path,
     seen: &mut HashSet<PathBuf>,
-    module_tag: &mut usize,
     resolved: &mut Resolved,
 ) -> Result<()> {
     for statement in statements {
@@ -55,7 +83,7 @@ fn resolve_into(
 
         let full = base_dir.join(path);
         let key = full.canonicalize().unwrap_or_else(|_| full.clone());
-        if !seen.insert(key) {
+        if !seen.insert(key.clone()) {
             continue;
         }
 
@@ -78,9 +106,8 @@ fn resolve_into(
 
         let exports: HashSet<String> =
             parser.exports().iter().cloned().collect();
-        let tag = *module_tag;
-        *module_tag += 1;
-        let renames = private_renames(&imported, &exports, tag);
+        let tag = module_tag(&key, root);
+        let renames = private_renames(&imported, &exports, &tag);
         if !renames.is_empty() {
             let renamer = Renamer { renames };
             renamer.block(&mut imported, &mut Vec::new());
@@ -88,7 +115,7 @@ fn resolve_into(
 
         let child_dir =
             full.parent().map(Path::to_path_buf).unwrap_or_default();
-        resolve_into(imported, &child_dir, seen, module_tag, resolved)?;
+        resolve_into(imported, &child_dir, root, seen, resolved)?;
     }
     Ok(())
 }
@@ -107,7 +134,7 @@ fn top_level_name(statement: &Statement) -> Option<&str> {
 fn private_renames(
     statements: &[Spanned<Statement>],
     exports: &HashSet<String>,
-    tag: usize,
+    tag: &str,
 ) -> HashMap<String, String> {
     let mut renames = HashMap::new();
     for statement in statements {
