@@ -2016,10 +2016,17 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     if (kind == TOK_KW_WHILE) {
         advance(p)
         advance(p)
+        // Anything the condition needs set up, a `?` or a match used as a
+        // value, belongs to the loop rather than to the statement before it,
+        // since the condition is asked again every time round.
+        mark := p.pending.count
         condition := parse_expr(p)
+        preamble := flush_pending(p, mark, 0 - 1)
         advance(p)
         body := parse_block(p)
-        return new_node(p, NODE_WHILE, condition, body, 0)
+        loop := new_node(p, NODE_WHILE, condition, body, 0)
+        set_while_preamble(p, loop, preamble)
+        return loop
     }
     // `with arena { ... }` supplies an allocation capability to everything the
     // block calls. The block is the region: it is a plain scope once the calls
@@ -2091,8 +2098,15 @@ flush_pending :: fn(mut p: Parser, mark: i64, statement: i64) -> i64 {
     if (head == (0 - 1)) {
         return statement
     }
-    set_next(p, tail, statement)
+    if (statement != (0 - 1)) {
+        set_next(p, tail, statement)
+    }
     head
+}
+
+set_while_preamble :: fn(mut p: Parser, loop: i64, preamble: i64) {
+    node : ^Node = arena_at(p.arena, loop)
+    node^.c = preamble
 }
 
 // The statement a match arm runs, with anything its own parse queued placed
@@ -3418,9 +3432,22 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
     if (kind == NODE_WHILE) {
         cond := node^.a
         body := node^.b
-        frost_emit_str("while (")
+        preamble := node^.c
+        if (preamble == (0 - 1)) {
+            frost_emit_str("while (")
+            emit_expr(p, cond)
+            frost_emit_str(") {\n")
+            emit_list(p, body)
+            frost_emit_str("}\n")
+            return
+        }
+        // The condition needs statements run before it can be asked, and it is
+        // asked again every time round, so the test moves inside the loop.
+        frost_emit_str("while (1) {\n")
+        emit_list(p, preamble)
+        frost_emit_str("if (!(")
         emit_expr(p, cond)
-        frost_emit_str(") {\n")
+        frost_emit_str(")) break;\n")
         emit_list(p, body)
         frost_emit_str("}\n")
         return
@@ -3782,22 +3809,6 @@ abi_shadow :: fn(mut p: Parser) -> i64 {
 
 ASM_FRAME :: 4096
 
-// Every field in this compiler is a word, so a struct is one 8 byte slot per
-// field. That keeps layout to an index rather than an alignment computation.
-struct_field_count :: fn(mut p: Parser, struct_ty: i64) -> i64 {
-    if (is_struct_ty(struct_ty) == false) {
-        return 0
-    }
-    def : ^StructDef = arena_at(p.structs, struct_index_of(struct_ty))
-    mut fid := def^.field_head
-    mut count : i64 = 0
-    while (fid != (0 - 1)) {
-        field : ^StructField = arena_at(p.fields, fid)
-        count = count + 1
-        fid = field^.next
-    }
-    count
-}
 
 // A struct is as wide as its fields laid end to end. A field may itself be a
 // struct, so this cannot just count them: Parser carries eleven arenas, and an
@@ -4472,6 +4483,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         end_id := new_label(p)
         emit_label(".Ltop", top_id)
         frost_emit_str(":\n")
+        emit_asm_block(p, node^.c)
         emit_asm_expr(p, node^.a)
         asm("cmpq $0, %rax")
         frost_emit_str("    je ")

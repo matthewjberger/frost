@@ -1630,6 +1630,27 @@ fn self_hosted_native_indexes_bytes() {
     assert_eq!(output, "104\n101\n111\n1\n");
 }
 
+// A `?` in a loop's condition is asked again every time round. It used to be
+// lifted out of the loop and evaluated once, which read the same answer for
+// ever.
+#[test]
+fn self_hosted_reevaluates_a_try_in_a_loop_condition() {
+    let source = "E :: struct { c: i64 }\n\
+                  step :: fn(n: i64) -> i64 ! E {\n\
+                  \x20   if (n > 3) { return E { c = 9 } }\n\
+                  \x20   n + 1\n}\n\
+                  run :: fn() -> i64 ! E {\n\
+                  \x20   mut n : i64 = 0\n\
+                  \x20   while (step(n)? < 3) { n = n + 1 }\n\
+                  \x20   n\n}\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   r := run()\n    print r.value\n    0\n}\n";
+    let Some(output) = selfhosted_native_output("trywhile", source) else {
+        return;
+    };
+    assert_eq!(output, "2\n");
+}
+
 #[test]
 fn self_hosted_rejects_a_linear_value_never_consumed() {
     let source = "File :: linear struct { h: i64 }\n\

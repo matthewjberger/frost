@@ -242,7 +242,13 @@ its output. In dependency order:
    the same way a `?` is. An arm ending in something with no value is left alone,
    since it was not producing one.
 
-   The one thing this turned up is a bug of its own, fixed with it: the native
+   Making `match` an expression turned up a bug in the road both it and `?`
+   take. A statement queued while a condition was being parsed was placed
+   before the loop, so a `?` in a `while` condition was asked once and answered
+   the same for ever. The loop now carries what its condition needs and runs it
+   every time round, with the test moved inside.
+
+   The other thing this turned up: the native
    backend treated every scalar as a word, so `^i8` indexing strode eight bytes
    at a time and `sizeof(i8)` answered 8. A byte-wide type is one byte now,
    struct fields sit on their own alignment, and a byte is loaded and stored
