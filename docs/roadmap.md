@@ -166,12 +166,34 @@ to hand to `define_function_bytes`. That backend uses the function only to
 resolve relocation targets against its imported names, so the value is moved out
 with `mem::replace` rather than deep copied, worth about 130 ms at this size.
 
-So the honest state is that the mechanism is correct and in place, the serial
-phases are measured and tiny, and the parallel phase does not scale for a reason
-that is not yet found. The next things to try, in order: check whether the
-threads are genuinely concurrent by watching CPU utilization during a run, since
-everything so far assumes they are; then look for shared state inside
-`Context::compile` rather than around it.
+Then the assumption underneath all of that was checked, and it was wrong.
+Comparing processor time against wall time for the whole run:
+
+| threads | wall | cpu | ratio |
+| --- | --- | --- | --- |
+| 1 | 1,349 ms | 1,313 ms | 1.0 |
+| 4 | 1,227 ms | 1,328 ms | 1.1 |
+| 16 | 1,211 ms | 1,578 ms | 1.3 |
+
+Sixteen threads genuinely working would put processor time many times above wall
+time. It is 1.3x, and total processor time is roughly flat across thread counts,
+which says the work is not being split at all. The extra 265 ms at sixteen
+threads is about what sixteen `make_isa` calls cost, so that is overhead rather
+than progress.
+
+So this was never a scaling problem. The threads are spawned and the work is
+chunked evenly, but something serializes them, and the earlier readings were
+measuring one thread doing everything while fifteen waited. That is a different
+and more tractable question than "why does parallelism not help", and it is where
+the next session starts:
+
+- Confirm the chunking is what it is believed to be, by printing chunk count and
+  per-chunk length rather than trusting `div_ceil`.
+- Put a timer inside one worker around `build_function` and around
+  `Context::compile` separately, so it is known which half is stuck.
+- Suspect the heap first despite mimalloc measuring flat, since that test only
+  proved the global allocator changed, not that Cranelift's allocations went
+  through it.
 
 **Why it was first.** It is where the time is. Code generation is 1,285 ms of a 1,289 ms
 backend at 10,241 functions, and the work is per-function on independent inputs,
