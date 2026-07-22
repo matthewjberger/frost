@@ -50,30 +50,36 @@ each array access.
 
 ---
 
-## 1. Second-class references, so no dangling pointers
+## 1. Second-class borrows, so no dangling pointers
 
-A reference type (`&T`, `&mut T`) is **second-class**. It may appear only as a
-*parameter mode* or a *dereference-scoped temporary*. Concretely, the ownership
-pass rejects:
-
-- a reference stored in a **struct field** or **enum variant field**, and
-- a reference **returned** from a function or `extern`.
+A borrow is **second-class**: it exists only as a *parameter mode*, and there is
+no reference type in the surface language to write anywhere else. `x: T` borrows
+to read, `mut x: T` borrows to mutate, `move x: T` takes ownership, and the call
+site writes no sigil at all.
 
 ```
-Bad :: struct { r: &i64 }              // rejected: reference stored in a field
-bad :: fn(x: &i64) -> &i64 { x }       // rejected: reference returned
-read :: fn(x: &i64) -> i64 { x^ }      // fine: parameter mode, deref, return a value
+read  :: fn(x: i64) -> i64 { x }        // borrowed to read
+bump  :: fn(mut x: i64) { x = x + 1 }   // borrowed to mutate in place
+eat   :: fn(move p: Point) -> i64 { p.x }
+
+bump(n)                                  // no '&mut' at the call
 ```
 
-Because a reference can never escape the call it was created in, the value it
-points to is always still alive when the reference is used. There is nothing to
-outlive, so there are **no lifetimes to infer and no lifetime annotations**.
-That is what lets the borrow analysis stay entirely scope-local.
+Since the only place a borrow can appear is a parameter, the shapes that would
+let one escape are not expressible. There is no way to write a reference-typed
+struct field, and no way to write a reference return type, so a borrow can never
+outlive the call it was created for. There is nothing to outlive, so there are
+**no lifetimes to infer and no lifetime annotations**. That is what lets the
+borrow analysis stay entirely scope-local.
 
-The same rule is what makes `pool[handle]` sound (see section 5). Dereferencing a
-handle yields a `&mut T` or `&T` borrow, and that borrow is second-class by the
-same rule. You cannot stash it in a struct or return it, so it cannot dangle
-past the pool operation.
+The lowering still forms reference types internally, and `check_ownership` still
+rejects them in fields and return positions, which is what keeps a synthesized
+reference from escaping either.
+
+The same rule is what makes `pool[handle]` sound (see section 5). Passing
+`pool[handle]` to a function borrows it under that function's parameter mode,
+and that borrow is second-class like any other. You cannot stash it in a struct
+or return it, so it cannot dangle past the pool operation.
 
 Enforced in `check_ownership` via `Type::contains_reference()` on declared
 struct/enum field types and function return signatures.
@@ -96,8 +102,9 @@ a := take(p)      // p moved into take
 b := take(p)      // error: use of moved value 'p'
 ```
 
-Borrowing (`&x`), field read (`x.f`), and dereference (`p^`) do **not** consume,
-so the common read patterns are unaffected. Copy types are never moved, so
+Passing to a read or `mut` parameter, field read (`x.f`), and dereference (`p^`)
+do **not** consume, so the common read patterns are unaffected. Only a `move`
+parameter takes the value. Copy types are never moved, so
 `add(x, x)` with integer `x` is fine.
 
 Enforced per function body by `MoveChecker` in `src/ownership.rs`, which tracks a
@@ -105,19 +112,23 @@ set of moved bindings and their types.
 
 ## 3. Borrow exclusivity, so no mutable aliasing
 
-A `&mut` borrow is exclusive. Within a single call the checker rejects:
+A `mut` borrow is exclusive. Within a single call the checker rejects:
 
-- borrowing the same variable `&mut` twice, and
-- borrowing it `&mut` and `&` simultaneously.
+- passing the same variable to two `mut` parameters, and
+- passing it to a `mut` parameter and a read parameter at once.
 
 ```
-add(&mut x, &mut x)   // rejected: aliased mutable borrows
-mix(&x, &mut x)       // rejected: shared and mutable borrow of the same value
-add(&mut x, &mut y)   // fine: distinct variables
-sum(&x, &x)           // fine: multiple shared borrows
+// add :: fn(mut a: i64, mut b: i64)   mix :: fn(a: i64, mut b: i64)
+add(x, x)   // rejected: aliased mutable borrows
+mix(x, x)   // rejected: shared and mutable borrow of the same value
+add(x, y)   // fine: distinct variables
+sum(x, x)   // fine: multiple shared borrows
 ```
 
-This per-call check is sufficient, not merely necessary, because references are
+Which argument is a borrow and which kind it is comes from the callee's
+parameter modes, so the check reads the signature rather than the call's syntax.
+
+This per-call check is sufficient, not merely necessary, because borrows are
 second-class. A borrow cannot be saved to be aliased later, so there is no
 cross-call aliasing to reason about. The question "who else holds a reference to
 this?" collapses to "what does this one call borrow?".
@@ -170,9 +181,9 @@ generation)` pair, which is plain copyable data you *can* freely store and retur
   (`pool_contains` returns 0, a checked get returns nothing).
 
 ```
-h := pool_alloc(world, &entity)   // slot 0, generation 0
-pool_free(world, h)               // slot 0 now generation 1
-pool_alloc(world, &other)         // reuses slot 0 at generation 1
+h := pool_alloc(world, ptr_to(entity))   // slot 0, generation 0
+pool_free(world, h)                      // slot 0 now generation 1
+pool_alloc(world, ptr_to(other))         // reuses slot 0 at generation 1
 pool_contains(world, h)           // 0, the old handle can never read the new occupant
 ```
 
@@ -184,15 +195,15 @@ use-after-free detection without a GC and without reference counting.
 ### Handle-dereference-as-borrow
 
 `pool[handle]` is a **place**. You can read and write fields through it
-(`world[h].hp = 60`), copy the element out (`e := world[h]`), or take a borrow
-of it (`&world[h]`, `&mut world[h]`) to pass to a function. The element type is
-recovered from the handle's `Handle<T>`, so the pool itself stays a raw pointer.
+(`world[h].hp = 60`), copy the element out (`e := world[h]`), or pass it to a
+function, which borrows it under that function's parameter mode. The element
+type is recovered from the handle's `Handle<T>`, so the pool itself stays a raw
+pointer.
 
-The borrow you get is a **second-class reference** (section 1). Storing it in a
-struct or returning it is already rejected, so a handle-deref borrow cannot
-escape the region where the pool operation is valid. Handles unify with the
-reference discipline. The *handle* is data you keep. The *borrow* through it is a
-scoped temporary the compiler will not let you save.
+The borrow you get is **second-class** (section 1), so there is nowhere to put it
+that would let it escape the region where the pool operation is valid. Handles
+unify with the borrow discipline. The *handle* is data you keep. The *borrow*
+through it is a scoped thing the language gives you no way to save.
 
 ---
 

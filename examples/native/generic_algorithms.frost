@@ -5,9 +5,9 @@ max_of :: fn(move a: $T, move b: $T) -> T { if (a > b) { a } else { b } }
 clamp  :: fn(move x: $T, move lo: $T, move hi: $T) -> T { max_of(lo, min_of(x, hi)) }
 
 swap :: fn(mut a: $T, mut b: $T) {
-    t := a^
-    a^ = b^
-    b^ = t
+    t := a
+    a = b
+    b = t
 }
 
 bytes :: fn($T: Type) -> i64 { sizeof(T) }

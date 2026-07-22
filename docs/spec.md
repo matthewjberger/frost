@@ -348,7 +348,7 @@ with an `export` line at the top.
 export area, Shape
 
 Shape :: enum { Circle { r: i64 }, Rect { w: i64, h: i64 } }
-area :: fn(s: &Shape) -> i64 { ... }
+area :: fn(s: Shape) -> i64 { ... }
 scale :: fn(x: i64) -> i64 { ... }   // private, not exported
 ```
 
@@ -381,9 +381,12 @@ operators are left-associative.
 
 - `ptr_to(place)` the address of a place. There is no borrow operator: a
   borrow is what a parameter mode means, inserted at the call.
-- `expr^` dereferences a reference or raw pointer to its pointee value and is
-  assignable (`p^ = v`). Member access through a reference to an aggregate is
-  direct (`r.field`). Through a raw pointer it is written `p^.field`.
+- `expr^` dereferences a raw pointer to its pointee value and is assignable
+  (`p^ = v`). Member access through a raw pointer is written `p^.field`.
+- A borrowed parameter needs no dereference at all, whatever its type. `p.field`
+  reads and writes a field of a borrowed aggregate, and `p = q` on a `mut`
+  parameter assigns the whole value through the borrow rather than rebinding
+  anything local. Naming a `mut` parameter always means the caller's value.
 
 ### 6.4 Calls, indexing, and field access
 

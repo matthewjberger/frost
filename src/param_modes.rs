@@ -116,9 +116,9 @@ fn rewrite_block(
     }
 }
 
-// Read a `mut` scalar parameter through the reference it became, everywhere the
-// body names it. A binding of the same name inside the body is a different
-// thing and stops the rewrite from there on.
+// Read a `mut` parameter through the reference it became, everywhere the body
+// names it. A binding of the same name inside the body is a different thing and
+// stops the rewrite from there on.
 type Bound = Vec<Vec<String>>;
 
 fn shadowed(name: &str, bound: &Bound) -> bool {
@@ -266,23 +266,20 @@ fn rewrite_expression(
     match expression {
         Expression::Function(params, ret, body)
         | Expression::Proc(params, ret, body) => {
-            // A `mut` parameter of a copy type is a reference the body never
-            // asked for. A struct one reads through itself, since a field
-            // access derefs on the way, but a scalar is used as a whole value
-            // and has to be read through explicitly.
+            // A `mut` parameter is a reference the body never asked for, so
+            // every mention of it reads through that reference. Field access
+            // would deref on its own, but a whole-value use would not, and
+            // `a = b` on an unrewritten name assigns to the local reference
+            // instead of through it, which silently leaves the caller's value
+            // alone. A parameter already written as a reference type is not
+            // this pass's doing and is left as it is.
             let through: Vec<String> = params
                 .iter()
                 .filter(|parameter| {
                     !is_type_parameter(parameter)
                         && parameter.mode == ParamMode::Write
                         && parameter.type_annotation.as_ref().is_some_and(
-                            |ty| {
-                                ty.is_copy()
-                                    && !matches!(
-                                        ty,
-                                        Type::Ref(_) | Type::RefMut(_)
-                                    )
-                            },
+                            |ty| !matches!(ty, Type::Ref(_) | Type::RefMut(_)),
                         )
                 })
                 .map(|parameter| parameter.name.clone())

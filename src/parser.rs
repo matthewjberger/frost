@@ -810,10 +810,14 @@ impl From<&Token> for Precedence {
 
 pub type Program = Vec<Spanned<Statement>>;
 
+// Reads a type back from its `Display` form. This is the compiler talking to
+// itself, so unlike the surface it accepts the reference types that parameter
+// mode lowering synthesizes.
 pub fn type_from_string(source: &str) -> Result<Type> {
     let mut lexer = crate::lexer::Lexer::new(source);
     let tokens = lexer.tokenize()?;
     let mut parser = Parser::new(&tokens);
+    parser.internal_types = true;
     parser.parse_type()
 }
 
@@ -842,6 +846,12 @@ pub struct Parser<'a> {
     consumed: usize,
     pending_angle_close: usize,
     diagnostics: Vec<Diagnostic>,
+    // Monomorphization names a specialization by rendering its type arguments
+    // and reads them back with `type_from_string`, so `Type` has to survive a
+    // round trip through its own `Display`. Reference types have no surface
+    // spelling and are rejected in source, but they do occur internally once
+    // parameter modes are lowered, so that one entry point accepts them.
+    internal_types: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -855,6 +865,7 @@ impl<'a> Parser<'a> {
             consumed: 0,
             pending_angle_close: 0,
             diagnostics: Vec::new(),
+            internal_types: false,
         }
     }
 
@@ -871,6 +882,7 @@ impl<'a> Parser<'a> {
             consumed: 0,
             pending_angle_close: 0,
             diagnostics: Vec::new(),
+            internal_types: false,
         }
     }
 
@@ -2527,6 +2539,15 @@ impl<'a> Parser<'a> {
             Token::Caret => {
                 self.read_token();
                 Type::Ptr(Box::new(self.parse_type()?))
+            }
+            Token::Ampersand if self.internal_types => {
+                self.read_token();
+                if matches!(self.peek_nth(0), Token::Mut) {
+                    self.read_token();
+                    Type::RefMut(Box::new(self.parse_type()?))
+                } else {
+                    Type::Ref(Box::new(self.parse_type()?))
+                }
             }
             Token::Ampersand => {
                 bail!(

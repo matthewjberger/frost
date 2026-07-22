@@ -34,7 +34,7 @@ main :: fn() -> i64 {
   Frost functions are mangled (see below).
 - **Types map to the natural C ABI.** Scalars map to their `<stdint.h>`
   equivalents (`i32` to `int32_t`, `u8` to `uint8_t`, `f64` to `double`), and
-  pointer or reference types (`^T`, `&T`, `&mut T`) map to pointers. An `extern`
+  a raw pointer (`^T`) and a borrowed parameter both map to pointers. An `extern`
   signature is therefore a direct description of the C function's ABI.
 - **Aggregate parameters are passed by pointer.** A `struct`/`enum`/array
   parameter to an `extern fn` is passed as a pointer to the value, not

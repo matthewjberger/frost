@@ -98,17 +98,18 @@ correct type and operation for each value because the IR is fully typed, and
   coerces to a slice of the whole array (`view : []i64 = arr`, or an array
   passed to a `[]T` parameter), `s[i]` is bounds-checked against the runtime
   length, `slice_len(s)` reads the length, and slices pass and return by value.
-- References and pointers: `&`, `&mut`, `^` dereference read/write, and
-  pointer/reference parameters (e.g. `swap(a: ^i64, b: ^i64)`,
-  `increment(x: &mut i64)`).
+- Borrows and pointers: parameter modes (`increment(mut x: i64)`), `^`
+  dereference read/write, and raw pointer parameters (e.g.
+  `swap(a: ^i64, b: ^i64)`). The surface has no `&`; `lower_param_modes`
+  synthesizes the reference types the rest of the pipeline handles.
 - Structs: layout with correct field alignment, construction, field read
-  and write, references to structs and to fields, mutation through
-  `&mut Struct`, whole-struct copy (`copy := p`), passing aggregates by
+  and write, borrowed struct and field parameters, mutation through a
+  `mut` parameter, whole-struct copy (`copy := p`), passing aggregates by
   value (copied at the call boundary so a callee's mutations do not affect
   the caller), and returning aggregates by value (via a hidden out-pointer),
   including passing an aggregate-returning call directly as an argument.
 - Fixed-size arrays: array literals, indexed read and write with static or
-  runtime indices, and references to arrays (e.g. `sum(a: &[5]i64)`). Every
+  runtime indices, and borrowed array parameters (e.g. `sum(a: [5]i64)`). Every
   index is bounds-checked against the statically-known length. An out-of-range
   index aborts (see [memory-safety.md](memory-safety.md)).
 - Enums and tagged unions: construction, and `match` over a value or a
@@ -234,20 +235,23 @@ Frost is being reshaped toward a data-oriented language with:
 
 `src/ownership.rs` runs after parsing and enforces two rules:
 
-- **Second-class references.** A reference (`&T` / `&mut T`) cannot be stored
-  in a struct or enum field, and cannot be returned from a function or
-  extern. Reference *parameters* are allowed, and `Handle<T>` (a generational
-  index, not a reference) can be stored and returned freely. Because
-  references cannot escape, borrow analysis stays scope-local.
-- **Borrow exclusivity.** A `&mut` borrow is exclusive. A variable cannot be
-  borrowed as mutable more than once, or as both shared and mutable, within a
-  single call. Multiple shared `&` borrows are fine. Because references are
-  second-class, this per-call check is enough to keep mutable aliasing out.
+- **Second-class borrows.** The reference types this pass sees are synthesized
+  by `lower_param_modes`, since the surface has none. One cannot be stored in a
+  struct or enum field, and cannot be returned from a function or extern.
+  Reference *parameters* are the point, and `Handle<T>` (a generational index,
+  not a reference) can be stored and returned freely. Because a borrow cannot
+  escape, borrow analysis stays scope-local.
+- **Borrow exclusivity.** A `mut` borrow is exclusive. A variable cannot be
+  passed to more than one `mut` parameter, or to both a `mut` and a read
+  parameter, within a single call. Multiple read borrows are fine. Because
+  borrows are second-class, this per-call check is enough to keep mutable
+  aliasing out.
 - **Move checking.** Per function body, a value of a move type (a struct,
-  enum, or slice, anything not `Copy`) is consumed when it is passed by value,
-  assigned, or returned. Using it again is a use-after-move error. Borrowing
-  (`&x`), field access (`x.f`), and dereference do not consume, and copy types
-  (integers, floats, bools, pointers, references, handles, and `str`) are never
+  enum, or slice, anything not `Copy`) is consumed when it is passed to a
+  `move` parameter, assigned, or returned. Using it again is a use-after-move
+  error. A read or `mut` parameter, field access (`x.f`), and dereference do
+  not consume, and copy types (integers, floats, bools, pointers, references,
+  handles, and `str`) are never
   moved.
 - **Linear resources.** A struct or enum declared `linear`
   (`File :: linear struct { ... }`) is a resource that must be consumed

@@ -18,12 +18,14 @@ its referent. That machinery is the price of letting references be first-class
 values you can store in structs, return from functions, and thread through data
 structures.
 
-Frost makes a different trade. References are **second-class**. A `&T` or
-`&mut T` exists only as a function parameter or a short-lived local, and it can
-never be stored in a field, put in an array, or returned. Because a borrow can
-never escape the scope it was created in, there is nothing to annotate and
-nothing to infer. Frost has **no lifetimes, no `'a`, no borrow regions, and no
-lifetime elision** because it does not need them.
+Frost makes a different trade. Borrows are **second-class**, and they are not a
+type at all: there is no `&` in the language. How a parameter is passed is
+written on the parameter (`p: T` reads, `mut p: T` mutates, `move p: T` takes),
+and the call site writes nothing. Because a borrow can only ever be a parameter,
+it cannot be stored in a field, put in an array, or returned, and the shapes that
+would let it escape are not expressible rather than merely rejected. So there is
+nothing to annotate and nothing to infer. Frost has **no lifetimes, no `'a`, no
+borrow regions, and no lifetime elision** because it does not need them.
 
 Everything else about the borrow system follows from that single decision.
 Where Rust reaches for a reference that must live somewhere (a graph node, a
@@ -47,9 +49,10 @@ being surprises.
 | `if x > 5 { a } else { b }` | `if (x > 5) { a } else { b }` |
 | `for i in 0..n { }` | `for i in 0..n { }` |
 | `while cond { }` | `while (cond) { }` |
-| `&x`, `&mut x` | `&x`, `&mut x` |
+| `&x`, `&mut x` (at a call) | nothing, the callee's mode decides |
+| `fn f(x: &T)`, `fn f(x: &mut T)` | `f :: fn(x: T)`, `f :: fn(mut x: T)` |
 | `*p` (deref) | `p^` |
-| `*const T`, `*mut T` | `^T` |
+| `*const T`, `*mut T` | `^T`, and `ptr_to(x)` takes one |
 | `fn(i64) -> i64` (fn pointer) | `fn(i64) -> i64` |
 | `Box<T>` / `Rc<T>` / arena index | `Handle<T>` into a pool |
 | `impl Drop for T` | `T :: linear struct { .. }` plus a consumer |
@@ -95,12 +98,15 @@ their data as parameters:
 ```
 Vec3 :: struct { x: i64, y: i64, z: i64 }
 
-dot :: fn(a: &Vec3, b: &Vec3) -> i64 {
+dot :: fn(a: Vec3, b: Vec3) -> i64 {
     a.x * b.x + a.y * b.y + a.z * b.z
 }
 ```
 
-Where Rust would write `a.dot(&b)`, Frost writes `dot(&a, &b)`. This is not a
+Both parameters are borrowed to read, which is what an unmarked parameter means,
+so nothing is copied and nothing is consumed.
+
+Where Rust would write `a.dot(&b)`, Frost writes `dot(a, b)`. This is not a
 missing feature. It is the design. Separating data from the code that walks it
 is what keeps the memory layout visible and the control flow explicit.
 
@@ -170,7 +176,7 @@ Kind :: enum { Player, Enemy { damage: i64 }, Pickup { amount: i64 } }
 variant pattern leads with a dot and binds fields by name:
 
 ```
-delta :: fn(k: &Kind) -> i64 {
+delta :: fn(k: Kind) -> i64 {
     match k {
         case .Player: 0
         case .Enemy { damage }: 0 - damage
@@ -210,47 +216,57 @@ usually done by handing values to C's `printf`.
 
 This is the section a Rust programmer should read twice.
 
-`&T` and `&mut T` are borrows with the same meaning as in Rust, shared and
-exclusive access. The exclusivity rule is also familiar. Within a single call
-you may take many `&` borrows or exactly one `&mut`, never both. Passing the
-same variable as two `&mut` arguments to one call is rejected.
+Shared and exclusive borrows mean what they mean in Rust, and the exclusivity
+rule is familiar: within a single call you may borrow a variable to read many
+times or to mutate exactly once, never both. What is different is where you write
+it. There is no `&`. The mode is a property of the parameter:
 
-What is different is that borrows are **second-class**. Concretely:
+| Rust | Frost | means |
+| --- | --- | --- |
+| `fn f(x: &T)` | `f :: fn(x: T)` | borrowed to read |
+| `fn f(x: &mut T)` | `f :: fn(mut x: T)` | borrowed to mutate in place |
+| `fn f(x: T)` | `f :: fn(move x: T)` | ownership transferred |
 
-- A reference cannot be stored in a struct or enum field.
-- A reference cannot be returned from a function.
-- A reference cannot be put in an array or otherwise made to outlive the call.
+The call is `f(x)` in all three cases. Which one it is comes from the signature
+you can go read, not from a sigil at the call, and the exclusivity check reads
+that signature too.
 
-Reference **parameters** are fine, and this is the point. You pass data in by
-borrow, operate on it, and the borrow dies at the end of the call. Because a
-borrow can never escape, the analysis is entirely scope-local. There is nothing
-like Rust's `fn longest<'a>(x: &'a str, y: &'a str) -> &'a str` because you
-cannot return a borrow at all.
+Borrows are also **second-class**, which here means something stronger than
+"rejected": the shapes are not expressible. There is no reference type to write
+in a struct field or a return position, so:
+
+- A borrow cannot be stored in a struct or enum field.
+- A borrow cannot be returned from a function.
+- A borrow cannot be put in an array or otherwise made to outlive the call.
+
+You pass data in by borrow, operate on it, and the borrow dies at the end of the
+call. Because it can never escape, the analysis is entirely scope-local. There is
+nothing like Rust's `fn longest<'a>(x: &'a str, y: &'a str) -> &'a str` because
+you cannot return a borrow at all.
 
 ```
-scale :: fn(p: &mut Point, k: i64) {
-    p.x = p.x * k          // field access through a reference is direct
+scale :: fn(mut p: Point, k: i64) {
+    p.x = p.x * k          // field access on a borrowed struct is direct
     p.y = p.y * k
 }
 
-// rejected: reference stored in a field
-// Node :: struct { link: &Node }
-
-// rejected: reference returned
-// first :: fn(p: &Point) -> &Point { p }
+main :: fn() -> i64 {
+    mut p := Point { x = 3, y = 4 }
+    scale(p, 2)            // no '&mut' here
+    p.x
+}
 ```
 
-Deref rules to keep straight, since they differ slightly from Rust's `*`:
+Deref rules to keep straight, since they differ from Rust's `*`:
 
-- For a reference to an aggregate, member access is direct, as in `p.x` where
-  `p: &mut Point`. There is no `(*p).x` and no explicit deref needed for fields.
-- To read or write the whole pointee, especially a reference to a scalar, use
-  the postfix `^` operator. Given `a: &mut i64`, `a^` is the value and
-  `a^ = 7` writes it.
+- On a borrowed aggregate, member access is direct, as in `p.x` where the
+  parameter is `mut p: Point`. There is no `(*p).x`.
+- On a raw pointer, the postfix `^` operator reads or writes the pointee. Given
+  `a: ^i64`, `a^` is the value and `a^ = 7` writes it.
 
 The Rust move you cannot make is "return a borrow into my own data" or "stash a
 borrow for later." When you feel that reflex, that is the signal to switch from
-references to handles.
+borrows to handles.
 
 ### Raw pointers are the escape hatch
 
@@ -547,9 +563,10 @@ files pulled in by `import`, not as a module tree with visibility rules.
   as in `case .Circle { radius }:`.
 - There is no `let`. Use `:=`, `:`, or `::`.
 - Every function, type, and constant is declared with `::`.
-- To deref a reference-to-scalar or a raw pointer, use postfix `^`, as in `a^`,
-  `p^.field`. Field access through a reference-to-struct is direct, as in `p.field`.
-- You cannot return or store a `&T`. Use a `Handle<T>` for anything that must
+- To deref a raw pointer, use postfix `^`, as in `a^`, `p^.field`. A borrowed
+  parameter needs no sigil, so field access on one is direct, as in `p.field`,
+  and assigning to the whole of a `mut` parameter is just `p = q`.
+- You cannot return or store a borrow. Use a `Handle<T>` for anything that must
   live beyond the call.
 - A `linear` value must be consumed on every path, or it is a compile error.
 - Integer arithmetic wraps. Do not rely on overflow being caught.
@@ -570,7 +587,7 @@ pool_free  :: extern fn(pool: ^u8, handle: i64) -> i64
 Kind :: enum { Player, Enemy { damage: i64 }, Pickup { amount: i64 } }
 Entity :: struct { hp: i64, kind: Kind }
 
-delta :: fn(k: &Kind) -> i64 {
+delta :: fn(k: Kind) -> i64 {
     match k {
         case .Player: 0
         case .Enemy { damage }: 0 - damage
@@ -582,14 +599,14 @@ main :: fn() -> i64 {
     world := pool_new(16, 24)
 
     mut player := Entity { hp = 100, kind = Kind::Player }
-    ph := pool_alloc(world, &player)
+    ph := pool_alloc(world, ptr_to(player))
     mut goblin := Entity { hp = 30, kind = Kind::Enemy { damage = 15 } }
-    gh := pool_alloc(world, &goblin)
+    gh := pool_alloc(world, ptr_to(goblin))
 
     pe : ^Entity = pool_get(world, ph)
     ge : ^Entity = pool_get(world, gh)
 
-    pe^.hp = pe^.hp + delta(&ge^.kind)    // player takes the goblin's damage
+    pe^.hp = pe^.hp + delta(ge^.kind)     // player takes the goblin's damage
     printf("%lld\n", pe^.hp)              // 85
 
     pool_free(world, gh)                  // gh is now stale; its generation bumped
@@ -598,8 +615,8 @@ main :: fn() -> i64 {
 ```
 
 Notice what is doing the work. Entities are stored by value in the pool,
-handles are the things that get passed around and stored, borrows (`&ge^.kind`)
-are used only for the duration of a call, and freeing a slot invalidates old
+handles are the things that get passed around and stored, borrows (the argument
+to `delta`) last only for the duration of a call, and freeing a slot invalidates old
 handles by generation rather than by any lifetime the compiler had to track.
 That is the whole model. Once it clicks, the absence of lifetimes stops feeling
 like something missing and starts feeling like something removed.
