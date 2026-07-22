@@ -508,6 +508,35 @@ fn native_allocation_sources() {
     assert_eq!(output, "42\n");
 }
 
+// A raw pointer into the arena may not escape its `with` block: storing an
+// arena pointer in a binding that outlives the region is rejected.
+#[test]
+fn region_pointer_escape_is_rejected() {
+    let source = r#"
+Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
+
+alloc_int :: fn(mut a: Arena<256>) -> ^i64 {
+    slot := ptr_to(a.data[a.offset])
+    a.offset = a.offset + sizeof(i64)
+    ptr_cast($i64, slot)
+}
+
+main :: fn() -> i64 {
+    mut arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
+    mut escaped : ^i64 = ptr_to(arena.offset)
+    with arena {
+        escaped = alloc_int(arena)
+    }
+    escaped^
+}
+"#;
+    let message = compile_error("region_escape", source);
+    assert!(
+        message.contains("region") && message.contains("escapes"),
+        "expected a region-escape error, got:\n{message}"
+    );
+}
+
 // Calling a `uses` function with no capability in scope is rejected.
 #[test]
 fn allocation_source_without_capability_is_rejected() {

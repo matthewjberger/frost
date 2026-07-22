@@ -12,12 +12,13 @@ mod lexer;
 mod ownership;
 mod param_modes;
 mod parser;
+mod regions;
 mod types;
 
 pub use self::{
     allocation_sources::*, failure_sets::*, imports::*, ir::*, ir_build::*,
     ir_c::*, ir_codegen::*, ir_interp::*, ir_ownership::*, ir_typecheck::*,
-    lexer::*, ownership::*, param_modes::*, parser::*, types::*,
+    lexer::*, ownership::*, param_modes::*, parser::*, regions::*, types::*,
 };
 
 use std::fmt::Display;
