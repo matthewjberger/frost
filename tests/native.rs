@@ -797,6 +797,20 @@ fn minifrost_rejects_an_undefined_variable() {
 }
 
 #[test]
+fn minifrost_rejects_a_field_the_struct_does_not_have() {
+    let source = "P :: struct { x: i64, y: i64 }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   p := P { x = 1, y = 2 }\n    return p.zzz\n}\n";
+    let Some(message) = minifrost_rejects("badfield", source) else {
+        return;
+    };
+    assert!(
+        message.contains("has no field"),
+        "expected an unknown-field error, got:\n{message}"
+    );
+}
+
+#[test]
 fn minifrost_rejects_a_call_with_the_wrong_argument_count() {
     let source = "add :: fn(a: i64, b: i64) -> i64 { a + b }\n\
                   main :: fn() -> i64 {\n    return add(1)\n}\n";
