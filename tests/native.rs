@@ -727,6 +727,70 @@ fn self_hosting_is_a_fixpoint() {
     assert_eq!(gen1_c, gen2_c, "self-hosting is not a fixpoint");
 }
 
+// Self-hosting with no C compiler in the loop: the self-hosted compiler emits
+// assembly for its own source, that assembly is assembled into a compiler, and
+// that compiler emits the same assembly for the same source. The fixpoint is
+// the proof, since a compiler built by a different route agreeing byte for byte
+// leaves nowhere for a codegen mistake to hide.
+#[test]
+fn native_self_hosting_is_a_fixpoint() {
+    let Some(compiler) = build_self_hosted_compiler("nativefix") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    let source = directory.join("frost_nativefix.frost");
+    std::fs::write(&source, SELF_HOSTED).unwrap();
+
+    let emit_self = |exe: &PathBuf| -> String {
+        let emit = Command::new(exe)
+            .env("FROST_BACKEND", "asm")
+            .env("FROST_INPUT", &source)
+            .output()
+            .unwrap();
+        assert!(
+            emit.status.success(),
+            "the compiler failed to emit assembly for its own source:\n{}",
+            String::from_utf8_lossy(&emit.stderr)
+        );
+        String::from_utf8_lossy(&emit.stdout).replace("\r\n", "\n")
+    };
+
+    let stage1 = emit_self(&compiler);
+    assert!(
+        stage1.lines().count() > 10000,
+        "assembly for the compiler implausibly small ({} lines)",
+        stage1.lines().count()
+    );
+
+    let asm_path = directory.join("frost_nativefix.s");
+    let stage1_exe = directory
+        .join(format!("frost_nativefix1{}", std::env::consts::EXE_SUFFIX));
+    std::fs::write(&asm_path, &stage1).unwrap();
+    let runtime =
+        format!("{}/runtime/frost_runtime.c", env!("CARGO_MANIFEST_DIR"));
+    let assembled = Command::new(c_compiler().unwrap())
+        .arg(&asm_path)
+        .arg(&runtime)
+        .arg("-o")
+        .arg(&stage1_exe)
+        .output()
+        .unwrap();
+    assert!(
+        assembled.status.success(),
+        "the compiler's own assembly did not assemble:\n{}",
+        String::from_utf8_lossy(&assembled.stderr)
+    );
+
+    let stage2 = emit_self(&stage1_exe);
+
+    let _ = std::fs::remove_file(&source);
+    let _ = std::fs::remove_file(&asm_path);
+    let _ = std::fs::remove_file(&stage1_exe);
+    let _ = std::fs::remove_file(&compiler);
+
+    assert_eq!(stage1, stage2, "native self-hosting is not a fixpoint");
+}
+
 // the self-hosted compiler's native backend: it emits x64 assembly rather than C, so a build
 // pays an assembler rather than a C compiler. Emit it, assemble it, run it.
 #[test]
@@ -807,7 +871,7 @@ fn self_hosted_native_backend_emits_working_assembly() {
 // result and run it, returning what it printed. Nothing here goes through a C
 // compiler except the assembler and linker.
 fn selfhosted_native_output(name: &str, source: &str) -> Option<String> {
-    let compiler = build_self_hosted_compiler()?;
+    let compiler = build_self_hosted_compiler(name)?;
     let directory = std::env::temp_dir();
     let input = directory.join(format!("frost_nb_{name}.frost"));
     std::fs::write(&input, source).unwrap();
@@ -850,14 +914,18 @@ fn selfhosted_native_output(name: &str, source: &str) -> Option<String> {
     Some(output)
 }
 
-fn build_self_hosted_compiler() -> Option<PathBuf> {
+// Each caller gets its own copy, named after itself. The test binary runs its
+// tests in parallel, so a shared path is two tests writing one file.
+fn build_self_hosted_compiler(name: &str) -> Option<PathBuf> {
     if c_compiler().is_none() || !linker_available() {
         return None;
     }
     let directory = std::env::temp_dir();
-    let compiler = directory
-        .join(format!("frost_selfhosted{}", std::env::consts::EXE_SUFFIX));
-    let source = directory.join("frost_selfhosted.frost");
+    let compiler = directory.join(format!(
+        "frost_selfhosted_{name}{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    let source = directory.join(format!("frost_selfhosted_{name}.frost"));
     std::fs::write(&source, SELF_HOSTED).unwrap();
     let frost = env!("CARGO_BIN_EXE_frost");
     let build = Command::new(frost)
@@ -905,6 +973,16 @@ fn native_backend_covers_the_language() {
             "structs",
             "P :: struct { x: i64, y: i64 }\nsum :: fn(q: P) -> i64 { return q.x + q.y }\nbump :: fn(mut q: P) { q.x = q.x + 100 }\nmain :: fn() -> i64 {\n    mut a : P = P { x = 3, y = 4 }\n    print sum(a)\n    bump(a)\n    print a.x\n    b := a\n    print b.x\n    print sizeof(P)\n    0\n}\n",
             "7\n103\n103\n16\n",
+        ),
+        (
+            "nested_structs",
+            "Inner :: struct { a: i64, b: i64, c: i64 }\n\
+             Outer :: struct { first: i64, mid: Inner, last: i64 }\n\
+             main :: fn() -> i64 {\n\
+             \x20   mut o : Outer = Outer { first = 1, mid = Inner { a = 2, b = 3, c = 4 }, last = 5 }\n\
+             \x20   print o.first\n    print o.mid.a\n    print o.mid.c\n    print o.last\n\
+             \x20   print sizeof(Outer)\n    o.mid.b = 99\n    print o.mid.b\n    print o.last\n    0\n}\n",
+            "1\n2\n4\n5\n40\n99\n5\n",
         ),
         (
             "pointers",

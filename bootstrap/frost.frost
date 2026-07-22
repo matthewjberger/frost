@@ -1729,17 +1729,23 @@ emit_string_content :: fn(src: ^i8, off: i64, len: i64) {
 // a later `:=` or field access can be typed by walking the expression.
 // ---------------------------------------------------------------------------
 
+// A name may be bound more than once in one body, once per sibling scope, and
+// the binding in scope is the one bound most recently. Locals are recorded in
+// declaration order and never popped, so that is the last matching entry, not
+// the first: `emit_program` binds `node` to an i64 and later to a `^Node`, and
+// answering with the i64 types `node^.next` as a scalar and reads offset zero.
 lookup_local :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
     mut i : i64 = 0
+    mut found : i64 = TY_I64
     while (i < p.locals.count) {
         entry : ^LocalVar = arena_at(p.locals, i)
         if (entry^.name_len == len
             && bytes_equal(p.src, entry^.name_off, off, len)) {
-            return entry^.ty
+            found = entry^.ty
         }
         i = i + 1
     }
-    TY_I64
+    found
 }
 
 // Whether a name is in scope as a parameter or local. lookup_local answers with
@@ -2717,11 +2723,22 @@ struct_field_count :: fn(mut p: Parser, struct_ty: i64) -> i64 {
     count
 }
 
+// A struct is as wide as its fields laid end to end. A field may itself be a
+// struct, so this cannot just count them: Parser carries eleven arenas, and an
+// arena is three words, not one.
 type_size :: fn(mut p: Parser, ty: i64) -> i64 {
-    if (is_struct_ty(ty)) {
-        return 8 * struct_field_count(p, ty)
+    if (is_struct_ty(ty) == false) {
+        return 8
     }
-    8
+    def : ^StructDef = arena_at(p.structs, struct_index_of(ty))
+    mut fid := def^.field_head
+    mut total : i64 = 0
+    while (fid != (0 - 1)) {
+        field : ^StructField = arena_at(p.fields, fid)
+        total = total + type_size(p, field^.ty)
+        fid = field^.next
+    }
+    total
 }
 
 field_offset :: fn(mut p: Parser, struct_ty: i64, off: i64, len: i64) -> i64 {
@@ -2734,14 +2751,14 @@ field_offset :: fn(mut p: Parser, struct_ty: i64, off: i64, len: i64) -> i64 {
     }
     def : ^StructDef = arena_at(p.structs, struct_index_of(base))
     mut fid := def^.field_head
-    mut index : i64 = 0
+    mut running : i64 = 0
     while (fid != (0 - 1)) {
         field : ^StructField = arena_at(p.fields, fid)
         if (field^.name_len == len
             && bytes_equal(p.src, field^.name_off, off, len)) {
-            return 8 * index
+            return running
         }
-        index = index + 1
+        running = running + type_size(p, field^.ty)
         fid = field^.next
     }
     0
@@ -2793,21 +2810,23 @@ emit_label :: fn(name: ^i8, id: i64) {
     frost_emit_int(id)
 }
 
-// Locals are recorded in order, so the nth sits at -(8 * (n + 1)) from rbp. The
-// bottom 32 bytes of the frame stay free as the shadow area for calls.
+// Locals are laid end to end from the top of the frame down, so a local sits
+// past everything recorded before it. A rebound name takes the slot of its most
+// recent binding, matching lookup_local, so the two bindings stay distinct.
 local_slot :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
     mut i : i64 = 0
     mut running : i64 = 0
+    mut found : i64 = 0 - 8
     while (i < p.locals.count) {
         entry : ^LocalVar = arena_at(p.locals, i)
         running = running + type_size(p, entry^.ty)
         if (entry^.name_len == len
             && bytes_equal(p.src, entry^.name_off, off, len)) {
-            return 0 - running
+            found = 0 - running
         }
         i = i + 1
     }
-    0 - 8
+    found
 }
 
 // The address of a place, rather than the value in it.

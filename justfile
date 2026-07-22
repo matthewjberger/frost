@@ -150,6 +150,10 @@ selfhost-examples: selfhost-build
 selfhost-check:
     cargo test -r -p frost --test native self_hosting_is_a_fixpoint -- --nocapture
 
+# Checks the compiler built from its own assembly reproduces that assembly exactly
+selfhost-native-check:
+    cargo test -r -p frost --test native native_self_hosting_is_a_fixpoint -- --nocapture
+
 # Runs every self-hosting check: fixpoint, emitted C, native backend, own errors
 selfhost-test:
     cargo test -r -p frost --test native self_host -- --nocapture
