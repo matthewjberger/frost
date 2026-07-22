@@ -133,11 +133,32 @@ Slab :: struct($T: Type, $N: usize) { items: [N]T, count: i64 }
 
 Generics monomorphize, so there is no runtime dispatch.
 
+A parameter may also be a function chosen at compile time, which is how a generic
+algorithm takes the operation it needs without a trait and without an indirect
+call. Declare the signature and the argument is checked against it at the call:
+
+```
+ascending :: fn(a: i64, b: i64) -> bool { a < b }
+
+best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
+    mut result := x
+    if (before(y, result)) { result = y }
+    result
+}
+
+smallest := best($i64, $ascending, 7, 3)
+```
+
+`$before: Type` also works and accepts a function of any signature, but then a
+mismatch is reported from inside the specialized body rather than at the call.
+
 ## Functions as values
 
 Higher-order code uses function pointers, not closures. A `fn(...) -> T`
 parameter holds one. A function literal is an expression, so an anonymous
-function is just the declaration form without the name.
+function is just the declaration form without the name. Prefer a compile-time
+function parameter where the function is known at the call, since that one is
+called directly; reach for a pointer when it genuinely varies at runtime.
 
 ```
 apply :: fn(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }

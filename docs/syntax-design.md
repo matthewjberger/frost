@@ -222,11 +222,18 @@ a file in with `import` makes its names available, and that is the whole story.
 
 ## Honest tradeoffs
 
-**Unbounded generics.** `$T` with no bounds means generic errors surface at
-instantiation, not declaration. This is the C++ template experience that Rust's
-trait bounds were designed to fix, where error messages point into the generic's
-body instead of at the call site's contract. If the corpus author is a model
-iterating against compiler output, that may be acceptable, but it is a real cost.
+**Unbounded type parameters.** `$T` carries no bound, so an error about what a
+body requires of `T` surfaces at instantiation rather than at the declaration.
+This is the C++ template experience that Rust's trait bounds were designed to
+fix, where error messages point into the generic's body instead of at the call
+site's contract. If the corpus author is a model iterating against compiler
+output, that may be acceptable, but it is a real cost.
+
+The common case is narrower than it looks, and it is answered: a compile-time
+function parameter can declare the signature it needs (`$before: fn(T, T) ->
+bool`), and a mismatch there is reported against the parameter list. What remains
+unbounded is what a body does with `T` itself, such as requiring it to be
+numeric.
 
 **Ergonomics traded for predictability.** Mandatory parentheses and explicit
 consumers cost some human ergonomics in exchange for machine predictability. That

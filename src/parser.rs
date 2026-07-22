@@ -69,6 +69,12 @@ pub struct Parameter {
     pub type_annotation: Option<Type>,
     pub mutable: bool,
     pub mode: ParamMode,
+    // For a compile-time parameter written `$compare: fn(T, T) -> bool`, the
+    // signature the argument has to have. This is kept beside the annotation
+    // rather than in it: every pass that asks "is this a compile-time
+    // parameter" asks whether the annotation *is* `TypeParam(name)`, so putting
+    // the signature there would turn the parameter back into a runtime one.
+    pub compile_time_signature: Option<Type>,
 }
 
 impl Display for Parameter {
@@ -1461,6 +1467,7 @@ impl<'a> Parser<'a> {
                     type_annotation: Some(param_type),
                     mutable: false,
                     mode: ParamMode::Read,
+                    compile_time_signature: None,
                 });
                 if matches!(self.peek_nth(0), Token::Comma) {
                     self.read_token();
@@ -2044,25 +2051,7 @@ impl<'a> Parser<'a> {
             };
 
             if matches!(self.peek_nth(0), Token::Dollar) {
-                self.read_token();
-                let name = match self.read_token() {
-                    Token::Identifier(name) => name.to_string(),
-                    _ => bail!("Expected type parameter name after '$'"),
-                };
-                if !matches!(self.read_token(), Token::Colon) {
-                    bail!("Expected ':' after type parameter name");
-                }
-                match self.read_token() {
-                    Token::Type => {}
-                    Token::Identifier(word) if word == "Type" => {}
-                    _ => bail!("Expected 'Type' after ':' in type parameter"),
-                }
-                parameters.push(Parameter {
-                    name: name.clone(),
-                    type_annotation: Some(Type::TypeParam(name)),
-                    mutable: false,
-                    mode: ParamMode::Read,
-                });
+                parameters.push(self.parse_compile_time_parameter()?);
             } else if let Token::Identifier(name) = self.peek_nth(0) {
                 let name = name.to_string();
                 self.read_token();
@@ -2080,6 +2069,7 @@ impl<'a> Parser<'a> {
                     type_annotation,
                     mutable: false,
                     mode,
+                    compile_time_signature: None,
                 });
             } else {
                 bail!(
@@ -2396,25 +2386,7 @@ impl<'a> Parser<'a> {
             };
 
             if matches!(self.peek_nth(0), Token::Dollar) {
-                self.read_token();
-                let name = match self.read_token() {
-                    Token::Identifier(name) => name.to_string(),
-                    _ => bail!("Expected type parameter name after '$'"),
-                };
-                if !matches!(self.read_token(), Token::Colon) {
-                    bail!("Expected ':' after type parameter name");
-                }
-                match self.read_token() {
-                    Token::Type => {}
-                    Token::Identifier(word) if word == "Type" => {}
-                    _ => bail!("Expected 'Type' after ':' in type parameter"),
-                }
-                parameters.push(Parameter {
-                    name: name.clone(),
-                    type_annotation: Some(Type::TypeParam(name)),
-                    mutable: false,
-                    mode: ParamMode::Read,
-                });
+                parameters.push(self.parse_compile_time_parameter()?);
             } else if let Token::Identifier(name) = self.peek_nth(0) {
                 let name = name.to_string();
                 self.read_token();
@@ -2432,6 +2404,7 @@ impl<'a> Parser<'a> {
                     type_annotation,
                     mutable: false,
                     mode,
+                    compile_time_signature: None,
                 });
             } else {
                 bail!(
@@ -2451,6 +2424,42 @@ impl<'a> Parser<'a> {
         self.read_token();
 
         Ok(parameters)
+    }
+
+    // `$T: Type` names a type the caller supplies. `$f: fn(T, T) -> bool` names
+    // a function the caller supplies, and says what its signature has to be, so
+    // a mismatch is reported against the parameter list the caller can read
+    // rather than against a line inside the specialized body.
+    fn parse_compile_time_parameter(&mut self) -> Result<Parameter> {
+        self.read_token();
+        let name = match self.read_token() {
+            Token::Identifier(name) => name.to_string(),
+            _ => bail!("Expected type parameter name after '$'"),
+        };
+        if !matches!(self.read_token(), Token::Colon) {
+            bail!("Expected ':' after type parameter name");
+        }
+        let compile_time_signature = match self.peek_nth(0) {
+            Token::Type => {
+                self.read_token();
+                None
+            }
+            Token::Identifier(word) if word == "Type" => {
+                self.read_token();
+                None
+            }
+            Token::Function => Some(self.parse_type()?),
+            _ => bail!(
+                "Expected 'Type' or a function signature after ':' in the compile-time parameter '${name}'"
+            ),
+        };
+        Ok(Parameter {
+            name: name.clone(),
+            type_annotation: Some(Type::TypeParam(name)),
+            mutable: false,
+            mode: ParamMode::Read,
+            compile_time_signature,
+        })
     }
 
     fn parse_type(&mut self) -> Result<Type> {
@@ -3097,12 +3106,14 @@ mod tests {
                     type_annotation: None,
                     mutable: false,
                     mode: ParamMode::Read,
+                    compile_time_signature: None,
                 },
                 Parameter {
                     name: "y".to_string(),
                     type_annotation: None,
                     mutable: false,
                     mode: ParamMode::Read,
+                    compile_time_signature: None,
                 },
             ],
             ReturnSignature::plain(ReturnKind::None),
@@ -3129,6 +3140,7 @@ mod tests {
                     type_annotation: None,
                     mutable: false,
                     mode: ParamMode::Read,
+                    compile_time_signature: None,
                 }],
             ),
             (
@@ -3139,18 +3151,21 @@ mod tests {
                         type_annotation: None,
                         mutable: false,
                         mode: ParamMode::Read,
+                        compile_time_signature: None,
                     },
                     Parameter {
                         name: "y".to_string(),
                         type_annotation: None,
                         mutable: false,
                         mode: ParamMode::Read,
+                        compile_time_signature: None,
                     },
                     Parameter {
                         name: "z".to_string(),
                         type_annotation: None,
                         mutable: false,
                         mode: ParamMode::Read,
+                        compile_time_signature: None,
                     },
                 ],
             ),

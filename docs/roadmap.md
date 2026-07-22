@@ -53,25 +53,38 @@ answer to. See item 2, which is why it comes next rather than first.
 compiled artifact contains and what has to be in it for a caller to compile
 against it without the body.
 
-## 2. Bounds on compile-time arguments
+## 2. Bounds on compile-time arguments (done)
 
-**Why second.** Item 1 needs it, and it is what the philosophy positively asks
-for on its own. Goal 7 is predictability, and `double :: fn(v: $T) -> T` silently
-requiring `T` to be numeric fails that at the signature, before any code runs.
+A compile-time function parameter may now say what signature it needs:
 
-**What it is.** `$compare: fn(T, T) -> bool` parses today and the annotation is
-thrown away (`src/parser.rs`, generic-parameter position). Keep it, and check the
-bound `ConstFn`'s signature against it at the call.
+```
+best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T
+```
+
+`$T: Type` still means a type. `$f: fn(...) -> ...` means a function, and the
+argument's declared signature is checked against it, with the call's own
+substitution applied, so `T` in the bound means what it means at the call.
+Passing a type where a function is declared, or a function whose signature does
+not match, is reported against the parameter list rather than against a line
+inside the specialized body the reader never wrote.
 
 **What it is not.** Not a trait system. No coherence, no orphan rules, no solver.
 A comparison of one signature against another, on one parameter kind. See the
 "Not trait-based" non-goal.
 
-**The catch.** `is_type_parameter` keys on the annotation *being*
-`Type::TypeParam(name)`, so simply not discarding the annotation flips the
-parameter to a runtime parameter and breaks every generic. It needs a separate
-field on `Parameter`, something like `compile_time_signature: Option<Type>`, kept
-beside the annotation rather than replacing it.
+**The catch, since it will bite again.** `is_type_parameter` keys on the
+annotation *being* `Type::TypeParam(name)`, so putting the signature there flips
+the parameter to a runtime parameter and breaks every generic. It lives in a
+separate `compile_time_signature: Option<Type>` on `Parameter`, beside the
+annotation rather than replacing it.
+
+The check is deferred until every argument has been walked, because a bound can
+name type parameters that later value arguments are what bind.
+
+**Still open**, and deliberately: `$T: Type` has no bound of its own, so
+`double :: fn(v: $T) -> T` still requires `T` to be numeric silently. Bounding a
+type rather than a function is the thing that turns into a trait system if it is
+approached carelessly, and nothing needs it yet.
 
 ## 3. Callbacks with a typed context
 

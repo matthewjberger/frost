@@ -47,6 +47,7 @@ pub fn lower_allocation_sources(program: &mut Program) -> Result<()> {
                 type_annotation: Some(capability.clone()),
                 mutable: true,
                 mode: ParamMode::Write,
+                compile_time_signature: None,
             });
             signature.uses.clear();
             uses_functions.insert(name.clone(), capability);

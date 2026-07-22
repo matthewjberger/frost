@@ -53,7 +53,8 @@ being surprises.
 | `fn(i64) -> i64` (fn pointer) | `fn(i64) -> i64` |
 | `Box<T>` / `Rc<T>` / arena index | `Handle<T>` into a pool |
 | `impl Drop for T` | `T :: linear struct { .. }` plus a consumer |
-| generics with `<T: Trait>` | `$T` type parameters, no bounds |
+| generics with `<T: Trait>` | `$T` type parameters, unbounded |
+| a trait method a generic calls | `$f: fn(..) -> ..` compile-time parameter |
 | `foo::<u32>()` (turbofish) | `foo($u32, ..)` |
 | `extern "C" { .. }` | `name :: extern fn(..) -> ..` |
 
@@ -403,10 +404,10 @@ Pair :: struct($T: Type) { first: T, second: T }
 
 make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
 
-swap :: fn(a: &mut $T, b: &mut $T) {
-    t := a^
-    a^ = b^
-    b^ = t
+swap :: fn(mut a: $T, mut b: $T) {
+    t := a
+    a = b
+    b = t
 }
 ```
 
@@ -428,14 +429,37 @@ world := make_pool($Entity, 16)     // like make_pool::<Entity>(16)
 type parameter. Type parameters are erased after monomorphization and carry no
 runtime cost. They drive the specialization and then vanish from the ABI.
 
-The big thing you cannot say is a **bound**. There are **no traits, so no trait
-bounds, no `where` clauses, no associated types, and no `dyn Trait`.** A generic
-function is generic over any type its body actually type-checks against once
-specialized. If you are used to expressing "T must be `Ord`" with a bound, in
-Frost you instead pass the operation in as a function pointer, or you write the
-concrete code. This is a real expressiveness difference and the most likely
-thing to feel constraining coming from Rust. The upside is that there is no
-trait-resolution machinery, no coherence rules, and no orphan problem.
+There are **no traits, so no `where` clauses, no associated types, and no `dyn
+Trait`.** A generic function is generic over any type its body actually
+type-checks against once specialized.
+
+Where Rust would write `T: Ord` and call `a.cmp(&b)`, Frost takes the operation
+as a compile-time function parameter, and that parameter can declare the
+signature it needs:
+
+```
+ascending :: fn(a: i64, b: i64) -> bool { a < b }
+
+best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
+    mut result := x
+    if (before(y, result)) { result = y }
+    result
+}
+
+smallest := best($i64, $ascending, 7, 3)
+```
+
+The bound is checked at the call with that call's type arguments substituted in,
+so a wrong signature is an error against the parameter list rather than a
+message pointing inside the specialized body. The call to `before` is direct,
+not through a pointer, because the specialization knows which function it is.
+This is the one form of bound in the language, and it is a comparison of one
+signature against another, not a solver.
+
+What you still cannot state is a requirement on `T` itself, such as "numeric".
+That surfaces when the specialization is compiled. The upside of the whole
+arrangement is that there is no trait-resolution machinery, no coherence rules,
+and no orphan problem.
 
 ## Function pointers, not closures
 
@@ -458,12 +482,14 @@ value alongside the function pointer, the same pattern C uses.
 
 ## Compile-time evaluation
 
-Frost has no general compile-time interpreter and no macros. The only
-compile-time machinery is `sizeof(T)`, a constant, and monomorphization. A
-generic function or struct written with `$T` type parameters is stamped out once
-per concrete type at the call site (chapter 11 of the spec), the way Rust
-monomorphizes generics. That is the whole of it. There is nothing here that
-corresponds to `const fn`, const generics as values, or macro expansion.
+Frost has no general compile-time interpreter and no macros. The compile-time
+machinery is `sizeof(T)` as a constant and monomorphization, which is driven by
+three kinds of `$` parameter: a type (`$T: Type`), an integer (`$N: usize`, which
+is Rust's const generics as values and is what sizes a `[N]T` field), and a
+function (`$f: fn(..) -> ..`). A generic function or struct is stamped out once
+per distinct set of those arguments at the call site (chapter 11 of the spec),
+the way Rust monomorphizes generics. That is the whole of it. There is nothing
+here that corresponds to `const fn` or macro expansion.
 
 ## Calling C
 
