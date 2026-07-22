@@ -872,6 +872,37 @@ fn minifrost_rejects_a_use_after_move() {
 }
 
 #[test]
+fn minifrost_rejects_a_linear_value_never_consumed() {
+    let source = "File :: linear struct { h: i64 }\n\
+                  close :: extern fn(move f: File)\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   r := File { h = 1 }\n    return 0\n}\n";
+    let Some(message) = minifrost_rejects("linearleak", source) else {
+        return;
+    };
+    assert!(
+        message.contains("never consumed"),
+        "expected a linear-not-consumed error, got:\n{message}"
+    );
+}
+
+#[test]
+fn minifrost_rejects_consuming_a_linear_value_twice() {
+    let source = "File :: linear struct { h: i64 }\n\
+                  close :: extern fn(move f: File)\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   r := File { h = 1 }\n\
+                  \x20   close(r)\n    close(r)\n    return 0\n}\n";
+    let Some(message) = minifrost_rejects("lineartwice", source) else {
+        return;
+    };
+    assert!(
+        message.contains("moved value"),
+        "expected a double-consume error, got:\n{message}"
+    );
+}
+
+#[test]
 fn minifrost_rejects_a_call_with_the_wrong_argument_count() {
     let source = "add :: fn(a: i64, b: i64) -> i64 { a + b }\n\
                   main :: fn() -> i64 {\n    return add(1)\n}\n";
