@@ -245,7 +245,11 @@ fn read_through_expression(
         Expression::Switch(scrutinee, cases) => {
             read_through_expression(scrutinee, through, bound);
             for case in cases.iter_mut() {
+                // A pattern's bindings are the arm's own names, so one that
+                // spells a parameter shadows it for the arm.
+                bound.push(pattern_bindings(&case.pattern));
                 read_through_block(&mut case.body, through, bound);
+                bound.pop();
             }
         }
         Expression::Unsafe(body) => read_through_block(body, through, bound),
@@ -393,5 +397,20 @@ fn auto_borrow_call(
             }
             _ => {}
         }
+    }
+}
+
+// The names a pattern binds in the arm it belongs to.
+fn pattern_bindings(pattern: &crate::parser::Pattern) -> Vec<String> {
+    use crate::parser::Pattern;
+    match pattern {
+        Pattern::Identifier(name) => vec![name.clone()],
+        Pattern::EnumVariant { bindings, .. } => {
+            bindings.iter().map(|(_, name)| name.clone()).collect()
+        }
+        Pattern::Tuple(patterns) => {
+            patterns.iter().flat_map(pattern_bindings).collect()
+        }
+        Pattern::Wildcard | Pattern::Literal(_) => Vec::new(),
     }
 }

@@ -1388,6 +1388,12 @@ fn substitute_expression(
         Expression::Sizeof(ty) => {
             Expression::Sizeof(substitute_type(ty, subst))
         }
+        // A compile-time argument handed on to another generic. Without this a
+        // `$T` or a `$f` forwarded from one generic to the next arrived as the
+        // parameter's own name rather than what it was bound to.
+        Expression::TypeValue(ty) => {
+            Expression::TypeValue(substitute_type(ty, subst))
+        }
         Expression::Range(start, end, inclusive) => Expression::Range(
             Box::new(substitute_expression(start, subst)),
             Box::new(substitute_expression(end, subst)),
