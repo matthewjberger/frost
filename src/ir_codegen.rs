@@ -16,8 +16,18 @@ pub fn compile_ir_to_object(module: &IrModule) -> Result<Vec<u8>> {
     let mut generator = Generator::new()?;
     generator.declare_strings(module)?;
     generator.declare_functions(module)?;
+    // One context and one builder context for the whole module. Cranelift is
+    // built to have these reused, and a program that specializes a generic
+    // thousands of times is thousands of functions, each of which would
+    // otherwise pay for a fresh set of arenas.
+    let mut context = generator.module.make_context();
+    let mut builder_context = FunctionBuilderContext::new();
     for function in &module.functions {
-        generator.define_function(function)?;
+        generator.define_function(
+            function,
+            &mut context,
+            &mut builder_context,
+        )?;
     }
     let object = generator.module.finish();
     Ok(object.emit()?)
@@ -186,17 +196,21 @@ impl Generator {
         Ok(signature)
     }
 
-    fn define_function(&mut self, function: &IrFunction) -> Result<()> {
+    fn define_function(
+        &mut self,
+        function: &IrFunction,
+        context: &mut cranelift::codegen::Context,
+        builder_context: &mut FunctionBuilderContext,
+    ) -> Result<()> {
         let func_id = self.functions[&function.name];
         let pointer_type = self.pointer_type;
         let returns_aggregate = self.returns_aggregate(function);
         let return_type = self.function_return_type(function);
-        let mut context = self.module.make_context();
+
         context.func.signature = self.build_signature(function)?;
 
-        let mut builder_context = FunctionBuilderContext::new();
         let mut builder =
-            FunctionBuilder::new(&mut context.func, &mut builder_context);
+            FunctionBuilder::new(&mut context.func, builder_context);
 
         let clif_blocks: Vec<Block> = function
             .blocks
@@ -284,8 +298,8 @@ impl Generator {
         builder.seal_all_blocks();
         builder.finalize();
 
-        self.module.define_function(func_id, &mut context)?;
-        self.module.clear_context(&mut context);
+        self.module.define_function(func_id, context)?;
+        self.module.clear_context(context);
         Ok(())
     }
 }

@@ -175,6 +175,27 @@ bench file:
     Write-Host "compile only:"; Measure-Command { ./target/release/frost.exe --native -o "$env:TEMP/bench.o" {{file}} } | Select-Object -ExpandProperty TotalMilliseconds
     Write-Host "with link:"; Measure-Command { ./target/release/frost.exe --link -o "$env:TEMP/bench.exe" {{file}} } | Select-Object -ExpandProperty TotalMilliseconds
 
+# Measures how the pipeline scales, in lines and in specializations (Unix)
+[unix]
+bench-scaling:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -r -q -p frost --bin frost
+    python3 bench/generate.py bench/generated > /dev/null
+    for f in bench/generated/*.frost; do
+        printf "%-34s %6s lines  " "$(basename "$f")" "$(wc -l < "$f")"
+        printf "front end "; /usr/bin/time -f "%e s" ./target/release/frost --emit-c -o /tmp/bench.c "$f" 2>&1 >/dev/null | tail -1
+        printf "%-34s %6s        native    " "" ""
+        /usr/bin/time -f "%e s" ./target/release/frost --native -o /tmp/bench.o "$f" 2>&1 >/dev/null | tail -1
+    done
+
+# Measures how the pipeline scales, in lines and in specializations (Windows)
+[windows]
+bench-scaling:
+    cargo build -r -q -p frost --bin frost
+    python bench/generate.py bench/generated | Out-Null
+    Get-ChildItem bench/generated/*.frost | ForEach-Object { $lines = (Get-Content $_ | Measure-Object -Line).Lines; $front = (Measure-Command { ./target/release/frost.exe --emit-c -o "$env:TEMP/bench.c" $_.FullName }).TotalMilliseconds; $native = (Measure-Command { ./target/release/frost.exe --native -o "$env:TEMP/bench.o" $_.FullName }).TotalMilliseconds; "{0,-24} {1,7} lines  front end {2,7:N0} ms  native {3,7:N0} ms" -f $_.BaseName, $lines, $front, $native }
+
 # Runs all tests
 test:
     cargo test -p frost -- --nocapture
