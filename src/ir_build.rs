@@ -4033,7 +4033,31 @@ impl<'a> FunctionLowering<'a> {
             } else {
                 let (value, value_type) =
                     self.lower_expression(scrutinee, None)?;
-                (None, None, None, Some((value, value_type)))
+                if let Some(name) = self.enum_name_of(&value_type) {
+                    let IrOperand::Local(local) = value else {
+                        bail!(
+                            "native backend: enum match value is not a place"
+                        );
+                    };
+                    self.mark_in_memory(local);
+                    let address = self.address_of_local(local, &value_type);
+                    let tag = self.fresh_local(Type::I32, None);
+                    self.emit(IrStatement::Assign(
+                        tag,
+                        IrRvalue::Load {
+                            address: address.clone(),
+                            ty: Type::I32,
+                        },
+                    ));
+                    (
+                        Some(address),
+                        Some(name),
+                        Some(IrOperand::Local(tag)),
+                        None,
+                    )
+                } else {
+                    (None, None, None, Some((value, value_type)))
+                }
             };
 
         let merge = self.new_block();
@@ -4122,6 +4146,13 @@ impl<'a> FunctionLowering<'a> {
                 scalar.as_ref(),
             )?;
             let (value, value_type) = self.lower_block(&case.body, expected)?;
+            // An arm that returns, breaks, or continues yields no value and has
+            // already set its terminator, so it contributes nothing to merge.
+            if self.current_is_terminated() {
+                self.pop_scope();
+                self.switch_to(next_block);
+                continue;
+            }
             if result_local.is_none() {
                 result_type = match expected {
                     Some(ty) if !matches!(ty, Type::Void) => ty.clone(),
@@ -4140,7 +4171,7 @@ impl<'a> FunctionLowering<'a> {
         }
 
         let target = result_local
-            .expect("match has at least one case, so a result exists");
+            .unwrap_or_else(|| self.fresh_local(result_type.clone(), None));
         if !needs_memory(&result_type) {
             let zero = zero_operand(&result_type);
             self.emit(IrStatement::Assign(target, IrRvalue::Use(zero)));
@@ -4293,6 +4324,13 @@ impl<'a> FunctionLowering<'a> {
                 }
             }
             let (value, value_type) = self.lower_block(&case.body, expected)?;
+            // An arm that returns, breaks, or continues yields no value and has
+            // already set its terminator, so it contributes nothing to merge.
+            if self.current_is_terminated() {
+                self.pop_scope();
+                self.switch_to(next_block);
+                continue;
+            }
             if result_local.is_none() {
                 result_type = match expected {
                     Some(ty) if !matches!(ty, Type::Void) => ty.clone(),
@@ -4311,7 +4349,7 @@ impl<'a> FunctionLowering<'a> {
         }
 
         let target = result_local
-            .expect("match has at least one case, so a result exists");
+            .unwrap_or_else(|| self.fresh_local(result_type.clone(), None));
         if !needs_memory(&result_type) {
             let zero = zero_operand(&result_type);
             self.emit(IrStatement::Assign(target, IrRvalue::Use(zero)));

@@ -438,6 +438,45 @@ main :: fn() -> i64 {
 }
 "#;
 
+const FAILURE_SETS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+FileError :: enum { NotFound, Denied }
+
+read_size :: fn(ok: i64) -> i64 ! FileError {
+    if (ok == 0) { return FileError::NotFound {} }
+    return 42
+}
+
+use_it :: fn(ok: i64) -> i64 ! FileError {
+    n := read_size(ok)?
+    return n + 1
+}
+
+report :: fn(ok: i64) -> i64 {
+    match use_it(ok) {
+        case .Ok { value }: value
+        case .Err { error }: 0 - 1
+    }
+}
+
+main :: fn() -> i64 {
+    printf("%lld\n", report(1))
+    printf("%lld\n", report(0))
+    0
+}
+"#;
+
+// A fallible function returns `-> T ! E`; `?` unwraps the Ok value and returns
+// the enclosing function's Err on failure; the caller matches Ok/Err.
+#[test]
+fn native_failure_sets() {
+    let Some(output) = compile_and_run("failure_sets", FAILURE_SETS) else {
+        return;
+    };
+    assert_eq!(output, "43\n-1\n");
+}
+
 // A `mut` parameter is written and a value parameter read, both called with a
 // plain value and no `&`/`&mut` -- the compiler borrows for the mut parameter.
 #[test]
@@ -2826,6 +2865,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_constants", TOP_LEVEL_CONSTANTS),
         ("diff_fnptrarr", FUNCTION_POINTER_ARRAY),
         ("diff_matchplace", MATCH_ENUM_PLACE),
+        ("diff_failuresets", FAILURE_SETS),
         ("diff_aggreads", AGGREGATE_BY_VALUE_READS),
         ("diff_aggassign", AGGREGATE_ASSIGNMENT),
         ("diff_generics", GENERIC_FUNCTIONS),
