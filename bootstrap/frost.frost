@@ -378,6 +378,7 @@ Parser :: struct {
     inner: Arena<LocalVar>,
     region_off: i64,
     region_len: i64,
+    region_returns: i64,
     synth_next: i64,
     prov_kind: i64,
     prov_off: i64,
@@ -4125,16 +4126,23 @@ check_region_block :: fn(mut p: Parser, head: i64) {
                         pnode^.c) == false
                 }
                 if (outside) {
+                    if (p.region_returns == 1) {
+                        region_escape(p, "being stored into a parameter")
+                    }
                     region_escape(p, "being stored outside it")
                 }
             }
         }
-        if (kind == NODE_RETURN) {
+        // Handing a pointer back is an escape from a `with` block, whose arena
+        // dies at the closing brace. It is not one from a `uses` function: the
+        // arena belongs to the caller, so the pointer is handed to the caller's
+        // region and checked there.
+        if (kind == NODE_RETURN && p.region_returns == 0) {
             if (region_pointer(p, node^.a)) {
                 region_escape(p, "being returned")
             }
         }
-        if (kind == NODE_EXPRSTMT) {
+        if (kind == NODE_EXPRSTMT && p.region_returns == 0) {
             if (next_id == (0 - 1) && region_pointer(p, node^.a)) {
                 region_escape(p, "being the block's value")
             }
@@ -4153,19 +4161,38 @@ check_region_block :: fn(mut p: Parser, head: i64) {
     }
 }
 
-// Every `with` block in the program is a region. Each is checked on its own,
-// since a region's arena is the only thing its pointers can point into.
+// Every `with` block in the program is a region, and so is the body of every
+// `uses` function, whose arena belongs to whoever supplied it. Each is checked
+// on its own, since a region's arena is the only thing its pointers can point
+// into. This is what makes the check interprocedural without lifetimes: a
+// pointer can only reach an arena a function was handed directly, so following
+// the flow inside each body is enough.
 check_regions :: fn(mut p: Parser) {
     mut i : i64 = 0
     while (i < p.arena.count) {
         node : ^Node = arena_at(p.arena, i)
-        if (node^.kind == NODE_WITH) {
+        kind := node^.kind
+        if (kind == NODE_WITH) {
             body := node^.a
             p.region_off = node^.val
             p.region_len = node^.c
             p.tainted.count = 0
             p.inner.count = 0
+            p.region_returns = 0
             check_region_block(p, body)
+        }
+        if (kind == NODE_FUNC) {
+            sym : ^Sym = arena_at(p.fns, node^.val)
+            if (sym^.uses_ty >= 0) {
+                body := node^.a
+                p.region_off = sym^.cap_off
+                p.region_len = sym^.cap_len
+                p.tainted.count = 0
+                p.inner.count = 0
+                p.region_returns = 1
+                check_region_block(p, body)
+                p.region_returns = 0
+            }
         }
         i = i + 1
     }
@@ -4332,6 +4359,7 @@ main :: fn() -> i64 {
         inner = arena_make($LocalVar, 4096),
         region_off = 0,
         region_len = 0,
+        region_returns = 0,
         synth_next = 0,
         prov_kind = 0,
         prov_off = 0,
