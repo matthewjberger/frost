@@ -1498,6 +1498,63 @@ fn self_hosted_reports_an_unreadable_import() {
     );
 }
 
+// Failure sets in the self-hosted compiler: `-> T ! E` answers with a value or
+// a failure, `?` hands a failure on, and both sides come back out at the top.
+const SELF_HOSTED_FAILURE_SETS: &str = "OpenError :: struct { code: i64 }\n\
+     halve :: fn(n: i64) -> i64 ! OpenError {\n\
+     \x20   if (n % 2 != 0) { return OpenError { code = 7 } }\n\
+     \x20   n / 2\n}\n\
+     twice :: fn(n: i64) -> i64 ! OpenError {\n\
+     \x20   a := halve(n)?\n    b := halve(a)?\n    a + b\n}\n\
+     main :: fn() -> i64 {\n\
+     \x20   good := twice(8)\n    print good.tag\n    print good.value\n\
+     \x20   bad := twice(6)\n    print bad.tag\n    print bad.error.code\n\
+     \x20   0\n}\n";
+
+#[test]
+fn self_hosted_failure_sets_through_c() {
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_selffail_input.frost");
+    std::fs::write(&input, SELF_HOSTED_FAILURE_SETS).unwrap();
+    let Some(c_source) = compile_and_run_with_input(
+        "selffail",
+        SELF_HOSTED,
+        input.to_str().unwrap(),
+    ) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(output) = compile_c_and_run("selffail", &c_source) else {
+        return;
+    };
+    assert_eq!(output, "0\n6\n1\n7\n");
+}
+
+#[test]
+fn self_hosted_failure_sets_natively() {
+    let Some(output) =
+        selfhosted_native_output("failsets", SELF_HOSTED_FAILURE_SETS)
+    else {
+        return;
+    };
+    assert_eq!(output, "0\n6\n1\n7\n");
+}
+
+// `?` only means something where there is a failure to hand on.
+#[test]
+fn self_hosted_rejects_a_try_outside_a_fallible_function() {
+    let source = "E :: struct { c: i64 }\n\
+                  f :: fn() -> i64 ! E { 1 }\n\
+                  main :: fn() -> i64 { f()? }\n";
+    let Some(message) = self_hosted_rejects("tryoutside", source) else {
+        return;
+    };
+    assert!(
+        message.contains("declares a failure set"),
+        "expected a misplaced-'?' error, got:\n{message}"
+    );
+}
+
 #[test]
 fn self_hosted_rejects_a_linear_value_never_consumed() {
     let source = "File :: linear struct { h: i64 }\n\

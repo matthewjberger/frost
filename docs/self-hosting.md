@@ -203,9 +203,28 @@ its output. In dependency order, what is done and what remains:
    pointer back to its caller, where the caller's region checks it, but may not
    store one into a parameter, which outlives the call.
 
-6. **Failure sets.** `-> T ! E` with `?`, mirroring `src/failure_sets.rs`. This
-   one needs enums with payloads first, which the bootstrap subset skipped,
-   since the desugar synthesizes a Result enum and matches on it.
+6. **Failure sets.** Done. `-> T ! E` says a function answers with a T or fails
+   with an E, and `e?` hands the failure on.
+
+   Both lower to what the compiler already had. A failure set is a struct
+   carrying which of the two it holds beside both payloads, rather than the
+   reference compiler's Result enum, so no enum-with-payload machinery was
+   needed: the two are never both live, but reading either one is then a plain
+   field of a plain struct, which every backend already does. A `return` that
+   builds the error type is the failure side and anything else is the value
+   side, matching how the reference reads it.
+
+   `e?` becomes a binding, a test and a return, queued for the block being
+   parsed and emitted ahead of the statement the `?` was written in. That is
+   what lets a `?` sit anywhere an expression can rather than only where a
+   statement can.
+
+   This needed names the compiler makes up, which the room past the source
+   already provides: `__Result<n>` per failure set, `__try<n>` per `?`, and the
+   three field names.
+
+   Left: general enums with payloads, which the language has and the bootstrap
+   subset still skips. Failure sets no longer depend on them.
 7. **Imports.** Done. `import "path"` names a file whose declarations join this
    one's.
 
