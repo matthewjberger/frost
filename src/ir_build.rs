@@ -310,6 +310,12 @@ impl IrBuilder {
         let return_type = return_sig.to_type().unwrap_or(Type::Void);
         let mut function = FunctionLowering::new(self, return_type.clone());
 
+        // A parameter is bound before any statement runs, so it would carry no
+        // position and a type error about one would name a function and nothing
+        // else. The body's first statement is where a reader looks.
+        if let Some(first) = body.first() {
+            function.current_position = first.position;
+        }
         for parameter in parameters {
             let ty = parameter_type(parameter);
             let local = function.fresh_local(ty, Some(parameter.name.clone()));
@@ -2582,6 +2588,21 @@ impl<'a> FunctionLowering<'a> {
                         if self.builder.signature(named).is_some() =>
                     {
                         Type::ConstFn(named.clone())
+                    }
+                    // A name that is neither a declared type nor a declared
+                    // function is caught here rather than deep inside the
+                    // specialized body, where the reader would be looking at
+                    // code they did not write.
+                    Type::Struct(named)
+                        if self.builder.struct_layout(named).is_none()
+                            && self.builder.enum_layout(named).is_none()
+                            && !is_generic_instance(named) =>
+                    {
+                        bail!(
+                            "native backend: '{named}' given to '{}' as the compile-time argument '{}' names neither a type nor a function",
+                            name,
+                            parameter.name
+                        );
                     }
                     other => other.clone(),
                 };
