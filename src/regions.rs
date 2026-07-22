@@ -7,13 +7,21 @@ use crate::parser::{
 };
 use crate::types::Type;
 
-// The region check. A `with arena { ... }` block is a region: the arena is live
-// only inside it. A raw pointer derived from the arena (returned by an allocator
-// that takes the arena, or by a `uses` function, or taken with `ptr_to` of arena
-// memory) is region-bound and must not outlive the block. Returning such a
-// pointer, or storing it in a binding that lives past the block, would leave a
-// pointer into memory the arena may reset or free, so it is rejected here, before
-// the `with` block is lowered away.
+// The region check. A region is the scope in which an arena is live: the body of
+// a `with arena { ... }` block, and the body of a `uses A` function (where the
+// arena is the implicit capability). A raw pointer into the arena is region-bound
+// and must not outlive its region.
+//
+// No lifetimes and no region types on pointers. Frost has no global arenas and no
+// closures, so a `^T` can only point into an arena a function was handed directly
+// (a parameter, a value derived from one, or a `uses` capability). That makes
+// provenance a plain flow question, and the escape rule a plain scope question:
+//   - inside a `with` block, an arena pointer may not be returned or stored in a
+//     binding that lives past the block;
+//   - inside a `uses` function, it may be returned (that hands it to the caller's
+//     region, checked where the `with` block is) but not stored into a parameter.
+// A pointer confined to a binding declared in the region is fine; that binding
+// dies with the region.
 
 struct Signatures {
     returns_pointer: HashMap<String, bool>,
@@ -43,28 +51,34 @@ pub fn check_regions(program: &Program) -> Result<()> {
     for statement in program {
         if let Statement::Constant(
             _,
-            Expression::Function(_, _, body) | Expression::Proc(_, _, body),
+            Expression::Function(_, sig, body) | Expression::Proc(_, sig, body),
         ) = &statement.node
         {
+            // A `uses` function's whole body is a region whose arena is the
+            // implicit capability; it may return arena pointers but not leak
+            // them into its parameters.
+            if let Some(capability) = sig.uses.first() {
+                let mut region = Region::new(
+                    capability_binding(capability),
+                    &signatures,
+                    true,
+                );
+                region.check(body, true)?;
+            }
             find_regions(body, &signatures)?;
         }
     }
     Ok(())
 }
 
-// Walk a block looking for `with` regions to check; ordinary blocks impose no
-// region rule of their own.
+// Walk a block looking for `with` regions to check; an ordinary block imposes no
+// region rule of its own.
 fn find_regions(block: &Block, signatures: &Signatures) -> Result<()> {
     for statement in block {
         match &statement.node {
             Statement::With(arena, body) => {
-                let mut region = Region {
-                    arena: arena.clone(),
-                    signatures,
-                    inner: HashSet::new(),
-                    bound: HashSet::new(),
-                };
-                region.check(body)?;
+                let mut region = Region::new(arena.clone(), signatures, false);
+                region.check(body, true)?;
                 find_regions(body, signatures)?;
             }
             Statement::While(_, body) | Statement::For(_, _, body) => {
@@ -72,13 +86,9 @@ fn find_regions(block: &Block, signatures: &Signatures) -> Result<()> {
             }
             Statement::Defer(inner) => {
                 if let Statement::With(arena, body) = inner.as_ref() {
-                    let mut region = Region {
-                        arena: arena.clone(),
-                        signatures,
-                        inner: HashSet::new(),
-                        bound: HashSet::new(),
-                    };
-                    region.check(body)?;
+                    let mut region =
+                        Region::new(arena.clone(), signatures, false);
+                    region.check(body, true)?;
                 }
             }
             _ => {}
@@ -87,68 +97,126 @@ fn find_regions(block: &Block, signatures: &Signatures) -> Result<()> {
     Ok(())
 }
 
+// The capability binding name for an arena type: its base name with the first
+// letter lowercased, so `Arena<256>` binds `arena` (matching the allocation
+// sources lowering).
+fn capability_binding(capability: &Type) -> String {
+    let name = match capability {
+        Type::Struct(name) | Type::Enum(name) => name.clone(),
+        other => other.to_string(),
+    };
+    let base = name.split('<').next().unwrap_or(&name);
+    let mut characters = base.chars();
+    match characters.next() {
+        Some(first) => {
+            first.to_lowercase().collect::<String>() + characters.as_str()
+        }
+        None => base.to_string(),
+    }
+}
+
+// The root variable a place is rooted at, so `s.field` and `xs[i]` are rooted at
+// `s` and `xs`.
+fn root_identifier(place: &Expression) -> Option<&str> {
+    match place {
+        Expression::Identifier(name) => Some(name),
+        Expression::FieldAccess(base, _)
+        | Expression::Dereference(base)
+        | Expression::Index(base, _) => root_identifier(base),
+        _ => None,
+    }
+}
+
 struct Region<'a> {
     arena: String,
     signatures: &'a Signatures,
+    // Whether a returned arena pointer is allowed (true in a `uses` body, false
+    // in a `with` block).
+    allow_return: bool,
     // Bindings declared inside the region; they die with it, so they may hold a
     // region pointer.
     inner: HashSet<String>,
-    // Bindings currently holding a region pointer.
+    // Bindings that currently hold, or transitively contain, a region pointer.
     bound: HashSet<String>,
 }
 
-impl Region<'_> {
-    fn check(&mut self, block: &Block) -> Result<()> {
+impl<'a> Region<'a> {
+    fn new(
+        arena: String,
+        signatures: &'a Signatures,
+        allow_return: bool,
+    ) -> Self {
+        Region {
+            arena,
+            signatures,
+            allow_return,
+            inner: HashSet::new(),
+            bound: HashSet::new(),
+        }
+    }
+
+    fn check(&mut self, block: &Block, root: bool) -> Result<()> {
         for statement in block {
             match &statement.node {
-                Statement::Let { name, value, .. } => {
-                    self.inner.insert(name.clone());
-                    if self.is_region_pointer(value) {
-                        self.bound.insert(name.clone());
-                    }
-                }
-                Statement::Constant(name, value) => {
+                Statement::Let { name, value, .. }
+                | Statement::Constant(name, value) => {
                     self.inner.insert(name.clone());
                     if self.is_region_pointer(value) {
                         self.bound.insert(name.clone());
                     }
                 }
                 Statement::Assignment(place, value) => {
-                    if self.is_region_pointer(value)
-                        && !self.is_inner_place(place)
-                    {
-                        bail!(
-                            "region: a pointer into arena '{}' escapes its `with` block by assignment; it may not outlive the region",
-                            self.arena
-                        );
+                    if self.is_region_pointer(value) {
+                        self.bind_or_escape(place, "assignment")?;
                     }
                 }
                 Statement::Return(value) => {
-                    if self.is_region_pointer(value) {
-                        bail!(
-                            "region: a pointer into arena '{}' escapes its `with` block by being returned; it may not outlive the region",
-                            self.arena
-                        );
+                    if self.is_region_pointer(value) && !self.allow_return {
+                        bail!(self.escape("being returned"));
                     }
                 }
-                Statement::While(condition, body) => {
-                    let _ = condition;
-                    self.check(body)?;
-                }
+                Statement::While(_, body) => self.check(body, false)?,
                 Statement::For(variable, _, body) => {
                     self.inner.insert(variable.clone());
-                    self.check(body)?;
+                    self.check(body, false)?;
                 }
-                Statement::With(_, body) => {
-                    self.check(body)?;
-                }
+                Statement::With(_, body) => self.check(body, false)?,
                 Statement::Expression(value) => {
                     self.check_conditional(value)?;
                 }
                 _ => {}
             }
         }
+        // The block's trailing expression is its value; in a `with` block that
+        // value flows to the enclosing scope, so an arena pointer there escapes.
+        if root
+            && !self.allow_return
+            && let Some(last) = block.last()
+            && let Statement::Expression(value) = &last.node
+            && self.is_region_pointer(value)
+        {
+            bail!(self.escape("being the block's value"));
+        }
         Ok(())
+    }
+
+    // Storing a region pointer into a binding declared inside the region keeps it
+    // in the region (and taints that binding); storing it anywhere else escapes.
+    fn bind_or_escape(&mut self, place: &Expression, how: &str) -> Result<()> {
+        match root_identifier(place) {
+            Some(name) if self.inner.contains(name) => {
+                self.bound.insert(name.to_string());
+                Ok(())
+            }
+            _ => bail!(self.escape(how)),
+        }
+    }
+
+    fn escape(&self, how: &str) -> String {
+        format!(
+            "region: a pointer into arena '{}' escapes its region by {how}; it may not outlive the arena",
+            self.arena
+        )
     }
 
     // An `if`/`match` used as a statement carries blocks that are still inside
@@ -156,25 +224,19 @@ impl Region<'_> {
     fn check_conditional(&mut self, expression: &Expression) -> Result<()> {
         match expression {
             Expression::If(_, consequence, alternative) => {
-                self.check(consequence)?;
+                self.check(consequence, false)?;
                 if let Some(block) = alternative {
-                    self.check(block)?;
+                    self.check(block, false)?;
                 }
             }
             Expression::Switch(_, cases) => {
                 for SwitchCase { body, .. } in cases {
-                    self.check(body)?;
+                    self.check(body, false)?;
                 }
             }
             _ => {}
         }
         Ok(())
-    }
-
-    // A place that is a binding declared inside the region can hold a region
-    // pointer; a parameter, an outer local, or a field of one cannot.
-    fn is_inner_place(&self, place: &Expression) -> bool {
-        matches!(place, Expression::Identifier(name) if self.inner.contains(name))
     }
 
     fn is_region_pointer(&self, expression: &Expression) -> bool {
@@ -198,6 +260,9 @@ impl Region<'_> {
                 if !returns_pointer {
                     return false;
                 }
+                // A pointer-returning function hands back an arena pointer only if
+                // it draws on this arena: it is a `uses` function, or it is passed
+                // the arena (or a value already bound to the region).
                 self.signatures.uses_arena.contains(function)
                     || arguments
                         .iter()
