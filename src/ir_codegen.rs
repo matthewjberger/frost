@@ -12,7 +12,19 @@ use crate::ir::{
 };
 use crate::types::Type;
 
+// A compiler that promises to stay fast should be able to say where its time
+// goes. `FROST_TIMINGS=1` reports the split between generating code for each
+// function and writing the object, which are the two halves of the backend and
+// want different answers: one parallelizes, the other wants more compilation
+// units. Off unless asked for, and it prints to stderr so it never reaches
+// emitted output.
+fn timings_wanted() -> bool {
+    std::env::var("FROST_TIMINGS").is_ok_and(|value| value != "0")
+}
+
 pub fn compile_ir_to_object(module: &IrModule) -> Result<Vec<u8>> {
+    let report = timings_wanted();
+    let started = std::time::Instant::now();
     let mut generator = Generator::new()?;
     generator.declare_strings(module)?;
     generator.declare_functions(module)?;
@@ -29,8 +41,18 @@ pub fn compile_ir_to_object(module: &IrModule) -> Result<Vec<u8>> {
             &mut builder_context,
         )?;
     }
+    let generated = started.elapsed();
     let object = generator.module.finish();
-    Ok(object.emit()?)
+    let bytes = object.emit()?;
+    if report {
+        eprintln!(
+            "frost: {} functions, code generation {:.0} ms, object emission {:.0} ms",
+            module.functions.len(),
+            generated.as_secs_f64() * 1000.0,
+            (started.elapsed() - generated).as_secs_f64() * 1000.0
+        );
+    }
+    Ok(bytes)
 }
 
 struct Generator {
