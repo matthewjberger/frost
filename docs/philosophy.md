@@ -56,9 +56,13 @@ actual work predictable.
    annotations.** Safety comes from making the dangerous shapes unrepresentable
    (second-class references) and from a few local rules (moves, exclusivity,
    linearity, generational handles). See [memory-safety.md](memory-safety.md).
-3. **Zero-cost, static polymorphism.** Generics monomorphize and higher-order
-   code is function pointers. You pay for abstraction at compile time, not at run
-   time.
+3. **Zero-cost, static polymorphism.** Generics monomorphize, and a function
+   that varies is a compile-time argument (`$f`) rather than a pointer, so the
+   call in the inner loop is direct. You pay for abstraction at compile time,
+   not at run time. Function pointers remain for the cases that are genuinely
+   dynamic, and they are honest about costing an indirect call: neither backend
+   devirtualizes one, by design, because goal 7 says the lowering is what you
+   read rather than what an optimizer left behind.
 4. **Cleanup as a tracked obligation, not an implicit call.** `linear` resources
    must be consumed exactly once. This replaces `Drop` and finalizers with
    something the compiler checks and the reader can see, and it makes error
@@ -88,8 +92,21 @@ actual work predictable.
   emitted C is an internal lowering, and it is not an interface anyone should
   link against. That asymmetry is what keeps the backend simple.
 - **Not maximally general.** Frost intentionally omits capturing closures
-  (function pointers instead), exceptions (errors are linear enum returns), and
-  implicit conversions that hide cost.
+  (function pointers and compile-time function arguments instead), exceptions
+  (errors are failure sets and linear enum returns), and implicit conversions
+  that hide cost.
+- **Not trait-based.** There are no traits, no coherence rules, and no bound
+  solving. A generic algorithm takes the functions it needs as compile-time
+  arguments, which is what makes its calls direct. Do not reach for a generic
+  sort, hash or equality that works over everything: write the one you need over
+  the layout you have, and pass `$compare` or `$hash` when it varies. The
+  self-hosted compiler is 5,000 lines and wanted a generic function three times,
+  which is the shape of the language working rather than a gap in it.
+
+  This is also what keeps the front end near-linear. Coherence checking, bound
+  solving and method resolution are among the passes that dominate other
+  compilers' front ends, and their absence is measured in
+  [self-hosting.md](self-hosting.md), not assumed.
 - **Not access-controlled.** There are no visibility modifiers. Every struct
   field is public, there is no `pub` or private, and the module system needs no
   visibility rules. Encapsulation by field privacy is out of scope.
