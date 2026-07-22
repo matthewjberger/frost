@@ -18,21 +18,5 @@ jobs:
         run: cargo build --verbose
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
-      - name: Diagnose the native self-hosting crash
-        run: |
-          sudo apt-get install -y gdb
-          cargo build --bin frost
-          ./target/debug/frost --link -o /tmp/stage0 bootstrap/frost.frost
-          export FROST_BACKEND=asm
-          export FROST_INPUT=bootstrap/frost.frost
-          /tmp/stage0 > /tmp/stage1.s
-          echo "stage1 assembly: $(wc -l < /tmp/stage1.s) lines"
-          gcc /tmp/stage1.s runtime/frost_runtime.c -o /tmp/stage1
-          /tmp/stage1 > /tmp/stage2.s 2>/tmp/stage2.err \
-            && echo "stage2 fine: $(wc -l < /tmp/stage2.s) lines" \
-            || echo "stage2 failed with status $?"
-          gdb -batch -ex "set disable-randomization off" -ex run -ex bt \
-            -ex "info registers rip rsp rbp" -ex "x/8i \$rip" \
-            /tmp/stage1 2>&1 | grep -v '^\s*$' | tail -35
       - name: Run tests
         run: cargo test --verbose
