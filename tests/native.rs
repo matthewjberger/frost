@@ -1419,6 +1419,190 @@ fn self_hosted_survives_an_import_cycle() {
     assert_eq!(output, "7\n");
 }
 
+// A module may export a function that returns a type it does not export, which
+// the visibility rule allows and which used to not compile: the renamer walked
+// a function's parameters and body but skipped its return signature, so the
+// private type kept its un-renamed name and nothing could resolve it.
+#[test]
+fn an_exported_function_may_return_an_unexported_type() {
+    let directory = std::env::temp_dir().join("frost_private_return");
+    let library = directory.join("lib");
+    std::fs::create_dir_all(&library).unwrap();
+    std::fs::write(
+        library.join("hidden.frost"),
+        "export make\n\
+         Hidden :: struct { v: i64 }\n\
+         make :: fn(x: i64) -> Hidden { Hidden { v = x } }\n",
+    )
+    .unwrap();
+    let root = directory.join("private_return_app.frost");
+    std::fs::write(
+        &root,
+        "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
+         import \"lib/hidden.frost\"\n\
+         main :: fn() -> i64 { h := make(7)  printf(\"%lld\\n\", h.v)  0 }\n",
+    )
+    .unwrap();
+
+    if !linker_available() {
+        let _ = std::fs::remove_dir_all(&directory);
+        return;
+    }
+    let exe = directory.join(format!("app{}", std::env::consts::EXE_SUFFIX));
+    let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe)
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "a private return type did not resolve:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let ran = Command::new(&exe).output().unwrap();
+    let output = String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n");
+    let _ = std::fs::remove_dir_all(&directory);
+    assert_eq!(output, "7\n");
+}
+
+// Step 4 of docs/separate-compilation.md, as an oracle. With
+// FROST_BUILD_FROM_INTERFACES an imported module contributes what its interface
+// says and nothing else, so producing the same program either way is the
+// evidence that an interface is sufficient. The module here uses the things
+// most likely to be missing from one: a private helper reached only through an
+// export, a generic whose body the caller has to instantiate, an enum, a struct
+// returned by an exported function without being exported itself, and a private
+// name that nothing reaches and which the interface therefore drops.
+#[test]
+fn a_program_built_from_interfaces_is_the_same_program() {
+    let directory = std::env::temp_dir().join("frost_from_interfaces");
+    let library = directory.join("lib");
+    std::fs::create_dir_all(&library).unwrap();
+    std::fs::write(
+        library.join("shapes.frost"),
+        "export area, describe, biggest, Shape\n\
+         Shape :: enum { Circle { r: i64 }, Rect { w: i64, h: i64 } }\n\
+         Report :: struct { value: i64, kind: i64 }\n\
+         scale :: fn(x: i64) -> i64 { x * 2 }\n\
+         never_used :: fn() -> i64 { 999 }\n\
+         area :: fn(s: Shape) -> i64 {\n\
+         \x20   match s {\n\
+         \x20       case .Circle { r }: scale(3 * r * r)\n\
+         \x20       case .Rect { w, h }: w * h\n\
+         \x20   }\n\
+         }\n\
+         describe :: fn(s: Shape) -> Report { Report { value = area(s), kind = 1 } }\n\
+         biggest :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {\n\
+         \x20   mut best := x\n    if (before(y, best)) { best = y }\n    best\n\
+         }\n",
+    )
+    .unwrap();
+    let root = directory.join("from_interfaces_app.frost");
+    std::fs::write(
+        &root,
+        "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
+         import \"lib/shapes.frost\"\n\
+         wider :: fn(a: i64, b: i64) -> bool { a > b }\n\
+         main :: fn() -> i64 {\n\
+         \x20   printf(\"%lld\\n\", area(Shape::Rect { w = 4, h = 5 }))\n\
+         \x20   report := describe(Shape::Circle { r = 2 })\n\
+         \x20   printf(\"%lld\\n\", report.value)\n\
+         \x20   printf(\"%lld\\n\", biggest($i64, $wider, 7, 3))\n\
+         \x20   0\n\
+         }\n",
+    )
+    .unwrap();
+
+    let frost = env!("CARGO_BIN_EXE_frost");
+    let emit = |from_interfaces: bool, name: &str| {
+        let c_path = directory.join(format!("{name}.c"));
+        let output = Command::new(frost)
+            .env("FROST_CHECK_INTERFACES", "1")
+            .env(
+                "FROST_BUILD_FROM_INTERFACES",
+                if from_interfaces { "1" } else { "0" },
+            )
+            .arg("--emit-c")
+            .arg("-o")
+            .arg(&c_path)
+            .arg(&root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "building {name} failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        std::fs::read_to_string(&c_path).unwrap()
+    };
+
+    let from_source = emit(false, "source");
+    let from_interfaces = emit(true, "interfaces");
+
+    // The private name nothing reaches is dropped by the interface, which is
+    // the point of an interface, so the two texts are not expected to match.
+    assert!(
+        from_source.contains("never_used"),
+        "the source build lost a private function it should have kept"
+    );
+    assert!(
+        !from_interfaces.contains("never_used"),
+        "the interface carried a private name nothing reaches"
+    );
+    for reachable in ["_area", "_scale", "_describe", "biggest"] {
+        assert!(
+            from_interfaces.contains(reachable),
+            "the interface build lost '{reachable}'"
+        );
+    }
+
+    // What has to match is the program, so run both and compare. That is the
+    // claim worth checking anyway: an interface is sufficient if a program
+    // built from it behaves identically, not if the emitted text is equal.
+    let run = |from_interfaces: bool, name: &str| -> Option<String> {
+        if !linker_available() {
+            return None;
+        }
+        let exe =
+            directory.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+        let built = Command::new(frost)
+            .env("FROST_CHECK_INTERFACES", "1")
+            .env(
+                "FROST_BUILD_FROM_INTERFACES",
+                if from_interfaces { "1" } else { "0" },
+            )
+            .arg("--link")
+            .arg("-o")
+            .arg(&exe)
+            .arg(&root)
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "linking {name} failed:\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let ran = Command::new(&exe).output().unwrap();
+        Some(String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n"))
+    };
+    let source_output = run(false, "source");
+    let interface_output = run(true, "interfaces");
+    let _ = std::fs::remove_dir_all(&directory);
+
+    let (Some(source_output), Some(interface_output)) =
+        (source_output, interface_output)
+    else {
+        return;
+    };
+    assert_eq!(source_output, "20\n24\n7\n");
+    assert_eq!(
+        source_output, interface_output,
+        "building from interfaces changed what the program does"
+    );
+}
+
 // Separate compilation gives each module its own copy of every specialization
 // it instantiates, because cranelift has no weak or COMDAT linkage to fold
 // duplicates with. Whether that duplication matters is a measurement, and this
