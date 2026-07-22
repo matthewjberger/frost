@@ -118,7 +118,8 @@ and the wildcard `_` all work.
 
 ## Generics
 
-A type parameter is written `$T`, with no bounds and no traits. It usually
+A type parameter is written `$T`, with no bound of its own and no traits. It
+usually
 infers from a value argument. When it cannot, declare it `$T: Type` and pass the
 type at the call site with a leading `$`.
 

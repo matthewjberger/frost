@@ -54,8 +54,9 @@ actual work predictable.
    inspectable layout, pools are contiguous, and nothing is boxed implicitly.
 2. **Memory safety without a garbage collector and without lifetime
    annotations.** Safety comes from making the dangerous shapes unrepresentable
-   (second-class references) and from a few local rules (moves, exclusivity,
-   linearity, generational handles). See [memory-safety.md](memory-safety.md).
+   (borrowing is a parameter mode, so there is no reference type to store or
+   return) and from a few local rules (moves, exclusivity, linearity,
+   generational handles). See [memory-safety.md](memory-safety.md).
 3. **Zero-cost, static polymorphism.** Generics monomorphize, and a function
    that varies is a compile-time argument (`$f`) rather than a pointer, so the
    call in the inner loop is direct. You pay for abstraction at compile time,
@@ -82,10 +83,14 @@ actual work predictable.
    whole-program monomorphization with imports flattened into one AST is the
    shape that contradicts it, so separate compilation is an obligation this goal
    takes on. The bar is the one Jai and Odin set, a full build in the 100,000
-   lines per second range, and today the front end clears it while the whole
-   build is about half of it. The curve is measured by `just bench-scaling` and
-   recorded in [self-hosting.md](self-hosting.md), so the claim is checkable
-   rather than asserted, and [roadmap.md](roadmap.md) says what closes the gap.
+   lines per second range, and a full native build clears it at about 165,000
+   lines per second. That is the constant factor, and it is done. The shape is
+   not: every program measured is one file, and separate compilation is what
+   keeps the curve flat once they are not. The curve is measured by
+   `just bench-scaling` and recorded in [self-hosting.md](self-hosting.md), so
+   the claim is checkable rather than asserted;
+   [separate-compilation.md](separate-compilation.md) is the design for the part
+   that is left, and [roadmap.md](roadmap.md) is the surrounding order of work.
 
 ## Non-goals
 

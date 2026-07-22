@@ -59,7 +59,7 @@ compiles to native code through Cranelift or through portable C.
 - [docs/spec.md](docs/spec.md): the language reference and grammar
 - [docs/roadmap.md](docs/roadmap.md): what is left, in the order to do it
 - [docs/separate-compilation.md](docs/separate-compilation.md): the module
-  boundary design, written down and not yet built
+  boundary design, and how far it is built
 
 ## A first program
 
