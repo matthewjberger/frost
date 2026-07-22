@@ -36,6 +36,10 @@ struct AnonRequest {
     parameters: Vec<Parameter>,
     return_sig: ReturnSignature,
     body: Block,
+    // The module whose lowering produced this literal, carried for the same
+    // reason `Specialization` carries it: a generic instantiated from inside an
+    // anonymous function is work that module would have to do.
+    requested_by: u32,
 }
 
 fn locate<T>(result: Result<T>, position: Position) -> Result<T> {
@@ -136,8 +140,8 @@ pub fn build_module(
                     position,
                 )?;
                 functions.push(function);
-                pending.extend(requests);
-                pending_anon.extend(anon);
+                pending.extend(requested_by(requests, position.file));
+                pending_anon.extend(anon_requested_by(anon, position.file));
             }
             Statement::Extern {
                 name,
@@ -175,14 +179,30 @@ pub fn build_module(
             &top_level,
         )?;
         functions.push(function);
-        pending.extend(requests);
-        pending_anon.extend(anon);
+        // Synthesized `main` from loose top-level statements, which belong to
+        // the entry file.
+        pending.extend(requested_by(requests, 0));
+        pending_anon.extend(anon_requested_by(anon, 0));
     }
 
+    // Which modules instantiate each specialization. Recorded for every
+    // request, including the ones the global dedup then discards, because the
+    // question it answers is what *separate* compilation would cost and that is
+    // exactly the requests a single-object build throws away.
+    let mut instantiated_by: HashMap<String, std::collections::HashSet<u32>> =
+        HashMap::new();
     let mut emitted: std::collections::HashSet<String> =
         std::collections::HashSet::new();
     loop {
         if let Some(specialization) = pending.pop() {
+            instantiated_by
+                .entry(specialization.mangled_name.clone())
+                .or_default()
+                .insert(specialization.requested_by);
+            // The output is one object, so a specialization is emitted once no
+            // matter how many modules ask for it. Per-module copies become
+            // possible only when each module emits its own object; see step 3
+            // of docs/separate-compilation.md.
             if !emitted.insert(specialization.mangled_name.clone()) {
                 continue;
             }
@@ -234,8 +254,11 @@ pub fn build_module(
                 &body,
             )?;
             functions.push(function);
-            pending.extend(requests);
-            pending_anon.extend(anon);
+            // A generic that instantiates another generic is still work the
+            // asking module would have to do, so the attribution carries down.
+            pending.extend(requested_by(requests, specialization.requested_by));
+            pending_anon
+                .extend(anon_requested_by(anon, specialization.requested_by));
         } else if let Some(request) = pending_anon.pop() {
             let (function, requests, anon) = builder.lower_function(
                 &request.name,
@@ -244,14 +267,86 @@ pub fn build_module(
                 &request.body,
             )?;
             functions.push(function);
-            pending.extend(requests);
-            pending_anon.extend(anon);
+            pending.extend(requested_by(requests, request.requested_by));
+            pending_anon.extend(anon_requested_by(anon, request.requested_by));
         } else {
             break;
         }
     }
 
+    report_module_specializations(&instantiated_by);
     Ok(IrModule { functions, externs })
+}
+
+fn requested_by(
+    requests: Vec<Specialization>,
+    module: u32,
+) -> Vec<Specialization> {
+    requests
+        .into_iter()
+        .map(|request| Specialization {
+            requested_by: module,
+            ..request
+        })
+        .collect()
+}
+
+fn anon_requested_by(
+    requests: Vec<AnonRequest>,
+    module: u32,
+) -> Vec<AnonRequest> {
+    requests
+        .into_iter()
+        .map(|request| AnonRequest {
+            requested_by: module,
+            ..request
+        })
+        .collect()
+}
+
+// What separate compilation would cost in duplicated code, measured rather than
+// guessed at. The design gives each module its own copy of every specialization
+// it instantiates, because cranelift has no weak or COMDAT linkage to fold them
+// with, and whether that matters is this number.
+//
+// Off unless `FROST_MODULE_REPORT` is set, and it prints to stderr so it never
+// reaches emitted output.
+fn report_module_specializations(
+    instantiated_by: &HashMap<String, std::collections::HashSet<u32>>,
+) {
+    if !std::env::var("FROST_MODULE_REPORT").is_ok_and(|value| value != "0") {
+        return;
+    }
+    let total = instantiated_by.len();
+    let copies: usize =
+        instantiated_by.values().map(|modules| modules.len()).sum();
+    let shared = instantiated_by
+        .values()
+        .filter(|modules| modules.len() > 1)
+        .count();
+
+    let mut per_module: HashMap<u32, usize> = HashMap::new();
+    for modules in instantiated_by.values() {
+        for module in modules {
+            *per_module.entry(*module).or_default() += 1;
+        }
+    }
+    let mut rows: Vec<(String, usize)> = per_module
+        .into_iter()
+        .map(|(module, count)| {
+            let name = crate::source_map::name_of(module)
+                .unwrap_or_else(|| "(entry file)".to_string());
+            (name, count)
+        })
+        .collect();
+    rows.sort();
+
+    eprintln!(
+        "frost: {total} specialization(s) emitted, {copies} would be emitted per-module ({shared} instantiated by more than one module)"
+    );
+    for (name, count) in rows {
+        eprintln!("frost:   {name} instantiates {count}");
+    }
 }
 
 impl IrBuilder {
@@ -402,6 +497,17 @@ struct Specialization {
     generic_name: String,
     mangled_name: String,
     subst: HashMap<String, Type>,
+    // Which module asked for this one, as a source map file id. A
+    // specialization requested from inside another specialization inherits the
+    // module that asked for the outer one, since that is the module that would
+    // have to emit both once modules are compilation units.
+    //
+    // Nothing downstream uses this yet and the emitted code does not depend on
+    // it. It exists to answer the question the design in
+    // docs/separate-compilation.md leaves open: separate compilation gives each
+    // module its own copy of a specialization it instantiates, and whether that
+    // duplication is worth caring about is a measurement, not an opinion.
+    requested_by: u32,
 }
 
 fn function_type_params(parameters: &[Parameter]) -> Vec<String> {
@@ -2223,6 +2329,7 @@ impl<'a> FunctionLowering<'a> {
                     parameters: parameters.clone(),
                     return_sig: return_sig.clone(),
                     body: body.clone(),
+                    requested_by: 0,
                 });
                 let result = self.fresh_local(proc_type.clone(), None);
                 self.emit(IrStatement::Assign(
@@ -2798,6 +2905,9 @@ impl<'a> FunctionLowering<'a> {
             generic_name: name.to_string(),
             mangled_name: mangled_name.clone(),
             subst,
+            // Stamped by whoever drains these, which is the only place that
+            // knows which module's lowering produced them.
+            requested_by: 0,
         });
 
         let mut lowered = Vec::with_capacity(plans.len());
