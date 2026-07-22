@@ -55,8 +55,70 @@ pub fn compile_ir_to_object(module: &IrModule) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+
+// What building a function's body needs to know about the rest of the module:
+// the call convention and, for anything it references, that symbol's signature
+// and whether it is colocated. This is deliberately not the module. A module is
+// a single mutable thing and code generation is the part of the backend worth
+// doing on more than one thread at a time, so the translation is given the facts
+// rather than the object that owns them.
+//
+// The two helpers replicate `Module::declare_func_in_func` and
+// `declare_data_in_func` exactly. Both of those take `&mut self` but read only
+// `self.declarations()`, which is what makes this safe to do from a snapshot.
+struct Decls {
+    call_conv: isa::CallConv,
+    functions: HashMap<FuncId, (Signature, bool)>,
+    data: HashMap<DataId, bool>,
+}
+
+impl Decls {
+    fn make_signature(&self) -> Signature {
+        Signature::new(self.call_conv)
+    }
+
+    fn declare_func_in_func(
+        &self,
+        id: FuncId,
+        func: &mut cranelift::codegen::ir::Function,
+    ) -> cranelift::codegen::ir::FuncRef {
+        use cranelift::codegen::ir;
+        let (signature, colocated) = &self.functions[&id];
+        let signature = func.import_signature(signature.clone());
+        let name = func.declare_imported_user_function(ir::UserExternalName {
+            namespace: 0,
+            index: id.as_u32(),
+        });
+        func.import_function(ir::ExtFuncData {
+            name: ir::ExternalName::user(name),
+            signature,
+            colocated: *colocated,
+        })
+    }
+
+    fn declare_data_in_func(
+        &self,
+        id: DataId,
+        func: &mut cranelift::codegen::ir::Function,
+    ) -> cranelift::codegen::ir::GlobalValue {
+        use cranelift::codegen::ir;
+        let colocated = self.data[&id];
+        let name = func.declare_imported_user_function(ir::UserExternalName {
+            namespace: 1,
+            index: id.as_u32(),
+        });
+        func.create_global_value(ir::GlobalValueData::Symbol {
+            name: ir::ExternalName::user(name),
+            offset: ir::immediates::Imm64::new(0),
+            colocated,
+            tls: false,
+        })
+    }
+}
+
 struct Generator {
     module: ObjectModule,
+    decls: Decls,
     functions: HashMap<String, FuncId>,
     return_types: HashMap<String, Type>,
     strings: HashMap<String, DataId>,
@@ -77,8 +139,15 @@ impl Generator {
             "frost_module",
             cranelift_module::default_libcall_names(),
         )?;
+        let module = ObjectModule::new(builder);
+        let call_conv = module.isa().default_call_conv();
         Ok(Generator {
-            module: ObjectModule::new(builder),
+            module,
+            decls: Decls {
+                call_conv,
+                functions: HashMap::new(),
+                data: HashMap::new(),
+            },
             functions: HashMap::new(),
             return_types: HashMap::new(),
             strings: HashMap::new(),
@@ -105,6 +174,7 @@ impl Generator {
             bytes.push(0);
             description.define(bytes.into_boxed_slice());
             self.module.define_data(data_id, &description)?;
+            self.decls.data.insert(data_id, true);
             self.strings.insert(text.to_string(), data_id);
             Ok(())
         })
@@ -113,7 +183,7 @@ impl Generator {
     fn declare_functions(&mut self, module: &IrModule) -> Result<()> {
         let pointer_type = self.pointer_type;
         for external in &module.externs {
-            let mut signature = self.module.make_signature();
+            let mut signature = self.decls.make_signature();
             for parameter in &external.params {
                 signature.params.push(AbiParam::new(param_abi_type(
                     pointer_type,
@@ -131,6 +201,7 @@ impl Generator {
                 Linkage::Import,
                 &signature,
             )?;
+            self.decls.functions.insert(func_id, (signature, false));
             self.functions.insert(external.name.clone(), func_id);
             self.return_types
                 .insert(external.name.clone(), external.return_type.clone());
@@ -143,13 +214,14 @@ impl Generator {
                 Linkage::Export,
                 &signature,
             )?;
+            self.decls.functions.insert(func_id, (signature, true));
             self.functions.insert(function.name.clone(), func_id);
             self.return_types
                 .insert(function.name.clone(), function.return_type.clone());
         }
 
         if !self.functions.contains_key("memcpy") {
-            let mut signature = self.module.make_signature();
+            let mut signature = self.decls.make_signature();
             signature.params.push(AbiParam::new(pointer_type));
             signature.params.push(AbiParam::new(pointer_type));
             signature.params.push(AbiParam::new(pointer_type));
@@ -159,6 +231,7 @@ impl Generator {
                 Linkage::Import,
                 &signature,
             )?;
+            self.decls.functions.insert(func_id, (signature, false));
             self.functions.insert("memcpy".to_string(), func_id);
         }
 
@@ -166,7 +239,7 @@ impl Generator {
             if self.functions.contains_key(name) {
                 continue;
             }
-            let mut signature = self.module.make_signature();
+            let mut signature = self.decls.make_signature();
             signature.params.push(AbiParam::new(types::I64));
             signature.params.push(AbiParam::new(types::I64));
             let func_id = self.module.declare_function(
@@ -174,6 +247,7 @@ impl Generator {
                 Linkage::Import,
                 &signature,
             )?;
+            self.decls.functions.insert(func_id, (signature, false));
             self.functions.insert(name.to_string(), func_id);
         }
 
@@ -197,7 +271,7 @@ impl Generator {
         function: &IrFunction,
     ) -> Result<cranelift::codegen::ir::Signature> {
         let pointer_type = self.pointer_type;
-        let mut signature = self.module.make_signature();
+        let mut signature = self.decls.make_signature();
         for index in 0..function.param_count {
             signature.params.push(AbiParam::new(param_abi_type(
                 pointer_type,
@@ -277,7 +351,7 @@ impl Generator {
                 let size =
                     builder.ins().iconst(pointer_type, local.size as i64);
                 let memcpy_ref =
-                    self.module.declare_func_in_func(memcpy, builder.func);
+                    self.decls.declare_func_in_func(memcpy, builder.func);
                 builder.ins().call(memcpy_ref, &[destination, *value, size]);
             } else if let Some(slot) = slots.get(&index) {
                 builder.ins().stack_store(*value, *slot, 0);
@@ -293,7 +367,7 @@ impl Generator {
 
         {
             let mut translator = Translator {
-                module: &mut self.module,
+                decls: &self.decls,
                 functions: &self.functions,
                 strings: &self.strings,
                 slots: &slots,
@@ -365,7 +439,7 @@ fn clif_type(pointer_type: types::Type, ty: &Type) -> Result<types::Type> {
 }
 
 struct Translator<'a, 'b> {
-    module: &'a mut ObjectModule,
+    decls: &'a Decls,
     functions: &'a HashMap<String, FuncId>,
     strings: &'a HashMap<String, DataId>,
     slots: &'a HashMap<usize, StackSlot>,
@@ -389,7 +463,7 @@ impl Translator<'_, '_> {
             self.builder.ins().iconst(self.pointer_type, size as i64);
         let memcpy = self.functions["memcpy"];
         let memcpy_ref =
-            self.module.declare_func_in_func(memcpy, self.builder.func);
+            self.decls.declare_func_in_func(memcpy, self.builder.func);
         self.builder
             .ins()
             .call(memcpy_ref, &[destination, source, size_value]);
@@ -573,7 +647,7 @@ impl Translator<'_, '_> {
                     );
                 };
                 let func_ref = self
-                    .module
+                    .decls
                     .declare_func_in_func(*func_id, self.builder.func);
                 Ok(self.builder.ins().func_addr(self.pointer_type, func_ref))
             }
@@ -729,7 +803,7 @@ impl Translator<'_, '_> {
             bail!("native backend: call to undeclared function '{function}'");
         };
         let func_ref = self
-            .module
+            .decls
             .declare_func_in_func(*func_id, self.builder.func);
         let mut argument_values = Vec::with_capacity(arguments.len());
         for argument in arguments {
@@ -746,7 +820,7 @@ impl Translator<'_, '_> {
         parameter_types: &[Type],
         return_type: &Type,
     ) -> Result<Vec<Value>> {
-        let mut signature = self.module.make_signature();
+        let mut signature = self.decls.make_signature();
         for parameter in parameter_types {
             signature.params.push(AbiParam::new(param_abi_type(
                 self.pointer_type,
@@ -783,7 +857,7 @@ impl Translator<'_, '_> {
             bail!("native backend: call to undeclared function '{function}'");
         };
         let func_ref = self
-            .module
+            .decls
             .declare_func_in_func(*func_id, self.builder.func);
         let mut argument_values = Vec::with_capacity(arguments.len() + 1);
         for argument in arguments {
@@ -891,7 +965,7 @@ impl Translator<'_, '_> {
             IrConstant::CString(text) => {
                 let data_id = self.strings[text];
                 let local = self
-                    .module
+                    .decls
                     .declare_data_in_func(data_id, self.builder.func);
                 Ok(self.builder.ins().symbol_value(self.pointer_type, local))
             }
