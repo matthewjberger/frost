@@ -78,7 +78,9 @@ Second-order levers, worth doing but small next to the above:
 
 2. Parse each generic template to AST once and substitute types per
    instantiation. the self-hosted compiler re-lexes and re-parses the template for every
-   instance, which is wasted work that grows with instantiation count.
+   instance, which is wasted work that grows with instantiation count. This got
+   more valuable once concrete return types were computed for both backends,
+   since the templates are now re-parsed three times over rather than twice.
 3. Parallelize per-function type checking and codegen. The type system is local
    and signature-based, so functions are independent once signatures are
    collected.
@@ -224,8 +226,16 @@ its output. In dependency order, what is done and what remains:
    native backend; it now runs before either backend, so a call answers with it
    everywhere.
 
-   Left: `export` and the private-name mangling that goes with it. Every
-   top-level name is visible across imports today.
+   `export a, b` lists what a file offers. A top-level name not listed is the
+   file's own, so two modules may each keep one of the same name and neither
+   sees the other's.
+
+   Visibility is settled where a name is interned rather than by renaming what
+   a module keeps private. A declaration's own offset says which file wrote it,
+   so nothing has to carry an owner, and a lookup matches a name only when the
+   two are in the same file or the declaring file exported it. A program built
+   from one file has one module, so the first comparison answers yes and this
+   costs nothing.
 
 Param modes are already done: the self-hosted compiler lowers `mut`/`move`/read to pointers and
 inserts the borrow at call sites.
