@@ -523,7 +523,6 @@ impl MoveChecker<'_> {
             }
             Expression::Call(callee, arguments) => {
                 self.visit(callee, false)?;
-                check_borrow_exclusivity(arguments)?;
                 if let Expression::Identifier(name) = callee.as_ref()
                     && let Some(borrows) = builtin_borrows_first_argument(name)
                 {
@@ -536,6 +535,7 @@ impl MoveChecker<'_> {
                     Expression::Identifier(name) => self.param_types.get(name),
                     _ => None,
                 };
+                check_borrow_exclusivity(arguments, param_types)?;
                 for (index, argument) in arguments.iter().enumerate() {
                     let borrows = param_types
                         .and_then(|types| types.get(index))
@@ -588,10 +588,18 @@ impl MoveChecker<'_> {
     }
 }
 
-fn check_borrow_exclusivity(arguments: &[Expression]) -> Result<()> {
+fn check_borrow_exclusivity(
+    arguments: &[Expression],
+    param_types: Option<&Vec<Option<Type>>>,
+) -> Result<()> {
     let mut mutable: Vec<&str> = Vec::new();
     let mut shared: Vec<&str> = Vec::new();
-    for argument in arguments {
+    for (index, argument) in arguments.iter().enumerate() {
+        // An explicit borrow, or a bare place auto-borrowed for a `read`/`mut`
+        // parameter. A `mut` parameter borrows exclusively, a `read` shares.
+        let mode = param_types
+            .and_then(|types| types.get(index))
+            .and_then(|ty| ty.as_ref());
         match argument {
             Expression::BorrowMut(inner) => {
                 if let Expression::Identifier(name) = &**inner {
@@ -603,6 +611,11 @@ fn check_borrow_exclusivity(arguments: &[Expression]) -> Result<()> {
                     shared.push(name);
                 }
             }
+            Expression::Identifier(name) => match mode {
+                Some(Type::RefMut(_)) => mutable.push(name),
+                Some(Type::Ref(_)) => shared.push(name),
+                _ => {}
+            },
             _ => {}
         }
     }
