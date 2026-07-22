@@ -51,11 +51,24 @@ impl<T: Display> Display for Spanned<T> {
     }
 }
 
+// How a parameter takes its argument. `read` (the default) is a shared borrow,
+// `mut` an exclusive borrow, `move` takes ownership. These are the surface; a
+// later pass turns them into the reference types the rest of the compiler
+// already handles and inserts the borrows at call sites.
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
+pub enum ParamMode {
+    #[default]
+    Read,
+    Write,
+    Move,
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct Parameter {
     pub name: Identifier,
     pub type_annotation: Option<Type>,
     pub mutable: bool,
+    pub mode: ParamMode,
 }
 
 impl Display for Parameter {
@@ -1356,6 +1369,7 @@ impl<'a> Parser<'a> {
                     name: param_name,
                     type_annotation: Some(param_type),
                     mutable: false,
+                    mode: ParamMode::Read,
                 });
                 if matches!(self.peek_nth(0), Token::Comma) {
                     self.read_token();
@@ -1941,11 +1955,16 @@ impl<'a> Parser<'a> {
                 bail!("Unexpected end of input in parameter list");
             }
 
-            let mutable = if matches!(self.peek_nth(0), Token::Mut) {
-                self.read_token();
-                true
-            } else {
-                false
+            let mode = match self.peek_nth(0) {
+                Token::Mut => {
+                    self.read_token();
+                    ParamMode::Write
+                }
+                Token::Move => {
+                    self.read_token();
+                    ParamMode::Move
+                }
+                _ => ParamMode::Read,
             };
 
             if matches!(self.peek_nth(0), Token::Dollar) {
@@ -1966,6 +1985,7 @@ impl<'a> Parser<'a> {
                     name: name.clone(),
                     type_annotation: Some(Type::TypeParam(name)),
                     mutable: false,
+                    mode: ParamMode::Read,
                 });
             } else if let Token::Identifier(name) = self.peek_nth(0) {
                 let name = name.to_string();
@@ -1982,7 +2002,8 @@ impl<'a> Parser<'a> {
                 parameters.push(Parameter {
                     name,
                     type_annotation,
-                    mutable,
+                    mutable: false,
+                    mode,
                 });
             } else {
                 bail!(
@@ -2267,11 +2288,16 @@ impl<'a> Parser<'a> {
                 bail!("Unexpected end of input in parameter list");
             }
 
-            let mutable = if matches!(self.peek_nth(0), Token::Mut) {
-                self.read_token();
-                true
-            } else {
-                false
+            let mode = match self.peek_nth(0) {
+                Token::Mut => {
+                    self.read_token();
+                    ParamMode::Write
+                }
+                Token::Move => {
+                    self.read_token();
+                    ParamMode::Move
+                }
+                _ => ParamMode::Read,
             };
 
             if matches!(self.peek_nth(0), Token::Dollar) {
@@ -2292,6 +2318,7 @@ impl<'a> Parser<'a> {
                     name: name.clone(),
                     type_annotation: Some(Type::TypeParam(name)),
                     mutable: false,
+                    mode: ParamMode::Read,
                 });
             } else if let Token::Identifier(name) = self.peek_nth(0) {
                 let name = name.to_string();
@@ -2308,7 +2335,8 @@ impl<'a> Parser<'a> {
                 parameters.push(Parameter {
                     name,
                     type_annotation,
-                    mutable,
+                    mutable: false,
+                    mode,
                 });
             } else {
                 bail!(
@@ -2587,8 +2615,8 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Expression, Literal, Parameter, Parser, Pattern, ReturnSignature,
-        Statement, StructField,
+        Expression, Literal, ParamMode, Parameter, Parser, Pattern,
+        ReturnSignature, Statement, StructField,
     };
     use crate::{Operator, lexer::Lexer, types::Type};
     use anyhow::{Result, bail};
@@ -2977,11 +3005,13 @@ mod tests {
                     name: "x".to_string(),
                     type_annotation: None,
                     mutable: false,
+                    mode: ParamMode::Read,
                 },
                 Parameter {
                     name: "y".to_string(),
                     type_annotation: None,
                     mutable: false,
+                    mode: ParamMode::Read,
                 },
             ],
             ReturnSignature::None,
@@ -3007,6 +3037,7 @@ mod tests {
                     name: "x".to_string(),
                     type_annotation: None,
                     mutable: false,
+                    mode: ParamMode::Read,
                 }],
             ),
             (
@@ -3016,16 +3047,19 @@ mod tests {
                         name: "x".to_string(),
                         type_annotation: None,
                         mutable: false,
+                        mode: ParamMode::Read,
                     },
                     Parameter {
                         name: "y".to_string(),
                         type_annotation: None,
                         mutable: false,
+                        mode: ParamMode::Read,
                     },
                     Parameter {
                         name: "z".to_string(),
                         type_annotation: None,
                         mutable: false,
+                        mode: ParamMode::Read,
                     },
                 ],
             ),
