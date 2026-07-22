@@ -133,7 +133,7 @@ fn main() -> Result<()> {
     let mut statements = resolved.statements;
     let linear_types = resolved.linear_types;
     let tests = resolved.tests;
-    lower_failure_sets(&mut statements);
+    lower_failure_sets(&mut statements).context("Failure set error")?;
     lower_param_modes(&mut statements);
     check_ownership(&statements, &linear_types).context("Ownership error")?;
 

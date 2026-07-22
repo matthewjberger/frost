@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use anyhow::{Result, bail};
+
 use crate::lexer::Position;
 use crate::parser::{
     Block, EnumVariant, Expression, Pattern, Program, ReturnSignature, Spanned,
@@ -29,7 +31,7 @@ fn spanned(statement: Statement) -> Spanned<Statement> {
     }
 }
 
-pub fn lower_failure_sets(program: &mut Program) {
+pub fn lower_failure_sets(program: &mut Program) -> Result<()> {
     let mut lowerer = Lowerer {
         results: HashMap::new(),
         enums: Vec::new(),
@@ -50,17 +52,23 @@ pub fn lower_failure_sets(program: &mut Program) {
         }
     }
 
-    // Second pass: rewrite bodies and return signatures.
+    // Second pass: rewrite bodies and return signatures. A `?` in a function
+    // that declares no failure set has nowhere to propagate to, so reject it.
     for statement in program.iter_mut() {
         if let Statement::Constant(
             name,
             Expression::Function(_, sig, body) | Expression::Proc(_, sig, body),
         ) = &mut statement.node
-            && let ReturnSignature::Fallible(_, error) = sig.clone()
         {
-            let result = lowerer.fallible.get(name).unwrap().clone();
-            *sig = ReturnSignature::Single(Type::Enum(result.clone()));
-            lowerer.rewrite_block(body, &result, &error);
+            if let ReturnSignature::Fallible(_, error) = sig.clone() {
+                let result = lowerer.fallible.get(name).unwrap().clone();
+                *sig = ReturnSignature::Single(Type::Enum(result.clone()));
+                lowerer.rewrite_block(body, &result, &error);
+            } else if block_has_try(body) {
+                bail!(
+                    "the `?` operator is only allowed in a function with a failure set; '{name}' must declare `-> T ! E`"
+                );
+            }
         }
     }
 
@@ -68,6 +76,67 @@ pub fn lower_failure_sets(program: &mut Program) {
     let mut synthesized = std::mem::take(&mut lowerer.enums);
     synthesized.append(program);
     *program = synthesized;
+    Ok(())
+}
+
+fn block_has_try(block: &Block) -> bool {
+    block
+        .iter()
+        .any(|statement| statement_has_try(&statement.node))
+}
+
+fn statement_has_try(statement: &Statement) -> bool {
+    match statement {
+        Statement::Return(value)
+        | Statement::Let { value, .. }
+        | Statement::Constant(_, value)
+        | Statement::Expression(value) => expression_has_try(value),
+        Statement::Assignment(place, value) => {
+            expression_has_try(place) || expression_has_try(value)
+        }
+        Statement::Defer(inner) => statement_has_try(inner),
+        Statement::While(condition, body) => {
+            expression_has_try(condition) || block_has_try(body)
+        }
+        Statement::For(_, iterable, body) => {
+            expression_has_try(iterable) || block_has_try(body)
+        }
+        _ => false,
+    }
+}
+
+fn expression_has_try(expression: &Expression) -> bool {
+    match expression {
+        Expression::Try(_) => true,
+        Expression::Prefix(_, inner)
+        | Expression::AddressOf(inner)
+        | Expression::Borrow(inner)
+        | Expression::BorrowMut(inner)
+        | Expression::Dereference(inner)
+        | Expression::FieldAccess(inner, _) => expression_has_try(inner),
+        Expression::Infix(left, _, right) | Expression::Index(left, right) => {
+            expression_has_try(left) || expression_has_try(right)
+        }
+        Expression::Call(callee, arguments) => {
+            expression_has_try(callee)
+                || arguments.iter().any(expression_has_try)
+        }
+        Expression::If(condition, then_block, else_block) => {
+            expression_has_try(condition)
+                || block_has_try(then_block)
+                || else_block.as_ref().is_some_and(block_has_try)
+        }
+        Expression::StructInit(_, fields)
+        | Expression::EnumVariantInit(_, _, fields) => {
+            fields.iter().any(|(_, value)| expression_has_try(value))
+        }
+        Expression::Switch(scrutinee, cases) => {
+            expression_has_try(scrutinee)
+                || cases.iter().any(|case| block_has_try(&case.body))
+        }
+        Expression::Tuple(items) => items.iter().any(expression_has_try),
+        _ => false,
+    }
 }
 
 impl Lowerer {
@@ -337,9 +406,20 @@ mod tests {
         let mut program = parse(source);
         let before = format!("{:?}", program);
         assert!(before.contains("Fallible"), "parsed sig: {before}");
-        lower_failure_sets(&mut program);
+        lower_failure_sets(&mut program).unwrap();
         let after = format!("{:?}", program);
         assert!(after.contains("__Result_0"), "after: {after}");
         assert!(!after.contains("Fallible"), "after still fallible: {after}");
+    }
+
+    #[test]
+    fn rejects_try_without_a_failure_set() {
+        let source = "src :: fn() -> i64 ! E { return 1 }\nuse_it :: fn() -> i64 { src()? }\n";
+        let mut program = parse(source);
+        let error = lower_failure_sets(&mut program).unwrap_err();
+        assert!(
+            error.to_string().contains("failure set"),
+            "unexpected error: {error}"
+        );
     }
 }
