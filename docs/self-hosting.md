@@ -117,10 +117,28 @@ compiler catch type errors. In dependency order:
    check against, and an auto-borrowed argument is a value whose address is taken
    at the call, so it answers to the pointee rather than the pointer.
 
-   Left: statement-level checks (assignment types), and the scope tracking is
-   emit-time rather than a separate semantic pass.
-2. **Ownership and linearity.** Linear resources consumed exactly once, the move
-   and borrow rules. The design's safety core, entirely absent from minifrost.
+   - Assignment types, against the place.
+
+   Left: the scope tracking is emit-time rather than a separate semantic pass,
+   which is enough for these checks but would need reworking for flow-sensitive
+   ones.
+
+2. **Ownership and linearity.** Done, and also free.
+
+   - Use after move. A struct handed to a parameter that does not borrow is
+     moved out of the caller, so reading it afterwards reads a value that was
+     given away.
+   - Linear types. `linear struct` marks a resource; `is_linear` is recorded on
+     the definition, and at the end of each body every linear value must have
+     been handed on, by being returned or passed to a parameter that takes
+     ownership. Together with the move check this is linearity proper, consumed
+     exactly once: never consumed is a leak, consumed twice is a use after move.
+
+   Note the shape of a real consumer. A read parameter of struct type borrows,
+   so it does not consume; consuming takes `move`, as in
+   `close :: extern fn(move f: File)`. A function that takes a linear value by
+   `move` and only reads a field out of it is correctly rejected, because the
+   resource dies there.
 3. **Native backend.** The speed payoff above, unblocked by (1).
 4. **Failure sets, allocation sources, regions.** `-> T ! E` with `?`,
    `uses`/`with`, and the arena escape check. These reuse minifrost's existing
