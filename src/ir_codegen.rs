@@ -25,36 +25,142 @@ fn timings_wanted() -> bool {
 pub fn compile_ir_to_object(module: &IrModule) -> Result<Vec<u8>> {
     let report = timings_wanted();
     let started = std::time::Instant::now();
-    let mut generator = Generator::new()?;
-    generator.declare_strings(module)?;
-    generator.declare_functions(module)?;
-    // One context and one builder context for the whole module. Cranelift is
-    // built to have these reused, and a program that specializes a generic
-    // thousands of times is thousands of functions, each of which would
-    // otherwise pay for a fresh set of arenas.
-    let mut context = generator.module.make_context();
-    let mut builder_context = FunctionBuilderContext::new();
-    for function in &module.functions {
-        generator.define_function(
-            function,
-            &mut context,
-            &mut builder_context,
+    let (mut object, mut generator) = Generator::new()?;
+    generator.declare_strings(&mut object, module)?;
+    generator.declare_functions(&mut object, module)?;
+
+    // Code generation is nearly all of the backend's time, it is per function,
+    // and the inputs are independent once every symbol is declared. So it runs
+    // on as many threads as the machine has, and only the defining is serial,
+    // because the object is one mutable thing.
+    let generator = &generator;
+    let isa = object.isa();
+    let threads = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        .min(module.functions.len().max(1));
+    let per_thread = module.functions.len().div_ceil(threads.max(1));
+    let mut compiled: Vec<Compiled> =
+        Vec::with_capacity(module.functions.len());
+
+    if threads <= 1 || per_thread == 0 {
+        let mut context = cranelift::codegen::Context::new();
+        let mut builder_context = FunctionBuilderContext::new();
+        for function in &module.functions {
+            compiled.push(compile_one(
+                generator,
+                isa,
+                function,
+                &mut context,
+                &mut builder_context,
+            )?);
+        }
+    } else {
+        let chunks: Vec<&[IrFunction]> =
+            module.functions.chunks(per_thread).collect();
+        let results: Vec<Result<Vec<Compiled>>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = chunks
+                .into_iter()
+                .map(|chunk| {
+                    scope.spawn(move || {
+                        let mut context = cranelift::codegen::Context::new();
+                        let mut builder_context = FunctionBuilderContext::new();
+                        let mut out = Vec::with_capacity(chunk.len());
+                        for function in chunk {
+                            out.push(compile_one(
+                                generator,
+                                isa,
+                                function,
+                                &mut context,
+                                &mut builder_context,
+                            )?);
+                        }
+                        Ok(out)
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| match handle.join() {
+                    Ok(result) => result,
+                    Err(_) => bail!(
+                        "native backend: a code generation thread panicked"
+                    ),
+                })
+                .collect()
+        });
+        for result in results {
+            compiled.extend(result?);
+        }
+    }
+
+    let generated = started.elapsed();
+    for unit in &compiled {
+        object.define_function_bytes(
+            unit.id,
+            &unit.function,
+            unit.alignment as u64,
+            &unit.bytes,
+            &unit.relocations,
         )?;
     }
-    let generated = started.elapsed();
-    let object = generator.module.finish();
-    let bytes = object.emit()?;
+    let defined = started.elapsed();
+    let product = object.finish();
+    let bytes = product.emit()?;
     if report {
         eprintln!(
-            "frost: {} functions, code generation {:.0} ms, object emission {:.0} ms",
+            "frost: {} functions on {threads} thread(s), code generation {:.0} ms, defining {:.0} ms, object emission {:.0} ms",
             module.functions.len(),
             generated.as_secs_f64() * 1000.0,
-            (started.elapsed() - generated).as_secs_f64() * 1000.0
+            (defined - generated).as_secs_f64() * 1000.0,
+            (started.elapsed() - defined).as_secs_f64() * 1000.0
         );
     }
     Ok(bytes)
 }
 
+// One function's finished machine code, held by value so nothing borrows the
+// context it was compiled in once the thread that owned it is gone.
+struct Compiled {
+    id: FuncId,
+    function: cranelift::codegen::ir::Function,
+    alignment: u32,
+    bytes: Vec<u8>,
+    relocations: Vec<cranelift::codegen::FinalizedMachReloc>,
+}
+
+fn compile_one(
+    generator: &Generator,
+    isa: &dyn cranelift::codegen::isa::TargetIsa,
+    function: &IrFunction,
+    context: &mut cranelift::codegen::Context,
+    builder_context: &mut FunctionBuilderContext,
+) -> Result<Compiled> {
+    context.clear();
+    let id = generator.build_function(function, context, builder_context)?;
+    let (alignment, bytes, relocations) = {
+        let code = context
+            .compile(
+                isa,
+                &mut cranelift::codegen::control::ControlPlane::default(),
+            )
+            .map_err(|error| {
+                anyhow::anyhow!("native backend: {:?}", error.inner)
+            })?;
+        (
+            code.buffer.alignment,
+            code.buffer.data().to_vec(),
+            code.buffer.relocs().to_vec(),
+        )
+    };
+    Ok(Compiled {
+        id,
+        function: context.func.clone(),
+        alignment,
+        bytes,
+        relocations,
+    })
+}
 
 // What building a function's body needs to know about the rest of the module:
 // the call convention and, for anything it references, that symbol's signature
@@ -117,7 +223,6 @@ impl Decls {
 }
 
 struct Generator {
-    module: ObjectModule,
     decls: Decls,
     functions: HashMap<String, FuncId>,
     return_types: HashMap<String, Type>,
@@ -126,7 +231,7 @@ struct Generator {
 }
 
 impl Generator {
-    fn new() -> Result<Self> {
+    fn new() -> Result<(ObjectModule, Self)> {
         let mut flag_builder = settings::builder();
         flag_builder.set("opt_level", "speed")?;
         flag_builder.set("is_pic", "true")?;
@@ -141,21 +246,27 @@ impl Generator {
         )?;
         let module = ObjectModule::new(builder);
         let call_conv = module.isa().default_call_conv();
-        Ok(Generator {
+        Ok((
             module,
-            decls: Decls {
-                call_conv,
+            Generator {
+                decls: Decls {
+                    call_conv,
+                    functions: HashMap::new(),
+                    data: HashMap::new(),
+                },
                 functions: HashMap::new(),
-                data: HashMap::new(),
+                return_types: HashMap::new(),
+                strings: HashMap::new(),
+                pointer_type,
             },
-            functions: HashMap::new(),
-            return_types: HashMap::new(),
-            strings: HashMap::new(),
-            pointer_type,
-        })
+        ))
     }
 
-    fn declare_strings(&mut self, module: &IrModule) -> Result<()> {
+    fn declare_strings(
+        &mut self,
+        object: &mut ObjectModule,
+        module: &IrModule,
+    ) -> Result<()> {
         let mut counter = 0;
         collect_strings(module, &mut |text| {
             if self.strings.contains_key(text) {
@@ -163,24 +274,24 @@ impl Generator {
             }
             let name = format!(".str.{counter}");
             counter += 1;
-            let data_id = self.module.declare_data(
-                &name,
-                Linkage::Local,
-                false,
-                false,
-            )?;
+            let data_id =
+                object.declare_data(&name, Linkage::Local, false, false)?;
             let mut description = DataDescription::new();
             let mut bytes = text.as_bytes().to_vec();
             bytes.push(0);
             description.define(bytes.into_boxed_slice());
-            self.module.define_data(data_id, &description)?;
+            object.define_data(data_id, &description)?;
             self.decls.data.insert(data_id, true);
             self.strings.insert(text.to_string(), data_id);
             Ok(())
         })
     }
 
-    fn declare_functions(&mut self, module: &IrModule) -> Result<()> {
+    fn declare_functions(
+        &mut self,
+        object: &mut ObjectModule,
+        module: &IrModule,
+    ) -> Result<()> {
         let pointer_type = self.pointer_type;
         for external in &module.externs {
             let mut signature = self.decls.make_signature();
@@ -196,7 +307,7 @@ impl Generator {
                     &external.return_type,
                 )?));
             }
-            let func_id = self.module.declare_function(
+            let func_id = object.declare_function(
                 &external.name,
                 Linkage::Import,
                 &signature,
@@ -209,7 +320,7 @@ impl Generator {
 
         for function in &module.functions {
             let signature = self.build_signature(function)?;
-            let func_id = self.module.declare_function(
+            let func_id = object.declare_function(
                 &function.name,
                 Linkage::Export,
                 &signature,
@@ -226,7 +337,7 @@ impl Generator {
             signature.params.push(AbiParam::new(pointer_type));
             signature.params.push(AbiParam::new(pointer_type));
             signature.returns.push(AbiParam::new(pointer_type));
-            let func_id = self.module.declare_function(
+            let func_id = object.declare_function(
                 "memcpy",
                 Linkage::Import,
                 &signature,
@@ -242,11 +353,8 @@ impl Generator {
             let mut signature = self.decls.make_signature();
             signature.params.push(AbiParam::new(types::I64));
             signature.params.push(AbiParam::new(types::I64));
-            let func_id = self.module.declare_function(
-                name,
-                Linkage::Import,
-                &signature,
-            )?;
+            let func_id =
+                object.declare_function(name, Linkage::Import, &signature)?;
             self.decls.functions.insert(func_id, (signature, false));
             self.functions.insert(name.to_string(), func_id);
         }
@@ -292,12 +400,14 @@ impl Generator {
         Ok(signature)
     }
 
-    fn define_function(
-        &mut self,
+    // Build a function's body into the given context, touching nothing shared.
+    // This is the part that runs on every thread at once.
+    fn build_function(
+        &self,
         function: &IrFunction,
         context: &mut cranelift::codegen::Context,
         builder_context: &mut FunctionBuilderContext,
-    ) -> Result<()> {
+    ) -> Result<FuncId> {
         let func_id = self.functions[&function.name];
         let pointer_type = self.pointer_type;
         let returns_aggregate = self.returns_aggregate(function);
@@ -393,10 +503,7 @@ impl Generator {
 
         builder.seal_all_blocks();
         builder.finalize();
-
-        self.module.define_function(func_id, context)?;
-        self.module.clear_context(context);
-        Ok(())
+        Ok(func_id)
     }
 }
 
@@ -802,9 +909,8 @@ impl Translator<'_, '_> {
         let Some(func_id) = self.functions.get(function) else {
             bail!("native backend: call to undeclared function '{function}'");
         };
-        let func_ref = self
-            .decls
-            .declare_func_in_func(*func_id, self.builder.func);
+        let func_ref =
+            self.decls.declare_func_in_func(*func_id, self.builder.func);
         let mut argument_values = Vec::with_capacity(arguments.len());
         for argument in arguments {
             argument_values.push(self.operand(argument)?);
@@ -856,9 +962,8 @@ impl Translator<'_, '_> {
         let Some(func_id) = self.functions.get(function) else {
             bail!("native backend: call to undeclared function '{function}'");
         };
-        let func_ref = self
-            .decls
-            .declare_func_in_func(*func_id, self.builder.func);
+        let func_ref =
+            self.decls.declare_func_in_func(*func_id, self.builder.func);
         let mut argument_values = Vec::with_capacity(arguments.len() + 1);
         for argument in arguments {
             argument_values.push(self.operand(argument)?);
@@ -964,9 +1069,8 @@ impl Translator<'_, '_> {
             }
             IrConstant::CString(text) => {
                 let data_id = self.strings[text];
-                let local = self
-                    .decls
-                    .declare_data_in_func(data_id, self.builder.func);
+                let local =
+                    self.decls.declare_data_in_func(data_id, self.builder.func);
                 Ok(self.builder.ins().symbol_value(self.pointer_type, local))
             }
             IrConstant::Unit => {
