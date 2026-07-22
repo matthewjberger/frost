@@ -45,15 +45,33 @@ So there is one lever that matters:
 
 On the native path the C compiler is already out of the per-build loop. The
 runtime is compiled once into an object cached in the temp directory, keyed by a
-hash of its source and the tool that built it, and linked thereafter. A small
-program builds in 0.307 s cold and 0.104 s warm. What remains external is the
-linker, which the build invokes to turn the object into an executable.
+hash of its source and the tool that built it, and linked thereafter.
 
-To remove that too, in increasing order of effort: port the runtime itself to
-Frost (the pool memory model spike showed this works, and `--freestanding`
-already links with no libc), then emit the executable directly, PE on Windows and
-ELF on Linux, instead of calling a linker. That is the last external dependency
-and it is what Jai does.
+Where a build's time goes now:
+
+| stage | small program | minifrost, 2579 lines |
+| --- | --- | --- |
+| frost compile only (`--native`) | 0.033 s | 0.045 s |
+| full build including link | 0.099 s | 0.126 s |
+
+So the compiler's own work is a third of the build and the rest is the linker
+invocation. That remainder is mostly fixed process and driver overhead rather
+than linking work, which means it barely grows with program size and is already
+a small fraction of a large build.
+
+Measured and rejected: passing `-fuse-ld=lld` to the driver. lld is present on
+this machine and made no difference (0.113 s against 0.106 s, inside noise),
+confirming the cost is driver overhead, not the link itself. Do not re-try this
+expecting a win.
+
+The only way to remove that last cost is to stop invoking an external tool at
+all, which means emitting the executable directly, PE on Windows and ELF on
+Linux. That is a mini-linker (symbol resolution, relocations, imports) and is
+what Jai does. Worth doing for self-containment more than for speed. Porting the
+runtime itself to Frost is the other half of going C-free; the pool model already
+exists in Frost in `examples/native/native_pool.frost`, and `--freestanding`
+already links with no libc, but it needs a prelude mechanism so a Frost-written
+runtime is compiled into every program.
 
 Second-order levers, worth doing but small next to the above:
 
