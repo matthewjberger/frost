@@ -727,6 +727,76 @@ fn bootstrap_minifrost_self_hosts() {
     assert_eq!(gen1_c, gen2_c, "self-hosting is not a fixpoint");
 }
 
+// Build minifrost, feed it a program, and return what it wrote to stderr after
+// rejecting it. minifrost answers for its own errors rather than deferring them
+// to whatever compiles its output.
+fn minifrost_rejects(name: &str, source: &str) -> Option<String> {
+    if !linker_available() {
+        return None;
+    }
+    let directory = std::env::temp_dir();
+    let compiler = directory
+        .join(format!("frost_mfck_{name}{}", std::env::consts::EXE_SUFFIX));
+    let compiler_source = directory.join(format!("frost_mfck_{name}.frost"));
+    std::fs::write(&compiler_source, MINIFROST).unwrap();
+
+    let frost = env!("CARGO_BIN_EXE_frost");
+    let build = Command::new(frost)
+        .arg("--link")
+        .arg("-o")
+        .arg(&compiler)
+        .arg(&compiler_source)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "minifrost failed to build:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let input = directory.join(format!("frost_mfck_input_{name}.frost"));
+    std::fs::write(&input, source).unwrap();
+    let run = Command::new(&compiler)
+        .env("MINIFROST_INPUT", &input)
+        .output()
+        .unwrap();
+
+    let _ = std::fs::remove_file(&compiler_source);
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&compiler);
+
+    assert!(
+        !run.status.success(),
+        "expected minifrost to reject the program"
+    );
+    Some(String::from_utf8_lossy(&run.stderr).to_string())
+}
+
+#[test]
+fn minifrost_rejects_a_call_to_an_undefined_function() {
+    let source = "main :: fn() -> i64 {\n    return no_such_fn(1)\n}\n";
+    let Some(message) = minifrost_rejects("undef", source) else {
+        return;
+    };
+    assert!(
+        message.contains("undefined function"),
+        "expected an undefined-function error, got:\n{message}"
+    );
+}
+
+#[test]
+fn minifrost_rejects_a_call_with_the_wrong_argument_count() {
+    let source = "add :: fn(a: i64, b: i64) -> i64 { a + b }\n\
+                  main :: fn() -> i64 {\n    return add(1)\n}\n";
+    let Some(message) = minifrost_rejects("arity", source) else {
+        return;
+    };
+    assert!(
+        message.contains("expects 2"),
+        "expected an argument-count error, got:\n{message}"
+    );
+}
+
 // Compile a Frost program to a native executable, run it with MINIFROST_INPUT
 // set, and return its stdout.
 fn compile_and_run_with_input(

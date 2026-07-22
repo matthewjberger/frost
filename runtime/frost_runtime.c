@@ -184,3 +184,22 @@ void pool_destroy(void *pool_ptr) {
     free(pool->free_list);
     free(pool);
 }
+
+/* Diagnostics for a Frost-written compiler. Its program output goes to stdout,
+   so errors are composed piecewise on stderr and frost_die ends the process. */
+void frost_error(const char *text) {
+    fputs(text, stderr);
+}
+
+void frost_error_src(const char *text, int64_t offset, int64_t length) {
+    fwrite(text + offset, 1, (size_t)length, stderr);
+}
+
+void frost_error_int(int64_t value) {
+    fprintf(stderr, "%lld", (long long)value);
+}
+
+void frost_die(void) {
+    fputc('\n', stderr);
+    exit(1);
+}
