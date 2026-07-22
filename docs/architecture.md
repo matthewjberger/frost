@@ -208,8 +208,22 @@ Frost is being reshaped toward a data-oriented language with:
 
 - Plain data (copy/move), **linear resources** that must be consumed exactly
   once, and generational **handles** into explicit pools.
-- Second-class references: borrows exist only as parameter modes and
-  dereference-scoped temporaries. They cannot be stored or returned.
+- **Parameter modes** rather than reference syntax: unmarked reads, `mut`
+  writes, `move` takes ownership, and the compiler inserts the borrow at the
+  call. `&`/`&mut` are not surface syntax, so a borrow has nowhere to be stored
+  and is second-class by construction (`src/param_modes.rs`).
+- **Regions** without lifetimes: a `with arena { }` block owns an arena, and a
+  raw pointer into it may not outlive the block. A function's frame is checked
+  the same way, so a pointer or slice naming a local cannot be returned
+  (`src/regions.rs`).
+- **Allocation sources**: `uses A` draws an allocation capability, threaded as
+  an implicit parameter and supplied by the `with` block that provides it
+  (`src/allocation_sources.rs`).
+- **Failure sets**: `-> T ! E` says how a function fails and `?` hands a failure
+  on, desugared to an ordinary enum and match (`src/failure_sets.rs`).
+- **Compile-time arguments**: `$T` for types, `$N` for values, and `$f` for a
+  function, so a generic algorithm calls its comparator directly rather than
+  through a pointer.
 - Free functions only, with signatures that declare their effects.
 - The typed IR as the single point where ownership, borrow, and linearity
   checking are discharged, cross-checked by three independent execution paths:

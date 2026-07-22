@@ -30,7 +30,8 @@ normative rules see [spec.md](spec.md). For a broader Rust-to-Frost guide see
 | `if x > 5 { a } else { b }` | `if (x > 5) { a } else { b }` |
 | `for i in 0..n { }` | `for i in 0..n { }` |
 | `while cond { }` | `while (cond) { }` |
-| `&x`, `&mut x` | `&x`, `&mut x` |
+| `&x`, `&mut x` | nothing: a borrow is what a parameter mode means |
+| `&T`, `&mut T` (parameter) | `x: T` (read), `mut x: T` (write) |
 | `*p` (deref) | `p^` |
 | `*const T`, `*mut T` | `^T` |
 | `fn(i64) -> i64` (fn pointer) | `fn(i64) -> i64` |

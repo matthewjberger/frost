@@ -14,13 +14,21 @@ one decision plus a small number of local rules.
 
 ## The six guarantees
 
-1. **No dangling references.** A reference can never outlive the value it points
-   at. References cannot be stored or returned, so they exist only for the
-   duration of a single call.
+1. **Nothing that borrows storage outlives it.** A borrow can never outlive the
+   value it names. Borrows exist only as parameter modes and so last exactly one
+   call, and the two things that could carry storage out of a frame are checked
+   instead of forbidden: a raw pointer formed from a local, and a slice over one,
+   may not be returned (`src/regions.rs`, the frame check). A pointer a function
+   was handed is not its frame's and passes back out freely.
+
+   The same check covers arenas. A raw pointer into an arena may not outlive the
+   `with` block that owns it, and a `uses` function may hand one back to its
+   caller, whose region checks it, but may not store one into a parameter.
 2. **No use-after-move.** A non-`Copy` value is consumed when moved. Using it
    again is a compile error.
-3. **No mutable aliasing.** Within a call, a value cannot be borrowed `&mut`
-   more than once, nor `&mut` and `&` at the same time.
+3. **No mutable aliasing.** Within a call, a value cannot be passed to two
+   `mut` parameters at once, nor to a `mut` and a read parameter at the same
+   time.
 4. **No leaked resources.** A `linear` value must be consumed exactly once. A
    live-but-unconsumed linear value at end of scope is a compile error.
 5. **No use-after-free through a stale handle.** A generational handle whose slot
@@ -29,6 +37,10 @@ one decision plus a small number of local rules.
 6. **No out-of-bounds array access.** Every array index is bounds-checked against
    the array's statically-known length. An out-of-range index aborts with a
    diagnostic rather than reading or writing past the array.
+
+What is not covered: a raw pointer is unchecked once it is out of the frame and
+region checks, which is what `^T` is for. It carries no guarantee, and a program
+that casts one with `ptr_cast` and reads through it is on its own.
 
 The first four hold statically. The fifth uses a runtime generation check that
 stays cheap (one integer compare) because the static rules keep handles honest.
