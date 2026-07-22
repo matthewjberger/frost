@@ -20,13 +20,16 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Diagnose the native self-hosting crash
         run: |
-          sudo apt-get install -y valgrind
           cargo build -r --bin frost
           ./target/release/frost --link -o /tmp/selfhosted bootstrap/frost.frost
+          cp bootstrap/frost.frost /tmp/input.frost
           export FROST_BACKEND=asm
-          export FROST_INPUT=bootstrap/frost.frost
-          valgrind --num-callers=20 /tmp/selfhosted \
-            > /tmp/out.s 2>/tmp/vg.log || true
-          head -60 /tmp/vg.log
+          export FROST_INPUT=/tmp/input.frost
+          echo "stack limit: $(ulimit -s)"
+          for i in $(seq 1 20); do
+            /tmp/selfhosted > /tmp/out.s 2>/dev/null \
+              || echo "run $i failed with status $?"
+          done
+          echo "done; last output was $(wc -l < /tmp/out.s) lines"
       - name: Run tests
         run: cargo test --verbose
