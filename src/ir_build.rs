@@ -2531,9 +2531,16 @@ impl<'a> FunctionLowering<'a> {
             );
         }
 
+        enum ArgPlan {
+            Value(IrOperand, Type),
+            Borrow(usize),
+        }
+
         let mut subst: HashMap<String, Type> = HashMap::new();
-        let mut value_operands: Vec<(IrOperand, Type)> = Vec::new();
-        for (parameter, argument) in generic.parameters.iter().zip(arguments) {
+        let mut plans: Vec<ArgPlan> = Vec::new();
+        for (index, (parameter, argument)) in
+            generic.parameters.iter().zip(arguments).enumerate()
+        {
             if is_type_parameter(parameter) {
                 let Expression::TypeValue(ty) = argument else {
                     bail!(
@@ -2543,16 +2550,54 @@ impl<'a> FunctionLowering<'a> {
                     );
                 };
                 subst.insert(parameter.name.clone(), ty.clone());
+                continue;
+            }
+            let param_ty = parameter_type(parameter);
+            // Auto-borrow: a value place passed to a `read`/`mut` reference
+            // parameter has its address taken; an argument that is already a
+            // reference is forwarded as-is. The type parameter is inferred from
+            // the pointee against the place's type.
+            if let Type::Ref(inner) | Type::RefMut(inner) = &param_ty {
+                let already_reference = matches!(
+                    argument,
+                    Expression::Borrow(_)
+                        | Expression::BorrowMut(_)
+                        | Expression::AddressOf(_)
+                ) || matches!(
+                    self.probe_type(argument),
+                    Some(Type::Ref(_) | Type::RefMut(_) | Type::Ptr(_))
+                );
+                if already_reference {
+                    let (operand, value_type) =
+                        self.lower_expression(argument, None)?;
+                    infer_subst_into(
+                        &param_ty,
+                        &value_type,
+                        &generic.type_params,
+                        &mut subst,
+                    );
+                    plans.push(ArgPlan::Value(operand, value_type));
+                } else {
+                    if let Some(place_type) = self.probe_type(argument) {
+                        infer_subst_into(
+                            inner,
+                            &place_type,
+                            &generic.type_params,
+                            &mut subst,
+                        );
+                    }
+                    plans.push(ArgPlan::Borrow(index));
+                }
             } else {
                 let (operand, value_type) =
                     self.lower_expression(argument, None)?;
                 infer_subst_into(
-                    &parameter_type(parameter),
+                    &param_ty,
                     &value_type,
                     &generic.type_params,
                     &mut subst,
                 );
-                value_operands.push((operand, value_type));
+                plans.push(ArgPlan::Value(operand, value_type));
             }
         }
 
@@ -2578,19 +2623,35 @@ impl<'a> FunctionLowering<'a> {
             subst,
         });
 
-        let mut lowered = Vec::with_capacity(value_operands.len());
-        for ((operand, value_type), target) in
-            value_operands.into_iter().zip(&value_parameter_types)
-        {
-            if needs_memory(target) {
-                let IrOperand::Local(local) = operand else {
-                    bail!(
-                        "native backend: aggregate argument to generic call is not a place"
-                    );
-                };
-                lowered.push(self.address_of_local(local, target));
-            } else {
-                lowered.push(self.coerce(operand, &value_type, target));
+        let mut lowered = Vec::with_capacity(plans.len());
+        for (plan, target) in plans.into_iter().zip(&value_parameter_types) {
+            match plan {
+                ArgPlan::Value(operand, value_type) => {
+                    if needs_memory(target) {
+                        let IrOperand::Local(local) = operand else {
+                            bail!(
+                                "native backend: aggregate argument to generic call is not a place"
+                            );
+                        };
+                        lowered.push(self.address_of_local(local, target));
+                    } else {
+                        lowered.push(self.coerce(operand, &value_type, target));
+                    }
+                }
+                ArgPlan::Borrow(index) => {
+                    let pointee = match target {
+                        Type::Ref(inner) | Type::RefMut(inner) => {
+                            (**inner).clone()
+                        }
+                        _ => target.clone(),
+                    };
+                    let address = self.aggregate_argument_address(
+                        &arguments[index],
+                        &pointee,
+                        false,
+                    )?;
+                    lowered.push(address);
+                }
             }
         }
 
