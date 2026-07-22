@@ -741,7 +741,7 @@ fn native_self_hosting_is_a_fixpoint() {
     let source = directory.join("frost_nativefix.frost");
     std::fs::write(&source, SELF_HOSTED).unwrap();
 
-    let emit_self = |exe: &PathBuf| -> String {
+    let emit_self = |exe: &PathBuf, stage: &str| -> String {
         let emit = Command::new(exe)
             .env("FROST_BACKEND", "asm")
             .env("FROST_INPUT", &source)
@@ -749,7 +749,7 @@ fn native_self_hosting_is_a_fixpoint() {
             .unwrap();
         assert!(
             emit.status.success(),
-            "the compiler failed to emit assembly for its own source ({}, {} bytes out):\n{}",
+            "the {stage} compiler failed to emit assembly for its own source ({}, {} bytes out):\n{}",
             emit.status,
             emit.stdout.len(),
             String::from_utf8_lossy(&emit.stderr)
@@ -757,7 +757,7 @@ fn native_self_hosting_is_a_fixpoint() {
         String::from_utf8_lossy(&emit.stdout).replace("\r\n", "\n")
     };
 
-    let stage1 = emit_self(&compiler);
+    let stage1 = emit_self(&compiler, "frost-built");
     assert!(
         stage1.lines().count() > 10000,
         "assembly for the compiler implausibly small ({} lines)",
@@ -783,7 +783,7 @@ fn native_self_hosting_is_a_fixpoint() {
         String::from_utf8_lossy(&assembled.stderr)
     );
 
-    let stage2 = emit_self(&stage1_exe);
+    let stage2 = emit_self(&stage1_exe, "assembly-built");
 
     let _ = std::fs::remove_file(&source);
     let _ = std::fs::remove_file(&asm_path);
