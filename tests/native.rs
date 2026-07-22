@@ -480,7 +480,7 @@ fn bootstrap_minifrost_emits_working_c() {
     };
     assert_eq!(
         output,
-        "55\n120\n55\n3\n14\n11\n4\n11\n11\n16\n100\n200\n999\n5\n42\n"
+        "55\n120\n55\n3\n14\n11\n4\n11\n11\n16\n100\n200\n999\n5\n42\n77\n"
     );
 }
 
