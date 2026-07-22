@@ -206,6 +206,7 @@ pub fn build_module(
                         .as_ref()
                         .map(|ty| substitute_type(ty, &specialization.subst)),
                     mutable: parameter.mutable,
+                    mode: parameter.mode,
                 })
                 .collect();
             let return_sig = match generic.return_sig.to_type() {
