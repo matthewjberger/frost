@@ -3,3 +3,4 @@ history.txt
 *.exe
 *.o
 bootstrap/.run_target*.s
+*.py
