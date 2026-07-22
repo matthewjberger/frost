@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{Result, bail};
 
 use crate::parser::{
-    Block, Expression, Program, ReturnKind, Statement, SwitchCase,
+    Block, Expression, Program, ReturnKind, Spanned, Statement, SwitchCase,
 };
 use crate::types::Type;
 
@@ -372,25 +372,43 @@ impl Frame {
                 }
                 Statement::Return(value) => {
                     if self.points_into_frame(value) {
-                        bail!(self.escape());
+                        bail!(self.escape("returned"));
                     }
                 }
-                Statement::Expression(value) if last => {
-                    if self.points_into_frame(value) {
-                        bail!(self.escape());
+                // Writing one into a parameter hands it to the caller just as
+                // returning it does, and the caller's frame outlives this one.
+                Statement::Assignment(place, value) => {
+                    if self.points_into_frame(value) && !self.rooted_here(place)
+                    {
+                        bail!(self.escape("stored where the call cannot see"));
                     }
                 }
-                Statement::While(_, body) | Statement::With(_, body) => {
-                    self.check(body)?
+                Statement::While(_, body)
+                | Statement::With(_, body)
+                | Statement::For(_, _, body) => self.check(body)?,
+                Statement::Defer(inner) => {
+                    let deferred = vec![Spanned::new(
+                        (**inner).clone(),
+                        statement.position,
+                    )];
+                    self.check(&deferred)?;
                 }
+                // A block used as a value answers for the whole function, so
+                // its branches are checked and, when it is the last statement,
+                // so is what each branch ends with.
                 Statement::Expression(Expression::If(
                     _,
                     consequence,
                     alternative,
                 )) => {
-                    self.check(consequence)?;
+                    self.answers_here(consequence, last)?;
                     if let Some(block) = alternative {
-                        self.check(block)?;
+                        self.answers_here(block, last)?;
+                    }
+                }
+                Statement::Expression(value) if last => {
+                    if self.points_into_frame(value) {
+                        bail!(self.escape("the call's answer"));
                     }
                 }
                 _ => {}
@@ -399,9 +417,23 @@ impl Frame {
         Ok(())
     }
 
-    fn escape(&self) -> String {
+    // A branch of a block used as a value: check it as a block, and when the
+    // block is the function's answer, check what the branch ends with too.
+    fn answers_here(&mut self, block: &Block, answers: bool) -> Result<()> {
+        self.check(block)?;
+        if answers
+            && let Some(last) = block.last()
+            && let Statement::Expression(value) = &last.node
+            && self.points_into_frame(value)
+        {
+            bail!(self.escape("the call's answer"));
+        }
+        Ok(())
+    }
+
+    fn escape(&self, how: &str) -> String {
         format!(
-            "region: '{}' answers with a pointer into its own frame; the storage it names dies when the call returns",
+            "region: a pointer into the frame of '{}' is {how}; the storage it names dies when the call returns",
             self.function
         )
     }
@@ -420,6 +452,14 @@ impl Frame {
             }
             Expression::Index(base, _) | Expression::FieldAccess(base, _) => {
                 self.points_into_frame(base)
+            }
+            // A value built around one carries it out.
+            Expression::StructInit(_, fields)
+            | Expression::EnumVariantInit(_, _, fields) => fields
+                .iter()
+                .any(|(_, value)| self.points_into_frame(value)),
+            Expression::Tuple(items) => {
+                items.iter().any(|item| self.points_into_frame(item))
             }
             // `ptr_to(x)` is how an address is written, and `ptr_cast` keeps
             // pointing where it pointed.

@@ -183,6 +183,16 @@ fn check_function_moves(
         linear,
         signatures,
         param_types,
+        compile_time: params
+            .iter()
+            .filter(|parameter| {
+                matches!(
+                    &parameter.type_annotation,
+                    Some(Type::TypeParam(name)) if name == &parameter.name
+                )
+            })
+            .map(|parameter| parameter.name.clone())
+            .collect(),
         in_defer: false,
     };
     for parameter in params {
@@ -216,6 +226,10 @@ struct MoveChecker<'a> {
     linear: &'a HashSet<String>,
     signatures: &'a Signatures,
     param_types: &'a ParamTypes,
+    // The enclosing function's compile-time parameters. A call to one of these
+    // names a function only once the generic is specialized, so nothing is
+    // known about what it does with its arguments until then.
+    compile_time: HashSet<String>,
     in_defer: bool,
 }
 
@@ -536,11 +550,18 @@ impl MoveChecker<'_> {
                     _ => None,
                 };
                 check_borrow_exclusivity(arguments, param_types)?;
-                // A callee with no signature here is a compile-time function
-                // parameter, whose target is only known once the generic is
-                // specialized. It says nothing about ownership yet, and the
-                // specialized body answers for it afterwards.
-                let known = param_types.is_some();
+                // A call to a compile-time parameter names a function only
+                // once the generic is specialized, so it says nothing about
+                // ownership yet and the specialized body answers for it
+                // afterwards. Any other unknown callee is still read as
+                // consuming, so a function pointer does not quietly stop
+                // moving what it is given.
+                let deferred = matches!(
+                    callee.as_ref(),
+                    Expression::Identifier(name)
+                        if self.compile_time.contains(name)
+                );
+                let known = !deferred;
                 for (index, argument) in arguments.iter().enumerate() {
                     let borrows = param_types
                         .and_then(|types| types.get(index))
