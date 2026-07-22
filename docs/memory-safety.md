@@ -256,8 +256,16 @@ A few honest gaps in the current implementation:
 - **Raw pointers** (`^T`) are an explicit escape hatch, used for FFI and the pool
   runtime's internals. They are `Copy` and unchecked, exactly like C pointers,
   and code that uses them takes on the corresponding responsibility. The safe
-  surface of references, handles, and linear resources is what the guarantees
-  above cover.
+  surface of borrows, handles, and linear resources is what the guarantees above
+  cover. `check_frame_escapes` narrows the hatch: a raw pointer formed from this
+  frame's own storage, including one taken with `ptr_to` or a slice over a local
+  array, cannot be returned.
+- **Callbacks are an unsafe API today**, because the only way to write one is
+  the C idiom of a function pointer plus an untyped `^u8`, which is long-lived
+  and outside every check here. The fix is designed and not built: a callback
+  becomes a compile-time function argument plus a typed context the caller moves
+  in and gets back on unregistration, with the registration linear so forgetting
+  to unregister is a compile error. See item 4 in [roadmap.md](roadmap.md).
 - The static checks run on the AST, so **integer overflow** follows the backend's
   C semantics (wrapping for unsigned, two's-complement for signed) rather than
   trapping.

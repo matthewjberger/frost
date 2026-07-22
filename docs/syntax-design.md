@@ -37,7 +37,8 @@ normative rules see [spec.md](spec.md). For a broader Rust-to-Frost guide see
 | `fn(i64) -> i64` (fn pointer) | `fn(i64) -> i64` |
 | `Box<T>` / `Rc<T>` / arena index | `Handle<T>` into a pool |
 | `impl Drop for T` | `T :: linear struct { .. }` plus a consumer |
-| generics with `<T: Trait>` | `$T` type parameters, no bounds |
+| generics with `<T: Trait>` | `$T` type parameters, unbounded |
+| a trait method a generic calls | `$f: fn(..) -> ..` compile-time parameter |
 | `foo::<u32>()` (turbofish) | `foo($u32, ..)` |
 | `extern "C" { .. }` | `name :: extern fn(..) -> ..` |
 

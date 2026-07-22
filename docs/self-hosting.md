@@ -85,54 +85,60 @@ argued, with `just bench-scaling`:
 
 | program | front end (`--emit-c`) | with Cranelift (`--native`) |
 | --- | --- | --- |
-| 907 lines | 13 ms | 23 ms |
-| 3,607 lines | 28 ms | 61 ms |
-| 14,407 lines | 81 ms | 210 ms |
-| 57,607 lines | 395 ms | 1.11 s |
-| 640 specializations | 15 ms | 45 ms |
-| 2,560 specializations | 37 ms | 190 ms |
-| 10,240 specializations | 152 ms | 1.38 s |
+| 917 lines | 24 ms | 25 ms |
+| 3,642 lines | 26 ms | 29 ms |
+| 14,532 lines | 84 ms | 94 ms |
+| 58,107 lines | 338 ms | 353 ms |
+| 640 specializations | 15 ms | 20 ms |
+| 2,560 specializations | 38 ms | 53 ms |
+| 10,240 specializations | 138 ms | 213 ms |
 
-Read the ratios rather than the absolutes, since about 10 ms of each figure is
-process startup. Four times the input costs roughly four to five times the time
-on both curves, so the pipeline is close to linear with a mild superlinear term
-that grows with function count, and that term is heavier in the backend than in
-the front end: from 2,560 to 10,240 specializations the front end grows 4.1x and
-the whole build grows 7.3x.
+Read the ratios rather than the absolutes, since about 15 ms of each figure is
+process startup. Four times the input costs roughly four times the time on both
+curves, so the pipeline is close to linear with a mild superlinear term that
+grows with function count.
 
-So the front end holds up. Parse, parameter modes, regions, ownership, IR
-lowering, type checking, monomorphization to fixpoint and C emission together
-stay near-linear because every one of them is a local pass: no traits to solve,
-no lifetimes to infer, no global inference, and the specialization worklist
-dedups through a hash set rather than a scan. 57k lines through the whole front
-end is 395 ms.
+The gap between the two columns used to be the story and is now nearly nothing:
+58k lines is 338 ms through the front end and 353 ms for the whole native build,
+about 165,000 lines per second. Code generation is 64 ms of that, because it
+runs on every core (see item 1 in [roadmap.md](roadmap.md)). Before that landed
+the same program took 1.11 s and the backend was two thirds of it.
 
-The backend is where the superlinear term lives. Reusing one `Context` and one
-`FunctionBuilderContext` across the module rather than allocating a pair per
-function, which is how Cranelift is meant to be used, measured flat, so it is not
-allocation churn on our side. It is inside code generation or symbol emission at
-high function counts.
+So the front end is now what the curve is made of. Parse, parameter modes,
+regions, ownership, IR lowering, type checking, monomorphization to fixpoint and
+C emission together stay near-linear because every one of them is a local pass:
+no traits to solve, no lifetimes to infer, no global inference, and the
+specialization worklist dedups through a hash set rather than a scan.
 
-That points the work at the backend rather than at incremental compilation of a
-front end that is already fast:
+What these numbers do **not** show is the shape problem, because every program
+here is a single file. Imports flatten into one AST and monomorphization runs
+whole-program, so a change to one line rebuilds everything. That is what
+[separate-compilation.md](separate-compilation.md) is about, and it is invisible
+at these sizes by construction.
 
-1. **Compile functions in parallel.** The type system is local and
-   signature-based, so once signatures are collected functions are independent.
-   This is the direct answer to the measurement above and a large part of why the
-   language was designed the way it is.
-2. **Separate compilation per module.** Imports flatten into one AST today, which
-   is what makes a program's cost whole-program. Module boundaries would also
-   bound monomorphization, since a specialization need only be emitted once per
-   module that needs it.
-3. **Cache specializations across builds.** Worth doing only after (1) and (2),
-   and only if measurement still asks for it.
+The backend used to be where the superlinear term lived, and is not any more:
 
-None of this is urgent at the sizes Frost compiles today. What matters is that
-the shape is measured rather than assumed, and that the measurement is a command
-rather than a memory. The first version of this table was wrong because the
-generated programs happened to name a function `f32`, so the compiler rejected
-them at line 292 and the timings were of a parse error. Re-run the benchmark
-before trusting any of it.
+1. **Compile functions in parallel.** *Done.* The type system is local and
+   signature-based, so once signatures are collected functions are independent,
+   which is a large part of why the language was designed the way it is. Code
+   generation now runs on every core and is 64 ms of a 353 ms build at 58k
+   lines.
+2. **Separate compilation per module.** *Designed, partly built.* Imports
+   flatten into one AST today, which is what makes a program's cost
+   whole-program. Module boundaries also bound monomorphization, since a
+   specialization need only be emitted once per module that needs it. See
+   [separate-compilation.md](separate-compilation.md).
+3. **Cache specializations across builds.** Worth doing only after (2), and only
+   if measurement still asks for it.
+
+What matters is that the shape is measured rather than assumed, and that the
+measurement is a command rather than a memory. Two versions of this table have
+now been wrong for benchmark reasons rather than compiler reasons: the first
+because the generated programs named a function `f32`, so the timings were of a
+parse error, and the second because every program had a `main` with thousands of
+call sites, which is one function no amount of threading can split and which
+made parallel code generation look like it did not work. Re-run the benchmark
+before trusting any of it, and look at the shape of what it generates too.
 
 Second-order levers, worth doing but small next to the above:
 

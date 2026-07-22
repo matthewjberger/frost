@@ -43,9 +43,26 @@ re-reading the source.
 **A specialization is emitted in the module that instantiates it.** Not in the
 module that declares the generic, which cannot know what its callers will ask
 for, and not once per program, which is the thing being fixed. Two modules that
-both instantiate `Stack<i64>` each emit it, and the linker folds them. That is
-the standard arrangement and it is what makes a module's work depend only on the
-module.
+both instantiate `Stack<i64>` each emit their own copy, with module-local
+linkage, and the duplicate code is the price of a module's work depending only
+on the module.
+
+An earlier version of this said the linker folds those copies, which is what
+C++ and Rust do with COMDAT and weak symbols. **That is not available here.**
+`cranelift_module::Linkage` has exactly `Import`, `Local`, `Preemptible`,
+`Hidden` and `Export`, with no weak or COMDAT variant, so there is nothing to
+ask the object writer for. Two options follow and the first is chosen:
+
+- **Emit a private copy per module** (`Linkage::Local`). Needs no backend work
+  at all, and duplicate specializations cost code size rather than correctness.
+  This is what makes step 3 possible without touching either backend.
+- Teach `cranelift-object` to emit COMDAT sections and add a `Linkage` variant
+  for it. Better output, upstream work, and not on the critical path. Worth
+  revisiting only if duplicated specializations measurably matter.
+
+Finding this out is why the step order below is worth trusting: it was a design
+assumption that survived being written down and did not survive being checked
+against the API.
 
 ## What the artifact contains
 
@@ -135,10 +152,13 @@ rather than after.
    flattening it previously could not.
 
    What is left is the per-module part itself: group the specialization set by
-   the module that instantiates it, and let duplicate specializations across
-   modules be folded by the linker rather than deduplicated by the compiler.
-   That last part needs the backends to emit those symbols as weak or COMDAT,
-   which neither does today, and that is the real remaining work in this step.
+   the module that instantiates it, and give each module its own copy with
+   module-local linkage. This was thought to be blocked on weak or COMDAT
+   symbols; it is not, because the copies are private rather than folded (see
+   "what a module is" above). So the remaining work is all compiler-side and
+   touches neither backend: `emitted: HashSet<String>` in `src/ir_build.rs`
+   becomes per-module, and the specialization worklist is seeded per module from
+   what that module's own code instantiates.
 4. **Compile a module from interfaces alone.** Only then does the compiler stop
    reading imported source. Note the ordering constraint that emerged from step
    2: an interface deliberately drops a module's unexported, unreached

@@ -17,7 +17,10 @@ Source (.frost)
       |
       v
    Import resolver  src/imports.rs      -> one flat, module-scoped AST
-      |
+      |                                    src/interface.rs derives and checks
+      |                                    each module's interface alongside
+      |                                    src/source_map.rs records which file
+      |                                    each position came from
       v
    Ownership check  src/ownership.rs
       |
@@ -48,6 +51,38 @@ each program through them and asserts their output matches.
 There is one execution surface. An earlier bytecode VM was retired once the
 native path covered the language, so the data-oriented native language is the
 only language.
+
+## Modules
+
+`src/imports.rs` reads each imported file once, renames the top-level names the
+file does not `export`, and splices the result into one statement list. A
+module's private names are tagged `__m<tag>_<name>`, where the tag is an FNV-1a
+hash of the module's path relative to the project root, so a module's symbols
+are a property of the module rather than of the order it was reached in. The tag
+is undone in diagnostics by `demangle_private_names`, which lives next to the
+code that applies it.
+
+Positions carry a file id into `src/source_map.rs`, stamped during import
+resolution, which is the only place that knows which file a position belongs to.
+Without it a diagnostic from an imported module would name a line number in a
+flattened program that matches no file the reader has open.
+
+`src/interface.rs` derives what a caller would need to compile against a module
+without seeing the rest of it, and checks it. Nothing builds from interfaces
+yet; see [separate-compilation.md](separate-compilation.md) for the design and
+where it stands. The checks run under `FROST_CHECK_INTERFACES`, which the test
+suite sets on every compilation.
+
+## Code generation is parallel
+
+`src/ir_codegen.rs` builds and compiles each function on its own thread, then
+defines them into the object serially, since a module is one mutable thing.
+Functions are handed out from a shared atomic cursor rather than split into
+equal chunks, because cost per function varies by more than an order of
+magnitude and the expensive ones sit next to each other. Results are sorted back
+into module order so a build's output does not depend on how threads
+interleaved. `FROST_THREADS` caps the pool and `FROST_TIMINGS` reports the
+split between declaring, generating, defining and emitting.
 
 ## Typed IR
 
@@ -224,7 +259,10 @@ Frost is being reshaped toward a data-oriented language with:
   on, desugared to an ordinary enum and match (`src/failure_sets.rs`).
 - **Compile-time arguments**: `$T` for types, `$N` for values, and `$f` for a
   function, so a generic algorithm calls its comparator directly rather than
-  through a pointer.
+  through a pointer. A function argument may declare the signature it needs
+  (`$before: fn(T, T) -> bool`), checked at the call with that call's type
+  arguments substituted in. That is the only bound in the language and it is not
+  a trait system.
 - Free functions only, with signatures that declare their effects.
 - The typed IR as the single point where ownership, borrow, and linearity
   checking are discharged, cross-checked by three independent execution paths:
@@ -289,7 +327,7 @@ AST; both point at a line.
 1. Discharge ownership on the IR. *(Partly done: the linear consume discipline
    now runs as a CFG dataflow pass in `src/ir_ownership.rs`. Move tracking and
    borrow exclusivity stay on the AST, where the move-versus-borrow distinction
-   the IR erases is still visible; second-class references keep that analysis
+   the IR erases is still visible; second-class borrows keep that analysis
    scope-local.)*
 2. A real type-checking pass on the IR. *(Done: `src/ir_typecheck.rs` runs on
    the typed IR after lowering and before either backend. It validates local
@@ -305,9 +343,10 @@ AST; both point at a line.
    linearity makes non-ignorable.
 4. Handle-dereference-as-borrow, and a first-class pool type. *(Done: `Handle<T>`
    is a first-class native type (a packed i64), and `pool[handle]` is a place.
-   Read/write fields through it, copy the element out, or take `&`/`&mut` of it.
-   The borrow is second-class by the same reference rule. Storing it in a field
-   or returning it is already rejected, so a handle-deref borrow cannot escape.
+   Read/write fields through it, copy the element out, or pass it to a function,
+   which borrows it under that function's parameter mode. The borrow is
+   second-class like any other, so a handle-deref borrow has nowhere to escape
+   to.
    A pool is not a compiler type. A program writes its own: a value-generic
    struct of `[N]T` storage plus a generational free list, all Frost code
    (`examples/native/generic_slab.frost`), on top of slices, value generics, and
@@ -329,24 +368,21 @@ AST; both point at a line.
 8. Source locations in errors. *(Done: the lexer and parser carry
    `line`/`column`, and a `Spanned<T>` wrapper attaches a source position to
    every statement, so ownership and IR-lowering errors report the exact source
-   line and column, not just the enclosing function.)*
+   line and column, not just the enclosing function. A position also carries the
+   file it came from, so an error inside an imported module names that module
+   rather than a line number in the flattened program.)*
 9. A third differential oracle. *(Done: `src/ir_interp.rs` interprets the typed
    IR directly, exposed through `--run-ir`. It validates scalar arithmetic,
    control flow, recursion, and function pointers against the Cranelift and C
    backends, and declines cleanly on memory and pool operations rather than
    guessing.)*
-10. Self-hosting the compiler in Frost. *(In progress: `bootstrap/frost.frost`
-    is a compiler for a Frost-like subset, written in the data-oriented native
-    surface (a pool-backed AST arena, integer node indices instead of pointers,
-    second-class references). It reads source, builds an AST, and emits a C
-    translation unit that compiles and runs, so a Frost-written code generator
-    now emits native code end to end. It accepts user-defined functions with
-    parameters, `return`, calls, and recursion, each emitted as a C function with
-    its own frame, and multi-character identifiers resolved through pool-backed
-    symbol tables (a per-function local table and a global function table that
-    intern source byte ranges by comparison, the data-oriented stand-in for a
-    string-keyed map). The remaining step is widening the accepted language
-    toward the full surface until the compiler can compile Frost.)*
+10. Self-hosting the compiler in Frost. *(Done: `bootstrap/frost.frost` compiles
+    itself to a byte-identical fixpoint through both its C backend and its own
+    native x86-64 backend, so there is a path with no C compiler in the loop. It
+    is written in the data-oriented native surface, a pool-backed AST arena with
+    integer node indices instead of pointers, and carries imports and modules,
+    failure sets, enums with payloads, and generics. See
+    [self-hosting.md](self-hosting.md).)*
 11. Parser error recovery. *(Done: the parser recovers at statement boundaries
     instead of stopping at the first error, at the top level and inside function
     bodies alike, so one malformed statement no longer discards the rest of the
@@ -357,3 +393,16 @@ AST; both point at a line.
     always makes progress, so recovery cannot loop. This is the foundation an
     editor integration would build on, though the language server itself is not
     yet in scope.)*
+12. Parallel code generation. *(Done: `src/ir_codegen.rs` builds and compiles
+    functions across every core from a shared work queue. 385 ms to 55 ms on
+    sixteen threads at 10,401 functions, which took a full native build of 58k
+    lines from 1.11 s to 353 ms. The two false starts are recorded in
+    [roadmap.md](roadmap.md) because both came from trusting a summary statistic
+    over a per-worker measurement.)*
+13. Separate compilation. *(Designed and started. A module is a file, its
+    interface is its `export` line, and a specialization is emitted in the
+    module that instantiates it. Module identity and interface derivation are
+    built and checked; per-module monomorphization and building from interfaces
+    alone are not. [separate-compilation.md](separate-compilation.md) tracks it
+    step by step, including what was found to be wrong about the original
+    design.)*
