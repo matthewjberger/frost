@@ -201,6 +201,7 @@ Sym :: struct {
     len: i64,
     is_extern: i64,
     ret_type: i64,
+    params: i64,
 }
 
 // A compile-time integer constant `name :: value`, inlined at each use.
@@ -319,6 +320,7 @@ Parser :: struct {
     saw_type_param: i64,
     last_return_type: i64,
     no_struct_lit: bool,
+    last_type_was_generic: i64,
 }
 
 is_digit :: fn(c: i64) -> bool {
@@ -563,7 +565,8 @@ intern_global :: fn(p: &mut Parser, offset: i64, length: i64) -> i64 {
     }
     arena_push(
         &mut p.fns,
-        Sym { off = offset, len = length, is_extern = 0, ret_type = TY_I64 },
+        Sym { off = offset, len = length, is_extern = 0, ret_type = TY_I64,
+            params = 0 - 1 },
     )
 }
 
@@ -575,6 +578,11 @@ mark_extern :: fn(p: &mut Parser, fn_index: i64) {
 set_ret_type :: fn(p: &mut Parser, fn_index: i64, ret: i64) {
     entry : ^Sym = arena_at(&p.fns, fn_index)
     entry^.ret_type = ret
+}
+
+set_params :: fn(p: &mut Parser, fn_index: i64, params: i64) {
+    entry : ^Sym = arena_at(&p.fns, fn_index)
+    entry^.params = params
 }
 
 record_generic_fn :: fn(p: &mut Parser, fn_index: i64, tparam_off: i64,
@@ -1116,7 +1124,9 @@ parse_type :: fn(p: &mut Parser) -> i64 {
         p.saw_type_param = 1
     }
     mut base : i64 = TY_I64
+    mut was_generic : i64 = 0
     if (cur(p) == TOK_LT) {
+        was_generic = 1
         gi := generic_index_for(p, offset, length)
         advance(p)
         arg := parse_type(p)
@@ -1133,6 +1143,10 @@ parse_type :: fn(p: &mut Parser) -> i64 {
             p.saw_type_param = 1
         }
     }
+    // Record whether this type named a generic-struct instance, so parse_params
+    // can tell a `Foo<T>` template placeholder (which collapses to a scalar code)
+    // apart from a real scalar and still borrow it by pointer.
+    p.last_type_was_generic = was_generic
     mut result := base
     mut k : i64 = 0
     while (k < pointer_levels) {
@@ -1378,10 +1392,15 @@ parse_params :: fn(p: &mut Parser) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
-        // A parameter mode keyword (`mut`/`move`) is skipped; the emitted C
-        // takes a `&`-typed parameter by pointer and any other by value, so the
-        // mode itself carries no code-generation difference here.
-        if (cur(p) == TOK_KW_MUT || cur(p) == TOK_KW_MOVE) {
+        // Capture the parameter mode. `mut` (write) is 1, `move` is 2, and an
+        // unmarked read is 0.
+        mut mode : i64 = 0
+        if (cur(p) == TOK_KW_MUT) {
+            mode = 1
+            advance(p)
+        }
+        if (cur(p) == TOK_KW_MOVE) {
+            mode = 2
             advance(p)
         }
         // A `$T: Type` parameter declares the type parameter and is erased from
@@ -1400,10 +1419,30 @@ parse_params :: fn(p: &mut Parser) -> i64 {
             offset := cur_off(p)
             length := cur_len(p)
             advance(p)
-            ty := parse_type_annotation(p)
+            mut ty := parse_type_annotation(p)
+            // A mode borrow of a value is passed by pointer, and the call site
+            // takes its address automatically (auto_borrow = 1). `mut` always
+            // borrows; an unmarked read borrows a struct or generic instance and
+            // passes a scalar by value. An already pointer-typed annotation
+            // (`&`/`^`) or a `move` stays as written.
+            mut auto_borrow : i64 = 0
+            if (is_pointer(ty) == false) {
+                if (mode == 1) {
+                    auto_borrow = 1
+                }
+                if (mode == 0 && is_struct_ty(ty)) {
+                    auto_borrow = 1
+                }
+                if (mode == 0 && p.last_type_was_generic == 1) {
+                    auto_borrow = 1
+                }
+            }
+            if (auto_borrow == 1) {
+                ty = POINTER_BASE + ty
+            }
             param := arena_push(
                 &mut p.arena,
-                Node { kind = NODE_PARAM, a = 0, b = ty, c = length,
+                Node { kind = NODE_PARAM, a = auto_borrow, b = ty, c = length,
                     val = offset, next = 0 - 1 },
             )
             if (head == (0 - 1)) {
@@ -1438,6 +1477,7 @@ parse_function :: fn(p: &mut Parser) -> i64 {
     }
     advance(p)
     params := parse_params(p)
+    set_params(p, fn_index, params)
     mut ret : i64 = TY_VOID
     if (cur(p) == TOK_ARROW) {
         advance(p)
@@ -1514,6 +1554,7 @@ parse_extern :: fn(p: &mut Parser) -> i64 {
     mark_extern(p, fn_index)
     advance(p)
     params := parse_params(p)
+    set_params(p, fn_index, params)
     mut ret : i64 = TY_VOID
     if (cur(p) == TOK_ARROW) {
         advance(p)
@@ -1846,7 +1887,7 @@ emit_expr :: fn(p: &mut Parser, id: i64) {
             frost_emit_str("_t")
             frost_emit_int(call_type_arg(p, args))
             frost_emit_str("(")
-            emit_args(p, args)
+            emit_args(p, args, fn_index)
             frost_emit_str(")")
             return
         }
@@ -1858,7 +1899,7 @@ emit_expr :: fn(p: &mut Parser, id: i64) {
             frost_emit_int(fn_index)
         }
         frost_emit_str("(")
-        emit_args(p, args)
+        emit_args(p, args, fn_index)
         frost_emit_str(")")
         return
     }
@@ -1936,9 +1977,11 @@ emit_expr :: fn(p: &mut Parser, id: i64) {
 
 // Emit call arguments, skipping type-value arguments (they are erased since a
 // type parameter is not a runtime value).
-emit_args :: fn(p: &mut Parser, head: i64) {
+emit_args :: fn(p: &mut Parser, head: i64, fn_index: i64) {
     mut id := head
     mut first : bool = true
+    sym : ^Sym = arena_at(&p.fns, fn_index)
+    mut param : i64 = sym^.params
     while (id != (0 - 1)) {
         node : ^Node = arena_at(&p.arena, id)
         value := node^.a
@@ -1949,7 +1992,31 @@ emit_args :: fn(p: &mut Parser, head: i64) {
                 frost_emit_str(", ")
             }
             first = false
-            emit_expr(p, value)
+            // Auto-borrow: an argument passed to a mode-borrow (pointer)
+            // parameter has its address taken here, unless it is already a
+            // pointer (a borrow forwarded onward).
+            mut borrow : i64 = 0
+            mut param_next : i64 = 0 - 1
+            mut have_param : i64 = 0
+            if (param != (0 - 1)) {
+                pnode : ^Node = arena_at(&p.arena, param)
+                param_auto := pnode^.a
+                param_next = pnode^.next
+                have_param = 1
+                if (param_auto == 1 && is_pointer(type_of(p, value)) == false) {
+                    borrow = 1
+                }
+            }
+            if (borrow == 1) {
+                frost_emit_str("(&(")
+                emit_expr(p, value)
+                frost_emit_str("))")
+            } else {
+                emit_expr(p, value)
+            }
+            if (have_param == 1) {
+                param = param_next
+            }
         }
         id = next_id
     }
@@ -2511,6 +2578,7 @@ main :: fn() -> i64 {
         saw_type_param = 0,
         last_return_type = 0,
         no_struct_lit = false,
+        last_type_was_generic = 0,
     }
     tokenize(source, frost_str_len(source), &mut parser.tokens)
     program := parse_program(&mut parser)
