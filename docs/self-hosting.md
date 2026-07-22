@@ -161,6 +161,12 @@ its output. In dependency order, what is done and what remains:
      loop and to a `^Node` in the next, so `node^.next` typed as a scalar and
      read offset zero, and the walk over the top-level list never reached its
      end.
+   - The prologue read the hidden struct-result pointer out of `%rcx`, which is
+     where Windows puts the first argument but not System V. That self-hosted on
+     Windows and segfaulted on Linux, and only in the second stage, since the
+     first-stage compiler is built by the reference compiler and never runs this
+     assembly. When a stage fails, check which one before assuming the emitter
+     crashed.
 4. **Allocation sources.** Done. `uses A` on a function and `with a { }` around
    a call, mirroring `src/allocation_sources.rs`.
 
