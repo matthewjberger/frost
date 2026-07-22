@@ -243,9 +243,9 @@ fn located(
         anyhow::anyhow!("{message}")
     } else {
         anyhow::anyhow!(
-            "at line {}, column {}: {message}",
-            position.line,
-            position.column
+            "at {}: {}",
+            position.describe(),
+            crate::imports::demangle_private_names(&message.to_string())
         )
     }
 }

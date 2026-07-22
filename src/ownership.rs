@@ -12,15 +12,11 @@ type Signatures = HashMap<String, Type>;
 
 fn locate<T>(result: Result<T>, position: Position) -> Result<T> {
     result.map_err(|error| {
-        let text = error.to_string();
-        if position == Position::default() || text.starts_with("at line ") {
-            error
+        let text = crate::imports::demangle_private_names(&error.to_string());
+        if position == Position::default() || text.starts_with("at ") {
+            anyhow::anyhow!("{text}")
         } else {
-            anyhow::anyhow!(
-                "at line {}, column {}: {text}",
-                position.line,
-                position.column
-            )
+            anyhow::anyhow!("at {}: {text}", position.describe())
         }
     })
 }

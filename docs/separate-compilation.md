@@ -124,14 +124,21 @@ rather than after.
    everything it exports, and it is closed, meaning every name a carried
    declaration reaches and this module declares is carried too. Serialization is
    serde and JSON, marked replaceable.
-3. **Make monomorphization per-module.** *Not started, and the next thing.*
-   `expand_generic_structs` and the specialization loop in `src/ir_build.rs` walk
-   every statement in the flattened program. The blocker is that flattening
-   throws away which module a statement came from, so **the first move is to keep
-   that**, most likely by carrying the module identity on `Spanned` alongside the
-   position, or by keeping the resolved program as a list of modules rather than
-   one statement vector. Until a statement knows its module, nothing downstream
-   can be made per-module.
+3. **Make monomorphization per-module.** *Prerequisite done, the rest not
+   started.* `expand_generic_structs` and the specialization loop in
+   `src/ir_build.rs` walk every statement in the flattened program, and the
+   blocker was that flattening threw away which module a statement came from.
+   That is fixed: a `Position` now carries a file id into `src/source_map.rs`,
+   stamped during import resolution, so every statement knows its module. It
+   earns its place immediately rather than sitting as scaffolding, because it is
+   also what lets a diagnostic name the file it came from, which after
+   flattening it previously could not.
+
+   What is left is the per-module part itself: group the specialization set by
+   the module that instantiates it, and let duplicate specializations across
+   modules be folded by the linker rather than deduplicated by the compiler.
+   That last part needs the backends to emit those symbols as weak or COMDAT,
+   which neither does today, and that is the real remaining work in this step.
 4. **Compile a module from interfaces alone.** Only then does the compiler stop
    reading imported source. Note the ordering constraint that emerged from step
    2: an interface deliberately drops a module's unexported, unreached
