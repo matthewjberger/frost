@@ -2069,10 +2069,29 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
             if (param != (0 - 1)) {
                 pnode : ^Node = arena_at(p.arena, param)
                 param_auto := pnode^.a
+                param_ty := pnode^.b
                 param_next = pnode^.next
                 have_param = 1
-                if (param_auto == 1 && is_pointer(type_of(p, value)) == false) {
+                arg_ty := type_of(p, value)
+                if (param_auto == 1 && is_pointer(arg_ty) == false) {
                     borrow = 1
+                }
+                // Check the argument against the parameter. A generic
+                // template's parameter types are placeholders bound per
+                // instantiation, so they carry nothing to check against. An
+                // auto-borrowed argument is a value whose address is taken
+                // here, so it answers to the pointee rather than the pointer.
+                if (generic_fn_of(p, fn_index) < 0) {
+                    mut expected := param_ty
+                    if (borrow == 1) {
+                        expected = pointee(param_ty)
+                    }
+                    if (types_compatible(arg_ty, expected) == false) {
+                        frost_error("minifrost: '")
+                        frost_error_src(p.src, sym^.off, sym^.len)
+                        frost_error("' was passed an argument of the wrong type")
+                        frost_die()
+                    }
                 }
             }
             if (borrow == 1) {
