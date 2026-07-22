@@ -69,13 +69,23 @@ actual work predictable.
    values non-ignorable.
 5. **Speak C fluently going out.** `extern fn` reaches the entire C ecosystem
    with no glue. See [c-compatibility.md](c-compatibility.md).
-6. **One typed IR, two backends, kept honest.** The AST lowers to a single typed
-   IR from which both a Cranelift backend and a portable C backend emit, and a
-   differential test compiles every program through both and asserts they agree.
-   Two independent backends that must match catch miscompilations a single
-   backend would hide.
+6. **One typed IR, three execution paths, kept honest.** The AST lowers to a
+   single typed IR from which a Cranelift backend and a portable C backend emit
+   and an IR interpreter runs directly, and a differential test puts every
+   program through them and asserts they agree. Independent paths that must
+   match catch miscompilations a single backend would hide.
 7. **Predictability over cleverness.** The generated code should be something you
    can reason about. Simple, explicit lowerings are preferred to clever ones.
+8. **Compilation stays fast as programs grow.** Not fast at the sizes tested so
+   far, which any compiler manages, but fast on a curve that does not turn over.
+   This is a promise rather than a happy accident, and it has a bill attached:
+   whole-program monomorphization with imports flattened into one AST is the
+   shape that contradicts it, so separate compilation is an obligation this goal
+   takes on. The bar is the one Jai and Odin set, a full build in the 100,000
+   lines per second range, and today the front end clears it while the whole
+   build is about half of it. The curve is measured by `just bench-scaling` and
+   recorded in [self-hosting.md](self-hosting.md), so the claim is checkable
+   rather than asserted, and [roadmap.md](roadmap.md) says what closes the gap.
 
 ## Non-goals
 
