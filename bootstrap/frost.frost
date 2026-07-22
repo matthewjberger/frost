@@ -318,6 +318,13 @@ arena_make :: fn($T: Type, cap: i64) -> Arena<T> {
 }
 
 arena_push :: fn(mut a: Arena<$T>, move value: $T) -> i64 {
+    // An arena is a single fixed allocation, so running past it writes over
+    // whatever the allocator put next and the damage surfaces somewhere else
+    // entirely. Say so here instead.
+    if (a.count >= a.cap) {
+        frost_error("frost: an arena ran out of room")
+        frost_die()
+    }
     id := a.count
     a.data[id] = value
     a.count = a.count + 1

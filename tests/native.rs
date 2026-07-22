@@ -749,7 +749,9 @@ fn native_self_hosting_is_a_fixpoint() {
             .unwrap();
         assert!(
             emit.status.success(),
-            "the compiler failed to emit assembly for its own source:\n{}",
+            "the compiler failed to emit assembly for its own source ({}, {} bytes out):\n{}",
+            emit.status,
+            emit.stdout.len(),
             String::from_utf8_lossy(&emit.stderr)
         );
         String::from_utf8_lossy(&emit.stdout).replace("\r\n", "\n")
