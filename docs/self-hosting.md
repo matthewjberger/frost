@@ -143,8 +143,24 @@ its output. In dependency order, what is done and what remains:
    `move` and only reads a field out of it is correctly rejected, because the
    resource dies there.
 
-3. **Native backend.** The speed payoff above, now unblocked: (1) is done, so
-   there is a checker behind the compiler once it stops emitting C.
+3. **Native backend.** Done, and self-hosting with no C compiler in the loop.
+
+   The compiler emits assembly for its own 3500 lines, that assembly assembles
+   into a compiler, and that compiler emits the same 29,545 lines of assembly
+   byte for byte. `native_self_hosting_is_a_fixpoint` checks it. Compiling
+   itself this way takes 0.08 s.
+
+   Two bugs had to be found to get there, both invisible to the C backend
+   because C needs neither struct offsets nor a scope discipline of its own:
+
+   - `type_size` counted a struct's fields instead of measuring them, so every
+     type holding a struct field was sized wrong. `Parser` carries ten arenas
+     and an arena is three words, not one.
+   - `lookup_local` and `local_slot` answered with the first binding of a name
+     rather than the most recent. `emit_program` binds `node` to an i64 in one
+     loop and to a `^Node` in the next, so `node^.next` typed as a scalar and
+     read offset zero, and the walk over the top-level list never reached its
+     end.
 4. **Failure sets, allocation sources, regions.** `-> T ! E` with `?`,
    `uses`/`with`, and the arena escape check. These reuse the self-hosted compiler's existing
    enum and match machinery and mirror the desugars in `src/failure_sets.rs`,
