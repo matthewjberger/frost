@@ -154,9 +154,16 @@ rather than after.
    also what lets a diagnostic name the file it came from, which after
    flattening it previously could not.
 
-   What is left is the per-module part itself: seed the specialization worklist
-   per module from what that module's own code instantiates, rather than from
-   the whole flattened program.
+   *Attribution done.* Every specialization now records the module that asked
+   for it, inherited by anything it goes on to instantiate. Emitted code is
+   unchanged, verified by hashing the C and the object before and after.
+   `FROST_MODULE_REPORT=1` reports how many specializations a single object
+   emits, how many separate objects would emit, and how many are instantiated by
+   more than one module, which is the measurement that decides whether the
+   private-copy choice above ever needs revisiting.
+
+   What is left is to seed the worklist per module rather than from the whole
+   flattened program, which only becomes observable at step 4.
 
    One thing to get right, because it is easy to state the step wrongly. While
    the compiler still emits **one** object, per-module copies cannot actually be

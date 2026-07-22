@@ -1419,6 +1419,72 @@ fn self_hosted_survives_an_import_cycle() {
     assert_eq!(output, "7\n");
 }
 
+// Separate compilation gives each module its own copy of every specialization
+// it instantiates, because cranelift has no weak or COMDAT linkage to fold
+// duplicates with. Whether that duplication matters is a measurement, and this
+// is the instrument: `wrap<i64>` is instantiated by both modules and `wrap<bool>`
+// by one, so a single object emits two and separate objects would emit three.
+#[test]
+fn the_module_report_counts_what_separate_compilation_would_duplicate() {
+    let directory = std::env::temp_dir().join("frost_module_report");
+    let library = directory.join("lib");
+    std::fs::create_dir_all(&library).unwrap();
+    std::fs::write(
+        library.join("box.frost"),
+        "export Boxed, wrap\n\
+         Boxed :: struct($T: Type) { value: T }\n\
+         wrap :: fn(move v: $T) -> Boxed<T> { Boxed { value = v } }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        library.join("one.frost"),
+        "export use_one\n\
+         import \"box.frost\"\n\
+         use_one :: fn() -> i64 { b := wrap(1)  b.value }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        library.join("two.frost"),
+        "export use_two\n\
+         import \"box.frost\"\n\
+         use_two :: fn() -> i64 { b := wrap(2)  c := wrap(true)  b.value }\n",
+    )
+    .unwrap();
+    let root = directory.join("app.frost");
+    std::fs::write(
+        &root,
+        "import \"lib/one.frost\"\n\
+         import \"lib/two.frost\"\n\
+         main :: fn() -> i64 { use_one() + use_two() }\n",
+    )
+    .unwrap();
+
+    let frost = env!("CARGO_BIN_EXE_frost");
+    let output = Command::new(frost)
+        .env("FROST_MODULE_REPORT", "1")
+        .arg("--emit-c")
+        .arg("-o")
+        .arg(directory.join("out.c"))
+        .arg(&root)
+        .output()
+        .unwrap();
+    let report = String::from_utf8_lossy(&output.stderr).to_string();
+    let _ = std::fs::remove_dir_all(&directory);
+
+    assert!(output.status.success(), "compilation failed:\n{report}");
+    assert!(
+        report.contains(
+            "2 specialization(s) emitted, 3 would be emitted per-module (1 instantiated by more than one module)"
+        ),
+        "unexpected module report:\n{report}"
+    );
+    assert!(
+        report.contains("lib/one.frost instantiates 1")
+            && report.contains("lib/two.frost instantiates 2"),
+        "the report did not attribute specializations to modules:\n{report}"
+    );
+}
+
 // An error inside an imported module names that module. Imports flatten every
 // file into one statement list, so a bare "line 5" sent the reader to line 5 of
 // whichever file they happened to be looking at. The mangled private name is
