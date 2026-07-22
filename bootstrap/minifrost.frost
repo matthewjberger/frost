@@ -1745,6 +1745,8 @@ field_type :: fn(mut p: Parser, base_ty: i64, off: i64, len: i64) -> i64 {
         return TY_I64
     }
     def : ^StructDef = arena_at(p.structs, struct_index_of(struct_ty))
+    struct_off := def^.name_off
+    struct_len := def^.name_len
     mut fid := def^.field_head
     while (fid != (0 - 1)) {
         field : ^StructField = arena_at(p.fields, fid)
@@ -1754,6 +1756,14 @@ field_type :: fn(mut p: Parser, base_ty: i64, off: i64, len: i64) -> i64 {
         }
         fid = field^.next
     }
+    // The base is a struct but carries no such field. Emitting the access
+    // verbatim would leave it for whatever compiles the output to notice.
+    frost_error("minifrost: struct '")
+    frost_error_src(p.src, struct_off, struct_len)
+    frost_error("' has no field '")
+    frost_error_src(p.src, off, len)
+    frost_error("'")
+    frost_die()
     TY_I64
 }
 
@@ -1940,6 +1950,9 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         off := node^.val
         len := node^.c
         base_ty := type_of(p, base)
+        // Resolve the field for its own sake: field_type rejects a name the
+        // struct does not carry, which emitting alone would not notice.
+        field_type(p, base_ty, off, len)
         if (is_pointer(base_ty)) {
             frost_emit_str("(*(")
             emit_expr(p, base)
