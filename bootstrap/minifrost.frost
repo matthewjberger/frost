@@ -850,14 +850,6 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         advance(p)
         return new_named_node(p, NODE_STRLIT, 0, offset, length)
     }
-    if (kind == TOK_AMP) {
-        advance(p)
-        if (cur(p) == TOK_KW_MUT) {
-            advance(p)
-        }
-        inner := parse_factor(p)
-        return new_unary(p, NODE_ADDROF, inner)
-    }
     if (kind == TOK_DOLLAR) {
         advance(p)
         ty := parse_type(p)
@@ -1103,11 +1095,8 @@ parse_block :: fn(mut p: Parser) -> i64 {
 // on a non-generic name is consumed and treated as i64.
 parse_type :: fn(mut p: Parser) -> i64 {
     mut pointer_levels : i64 = 0
-    while (cur(p) == TOK_AMP || cur(p) == TOK_CARET) {
+    while (cur(p) == TOK_CARET) {
         advance(p)
-        if (cur(p) == TOK_KW_MUT) {
-            advance(p)
-        }
         pointer_levels = pointer_levels + 1
     }
     mut dollar : i64 = 0
