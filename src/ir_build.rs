@@ -620,6 +620,7 @@ fn mangle_type(ty: &Type) -> String {
         Type::Array(inner, size) => format!("a{}_{}", size, mangle_type(inner)),
         Type::Handle(inner) => format!("h_{}", mangle_type(inner)),
         Type::Proc(_, _) => "proc".to_string(),
+        Type::ConstFn(name) => sanitize_identifier(name),
         other => format!("{other}"),
     }
 }
@@ -1302,6 +1303,23 @@ fn substitute_expression(
     expression: &Expression,
     subst: &HashMap<String, Type>,
 ) -> Expression {
+    // A call through a compile-time function parameter is a call to the
+    // function that parameter was given. There is nothing left to dispatch on
+    // by the time the specialized body is lowered, which is the whole point:
+    // the comparator ends up inlined into the loop rather than called through
+    // a pointer.
+    if let Expression::Call(callee, arguments) = expression
+        && let Expression::Identifier(name) = callee.as_ref()
+        && let Some(Type::ConstFn(target)) = subst.get(name)
+    {
+        return Expression::Call(
+            Box::new(Expression::Identifier(target.clone())),
+            arguments
+                .iter()
+                .map(|argument| substitute_expression(argument, subst))
+                .collect(),
+        );
+    }
     match expression {
         Expression::Prefix(operator, operand) => Expression::Prefix(
             *operator,
@@ -2549,7 +2567,19 @@ impl<'a> FunctionLowering<'a> {
                         parameter.name
                     );
                 };
-                subst.insert(parameter.name.clone(), ty.clone());
+                // `$f` where f is a function rather than a type is a
+                // compile-time function argument. It reads as a named type
+                // here, so which one it is comes from whether the name is a
+                // function this program declares.
+                let bound = match ty {
+                    Type::Struct(named)
+                        if self.builder.signature(named).is_some() =>
+                    {
+                        Type::ConstFn(named.clone())
+                    }
+                    other => other.clone(),
+                };
+                subst.insert(parameter.name.clone(), bound);
                 continue;
             }
             let param_ty = parameter_type(parameter);

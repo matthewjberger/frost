@@ -4134,3 +4134,81 @@ main :: fn() -> i64 {
     };
     assert_eq!(output, "7\n");
 }
+
+// A compile-time function argument. `$f` names a function at the call, the
+// generic specializes once per function it is given, and the body calls it
+// directly. This is what closes the inner-loop gap left by having no traits,
+// no closures and no operator overloading: the comparator is in the loop
+// rather than reached through a pointer.
+#[test]
+fn a_function_may_be_a_compile_time_argument() {
+    let source = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+ascending :: fn(a: i64, b: i64) -> bool { a < b }
+descending :: fn(a: i64, b: i64) -> bool { a > b }
+
+best3 :: fn($T: Type, $before: Type, move x: $T, move y: $T, move z: $T) -> $T {
+    mut result := x
+    if (before(y, result)) { result = y }
+    if (before(z, result)) { result = z }
+    result
+}
+
+main :: fn() -> i64 {
+    printf("%lld\n", best3($i64, $ascending, 7, 3, 9))
+    printf("%lld\n", best3($i64, $descending, 7, 3, 9))
+    0
+}
+"#;
+    let Some(output) = compile_and_run("constfn", source) else {
+        return;
+    };
+    assert_eq!(output, "3\n9\n");
+}
+
+// One specialization per function given, and the call inside it is direct.
+#[test]
+fn a_compile_time_function_argument_specializes_and_calls_directly() {
+    let source = "cmp :: fn(a: i64, b: i64) -> bool { a < b }\n\
+                  pick :: fn($T: Type, $f: Type, move a: $T, move b: $T) -> $T {\n\
+                  \x20   mut best := a\n    if (f(b, best)) { best = b }\n    best\n}\n\
+                  main :: fn() -> i64 { pick($i64, $cmp, 2, 1) }\n";
+    let Some(c_source) = emit_c_source("constfndirect", source) else {
+        return;
+    };
+    assert!(
+        c_source.contains("pick__i64__cmp"),
+        "expected a specialization named for the function:\n{c_source}"
+    );
+    assert!(
+        c_source.contains("= frost_cmp("),
+        "expected a direct call to the comparator:\n{c_source}"
+    );
+}
+
+// The C the compiler emits for a program, for tests that need to look at the
+// shape of the lowering rather than only at what it prints.
+fn emit_c_source(name: &str, source: &str) -> Option<String> {
+    let directory = std::env::temp_dir();
+    let source_path = directory.join(format!("frost_cemit_{name}.frost"));
+    let c_path = directory.join(format!("frost_cemit_{name}.c"));
+    std::fs::write(&source_path, source).unwrap();
+    let frost = env!("CARGO_BIN_EXE_frost");
+    let emitted = Command::new(frost)
+        .arg("--emit-c")
+        .arg("-o")
+        .arg(&c_path)
+        .arg(&source_path)
+        .output()
+        .unwrap();
+    assert!(
+        emitted.status.success(),
+        "C emission failed for {name}:\n{}",
+        String::from_utf8_lossy(&emitted.stderr)
+    );
+    let text = std::fs::read_to_string(&c_path).ok();
+    let _ = std::fs::remove_file(&source_path);
+    let _ = std::fs::remove_file(&c_path);
+    text
+}
