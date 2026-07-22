@@ -8,13 +8,14 @@ mod ir_ownership;
 mod ir_typecheck;
 mod lexer;
 mod ownership;
+mod param_modes;
 mod parser;
 mod types;
 
 pub use self::{
     imports::*, ir::*, ir_build::*, ir_c::*, ir_codegen::*, ir_interp::*,
-    ir_ownership::*, ir_typecheck::*, lexer::*, ownership::*, parser::*,
-    types::*,
+    ir_ownership::*, ir_typecheck::*, lexer::*, ownership::*, param_modes::*,
+    parser::*, types::*,
 };
 
 use std::fmt::Display;

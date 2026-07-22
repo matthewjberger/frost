@@ -8,7 +8,7 @@ use frost::{
     Expression, Lexer, Literal, Parameter, Parser as FrostParser, Position,
     ReturnSignature, RunOutcome, Spanned, Statement, Type, build_module,
     check_linearity, check_module, check_ownership, compile_ir_to_object,
-    emit_c, resolve_imports, run_module,
+    emit_c, lower_param_modes, resolve_imports, run_module,
 };
 
 #[derive(Parser)]
@@ -130,9 +130,10 @@ fn main() -> Result<()> {
         parser.tests().to_vec(),
     )
     .context("Import error")?;
-    let statements = resolved.statements;
+    let mut statements = resolved.statements;
     let linear_types = resolved.linear_types;
     let tests = resolved.tests;
+    lower_param_modes(&mut statements);
     check_ownership(&statements, &linear_types).context("Ownership error")?;
 
     if cli.test {
