@@ -2620,6 +2620,30 @@ impl<'a> FunctionLowering<'a> {
         let mut lowered = Vec::with_capacity(arguments.len());
         for (index, argument) in arguments.iter().enumerate() {
             let expected = parameter_types.get(index);
+            // Auto-borrow: a `read`/`mut` parameter is a reference, and a plain
+            // value place passed to it takes its address here. An argument that
+            // is already a reference (a reference-typed local passed onward) or
+            // an explicit borrow is left alone, so nothing is double-referenced.
+            if let Some(expected @ (Type::Ref(_) | Type::RefMut(_))) = expected
+            {
+                let already_reference = matches!(
+                    argument,
+                    Expression::Borrow(_)
+                        | Expression::BorrowMut(_)
+                        | Expression::AddressOf(_)
+                ) || self.probe_type(argument).as_ref()
+                    == Some(expected);
+                if !already_reference {
+                    let kind = if matches!(expected, Type::RefMut(_)) {
+                        RefKind::RefMut
+                    } else {
+                        RefKind::Ref
+                    };
+                    let (address, _) = self.lower_address_of(argument, kind)?;
+                    lowered.push(address);
+                    continue;
+                }
+            }
             if let Some(target) = expected
                 && needs_memory(target)
             {
@@ -2685,6 +2709,30 @@ impl<'a> FunctionLowering<'a> {
         let mut lowered = Vec::with_capacity(arguments.len());
         for (index, argument) in arguments.iter().enumerate() {
             let expected = parameter_types.get(index);
+            // Auto-borrow: a `read`/`mut` parameter is a reference, and a plain
+            // value place passed to it takes its address here. An argument that
+            // is already a reference (a reference-typed local passed onward) or
+            // an explicit borrow is left alone, so nothing is double-referenced.
+            if let Some(expected @ (Type::Ref(_) | Type::RefMut(_))) = expected
+            {
+                let already_reference = matches!(
+                    argument,
+                    Expression::Borrow(_)
+                        | Expression::BorrowMut(_)
+                        | Expression::AddressOf(_)
+                ) || self.probe_type(argument).as_ref()
+                    == Some(expected);
+                if !already_reference {
+                    let kind = if matches!(expected, Type::RefMut(_)) {
+                        RefKind::RefMut
+                    } else {
+                        RefKind::Ref
+                    };
+                    let (address, _) = self.lower_address_of(argument, kind)?;
+                    lowered.push(address);
+                    continue;
+                }
+            }
             if let Some(target) = expected
                 && needs_memory(target)
             {

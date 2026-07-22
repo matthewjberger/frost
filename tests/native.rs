@@ -419,6 +419,35 @@ main :: fn() -> i64 {
 }
 "#;
 
+const PARAM_MODES: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Point :: struct { x: i64, y: i64 }
+
+bump :: fn(mut p: Point) { p.x = p.x + 1 }
+
+sum :: fn(p: Point) -> i64 { p.x + p.y }
+
+main :: fn() -> i64 {
+    mut pt : Point = Point { x = 5, y = 10 }
+    bump(pt)
+    bump(pt)
+    printf("%lld\n", pt.x)
+    printf("%lld\n", sum(pt))
+    0
+}
+"#;
+
+// A `mut` parameter is written and a value parameter read, both called with a
+// plain value and no `&`/`&mut` -- the compiler borrows for the mut parameter.
+#[test]
+fn native_parameter_modes() {
+    let Some(output) = compile_and_run("param_modes", PARAM_MODES) else {
+        return;
+    };
+    assert_eq!(output, "7\n17\n");
+}
+
 #[test]
 fn native_anonymous_functions() {
     let Some(output) = compile_and_run("anon", ANON_FUNCTIONS) else {
