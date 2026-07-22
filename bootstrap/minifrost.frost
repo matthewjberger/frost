@@ -121,6 +121,7 @@ TOK_KW_TRUE   :: 21
 TOK_KW_FALSE  :: 22
 TOK_KW_MUT    :: 23
 TOK_KW_MOVE   :: 24
+TOK_KW_LINEAR :: 25
 TOK_LPAREN    :: 40
 TOK_RPAREN    :: 41
 TOK_LBRACE    :: 42
@@ -244,6 +245,7 @@ StructDef :: struct {
     tparam_len: i64,
     field_token: i64,
     instance_id: i64,
+    is_linear: i64,
 }
 
 // A monomorphized instance of a generic struct: which template, the concrete
@@ -382,6 +384,7 @@ classify_ident :: fn(src: ^i8, off: i64, len: i64) -> i64 {
     if (str_range_eq(src, off, len, "if")) { return TOK_KW_IF }
     if (str_range_eq(src, off, len, "let")) { return TOK_KW_LET }
     if (str_range_eq(src, off, len, "mut")) { return TOK_KW_MUT }
+    if (str_range_eq(src, off, len, "linear")) { return TOK_KW_LINEAR }
     if (str_range_eq(src, off, len, "move")) { return TOK_KW_MOVE }
     if (str_range_eq(src, off, len, "else")) { return TOK_KW_ELSE }
     if (str_range_eq(src, off, len, "case")) { return TOK_KW_CASE }
@@ -1242,7 +1245,8 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64) -> i64 {
         p.structs,
         StructDef { name_off = name_off, name_len = name_len,
             field_head = field_head, is_generic = 0, tparam_off = 0,
-            tparam_len = 0, field_token = 0, instance_id = struct_index },
+            tparam_len = 0, field_token = 0, instance_id = struct_index,
+            is_linear = 0 },
     )
     arena_push(
         p.instances,
@@ -1508,6 +1512,13 @@ parse_struct :: fn(mut p: Parser) {
     name_length := cur_len(p)
     advance(p)
     advance(p)
+    // `Name :: linear struct { ... }` marks a resource that must be consumed
+    // exactly once, so the keyword sits between `::` and `struct`.
+    mut linear_flag : i64 = 0
+    if (cur(p) == TOK_KW_LINEAR) {
+        linear_flag = 1
+        advance(p)
+    }
     advance(p)
     if (cur(p) == TOK_LPAREN) {
         advance(p)
@@ -1536,7 +1547,7 @@ parse_struct :: fn(mut p: Parser) {
             StructDef { name_off = name_offset, name_len = name_length,
                 field_head = 0 - 1, is_generic = 1, tparam_off = tparam_off,
                 tparam_len = tparam_len, field_token = field_token,
-                instance_id = 0 - 1 },
+                instance_id = 0 - 1, is_linear = linear_flag },
         )
     } else {
         head := parse_struct_fields(p)
@@ -1544,7 +1555,8 @@ parse_struct :: fn(mut p: Parser) {
             p.structs,
             StructDef { name_off = name_offset, name_len = name_length,
                 field_head = head, is_generic = 0, tparam_off = 0,
-                tparam_len = 0, field_token = 0, instance_id = 0 - 1 },
+                tparam_len = 0, field_token = 0, instance_id = 0 - 1,
+                is_linear = linear_flag },
         )
     }
 }
@@ -1595,7 +1607,7 @@ parse_program :: fn(mut p: Parser) -> i64 {
     mut tail : i64 = 0 - 1
     while (cur(p) == TOK_IDENT) {
         third := peek_kind(p, 2)
-        if (third == TOK_KW_STRUCT) {
+        if (third == TOK_KW_STRUCT || third == TOK_KW_LINEAR) {
             parse_struct(p)
         } else if (third == TOK_KW_EXTERN) {
             item := parse_extern(p)
@@ -1775,6 +1787,38 @@ is_moved :: fn(mut p: Parser, off: i64, len: i64) -> bool {
         i = i + 1
     }
     false
+}
+
+is_linear_type :: fn(mut p: Parser, ty: i64) -> bool {
+    if (is_struct_ty(ty) == false) {
+        return false
+    }
+    def : ^StructDef = arena_at(p.structs, struct_index_of(ty))
+    if (def^.is_linear == 1) {
+        return true
+    }
+    false
+}
+
+// At the end of a body every linear value must have been handed on. One that
+// was not is a resource silently dropped.
+check_linear_consumed :: fn(mut p: Parser) {
+    mut i : i64 = 0
+    while (i < p.locals.count) {
+        entry : ^LocalVar = arena_at(p.locals, i)
+        ty := entry^.ty
+        off := entry^.name_off
+        len := entry^.name_len
+        if (is_linear_type(p, ty)) {
+            if (is_moved(p, off, len) == false) {
+                frost_error("minifrost: linear value '")
+                frost_error_src(p.src, off, len)
+                frost_error("' is never consumed")
+                frost_die()
+            }
+        }
+        i = i + 1
+    }
 }
 
 record_local :: fn(mut p: Parser, off: i64, len: i64, ty: i64) {
@@ -2319,6 +2363,9 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
             frost_emit_str("return 0;\n")
         } else {
             value_ty := type_of(p, value)
+            if (is_linear_type(p, value_ty)) {
+                mark_moved(p, value)
+            }
             if (types_compatible(value_ty, p.current_ret) == false) {
                 frost_error("minifrost: '")
                 frost_error_src(p.src, p.current_fn_off, p.current_fn_len)
@@ -2533,6 +2580,7 @@ emit_function :: fn(mut p: Parser, id: i64) {
         frost_emit_str(") {\n")
     }
     emit_function_body(p, body)
+    check_linear_consumed(p)
     frost_emit_str("}\n")
 }
 
