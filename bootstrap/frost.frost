@@ -3719,7 +3719,11 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
     if (is_struct_ty(ret)) {
         shift = 1
         p.sret_slot = alloc_temp(p, 8)
-        asm_i("movq %rcx, ", p.sret_slot, "(%rbp)")
+        frost_emit_str("    movq ")
+        emit_asm_arg_reg(p, 0)
+        frost_emit_str(", ")
+        frost_emit_int(p.sret_slot)
+        frost_emit_str("(%rbp)\n")
     }
 
     // The first four arguments arrive in registers; the rest were left on the
