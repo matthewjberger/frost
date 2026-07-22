@@ -21,7 +21,7 @@ Slab :: struct($T: Type, $N: usize) {
     free_count: i64,
 }
 
-slab_reset :: fn(s: &mut Slab<Entity, 4>) {
+slab_reset :: fn(mut s: Slab<Entity, 4>) {
     mut i : i64 = 0
     while (i < 4) {
         s.generations[i] = 0
@@ -31,7 +31,7 @@ slab_reset :: fn(s: &mut Slab<Entity, 4>) {
     s.free_count = 4
 }
 
-slab_insert :: fn(s: &mut Slab<Entity, 4>, move value: Entity) -> i64 {
+slab_insert :: fn(mut s: Slab<Entity, 4>, move value: Entity) -> i64 {
     s.free_count = s.free_count - 1
     index := s.free_list[s.free_count]
     s.storage[index] = value
@@ -39,13 +39,13 @@ slab_insert :: fn(s: &mut Slab<Entity, 4>, move value: Entity) -> i64 {
     packed
 }
 
-slab_alive :: fn(s: &Slab<Entity, 4>, handle: i64) -> bool {
+slab_alive :: fn(s: Slab<Entity, 4>, handle: i64) -> bool {
     index := handle & 4294967295
     generation := handle >> 32
     s.generations[index] == generation
 }
 
-slab_release :: fn(s: &mut Slab<Entity, 4>, handle: i64) {
+slab_release :: fn(mut s: Slab<Entity, 4>, handle: i64) {
     index := handle & 4294967295
     s.generations[index] = s.generations[index] + 1
     s.free_list[s.free_count] = index
@@ -62,20 +62,20 @@ main :: fn() -> i64 {
         free_list = [0, 0, 0, 0],
         free_count = 0,
     }
-    slab_reset(&mut world)
+    slab_reset(world)
 
-    hero : Handle<Entity> = slab_insert(&mut world, Entity { hp = 100, mana = 30 })
-    foe : Handle<Entity> = slab_insert(&mut world, Entity { hp = 40, mana = 10 })
+    hero : Handle<Entity> = slab_insert(world, Entity { hp = 100, mana = 30 })
+    foe : Handle<Entity> = slab_insert(world, Entity { hp = 40, mana = 10 })
 
     printf("%lld\n", world[hero].hp)             // 100, read in place
     world[hero].hp = world[hero].hp - 25
     printf("%lld\n", world[hero].hp)             // 75, written in place
     printf("%lld\n", world[foe].hp)              // 40
 
-    if (slab_alive(&world, foe)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
-    slab_release(&mut world, foe)
-    reused := slab_insert(&mut world, Entity { hp = 7, mana = 7 })
-    if (slab_alive(&world, reused)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
-    if (slab_alive(&world, foe)) { printf("%lld\n", 9) } else { printf("%lld\n", 0) }
+    if (slab_alive(world, foe)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    slab_release(world, foe)
+    reused := slab_insert(world, Entity { hp = 7, mana = 7 })
+    if (slab_alive(world, reused)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    if (slab_alive(world, foe)) { printf("%lld\n", 9) } else { printf("%lld\n", 0) }
     0
 }

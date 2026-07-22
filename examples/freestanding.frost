@@ -18,7 +18,7 @@ Arena :: struct($N: usize) {
     offset: i64,
 }
 
-alloc_int :: fn(a: &mut Arena<64>) -> ^i64 {
+alloc_int :: fn(mut a: Arena<64>) -> ^i64 {
     slot := ptr_to(a.data[a.offset])
     a.offset = a.offset + sizeof(i64)
     ptr_cast($i64, slot)
@@ -26,9 +26,9 @@ alloc_int :: fn(a: &mut Arena<64>) -> ^i64 {
 
 main :: fn() -> i64 {
     mut arena : Arena<64> = Arena { data = [0; 64], offset = 0 }
-    p := alloc_int(&mut arena)
+    p := alloc_int(arena)
     p^ = 20
-    q := alloc_int(&mut arena)
+    q := alloc_int(arena)
     q^ = 22
     p^ + q^                 // 42, returned as the process exit code
 }

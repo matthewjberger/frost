@@ -9,7 +9,7 @@ pool_contains :: extern fn(pool: ^u8, handle: i64) -> i64
 Kind :: enum { Player, Enemy { damage: i64 }, Pickup { amount: i64 } }
 Entity :: struct { hp: i64, kind: Kind }
 
-delta :: fn(k: &Kind) -> i64 {
+delta :: fn(k: Kind) -> i64 {
     match k {
         case .Player: 0
         case .Enemy { damage }: 0 - damage
@@ -21,19 +21,19 @@ main :: fn() -> i64 {
     world := pool_new(16, 24)
 
     mut player := Entity { hp = 100, kind = Kind::Player }
-    ph := pool_alloc(world, &player)
+    ph := pool_alloc(world, ptr_to(player))
     mut goblin := Entity { hp = 30, kind = Kind::Enemy { damage = 15 } }
-    gh := pool_alloc(world, &goblin)
+    gh := pool_alloc(world, ptr_to(goblin))
     mut potion := Entity { hp = 0, kind = Kind::Pickup { amount = 25 } }
-    ih := pool_alloc(world, &potion)
+    ih := pool_alloc(world, ptr_to(potion))
 
     pe : ^Entity = pool_get(world, ph)
     ge : ^Entity = pool_get(world, gh)
     ie : ^Entity = pool_get(world, ih)
 
-    pe^.hp = pe^.hp + delta(&ge^.kind)
+    pe^.hp = pe^.hp + delta(ge^.kind)
     printf("%lld\n", pe^.hp)
-    pe^.hp = pe^.hp + delta(&ie^.kind)
+    pe^.hp = pe^.hp + delta(ie^.kind)
     printf("%lld\n", pe^.hp)
 
     pool_free(world, gh)
@@ -41,7 +41,7 @@ main :: fn() -> i64 {
     printf("%lld\n", pool_contains(world, ph))
 
     mut newcomer := Entity { hp = 5, kind = Kind::Player }
-    nh := pool_alloc(world, &newcomer)
+    nh := pool_alloc(world, ptr_to(newcomer))
     printf("%lld\n", pool_contains(world, gh))
     ne : ^Entity = pool_get(world, nh)
     printf("%lld\n", ne^.hp)

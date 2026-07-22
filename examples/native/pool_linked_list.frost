@@ -8,7 +8,7 @@ Node :: struct { value: i64, next: i64 }
 
 push_front :: fn(pool: ^u8, head: i64, value: i64) -> i64 {
     mut node := Node { value = value, next = head }
-    pool_alloc(pool, &node)
+    pool_alloc(pool, ptr_to(node))
 }
 
 sum_list :: fn(pool: ^u8, head: i64) -> i64 {

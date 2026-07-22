@@ -26,7 +26,7 @@ Allocator :: struct {
     state: ^u8,
 }
 
-alloc :: fn(a: &Allocator, size: i64) -> ^u8 {
+alloc :: fn(a: Allocator, size: i64) -> ^u8 {
     a.take(a.state, size)
 }
 
@@ -42,9 +42,9 @@ main :: fn() -> i64 {
         state = ptr_cast($u8, ptr_to(bump)),
     }
 
-    p := ptr_cast($i64, alloc(&a, 8))
+    p := ptr_cast($i64, alloc(a, 8))
     p^ = 42
-    q := ptr_cast($i64, alloc(&a, 8))
+    q := ptr_cast($i64, alloc(a, 8))
     q^ = 7
 
     printf("%lld\n", p^)            // 42

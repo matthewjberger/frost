@@ -15,8 +15,8 @@ main :: fn() -> i64 {
 
     mut hero := Entity { hp = 100, mana = 30 }
     mut goblin := Entity { hp = 50, mana = 10 }
-    hero_handle := pool_alloc(p, &hero)
-    goblin_handle := pool_alloc(p, &goblin)
+    hero_handle := pool_alloc(p, ptr_to(hero))
+    goblin_handle := pool_alloc(p, ptr_to(goblin))
 
     printf("%lld\n", handle_index(hero_handle))
     printf("%lld\n", handle_index(goblin_handle))
@@ -32,7 +32,7 @@ main :: fn() -> i64 {
     printf("%lld\n", pool_contains(p, goblin_handle))
 
     mut orc := Entity { hp = 80, mana = 0 }
-    orc_handle := pool_alloc(p, &orc)
+    orc_handle := pool_alloc(p, ptr_to(orc))
     printf("%lld\n", handle_index(orc_handle))
     printf("%lld\n", handle_generation(orc_handle))
     printf("%lld\n", pool_contains(p, goblin_handle))

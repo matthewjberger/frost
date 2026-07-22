@@ -24,7 +24,7 @@ arena_destroy :: fn(move a: Arena) {
     free(a.data)
 }
 
-alloc_int :: fn(a: &mut Arena) -> ^i64 {
+alloc_int :: fn(mut a: Arena) -> ^i64 {
     slot := ptr_to(a.data[a.offset])
     a.offset = a.offset + sizeof(i64)
     ptr_cast($i64, slot)
@@ -33,9 +33,9 @@ alloc_int :: fn(a: &mut Arena) -> ^i64 {
 main :: fn() -> i64 {
     mut a := arena_new(256)
 
-    p := alloc_int(&mut a)
+    p := alloc_int(a)
     p^ = 42
-    q := alloc_int(&mut a)
+    q := alloc_int(a)
     q^ = 100
 
     printf("%lld\n", p^)          // 42

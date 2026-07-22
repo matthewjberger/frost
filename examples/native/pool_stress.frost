@@ -15,7 +15,7 @@ main :: fn() -> i64 {
     mut handles := [0, 0, 0, 0]
     for i in 0..4 {
         mut u := Unit { id = i, stats = Stats { hp = i * 10, xp = i, slot = i } }
-        handles[i] = pool_alloc(p, &u)
+        handles[i] = pool_alloc(p, ptr_to(u))
     }
 
     mut alive : i64 = 0
@@ -27,7 +27,7 @@ main :: fn() -> i64 {
     printf("%lld\n", alive)
 
     mut extra := Unit { id = 4, stats = Stats { hp = 1, xp = 1, slot = 1 } }
-    exhausted := pool_alloc(p, &extra)
+    exhausted := pool_alloc(p, ptr_to(extra))
     printf("%lld\n", exhausted)
 
     printf("%lld\n", pool_free(p, handles[1]))
@@ -43,7 +43,7 @@ main :: fn() -> i64 {
     printf("%lld\n", sum_hp)
 
     mut r := Unit { id = 99, stats = Stats { hp = 500, xp = 0, slot = 0 } }
-    h_new := pool_alloc(p, &r)
+    h_new := pool_alloc(p, ptr_to(r))
     printf("%lld\n", pool_contains(p, h_new))
     printf("%lld\n", pool_contains(p, handles[3]))
     reborn : ^Unit = pool_get(p, h_new)
