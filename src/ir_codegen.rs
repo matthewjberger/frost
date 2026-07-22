@@ -28,6 +28,7 @@ pub fn compile_ir_to_object(module: &IrModule) -> Result<Vec<u8>> {
     let (mut object, mut generator) = Generator::new()?;
     generator.declare_strings(&mut object, module)?;
     generator.declare_functions(&mut object, module)?;
+    let declared = started.elapsed();
 
     // Code generation is nearly all of the backend's time, it is per function,
     // and the inputs are independent once every symbol is declared. So it runs
@@ -109,9 +110,10 @@ pub fn compile_ir_to_object(module: &IrModule) -> Result<Vec<u8>> {
     let bytes = product.emit()?;
     if report {
         eprintln!(
-            "frost: {} functions on {threads} thread(s), code generation {:.0} ms, defining {:.0} ms, object emission {:.0} ms",
+            "frost: {} functions on {threads} thread(s), declaring {:.0} ms, code generation {:.0} ms, defining {:.0} ms, object emission {:.0} ms",
             module.functions.len(),
-            generated.as_secs_f64() * 1000.0,
+            declared.as_secs_f64() * 1000.0,
+            (generated - declared).as_secs_f64() * 1000.0,
             (defined - generated).as_secs_f64() * 1000.0,
             (started.elapsed() - defined).as_secs_f64() * 1000.0
         );
