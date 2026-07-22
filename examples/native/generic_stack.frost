@@ -2,7 +2,7 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 Stack :: struct($T: Type) { items: [8]T, count: i64 }
 
-push :: fn(stack: &mut Stack<$T>, value: $T) {
+push :: fn(stack: &mut Stack<$T>, move value: $T) {
     stack^.items[stack^.count] = value
     stack^.count = stack^.count + 1
 }

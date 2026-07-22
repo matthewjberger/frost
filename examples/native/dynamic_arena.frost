@@ -20,7 +20,7 @@ arena_new :: fn(cap: i64) -> Arena {
     Arena { data = malloc(cap), cap = cap, offset = 0 }
 }
 
-arena_destroy :: fn(a: Arena) {
+arena_destroy :: fn(move a: Arena) {
     free(a.data)
 }
 

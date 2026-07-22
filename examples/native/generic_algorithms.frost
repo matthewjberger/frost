@@ -1,8 +1,8 @@
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
-min_of :: fn(a: $T, b: $T) -> T { if (a < b) { a } else { b } }
-max_of :: fn(a: $T, b: $T) -> T { if (a > b) { a } else { b } }
-clamp  :: fn(x: $T, lo: $T, hi: $T) -> T { max_of(lo, min_of(x, hi)) }
+min_of :: fn(move a: $T, move b: $T) -> T { if (a < b) { a } else { b } }
+max_of :: fn(move a: $T, move b: $T) -> T { if (a > b) { a } else { b } }
+clamp  :: fn(move x: $T, move lo: $T, move hi: $T) -> T { max_of(lo, min_of(x, hi)) }
 
 swap :: fn(a: &mut $T, b: &mut $T) {
     t := a^

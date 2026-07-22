@@ -113,6 +113,7 @@ TOK_KW_EXTERN :: 20
 TOK_KW_TRUE   :: 21
 TOK_KW_FALSE  :: 22
 TOK_KW_MUT    :: 23
+TOK_KW_MOVE   :: 24
 TOK_LPAREN    :: 40
 TOK_RPAREN    :: 41
 TOK_LBRACE    :: 42
@@ -288,7 +289,7 @@ arena_make :: fn($T: Type, cap: i64) -> Arena<T> {
     Arena { data = ptr_cast($T, bytes), cap = cap, count = 0 }
 }
 
-arena_push :: fn(a: &mut Arena<$T>, value: $T) -> i64 {
+arena_push :: fn(a: &mut Arena<$T>, move value: $T) -> i64 {
     id := a.count
     a.data[id] = value
     a.count = a.count + 1
@@ -367,6 +368,7 @@ classify_ident :: fn(src: ^i8, off: i64, len: i64) -> i64 {
     if (str_range_eq(src, off, len, "if")) { return TOK_KW_IF }
     if (str_range_eq(src, off, len, "let")) { return TOK_KW_LET }
     if (str_range_eq(src, off, len, "mut")) { return TOK_KW_MUT }
+    if (str_range_eq(src, off, len, "move")) { return TOK_KW_MOVE }
     if (str_range_eq(src, off, len, "else")) { return TOK_KW_ELSE }
     if (str_range_eq(src, off, len, "case")) { return TOK_KW_CASE }
     if (str_range_eq(src, off, len, "true")) { return TOK_KW_TRUE }
@@ -1376,6 +1378,12 @@ parse_params :: fn(p: &mut Parser) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
+        // A parameter mode keyword (`mut`/`move`) is skipped; the emitted C
+        // takes a `&`-typed parameter by pointer and any other by value, so the
+        // mode itself carries no code-generation difference here.
+        if (cur(p) == TOK_KW_MUT || cur(p) == TOK_KW_MOVE) {
+            advance(p)
+        }
         // A `$T: Type` parameter declares the type parameter and is erased from
         // the runtime signature, so no PARAM node is created for it.
         if (cur(p) == TOK_DOLLAR) {
