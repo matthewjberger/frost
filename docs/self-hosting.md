@@ -43,6 +43,18 @@ So there is one lever that matters:
    type-check for itself first, because there is no longer a C compiler behind it
    to catch mistakes.
 
+On the native path the C compiler is already out of the per-build loop. The
+runtime is compiled once into an object cached in the temp directory, keyed by a
+hash of its source and the tool that built it, and linked thereafter. A small
+program builds in 0.307 s cold and 0.104 s warm. What remains external is the
+linker, which the build invokes to turn the object into an executable.
+
+To remove that too, in increasing order of effort: port the runtime itself to
+Frost (the pool memory model spike showed this works, and `--freestanding`
+already links with no libc), then emit the executable directly, PE on Windows and
+ELF on Linux, instead of calling a linker. That is the last external dependency
+and it is what Jai does.
+
 Second-order levers, worth doing but small next to the above:
 
 2. Parse each generic template to AST once and substitute types per
