@@ -406,10 +406,10 @@ impl Frame {
                         self.answers_here(block, last)?;
                     }
                 }
-                Statement::Expression(value) if last => {
-                    if self.points_into_frame(value) {
-                        bail!(self.escape("the call's answer"));
-                    }
+                Statement::Expression(value)
+                    if last && self.points_into_frame(value) =>
+                {
+                    bail!(self.escape("the call's answer"));
                 }
                 _ => {}
             }
