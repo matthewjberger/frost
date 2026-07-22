@@ -329,6 +329,9 @@ Parser :: struct {
     last_return_type: i64,
     no_struct_lit: bool,
     last_type_was_generic: i64,
+    current_ret: i64,
+    current_fn_off: i64,
+    current_fn_len: i64,
 }
 
 is_digit :: fn(c: i64) -> bool {
@@ -1716,6 +1719,26 @@ lookup_local :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
 // Whether a name is in scope as a parameter or local. lookup_local answers with
 // a type and defaults an unknown name to i64, which cannot distinguish "an i64"
 // from "not declared", so a check needs this instead.
+// Whether a value of type `from` may stand in for `to`. Scalars and pointers
+// convert freely, the way the emitted C does, and a type parameter matches
+// anything because it is a placeholder. A struct only matches the same struct,
+// which is where real mistakes show up.
+types_compatible :: fn(from: i64, to: i64) -> bool {
+    if (from == to) {
+        return true
+    }
+    if (from == TY_PARAM || to == TY_PARAM) {
+        return true
+    }
+    if (is_pointer(from) && is_pointer(to)) {
+        return true
+    }
+    if (is_struct_ty(from) || is_struct_ty(to)) {
+        return false
+    }
+    true
+}
+
 local_exists :: fn(mut p: Parser, off: i64, len: i64) -> bool {
     mut i : i64 = 0
     while (i < p.locals.count) {
@@ -2231,6 +2254,13 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         if (value == (0 - 1)) {
             frost_emit_str("return 0;\n")
         } else {
+            value_ty := type_of(p, value)
+            if (types_compatible(value_ty, p.current_ret) == false) {
+                frost_error("minifrost: '")
+                frost_error_src(p.src, p.current_fn_off, p.current_fn_len)
+                frost_error("' returns a value of the wrong type")
+                frost_die()
+            }
             frost_emit_str("return (")
             emit_expr(p, value)
             frost_emit_str(");\n")
@@ -2422,6 +2452,10 @@ emit_function :: fn(mut p: Parser, id: i64) {
     body := node^.a
     params := node^.b
     is_main := node^.c
+    sym : ^Sym = arena_at(p.fns, fn_index)
+    p.current_ret = sym^.ret_type
+    p.current_fn_off = sym^.off
+    p.current_fn_len = sym^.len
     p.locals.count = 0
     record_params(p, params)
     if (is_main == 1) {
@@ -2444,6 +2478,10 @@ emit_mono_function :: fn(mut p: Parser, id: i64, arg: i64, ret: i64) {
     fn_index := node^.val
     body := node^.a
     params := node^.b
+    msym : ^Sym = arena_at(p.fns, fn_index)
+    p.current_ret = ret
+    p.current_fn_off = msym^.off
+    p.current_fn_len = msym^.len
     p.locals.count = 0
     record_params(p, params)
     emit_ctype(p, ret)
@@ -2695,6 +2733,9 @@ main :: fn() -> i64 {
         last_return_type = 0,
         no_struct_lit = false,
         last_type_was_generic = 0,
+        current_ret = 0,
+        current_fn_off = 0,
+        current_fn_len = 0,
     }
     tokenize(source, frost_str_len(source), parser.tokens)
     program := parse_program(parser)

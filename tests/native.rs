@@ -811,6 +811,21 @@ fn minifrost_rejects_a_field_the_struct_does_not_have() {
 }
 
 #[test]
+fn minifrost_rejects_returning_the_wrong_type() {
+    let source = "P :: struct { x: i64 }\n\
+                  bad :: fn() -> i64 {\n\
+                  \x20   p := P { x = 1 }\n    return p\n}\n\
+                  main :: fn() -> i64 { return bad() }\n";
+    let Some(message) = minifrost_rejects("badreturn", source) else {
+        return;
+    };
+    assert!(
+        message.contains("wrong type"),
+        "expected a return-type error, got:\n{message}"
+    );
+}
+
+#[test]
 fn minifrost_rejects_a_call_with_the_wrong_argument_count() {
     let source = "add :: fn(a: i64, b: i64) -> i64 { a + b }\n\
                   main :: fn() -> i64 {\n    return add(1)\n}\n";
