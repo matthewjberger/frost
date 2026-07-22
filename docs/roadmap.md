@@ -133,9 +133,30 @@ answer is that registering borrows for longer than a call, which is the first
 thing in the language that does, and it may want to be a linear obligation
 (register/unregister as a consumed pair) rather than a borrow.
 
-## 1. Parallel code generation
+## 1. Parallel code generation (landed, and not yet paying)
 
-**Why first.** It is where the time is. Code generation is 1,285 ms of a 1,289 ms
+**Landed, and it does not pay yet.** Code generation runs on every thread the
+machine has, correctness is carried by the differential oracle, and the win is
+1,285 ms to about 1,060 ms on sixteen threads at 10,241 functions. That is 1.2x
+from 16x the threads, and it is not understood.
+
+What has been ruled out by measurement, so nobody re-runs it:
+
+| suspect | measured | verdict |
+| --- | --- | --- |
+| serial declaration | 9 ms | not it |
+| serial defining | 3 ms | not it |
+| object emission | 4 ms | not it |
+| allocator contention | mimalloc changed nothing | not it |
+
+So the serial tail is 16 ms against a second of parallel work, and Amdahl does
+not explain it. The remaining candidates are that this machine's sixteen threads
+are eight cores with SMT and Cranelift's compile is memory-bound enough that SMT
+buys nothing, or that something inside `Context::compile` shares state. The next
+step is a thread-count sweep, 1, 2, 4, 8, 16, which separates those two answers
+in one run: memory-bound work flattens gradually, a shared lock flattens at two.
+
+**Why it was first.** It is where the time is. Code generation is 1,285 ms of a 1,289 ms
 backend at 10,241 functions, and the work is per-function on independent inputs,
 so this is the one change that moves the number that misses the target. It is not
 made redundant by separate compilation either, since functions within a module
