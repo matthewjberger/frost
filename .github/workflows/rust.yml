@@ -18,5 +18,15 @@ jobs:
         run: cargo build --verbose
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
+      - name: Diagnose the native self-hosting crash
+        run: |
+          sudo apt-get install -y gdb
+          cargo build -r --bin frost
+          ./target/release/frost --link -o /tmp/selfhosted bootstrap/frost.frost
+          export FROST_BACKEND=asm
+          export FROST_INPUT=bootstrap/frost.frost
+          gdb -batch -ex run -ex bt -ex "info registers rip rsp rbp" \
+            /tmp/selfhosted > /tmp/gdb.log 2>&1 || true
+          grep -v '^\s*$' /tmp/gdb.log | tail -40
       - name: Run tests
         run: cargo test --verbose
