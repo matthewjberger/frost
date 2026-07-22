@@ -18,6 +18,19 @@ use crate::types::Type;
 // want different answers: one parallelizes, the other wants more compilation
 // units. Off unless asked for, and it prints to stderr so it never reaches
 // emitted output.
+// One ISA per thread. Sharing a single one across threads is allowed, but the
+// scaling says something behind it serializes, and an ISA is cheap to build
+// next to a second of code generation.
+fn make_isa() -> Result<std::sync::Arc<dyn cranelift::codegen::isa::TargetIsa>>
+{
+    let mut flag_builder = settings::builder();
+    flag_builder.set("opt_level", "speed")?;
+    flag_builder.set("is_pic", "true")?;
+    let isa_builder = cranelift_native::builder()
+        .map_err(|message| anyhow::anyhow!("ISA builder: {message}"))?;
+    Ok(isa_builder.finish(settings::Flags::new(flag_builder))?)
+}
+
 fn timings_wanted() -> bool {
     std::env::var("FROST_TIMINGS").is_ok_and(|value| value != "0")
 }
@@ -36,10 +49,17 @@ pub fn compile_ir_to_object(module: &IrModule) -> Result<Vec<u8>> {
     // because the object is one mutable thing.
     let generator = &generator;
     let isa = object.isa();
-    let threads = std::thread::available_parallelism()
+    // `FROST_THREADS` caps it, both so a build system can leave headroom and so
+    // the scaling can be swept rather than guessed at.
+    let available = std::thread::available_parallelism()
         .map(|count| count.get())
-        .unwrap_or(1)
-        .min(module.functions.len().max(1));
+        .unwrap_or(1);
+    let requested = std::env::var("FROST_THREADS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|count| *count > 0)
+        .unwrap_or(available);
+    let threads = requested.min(module.functions.len().max(1));
     let per_thread = module.functions.len().div_ceil(threads.max(1));
     let mut compiled: Vec<Compiled> =
         Vec::with_capacity(module.functions.len());
@@ -64,6 +84,8 @@ pub fn compile_ir_to_object(module: &IrModule) -> Result<Vec<u8>> {
                 .into_iter()
                 .map(|chunk| {
                     scope.spawn(move || {
+                        let isa = make_isa()?;
+                        let isa = isa.as_ref();
                         let mut context = cranelift::codegen::Context::new();
                         let mut builder_context = FunctionBuilderContext::new();
                         let mut out = Vec::with_capacity(chunk.len());
@@ -125,6 +147,9 @@ pub fn compile_ir_to_object(module: &IrModule) -> Result<Vec<u8>> {
 // context it was compiled in once the thread that owned it is gone.
 struct Compiled {
     id: FuncId,
+    // Needed only so the object backend can resolve relocation targets against
+    // the function's imported names. Moved out of the context rather than
+    // cloned, since the context is cleared before it is used again.
     function: cranelift::codegen::ir::Function,
     alignment: u32,
     bytes: Vec<u8>,
@@ -157,7 +182,10 @@ fn compile_one(
     };
     Ok(Compiled {
         id,
-        function: context.func.clone(),
+        function: std::mem::replace(
+            &mut context.func,
+            cranelift::codegen::ir::Function::new(),
+        ),
         alignment,
         bytes,
         relocations,
