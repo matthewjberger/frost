@@ -1279,6 +1279,43 @@ fn self_hosted_accepts_a_region_pointer_held_inside() {
     assert_eq!(output, "7\n");
 }
 
+// The interprocedural half: a `uses` function may hand an arena pointer back to
+// its caller, whose region owns the arena, but may not store one into a
+// parameter, which outlives the call.
+#[test]
+fn self_hosted_rejects_a_region_pointer_stored_into_a_parameter() {
+    let source = "Arena :: struct { offset: i64 }\n\
+                  Holder :: struct { slot: ^i64 }\n\
+                  leak :: fn(mut h: Holder) -> i64 uses Arena {\n\
+                  \x20   h.slot = ptr_to(arena^.offset)\n    0\n}\n\
+                  main :: fn() -> i64 { 0 }\n";
+    let Some(message) = self_hosted_rejects("regionparam", source) else {
+        return;
+    };
+    assert!(
+        message.contains("stored into a parameter"),
+        "expected a parameter-leak region error, got:\n{message}"
+    );
+}
+
+#[test]
+fn self_hosted_accepts_a_region_pointer_handed_to_the_caller() {
+    let source = "Arena :: struct { offset: i64 }\n\
+                  alloc :: fn() -> ^i64 uses Arena {\n\
+                  \x20   slot := ptr_to(arena^.offset)\n    return slot\n}\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   mut arena : Arena = Arena { offset = 5 }\n\
+                  \x20   mut result : i64 = 0\n\
+                  \x20   with arena {\n        held := alloc()\n\
+                  \x20       result = held^\n    }\n\
+                  \x20   print result\n    0\n}\n";
+    let Some(output) = selfhosted_native_output("regionhandback", source)
+    else {
+        return;
+    };
+    assert_eq!(output, "5\n");
+}
+
 #[test]
 fn self_hosted_rejects_a_linear_value_never_consumed() {
     let source = "File :: linear struct { h: i64 }\n\

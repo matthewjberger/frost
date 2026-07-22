@@ -196,8 +196,10 @@ its output. In dependency order, what is done and what remains:
    propagate: it reads the value there, and reading out of the region is what
    the region is for.
 
-   Left: the interprocedural half, where a `uses` function stores an arena
-   pointer into one of its own parameters.
+   It is interprocedural: the body of every `uses` function is a region too,
+   whose arena belongs to whoever supplied it. Such a function may hand a
+   pointer back to its caller, where the caller's region checks it, but may not
+   store one into a parameter, which outlives the call.
 
 6. **Failure sets.** `-> T ! E` with `?`, mirroring `src/failure_sets.rs`. This
    one needs enums with payloads first, which the bootstrap subset skipped,
