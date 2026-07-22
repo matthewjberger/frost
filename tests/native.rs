@@ -4091,7 +4091,7 @@ fn a_pointer_into_the_frame_may_not_be_returned() {
                   main :: fn() -> i64 { 0 }\n";
     let message = compile_error("frameptr", source);
     assert!(
-        message.contains("pointer into its own frame"),
+        message.contains("pointer into the frame of"),
         "expected a frame escape error, got:\n{message}"
     );
 }
@@ -4105,7 +4105,7 @@ fn a_slice_over_a_local_may_not_be_returned() {
                   main :: fn() -> i64 { 0 }\n";
     let message = compile_error("frameslice", source);
     assert!(
-        message.contains("pointer into its own frame"),
+        message.contains("pointer into the frame of"),
         "expected a frame escape error, got:\n{message}"
     );
 }
@@ -4211,4 +4211,39 @@ fn emit_c_source(name: &str, source: &str) -> Option<String> {
     let _ = std::fs::remove_file(&source_path);
     let _ = std::fs::remove_file(&c_path);
     text
+}
+
+// The other ways a pointer into the frame could leave it: written into a
+// parameter, answered from a branch, or carried out inside a struct.
+#[test]
+fn a_frame_pointer_may_not_leave_by_any_road() {
+    let cases: &[(&str, &str)] = &[
+        (
+            "param",
+            "stash :: fn(mut slot: ^i64) {\n\
+             \x20   mut local : i64 = 5\n    slot = ptr_to(local)\n}\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+        (
+            "branch",
+            "pick :: fn(c: bool) -> ^i64 {\n\
+             \x20   mut a : i64 = 1\n\
+             \x20   if (c) { ptr_to(a) } else { ptr_to(a) }\n}\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+        (
+            "struct",
+            "Holder :: struct { p: ^i64 }\n\
+             wrap :: fn() -> Holder {\n\
+             \x20   mut a : i64 = 1\n    Holder { p = ptr_to(a) }\n}\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+    ];
+    for (name, source) in cases {
+        let message = compile_error(&format!("frame_{name}"), source);
+        assert!(
+            message.contains("pointer into the frame of"),
+            "{name}: expected a frame escape error, got:\n{message}"
+        );
+    }
 }
