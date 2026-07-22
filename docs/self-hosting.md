@@ -92,10 +92,26 @@ Second-order levers, worth doing but small next to the above:
 minifrost today is a translator, not a checker: it emits C and lets the C
 compiler catch type errors. In dependency order:
 
-1. **Self type-checking.** Types, call arguments and arity, returns, field
-   access. minifrost already has a type model (`TY_` codes, `STRUCT_BASE`,
-   `POINTER_BASE`) and a `type_of`, so this extends existing machinery rather
-   than starting from zero. Required before (3).
+1. **Self type-checking.** Required before (3), because once minifrost stops
+   emitting C there is no C compiler behind it to catch anything.
+
+   Done: calls. A name becomes defined when its `fn` or `extern fn` is parsed, so
+   a name that is only ever called does not exist. Every node ever parsed lives
+   in one arena, so a linear scan reaches every call and checks the callee exists
+   and the argument count matches. Costs nothing measurable.
+
+   Left: argument types, return types, field access, and variable resolution.
+   These need more than the arena scan. `lookup_local` silently defaults an
+   unknown name to `TY_I64`, and the locals table is populated during emit and
+   reset per function, so types are not known after parsing. Doing these properly
+   means a semantic pass that walks each function with a live scope, recording
+   local types as it goes. That is the real work of turning minifrost from a
+   translator into a checker.
+
+   Watch for false positives against minifrost.frost itself, which must keep
+   passing: generic templates collapse `Foo<$T>` to a placeholder type, and an
+   auto-borrowed argument is a struct place passed to a pointer parameter, so a
+   naive argument-type comparison rejects valid code.
 2. **Ownership and linearity.** Linear resources consumed exactly once, the move
    and borrow rules. The design's safety core, entirely absent from minifrost.
 3. **Native backend.** The speed payoff above, unblocked by (1).
