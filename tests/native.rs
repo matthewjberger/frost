@@ -826,6 +826,21 @@ fn minifrost_rejects_returning_the_wrong_type() {
 }
 
 #[test]
+fn minifrost_rejects_an_argument_of_the_wrong_type() {
+    let source = "P :: struct { x: i64 }\n\
+                  take :: fn(n: i64) -> i64 { n }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   p := P { x = 1 }\n    return take(p)\n}\n";
+    let Some(message) = minifrost_rejects("badarg", source) else {
+        return;
+    };
+    assert!(
+        message.contains("wrong type"),
+        "expected an argument-type error, got:\n{message}"
+    );
+}
+
+#[test]
 fn minifrost_rejects_a_call_with_the_wrong_argument_count() {
     let source = "add :: fn(a: i64, b: i64) -> i64 { a + b }\n\
                   main :: fn() -> i64 {\n    return add(1)\n}\n";
