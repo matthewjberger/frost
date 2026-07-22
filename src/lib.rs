@@ -15,6 +15,7 @@ mod ownership;
 mod param_modes;
 mod parser;
 mod regions;
+mod source_map;
 mod types;
 
 pub use self::{

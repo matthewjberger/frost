@@ -833,11 +833,7 @@ pub struct Diagnostic {
 
 impl std::fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "at line {}, column {}: {}",
-            self.position.line, self.position.column, self.message
-        )
+        write!(f, "at {}: {}", self.position.describe(), self.message)
     }
 }
 

@@ -106,7 +106,15 @@ fn resolve_into(
         let tokens = lexer
             .tokenize()
             .with_context(|| format!("lexing {}", full.display()))?;
-        let positions = lexer.positions().to_vec();
+        let module_name = relative_module_name(&key, root);
+        // Every position the lexer produced for this file belongs to this file,
+        // and stamping them here is the only place that knows which file it is.
+        let file = crate::source_map::register(&module_name);
+        let positions: Vec<_> = lexer
+            .positions()
+            .iter()
+            .map(|position| crate::lexer::Position { file, ..*position })
+            .collect();
         let mut parser = Parser::with_positions(&tokens, &positions);
         let mut imported = parser
             .parse()
@@ -126,7 +134,7 @@ fn resolve_into(
         // what keeps it from drifting out of step with the source it describes.
         if crate::interface::interfaces_are_checked() {
             let interface = crate::interface::ModuleInterface::of(
-                &relative_module_name(&key, root),
+                &module_name,
                 &imported,
                 parser.exports(),
                 &parser.linear_types().iter().cloned().collect(),
@@ -159,6 +167,32 @@ fn top_level_name(statement: &Statement) -> Option<&str> {
         | Statement::Extern { name, .. } => Some(name),
         _ => None,
     }
+}
+
+// Turns `__m<tag>_helper` back into `helper` for a diagnostic. A reader did not
+// write the mangled name and should not have to recognize it. Kept next to
+// `private_renames`, which is the only thing that produces the shape, so the
+// two cannot drift apart.
+pub fn demangle_private_names(text: &str) -> String {
+    const PREFIX: &str = "__m";
+    const TAG: usize = 16;
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(PREFIX) {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + PREFIX.len()..];
+        let is_tag = after.len() > TAG
+            && after.as_bytes()[..TAG].iter().all(u8::is_ascii_hexdigit)
+            && after.as_bytes()[TAG] == b'_';
+        if is_tag {
+            rest = &after[TAG + 1..];
+        } else {
+            out.push_str(PREFIX);
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn private_renames(
@@ -445,5 +479,45 @@ impl Renamer {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn demangling_leaves_alone_what_it_did_not_mangle() {
+        // A real mangled name, the same shape `private_renames` produces.
+        assert_eq!(
+            demangle_private_names(
+                "struct '__m6999e911a6ca1ff4_Dot' has no field 'x'"
+            ),
+            "struct 'Dot' has no field 'x'"
+        );
+        // A name that merely starts the same way is not a tag.
+        assert_eq!(demangle_private_names("__mixer"), "__mixer");
+        assert_eq!(demangle_private_names("__m123_short"), "__m123_short");
+        assert_eq!(demangle_private_names("nothing here"), "nothing here");
+        // Two in one message, and the tail after the last one is kept.
+        assert_eq!(
+            demangle_private_names(
+                "__m0000000000000001_a calls __m0000000000000002_b twice"
+            ),
+            "a calls b twice"
+        );
+    }
+
+    #[test]
+    fn a_module_tag_is_the_same_for_the_same_relative_path() {
+        let root = Path::new("/project");
+        assert_eq!(
+            module_tag(Path::new("/project/lib/a.frost"), root),
+            module_tag(Path::new("/project/lib/a.frost"), root)
+        );
+        assert_ne!(
+            module_tag(Path::new("/project/lib/a.frost"), root),
+            module_tag(Path::new("/project/lib/b.frost"), root)
+        );
     }
 }

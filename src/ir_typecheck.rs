@@ -300,10 +300,7 @@ fn at(function: &IrFunction, operand: &IrOperand) -> String {
     if local.position == crate::lexer::Position::default() {
         return String::new();
     }
-    format!(
-        "at line {}, column {}: ",
-        local.position.line, local.position.column
-    )
+    format!("at {}: ", local.position.describe())
 }
 
 fn require_numeric(function: &IrFunction, operand: &IrOperand) -> Result<()> {

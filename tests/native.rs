@@ -1419,6 +1419,58 @@ fn self_hosted_survives_an_import_cycle() {
     assert_eq!(output, "7\n");
 }
 
+// An error inside an imported module names that module. Imports flatten every
+// file into one statement list, so a bare "line 5" sent the reader to line 5 of
+// whichever file they happened to be looking at. The mangled private name is
+// undone too, since the reader never wrote `__m<tag>_Dot`.
+#[test]
+fn a_diagnostic_from_an_imported_module_names_the_file() {
+    let directory = std::env::temp_dir().join("frost_import_diagnostic");
+    let library = directory.join("lib");
+    std::fs::create_dir_all(&library).unwrap();
+    std::fs::write(
+        library.join("broken.frost"),
+        "export oops\n\
+         Dot :: struct { x: i64 }\n\
+         oops :: fn() -> i64 {\n\
+         \x20   d := Dot { x = 1 }\n\
+         \x20   d.missing_field\n\
+         }\n",
+    )
+    .unwrap();
+    let root = directory.join("app.frost");
+    std::fs::write(
+        &root,
+        "import \"lib/broken.frost\"\nmain :: fn() -> i64 { oops() }\n",
+    )
+    .unwrap();
+
+    let frost = env!("CARGO_BIN_EXE_frost");
+    let output = Command::new(frost)
+        .arg("--emit-c")
+        .arg("-o")
+        .arg(directory.join("out.c"))
+        .arg(&root)
+        .output()
+        .unwrap();
+    let message = String::from_utf8_lossy(&output.stderr).to_string();
+    let _ = std::fs::remove_dir_all(&directory);
+
+    assert!(!output.status.success(), "the broken module compiled");
+    assert!(
+        message.contains("lib/broken.frost:5:"),
+        "the diagnostic did not name the imported file:\n{message}"
+    );
+    assert!(
+        !message.contains("__m"),
+        "the diagnostic leaked a mangled private name:\n{message}"
+    );
+    assert!(
+        message.contains("'Dot'"),
+        "the diagnostic did not name the struct the reader wrote:\n{message}"
+    );
+}
+
 // A module's private symbols are a property of the module, not of the order it
 // happened to be reached in. This is step 1 of docs/separate-compilation.md and
 // the thing the rest of it cannot be built without: a module compiled once has

@@ -200,6 +200,27 @@ pub const EOF_CHAR: char = '\0';
 pub struct Position {
     pub line: usize,
     pub column: usize,
+    // Which file this came from, as an id into the source map. Imports flatten
+    // every module into one statement list, so without this a diagnostic says
+    // "line 12" and the reader looks up line 12 of the wrong file. The lexer
+    // does not know which file it is reading, so it leaves this 0 and import
+    // resolution stamps it, which is also the module provenance step 3 of
+    // docs/separate-compilation.md needs.
+    #[serde(default)]
+    pub file: u32,
+}
+
+impl Position {
+    // How a diagnostic names this place. Falls back to the bare line and column
+    // when the file is not known, which is the entry file and the tests.
+    pub fn describe(&self) -> String {
+        match crate::source_map::name_of(self.file) {
+            Some(name) => {
+                format!("{name}:{}:{}", self.line, self.column)
+            }
+            None => format!("line {}, column {}", self.line, self.column),
+        }
+    }
 }
 
 pub struct Lexer<'a> {
@@ -216,7 +237,11 @@ impl<'a> Lexer<'a> {
             chars: input.chars(),
             line: 1,
             column: 1,
-            token_start: Position { line: 1, column: 1 },
+            token_start: Position {
+                line: 1,
+                column: 1,
+                file: 0,
+            },
             positions: Vec::new(),
         }
     }
@@ -252,6 +277,7 @@ impl<'a> Lexer<'a> {
         self.token_start = Position {
             line: self.line,
             column: self.column,
+            file: 0,
         };
         let first_char = self.read_char();
         let token = match first_char {
