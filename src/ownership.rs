@@ -25,18 +25,48 @@ fn locate<T>(result: Result<T>, position: Position) -> Result<T> {
     })
 }
 
+type ParamTypes = HashMap<String, Vec<Option<Type>>>;
+
 pub fn check_ownership(
     statements: &[Spanned<Statement>],
     linear: &HashSet<String>,
 ) -> Result<()> {
     let signatures = collect_signatures(statements);
+    let param_types = collect_param_types(statements);
     for statement in statements {
         locate(
-            check_statement(&statement.node, linear, &signatures),
+            check_statement(&statement.node, linear, &signatures, &param_types),
             statement.position,
         )?;
     }
     Ok(())
+}
+
+// The declared type of every parameter of every function and extern, in order,
+// so a call argument can be told to borrow (a reference parameter) rather than
+// move (a value parameter). Positions line up one-to-one with call arguments,
+// including a `$Type` argument against a `$T: Type` parameter.
+fn collect_param_types(statements: &[Spanned<Statement>]) -> ParamTypes {
+    let mut param_types = HashMap::new();
+    for statement in statements {
+        let (name, params) = match &statement.node {
+            Statement::Constant(
+                name,
+                Expression::Function(params, _, _)
+                | Expression::Proc(params, _, _),
+            ) => (name, params),
+            Statement::Extern { name, params, .. } => (name, params),
+            _ => continue,
+        };
+        param_types.insert(
+            name.clone(),
+            params
+                .iter()
+                .map(|parameter| parameter.type_annotation.clone())
+                .collect(),
+        );
+    }
+    param_types
 }
 
 fn collect_signatures(statements: &[Spanned<Statement>]) -> Signatures {
@@ -71,6 +101,7 @@ fn check_statement(
     statement: &Statement,
     linear: &HashSet<String>,
     signatures: &Signatures,
+    param_types: &ParamTypes,
 ) -> Result<()> {
     match statement {
         Statement::Struct(name, _, fields) => {
@@ -113,9 +144,15 @@ fn check_statement(
                 );
             }
             for inner in body {
-                check_statement(inner, linear, signatures)?;
+                check_statement(inner, linear, signatures, param_types)?;
             }
-            check_function_moves(params, body, linear, signatures)?;
+            check_function_moves(
+                params,
+                body,
+                linear,
+                signatures,
+                param_types,
+            )?;
         }
         Statement::Extern {
             name, return_type, ..
@@ -138,12 +175,14 @@ fn check_function_moves(
     body: &Block,
     linear: &HashSet<String>,
     signatures: &Signatures,
+    param_types: &ParamTypes,
 ) -> Result<()> {
     let mut checker = MoveChecker {
         types: HashMap::new(),
         states: HashMap::new(),
         linear,
         signatures,
+        param_types,
         in_defer: false,
     };
     for parameter in params {
@@ -176,6 +215,7 @@ struct MoveChecker<'a> {
     states: HashMap<String, MoveState>,
     linear: &'a HashSet<String>,
     signatures: &'a Signatures,
+    param_types: &'a ParamTypes,
     in_defer: bool,
 }
 
@@ -492,8 +532,18 @@ impl MoveChecker<'_> {
                     }
                     return Ok(());
                 }
-                for argument in arguments {
-                    self.visit(argument, true)?;
+                let param_types = match callee.as_ref() {
+                    Expression::Identifier(name) => self.param_types.get(name),
+                    _ => None,
+                };
+                for (index, argument) in arguments.iter().enumerate() {
+                    let borrows = param_types
+                        .and_then(|types| types.get(index))
+                        .map(|ty| {
+                            matches!(ty, Some(Type::Ref(_) | Type::RefMut(_)))
+                        })
+                        .unwrap_or(false);
+                    self.visit(argument, !borrows)?;
                 }
                 Ok(())
             }
