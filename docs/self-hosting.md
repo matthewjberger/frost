@@ -1,10 +1,10 @@
 # Self-hosting and compile speed
 
 Frost has two compilers. `src/*.rs` is the reference compiler, written in Rust,
-implementing the full language. `bootstrap/minifrost.frost` is a compiler written
+implementing the full language. `bootstrap/frost.frost` is a compiler written
 in Frost that compiles a subset of Frost, and it self-hosts: it compiles its own
 source to a byte-identical fixpoint across three stages, checked by
-`bootstrap_minifrost_self_hosts`. It checks the programs it compiles rather than
+`self_hosting_is_a_fixpoint`. It checks the programs it compiles rather than
 leaving that to whatever compiles its output.
 
 Finishing the self-hosted compiler means growing the Frost-written one until it
@@ -13,11 +13,11 @@ Because the spec is deliberately small and closed, this is a finite checklist.
 
 ## Compile speed
 
-Measured on minifrost compiling its own 2579 lines (2324 lines of C emitted):
+Measured on the self-hosted compiler compiling its own 2579 lines (2324 lines of C emitted):
 
 | stage | time |
 | --- | --- |
-| minifrost: parse, monomorphize, emit C | 0.047 s |
+| frost: parse, monomorphize, emit C | 0.047 s |
 | gcc compiling the emitted C | 0.249 s |
 | gcc -O2 compiling the emitted C | 0.838 s |
 
@@ -50,7 +50,7 @@ hash of its source and the tool that built it, and linked thereafter.
 
 Where a build's time goes now:
 
-| stage | small program | minifrost, 2579 lines |
+| stage | small program | the self-hosted compiler, 2579 lines |
 | --- | --- | --- |
 | frost compile only (`--native`) | 0.033 s | 0.045 s |
 | full build including link | 0.099 s | 0.126 s |
@@ -77,23 +77,23 @@ runtime is compiled into every program.
 Second-order levers, worth doing but small next to the above:
 
 2. Parse each generic template to AST once and substitute types per
-   instantiation. minifrost re-lexes and re-parses the template for every
+   instantiation. the self-hosted compiler re-lexes and re-parses the template for every
    instance, which is wasted work that grows with instantiation count.
 3. Parallelize per-function type checking and codegen. The type system is local
    and signature-based, so functions are independent once signatures are
    collected.
-4. Keep the arena allocation and the single in-memory pass per file. minifrost
+4. Keep the arena allocation and the single in-memory pass per file. the self-hosted compiler
    already does this, which is why it reaches 47 ms.
-5. Keep monomorphization cached and bounded. minifrost already dedups
+5. Keep monomorphization cached and bounded. the self-hosted compiler already dedups
    instantiations, and specialization-only comptime means code generation cannot
    run away.
 
 ## What is left in the Frost-written compiler
 
-minifrost checks its own programs now rather than deferring to whatever compiles
+the self-hosted compiler checks its own programs now rather than deferring to whatever compiles
 its output. In dependency order, what is done and what remains:
 
-1. **Self type-checking.** Required before (3), because once minifrost stops
+1. **Self type-checking.** Required before (3), because once the self-hosted compiler stops
    emitting C there is no C compiler behind it to catch anything.
 
    Done, and free. Every check was measured by running the build before and after
@@ -117,7 +117,7 @@ its output. In dependency order, what is done and what remains:
    and pointers convert freely and a type parameter matches anything, because it
    is a placeholder. A struct only matches the same struct, which is where real
    mistakes show up. Two false positives had to be designed around, since
-   minifrost.frost must keep passing its own checks: a generic template's
+   frost.frost must keep passing its own checks: a generic template's
    parameter types are placeholders bound per instantiation and carry nothing to
    check against, and an auto-borrowed argument is a value whose address is taken
    at the call, so it answers to the pointee rather than the pointer.
@@ -146,24 +146,24 @@ its output. In dependency order, what is done and what remains:
 3. **Native backend.** The speed payoff above, now unblocked: (1) is done, so
    there is a checker behind the compiler once it stops emitting C.
 4. **Failure sets, allocation sources, regions.** `-> T ! E` with `?`,
-   `uses`/`with`, and the arena escape check. These reuse minifrost's existing
+   `uses`/`with`, and the arena escape check. These reuse the self-hosted compiler's existing
    enum and match machinery and mirror the desugars in `src/failure_sets.rs`,
    `src/allocation_sources.rs`, and `src/regions.rs`.
-5. **Imports and modules.** minifrost is single-file today; a multi-file
+5. **Imports and modules.** the self-hosted compiler is single-file today; a multi-file
    compiler needs this to compile itself.
 
-Param modes are already done: minifrost lowers `mut`/`move`/read to pointers and
+Param modes are already done: the self-hosted compiler lowers `mut`/`move`/read to pointers and
 inserts the borrow at call sites.
 
 ## How to do each port
 
 The pattern that worked for param modes:
 
-1. Add the capability to minifrost while leaving minifrost.frost unchanged, so
+1. Add the capability to the self-hosted compiler while leaving frost.frost unchanged, so
    the fixpoint stays byte-identical and the change is inert.
-2. Migrate minifrost.frost to use it.
+2. Migrate frost.frost to use it.
 3. Verify against the reference compiler with the differential tests, and keep
-   `bootstrap_minifrost_self_hosts` green.
+   `self_hosting_is_a_fixpoint` green.
 4. Commit each stage separately.
 
 The reference compiler stays the oracle throughout.

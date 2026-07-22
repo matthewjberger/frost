@@ -317,7 +317,7 @@ AST; both point at a line.
    control flow, recursion, and function pointers against the Cranelift and C
    backends, and declines cleanly on memory and pool operations rather than
    guessing.)*
-10. Self-hosting the compiler in Frost. *(In progress: `bootstrap/minifrost.frost`
+10. Self-hosting the compiler in Frost. *(In progress: `bootstrap/frost.frost`
     is a compiler for a Frost-like subset, written in the data-oriented native
     surface (a pool-backed AST arena, integer node indices instead of pointers,
     second-class references). It reads source, builds an AST, and emits a C

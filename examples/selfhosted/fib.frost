@@ -1,0 +1,19 @@
+// Programs in this directory are for the self-hosted compiler
+// (bootstrap/frost.frost), which understands a subset of Frost and has its own
+// `print` statement. Run one with `just selfhost-native examples/selfhosted/fib.frost`
+// to go through the native backend, or `just selfhost-run ...` for the C backend.
+
+fib :: fn(n: i64) -> i64 {
+    if (n < 2) { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+main :: fn() -> i64 {
+    mut i : i64 = 0
+    while (i < 10) {
+        print fib(i)
+        i = i + 1
+    }
+    print 6 * 7
+    0
+}
