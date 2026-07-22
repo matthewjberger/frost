@@ -329,6 +329,7 @@ Parser :: struct {
     last_return_type: i64,
     no_struct_lit: bool,
     last_type_was_generic: i64,
+    moved: Arena<LocalVar>,
     current_ret: i64,
     current_fn_off: i64,
     current_fn_len: i64,
@@ -1752,6 +1753,30 @@ local_exists :: fn(mut p: Parser, off: i64, len: i64) -> bool {
     false
 }
 
+// A value handed to a `move` parameter is gone from the caller. Record it so a
+// later use is caught rather than silently reading a value that was given away.
+mark_moved :: fn(mut p: Parser, value: i64) {
+    node : ^Node = arena_at(p.arena, value)
+    if (node^.kind == NODE_VAR) {
+        off := node^.val
+        len := node^.c
+        arena_push(p.moved, LocalVar { name_off = off, name_len = len, ty = 0 })
+    }
+}
+
+is_moved :: fn(mut p: Parser, off: i64, len: i64) -> bool {
+    mut i : i64 = 0
+    while (i < p.moved.count) {
+        entry : ^LocalVar = arena_at(p.moved, i)
+        if (entry^.name_len == len
+            && bytes_equal(p.src, entry^.name_off, off, len)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
 record_local :: fn(mut p: Parser, off: i64, len: i64, ty: i64) {
     arena_push(p.locals, LocalVar { name_off = off, name_len = len, ty = ty })
 }
@@ -1930,6 +1955,12 @@ emit_expr :: fn(mut p: Parser, id: i64) {
                 frost_error("'")
                 frost_die()
             }
+            if (is_moved(p, off, len)) {
+                frost_error("minifrost: use of moved value '")
+                frost_error_src(p.src, off, len)
+                frost_error("'")
+                frost_die()
+            }
             emit_source(p.src, off, len)
         }
         return
@@ -2064,6 +2095,7 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
             // parameter has its address taken here, unless it is already a
             // pointer (a borrow forwarded onward).
             mut borrow : i64 = 0
+            mut moves : i64 = 0
             mut param_next : i64 = 0 - 1
             mut have_param : i64 = 0
             if (param != (0 - 1)) {
@@ -2075,6 +2107,10 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                 arg_ty := type_of(p, value)
                 if (param_auto == 1 && is_pointer(arg_ty) == false) {
                     borrow = 1
+                }
+                // A struct handed to a parameter that does not borrow is moved.
+                if (param_auto == 0 && is_struct_ty(arg_ty)) {
+                    moves = 1
                 }
                 // Check the argument against the parameter. A generic
                 // template's parameter types are placeholders bound per
@@ -2100,6 +2136,9 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                 frost_emit_str("))")
             } else {
                 emit_expr(p, value)
+            }
+            if (moves == 1) {
+                mark_moved(p, value)
             }
             if (have_param == 1) {
                 param = param_next
@@ -2482,6 +2521,7 @@ emit_function :: fn(mut p: Parser, id: i64) {
     p.current_fn_off = sym^.off
     p.current_fn_len = sym^.len
     p.locals.count = 0
+    p.moved.count = 0
     record_params(p, params)
     if (is_main == 1) {
         frost_emit_str("int main(void) {\n")
@@ -2508,6 +2548,7 @@ emit_mono_function :: fn(mut p: Parser, id: i64, arg: i64, ret: i64) {
     p.current_fn_off = msym^.off
     p.current_fn_len = msym^.len
     p.locals.count = 0
+    p.moved.count = 0
     record_params(p, params)
     emit_ctype(p, ret)
     frost_emit_str(" mf_")
@@ -2758,6 +2799,7 @@ main :: fn() -> i64 {
         last_return_type = 0,
         no_struct_lit = false,
         last_type_was_generic = 0,
+        moved = arena_make($LocalVar, 4096),
         current_ret = 0,
         current_fn_off = 0,
         current_fn_len = 0,
