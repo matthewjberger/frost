@@ -326,6 +326,12 @@ Variant :: struct {
     tag: i64,
 }
 
+// A concrete type a generic was used with. Every generic function is emitted
+// once per distinct one of these.
+TypeArg :: struct {
+    arg: i64,
+}
+
 // A local's type binding during code generation. The table is rebuilt per
 // function and maps a local's name (byte range) to its type code, so a field
 // access or a `:=` can be typed by walking it.
@@ -420,6 +426,7 @@ Parser :: struct {
     failure_ty: i64,
     variants: Arena<Variant>,
     match_count: i64,
+    type_args: Arena<TypeArg>,
     pending: Arena<LocalVar>,
     try_count: i64,
     name_tag: i64,
@@ -4200,6 +4207,46 @@ record_mono_ret :: fn(mut p: Parser, fn_index: i64, arg: i64, ret: i64) {
         MonoRet { fn_index = fn_index, arg = arg, ret = ret })
 }
 
+// The concrete types the generics in this program are used with. A generic
+// struct written as `Box<i64>` is one, and so is a call to a generic function,
+// which used to be missed: instantiation was driven by the struct instances
+// alone, so a generic function called with a type that no generic struct had
+// been written with was called and never emitted.
+//
+// Distinct types rather than instances, since two generic structs written with
+// the same type would otherwise have every generic function emitted twice.
+note_type_arg :: fn(mut p: Parser, arg: i64) {
+    if (arg < 0) {
+        return
+    }
+    mut i : i64 = 0
+    while (i < p.type_args.count) {
+        entry : ^TypeArg = arena_at(p.type_args, i)
+        if (entry^.arg == arg) {
+            return
+        }
+        i = i + 1
+    }
+    arena_push(p.type_args, TypeArg { arg = arg })
+}
+
+collect_type_args :: fn(mut p: Parser) {
+    mut i : i64 = 0
+    while (i < p.instances.count) {
+        entry : ^Instance = arena_at(p.instances, i)
+        note_type_arg(p, entry^.arg)
+        i = i + 1
+    }
+    i = 0
+    while (i < p.arena.count) {
+        node : ^Node = arena_at(p.arena, i)
+        if (node^.kind == NODE_CALL && generic_fn_of(p, node^.val) >= 0) {
+            note_type_arg(p, call_type_arg(p, node^.a))
+        }
+        i = i + 1
+    }
+}
+
 // Work out every monomorphization's concrete return type. A call needs it to
 // type its result and to know whether to hand in a buffer for a struct, and the
 // template's own return type still mentions the type parameter. This runs
@@ -4208,9 +4255,9 @@ record_mono_rets :: fn(mut p: Parser) {
     mut gi : i64 = 0
     while (gi < p.generic_fns.count) {
         mut ii : i64 = 0
-        while (ii < p.instances.count) {
-            inst : ^Instance = arena_at(p.instances, ii)
-            arg := inst^.arg
+        while (ii < p.type_args.count) {
+            used : ^TypeArg = arena_at(p.type_args, ii)
+            arg := used^.arg
             node := parse_generic_instance(p, gi, arg)
             fnode : ^Node = arena_at(p.arena, node)
             record_mono_ret(p, fnode^.val, arg, p.last_return_type)
@@ -4758,9 +4805,9 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
     mut gi : i64 = 0
     while (gi < p.generic_fns.count) {
         mut ii : i64 = 0
-        while (ii < p.instances.count) {
-            inst : ^Instance = arena_at(p.instances, ii)
-            arg := inst^.arg
+        while (ii < p.type_args.count) {
+            used : ^TypeArg = arena_at(p.type_args, ii)
+            arg := used^.arg
             node := parse_generic_instance(p, gi, arg)
             ret := p.last_return_type
             emit_asm_mono_function(p, node, arg, ret)
@@ -4803,9 +4850,9 @@ emit_program :: fn(mut p: Parser, head: i64) {
     mut gi : i64 = 0
     while (gi < p.generic_fns.count) {
         mut ii : i64 = 0
-        while (ii < p.instances.count) {
-            inst : ^Instance = arena_at(p.instances, ii)
-            arg := inst^.arg
+        while (ii < p.type_args.count) {
+            used : ^TypeArg = arena_at(p.type_args, ii)
+            arg := used^.arg
             node := parse_generic_instance(p, gi, arg)
             ret := p.last_return_type
             emit_mono_prototype(p, node, arg, ret)
@@ -4820,9 +4867,9 @@ emit_program :: fn(mut p: Parser, head: i64) {
     gi = 0
     while (gi < p.generic_fns.count) {
         mut ii : i64 = 0
-        while (ii < p.instances.count) {
-            inst : ^Instance = arena_at(p.instances, ii)
-            arg := inst^.arg
+        while (ii < p.type_args.count) {
+            used : ^TypeArg = arena_at(p.type_args, ii)
+            arg := used^.arg
             node := parse_generic_instance(p, gi, arg)
             ret := p.last_return_type
             emit_mono_function(p, node, arg, ret)
@@ -5287,6 +5334,7 @@ main :: fn() -> i64 {
         failure_ty = 0 - 1,
         variants = arena_make($Variant, 4096),
         match_count = 0,
+        type_args = arena_make($TypeArg, 1024),
         pending = arena_make($LocalVar, 4096),
         try_count = 0,
         name_tag = 0,
@@ -5312,6 +5360,7 @@ main :: fn() -> i64 {
     }
     tokenize(source, frost_str_len(source), parser.tokens)
     program := parse_program(parser)
+    collect_type_args(parser)
     record_mono_rets(parser)
     check_calls(parser)
     check_regions(parser)

@@ -248,6 +248,17 @@ its output. In dependency order:
    the same for ever. The loop now carries what its condition needs and runs it
    every time round, with the test moved inside.
 
+   Two more bugs came out of running everything through both backends and
+   comparing, which is now a test of its own:
+
+   - A generic function used with a type that no generic struct was written
+     with was called and never emitted, so the program failed to link.
+     Instantiation was driven by the struct instances, and a generic function
+     had to ride on one. It is driven by the distinct types the generics are
+     used with now, gathered from the instances and from the calls. That also
+     closes a second hole: two generic structs written with the same type would
+     have had every generic function emitted twice.
+
    The other thing this turned up: the native
    backend treated every scalar as a word, so `^i8` indexing strode eight bytes
    at a time and `sizeof(i8)` answered 8. A byte-wide type is one byte now,
