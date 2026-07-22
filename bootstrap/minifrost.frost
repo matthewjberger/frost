@@ -290,14 +290,14 @@ arena_make :: fn($T: Type, cap: i64) -> Arena<T> {
     Arena { data = ptr_cast($T, bytes), cap = cap, count = 0 }
 }
 
-arena_push :: fn(a: &mut Arena<$T>, move value: $T) -> i64 {
+arena_push :: fn(mut a: Arena<$T>, move value: $T) -> i64 {
     id := a.count
     a.data[id] = value
     a.count = a.count + 1
     id
 }
 
-arena_at :: fn(a: &Arena<$T>, id: i64) -> ^T {
+arena_at :: fn(a: Arena<$T>, id: i64) -> ^T {
     ptr_to(a.data[id])
 }
 
@@ -384,14 +384,14 @@ classify_ident :: fn(src: ^i8, off: i64, len: i64) -> i64 {
     TOK_IDENT
 }
 
-push_token :: fn(tokens: &mut Arena<Token>, kind: i64, off: i64, len: i64,
+push_token :: fn(mut tokens: Arena<Token>, kind: i64, off: i64, len: i64,
     value: i64) {
     id := arena_push(tokens, Token { kind = kind, off = off, len = len,
         value = value })
     id
 }
 
-lex_operator :: fn(src: ^i8, i: i64, len: i64, tokens: &mut Arena<Token>) -> i64 {
+lex_operator :: fn(src: ^i8, i: i64, len: i64, mut tokens: Arena<Token>) -> i64 {
     c := byte_of(src, i, len)
     d := byte_of(src, i + 1, len)
     if (c == CH_COLON && d == CH_COLON) {
@@ -455,7 +455,7 @@ lex_operator :: fn(src: ^i8, i: i64, len: i64, tokens: &mut Arena<Token>) -> i64
     i + 1
 }
 
-tokenize :: fn(src: ^i8, len: i64, tokens: &mut Arena<Token>) {
+tokenize :: fn(src: ^i8, len: i64, mut tokens: Arena<Token>) {
     mut i : i64 = 0
     while (i < len) {
         c := byte_of(src, i, len)
@@ -504,7 +504,7 @@ tokenize :: fn(src: ^i8, len: i64, tokens: &mut Arena<Token>) {
 // Token cursor. The parser reads token kinds through these rather than bytes.
 // ---------------------------------------------------------------------------
 
-peek_kind :: fn(p: &mut Parser, offset: i64) -> i64 {
+peek_kind :: fn(mut p: Parser, offset: i64) -> i64 {
     index := p.ti + offset
     if (index >= p.tokens.count) {
         return TOK_EOF
@@ -513,26 +513,26 @@ peek_kind :: fn(p: &mut Parser, offset: i64) -> i64 {
     entry^.kind
 }
 
-cur :: fn(p: &mut Parser) -> i64 {
+cur :: fn(mut p: Parser) -> i64 {
     peek_kind(p, 0)
 }
 
-cur_off :: fn(p: &mut Parser) -> i64 {
+cur_off :: fn(mut p: Parser) -> i64 {
     entry : ^Token = arena_at(&p.tokens, p.ti)
     entry^.off
 }
 
-cur_len :: fn(p: &mut Parser) -> i64 {
+cur_len :: fn(mut p: Parser) -> i64 {
     entry : ^Token = arena_at(&p.tokens, p.ti)
     entry^.len
 }
 
-cur_val :: fn(p: &mut Parser) -> i64 {
+cur_val :: fn(mut p: Parser) -> i64 {
     entry : ^Token = arena_at(&p.tokens, p.ti)
     entry^.value
 }
 
-advance :: fn(p: &mut Parser) {
+advance :: fn(mut p: Parser) {
     p.ti = p.ti + 1
 }
 
@@ -553,7 +553,7 @@ bytes_equal :: fn(src: ^i8, first: i64, second: i64, length: i64) -> bool {
     true
 }
 
-intern_global :: fn(p: &mut Parser, offset: i64, length: i64) -> i64 {
+intern_global :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     mut i : i64 = 0
     while (i < p.fns.count) {
         entry : ^Sym = arena_at(&p.fns, i)
@@ -570,22 +570,22 @@ intern_global :: fn(p: &mut Parser, offset: i64, length: i64) -> i64 {
     )
 }
 
-mark_extern :: fn(p: &mut Parser, fn_index: i64) {
+mark_extern :: fn(mut p: Parser, fn_index: i64) {
     entry : ^Sym = arena_at(&p.fns, fn_index)
     entry^.is_extern = 1
 }
 
-set_ret_type :: fn(p: &mut Parser, fn_index: i64, ret: i64) {
+set_ret_type :: fn(mut p: Parser, fn_index: i64, ret: i64) {
     entry : ^Sym = arena_at(&p.fns, fn_index)
     entry^.ret_type = ret
 }
 
-set_params :: fn(p: &mut Parser, fn_index: i64, params: i64) {
+set_params :: fn(mut p: Parser, fn_index: i64, params: i64) {
     entry : ^Sym = arena_at(&p.fns, fn_index)
     entry^.params = params
 }
 
-record_generic_fn :: fn(p: &mut Parser, fn_index: i64, tparam_off: i64,
+record_generic_fn :: fn(mut p: Parser, fn_index: i64, tparam_off: i64,
     tparam_len: i64, token_start: i64) {
     arena_push(
         &mut p.generic_fns,
@@ -596,7 +596,7 @@ record_generic_fn :: fn(p: &mut Parser, fn_index: i64, tparam_off: i64,
 
 // Register `name :: value` in the constant table. Duplicate names are harmless
 // since lookup takes the first.
-register_const :: fn(p: &mut Parser, offset: i64, length: i64, value: i64) {
+register_const :: fn(mut p: Parser, offset: i64, length: i64, value: i64) {
     arena_push(
         &mut p.consts,
         ConstDef { name_off = offset, name_len = length, value = value },
@@ -605,7 +605,7 @@ register_const :: fn(p: &mut Parser, offset: i64, length: i64, value: i64) {
 
 // If a name is a declared constant, return its value through `out` (as the
 // return) and true; otherwise false. Consts are looked up by byte comparison.
-const_value :: fn(p: &mut Parser, offset: i64, length: i64) -> i64 {
+const_value :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     mut i : i64 = 0
     while (i < p.consts.count) {
         entry : ^ConstDef = arena_at(&p.consts, i)
@@ -618,7 +618,7 @@ const_value :: fn(p: &mut Parser, offset: i64, length: i64) -> i64 {
     0 - 1
 }
 
-is_const :: fn(p: &mut Parser, offset: i64, length: i64) -> bool {
+is_const :: fn(mut p: Parser, offset: i64, length: i64) -> bool {
     mut i : i64 = 0
     while (i < p.consts.count) {
         entry : ^ConstDef = arena_at(&p.consts, i)
@@ -644,7 +644,7 @@ is_main_name :: fn(src: ^i8, offset: i64, length: i64) -> bool {
 // Parsing.
 // ---------------------------------------------------------------------------
 
-new_node :: fn(p: &mut Parser, kind: i64, a: i64, b: i64, val: i64) -> i64 {
+new_node :: fn(mut p: Parser, kind: i64, a: i64, b: i64, val: i64) -> i64 {
     arena_push(
         &mut p.arena,
         Node { kind = kind, a = a, b = b, c = 0, val = val, next = 0 - 1 },
@@ -654,7 +654,7 @@ new_node :: fn(p: &mut Parser, kind: i64, a: i64, b: i64, val: i64) -> i64 {
 // A node that names a local by its source byte range: `val` is the offset and
 // `c` is the length, so code generation re-emits the identifier text directly.
 // This is what lets locals become named C variables instead of `v[]` slots.
-new_named_node :: fn(p: &mut Parser, kind: i64, child: i64, offset: i64,
+new_named_node :: fn(mut p: Parser, kind: i64, child: i64, offset: i64,
     length: i64) -> i64 {
     arena_push(
         &mut p.arena,
@@ -666,7 +666,7 @@ new_named_node :: fn(p: &mut Parser, kind: i64, child: i64, offset: i64,
 // A local binding. `b` carries the annotated type, or -1 to infer the type from
 // the initializer. An annotation wins because a generic call cannot be typed
 // precisely from the callee alone (`entry : ^Token = arena_at(...)`).
-new_let_node :: fn(p: &mut Parser, value: i64, offset: i64, length: i64,
+new_let_node :: fn(mut p: Parser, value: i64, offset: i64, length: i64,
     annotation: i64) -> i64 {
     arena_push(
         &mut p.arena,
@@ -675,7 +675,7 @@ new_let_node :: fn(p: &mut Parser, value: i64, offset: i64, length: i64,
     )
 }
 
-new_func_node :: fn(p: &mut Parser, body: i64, params: i64, fn_index: i64,
+new_func_node :: fn(mut p: Parser, body: i64, params: i64, fn_index: i64,
     is_main: i64) -> i64 {
     arena_push(
         &mut p.arena,
@@ -690,14 +690,14 @@ new_func_node :: fn(p: &mut Parser, body: i64, params: i64, fn_index: i64,
     )
 }
 
-set_next :: fn(p: &mut Parser, id: i64, next_id: i64) {
+set_next :: fn(mut p: Parser, id: i64, next_id: i64) {
     node : ^Node = arena_at(&p.arena, id)
     node^.next = next_id
 }
 
 // A field access `base.name`: `a` is the base expression, `val`/`c` the field
 // name's byte range.
-new_field_node :: fn(p: &mut Parser, base: i64, offset: i64, length: i64) -> i64 {
+new_field_node :: fn(mut p: Parser, base: i64, offset: i64, length: i64) -> i64 {
     arena_push(
         &mut p.arena,
         Node { kind = NODE_FIELD, a = base, b = 0, c = length, val = offset,
@@ -707,7 +707,7 @@ new_field_node :: fn(p: &mut Parser, base: i64, offset: i64, length: i64) -> i64
 
 // A struct literal `Name { ... }`: `val` is the struct's table index and `a` is
 // the head of a linked list of NODE_FIELD_INIT nodes.
-new_struct_lit :: fn(p: &mut Parser, struct_index: i64, inits: i64) -> i64 {
+new_struct_lit :: fn(mut p: Parser, struct_index: i64, inits: i64) -> i64 {
     arena_push(
         &mut p.arena,
         Node { kind = NODE_STRUCT_LIT, a = inits, b = 0, c = 0,
@@ -717,7 +717,7 @@ new_struct_lit :: fn(p: &mut Parser, struct_index: i64, inits: i64) -> i64 {
 
 // One `name = value` inside a struct literal: `a` is the value, `val`/`c` the
 // field name's byte range, `next` the following initializer.
-new_field_init :: fn(p: &mut Parser, value: i64, offset: i64, length: i64) -> i64 {
+new_field_init :: fn(mut p: Parser, value: i64, offset: i64, length: i64) -> i64 {
     arena_push(
         &mut p.arena,
         Node { kind = NODE_FIELD_INIT, a = value, b = 0, c = length,
@@ -725,7 +725,7 @@ new_field_init :: fn(p: &mut Parser, value: i64, offset: i64, length: i64) -> i6
     )
 }
 
-set_field_next :: fn(p: &mut Parser, id: i64, next_id: i64) {
+set_field_next :: fn(mut p: Parser, id: i64, next_id: i64) {
     field : ^StructField = arena_at(&p.fields, id)
     field^.next = next_id
 }
@@ -751,7 +751,7 @@ struct_index_of :: fn(ty: i64) -> i64 {
 // TY_PARAM placeholder), a primitive keyword, or the named struct. A generic
 // template struct is not returned here; `Name<Arg>` instantiation is handled in
 // parse_type. An unknown name falls back to i64.
-type_code_for :: fn(p: &mut Parser, offset: i64, length: i64) -> i64 {
+type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     if (p.type_param_len == length
         && bytes_equal(p.src, p.type_param_off, offset, length)) {
         if (p.binding_active == 1) {
@@ -776,7 +776,7 @@ type_code_for :: fn(p: &mut Parser, offset: i64, length: i64) -> i64 {
 }
 
 // Find the index of a generic struct template by name, or -1.
-generic_index_for :: fn(p: &mut Parser, offset: i64, length: i64) -> i64 {
+generic_index_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     mut i : i64 = 0
     while (i < p.structs.count) {
         entry : ^StructDef = arena_at(&p.structs, i)
@@ -790,7 +790,7 @@ generic_index_for :: fn(p: &mut Parser, offset: i64, length: i64) -> i64 {
 }
 
 // A unary node wrapping a single child expression (deref, address-of).
-new_unary :: fn(p: &mut Parser, kind: i64, child: i64) -> i64 {
+new_unary :: fn(mut p: Parser, kind: i64, child: i64) -> i64 {
     arena_push(
         &mut p.arena,
         Node { kind = kind, a = child, b = 0, c = 0, val = 0, next = 0 - 1 },
@@ -798,7 +798,7 @@ new_unary :: fn(p: &mut Parser, kind: i64, child: i64) -> i64 {
 }
 
 // An index node `base[index]`: `a` is the base, `b` the index expression.
-new_index :: fn(p: &mut Parser, base: i64, index: i64) -> i64 {
+new_index :: fn(mut p: Parser, base: i64, index: i64) -> i64 {
     arena_push(
         &mut p.arena,
         Node { kind = NODE_INDEX, a = base, b = index, c = 0, val = 0,
@@ -808,7 +808,7 @@ new_index :: fn(p: &mut Parser, base: i64, index: i64) -> i64 {
 
 // A node carrying a type code in `val` (ptr_cast target, sizeof operand) and an
 // optional expression in `a`.
-new_type_node :: fn(p: &mut Parser, kind: i64, expr: i64, ty: i64) -> i64 {
+new_type_node :: fn(mut p: Parser, kind: i64, expr: i64, ty: i64) -> i64 {
     arena_push(
         &mut p.arena,
         Node { kind = kind, a = expr, b = 0, c = 0, val = ty, next = 0 - 1 },
@@ -817,7 +817,7 @@ new_type_node :: fn(p: &mut Parser, kind: i64, expr: i64, ty: i64) -> i64 {
 
 // One arm of a match: `a` is the body statement, `val` the integer pattern, and
 // `c` a flag marking the `_` default arm.
-new_case :: fn(p: &mut Parser, body: i64, value: i64, is_default: i64) -> i64 {
+new_case :: fn(mut p: Parser, body: i64, value: i64, is_default: i64) -> i64 {
     arena_push(
         &mut p.arena,
         Node { kind = NODE_CASE, a = body, b = 0, c = is_default, val = value,
@@ -825,13 +825,13 @@ new_case :: fn(p: &mut Parser, body: i64, value: i64, is_default: i64) -> i64 {
     )
 }
 
-parse_number :: fn(p: &mut Parser) -> i64 {
+parse_number :: fn(mut p: Parser) -> i64 {
     value := cur_val(p)
     advance(p)
     new_node(p, NODE_NUM, 0, 0, value)
 }
 
-parse_primary :: fn(p: &mut Parser) -> i64 {
+parse_primary :: fn(mut p: Parser) -> i64 {
     kind := cur(p)
     if (kind == TOK_INT) {
         return parse_number(p)
@@ -913,7 +913,7 @@ parse_primary :: fn(p: &mut Parser) -> i64 {
 // The struct type for a literal `Name { ... }`. A generic name resolves, under
 // an active binding, to the instance for the bound type argument; that is how the
 // bare `Arena { ... }` inside a generic function names the right instance.
-resolve_lit_type :: fn(p: &mut Parser, offset: i64, length: i64) -> i64 {
+resolve_lit_type :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     gi := generic_index_for(p, offset, length)
     if (gi >= 0) {
         if (p.binding_active == 1) {
@@ -925,7 +925,7 @@ resolve_lit_type :: fn(p: &mut Parser, offset: i64, length: i64) -> i64 {
 }
 
 // Apply any trailing `.field`, `^` deref, and `[index]` operators to a node.
-parse_postfix :: fn(p: &mut Parser, start: i64) -> i64 {
+parse_postfix :: fn(mut p: Parser, start: i64) -> i64 {
     mut node := start
     while (cur(p) == TOK_DOT || cur(p) == TOK_CARET
         || cur(p) == TOK_LBRACKET) {
@@ -948,11 +948,11 @@ parse_postfix :: fn(p: &mut Parser, start: i64) -> i64 {
     node
 }
 
-parse_factor :: fn(p: &mut Parser) -> i64 {
+parse_factor :: fn(mut p: Parser) -> i64 {
     parse_postfix(p, parse_primary(p))
 }
 
-parse_field_inits :: fn(p: &mut Parser) -> i64 {
+parse_field_inits :: fn(mut p: Parser) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
@@ -977,7 +977,7 @@ parse_field_inits :: fn(p: &mut Parser) -> i64 {
     head
 }
 
-parse_arg_list :: fn(p: &mut Parser) -> i64 {
+parse_arg_list :: fn(mut p: Parser) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
@@ -998,7 +998,7 @@ parse_arg_list :: fn(p: &mut Parser) -> i64 {
     head
 }
 
-parse_mul :: fn(p: &mut Parser) -> i64 {
+parse_mul :: fn(mut p: Parser) -> i64 {
     mut left := parse_factor(p)
     mut kind := cur(p)
     while (kind == TOK_STAR || kind == TOK_SLASH || kind == TOK_PERCENT) {
@@ -1017,7 +1017,7 @@ parse_mul :: fn(p: &mut Parser) -> i64 {
     left
 }
 
-parse_add :: fn(p: &mut Parser) -> i64 {
+parse_add :: fn(mut p: Parser) -> i64 {
     mut left := parse_mul(p)
     mut kind := cur(p)
     while (kind == TOK_PLUS || kind == TOK_MINUS) {
@@ -1033,7 +1033,7 @@ parse_add :: fn(p: &mut Parser) -> i64 {
     left
 }
 
-parse_cmp :: fn(p: &mut Parser) -> i64 {
+parse_cmp :: fn(mut p: Parser) -> i64 {
     left := parse_add(p)
     kind := cur(p)
     if (kind == TOK_LT) {
@@ -1069,7 +1069,7 @@ parse_cmp :: fn(p: &mut Parser) -> i64 {
     left
 }
 
-parse_and :: fn(p: &mut Parser) -> i64 {
+parse_and :: fn(mut p: Parser) -> i64 {
     mut left := parse_cmp(p)
     while (cur(p) == TOK_ANDAND) {
         advance(p)
@@ -1079,7 +1079,7 @@ parse_and :: fn(p: &mut Parser) -> i64 {
     left
 }
 
-parse_expr :: fn(p: &mut Parser) -> i64 {
+parse_expr :: fn(mut p: Parser) -> i64 {
     mut left := parse_and(p)
     while (cur(p) == TOK_OROR) {
         advance(p)
@@ -1089,7 +1089,7 @@ parse_expr :: fn(p: &mut Parser) -> i64 {
     left
 }
 
-parse_block :: fn(p: &mut Parser) -> i64 {
+parse_block :: fn(mut p: Parser) -> i64 {
     advance(p)
     head := parse_stmt_list(p, TOK_RBRACE)
     advance(p)
@@ -1101,7 +1101,7 @@ parse_block :: fn(p: &mut Parser) -> i64 {
 // parameter; if none is bound yet in the current generic, this use establishes
 // it. `Generic<Arg>` instantiates the generic struct to a concrete one. A `<...>`
 // on a non-generic name is consumed and treated as i64.
-parse_type :: fn(p: &mut Parser) -> i64 {
+parse_type :: fn(mut p: Parser) -> i64 {
     mut pointer_levels : i64 = 0
     while (cur(p) == TOK_AMP || cur(p) == TOK_CARET) {
         advance(p)
@@ -1156,14 +1156,14 @@ parse_type :: fn(p: &mut Parser) -> i64 {
     result
 }
 
-parse_type_annotation :: fn(p: &mut Parser) -> i64 {
+parse_type_annotation :: fn(mut p: Parser) -> i64 {
     advance(p)
     parse_type(p)
 }
 
 // Parse `{ field : Type, ... }` into a linked list of fields, returning the head.
 // Field types resolve under any active type-parameter binding.
-parse_struct_fields :: fn(p: &mut Parser) -> i64 {
+parse_struct_fields :: fn(mut p: Parser) -> i64 {
     advance(p)
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
@@ -1195,7 +1195,7 @@ parse_struct_fields :: fn(p: &mut Parser) -> i64 {
 // Get or create the concrete struct for a generic instantiation. The template's
 // fields are re-parsed with the type parameter bound to `arg`, producing a new
 // struct whose emitted name is `<generic>_<index>`.
-instantiate :: fn(p: &mut Parser, generic_index: i64, arg: i64) -> i64 {
+instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64) -> i64 {
     mut i : i64 = 0
     while (i < p.instances.count) {
         entry : ^Instance = arena_at(&p.instances, i)
@@ -1246,7 +1246,7 @@ instantiate :: fn(p: &mut Parser, generic_index: i64, arg: i64) -> i64 {
 // A match `match expr { case N: stmt  case _: stmt }`. The scrutinee is parsed
 // with struct literals suppressed so the `{` opening the arms is not mistaken
 // for one. Each arm holds a single statement.
-parse_match :: fn(p: &mut Parser) -> i64 {
+parse_match :: fn(mut p: Parser) -> i64 {
     advance(p)
     p.no_struct_lit = true
     scrutinee := parse_expr(p)
@@ -1280,7 +1280,7 @@ parse_match :: fn(p: &mut Parser) -> i64 {
     new_node(p, NODE_MATCH, scrutinee, head, 0)
 }
 
-parse_stmt :: fn(p: &mut Parser) -> i64 {
+parse_stmt :: fn(mut p: Parser) -> i64 {
     kind := cur(p)
 
     if (kind == TOK_KW_MATCH) {
@@ -1372,7 +1372,7 @@ parse_stmt :: fn(p: &mut Parser) -> i64 {
     new_unary(p, NODE_EXPRSTMT, expr)
 }
 
-parse_stmt_list :: fn(p: &mut Parser, terminator: i64) -> i64 {
+parse_stmt_list :: fn(mut p: Parser, terminator: i64) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     while (cur(p) != terminator && cur(p) != TOK_EOF) {
@@ -1388,7 +1388,7 @@ parse_stmt_list :: fn(p: &mut Parser, terminator: i64) -> i64 {
     head
 }
 
-parse_params :: fn(p: &mut Parser) -> i64 {
+parse_params :: fn(mut p: Parser) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
@@ -1464,7 +1464,7 @@ parse_params :: fn(p: &mut Parser) -> i64 {
 // A definition is `name :: fn(params) -> ret { body }`. The name, `::`, and `fn`
 // are consumed here; an optional `-> type` return annotation is parsed and
 // discarded (every function still lowers to an int64_t C function).
-parse_function :: fn(p: &mut Parser) -> i64 {
+parse_function :: fn(mut p: Parser) -> i64 {
     name_offset := cur_off(p)
     name_length := cur_len(p)
     advance(p)
@@ -1493,7 +1493,7 @@ parse_function :: fn(p: &mut Parser) -> i64 {
 // generic `name :: struct($T: Type) { ... }` records its type parameter and the
 // token index of its `{`, then skips the body; each instantiation re-parses the
 // fields with the parameter bound.
-parse_struct :: fn(p: &mut Parser) {
+parse_struct :: fn(mut p: Parser) {
     name_offset := cur_off(p)
     name_length := cur_len(p)
     advance(p)
@@ -1543,7 +1543,7 @@ parse_struct :: fn(p: &mut Parser) {
 // extern so calls emit it verbatim, and the node carries params and return type
 // so a C prototype can be emitted. `val` is the fn index, `b` the params, `c`
 // the return type.
-parse_extern :: fn(p: &mut Parser) -> i64 {
+parse_extern :: fn(mut p: Parser) -> i64 {
     name_offset := cur_off(p)
     name_length := cur_len(p)
     advance(p)
@@ -1569,7 +1569,7 @@ parse_extern :: fn(p: &mut Parser) -> i64 {
 }
 
 // A constant `name :: value`, registered for inlining at use sites.
-parse_const :: fn(p: &mut Parser) {
+parse_const :: fn(mut p: Parser) {
     name_offset := cur_off(p)
     name_length := cur_len(p)
     advance(p)
@@ -1579,7 +1579,7 @@ parse_const :: fn(p: &mut Parser) {
     register_const(p, name_offset, name_length, value)
 }
 
-parse_program :: fn(p: &mut Parser) -> i64 {
+parse_program :: fn(mut p: Parser) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     while (cur(p) == TOK_IDENT) {
@@ -1693,7 +1693,7 @@ emit_string_content :: fn(src: ^i8, off: i64, len: i64) {
 // a later `:=` or field access can be typed by walking the expression.
 // ---------------------------------------------------------------------------
 
-lookup_local :: fn(p: &mut Parser, off: i64, len: i64) -> i64 {
+lookup_local :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
     mut i : i64 = 0
     while (i < p.locals.count) {
         entry : ^LocalVar = arena_at(&p.locals, i)
@@ -1706,14 +1706,14 @@ lookup_local :: fn(p: &mut Parser, off: i64, len: i64) -> i64 {
     TY_I64
 }
 
-record_local :: fn(p: &mut Parser, off: i64, len: i64, ty: i64) {
+record_local :: fn(mut p: Parser, off: i64, len: i64, ty: i64) {
     arena_push(&mut p.locals, LocalVar { name_off = off, name_len = len, ty = ty })
 }
 
 // The type of a struct field. The base type may be a pointer (a `&mut Arena`
 // reference or a `^T`), which is dereferenced one level first, so `a.count` and
 // `node^.next` both resolve.
-field_type :: fn(p: &mut Parser, base_ty: i64, off: i64, len: i64) -> i64 {
+field_type :: fn(mut p: Parser, base_ty: i64, off: i64, len: i64) -> i64 {
     mut struct_ty := base_ty
     if (is_pointer(struct_ty)) {
         struct_ty = pointee(struct_ty)
@@ -1734,7 +1734,7 @@ field_type :: fn(p: &mut Parser, base_ty: i64, off: i64, len: i64) -> i64 {
     TY_I64
 }
 
-type_of :: fn(p: &mut Parser, id: i64) -> i64 {
+type_of :: fn(mut p: Parser, id: i64) -> i64 {
     node : ^Node = arena_at(&p.arena, id)
     kind := node^.kind
     if (kind == NODE_STRLIT) {
@@ -1785,7 +1785,7 @@ type_of :: fn(p: &mut Parser, id: i64) -> i64 {
 
 // Emit a struct's C name: its source name, plus `_<instance_id>` when it is a
 // monomorphized instance, so `Arena<Node>` and `Arena<Sym>` get distinct names.
-emit_struct_name :: fn(p: &mut Parser, struct_index: i64) {
+emit_struct_name :: fn(mut p: Parser, struct_index: i64) {
     def : ^StructDef = arena_at(&p.structs, struct_index)
     name_off := def^.name_off
     name_len := def^.name_len
@@ -1797,7 +1797,7 @@ emit_struct_name :: fn(p: &mut Parser, struct_index: i64) {
     }
 }
 
-emit_ctype :: fn(p: &mut Parser, ty: i64) {
+emit_ctype :: fn(mut p: Parser, ty: i64) {
     if (is_pointer(ty)) {
         emit_ctype(p, pointee(ty))
         frost_emit_str("*")
@@ -1827,7 +1827,7 @@ emit_ctype :: fn(p: &mut Parser, ty: i64) {
     emit_struct_name(p, struct_index_of(ty))
 }
 
-emit_struct_lit :: fn(p: &mut Parser, struct_ty: i64, inits: i64) {
+emit_struct_lit :: fn(mut p: Parser, struct_ty: i64, inits: i64) {
     frost_emit_str("(struct ")
     emit_struct_name(p, struct_index_of(struct_ty))
     frost_emit_str("){ ")
@@ -1852,7 +1852,7 @@ emit_struct_lit :: fn(p: &mut Parser, struct_ty: i64, inits: i64) {
     frost_emit_str(" }")
 }
 
-emit_expr :: fn(p: &mut Parser, id: i64) {
+emit_expr :: fn(mut p: Parser, id: i64) {
     node : ^Node = arena_at(&p.arena, id)
     kind := node^.kind
     if (kind == NODE_NUM) {
@@ -1977,7 +1977,7 @@ emit_expr :: fn(p: &mut Parser, id: i64) {
 
 // Emit call arguments, skipping type-value arguments (they are erased since a
 // type parameter is not a runtime value).
-emit_args :: fn(p: &mut Parser, head: i64, fn_index: i64) {
+emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
     mut id := head
     mut first : bool = true
     sym : ^Sym = arena_at(&p.fns, fn_index)
@@ -2023,7 +2023,7 @@ emit_args :: fn(p: &mut Parser, head: i64, fn_index: i64) {
 }
 
 // The generic-fns index of a function, or -1 if it is not generic.
-generic_fn_of :: fn(p: &mut Parser, fn_index: i64) -> i64 {
+generic_fn_of :: fn(mut p: Parser, fn_index: i64) -> i64 {
     mut i : i64 = 0
     while (i < p.generic_fns.count) {
         entry : ^GenericFn = arena_at(&p.generic_fns, i)
@@ -2037,7 +2037,7 @@ generic_fn_of :: fn(p: &mut Parser, fn_index: i64) -> i64 {
 
 // The type argument of a concrete generic-struct instance, or -1 if the type is
 // not an instance.
-instance_arg_of :: fn(p: &mut Parser, ty: i64) -> i64 {
+instance_arg_of :: fn(mut p: Parser, ty: i64) -> i64 {
     if (is_struct_ty(ty) == false) {
         return 0 - 1
     }
@@ -2056,7 +2056,7 @@ instance_arg_of :: fn(p: &mut Parser, ty: i64) -> i64 {
 // Determine the concrete type argument of a generic call: an explicit `$Type`
 // argument if present, otherwise inferred from the first argument whose type is
 // a generic-struct instance (or a pointer to one).
-call_type_arg :: fn(p: &mut Parser, head: i64) -> i64 {
+call_type_arg :: fn(mut p: Parser, head: i64) -> i64 {
     mut id := head
     while (id != (0 - 1)) {
         node : ^Node = arena_at(&p.arena, id)
@@ -2088,7 +2088,7 @@ call_type_arg :: fn(p: &mut Parser, head: i64) -> i64 {
 
 // Re-parse a generic function with its type parameter bound to `arg`, returning
 // the concrete FUNC node. The return type is left in p.last_return_type.
-parse_generic_instance :: fn(p: &mut Parser, gfn_index: i64, arg: i64) -> i64 {
+parse_generic_instance :: fn(mut p: Parser, gfn_index: i64, arg: i64) -> i64 {
     gfn : ^GenericFn = arena_at(&p.generic_fns, gfn_index)
     tparam_off := gfn^.tparam_off
     tparam_len := gfn^.tparam_len
@@ -2112,7 +2112,7 @@ parse_generic_instance :: fn(p: &mut Parser, gfn_index: i64, arg: i64) -> i64 {
     node
 }
 
-emit_stmt :: fn(p: &mut Parser, id: i64) {
+emit_stmt :: fn(mut p: Parser, id: i64) {
     node : ^Node = arena_at(&p.arena, id)
     kind := node^.kind
     if (kind == NODE_LET) {
@@ -2221,7 +2221,7 @@ emit_stmt :: fn(p: &mut Parser, id: i64) {
     }
 }
 
-emit_list :: fn(p: &mut Parser, head: i64) {
+emit_list :: fn(mut p: Parser, head: i64) {
     mut id := head
     while (id != (0 - 1)) {
         emit_stmt(p, id)
@@ -2230,7 +2230,7 @@ emit_list :: fn(p: &mut Parser, head: i64) {
     }
 }
 
-emit_param_signature :: fn(p: &mut Parser, head: i64) {
+emit_param_signature :: fn(mut p: Parser, head: i64) {
     if (head == (0 - 1)) {
         frost_emit_str("void")
         return
@@ -2254,7 +2254,7 @@ emit_param_signature :: fn(p: &mut Parser, head: i64) {
     }
 }
 
-record_params :: fn(p: &mut Parser, head: i64) {
+record_params :: fn(mut p: Parser, head: i64) {
     mut id := head
     while (id != (0 - 1)) {
         node : ^Node = arena_at(&p.arena, id)
@@ -2267,7 +2267,7 @@ record_params :: fn(p: &mut Parser, head: i64) {
     }
 }
 
-emit_prototypes :: fn(p: &mut Parser, head: i64) {
+emit_prototypes :: fn(mut p: Parser, head: i64) {
     mut id := head
     while (id != (0 - 1)) {
         node : ^Node = arena_at(&p.arena, id)
@@ -2287,7 +2287,7 @@ emit_prototypes :: fn(p: &mut Parser, head: i64) {
     }
 }
 
-emit_extern_prototypes :: fn(p: &mut Parser, head: i64) {
+emit_extern_prototypes :: fn(mut p: Parser, head: i64) {
     mut id := head
     while (id != (0 - 1)) {
         node : ^Node = arena_at(&p.arena, id)
@@ -2311,7 +2311,7 @@ emit_extern_prototypes :: fn(p: &mut Parser, head: i64) {
     }
 }
 
-emit_struct_decls :: fn(p: &mut Parser) {
+emit_struct_decls :: fn(mut p: Parser) {
     mut i : i64 = 0
     while (i < p.structs.count) {
         def : ^StructDef = arena_at(&p.structs, i)
@@ -2343,7 +2343,7 @@ emit_struct_decls :: fn(p: &mut Parser) {
 // Emit a function body, treating a trailing expression statement as the return
 // value (Frost's implicit return) and appending a `return 0;` fallthrough only
 // when the body does not already end in a return or a value.
-emit_function_body :: fn(p: &mut Parser, body: i64) {
+emit_function_body :: fn(mut p: Parser, body: i64) {
     if (body == (0 - 1)) {
         frost_emit_str("return 0;\n")
         return
@@ -2371,7 +2371,7 @@ emit_function_body :: fn(p: &mut Parser, body: i64) {
     }
 }
 
-emit_function :: fn(p: &mut Parser, id: i64) {
+emit_function :: fn(mut p: Parser, id: i64) {
     node : ^Node = arena_at(&p.arena, id)
     fn_index := node^.val
     body := node^.a
@@ -2394,7 +2394,7 @@ emit_function :: fn(p: &mut Parser, id: i64) {
 
 // Emit one monomorphization of a generic function: the concrete return type, the
 // mangled name mf_<index>_t<arg>, concrete parameters, and the body.
-emit_mono_function :: fn(p: &mut Parser, id: i64, arg: i64, ret: i64) {
+emit_mono_function :: fn(mut p: Parser, id: i64, arg: i64, ret: i64) {
     node : ^Node = arena_at(&p.arena, id)
     fn_index := node^.val
     body := node^.a
@@ -2413,7 +2413,7 @@ emit_mono_function :: fn(p: &mut Parser, id: i64, arg: i64, ret: i64) {
     frost_emit_str("}\n")
 }
 
-emit_mono_prototype :: fn(p: &mut Parser, id: i64, arg: i64, ret: i64) {
+emit_mono_prototype :: fn(mut p: Parser, id: i64, arg: i64, ret: i64) {
     node : ^Node = arena_at(&p.arena, id)
     fn_index := node^.val
     params := node^.b
@@ -2427,7 +2427,7 @@ emit_mono_prototype :: fn(p: &mut Parser, id: i64, arg: i64, ret: i64) {
     frost_emit_str(");\n")
 }
 
-emit_program :: fn(p: &mut Parser, head: i64) {
+emit_program :: fn(mut p: Parser, head: i64) {
     emit_struct_decls(p)
     emit_extern_prototypes(p, head)
 
@@ -2525,7 +2525,7 @@ main :: fn() -> i64 {
             Box { value = v }
         }
 
-        box_get :: fn(b: &Box<$T>) -> $T {
+        box_get :: fn(b: Box<$T>) -> $T {
             b^.value
         }
 
