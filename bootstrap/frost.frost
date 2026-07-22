@@ -1812,7 +1812,7 @@ check_linear_consumed :: fn(mut p: Parser) {
         len := entry^.name_len
         if (is_linear_type(p, ty)) {
             if (is_moved(p, off, len) == false) {
-                frost_error("minifrost: linear value '")
+                frost_error("frost: linear value '")
                 frost_error_src(p.src, off, len)
                 frost_error("' is never consumed")
                 frost_die()
@@ -1851,7 +1851,7 @@ field_type :: fn(mut p: Parser, base_ty: i64, off: i64, len: i64) -> i64 {
     }
     // The base is a struct but carries no such field. Emitting the access
     // verbatim would leave it for whatever compiles the output to notice.
-    frost_error("minifrost: struct '")
+    frost_error("frost: struct '")
     frost_error_src(p.src, struct_off, struct_len)
     frost_error("' has no field '")
     frost_error_src(p.src, off, len)
@@ -1995,13 +1995,13 @@ emit_expr :: fn(mut p: Parser, id: i64) {
             // exist. Without this the name would be emitted verbatim and only
             // whatever compiles the output would notice.
             if (local_exists(p, off, len) == false) {
-                frost_error("minifrost: undefined variable '")
+                frost_error("frost: undefined variable '")
                 frost_error_src(p.src, off, len)
                 frost_error("'")
                 frost_die()
             }
             if (is_moved(p, off, len)) {
-                frost_error("minifrost: use of moved value '")
+                frost_error("frost: use of moved value '")
                 frost_error_src(p.src, off, len)
                 frost_error("'")
                 frost_die()
@@ -2168,7 +2168,7 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                         expected = pointee(param_ty)
                     }
                     if (types_compatible(arg_ty, expected) == false) {
-                        frost_error("minifrost: '")
+                        frost_error("frost: '")
                         frost_error_src(p.src, sym^.off, sym^.len)
                         frost_error("' was passed an argument of the wrong type")
                         frost_die()
@@ -2310,7 +2310,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         place_ty := type_of(p, place)
         value_ty := type_of(p, value)
         if (types_compatible(value_ty, place_ty) == false) {
-            frost_error("minifrost: assigning a value of the wrong type")
+            frost_error("frost: assigning a value of the wrong type")
             frost_die()
         }
         emit_expr(p, place)
@@ -2368,7 +2368,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
                 mark_moved(p, value)
             }
             if (types_compatible(value_ty, p.current_ret) == false) {
-                frost_error("minifrost: '")
+                frost_error("frost: '")
                 frost_error_src(p.src, p.current_fn_off, p.current_fn_len)
                 frost_error("' returns a value of the wrong type")
                 frost_die()
@@ -2628,7 +2628,7 @@ emit_mono_prototype :: fn(mut p: Parser, id: i64, arg: i64, ret: i64) {
 // ---------------------------------------------------------------------------
 // Native backend. Emits x64 assembly instead of C, so a build no longer pays for
 // a C compiler parsing and optimizing generated source. Selected with
-// MINIFROST_BACKEND=asm; the C path stays the default until this covers the
+// FROST_BACKEND=asm; the C path stays the default until this covers the
 // whole language.
 //
 // Windows x64: integer arguments arrive in rcx, rdx, r8, r9, the caller reserves
@@ -2685,7 +2685,7 @@ local_slot :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
 }
 
 asm_unsupported :: fn(what: ^i8) {
-    frost_error("minifrost: the native backend does not handle ")
+    frost_error("frost: the native backend does not handle ")
     frost_error(what)
     frost_error(" yet")
     frost_die()
@@ -3144,7 +3144,7 @@ check_calls :: fn(mut p: Parser) {
             name_len := sym^.len
             params := sym^.params
             if (defined == 0) {
-                frost_error("minifrost: call to undefined function '")
+                frost_error("frost: call to undefined function '")
                 frost_error_src(p.src, name_off, name_len)
                 frost_error("'")
                 frost_die()
@@ -3152,7 +3152,7 @@ check_calls :: fn(mut p: Parser) {
             expected := count_params(p, params)
             got := count_args(p, args)
             if (expected != got) {
-                frost_error("minifrost: '")
+                frost_error("frost: '")
                 frost_error_src(p.src, name_off, name_len)
                 frost_error("' expects ")
                 frost_error_int(expected)
@@ -3166,10 +3166,10 @@ check_calls :: fn(mut p: Parser) {
 }
 
 main :: fn() -> i64 {
-    // Compile the file named by the MINIFROST_INPUT environment variable when it
-    // is set (the self-hosting fixpoint feeds minifrost.frost itself through
+    // Compile the file named by the FROST_INPUT environment variable when it
+    // is set (the self-hosting fixpoint feeds frost.frost itself through
     // here), and otherwise fall back to the built-in demonstration program.
-    input_path := frost_getenv("MINIFROST_INPUT")
+    input_path := frost_getenv("FROST_INPUT")
     mut source : ^i8 = frost_read_file(input_path)
     if (frost_str_len(source) == 0) {
         source = "
@@ -3279,7 +3279,7 @@ main :: fn() -> i64 {
     program := parse_program(parser)
     check_calls(parser)
 
-    backend := frost_getenv("MINIFROST_BACKEND")
+    backend := frost_getenv("FROST_BACKEND")
     if (cstr_eq(backend, "asm")) {
         emit_asm_program(parser, program)
         return 0

@@ -58,33 +58,118 @@ uninstall-hooks:
 lint:
     cargo clippy --all --tests -- -D warnings
 
-# Runs the REPL
-repl:
-    cargo run -r -p repl
-
-# Runs a frost file
+# Compiles and runs a frost file
 run file:
-    cargo run -r -p frost --bin frost -- {{file}}
+    cargo run -r -q -p frost --bin frost -- --link -o {{file}}.exe {{file}}
+    ./{{file}}.exe
 
-# Compiles a frost file to native code
+# Compiles a frost file to a native executable
 compile file:
-    cargo run -r -p frost --bin frost -- --native {{file}}
+    cargo run -r -q -p frost --bin frost -- --link -o {{file}}.exe {{file}}
 
-# Runs the bootstrap compiler tests
-bootstrap:
-    cargo run -r -p frost --bin frost -- bootstrap/main.frost
+# Compiles a frost file through the C backend instead of the native one
+compile-c file:
+    cargo run -r -q -p frost --bin frost -- --emit-c --link -o {{file}}.exe {{file}}
 
-# Runs a frost file through the self-hosted bootstrap compiler (Windows)
-[windows]
-bootstrap-run file:
-    [System.IO.File]::WriteAllText("bootstrap/.run_target", "{{file}}")
-    cargo run -r -p frost --bin frost -- bootstrap/run.frost
-
-# Runs a frost file through the self-hosted bootstrap compiler (Unix)
+# Lists the example programs
 [unix]
-bootstrap-run file:
-    printf '%s' "{{file}}" > bootstrap/.run_target
-    cargo run -r -p frost --bin frost -- bootstrap/run.frost
+examples:
+    @echo "full frost (just run):"; ls examples/native/*.frost | sed 's|.*/||; s|\.frost$||' | sed 's/^/  /'
+    @echo "self-hosted subset (just selfhost-native):"; ls examples/selfhosted/*.frost | sed 's|.*/||; s|\.frost$||' | sed 's/^/  /'
+
+# Lists the example programs
+[windows]
+examples:
+    @Write-Host "full frost (just run):"; Get-ChildItem examples/native/*.frost | ForEach-Object { "  " + $_.BaseName }
+    @Write-Host "self-hosted subset (just selfhost-native):"; Get-ChildItem examples/selfhosted/*.frost | ForEach-Object { "  " + $_.BaseName }
+
+# Builds and runs every example, checking they all still work
+[unix]
+examples-run:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for f in examples/native/*.frost; do
+        echo "== $f"
+        cargo run -r -q -p frost --bin frost -- --link -o "$f.exe" "$f"
+        "./$f.exe"
+        rm -f "$f.exe"
+    done
+
+# Builds and runs every example, checking they all still work
+[windows]
+examples-run:
+    Get-ChildItem examples/native/*.frost | ForEach-Object { Write-Host "== $_"; cargo run -r -q -p frost --bin frost -- --link -o "$_.exe" "$_"; & "$($_.FullName).exe"; Remove-Item "$($_.FullName).exe" -Force }
+
+# Builds the self-hosted compiler (frost written in frost)
+selfhost-build:
+    cargo run -r -q -p frost --bin frost -- --link -o bootstrap/frost.exe bootstrap/frost.frost
+
+# Compiles a frost file with the self-hosted compiler, via its C backend (Unix)
+[unix]
+selfhost-run file: selfhost-build
+    FROST_INPUT={{file}} ./bootstrap/frost.exe
+
+# Compiles a frost file with the self-hosted compiler, via its C backend (Windows)
+[windows]
+selfhost-run file: selfhost-build
+    $env:FROST_INPUT = "{{file}}"; ./bootstrap/frost.exe
+
+# Compiles a frost file with the self-hosted native backend, then assembles and runs it (Unix)
+[unix]
+selfhost-native file: selfhost-build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    FROST_BACKEND=asm FROST_INPUT={{file}} ./bootstrap/frost.exe > {{file}}.s
+    cc {{file}}.s -o {{file}}.exe
+    ./{{file}}.exe
+
+# Compiles a frost file with the self-hosted native backend, then assembles and runs it (Windows)
+[windows]
+selfhost-native file: selfhost-build
+    $env:FROST_BACKEND = "asm"; $env:FROST_INPUT = "{{file}}"; $asm = & ./bootstrap/frost.exe; $env:FROST_BACKEND = $null; [System.IO.File]::WriteAllLines((Resolve-Path .).Path + "/{{file}}.s", $asm); gcc "{{file}}.s" -o "{{file}}.exe"; & "./{{file}}.exe"
+
+# Runs every self-hosted example through the native backend (Windows)
+[windows]
+selfhost-examples: selfhost-build
+    Get-ChildItem examples/selfhosted/*.frost | ForEach-Object { Write-Host "== $($_.Name)"; $env:FROST_BACKEND = "asm"; $env:FROST_INPUT = $_.FullName; $asm = & ./bootstrap/frost.exe; $env:FROST_BACKEND = $null; [System.IO.File]::WriteAllLines($_.FullName + ".s", $asm); gcc ($_.FullName + ".s") -o ($_.FullName + ".exe"); & ($_.FullName + ".exe"); Remove-Item ($_.FullName + ".s"), ($_.FullName + ".exe") -Force }
+
+# Runs every self-hosted example through the native backend (Unix)
+[unix]
+selfhost-examples: selfhost-build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for f in examples/selfhosted/*.frost; do
+        echo "== $f"
+        FROST_BACKEND=asm FROST_INPUT="$f" ./bootstrap/frost.exe > "$f.s"
+        cc "$f.s" -o "$f.exe"
+        "./$f.exe"
+        rm -f "$f.s" "$f.exe"
+    done
+
+# Checks the self-hosted compiler reproduces itself exactly (three-stage fixpoint)
+selfhost-check:
+    cargo test -r -p frost --test native self_hosting_is_a_fixpoint -- --nocapture
+
+# Runs every self-hosting check: fixpoint, emitted C, native backend, own errors
+selfhost-test:
+    cargo test -r -p frost --test native self_host -- --nocapture
+    cargo test -r -p frost --test native self_hosted -- --nocapture
+
+# Reports how long a build takes, compiler work versus linking (Unix)
+[unix]
+bench file:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -r -q -p frost --bin frost
+    echo "compile only:"; time ./target/release/frost --native -o /tmp/bench.o {{file}}
+    echo "with link:";    time ./target/release/frost --link -o /tmp/bench.exe {{file}}
+
+# Reports how long a build takes, compiler work versus linking (Windows)
+[windows]
+bench file:
+    cargo build -r -q -p frost --bin frost
+    Write-Host "compile only:"; Measure-Command { ./target/release/frost.exe --native -o "$env:TEMP/bench.o" {{file}} } | Select-Object -ExpandProperty TotalMilliseconds
+    Write-Host "with link:"; Measure-Command { ./target/release/frost.exe --link -o "$env:TEMP/bench.exe" {{file}} } | Select-Object -ExpandProperty TotalMilliseconds
 
 # Runs all tests
 test:

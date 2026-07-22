@@ -1,16 +1,16 @@
 # Mini-Frost: a self-hosting compiler written in Frost
 
-`minifrost.frost` is a compiler, written in Frost, for a subset of Frost. It
+`frost.frost` is a compiler, written in Frost, for a subset of Frost. It
 lexes the source, parses it, and emits a C translation unit; compiling and
 running that C reproduces the program's output. So it is a real code generator
 written in Frost that emits native code, the same way Frost's own primary
 backend emits C and links it.
 
 **It self-hosts.** The subset it accepts is large enough to include its own
-source, so minifrost compiles minifrost.frost. The C that produces builds a
+source, so the self-hosted compiler compiles frost.frost. The C that produces builds a
 second compiler which compiles the same source again, and the two translation
 units are byte-identical, the classic three-stage bootstrap fixpoint. The
-`bootstrap_minifrost_self_hosts` test in `tests/native.rs` checks it.
+`self_hosting_is_a_fixpoint` test in `tests/native.rs` checks it.
 
 It is written the way the language wants a compiler written: Frost-native arenas
 for the tokens, the AST, and the symbol tables, integer indices instead of heap
@@ -79,8 +79,8 @@ digits after the first character (`sum`, `count`, `fib`, `is_main`, `Node`).
 ## Building and running
 
 ```
-frost --link -o minifrost bootstrap/minifrost.frost
-./minifrost > out.c          # the Frost-written compiler emits C
+frost --link -o the self-hosted compiler bootstrap/frost.frost
+./the self-hosted compiler > out.c          # the Frost-written compiler emits C
 cc out.c -o out && ./out     # compile the emitted C to native and run it
 ```
 
@@ -97,7 +97,7 @@ prints:
 
 The compiler itself produces identical C through both of Frost's backends
 (`--link` and `--emit-c`), which the differential test checks. The
-`bootstrap_minifrost_emits_working_c` test in `tests/native.rs` runs the whole
+`self_hosted_compiler_emits_working_c` test in `tests/native.rs` runs the whole
 pipeline on every build: it compiles the Frost-written compiler, runs it to emit
 C, compiles that C, runs the result, and checks the output.
 

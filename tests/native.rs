@@ -599,7 +599,7 @@ fn native_anonymous_functions() {
     assert_eq!(output, "42\n81\n47\n20\n");
 }
 
-const MINIFROST: &str = include_str!("../bootstrap/minifrost.frost");
+const SELF_HOSTED: &str = include_str!("../bootstrap/frost.frost");
 
 fn c_compiler() -> Option<&'static str> {
     for compiler in ["gcc", "clang", "cc"] {
@@ -643,11 +643,11 @@ fn compile_c_and_run(name: &str, c_source: &str) -> Option<String> {
 }
 
 #[test]
-fn bootstrap_minifrost_emits_working_c() {
-    let Some(c_source) = compile_and_run("minifrost", MINIFROST) else {
+fn self_hosted_compiler_emits_working_c() {
+    let Some(c_source) = compile_and_run("selfhosted", SELF_HOSTED) else {
         return;
     };
-    let Some(output) = compile_c_and_run("minifrost", &c_source) else {
+    let Some(output) = compile_c_and_run("selfhosted", &c_source) else {
         return;
     };
     assert_eq!(
@@ -686,20 +686,20 @@ fn compile_c_with_runtime(name: &str, c_source: &str) -> Option<PathBuf> {
     Some(exe_path)
 }
 
-// The self-hosting fixpoint: minifrost compiles its own source, the resulting
+// The self-hosting fixpoint: the self-hosted compiler compiles its own source, the resulting
 // compiler compiles that source again, and the two emitted translation units are
 // byte-identical (the classic three-stage bootstrap check).
 #[test]
-fn bootstrap_minifrost_self_hosts() {
+fn self_hosting_is_a_fixpoint() {
     if c_compiler().is_none() {
         return;
     }
     let source_file =
-        format!("{}/bootstrap/minifrost.frost", env!("CARGO_MANIFEST_DIR"));
+        format!("{}/bootstrap/frost.frost", env!("CARGO_MANIFEST_DIR"));
 
-    // Stage 1: the frost-hosted minifrost compiles minifrost.frost.
+    // Stage 1: the frost-hosted the self-hosted compiler compiles frost.frost.
     let Some(gen1_c) =
-        compile_and_run_with_input("selfhost1", MINIFROST, &source_file)
+        compile_and_run_with_input("selfhost1", SELF_HOSTED, &source_file)
     else {
         return;
     };
@@ -714,7 +714,7 @@ fn bootstrap_minifrost_self_hosts() {
         return;
     };
     let gen2 = Command::new(&gen1_exe)
-        .env("MINIFROST_INPUT", &source_file)
+        .env("FROST_INPUT", &source_file)
         .output()
         .unwrap();
     let _ = std::fs::remove_file(&gen1_exe);
@@ -727,10 +727,10 @@ fn bootstrap_minifrost_self_hosts() {
     assert_eq!(gen1_c, gen2_c, "self-hosting is not a fixpoint");
 }
 
-// minifrost's native backend: it emits x64 assembly rather than C, so a build
+// the self-hosted compiler's native backend: it emits x64 assembly rather than C, so a build
 // pays an assembler rather than a C compiler. Emit it, assemble it, run it.
 #[test]
-fn minifrost_native_backend_emits_working_assembly() {
+fn self_hosted_native_backend_emits_working_assembly() {
     if c_compiler().is_none() || !linker_available() {
         return;
     }
@@ -738,7 +738,7 @@ fn minifrost_native_backend_emits_working_assembly() {
     let compiler =
         directory.join(format!("frost_mfasm{}", std::env::consts::EXE_SUFFIX));
     let compiler_source = directory.join("frost_mfasm.frost");
-    std::fs::write(&compiler_source, MINIFROST).unwrap();
+    std::fs::write(&compiler_source, SELF_HOSTED).unwrap();
     let frost = env!("CARGO_BIN_EXE_frost");
     let build = Command::new(frost)
         .arg("--link")
@@ -747,7 +747,7 @@ fn minifrost_native_backend_emits_working_assembly() {
         .arg(&compiler_source)
         .output()
         .unwrap();
-    assert!(build.status.success(), "minifrost failed to build");
+    assert!(build.status.success(), "the self-hosted compiler failed to build");
 
     let program = "fib :: fn(n: i64) -> i64 {\n\
                    \x20   if (n < 2) { return n }\n\
@@ -760,8 +760,8 @@ fn minifrost_native_backend_emits_working_assembly() {
     std::fs::write(&input, program).unwrap();
 
     let emit = Command::new(&compiler)
-        .env("MINIFROST_BACKEND", "asm")
-        .env("MINIFROST_INPUT", &input)
+        .env("FROST_BACKEND", "asm")
+        .env("FROST_INPUT", &input)
         .output()
         .unwrap();
     assert!(
@@ -800,10 +800,10 @@ fn minifrost_native_backend_emits_working_assembly() {
     assert_eq!(output, "0\n1\n1\n2\n3\n5\n8\n13\n21\n34\n42\n");
 }
 
-// Build minifrost, feed it a program, and return what it wrote to stderr after
-// rejecting it. minifrost answers for its own errors rather than deferring them
+// Build the self-hosted compiler, feed it a program, and return what it wrote to stderr after
+// rejecting it. the self-hosted compiler answers for its own errors rather than deferring them
 // to whatever compiles its output.
-fn minifrost_rejects(name: &str, source: &str) -> Option<String> {
+fn self_hosted_rejects(name: &str, source: &str) -> Option<String> {
     if !linker_available() {
         return None;
     }
@@ -811,7 +811,7 @@ fn minifrost_rejects(name: &str, source: &str) -> Option<String> {
     let compiler = directory
         .join(format!("frost_mfck_{name}{}", std::env::consts::EXE_SUFFIX));
     let compiler_source = directory.join(format!("frost_mfck_{name}.frost"));
-    std::fs::write(&compiler_source, MINIFROST).unwrap();
+    std::fs::write(&compiler_source, SELF_HOSTED).unwrap();
 
     let frost = env!("CARGO_BIN_EXE_frost");
     let build = Command::new(frost)
@@ -823,14 +823,14 @@ fn minifrost_rejects(name: &str, source: &str) -> Option<String> {
         .unwrap();
     assert!(
         build.status.success(),
-        "minifrost failed to build:\n{}",
+        "the self-hosted compiler failed to build:\n{}",
         String::from_utf8_lossy(&build.stderr)
     );
 
     let input = directory.join(format!("frost_mfck_input_{name}.frost"));
     std::fs::write(&input, source).unwrap();
     let run = Command::new(&compiler)
-        .env("MINIFROST_INPUT", &input)
+        .env("FROST_INPUT", &input)
         .output()
         .unwrap();
 
@@ -840,15 +840,15 @@ fn minifrost_rejects(name: &str, source: &str) -> Option<String> {
 
     assert!(
         !run.status.success(),
-        "expected minifrost to reject the program"
+        "expected the self-hosted compiler to reject the program"
     );
     Some(String::from_utf8_lossy(&run.stderr).to_string())
 }
 
 #[test]
-fn minifrost_rejects_a_call_to_an_undefined_function() {
+fn self_hosted_rejects_a_call_to_an_undefined_function() {
     let source = "main :: fn() -> i64 {\n    return no_such_fn(1)\n}\n";
-    let Some(message) = minifrost_rejects("undef", source) else {
+    let Some(message) = self_hosted_rejects("undef", source) else {
         return;
     };
     assert!(
@@ -858,9 +858,9 @@ fn minifrost_rejects_a_call_to_an_undefined_function() {
 }
 
 #[test]
-fn minifrost_rejects_an_undefined_variable() {
+fn self_hosted_rejects_an_undefined_variable() {
     let source = "main :: fn() -> i64 {\n    x := 1\n    return x + zzz\n}\n";
-    let Some(message) = minifrost_rejects("undefvar", source) else {
+    let Some(message) = self_hosted_rejects("undefvar", source) else {
         return;
     };
     assert!(
@@ -870,11 +870,11 @@ fn minifrost_rejects_an_undefined_variable() {
 }
 
 #[test]
-fn minifrost_rejects_a_field_the_struct_does_not_have() {
+fn self_hosted_rejects_a_field_the_struct_does_not_have() {
     let source = "P :: struct { x: i64, y: i64 }\n\
                   main :: fn() -> i64 {\n\
                   \x20   p := P { x = 1, y = 2 }\n    return p.zzz\n}\n";
-    let Some(message) = minifrost_rejects("badfield", source) else {
+    let Some(message) = self_hosted_rejects("badfield", source) else {
         return;
     };
     assert!(
@@ -884,12 +884,12 @@ fn minifrost_rejects_a_field_the_struct_does_not_have() {
 }
 
 #[test]
-fn minifrost_rejects_returning_the_wrong_type() {
+fn self_hosted_rejects_returning_the_wrong_type() {
     let source = "P :: struct { x: i64 }\n\
                   bad :: fn() -> i64 {\n\
                   \x20   p := P { x = 1 }\n    return p\n}\n\
                   main :: fn() -> i64 { return bad() }\n";
-    let Some(message) = minifrost_rejects("badreturn", source) else {
+    let Some(message) = self_hosted_rejects("badreturn", source) else {
         return;
     };
     assert!(
@@ -899,12 +899,12 @@ fn minifrost_rejects_returning_the_wrong_type() {
 }
 
 #[test]
-fn minifrost_rejects_an_argument_of_the_wrong_type() {
+fn self_hosted_rejects_an_argument_of_the_wrong_type() {
     let source = "P :: struct { x: i64 }\n\
                   take :: fn(n: i64) -> i64 { n }\n\
                   main :: fn() -> i64 {\n\
                   \x20   p := P { x = 1 }\n    return take(p)\n}\n";
-    let Some(message) = minifrost_rejects("badarg", source) else {
+    let Some(message) = self_hosted_rejects("badarg", source) else {
         return;
     };
     assert!(
@@ -914,12 +914,12 @@ fn minifrost_rejects_an_argument_of_the_wrong_type() {
 }
 
 #[test]
-fn minifrost_rejects_assigning_the_wrong_type() {
+fn self_hosted_rejects_assigning_the_wrong_type() {
     let source = "P :: struct { x: i64 }\n\
                   main :: fn() -> i64 {\n\
                   \x20   p := P { x = 1 }\n\
                   \x20   mut n : i64 = 0\n    n = p\n    return n\n}\n";
-    let Some(message) = minifrost_rejects("badassign", source) else {
+    let Some(message) = self_hosted_rejects("badassign", source) else {
         return;
     };
     assert!(
@@ -929,13 +929,13 @@ fn minifrost_rejects_assigning_the_wrong_type() {
 }
 
 #[test]
-fn minifrost_rejects_a_use_after_move() {
+fn self_hosted_rejects_a_use_after_move() {
     let source = "P :: struct { x: i64 }\n\
                   take :: fn(move q: P) -> i64 { q.x }\n\
                   main :: fn() -> i64 {\n\
                   \x20   p := P { x = 1 }\n\
                   \x20   a := take(p)\n    b := take(p)\n    return a + b\n}\n";
-    let Some(message) = minifrost_rejects("useafmove", source) else {
+    let Some(message) = self_hosted_rejects("useafmove", source) else {
         return;
     };
     assert!(
@@ -945,12 +945,12 @@ fn minifrost_rejects_a_use_after_move() {
 }
 
 #[test]
-fn minifrost_rejects_a_linear_value_never_consumed() {
+fn self_hosted_rejects_a_linear_value_never_consumed() {
     let source = "File :: linear struct { h: i64 }\n\
                   close :: extern fn(move f: File)\n\
                   main :: fn() -> i64 {\n\
                   \x20   r := File { h = 1 }\n    return 0\n}\n";
-    let Some(message) = minifrost_rejects("linearleak", source) else {
+    let Some(message) = self_hosted_rejects("linearleak", source) else {
         return;
     };
     assert!(
@@ -960,13 +960,13 @@ fn minifrost_rejects_a_linear_value_never_consumed() {
 }
 
 #[test]
-fn minifrost_rejects_consuming_a_linear_value_twice() {
+fn self_hosted_rejects_consuming_a_linear_value_twice() {
     let source = "File :: linear struct { h: i64 }\n\
                   close :: extern fn(move f: File)\n\
                   main :: fn() -> i64 {\n\
                   \x20   r := File { h = 1 }\n\
                   \x20   close(r)\n    close(r)\n    return 0\n}\n";
-    let Some(message) = minifrost_rejects("lineartwice", source) else {
+    let Some(message) = self_hosted_rejects("lineartwice", source) else {
         return;
     };
     assert!(
@@ -976,10 +976,10 @@ fn minifrost_rejects_consuming_a_linear_value_twice() {
 }
 
 #[test]
-fn minifrost_rejects_a_call_with_the_wrong_argument_count() {
+fn self_hosted_rejects_a_call_with_the_wrong_argument_count() {
     let source = "add :: fn(a: i64, b: i64) -> i64 { a + b }\n\
                   main :: fn() -> i64 {\n    return add(1)\n}\n";
-    let Some(message) = minifrost_rejects("arity", source) else {
+    let Some(message) = self_hosted_rejects("arity", source) else {
         return;
     };
     assert!(
@@ -988,7 +988,7 @@ fn minifrost_rejects_a_call_with_the_wrong_argument_count() {
     );
 }
 
-// Compile a Frost program to a native executable, run it with MINIFROST_INPUT
+// Compile a Frost program to a native executable, run it with FROST_INPUT
 // set, and return its stdout.
 fn compile_and_run_with_input(
     name: &str,
@@ -1019,7 +1019,7 @@ fn compile_and_run_with_input(
         String::from_utf8_lossy(&compile.stderr)
     );
     let run = Command::new(&exe_path)
-        .env("MINIFROST_INPUT", input)
+        .env("FROST_INPUT", input)
         .output()
         .unwrap();
     assert!(
@@ -3195,7 +3195,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_widths", WIDTHS),
         ("diff_wrapping", WRAPPING_AND_UNARY),
         ("diff_anon", ANON_FUNCTIONS),
-        ("diff_minifrost", MINIFROST),
+        ("diff_the self-hosted compiler", SELF_HOSTED),
         ("diff_strings", STRINGS),
         ("diff_strview", STR_VIEW),
         ("diff_pointers", POINTERS),
