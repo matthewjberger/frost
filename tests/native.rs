@@ -727,6 +727,79 @@ fn bootstrap_minifrost_self_hosts() {
     assert_eq!(gen1_c, gen2_c, "self-hosting is not a fixpoint");
 }
 
+// minifrost's native backend: it emits x64 assembly rather than C, so a build
+// pays an assembler rather than a C compiler. Emit it, assemble it, run it.
+#[test]
+fn minifrost_native_backend_emits_working_assembly() {
+    if c_compiler().is_none() || !linker_available() {
+        return;
+    }
+    let directory = std::env::temp_dir();
+    let compiler =
+        directory.join(format!("frost_mfasm{}", std::env::consts::EXE_SUFFIX));
+    let compiler_source = directory.join("frost_mfasm.frost");
+    std::fs::write(&compiler_source, MINIFROST).unwrap();
+    let frost = env!("CARGO_BIN_EXE_frost");
+    let build = Command::new(frost)
+        .arg("--link")
+        .arg("-o")
+        .arg(&compiler)
+        .arg(&compiler_source)
+        .output()
+        .unwrap();
+    assert!(build.status.success(), "minifrost failed to build");
+
+    let program = "fib :: fn(n: i64) -> i64 {\n\
+                   \x20   if (n < 2) { return n }\n\
+                   \x20   return fib(n - 1) + fib(n - 2)\n}\n\
+                   main :: fn() -> i64 {\n\
+                   \x20   mut i : i64 = 0\n\
+                   \x20   while (i < 10) {\n        print fib(i)\n        i = i + 1\n    }\n\
+                   \x20   print 6 * 7\n    0\n}\n";
+    let input = directory.join("frost_mfasm_input.frost");
+    std::fs::write(&input, program).unwrap();
+
+    let emit = Command::new(&compiler)
+        .env("MINIFROST_BACKEND", "asm")
+        .env("MINIFROST_INPUT", &input)
+        .output()
+        .unwrap();
+    assert!(
+        emit.status.success(),
+        "native backend refused the program:\n{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let assembly = String::from_utf8_lossy(&emit.stdout).to_string();
+    assert!(assembly.contains(".text"), "got:\n{assembly}");
+
+    let asm_path = directory.join("frost_mfasm_out.s");
+    let exe_path = directory
+        .join(format!("frost_mfasm_out{}", std::env::consts::EXE_SUFFIX));
+    std::fs::write(&asm_path, &assembly).unwrap();
+    let assembled = Command::new(c_compiler().unwrap())
+        .arg(&asm_path)
+        .arg("-o")
+        .arg(&exe_path)
+        .output()
+        .unwrap();
+    assert!(
+        assembled.status.success(),
+        "emitted assembly did not assemble:\n{}",
+        String::from_utf8_lossy(&assembled.stderr)
+    );
+
+    let run = Command::new(&exe_path).output().unwrap();
+    let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+
+    let _ = std::fs::remove_file(&compiler_source);
+    let _ = std::fs::remove_file(&compiler);
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&asm_path);
+    let _ = std::fs::remove_file(&exe_path);
+
+    assert_eq!(output, "0\n1\n1\n2\n3\n5\n8\n13\n21\n34\n42\n");
+}
+
 // Build minifrost, feed it a program, and return what it wrote to stderr after
 // rejecting it. minifrost answers for its own errors rather than deferring them
 // to whatever compiles its output.
