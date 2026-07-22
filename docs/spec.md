@@ -150,7 +150,7 @@ which is how string literals interoperate with C.
 (   )   {   }   [   ]   ,   ;
 ```
 
-`&mut` is two tokens (`&` then `mut`). `>>` is a single shift token that the
+`>>` is a single shift token that the
 parser splits when it closes nested generic arguments (11.4).
 
 ---
@@ -192,19 +192,23 @@ boundaries unless passed by borrow, with no `Copy` derive.
 Frost has no visibility modifiers. There is no `pub` and no private. Every struct
 field is public and reachable, and there is nothing to specify.
 
-### 3.3 Reference and pointer types
+### 3.3 Borrows and pointer types
 
-- `&T` shared (immutable) borrow. `&mut T` exclusive (mutable) borrow.
+A borrow is not a type a program writes. It is what a parameter mode means:
+an unmarked parameter of a non-copy type is read-borrowed, `mut` is
+write-borrowed, and `move` takes the value (chapter 8). There is no `&` or `&mut`
+in the surface, so a borrow has nowhere to be written down and nowhere to be
+stored, which is what makes it second-class by construction rather than by rule.
+
 - `^T` raw pointer, unchecked, for FFI and low-level libraries.
 
-References are **second-class** (chapter 8), only parameters and short-lived
-locals, never stored or returned. Raw pointers are first-class copy values that
-may be stored and returned and carry no safety guarantee.
+`ptr_to(place)` yields a `^T` to a place. `ptr_cast($T, p)` reinterprets a
+pointer as `^T` at no runtime cost. These are the low-level tools an allocator
+uses to hand back typed memory from a byte buffer; ordinary code does not need
+them, and a pointer carries no safety guarantee once it is formed.
 
-`ptr_to(place)` yields a first-class `^T` to a place, the raw-pointer counterpart
-of `&` that may be stored and returned. `ptr_cast($T, p)` reinterprets a pointer
-as `^T` at no runtime cost. These are the low-level tools an allocator uses to
-hand back typed memory from a byte buffer; ordinary code does not need them.
+A pointer or a slice that names storage in the current frame may not be
+returned, and neither may one into an arena outlive its region (chapter 8).
 
 ### 3.4 Handle and pool types
 
@@ -375,7 +379,8 @@ operators are left-associative.
 
 ### 6.3 References and dereference
 
-- `&expr` shared borrow. `&mut expr` exclusive borrow.
+- `ptr_to(place)` the address of a place. There is no borrow operator: a
+  borrow is what a parameter mode means, inserted at the call.
 - `expr^` dereferences a reference or raw pointer to its pointee value and is
   assignable (`p^ = v`). Member access through a reference to an aggregate is
   direct (`r.field`). Through a raw pointer it is written `p^.field`.
@@ -469,25 +474,33 @@ borrow rules run after parsing (`src/ownership.rs`).
 
 ### 8.1 Copy and move
 
-Each type is **copy** or **move**. Scalars, pointers, references, function
-pointers, and handles are copy. Structs, enums, strings, and slices are move. A
+Each type is **copy** or **move**. Scalars, pointers, function pointers, handles,
+strings, and slices are copy: a slice and a `str` are a pointer and a length, and
+copying one copies that pair rather than what it names. Structs and enums are
+move. A
 move value is consumed when passed by value, assigned, or returned. Using it
 after is a use-after-move error. There is no `Copy`/`Clone` derive and no
 implicit deep copy. A second copy of an aggregate is constructed explicitly.
 
-### 8.2 Second-class references
+### 8.2 Second-class borrows
 
-A reference (`&T` or `&mut T`) cannot be stored in a struct or enum field, placed
-in an array, or returned. Reference *parameters* are allowed. Because a borrow
-cannot escape its call, borrow analysis is scope-local, and Frost has no lifetime
-annotations, lifetime variables, or borrow regions.
+A borrow exists only as a parameter mode, so it cannot be stored in a struct or
+enum field, placed in an array, or returned: there is no syntax that would name
+one. Because a borrow cannot escape its call, borrow analysis is scope-local, and
+Frost has no lifetime annotations, lifetime variables, or borrow regions.
+
+A raw pointer can escape, which is what it is for, so the two ways one could
+outlive its storage are checked rather than forbidden. A function may not answer
+with a pointer or a slice that names its own frame, and an arena pointer may not
+outlive the `with` block that owns the arena. A `uses` function may hand one back
+to its caller, whose region checks it, but may not store one into a parameter.
 
 ### 8.3 Borrow exclusivity
 
-Within one call, a value may be borrowed by any number of shared `&` borrows or
-by exactly one `&mut`, never both at once. Passing the same variable as two
-`&mut` arguments to one call is rejected. This per-call check suffices to prevent
-mutable aliasing precisely because references cannot escape.
+Within one call, a value may be read-borrowed any number of times or write-
+borrowed exactly once, never both at once. Passing the same variable to two `mut`
+parameters of one call is rejected. This per-call check suffices to prevent
+mutable aliasing precisely because borrows cannot escape.
 
 ### 8.4 Reference escape through returns
 
@@ -547,8 +560,8 @@ pool from it is indexed by a `Handle<T>`, `pool[handle]` lowers to its `pool_get
 ### 10.2 `pool[handle]` is a place
 
 `pool[handle]` is a place. Read a field, write a field, copy the element out, or
-take a `&`/`&mut` of it. The borrow obtained is second-class and cannot escape
-the pool operation.
+pass it to a parameter, which borrows it. The borrow obtained is second-class and
+cannot escape the call.
 
 ### 10.3 Generational safety
 
@@ -834,7 +847,7 @@ Type =
 ```
 
 A type is a single prefix-constructed form. Nesting comes from the recursive
-constructors (`^`, `&`, `[]`, `?`, `distinct`, `fn`), not a postfix loop. Closing
+constructors (`^`, `[]`, `?`, `distinct`, `fn`), not a postfix loop. Closing
 `>` in the generic forms accepts a split `>>` (11.4).
 
 ### 13.8 Comparison and equality precedence
@@ -865,7 +878,7 @@ is normative and matches the reference parser's precedence mapping.
 | Shift | `<<` `>>` | |
 | Sum | `+` `-` | |
 | Product | `*` `/` `%` | |
-| Prefix | `-` `!` `&` `&mut` | unary |
+| Prefix | `-` `!` | unary |
 | Call / Index / Access | `f(...)` `a[i]` `.` `^` `::` | tightest |
 
 ### 14.2 Keywords

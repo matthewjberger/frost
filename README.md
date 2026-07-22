@@ -9,13 +9,24 @@ compiles to native code through Cranelift or through portable C.
 
 - **Data-oriented, not object-oriented** - plain structs and free functions, no
   methods, inheritance, or vtables.
-- **Ownership without lifetimes** - references are second-class (they cannot be
-  stored or returned), so there is nothing to annotate.
+- **Ownership without lifetimes** - a borrow is what a parameter mode means
+  (unmarked reads, `mut` writes, `move` takes ownership) and the compiler
+  inserts it at the call. There is no `&` in the surface, so a borrow has
+  nowhere to be stored and nothing to annotate.
+- **Regions, still without lifetimes** - a `with arena { }` block owns an arena
+  and a pointer into it may not outlive the block. A function's frame is checked
+  the same way, so a pointer or slice naming a local cannot be returned.
+- **Allocation is declared** - `uses Arena` draws an allocation capability,
+  threaded implicitly and supplied by the `with` block that provides it.
+- **Failure sets** - `-> T ! E` says how a function fails, `?` hands a failure
+  on, and both lower to an ordinary enum and match.
 - **Linear resources instead of `Drop`** - a `linear` value must be consumed
   exactly once, and forgetting is a compile error.
 - **Generational handles and pools** - the safe replacement for reference-heavy
   object graphs. A stale handle can never read a reused slot.
-- **Generics by monomorphization** - `$T` type parameters, no runtime dispatch.
+- **Generics by monomorphization** - `$T` types, `$N` values, and `$f`
+  functions, so a generic algorithm calls its comparator directly rather than
+  through a pointer. No runtime dispatch anywhere.
 - **Function pointers and non-capturing function literals**, no closures.
 - **Modules with a one-line export surface** - items are private by default and
   a file lists what it offers with `export`. No `pub` anywhere, all struct
