@@ -7,7 +7,8 @@ use anyhow::{Context, Result};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::parser::{
-    Block, Expression, Parameter, Pattern, Spanned, Statement, SwitchCase,
+    Block, Expression, Parameter, Pattern, ReturnKind, ReturnSignature,
+    Spanned, Statement, SwitchCase,
 };
 use crate::types::Type;
 
@@ -128,11 +129,12 @@ fn resolve_into(
             parser.exports().iter().cloned().collect();
         let tag = module_tag(&key, root);
 
-        // Step 2 of docs/separate-compilation.md. The interface is derived and
-        // checked here, and then the compiler goes on to build from source
-        // exactly as before. Deriving it at the one place a module is parsed is
-        // what keeps it from drifting out of step with the source it describes.
-        if crate::interface::interfaces_are_checked() {
+        // Steps 2 and 4 of docs/separate-compilation.md. The interface is
+        // derived at the one place a module is parsed, which is what keeps it
+        // from drifting out of step with the source it describes.
+        if crate::interface::interfaces_are_checked()
+            || crate::interface::built_from_interfaces()
+        {
             let interface = crate::interface::ModuleInterface::of(
                 &module_name,
                 &imported,
@@ -142,6 +144,29 @@ fn resolve_into(
             crate::interface::check_interface_round_trip(&interface)?;
             crate::interface::check_interface_covers_exports(&interface)?;
             crate::interface::check_interface_is_closed(&interface, &imported)?;
+
+            // The oracle for step 4: build the program from what the interface
+            // says rather than from the module's source, and require the result
+            // to be the same program. An interface that is missing something a
+            // caller needs fails here, loudly, instead of at step 5 when the
+            // compiler has started trusting interfaces for real.
+            //
+            // The module's own `import` lines are kept, because an interface
+            // carries declarations and not dependencies, and the modules behind
+            // them still have to be reached. Everything else the module
+            // declared is replaced by the interface's view of it, so anything
+            // it kept private and nothing reaches is simply gone.
+            if crate::interface::built_from_interfaces() {
+                let mut rebuilt: Vec<Spanned<Statement>> = imported
+                    .iter()
+                    .filter(|statement| {
+                        matches!(statement.node, Statement::Import(_))
+                    })
+                    .cloned()
+                    .collect();
+                rebuilt.extend(interface.declarations.iter().cloned());
+                imported = rebuilt;
+            }
             resolved.interfaces.push(interface);
         }
 
@@ -332,6 +357,29 @@ impl Renamer {
         }
     }
 
+    // A private type is just as nameable in a return position as in a
+    // parameter, and this used to be skipped, so an exported function returning
+    // an unexported struct kept the un-renamed name and the importer could not
+    // resolve it.
+    fn return_signature(&self, signature: &mut ReturnSignature) {
+        match &mut signature.kind {
+            ReturnKind::None => {}
+            ReturnKind::Single(ty) => self.ty(ty),
+            ReturnKind::Named(params) => {
+                for param in params.iter_mut() {
+                    self.ty(&mut param.param_type);
+                }
+            }
+            ReturnKind::Fallible(value, failure) => {
+                self.ty(value);
+                self.ty(failure);
+            }
+        }
+        for capability in signature.uses.iter_mut() {
+            self.ty(capability);
+        }
+    }
+
     fn parameters(&self, params: &mut [Parameter], scope: &mut Scope) {
         for param in params.iter_mut() {
             if let Some(ty) = &mut param.type_annotation {
@@ -373,10 +421,11 @@ impl Renamer {
                     self.block(block, scope);
                 }
             }
-            Expression::Function(params, _, body)
-            | Expression::Proc(params, _, body) => {
+            Expression::Function(params, return_sig, body)
+            | Expression::Proc(params, return_sig, body) => {
                 scope.push(HashSet::new());
                 self.parameters(params, scope);
+                self.return_signature(return_sig);
                 for statement in body.iter_mut() {
                     self.statement(&mut statement.node, scope);
                 }

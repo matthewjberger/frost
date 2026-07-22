@@ -111,6 +111,16 @@ pub fn interfaces_are_checked() -> bool {
     std::env::var("FROST_CHECK_INTERFACES").is_ok_and(|value| value != "0")
 }
 
+// Step 4 of docs/separate-compilation.md, as an oracle rather than as the way
+// builds work. With this on, an imported module contributes what its interface
+// says it contributes and nothing else, so a program that still compiles and
+// still produces the same output is evidence that the interface is sufficient.
+// That is the gate step 5 needs, and it is much cheaper to establish here than
+// to debug once the compiler has started trusting interfaces for real.
+pub fn built_from_interfaces() -> bool {
+    std::env::var("FROST_BUILD_FROM_INTERFACES").is_ok_and(|value| value != "0")
+}
+
 // The interface has to carry a declaration for every name it exports, and for
 // every name those declarations reach. A caller compiling against it and
 // finding a name missing is the failure this is here to turn into a loud error

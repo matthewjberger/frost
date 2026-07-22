@@ -174,12 +174,21 @@ rather than after.
    each module emits its own object, and that is also when their linkage becomes
    module-local. Step 3 is therefore a refactor whose output is byte-identical,
    which is exactly the kind that should be landed against the fixpoint tests.
-4. **Compile a module from interfaces alone.** Only then does the compiler stop
-   reading imported source. Note the ordering constraint that emerged from step
-   2: an interface deliberately drops a module's unexported, unreached
-   declarations, so a program cannot be built from interfaces until each module
-   contributes its own object file. Step 4 therefore implies separate object
-   emission, and cannot be done before step 3.
+4. **Compile a module from interfaces alone.** *Available as an oracle.*
+   `FROST_BUILD_FROM_INTERFACES=1` makes an imported module contribute what its
+   interface says and nothing else, so a program that still behaves identically
+   is evidence that the interface is sufficient. A module's own `import` lines
+   are kept, since an interface carries declarations and not dependencies.
+
+   The first thing this found was a live bug that had nothing to do with
+   interfaces: the renamer walked a function's parameters and body but skipped
+   its return signature, so a module exporting a function that returned an
+   unexported type produced a name the importer could not resolve, and such a
+   program simply did not compile.
+
+   What is left is making it the way builds work rather than a check on them,
+   and that needs each module to emit its own object file, because an interface
+   deliberately drops a module's unexported, unreached declarations.
 5. **Cache and skip.** Rebuild a module only when its own source or an imported
    interface hash changes. This is the step that pays, and it pays only because
    the four before it made it a scheduling question rather than a correctness one.
