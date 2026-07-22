@@ -204,8 +204,28 @@ its output. In dependency order, what is done and what remains:
 6. **Failure sets.** `-> T ! E` with `?`, mirroring `src/failure_sets.rs`. This
    one needs enums with payloads first, which the bootstrap subset skipped,
    since the desugar synthesizes a Result enum and matches on it.
-7. **Imports and modules.** the self-hosted compiler is single-file today; a multi-file
-   compiler needs this to compile itself.
+7. **Imports.** Done. `import "path"` names a file whose declarations join this
+   one's.
+
+   Every file's text reaches one buffer, so a name stays what it is everywhere
+   else in this compiler, an offset and a length into a single source, and
+   nothing downstream learns that more than one file was involved. A file lands
+   there once however many times it is named, which is what separates this from
+   a textual include and what makes a diamond one copy and a cycle terminate.
+   Imports are found by token rather than by scanning text, so the word
+   `import` inside a string or a comment is not one, and the placement is
+   post-order: a file follows everything it depends on, because a struct's name
+   is resolved where it is written rather than looked up later.
+
+   Fixing this turned up a real gap: a local bound by `:=` to a call of a
+   generic function took the template's return type, which still mentions the
+   type parameter, so two arenas over different elements came out as the same
+   type. The concrete return type per instantiation was already computed for the
+   native backend; it now runs before either backend, so a call answers with it
+   everywhere.
+
+   Left: `export` and the private-name mangling that goes with it. Every
+   top-level name is visible across imports today.
 
 Param modes are already done: the self-hosted compiler lowers `mut`/`move`/read to pointers and
 inserts the borrow at call sites.

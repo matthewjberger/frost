@@ -1316,6 +1316,114 @@ fn self_hosted_accepts_a_region_pointer_handed_to_the_caller() {
     assert_eq!(output, "5\n");
 }
 
+// Imports in the self-hosted compiler: a nested import, a diamond (both the
+// root and its dependency name the same file) and a struct declared in one file
+// used in another.
+#[test]
+fn self_hosted_resolves_imports() {
+    let Some(compiler) = build_self_hosted_compiler("imports") else {
+        return;
+    };
+    let directory = std::env::temp_dir().join("frost_import_test");
+    let library = directory.join("lib");
+    std::fs::create_dir_all(&library).unwrap();
+    std::fs::write(
+        library.join("math.frost"),
+        "Pair :: struct { a: i64, b: i64 }\n\
+         square :: fn(n: i64) -> i64 { n * n }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        library.join("extra.frost"),
+        "import \"math.frost\"\n\
+         cube :: fn(n: i64) -> i64 { n * square(n) }\n",
+    )
+    .unwrap();
+    let root = directory.join("app.frost");
+    std::fs::write(
+        &root,
+        "import \"lib/extra.frost\"\n\
+         import \"lib/math.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   print square(7)\n    print cube(3)\n\
+         \x20   p := Pair { a = 4, b = 5 }\n    print p.a + p.b\n    0\n}\n",
+    )
+    .unwrap();
+
+    let emit = Command::new(&compiler)
+        .env("FROST_INPUT", &root)
+        .output()
+        .unwrap();
+    assert!(
+        emit.status.success(),
+        "imports were not resolved:\n{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let c_source = String::from_utf8_lossy(&emit.stdout).replace("\r\n", "\n");
+    let Some(output) = compile_c_and_run("imports", &c_source) else {
+        return;
+    };
+
+    let _ = std::fs::remove_dir_all(&directory);
+    let _ = std::fs::remove_file(&compiler);
+    assert_eq!(output, "49\n27\n9\n");
+}
+
+// A file names another that names it back. Each file lands in the buffer once,
+// so this settles rather than running forever.
+#[test]
+fn self_hosted_survives_an_import_cycle() {
+    let Some(compiler) = build_self_hosted_compiler("importcycle") else {
+        return;
+    };
+    let directory = std::env::temp_dir().join("frost_import_cycle");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("second.frost"),
+        "import \"first.frost\"\nbeta :: fn() -> i64 { 4 }\n",
+    )
+    .unwrap();
+    let root = directory.join("first.frost");
+    std::fs::write(
+        &root,
+        "import \"second.frost\"\n\
+         alpha :: fn() -> i64 { 3 }\n\
+         main :: fn() -> i64 { print alpha() + beta()\n    0 }\n",
+    )
+    .unwrap();
+
+    let emit = Command::new(&compiler)
+        .env("FROST_INPUT", &root)
+        .output()
+        .unwrap();
+    assert!(
+        emit.status.success(),
+        "an import cycle was not resolved:\n{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let c_source = String::from_utf8_lossy(&emit.stdout).replace("\r\n", "\n");
+    let Some(output) = compile_c_and_run("importcycle", &c_source) else {
+        return;
+    };
+
+    let _ = std::fs::remove_dir_all(&directory);
+    let _ = std::fs::remove_file(&compiler);
+    assert_eq!(output, "7\n");
+}
+
+#[test]
+fn self_hosted_reports_an_unreadable_import() {
+    let source = "import \"nowhere_at_all.frost\"\n\
+                  main :: fn() -> i64 { 0 }\n";
+    let Some(message) = self_hosted_rejects("importmissing", source) else {
+        return;
+    };
+    assert!(
+        message.contains("cannot read"),
+        "expected an unreadable-import error, got:\n{message}"
+    );
+}
+
 #[test]
 fn self_hosted_rejects_a_linear_value_never_consumed() {
     let source = "File :: linear struct { h: i64 }\n\
