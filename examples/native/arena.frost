@@ -20,21 +20,21 @@ Arena :: struct($N: usize) {
     offset: i64,
 }
 
-arena_mark :: fn(a: &Arena<256>) -> i64 {
+arena_mark :: fn(a: Arena<256>) -> i64 {
     a.offset
 }
 
-arena_reset :: fn(a: &mut Arena<256>, mark: i64) {
+arena_reset :: fn(mut a: Arena<256>, mark: i64) {
     a.offset = mark
 }
 
-alloc_point :: fn(a: &mut Arena<256>) -> ^Point {
+alloc_point :: fn(mut a: Arena<256>) -> ^Point {
     slot := ptr_to(a.data[a.offset])
     a.offset = a.offset + sizeof(Point)
     ptr_cast($Point, slot)
 }
 
-alloc_int :: fn(a: &mut Arena<256>) -> ^i64 {
+alloc_int :: fn(mut a: Arena<256>) -> ^i64 {
     slot := ptr_to(a.data[a.offset])
     a.offset = a.offset + sizeof(i64)
     ptr_cast($i64, slot)
@@ -46,10 +46,10 @@ main :: fn() -> i64 {
         offset = 0,
     }
 
-    p : ^Point = alloc_point(&mut arena)
+    p : ^Point = alloc_point(arena)
     p^.x = 3
     p^.y = 4
-    q : ^i64 = alloc_int(&mut arena)
+    q : ^i64 = alloc_int(arena)
     q^ = 99
 
     printf("%lld\n", p^.x)            // 3
@@ -58,9 +58,9 @@ main :: fn() -> i64 {
     printf("%lld\n", arena.offset)    // 24 = Point(16) + i64(8)
 
     // Roll back to the start and reuse the same bytes.
-    saved := arena_mark(&arena)
-    arena_reset(&mut arena, 0)
-    r : ^i64 = alloc_int(&mut arena)
+    saved := arena_mark(arena)
+    arena_reset(arena, 0)
+    r : ^i64 = alloc_int(arena)
     r^ = 7
     printf("%lld\n", r^)              // 7
     printf("%lld\n", arena.offset)    // 8, the buffer was reclaimed

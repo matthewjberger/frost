@@ -9,10 +9,10 @@ pool_free :: extern fn(pool: ^u8, handle: i64) -> i64
 Kind :: enum { Hero, Monster { threat: i64 } }
 Entity :: struct { hp: i64, kind: Kind }
 
-make_pool :: fn(capacity: i64, sample: &$T) -> ^u8 { pool_new(capacity, sizeof(T)) }
-spawn :: fn(world: ^u8, move value: $T) -> Handle<T> { pool_alloc(world, &value) }
+make_pool :: fn(capacity: i64, sample: $T) -> ^u8 { pool_new(capacity, sizeof(T)) }
+spawn :: fn(world: ^u8, move value: $T) -> Handle<T> { pool_alloc(world, ptr_to(value)) }
 
-threat_of :: fn(e: &Entity) -> i64 {
+threat_of :: fn(e: Entity) -> i64 {
     match e^.kind {
         case .Hero: 0
         case .Monster { threat }: threat
@@ -21,7 +21,7 @@ threat_of :: fn(e: &Entity) -> i64 {
 
 main :: fn() -> i64 {
     zero := Entity { hp = 0, kind = Kind::Hero }
-    world := make_pool(16, &zero)
+    world := make_pool(16, zero)
 
     mut handles : [3]Handle<Entity> = [0, 0, 0]
     handles[0] = spawn(world, Entity { hp = 100, kind = Kind::Hero })
@@ -30,7 +30,7 @@ main :: fn() -> i64 {
 
     mut total_threat : i64 = 0
     for i in 0..3 {
-        total_threat = total_threat + threat_of(&world[handles[i]])
+        total_threat = total_threat + threat_of(world[handles[i]])
     }
     printf("%lld\n", total_threat)
 

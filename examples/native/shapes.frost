@@ -6,7 +6,7 @@ Shape :: enum {
     Triangle { base: i64, height: i64 },
 }
 
-area :: fn(s: &Shape) -> i64 {
+area :: fn(s: Shape) -> i64 {
     match s {
         case .Circle { radius }: 3 * radius * radius
         case .Rectangle { width, height }: width * height
@@ -19,8 +19,8 @@ main :: fn() -> i64 {
     r := Shape::Rectangle { width = 4, height = 6 }
     t := Shape::Triangle { base = 8, height = 3 }
 
-    printf("circle area    = %lld\n", area(&c))
-    printf("rectangle area = %lld\n", area(&r))
-    printf("triangle area  = %lld\n", area(&t))
+    printf("circle area    = %lld\n", area(c))
+    printf("rectangle area = %lld\n", area(r))
+    printf("triangle area  = %lld\n", area(t))
     0
 }

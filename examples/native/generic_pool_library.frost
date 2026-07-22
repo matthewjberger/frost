@@ -13,7 +13,7 @@ make_pool :: fn($T: Type, capacity: i64) -> ^u8 {
 }
 
 insert :: fn(pool: ^u8, move value: $T) -> Handle<T> {
-    pool_alloc(pool, &value)
+    pool_alloc(pool, ptr_to(value))
 }
 
 main :: fn() -> i64 {

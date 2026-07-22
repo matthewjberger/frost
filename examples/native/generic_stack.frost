@@ -2,26 +2,26 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 Stack :: struct($T: Type) { items: [8]T, count: i64 }
 
-push :: fn(stack: &mut Stack<$T>, move value: $T) {
+push :: fn(mut stack: Stack<$T>, move value: $T) {
     stack^.items[stack^.count] = value
     stack^.count = stack^.count + 1
 }
 
-peek :: fn(stack: &Stack<$T>) -> $T {
+peek :: fn(stack: Stack<$T>) -> $T {
     stack^.items[stack^.count - 1]
 }
 
-depth :: fn(stack: &Stack<$T>) -> i64 {
+depth :: fn(stack: Stack<$T>) -> i64 {
     stack^.count
 }
 
 main :: fn() -> i64 {
     mut numbers : Stack<i64> = Stack { items = [0, 0, 0, 0, 0, 0, 0, 0], count = 0 }
-    push(&mut numbers, 10)
-    push(&mut numbers, 20)
-    push(&mut numbers, 30)
-    printf("%lld\n", depth(&numbers))
-    printf("%lld\n", peek(&numbers))
+    push(numbers, 10)
+    push(numbers, 20)
+    push(numbers, 30)
+    printf("%lld\n", depth(numbers))
+    printf("%lld\n", peek(numbers))
     printf("%lld\n", numbers.items[0])
     0
 }

@@ -4,7 +4,7 @@ min_of :: fn(move a: $T, move b: $T) -> T { if (a < b) { a } else { b } }
 max_of :: fn(move a: $T, move b: $T) -> T { if (a > b) { a } else { b } }
 clamp  :: fn(move x: $T, move lo: $T, move hi: $T) -> T { max_of(lo, min_of(x, hi)) }
 
-swap :: fn(a: &mut $T, b: &mut $T) {
+swap :: fn(mut a: $T, mut b: $T) {
     t := a^
     a^ = b^
     b^ = t
@@ -22,7 +22,7 @@ main :: fn() -> i64 {
 
     mut a : i64 = 100
     mut b : i64 = 200
-    swap(&mut a, &mut b)
+    swap(a, b)
     printf("%lld\n", a)
 
     printf("%lld\n", bytes($Vec3))

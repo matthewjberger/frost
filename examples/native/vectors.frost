@@ -6,15 +6,15 @@ Vec3 :: struct {
     z: i64,
 }
 
-add :: fn(a: &Vec3, b: &Vec3) -> Vec3 {
+add :: fn(a: Vec3, b: Vec3) -> Vec3 {
     Vec3 { x = a.x + b.x, y = a.y + b.y, z = a.z + b.z }
 }
 
-dot :: fn(a: &Vec3, b: &Vec3) -> i64 {
+dot :: fn(a: Vec3, b: Vec3) -> i64 {
     a.x * b.x + a.y * b.y + a.z * b.z
 }
 
-scale :: fn(v: &mut Vec3, factor: i64) {
+scale :: fn(mut v: Vec3, factor: i64) {
     v.x = v.x * factor
     v.y = v.y * factor
     v.z = v.z * factor
@@ -24,15 +24,15 @@ main :: fn() -> i64 {
     a := Vec3 { x = 1, y = 2, z = 3 }
     b := Vec3 { x = 4, y = 5, z = 6 }
 
-    sum := add(&a, &b)
+    sum := add(a, b)
     printf("sum.x = %lld\n", sum.x)
     printf("sum.y = %lld\n", sum.y)
     printf("sum.z = %lld\n", sum.z)
 
-    printf("dot = %lld\n", dot(&a, &b))
+    printf("dot = %lld\n", dot(a, b))
 
     mut c := a
-    scale(&mut c, 10)
+    scale(c, 10)
     printf("scaled.x = %lld\n", c.x)
     0
 }
