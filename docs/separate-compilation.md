@@ -53,9 +53,12 @@ C++ and Rust do with COMDAT and weak symbols. **That is not available here.**
 `Hidden` and `Export`, with no weak or COMDAT variant, so there is nothing to
 ask the object writer for. Two options follow and the first is chosen:
 
-- **Emit a private copy per module** (`Linkage::Local`). Needs no backend work
-  at all, and duplicate specializations cost code size rather than correctness.
-  This is what makes step 3 possible without touching either backend.
+- **Emit a private copy per module** (`Linkage::Local`), once each module emits
+  its own object. Needs no backend work at all, and duplicate specializations
+  cost code size rather than correctness. Note this only becomes possible with
+  separate objects: two copies in one object file is a duplicate symbol, so
+  while the compiler emits a single object it must keep deduplicating exactly as
+  it does today.
 - Teach `cranelift-object` to emit COMDAT sections and add a `Linkage` variant
   for it. Better output, upstream work, and not on the critical path. Worth
   revisiting only if duplicated specializations measurably matter.
@@ -151,14 +154,19 @@ rather than after.
    also what lets a diagnostic name the file it came from, which after
    flattening it previously could not.
 
-   What is left is the per-module part itself: group the specialization set by
-   the module that instantiates it, and give each module its own copy with
-   module-local linkage. This was thought to be blocked on weak or COMDAT
-   symbols; it is not, because the copies are private rather than folded (see
-   "what a module is" above). So the remaining work is all compiler-side and
-   touches neither backend: `emitted: HashSet<String>` in `src/ir_build.rs`
-   becomes per-module, and the specialization worklist is seeded per module from
-   what that module's own code instantiates.
+   What is left is the per-module part itself: seed the specialization worklist
+   per module from what that module's own code instantiates, rather than from
+   the whole flattened program.
+
+   One thing to get right, because it is easy to state the step wrongly. While
+   the compiler still emits **one** object, per-module copies cannot actually be
+   emitted: two definitions of `Stack<i64>` in one object file is a duplicate
+   symbol, not a fold. So `emitted: HashSet<String>` in `src/ir_build.rs` stays
+   global for as long as the output is one object, and what step 3 changes is
+   only *how the worklist is seeded*. The copies become real at step 4, when
+   each module emits its own object, and that is also when their linkage becomes
+   module-local. Step 3 is therefore a refactor whose output is byte-identical,
+   which is exactly the kind that should be landed against the fixpoint tests.
 4. **Compile a module from interfaces alone.** Only then does the compiler stop
    reading imported source. Note the ordering constraint that emerged from step
    2: an interface deliberately drops a module's unexported, unreached
