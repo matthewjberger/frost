@@ -15,6 +15,10 @@ pub struct Resolved {
     pub statements: Vec<Spanned<Statement>>,
     pub linear_types: HashSet<String>,
     pub tests: Vec<(String, String)>,
+    // One per imported module, and empty unless interface checking is on. The
+    // compiler does not build from these yet; see step 2 of
+    // docs/separate-compilation.md.
+    pub interfaces: Vec<crate::interface::ModuleInterface>,
 }
 
 pub fn resolve_imports(
@@ -28,6 +32,7 @@ pub fn resolve_imports(
         statements: Vec::new(),
         linear_types,
         tests,
+        interfaces: Vec::new(),
     };
     // The directory of the file named on the command line is the project root,
     // and a module's identity is its path relative to that. See the "what is a
@@ -46,14 +51,21 @@ pub fn resolve_imports(
 // compilation cannot work on top of that, since a module compiled once has to
 // produce the symbols every other module expects to link against.
 fn module_tag(path: &Path, root: &Path) -> String {
+    format!(
+        "{:016x}",
+        fnv1a(relative_module_name(path, root).as_bytes())
+    )
+}
+
+// A module's identity: its path relative to the project root, with separators
+// normalized, because the identity must not vary by platform.
+fn relative_module_name(path: &Path, root: &Path) -> String {
     let relative = path.strip_prefix(root).unwrap_or(path);
-    // Path separators differ by platform and the identity must not, so the
-    // components are joined rather than the string taken as it is.
     let joined: Vec<String> = relative
         .components()
         .map(|component| component.as_os_str().to_string_lossy().into_owned())
         .collect();
-    format!("{:016x}", fnv1a(joined.join("/").as_bytes()))
+    joined.join("/")
 }
 
 // FNV-1a, written out rather than taken from the standard library because the
@@ -107,6 +119,24 @@ fn resolve_into(
         let exports: HashSet<String> =
             parser.exports().iter().cloned().collect();
         let tag = module_tag(&key, root);
+
+        // Step 2 of docs/separate-compilation.md. The interface is derived and
+        // checked here, and then the compiler goes on to build from source
+        // exactly as before. Deriving it at the one place a module is parsed is
+        // what keeps it from drifting out of step with the source it describes.
+        if crate::interface::interfaces_are_checked() {
+            let interface = crate::interface::ModuleInterface::of(
+                &relative_module_name(&key, root),
+                &imported,
+                parser.exports(),
+                &parser.linear_types().iter().cloned().collect(),
+            );
+            crate::interface::check_interface_round_trip(&interface)?;
+            crate::interface::check_interface_covers_exports(&interface)?;
+            crate::interface::check_interface_is_closed(&interface, &imported)?;
+            resolved.interfaces.push(interface);
+        }
+
         let renames = private_renames(&imported, &exports, &tag);
         if !renames.is_empty() {
             let renamer = Renamer { renames };
