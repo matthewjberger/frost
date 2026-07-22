@@ -20,8 +20,8 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Diagnose the native self-hosting crash
         run: |
-          cargo build -r --bin frost
-          ./target/release/frost --link -o /tmp/selfhosted bootstrap/frost.frost
+          cargo build --bin frost
+          ./target/debug/frost --link -o /tmp/selfhosted bootstrap/frost.frost
           cp bootstrap/frost.frost /tmp/input.frost
           export FROST_BACKEND=asm
           export FROST_INPUT=/tmp/input.frost
