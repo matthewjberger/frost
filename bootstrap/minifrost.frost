@@ -1713,6 +1713,22 @@ lookup_local :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
     TY_I64
 }
 
+// Whether a name is in scope as a parameter or local. lookup_local answers with
+// a type and defaults an unknown name to i64, which cannot distinguish "an i64"
+// from "not declared", so a check needs this instead.
+local_exists :: fn(mut p: Parser, off: i64, len: i64) -> bool {
+    mut i : i64 = 0
+    while (i < p.locals.count) {
+        entry : ^LocalVar = arena_at(p.locals, i)
+        if (entry^.name_len == len
+            && bytes_equal(p.src, entry^.name_off, off, len)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
 record_local :: fn(mut p: Parser, off: i64, len: i64, ty: i64) {
     arena_push(p.locals, LocalVar { name_off = off, name_len = len, ty = ty })
 }
@@ -1872,6 +1888,15 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         if (is_const(p, off, len)) {
             frost_emit_int(const_value(p, off, len))
         } else {
+            // Neither a constant nor anything in scope, so the name does not
+            // exist. Without this the name would be emitted verbatim and only
+            // whatever compiles the output would notice.
+            if (local_exists(p, off, len) == false) {
+                frost_error("minifrost: undefined variable '")
+                frost_error_src(p.src, off, len)
+                frost_error("'")
+                frost_die()
+            }
             emit_source(p.src, off, len)
         }
         return

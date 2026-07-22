@@ -785,6 +785,18 @@ fn minifrost_rejects_a_call_to_an_undefined_function() {
 }
 
 #[test]
+fn minifrost_rejects_an_undefined_variable() {
+    let source = "main :: fn() -> i64 {\n    x := 1\n    return x + zzz\n}\n";
+    let Some(message) = minifrost_rejects("undefvar", source) else {
+        return;
+    };
+    assert!(
+        message.contains("undefined variable"),
+        "expected an undefined-variable error, got:\n{message}"
+    );
+}
+
+#[test]
 fn minifrost_rejects_a_call_with_the_wrong_argument_count() {
     let source = "add :: fn(a: i64, b: i64) -> i64 { a + b }\n\
                   main :: fn() -> i64 {\n    return add(1)\n}\n";
