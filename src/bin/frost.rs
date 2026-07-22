@@ -9,9 +9,10 @@ use clap::Parser;
 use frost::{
     Expression, Lexer, Literal, Parameter, Parser as FrostParser, Position,
     ReturnKind, ReturnSignature, RunOutcome, Spanned, Statement, Type,
-    build_module, check_linearity, check_module, check_ownership,
-    check_regions, compile_ir_to_object, emit_c, lower_allocation_sources,
-    lower_failure_sets, lower_param_modes, resolve_imports, run_module,
+    build_module, check_frame_escapes, check_linearity, check_module,
+    check_ownership, check_regions, compile_ir_to_object, emit_c,
+    lower_allocation_sources, lower_failure_sets, lower_param_modes,
+    resolve_imports, run_module,
 };
 
 #[derive(Parser)]
@@ -137,6 +138,7 @@ fn main() -> Result<()> {
     let linear_types = resolved.linear_types;
     let tests = resolved.tests;
     check_regions(&statements).context("Region error")?;
+    check_frame_escapes(&statements).context("Region error")?;
     lower_allocation_sources(&mut statements)
         .context("Allocation source error")?;
     lower_failure_sets(&mut statements).context("Failure set error")?;
