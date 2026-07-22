@@ -1,4 +1,6 @@
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -332,13 +334,74 @@ fn write_runtime_source_named(source: &str, name: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn write_runtime_source() -> Result<PathBuf> {
-    let path = std::env::temp_dir()
-        .join(format!("frost_runtime_{}.c", std::process::id()));
-    fs::write(&path, RUNTIME_SOURCE).with_context(|| {
-        format!("Failed to write runtime: {}", path.display())
-    })?;
-    Ok(path)
+// The runtime is a fixed piece of C that does not vary with the program being
+// compiled, so recompiling it on every build is wasted work. Build it once into
+// an object cached in the temp directory, keyed by a hash of the source and the
+// tool that built it, and link that object thereafter. On the native backend
+// this takes the C compiler out of the per-build path entirely.
+fn runtime_object(tool: &str, freestanding: bool) -> Result<PathBuf> {
+    let source = if freestanding {
+        FREESTANDING_SOURCE
+    } else {
+        RUNTIME_SOURCE
+    };
+    let mut hasher = DefaultHasher::new();
+    source.hash(&mut hasher);
+    tool.hash(&mut hasher);
+    freestanding.hash(&mut hasher);
+    let key = hasher.finish();
+
+    let extension = if tool == "cl" { "obj" } else { "o" };
+    let directory = std::env::temp_dir();
+    let cached =
+        directory.join(format!("frost_runtime_{key:016x}.{extension}"));
+    if cached.exists() {
+        return Ok(cached);
+    }
+
+    let name = if freestanding {
+        "frost_freestanding"
+    } else {
+        "frost_runtime"
+    };
+    let source_path = write_runtime_source_named(source, name)?;
+    let pending = directory.join(format!(
+        "frost_runtime_{key:016x}_{}.{extension}",
+        std::process::id()
+    ));
+
+    let mut command = Command::new(tool);
+    if tool == "cl" {
+        command.arg("/c");
+        command.arg(&source_path);
+        command.arg(format!("/Fo:{}", pending.display()));
+    } else {
+        command.arg("-std=c11");
+        command.arg("-c");
+        command.arg(&source_path);
+        command.arg("-o");
+        command.arg(&pending);
+    }
+    let output = command
+        .output()
+        .context("Failed to compile the Frost runtime")?;
+    fs::remove_file(&source_path).ok();
+    if !output.status.success() {
+        bail!(
+            "Frost runtime failed to compile: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // A rename is atomic, so builds racing to fill the cache all end up with the
+    // same object rather than a half-written one.
+    if fs::rename(&pending, &cached).is_err() {
+        fs::copy(&pending, &cached).with_context(|| {
+            format!("Failed to cache runtime: {}", cached.display())
+        })?;
+        fs::remove_file(&pending).ok();
+    }
+    Ok(cached)
 }
 
 fn compile_c(
@@ -350,7 +413,7 @@ fn compile_c(
         anyhow::anyhow!("No C compiler found. Please install gcc or clang.")
     })?;
 
-    let runtime_path = write_runtime_source()?;
+    let runtime_path = runtime_object(compiler, false)?;
 
     let mut cmd = Command::new(compiler);
     if compiler == "cl" {
@@ -372,7 +435,6 @@ fn compile_c(
     }
 
     let output = cmd.output().context("Failed to run C compiler")?;
-    fs::remove_file(&runtime_path).ok();
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!("C compiler failed: {}", stderr);
@@ -445,11 +507,7 @@ fn link_executable(
         bail!("--freestanding is supported with gcc or clang, not MSVC");
     }
 
-    let runtime_path = if freestanding {
-        write_runtime_source_named(FREESTANDING_SOURCE, "frost_freestanding")?
-    } else {
-        write_runtime_source()?
-    };
+    let runtime_path = runtime_object(linker, freestanding)?;
 
     let mut cmd = Command::new(linker);
 
@@ -481,7 +539,6 @@ fn link_executable(
     }
 
     let output = cmd.output().context("Failed to run linker")?;
-    fs::remove_file(&runtime_path).ok();
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
