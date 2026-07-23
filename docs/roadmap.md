@@ -388,28 +388,26 @@ matches how most C APIs take structs. So returns follow the real C ABI and
 parameters follow a convention, and the asymmetry is worth knowing about.
 Passing a struct to C by value has no spelling.
 
-## 5. A generic literal as a generic argument (found, not fixed)
+## 5. A generic literal as a generic argument (done)
 
-Turned up while porting the pool tests. A generic struct literal passed directly
-as the argument of a generic function does not resolve its type argument:
+A generic struct literal passed straight to a generic function failed:
 
 ```
 insert($Pair<i64>, $4, pool, Pair { first = 3, second = 4 })
 // native backend: unknown struct 'Pair'
 ```
 
-Binding it first works, so the workaround is a line:
+The argument was lowered with no expected type at all, so the literal had
+nothing to tell it which instance it was and fell back to the bare template
+`Pair`, which has no layout because only instances get one. Binding it to a
+typed local first worked, which is what made it look like an inference gap when
+it was really a dropped expectation.
 
-```
-value : Pair<i64> = Pair { first = 3, second = 4 }
-insert($Pair<i64>, $4, pool, value)
-```
-
-Inference from the field values works in a `let` (`inferred := Pair { first =
-30, second = 12 }`), and the parameter's type is already known at the call, so
-this looks like the argument being probed as the bare template `Pair` rather
-than against the expected type. Small, and it is a real edge for anyone writing
-generic containers.
+The parameter's type is known at the call, so lowering now substitutes what is
+bound so far into the declared parameter type and hands that down as the
+expected type. Only when the result is concrete: a type argument written *after*
+the value it parameterizes has not been bound yet, and an expected type still
+naming a type parameter would say less than nothing.
 
 ## Smaller things found, and what happened to them
 

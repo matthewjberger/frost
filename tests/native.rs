@@ -3587,8 +3587,7 @@ main :: fn() -> i64 {
         generations = [0; 4],
         free_count = 0,
     }
-    value : Pair<i64> = Pair { first = 3, second = 4 }
-    h := insert($Pair<i64>, $4, pool, value)
+    h := insert($Pair<i64>, $4, pool, Pair { first = 3, second = 4 })
     printf("%lld\n", pool[h].first + pool[h].second)
     0
 }
@@ -5681,4 +5680,43 @@ fn an_aggregate_literal_must_write_every_field() {
         message.contains("is missing field 'h'"),
         "expected the missing payload field to be named, got:\n{message}"
     );
+}
+
+// A generic struct literal passed straight to a generic function used to fail
+// with "unknown struct 'Pair'": the argument was lowered with no expected type,
+// so the literal had nothing to tell it which instance it was and fell back to
+// the bare template, which has no layout. The parameter's type is known at the
+// call, so the fix is to substitute what is bound so far and hand that down.
+#[test]
+fn a_generic_literal_can_be_a_generic_argument() {
+    let source = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Pair :: struct($T: Type) { first: T, second: T }
+Slab :: struct($T: Type, $N: usize) { storage: [N]T, count: i64 }
+
+sum :: fn($T: Type, move v: $T) -> i64 { v.first + v.second }
+
+insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> i64 {
+    index := s.count
+    s.count = s.count + 1
+    s.storage[index] = value
+    index
+}
+
+zero :: fn() -> Pair<i64> { Pair { first = 0, second = 0 } }
+
+main :: fn() -> i64 {
+    printf("%lld\n", sum($Pair<i64>, Pair { first = 3, second = 4 }))
+
+    mut pool : Slab<Pair<i64>, 4> = Slab { storage = [zero(); 4], count = 0 }
+    h := insert($Pair<i64>, $4, pool, Pair { first = 10, second = 20 })
+    printf("%lld\n", pool.storage[h].first + pool.storage[h].second)
+    0
+}
+"#;
+    let Some(output) = compile_and_run("generic_literal_arg", source) else {
+        return;
+    };
+    assert_eq!(output, "7\n30\n");
 }
