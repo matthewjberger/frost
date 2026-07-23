@@ -60,6 +60,8 @@ compiles to native code through Cranelift or through portable C.
 - [docs/roadmap.md](docs/roadmap.md): what is left, in the order to do it
 - [docs/separate-compilation.md](docs/separate-compilation.md): the module
   boundary, one object per module, and what `--incremental` rebuilds
+- [docs/callbacks.md](docs/callbacks.md): the design for callbacks with a typed
+  context, which is the one place the implementation contradicts a goal
 
 ## A first program
 

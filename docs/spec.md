@@ -225,6 +225,12 @@ provides the pieces to build one, not the pool itself.
 `fn(T1, ...) -> R` is a function pointer. There are no closure types. A
 function-typed value is always a plain pointer to a function.
 
+A parameter of a function type may be written `mut T`, which means the same
+reference the `mut` mode means on a declared parameter (chapter 8). It has to be
+sayable here because the surface has no reference type to write instead. An
+unmarked parameter is the type as written, and `move T` is the type as written
+too, allowed so a function type can be read beside the declaration it describes.
+
 ### 3.6 Other type forms
 
 - `distinct T` is a nominal type with `T`'s representation, not interchangeable

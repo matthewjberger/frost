@@ -4973,3 +4973,45 @@ fn only_the_modules_an_edit_reaches_are_rebuilt() {
 
     let _ = std::fs::remove_dir_all(&directory);
 }
+
+// docs/callbacks.md, step 1. A callback registration is an `extern fn` with a
+// `$handler` parameter bound to a function signature, and the whole ownership
+// argument is that the context moves in. What this checks is that the argument
+// costs no new machinery: `check_ownership` already stops a caller touching a
+// moved value, so a program that registers a context and then reads it is
+// rejected by the pass that was already there.
+#[test]
+fn a_registered_context_may_not_still_be_read() {
+    let message = compile_error(
+        "callback_moved",
+        "Ctx :: struct { hits: i64 }\n\
+         on_event :: fn(mut ctx: Ctx, code: i64) { ctx.hits = ctx.hits + code }\n\
+         register :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64\n\
+         main :: fn() -> i64 {\n\
+         \x20   c := Ctx { hits = 0 }\n\
+         \x20   t := register($on_event, c)\n\
+         \x20   c.hits\n\
+         }\n",
+    );
+    assert!(
+        message.contains("use of moved value"),
+        "expected the context to be moved into the registration, got:\n{message}"
+    );
+}
+
+// The declaration checks reach the driver, not just the unit tests, and they
+// name the thing the reader wrote rather than something downstream of it.
+#[test]
+fn a_registration_declaration_is_checked() {
+    let message = compile_error(
+        "callback_borrowed_context",
+        "Ctx :: struct { hits: i64 }\n\
+         on_event :: fn(mut ctx: Ctx, code: i64) { ctx.hits = ctx.hits + code }\n\
+         register :: extern fn($handler: fn(mut Ctx, i64), ctx: Ctx) -> i64\n\
+         main :: fn() -> i64 { 0 }\n",
+    );
+    assert!(
+        message.contains("'move'"),
+        "expected the context to have to be taken by move, got:\n{message}"
+    );
+}
