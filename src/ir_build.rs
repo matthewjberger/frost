@@ -57,6 +57,26 @@ pub fn build_module(
     statements: &[Spanned<Statement>],
     linear: &HashSet<String>,
 ) -> Result<IrModule> {
+    build_module_inner(statements, linear, false)
+}
+
+// The same lowering, but a specialization is emitted once per module that
+// instantiates it rather than once per program. Only correct when the result is
+// about to be split into one object per module, since two definitions of a name
+// in a single object is a duplicate symbol. Split, they are module-local and a
+// module's object is self-contained, which is the point.
+pub fn build_module_per_module(
+    statements: &[Spanned<Statement>],
+    linear: &HashSet<String>,
+) -> Result<IrModule> {
+    build_module_inner(statements, linear, true)
+}
+
+fn build_module_inner(
+    statements: &[Spanned<Statement>],
+    linear: &HashSet<String>,
+    per_module: bool,
+) -> Result<IrModule> {
     let synthetic_structs = expand_generic_structs(statements)?;
     let mut layout_statements: Vec<Statement> =
         statements.iter().map(|s| s.node.clone()).collect();
@@ -139,7 +159,7 @@ pub fn build_module(
                     builder.lower_function(name, parameters, return_sig, body),
                     position,
                 )?;
-                functions.push(function);
+                functions.push(in_module(function, position.file));
                 pending.extend(requested_by(requests, position.file));
                 pending_anon.extend(anon_requested_by(anon, position.file));
             }
@@ -178,7 +198,7 @@ pub fn build_module(
             &ReturnSignature::plain(ReturnKind::Single(Type::I64)),
             &top_level,
         )?;
-        functions.push(function);
+        functions.push(in_module(function, 0));
         // Synthesized `main` from loose top-level statements, which belong to
         // the entry file.
         pending.extend(requested_by(requests, 0));
@@ -191,7 +211,9 @@ pub fn build_module(
     // exactly the requests a single-object build throws away.
     let mut instantiated_by: HashMap<String, std::collections::HashSet<u32>> =
         HashMap::new();
-    let mut emitted: std::collections::HashSet<String> =
+    // Keyed by name alone for one object, and by module and name when each
+    // module gets its own.
+    let mut emitted: std::collections::HashSet<(u32, String)> =
         std::collections::HashSet::new();
     loop {
         if let Some(specialization) = pending.pop() {
@@ -199,11 +221,16 @@ pub fn build_module(
                 .entry(specialization.mangled_name.clone())
                 .or_default()
                 .insert(specialization.requested_by);
+            let key = if per_module {
+                specialization.requested_by
+            } else {
+                0
+            };
             // The output is one object, so a specialization is emitted once no
             // matter how many modules ask for it. Per-module copies become
             // possible only when each module emits its own object; see step 3
             // of docs/separate-compilation.md.
-            if !emitted.insert(specialization.mangled_name.clone()) {
+            if !emitted.insert((key, specialization.mangled_name.clone())) {
                 continue;
             }
             let generic = builder
@@ -253,7 +280,8 @@ pub fn build_module(
                 &return_sig,
                 &body,
             )?;
-            functions.push(function);
+            functions
+                .push(local_to_module(function, specialization.requested_by));
             // A generic that instantiates another generic is still work the
             // asking module would have to do, so the attribution carries down.
             pending.extend(requested_by(requests, specialization.requested_by));
@@ -266,7 +294,7 @@ pub fn build_module(
                 &request.return_sig,
                 &request.body,
             )?;
-            functions.push(function);
+            functions.push(local_to_module(function, request.requested_by));
             pending.extend(requested_by(requests, request.requested_by));
             pending_anon.extend(anon_requested_by(anon, request.requested_by));
         } else {
@@ -275,7 +303,25 @@ pub fn build_module(
     }
 
     report_module_specializations(&instantiated_by);
-    Ok(IrModule { functions, externs })
+    Ok(IrModule {
+        functions,
+        externs,
+        imported: Vec::new(),
+    })
+}
+
+fn in_module(function: IrFunction, module: u32) -> IrFunction {
+    IrFunction { module, ..function }
+}
+
+// A specialization or an anonymous literal: private to the object that holds
+// it, because the module that produced it is the only one that calls it.
+fn local_to_module(function: IrFunction, module: u32) -> IrFunction {
+    IrFunction {
+        module,
+        local: true,
+        ..function
+    }
 }
 
 fn requested_by(
@@ -449,6 +495,11 @@ impl IrBuilder {
                 locals,
                 blocks,
                 entry: 0,
+                // Stamped by the caller, which is the only place that knows
+                // whether this is a module's own function or a specialization
+                // some other module asked for.
+                module: 0,
+                local: false,
             },
             specializations,
             anonymous,

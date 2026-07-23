@@ -756,6 +756,7 @@ mod tests {
     fn run_module_interprets_printf() {
         let module = IrModule {
             externs: Vec::new(),
+            imported: Vec::new(),
             functions: vec![IrFunction {
                 name: "main".to_string(),
                 param_count: 0,
@@ -782,6 +783,8 @@ mod tests {
                     )),
                 }],
                 entry: 0,
+                module: 0,
+                local: false,
             }],
         };
         match run_module(&module) {
@@ -794,6 +797,7 @@ mod tests {
     fn run_module_declines_on_memory_ops() {
         let module = IrModule {
             externs: Vec::new(),
+            imported: Vec::new(),
             functions: vec![IrFunction {
                 name: "main".to_string(),
                 param_count: 0,
@@ -812,6 +816,8 @@ mod tests {
                     )),
                 }],
                 entry: 0,
+                module: 0,
+                local: false,
             }],
         };
         assert!(matches!(run_module(&module), RunOutcome::Unsupported(_)));
@@ -821,6 +827,7 @@ mod tests {
     fn run_module_declines_without_main() {
         let module = IrModule {
             externs: Vec::new(),
+            imported: Vec::new(),
             functions: Vec::new(),
         };
         assert!(matches!(run_module(&module), RunOutcome::Unsupported(_)));

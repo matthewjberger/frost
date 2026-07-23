@@ -379,6 +379,7 @@ mod tests {
     ) -> IrModule {
         IrModule {
             externs: Vec::new(),
+            imported: Vec::new(),
             functions: vec![IrFunction {
                 name: "main".to_string(),
                 param_count: 0,
@@ -389,6 +390,8 @@ mod tests {
                     terminator,
                 }],
                 entry: 0,
+                module: 0,
+                local: false,
             }],
         }
     }
