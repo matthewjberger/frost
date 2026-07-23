@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::{Result, bail};
 
-use crate::parser::{ParamMode, Parameter, Program, Statement};
+use crate::parser::{ParamMode, Parameter, Spanned, Statement};
 use crate::types::Type;
 
 // docs/callbacks.md. An `extern fn` with a `$handler` parameter bound to a
@@ -16,7 +16,9 @@ use crate::types::Type;
 // parameter of that same type is the one the userdata is taken from, found by
 // type rather than by position because libraries put the userdata on either
 // side of the function pointer.
-pub fn check_callback_declarations(program: &Program) -> Result<()> {
+pub fn check_callback_declarations(
+    program: &[Spanned<Statement>],
+) -> Result<()> {
     for statement in program {
         let Statement::Extern { name, params, .. } = &statement.node else {
             continue;
@@ -31,32 +33,51 @@ pub fn check_callback_declarations(program: &Program) -> Result<()> {
     Ok(())
 }
 
-// Every callback registration in a program, by name, with the position of the
-// argument that carries the context. The region check needs this to know that
-// the value a registration answers with names storage in the caller's frame, so
-// that letting it escape is the same error as letting a pointer escape. See
-// docs/callbacks.md.
-pub fn callback_registrations(program: &Program) -> HashMap<String, usize> {
+// Which argument of a registration is the callback and which is the context,
+// and what the context's type is. Everything downstream is derived from this:
+// the region check needs the context's position, and lowering needs all three.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallbackShape {
+    pub handler: usize,
+    pub context: usize,
+    pub context_type: Type,
+}
+
+// The shape of an `extern fn`'s parameter list read as a registration, or
+// `None` when it is an ordinary extern. See docs/callbacks.md.
+pub fn callback_shape(params: &[Parameter]) -> Option<CallbackShape> {
+    for (handler, parameter) in params.iter().enumerate() {
+        let Some(Type::Proc(handler_params, _)) =
+            &parameter.compile_time_signature
+        else {
+            continue;
+        };
+        let Some(Type::RefMut(context_type)) = handler_params.first() else {
+            continue;
+        };
+        let context = params.iter().position(|parameter| {
+            parameter.type_annotation.as_ref() == Some(context_type.as_ref())
+        })?;
+        return Some(CallbackShape {
+            handler,
+            context,
+            context_type: (**context_type).clone(),
+        });
+    }
+    None
+}
+
+// Every callback registration in a program, by name.
+pub fn callback_registrations(
+    program: &[Spanned<Statement>],
+) -> HashMap<String, CallbackShape> {
     let mut registrations = HashMap::new();
     for statement in program {
         let Statement::Extern { name, params, .. } = &statement.node else {
             continue;
         };
-        for parameter in params {
-            let Some(Type::Proc(handler_params, _)) =
-                &parameter.compile_time_signature
-            else {
-                continue;
-            };
-            let Some(Type::RefMut(context)) = handler_params.first() else {
-                continue;
-            };
-            let carrier = params.iter().position(|parameter| {
-                parameter.type_annotation.as_ref() == Some(context.as_ref())
-            });
-            if let Some(carrier) = carrier {
-                registrations.insert(name.clone(), carrier);
-            }
+        if let Some(shape) = callback_shape(params) {
+            registrations.insert(name.clone(), shape);
         }
     }
     registrations
@@ -192,7 +213,10 @@ mod tests {
         let mut parser = Parser::new(&tokens);
         let statements = parser.parse().unwrap();
         let found = callback_registrations(&statements);
-        assert_eq!(found.get("register"), Some(&1));
+        let shape = found.get("register").unwrap();
+        assert_eq!(shape.handler, 0);
+        assert_eq!(shape.context, 1);
+        assert_eq!(shape.context_type, Type::Struct("Ctx".to_string()));
     }
 
     // An ordinary generic is not a registration and must not be dragged into

@@ -356,7 +356,7 @@ struct Frame<'a> {
     answers_view: bool,
     // Callback registrations in the program, and which argument of each is the
     // context whose storage it keeps.
-    registrations: &'a HashMap<String, usize>,
+    registrations: &'a HashMap<String, crate::callbacks::CallbackShape>,
 }
 
 impl Frame<'_> {
@@ -491,7 +491,7 @@ impl Frame<'_> {
                     _ => self
                         .registrations
                         .get(name)
-                        .and_then(|context| arguments.get(*context))
+                        .and_then(|shape| arguments.get(shape.context))
                         .is_some_and(|context| self.rooted_here(context)),
                 }
             }

@@ -406,7 +406,15 @@ AST; both point at a line.
     lines from 1.11 s to 353 ms. The two false starts are recorded in
     [roadmap.md](roadmap.md) because both came from trusting a summary statistic
     over a per-worker measurement.)*
-13. Separate compilation. *(Done. A module is a file, its interface is its
+13. Callbacks with a typed context. *(Done. An `extern fn` with a `$handler`
+    parameter bound to a function signature is a callback registration:
+    `src/callbacks.rs` checks the declaration, `src/regions.rs` holds the
+    registration to the frame that holds its context, and `src/ir_build.rs`
+    passes the handler's address and the context's address. There is no
+    trampoline and no cast, because a `mut` parameter is already a pointer and
+    Frost and C share a calling convention. [callbacks.md](callbacks.md) has the
+    design and the one thing it does not yet do.)*
+14. Separate compilation. *(Done. A module is a file, its interface is its
     `export` line, and a specialization is emitted in the module that
     instantiates it. On `--link` each module is its own object, and
     `--incremental` rebuilds a module only when its own source or an imported

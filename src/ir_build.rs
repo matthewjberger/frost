@@ -28,6 +28,8 @@ pub struct IrBuilder {
     generic_functions: HashMap<String, GenericFunction>,
     generic_struct_defs: HashMap<String, (Vec<String>, Vec<StructField>)>,
     linear: HashSet<String>,
+    // Callback registrations, by name. See docs/callbacks.md.
+    registrations: HashMap<String, crate::callbacks::CallbackShape>,
     anon_counter: std::cell::Cell<usize>,
 }
 
@@ -130,6 +132,7 @@ fn build_module_inner(
         generic_functions,
         generic_struct_defs,
         linear: linear.clone(),
+        registrations: crate::callbacks::callback_registrations(statements),
         anon_counter: std::cell::Cell::new(0),
     };
     builder.collect_signatures(statements);
@@ -170,15 +173,7 @@ fn build_module_inner(
             } => {
                 externs.push(IrExtern {
                     name: name.clone(),
-                    params: params
-                        .iter()
-                        .map(|parameter| {
-                            parameter
-                                .type_annotation
-                                .clone()
-                                .unwrap_or(Type::I64)
-                        })
-                        .collect(),
+                    params: extern_parameter_types(params),
                     return_type: return_type.clone().unwrap_or(Type::Void),
                 });
             }
@@ -310,6 +305,28 @@ fn build_module_inner(
     })
 }
 
+// What an extern's parameters are once C sees them. For a registration these
+// are not what the declaration says literally: the `$handler` parameter is the
+// callback pointer, and the context is passed as an address, because the library
+// keeps it past the call. See docs/callbacks.md.
+fn extern_parameter_types(params: &[Parameter]) -> Vec<Type> {
+    let shape = crate::callbacks::callback_shape(params);
+    params
+        .iter()
+        .enumerate()
+        .map(|(index, parameter)| match &shape {
+            Some(shape) if index == shape.handler => parameter
+                .compile_time_signature
+                .clone()
+                .unwrap_or(Type::Ptr(Box::new(Type::U8))),
+            Some(shape) if index == shape.context => {
+                Type::Ptr(Box::new(shape.context_type.clone()))
+            }
+            _ => parameter_type(parameter),
+        })
+        .collect()
+}
+
 fn in_module(function: IrFunction, module: u32) -> IrFunction {
     IrFunction { module, ..function }
 }
@@ -428,10 +445,7 @@ impl IrBuilder {
                     self.signatures.insert(
                         name.clone(),
                         FunctionSignature {
-                            parameters: params
-                                .iter()
-                                .map(parameter_type)
-                                .collect(),
+                            parameters: extern_parameter_types(params),
                             return_type: return_type
                                 .clone()
                                 .unwrap_or(Type::Void),
@@ -2709,6 +2723,51 @@ impl<'a> FunctionLowering<'a> {
         }
     }
 
+    // docs/callbacks.md, steps 3 and 4. There is no trampoline, and finding that
+    // out is the whole of step 3: the handler's context parameter is `mut`, so
+    // it is already a pointer in the signature, and a Frost function and a C
+    // one use the same calling convention. So `on_event` compiled for Frost is
+    // bit for bit the `void (*)(void*, ...)` the library wants, and the cast the
+    // design set out to hide inside generated code turns out not to exist. What
+    // is left is passing the handler's address and the context's address.
+    fn lower_registration_call(
+        &mut self,
+        name: &str,
+        arguments: &[Expression],
+    ) -> Result<(IrOperand, Type)> {
+        let shape = self
+            .builder
+            .registrations
+            .get(name)
+            .cloned()
+            .expect("a registration the caller just looked up");
+        let mut rewritten = arguments.to_vec();
+        let Some(handler) = rewritten.get(shape.handler) else {
+            bail!(
+                "native backend: '{name}' registers a callback and needs one as its argument {}",
+                shape.handler + 1
+            );
+        };
+        let Expression::TypeValue(Type::Struct(handler)) = handler else {
+            bail!(
+                "native backend: argument {} of '{name}' is the callback and has to be written '$name'",
+                shape.handler + 1
+            );
+        };
+        rewritten[shape.handler] = Expression::Identifier(handler.clone());
+        let Some(context) = rewritten.get(shape.context).cloned() else {
+            bail!(
+                "native backend: '{name}' registers a callback and needs its context as argument {}",
+                shape.context + 1
+            );
+        };
+        rewritten[shape.context] = Expression::Call(
+            Box::new(Expression::Identifier("ptr_to".to_string())),
+            vec![context],
+        );
+        self.lower_direct_call(name, &rewritten)
+    }
+
     fn lower_call(
         &mut self,
         callee: &Expression,
@@ -2753,6 +2812,9 @@ impl<'a> FunctionLowering<'a> {
         {
             if self.builder.generic_functions.contains_key(name) {
                 return self.lower_generic_call(name, arguments);
+            }
+            if self.builder.registrations.contains_key(name) {
+                return self.lower_registration_call(name, arguments);
             }
             if self.builder.signature(name).is_some() {
                 return self.lower_direct_call(name, arguments);
