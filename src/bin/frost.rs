@@ -12,6 +12,7 @@ use frost::{
     RunOutcome, SearchRoot, Spanned, Statement, Type, build_module,
     build_module_per_module, check_callback_declarations, check_frame_escapes,
     check_linearity, check_module, check_ownership, check_regions,
+    check_unsafety,
     compile_ir_to_object, emit_c, lower_allocation_sources, lower_failure_sets,
     lower_param_modes, register_entry_file, resolve_imports_cached, run_module,
 };
@@ -319,6 +320,9 @@ fn main() -> Result<()> {
     let tests = resolved.tests;
     let mut modules = resolved.modules;
     check_callback_declarations(&statements).context("Callback error")?;
+    if std::env::var_os("FROST_CHECK_UNSAFE").is_some() {
+        check_unsafety(&statements).context("Unsafe operation error")?;
+    }
     check_regions(&statements).context("Region error")?;
     check_frame_escapes(&statements).context("Region error")?;
     lower_allocation_sources(&mut statements)

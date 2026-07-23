@@ -21,12 +21,14 @@ mod parser;
 mod regions;
 mod source_map;
 mod types;
+mod unsafety;
 
 pub use self::{
     allocation_sources::*, build_cache::*, c_abi::*, callbacks::*,
     failure_sets::*, imports::*, interface::*, ir::*, ir_build::*, ir_c::*,
     ir_codegen::*, ir_interp::*, ir_ownership::*, ir_typecheck::*, lexer::*,
     manifest::*, ownership::*, param_modes::*, parser::*, regions::*, types::*,
+    unsafety::*,
 };
 
 use std::fmt::Display;
