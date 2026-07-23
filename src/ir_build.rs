@@ -1591,6 +1591,8 @@ fn expand_generic_structs(
 ) -> Result<Vec<Statement>> {
     let mut generic_structs: HashMap<String, (Vec<String>, Vec<StructField>)> =
         HashMap::new();
+    let mut generic_enums: HashMap<String, (Vec<String>, Vec<EnumVariant>)> =
+        HashMap::new();
     for statement in statements {
         let statement = &statement.node;
         if let Statement::Struct(name, type_params, fields) = statement
@@ -1599,8 +1601,14 @@ fn expand_generic_structs(
             generic_structs
                 .insert(name.clone(), (type_params.clone(), fields.clone()));
         }
+        if let Statement::Enum(name, type_params, variants) = statement
+            && !type_params.is_empty()
+        {
+            generic_enums
+                .insert(name.clone(), (type_params.clone(), variants.clone()));
+        }
     }
-    if generic_structs.is_empty() {
+    if generic_structs.is_empty() && generic_enums.is_empty() {
         return Ok(Vec::new());
     }
 
@@ -1656,7 +1664,7 @@ fn expand_generic_structs(
                 collect_instances_in_type(&field.field_type, &mut queue);
             }
         }
-        if let Statement::Enum(_, variants) = statement {
+        if let Statement::Enum(_, _, variants) = statement {
             for variant in variants {
                 if let Some(fields) = &variant.fields {
                     for field in fields {
@@ -1711,27 +1719,59 @@ fn expand_generic_structs(
         let Some((base, argument_strings)) = split_instance(&instance) else {
             continue;
         };
+        if let Some((type_params, variants)) = generic_enums.get(&base) {
+            let subst = instance_substitution(
+                &base,
+                type_params,
+                &argument_strings,
+                &instance,
+                "enum",
+            )?;
+            let concrete_variants: Vec<EnumVariant> = variants
+                .iter()
+                .map(|variant| EnumVariant {
+                    name: variant.name.clone(),
+                    fields: variant.fields.as_ref().map(|fields| {
+                        fields
+                            .iter()
+                            .map(|field| StructField {
+                                name: field.name.clone(),
+                                field_type: substitute_type(
+                                    &field.field_type,
+                                    &subst,
+                                ),
+                            })
+                            .collect()
+                    }),
+                })
+                .collect();
+            for variant in &concrete_variants {
+                if let Some(fields) = &variant.fields {
+                    for field in fields {
+                        collect_instances_in_type(
+                            &field.field_type,
+                            &mut queue,
+                        );
+                    }
+                }
+            }
+            synthetic.push(Statement::Enum(
+                instance.clone(),
+                Vec::new(),
+                concrete_variants,
+            ));
+            continue;
+        }
         let Some((type_params, fields)) = generic_structs.get(&base) else {
             continue;
         };
-        if type_params.len() != argument_strings.len() {
-            bail!(
-                "native backend: generic struct '{base}' expects {} type argument(s) but {} were given",
-                type_params.len(),
-                argument_strings.len()
-            );
-        }
-        let mut subst = HashMap::new();
-        for (type_param, argument) in type_params.iter().zip(&argument_strings)
-        {
-            let argument_type = crate::parser::type_from_string(argument)
-                .with_context(|| {
-                    format!(
-                        "native backend: type argument '{argument}' of '{instance}'"
-                    )
-                })?;
-            subst.insert(type_param.clone(), argument_type);
-        }
+        let subst = instance_substitution(
+            &base,
+            type_params,
+            &argument_strings,
+            &instance,
+            "struct",
+        )?;
         let concrete_fields: Vec<StructField> = fields
             .iter()
             .map(|field| StructField {
@@ -1749,6 +1789,35 @@ fn expand_generic_structs(
         ));
     }
     Ok(synthetic)
+}
+
+// What each type parameter of a generic declaration is bound to for one
+// instance, from the argument names parsed out of `Name<A, B>`.
+fn instance_substitution(
+    base: &str,
+    type_params: &[String],
+    argument_strings: &[String],
+    instance: &str,
+    kind: &str,
+) -> Result<HashMap<String, Type>> {
+    if type_params.len() != argument_strings.len() {
+        bail!(
+            "native backend: generic {kind} '{base}' expects {} type argument(s) but {} were given",
+            type_params.len(),
+            argument_strings.len()
+        );
+    }
+    let mut subst = HashMap::new();
+    for (type_param, argument) in type_params.iter().zip(argument_strings) {
+        let argument_type = crate::parser::type_from_string(argument)
+            .with_context(|| {
+                format!(
+                    "native backend: type argument '{argument}' of '{instance}'"
+                )
+            })?;
+        subst.insert(type_param.clone(), argument_type);
+    }
+    Ok(subst)
 }
 
 fn substitute_block(block: &Block, subst: &HashMap<String, Type>) -> Block {
@@ -2015,7 +2084,7 @@ fn compute_layouts(statements: &[Statement]) -> LayoutMaps {
     let enum_defs: Vec<(&String, &Vec<EnumVariant>)> = statements
         .iter()
         .filter_map(|statement| match statement {
-            Statement::Enum(name, variants) => Some((name, variants)),
+            Statement::Enum(name, _, variants) => Some((name, variants)),
             _ => None,
         })
         .collect();
@@ -2431,11 +2500,26 @@ impl<'a> FunctionLowering<'a> {
                     field_inits,
                 ) = value
                 {
-                    let ty = Type::Enum(enum_name.clone());
+                    // `m : Maybe<i64> = Maybe::Just { value = 3 }`: the
+                    // annotation says which instance, the literal does not
+                    // carry arguments, so the annotation is what names the
+                    // layout. Same rule as a generic struct literal above.
+                    let layout_name = match type_annotation {
+                        Some(
+                            Type::Enum(annotated) | Type::Struct(annotated),
+                        ) if is_generic_instance(annotated)
+                            && annotated
+                                .starts_with(&format!("{enum_name}<")) =>
+                        {
+                            annotated.clone()
+                        }
+                        _ => enum_name.clone(),
+                    };
+                    let ty = Type::Enum(layout_name.clone());
                     let local = self.fresh_local(ty, Some(name.clone()));
                     self.init_enum(
                         local,
-                        enum_name,
+                        &layout_name,
                         variant_name,
                         field_inits,
                     )?;
@@ -2740,8 +2824,20 @@ impl<'a> FunctionLowering<'a> {
                 self.materialize_aggregate(temp, expression)?;
                 Ok((IrOperand::Local(temp), ty))
             }
-            Expression::EnumVariantInit(struct_name, _, _) => {
-                let ty = Type::Enum(struct_name.clone());
+            Expression::EnumVariantInit(enum_name, _, _) => {
+                // A generic enum is written `Maybe::Just { value = 3 }` with no
+                // arguments on it, so which instance it is comes from what the
+                // context expects, exactly as for a generic struct literal.
+                let ty = match expected {
+                    Some(Type::Enum(instance) | Type::Struct(instance))
+                        if is_generic_instance(instance)
+                            && instance
+                                .starts_with(&format!("{enum_name}<")) =>
+                    {
+                        Type::Enum(instance.clone())
+                    }
+                    _ => Type::Enum(enum_name.clone()),
+                };
                 let temp = self.fresh_local(ty.clone(), None);
                 self.materialize_aggregate(temp, expression)?;
                 Ok((IrOperand::Local(temp), ty))
@@ -3624,7 +3720,17 @@ impl<'a> FunctionLowering<'a> {
                 self.init_struct(local, &layout_name, fields)
             }
             Expression::EnumVariantInit(name, variant, fields) => {
-                self.init_enum(local, name, variant, fields)
+                // The local's type already names the instance when the context
+                // resolved one, and that is the layout to write into.
+                let layout_name = match self.type_of_local(local) {
+                    Type::Enum(instance) | Type::Struct(instance)
+                        if is_generic_instance(&instance) =>
+                    {
+                        instance
+                    }
+                    _ => name.clone(),
+                };
+                self.init_enum(local, &layout_name, variant, fields)
             }
             Expression::Literal(Literal::Array(elements)) => {
                 let Type::Array(element, _) = self.type_of_local(local) else {

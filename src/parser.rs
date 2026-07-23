@@ -371,7 +371,7 @@ pub enum Statement {
     Return(Expression),
     Expression(Expression),
     Struct(Identifier, Vec<String>, Vec<StructField>),
-    Enum(Identifier, Vec<EnumVariant>),
+    Enum(Identifier, Vec<String>, Vec<EnumVariant>),
     TypeAlias(Identifier, Type),
     Defer(Box<Statement>),
     Assignment(Expression, Expression),
@@ -453,7 +453,7 @@ impl Display for Statement {
                     )
                 }
             }
-            Self::Enum(name, variants) => {
+            Self::Enum(name, _, variants) => {
                 let variant_strs: Vec<String> = variants
                     .iter()
                     .map(|v| match &v.fields {
@@ -1356,43 +1356,7 @@ impl<'a> Parser<'a> {
 
         if matches!(self.peek_nth(0), Token::Struct) {
             self.read_token();
-            let mut type_params = Vec::new();
-            if matches!(self.peek_nth(0), Token::LeftParentheses) {
-                self.read_token();
-                while self.peek_nth(0) != &Token::RightParentheses {
-                    if !matches!(self.peek_nth(0), Token::Dollar) {
-                        bail!("Expected '$' before type parameter name");
-                    }
-                    self.read_token();
-                    let param_name = match self.read_token() {
-                        Token::Identifier(name) => name.to_string(),
-                        _ => bail!("Expected type parameter name after '$'"),
-                    };
-                    if !matches!(self.read_token(), Token::Colon) {
-                        bail!("Expected ':' after type parameter name");
-                    }
-                    // `$T: Type` is a type parameter; `$N: usize` (or any other
-                    // integer type) is a value parameter, resolved to a concrete
-                    // integer at instantiation. Both are recorded by name here;
-                    // the argument kind decides which is which.
-                    match self.peek_nth(0) {
-                        Token::Type => {
-                            self.read_token();
-                        }
-                        Token::Identifier(s) if s == "Type" => {
-                            self.read_token();
-                        }
-                        _ => {
-                            self.parse_type()?;
-                        }
-                    }
-                    type_params.push(param_name);
-                    if matches!(self.peek_nth(0), Token::Comma) {
-                        self.read_token();
-                    }
-                }
-                self.read_token();
-            }
+            let type_params = self.parse_generic_params()?;
             if !matches!(self.read_token(), Token::LeftBrace) {
                 bail!("Expected '{{' after struct");
             }
@@ -1423,6 +1387,11 @@ impl<'a> Parser<'a> {
             Ok(Statement::Struct(identifier, type_params, fields))
         } else if matches!(self.peek_nth(0), Token::Enum) {
             self.read_token();
+            // An enum takes type parameters exactly as a struct does, and for
+            // the same reason: without them there is no way to write a sum type
+            // over an arbitrary element, so `Maybe<T>` and `Result<T, E>` would
+            // have to be rewritten once per element type.
+            let type_params = self.parse_generic_params()?;
             if !matches!(self.read_token(), Token::LeftBrace) {
                 bail!("Expected '{{' after enum");
             }
@@ -1471,7 +1440,7 @@ impl<'a> Parser<'a> {
             if matches!(self.peek_nth(0), Token::Semicolon) {
                 self.read_token();
             }
-            Ok(Statement::Enum(identifier, variants))
+            Ok(Statement::Enum(identifier, type_params, variants))
         } else if matches!(self.peek_nth(0), Token::Distinct) {
             let typ = self.parse_type()?;
             if matches!(self.peek_nth(0), Token::Semicolon) {
@@ -2487,6 +2456,50 @@ impl<'a> Parser<'a> {
     // a function the caller supplies, and says what its signature has to be, so
     // a mismatch is reported against the parameter list the caller can read
     // rather than against a line inside the specialized body.
+    // The `($T: Type, $N: usize)` list a generic declaration carries. Shared by
+    // struct and enum so the two cannot drift.
+    //
+    // `$T: Type` is a type parameter; `$N: usize` is a value parameter, resolved
+    // to a concrete integer at instantiation. Both are recorded by name here,
+    // and the argument kind decides which is which.
+    fn parse_generic_params(&mut self) -> Result<Vec<String>> {
+        let mut type_params = Vec::new();
+        if !matches!(self.peek_nth(0), Token::LeftParentheses) {
+            return Ok(type_params);
+        }
+        self.read_token();
+        while self.peek_nth(0) != &Token::RightParentheses {
+            if !matches!(self.peek_nth(0), Token::Dollar) {
+                bail!("Expected '$' before type parameter name");
+            }
+            self.read_token();
+            let param_name = match self.read_token() {
+                Token::Identifier(name) => name.to_string(),
+                _ => bail!("Expected type parameter name after '$'"),
+            };
+            if !matches!(self.read_token(), Token::Colon) {
+                bail!("Expected ':' after type parameter name");
+            }
+            match self.peek_nth(0) {
+                Token::Type => {
+                    self.read_token();
+                }
+                Token::Identifier(word) if word == "Type" => {
+                    self.read_token();
+                }
+                _ => {
+                    self.parse_type()?;
+                }
+            }
+            type_params.push(param_name);
+            if matches!(self.peek_nth(0), Token::Comma) {
+                self.read_token();
+            }
+        }
+        self.read_token();
+        Ok(type_params)
+    }
+
     fn parse_compile_time_parameter(&mut self) -> Result<Parameter> {
         self.read_token();
         let name = match self.read_token() {
@@ -4316,7 +4329,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Enum(name, variants) = &program[0].node {
+        if let Statement::Enum(name, _, variants) = &program[0].node {
             assert_eq!(name, "Color");
             assert_eq!(variants.len(), 3);
             assert_eq!(variants[0].name, "Red");
@@ -4340,7 +4353,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Enum(name, variants) = &program[0].node {
+        if let Statement::Enum(name, _, variants) = &program[0].node {
             assert_eq!(name, "Result");
             assert_eq!(variants.len(), 2);
             assert_eq!(variants[0].name, "Ok");
@@ -4659,7 +4672,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Enum(name, variants) = &program[0].node {
+        if let Statement::Enum(name, _, variants) = &program[0].node {
             assert_eq!(name, "Option");
             assert_eq!(variants.len(), 2);
             assert_eq!(variants[0].name, "None");

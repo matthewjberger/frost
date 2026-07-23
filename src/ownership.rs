@@ -119,7 +119,7 @@ fn check_statement(
                 }
             }
         }
-        Statement::Enum(name, variants) => {
+        Statement::Enum(name, _, variants) => {
             for variant in variants {
                 let Some(fields) = &variant.fields else {
                     continue;

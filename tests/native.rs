@@ -5720,3 +5720,59 @@ main :: fn() -> i64 {
     };
     assert_eq!(output, "7\n30\n");
 }
+
+// A struct could take type parameters and an enum could not, so there was no
+// way to write a sum type over an arbitrary element: no `Maybe<T>`, no
+// `Result<T, E>`, and no way for a library to offer one. This covers the shapes
+// that would break separately: two instances of one enum, two type parameters,
+// an aggregate payload, and an instance nested inside another.
+#[test]
+fn an_enum_can_be_generic() {
+    let source = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Point :: struct { x: i64, y: i64 }
+Maybe :: enum($T: Type) { Nothing, Just { value: T } }
+Either :: enum($L: Type, $R: Type) { Left { value: L }, Right { value: R } }
+
+unwrap_or :: fn($T: Type, m: Maybe<T>, fallback: $T) -> $T {
+    match m {
+        case .Nothing: fallback
+        case .Just { value }: value
+    }
+}
+
+main :: fn() -> i64 {
+    a : Maybe<i64> = Maybe::Just { value = 42 }
+    b : Maybe<i64> = Maybe::Nothing
+    printf("%lld\n", unwrap_or($i64, a, 0))
+    printf("%lld\n", unwrap_or($i64, b, 7))
+
+    p : Maybe<Point> = Maybe::Just { value = Point { x = 3, y = 4 } }
+    match p {
+        case .Nothing: printf("%lld\n", 0)
+        case .Just { value }: printf("%lld\n", value.x + value.y)
+    }
+
+    e : Either<i64, Point> = Either::Right { value = Point { x = 5, y = 6 } }
+    match e {
+        case .Left { value }: printf("%lld\n", value)
+        case .Right { value }: printf("%lld\n", value.y)
+    }
+
+    nested : Maybe<Maybe<i64>> = Maybe::Just { value = Maybe::Just { value = 8 } }
+    match nested {
+        case .Nothing: printf("%lld\n", 0)
+        case .Just { value }: match value {
+            case .Nothing: printf("%lld\n", 0)
+            case .Just { value }: printf("%lld\n", value)
+        }
+    }
+    0
+}
+"#;
+    let Some(output) = compile_and_run("generic_enum", source) else {
+        return;
+    };
+    assert_eq!(output, "42\n7\n7\n6\n8\n");
+}
