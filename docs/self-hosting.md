@@ -1,5 +1,8 @@
 # Self-hosting and compile speed
 
+Self-hosted, native and freestanding are three different axes, and this document
+is about the first. [build-modes.md](build-modes.md) separates them.
+
 Frost has two compilers. `src/*.rs` is the reference compiler, written in Rust,
 implementing the full language. `bootstrap/frost.frost` is a compiler written in
 Frost, and it self-hosts twice over: through its C backend and through its own

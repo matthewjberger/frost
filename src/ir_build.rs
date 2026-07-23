@@ -927,7 +927,6 @@ fn single_inner(ty: &Type) -> Option<&Type> {
         | Type::RefMut(inner)
         | Type::Array(inner, _)
         | Type::Slice(inner)
-        | Type::Optional(inner)
         | Type::Handle(inner)
         | Type::Distinct(inner) => Some(inner),
         _ => None,
@@ -983,9 +982,6 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
         }
         Type::Slice(inner) => {
             Type::Slice(Box::new(substitute_type(inner, subst)))
-        }
-        Type::Optional(inner) => {
-            Type::Optional(Box::new(substitute_type(inner, subst)))
         }
         Type::Handle(inner) => {
             Type::Handle(Box::new(substitute_type(inner, subst)))

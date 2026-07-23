@@ -56,6 +56,8 @@ compiles to native code through Cranelift or through portable C.
 - [docs/memory-safety.md](docs/memory-safety.md): how Frost guarantees memory
   safety without a garbage collector or lifetime annotations
 - [docs/c-compatibility.md](docs/c-compatibility.md): calling C and the C backend
+- [docs/build-modes.md](docs/build-modes.md): native, freestanding and
+  self-hosted are three separate axes, and what each one actually means
 - [docs/architecture.md](docs/architecture.md): the compiler pipeline and what
   the native backend supports today
 - [docs/native-pools.md](docs/native-pools.md): a spike writing a generational

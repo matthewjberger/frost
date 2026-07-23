@@ -32,7 +32,6 @@ pub enum Type {
     Enum(String),
     Distinct(Box<Type>),
     Handle(Box<Type>),
-    Optional(Box<Type>),
     TypeParam(String),
     Unknown,
 }
@@ -57,7 +56,6 @@ impl Type {
             Type::Enum(_) => 4,
             Type::Distinct(inner) => inner.size_of(),
             Type::Handle(_) => 8,
-            Type::Optional(inner) => 1 + inner.size_of(),
             Type::TypeParam(_) => 0,
             Type::Unknown => 0,
         }
@@ -87,7 +85,6 @@ impl Type {
             Type::Enum(_) => 4,
             Type::Distinct(inner) => inner.align_of(),
             Type::Handle(_) => 4,
-            Type::Optional(inner) => inner.align_of(),
             Type::TypeParam(_) => 1,
             Type::Unknown => 1,
         }
@@ -108,7 +105,6 @@ impl Type {
             Type::Struct(_) | Type::Enum(_) => false,
             Type::Distinct(inner) => inner.is_copy(),
             Type::Handle(_) => true,
-            Type::Optional(inner) => inner.is_copy(),
             Type::TypeParam(_) => false,
             Type::Unknown => false,
         }
@@ -120,7 +116,6 @@ impl Type {
             Type::Struct(_) | Type::Enum(_) => true,
             Type::Array(inner, _) => inner.needs_drop(),
             Type::Distinct(inner) => inner.needs_drop(),
-            Type::Optional(inner) => inner.needs_drop(),
             _ => false,
         }
     }
@@ -137,7 +132,6 @@ impl Type {
             Type::Ptr(inner) => inner.contains_reference(),
             Type::Distinct(inner) => inner.contains_reference(),
             Type::Handle(inner) => inner.contains_reference(),
-            Type::Optional(inner) => inner.contains_reference(),
             _ => false,
         }
     }
@@ -184,7 +178,6 @@ impl Display for Type {
             Type::Enum(name) => write!(f, "{}", name),
             Type::Distinct(inner) => write!(f, "distinct {}", inner),
             Type::Handle(inner) => write!(f, "Handle<{}>", inner),
-            Type::Optional(inner) => write!(f, "?{}", inner),
             Type::TypeParam(name) => write!(f, "${}", name),
             Type::Unknown => write!(f, "?"),
         }

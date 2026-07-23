@@ -56,6 +56,10 @@ main :: fn() -> i64 {
   means by it and `-> ^Ctx` is how a returned pointer is written. A parameter had
   a choice, and passing by pointer is what most C APIs want. Passing a struct to
   C by value has no spelling.
+- **Freestanding is a separate axis.** Everything on this page is about calling
+  C and about the C backend. Whether the *executable* needs libc once it is
+  running is a different question, answered by `--freestanding`. See
+  [build-modes.md](build-modes.md).
 - **The linker gets a real C compiler.** Both backends finish by invoking
   `cc`/`gcc`/`clang` (or `cl` on MSVC), so C symbols resolve normally and you can
   pass extra libraries with `--libs`.
