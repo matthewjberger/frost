@@ -3,6 +3,9 @@ name = "frost"
 version = "0.1.0"
 authors = ["Matthew J. Berger <matthewberger@nevada.unr.edu>"]
 edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "A small, statically typed, data-oriented systems language"
+repository = "https://github.com/matthewjberger/frost"
 
 [dependencies]
 anyhow = "1.0.40"
