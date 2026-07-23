@@ -1997,6 +1997,15 @@ fn substitute_expression(
                 })
                 .collect(),
         ),
+        // The body of an `unsafe` block is ordinary code, so a type parameter
+        // used inside one substitutes the same as anywhere else. Missing this
+        // left `sizeof(T)` reading as zero inside `unsafe { }`.
+        Expression::Unsafe(body) => {
+            Expression::Unsafe(substitute_block(body, subst))
+        }
+        Expression::UnsafeFn(inner) => {
+            Expression::UnsafeFn(Box::new(substitute_expression(inner, subst)))
+        }
         other => other.clone(),
     }
 }
@@ -2009,6 +2018,19 @@ fn needs_memory(ty: &Type) -> bool {
             | Type::Enum(_)
             | Type::Str
             | Type::Slice(_)
+    )
+}
+
+// A place expression names storage: a variable, a field, an element, or a
+// dereference. Anything else is a value expression, whose result has to be
+// spilled to memory before its address can be taken.
+fn is_place_expression(expression: &Expression) -> bool {
+    matches!(
+        expression,
+        Expression::Identifier(_)
+            | Expression::FieldAccess(_, _)
+            | Expression::Index(_, _)
+            | Expression::Dereference(_)
     )
 }
 
@@ -3192,6 +3214,7 @@ impl<'a> FunctionLowering<'a> {
             match name.as_str() {
                 "ptr_to" => return self.lower_ptr_to(arguments),
                 "ptr_cast" => return self.lower_ptr_cast(arguments),
+                "slice_from" => return self.lower_slice_from(arguments),
                 _ => {}
             }
         }
@@ -4132,6 +4155,24 @@ impl<'a> FunctionLowering<'a> {
         element: Type,
     ) -> Result<(IrOperand, Type)> {
         let slice_address = self.slice_value_address(base)?;
+        self.slice_element_address_from(
+            slice_address,
+            index_operand,
+            index_type,
+            element,
+        )
+    }
+
+    // Index a slice given the address of the slice value itself. Both a slice
+    // held in a place and one produced by an expression reach here, since the
+    // element lives behind the data pointer either way.
+    fn slice_element_address_from(
+        &mut self,
+        slice_address: IrOperand,
+        index_operand: IrOperand,
+        index_type: Type,
+        element: Type,
+    ) -> Result<(IrOperand, Type)> {
         let element_ptr = Type::Ptr(Box::new(element.clone()));
         let data = self.str_field(
             slice_address.clone(),
@@ -4190,6 +4231,62 @@ impl<'a> FunctionLowering<'a> {
 
     // Reinterpret a pointer value as `^T`. A pointer is a pointer at the ABI, so
     // this is a retype with no runtime cost.
+    // `slice_from($T, pointer, length)`: a `[]T` view over a run of `T` the
+    // caller vouches for. This is the primitive a heap-backed container is
+    // built on, since a slice is the safe, bounds-checked face it presents over
+    // its own raw storage. Trusting the pointer and length is unchecked, which
+    // is why forming one is a gated operation like ptr_cast.
+    fn lower_slice_from(
+        &mut self,
+        arguments: &[Expression],
+    ) -> Result<(IrOperand, Type)> {
+        if arguments.len() != 3 {
+            bail!(
+                "native backend: slice_from expects a type, a pointer and a length, as in slice_from($T, p, n)"
+            );
+        }
+        let Expression::TypeValue(element) = &arguments[0] else {
+            bail!(
+                "native backend: slice_from's first argument must be a type, as in $Entity"
+            );
+        };
+        let element = element.clone();
+        let (pointer, _) = self.lower_expression(&arguments[1], None)?;
+        let (length, length_type) = self.lower_expression(&arguments[2], None)?;
+        let length = self.coerce(length, &length_type, &Type::Usize);
+        let slice_type = Type::Slice(Box::new(element.clone()));
+        let slice_local = self.fresh_local(slice_type.clone(), None);
+        self.mark_in_memory(slice_local);
+        let ptr_slot = self.fresh_local(
+            Type::Ptr(Box::new(Type::Ptr(Box::new(element.clone())))),
+            None,
+        );
+        self.emit(IrStatement::Assign(
+            ptr_slot,
+            IrRvalue::AddressOf {
+                local: slice_local,
+                offset: SLICE_PTR_OFFSET,
+            },
+        ));
+        self.emit(IrStatement::Store {
+            address: IrOperand::Local(ptr_slot),
+            value: pointer,
+        });
+        let len_slot = self.fresh_local(Type::Ptr(Box::new(Type::Usize)), None);
+        self.emit(IrStatement::Assign(
+            len_slot,
+            IrRvalue::AddressOf {
+                local: slice_local,
+                offset: SLICE_LEN_OFFSET,
+            },
+        ));
+        self.emit(IrStatement::Store {
+            address: IrOperand::Local(len_slot),
+            value: length,
+        });
+        Ok((IrOperand::Local(slice_local), slice_type))
+    }
+
     fn lower_ptr_cast(
         &mut self,
         arguments: &[Expression],
@@ -4294,6 +4391,29 @@ impl<'a> FunctionLowering<'a> {
                 index_operand,
                 index_type,
             );
+        }
+        // A slice produced by a value expression rather than held in a place,
+        // such as a container's `vec_slice(v)`. Its data pointer aliases real
+        // storage, so indexing the spilled temporary reads and writes there.
+        // Only a non-place base reaches here without a matched probe, so this
+        // does not lower a place twice.
+        if !is_place_expression(base) {
+            let (value, value_type) = self.lower_expression(base, None)?;
+            if let Type::Slice(element) = value_type {
+                let IrOperand::Local(local) = value else {
+                    bail!("native backend: slice value is not addressable");
+                };
+                self.mark_in_memory(local);
+                let slice_address =
+                    self.address_of_local(local, &Type::Slice(element.clone()));
+                return self.slice_element_address_from(
+                    slice_address,
+                    index_operand,
+                    index_type,
+                    *element,
+                );
+            }
+            bail!("native backend: cannot index into: {base}");
         }
         let (base_pointer, element_type, length) =
             self.array_base_pointer(base)?;

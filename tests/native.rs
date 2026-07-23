@@ -258,6 +258,55 @@ fn native_out_of_bounds_index_aborts() {
 // through it writes to the element, which is the reusable handle a container
 // needs without a raw pointer. Both backends must agree, and the frame check
 // must refuse letting it escape.
+// The growable vector from std, exercised end to end: pushing past capacity so
+// it reallocates, reading, setting, and summing. It leans on slice_from over
+// heap storage, sizeof inside unsafe, and a generic move value, each of which
+// was a compiler fix. Both backends must agree.
+const VEC_LIBRARY: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+frost_heap_alloc   :: extern fn(size: i64) -> ^u8
+frost_heap_realloc :: extern fn(block: ^u8, size: i64) -> ^u8
+frost_heap_free    :: extern fn(block: ^u8)
+
+Vec :: struct($T: Type) { data: ^T, len: i64, cap: i64 }
+
+vec_new :: fn($T: Type, capacity: i64) -> Vec<T> {
+    mut room := capacity
+    if (room < 1) { room = 1 }
+    block := unsafe { frost_heap_alloc(room * sizeof(T)) }
+    Vec { data = unsafe { ptr_cast($T, block) }, len = 0, cap = room }
+}
+vec_push :: fn($T: Type, mut v: Vec<T>, move value: $T) {
+    if (v.len >= v.cap) {
+        mut room := v.cap * 2
+        if (room < 1) { room = 1 }
+        v.data = unsafe { ptr_cast($T, frost_heap_realloc(ptr_cast($u8, v.data), room * sizeof(T))) }
+        v.cap = room
+    }
+    unsafe { v.data[v.len] = value }
+    v.len = v.len + 1
+}
+vec_get :: fn($T: Type, v: Vec<T>, index: i64) -> $T { unsafe { v.data[index] } }
+vec_set :: fn($T: Type, mut v: Vec<T>, index: i64, move value: $T) { unsafe { v.data[index] = value } }
+vec_len :: fn($T: Type, v: Vec<T>) -> i64 { v.len }
+
+main :: fn() -> i64 {
+    mut v := vec_new($i64, 2)
+    mut i : i64 = 0
+    while (i < 10) { vec_push($i64, v, i * i)  i = i + 1 }
+    printf("%lld\n", vec_len($i64, v))
+    printf("%lld\n", vec_get($i64, v, 9))
+    vec_set($i64, v, 3, 999)
+    printf("%lld\n", vec_get($i64, v, 3))
+    mut sum : i64 = 0
+    mut j : i64 = 0
+    while (j < vec_len($i64, v)) { sum = sum + vec_get($i64, v, j)  j = j + 1 }
+    printf("%lld\n", sum)
+    unsafe { frost_heap_free(ptr_cast($u8, v.data)) }
+    0
+}
+"#;
+
 const REF_BINDING: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 Node :: struct { a: i64, b: i64 }
@@ -3279,9 +3328,9 @@ fn native_freestanding_links_without_libc() {
         return;
     }
     let directory = std::env::temp_dir();
-    let source_path = directory.join("frost_freestanding.frost");
+    let source_path = directory.join("frost_heap_freestanding.frost");
     let exe_path = directory.join(format!(
-        "frost_freestanding{}",
+        "frost_heap_freestanding{}",
         std::env::consts::EXE_SUFFIX
     ));
     std::fs::write(&source_path, FREESTANDING).unwrap();
@@ -4964,6 +5013,7 @@ fn cranelift_and_c_backends_agree() {
     let programs = [
         ("diff_arith", ARITHMETIC),
         ("diff_refbind", REF_BINDING),
+        ("diff_vec", VEC_LIBRARY),
         ("diff_floats", FLOATS),
         ("diff_widths", WIDTHS),
         ("diff_wrapping", WRAPPING_AND_UNARY),
