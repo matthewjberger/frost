@@ -5495,3 +5495,45 @@ fn an_error_inside_a_specialization_names_the_call() {
         "the error lost the template position:\n{message}"
     );
 }
+
+// A field left out of an aggregate literal used to compile, and the storage it
+// named was never written, so reading it read whatever was on the stack. That
+// is the shape goal 2 says should be unrepresentable, and nothing downstream
+// could have caught it: the value has a type, an address, and a plausible bit
+// pattern.
+#[test]
+fn an_aggregate_literal_must_write_every_field() {
+    let message = compile_error(
+        "partial_struct",
+        "E :: struct { hp: i64, mana: i64 }\n\
+         main :: fn() -> i64 { e := E { hp = 5 }  e.mana }\n",
+    );
+    assert!(
+        message.contains("is missing field 'mana'"),
+        "expected the missing field to be named, got:\n{message}"
+    );
+
+    let message = compile_error(
+        "empty_struct",
+        "E :: struct { hp: i64, mana: i64 }\n\
+         main :: fn() -> i64 { e := E {}  e.hp }\n",
+    );
+    assert!(
+        message.contains("missing fields 'hp', 'mana'"),
+        "expected both fields to be named, got:\n{message}"
+    );
+
+    // An enum payload is the same storage with a tag in front of it.
+    let message = compile_error(
+        "partial_variant",
+        "Shape :: enum { Rect { w: i64, h: i64 } }\n\
+         main :: fn() -> i64 {\n\
+         \x20   s := Shape::Rect { w = 3 }\n\
+         \x20   match s { case .Rect { w, h }: h }\n\
+         }\n",
+    );
+    assert!(
+        message.contains("is missing field 'h'"),
+        "expected the missing payload field to be named, got:\n{message}"
+    );
+}
