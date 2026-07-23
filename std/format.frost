@@ -1,0 +1,96 @@
+// Building text into a growable byte buffer, and turning numbers into digits.
+//
+// A `Builder` is a `Vec<u8>` under a name that says what it is for. Everything
+// here appends to one, so a caller assembles a line from parts and prints or
+// writes it once, rather than one `print_int` at a time. The bytes are a `str`
+// through `builder_str`, which is the bounds-checked view every string
+// operation takes.
+
+import "vec.frost"
+
+export Builder, builder_new, builder_free, builder_len, builder_str,
+    builder_byte, builder_bytes, builder_str_value, builder_int, builder_uint,
+    builder_clear
+
+Builder :: struct {
+    bytes: Vec<u8>,
+}
+
+builder_new :: fn(capacity: i64) -> Builder {
+    Builder { bytes = vec_new($u8, capacity) }
+}
+
+builder_free :: fn(move b: Builder) {
+    vec_free($u8, b.bytes)
+}
+
+builder_len :: fn(b: Builder) -> i64 {
+    vec_len($u8, b.bytes)
+}
+
+builder_clear :: fn(mut b: Builder) {
+    vec_clear($u8, b.bytes)
+}
+
+// The bytes written so far, as a `str`. It views the builder's storage, so it
+// is valid only until the next append, which is the usual rule for a view into
+// a growable thing.
+builder_str :: fn(b: Builder) -> str {
+    unsafe { slice_from($u8, b.bytes.data, vec_len($u8, b.bytes)) }
+}
+
+builder_byte :: fn(mut b: Builder, byte: i64) {
+    vec_push($u8, b.bytes, byte)
+}
+
+// Append a run of raw bytes, given a pointer and a length. Used by the string
+// and str appends below rather than by callers directly.
+builder_bytes :: fn(mut b: Builder, data: ^u8, length: i64) {
+    mut i : i64 = 0
+    while (i < length) {
+        vec_push($u8, b.bytes, unsafe { data[i] })
+        i = i + 1
+    }
+}
+
+// Append a `str`, byte for byte.
+builder_str_value :: fn(mut b: Builder, text: str) {
+    mut i : i64 = 0
+    while (i < str_len(text)) {
+        vec_push($u8, b.bytes, text[i])
+        i = i + 1
+    }
+}
+
+// Append a signed integer in base ten, with a leading `-` for a negative. The
+// digits are produced least significant first into a small stack buffer, then
+// appended in order, which avoids needing to know the length up front.
+builder_int :: fn(mut b: Builder, value: i64) {
+    if (value < 0) {
+        vec_push($u8, b.bytes, 45)
+        builder_uint(b, 0 - value)
+        return
+    }
+    builder_uint(b, value)
+}
+
+builder_uint :: fn(mut b: Builder, value: i64) {
+    if (value == 0) {
+        vec_push($u8, b.bytes, 48)
+        return
+    }
+    mut digits : [20]u8 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    mut count : i64 = 0
+    mut left := value
+    while (left > 0) {
+        digits[count] = 48 + left % 10
+        left = left / 10
+        count = count + 1
+    }
+    mut i := count - 1
+    while (i >= 0) {
+        vec_push($u8, b.bytes, digits[i])
+        i = i - 1
+    }
+}

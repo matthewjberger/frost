@@ -1,0 +1,53 @@
+// Reading and writing whole files. A read answers with the bytes as a `str`
+// over a fresh heap block, along with whether it succeeded; a write takes a
+// `str` and reports the same. The buffer a read returns is the caller's to
+// free with fs_free.
+//
+// The extern calls are the unsafe floor, wrapped here so a program that reads
+// and writes files names none of them.
+
+export ReadResult, fs_read, fs_write, fs_free, fs_exists
+
+frost_file_read   :: extern fn(path: ^i8) -> ^u8
+frost_file_size   :: extern fn() -> i64
+frost_file_write  :: extern fn(path: ^i8, bytes: ^u8, length: i64) -> i64
+frost_file_exists :: extern fn(path: ^i8) -> i64
+frost_heap_free   :: extern fn(block: ^u8)
+
+// `ok` is false when the file could not be opened, in which case `text` is
+// empty. `buffer` is the heap block the text views, kept so fs_free can release
+// it without reaching back through the slice.
+ReadResult :: struct {
+    text: str,
+    buffer: ^u8,
+    ok: bool,
+}
+
+fs_read :: fn(path: ^i8) -> ReadResult {
+    raw := unsafe { frost_file_read(path) }
+    length := unsafe { frost_file_size() }
+    if (length < 0) {
+        return ReadResult { text = unsafe { slice_from($u8, raw, 0) },
+            buffer = raw, ok = false }
+    }
+    ReadResult { text = unsafe { slice_from($u8, raw, length) },
+        buffer = raw, ok = true }
+}
+
+// Free the buffer a read returned. The `str` borrows it, so nothing may use the
+// text after this.
+fs_free :: fn(move result: ReadResult) {
+    unsafe { frost_heap_free(result.buffer) }
+}
+
+fs_write :: fn(path: ^i8, text: str) -> bool {
+    length := str_len(text)
+    if (length == 0) {
+        return unsafe { frost_file_write(path, ptr_cast($u8, path), 0) } == 1
+    }
+    unsafe { frost_file_write(path, ptr_to(text[0]), length) } == 1
+}
+
+fs_exists :: fn(path: ^i8) -> bool {
+    unsafe { frost_file_exists(path) } == 1
+}
