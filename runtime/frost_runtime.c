@@ -242,6 +242,27 @@ const char *frost_arg_at(int64_t index) {
     return frost_argument_vector()[index];
 }
 
+/* Heap allocation for the standard library's growable containers. Thin wrappers
+   so a Frost program names one set of functions rather than the C library's,
+   and so a freestanding build can point them at its own allocator. */
+void *frost_heap_alloc(int64_t size) {
+    return malloc((size_t)size);
+}
+
+void *frost_heap_realloc(void *block, int64_t size) {
+    return realloc(block, (size_t)size);
+}
+
+void frost_heap_free(void *block) {
+    free(block);
+}
+
+/* Copy `size` bytes from `source` to `destination`, for a container growing its
+   storage or shifting elements. */
+void frost_mem_copy(void *destination, const void *source, int64_t size) {
+    memcpy(destination, source, (size_t)size);
+}
+
 int64_t frost_file_exists(const char *path) {
     FILE *file = fopen(path, "rb");
     if (file == 0) {

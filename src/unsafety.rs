@@ -336,6 +336,11 @@ impl Checker {
                 if let Expression::Identifier(name) = &**callee {
                     if name == "ptr_cast" {
                         self.refuse("ptr_cast", at)?;
+                    } else if name == "slice_from" {
+                        self.refuse(
+                            "forming a slice from a raw pointer",
+                            at,
+                        )?;
                     } else if self.externs.contains(name) {
                         self.refuse(
                             &format!("calling the C function '{name}'"),
