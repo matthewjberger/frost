@@ -1,0 +1,78 @@
+// What both backends emit through: source text, string literals, and the
+// allocation capability a call is handed.
+
+import "core.frost"
+
+export PROVIDER_NONE, PROVIDER_REGION, begin_provider, emit_source,
+    emit_string_content, set_provider
+
+// Re-emit an identifier from the source by its byte range, so a local reference
+// becomes the variable's own name in the generated C.
+emit_source :: fn(src: ^i8, off: i64, len: i64) {
+    mut k : i64 = 0
+    while (k < len) {
+        frost_emit_char(frost_byte_at(src, off + k))
+        k = k + 1
+    }
+}
+
+// Emit the content of a string literal for C. Frost and C share escape syntax,
+// so a backslash escape is passed through whole; the one difference is that Frost
+// allows raw newlines and tabs inside a string, which C forbids, so those are
+// escaped.
+emit_string_content :: fn(src: ^i8, off: i64, len: i64) {
+    mut k : i64 = 0
+    while (k < len) {
+        b := frost_byte_at(src, off + k)
+        if (b == CH_BACKSLASH) {
+            frost_emit_char(b)
+            k = k + 1
+            if (k < len) {
+                frost_emit_char(frost_byte_at(src, off + k))
+            }
+        } else if (b == CH_LF) {
+            frost_emit_char(CH_BACKSLASH)
+            frost_emit_char(CH_LOWER_N)
+        } else if (b == CH_TAB) {
+            frost_emit_char(CH_BACKSLASH)
+            frost_emit_char(CH_LOWER_T)
+        } else if (b == CH_CR) {
+            k = k
+        } else {
+            frost_emit_char(b)
+        }
+        k = k + 1
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Types during code generation. A local's type is recorded when it is bound, so
+// a later `:=` or field access can be typed by walking the expression.
+// ---------------------------------------------------------------------------
+
+// The provider in force while a block is emitted: where a call to a `uses`
+// function gets its capability. A `uses` function forwards the one it was
+// handed; a `with` block supplies the arena it names; anywhere else there is
+// none and such a call is an error.
+PROVIDER_NONE    :: 0
+PROVIDER_FORWARD :: 1
+PROVIDER_REGION  :: 2
+
+set_provider :: fn(mut p: Parser, kind: i64, off: i64, len: i64) {
+    p.prov_kind = kind
+    p.prov_off = off
+    p.prov_len = len
+}
+
+// A `uses` function forwards the capability it was handed. Anything else starts
+// with none, so a `uses` call from outside a region is caught rather than
+// silently allocating from somewhere unnamed.
+begin_provider :: fn(mut p: Parser, fn_index: i64) {
+    sym : ^Sym = arena_at(p.fns, fn_index)
+    if (sym^.uses_ty >= 0) {
+        set_provider(p, PROVIDER_FORWARD, sym^.cap_off, sym^.cap_len)
+        return
+    }
+    set_provider(p, PROVIDER_NONE, 0, 0)
+}
+

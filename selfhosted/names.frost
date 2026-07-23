@@ -1,0 +1,472 @@
+// Names and nodes: interning, visibility, synthesized names, constants, type
+// codes, and the AST constructors.
+
+import "core.frost"
+import "lexer.frost"
+import "imports.frost"
+
+export append_node, bytes_equal, const_value, digits_in, generic_index_for,
+    intern_global, is_const, is_main_name, is_pointer, is_struct_ty,
+    mark_defined, mark_extern, new_case, new_field_init, new_field_node,
+    new_func_node, new_index, new_let_node, new_named_node, new_node,
+    new_struct_lit, new_type_node, new_unary, node_next, pointee,
+    record_generic_fn, register_const, set_field_next, set_next, set_params,
+    set_ret_type, set_uses, struct_index_of, synth_capability_name,
+    synth_join, synth_literal, synth_numbered, type_code_for
+
+// Copy a literal name into the room past the source and answer its offset, for
+// a name the compiler needs that no source spells.
+synth_literal :: fn(mut p: Parser, word: ^i8) -> i64 {
+    start := p.synth_next
+    length := frost_str_len(word)
+    mut k : i64 = 0
+    while (k < length) {
+        frost_byte_set(p.src, start + k, frost_byte_at(word, k))
+        k = k + 1
+    }
+    frost_byte_set(p.src, start + length, 0)
+    p.synth_next = start + length + 1
+    start
+}
+
+digits_in :: fn(number: i64) -> i64 {
+    mut value := number
+    mut digits : i64 = 1
+    while (value >= 10) {
+        value = value / 10
+        digits = digits + 1
+    }
+    digits
+}
+
+// A name with a number after it, so each `?` and each failure set gets one of
+// its own. Its length is the word's plus the number's digits.
+synth_numbered :: fn(mut p: Parser, word: ^i8, number: i64) -> i64 {
+    start := synth_literal(p, word)
+    digits := digits_in(number)
+    mut scale : i64 = 1
+    mut left : i64 = 1
+    while (left < digits) {
+        scale = scale * 10
+        left = left + 1
+    }
+    mut value := number
+    mut written : i64 = 0
+    while (written < digits) {
+        digit := value / scale
+        frost_byte_set(p.src, p.synth_next - 1 + written, CH_0 + digit)
+        value = value - digit * scale
+        scale = scale / 10
+        written = written + 1
+    }
+    frost_byte_set(p.src, p.synth_next - 1 + digits, 0)
+    p.synth_next = p.synth_next + digits
+    start
+}
+
+// Two source names joined by an underscore, for a field that belongs to one
+// variant of an enum: `Enemy` and `damage` become `Enemy_damage`. Two variants
+// may each carry a `damage` and they stay apart.
+synth_join :: fn(mut p: Parser, first_off: i64, first_len: i64, second_off: i64,
+    second_len: i64) -> i64 {
+    start := p.synth_next
+    mut k : i64 = 0
+    while (k < first_len) {
+        frost_byte_set(p.src, start + k, frost_byte_at(p.src, first_off + k))
+        k = k + 1
+    }
+    frost_byte_set(p.src, start + first_len, CH_UNDERSCORE)
+    k = 0
+    while (k < second_len) {
+        frost_byte_set(p.src, start + first_len + 1 + k,
+            frost_byte_at(p.src, second_off + k))
+        k = k + 1
+    }
+    frost_byte_set(p.src, start + first_len + 1 + second_len, 0)
+    p.synth_next = start + first_len + second_len + 2
+    start
+}
+
+// The binding a `uses Arena` function draws: the capability type's name with
+// its first letter lowercased, so `uses Arena<256>` binds `arena` and the body
+// names it the way the caller's `with arena` block does.
+synth_capability_name :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    start := p.synth_next
+    mut k : i64 = 0
+    while (k < len) {
+        mut byte := frost_byte_at(p.src, off + k)
+        if (k == 0 && byte >= CH_UPPER_A && byte <= CH_UPPER_Z) {
+            byte = byte + 32
+        }
+        frost_byte_set(p.src, start + k, byte)
+        k = k + 1
+    }
+    frost_byte_set(p.src, start + len, 0)
+    p.synth_next = start + len + 1
+    start
+}
+
+// The same comparison across two buffers, for a name kept somewhere other than
+// the source it was read from.
+bytes_equal_across :: fn(first: ^i8, first_off: i64, second: ^i8,
+    second_off: i64, length: i64) -> bool {
+    mut k : i64 = 0
+    while (k < length) {
+        if (frost_byte_at(first, first_off + k)
+            != frost_byte_at(second, second_off + k)) {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
+bytes_equal :: fn(src: ^i8, first: i64, second: i64, length: i64) -> bool {
+    mut k : i64 = 0
+    while (k < length) {
+        if (frost_byte_at(src, first + k) != frost_byte_at(src, second + k)) {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
+intern_global :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < p.fns.count) {
+        entry : ^Sym = arena_at(p.fns, i)
+        if (entry^.len == length
+            && bytes_equal(p.src, entry^.off, offset, length)
+            && name_visible(p, entry^.off, entry^.len, offset)) {
+            return i
+        }
+        i = i + 1
+    }
+    arena_push(
+        p.fns,
+        Sym { off = offset, len = length, is_extern = 0, ret_type = TY_I64,
+            params = 0 - 1, defined = 0, uses_ty = 0 - 1, cap_off = 0,
+            cap_len = 0 },
+    )
+}
+
+// A name becomes defined when its `fn` or `extern fn` is parsed. A name that is
+// only ever called is interned but never defined, which is a call to a function
+// that does not exist.
+mark_defined :: fn(mut p: Parser, fn_index: i64) {
+    entry : ^Sym = arena_at(p.fns, fn_index)
+    entry^.defined = 1
+}
+
+mark_extern :: fn(mut p: Parser, fn_index: i64) {
+    entry : ^Sym = arena_at(p.fns, fn_index)
+    entry^.is_extern = 1
+}
+
+set_ret_type :: fn(mut p: Parser, fn_index: i64, ret: i64) {
+    entry : ^Sym = arena_at(p.fns, fn_index)
+    entry^.ret_type = ret
+}
+
+set_params :: fn(mut p: Parser, fn_index: i64, params: i64) {
+    entry : ^Sym = arena_at(p.fns, fn_index)
+    entry^.params = params
+}
+
+set_uses :: fn(mut p: Parser, fn_index: i64, ty: i64, off: i64, len: i64) {
+    entry : ^Sym = arena_at(p.fns, fn_index)
+    entry^.uses_ty = ty
+    entry^.cap_off = off
+    entry^.cap_len = len
+}
+
+node_next :: fn(mut p: Parser, id: i64) -> i64 {
+    node : ^Node = arena_at(p.arena, id)
+    node^.next
+}
+
+append_node :: fn(mut p: Parser, head: i64, extra: i64) -> i64 {
+    if (head == (0 - 1)) {
+        return extra
+    }
+    mut tail := head
+    mut following := node_next(p, tail)
+    while (following != (0 - 1)) {
+        tail = following
+        following = node_next(p, tail)
+    }
+    set_next(p, tail, extra)
+    head
+}
+
+record_generic_fn :: fn(mut p: Parser, fn_index: i64, tparam_off: i64,
+    tparam_len: i64, token_start: i64) {
+    arena_push(
+        p.generic_fns,
+        GenericFn { fn_index = fn_index, tparam_off = tparam_off,
+            tparam_len = tparam_len, token_start = token_start },
+    )
+}
+
+// Register `name :: value` in the constant table. Duplicate names are harmless
+// since lookup takes the first.
+register_const :: fn(mut p: Parser, offset: i64, length: i64, value: i64) {
+    arena_push(
+        p.consts,
+        ConstDef { name_off = offset, name_len = length, value = value },
+    )
+}
+
+// Whether a declaration whose name sits at `decl_off` may be named from
+// `use_off`. A file's own names are its own to use; another file's are only
+// what it exported. The declaration's offset is what says which file wrote it,
+// so no table has to carry an owner.
+//
+// A program compiled from one file has one module and every name is in it, so
+// this answers true on the first comparison and costs nothing.
+name_visible :: fn(mut p: Parser, decl_off: i64, decl_len: i64, use_off: i64)
+    -> bool {
+    owner := module_at(p.modules, decl_off)
+    if (owner == module_at(p.modules, use_off)) {
+        return true
+    }
+    mut i : i64 = 0
+    while (i < p.exports.count) {
+        entry : ^Export = arena_at(p.exports, i)
+        if (entry^.module == owner && entry^.len == decl_len
+            && bytes_equal_across(p.export_names, entry^.off, p.src, decl_off,
+                decl_len)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+// If a name is a declared constant, return its value through `out` (as the
+// return) and true; otherwise false. Consts are looked up by byte comparison.
+const_value :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < p.consts.count) {
+        entry : ^ConstDef = arena_at(p.consts, i)
+        if (entry^.name_len == length
+            && bytes_equal(p.src, entry^.name_off, offset, length)
+            && name_visible(p, entry^.name_off, entry^.name_len, offset)) {
+            return entry^.value
+        }
+        i = i + 1
+    }
+    0 - 1
+}
+
+is_const :: fn(mut p: Parser, offset: i64, length: i64) -> bool {
+    mut i : i64 = 0
+    while (i < p.consts.count) {
+        entry : ^ConstDef = arena_at(p.consts, i)
+        if (entry^.name_len == length
+            && bytes_equal(p.src, entry^.name_off, offset, length)
+            && name_visible(p, entry^.name_off, entry^.name_len, offset)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+is_main_name :: fn(src: ^i8, offset: i64, length: i64) -> bool {
+    if (length != 4) {
+        return false
+    }
+    frost_byte_at(src, offset) == 109 && frost_byte_at(src, offset + 1) == 97
+        && frost_byte_at(src, offset + 2) == 105
+        && frost_byte_at(src, offset + 3) == 110
+}
+
+// ---------------------------------------------------------------------------
+// Parsing.
+// ---------------------------------------------------------------------------
+
+new_node :: fn(mut p: Parser, kind: i64, a: i64, b: i64, val: i64) -> i64 {
+    arena_push(
+        p.arena,
+        Node { kind = kind, a = a, b = b, c = 0, val = val, next = 0 - 1 },
+    )
+}
+
+// A node that names a local by its source byte range: `val` is the offset and
+// `c` is the length, so code generation re-emits the identifier text directly.
+// This is what lets locals become named C variables instead of `v[]` slots.
+new_named_node :: fn(mut p: Parser, kind: i64, child: i64, offset: i64,
+    length: i64) -> i64 {
+    arena_push(
+        p.arena,
+        Node { kind = kind, a = child, b = 0, c = length, val = offset,
+            next = 0 - 1 },
+    )
+}
+
+// A local binding. `b` carries the annotated type, or -1 to infer the type from
+// the initializer. An annotation wins because a generic call cannot be typed
+// precisely from the callee alone (`entry : ^Token = arena_at(...)`).
+new_let_node :: fn(mut p: Parser, value: i64, offset: i64, length: i64,
+    annotation: i64) -> i64 {
+    arena_push(
+        p.arena,
+        Node { kind = NODE_LET, a = value, b = annotation, c = length,
+            val = offset, next = 0 - 1 },
+    )
+}
+
+new_func_node :: fn(mut p: Parser, body: i64, params: i64, fn_index: i64,
+    is_main: i64) -> i64 {
+    arena_push(
+        p.arena,
+        Node {
+            kind = NODE_FUNC,
+            a = body,
+            b = params,
+            c = is_main,
+            val = fn_index,
+            next = 0 - 1,
+        },
+    )
+}
+
+set_next :: fn(mut p: Parser, id: i64, next_id: i64) {
+    node : ^Node = arena_at(p.arena, id)
+    node^.next = next_id
+}
+
+// A field access `base.name`: `a` is the base expression, `val`/`c` the field
+// name's byte range.
+new_field_node :: fn(mut p: Parser, base: i64, offset: i64, length: i64) -> i64 {
+    arena_push(
+        p.arena,
+        Node { kind = NODE_FIELD, a = base, b = 0, c = length, val = offset,
+            next = 0 - 1 },
+    )
+}
+
+// A struct literal `Name { ... }`: `val` is the struct's table index and `a` is
+// the head of a linked list of NODE_FIELD_INIT nodes.
+new_struct_lit :: fn(mut p: Parser, struct_index: i64, inits: i64) -> i64 {
+    arena_push(
+        p.arena,
+        Node { kind = NODE_STRUCT_LIT, a = inits, b = 0, c = 0,
+            val = struct_index, next = 0 - 1 },
+    )
+}
+
+// One `name = value` inside a struct literal: `a` is the value, `val`/`c` the
+// field name's byte range, `next` the following initializer.
+new_field_init :: fn(mut p: Parser, value: i64, offset: i64, length: i64) -> i64 {
+    arena_push(
+        p.arena,
+        Node { kind = NODE_FIELD_INIT, a = value, b = 0, c = length,
+            val = offset, next = 0 - 1 },
+    )
+}
+
+set_field_next :: fn(mut p: Parser, id: i64, next_id: i64) {
+    field : ^StructField = arena_at(p.fields, id)
+    field^.next = next_id
+}
+
+is_pointer :: fn(ty: i64) -> bool {
+    ty >= POINTER_BASE
+}
+
+pointee :: fn(ty: i64) -> i64 {
+    ty - POINTER_BASE
+}
+
+is_struct_ty :: fn(ty: i64) -> bool {
+    ty >= STRUCT_BASE && ty < POINTER_BASE
+}
+
+struct_index_of :: fn(ty: i64) -> i64 {
+    ty - STRUCT_BASE
+}
+
+// Resolve a type name (byte range) to a type code: the current generic type
+// parameter (bound to its concrete type while monomorphizing, otherwise the
+// TY_PARAM placeholder), a primitive keyword, or the named struct. A generic
+// template struct is not returned here; `Name<Arg>` instantiation is handled in
+// parse_type. An unknown name falls back to i64.
+type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
+    if (p.type_param_len == length
+        && bytes_equal(p.src, p.type_param_off, offset, length)) {
+        if (p.binding_active == 1) {
+            return p.type_binding
+        }
+        return TY_PARAM
+    }
+    if (str_range_eq(p.src, offset, length, "i64")) { return TY_I64 }
+    if (str_range_eq(p.src, offset, length, "i8")) { return TY_I8 }
+    if (str_range_eq(p.src, offset, length, "u8")) { return TY_U8 }
+    if (str_range_eq(p.src, offset, length, "bool")) { return TY_BOOL }
+    mut i : i64 = 0
+    while (i < p.structs.count) {
+        entry : ^StructDef = arena_at(p.structs, i)
+        if (entry^.is_generic == 0 && entry^.name_len == length
+            && bytes_equal(p.src, entry^.name_off, offset, length)
+            && name_visible(p, entry^.name_off, entry^.name_len, offset)) {
+            return STRUCT_BASE + i
+        }
+        i = i + 1
+    }
+    TY_I64
+}
+
+// Find the index of a generic struct template by name, or -1.
+generic_index_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < p.structs.count) {
+        entry : ^StructDef = arena_at(p.structs, i)
+        if (entry^.is_generic == 1 && entry^.name_len == length
+            && bytes_equal(p.src, entry^.name_off, offset, length)
+            && name_visible(p, entry^.name_off, entry^.name_len, offset)) {
+            return i
+        }
+        i = i + 1
+    }
+    0 - 1
+}
+
+// A unary node wrapping a single child expression (deref, address-of).
+new_unary :: fn(mut p: Parser, kind: i64, child: i64) -> i64 {
+    arena_push(
+        p.arena,
+        Node { kind = kind, a = child, b = 0, c = 0, val = 0, next = 0 - 1 },
+    )
+}
+
+// An index node `base[index]`: `a` is the base, `b` the index expression.
+new_index :: fn(mut p: Parser, base: i64, index: i64) -> i64 {
+    arena_push(
+        p.arena,
+        Node { kind = NODE_INDEX, a = base, b = index, c = 0, val = 0,
+            next = 0 - 1 },
+    )
+}
+
+// A node carrying a type code in `val` (ptr_cast target, sizeof operand) and an
+// optional expression in `a`.
+new_type_node :: fn(mut p: Parser, kind: i64, expr: i64, ty: i64) -> i64 {
+    arena_push(
+        p.arena,
+        Node { kind = kind, a = expr, b = 0, c = 0, val = ty, next = 0 - 1 },
+    )
+}
+
+// One arm of a match: `a` is the body statement, `val` the integer pattern, and
+// `c` a flag marking the `_` default arm.
+new_case :: fn(mut p: Parser, body: i64, value: i64, is_default: i64) -> i64 {
+    arena_push(
+        p.arena,
+        Node { kind = NODE_CASE, a = body, b = 0, c = is_default, val = value,
+            next = 0 - 1 },
+    )
+}
+

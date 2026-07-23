@@ -457,6 +457,17 @@ fn main() -> Result<()> {
         } else {
             vec![module]
         };
+        // Intermediate objects are named for the executable rather than for the
+        // source, since two builds of the same program to different outputs run
+        // at once and one naming them for the source would delete the other's.
+        let exe_path = cli.output.clone().unwrap_or_else(|| {
+            if cfg!(windows) {
+                format!("{}.exe", stem)
+            } else {
+                stem.to_string()
+            }
+        });
+
         let mut object_paths = Vec::with_capacity(parts.len());
         // Objects for cached modules are named for the fingerprint that
         // produced them and outlive the build; everything else is an
@@ -494,7 +505,7 @@ fn main() -> Result<()> {
             let object_bytes = compile_ir_to_object(part)
                 .context("Native compilation error")?;
             let object_path = if cli.link {
-                format!("{}.{}.o", stem, index)
+                format!("{}.{}.o", exe_path, index)
             } else {
                 cli.output.clone().unwrap_or_else(|| format!("{}.o", stem))
             };
@@ -519,14 +530,6 @@ fn main() -> Result<()> {
         }
 
         if cli.link {
-            let exe_path = cli.output.clone().unwrap_or_else(|| {
-                if cfg!(windows) {
-                    format!("{}.exe", stem)
-                } else {
-                    stem.to_string()
-                }
-            });
-
             link_executable(
                 &object_paths,
                 &exe_path,

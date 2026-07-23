@@ -409,42 +409,157 @@ expected type. Only when the result is concrete: a type argument written *after*
 the value it parameterizes has not been bound yet, and an expected type still
 naming a type parameter would say less than nothing.
 
-## 6. Split the self-hosted compiler into modules
+## The rest of the roadmap is one project
 
-`selfhosted/frost.frost` is 5,457 lines in one file. Frost has modules, the
-standard library uses them, and every example does; the compiler written in the
-language does not. That is the wrong advertisement for the language, and it is
-the one program most likely to be read as an example of how to write a large one.
+**`selfhosted/frost.frost` is the compiler people will use, and `src/*.rs` is the
+bootstrap that makes writing it possible.** Everything below follows from that.
+The bootstrap compiles stage 0 and is the differential oracle, which is the only
+reason it is ahead; being ahead is a stage of the work rather than a division of
+labour. See [self-hosting.md](self-hosting.md).
 
-**The obstacle is not the split, it is the order.** The file grew by accretion
-and its concerns are interleaved, so there is no line to cut at. Measured rather
-than guessed:
+So the target is parity on both axes: the full language, and goal 8's speed. Two
+things follow that are worth saying before the list.
 
-| functions | span | foreign functions inside that span |
-| --- | --- | --- |
-| `emit_*` (42) | 2715-4924 | 41 |
-| `parse_*` (29) | 1359-3369 | 36 |
-| `record_*` (5) | 1089-4333 | 130 |
-| `is_*` (10) | 454-3904 | 139 |
+- **Speed matters more in the Frost compiler than in the Rust one.** The
+  measurements at the top of this document are of the bootstrap. They are the
+  bar, not the achievement, until the compiler a user actually runs meets them.
+- **Nothing here is optional.** Items 7 through 18 are what the bootstrap
+  supports and the Frost compiler does not, derived by reading both rather than
+  by memory: `src/types.rs` against the eight type codes in `frost.frost`, and
+  the bootstrap's flags against `main`.
 
-The section comments do not describe the file either. Everything between the
-"Native backend" banner and the "Checks" banner reads as one concern, and in it
-sit `cstr_eq`, three pieces of monomorphization machinery shared by both
-backends, and `emit_program`, which is the entry point of the *C* backend.
+## 6. Split the self-hosted compiler into modules (done)
 
-Taking the native backend out as the first module looks like the clean cut,
-because nothing but `main` calls into it. It is not: six functions in that range
-are called from outside it, and it calls twenty-six that live outside.
+It was 5,457 lines in one file. It is thirteen modules now, listed with their
+sizes in [../selfhosted/README.md](../selfhosted/README.md), in an order that is
+a topological order of what calls what.
 
-**So the order of work is reorganise, then split.** Move functions so that each
-concern is contiguous, with the fixpoint tests green at every step, and only then
-draw module boundaries and add `export` lines. Reordering alone should be
-provably safe: the emitted output must stay byte-identical, and both fixpoints
-already check exactly that.
+**The boundaries come from the call graph between concerns, not from where
+functions sit on the page.** Mapping every top-level name to a concern and
+taking that graph leaves four edges running backwards, each a single call:
 
-Likely modules, in dependency order: the arena and node types; the lexer; the
-token cursor and symbol tables; imports; the parser; the checks (types,
-ownership, regions); the C backend; the assembly backend; the driver.
+```
+record_mono_rets -> parse_generic_instance      call_type_arg -> type_of
+type_of          -> call_ret_type               assign_case_values -> type_of
+```
+
+`record_mono_rets` re-parses a template, so it belongs to the parser; the other
+three are one cycle between typing and monomorphization, so those are one
+`types` module. Two further placements: `cstr_eq` is `core`, and the emitters
+both backends share are `emit`, which is what keeps the assembly backend from
+depending on the C one.
+
+Note what the fixpoints do and do not check here. Function order determines
+interning order, which determines the `mf_<index>` in every emitted name, so
+moving a function changes the output. What holds across a move is that a
+compiler reproduces *itself*.
+
+## 7. A command line, and linking
+
+The Frost compiler has no command line. It reads `FROST_INPUT`, writes the
+translation unit or the assembly to standard output, and picks its backend out
+of `FROST_BACKEND` and its ABI out of `FROST_ABI`. Nothing links; a caller runs
+the C compiler or the assembler by hand.
+
+That is the item nearest the user, which is why it is first after the split. It
+needs: a file argument, `-o`, `--emit-c`, `--native`, `--link`, `-L`,
+`--freestanding`, `--incremental`, and invoking the system linker the way
+`src/link.rs` does. `FROST_ABI` stays, since cross-inspecting the other target's
+output from either host is worth keeping.
+
+## 8. The rest of the scalar types
+
+`frost.frost` has eight type codes: `i64`, `i8`, `bool`, `u8`, `void`, a type
+parameter, a struct and a pointer. `src/types.rs` has `i8` through `i64`,
+`u8` through `u64`, `isize`, `usize`, `f32`, `f64`, `bool` and `str`.
+
+So missing: `i16`, `i32`, `isize`, `u16`, `u32`, `u64`, `usize`, `f32`, `f64`,
+`str`. The integers are width and signedness work through `type_size`,
+`align_of`, the loads and stores, and the C backend's `emit_ctype`. The floats
+are more: the assembly backend has no SSE at all, so it needs XMM registers, a
+second argument class in the calling convention, and float literals in the
+lexer.
+
+**Do the integers before the floats**, and note the bug the bootstrap had here.
+Mixed-width arithmetic truncated to the *narrower* operand, so an `i64`
+accumulator fed by `u8` bytes computed at eight bits. Every backend agreed on
+the wrong answer, so the differential oracle could not see it. Whatever is
+written here needs a program with expected output, not an agreement check.
+
+## 9. Arrays and slices
+
+`[N]T`, `[]T`, and the generic array length `ArrayGeneric`. The Frost compiler
+has none of them, so a fixed buffer has to be a `malloc` and a pointer. A slice
+is two words, which the assembly backend's uniform word assumption does not
+allow for, so this and item 8 touch the same code.
+
+## 10. Value generics and compile-time function arguments
+
+`$N: usize` and `$f: fn(T, T) -> bool`, with the signature bounds from item 2
+above. The Frost compiler monomorphizes over types only: `GenericFn` carries one
+`tparam_off`/`tparam_len` and `Instance` carries one `arg`, so the first piece of
+work is that a template takes a list of parameters rather than one.
+
+## 11. Generic enums
+
+`enum($T: Type)`. The Frost compiler lays an enum out as a struct carrying the
+tag beside every variant's fields, which composes with monomorphization the same
+way a generic struct does, so this should follow item 10 cheaply.
+
+## 12. Handles, pools and distinct types
+
+`Handle(T)` and `Distinct(T)`. The generational pool is Frost source rather than
+runtime C (see [native-pools.md](native-pools.md)), so what is missing is the
+type machinery around it rather than the pool itself.
+
+## 13. Callbacks with a typed context
+
+Item 3 above, ported. The trampoline turned out not to exist there and will not
+exist here either, since a `mut` parameter is already a pointer, so this is
+`$handler: fn(mut Ctx, ...)` on an `extern fn` plus the linear-registration
+checks. It depends on item 10 for the compile-time function argument.
+
+## 14. C functions returning a struct by value
+
+Item 4 above, ported: `src/c_abi.rs` classification for Microsoft x64, System V
+AMD64 and AAPCS64. The Frost compiler's C backend can do what the bootstrap's
+does and declare a real struct type, letting the C compiler classify it. Its
+assembly backend cannot, and needs the classification written out.
+
+## 15. Tests
+
+`test` blocks and the setjmp/longjmp runner in `runtime/frost_runtime.c`. The
+standard library's tests are how a user finds out their own code is wrong, and
+the Frost compiler cannot compile a file containing one.
+
+## 16. Diagnostics parity
+
+The bootstrap reports `app.frost:5:5: instantiating 'add<Point>':
+lib/g.frost:2:41: ...`: a file, a line and a column, with the instantiation
+behind it and no mangled symbol anywhere. The Frost compiler composes an error
+out of `frost_error`, `frost_error_src` and `frost_error_int` and has no line
+numbers at all. It needs a source map over the one buffer every file is laid
+into, which is the same structure `Module` already records.
+
+## 17. Module resolution parity
+
+The bootstrap searches the importing file's directory, then `-L`, then
+`FROST_PATH`, then a `frost.json` manifest, then the bundled `std/`. The Frost
+compiler joins the import path against the parent's directory and nothing else,
+so nothing can import the standard library by name. See
+[modules.md](modules.md).
+
+## 18. Speed parity
+
+Everything the top of this document measures, in the compiler people run:
+parallel code generation, separate compilation, per-module objects, a build
+cache and `--incremental`. See
+[separate-compilation.md](separate-compilation.md).
+
+This is last because it depends on items 6, 7 and 17 (modules to compile
+separately, a command line to pass `--incremental` to, and module identity to
+key a cache by), not because it is optional. A user's project is many files, and
+their edit-compile loop is the thing goal 8 promises about.
 
 ## Smaller things found, and what happened to them
 
@@ -464,8 +579,8 @@ All three are closed. Kept because the reasoning is the useful part.
   generic, and no mangled symbol anywhere. The entry file is registered in the
   source map too, so every position now names a file rather than a bare line.
 - ~~The self-hosted compiler has no incremental or separate compilation
-  either, and it is undecided whether it should.~~ *Decided: no.* The two
-  compilers are under different promises, and there is nothing for separate
-  compilation to bound in a single 5,400-line file that compiles itself in
-  35 ms. The reasoning and the two things that would reopen it are in
-  [self-hosting.md](self-hosting.md).
+  either, and it is undecided whether it should.~~ *Settled: yes, and it is
+  item 18.* This was recorded for a while as a decision against, on the
+  reasoning that the two compilers were under different promises. They are not.
+  The Frost compiler is the one people will use, so it is under every promise
+  the bootstrap is under.
