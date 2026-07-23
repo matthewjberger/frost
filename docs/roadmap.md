@@ -188,10 +188,20 @@ to build it in. Three things it settles and one it found:
 - The registration is `linear` and the context moves in and back out, which
   needs no new machinery: `check_ownership` and `check_linearity` already do it.
 - **What it found:** the context has to name storage that outlives the
-  registration, and a moved argument today is a place in the caller's frame.
-  Nothing rejects that yet, because until now nothing in the language could keep
-  a pointer past a call. That obligation is the difference between this and a
-  prettier spelling of the C idiom.
+  registration, and nothing enforced that, because until now nothing in the
+  language could keep a pointer past a call. The first answer written down, that
+  the context must therefore live in an arena, was wrong and would have rejected
+  every program anyone could write. The obligation is satisfied from the other
+  end instead: a registration is `linear`, so it must be consumed in the
+  function that made it, and a context in that frame outlives it by
+  construction. What was left to stop is the registration leaving that function,
+  which is the same three roads `src/regions.rs` already closes for pointers.
+
+**Steps 1 and 2 are built**, which is everything up to emitting code. Externs
+take modes and compile-time parameters, `src/callbacks.rs` checks the
+declaration, and a registration that outlives its context's frame is rejected.
+What is left is the trampoline, the call lowering, and binding a real C library,
+which is the only step that proves the ABI.
 
 ## 1. Parallel code generation (done)
 
