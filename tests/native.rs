@@ -695,6 +695,50 @@ fn self_hosted_compiler_emits_working_c() {
     );
 }
 
+// Every integer width, through both backends, including a struct whose fields
+// have different alignments. The two compute layout separately (C works it out
+// for itself, the assembly backend has to), so sizeof and the field reads are
+// what says they agree.
+const SELF_HOSTED_WIDTHS: &str = "Mixed :: struct { a: i32, b: i16, c: u8, d: i64 }\n\
+     main :: fn() -> i64 {\n\
+     \x20   mut small : i32 = 0 - 5\n\
+     \x20   mut tiny : i16 = 300\n\
+     \x20   mut byte : u8 = 200\n\
+     \x20   mut big : u32 = 4000000000\n\
+     \x20   mut wide : usize = 9000000000\n\
+     \x20   print small\n    print tiny\n    print byte\n    print big\n\
+     \x20   print wide\n    print sizeof(Mixed)\n\
+     \x20   m := Mixed { a = 0 - 7, b = 9, c = 250, d = 123456789 }\n\
+     \x20   print m.a\n    print m.b\n    print m.c\n    print m.d\n\
+     \x20   ptr := ptr_to(m)\n    ptr^.a = 0 - 1\n\
+     \x20   print m.a\n    print m.d\n    0\n}\n";
+
+const WIDTHS_EXPECTED: &str = "-5\n300\n200\n4000000000\n9000000000\n16\n-7\n9\n250\n123456789\n-1\n123456789\n";
+
+#[test]
+fn self_hosted_integer_widths_natively() {
+    let Some(output) = selfhosted_native_output("widths", SELF_HOSTED_WIDTHS)
+    else {
+        return;
+    };
+    assert_eq!(output, WIDTHS_EXPECTED);
+}
+
+#[test]
+fn self_hosted_integer_widths_through_c() {
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_selfwidths_input.frost");
+    std::fs::write(&input, SELF_HOSTED_WIDTHS).unwrap();
+    let Some(c_source) = self_hosted_emits("selfwidths", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(output) = compile_c_and_run("selfwidths", &c_source) else {
+        return;
+    };
+    assert_eq!(output, WIDTHS_EXPECTED);
+}
+
 const CLI_PROGRAM: &str = "fib :: fn(n: i64) -> i64 {\n\
      \x20   if (n < 2) { return n }\n\
      \x20   return fib(n - 1) + fib(n - 2)\n}\n\
