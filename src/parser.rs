@@ -2506,8 +2506,17 @@ impl<'a> Parser<'a> {
                 None
             }
             Token::Function => Some(self.parse_type()?),
+            // `$N: usize` is a value parameter, the same kind a generic struct
+            // already takes. The argument is an integer written `$4`, and the
+            // name stands for that integer in the body as well as in a type, so
+            // a function over `[N]T` can be written once rather than once per
+            // capacity.
+            Token::TypeUsize => {
+                self.read_token();
+                None
+            }
             _ => bail!(
-                "Expected 'Type' or a function signature after ':' in the compile-time parameter '${name}'"
+                "Expected 'Type', 'usize' or a function signature after ':' in the compile-time parameter '${name}'"
             ),
         };
         Ok(Parameter {

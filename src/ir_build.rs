@@ -1816,6 +1816,15 @@ fn substitute_expression(
     // by the time the specialized body is lowered, which is the whole point:
     // the comparator ends up inlined into the loop rather than called through
     // a pointer.
+    // A value parameter stands for its integer everywhere the body names it, not
+    // only in a type. `while (i < N)` has to mean the capacity.
+    if let Expression::Identifier(name) = expression
+        && let Some(Type::ConstUsize(value)) = subst.get(name)
+    {
+        return Expression::Literal(crate::parser::Literal::Integer(
+            *value as i64,
+        ));
+    }
     if let Expression::Call(callee, arguments) = expression
         && let Expression::Identifier(name) = callee.as_ref()
         && let Some(Type::ConstFn(target)) = subst.get(name)

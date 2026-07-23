@@ -122,11 +122,20 @@ abort discipline rather than a foreign definition.
    `$N: usize`, sizes `[N]T` with it, and instantiates concretely
    (`Slab<Entity, 4>`). See `examples/native/generic_slab.frost`, a generational
    pool generic over both element type and capacity.
-2. **Compiler place-deref over a Frost aggregate.** Teach `pool[handle]` to
-   target a pool struct's `storage` field plus a generation check inline, instead
-   of the C `pool_get`.
-3. **Zeroed or default aggregate construction**, to remove the array-literal
-   boilerplate from pool creation.
+2. **Compiler place-deref over a Frost aggregate.** *(Done.)* A struct with a
+   `storage` array and a parallel `generations` array is recognized as
+   slab-shaped, and `p[handle]` compiles to inline index and generation
+   arithmetic against those fields rather than a call.
+3. **Operations generic over the capacity.** *(Done.)* A function takes `$N:
+   usize` the way a struct already could, so `slab_reset`, `slab_insert` and the
+   rest are written once rather than once per size, and the name stands for the
+   integer in the body as well as in a type. That is what turned the example
+   into a library: `examples/native/lib/slab.frost`.
+
+   The item as originally written asked for zeroed or default construction to
+   remove the array-literal boilerplate. The repeat literal already does that
+   (`storage = [Node { value = 0, next = 0 }; 16]`), and an implicit zero would
+   contradict the rule that a literal writes every field.
 4. **Remove the compiler-special pool surface**, freeing the `Pool` type name and
    the `pool_*` function names for user code. *(Done.)*
 
