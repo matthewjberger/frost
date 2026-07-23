@@ -1025,6 +1025,7 @@ impl Renamer {
                 }
             }
             Expression::Unsafe(body) => self.block(body, scope),
+            Expression::UnsafeFn(inner) => self.expression(inner, scope),
         }
     }
 
