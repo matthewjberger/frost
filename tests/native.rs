@@ -926,6 +926,62 @@ fn self_hosted_runs_test_blocks() {
     let _ = std::fs::remove_file(&compiler);
 }
 
+// The standard library, compiled and run by the Frost compiler through both
+// backends. It is the largest program written in the language that the compiler
+// did not write itself, and its `test` blocks are what say the answers are right
+// rather than merely that the two backends agree on them.
+#[test]
+fn self_hosted_runs_the_standard_library_tests() {
+    let Some(compiler) = build_self_hosted_compiler("stdlib") else {
+        return;
+    };
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let runtime = format!("{}/runtime/frost_runtime.c", root.display());
+    let directory = std::env::temp_dir();
+
+    for (label, backend) in [("stdc", "--emit-c"), ("stdasm", "--emit-asm")] {
+        let exe = directory
+            .join(format!("frost_{label}{}", std::env::consts::EXE_SUFFIX));
+        let run = Command::new(&compiler)
+            .arg(backend)
+            .arg("--test")
+            .arg("-o")
+            .arg(&exe)
+            .arg(root.join("std").join("strings.frost"))
+            .env("FROST_RUNTIME", &runtime)
+            .output()
+            .unwrap();
+        let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+        assert!(
+            output.contains("6 passed, 0 failed"),
+            "{label}:\n{output}{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        let _ = std::fs::remove_file(&exe);
+    }
+    let _ = std::fs::remove_file(&compiler);
+}
+
+// `str` is a slice of bytes, an `if` is an expression, and a body ending in one
+// answers with whichever branch ran.
+#[test]
+fn self_hosted_strings_and_if_expressions() {
+    let source = "read :: fn(s: str) -> i64 {\n\
+         \x20   mut i : i64 = 0\n    mut negative := false\n\
+         \x20   if (str_len(s) > 0 && s[0] == 45) { negative = true  i = 1 }\n\
+         \x20   mut value : i64 = 0\n\
+         \x20   while (i < str_len(s)) {\n\
+         \x20       value = value * 10 + (s[i] - 48)\n        i = i + 1\n    }\n\
+         \x20   if (negative) { 0 - value } else { value }\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   print read(\"1234567\")\n    print read(\"-7\")\n\
+         \x20   print read(\"0\")\n    print str_len(\"abc\")\n    0\n}\n";
+    let Some(output) = selfhosted_native_output("strif", source) else {
+        return;
+    };
+    assert_eq!(output, "1234567\n-7\n0\n3\n");
+}
+
 const CLI_PROGRAM: &str = "fib :: fn(n: i64) -> i64 {\n\
      \x20   if (n < 2) { return n }\n\
      \x20   return fib(n - 1) + fib(n - 2)\n}\n\

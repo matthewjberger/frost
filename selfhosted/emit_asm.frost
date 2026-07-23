@@ -226,6 +226,25 @@ emit_asm_convert :: fn(mut p: Parser, from: i64, to: i64) {
     emit_asm_move("cvttsd2siq", "%xmm0", "%rax")
 }
 
+// The same conversion, where what is being converted is known rather than only
+// its type. A string literal reaching a `str` needs that: the length is counted
+// from the source, since an escape is two bytes written and one byte held.
+emit_asm_coerce :: fn(mut p: Parser, value: i64, want: i64) {
+    have := type_of(p, value)
+    if (is_array_ty(want) && is_slice_ty(p, want) && is_pointer(have)) {
+        node : ^Node = arena_at(p.arena, value)
+        if (node^.kind == NODE_STRLIT) {
+            slot := alloc_temp(p, 16)
+            asm_i("movq %rax, ", slot, "(%rbp)")
+            asm_i("movq $", literal_length(p.src, node^.val, node^.c), ", %r11")
+            asm_i("movq %r11, ", slot + 8, "(%rbp)")
+            asm_i("leaq ", slot, "(%rbp), %rax")
+            return
+        }
+    }
+    emit_asm_convert(p, have, want)
+}
+
 // Both operands arrive as f64 bit patterns, the left in %rax and the right in
 // %r11. A comparison answers 0 or 1 in %rax like an integer one does, so
 // everything downstream of it is unchanged.
@@ -504,6 +523,12 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
     }
     if (kind == NODE_SLICE_LEN) {
         inner := node^.a
+        // A literal has no length beside it, so its own is counted here.
+        held : ^Node = arena_at(p.arena, inner)
+        if (held^.kind == NODE_STRLIT) {
+            asm_i("movq $", literal_length(p.src, held^.val, held^.c), ", %rax")
+            return
+        }
         mut inner_ty := type_of(p, inner)
         if (is_pointer(inner_ty)) {
             inner_ty = pointee(inner_ty)
@@ -631,7 +656,7 @@ emit_asm_array_lit :: fn(mut p: Parser, id: i64) {
     while (entry != (0 - 1)) {
         enode : ^Node = arena_at(p.arena, entry)
         emit_asm_expr(p, enode^.a)
-        emit_asm_convert(p, type_of(p, enode^.a), element)
+        emit_asm_coerce(p, enode^.a, element)
         asm("movq %rax, %r11")
         emit_asm_store_to(p, element, slot + at, "(%rbp)")
         at = at + stride
@@ -664,7 +689,7 @@ emit_asm_struct_lit :: fn(mut p: Parser, id: i64) {
         offset := field_offset(p, struct_ty, fnode^.val, fnode^.c)
         member := field_type(p, struct_ty, fnode^.val, fnode^.c)
         emit_asm_expr(p, value)
-        emit_asm_convert(p, type_of(p, value), member)
+        emit_asm_coerce(p, value, member)
         if (is_aggregate(member)) {
             asm("movq %rax, %r11")
             asm_i("leaq ", slot + offset, "(%rbp), %r10")
@@ -743,7 +768,7 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
                 want = pointee(want)
             }
             if (declared >= 0 && want != TY_PARAM) {
-                emit_asm_convert(p, type_of(p, argument), want)
+                emit_asm_coerce(p, argument, want)
             }
         }
         emit_asm_push()
@@ -854,7 +879,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
             ty = type_of(p, value)
         }
         emit_asm_expr(p, value)
-        emit_asm_convert(p, type_of(p, value), ty)
+        emit_asm_coerce(p, value, ty)
         record_local(p, off, len, ty)
         slot := local_slot(p, off, len)
         if (is_aggregate(ty)) {
@@ -874,7 +899,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         emit_asm_addr(p, place)
         emit_asm_push()
         emit_asm_expr(p, value)
-        emit_asm_convert(p, type_of(p, value), place_ty)
+        emit_asm_coerce(p, value, place_ty)
         if (is_aggregate(place_ty)) {
             asm("movq %rax, %r11")
             emit_asm_pop_rax()
@@ -1041,7 +1066,7 @@ emit_asm_return :: fn(mut p: Parser, value: i64) {
         return
     }
     emit_asm_expr(p, value)
-    emit_asm_convert(p, type_of(p, value), p.asm_ret)
+    emit_asm_coerce(p, value, p.asm_ret)
     if (is_aggregate(p.asm_ret)) {
         asm("movq %rax, %r11")
         asm_i("movq ", p.sret_slot, "(%rbp), %r10")
