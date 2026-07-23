@@ -51,8 +51,8 @@ now works with no libc at all. See [native-pools.md](native-pools.md).
 
 ## Self-hosted: what the compiler is written in
 
-`selfhosted/frost.frost` is a Frost compiler written in Frost, about 5,400 lines
-in one file.
+`selfhosted/` is the Frost compiler, written in Frost, about 5,300 lines across
+thirteen modules. `src/` is the bootstrap that compiles its stage 0.
 
 The claim it discharges is a **three-stage fixpoint**: it compiles its own
 source, a compiler built from that output compiles the source again, and the two
@@ -61,29 +61,23 @@ and its own assembly emitter (`FROST_BACKEND=asm`), and both fixpoints are
 checked on every build by `self_hosting_is_a_fixpoint` and
 `native_self_hosting_is_a_fixpoint`.
 
-It is a real compiler rather than a stub. It implements ownership and linearity
-(use after move, and linear values consumed exactly once), monomorphized
-generics, structs, enums with `match`, and `extern` FFI. See
-[self-hosting.md](self-hosting.md) for the checklist and the measurements.
+It implements ownership and linearity (use after move, and linear values
+consumed exactly once), monomorphized generics, structs, enums with `match`, and
+`extern` FFI. What it does not implement yet is items 6 through 18 of
+[roadmap.md](roadmap.md). See [self-hosting.md](self-hosting.md) for the
+checklist and the measurements.
 
 ## How the axes interact
 
-The reference compiler (Rust, `src/`) and the self-hosted one are under
-**different promises**, which is why they diverge on purpose rather than by
-neglect.
+`src/` (Rust) is the **bootstrap** and `selfhosted/frost.frost` is the compiler
+people will use. The bootstrap compiles stage 0 and serves as the differential
+oracle, which is why every feature lands there first; that ordering is the only
+reason it is ahead.
 
-- The reference compiler is under a **speed** promise, which is goal 8 in
-  [philosophy.md](philosophy.md). That is what parallel code generation,
-  separate compilation and `--incremental` are for.
-- The self-hosted compiler is under a **self-hosting** promise. It exists to show
-  the language can express a real compiler, and it discharges that by
-  reproducing itself exactly.
-
-That is the reasoning behind the recorded decision that the self-hosted compiler
-will **not** grow incremental or separate compilation: it is one file with no
-imports that compiles itself in about 35 ms, so there is nothing for separate
-compilation to bound. The two conditions that would reopen it are in
-[self-hosting.md](self-hosting.md).
+Both are under the same promises: the full language, and goal 8's speed. Where
+the self-hosted compiler is behind, that is a port on
+[roadmap.md](roadmap.md) rather than a divergence, and that includes parallel
+code generation, separate compilation and `--incremental`.
 
 The axes compose freely. The self-hosted compiler emits assembly, so it is
 native without being freestanding. A `--emit-c --link` build is neither native

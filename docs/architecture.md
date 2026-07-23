@@ -417,12 +417,15 @@ AST; both point at a line.
    control flow, recursion, and function pointers against the Cranelift and C
    backends, and declines cleanly on memory and pool operations rather than
    guessing.)*
-10. Self-hosting the compiler in Frost. *(Done: `selfhosted/frost.frost` compiles
-    itself to a byte-identical fixpoint through both its C backend and its own
-    native x86-64 backend, so there is a path with no C compiler in the loop. It
-    is written in the data-oriented native surface, a pool-backed AST arena with
-    integer node indices instead of pointers, and carries imports and modules,
-    failure sets, enums with payloads, and generics. See
+10. Self-hosting the compiler in Frost. *(Done as a fixpoint, in progress as the
+    product: `selfhosted/frost.frost` compiles itself to a byte-identical
+    fixpoint through both its C backend and its own native x86-64 backend, so
+    there is a path with no C compiler in the loop. It is written in the
+    data-oriented native surface, a pool-backed AST arena with integer node
+    indices instead of pointers, and carries imports and modules, failure sets,
+    enums with payloads, and generics. It is the compiler Frost is for, and this
+    file describes the bootstrap that builds its stage 0; reaching parity is
+    items 6 through 18 of [roadmap.md](roadmap.md). See
     [self-hosting.md](self-hosting.md).)*
 11. Parser error recovery. *(Done: the parser recovers at statement boundaries
     instead of stopping at the first error, at the top level and inside function
