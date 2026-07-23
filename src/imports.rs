@@ -42,6 +42,14 @@ pub struct ModulePlan {
     pub record: ModuleRecord,
 }
 
+// The file named on the command line, registered so a diagnostic from it names
+// a file like every other one does rather than a bare line number.
+pub fn register_entry_file(path: &Path, base_dir: &Path) -> u32 {
+    let root = base_dir.canonicalize().unwrap_or_else(|_| base_dir.into());
+    let key = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    crate::source_map::register(&relative_module_name(&key, &root))
+}
+
 pub fn resolve_imports(
     statements: Vec<Spanned<Statement>>,
     base_dir: &Path,

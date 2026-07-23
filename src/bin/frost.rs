@@ -12,7 +12,8 @@ use frost::{
     Type, build_module, build_module_per_module, check_callback_declarations,
     check_frame_escapes, check_linearity, check_module, check_ownership,
     check_regions, compile_ir_to_object, emit_c, lower_allocation_sources,
-    lower_failure_sets, lower_param_modes, resolve_imports_cached, run_module,
+    lower_failure_sets, lower_param_modes, register_entry_file,
+    resolve_imports_cached, run_module,
 };
 
 #[derive(Parser)]
@@ -132,15 +133,25 @@ fn main() -> Result<()> {
 
     let mut lexer = Lexer::new(&source);
     let tokens = lexer.tokenize().context("Lexer error")?;
-    let positions = lexer.positions().to_vec();
-
-    let mut parser = FrostParser::with_positions(&tokens, &positions);
-    let parsed = parser.parse().context("Parser error")?;
 
     let base_dir = Path::new(&cli.file)
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_default();
+    // The entry file is a file like any other, so a diagnostic from it should
+    // name one rather than a bare line number.
+    let entry = register_entry_file(Path::new(&cli.file), &base_dir);
+    let positions: Vec<Position> = lexer
+        .positions()
+        .iter()
+        .map(|position| Position {
+            file: entry,
+            ..*position
+        })
+        .collect();
+
+    let mut parser = FrostParser::with_positions(&tokens, &positions);
+    let parsed = parser.parse().context("Parser error")?;
     // A module's object is only its own on the link path, so that is the only
     // place a cached one can be linked instead of built. `--test` needs every
     // module's `test` blocks, which a module answered for from the cache is

@@ -51,8 +51,8 @@ expressible in the language today with zero runtime.
 
 The DOD memory model is native-expressible. Everything the pool logic needs,
 arrays inside structs, bounds-checked element read and write, aggregate element
-assignment, and integer packing, already works. This is strong evidence that the
-from-scratch language can own its memory model rather than borrow it from C.
+assignment, and integer packing, already works. This is strong evidence that
+Frost can own its memory model rather than borrow it from the C runtime.
 
 ## What the spike surfaced
 

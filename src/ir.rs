@@ -139,6 +139,11 @@ pub struct IrFunction {
     // that would emit it once modules are compilation units. See
     // docs/separate-compilation.md.
     pub module: u32,
+    // Set when this function is a specialization, naming it the way the reader
+    // wrote it and pointing at the call that asked for it. A diagnostic inside a
+    // stamped-out body otherwise names a line in a template the reader never
+    // wrote. See item 2 of the smaller things in docs/roadmap.md.
+    pub instantiated: Option<Instantiation>,
     // Whether this symbol is private to its object file. True for
     // specializations and anonymous function literals, which are only ever
     // called from the module that produced them, and which therefore must not
@@ -151,6 +156,13 @@ impl IrFunction {
     pub fn local_type(&self, local: LocalId) -> &Type {
         &self.locals[local].ty
     }
+}
+
+// How a specialization is named to a reader, and where it was asked for.
+#[derive(Debug, Clone)]
+pub struct Instantiation {
+    pub name: String,
+    pub at: Position,
 }
 
 #[derive(Debug, Clone)]
