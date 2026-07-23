@@ -742,6 +742,21 @@ it, and that is checked when the specialization is compiled.
 
 ---
 
+### 11.5 Modules and imports
+
+A module is a file. `import "x.frost"` splices that file's declarations into the
+program, and a file's `export` line is the complete set of names another file
+can use from it; everything else is private and mangled so it cannot collide.
+
+An import is looked for beside the importing file first, then in directories
+given with `-L`, then in `FROST_PATH`, then in those a `frost.json` beside the
+entry file declares, then in the standard library. A module's identity is its
+path relative to whichever of those it was found under, which is what private
+symbol names and the build cache are keyed on. See
+[modules.md](modules.md).
+
+---
+
 ## 12. The foreign function interface
 
 An `extern fn` declares a function with C linkage:

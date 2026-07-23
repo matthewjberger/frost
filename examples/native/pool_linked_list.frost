@@ -3,12 +3,12 @@
 // contiguously in one slab, a link is a small copy value, and a stale link
 // cannot read a reused slot.
 //
-// The slab is Frost code (lib/slab.frost) with no allocation and no runtime
+// The slab is the standard library one (std/slab.frost) with no allocation and no runtime
 // call. Only `p[handle]`, the validated place-deref, comes from the compiler.
 
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
-import "lib/slab.frost"
+import "slab.frost"
 
 // `next` is a handle into the same slab, or -1 for the end of the list. The
 // sentinel is safe here in a way a null pointer is not: reading through it is

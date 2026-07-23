@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 
 use crate::build_cache::{
     BuildCache, ModuleRecord, digest, fnv1a, interface_fingerprint,
@@ -16,6 +16,90 @@ use crate::parser::{
     Spanned, Statement, SwitchCase,
 };
 use crate::types::Type;
+
+// One place an import may be found, and the name that place gives a module.
+//
+// A module's identity has to be a property of the module, not of where the
+// machine happens to keep it, because private symbol names and the build cache
+// are both keyed on it. So identity is the path relative to the root it was
+// found under, with that root's label in front: a project file stays
+// `lib/slab.frost` exactly as before, and a standard library module is
+// `std/maybe.frost` wherever the standard library is installed.
+#[derive(Debug, Clone)]
+pub struct SearchRoot {
+    pub label: String,
+    pub directory: PathBuf,
+}
+
+impl SearchRoot {
+    pub fn project(directory: PathBuf) -> Self {
+        SearchRoot {
+            label: String::new(),
+            directory,
+        }
+    }
+
+    pub fn named(label: &str, directory: PathBuf) -> Self {
+        SearchRoot {
+            label: label.to_string(),
+            directory,
+        }
+    }
+}
+
+// Where an import was found: the file itself, and the identity to give it.
+struct Found {
+    path: PathBuf,
+    module: String,
+}
+
+// Resolve `import "x.frost"` written in a file in `importing_dir`.
+//
+// The importing file's own directory is tried first and always, because a
+// file's neighbours are the most specific thing it could mean and because that
+// is what every existing program relies on. Only then the search roots, in the
+// order the driver assembled them.
+fn find_import(
+    importing_dir: &Path,
+    path: &str,
+    roots: &[SearchRoot],
+    project_root: &Path,
+) -> Option<Found> {
+    let neighbour = importing_dir.join(path);
+    if neighbour.exists() {
+        let key = neighbour
+            .canonicalize()
+            .unwrap_or_else(|_| neighbour.clone());
+        return Some(Found {
+            module: relative_module_name(&key, project_root),
+            path: neighbour,
+        });
+    }
+    for root in roots {
+        let candidate = root.directory.join(path);
+        if !candidate.exists() {
+            continue;
+        }
+        let key = candidate
+            .canonicalize()
+            .unwrap_or_else(|_| candidate.clone());
+        let directory = root
+            .directory
+            .canonicalize()
+            .unwrap_or_else(|_| root.directory.clone());
+        let relative = relative_module_name(&key, &directory);
+        let module = if root.label.is_empty() {
+            relative
+        } else {
+            format!("{}/{relative}", root.label)
+        };
+        return Some(Found {
+            path: candidate,
+            module,
+        });
+    }
+    None
+}
 
 pub struct Resolved {
     pub statements: Vec<Spanned<Statement>>,
@@ -56,7 +140,22 @@ pub fn resolve_imports(
     linear_types: HashSet<String>,
     tests: Vec<(String, String)>,
 ) -> Result<Resolved> {
-    resolve_imports_cached(statements, base_dir, linear_types, tests, None)
+    resolve_imports_cached(
+        statements,
+        base_dir,
+        linear_types,
+        tests,
+        Resolution::default(),
+    )
+}
+
+// What resolution is allowed to use beyond the source it is handed: a build
+// cache to answer for unchanged modules, and the directories to search for an
+// import that is not beside the file that wrote it.
+#[derive(Default, Clone, Copy)]
+pub struct Resolution<'a> {
+    pub cache: Option<&'a BuildCache>,
+    pub roots: &'a [SearchRoot],
 }
 
 // Step 5 of docs/separate-compilation.md. With a cache, a module whose own
@@ -68,8 +167,9 @@ pub fn resolve_imports_cached(
     base_dir: &Path,
     linear_types: HashSet<String>,
     tests: Vec<(String, String)>,
-    cache: Option<&BuildCache>,
+    options: Resolution<'_>,
 ) -> Result<Resolved> {
+    let Resolution { cache, roots } = options;
     let resolved = Resolved {
         statements: Vec::new(),
         linear_types,
@@ -93,10 +193,17 @@ pub fn resolve_imports_cached(
         let mut stack = HashSet::new();
         for statement in &statements {
             if let Statement::Import(path) = &statement.node {
+                let Some(found) = find_import(base_dir, path, roots, &root)
+                else {
+                    continue;
+                };
                 plan_module(
-                    &base_dir.join(path),
-                    &root,
-                    cache,
+                    &found,
+                    &Planning {
+                        root: &root,
+                        cache,
+                        roots,
+                    },
                     &mut plans,
                     &mut stack,
                 )?;
@@ -106,6 +213,7 @@ pub fn resolve_imports_cached(
 
     let mut walk = Walk {
         root: &root,
+        roots,
         seen: HashSet::new(),
         resolved,
         plans,
@@ -198,13 +306,22 @@ fn parse_module(
     }))
 }
 
+// The planner's fixed inputs, so the recursive walk carries one reference
+// rather than four positional arguments.
+struct Planning<'a> {
+    root: &'a Path,
+    cache: &'a BuildCache,
+    roots: &'a [SearchRoot],
+}
+
 fn plan_module(
-    full: &Path,
-    root: &Path,
-    cache: &BuildCache,
+    found: &Found,
+    context: &Planning<'_>,
     plans: &mut Plans,
     stack: &mut HashSet<PathBuf>,
 ) -> Result<PathBuf> {
+    let Planning { root, cache, roots } = context;
+    let full = found.path.as_path();
     let key = full.canonicalize().unwrap_or_else(|_| full.to_path_buf());
     if plans.contains_key(&key) || !stack.insert(key.clone()) {
         return Ok(key);
@@ -213,9 +330,9 @@ fn plan_module(
     let source = fs::read_to_string(full).with_context(|| {
         format!("failed to read imported file: {}", full.display())
     })?;
-    let module = relative_module_name(&key, root);
+    let module = found.module.clone();
     let file = crate::source_map::register(&module);
-    let tag = module_tag(&key, root);
+    let tag = module_tag_of(&module);
     let source_hash = digest(&source);
     let record = cache.load(&tag, &source_hash);
 
@@ -247,8 +364,11 @@ fn plan_module(
     let directory = full.parent().map(Path::to_path_buf).unwrap_or_default();
     let mut closure: BTreeMap<String, String> = BTreeMap::new();
     for import in &imports {
-        let child =
-            plan_module(&directory.join(import), root, cache, plans, stack)?;
+        let Some(child_found) = find_import(&directory, import, roots, root)
+        else {
+            continue;
+        };
+        let child = plan_module(&child_found, context, plans, stack)?;
         if let Some(planned) = plans.get(&child) {
             closure
                 .insert(planned.module.clone(), planned.interface_hash.clone());
@@ -318,11 +438,11 @@ fn import_paths(statements: &[Spanned<Statement>]) -> Vec<String> {
 // adding an unrelated import renamed every symbol downstream of it. Separate
 // compilation cannot work on top of that, since a module compiled once has to
 // produce the symbols every other module expects to link against.
-fn module_tag(path: &Path, root: &Path) -> String {
-    format!(
-        "{:016x}",
-        fnv1a(relative_module_name(path, root).as_bytes())
-    )
+// The tag for a module identity. Taken from the identity rather than from a
+// path, so a module found through a search root is tagged by what it is called
+// (`std/maybe.frost`) rather than by where the machine keeps it.
+fn module_tag_of(module: &str) -> String {
+    format!("{:016x}", fnv1a(module.as_bytes()))
 }
 
 // A module's identity: its path relative to the project root, with separators
@@ -338,6 +458,7 @@ fn relative_module_name(path: &Path, root: &Path) -> String {
 
 struct Walk<'a> {
     root: &'a Path,
+    roots: &'a [SearchRoot],
     seen: HashSet<PathBuf>,
     resolved: Resolved,
     plans: Plans,
@@ -357,7 +478,15 @@ impl Walk<'_> {
                 continue;
             };
 
-            let full = base_dir.join(path);
+            let Some(found) =
+                find_import(base_dir, path, self.roots, self.root)
+            else {
+                bail!(
+                    "failed to read imported file: '{path}' is not beside {} and is not on any library path",
+                    base_dir.display()
+                );
+            };
+            let full = found.path.clone();
             let key = full.canonicalize().unwrap_or_else(|_| full.clone());
             if !self.seen.insert(key.clone()) {
                 continue;
@@ -367,7 +496,7 @@ impl Walk<'_> {
             {
                 self.planned_module(&key)?
             } else {
-                self.read_module(&full, &key)?
+                self.read_module(&full, &found.module)?
             };
 
             let renames = private_renames(&imported, &exports, &tag);
@@ -432,12 +561,15 @@ impl Walk<'_> {
         Ok((statements, exports, tag))
     }
 
-    fn read_module(&mut self, full: &Path, key: &Path) -> Result<Contribution> {
+    fn read_module(
+        &mut self,
+        full: &Path,
+        module_name: &str,
+    ) -> Result<Contribution> {
         let source = fs::read_to_string(full).with_context(|| {
             format!("failed to read imported file: {}", full.display())
         })?;
-        let module_name = relative_module_name(key, self.root);
-        let file = crate::source_map::register(&module_name);
+        let file = crate::source_map::register(module_name);
         let parsed = parse_module(&source, file, full)?;
         self.resolved
             .linear_types
@@ -445,7 +577,7 @@ impl Walk<'_> {
         self.resolved.tests.extend(parsed.tests.iter().cloned());
 
         let exports: HashSet<String> = parsed.exports.iter().cloned().collect();
-        let tag = module_tag(key, self.root);
+        let tag = module_tag_of(module_name);
         let mut statements = parsed.statements;
 
         // Steps 2 and 4 of docs/separate-compilation.md. The interface is
@@ -455,7 +587,7 @@ impl Walk<'_> {
             || crate::interface::built_from_interfaces()
         {
             let interface = ModuleInterface::of(
-                &module_name,
+                module_name,
                 &statements,
                 &parsed.exports,
                 &parsed.linear_types,
@@ -965,12 +1097,24 @@ mod tests {
     fn a_module_tag_is_the_same_for_the_same_relative_path() {
         let root = Path::new("/project");
         assert_eq!(
-            module_tag(Path::new("/project/lib/a.frost"), root),
-            module_tag(Path::new("/project/lib/a.frost"), root)
+            module_tag_of(&relative_module_name(
+                Path::new("/project/lib/a.frost"),
+                root
+            )),
+            module_tag_of(&relative_module_name(
+                Path::new("/project/lib/a.frost"),
+                root
+            ))
         );
         assert_ne!(
-            module_tag(Path::new("/project/lib/a.frost"), root),
-            module_tag(Path::new("/project/lib/b.frost"), root)
+            module_tag_of(&relative_module_name(
+                Path::new("/project/lib/a.frost"),
+                root
+            )),
+            module_tag_of(&relative_module_name(
+                Path::new("/project/lib/b.frost"),
+                root
+            ))
         );
     }
 }

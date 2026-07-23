@@ -1,11 +1,11 @@
 // Exercises the generational slab the way a pool gets used: fill it, exhaust
 // it, release slots, reuse them, and check that handles to released slots have
 // gone stale. Nothing here calls a runtime; the storage and the bookkeeping are
-// the Frost code in lib/slab.frost.
+// the standard library slab (std/slab.frost).
 
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
-import "lib/slab.frost"
+import "slab.frost"
 
 Stats :: struct { hp: i64, xp: i64, slot: i64 }
 Unit :: struct { id: i64, stats: Stats }

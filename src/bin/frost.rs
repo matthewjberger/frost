@@ -7,13 +7,13 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use frost::{
-    BuildCache, Expression, Lexer, Literal, Parameter, Parser as FrostParser,
-    Position, ReturnKind, ReturnSignature, RunOutcome, Spanned, Statement,
-    Type, build_module, build_module_per_module, check_callback_declarations,
-    check_frame_escapes, check_linearity, check_module, check_ownership,
-    check_regions, compile_ir_to_object, emit_c, lower_allocation_sources,
-    lower_failure_sets, lower_param_modes, register_entry_file,
-    resolve_imports_cached, run_module,
+    BuildCache, Expression, Lexer, Literal, Manifest, Parameter,
+    Parser as FrostParser, Position, Resolution, ReturnKind, ReturnSignature,
+    RunOutcome, SearchRoot, Spanned, Statement, Type, build_module,
+    build_module_per_module, check_callback_declarations, check_frame_escapes,
+    check_linearity, check_module, check_ownership, check_regions,
+    compile_ir_to_object, emit_c, lower_allocation_sources, lower_failure_sets,
+    lower_param_modes, register_entry_file, resolve_imports_cached, run_module,
 };
 
 #[derive(Parser)]
@@ -64,6 +64,40 @@ struct Cli {
         help = "Where --incremental keeps interfaces and objects"
     )]
     build_dir: String,
+
+    #[arg(
+        short = 'L',
+        long = "lib-path",
+        value_name = "DIR",
+        help = "Directory to search for imports, after the importing file's own. Repeatable"
+    )]
+    lib_path: Vec<String>,
+}
+
+// Where an import may be found, most specific first.
+//
+// The importing file's own directory is always tried before any of these and is
+// not in the list; see `find_import`. After it: directories named on the command
+// line, then `FROST_PATH`, then whatever the project's manifest declares, then
+// the standard library. Command line beats environment beats project file, which
+// is the order of how deliberately each was said.
+fn search_roots(cli: &Cli, project_root: &Path) -> Result<Vec<SearchRoot>> {
+    let mut roots = Vec::new();
+    for directory in &cli.lib_path {
+        roots.push(SearchRoot::project(PathBuf::from(directory)));
+    }
+    for directory in frost::path_from_environment() {
+        roots.push(SearchRoot::project(directory));
+    }
+    if let Some(manifest) = Manifest::find(project_root)? {
+        for directory in manifest.search_paths(project_root) {
+            roots.push(SearchRoot::project(directory));
+        }
+    }
+    if let Some(standard) = frost::bundled_std() {
+        roots.push(SearchRoot::named("std", standard));
+    }
+    Ok(roots)
 }
 
 fn test_harness(tests: &[(String, String)]) -> Vec<Spanned<Statement>> {
@@ -172,12 +206,19 @@ fn main() -> Result<()> {
         None
     };
 
+    let project_root =
+        base_dir.canonicalize().unwrap_or_else(|_| base_dir.clone());
+    let roots = search_roots(&cli, &project_root)?;
+
     let resolved = resolve_imports_cached(
         parsed,
         &base_dir,
         parser.linear_types().clone(),
         parser.tests().to_vec(),
-        cache.as_ref(),
+        Resolution {
+            cache: cache.as_ref(),
+            roots: &roots,
+        },
     )
     .context("Import error")?;
     let mut statements = resolved.statements;

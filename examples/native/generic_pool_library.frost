@@ -8,7 +8,7 @@
 
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
-import "lib/slab.frost"
+import "slab.frost"
 
 Entity :: struct { hp: i64, mana: i64 }
 Tile :: struct { height: i64 }
