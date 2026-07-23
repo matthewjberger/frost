@@ -173,19 +173,26 @@ handle** (`Handle<T>`), not a raw pointer. A handle is a packed `(index,
 generation)` pair, which is plain copyable data you *can* freely store and return
 (unlike a reference).
 
-- `pool_alloc` puts a value in a free slot and returns a handle carrying that
+- `slab_insert` puts a value in a free slot and returns a handle carrying that
   slot's current generation.
-- `pool_free` bumps the slot's generation and returns it to the free list.
+- `slab_release` bumps the slot's generation and returns it to the free list.
 - Any later access checks the handle's generation against the slot's current
-  generation. If they differ, the handle is **stale** and the access fails
-  (`pool_contains` returns 0, a checked get returns nothing).
+  generation. If they differ, the handle is **stale**: `slab_alive` answers
+  false, and reading `world[h]` aborts rather than returning the new occupant.
 
 ```
-h := pool_alloc(world, ptr_to(entity))   // slot 0, generation 0
-pool_free(world, h)                      // slot 0 now generation 1
-pool_alloc(world, ptr_to(other))         // reuses slot 0 at generation 1
-pool_contains(world, h)           // 0, the old handle can never read the new occupant
+h := slab_insert($Entity, $8, world, entity)    // slot 0, generation 0
+slab_release($Entity, $8, world, h)             // slot 0 now generation 1
+slab_insert($Entity, $8, world, other)          // reuses slot 0 at generation 1
+slab_alive($Entity, $8, world, h)               // false, the old handle can never
+                                                // read the new occupant
 ```
+
+Those operations are ordinary Frost, not compiler builtins or a runtime:
+`examples/native/lib/slab.frost` is the whole implementation, generic over
+element type and capacity. The only part the compiler supplies is the validated
+place-deref `world[h]`, because "return a checked reference into storage" cannot
+be written where references are second-class.
 
 This is the memory-safety property a raw pointer cannot give you. After a free
 and reuse, the *bit pattern* of the old handle no longer matches, so it cannot be

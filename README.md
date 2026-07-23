@@ -145,7 +145,7 @@ frost/
 │   ├── ir_interp.rs    # direct IR interpreter (differential oracle)
 │   ├── types.rs        # type definitions
 │   └── bin/frost.rs    # the compiler CLI
-├── runtime/            # small C runtime (pools, bounds check, assert)
+├── runtime/            # small C runtime (bounds check, assert, IO helpers)
 ├── bootstrap/          # a Frost-subset compiler written in Frost
 ├── examples/native/    # example programs
 └── docs/               # documentation
