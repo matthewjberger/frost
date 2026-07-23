@@ -59,8 +59,9 @@ main :: fn() -> i64 {
         // is an offset into a single source no matter which file wrote it.
         buffer := ptr_cast($i8, malloc(SOURCE_ROOM + SYNTH_ROOM))
         mut scratch : Arena<Token> = arena_make($Token, 262144)
+        search_roots_from(options.roots)
         resolve_imports(buffer, input_path, export_names, modules, exports,
-            scratch)
+            scratch, options.roots)
         source = buffer
     }
     if (frost_str_len(source) == 0) {

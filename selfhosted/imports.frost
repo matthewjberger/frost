@@ -4,7 +4,7 @@ import "core.frost"
 import "lexer.frost"
 
 export SOURCE_ROOM, SYNTH_ROOM, emit_position, module_at, report_where,
-    resolve_imports, source_with_room
+    resolve_imports, search_roots_from, source_with_room
 
 module_seen :: fn(mut modules: Arena<Module>, path: ^i8) -> bool {
     mut i : i64 = 0
@@ -46,6 +46,62 @@ join_path :: fn(parent: ^i8, src: ^i8, off: i64, len: i64) -> ^i8 {
     out
 }
 
+// A path under a directory, with a separator between them when the directory
+// needs one.
+join_under :: fn(directory: ^i8, src: ^i8, off: i64, len: i64) -> ^i8 {
+    directory_len := frost_str_len(directory)
+    mut separator : i64 = 0
+    if (directory_len > 0) {
+        last := frost_byte_at(directory, directory_len - 1)
+        if (last != CH_SLASH && last != CH_BACKSLASH) {
+            separator = 1
+        }
+    }
+    out := ptr_cast($i8, malloc(directory_len + separator + len + 1))
+    mut k : i64 = 0
+    while (k < directory_len) {
+        frost_byte_set(out, k, frost_byte_at(directory, k))
+        k = k + 1
+    }
+    if (separator == 1) {
+        frost_byte_set(out, directory_len, CH_SLASH)
+    }
+    k = 0
+    while (k < len) {
+        frost_byte_set(out, directory_len + separator + k,
+            frost_byte_at(src, off + k))
+        k = k + 1
+    }
+    frost_byte_set(out, directory_len + separator + len, 0)
+    out
+}
+
+// Where an import is found: beside the file that named it first, then under
+// each directory the command line or the environment offered, then under the
+// standard library. Beside-first is what lets a project's own files name each
+// other without a search path, and the rest is what lets `std/strings.frost`
+// be named from anywhere.
+//
+// A path that matches nothing is answered with the beside-it form, so the error
+// names where the reader would have looked.
+find_import :: fn(parent: ^i8, src: ^i8, off: i64, len: i64,
+    mut roots: Arena<SearchRoot>) -> ^i8 {
+    beside := join_path(parent, src, off, len)
+    if (frost_file_exists(beside) == 1) {
+        return beside
+    }
+    mut i : i64 = 0
+    while (i < roots.count) {
+        entry : ^SearchRoot = arena_at(roots, i)
+        candidate := join_under(entry^.path, src, off, len)
+        if (frost_file_exists(candidate) == 1) {
+            return candidate
+        }
+        i = i + 1
+    }
+    beside
+}
+
 // Copy a file's text into the buffer at `at`, terminated, and answer where the
 // next one starts.
 append_text :: fn(buffer: ^i8, at: i64, text: ^i8) -> i64 {
@@ -64,7 +120,8 @@ append_text :: fn(buffer: ^i8, at: i64, text: ^i8) -> i64 {
 // resolved where it is written rather than looked up later, so a file has to
 // reach the buffer after everything it depends on. A file already placed is
 // skipped, which is what makes a diamond one copy and a cycle terminate.
-place_module :: fn(buffer: ^i8, at: i64, path: ^i8, mut modules: Arena<Module>,
+place_module :: fn(buffer: ^i8, at: i64, path: ^i8,
+    mut modules: Arena<Module>, mut roots: Arena<SearchRoot>,
     mut scratch: Arena<Token>) -> i64 {
     if (module_seen(modules, path)) {
         return at
@@ -89,7 +146,9 @@ place_module :: fn(buffer: ^i8, at: i64, path: ^i8, mut modules: Arena<Module>,
         if (entry^.kind == TOK_KW_IMPORT && named^.kind == TOK_STR) {
             arena_push(
                 children,
-                Module { path = join_path(path, text, named^.off, named^.len),
+                Module {
+                    path = find_import(path, text, named^.off, named^.len,
+                        roots),
                     start = 0, finish = 0 },
             )
         }
@@ -99,7 +158,8 @@ place_module :: fn(buffer: ^i8, at: i64, path: ^i8, mut modules: Arena<Module>,
     mut c : i64 = 0
     while (c < children.count) {
         child : ^Module = arena_at(children, c)
-        here = place_module(buffer, here, child^.path, modules, scratch)
+        here = place_module(buffer, here, child^.path, modules, roots,
+            scratch)
         c = c + 1
     }
     finish := append_text(buffer, here, text)
@@ -203,11 +263,23 @@ blank_range :: fn(buffer: ^i8, from: i64, through: i64) {
     }
 }
 
+// The directories an import may be found under, most deliberate first: what the
+// command line said, then what the environment did, then the standard library
+// beside the compiler's own checkout.
+search_roots_from :: fn(mut roots: Arena<SearchRoot>) {
+    named := frost_getenv("FROST_PATH")
+    if (frost_str_len(named) != 0) {
+        add_root(roots, named)
+    }
+    add_root(roots, "std")
+    add_root(roots, ".")
+}
+
 resolve_imports :: fn(buffer: ^i8, root: ^i8, names: ^i8,
     mut modules: Arena<Module>, mut exports: Arena<Export>,
-    mut scratch: Arena<Token>) -> i64 {
+    mut scratch: Arena<Token>, mut roots: Arena<SearchRoot>) -> i64 {
     mut named_at : i64 = 0
-    length := place_module(buffer, 0, root, modules, scratch)
+    length := place_module(buffer, 0, root, modules, roots, scratch)
     // Every imported file's text is in the buffer now, so the imports have
     // nothing left to say, and an export line has said it once it is recorded.
     // Blanking both leaves the parser one plain program with every offset where

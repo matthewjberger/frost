@@ -85,12 +85,11 @@ aggregate value, so the runtime's *natural* C ABI matches Frost's internal
 aggregate convention with zero negotiation. That is also why the identical
 compiled runtime links into both backends and they agree bit for bit.
 
-**The memory model is not in here.** The runtime used to own the generational
-pool, and it does not any more: a slab is a Frost struct with Frost operations
-over it (`examples/native/lib/slab.frost`), which is why fixed-capacity storage
-works under `--freestanding` where there is no libc at all. What is left in C is
-bounds and generation aborts, assertions, and the IO helpers the self-hosted
-compiler uses.
+**The memory model is not in here.** A slab is a Frost struct with Frost
+operations over it (`examples/native/lib/slab.frost`), which is why
+fixed-capacity storage works under `--freestanding` where there is no libc at
+all. What C holds is bounds and generation aborts, assertions, and the IO
+helpers.
 
 ## 2. Frost lowers through C: `--emit-c`
 
