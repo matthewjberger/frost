@@ -388,12 +388,16 @@ matches how most C APIs take structs. So returns follow the real C ABI and
 parameters follow a convention, and the asymmetry is worth knowing about.
 Passing a struct to C by value has no spelling.
 
-## Smaller things found and not yet fixed
+## Smaller things found, and what happened to them
 
-- **Generic templates are re-parsed per instantiation in the self-hosted
-  compiler**, now three times over rather than twice since concrete return types
-  are computed for both backends. Parse the template to AST once and substitute.
-  Listed as second-order lever 2 in [self-hosting.md](self-hosting.md).
+All three are closed. Kept because the reasoning is the useful part.
+
+- ~~Generic templates are re-parsed per instantiation in the self-hosted
+  compiler.~~ *Fixed.* They were parsed three times over, once for the return
+  type and once each for the prototype and the body, all producing the same AST
+  from the same template and argument. `parse_generic_instance` remembers
+  `(template, argument)` now. Compiling the self-hosted compiler with itself
+  went from a median of 87 ms to 35 ms, with both fixpoints byte-identical.
 - ~~An IR type error points into the generic's body rather than at the call
   site.~~ *Fixed.* A specialization carries the call that asked for it and the
   name the reader wrote, so the diagnostic reads
@@ -401,6 +405,9 @@ Passing a struct to C by value has no spelling.
   they wrote first, the template position behind it for whoever owns the
   generic, and no mangled symbol anywhere. The entry file is registered in the
   source map too, so every position now names a file rather than a bare line.
-- **The self-hosted compiler has no incremental or separate compilation
-  either**, and item 1's design should say whether it is expected to grow one or
-  whether the reference compiler is the only one that does.
+- ~~The self-hosted compiler has no incremental or separate compilation
+  either, and it is undecided whether it should.~~ *Decided: no.* The two
+  compilers are under different promises, and there is nothing for separate
+  compilation to bound in a single 5,400-line file that compiles itself in
+  35 ms. The reasoning and the two things that would reopen it are in
+  [self-hosting.md](self-hosting.md).

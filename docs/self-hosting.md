@@ -132,6 +132,27 @@ The backend used to be where the superlinear term lived, and is not any more:
    holds the specializations that module asked for, and reusing the object
    reuses them.
 
+## Does the self-hosted compiler grow separate compilation too?
+
+**No, and this is the decision rather than an open question.** The two compilers
+are under different promises. The reference compiler is under a speed promise
+that has to hold as programs grow, which is what goal 8 in
+[philosophy.md](philosophy.md) commits to and what separate compilation is the
+answer to. The self-hosted compiler is under a self-hosting promise: it exists
+to show the language can express a real compiler, and it discharges that by
+reproducing itself byte for byte.
+
+Concretely, `bootstrap/frost.frost` is one file of about 5,400 lines with no
+`import` in it, and it compiles itself in about 35 ms. Separate compilation
+bounds work per module, and there is one module. Building interfaces, a build
+cache and per-module objects into it would be machinery with nothing to bound,
+and it would grow the surface that has to keep reproducing itself exactly.
+
+What would reopen it: `bootstrap/frost.frost` gaining imports, or its self-build
+time getting far enough into the hundreds of milliseconds that the edit-compile
+loop on the compiler itself starts to bite. Neither is true, and the second is
+what to measure rather than guess at.
+
 What matters is that the shape is measured rather than assumed, and that the
 measurement is a command rather than a memory. Two versions of this table have
 now been wrong for benchmark reasons rather than compiler reasons: the first
@@ -143,16 +164,26 @@ before trusting any of it, and look at the shape of what it generates too.
 
 Second-order levers, worth doing but small next to the above:
 
-2. Parse each generic template to AST once and substitute types per
-   instantiation. the self-hosted compiler re-lexes and re-parses the template for every
-   instance, which is wasted work that grows with instantiation count. This got
-   more valuable once concrete return types were computed for both backends,
-   since the templates are now re-parsed three times over rather than twice.
+2. ~~Parse each generic template once per instantiation.~~ *Done.* Every
+   instantiation used to be re-parsed three times over, once to record its
+   concrete return type and once each for its prototype and its body, all three
+   producing the same AST from the same template and the same argument.
+   `parse_generic_instance` now remembers `(template, argument)` and hands back
+   the node and the return type it worked out. Compiling the self-hosted
+   compiler with itself went from a median of 87 ms to 35 ms, and both
+   fixpoints stayed byte-identical, which is what says the memo is a memo and
+   not a change of meaning.
+
+   The lever as originally written was to parse each template *once* and
+   substitute types into the AST per instantiation. That is a further step and
+   it needs a substitution pass this compiler does not have, where binding
+   happens during the parse. One parse per instantiation removes the repetition
+   that was actually there.
 3. Parallelize per-function type checking and codegen. The type system is local
    and signature-based, so functions are independent once signatures are
    collected.
 4. Keep the arena allocation and the single in-memory pass per file. the self-hosted compiler
-   already does this, which is why it reaches 47 ms.
+   already does this, which is why it compiles itself in about 35 ms.
 5. Keep monomorphization cached and bounded. the self-hosted compiler already dedups
    instantiations, and specialization-only comptime means code generation cannot
    run away.

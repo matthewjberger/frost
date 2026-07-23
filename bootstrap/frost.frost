@@ -273,6 +273,18 @@ MonoRet :: struct {
     ret: i64,
 }
 
+// A generic function already re-parsed with one type argument bound: which
+// template, which argument, the FUNC node it produced and the return type that
+// parse worked out. Parsing a template is deterministic given those two, and
+// every instantiation used to be parsed three times over, once to record its
+// return type and once each for its prototype and its body.
+MonoNode :: struct {
+    gfn_index: i64,
+    arg: i64,
+    node: i64,
+    ret: i64,
+}
+
 Instance :: struct {
     generic_index: i64,
     arg: i64,
@@ -411,6 +423,7 @@ Parser :: struct {
     asm_ret: i64,
     sret_slot: i64,
     mono_rets: Arena<MonoRet>,
+    mono_nodes: Arena<MonoNode>,
     current_ret: i64,
     current_fn_off: i64,
     current_fn_len: i64,
@@ -3347,7 +3360,22 @@ call_type_arg :: fn(mut p: Parser, head: i64) -> i64 {
 
 // Re-parse a generic function with its type parameter bound to `arg`, returning
 // the concrete FUNC node. The return type is left in p.last_return_type.
+//
+// Parsed once per instantiation and remembered. The result depends on nothing
+// but the template and the argument, and three passes ask for the same one: the
+// return-type pass, the prototype pass and the body pass. Parsing it once is
+// worth more here than anywhere else in this compiler, because a template is
+// the one thing it reads more than once.
 parse_generic_instance :: fn(mut p: Parser, gfn_index: i64, arg: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < p.mono_nodes.count) {
+        held : ^MonoNode = arena_at(p.mono_nodes, i)
+        if (held^.gfn_index == gfn_index && held^.arg == arg) {
+            p.last_return_type = held^.ret
+            return held^.node
+        }
+        i = i + 1
+    }
     gfn : ^GenericFn = arena_at(p.generic_fns, gfn_index)
     tparam_off := gfn^.tparam_off
     tparam_len := gfn^.tparam_len
@@ -3368,6 +3396,9 @@ parse_generic_instance :: fn(mut p: Parser, gfn_index: i64, arg: i64) -> i64 {
     p.type_param_len = saved_len
     p.type_binding = saved_bind
     p.binding_active = saved_active
+    arena_push(p.mono_nodes,
+        MonoNode { gfn_index = gfn_index, arg = arg, node = node,
+                   ret = p.last_return_type })
     node
 }
 
@@ -5367,6 +5398,7 @@ main :: fn() -> i64 {
         asm_ret = 0,
         sret_slot = 0,
         mono_rets = arena_make($MonoRet, 1024),
+        mono_nodes = arena_make($MonoNode, 1024),
         current_ret = 0,
         current_fn_off = 0,
         current_fn_len = 0,
