@@ -1466,6 +1466,29 @@ impl<'a> Parser<'a> {
             }
             let mut params = Vec::new();
             while self.peek_nth(0) != &Token::RightParentheses {
+                // An extern takes modes and compile-time parameters for the
+                // same reason an ordinary function does: a callback
+                // registration is declared as an extern, it takes its context
+                // by `move`, and the handler it wants is a `$` parameter with a
+                // function bound. See docs/callbacks.md.
+                let mode = match self.peek_nth(0) {
+                    Token::Mut => {
+                        self.read_token();
+                        ParamMode::Write
+                    }
+                    Token::Move => {
+                        self.read_token();
+                        ParamMode::Move
+                    }
+                    _ => ParamMode::Read,
+                };
+                if matches!(self.peek_nth(0), Token::Dollar) {
+                    params.push(self.parse_compile_time_parameter()?);
+                    if matches!(self.peek_nth(0), Token::Comma) {
+                        self.read_token();
+                    }
+                    continue;
+                }
                 let param_name = match self.read_token() {
                     Token::Identifier(name) => name.to_string(),
                     _ => bail!("Expected parameter name"),
@@ -1478,7 +1501,7 @@ impl<'a> Parser<'a> {
                     name: param_name,
                     type_annotation: Some(param_type),
                     mutable: false,
-                    mode: ParamMode::Read,
+                    mode,
                     compile_time_signature: None,
                 });
                 if matches!(self.peek_nth(0), Token::Comma) {
@@ -2598,7 +2621,31 @@ impl<'a> Parser<'a> {
                 self.read_token();
                 let mut param_types = Vec::new();
                 while self.peek_nth(0) != &Token::RightParentheses {
-                    param_types.push(self.parse_type()?);
+                    // An unmarked parameter of a function type is the type as
+                    // written, which is what the spec says a function type is
+                    // and what every existing bound means. `mut` is the one
+                    // marker that has to be sayable, because a `mut` parameter
+                    // is a reference in the signature and the surface has no
+                    // way to write a reference type. `move` is the type as
+                    // written too, and is allowed so a bound can be read
+                    // beside the declaration it describes.
+                    let write = match self.peek_nth(0) {
+                        Token::Mut => {
+                            self.read_token();
+                            true
+                        }
+                        Token::Move => {
+                            self.read_token();
+                            false
+                        }
+                        _ => false,
+                    };
+                    let param_type = self.parse_type()?;
+                    param_types.push(if write {
+                        Type::RefMut(Box::new(param_type))
+                    } else {
+                        param_type
+                    });
                     if matches!(self.peek_nth(0), Token::Comma) {
                         self.read_token();
                     }
