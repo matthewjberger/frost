@@ -61,6 +61,40 @@ def specializations(types, generics):
     return "\n".join(out) + "\n"
 
 
+# A program spread over many files, which is what step 5 of
+# docs/separate-compilation.md is measured against. One curve is not enough
+# here: what matters is the second build, so the root imports every module and
+# each module is independent, which is the shape where skipping the unchanged
+# ones is worth the most.
+def many_modules(count, per_module, directory):
+    library = os.path.join(directory, "modules")
+    os.makedirs(library, exist_ok=True)
+    for module in range(count):
+        out = [f"export call{module}"]
+        for index in range(per_module):
+            out += [
+                f"step{module}_{index} :: fn(x: i64) -> i64 {{",
+                "    mut acc : i64 = x",
+                "    mut j : i64 = 0",
+                "    while (j < 4) { acc = acc + j  j = j + 1 }",
+                "    acc",
+                "}",
+            ]
+        body = " + ".join(
+            f"step{module}_{index}({index})" for index in range(per_module)
+        )
+        out += [f"call{module} :: fn() -> i64 {{ {body} }}"]
+        with open(os.path.join(library, f"m{module}.frost"), "w") as handle:
+            handle.write("\n".join(out) + "\n")
+    root = ["printf :: extern fn(fmt: ^i8, value: i64) -> i32"]
+    root += [f'import "modules/m{module}.frost"' for module in range(count)]
+    root += fan_out([f"call{module}()" for module in range(count)])
+    path = os.path.join(directory, "modules.frost")
+    with open(path, "w") as handle:
+        handle.write("\n".join(root) + "\n")
+    return path
+
+
 directory = sys.argv[1] if len(sys.argv) > 1 else "bench/generated"
 os.makedirs(directory, exist_ok=True)
 for count in (100, 400, 1600, 6400):
@@ -73,3 +107,4 @@ for types, generics in ((40, 16), (80, 32), (160, 64)):
     with open(path, "w") as handle:
         handle.write(specializations(types, generics))
     print(path)
+print(many_modules(64, 24, directory))

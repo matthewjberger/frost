@@ -6,3 +6,4 @@ bootstrap/.run_target*.s
 *.py
 !bench/generate.py
 bench/generated
+.frost-build

@@ -59,7 +59,7 @@ compiles to native code through Cranelift or through portable C.
 - [docs/spec.md](docs/spec.md): the language reference and grammar
 - [docs/roadmap.md](docs/roadmap.md): what is left, in the order to do it
 - [docs/separate-compilation.md](docs/separate-compilation.md): the module
-  boundary design, and how far it is built
+  boundary, one object per module, and what `--incremental` rebuilds
 
 ## A first program
 
@@ -94,6 +94,9 @@ frost --link -o program program.frost
 
 # Emit portable C instead of using Cranelift
 frost --emit-c -o program.c program.frost
+
+# Rebuild only the modules an edit reaches, keeping objects under .frost-build
+frost --link --incremental -o program program.frost
 
 # Link with no C standard library (a static-arena program needs no runtime)
 frost --link --freestanding -o program program.frost

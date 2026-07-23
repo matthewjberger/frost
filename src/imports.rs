@@ -1,9 +1,14 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+use crate::build_cache::{
+    BuildCache, ModuleRecord, digest, fnv1a, interface_fingerprint,
+    module_fingerprint, stamp_file,
+};
+use crate::interface::ModuleInterface;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::parser::{
@@ -20,6 +25,21 @@ pub struct Resolved {
     // compiler does not build from these yet; see step 2 of
     // docs/separate-compilation.md.
     pub interfaces: Vec<crate::interface::ModuleInterface>,
+    // One per imported module, and empty without a build cache. What the driver
+    // needs to link a module's cached object instead of compiling it, and to
+    // write back what it did compile.
+    pub modules: Vec<ModulePlan>,
+}
+
+// What was decided about one module before the program was built: whether it
+// still has to be compiled, and where its object is either way.
+pub struct ModulePlan {
+    pub module: String,
+    pub tag: String,
+    pub file: u32,
+    pub object: PathBuf,
+    pub reused: bool,
+    pub record: ModuleRecord,
 }
 
 pub fn resolve_imports(
@@ -28,20 +48,259 @@ pub fn resolve_imports(
     linear_types: HashSet<String>,
     tests: Vec<(String, String)>,
 ) -> Result<Resolved> {
-    let mut seen = HashSet::new();
-    let mut resolved = Resolved {
+    resolve_imports_cached(statements, base_dir, linear_types, tests, None)
+}
+
+// Step 5 of docs/separate-compilation.md. With a cache, a module whose own
+// source and whose imported interfaces are all unchanged is not read past its
+// first line: it contributes the interface the cache already holds, and its
+// object is linked rather than built.
+pub fn resolve_imports_cached(
+    statements: Vec<Spanned<Statement>>,
+    base_dir: &Path,
+    linear_types: HashSet<String>,
+    tests: Vec<(String, String)>,
+    cache: Option<&BuildCache>,
+) -> Result<Resolved> {
+    let resolved = Resolved {
         statements: Vec::new(),
         linear_types,
         tests,
         interfaces: Vec::new(),
+        modules: Vec::new(),
     };
     // The directory of the file named on the command line is the project root,
     // and a module's identity is its path relative to that. See the "what is a
     // project root" question in docs/separate-compilation.md, which this is the
     // smallest answer to.
     let root = base_dir.canonicalize().unwrap_or_else(|_| base_dir.into());
-    resolve_into(statements, base_dir, &root, &mut seen, &mut resolved)?;
+
+    // Deciding whether a module can be skipped needs the interfaces of
+    // everything below it, so the graph is walked bottom up before anything is
+    // spliced. The walk parses only the modules it cannot answer for from the
+    // cache, and hands those parses to the splice below rather than repeating
+    // them.
+    let mut plans: Plans = BTreeMap::new();
+    if let Some(cache) = cache {
+        let mut stack = HashSet::new();
+        for statement in &statements {
+            if let Statement::Import(path) = &statement.node {
+                plan_module(
+                    &base_dir.join(path),
+                    &root,
+                    cache,
+                    &mut plans,
+                    &mut stack,
+                )?;
+            }
+        }
+    }
+
+    let mut walk = Walk {
+        root: &root,
+        seen: HashSet::new(),
+        resolved,
+        plans,
+    };
+    walk.resolve_into(statements, base_dir)?;
+    let mut resolved = walk.resolved;
+
+    resolved.modules = walk
+        .plans
+        .into_values()
+        .map(|planned| {
+            let mut interface = planned.interface;
+            // A file id is handed out in registration order, so an interface
+            // written down with one in it would mean something different in the
+            // process that reads it back.
+            stamp_file(&mut interface.declarations, 0);
+            ModulePlan {
+                file: planned.file,
+                object: planned.object,
+                reused: planned.reused,
+                tag: planned.tag,
+                module: planned.module.clone(),
+                record: ModuleRecord {
+                    module: planned.module,
+                    source_hash: planned.source_hash,
+                    imports: planned.imports,
+                    interface,
+                    emits_object: planned.emits_object,
+                },
+            }
+        })
+        .collect();
     Ok(resolved)
+}
+
+struct ParsedModule {
+    statements: Vec<Spanned<Statement>>,
+    exports: Vec<String>,
+    linear_types: HashSet<String>,
+    tests: Vec<(String, String)>,
+}
+
+struct Planned {
+    module: String,
+    tag: String,
+    file: u32,
+    source_hash: String,
+    imports: Vec<String>,
+    // Absent when the module was answered for from the cache, which is the
+    // whole point: its source was never parsed.
+    parsed: Option<ParsedModule>,
+    interface: ModuleInterface,
+    interface_hash: String,
+    // The interface hash of every module reachable through this one's imports.
+    // Transitive, because a generic this module instantiates can instantiate one
+    // from further down.
+    closure: BTreeMap<String, String>,
+    object: PathBuf,
+    reused: bool,
+    emits_object: bool,
+}
+
+type Plans = BTreeMap<PathBuf, Planned>;
+
+fn parse_module(
+    source: &str,
+    file: u32,
+    path: &Path,
+) -> Result<Box<ParsedModule>> {
+    let mut lexer = Lexer::new(source);
+    let tokens = lexer
+        .tokenize()
+        .with_context(|| format!("lexing {}", path.display()))?;
+    // Every position the lexer produced for this file belongs to this file, and
+    // stamping them here is the only place that knows which file it is.
+    let positions: Vec<_> = lexer
+        .positions()
+        .iter()
+        .map(|position| crate::lexer::Position { file, ..*position })
+        .collect();
+    let mut parser = Parser::with_positions(&tokens, &positions);
+    let statements = parser
+        .parse()
+        .with_context(|| format!("parsing {}", path.display()))?;
+    Ok(Box::new(ParsedModule {
+        statements,
+        exports: parser.exports().to_vec(),
+        linear_types: parser.linear_types().iter().cloned().collect(),
+        tests: parser.tests().to_vec(),
+    }))
+}
+
+fn plan_module(
+    full: &Path,
+    root: &Path,
+    cache: &BuildCache,
+    plans: &mut Plans,
+    stack: &mut HashSet<PathBuf>,
+) -> Result<PathBuf> {
+    let key = full.canonicalize().unwrap_or_else(|_| full.to_path_buf());
+    if plans.contains_key(&key) || !stack.insert(key.clone()) {
+        return Ok(key);
+    }
+
+    let source = fs::read_to_string(full).with_context(|| {
+        format!("failed to read imported file: {}", full.display())
+    })?;
+    let module = relative_module_name(&key, root);
+    let file = crate::source_map::register(&module);
+    let tag = module_tag(&key, root);
+    let source_hash = digest(&source);
+    let record = cache.load(&tag, &source_hash);
+
+    let mut parsed: Option<Box<ParsedModule>> = None;
+    let mut interface = match &record {
+        Some(record) => {
+            let mut interface = record.interface.clone();
+            stamp_file(&mut interface.declarations, file);
+            interface
+        }
+        None => {
+            let fresh = parse_module(&source, file, full)?;
+            let interface = ModuleInterface::of(
+                &module,
+                &fresh.statements,
+                &fresh.exports,
+                &fresh.linear_types,
+            );
+            parsed = Some(fresh);
+            interface
+        }
+    };
+    let imports: Vec<String> = match (&record, &parsed) {
+        (Some(record), _) => record.imports.clone(),
+        (None, Some(fresh)) => import_paths(&fresh.statements),
+        (None, None) => Vec::new(),
+    };
+
+    let directory = full.parent().map(Path::to_path_buf).unwrap_or_default();
+    let mut closure: BTreeMap<String, String> = BTreeMap::new();
+    for import in &imports {
+        let child =
+            plan_module(&directory.join(import), root, cache, plans, stack)?;
+        if let Some(planned) = plans.get(&child) {
+            closure
+                .insert(planned.module.clone(), planned.interface_hash.clone());
+            for (name, hash) in &planned.closure {
+                closure.insert(name.clone(), hash.clone());
+            }
+        }
+    }
+
+    let interface_hash = interface_fingerprint(&interface)?;
+    let fingerprint = module_fingerprint(&source_hash, &closure);
+    let object = cache.object_path(&tag, &fingerprint);
+    // A record answers for the module only while the object it describes is
+    // still there. Deleting the build directory has to mean a full rebuild
+    // rather than a link against nothing.
+    let reused = record
+        .as_ref()
+        .is_some_and(|record| !record.emits_object || object.exists());
+    if !reused && parsed.is_none() {
+        let fresh = parse_module(&source, file, full)?;
+        interface = ModuleInterface::of(
+            &module,
+            &fresh.statements,
+            &fresh.exports,
+            &fresh.linear_types,
+        );
+        parsed = Some(fresh);
+    }
+
+    stack.remove(&key);
+    plans.insert(
+        key.clone(),
+        Planned {
+            module,
+            tag,
+            file,
+            source_hash,
+            imports,
+            parsed: parsed.map(|parsed| *parsed),
+            interface,
+            interface_hash,
+            closure,
+            object,
+            reused,
+            emits_object: record
+                .as_ref()
+                .is_some_and(|record| record.emits_object),
+        },
+    );
+    Ok(key)
+}
+
+fn import_paths(statements: &[Spanned<Statement>]) -> Vec<String> {
+    statements
+        .iter()
+        .filter_map(|statement| match &statement.node {
+            Statement::Import(path) => Some(path.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 // The tag that distinguishes one module's private names from another's. It has
@@ -69,65 +328,104 @@ fn relative_module_name(path: &Path, root: &Path) -> String {
     joined.join("/")
 }
 
-// FNV-1a, written out rather than taken from the standard library because the
-// hash has to mean the same thing in every build of the compiler, and
-// `DefaultHasher` promises only that it is consistent within one version.
-fn fnv1a(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for byte in bytes {
-        hash ^= *byte as u64;
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
+struct Walk<'a> {
+    root: &'a Path,
+    seen: HashSet<PathBuf>,
+    resolved: Resolved,
+    plans: Plans,
 }
 
-fn resolve_into(
-    statements: Vec<Spanned<Statement>>,
-    base_dir: &Path,
-    root: &Path,
-    seen: &mut HashSet<PathBuf>,
-    resolved: &mut Resolved,
-) -> Result<()> {
-    for statement in statements {
-        let Statement::Import(path) = &statement.node else {
-            resolved.statements.push(statement);
-            continue;
+type Contribution = (Vec<Spanned<Statement>>, HashSet<String>, String);
+
+impl Walk<'_> {
+    fn resolve_into(
+        &mut self,
+        statements: Vec<Spanned<Statement>>,
+        base_dir: &Path,
+    ) -> Result<()> {
+        for statement in statements {
+            let Statement::Import(path) = &statement.node else {
+                self.resolved.statements.push(statement);
+                continue;
+            };
+
+            let full = base_dir.join(path);
+            let key = full.canonicalize().unwrap_or_else(|_| full.clone());
+            if !self.seen.insert(key.clone()) {
+                continue;
+            }
+
+            let (mut imported, exports, tag) = if self.plans.contains_key(&key)
+            {
+                self.planned_module(&key)?
+            } else {
+                self.read_module(&full, &key)?
+            };
+
+            let renames = private_renames(&imported, &exports, &tag);
+            if !renames.is_empty() {
+                let renamer = Renamer { renames };
+                renamer.block(&mut imported, &mut Vec::new());
+            }
+
+            let child_dir =
+                full.parent().map(Path::to_path_buf).unwrap_or_default();
+            self.resolve_into(imported, &child_dir)?;
+        }
+        Ok(())
+    }
+
+    // What a planned module contributes. A module the plan could answer for
+    // contributes its interface and its own import lines, which is exactly what
+    // the `FROST_BUILD_FROM_INTERFACES` oracle has been checking on every commit
+    // since step 4; the difference is that here its object is not rebuilt
+    // either.
+    fn planned_module(&mut self, key: &Path) -> Result<Contribution> {
+        let planned = self
+            .plans
+            .get_mut(key)
+            .expect("a planned module the walk just found");
+        let tag = planned.tag.clone();
+        let interface = planned.interface.clone();
+        let Some(parsed) = planned.parsed.take() else {
+            let imports = planned.imports.clone();
+            self.resolved
+                .linear_types
+                .extend(interface.linear_types.iter().cloned());
+            let mut statements: Vec<Spanned<Statement>> = imports
+                .into_iter()
+                .map(|path| Spanned::from(Statement::Import(path)))
+                .collect();
+            statements.extend(interface.declarations);
+            let exports = interface.exports.into_iter().collect();
+            return Ok((statements, exports, tag));
         };
 
-        let full = base_dir.join(path);
-        let key = full.canonicalize().unwrap_or_else(|_| full.clone());
-        if !seen.insert(key.clone()) {
-            continue;
-        }
+        self.resolved
+            .linear_types
+            .extend(parsed.linear_types.iter().cloned());
+        self.resolved.tests.extend(parsed.tests.iter().cloned());
+        let exports: HashSet<String> = parsed.exports.into_iter().collect();
+        let mut statements = parsed.statements;
+        self.check_and_reduce(&interface, &mut statements)?;
+        Ok((statements, exports, tag))
+    }
 
-        let source = fs::read_to_string(&full).with_context(|| {
+    fn read_module(&mut self, full: &Path, key: &Path) -> Result<Contribution> {
+        let source = fs::read_to_string(full).with_context(|| {
             format!("failed to read imported file: {}", full.display())
         })?;
-        let mut lexer = Lexer::new(&source);
-        let tokens = lexer
-            .tokenize()
-            .with_context(|| format!("lexing {}", full.display()))?;
-        let module_name = relative_module_name(&key, root);
-        // Every position the lexer produced for this file belongs to this file,
-        // and stamping them here is the only place that knows which file it is.
+        let module_name = relative_module_name(key, self.root);
         let file = crate::source_map::register(&module_name);
-        let positions: Vec<_> = lexer
-            .positions()
-            .iter()
-            .map(|position| crate::lexer::Position { file, ..*position })
-            .collect();
-        let mut parser = Parser::with_positions(&tokens, &positions);
-        let mut imported = parser
-            .parse()
-            .with_context(|| format!("parsing {}", full.display()))?;
-        resolved
+        let parsed = parse_module(&source, file, full)?;
+        self.resolved
             .linear_types
-            .extend(parser.linear_types().iter().cloned());
-        resolved.tests.extend(parser.tests().iter().cloned());
+            .extend(parsed.linear_types.iter().cloned());
+        self.resolved.tests.extend(parsed.tests.iter().cloned());
 
-        let exports: HashSet<String> =
-            parser.exports().iter().cloned().collect();
-        let tag = module_tag(&key, root);
+        let exports: HashSet<String> = parsed.exports.iter().cloned().collect();
+        let tag = module_tag(key, self.root);
+        let mut statements = parsed.statements;
 
         // Steps 2 and 4 of docs/separate-compilation.md. The interface is
         // derived at the one place a module is parsed, which is what keeps it
@@ -135,51 +433,61 @@ fn resolve_into(
         if crate::interface::interfaces_are_checked()
             || crate::interface::built_from_interfaces()
         {
-            let interface = crate::interface::ModuleInterface::of(
+            let interface = ModuleInterface::of(
                 &module_name,
-                &imported,
-                parser.exports(),
-                &parser.linear_types().iter().cloned().collect(),
+                &statements,
+                &parsed.exports,
+                &parsed.linear_types,
             );
-            crate::interface::check_interface_round_trip(&interface)?;
-            crate::interface::check_interface_covers_exports(&interface)?;
-            crate::interface::check_interface_is_closed(&interface, &imported)?;
-
-            // The oracle for step 4: build the program from what the interface
-            // says rather than from the module's source, and require the result
-            // to be the same program. An interface that is missing something a
-            // caller needs fails here, loudly, instead of at step 5 when the
-            // compiler has started trusting interfaces for real.
-            //
-            // The module's own `import` lines are kept, because an interface
-            // carries declarations and not dependencies, and the modules behind
-            // them still have to be reached. Everything else the module
-            // declared is replaced by the interface's view of it, so anything
-            // it kept private and nothing reaches is simply gone.
-            if crate::interface::built_from_interfaces() {
-                let mut rebuilt: Vec<Spanned<Statement>> = imported
-                    .iter()
-                    .filter(|statement| {
-                        matches!(statement.node, Statement::Import(_))
-                    })
-                    .cloned()
-                    .collect();
-                rebuilt.extend(interface.declarations.iter().cloned());
-                imported = rebuilt;
-            }
-            resolved.interfaces.push(interface);
+            self.check_and_reduce(&interface, &mut statements)?;
         }
-
-        let renames = private_renames(&imported, &exports, &tag);
-        if !renames.is_empty() {
-            let renamer = Renamer { renames };
-            renamer.block(&mut imported, &mut Vec::new());
-        }
-
-        let child_dir =
-            full.parent().map(Path::to_path_buf).unwrap_or_default();
-        resolve_into(imported, &child_dir, root, seen, resolved)?;
+        Ok((statements, exports, tag))
     }
+
+    fn check_and_reduce(
+        &mut self,
+        interface: &ModuleInterface,
+        statements: &mut Vec<Spanned<Statement>>,
+    ) -> Result<()> {
+        check_and_reduce(interface, statements, &mut self.resolved.interfaces)
+    }
+}
+
+fn check_and_reduce(
+    interface: &ModuleInterface,
+    statements: &mut Vec<Spanned<Statement>>,
+    interfaces: &mut Vec<ModuleInterface>,
+) -> Result<()> {
+    if !crate::interface::interfaces_are_checked()
+        && !crate::interface::built_from_interfaces()
+    {
+        return Ok(());
+    }
+    crate::interface::check_interface_round_trip(interface)?;
+    crate::interface::check_interface_covers_exports(interface)?;
+    crate::interface::check_interface_is_closed(interface, statements)?;
+
+    // The oracle for step 4: build the program from what the interface says
+    // rather than from the module's source, and require the result to be the
+    // same program. An interface that is missing something a caller needs fails
+    // here, loudly, rather than once the compiler is trusting interfaces for
+    // real.
+    //
+    // The module's own `import` lines are kept, because an interface carries
+    // declarations and not dependencies, and the modules behind them still have
+    // to be reached. Everything else the module declared is replaced by the
+    // interface's view of it, so anything it kept private and nothing reaches
+    // is simply gone.
+    if crate::interface::built_from_interfaces() {
+        let mut rebuilt: Vec<Spanned<Statement>> = statements
+            .iter()
+            .filter(|statement| matches!(statement.node, Statement::Import(_)))
+            .cloned()
+            .collect();
+        rebuilt.extend(interface.declarations.iter().cloned());
+        *statements = rebuilt;
+    }
+    interfaces.push(interface.clone());
     Ok(())
 }
 

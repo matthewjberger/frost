@@ -111,10 +111,10 @@ no traits to solve, no lifetimes to infer, no global inference, and the
 specialization worklist dedups through a hash set rather than a scan.
 
 What these numbers do **not** show is the shape problem, because every program
-here is a single file. Imports flatten into one AST and monomorphization runs
-whole-program, so a change to one line rebuilds everything. That is what
-[separate-compilation.md](separate-compilation.md) is about, and it is invisible
-at these sizes by construction.
+here is a single file, so a change to one line rebuilds everything no matter how
+little it reaches. `just bench-incremental` is the measurement that does show it:
+9,484 lines across 65 files, one changed, 668 ms full against 399 ms with
+`--incremental`. See [separate-compilation.md](separate-compilation.md).
 
 The backend used to be where the superlinear term lived, and is not any more:
 
@@ -123,13 +123,15 @@ The backend used to be where the superlinear term lived, and is not any more:
    which is a large part of why the language was designed the way it is. Code
    generation now runs on every core and is 64 ms of a 353 ms build at 58k
    lines.
-2. **Separate compilation per module.** *Designed, partly built.* Imports
-   flatten into one AST today, which is what makes a program's cost
-   whole-program. Module boundaries also bound monomorphization, since a
-   specialization need only be emitted once per module that needs it. See
+2. **Separate compilation per module.** *Done.* Each module is its own object on
+   the link path, monomorphization is seeded per module, and `--incremental`
+   skips the modules an edit cannot reach. What is still whole-program is that a
+   skipped module contributes its interface, which carries the bodies of
+   exported functions, so the front end walks bodies it will not emit. See
    [separate-compilation.md](separate-compilation.md).
-3. **Cache specializations across builds.** Worth doing only after (2), and only
-   if measurement still asks for it.
+3. **Cache specializations across builds.** Now subsumed: a module's object
+   holds the specializations that module asked for, and reusing the object
+   reuses them.
 
 What matters is that the shape is measured rather than assumed, and that the
 measurement is a command rather than a memory. Two versions of this table have

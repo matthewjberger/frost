@@ -84,13 +84,14 @@ actual work predictable.
    shape that contradicts it, so separate compilation is an obligation this goal
    takes on. The bar is the one Jai and Odin set, a full build in the 100,000
    lines per second range, and a full native build clears it at about 165,000
-   lines per second. That is the constant factor, and it is done. The shape is
-   not: every program measured is one file, and separate compilation is what
-   keeps the curve flat once they are not. The curve is measured by
-   `just bench-scaling` and recorded in [self-hosting.md](self-hosting.md), so
-   the claim is checkable rather than asserted;
-   [separate-compilation.md](separate-compilation.md) is the design for the part
-   that is left, and [roadmap.md](roadmap.md) is the surrounding order of work.
+   lines per second. That is the constant factor, and it is done. So is the
+   shape: each module is its own object and `--incremental` rebuilds only the
+   modules an edit can reach. Both are measured by commands rather than
+   remembered, `just bench-scaling` and `just bench-incremental`, and recorded
+   in [self-hosting.md](self-hosting.md) and
+   [separate-compilation.md](separate-compilation.md);
+   [roadmap.md](roadmap.md) is the surrounding order of work and names the one
+   piece of the front end that is still whole-program.
 
 ## Non-goals
 

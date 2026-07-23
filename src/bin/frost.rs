@@ -7,12 +7,12 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use frost::{
-    Expression, Lexer, Literal, Parameter, Parser as FrostParser, Position,
-    ReturnKind, ReturnSignature, RunOutcome, Spanned, Statement, Type,
-    build_module, build_module_per_module, check_frame_escapes,
+    BuildCache, Expression, Lexer, Literal, Parameter, Parser as FrostParser,
+    Position, ReturnKind, ReturnSignature, RunOutcome, Spanned, Statement,
+    Type, build_module, build_module_per_module, check_frame_escapes,
     check_linearity, check_module, check_ownership, check_regions,
     compile_ir_to_object, emit_c, lower_allocation_sources, lower_failure_sets,
-    lower_param_modes, resolve_imports, run_module,
+    lower_param_modes, resolve_imports_cached, run_module,
 };
 
 #[derive(Parser)]
@@ -50,6 +50,19 @@ struct Cli {
         help = "Link with no libc: a minimal freestanding runtime and a custom entry point"
     )]
     freestanding: bool,
+
+    #[arg(
+        long,
+        help = "Reuse a module's cached object unless its source or an imported interface changed"
+    )]
+    incremental: bool,
+
+    #[arg(
+        long,
+        default_value = ".frost-build",
+        help = "Where --incremental keeps interfaces and objects"
+    )]
+    build_dir: String,
 }
 
 fn test_harness(tests: &[(String, String)]) -> Vec<Spanned<Statement>> {
@@ -128,16 +141,38 @@ fn main() -> Result<()> {
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_default();
-    let resolved = resolve_imports(
+    // A module's object is only its own on the link path, so that is the only
+    // place a cached one can be linked instead of built. `--test` needs every
+    // module's `test` blocks, which a module answered for from the cache is
+    // never read far enough to have.
+    let cache = if cli.incremental {
+        if !cli.link {
+            bail!(
+                "--incremental needs --link, since a module is a compilation unit only when the objects are linked"
+            );
+        }
+        if cli.test || cli.emit_c || cli.run_ir {
+            bail!(
+                "--incremental applies to native linking, not --test, --emit-c or --run-ir"
+            );
+        }
+        Some(BuildCache::open(Path::new(&cli.build_dir))?)
+    } else {
+        None
+    };
+
+    let resolved = resolve_imports_cached(
         parsed,
         &base_dir,
         parser.linear_types().clone(),
         parser.tests().to_vec(),
+        cache.as_ref(),
     )
     .context("Import error")?;
     let mut statements = resolved.statements;
     let linear_types = resolved.linear_types;
     let tests = resolved.tests;
+    let mut modules = resolved.modules;
     check_regions(&statements).context("Region error")?;
     check_frame_escapes(&statements).context("Region error")?;
     lower_allocation_sources(&mut statements)
@@ -276,7 +311,39 @@ fn main() -> Result<()> {
             vec![module]
         };
         let mut object_paths = Vec::with_capacity(parts.len());
+        // Objects for cached modules are named for the fingerprint that
+        // produced them and outlive the build; everything else is an
+        // intermediate that goes away with it.
+        let mut temporary: Vec<String> = Vec::new();
         for (index, part) in parts.iter().enumerate() {
+            let file = part
+                .functions
+                .first()
+                .map(|function| function.module)
+                .unwrap_or_default();
+            let planned = modules
+                .iter()
+                .position(|plan| plan.file == file && !plan.reused);
+            if let Some(planned) = planned {
+                let plan = &modules[planned];
+                let object_bytes = compile_ir_to_object(part)
+                    .context("Native compilation error")?;
+                fs::write(&plan.object, object_bytes).with_context(|| {
+                    format!(
+                        "Failed to write object file: {}",
+                        plan.object.display()
+                    )
+                })?;
+                if let Some(cache) = &cache {
+                    cache.discard_other_objects(&plan.tag, &plan.object);
+                }
+                object_paths.push(plan.object.to_string_lossy().into_owned());
+                modules[planned].record.emits_object = true;
+                continue;
+            }
+            if modules.iter().any(|plan| plan.file == file && plan.reused) {
+                continue;
+            }
             let object_bytes = compile_ir_to_object(part)
                 .context("Native compilation error")?;
             let object_path = if cli.link {
@@ -287,7 +354,21 @@ fn main() -> Result<()> {
             fs::write(&object_path, object_bytes).with_context(|| {
                 format!("Failed to write object file: {}", object_path)
             })?;
-            object_paths.push(object_path);
+            object_paths.push(object_path.clone());
+            temporary.push(object_path);
+        }
+
+        // A module the cache answered for is linked whether or not this build
+        // produced anything for it, since its object holds code no other part
+        // does.
+        for plan in &modules {
+            if !plan.reused {
+                continue;
+            }
+            println!("Reused {}", plan.module);
+            if plan.record.emits_object {
+                object_paths.push(plan.object.to_string_lossy().into_owned());
+            }
         }
 
         if cli.link {
@@ -306,8 +387,18 @@ fn main() -> Result<()> {
                 cli.freestanding,
             )?;
 
-            for object_path in &object_paths {
+            for object_path in &temporary {
                 fs::remove_file(object_path).ok();
+            }
+
+            // Written after the link, so a record never claims an object a
+            // failed build did not finish producing.
+            if let Some(cache) = &cache {
+                for plan in &modules {
+                    if !plan.reused {
+                        cache.store(&plan.tag, &plan.record)?;
+                    }
+                }
             }
 
             println!("Linked executable: {}", exe_path);

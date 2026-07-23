@@ -1,9 +1,13 @@
 # Separate compilation
 
-This is the design, not the implementation. Item 3 in [roadmap.md](roadmap.md)
-says not to start it by writing code, and this document is what it asks for
-instead: what a module's compiled artifact contains, and what has to be in it for
-a caller to compile against it without seeing the body.
+This started as the design and is now also the record of building it. All five
+steps at the bottom are done. What a module's compiled artifact contains, and
+what has to be in it for a caller to compile against it without seeing the body,
+is the question the whole document is answering.
+
+The short version of the result: `frost --link --incremental` gives each module
+its own object and rebuilds a module only when its own source or an imported
+interface changes.
 
 ## Why the shape has to change
 
@@ -211,9 +215,55 @@ rather than after.
      builder that built the definitions. Describing them as externs would lose
      the hidden out-pointer an aggregate return uses, and the two objects would
      silently disagree about the ABI.
-5. **Cache and skip.** Rebuild a module only when its own source or an imported
-   interface hash changes. This is the step that pays, and it pays only because
-   the four before it made it a scheduling question rather than a correctness one.
+5. **Cache and skip.** *Done.* `--incremental` keeps a record and an object per
+   module under `--build-dir`, and a module whose own source and whose imported
+   interfaces are all unchanged is never parsed and never code generated: it
+   contributes the interface the record already holds, and its object is linked
+   rather than built.
+
+   The decision is a fingerprint, in `src/build_cache.rs`. A module's is a hash
+   of its own source together with the interface hash of every module reachable
+   through its imports, transitively, since a generic this module instantiates
+   can instantiate one from further down. A module's *interface* hash is taken
+   over the interface with the bodies of ordinary functions blanked and the
+   bodies of generics kept, which is the distinction this document has been
+   claiming since the top and is the only thing that makes the cache worth
+   having: an ordinary body is what a module can change without rebuilding
+   anything else, and it is most of what anyone edits.
+
+   Three things it forced:
+   - **The import graph has to be walked before anything is spliced**, bottom
+     up, because whether a module can be skipped depends on the interfaces below
+     it. The walk parses only the modules it cannot answer for, and hands those
+     parses to the splice rather than repeating them.
+   - **The record carries the import list**, even though an interface carries
+     declarations and not dependencies. Deciding whether to skip a module means
+     knowing what it imports before it has been read.
+   - **A file id could not go into a record.** It is handed out in registration
+     order, so an interface written down with one in it means something else in
+     the process that reads it back, and module attribution is exactly what
+     reads it. Interfaces are written with it zeroed and restamped on load.
+
+   **What it is worth**, from `just bench-incremental` on 9,484 lines across 65
+   files, one of which changed:
+
+   | | full | incremental |
+   | --- | --- | --- |
+   | build | 668 ms | 399 ms |
+
+   About 90 ms of each is process start and the linker, which no amount of
+   skipping removes, so the compiler's own work goes from 578 ms to 309 ms.
+
+   **Where the rest of it still goes, and it is worth naming precisely.** A
+   skipped module still contributes its interface to the flattened program, and
+   an interface carries the bodies of exported functions, generic or not. So the
+   front end still walks every exported body of every module in the program even
+   when it emits none of them. Removing that means a declaration form that
+   carries a full Frost signature and no body: not `extern`, whose ABI loses the
+   hidden out-pointer an aggregate return uses and which has nowhere to put
+   parameter modes, `uses` sets or linearity. That is the next lever and it is a
+   change to every pass that matches on a function declaration, which is why it
+   is named here rather than done quietly as part of this step.
 
 ## Open questions
 
@@ -221,12 +271,19 @@ rather than after.
   incremental or separate compilation either. The reference compiler is the one
   under a speed promise, and the self-hosted one is under a self-hosting promise,
   so the answer is probably no. Worth deciding rather than drifting into.
-- **What is a project root?** Module identity is a path relative to something, and
-  right now there is nothing. The smallest answer that works is the directory of
-  the file named on the command line, and the smallest thing that would make it
-  robust is a manifest. Neither is urgent, but the first one has to be picked
-  before step 1.
-- **Interfaces in what format?** Deliberately last, because it is the least
-  interesting decision here and the easiest to change. The one requirement the
-  design imposes is that it can hold a generic's AST, which rules out anything
-  shaped like a C header and points at serializing the existing types.
+- **What is a project root?** *Settled, smallest answer.* The directory of the
+  file named on the command line. A manifest would make it robust and nothing
+  needs one yet. Note what this costs: the same library imported from two
+  different roots has two identities and two caches.
+- **Interfaces in what format?** *Settled, replaceably.* serde and JSON, for
+  both interfaces and build records. The one requirement the design imposes is
+  that it can hold a generic's AST, which rules out anything shaped like a C
+  header and points at serializing the existing types, which is what this does.
+- **What invalidates a record beyond content?** Nothing yet. A record does not
+  name the compiler that wrote it, so changing the compiler and keeping a build
+  directory reuses objects the new compiler would not have emitted. Deleting the
+  build directory is the current answer, and a compiler version in the record is
+  the obvious one.
+- **`--test` does not use the cache.** A module answered for from a record is
+  never read far enough to know it has `test` blocks, so `--incremental` refuses
+  to combine with `--test` rather than silently running fewer tests.

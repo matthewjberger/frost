@@ -4846,3 +4846,130 @@ fn a_frame_pointer_may_not_leave_by_any_road() {
         );
     }
 }
+
+// Step 5 of docs/separate-compilation.md. A module is rebuilt only when its own
+// source or an imported interface changes, and the distinction that decides it
+// is that a generic's body is part of its interface while an ordinary body is
+// not. This builds a three module chain and edits the leaf twice, once in each
+// kind of body, which is the only way to tell a cache that works from one that
+// rebuilds everything or nothing.
+#[test]
+fn only_the_modules_an_edit_reaches_are_rebuilt() {
+    if !linker_available() {
+        return;
+    }
+    let directory = std::env::temp_dir().join("frost_incremental");
+    let library = directory.join("lib");
+    let build = directory.join("build");
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&library).unwrap();
+
+    let leaf = library.join("leaf.frost");
+    let write_leaf = |bump: &str, twice: &str| {
+        std::fs::write(
+            &leaf,
+            format!(
+                "export bump, twice\n\
+                 bump :: fn(x: i64) -> i64 {{ {bump} }}\n\
+                 twice :: fn($T: Type, move v: $T) -> $T {{ {twice} }}\n"
+            ),
+        )
+        .unwrap();
+    };
+    write_leaf("x + 1", "v + v");
+    std::fs::write(
+        library.join("mid.frost"),
+        "export combine\n\
+         import \"leaf.frost\"\n\
+         combine :: fn(x: i64) -> i64 { bump(twice($i64, x)) }\n",
+    )
+    .unwrap();
+    let root = directory.join("incremental_app.frost");
+    std::fs::write(
+        &root,
+        "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
+         import \"lib/mid.frost\"\n\
+         main :: fn() -> i64 { printf(\"%lld\n\", combine(5))  0 }\n",
+    )
+    .unwrap();
+
+    let exe = directory.join(format!("app{}", std::env::consts::EXE_SUFFIX));
+    let build_once = || -> (Vec<String>, String) {
+        let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+            .env("FROST_CHECK_INTERFACES", "1")
+            .arg("--link")
+            .arg("--incremental")
+            .arg("--build-dir")
+            .arg(&build)
+            .arg("-o")
+            .arg(&exe)
+            .arg(&root)
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "an incremental build failed:\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let reused: Vec<String> = String::from_utf8_lossy(&built.stdout)
+            .lines()
+            .filter_map(|line| line.strip_prefix("Reused ").map(str::to_string))
+            .collect();
+        let ran = Command::new(&exe).output().unwrap();
+        (
+            reused,
+            String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n"),
+        )
+    };
+
+    // Nothing is cached yet, so nothing is reused and the program still runs.
+    let (reused, output) = build_once();
+    assert!(reused.is_empty(), "a first build reused {reused:?}");
+    assert_eq!(output, "11\n");
+
+    // Nothing changed, so neither imported module is read or built again.
+    let (reused, output) = build_once();
+    assert_eq!(reused, vec!["lib/leaf.frost", "lib/mid.frost"]);
+    assert_eq!(output, "11\n");
+
+    // An ordinary body is the module's own business. The leaf is rebuilt and
+    // the module that calls it is not, because the call is resolved by the
+    // linker and nothing about it changed.
+    write_leaf("x + 3", "v + v");
+    let (reused, output) = build_once();
+    assert_eq!(reused, vec!["lib/mid.frost"]);
+    assert_eq!(output, "13\n");
+
+    // A generic body is its callers' business too, since the caller is what
+    // stamps out the template, so this reaches the module above.
+    write_leaf("x + 3", "v + v + v");
+    let (reused, output) = build_once();
+    assert!(
+        reused.is_empty(),
+        "a generic body changed and {reused:?} was reused anyway"
+    );
+    assert_eq!(output, "18\n");
+
+    // And back to a steady state, which is what proves the previous build
+    // wrote its records rather than merely rebuilding.
+    let (reused, output) = build_once();
+    assert_eq!(reused, vec!["lib/leaf.frost", "lib/mid.frost"]);
+    assert_eq!(output, "18\n");
+
+    // A record answers for a module only while the object it describes is still
+    // there, so throwing the objects away has to mean a rebuild rather than a
+    // link against nothing.
+    for entry in std::fs::read_dir(&build).unwrap().flatten() {
+        if entry.path().extension().is_some_and(|ext| ext == "o") {
+            std::fs::remove_file(entry.path()).unwrap();
+        }
+    }
+    let (reused, output) = build_once();
+    assert!(
+        reused.is_empty(),
+        "the objects were gone and {reused:?} was reused anyway"
+    );
+    assert_eq!(output, "18\n");
+
+    let _ = std::fs::remove_dir_all(&directory);
+}

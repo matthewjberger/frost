@@ -196,6 +196,26 @@ bench-scaling:
     python bench/generate.py bench/generated | Out-Null
     Get-ChildItem bench/generated/*.frost | ForEach-Object { $lines = (Get-Content $_ | Measure-Object -Line).Lines; $front = (Measure-Command { ./target/release/frost.exe --emit-c -o "$env:TEMP/bench.c" $_.FullName }).TotalMilliseconds; $native = (Measure-Command { ./target/release/frost.exe --native -o "$env:TEMP/bench.o" $_.FullName }).TotalMilliseconds; "{0,-24} {1,7} lines  front end {2,7:N0} ms  native {3,7:N0} ms" -f $_.BaseName, $lines, $front, $native }
 
+# Measures what --incremental saves on a program spread over modules (Unix)
+[unix]
+bench-incremental:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -r -q -p frost --bin frost
+    python3 bench/generate.py bench/generated > /dev/null
+    rm -rf /tmp/frost-bench-build
+    echo "full:"; time ./target/release/frost --link -o /tmp/bench.exe bench/generated/modules.frost
+    ./target/release/frost --link --incremental --build-dir /tmp/frost-bench-build -o /tmp/bench.exe bench/generated/modules.frost > /dev/null
+    echo "incremental:"; time ./target/release/frost --link --incremental --build-dir /tmp/frost-bench-build -o /tmp/bench.exe bench/generated/modules.frost
+
+# Measures what --incremental saves on a program spread over modules (Windows)
+[windows]
+bench-incremental:
+    cargo build -r -q -p frost --bin frost
+    python bench/generate.py bench/generated | Out-Null
+    Remove-Item -Recurse -Force "$env:TEMP/frost-bench-build" -ErrorAction Ignore
+    $full = (Measure-Command { ./target/release/frost.exe --link -o "$env:TEMP/bench.exe" bench/generated/modules.frost }).TotalMilliseconds; ./target/release/frost.exe --link --incremental --build-dir "$env:TEMP/frost-bench-build" -o "$env:TEMP/bench.exe" bench/generated/modules.frost | Out-Null; $again = (Measure-Command { ./target/release/frost.exe --link --incremental --build-dir "$env:TEMP/frost-bench-build" -o "$env:TEMP/bench.exe" bench/generated/modules.frost }).TotalMilliseconds; "{0,-14} {1,7:N0} ms" -f "full", $full; "{0,-14} {1,7:N0} ms" -f "incremental", $again
+
 # Runs all tests
 test:
     cargo test -p frost -- --nocapture
