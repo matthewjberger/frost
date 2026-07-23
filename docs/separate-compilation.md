@@ -274,10 +274,11 @@ rather than after.
 
 ## Open questions
 
-- **Does the self-hosted compiler grow this too?** `bootstrap/frost.frost` has no
-  incremental or separate compilation either. The reference compiler is the one
-  under a speed promise, and the self-hosted one is under a self-hosting promise,
-  so the answer is probably no. Worth deciding rather than drifting into.
+- **Does the self-hosted compiler grow this too?** *Decided: no.* The reference
+  compiler is under a speed promise and the self-hosted one is under a
+  self-hosting promise, and there is nothing for separate compilation to bound
+  in a single file that compiles itself in about 35 ms. The reasoning, and the
+  two things that would reopen it, are in [self-hosting.md](self-hosting.md).
 - **What is a project root?** *Settled, smallest answer.* The directory of the
   file named on the command line. A manifest would make it robust and nothing
   needs one yet. Note what this costs: the same library imported from two
