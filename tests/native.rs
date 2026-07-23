@@ -5905,3 +5905,48 @@ fn a_failing_test_does_not_hide_the_ones_after_it() {
     assert!(output.contains("test right ... ok"), "got:\n{output}");
     assert!(output.contains("1 passed, 1 failed"), "got:\n{output}");
 }
+
+// Mixed-width integer arithmetic widens to the wider operand, which the spec
+// has always said and the compiler used to do backwards: an `i64` mixed with a
+// narrower integer took the *narrower* type, so an accumulator fed by string
+// bytes computed at eight bits and silently answered the wrong number. This is
+// the shape that found it, reading a decimal integer out of a `str`.
+#[test]
+fn mixed_width_arithmetic_widens_to_the_wider_operand() {
+    let source = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+to_i64 :: fn(s: str) -> i64 {
+    mut value : i64 = 0
+    mut i : i64 = 0
+    while (i < str_len(s)) {
+        value = value * 10 + (s[i] - 48)
+        i = i + 1
+    }
+    value
+}
+
+main :: fn() -> i64 {
+    printf("%lld\n", to_i64("1234567"))
+
+    text := "7"
+    byte := text[0]
+    mut accumulator : i64 = 1234
+    printf("%lld\n", accumulator * 10 + (byte - 48))
+
+    // A literal still takes the width of what it is combined with, which is
+    // what the backwards rule was there to protect and which still holds.
+    mut small : u8 = 250
+    small = small + 10
+    wide : i64 = small
+    printf("%lld\n", wide)
+    0
+}
+"#;
+    let Some(output) = compile_and_run("mixed_widths", source) else {
+        return;
+    };
+    // 1234567 read a byte at a time, 12347 from the same shape by hand, and
+    // 250 + 10 wrapping at eight bits because both sides really are u8.
+    assert_eq!(output, "1234567\n12347\n4\n");
+}

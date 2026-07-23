@@ -10,6 +10,10 @@ pub type Identifier = String;
 
 pub type Block = Vec<Spanned<Statement>>;
 
+// The prefix a `test` block's generated function carries, so import resolution
+// can recognize one without a second registry to keep in step.
+pub const TEST_PREFIX: &str = "__frost_test_";
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct Spanned<T> {
     pub node: T,
@@ -989,7 +993,7 @@ impl<'a> Parser<'a> {
             }
         };
         let body = self.parse_block()?;
-        let function_name = format!("__frost_test_{}", self.tests.len());
+        let function_name = format!("{TEST_PREFIX}{}", self.tests.len());
         self.tests.push((name, function_name.clone()));
         Ok(Statement::Constant(
             function_name,

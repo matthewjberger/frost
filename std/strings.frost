@@ -1,0 +1,151 @@
+// Operations over `str`, which is a pointer and a length rather than a
+// NUL-terminated buffer, so every one of these is a bounds-checked walk with no
+// allocation anywhere. None of it is compiler magic: `str_len` and `s[i]` are
+// the only primitives, and the rest is ordinary Frost over them.
+//
+// Nothing here returns a new string, because building one needs storage and
+// this module does not decide where a caller's storage comes from. What it
+// offers is answers about strings: are they equal, does one contain another,
+// where is a byte. Building goes through an arena the caller owns.
+
+export str_eq, str_starts_with, str_ends_with, str_index_of, str_contains, str_count, str_is_empty, str_to_i64, str_byte_is_digit, str_byte_is_space
+
+str_is_empty :: fn(s: str) -> bool { str_len(s) == 0 }
+
+str_eq :: fn(a: str, b: str) -> bool {
+    if (str_len(a) != str_len(b)) { return false }
+    mut i : i64 = 0
+    while (i < str_len(a)) {
+        if (a[i] != b[i]) { return false }
+        i = i + 1
+    }
+    true
+}
+
+str_starts_with :: fn(s: str, prefix: str) -> bool {
+    if (str_len(prefix) > str_len(s)) { return false }
+    mut i : i64 = 0
+    while (i < str_len(prefix)) {
+        if (s[i] != prefix[i]) { return false }
+        i = i + 1
+    }
+    true
+}
+
+str_ends_with :: fn(s: str, suffix: str) -> bool {
+    if (str_len(suffix) > str_len(s)) { return false }
+    offset := str_len(s) - str_len(suffix)
+    mut i : i64 = 0
+    while (i < str_len(suffix)) {
+        if (s[offset + i] != suffix[i]) { return false }
+        i = i + 1
+    }
+    true
+}
+
+// The index of the first occurrence, or -1. An out-of-band answer rather than
+// an optional, because a caller almost always compares it to -1 immediately and
+// an enum here would cost a match at every call for nothing.
+str_index_of :: fn(s: str, needle: str) -> i64 {
+    if (str_len(needle) == 0) { return 0 }
+    if (str_len(needle) > str_len(s)) { return 0 - 1 }
+    last := str_len(s) - str_len(needle)
+    mut start : i64 = 0
+    while (start <= last) {
+        mut i : i64 = 0
+        mut same := true
+        while (i < str_len(needle)) {
+            if (s[start + i] != needle[i]) { same = false  i = str_len(needle) }
+            else { i = i + 1 }
+        }
+        if (same) { return start }
+        start = start + 1
+    }
+    0 - 1
+}
+
+str_contains :: fn(s: str, needle: str) -> bool {
+    str_index_of(s, needle) >= 0
+}
+
+str_count :: fn(s: str, byte: i64) -> i64 {
+    mut found : i64 = 0
+    mut i : i64 = 0
+    while (i < str_len(s)) {
+        if (s[i] == byte) { found = found + 1 }
+        i = i + 1
+    }
+    found
+}
+
+str_byte_is_digit :: fn(byte: i64) -> bool { byte >= 48 && byte <= 57 }
+
+str_byte_is_space :: fn(byte: i64) -> bool {
+    byte == 32 || byte == 9 || byte == 10 || byte == 13
+}
+
+// Reads a decimal integer, with an optional leading `-`. Answers 0 for anything
+// it cannot read, which is the same thing C's `atoi` does and is worth knowing
+// about: this does not distinguish "0" from "not a number". A caller that needs
+// the difference checks the bytes first.
+str_to_i64 :: fn(s: str) -> i64 {
+    mut i : i64 = 0
+    mut negative := false
+    if (str_len(s) > 0 && s[0] == 45) { negative = true  i = 1 }
+    mut value : i64 = 0
+    while (i < str_len(s)) {
+        if (str_byte_is_digit(s[i]) == false) { return 0 }
+        value = value * 10 + (s[i] - 48)
+        i = i + 1
+    }
+    if (negative) { 0 - value } else { value }
+}
+
+test "equality compares bytes and length" {
+    assert(str_eq("abc", "abc"))
+    assert(str_eq("", ""))
+    assert(str_eq("abc", "abd") == false)
+    assert(str_eq("ab", "abc") == false)
+}
+
+test "prefixes and suffixes" {
+    assert(str_starts_with("hello world", "hello"))
+    assert(str_starts_with("hello", "hello"))
+    assert(str_starts_with("hi", "hello") == false)
+    assert(str_ends_with("hello world", "world"))
+    assert(str_ends_with("hello", "lo"))
+    assert(str_ends_with("lo", "hello") == false)
+}
+
+test "searching" {
+    assert(str_index_of("hello world", "world") == 6)
+    assert(str_index_of("hello", "h") == 0)
+    assert(str_index_of("hello", "z") == 0 - 1)
+    assert(str_index_of("hello", "") == 0)
+    assert(str_index_of("ab", "abc") == 0 - 1)
+    assert(str_contains("hello world", "lo w"))
+    assert(str_contains("hello", "world") == false)
+}
+
+test "counting and emptiness" {
+    assert(str_count("banana", 97) == 3)
+    assert(str_count("banana", 122) == 0)
+    assert(str_is_empty(""))
+    assert(str_is_empty("a") == false)
+}
+
+test "reading an integer" {
+    assert(str_to_i64("0") == 0)
+    assert(str_to_i64("42") == 42)
+    assert(str_to_i64("-7") == 0 - 7)
+    assert(str_to_i64("1234567") == 1234567)
+    assert(str_to_i64("12a") == 0)
+}
+
+test "byte classes" {
+    assert(str_byte_is_digit(48))
+    assert(str_byte_is_digit(57))
+    assert(str_byte_is_digit(58) == false)
+    assert(str_byte_is_space(32))
+    assert(str_byte_is_space(65) == false)
+}

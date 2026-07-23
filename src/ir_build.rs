@@ -5536,13 +5536,28 @@ fn needs_cast(from: &Type, to: &Type) -> bool {
         || (matches!(from, Type::F32 | Type::F64) && is_integer(to))
 }
 
+// The type a binary operation is computed at. Spec 3.1: the narrower operand
+// widens to the wider.
+//
+// This used to say that `i64` mixed with any other integer yields the *other*
+// type, which is the opposite, and it silently truncated: `value * 10 + digit`
+// with an `i64` accumulator and a `u8` digit computed the whole thing at eight
+// bits, so reading "1234567" out of a string answered 135. The rule was there to
+// keep an untyped literal from dragging a narrow value up to `i64`, and it is
+// not needed for that: the right operand is lowered with the left's type as its
+// expectation, so a literal has already taken the other side's width by the time
+// this runs.
 fn unify(left: &Type, right: &Type) -> Type {
     if left == right {
         return left.clone();
     }
     match (left, right) {
-        (Type::I64, other) | (other, Type::I64) if is_integer(other) => {
-            other.clone()
+        (wide, narrow) | (narrow, wide)
+            if is_integer(wide)
+                && is_integer(narrow)
+                && wide.size_of() > narrow.size_of() =>
+        {
+            wide.clone()
         }
         (Type::F64, Type::F32) | (Type::F32, Type::F64) => Type::F64,
         (Type::Unknown, other) | (other, Type::Unknown) => other.clone(),

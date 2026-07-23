@@ -13,7 +13,7 @@ use crate::lexer::Lexer;
 use crate::parser::Parser;
 use crate::parser::{
     Block, Expression, Parameter, Pattern, ReturnKind, ReturnSignature,
-    Spanned, Statement, SwitchCase,
+    Spanned, Statement, SwitchCase, TEST_PREFIX,
 };
 use crate::types::Type;
 
@@ -45,6 +45,28 @@ impl SearchRoot {
             directory,
         }
     }
+}
+
+// A test block lowers to a function, and a test's body calls `assert`, which
+// only exists when the test harness declares it. So an imported module's tests
+// have to be dropped rather than spliced: otherwise a library with tests breaks
+// every program that imports it, and `--test` on a program would run its
+// dependencies' tests as well as its own.
+//
+// `--test <file>` runs that file's tests. `--test <directory>` runs everything
+// under it, one file at a time.
+fn without_tests(
+    statements: Vec<Spanned<Statement>>,
+) -> Vec<Spanned<Statement>> {
+    statements
+        .into_iter()
+        .filter(|statement| {
+            !matches!(
+                &statement.node,
+                Statement::Constant(name, _) if name.contains(TEST_PREFIX)
+            )
+        })
+        .collect()
 }
 
 // Where an import was found: the file itself, and the identity to give it.
@@ -574,11 +596,10 @@ impl Walk<'_> {
         self.resolved
             .linear_types
             .extend(parsed.linear_types.iter().cloned());
-        self.resolved.tests.extend(parsed.tests.iter().cloned());
 
         let exports: HashSet<String> = parsed.exports.iter().cloned().collect();
         let tag = module_tag_of(module_name);
-        let mut statements = parsed.statements;
+        let mut statements = without_tests(parsed.statements);
 
         // Steps 2 and 4 of docs/separate-compilation.md. The interface is
         // derived at the one place a module is parsed, which is what keeps it
