@@ -4,8 +4,8 @@ This is the design and the record of building it. It is item 3 in
 [roadmap.md](roadmap.md), and the same method that produced
 [separate-compilation.md](separate-compilation.md) is used here: work the design
 against the code that exists until it either survives or does not, before
-writing any of it. Steps 1 and 2 of the five at the bottom are built, which is
-everything up to but not including emitting code; the rest is design.
+writing any of it. All five steps at the bottom are built, and a Frost handler
+with a Frost context now runs through a real C callback API.
 
 ## The contradiction it exists to remove
 
@@ -46,11 +46,14 @@ on_event :: fn(mut ctx: Ctx, code: i64) { ctx.hits = ctx.hits + code }
 register :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64
 ```
 
-The compiler emits a trampoline per `(handler, context type)` pair with the C ABI
-the library expects, and that trampoline is the only code that casts the `^u8`
-back to `^Ctx`. The cast still happens, because C requires it, but it is
-generated once per instantiation inside code nobody writes, rather than appearing
-at every call site in code everybody reads.
+The design assumed the compiler would emit a trampoline per
+`(handler, context type)` pair, holding the one cast from the untyped userdata
+back to `^Ctx` so that nobody has to write it. **Building it showed the cast does
+not have to happen at all.** A `mut` parameter is already a pointer in the
+signature, and Frost and C share a calling convention, so `on_event` compiled for
+Frost *is* the `void (*)(void*, int64_t)` the library wants. What the compiler
+does at a registration is pass the handler's address and the context's address.
+There is no generated code and no cast anywhere in the program.
 
 ## Three questions the roadmap left, and the answers
 
@@ -219,34 +222,59 @@ both self-hosting fixpoints, in the way the separate-compilation steps were.
    which is steps 3 and 4. Emptying the registration table makes the first of
    those stop failing, which is the confirmation that the check is what catches
    it rather than something downstream.
-3. **Emit the trampoline.** One function per `(handler, context type)` pair, with
-   `IrFunction::local` set, since it is called only from the object that
-   registered it, exactly as a specialization is. Its body is one `ptr_cast` and
-   one call. The naming and the dedup are the same worklist that specializations
-   already use in `src/ir_build.rs`.
-4. **Lower the call.** The `$handler` argument becomes
-   `IrRvalue::FunctionAddress` of the trampoline; the context argument becomes a
-   pointer to its storage. Everything else about the extern call is unchanged.
-5. **Run one.** Bind a real C callback API and register against it, because
-   every step above is checkable without a library and none of them proves the
-   ABI is right. Whatever this finds is the part of the design that was never
-   tested against C, and the emitted trampoline is where it will show up.
+3. **Emit the trampoline.** *There is no trampoline, and finding that out is the
+   whole of this step.* The plan was one function per `(handler, context type)`
+   pair holding the one `ptr_cast` nobody should have to write. But the
+   handler's context parameter is `mut`, so it is already a pointer in the
+   signature, and a Frost function and a C function use the same calling
+   convention. `on_event` compiled for Frost is bit for bit the
+   `void (*)(void*, int64_t)` the library wants. The cast the design set out to
+   hide inside generated code does not exist, so there is nothing to generate
+   and nothing to dedup.
+4. **Lower the call.** *Done.* The `$handler` argument becomes
+   `IrRvalue::FunctionAddress` of the handler itself, and the context argument
+   becomes its address. An extern's C-facing parameter types are computed in
+   `extern_parameter_types` in `src/ir_build.rs`, since a registration's C
+   signature is not what its Frost declaration says literally. Everything else
+   about the extern call is unchanged, on both backends.
+5. **Run one.** *Done.* `a_callback_registered_with_a_c_library_runs` compiles a
+   small C library that stores a `(callback, userdata)` pair and calls it back
+   later, links it, and registers a Frost handler with a Frost context against
+   it. The handler runs, writes the Frost struct through the pointer the library
+   kept, and the library reads the updated value back out. That is the claim in
+   step 3 being true rather than argued: if the ABI did not line up, this is
+   where it would crash.
 
-Steps 1 and 2 are parsing and a check and landed before anything is emitted,
+Steps 1 and 2 are parsing and a check and landed before anything was emitted,
 which is the order that let the safety rule be found to be wrong while it was
 still cheap to change.
 
 ## What is still open
 
+- **How the caller gets its context back, and it is the big one.** The context
+  goes in by `move`, so the name it was bound to is dead to `check_ownership`
+  for the rest of the function, and the callback's updates are written into that
+  exact storage. So the caller cannot read what its own callback did. The C
+  library in the end-to-end test reads the value back out, which proves the ABI
+  but is not a program anyone wants to write.
+
+  The roadmap's sketch had `unregister :: fn(move r: Registration) -> Ctx`, and
+  that does not work as written: a `Registration` holding a `Ctx` field holds a
+  copy, and the copy is not the storage the library wrote through. The answer is
+  probably that unregistration is a recognized form the way registration is, and
+  gives the context back by name rather than by value. Nothing here is blocked
+  on it: the callback runs and the safety rules hold. But the feature is not
+  finished until a program can read its own context.
 - **What `token` holds** for a library whose unregister takes something other
-  than an integer. The `Registration` above is an ordinary `linear struct` a
-  binding author writes, so it can hold whatever the library hands back, and the
-  only real question is whether the compiler needs to know anything about it at
-  all. On the design above it does not, which is the answer this document
-  prefers, but no binding has been written against it yet.
-- **Whether a pool context is worth supporting in the first version.** An arena
-  context is the smaller case and covers a registration whose life is a scope. A
-  `Handle<T>` context covers one whose life is not, and it is not obvious yet
+  than an integer. The `Registration` in the end-to-end test is an ordinary
+  `linear struct` a binding author writes and the compiler knows nothing about
+  it, which is the answer this document prefers and which held up for a library
+  returning an integer. A library that hands back a pointer or a struct has not
+  been tried.
+- **Whether a context that outlives its frame is worth supporting.** Everything
+  here confines the registration to the frame that holds the context, which
+  covers a registration whose life is a scope and not one whose life is not. A
+  pool's `Handle<T>` is the obvious way to lift that, and it is not obvious yet
   that any binding wants it.
 - **Reentrancy.** Nothing here stops a callback from calling back into code that
   reaches the same context. Moving the context in means no *Frost* code holds it,

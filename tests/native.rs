@@ -5070,3 +5070,101 @@ fn registering_and_unregistering_in_one_frame_is_allowed() {
         );
     }
 }
+
+// docs/callbacks.md, step 5: bind a real C callback API and register against
+// it, because every earlier step is checkable without a library and none of
+// them proves the ABI. The library here is the smallest one that is still the
+// real shape, `(callback, userdata)` stored and called back later, compiled by
+// the C compiler and linked in.
+//
+// What this settles is the finding that made step 3 disappear. A `mut`
+// parameter is already a pointer in the signature and Frost and C share a
+// calling convention, so the handler compiled for Frost *is* the
+// `void (*)(void*, int64_t)` the library wants, and there is no trampoline and
+// no cast anywhere. If that were wrong, this is where it would crash.
+#[test]
+fn a_callback_registered_with_a_c_library_runs() {
+    let Some(compiler) = c_compiler() else {
+        return;
+    };
+    let directory = std::env::temp_dir().join("frost_callback_abi");
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+
+    let library_source = directory.join("events.c");
+    std::fs::write(
+        &library_source,
+        "#include <stdint.h>\n\
+         static void (*held)(void*, int64_t);\n\
+         static void* held_context;\n\
+         int64_t register_handler(void (*handler)(void*, int64_t), void* context) {\n\
+         \x20   held = handler;\n\
+         \x20   held_context = context;\n\
+         \x20   return 77;\n\
+         }\n\
+         void pump(int64_t code) { held(held_context, code); }\n\
+         int64_t peek(void) { return *(int64_t*)held_context; }\n",
+    )
+    .unwrap();
+    let library = directory.join("events.o");
+    let built = Command::new(compiler)
+        .arg("-c")
+        .arg(&library_source)
+        .arg("-o")
+        .arg(&library)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "the C library did not compile:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+
+    let root = directory.join("events.frost");
+    std::fs::write(
+        &root,
+        "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
+         pump :: extern fn(code: i64)\n\
+         peek :: extern fn() -> i64\n\
+         Ctx :: struct { hits: i64 }\n\
+         Registration :: linear struct { token: i64 }\n\
+         on_event :: fn(mut ctx: Ctx, code: i64) { ctx.hits = ctx.hits + code }\n\
+         register_handler :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64\n\
+         unregister :: fn(move r: Registration) -> i64 { r.token }\n\
+         main :: fn() -> i64 {\n\
+         \x20   c := Ctx { hits = 0 }\n\
+         \x20   r := Registration { token = register_handler($on_event, c) }\n\
+         \x20   pump(4)\n\
+         \x20   pump(5)\n\
+         \x20   printf(\"%lld\n\", peek())\n\
+         \x20   printf(\"%lld\n\", unregister(r))\n\
+         \x20   0\n\
+         }\n",
+    )
+    .unwrap();
+
+    let exe = directory.join(format!("events{}", std::env::consts::EXE_SUFFIX));
+    let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--link")
+        .arg("--libs")
+        .arg(&library)
+        .arg("-o")
+        .arg(&exe)
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "the callback program did not build:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+
+    let ran = Command::new(&exe).output().unwrap();
+    let output = String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n");
+    let _ = std::fs::remove_dir_all(&directory);
+    // 4 then 5 through the callback, read back by the library out of the Frost
+    // struct it was handed, then the token the library returned. The context is
+    // read by the library rather than by Frost because it was moved in, and
+    // getting it back is the open question at the end of docs/callbacks.md.
+    assert_eq!(output, "9\n77\n");
+}

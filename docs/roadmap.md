@@ -197,11 +197,20 @@ to build it in. Three things it settles and one it found:
   construction. What was left to stop is the registration leaving that function,
   which is the same three roads `src/regions.rs` already closes for pointers.
 
-**Steps 1 and 2 are built**, which is everything up to emitting code. Externs
-take modes and compile-time parameters, `src/callbacks.rs` checks the
-declaration, and a registration that outlives its context's frame is rejected.
-What is left is the trampoline, the call lowering, and binding a real C library,
-which is the only step that proves the ABI.
+**All five steps are built**, and a Frost handler with a Frost context runs
+through a real C callback API, on both backends, checked by linking a small C
+library that stores the pair and calls it back later.
+
+**The trampoline turned out not to exist**, which is the largest thing building
+it changed. A `mut` parameter is already a pointer in the signature and Frost
+and C share a calling convention, so a Frost handler *is* the
+`void (*)(void*, ...)` the library wants. The cast the whole design set out to
+hide inside generated code never has to happen, so there is no generated code.
+
+**What is not finished** is that a caller cannot read its own context: it goes
+in by `move`, so the name is dead for the rest of the function, and the callback
+writes that exact storage. Giving it back is the open question at the end of
+[callbacks.md](callbacks.md), and nothing else is blocked on it.
 
 ## 1. Parallel code generation (done)
 
