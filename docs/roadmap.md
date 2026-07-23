@@ -394,10 +394,13 @@ Passing a struct to C by value has no spelling.
   compiler**, now three times over rather than twice since concrete return types
   are computed for both backends. Parse the template to AST once and substitute.
   Listed as second-order lever 2 in [self-hosting.md](self-hosting.md).
-- **An IR type error points into the generic's body rather than at the call
-  site.** It carries a line and column now, but the line it names is inside code
-  the reader did not write. Item 2 fixes the common case by catching it at the
-  call instead.
+- ~~An IR type error points into the generic's body rather than at the call
+  site.~~ *Fixed.* A specialization carries the call that asked for it and the
+  name the reader wrote, so the diagnostic reads
+  `app.frost:5:5: instantiating 'add<Point>': lib/g.frost:2:41: ...`: the line
+  they wrote first, the template position behind it for whoever owns the
+  generic, and no mangled symbol anywhere. The entry file is registered in the
+  source map too, so every position now names a file rather than a bare line.
 - **The self-hosted compiler has no incremental or separate compilation
   either**, and item 1's design should say whether it is expected to grow one or
   whether the reference compiler is the only one that does.

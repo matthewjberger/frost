@@ -785,6 +785,7 @@ mod tests {
                 entry: 0,
                 module: 0,
                 local: false,
+                instantiated: None,
             }],
         };
         match run_module(&module) {
@@ -818,6 +819,7 @@ mod tests {
                 entry: 0,
                 module: 0,
                 local: false,
+                instantiated: None,
             }],
         };
         assert!(matches!(run_module(&module), RunOutcome::Unsupported(_)));

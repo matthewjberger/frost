@@ -63,9 +63,14 @@ is undone in diagnostics by `demangle_private_names`, which lives next to the
 code that applies it.
 
 Positions carry a file id into `src/source_map.rs`, stamped during import
-resolution, which is the only place that knows which file a position belongs to.
-Without it a diagnostic from an imported module would name a line number in a
-flattened program that matches no file the reader has open.
+resolution and, for the entry file, by the driver. Without it a diagnostic from
+an imported module would name a line number in a flattened program that matches
+no file the reader has open.
+
+A specialization additionally carries the call that asked for it and the name
+the reader wrote, so an error inside a stamped-out body leads with the line they
+wrote rather than a line in a template they may not own, and never shows a
+mangled symbol.
 
 `src/interface.rs` derives what a caller would need to compile against a module
 without seeing the rest of it, and checks it. The checks run under

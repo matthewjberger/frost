@@ -283,17 +283,32 @@ fn build_module_inner(
                     .collect(),
             };
             let body = substitute_block(&generic.body, &specialization.subst);
-            let (function, requests, anon) = builder.lower_function(
-                &specialization.mangled_name,
-                &parameters,
-                &return_sig,
-                &body,
+            let (function, requests, anon) = locate_instantiation(
+                builder.lower_function(
+                    &specialization.mangled_name,
+                    &parameters,
+                    &return_sig,
+                    &body,
+                ),
+                &specialization,
             )?;
-            functions
-                .push(local_to_module(function, specialization.requested_by));
+            let function =
+                local_to_module(function, specialization.requested_by);
+            functions.push(IrFunction {
+                instantiated: Some(crate::ir::Instantiation {
+                    name: specialization.display.clone(),
+                    at: specialization.requested_at,
+                }),
+                ..function
+            });
             // A generic that instantiates another generic is still work the
-            // asking module would have to do, so the attribution carries down.
-            pending.extend(requested_by(requests, specialization.requested_by));
+            // asking module would have to do, so the attribution carries down,
+            // and so does the call site: the inner call was written inside a
+            // template, and the line the reader wrote is the outer one.
+            pending.extend(requested_at(
+                requested_by(requests, specialization.requested_by),
+                specialization.requested_at,
+            ));
             pending_anon
                 .extend(anon_requested_by(anon, specialization.requested_by));
         } else if let Some(request) = pending_anon.pop() {
@@ -350,6 +365,7 @@ fn declared_function(
         locals,
         blocks: Vec::new(),
         entry: 0,
+        instantiated: None,
         module: 0,
         local: false,
     }
@@ -389,6 +405,44 @@ fn local_to_module(function: IrFunction, module: u32) -> IrFunction {
         local: true,
         ..function
     }
+}
+
+// A specialization asked for from inside another one was written in a template,
+// so it inherits the call site of the outer one, which is a line the reader
+// wrote.
+fn requested_at(
+    requests: Vec<Specialization>,
+    position: Position,
+) -> Vec<Specialization> {
+    requests
+        .into_iter()
+        .map(|request| Specialization {
+            requested_at: position,
+            ..request
+        })
+        .collect()
+}
+
+// A lowering error from inside a stamped-out body names a line in the template.
+// The call that asked for the specialization goes first, because that is the
+// line the reader wrote and the one they can change.
+fn locate_instantiation<T>(
+    result: Result<T>,
+    specialization: &Specialization,
+) -> Result<T> {
+    result.map_err(|error| {
+        let text = crate::imports::demangle_private_names(&error.to_string());
+        let display =
+            crate::imports::demangle_private_names(&specialization.display);
+        if specialization.requested_at == Position::default() {
+            anyhow::anyhow!("instantiating '{display}': {text}")
+        } else {
+            anyhow::anyhow!(
+                "at {}: instantiating '{display}': {text}",
+                specialization.requested_at.describe()
+            )
+        }
+    })
 }
 
 fn requested_by(
@@ -577,6 +631,7 @@ impl IrBuilder {
                 locals,
                 blocks,
                 entry: 0,
+                instantiated: None,
                 // Stamped by the caller, which is the only place that knows
                 // whether this is a module's own function or a specialization
                 // some other module asked for.
@@ -762,6 +817,11 @@ struct Specialization {
     // module its own copy of a specialization it instantiates, and whether that
     // duplication is worth caring about is a measurement, not an opinion.
     requested_by: u32,
+    // Where the call that asked for this one was written, and how it reads
+    // there. A diagnostic from inside the stamped-out body names a line in the
+    // template; this is the line the reader actually wrote.
+    requested_at: Position,
+    display: String,
 }
 
 fn function_type_params(parameters: &[Parameter]) -> Vec<String> {
@@ -1046,6 +1106,26 @@ fn mangle_type(ty: &Type) -> String {
         Type::ConstFn(name) => sanitize_identifier(name),
         other => format!("{other}"),
     }
+}
+
+// `add<Point>`: the specialization named the way the reader wrote the call,
+// rather than the mangled symbol, which is a compiler artifact.
+fn describe_specialization(
+    name: &str,
+    type_params: &[String],
+    subst: &HashMap<String, Type>,
+) -> String {
+    if type_params.is_empty() {
+        return name.to_string();
+    }
+    let arguments: Vec<String> = type_params
+        .iter()
+        .map(|type_param| match subst.get(type_param) {
+            Some(concrete) => concrete.to_string(),
+            None => type_param.clone(),
+        })
+        .collect();
+    format!("{name}<{}>", arguments.join(", "))
 }
 
 fn mangle_specialization(
@@ -3206,6 +3286,12 @@ impl<'a> FunctionLowering<'a> {
         self.specializations.push(Specialization {
             generic_name: name.to_string(),
             mangled_name: mangled_name.clone(),
+            requested_at: self.current_position,
+            display: describe_specialization(
+                name,
+                &generic.type_params,
+                &subst,
+            ),
             subst,
             // Stamped by whoever drains these, which is the only place that
             // knows which module's lowering produced them.

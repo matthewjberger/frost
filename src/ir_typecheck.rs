@@ -40,9 +40,37 @@ pub fn check_module(module: &IrModule) -> Result<()> {
         );
     }
     for function in &module.functions {
-        check_function(function, &signatures)?;
+        locate_instantiation(check_function(function, &signatures), function)?;
     }
     Ok(())
+}
+
+// A type error inside a specialization names a line in the template, which is
+// code the reader never wrote. The call that asked for the specialization is
+// what they did write, so it goes first and the template position stays behind
+// it for whoever maintains the generic.
+fn locate_instantiation<T>(
+    result: Result<T>,
+    function: &IrFunction,
+) -> Result<T> {
+    let Some(instantiated) = &function.instantiated else {
+        return result;
+    };
+    result.map_err(|error| {
+        let text = crate::imports::demangle_private_names(&error.to_string());
+        let name = crate::imports::demangle_private_names(&instantiated.name);
+        // The mangled symbol is a compiler artifact, so where the inner message
+        // names it, say what the reader wrote instead.
+        let text = text.replace(&function.name, &name);
+        if instantiated.at == crate::lexer::Position::default() {
+            anyhow::anyhow!("instantiating '{name}': {text}")
+        } else {
+            anyhow::anyhow!(
+                "at {}: instantiating '{name}': {text}",
+                instantiated.at.describe()
+            )
+        }
+    })
 }
 
 fn check_function(
@@ -394,6 +422,7 @@ mod tests {
                 entry: 0,
                 module: 0,
                 local: false,
+                instantiated: None,
             }],
         }
     }

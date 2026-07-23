@@ -125,7 +125,7 @@ main :: fn() -> i64 {
 "#;
     let message = compile_error("uam", source);
     assert!(
-        message.contains("at line 9,"),
+        message.contains(":9:"),
         "expected the moved-value error at line 9, got:\n{message}"
     );
     assert!(message.contains("use of moved value"), "got:\n{message}");
@@ -141,7 +141,7 @@ main :: fn() -> i64 {
 "#;
     let message = compile_error("unknownfn", source);
     assert!(
-        message.contains("at line 3,"),
+        message.contains(":3:"),
         "expected the unknown-variable error at line 3, got:\n{message}"
     );
 }
@@ -159,7 +159,7 @@ main :: fn() -> i64 {
 "#;
     let message = compile_error("exclusivity", source);
     assert!(
-        message.contains("at line 6,"),
+        message.contains(":6:"),
         "expected the exclusivity error at line 6, got:\n{message}"
     );
 }
@@ -178,7 +178,7 @@ main :: fn() -> i64 {
 "#;
     let message = compile_error("linear", source);
     assert!(
-        message.contains("at line"),
+        message.contains(".frost:"),
         "expected a located linear error, got:\n{message}"
     );
     assert!(
@@ -5432,4 +5432,66 @@ fn an_enum_returned_from_c_comes_back_correctly() {
     }
 
     let _ = std::fs::remove_dir_all(&directory);
+}
+
+// A type error inside a specialization used to name a line in the generic's
+// body, which is code the reader never wrote and often in a file they do not
+// own. The call that asked for the specialization is the line they did write,
+// so it comes first, and the specialization is named the way they wrote it
+// rather than by its mangled symbol.
+#[test]
+fn an_error_inside_a_specialization_names_the_call() {
+    let directory = std::env::temp_dir().join("frost_generic_diagnostic");
+    let library = directory.join("lib");
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&library).unwrap();
+    std::fs::write(
+        library.join("g.frost"),
+        "export add\n\
+         add :: fn($T: Type, move a: $T) -> $T { a + a }\n",
+    )
+    .unwrap();
+    let root = directory.join("generic_diagnostic_app.frost");
+    std::fs::write(
+        &root,
+        "import \"lib/g.frost\"\n\
+         Point :: struct { x: i64 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   p := Point { x = 1 }\n\
+         \x20   q := add($Point, p)\n\
+         \x20   0\n\
+         }\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--emit-c")
+        .arg("-o")
+        .arg(directory.join("out.c"))
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(!output.status.success(), "the bad instantiation compiled");
+    let message = String::from_utf8_lossy(&output.stderr).to_string();
+    let _ = std::fs::remove_dir_all(&directory);
+
+    // The call, first.
+    assert!(
+        message.contains("generic_diagnostic_app.frost:5:5"),
+        "the error did not name the call site:\n{message}"
+    );
+    // Named the way it was written, not as `add__Point`.
+    assert!(
+        message.contains("instantiating 'add<Point>'"),
+        "the error did not name the instantiation:\n{message}"
+    );
+    assert!(
+        !message.contains("add__Point"),
+        "a mangled name reached the reader:\n{message}"
+    );
+    // And the template position is still there for whoever owns the generic.
+    assert!(
+        message.contains("lib/g.frost:2:"),
+        "the error lost the template position:\n{message}"
+    );
 }
