@@ -1289,6 +1289,28 @@ fn self_hosted_rejects(name: &str, source: &str) -> Option<String> {
     Some(String::from_utf8_lossy(&run.stderr).to_string())
 }
 
+// A diagnostic names the file, the line and the column it is about, not just
+// what went wrong. Every file's text is laid into one buffer, so the line has
+// to be counted from where that file's own text begins.
+#[test]
+fn self_hosted_errors_name_a_position() {
+    let source = "Point :: struct { x: i64, y: i64 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   p := Point { x = 1, y = 2 }\n\
+         \x20   print p.z\n    0\n}\n";
+    let Some(message) = self_hosted_rejects("position", source) else {
+        return;
+    };
+    assert!(
+        message.contains(":4:13: struct 'Point' has no field 'z'"),
+        "expected a file, line and column, got:\n{message}"
+    );
+    assert!(
+        message.contains("frost_mfck_input_position.frost:"),
+        "expected the file it came from, got:\n{message}"
+    );
+}
+
 #[test]
 fn self_hosted_rejects_a_call_to_an_undefined_function() {
     let source = "main :: fn() -> i64 {\n    return no_such_fn(1)\n}\n";

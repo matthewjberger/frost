@@ -672,7 +672,8 @@ emit_asm_struct_lit :: fn(mut p: Parser, id: i64) {
 emit_asm_capability :: fn(mut p: Parser, fn_index: i64) {
     if (p.prov_kind == PROVIDER_NONE) {
         sym : ^Sym = arena_at(p.fns, fn_index)
-        frost_error("frost: calling '")
+        report_where(p.modules, p.src, sym^.off)
+        frost_error("calling '")
         frost_error_src(p.src, sym^.off, sym^.len)
         frost_error("' needs an allocation capability, so declare `uses` on ")
         frost_error("the caller or wrap the call in a `with` block")

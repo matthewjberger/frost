@@ -2,6 +2,7 @@
 // came from, across calls as well as within one.
 
 import "core.frost"
+import "imports.frost"
 import "names.frost"
 import "emit_asm.frost"
 
@@ -118,7 +119,8 @@ region_pointer :: fn(mut p: Parser, id: i64) -> bool {
 }
 
 region_escape :: fn(mut p: Parser, how: ^i8) {
-    frost_error("frost: a pointer into arena '")
+    report_where(p.modules, p.src, p.region_off)
+    frost_error("a pointer into arena '")
     frost_error_src(p.src, p.region_off, p.region_len)
     frost_error("' escapes its region by ")
     frost_error(how)
@@ -236,7 +238,8 @@ check_calls :: fn(mut p: Parser) {
             name_len := sym^.len
             params := sym^.params
             if (defined == 0) {
-                frost_error("frost: call to undefined function '")
+                report_where(p.modules, p.src, node^.pos)
+                frost_error("call to undefined function '")
                 frost_error_src(p.src, name_off, name_len)
                 frost_error("'")
                 frost_die()
@@ -249,7 +252,8 @@ check_calls :: fn(mut p: Parser) {
             }
             got := count_args(p, args)
             if (expected != got) {
-                frost_error("frost: '")
+                report_where(p.modules, p.src, name_off)
+                frost_error("'")
                 frost_error_src(p.src, name_off, name_len)
                 frost_error("' expects ")
                 frost_error_int(expected)
