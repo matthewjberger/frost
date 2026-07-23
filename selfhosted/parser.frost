@@ -19,6 +19,14 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     if (kind == TOK_INT) {
         return parse_number(p)
     }
+    // A float literal is its byte range, the way a string literal is, since
+    // nothing here has to know what number the digits spell.
+    if (kind == TOK_FLOAT) {
+        offset := cur_off(p)
+        length := cur_len(p)
+        advance(p)
+        return new_named_node(p, NODE_FLOAT, 0, offset, length)
+    }
     if (kind == TOK_KW_TRUE) {
         advance(p)
         return new_node(p, NODE_NUM, 0, 0, 1)

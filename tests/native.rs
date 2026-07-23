@@ -739,6 +739,51 @@ fn self_hosted_integer_widths_through_c() {
     assert_eq!(output, WIDTHS_EXPECTED);
 }
 
+// Floats, which the assembly backend had no registers for at all: arithmetic,
+// comparisons, a call taking and returning one, an f32 field beside an f64 one,
+// and an integer mixed into a float expression.
+const SELF_HOSTED_FLOATS: &str = "scale :: fn(v: f64, by: f64) -> f64 {\n    v * by\n}\n\
+     narrow :: fn(v: f32) -> f32 {\n    v + 0.5\n}\n\
+     Pair :: struct { x: f64, y: f32 }\n\
+     main :: fn() -> i64 {\n\
+     \x20   a := 3.5\n    b := 2.0\n\
+     \x20   print a + b\n    print a - b\n    print a * b\n    print a / b\n\
+     \x20   print scale(a, 4.0)\n\
+     \x20   mut small : f32 = 1.25\n    print small\n    print narrow(small)\n\
+     \x20   print sizeof(Pair)\n\
+     \x20   pr := Pair { x = 9.75, y = 0.5 }\n\
+     \x20   print pr.x\n    print pr.y\n\
+     \x20   if (a > b) { print 1 } else { print 0 }\n\
+     \x20   if (a < b) { print 1 } else { print 0 }\n\
+     \x20   mut n : i64 = 7\n    d := n * 1.0\n    print d / 2.0\n    0\n}\n";
+
+const FLOATS_EXPECTED: &str =
+    "5.5\n1.5\n7\n1.75\n14\n1.25\n1.75\n16\n9.75\n0.5\n1\n0\n3.5\n";
+
+#[test]
+fn self_hosted_floats_natively() {
+    let Some(output) = selfhosted_native_output("floats", SELF_HOSTED_FLOATS)
+    else {
+        return;
+    };
+    assert_eq!(output, FLOATS_EXPECTED);
+}
+
+#[test]
+fn self_hosted_floats_through_c() {
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_selffloats_input.frost");
+    std::fs::write(&input, SELF_HOSTED_FLOATS).unwrap();
+    let Some(c_source) = self_hosted_emits("selffloats", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(output) = compile_c_and_run("selffloats", &c_source) else {
+        return;
+    };
+    assert_eq!(output, FLOATS_EXPECTED);
+}
+
 const CLI_PROGRAM: &str = "fib :: fn(n: i64) -> i64 {\n\
      \x20   if (n < 2) { return n }\n\
      \x20   return fib(n - 1) + fib(n - 2)\n}\n\

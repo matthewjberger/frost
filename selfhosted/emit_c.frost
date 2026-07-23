@@ -85,6 +85,14 @@ emit_ctype :: fn(mut p: Parser, ty: i64) {
         frost_emit_str("unsigned char")
         return
     }
+    if (ty == TY_F64) {
+        frost_emit_str("double")
+        return
+    }
+    if (ty == TY_F32) {
+        frost_emit_str("float")
+        return
+    }
     if (ty == TY_BOOL) {
         frost_emit_str("int64_t")
         return
@@ -138,6 +146,12 @@ emit_expr :: fn(mut p: Parser, id: i64) {
     kind := node^.kind
     if (kind == NODE_NUM) {
         frost_emit_int(node^.val)
+        return
+    }
+    // The digits as written. C reads a decimal literal the same way the source
+    // means it, so nothing here converts one.
+    if (kind == NODE_FLOAT) {
+        emit_source(p.src, node^.val, node^.c)
         return
     }
     if (kind == NODE_VAR) {
@@ -437,7 +451,11 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
     }
     if (kind == NODE_PRINT) {
         value := node^.a
-        frost_emit_str("printf(\"%lld\\n\", (long long)(")
+        if (is_float(type_of(p, value))) {
+            frost_emit_str("printf(\"%g\\n\", (double)(")
+        } else {
+            frost_emit_str("printf(\"%lld\\n\", (long long)(")
+        }
         emit_expr(p, value)
         frost_emit_str("));\n")
         return

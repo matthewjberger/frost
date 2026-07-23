@@ -414,7 +414,7 @@ naming a type parameter would say less than nothing.
 **`selfhosted/frost.frost` is the compiler people will use, and `src/*.rs` is the
 bootstrap that makes writing it possible.** Everything below follows from that.
 The bootstrap compiles stage 0 and is the differential oracle, which is the only
-reason it is ahead; being ahead is a stage of the work rather than a division of
+reason it is ahead. Being ahead is a stage of the work rather than a division of
 labour. See [self-hosting.md](self-hosting.md).
 
 So the target is parity on both axes: the full language, and goal 8's speed. Two
@@ -443,7 +443,7 @@ record_mono_rets -> parse_generic_instance      call_type_arg -> type_of
 type_of          -> call_ret_type               assign_case_values -> type_of
 ```
 
-`record_mono_rets` re-parses a template, so it belongs to the parser; the other
+`record_mono_rets` re-parses a template, so it belongs to the parser. The other
 three are one cycle between typing and monomorphization, so those are one
 `types` module. Two further placements: `cstr_eq` is `core`, and the emitters
 both backends share are `emit`, which is what keeps the assembly backend from
@@ -458,8 +458,8 @@ compiler reproduces *itself*.
 
 The Frost compiler has no command line. It reads `FROST_INPUT`, writes the
 translation unit or the assembly to standard output, and picks its backend out
-of `FROST_BACKEND` and its ABI out of `FROST_ABI`. Nothing links; a caller runs
-the C compiler or the assembler by hand.
+of `FROST_BACKEND` and its ABI out of `FROST_ABI`. Nothing links, so a caller
+runs the C compiler or the assembler by hand.
 
 That is the item nearest the user, which is why it is first after the split. It
 needs: a file argument, `-o`, `--emit-c`, `--native`, `--link`, `-L`,

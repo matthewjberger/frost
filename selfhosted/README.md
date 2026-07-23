@@ -1,8 +1,7 @@
 # The Frost compiler, written in Frost
 
-A compiler for Frost, written in Frost, across thirteen modules. It lexes,
-parses, type-checks, and emits either a C translation unit or x86-64 assembly.
-`frost.frost` is the driver; the rest is named below.
+A compiler for Frost, written in Frost. It lexes, parses, type-checks, and emits
+either a C translation unit or x86-64 assembly. `frost.frost` is the driver.
 
 **This is the compiler Frost is for.** The Rust compiler in `src/` is the
 bootstrap: it compiles stage 0, and it is the differential oracle the tests
