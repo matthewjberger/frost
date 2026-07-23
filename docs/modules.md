@@ -1,12 +1,11 @@
 # Finding a module
 
-`import "x.frost"` used to mean one thing: a file beside the one that wrote the
-import. That is right for a program's own files and useless for a library,
-because there is no way to say "the slab, wherever it is installed" without
-writing `../../std/slab.frost` and hoping.
+`import "x.frost"` names a file. Beside the importing file is the first place
+looked, which is what a program's own files want, and there are four more, so a
+library can be named as "the slab, wherever it is installed" rather than as
+`../../std/slab.frost`.
 
-There are now four more places to look, and one rule about identity that makes
-them safe.
+One rule about identity is what makes the other four safe.
 
 ## The order
 

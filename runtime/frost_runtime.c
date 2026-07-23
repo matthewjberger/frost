@@ -242,6 +242,15 @@ const char *frost_arg_at(int64_t index) {
     return frost_argument_vector()[index];
 }
 
+int64_t frost_file_exists(const char *path) {
+    FILE *file = fopen(path, "rb");
+    if (file == 0) {
+        return 0;
+    }
+    fclose(file);
+    return 1;
+}
+
 int64_t frost_remove_file(const char *path) {
     return remove(path) == 0;
 }

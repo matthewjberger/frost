@@ -35,7 +35,8 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     frost_byte_at, frost_byte_set, frost_die, frost_emit_char, frost_emit_close,
     frost_emit_int, frost_emit_open, frost_emit_str, frost_error,
     frost_error_int, frost_error_src, frost_getenv, frost_is_windows,
-    frost_read_file, frost_remove_file, frost_run_command, frost_str_len, malloc
+    frost_file_exists, frost_read_file, frost_remove_file,
+    frost_run_command, frost_str_len, malloc, SearchRoot, add_root
 
 malloc          :: extern fn(size: i64) -> ^u8
 frost_byte_at   :: extern fn(s: ^i8, i: i64) -> i64
@@ -64,6 +65,7 @@ frost_emit_open   :: extern fn(path: ^i8) -> i64
 frost_emit_close  :: extern fn()
 frost_run_command :: extern fn(command: ^i8) -> i64
 frost_remove_file :: extern fn(path: ^i8) -> i64
+frost_file_exists :: extern fn(path: ^i8) -> i64
 
 // Node kinds.
 NODE_NUM        :: 0
@@ -392,6 +394,11 @@ TestCase :: struct {
     fn_index: i64,
 }
 
+// A directory an import may be found under, after the importing file's own.
+SearchRoot :: struct {
+    path: ^i8,
+}
+
 // A fixed array or a slice. `length` is how many elements a `[N]T` holds, and
 // -1 says this is a `[]T`, which carries its length at run time instead.
 ArrayDef :: struct {
@@ -455,6 +462,13 @@ arena_at :: fn(a: Arena<$T>, id: i64) -> ^T {
         frost_die()
     }
     ptr_to(a.data[id])
+}
+
+// A directory added to the search list. arena_push answers with an index
+// this has no use for, and a branch ending in a value is a branch that
+// produced one, so it is dropped here rather than at every call.
+add_root :: fn(mut roots: Arena<SearchRoot>, directory: ^i8) {
+    arena_push(roots, SearchRoot { path = directory })
 }
 
 Parser :: struct {

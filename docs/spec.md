@@ -235,10 +235,8 @@ too, allowed so a function type can be read beside the declaration it describes.
 
 ### 3.6 Other type forms
 
-There is no built-in optional. `?T` used to be listed here and no backend ever
-implemented it, so it was removed rather than left as a promise. A sum type over
-an arbitrary element is writable in the language now that an enum can be
-generic (3.2), and `Maybe :: enum($T: Type) { Nothing, Just { value: T } }` is
+There is no built-in optional, and none is needed: a generic enum (3.2) writes
+one in the language. `Maybe :: enum($T: Type) { Nothing, Just { value: T } }` is
 that type, with nothing special about it.
 
 - `distinct T` is a nominal type with `T`'s representation, not interchangeable

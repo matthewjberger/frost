@@ -267,25 +267,14 @@ A few honest gaps in the current implementation:
   cover. `check_frame_escapes` narrows the hatch: a raw pointer formed from this
   frame's own storage, including one taken with `ptr_to` or a slice over a local
   array, cannot be returned.
-- **Callbacks used to be an unsafe API** and are no longer, which is worth
-  recording here because it was the one place the implementation contradicted
-  the goal above. A callback is now a compile-time function argument plus a
-  typed context the caller moves in and gets back on unregistration, with the
-  registration `linear` so forgetting to unregister is a compile error, and the
-  region check holding the registration to the frame that holds its context.
-  Nothing in a program that uses one names a `^u8`. See
+- **A callback's guarantee stops at the C boundary.** The Frost side is checked:
+  the context moves in and comes back out, the registration is `linear` so
+  forgetting to unregister is a compile error, and the region check holds the
+  registration to the frame that holds its context, so no Frost code can read
+  the context while the callback might fire. None of that says anything about
+  the library's own threading, and a library that keeps the pointer after
+  unregistration is outside what the compiler can see. See
   [callbacks.md](callbacks.md).
-
-  What that guarantee is *not*: it says no Frost code holds the context while
-  the callback can fire, and it says the registration cannot outlive the
-  storage. It says nothing about the C library's own threading, and a library
-  that keeps the pointer after unregistration is outside anything the compiler
-  can see.
-- **Uninitialized reads are gone from aggregate construction**, which is worth
-  noting because they were not. A struct or enum-variant literal that left a
-  field out used to compile, and the storage that field named was never written,
-  so reading it read whatever was on the stack. A literal now has to write every
-  field, named in the error when it does not.
 - The static checks run on the AST, so **integer overflow** follows the backend's
   C semantics (wrapping for unsigned, two's-complement for signed) rather than
   trapping.
