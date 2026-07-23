@@ -1,0 +1,39 @@
+// Writing to standard output.
+//
+// Without this you declare the C function you want yourself, which is why so
+// many examples open with `printf :: extern fn(fmt: ^i8, value: i64) -> i32`.
+// That is honest about the FFI but it is a strange first line for a first
+// program, and it hands you `printf`'s format-string footgun for the sake of
+// printing one number.
+//
+// These go through the runtime's emit helpers rather than through `printf`, so
+// there is no format string to get wrong and nothing is variadic.
+
+export print, print_int, print_char, print_str, print_line, print_int_line, print_str_line
+
+frost_emit_str :: extern fn(text: ^i8)
+frost_emit_int :: extern fn(value: i64)
+frost_emit_char :: extern fn(byte: i64)
+
+// A string literal is a pointer to its bytes with a trailing NUL where `^i8` is
+// expected, so `print("hello")` works. A `str` value computed at run time is a
+// pointer and a length with no terminator, which is what `print_str` is for.
+print :: fn(text: ^i8) { frost_emit_str(text) }
+
+print_int :: fn(value: i64) { frost_emit_int(value) }
+
+print_char :: fn(byte: i64) { frost_emit_char(byte) }
+
+print_str :: fn(text: str) {
+    mut i : i64 = 0
+    while (i < str_len(text)) {
+        frost_emit_char(text[i])
+        i = i + 1
+    }
+}
+
+print_line :: fn(text: ^i8) { frost_emit_str(text)  frost_emit_char(10) }
+
+print_int_line :: fn(value: i64) { frost_emit_int(value)  frost_emit_char(10) }
+
+print_str_line :: fn(text: str) { print_str(text)  frost_emit_char(10) }

@@ -6,7 +6,7 @@
 // The slab is the standard library one (std/slab.frost) with no allocation and no runtime
 // call. Only `p[handle]`, the validated place-deref, comes from the compiler.
 
-printf :: extern fn(fmt: ^i8, value: i64) -> i32
+import "io.frost"
 
 import "slab.frost"
 
@@ -46,9 +46,9 @@ main :: fn() -> i64 {
     head = push_front(p, head, 20)
     head = push_front(p, head, 30)
 
-    printf("%lld\n", sum_list(p, head))    // 60
+    print_int_line(sum_list(p, head))  // 60
 
     front : Handle<Node> = head
-    printf("%lld\n", p[front].value)       // 30, the most recent push
+    print_int_line(p[front].value)  // 30, the most recent push
     0
 }

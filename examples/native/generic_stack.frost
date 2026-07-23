@@ -1,4 +1,4 @@
-printf :: extern fn(fmt: ^i8, value: i64) -> i32
+import "io.frost"
 
 Stack :: struct($T: Type) { items: [8]T, count: i64 }
 
@@ -20,8 +20,8 @@ main :: fn() -> i64 {
     push(numbers, 10)
     push(numbers, 20)
     push(numbers, 30)
-    printf("%lld\n", depth(numbers))
-    printf("%lld\n", peek(numbers))
-    printf("%lld\n", numbers.items[0])
+    print_int_line(depth(numbers))
+    print_int_line(peek(numbers))
+    print_int_line(numbers.items[0])
     0
 }

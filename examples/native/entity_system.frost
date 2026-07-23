@@ -6,7 +6,7 @@
 // call. Only `world[handle]`, the validated place-deref, comes from the
 // compiler.
 
-printf :: extern fn(fmt: ^i8, value: i64) -> i32
+import "io.frost"
 
 import "slab.frost"
 
@@ -21,7 +21,7 @@ delta :: fn(k: Kind) -> i64 {
     }
 }
 
-show :: fn(flag: bool) { if (flag) { printf("%lld\n", 1) } else { printf("%lld\n", 0) } }
+show :: fn(flag: bool) { if (flag) { print_int_line(1) } else { print_int_line(0) } }
 
 main :: fn() -> i64 {
     mut world : Slab<Entity, 16> = Slab {
@@ -41,9 +41,9 @@ main :: fn() -> i64 {
     // Read the kind out and apply it, all through handles, with the entities
     // never leaving the slab.
     world[player].hp = world[player].hp + delta(world[goblin].kind)
-    printf("%lld\n", world[player].hp)          // 85
+    print_int_line(world[player].hp)  // 85
     world[player].hp = world[player].hp + delta(world[potion].kind)
-    printf("%lld\n", world[player].hp)          // 110
+    print_int_line(world[player].hp)  // 110
 
     show(slab_release($Entity, $16, world, goblin))
     show(slab_alive($Entity, $16, world, goblin))   // 0, released
@@ -52,6 +52,6 @@ main :: fn() -> i64 {
     // The newcomer takes the goblin's slot, and the goblin's handle stays stale.
     newcomer := slab_insert($Entity, $16, world, Entity { hp = 5, kind = Kind::Player })
     show(slab_alive($Entity, $16, world, goblin))   // 0
-    printf("%lld\n", world[newcomer].hp)            // 5
+    print_int_line(world[newcomer].hp)  // 5
     0
 }

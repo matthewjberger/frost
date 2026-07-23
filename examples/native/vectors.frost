@@ -1,4 +1,4 @@
-printf :: extern fn(fmt: ^i8, value: i64) -> i32
+import "io.frost"
 
 Vec3 :: struct {
     x: i64,
@@ -25,14 +25,19 @@ main :: fn() -> i64 {
     b := Vec3 { x = 4, y = 5, z = 6 }
 
     sum := add(a, b)
-    printf("sum.x = %lld\n", sum.x)
-    printf("sum.y = %lld\n", sum.y)
-    printf("sum.z = %lld\n", sum.z)
+    print("sum.x = ")
+    print_int_line(sum.x)
+    print("sum.y = ")
+    print_int_line(sum.y)
+    print("sum.z = ")
+    print_int_line(sum.z)
 
-    printf("dot = %lld\n", dot(a, b))
+    print("dot = ")
+    print_int_line(dot(a, b))
 
     mut c := a
     scale(c, 10)
-    printf("scaled.x = %lld\n", c.x)
+    print("scaled.x = ")
+    print_int_line(c.x)
     0
 }

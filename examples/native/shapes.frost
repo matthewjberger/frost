@@ -1,4 +1,4 @@
-printf :: extern fn(fmt: ^i8, value: i64) -> i32
+import "io.frost"
 
 Shape :: enum {
     Circle { radius: i64 },
@@ -19,8 +19,11 @@ main :: fn() -> i64 {
     r := Shape::Rectangle { width = 4, height = 6 }
     t := Shape::Triangle { base = 8, height = 3 }
 
-    printf("circle area    = %lld\n", area(c))
-    printf("rectangle area = %lld\n", area(r))
-    printf("triangle area  = %lld\n", area(t))
+    print("circle area    = ")
+    print_int_line(area(c))
+    print("rectangle area = ")
+    print_int_line(area(r))
+    print("triangle area  = ")
+    print_int_line(area(t))
     0
 }
