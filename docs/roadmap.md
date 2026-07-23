@@ -337,6 +337,28 @@ of bug it invites is the one that passes the test suite and corrupts output, the
 way the sret register and the byte-stride bugs both did. Do it with the
 differential oracle running, not after.
 
+## 4. An extern may not return a struct by value
+
+Found while finishing item 3 and unrelated to it:
+`make_ctx :: extern fn(v: i64) -> Ctx` is rejected by both backends, with no
+callback anywhere near it. It is the reason a callback's context cannot yet be
+handed back to the program that owns it, and it will be the reason for the next
+binding too, because C libraries return small structs all the time.
+
+**Why it is not a small fix.** The compiler returns its own aggregates through a
+hidden out-pointer, uniformly, which is a choice it is entitled to make about its
+own calling convention. C is not uniform: a small struct comes back in registers
+and a large one through an out-pointer, and where the line is depends on the
+platform and on the field types. So supporting this means classifying return
+types against the platform C ABI rather than reusing the mechanism that exists,
+which is real work in `src/ir_codegen.rs` and a smaller amount in `src/ir_c.rs`,
+where the C compiler would do the classification if the type were declared.
+
+**Why it is worth doing anyway.** Goal 3 in [philosophy.md](philosophy.md) makes
+C interop a first-class concern rather than an escape hatch, and "you may call
+any C function except the ones that return a struct" is a hole in that, not a
+rough edge. The failure today is at least loud.
+
 ## Smaller things found and not yet fixed
 
 - **Generic templates are re-parsed per instantiation in the self-hosted
