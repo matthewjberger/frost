@@ -263,6 +263,42 @@ void frost_mem_copy(void *destination, const void *source, int64_t size) {
     memcpy(destination, source, (size_t)size);
 }
 
+/* Whole-file read and write, for a standard library that does its own IO
+   rather than reaching for the C library directly. The read returns a fresh
+   heap block the caller frees; the length comes back through frost_file_size. */
+static int64_t frost_last_read_length = 0;
+
+const char *frost_file_read(const char *path) {
+    FILE *file = fopen(path, "rb");
+    if (file == 0) {
+        frost_last_read_length = -1;
+        return "";
+    }
+    fseek(file, 0, SEEK_END);
+    long length = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    char *buffer = (char *)malloc((size_t)length + 1);
+    size_t read = fread(buffer, 1, (size_t)length, file);
+    buffer[read] = 0;
+    fclose(file);
+    frost_last_read_length = (int64_t)read;
+    return buffer;
+}
+
+int64_t frost_file_size(void) {
+    return frost_last_read_length;
+}
+
+int64_t frost_file_write(const char *path, const char *bytes, int64_t length) {
+    FILE *file = fopen(path, "wb");
+    if (file == 0) {
+        return 0;
+    }
+    size_t written = fwrite(bytes, 1, (size_t)length, file);
+    fclose(file);
+    return written == (size_t)length;
+}
+
 int64_t frost_file_exists(const char *path) {
     FILE *file = fopen(path, "rb");
     if (file == 0) {

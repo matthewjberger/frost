@@ -1,0 +1,69 @@
+// Sorting a slice in place, ordered by a comparison the caller supplies as a
+// compile-time function argument. No closures and no function pointers: `$less`
+// is monomorphized into the sort, so the comparison is a direct call with no
+// indirection, which is the point of compile-time function arguments.
+//
+// Insertion sort for small runs, quicksort above a threshold. Quicksort is not
+// stable and picks the middle element as its pivot, which keeps already-sorted
+// and reverse-sorted input off the quadratic path that a first-element pivot
+// falls into.
+
+import "vec.frost"
+
+export sort, sort_vec
+
+// Swap two elements of a slice by value.
+swap :: fn($T: Type, mut items: []T, i: i64, j: i64) {
+    hold := items[i]
+    items[i] = items[j]
+    items[j] = hold
+}
+
+insertion :: fn($T: Type, $less: fn(T, T) -> bool, mut items: []T,
+    low: i64, high: i64) {
+    mut i := low + 1
+    while (i <= high) {
+        mut j := i
+        while (j > low && less(items[j], items[j - 1])) {
+            swap($T, items, j, j - 1)
+            j = j - 1
+        }
+        i = i + 1
+    }
+}
+
+quicksort :: fn($T: Type, $less: fn(T, T) -> bool, mut items: []T,
+    low: i64, high: i64) {
+    if (high - low < 12) {
+        insertion($T, $less, items, low, high)
+        return
+    }
+    pivot := items[low + (high - low) / 2]
+    mut i := low
+    mut j := high
+    while (i <= j) {
+        while (less(items[i], pivot)) { i = i + 1 }
+        while (less(pivot, items[j])) { j = j - 1 }
+        if (i <= j) {
+            swap($T, items, i, j)
+            i = i + 1
+            j = j - 1
+        }
+    }
+    if (low < j) { quicksort($T, $less, items, low, j) }
+    if (i < high) { quicksort($T, $less, items, i, high) }
+}
+
+// Order a slice in place. `less` reports whether its first argument comes first,
+// so `sort($i64, $ascending, view)` with `ascending(a, b) = a < b` sorts upward.
+sort :: fn($T: Type, $less: fn(T, T) -> bool, mut items: []T) {
+    len := slice_len(items)
+    if (len > 1) {
+        quicksort($T, $less, items, 0, len - 1)
+    }
+}
+
+// The same, over a vector's live elements.
+sort_vec :: fn($T: Type, $less: fn(T, T) -> bool, mut v: Vec<T>) {
+    sort($T, $less, vec_slice($T, v))
+}
