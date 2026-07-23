@@ -1,113 +1,111 @@
-# Mini-Frost: a self-hosting compiler written in Frost
+# A Frost compiler written in Frost
 
-`frost.frost` is a compiler, written in Frost, for a subset of Frost. It
-lexes the source, parses it, and emits a C translation unit; compiling and
-running that C reproduces the program's output. So it is a real code generator
-written in Frost that emits native code, the same way Frost's own primary
-backend emits C and links it.
+`frost.frost` is a compiler for Frost, written in Frost. One file, about 5,400
+lines. It lexes, parses, type-checks, and emits either a C translation unit or
+x86-64 assembly.
 
-**It self-hosts.** The subset it accepts is large enough to include its own
-source, so the self-hosted compiler compiles frost.frost. The C that produces builds a
-second compiler which compiles the same source again, and the two translation
-units are byte-identical, the classic three-stage bootstrap fixpoint. The
-`self_hosting_is_a_fixpoint` test in `tests/native.rs` checks it.
+**It self-hosts, twice over.** It compiles its own source; a compiler built from
+that output compiles the same source again; the two outputs are byte-identical.
+That three-stage fixpoint holds through both of its backends, and both are
+checked on every build by `self_hosting_is_a_fixpoint` and
+`native_self_hosting_is_a_fixpoint` in `tests/native.rs`. Through the assembly
+backend there is no C compiler anywhere in the loop.
 
 It is written the way the language wants a compiler written: Frost-native arenas
-for the tokens, the AST, and the symbol tables, integer indices instead of heap
-pointers between nodes, and free functions over that data. There are no closures
-and no dynamic collections, every reference is second-class, and its memory comes
-from the language's own allocator, not a runtime pool.
+for the tokens, the AST and the symbol tables, integer indices instead of heap
+pointers between nodes, and free functions over that data. No closures, no
+dynamic collections, every reference second-class, and its memory comes from the
+language's own allocator rather than a runtime pool.
 
-## The language it compiles
+## What it implements
 
-A subset of Frost's own syntax, large enough to write this compiler in.
+Not a toy subset. It checks its own programs rather than deferring to whatever
+compiles its output, which it has to, because through the assembly backend
+nothing downstream would catch a mistake.
 
-- Definitions `name :: fn(p: T, q: T) -> R { ... }` with typed parameters and a
-  return type, called recursively. Constants `name :: value`, and `extern`
-  declarations `name :: extern fn(...) -> R` that lower to a C prototype and call.
-- Structs `Name :: struct { field: T, ... }`, struct literals, field access and
-  assignment, and structs passed by value.
-- Generics by monomorphization: `Name :: struct($T: Type) { ... }` and generic
-  functions over `$T`, instantiated per concrete type argument.
-- Types `i64`, `i8`, `u8`, `bool`, pointers `^T`, and references `&T`/`&mut T`,
-  with `e^` deref, `e[i]` indexing, `ptr_to`/`ptr_cast`/`sizeof`, and field
-  access that auto-dereferences a pointer or reference base.
-- Locals `x := e` and `mut x : T = e` (an annotation wins over inference),
-  assignment to any place, and an implicit return from a trailing expression.
-- `if`/`else` (and `else if`), `while`, `match` on integers to a `switch`,
-  arithmetic and comparisons, boolean `&&`/`||`, string literals, `true`/`false`.
-- `print expr` as a built-in convenience (the demonstration program uses it; the
-  compiler's own source uses `extern` emit functions instead).
+- **Types and layout.** `i64`, `i32`, `i8`, `u8`, `bool`, pointers `^T`, structs
+  passed and returned by value, and `e^`, `e[i]`, `ptr_to`, `ptr_cast`,
+  `sizeof`.
+- **Ownership and linearity.** Use after move, and `linear` values that must be
+  consumed exactly once, with a read parameter borrowing and `move` consuming.
+- **Generics by monomorphization** over `$T`, on structs and functions,
+  instantiated once per concrete type argument.
+- **Enums with payloads** and `match` over them.
+- **Allocation sources.** `uses A` on a function, `with a { }` around a call.
+- **Regions.** A `with` block is a region and an arena pointer may not outlive
+  it.
+- **Failure sets.** `-> T ! E` and `?`.
+- **Imports.** `import "path"` joins another file's declarations to this one.
+- **`extern fn`** for C linkage, which is how it does its own IO.
 
-Identifiers are letter runs that may include underscores, uppercase letters, and
-digits after the first character (`sum`, `count`, `fib`, `is_main`, `Node`).
+Both backends emit from the same checked program: C through
+`frost_emit_*` helpers, or x86-64 assembly directly.
+
+## What it does not implement
+
+The reference compiler in `src/` is ahead of it, and deliberately so. The two are
+under different promises: the reference compiler is under a speed promise, and
+this one is under a self-hosting promise. See
+[docs/build-modes.md](../docs/build-modes.md).
+
+Not here: generic enums, value parameters (`$N: usize`), slices, handles and
+pools, callbacks with a typed context, C functions returning a struct by value,
+and separate compilation. The last is a recorded decision rather than a gap:
+this is one file with no imports that compiles itself in about 35 ms, so there
+is nothing for separate compilation to bound. See
+[docs/self-hosting.md](../docs/self-hosting.md).
 
 ## How it works
 
-1. **A lexer runs first,** turning the source into a flat `Arena<Token>` in one
-   pass through `frost_byte_at`. It drops whitespace and `//` comments, reads
-   integer and string literals, classifies identifier runs that spell a keyword
-   to their own token kind, and lexes every operator and punctuation mark
-   greedily (so `::`, `:=`, `->`, `<=`, `&&` are single tokens). Each token keeps
-   the byte range it came from, which is how identifiers stay interned by range.
-   The parser then reads token kinds rather than raw bytes.
-2. **The AST lives in a Frost-native arena of `Node` records.** The arena is a
-   generic `Arena<$T>`, a bump allocator over one `malloc`, written in the
-   language itself (`docs/allocators.md`): `arena_push` appends a node and
-   returns its index, `arena_at` turns an index back into a `^Node`. A node names
-   its children by that index, the data-oriented replacement for pointers between
-   heap nodes, and sibling statements, parameters, and call arguments are threaded
-   through a `next` field into singly linked lists. No runtime pool is involved.
-3. **Locals are named; function names are interned.** An identifier occurrence
-   is a byte range into the source (offset plus length). A local reference stores
-   that range on its AST node, and code generation re-emits the bytes, so a local
-   becomes a named C variable and no local symbol table is needed. Function names
-   go through one global table that interns each range to a small integer, and a
-   function is emitted as `mf_<index>`, which gives a stable name and keeps user
-   names from colliding with the C runtime.
-4. **The mutable parser cursor** lives in a `Parser` struct threaded by `&mut`
-   through the recursive-descent functions, which is the second-class-reference
-   way to carry mutable state without storing a borrow anywhere.
-5. **Code generation** walks the arena, dispatching on `node.kind`, and emits C
-   text through the runtime helpers (`frost_emit_str`, `frost_emit_int`, and
-   `frost_emit_char` for identifier bytes). Each function becomes a C function
-   taking named `int64_t` parameters, and its locals are declared where they are
-   bound, so recursion just works with no explicit frame. Prototypes are emitted
-   ahead of the definitions, so functions may call each other in any order. The
-   function `main` is emitted as C `main`.
+1. **The lexer** turns the source into a flat `Arena<Token>` in one pass. It
+   drops whitespace and `//` comments, reads integer and string literals,
+   classifies keyword spellings to their own token kinds, and lexes operators
+   greedily, so `::`, `:=`, `->`, `<=` and `&&` are single tokens. Each token
+   keeps the byte range it came from, which is how identifiers stay interned by
+   range.
+2. **The AST is an arena of `Node` records.** `Arena<$T>` is a bump allocator
+   over one `malloc`, written in the language itself. `arena_push` appends and
+   returns an index; `arena_at` turns an index back into a `^Node`. A node names
+   its children by index, which is the data-oriented replacement for pointers
+   between heap nodes, and sibling statements, parameters and arguments thread
+   through a `next` field.
+3. **Names are byte ranges.** An identifier occurrence is an offset and a length
+   into the source. Locals re-emit those bytes, so a local becomes a named C
+   variable and no local symbol table is needed. Function names intern through
+   one global table to a small integer.
+4. **The parser cursor** lives in a `Parser` struct threaded by `mut` through
+   the recursive-descent functions, which is how you carry mutable state where
+   references are second-class.
+5. **Code generation** walks the arena dispatching on `node.kind`. The C backend
+   emits text through runtime helpers; the assembly backend emits x86-64
+   directly, with its own register allocation, stack frames and calling
+   convention.
 
 ## Building and running
 
 ```
-frost --link -o the self-hosted compiler bootstrap/frost.frost
-./the self-hosted compiler > out.c          # the Frost-written compiler emits C
-cc out.c -o out && ./out     # compile the emitted C to native and run it
+just selfhost-build                       # build it with the reference compiler
+just selfhost-run  examples/selfhosted/hello.frost   # compile a file, via its C backend
+just selfhost-native examples/selfhosted/hello.frost # via its assembly backend
+just selfhost-check                       # the three-stage fixpoint
+just selfhost-test                        # every self-hosting check
 ```
 
-The embedded sample program defines a recursive `fib` and a recursive `fact`,
-then a `main` that prints `fib(10)` (55), `fact(5)` (120), and the sum `1..10`
-(55) accumulated in variables named `sum` and `index`, so the compiled output
-prints:
+By hand, the compiler reads `FROST_INPUT` and writes to standard output:
 
 ```
-55
-120
-55
+frost --link -o bootstrap/frost.exe bootstrap/frost.frost
+FROST_INPUT=program.frost ./bootstrap/frost.exe > out.c
+cc out.c -o out && ./out
+
+FROST_BACKEND=asm FROST_INPUT=program.frost ./bootstrap/frost.exe > out.s
+cc out.s -o out && ./out
 ```
 
-The compiler itself produces identical C through both of Frost's backends
-(`--link` and `--emit-c`), which the differential test checks. The
-`self_hosted_compiler_emits_working_c` test in `tests/native.rs` runs the whole
-pipeline on every build: it compiles the Frost-written compiler, runs it to emit
-C, compiles that C, runs the result, and checks the output.
+## Where the measurements live
 
-## Scope and what is next
-
-This is a working code generator written in Frost: source to AST to emitted C to
-a native executable. It is not a full self-hosting compiler, because it accepts a
-small subset rather than all of Frost. What it establishes is that the
-data-oriented native language is expressive enough to write real compiler-shaped
-programs end to end, including functions, recursion, multi-character names
-resolved through symbol tables, and code emission. Widening the accepted language
-further (more types, structs, expressions as statements) toward the full surface
-is the path from here to compiling Frost itself.
+[docs/self-hosting.md](../docs/self-hosting.md) has the checklist in dependency
+order, what each item cost, the compile-speed numbers, and the bugs that only
+the assembly backend could have found. That last part is the useful bit: C needs
+neither struct offsets nor a scope discipline of its own, so emitting assembly
+surfaced three real bugs the C backend had been papering over.

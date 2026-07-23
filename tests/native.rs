@@ -1021,7 +1021,7 @@ fn native_backend_covers_the_language() {
 }
 
 // Build the self-hosted compiler, feed it a program, and return what it wrote to stderr after
-// rejecting it. the self-hosted compiler answers for its own errors rather than deferring them
+// rejecting it. The self-hosted compiler answers for its own errors rather than deferring them
 // to whatever compiles its output.
 fn self_hosted_rejects(name: &str, source: &str) -> Option<String> {
     if !linker_available() {
@@ -4595,7 +4595,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_widths", WIDTHS),
         ("diff_wrapping", WRAPPING_AND_UNARY),
         ("diff_anon", ANON_FUNCTIONS),
-        ("diff_the self-hosted compiler", SELF_HOSTED),
+        ("diff_self_hosted", SELF_HOSTED),
         ("diff_strings", STRINGS),
         ("diff_strview", STR_VIEW),
         ("diff_pointers", POINTERS),

@@ -1,4 +1,4 @@
-// Mini-Frost: a compiler written in Frost, in the data-oriented style.
+// A Frost compiler written in Frost, in the data-oriented style.
 //
 // It reads a program written in a subset of Frost's own syntax (definitions of
 // the form `name :: fn(p: i64) -> i64 { ... }`, `x := e` and `mut x : i64 = e`
