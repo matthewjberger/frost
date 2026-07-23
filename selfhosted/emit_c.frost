@@ -53,12 +53,32 @@ emit_ctype :: fn(mut p: Parser, ty: i64) {
         frost_emit_str("*")
         return
     }
-    if (ty == TY_I64) {
+    if (ty == TY_I64 || ty == TY_ISIZE) {
         frost_emit_str("int64_t")
+        return
+    }
+    if (ty == TY_I32) {
+        frost_emit_str("int32_t")
+        return
+    }
+    if (ty == TY_I16) {
+        frost_emit_str("int16_t")
         return
     }
     if (ty == TY_I8) {
         frost_emit_str("char")
+        return
+    }
+    if (ty == TY_U64 || ty == TY_USIZE) {
+        frost_emit_str("uint64_t")
+        return
+    }
+    if (ty == TY_U32) {
+        frost_emit_str("uint32_t")
+        return
+    }
+    if (ty == TY_U16) {
+        frost_emit_str("uint16_t")
         return
     }
     if (ty == TY_U8) {

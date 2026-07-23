@@ -100,6 +100,56 @@ local_slot :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
     found
 }
 
+// Load a scalar into %rax from `slot(base)`, where `base` closes the address
+// and opens the destination, as in "(%rbp), ". A narrow type is widened to the
+// whole register by its own signedness, so the comparison or the arithmetic
+// that follows reads the value the source meant rather than the bits beside it.
+emit_asm_load_from :: fn(mut p: Parser, ty: i64, slot: i64, base: ^i8) {
+    size := scalar_size(ty)
+    mut op : ^i8 = "movq "
+    mut destination : ^i8 = "%rax"
+    if (size == 1) {
+        op = "movsbq "
+        if (is_unsigned(ty)) { op = "movzbq " }
+    } else if (size == 2) {
+        op = "movswq "
+        if (is_unsigned(ty)) { op = "movzwq " }
+    } else if (size == 4) {
+        op = "movslq "
+        // Writing the 32-bit register clears the rest of the 64-bit one, so
+        // this is the zero extension rather than an instruction short of it.
+        if (is_unsigned(ty)) {
+            op = "movl "
+            destination = "%eax"
+        }
+    }
+    frost_emit_str("    ")
+    frost_emit_str(op)
+    frost_emit_int(slot)
+    frost_emit_str(base)
+    frost_emit_str(destination)
+    frost_emit_str("\n")
+}
+
+// Store %r11 into `slot(base)`, as wide as the place is rather than as wide as
+// the register, so a narrow field does not write over the one beside it.
+emit_asm_store_to :: fn(mut p: Parser, ty: i64, slot: i64, base: ^i8) {
+    size := scalar_size(ty)
+    mut op : ^i8 = "movq %r11, "
+    if (size == 1) {
+        op = "movb %r11b, "
+    } else if (size == 2) {
+        op = "movw %r11w, "
+    } else if (size == 4) {
+        op = "movl %r11d, "
+    }
+    frost_emit_str("    ")
+    frost_emit_str(op)
+    frost_emit_int(slot)
+    frost_emit_str(base)
+    frost_emit_str("\n")
+}
+
 // The address of a place, rather than the value in it.
 emit_asm_addr :: fn(mut p: Parser, id: i64) {
     node : ^Node = arena_at(p.arena, id)
@@ -270,11 +320,12 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         }
         // A struct is handled by its address, so naming one yields where it
         // lives rather than the first word inside it.
-        if (is_struct_ty(lookup_local(p, off, len))) {
+        local_ty := lookup_local(p, off, len)
+        if (is_struct_ty(local_ty)) {
             asm_i("leaq ", local_slot(p, off, len), "(%rbp), %rax")
             return
         }
-        asm_i("movq ", local_slot(p, off, len), "(%rbp), %rax")
+        emit_asm_load_from(p, local_ty, local_slot(p, off, len), "(%rbp), ")
         return
     }
     if (kind == NODE_BIN) {
@@ -312,10 +363,8 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
     if (kind == NODE_FIELD || kind == NODE_DEREF || kind == NODE_INDEX) {
         emit_asm_addr(p, id)
         result := type_of(p, id)
-        if (is_byte_ty(result)) {
-            asm("movzbq (%rax), %rax")
-        } else if (is_struct_ty(result) == false) {
-            asm("movq (%rax), %rax")
+        if (is_struct_ty(result) == false) {
+            emit_asm_load_from(p, result, 0, "(%rax), ")
         }
         return
     }
@@ -483,7 +532,8 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
             emit_asm_copy(type_size(p, ty))
             return
         }
-        asm_i("movq %rax, ", slot, "(%rbp)")
+        asm("movq %rax, %r11")
+        emit_asm_store_to(p, ty, slot, "(%rbp)")
         return
     }
     if (kind == NODE_ASSIGN) {
@@ -502,11 +552,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         }
         asm("movq %rax, %r11")
         emit_asm_pop_rax()
-        if (is_byte_ty(place_ty)) {
-            asm("movb %r11b, (%rax)")
-        } else {
-            asm("movq %r11, (%rax)")
-        }
+        emit_asm_store_to(p, place_ty, 0, "(%rax)")
         return
     }
     if (kind == NODE_RETURN) {

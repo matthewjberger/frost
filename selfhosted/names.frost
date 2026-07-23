@@ -403,8 +403,15 @@ type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         return TY_PARAM
     }
     if (str_range_eq(p.src, offset, length, "i64")) { return TY_I64 }
+    if (str_range_eq(p.src, offset, length, "i32")) { return TY_I32 }
+    if (str_range_eq(p.src, offset, length, "i16")) { return TY_I16 }
     if (str_range_eq(p.src, offset, length, "i8")) { return TY_I8 }
+    if (str_range_eq(p.src, offset, length, "isize")) { return TY_ISIZE }
+    if (str_range_eq(p.src, offset, length, "u64")) { return TY_U64 }
+    if (str_range_eq(p.src, offset, length, "u32")) { return TY_U32 }
+    if (str_range_eq(p.src, offset, length, "u16")) { return TY_U16 }
     if (str_range_eq(p.src, offset, length, "u8")) { return TY_U8 }
+    if (str_range_eq(p.src, offset, length, "usize")) { return TY_USIZE }
     if (str_range_eq(p.src, offset, length, "bool")) { return TY_BOOL }
     mut i : i64 = 0
     while (i < p.structs.count) {

@@ -25,7 +25,8 @@ export Arena, CH_0, CH_9, CH_AMP, CH_BACKSLASH, CH_BANG, CH_CARET, CH_COLON,
     TOK_KW_WITH, TOK_LBRACE, TOK_LBRACKET, TOK_LE, TOK_LPAREN, TOK_LT,
     TOK_MINUS, TOK_NE, TOK_OROR, TOK_PERCENT, TOK_PLUS, TOK_QUESTION,
     TOK_RBRACE, TOK_RBRACKET, TOK_RPAREN, TOK_SLASH, TOK_STAR, TOK_STR,
-    TY_BOOL, TY_I64, TY_I8, TY_PARAM, TY_U8, TY_VOID, Token, TypeArg, Variant,
+    TY_BOOL, TY_I16, TY_I32, TY_I64, TY_I8, TY_ISIZE, TY_PARAM, TY_U16,
+    TY_U32, TY_U64, TY_U8, TY_USIZE, TY_VOID, Token, TypeArg, Variant,
     arena_at, arena_make, arena_push, cstr_eq, frost_arg_at, frost_arg_count,
     frost_byte_at, frost_byte_set, frost_die, frost_emit_char, frost_emit_close,
     frost_emit_int, frost_emit_open, frost_emit_str, frost_error,
@@ -100,6 +101,13 @@ TY_BOOL  :: 2
 TY_U8    :: 3
 TY_VOID  :: 4
 TY_PARAM :: 5
+TY_I16   :: 6
+TY_I32   :: 7
+TY_U16   :: 8
+TY_U32   :: 9
+TY_U64   :: 10
+TY_ISIZE :: 11
+TY_USIZE :: 12
 STRUCT_BASE  :: 16
 POINTER_BASE :: 1000000
 

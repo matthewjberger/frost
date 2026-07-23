@@ -4,15 +4,37 @@
 import "core.frost"
 import "names.frost"
 
-export align_up, alloc_temp, field_offset, is_byte_ty, type_size
+export align_up, alloc_temp, field_offset, is_unsigned, scalar_size, type_size
 
-// A struct is as wide as its fields laid end to end. A field may itself be a
-// struct, so this cannot just count them: Parser carries eleven arenas, and an
-// arena is three words, not one.
-// A byte-wide type is one byte. Everything else this compiler has is a word,
-// and a struct is its fields laid end to end, each on its own alignment.
-is_byte_ty :: fn(ty: i64) -> bool {
-    (ty == TY_I8 || ty == TY_U8) && is_pointer(ty) == false
+// What the C compiler would compute, because the two backends have to agree:
+// a scalar is as wide as its name says, a pointer is a word, and a struct is
+// its fields laid end to end, each on its own alignment, rounded up to the
+// widest alignment among them.
+//
+// A field may itself be a struct, so a size cannot be counted rather than
+// measured: Parser carries eleven arenas and an arena is three words, not one.
+scalar_size :: fn(ty: i64) -> i64 {
+    if (is_pointer(ty)) {
+        return 8
+    }
+    if (ty == TY_I8 || ty == TY_U8) {
+        return 1
+    }
+    if (ty == TY_I16 || ty == TY_U16) {
+        return 2
+    }
+    if (ty == TY_I32 || ty == TY_U32) {
+        return 4
+    }
+    8
+}
+
+// Which of the two extensions a narrow value takes on its way into a register.
+// `bool` is emitted as a word, so it is not narrow and does not appear here.
+is_unsigned :: fn(ty: i64) -> bool {
+    is_pointer(ty) == false
+        && (ty == TY_U8 || ty == TY_U16 || ty == TY_U32 || ty == TY_U64
+            || ty == TY_USIZE)
 }
 
 align_up :: fn(offset: i64, alignment: i64) -> i64 {
@@ -20,18 +42,26 @@ align_up :: fn(offset: i64, alignment: i64) -> i64 {
 }
 
 align_of :: fn(mut p: Parser, ty: i64) -> i64 {
-    if (is_byte_ty(ty)) {
-        return 1
+    if (is_struct_ty(ty) == false) {
+        return scalar_size(ty)
     }
-    8
+    def : ^StructDef = arena_at(p.structs, struct_index_of(ty))
+    mut fid := def^.field_head
+    mut widest : i64 = 1
+    while (fid != (0 - 1)) {
+        field : ^StructField = arena_at(p.fields, fid)
+        one := align_of(p, field^.ty)
+        if (one > widest) {
+            widest = one
+        }
+        fid = field^.next
+    }
+    widest
 }
 
 type_size :: fn(mut p: Parser, ty: i64) -> i64 {
-    if (is_byte_ty(ty)) {
-        return 1
-    }
     if (is_struct_ty(ty) == false) {
-        return 8
+        return scalar_size(ty)
     }
     def : ^StructDef = arena_at(p.structs, struct_index_of(ty))
     mut fid := def^.field_head
@@ -42,7 +72,7 @@ type_size :: fn(mut p: Parser, ty: i64) -> i64 {
             + type_size(p, field^.ty)
         fid = field^.next
     }
-    align_up(total, 8)
+    align_up(total, align_of(p, ty))
 }
 
 field_offset :: fn(mut p: Parser, struct_ty: i64, off: i64, len: i64) -> i64 {
