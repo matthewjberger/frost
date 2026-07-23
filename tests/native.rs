@@ -695,6 +695,85 @@ fn self_hosted_compiler_emits_working_c() {
     );
 }
 
+const CLI_PROGRAM: &str = "fib :: fn(n: i64) -> i64 {\n\
+     \x20   if (n < 2) { return n }\n\
+     \x20   return fib(n - 1) + fib(n - 2)\n}\n\
+     main :: fn() -> i64 {\n    print fib(10)\n    print 6 * 7\n    0\n}\n";
+
+// The compiler names its input on the command line rather than in the
+// environment, writes where -o says, and finishes the build itself.
+#[test]
+fn self_hosted_compiler_takes_a_command_line() {
+    let Some(compiler) = build_self_hosted_compiler("cli") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_cli_input.frost");
+    std::fs::write(&input, CLI_PROGRAM).unwrap();
+
+    for (label, backend, expected) in [
+        ("cli_c", "--emit-c", "int main(void)"),
+        ("cli_asm", "--emit-asm", ".text"),
+    ] {
+        let output = directory.join(format!("frost_{label}.out"));
+        let emit = Command::new(&compiler)
+            .arg(backend)
+            .arg("-o")
+            .arg(&output)
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert!(
+            emit.status.success(),
+            "{label} failed:\n{}",
+            String::from_utf8_lossy(&emit.stderr)
+        );
+        assert!(
+            emit.stdout.is_empty(),
+            "{label} wrote to standard output as well as to -o"
+        );
+        let written = std::fs::read_to_string(&output).unwrap();
+        assert!(
+            written.contains(expected),
+            "{label} did not write {expected}:\n{written}"
+        );
+        let _ = std::fs::remove_file(&output);
+    }
+
+    // --link finishes the build, through either backend.
+    for (label, backend) in [("link_c", "--emit-c"), ("link_asm", "--emit-asm")]
+    {
+        let exe = directory
+            .join(format!("frost_{label}{}", std::env::consts::EXE_SUFFIX));
+        let build = Command::new(&compiler)
+            .arg(backend)
+            .arg("--link")
+            .arg("-o")
+            .arg(&exe)
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert!(
+            build.status.success(),
+            "{label} failed to link:\n{}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+        let run = Command::new(&exe).output().unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"),
+            "55\n42\n",
+            "{label} produced the wrong program"
+        );
+        let _ = std::fs::remove_file(&exe);
+    }
+
+    let unknown = Command::new(&compiler).arg("--nonsense").output().unwrap();
+    assert!(!unknown.status.success(), "an unknown option was accepted");
+
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&compiler);
+}
+
 // Compile emitted C together with the runtime into an executable, returning its
 // path. The caller runs it (optionally with environment variables) and removes it.
 fn compile_c_with_runtime(name: &str, c_source: &str) -> Option<PathBuf> {

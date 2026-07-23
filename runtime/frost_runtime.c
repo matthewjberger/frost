@@ -34,16 +34,39 @@ int64_t frost_str_len(const char *text) {
     return length;
 }
 
+/* Emitted output goes to standard output unless a file has been opened for it,
+   which is how `-o` works without every emitter having to carry a destination. */
+static FILE *frost_emit_target = 0;
+
+static FILE *frost_emit_where(void) {
+    if (frost_emit_target == 0) {
+        return stdout;
+    }
+    return frost_emit_target;
+}
+
+int64_t frost_emit_open(const char *path) {
+    frost_emit_target = fopen(path, "wb");
+    return frost_emit_target != 0;
+}
+
+void frost_emit_close(void) {
+    if (frost_emit_target != 0) {
+        fclose(frost_emit_target);
+        frost_emit_target = 0;
+    }
+}
+
 void frost_emit_str(const char *text) {
-    fputs(text, stdout);
+    fputs(text, frost_emit_where());
 }
 
 void frost_emit_int(int64_t value) {
-    printf("%lld", (long long)value);
+    fprintf(frost_emit_where(), "%lld", (long long)value);
 }
 
 void frost_emit_char(int64_t byte) {
-    putchar((int)byte);
+    fputc((int)byte, frost_emit_where());
 }
 
 const char *frost_getenv(const char *name) {
@@ -162,6 +185,61 @@ void frost_error_int(int64_t value) {
 void frost_die(void) {
     fputc('\n', stderr);
     exit(1);
+}
+
+/* The command line, reached without the emitted program's `main` having to
+   carry it. A Frost `main` takes no parameters and both backends emit it that
+   way, so the arguments are captured here instead: from the C runtime's own
+   copies on Windows, and from the initializer glibc and macOS hand argc and
+   argv to everywhere else. */
+#if defined(_WIN32)
+#include <stdlib.h>
+static int frost_argument_count(void) {
+    return __argc;
+}
+static char **frost_argument_vector(void) {
+    return __argv;
+}
+#else
+static int frost_saved_argc = 0;
+static char **frost_saved_argv = 0;
+
+__attribute__((constructor)) static void frost_capture_arguments(int argc,
+                                                                char **argv) {
+    frost_saved_argc = argc;
+    frost_saved_argv = argv;
+}
+
+static int frost_argument_count(void) {
+    return frost_saved_argc;
+}
+static char **frost_argument_vector(void) {
+    return frost_saved_argv;
+}
+#endif
+
+int64_t frost_arg_count(void) {
+    return (int64_t)frost_argument_count();
+}
+
+/* Out of range answers with the empty string rather than failing, so a caller
+   reads arguments by asking rather than by counting first. */
+const char *frost_arg_at(int64_t index) {
+    if (index < 0 || index >= (int64_t)frost_argument_count()) {
+        return "";
+    }
+    return frost_argument_vector()[index];
+}
+
+int64_t frost_remove_file(const char *path) {
+    return remove(path) == 0;
+}
+
+/* Runs a command line through the shell and answers with its exit status, so
+   the compiler can drive the assembler and the linker. */
+int64_t frost_run_command(const char *command) {
+    int status = system(command);
+    return (int64_t)status;
 }
 
 /* Which calling convention the native backend must emit for. */

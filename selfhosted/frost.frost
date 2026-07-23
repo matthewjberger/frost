@@ -27,6 +27,7 @@
 // which also keeps user names from colliding with the C runtime.
 
 import "core.frost"
+import "cli.frost"
 import "lexer.frost"
 import "imports.frost"
 import "types.frost"
@@ -36,10 +37,19 @@ import "emit_asm.frost"
 import "regions.frost"
 
 main :: fn() -> i64 {
-    // Compile the file named by the FROST_INPUT environment variable when it
-    // is set (the self-hosting fixpoint feeds frost.frost itself through
-    // here), and otherwise fall back to the built-in demonstration program.
-    input_path := frost_getenv("FROST_INPUT")
+    options := options_from_command_line()
+    if (options.help == 1) {
+        usage()
+        return 0
+    }
+    if (options.ok == 0) {
+        frost_die()
+    }
+
+    // With no file named anywhere, the built-in demonstration program is what
+    // gets compiled, which is what makes the compiler runnable with no
+    // arguments at all.
+    input_path := options.input
     mut source : ^i8 = ""
     mut modules : Arena<Module> = arena_make($Module, 1024)
     mut exports : Arena<Export> = arena_make($Export, 4096)
@@ -210,13 +220,51 @@ main :: fn() -> i64 {
     check_calls(parser)
     check_regions(parser)
 
-    backend := frost_getenv("FROST_BACKEND")
-    if (cstr_eq(backend, "asm")) {
-        emit_asm_program(parser, program)
-        return 0
+    // Where the emitted text goes. A link needs it in a file whatever the
+    // caller asked for, so it writes one beside the executable and removes it
+    // afterwards; without -o and without --link it goes to standard output.
+    mut executable : ^i8 = options.output
+    mut emit_path : ^i8 = options.output
+    if (options.link == 1) {
+        if (frost_str_len(executable) == 0) {
+            executable = "a.out"
+            if (frost_is_windows() == 1) {
+                executable = "a.exe"
+            }
+        }
+        if (options.backend == BACKEND_ASM) {
+            emit_path = join_two(executable, ".s")
+        } else {
+            emit_path = join_two(executable, ".c")
+        }
     }
-    frost_emit_str("#include <stdio.h>\n")
-    frost_emit_str("#include <stdint.h>\n")
-    emit_program(parser, program)
+    if (frost_str_len(emit_path) != 0) {
+        if (frost_emit_open(emit_path) == 0) {
+            frost_error("frost: cannot write '")
+            frost_error(emit_path)
+            frost_error("'")
+            frost_die()
+        }
+    }
+
+    if (options.backend == BACKEND_ASM) {
+        emit_asm_program(parser, program)
+    } else {
+        frost_emit_str("#include <stdio.h>\n")
+        frost_emit_str("#include <stdint.h>\n")
+        emit_program(parser, program)
+    }
+    frost_emit_close()
+
+    if (options.link == 1) {
+        command := join_two(join_two(join_two("cc ", emit_path), " -o "),
+            executable)
+        status := frost_run_command(command)
+        frost_remove_file(emit_path)
+        if (status != 0) {
+            frost_error("frost: the linker failed")
+            frost_die()
+        }
+    }
     0
 }
