@@ -185,15 +185,15 @@ Second-order levers, worth doing but small next to the above:
 3. Parallelize per-function type checking and codegen. The type system is local
    and signature-based, so functions are independent once signatures are
    collected.
-4. Keep the arena allocation and the single in-memory pass per file. the self-hosted compiler
+4. Keep the arena allocation and the single in-memory pass per file. The self-hosted compiler
    already does this, which is why it compiles itself in about 35 ms.
-5. Keep monomorphization cached and bounded. the self-hosted compiler already dedups
+5. Keep monomorphization cached and bounded. The self-hosted compiler already dedups
    instantiations, and specialization-only comptime means code generation cannot
    run away.
 
 ## The checklist
 
-the self-hosted compiler checks its own programs now rather than deferring to whatever compiles
+The self-hosted compiler checks its own programs now rather than deferring to whatever compiles
 its output. In dependency order:
 
 1. **Self type-checking.** Required before (3), because once the self-hosted compiler stops
