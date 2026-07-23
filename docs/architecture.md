@@ -76,9 +76,14 @@ reduces every imported module to its interface.
 `src/build_cache.rs` is what makes that pay. Under `--incremental` it keeps a
 record and an object per module, and a module whose own source and whose
 imported interfaces are unchanged is neither parsed nor code generated: it
-contributes the interface the record already holds and its object is linked. See
-[separate-compilation.md](separate-compilation.md) for the fingerprint rule and
-what is still whole-program.
+contributes what the record already holds and its object is linked.
+
+What it contributes is signatures rather than bodies. `Statement::Declared` is a
+Frost function's signature with no body, which is all a caller needs for a
+function it is not going to emit, and it is not an `extern` because an extern
+means C linkage and a C ABI. Generic bodies still come, because the caller is
+what stamps out the template. See
+[separate-compilation.md](separate-compilation.md) for the fingerprint rule.
 
 ## Code generation is parallel
 

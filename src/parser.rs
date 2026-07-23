@@ -388,6 +388,20 @@ pub enum Statement {
         params: Vec<Parameter>,
         return_type: Option<Type>,
     },
+    // A Frost function's signature with no body. Not surface syntax: import
+    // resolution produces it for a module the build cache answered for, whose
+    // object is being linked rather than rebuilt, so the program needs the
+    // signature to type and emit calls and needs nothing else. This is the last
+    // whole-program piece of the front end; see step 5 of
+    // docs/separate-compilation.md.
+    //
+    // Not an `Extern`, which means C linkage and a C ABI. This is a Frost
+    // function that some other object defines.
+    Declared {
+        name: Identifier,
+        params: Vec<Parameter>,
+        return_sig: ReturnSignature,
+    },
 }
 
 impl Display for Statement {
@@ -489,6 +503,14 @@ impl Display for Statement {
             Self::Break => "break".to_string(),
             Self::Continue => "continue".to_string(),
             Self::Import(path) => format!("import \"{}\"", path),
+            Self::Declared {
+                name,
+                params,
+                return_sig,
+            } => {
+                let params = crate::flatten(params, ", ");
+                format!("{name} :: fn({params}){return_sig}")
+            }
             Self::Extern {
                 name,
                 params,

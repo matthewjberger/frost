@@ -396,7 +396,20 @@ impl Walk<'_> {
                 .into_iter()
                 .map(|path| Spanned::from(Statement::Import(path)))
                 .collect();
-            statements.extend(interface.declarations);
+            // The module's object is being linked rather than rebuilt, so it
+            // contributes signatures where it can and bodies only where a
+            // caller needs one. See `as_declaration`.
+            statements.extend(interface.declarations.into_iter().map(
+                |statement| match crate::build_cache::as_declaration(
+                    &statement.node,
+                ) {
+                    Some(declared) => Spanned {
+                        node: declared,
+                        position: statement.position,
+                    },
+                    None => statement,
+                },
+            ));
             let exports = interface.exports.into_iter().collect();
             return Ok((statements, exports, tag));
         };
@@ -497,7 +510,8 @@ fn top_level_name(statement: &Statement) -> Option<&str> {
         | Statement::Struct(name, _, _)
         | Statement::Enum(name, _)
         | Statement::TypeAlias(name, _)
-        | Statement::Extern { name, .. } => Some(name),
+        | Statement::Extern { name, .. }
+        | Statement::Declared { name, .. } => Some(name),
         _ => None,
     }
 }
@@ -622,6 +636,17 @@ impl Renamer {
                 if let Some(ty) = return_type {
                     self.ty(ty);
                 }
+            }
+            Statement::Declared {
+                name,
+                params,
+                return_sig,
+            } => {
+                if let Some(mangled) = self.renames.get(name.as_str()) {
+                    *name = mangled.clone();
+                }
+                self.parameters(params, &mut Vec::new());
+                self.return_signature(return_sig);
             }
             Statement::Let {
                 name,

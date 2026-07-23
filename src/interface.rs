@@ -187,7 +187,8 @@ fn declared_name(statement: &Spanned<Statement>) -> Option<&str> {
         | Statement::Struct(name, _, _)
         | Statement::Enum(name, _)
         | Statement::TypeAlias(name, _)
-        | Statement::Extern { name, .. } => Some(name.as_str()),
+        | Statement::Extern { name, .. }
+        | Statement::Declared { name, .. } => Some(name.as_str()),
         _ => None,
     }
 }

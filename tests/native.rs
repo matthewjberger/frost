@@ -4869,8 +4869,11 @@ fn only_the_modules_an_edit_reaches_are_rebuilt() {
         std::fs::write(
             &leaf,
             format!(
-                "export bump, twice\n\
+                "export bump, twice, boxed, Boxed\n\
+                 Boxed :: struct {{ value: i64 }}\n\
+                 secret :: fn(x: i64) -> i64 {{ x + 100 }}\n\
                  bump :: fn(x: i64) -> i64 {{ {bump} }}\n\
+                 boxed :: fn(x: i64) -> Boxed {{ Boxed {{ value = secret(x) }} }}\n\
                  twice :: fn($T: Type, move v: $T) -> $T {{ {twice} }}\n"
             ),
         )
@@ -4889,7 +4892,11 @@ fn only_the_modules_an_edit_reaches_are_rebuilt() {
         &root,
         "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
          import \"lib/mid.frost\"\n\
-         main :: fn() -> i64 { printf(\"%lld\n\", combine(5))  0 }\n",
+         main :: fn() -> i64 {\n\
+         \x20   b := boxed(1)\n\
+         \x20   printf(\"%lld\n\", combine(5) + b.value + twice($i64, 2))\n\
+         \x20   0\n\
+         }\n",
     )
     .unwrap();
 
@@ -4925,12 +4932,20 @@ fn only_the_modules_an_edit_reaches_are_rebuilt() {
     // Nothing is cached yet, so nothing is reused and the program still runs.
     let (reused, output) = build_once();
     assert!(reused.is_empty(), "a first build reused {reused:?}");
-    assert_eq!(output, "11\n");
+    assert_eq!(
+        output,
+        "116
+"
+    );
 
     // Nothing changed, so neither imported module is read or built again.
     let (reused, output) = build_once();
     assert_eq!(reused, vec!["lib/leaf.frost", "lib/mid.frost"]);
-    assert_eq!(output, "11\n");
+    assert_eq!(
+        output,
+        "116
+"
+    );
 
     // An ordinary body is the module's own business. The leaf is rebuilt and
     // the module that calls it is not, because the call is resolved by the
@@ -4938,7 +4953,11 @@ fn only_the_modules_an_edit_reaches_are_rebuilt() {
     write_leaf("x + 3", "v + v");
     let (reused, output) = build_once();
     assert_eq!(reused, vec!["lib/mid.frost"]);
-    assert_eq!(output, "13\n");
+    assert_eq!(
+        output,
+        "118
+"
+    );
 
     // A generic body is its callers' business too, since the caller is what
     // stamps out the template, so this reaches the module above.
@@ -4948,13 +4967,21 @@ fn only_the_modules_an_edit_reaches_are_rebuilt() {
         reused.is_empty(),
         "a generic body changed and {reused:?} was reused anyway"
     );
-    assert_eq!(output, "18\n");
+    assert_eq!(
+        output,
+        "125
+"
+    );
 
     // And back to a steady state, which is what proves the previous build
     // wrote its records rather than merely rebuilding.
     let (reused, output) = build_once();
     assert_eq!(reused, vec!["lib/leaf.frost", "lib/mid.frost"]);
-    assert_eq!(output, "18\n");
+    assert_eq!(
+        output,
+        "125
+"
+    );
 
     // A record answers for a module only while the object it describes is still
     // there, so throwing the objects away has to mean a rebuild rather than a
@@ -4969,7 +4996,11 @@ fn only_the_modules_an_edit_reaches_are_rebuilt() {
         reused.is_empty(),
         "the objects were gone and {reused:?} was reused anyway"
     );
-    assert_eq!(output, "18\n");
+    assert_eq!(
+        output,
+        "125
+"
+    );
 
     let _ = std::fs::remove_dir_all(&directory);
 }

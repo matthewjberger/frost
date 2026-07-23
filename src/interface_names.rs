@@ -8,6 +8,34 @@ use crate::types::Type;
 pub(crate) fn names_in_statement(statement: &Statement, out: &mut Vec<String>) {
     match statement {
         Statement::Constant(_, value) => names_in_expression(value, out),
+        Statement::Declared {
+            params, return_sig, ..
+        } => {
+            for param in params {
+                if let Some(ty) = &param.type_annotation {
+                    names_in_type(ty, out);
+                }
+                if let Some(ty) = &param.compile_time_signature {
+                    names_in_type(ty, out);
+                }
+            }
+            match &return_sig.kind {
+                crate::parser::ReturnKind::None => {}
+                crate::parser::ReturnKind::Single(ty) => names_in_type(ty, out),
+                crate::parser::ReturnKind::Named(params) => {
+                    for param in params {
+                        names_in_type(&param.param_type, out);
+                    }
+                }
+                crate::parser::ReturnKind::Fallible(value, failure) => {
+                    names_in_type(value, out);
+                    names_in_type(failure, out);
+                }
+            }
+            for capability in &return_sig.uses {
+                names_in_type(capability, out);
+            }
+        }
         Statement::Struct(_, _, fields) => {
             for field in fields {
                 names_in_type(&field.field_type, out);

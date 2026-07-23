@@ -21,7 +21,9 @@ fn is_runtime_intrinsic(name: &str) -> bool {
 
 pub fn check_module(module: &IrModule) -> Result<()> {
     let mut signatures: HashMap<&str, Signature> = HashMap::new();
-    for function in &module.functions {
+    // A function another object defines is callable here and has a signature to
+    // check the call against; it simply has no body to check.
+    for function in module.functions.iter().chain(module.imported.iter()) {
         signatures.insert(
             function.name.as_str(),
             Signature {

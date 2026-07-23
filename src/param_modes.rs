@@ -60,7 +60,8 @@ fn collect_signatures(
             | Statement::Constant(name, Expression::Proc(params, _, _)) => {
                 signatures.insert(name.clone(), runtime_param_types(params));
             }
-            Statement::Extern { name, params, .. } => {
+            Statement::Extern { name, params, .. }
+            | Statement::Declared { name, params, .. } => {
                 signatures.insert(name.clone(), runtime_param_types(params));
             }
             _ => {}
@@ -103,6 +104,10 @@ fn rewrite_statement(
             rewrite_expression(condition, signatures);
             rewrite_block(body, signatures);
         }
+        // A declared signature has to lower its modes the same way the
+        // definition did, or the call this program emits and the object that
+        // defines it would disagree about what a parameter is.
+        Statement::Declared { params, .. } => rewrite_parameters(params),
         _ => {}
     }
 }
@@ -184,6 +189,7 @@ fn read_through_statement(
         | Statement::Enum(..)
         | Statement::TypeAlias(..)
         | Statement::Extern { .. }
+        | Statement::Declared { .. }
         | Statement::Break
         | Statement::Continue
         | Statement::Import(_) => {}
