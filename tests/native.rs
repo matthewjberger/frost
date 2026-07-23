@@ -254,6 +254,35 @@ fn native_out_of_bounds_index_aborts() {
     assert!(!succeeded, "out-of-bounds index should abort at runtime");
 }
 
+// A `ref` binding is a borrow of a container element, not a copy. Writing
+// through it writes to the element, which is the reusable handle a container
+// needs without a raw pointer. Both backends must agree, and the frame check
+// must refuse letting it escape.
+const REF_BINDING: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+Node :: struct { a: i64, b: i64 }
+Arena :: struct { data: []Node, count: i64 }
+
+grow :: fn(mut ar: Arena, i: i64) {
+    ref n := ar.data[i]
+    n.a = i * 10
+    n.b = n.a + 1
+}
+read_it :: fn(mut ar: Arena, i: i64) -> i64 {
+    ref n := ar.data[i]
+    n.a + n.b
+}
+main :: fn() -> i64 {
+    mut backing : [4]Node = [Node{a=0,b=0}, Node{a=0,b=0}, Node{a=0,b=0}, Node{a=0,b=0}]
+    mut ar := Arena { data = backing, count = 0 }
+    grow(ar, 2)
+    grow(ar, 3)
+    printf("%lld\n", read_it(ar, 2))
+    printf("%lld\n", read_it(ar, 3))
+    0
+}
+"#;
+
 const ARITHMETIC: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -4934,6 +4963,7 @@ fn native_showcase_examples_build_and_agree() {
 fn cranelift_and_c_backends_agree() {
     let programs = [
         ("diff_arith", ARITHMETIC),
+        ("diff_refbind", REF_BINDING),
         ("diff_floats", FLOATS),
         ("diff_widths", WIDTHS),
         ("diff_wrapping", WRAPPING_AND_UNARY),

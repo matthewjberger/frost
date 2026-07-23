@@ -1166,6 +1166,7 @@ impl<'a> Parser<'a> {
                 Some(Statement::Continue)
             }
             Token::Import => Some(self.parse_import_statement()?),
+            Token::Ref => Some(self.parse_ref_declaration()?),
             Token::Mut => Some(self.parse_mutable_declaration()?),
             Token::Identifier(_)
                 if matches!(self.peek_nth(1), Token::ColonAssign) =>
@@ -1316,6 +1317,33 @@ impl<'a> Parser<'a> {
             type_annotation: None,
             value,
             mutable,
+        })
+    }
+
+    // `ref name := place`: a borrow bound to a local, not a copy. It aliases the
+    // element or field it names, so writing through it writes there, which is
+    // how a container element is mutated across statements without a raw
+    // pointer. It is the local counterpart of a `mut` parameter, and the region
+    // check holds it to its frame the same way. Lowered to a BorrowMut, which is
+    // the internal mutable reference parameter modes already produce.
+    fn parse_ref_declaration(&mut self) -> Result<Statement> {
+        self.read_token();
+        let name = match self.read_token() {
+            Token::Identifier(name) => name.to_string(),
+            _ => bail!("Expected identifier after 'ref'"),
+        };
+        if !matches!(self.read_token(), Token::ColonAssign) {
+            bail!("Expected ':=' after 'ref identifier'");
+        }
+        let place = self.parse_expression(Precedence::Lowest)?;
+        if matches!(self.peek_nth(0), Token::Semicolon) {
+            self.read_token();
+        }
+        Ok(Statement::Let {
+            name,
+            type_annotation: None,
+            value: Expression::BorrowMut(Box::new(place)),
+            mutable: false,
         })
     }
 
