@@ -89,7 +89,7 @@ compiled runtime links into both backends and they agree bit for bit.
 pool, and it does not any more: a slab is a Frost struct with Frost operations
 over it (`examples/native/lib/slab.frost`), which is why fixed-capacity storage
 works under `--freestanding` where there is no libc at all. What is left in C is
-bounds and generation aborts, assertions, and the IO helpers the bootstrap
+bounds and generation aborts, assertions, and the IO helpers the self-hosted
 compiler uses.
 
 ## 2. Frost lowers through C: `--emit-c`

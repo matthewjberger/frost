@@ -94,11 +94,11 @@ just selfhost-test                        # every self-hosting check
 By hand, the compiler reads `FROST_INPUT` and writes to standard output:
 
 ```
-frost --link -o bootstrap/frost.exe bootstrap/frost.frost
-FROST_INPUT=program.frost ./bootstrap/frost.exe > out.c
+frost --link -o selfhosted/frost.exe selfhosted/frost.frost
+FROST_INPUT=program.frost ./selfhosted/frost.exe > out.c
 cc out.c -o out && ./out
 
-FROST_BACKEND=asm FROST_INPUT=program.frost ./bootstrap/frost.exe > out.s
+FROST_BACKEND=asm FROST_INPUT=program.frost ./selfhosted/frost.exe > out.s
 cc out.s -o out && ./out
 ```
 

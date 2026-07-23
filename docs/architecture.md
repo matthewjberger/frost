@@ -417,7 +417,7 @@ AST; both point at a line.
    control flow, recursion, and function pointers against the Cranelift and C
    backends, and declines cleanly on memory and pool operations rather than
    guessing.)*
-10. Self-hosting the compiler in Frost. *(Done: `bootstrap/frost.frost` compiles
+10. Self-hosting the compiler in Frost. *(Done: `selfhosted/frost.frost` compiles
     itself to a byte-identical fixpoint through both its C backend and its own
     native x86-64 backend, so there is a path with no C compiler in the loop. It
     is written in the data-oriented native surface, a pool-backed AST arena with
