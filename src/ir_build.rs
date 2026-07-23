@@ -4597,6 +4597,30 @@ impl<'a> FunctionLowering<'a> {
                 .collect()
         };
 
+        // A field left out is storage that is never written, and reading it
+        // afterwards reads whatever was on the stack. Nothing downstream could
+        // catch that, so the literal has to be complete.
+        let missing: Vec<&str> = fields
+            .iter()
+            .map(|(name, _, _)| name.as_str())
+            .filter(|name| !field_inits.iter().any(|(given, _)| given == name))
+            .collect();
+        if !missing.is_empty() {
+            bail!(
+                "native backend: struct '{struct_name}' is missing {} {}; a field left out would be read uninitialized",
+                if missing.len() == 1 {
+                    "field"
+                } else {
+                    "fields"
+                },
+                missing
+                    .iter()
+                    .map(|name| format!("'{name}'"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+
         for (field_name, field_value) in field_inits {
             let Some((_, offset, field_type)) =
                 fields.iter().find(|(name, _, _)| name == field_name)
@@ -4707,6 +4731,29 @@ impl<'a> FunctionLowering<'a> {
                 Type::I32,
             )),
         });
+
+        // The same hole a struct literal has: a payload field left out is
+        // storage a `match` will happily bind and read.
+        let missing: Vec<&str> = fields
+            .iter()
+            .map(|(name, _, _)| name.as_str())
+            .filter(|name| !field_inits.iter().any(|(given, _)| given == name))
+            .collect();
+        if !missing.is_empty() {
+            bail!(
+                "native backend: variant '{variant_name}' is missing {} {}; a field left out would be read uninitialized",
+                if missing.len() == 1 {
+                    "field"
+                } else {
+                    "fields"
+                },
+                missing
+                    .iter()
+                    .map(|name| format!("'{name}'"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
 
         for (field_name, field_value) in field_inits {
             let Some((_, offset, field_type)) =

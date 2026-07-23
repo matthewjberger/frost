@@ -411,6 +411,12 @@ Shape::Player                         // unit variant
 Struct and enum-variant construction are recognized only when the operand to the
 left of `{` or `::` is a bare identifier.
 
+**A literal must write every field.** There is no partial construction, no
+`..rest`, and no implicit zero. A field left out would name storage nothing
+wrote, and reading it afterwards would read whatever was there, which is exactly
+the shape chapter 8 exists to make unrepresentable. A missing field is an error
+that names it.
+
 ### 6.6 `if` expression
 
 ```

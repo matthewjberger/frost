@@ -274,6 +274,11 @@ A few honest gaps in the current implementation:
   storage. It says nothing about the C library's own threading, and a library
   that keeps the pointer after unregistration is outside anything the compiler
   can see.
+- **Uninitialized reads are gone from aggregate construction**, which is worth
+  noting because they were not. A struct or enum-variant literal that left a
+  field out used to compile, and the storage that field named was never written,
+  so reading it read whatever was on the stack. A literal now has to write every
+  field, named in the error when it does not.
 - The static checks run on the AST, so **integer overflow** follows the backend's
   C semantics (wrapping for unsigned, two's-complement for signed) rather than
   trapping.
