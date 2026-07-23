@@ -260,11 +260,23 @@ still cheap to change.
 
   The roadmap's sketch had `unregister :: fn(move r: Registration) -> Ctx`, and
   that does not work as written: a `Registration` holding a `Ctx` field holds a
-  copy, and the copy is not the storage the library wrote through. The answer is
-  probably that unregistration is a recognized form the way registration is, and
-  gives the context back by name rather than by value. Nothing here is blocked
-  on it: the callback runs and the safety rules hold. But the feature is not
-  finished until a program can read its own context.
+  copy, and the copy is not the storage the library wrote through.
+
+  **The answer needs no new language machinery**, which was checked by writing
+  it. Unregistration is an ordinary extern that hands the context back by value,
+  `unregister_handler :: extern fn(token: i64) -> Ctx`, wrapped in the Frost
+  function that consumes the linear registration. The caller rebinds the result
+  and reads it. Nothing about callbacks has to know.
+
+  **What blocks it is unrelated to callbacks**: an `extern fn` returning a
+  struct by value is not supported by either backend, and never has been.
+  `make_ctx :: extern fn(v: i64) -> Ctx` fails the same way with no callback
+  anywhere near it. That is not a small fix, because the compiler returns its own
+  aggregates through a hidden out-pointer while C returns small structs in
+  registers, so doing it right means classifying return types against the
+  platform C ABI rather than reusing what is there. Recorded in
+  [roadmap.md](roadmap.md) as its own item, since it is worth more than this one
+  use of it.
 - **What `token` holds** for a library whose unregister takes something other
   than an integer. The `Registration` in the end-to-end test is an ordinary
   `linear struct` a binding author writes and the compiler knows nothing about
