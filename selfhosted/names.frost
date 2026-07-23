@@ -3,6 +3,7 @@
 
 import "core.frost"
 import "lexer.frost"
+import "cursor.frost"
 import "imports.frost"
 
 export append_node, array_element, array_index_of, array_length, array_of,
@@ -292,7 +293,7 @@ is_main_name :: fn(src: ^i8, offset: i64, length: i64) -> bool {
 new_node :: fn(mut p: Parser, kind: i64, a: i64, b: i64, val: i64) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = kind, a = a, b = b, c = 0, val = val, next = 0 - 1 },
+        Node { kind = kind, a = a, b = b, c = 0, val = val, next = 0 - 1, pos = cur_off(p) },
     )
 }
 
@@ -304,7 +305,7 @@ new_named_node :: fn(mut p: Parser, kind: i64, child: i64, offset: i64,
     arena_push(
         p.arena,
         Node { kind = kind, a = child, b = 0, c = length, val = offset,
-            next = 0 - 1 },
+            next = 0 - 1, pos = cur_off(p) },
     )
 }
 
@@ -316,7 +317,7 @@ new_let_node :: fn(mut p: Parser, value: i64, offset: i64, length: i64,
     arena_push(
         p.arena,
         Node { kind = NODE_LET, a = value, b = annotation, c = length,
-            val = offset, next = 0 - 1 },
+            val = offset, next = 0 - 1, pos = cur_off(p) },
     )
 }
 
@@ -331,6 +332,7 @@ new_func_node :: fn(mut p: Parser, body: i64, params: i64, fn_index: i64,
             c = is_main,
             val = fn_index,
             next = 0 - 1,
+            pos = cur_off(p),
         },
     )
 }
@@ -346,7 +348,7 @@ new_field_node :: fn(mut p: Parser, base: i64, offset: i64, length: i64) -> i64 
     arena_push(
         p.arena,
         Node { kind = NODE_FIELD, a = base, b = 0, c = length, val = offset,
-            next = 0 - 1 },
+            next = 0 - 1, pos = cur_off(p) },
     )
 }
 
@@ -356,7 +358,7 @@ new_struct_lit :: fn(mut p: Parser, struct_index: i64, inits: i64) -> i64 {
     arena_push(
         p.arena,
         Node { kind = NODE_STRUCT_LIT, a = inits, b = 0, c = 0,
-            val = struct_index, next = 0 - 1 },
+            val = struct_index, next = 0 - 1, pos = cur_off(p) },
     )
 }
 
@@ -366,7 +368,7 @@ new_field_init :: fn(mut p: Parser, value: i64, offset: i64, length: i64) -> i64
     arena_push(
         p.arena,
         Node { kind = NODE_FIELD_INIT, a = value, b = 0, c = length,
-            val = offset, next = 0 - 1 },
+            val = offset, next = 0 - 1, pos = cur_off(p) },
     )
 }
 
@@ -497,7 +499,7 @@ generic_index_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
 new_unary :: fn(mut p: Parser, kind: i64, child: i64) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = kind, a = child, b = 0, c = 0, val = 0, next = 0 - 1 },
+        Node { kind = kind, a = child, b = 0, c = 0, val = 0, next = 0 - 1, pos = cur_off(p) },
     )
 }
 
@@ -506,7 +508,7 @@ new_index :: fn(mut p: Parser, base: i64, index: i64) -> i64 {
     arena_push(
         p.arena,
         Node { kind = NODE_INDEX, a = base, b = index, c = 0, val = 0,
-            next = 0 - 1 },
+            next = 0 - 1, pos = cur_off(p) },
     )
 }
 
@@ -515,7 +517,7 @@ new_index :: fn(mut p: Parser, base: i64, index: i64) -> i64 {
 new_type_node :: fn(mut p: Parser, kind: i64, expr: i64, ty: i64) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = kind, a = expr, b = 0, c = 0, val = ty, next = 0 - 1 },
+        Node { kind = kind, a = expr, b = 0, c = 0, val = ty, next = 0 - 1, pos = cur_off(p) },
     )
 }
 
@@ -525,7 +527,7 @@ new_case :: fn(mut p: Parser, body: i64, value: i64, is_default: i64) -> i64 {
     arena_push(
         p.arena,
         Node { kind = NODE_CASE, a = body, b = 0, c = is_default, val = value,
-            next = 0 - 1 },
+            next = 0 - 1, pos = cur_off(p) },
     )
 }
 

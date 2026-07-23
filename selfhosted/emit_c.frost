@@ -188,13 +188,15 @@ emit_expr :: fn(mut p: Parser, id: i64) {
             // exist. Without this the name would be emitted verbatim and only
             // whatever compiles the output would notice.
             if (local_exists(p, off, len) == false) {
-                frost_error("frost: undefined variable '")
+                report_where(p.modules, p.src, off)
+                frost_error("undefined variable '")
                 frost_error_src(p.src, off, len)
                 frost_error("'")
                 frost_die()
             }
             if (is_moved(p, off, len)) {
-                frost_error("frost: use of moved value '")
+                report_where(p.modules, p.src, off)
+                frost_error("use of moved value '")
                 frost_error_src(p.src, off, len)
                 frost_error("'")
                 frost_die()
@@ -436,7 +438,8 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                         expected = pointee(param_ty)
                     }
                     if (types_compatible(p, arg_ty, expected) == false) {
-                        frost_error("frost: '")
+                        report_where(p.modules, p.src, vnode^.pos)
+                        frost_error("'")
                         frost_error_src(p.src, sym^.off, sym^.len)
                         frost_error("' was passed an argument of the wrong type")
                         frost_die()
@@ -508,7 +511,8 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         place_ty := type_of(p, place)
         value_ty := type_of(p, value)
         if (types_compatible(p, value_ty, place_ty) == false) {
-            frost_error("frost: assigning a value of the wrong type")
+            report_where(p.modules, p.src, node^.pos)
+            frost_error("assigning a value of the wrong type")
             frost_die()
         }
         emit_expr(p, place)
@@ -570,7 +574,8 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
                 mark_moved(p, value)
             }
             if (types_compatible(p, value_ty, p.current_ret) == false) {
-                frost_error("frost: '")
+                report_where(p.modules, p.src, node^.pos)
+                frost_error("'")
                 frost_error_src(p.src, p.current_fn_off, p.current_fn_len)
                 frost_error("' returns a value of the wrong type")
                 frost_die()
@@ -640,7 +645,8 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
 emit_capability_argument :: fn(mut p: Parser, fn_index: i64) {
     if (p.prov_kind == PROVIDER_NONE) {
         sym : ^Sym = arena_at(p.fns, fn_index)
-        frost_error("frost: calling '")
+        report_where(p.modules, p.src, sym^.off)
+        frost_error("calling '")
         frost_error_src(p.src, sym^.off, sym^.len)
         frost_error("' needs an allocation capability, so declare `uses` on ")
         frost_error("the caller or wrap the call in a `with` block")

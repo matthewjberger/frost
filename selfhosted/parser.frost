@@ -3,6 +3,7 @@
 import "core.frost"
 import "lexer.frost"
 import "cursor.frost"
+import "imports.frost"
 import "names.frost"
 import "types.frost"
 
@@ -169,7 +170,8 @@ resolve_lit_type :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
 // statement can.
 lower_try :: fn(mut p: Parser, value: i64) -> i64 {
     if (p.result_ty == (0 - 1)) {
-        frost_error("frost: '?' needs a function that declares a failure set")
+        report_where(p.modules, p.src, cur_off(p))
+        frost_error("'?' needs a function that declares a failure set")
         frost_die()
     }
     name_off := synth_numbered(p, "__try", p.try_count)
@@ -596,7 +598,8 @@ parse_variant_case :: fn(mut p: Parser, subject: i64) -> i64 {
     advance(p)
     index := find_variant(p, 0 - 1, variant_off, variant_len)
     if (index < 0) {
-        frost_error("frost: no enum has a variant '")
+        report_where(p.modules, p.src, variant_off)
+        frost_error("no enum has a variant '")
         frost_error_src(p.src, variant_off, variant_len)
         frost_error("'")
         frost_die()
@@ -958,7 +961,7 @@ parse_params :: fn(mut p: Parser) -> i64 {
             param := arena_push(
                 p.arena,
                 Node { kind = NODE_PARAM, a = auto_borrow, b = ty, c = length,
-                    val = offset, next = 0 - 1 },
+                    val = offset, next = 0 - 1, pos = cur_off(p) },
             )
             if (head == (0 - 1)) {
                 head = param
@@ -1027,7 +1030,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
         capability := arena_push(
             p.arena,
             Node { kind = NODE_PARAM, a = 1, b = POINTER_BASE + cap_ty,
-                c = cap_name_len, val = binding, next = 0 - 1 },
+                c = cap_name_len, val = binding, next = 0 - 1, pos = cur_off(p) },
         )
         params = append_node(p, params, capability)
         set_params(p, fn_index, params)
@@ -1208,7 +1211,8 @@ parse_variant_value :: fn(mut p: Parser, enum_off: i64, enum_len: i64) -> i64 {
     advance(p)
     index := find_variant(p, enum_ty, variant_off, variant_len)
     if (index < 0) {
-        frost_error("frost: '")
+        report_where(p.modules, p.src, variant_off)
+        frost_error("'")
         frost_error_src(p.src, enum_off, enum_len)
         frost_error("' has no variant '")
         frost_error_src(p.src, variant_off, variant_len)
@@ -1326,7 +1330,7 @@ new_result_value :: fn(mut p: Parser, result_ty: i64, which: i64, name_off: i64,
     which_node := arena_push(
         p.arena,
         Node { kind = NODE_NUM, a = 0, b = 0, c = 0, val = which,
-            next = 0 - 1 },
+            next = 0 - 1, pos = cur_off(p) },
     )
     tag_init := new_field_init(p, which_node, p.name_tag, 3)
     payload_init := new_field_init(p, payload, name_off, name_len)
@@ -1360,7 +1364,7 @@ parse_extern :: fn(mut p: Parser) -> i64 {
     arena_push(
         p.arena,
         Node { kind = NODE_EXTERN, a = 0, b = params, c = ret, val = fn_index,
-            next = 0 - 1 },
+            next = 0 - 1, pos = cur_off(p) },
     )
 }
 

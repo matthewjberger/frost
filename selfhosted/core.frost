@@ -239,6 +239,10 @@ CH_BACKSLASH  :: 92
 CH_LOWER_N    :: 110
 CH_LOWER_T    :: 116
 
+// `pos` is where in the one buffer this node was written, which is what turns a
+// diagnostic into a file, a line and a column. A node the compiler synthesizes
+// takes the position of whatever was being read when it was made, which is the
+// line the reader wrote even though the node is not.
 Node :: struct {
     kind: i64,
     a: i64,
@@ -246,6 +250,7 @@ Node :: struct {
     c: i64,
     val: i64,
     next: i64,
+    pos: i64,
 }
 
 // An interned function name: a byte range into the source, a flag marking it as
