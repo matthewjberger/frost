@@ -2316,7 +2316,7 @@ fn in_module_tests_report_pass() {
     assert!(ok, "expected passing tests, got:\n{output}");
     assert!(output.contains("test adds ... ok"), "got:\n{output}");
     assert!(output.contains("test identity ... ok"), "got:\n{output}");
-    assert!(output.contains("all tests passed"), "got:\n{output}");
+    assert!(output.contains("2 passed, 0 failed"), "got:\n{output}");
 }
 
 #[test]
@@ -5886,4 +5886,22 @@ fn an_import_resolves_through_every_search_root() {
     assert_eq!(build("standard", uses_std, &[], &[]), "42\n");
 
     let _ = std::fs::remove_dir_all(&directory);
+}
+
+// A failing test used to end the run, so one bad test hid every test after it,
+// and the only thing it said was "assertion failed". Now the failure ends that
+// test, names where it was written, and the run continues to a summary.
+#[test]
+fn a_failing_test_does_not_hide_the_ones_after_it() {
+    let source = "add :: fn(a: i64, b: i64) -> i64 { a + b }\n\
+                  test \"wrong\" { assert(add(2, 2) == 5) }\n\
+                  test \"right\" { assert(add(1, 1) == 2) }\n";
+    let Some((output, ok)) = run_test_mode("mixed", source) else {
+        return;
+    };
+    assert!(!ok, "a failing test must fail the run:\n{output}");
+    assert!(output.contains("test wrong ... FAILED"), "got:\n{output}");
+    // The test after the failure still ran, which is the whole point.
+    assert!(output.contains("test right ... ok"), "got:\n{output}");
+    assert!(output.contains("1 passed, 1 failed"), "got:\n{output}");
 }

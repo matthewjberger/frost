@@ -96,6 +96,7 @@ frost --native -o program.o program.frost        # object file only
 frost --emit-c -o program.c program.frost        # portable C instead of Cranelift
 frost --run-ir program.frost                     # interpret the typed IR
 frost --test program.frost                       # run the file's `test` blocks
+frost --test tests/                              # run every test under a directory
 
 frost --link --incremental -o program program.frost   # rebuild only what changed
 frost --link --freestanding -o program program.frost  # link no C standard library

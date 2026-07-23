@@ -118,34 +118,54 @@ fn test_harness(tests: &[(String, String)]) -> Vec<Spanned<Statement>> {
         mode: frost::ParamMode::Read,
         compile_time_signature: None,
     };
-    let external = |name: &str, params: Vec<Parameter>| {
-        spanned(Statement::Extern {
-            name: name.to_string(),
-            params,
-            return_type: None,
-        })
-    };
+    let external =
+        |name: &str, params: Vec<Parameter>, return_type: Option<Type>| {
+            spanned(Statement::Extern {
+                name: name.to_string(),
+                params,
+                return_type,
+            })
+        };
 
+    // The runner takes each test body as a function pointer rather than the
+    // harness calling it directly, because a failing assertion has to escape
+    // back into the runner without ending the run, and the setjmp that makes
+    // that possible has to own the call. See runtime/frost_runtime.c.
     let mut items = vec![
         external(
-            "frost_test_start",
-            vec![param("name", Type::Ptr(Box::new(Type::I8)))],
+            "frost_test_run",
+            vec![
+                param("name", Type::Ptr(Box::new(Type::I8))),
+                param("body", Type::Proc(Vec::new(), Box::new(Type::Void))),
+            ],
+            None,
         ),
-        external("frost_test_ok", Vec::new()),
-        external("frost_assert", vec![param("cond", Type::Bool)]),
+        external("frost_test_summary", Vec::new(), Some(Type::I64)),
+        external(
+            "frost_assert_at",
+            vec![
+                param("cond", Type::Bool),
+                param("where", Type::Ptr(Box::new(Type::I8))),
+            ],
+            None,
+        ),
     ];
 
     let mut body = Vec::new();
     for (test_name, function_name) in tests {
         body.push(call_stmt(
-            "frost_test_start",
-            vec![Expression::Literal(Literal::String(test_name.clone()))],
+            "frost_test_run",
+            vec![
+                Expression::Literal(Literal::String(test_name.clone())),
+                Expression::Identifier(function_name.clone()),
+            ],
         ));
-        body.push(call_stmt(function_name, Vec::new()));
-        body.push(call_stmt("frost_test_ok", Vec::new()));
     }
-    body.push(spanned(Statement::Expression(Expression::Literal(
-        Literal::Integer(0),
+    // The summary is the last expression, so its failure count is what `main`
+    // answers with and what the process exits on.
+    body.push(spanned(Statement::Expression(call(
+        "frost_test_summary",
+        Vec::new(),
     ))));
 
     items.push(spanned(Statement::Constant(
@@ -159,8 +179,81 @@ fn test_harness(tests: &[(String, String)]) -> Vec<Spanned<Statement>> {
     items
 }
 
+// Every `.frost` file under a directory, in a stable order.
+fn frost_files(directory: &Path) -> Result<Vec<PathBuf>> {
+    let mut found = Vec::new();
+    let mut stack = vec![directory.to_path_buf()];
+    while let Some(next) = stack.pop() {
+        for entry in fs::read_dir(&next)
+            .with_context(|| format!("reading {}", next.display()))?
+        {
+            let path = entry?.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|kind| kind == "frost") {
+                found.push(path);
+            }
+        }
+    }
+    found.sort();
+    Ok(found)
+}
+
+// `--test` on a directory runs every file under it, each in its own process.
+// Separate processes rather than one program, because a test that manages to
+// crash outright takes down only its own file, and because two files are two
+// programs that may define the same names.
+fn test_directory(directory: &Path, arguments: &[String]) -> Result<()> {
+    let files = frost_files(directory)?;
+    if files.is_empty() {
+        println!("no .frost files under {}", directory.display());
+        return Ok(());
+    }
+    let executable = std::env::current_exe()
+        .context("finding the compiler to run tests with")?;
+    let mut failed = 0;
+    for file in &files {
+        println!("== {}", file.display());
+        let status = Command::new(&executable)
+            .arg("--test")
+            .args(arguments)
+            .arg(file)
+            .status()
+            .with_context(|| format!("running tests in {}", file.display()))?;
+        if !status.success() {
+            failed += 1;
+        }
+    }
+    println!(
+        "
+{} of {} file(s) failed",
+        failed,
+        files.len()
+    );
+    if failed > 0 {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // A directory is a suite rather than a program, so it never reaches the
+    // rest of this.
+    let entry = Path::new(&cli.file);
+    if cli.test && entry.is_dir() {
+        let mut forwarded = Vec::new();
+        for directory in &cli.lib_path {
+            forwarded.push("-L".to_string());
+            forwarded.push(directory.clone());
+        }
+        for library in &cli.libs {
+            forwarded.push("--libs".to_string());
+            forwarded.push(library.clone());
+        }
+        return test_directory(entry, &forwarded);
+    }
 
     let source = fs::read_to_string(&cli.file)
         .with_context(|| format!("Failed to read file: {}", cli.file))?;
@@ -273,8 +366,9 @@ fn main() -> Result<()> {
             .status()
             .context("Failed to run test executable")?;
         fs::remove_file(&exe_path).ok();
+        // The runner prints its own summary, so there is nothing to add here
+        // beyond making the process exit on a failure.
         if status.success() {
-            println!("all tests passed");
             return Ok(());
         }
         std::process::exit(1);
