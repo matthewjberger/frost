@@ -430,9 +430,8 @@ things follow that are worth saying before the list.
 
 ## 6. Split the self-hosted compiler into modules (done)
 
-It was 5,457 lines in one file. It is thirteen modules now, listed with their
-sizes in [../selfhosted/README.md](../selfhosted/README.md), in an order that is
-a topological order of what calls what.
+It was one file. It is a set of modules now, in an order that is a topological
+order of what calls what.
 
 **The boundaries come from the call graph between concerns, not from where
 functions sit on the page.** Mapping every top-level name to a concern and

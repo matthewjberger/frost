@@ -182,7 +182,14 @@ emit_asm_convert :: fn(mut p: Parser, from: i64, to: i64) {
     if (from == to || is_pointer(from) || is_pointer(to)) {
         return
     }
-    if (is_struct_ty(from) || is_struct_ty(to)) {
+    // The one conversion between aggregates: an array becomes a slice of the
+    // whole of itself. %rax holds its address, which is what a slice wants.
+    if (is_array_ty(from) && is_array_ty(to) && is_slice_ty(p, to)
+        && is_slice_ty(p, from) == false) {
+        emit_asm_slice_of(p, from)
+        return
+    }
+    if (is_aggregate(from) || is_aggregate(to)) {
         return
     }
     if (is_float(from) == false && is_float(to) == false) {
@@ -288,8 +295,24 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
     if (kind == NODE_INDEX) {
         base := node^.a
         base_ty := type_of(p, base)
+        mut through := base_ty
+        if (is_pointer(through)) {
+            through = pointee(through)
+        }
         mut element : i64 = TY_I64
-        if (is_pointer(base_ty)) {
+        if (is_array_ty(through)) {
+            element = array_element(p, through)
+            // An aggregate is reached by its address, and a slice holds the
+            // address of its run in its first word rather than being one.
+            if (is_pointer(base_ty)) {
+                emit_asm_expr(p, base)
+            } else {
+                emit_asm_addr(p, base)
+            }
+            if (is_slice_ty(p, through)) {
+                asm("movq (%rax), %rax")
+            }
+        } else if (is_pointer(base_ty)) {
             element = pointee(base_ty)
             emit_asm_expr(p, base)
         } else {
@@ -388,12 +411,9 @@ emit_asm_binop :: fn(op: i64) {
         emit_asm_compare("setne")
         return
     }
-    // `&&` and `||` over 0/1 values are the bitwise operations.
-    if (op == 11) {
-        asm("andq %r11, %rax")
-        return
-    }
-    asm("orq %r11, %rax")
+    // `&&` and `||` never reach here: they branch rather than compute, so that
+    // the right side is not evaluated when the left settles the answer.
+    asm_unsupported("this operator")
 }
 
 abi_sse_regs :: fn(mut p: Parser) -> i64 {
@@ -453,7 +473,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         // A struct is handled by its address, so naming one yields where it
         // lives rather than the first word inside it.
         local_ty := lookup_local(p, off, len)
-        if (is_struct_ty(local_ty)) {
+        if (is_aggregate(local_ty)) {
             asm_i("leaq ", local_slot(p, off, len), "(%rbp), %rax")
             return
         }
@@ -464,6 +484,56 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
     // already knows how to read a decimal and this compiler does not need to.
     if (kind == NODE_FLOAT) {
         asm_i("movq .Lflt", id, "(%rip), %rax")
+        return
+    }
+    if (kind == NODE_SLICE_LEN) {
+        inner := node^.a
+        mut inner_ty := type_of(p, inner)
+        if (is_pointer(inner_ty)) {
+            inner_ty = pointee(inner_ty)
+        }
+        if (is_array_ty(inner_ty) && is_slice_ty(p, inner_ty) == false) {
+            asm_i("movq $", array_length(p, inner_ty), ", %rax")
+            return
+        }
+        // The length is the word after the pointer.
+        if (is_pointer(type_of(p, inner))) {
+            emit_asm_expr(p, inner)
+        } else {
+            emit_asm_addr(p, inner)
+        }
+        asm("movq 8(%rax), %rax")
+        return
+    }
+    if (kind == NODE_ARRAY_LIT) {
+        emit_asm_array_lit(p, id)
+        return
+    }
+    // `&&` and `||` do not evaluate their right side unless they have to. This
+    // is not an optimization: a guard like `is_array(t) && length_of(t) < 0`
+    // reads a table only the guard says is safe to read, and evaluating both
+    // sides makes that a bounds failure rather than a false.
+    if (kind == NODE_BIN && node^.val >= OP_AND) {
+        done := new_label(p)
+        emit_asm_expr(p, node^.a)
+        asm("cmpq $0, %rax")
+        if (node^.val == OP_AND) {
+            // The answer is already settled if the left side settled it, and
+            // moving a constant leaves the comparison's flags alone.
+            asm("movq $0, %rax")
+            frost_emit_str("    je ")
+        } else {
+            asm("movq $1, %rax")
+            frost_emit_str("    jne ")
+        }
+        emit_label(".Lend", done)
+        frost_emit_str("\n")
+        emit_asm_expr(p, node^.b)
+        asm("cmpq $0, %rax")
+        asm("setne %al")
+        asm("movzbq %al, %rax")
+        emit_label(".Lend", done)
+        frost_emit_str(":\n")
         return
     }
     if (kind == NODE_BIN) {
@@ -520,7 +590,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
     if (kind == NODE_FIELD || kind == NODE_DEREF || kind == NODE_INDEX) {
         emit_asm_addr(p, id)
         result := type_of(p, id)
-        if (is_struct_ty(result) == false) {
+        if (is_aggregate(result) == false) {
             emit_asm_load_from(p, result, 0, "(%rax), ")
         }
         return
@@ -530,6 +600,38 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         return
     }
     asm_unsupported("this expression")
+}
+
+// Build an array into a temporary and answer with its address, the way a struct
+// literal does, since both are aggregates reached by address here.
+emit_asm_array_lit :: fn(mut p: Parser, id: i64) {
+    node : ^Node = arena_at(p.arena, id)
+    array_ty := type_of(p, id)
+    element := array_element(p, array_ty)
+    stride := type_size(p, element)
+    slot := alloc_temp(p, type_size(p, array_ty))
+    mut at : i64 = 0
+    mut entry := node^.a
+    while (entry != (0 - 1)) {
+        enode : ^Node = arena_at(p.arena, entry)
+        emit_asm_expr(p, enode^.a)
+        emit_asm_convert(p, type_of(p, enode^.a), element)
+        asm("movq %rax, %r11")
+        emit_asm_store_to(p, element, slot + at, "(%rbp)")
+        at = at + stride
+        entry = enode^.next
+    }
+    asm_i("leaq ", slot, "(%rbp), %rax")
+}
+
+// An array reaching a slice becomes one in a temporary, whose address is what
+// the callee or the place is handed. %rax holds the array's address on entry.
+emit_asm_slice_of :: fn(mut p: Parser, from: i64) {
+    slot := alloc_temp(p, 16)
+    asm_i("movq %rax, ", slot, "(%rbp)")
+    asm_i("movq $", array_length(p, from), ", %r11")
+    asm_i("movq %r11, ", slot + 8, "(%rbp)")
+    asm_i("leaq ", slot, "(%rbp), %rax")
 }
 
 // Build a struct into a temporary and answer with its address.
@@ -547,7 +649,7 @@ emit_asm_struct_lit :: fn(mut p: Parser, id: i64) {
         member := field_type(p, struct_ty, fnode^.val, fnode^.c)
         emit_asm_expr(p, value)
         emit_asm_convert(p, type_of(p, value), member)
-        if (is_struct_ty(member)) {
+        if (is_aggregate(member)) {
             asm("movq %rax, %r11")
             asm_i("leaq ", slot + offset, "(%rbp), %r10")
             emit_asm_copy(type_size(p, member))
@@ -595,7 +697,7 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     ret := call_ret_type(p, args, fn_index)
     mut sret : i64 = 0
     mut result_slot : i64 = 0
-    if (is_struct_ty(ret)) {
+    if (is_aggregate(ret)) {
         sret = 1
         result_slot = alloc_temp(p, type_size(p, ret))
     }
@@ -616,8 +718,15 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         // what the value has to arrive as.
         if (generic == false) {
             declared := nth_param_type(p, callee^.params, i)
-            if (declared >= 0 && declared != TY_PARAM) {
-                emit_asm_convert(p, type_of(p, argument), declared)
+            // A borrowed parameter's declared type is a pointer to what it
+            // takes, and an aggregate is already an address here, so the
+            // conversion is against what the pointer points at.
+            mut want := declared
+            if (is_pointer(want) && is_aggregate(pointee(want))) {
+                want = pointee(want)
+            }
+            if (declared >= 0 && want != TY_PARAM) {
+                emit_asm_convert(p, type_of(p, argument), want)
             }
         }
         emit_asm_push()
@@ -731,7 +840,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         emit_asm_convert(p, type_of(p, value), ty)
         record_local(p, off, len, ty)
         slot := local_slot(p, off, len)
-        if (is_struct_ty(ty)) {
+        if (is_aggregate(ty)) {
             asm("movq %rax, %r11")
             asm_i("leaq ", slot, "(%rbp), %r10")
             emit_asm_copy(type_size(p, ty))
@@ -749,7 +858,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         emit_asm_push()
         emit_asm_expr(p, value)
         emit_asm_convert(p, type_of(p, value), place_ty)
-        if (is_struct_ty(place_ty)) {
+        if (is_aggregate(place_ty)) {
             asm("movq %rax, %r11")
             emit_asm_pop_rax()
             asm("movq %rax, %r10")
@@ -916,7 +1025,7 @@ emit_asm_return :: fn(mut p: Parser, value: i64) {
     }
     emit_asm_expr(p, value)
     emit_asm_convert(p, type_of(p, value), p.asm_ret)
-    if (is_struct_ty(p.asm_ret)) {
+    if (is_aggregate(p.asm_ret)) {
         asm("movq %rax, %r11")
         asm_i("movq ", p.sret_slot, "(%rbp), %r10")
         emit_asm_copy(type_size(p, p.asm_ret))
@@ -997,7 +1106,7 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
     regs := abi_arg_regs(p)
     shadow := abi_shadow(p)
     mut shift : i64 = 0
-    if (is_struct_ty(ret)) {
+    if (is_aggregate(ret)) {
         shift = 1
         p.sret_slot = alloc_temp(p, 8)
         frost_emit_str("    movq ")
@@ -1036,7 +1145,7 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
         }
         // A struct argument travels as an address, so a parameter that owns one
         // copies it into its own slot rather than keeping the caller's pointer.
-        if (is_struct_ty(ptype)) {
+        if (is_aggregate(ptype)) {
             if (int_reg < regs) {
                 frost_emit_str("    movq ")
                 emit_asm_arg_reg(p, int_reg)

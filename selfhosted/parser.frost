@@ -27,6 +27,32 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         advance(p)
         return new_named_node(p, NODE_FLOAT, 0, offset, length)
     }
+    // `[a, b, c]`. The element type and the length both come from what is
+    // written, so an array literal needs no annotation to have a type.
+    if (kind == TOK_LBRACKET) {
+        advance(p)
+        mut head : i64 = 0 - 1
+        mut tail : i64 = 0 - 1
+        mut count : i64 = 0
+        while (cur(p) != TOK_RBRACKET) {
+            element := new_node(p, NODE_ARG, parse_expr(p), 0, 0)
+            if (head == (0 - 1)) {
+                head = element
+            } else {
+                set_next(p, tail, element)
+            }
+            tail = element
+            count = count + 1
+            if (cur(p) == TOK_COMMA) {
+                advance(p)
+            }
+        }
+        advance(p)
+        made := new_node(p, NODE_ARRAY_LIT, head, 0, 0)
+        node : ^Node = arena_at(p.arena, made)
+        node^.c = count
+        return made
+    }
     if (kind == TOK_KW_TRUE) {
         advance(p)
         return new_node(p, NODE_NUM, 0, 0, 1)
@@ -87,6 +113,14 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             ty := parse_type(p)
             advance(p)
             return new_type_node(p, NODE_SIZEOF, 0, ty)
+        }
+        // A slice carries its length, and a fixed array's is in its type, so
+        // this reads one in constant time either way.
+        if (str_range_eq(p.src, offset, length, "slice_len")) {
+            advance(p)
+            inner := parse_expr(p)
+            advance(p)
+            return new_unary(p, NODE_SLICE_LEN, inner)
         }
         if (str_range_eq(p.src, offset, length, "ptr_cast")) {
             advance(p)
@@ -252,7 +286,7 @@ hold_struct_result :: fn(mut p: Parser, value: i64) -> i64 {
         return value
     }
     callee : ^Sym = arena_at(p.fns, node^.val)
-    if (is_struct_ty(callee^.ret_type) == false) {
+    if (is_aggregate(callee^.ret_type) == false) {
         return value
     }
     name_off := synth_numbered(p, "__arg", p.match_count)
@@ -392,6 +426,29 @@ parse_type :: fn(mut p: Parser) -> i64 {
     while (cur(p) == TOK_CARET) {
         advance(p)
         pointer_levels = pointer_levels + 1
+    }
+    // `[]T` is a slice and `[N]T` is a fixed array, and both are read before
+    // the pointer levels above them so `^[]T` means what it looks like.
+    if (cur(p) == TOK_LBRACKET) {
+        advance(p)
+        mut length : i64 = 0 - 1
+        if (cur(p) != TOK_RBRACKET) {
+            if (cur(p) == TOK_INT) {
+                length = cur_val(p)
+            } else {
+                length = const_value(p, cur_off(p), cur_len(p))
+            }
+            advance(p)
+        }
+        advance(p)
+        element := parse_type(p)
+        mut made := array_of(p, element, length)
+        mut level : i64 = 0
+        while (level < pointer_levels) {
+            made = POINTER_BASE + made
+            level = level + 1
+        }
+        return made
     }
     mut dollar : i64 = 0
     if (cur(p) == TOK_DOLLAR) {
@@ -882,7 +939,7 @@ parse_params :: fn(mut p: Parser) -> i64 {
                 if (mode == 1) {
                     auto_borrow = 1
                 }
-                if (mode == 0 && is_struct_ty(ty)) {
+                if (mode == 0 && is_aggregate(ty)) {
                     auto_borrow = 1
                 }
                 if (mode == 0 && p.last_type_was_generic == 1) {

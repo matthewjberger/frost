@@ -274,8 +274,8 @@ rather than after.
 
 ## Open questions
 
-- **Does the self-hosted compiler grow this too?** *Yes, and it is on the
-  roadmap.* `selfhosted/frost.frost` is the compiler people will use, so the
+- **Does the self-hosted compiler grow this too?** *Yes.*
+  `selfhosted/frost.frost` is the compiler people will use, so the
   edit-compile loop goal 8 promises about is the one it runs. Everything in this
   document is a port waiting to happen: interfaces, the build cache, per-module
   objects and `--incremental`. See [self-hosting.md](self-hosting.md).

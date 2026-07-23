@@ -784,6 +784,66 @@ fn self_hosted_floats_through_c() {
     assert_eq!(output, FLOATS_EXPECTED);
 }
 
+// Arrays and slices: a literal, indexing, assignment through an index, an array
+// coercing to a slice both by binding and at a call, and `slice_len` reading a
+// constant from an array's type and a field from a slice.
+const SELF_HOSTED_ARRAYS: &str = "sum :: fn(numbers: []i64) -> i64 {\n\
+     \x20   mut total : i64 = 0\n    mut i : i64 = 0\n\
+     \x20   while (i < slice_len(numbers)) {\n\
+     \x20       total = total + numbers[i]\n        i = i + 1\n    }\n\
+     \x20   total\n}\n\
+     main :: fn() -> i64 {\n\
+     \x20   scores := [40, 10, 90, 30, 70]\n\
+     \x20   view : []i64 = scores\n\
+     \x20   print slice_len(scores)\n    print slice_len(view)\n\
+     \x20   print scores[2]\n    print view[3]\n\
+     \x20   print sum(view)\n    print sum(scores)\n\
+     \x20   print sizeof([5]i64)\n\
+     \x20   mut grid : [3]i64 = [7, 8, 9]\n\
+     \x20   grid[1] = 99\n    print grid[1]\n    print sum(grid)\n    0\n}\n";
+
+const ARRAYS_EXPECTED: &str = "5\n5\n90\n30\n240\n240\n40\n99\n115\n";
+
+#[test]
+fn self_hosted_arrays_natively() {
+    let Some(output) = selfhosted_native_output("arrays", SELF_HOSTED_ARRAYS)
+    else {
+        return;
+    };
+    assert_eq!(output, ARRAYS_EXPECTED);
+}
+
+#[test]
+fn self_hosted_arrays_through_c() {
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_selfarrays_input.frost");
+    std::fs::write(&input, SELF_HOSTED_ARRAYS).unwrap();
+    let Some(c_source) = self_hosted_emits("selfarrays", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(output) = compile_c_and_run("selfarrays", &c_source) else {
+        return;
+    };
+    assert_eq!(output, ARRAYS_EXPECTED);
+}
+
+// `&&` used to compute both sides in the assembly backend, so a guard that
+// checks a thing is safe to read before reading it read it anyway.
+#[test]
+fn self_hosted_boolean_operators_short_circuit() {
+    let source = "trap :: fn() -> i64 {\n\
+         \x20   mut ok : [1]i64 = [0]\n    ok[5] = 1\n    1\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut n : i64 = 0\n\
+         \x20   if (n == 1 && trap() == 1) { print 9 } else { print 1 }\n\
+         \x20   if (n == 0 || trap() == 1) { print 2 } else { print 8 }\n    0\n}\n";
+    let Some(output) = selfhosted_native_output("shortcircuit", source) else {
+        return;
+    };
+    assert_eq!(output, "1\n2\n");
+}
+
 const CLI_PROGRAM: &str = "fib :: fn(n: i64) -> i64 {\n\
      \x20   if (n < 2) { return n }\n\
      \x20   return fib(n - 1) + fib(n - 2)\n}\n\

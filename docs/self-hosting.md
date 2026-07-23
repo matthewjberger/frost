@@ -25,9 +25,9 @@ a division of labour.
 full language, everything the bootstrap supports, and it is under the same speed
 promise, goal 8 in [philosophy.md](philosophy.md). Speed matters more there than
 here, because it is the compiler a user's edit-compile loop actually runs.
-Everything not yet ported is a work list with an order, tracked in
-[roadmap.md](roadmap.md), and the shape of each port is the four-step pattern at
-the end of this document.
+What is not yet ported is listed in
+[../selfhosted/README.md](../selfhosted/README.md), and the shape of each port
+is the four-step pattern at the end of this document.
 
 **It self-hosts twice over**, through its C backend and through its own x64
 backend, each compiling its own source to a byte-identical fixpoint across three

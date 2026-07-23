@@ -42,6 +42,14 @@ align_up :: fn(offset: i64, alignment: i64) -> i64 {
 }
 
 align_of :: fn(mut p: Parser, ty: i64) -> i64 {
+    if (is_array_ty(ty)) {
+        // A slice is a pointer beside a length, so it aligns like a word. A
+        // fixed array aligns like the thing it holds.
+        if (is_slice_ty(p, ty)) {
+            return 8
+        }
+        return align_of(p, array_element(p, ty))
+    }
     if (is_struct_ty(ty) == false) {
         return scalar_size(ty)
     }
@@ -60,6 +68,12 @@ align_of :: fn(mut p: Parser, ty: i64) -> i64 {
 }
 
 type_size :: fn(mut p: Parser, ty: i64) -> i64 {
+    if (is_array_ty(ty)) {
+        if (is_slice_ty(p, ty)) {
+            return 16
+        }
+        return type_size(p, array_element(p, ty)) * array_length(p, ty)
+    }
     if (is_struct_ty(ty) == false) {
         return scalar_size(ty)
     }
