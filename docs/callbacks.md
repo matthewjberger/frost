@@ -10,9 +10,9 @@ with a Frost context now runs through a real C callback API.
 ## The contradiction it exists to remove
 
 Goal 2 in [philosophy.md](philosophy.md) says safety comes from making dangerous
-shapes unrepresentable. The only way to write a callback today is the C idiom: a
-function pointer plus an untyped `^u8` the callee casts back. Every piece of that
-already exists in the language, verified against the source rather than
+shapes unrepresentable. The only way to write a callback used to be the C idiom:
+a function pointer plus an untyped `^u8` the callee casts back. Every piece of
+that already exists in the language, verified against the source rather than
 remembered:
 
 - `fn(T1, ...) -> R` is a function pointer type (spec 3.5), and a named function
@@ -27,8 +27,8 @@ closures, so a `^T` can only point into an arena a function was handed directly.
 A `^u8` handed to a C library and called back through later is precisely the case
 that argument does not cover. `src/ownership.rs` cannot see through it either.
 
-The result is that every callback-shaped API in Frost is an unsafe API, not
-because callbacks are unsafe but because the only expression of one is a raw
+The result was that every callback-shaped API in Frost was an unsafe API, not
+because callbacks are unsafe but because the only expression of one was a raw
 escape hatch. That is the inversion the surface `&` removal was meant to prevent,
 reappearing at the C boundary.
 
@@ -61,7 +61,7 @@ There is no generated code and no cast anywhere in the program.
 
 **Inferred, and `uses CallbackAbi` is dropped.** A `$handler` parameter with a
 function bound on an `extern fn` is already the complete statement of "this
-extern wants a trampoline". A `uses` clause beside it would be a second thing
+extern takes a callback". A `uses` clause beside it would be a second thing
 that has to be kept in step with the first, and it would be a capability that
 grants nothing: `uses Arena` means a real implicit parameter is supplied at the
 call, which `src/allocation_sources.rs` inserts. A capability that supplies
@@ -75,8 +75,8 @@ against what the library expects at the call, by the code already in
 
 ### What does the extern's C signature become?
 
-A `$handler` parameter contributes exactly one C argument, the trampoline
-pointer, in the position it is written. The context contributes the `void*`, in
+A `$handler` parameter contributes exactly one C argument, the callback pointer,
+in the position it is written. The context contributes the `void*`, in
 the position it is written. So the declaration is written in the order C wants
 and the mapping needs no further rule:
 
@@ -89,7 +89,7 @@ becomes `int64_t register(void (*)(void*, int64_t), void*)`.
 **Which parameter is the context** is not positional and must not be, because
 libraries put the userdata on either side of the function pointer. It is the
 parameter whose type is the type of the handler's **first** parameter. That is
-also the definition that makes the trampoline derivable: the handler's first
+also the definition that makes the lowering derivable: the handler's first
 parameter is the context, and every parameter after it is a callback argument
 that C passes through.
 
@@ -108,8 +108,9 @@ Ctx          :: struct { hits: i64 }
 Registration :: linear struct { token: i64 }
 
 on_event   :: fn(mut ctx: Ctx, code: i64) { ctx.hits = ctx.hits + code }
-register   :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> Registration
-unregister :: fn(move r: Registration) -> Ctx
+register_handler   :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64
+unregister_handler :: extern fn(token: i64) -> Ctx
+unregister         :: fn(move r: Registration) -> Ctx { unregister_handler(r.token) }
 ```
 
 Three things fall out, and each is a reason to prefer moving over borrowing.
@@ -251,32 +252,25 @@ still cheap to change.
 
 ## What is still open
 
-- **How the caller gets its context back, and it is the big one.** The context
-  goes in by `move`, so the name it was bound to is dead to `check_ownership`
-  for the rest of the function, and the callback's updates are written into that
-  exact storage. So the caller cannot read what its own callback did. The C
-  library in the end-to-end test reads the value back out, which proves the ABI
-  but is not a program anyone wants to write.
+- **How the caller gets its context back.** *Answered, and it needed nothing
+  from callbacks.* The context goes in by `move`, so the name it was bound to is
+  dead to `check_ownership` for the rest of the function while the callback
+  writes that exact storage, and for a while a caller could not read what its own
+  callback did.
 
-  The roadmap's sketch had `unregister :: fn(move r: Registration) -> Ctx`, and
-  that does not work as written: a `Registration` holding a `Ctx` field holds a
-  copy, and the copy is not the storage the library wrote through.
+  The roadmap's sketch had a `Registration` holding a `Ctx` field, and that does
+  not work: the field is a copy, and the copy is not the storage the library
+  wrote through. What does work is unregistration as an ordinary extern that
+  hands the context back by value, `unregister_handler :: extern fn(token: i64)
+  -> Ctx`, wrapped in the Frost function that consumes the linear registration.
+  The caller rebinds the result and reads it, and nothing about callbacks has to
+  know.
 
-  **The answer needs no new language machinery**, which was checked by writing
-  it. Unregistration is an ordinary extern that hands the context back by value,
-  `unregister_handler :: extern fn(token: i64) -> Ctx`, wrapped in the Frost
-  function that consumes the linear registration. The caller rebinds the result
-  and reads it. Nothing about callbacks has to know.
-
-  **What blocks it is unrelated to callbacks**: an `extern fn` returning a
-  struct by value is not supported by either backend, and never has been.
-  `make_ctx :: extern fn(v: i64) -> Ctx` fails the same way with no callback
-  anywhere near it. That is not a small fix, because the compiler returns its own
-  aggregates through a hidden out-pointer while C returns small structs in
-  registers, so doing it right means classifying return types against the
-  platform C ABI rather than reusing what is there. Recorded in
-  [roadmap.md](roadmap.md) as its own item, since it is worth more than this one
-  use of it.
+  What blocked it was unrelated to callbacks and is now item 4 of
+  [roadmap.md](roadmap.md): an `extern fn` returning a struct by value, which
+  neither backend supported. `src/c_abi.rs` classifies return types the way the
+  target's C compiler does, and with that the round trip runs end to end in
+  `a_callback_registered_with_a_c_library_runs`.
 - **What `token` holds** for a library whose unregister takes something other
   than an integer. The `Registration` in the end-to-end test is an ordinary
   `linear struct` a binding author writes and the compiler knows nothing about

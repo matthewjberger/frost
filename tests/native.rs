@@ -5082,6 +5082,12 @@ fn registering_and_unregistering_in_one_frame_is_allowed() {
 // calling convention, so the handler compiled for Frost *is* the
 // `void (*)(void*, int64_t)` the library wants, and there is no trampoline and
 // no cast anywhere. If that were wrong, this is where it would crash.
+//
+// The context goes in by `move` and comes back out through unregistration,
+// which is an ordinary extern returning a struct by value. That needed no
+// callback machinery at all, only the C return classification in
+// src/c_abi.rs, which is what closed the last open question in
+// docs/callbacks.md.
 #[test]
 fn a_callback_registered_with_a_c_library_runs() {
     let Some(compiler) = c_compiler() else {
@@ -5167,4 +5173,232 @@ fn a_callback_registered_with_a_c_library_runs() {
     // read by the library rather than by Frost because it was moved in, and
     // getting it back is the open question at the end of docs/callbacks.md.
     assert_eq!(output, "9\n77\n");
+}
+
+// Item 4 of docs/roadmap.md. C returns a struct by a rule of its own, and the
+// rule differs by target and, on some targets, by whether the fields are
+// floating point. Every shape here was chosen because it lands on a different
+// side of some boundary: 3 bytes is not a power of two, 4 bytes of float is the
+// case where Windows and System V disagree, 16 bytes is the last size System V
+// returns in registers and the first size Windows does not.
+//
+// The library is compiled by the C compiler, so its side of the call is the
+// real convention rather than Frost's opinion of it. If the classification in
+// src/c_abi.rs were wrong, the values would come back scrambled rather than
+// missing, which is why this is a run rather than a compile.
+#[test]
+fn a_struct_returned_from_c_comes_back_correctly() {
+    let Some(compiler) = c_compiler() else {
+        return;
+    };
+    if !linker_available() {
+        return;
+    }
+    let directory = std::env::temp_dir().join("frost_c_struct_returns");
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+
+    let library_source = directory.join("shapes.c");
+    std::fs::write(
+        &library_source,
+        "#include <stdint.h>\n\
+         #include <stdio.h>\n\
+         typedef struct { uint8_t a; } S1;\n\
+         typedef struct { int16_t a; } S2;\n\
+         typedef struct { uint8_t a, b, c; } S3;\n\
+         typedef struct { int32_t a; } S4;\n\
+         typedef struct { int64_t a; } S8;\n\
+         typedef struct { float a; } SF;\n\
+         typedef struct { float a, b; } SFF;\n\
+         typedef struct { int32_t a; float b; } SMix;\n\
+         typedef struct { int64_t a, b; } S16;\n\
+         typedef struct { double a, b; } SDD;\n\
+         typedef struct { int64_t a, b, c; } S24;\n\
+         S1 m1(void){ S1 v={7}; return v; }\n\
+         S2 m2(void){ S2 v={-300}; return v; }\n\
+         S3 m3(void){ S3 v={1,2,3}; return v; }\n\
+         S4 m4(void){ S4 v={-70000}; return v; }\n\
+         S8 m8(void){ S8 v={1234567890123}; return v; }\n\
+         SF mf(void){ SF v={2.5f}; return v; }\n\
+         SFF mff(void){ SFF v={1.5f,-3.25f}; return v; }\n\
+         SMix mmix(void){ SMix v={-9, 6.75f}; return v; }\n\
+         S16 m16(void){ S16 v={11,22}; return v; }\n\
+         SDD mdd(void){ SDD v={1.25,-2.5}; return v; }\n\
+         S24 m24(void){ S24 v={5,6,7}; return v; }\n\
+         int printf_d(const char* fmt, double v) { return printf(fmt, v); }\n",
+    )
+    .unwrap();
+    let library = directory.join("shapes.o");
+    let built = Command::new(compiler)
+        .arg("-c")
+        .arg(&library_source)
+        .arg("-o")
+        .arg(&library)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "the C library did not compile:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+
+    let root = directory.join("shapes.frost");
+    std::fs::write(
+        &root,
+        "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
+         printf_d :: extern fn(fmt: ^i8, value: f64) -> i32\n\
+         S1 :: struct { a: u8 }\n\
+         S2 :: struct { a: i16 }\n\
+         S3 :: struct { a: u8, b: u8, c: u8 }\n\
+         S4 :: struct { a: i32 }\n\
+         S8 :: struct { a: i64 }\n\
+         SF :: struct { a: f32 }\n\
+         SFF :: struct { a: f32, b: f32 }\n\
+         SMix :: struct { a: i32, b: f32 }\n\
+         S16 :: struct { a: i64, b: i64 }\n\
+         SDD :: struct { a: f64, b: f64 }\n\
+         S24 :: struct { a: i64, b: i64, c: i64 }\n\
+         m1 :: extern fn() -> S1\n\
+         m2 :: extern fn() -> S2\n\
+         m3 :: extern fn() -> S3\n\
+         m4 :: extern fn() -> S4\n\
+         m8 :: extern fn() -> S8\n\
+         mf :: extern fn() -> SF\n\
+         mff :: extern fn() -> SFF\n\
+         mmix :: extern fn() -> SMix\n\
+         m16 :: extern fn() -> S16\n\
+         mdd :: extern fn() -> SDD\n\
+         m24 :: extern fn() -> S24\n\
+         show :: fn(v: i64) { printf(\"%lld\n\", v) }\n\
+         showd :: fn(v: f64) { printf_d(\"%.4f\n\", v) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   v1 := m1()   a1 : i64 = v1.a  show(a1)\n\
+         \x20   v2 := m2()   a2 : i64 = v2.a  show(a2)\n\
+         \x20   v3 := m3()   a3 : i64 = v3.a  b3 : i64 = v3.b  c3 : i64 = v3.c\n\
+         \x20   show(a3 * 100 + b3 * 10 + c3)\n\
+         \x20   v4 := m4()   a4 : i64 = v4.a  show(a4)\n\
+         \x20   v8 := m8()   show(v8.a)\n\
+         \x20   vf := mf()   af : f64 = vf.a  showd(af)\n\
+         \x20   vff := mff() aff : f64 = vff.a  bff : f64 = vff.b  showd(aff)  showd(bff)\n\
+         \x20   vm := mmix() am : i64 = vm.a  bm : f64 = vm.b  show(am)  showd(bm)\n\
+         \x20   v16 := m16() show(v16.a)  show(v16.b)\n\
+         \x20   vdd := mdd() showd(vdd.a)  showd(vdd.b)\n\
+         \x20   v24 := m24() show(v24.a)  show(v24.b)  show(v24.c)\n\
+         \x20   0\n\
+         }\n",
+    )
+    .unwrap();
+
+    let expected = "7\n-300\n123\n-70000\n1234567890123\n2.5000\n1.5000\n\
+                    -3.2500\n-9\n6.7500\n11\n22\n1.2500\n-2.5000\n5\n6\n7\n";
+    for emit_c in [false, true] {
+        let exe = directory
+            .join(format!("shapes_{emit_c}{}", std::env::consts::EXE_SUFFIX));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
+        if emit_c {
+            command.arg("--emit-c");
+        }
+        let built = command
+            .arg("--link")
+            .arg("--libs")
+            .arg(&library)
+            .arg("-o")
+            .arg(&exe)
+            .arg(&root)
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "the shapes program did not build (emit_c={emit_c}):\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let ran = Command::new(&exe).output().unwrap();
+        let output = String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n");
+        assert_eq!(output, expected, "emit_c={emit_c}");
+    }
+
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+// An enum is the one union-like shape Frost has, and a C ABI classifies a union
+// by combining what every member could put in each byte. The flattening in
+// `c_layout` carries every variant's fields for exactly that reason, so this is
+// the case that would break if it carried only one.
+#[test]
+fn an_enum_returned_from_c_comes_back_correctly() {
+    let Some(compiler) = c_compiler() else {
+        return;
+    };
+    if !linker_available() {
+        return;
+    }
+    let directory = std::env::temp_dir().join("frost_c_enum_return");
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+
+    let library_source = directory.join("shape.c");
+    std::fs::write(
+        &library_source,
+        "#include <stdint.h>\n\
+         typedef struct { uint32_t tag; int64_t v; } Shape;\n\
+         Shape mk(void) { Shape s; s.tag = 1; s.v = 42; return s; }\n",
+    )
+    .unwrap();
+    let library = directory.join("shape.o");
+    assert!(
+        Command::new(compiler)
+            .arg("-c")
+            .arg(&library_source)
+            .arg("-o")
+            .arg(&library)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+
+    let root = directory.join("shape.frost");
+    std::fs::write(
+        &root,
+        "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
+         Shape :: enum { Empty, Full { v: i64 } }\n\
+         mk :: extern fn() -> Shape\n\
+         main :: fn() -> i64 {\n\
+         \x20   s := mk()\n\
+         \x20   match s {\n\
+         \x20       case .Empty: printf(\"%lld\n\", 0)\n\
+         \x20       case .Full { v }: printf(\"%lld\n\", v)\n\
+         \x20   }\n\
+         \x20   0\n\
+         }\n",
+    )
+    .unwrap();
+
+    for emit_c in [false, true] {
+        let exe = directory
+            .join(format!("shape_{emit_c}{}", std::env::consts::EXE_SUFFIX));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
+        if emit_c {
+            command.arg("--emit-c");
+        }
+        let built = command
+            .arg("--link")
+            .arg("--libs")
+            .arg(&library)
+            .arg("-o")
+            .arg(&exe)
+            .arg(&root)
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "the enum program did not build (emit_c={emit_c}):\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let ran = Command::new(&exe).output().unwrap();
+        let output = String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n");
+        assert_eq!(output, "42\n", "emit_c={emit_c}");
+    }
+
+    let _ = std::fs::remove_dir_all(&directory);
 }

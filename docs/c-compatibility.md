@@ -43,6 +43,19 @@ main :: fn() -> i64 {
   structs by pointer) and is how a `linear` resource's terminal consumer works
   natively. The `extern` takes ownership across the boundary, receiving a
   pointer to the moved-in aggregate.
+- **Aggregate returns from an `extern` follow the real C ABI.** An
+  `extern fn(...) -> Ctx` returns whatever the target's C compiler returns:
+  in registers when the rule says so and through a hidden pointer when it does
+  not. Frost's own uniform out-pointer convention is not imposed on C, because C
+  does not use it. `src/c_abi.rs` has the three rules and where they were checked
+  against, and item 4 of [roadmap.md](roadmap.md) has the table.
+
+  Note the asymmetry with the line above it: a struct **parameter** to an extern
+  is a pointer by convention, a struct **return** is by value with the real ABI.
+  A return could not have been a convention, because `-> Ctx` has to mean what C
+  means by it and `-> ^Ctx` is how a returned pointer is written. A parameter had
+  a choice, and passing by pointer is what most C APIs want. Passing a struct to
+  C by value has no spelling.
 - **The linker gets a real C compiler.** Both backends finish by invoking
   `cc`/`gcc`/`clang` (or `cl` on MSVC), so C symbols resolve normally and you can
   pass extra libraries with `--libs`.
@@ -86,8 +99,9 @@ The emitted C is an **internal lowering**, and it looks like one:
   layout-registry key inside the compiler. It never has to be a valid C
   identifier, which is what lets monomorphized names like `Pair<i64>` work with
   no extra escaping.
-- **Aggregate returns use a hidden out-pointer.** A function returning a struct
-  compiles to `void f(..., char* __ret)` and `memcpy`s the result into `__ret`.
+- **Aggregate returns use a hidden out-pointer.** A Frost function returning a
+  struct compiles to `void f(..., char* __ret)` and `memcpy`s the result into
+  `__ret`. An `extern` is different, and deliberately so: see below.
 - **Non-extern names are mangled.** Every Frost function that isn't `extern` and
   isn't `main` is prefixed (`frost_`) so it can never collide with a C keyword or
   library symbol. `extern` names and `main` are left untouched so FFI and the

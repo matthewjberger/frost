@@ -171,10 +171,13 @@ fn build_module_inner(
                 params,
                 return_type,
             } => {
+                let return_type = return_type.clone().unwrap_or(Type::Void);
+                let return_layout = builder.c_layout(&return_type);
                 externs.push(IrExtern {
                     name: name.clone(),
                     params: extern_parameter_types(params),
-                    return_type: return_type.clone().unwrap_or(Type::Void),
+                    return_type,
+                    return_layout,
                 });
             }
             Statement::Struct(..)
@@ -522,6 +525,127 @@ impl IrBuilder {
 
     fn signature(&self, name: &str) -> Option<&FunctionSignature> {
         self.signatures.get(name)
+    }
+
+    // An aggregate flattened to what a C ABI asks about: its size, and every
+    // scalar leaf with its offset. `None` for anything C returns as a scalar,
+    // which needs no classification. See src/c_abi.rs.
+    fn c_layout(&self, ty: &Type) -> Option<crate::c_abi::CLayout> {
+        if !matches!(
+            ty,
+            Type::Struct(_)
+                | Type::Enum(_)
+                | Type::Array(_, _)
+                | Type::Str
+                | Type::Slice(_)
+        ) {
+            return None;
+        }
+        let mut scalars = Vec::new();
+        self.flatten_scalars(ty, 0, &mut scalars)?;
+        let (size, align) = self.size_and_align_of(ty)?;
+        Some(crate::c_abi::CLayout {
+            name: ty.to_string(),
+            size,
+            align,
+            scalars,
+        })
+    }
+
+    fn size_and_align_of(&self, ty: &Type) -> Option<(usize, usize)> {
+        match ty {
+            Type::Struct(name) => match self.structs.get(name) {
+                Some(layout) => Some((layout.size, layout.align)),
+                None => self
+                    .enums
+                    .get(name)
+                    .map(|layout| (layout.size, layout.align)),
+            },
+            Type::Enum(name) => self
+                .enums
+                .get(name)
+                .map(|layout| (layout.size, layout.align)),
+            Type::Array(inner, count) => {
+                let (size, align) = self.size_and_align_of(inner)?;
+                Some((size * count, align))
+            }
+            Type::Str | Type::Slice(_) => Some((16, 8)),
+            Type::Distinct(inner) => self.size_and_align_of(inner),
+            other => Some((other.size_of(), other.align_of())),
+        }
+    }
+
+    // Every variant of an enum is flattened, not just one, because an enum is
+    // the only union-like shape here and a union classifies as the combination
+    // of everything that could occupy each byte.
+    fn flatten_scalars(
+        &self,
+        ty: &Type,
+        offset: usize,
+        out: &mut Vec<crate::c_abi::CScalar>,
+    ) -> Option<()> {
+        match ty {
+            Type::Struct(name) => {
+                if let Some(layout) = self.structs.get(name) {
+                    for field in &layout.fields {
+                        self.flatten_scalars(
+                            &field.ty,
+                            offset + field.offset,
+                            out,
+                        )?;
+                    }
+                    return Some(());
+                }
+                self.flatten_enum(name, offset, out)
+            }
+            Type::Enum(name) => self.flatten_enum(name, offset, out),
+            Type::Array(inner, count) => {
+                let (size, _) = self.size_and_align_of(inner)?;
+                for index in 0..*count {
+                    self.flatten_scalars(inner, offset + index * size, out)?;
+                }
+                Some(())
+            }
+            Type::Str | Type::Slice(_) => {
+                out.push(crate::c_abi::CScalar {
+                    offset,
+                    ty: Type::Ptr(Box::new(Type::U8)),
+                });
+                out.push(crate::c_abi::CScalar {
+                    offset: offset + 8,
+                    ty: Type::I64,
+                });
+                Some(())
+            }
+            Type::Distinct(inner) => self.flatten_scalars(inner, offset, out),
+            Type::Void | Type::Unknown => None,
+            other => {
+                out.push(crate::c_abi::CScalar {
+                    offset,
+                    ty: other.clone(),
+                });
+                Some(())
+            }
+        }
+    }
+
+    fn flatten_enum(
+        &self,
+        name: &str,
+        offset: usize,
+        out: &mut Vec<crate::c_abi::CScalar>,
+    ) -> Option<()> {
+        let layout = self.enums.get(name)?;
+        out.push(crate::c_abi::CScalar {
+            offset,
+            ty: Type::U32,
+        });
+        for variant in &layout.variants {
+            for field in &variant.fields {
+                self.flatten_scalars(&field.ty, offset + field.offset, out)?;
+            }
+        }
+        Some(())
     }
 
     fn struct_layout(&self, name: &str) -> Option<&StructLayout> {

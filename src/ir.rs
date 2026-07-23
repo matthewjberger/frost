@@ -115,6 +115,10 @@ pub struct IrExtern {
     pub name: String,
     pub params: Vec<Type>,
     pub return_type: Type,
+    // Present when the return type is an aggregate, which C returns by a rule
+    // of its own that the backends have to follow rather than reuse Frost's.
+    // See src/c_abi.rs and item 4 of docs/roadmap.md.
+    pub return_layout: Option<crate::c_abi::CLayout>,
 }
 
 #[derive(Debug, Clone)]

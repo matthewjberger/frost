@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
 use anyhow::{Result, bail};
-use cranelift::codegen::ir::StackSlot;
+use cranelift::codegen::ir::{ArgumentPurpose, StackSlot};
 use cranelift::prelude::*;
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
+use crate::c_abi::{CLayout, CRegister, CReturn};
 use crate::ir::{
     IrBinOp, IrConstant, IrFunction, IrModule, IrOperand, IrRvalue,
     IrStatement, IrTerminator, IrUnOp,
@@ -229,6 +230,11 @@ struct Decls {
     call_conv: isa::CallConv,
     functions: HashMap<FuncId, (Signature, bool)>,
     data: HashMap<DataId, bool>,
+    // How C returns each extern that returns an aggregate. Frost returns its
+    // own aggregates through a hidden out-pointer no matter what they are; C
+    // does not, so a call to one of these is emitted from what
+    // `src/c_abi.rs` says the target does rather than from what Frost does.
+    c_returns: HashMap<String, (CLayout, CReturn)>,
 }
 
 impl Decls {
@@ -281,6 +287,9 @@ struct Generator {
     return_types: HashMap<String, Type>,
     strings: HashMap<String, DataId>,
     pointer_type: types::Type,
+    // `None` on a target whose C struct-return rule is not written down here,
+    // which makes an aggregate-returning extern an error rather than a guess.
+    c_target: Option<crate::c_abi::CTarget>,
 }
 
 impl Generator {
@@ -299,6 +308,7 @@ impl Generator {
         )?;
         let module = ObjectModule::new(builder);
         let call_conv = module.isa().default_call_conv();
+        let c_target = crate::c_abi::target_of(module.isa().triple());
         Ok((
             module,
             Generator {
@@ -306,7 +316,9 @@ impl Generator {
                     call_conv,
                     functions: HashMap::new(),
                     data: HashMap::new(),
+                    c_returns: HashMap::new(),
                 },
+                c_target,
                 functions: HashMap::new(),
                 return_types: HashMap::new(),
                 strings: HashMap::new(),
@@ -348,17 +360,61 @@ impl Generator {
         let pointer_type = self.pointer_type;
         for external in &module.externs {
             let mut signature = self.decls.make_signature();
+            // C returns an aggregate by its own rule, so the classification
+            // decides the signature before the ordinary parameters are added:
+            // an indirect return takes a hidden pointer as the first argument.
+            let returned = match &external.return_layout {
+                Some(layout) => {
+                    let Some(target) = self.c_target else {
+                        bail!(
+                            "native backend: '{}' returns '{}' by value, and this target's C rule for returning a struct is not one Frost knows; see item 4 of docs/roadmap.md",
+                            external.name,
+                            external.return_type
+                        );
+                    };
+                    let returned =
+                        crate::c_abi::classify_return(layout, target);
+                    if matches!(returned, CReturn::Indirect) {
+                        signature.params.push(AbiParam::special(
+                            pointer_type,
+                            ArgumentPurpose::StructReturn,
+                        ));
+                    }
+                    self.decls.c_returns.insert(
+                        external.name.clone(),
+                        (layout.clone(), returned.clone()),
+                    );
+                    Some(returned)
+                }
+                None => None,
+            };
+            // An aggregate parameter is a pointer by design, not by accident:
+            // `close :: extern fn(f: File)` links against `void close(File*)`.
+            // That is the documented convention in docs/c-compatibility.md and
+            // it is why parameters need no classification while returns do.
             for parameter in &external.params {
                 signature.params.push(AbiParam::new(param_abi_type(
                     pointer_type,
                     parameter,
                 )?));
             }
-            if !matches!(external.return_type, Type::Void) {
-                signature.returns.push(AbiParam::new(clif_type(
-                    pointer_type,
-                    &external.return_type,
-                )?));
+            match &returned {
+                Some(CReturn::Registers(registers)) => {
+                    for register in registers {
+                        signature
+                            .returns
+                            .push(AbiParam::new(register_type(*register)));
+                    }
+                }
+                Some(CReturn::Indirect) => {}
+                None => {
+                    if !matches!(external.return_type, Type::Void) {
+                        signature.returns.push(AbiParam::new(clif_type(
+                            pointer_type,
+                            &external.return_type,
+                        )?));
+                    }
+                }
             }
             let func_id = object.declare_function(
                 &external.name,
@@ -592,6 +648,25 @@ fn is_aggregate(ty: &Type) -> bool {
             | Type::Str
             | Type::Slice(_)
     )
+}
+
+// The machine type one returned register holds. A register carrying an odd
+// number of bytes is widened to the next one that exists, and only the bytes
+// the aggregate actually has are written back out.
+fn register_type(register: CRegister) -> types::Type {
+    if register.float {
+        return if register.bytes <= 4 {
+            types::F32
+        } else {
+            types::F64
+        };
+    }
+    match register.bytes {
+        1 => types::I8,
+        2 => types::I16,
+        3 | 4 => types::I32,
+        _ => types::I64,
+    }
 }
 
 fn param_abi_type(pointer_type: types::Type, ty: &Type) -> Result<types::Type> {
@@ -1040,6 +1115,31 @@ impl Translator<'_, '_> {
         };
         let func_ref =
             self.decls.declare_func_in_func(*func_id, self.builder.func);
+        // A C function returning an aggregate does not take Frost's trailing
+        // out-pointer. Either it takes a hidden pointer first, or it hands the
+        // value back in registers and the caller writes it into its own
+        // storage. See src/c_abi.rs.
+        if let Some((layout, returned)) = self.decls.c_returns.get(function) {
+            let layout = layout.clone();
+            let returned = returned.clone();
+            let mut argument_values = Vec::with_capacity(arguments.len() + 1);
+            if matches!(returned, CReturn::Indirect) {
+                argument_values.push(out);
+            }
+            for argument in arguments {
+                argument_values.push(self.operand(argument)?);
+            }
+            let call = self.builder.ins().call(func_ref, &argument_values);
+            if let CReturn::Registers(registers) = returned {
+                let results = self.builder.inst_results(call).to_vec();
+                for (register, value) in registers.iter().zip(results) {
+                    self.store_returned_register(
+                        *register, value, out, &layout,
+                    );
+                }
+            }
+            return Ok(());
+        }
         let mut argument_values = Vec::with_capacity(arguments.len() + 1);
         for argument in arguments {
             argument_values.push(self.operand(argument)?);
@@ -1047,6 +1147,37 @@ impl Translator<'_, '_> {
         argument_values.push(out);
         self.builder.ins().call(func_ref, &argument_values);
         Ok(())
+    }
+
+    // Write one returned register into the caller's storage. A register holding
+    // a whole number of bytes that a store can express is stored directly;
+    // anything else (a System V eightbyte with three bytes in it, say) goes
+    // through a scratch slot so that not one byte past the aggregate is
+    // written.
+    fn store_returned_register(
+        &mut self,
+        register: CRegister,
+        value: Value,
+        out: Value,
+        layout: &CLayout,
+    ) {
+        let bytes = register.bytes.min(layout.size - register.offset);
+        if matches!(bytes, 1 | 2 | 4 | 8) {
+            let address =
+                self.builder.ins().iadd_imm(out, register.offset as i64);
+            self.builder.ins().store(MemFlags::new(), value, address, 0);
+            return;
+        }
+        let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            8,
+            3,
+        ));
+        self.builder.ins().stack_store(value, slot, 0);
+        let source = self.builder.ins().stack_addr(self.pointer_type, slot, 0);
+        let destination =
+            self.builder.ins().iadd_imm(out, register.offset as i64);
+        self.emit_memcpy(destination, source, bytes);
     }
 
     fn terminator(

@@ -98,15 +98,15 @@ name type parameters that later value arguments are what bind.
 type rather than a function is the thing that turns into a trait system if it is
 approached carelessly, and nothing needs it yet.
 
-## 3. Callbacks with a typed context
+## 3. Callbacks with a typed context (done)
 
-**Why third.** It is the one place the implementation contradicts a goal rather
-than merely falling short of an aspiration, so it is correctness rather than
-performance. It is third only because items 1 and 2 change what a function
-signature can say, and this design leans on that.
+**Why it mattered.** It was the one place the implementation contradicted a goal
+rather than merely falling short of an aspiration, so it was correctness rather
+than performance. It came after items 1 and 2 because both change what a
+function signature can say, and this leans on that.
 
 **The contradiction.** Goal 2 says safety comes from making dangerous shapes
-unrepresentable. The only way to write a callback today is the C idiom, a
+unrepresentable. The only way to write a callback used to be the C idiom, a
 function pointer plus an untyped `^u8` userdata, which is long-lived, first
 class, and outside every check in `src/regions.rs` and `src/ownership.rs`. So
 every callback-shaped API in Frost is an unsafe API, not because callbacks are
@@ -123,31 +123,29 @@ Ctx :: struct { hits: i64 }
 
 on_event :: fn(mut ctx: Ctx, code: i64) { ctx.hits = ctx.hits + code }
 
-register :: extern fn($handler: Type, mut ctx: Ctx, ...) uses CallbackAbi
+register :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64
 ```
 
-The compiler emits a trampoline for each `(handler, Ctx)` pair with the C ABI the
-library expects, and that trampoline is the only code that casts the `^u8` back
-to `^Ctx`. The cast still happens, because C requires it, but it is generated
-once per instantiation inside code the user never writes, rather than appearing
-at every call site in user code. The user writes a typed `mut ctx: Ctx` and the
-perimeter holds everywhere a person is looking.
+The user writes a typed `mut ctx: Ctx` and the perimeter holds everywhere a
+person is looking. What the compiler does at the call is pass the handler's
+address and the context's address; see below for why that is all it does.
 
 **Who owns the context, settled.** This was the open question, and the answer is
 that **registration moves the context in and unregistration moves it back out**,
 with the registration itself a `linear` value. Not a borrow.
 
 ```
-Ctx :: struct { hits: i64 }
-Registration :: linear struct { token: i64, ctx: Ctx }
+Ctx          :: struct { hits: i64 }
+Registration :: linear struct { token: i64 }
 
-on_event :: fn(mut ctx: Ctx, code: i64) { ctx.hits = ctx.hits + code }
-
-register   :: extern fn($handler: Type, move ctx: Ctx) -> Registration uses CallbackAbi
-unregister :: fn(move r: Registration) -> Ctx
+on_event           :: fn(mut ctx: Ctx, code: i64) { ctx.hits = ctx.hits + code }
+register_handler   :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64
+unregister_handler :: extern fn(token: i64) -> Ctx
+unregister         :: fn(move r: Registration) -> Ctx { unregister_handler(r.token) }
 
 run :: fn() -> i64 {
-    r := register($on_event, Ctx { hits = 0 })
+    c := Ctx { hits = 0 }
+    r := Registration { token = register_handler($on_event, c) }
     pump_events()
     done := unregister(r)      // forgetting this is a compile error
     done.hits
@@ -168,7 +166,7 @@ Three things fall out, and each is a reason to prefer this over a borrow.
 - **Forgetting to unregister becomes a compile error**, which is a real bug class
   in every C callback API. A dangling callback into freed context is the exact
   failure this is meant to prevent, and linearity prevents it at the source
-  rather than at the trampoline.
+  rather than at the boundary.
 
 **The fire-and-forget case**, where the library never gives the callback back,
 does not get an exception. The registration is still linear, and a program that
@@ -207,10 +205,13 @@ and C share a calling convention, so a Frost handler *is* the
 `void (*)(void*, ...)` the library wants. The cast the whole design set out to
 hide inside generated code never has to happen, so there is no generated code.
 
-**What is not finished** is that a caller cannot read its own context: it goes
-in by `move`, so the name is dead for the rest of the function, and the callback
-writes that exact storage. Giving it back is the open question at the end of
-[callbacks.md](callbacks.md), and nothing else is blocked on it.
+**Getting the context back needed nothing from callbacks.** It goes in by
+`move`, so the name is dead for the rest of the function while the callback
+writes that exact storage, and for a while a caller could not read what its own
+callback did. The answer is an ordinary extern that hands the context back by
+value, wrapped in the function that consumes the linear registration. What
+blocked it was item 4, and once that landed the round trip in `run` above is a
+program that compiles and runs.
 
 ## 1. Parallel code generation (done)
 
@@ -337,27 +338,48 @@ of bug it invites is the one that passes the test suite and corrupts output, the
 way the sret register and the byte-stride bugs both did. Do it with the
 differential oracle running, not after.
 
-## 4. An extern may not return a struct by value
+## 4. An extern may return a struct by value (done)
 
-Found while finishing item 3 and unrelated to it:
-`make_ctx :: extern fn(v: i64) -> Ctx` is rejected by both backends, with no
-callback anywhere near it. It is the reason a callback's context cannot yet be
-handed back to the program that owns it, and it will be the reason for the next
-binding too, because C libraries return small structs all the time.
+`make_ctx :: extern fn(v: i64) -> Ctx` used to be rejected by both backends.
+Goal 3 in [philosophy.md](philosophy.md) makes C interop a first-class concern
+rather than an escape hatch, and "you may call any C function except the ones
+that return a struct" was a hole in that rather than a rough edge.
 
-**Why it is not a small fix.** The compiler returns its own aggregates through a
-hidden out-pointer, uniformly, which is a choice it is entitled to make about its
-own calling convention. C is not uniform: a small struct comes back in registers
-and a large one through an out-pointer, and where the line is depends on the
-platform and on the field types. So supporting this means classifying return
-types against the platform C ABI rather than reusing the mechanism that exists,
-which is real work in `src/ir_codegen.rs` and a smaller amount in `src/ir_c.rs`,
-where the C compiler would do the classification if the type were declared.
+**Why it was not a small fix.** The compiler returns its own aggregates through
+a hidden out-pointer, uniformly, which it is entitled to decide about its own
+calling convention. C is not uniform: a small struct comes back in registers and
+a large one through an out-pointer, and where the line falls depends on the
+target and, on some targets, on the field types. So it meant classifying return
+types the way the target's C compiler does. `src/c_abi.rs` is that
+classification, and it is a hundred lines because there are three rules:
 
-**Why it is worth doing anyway.** Goal 3 in [philosophy.md](philosophy.md) makes
-C interop a first-class concern rather than an escape hatch, and "you may call
-any C function except the ones that return a struct" is a hole in that, not a
-rough edge. The failure today is at least loud.
+| | in registers | indirect |
+| --- | --- | --- |
+| Microsoft x64 | size 1, 2, 4 or 8, whatever the fields | everything else |
+| System V AMD64 | up to two eightbytes, each SSE or INTEGER by what touches it | over 16 bytes |
+| AAPCS64 | a homogeneous float aggregate up to 4 wide, else up to 16 bytes | over 16 bytes |
+
+The Windows row is the one worth reading twice, and it was **read off the host
+compiler rather than off a document**: a `struct { float a; }` comes back in RAX
+rather than XMM0, and a `struct { char a[3]; }` goes indirect despite fitting in
+a register. Both would have been guessed wrong.
+
+The C backend does not reimplement any of this. It declares a real struct type,
+field for field with explicit padding, and lets the C compiler classify it,
+which is the same answer arrived at by the only party guaranteed to be right.
+
+**How it is checked.** `a_struct_returned_from_c_comes_back_correctly` compiles
+a C library returning eleven shapes chosen to land on opposite sides of every
+boundary, links it, and runs both backends against it. Misclassifying one size
+scrambles exactly the values of that size, which is how the test was confirmed
+to be sharp.
+
+**What is still by pointer**, deliberately: an aggregate *parameter* to an
+extern. `close :: extern fn(f: File)` links against `void close(File*)`, which
+is the documented convention in [c-compatibility.md](c-compatibility.md) and
+matches how most C APIs take structs. So returns follow the real C ABI and
+parameters follow a convention, and the asymmetry is worth knowing about.
+Passing a struct to C by value has no spelling.
 
 ## Smaller things found and not yet fixed
 

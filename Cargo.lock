@@ -260,6 +260,7 @@ dependencies = [
  "cranelift-object",
  "serde",
  "serde_json",
+ "target-lexicon",
 ]
 
 [[package]]
