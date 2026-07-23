@@ -2794,6 +2794,12 @@ impl<'a> FunctionLowering<'a> {
                 self.lower_address_of(inner, RefKind::Ptr)
             }
             Expression::Dereference(inner) => self.lower_dereference(inner),
+            // An `unsafe` block is a block. It changes nothing about the code
+            // it holds; it is where `check_unsafety` allows the three unchecked
+            // operations, and that check has already run by the time lowering
+            // sees this. So the marker is discharged before here and this is a
+            // plain block that answers with its last expression.
+            Expression::Unsafe(body) => self.lower_block(body, expected),
             Expression::FieldAccess(base, field) => {
                 self.lower_field_read(base, field)
             }
