@@ -291,6 +291,7 @@ fn stamp_expression(expression: &mut Expression, file: u32) {
             }
         }
         Expression::Unsafe(body) => stamp_file(body, file),
+        Expression::UnsafeFn(inner) => stamp_expression(inner, file),
         Expression::Identifier(_)
         | Expression::Literal(_)
         | Expression::Boolean(_)

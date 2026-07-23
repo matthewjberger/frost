@@ -33,14 +33,21 @@ use crate::types::Type;
 pub fn check_unsafety(statements: &[Spanned<Statement>]) -> Result<()> {
     let mut checker = Checker {
         externs: HashSet::new(),
+        unsafe_fns: HashSet::new(),
         fields: HashMap::new(),
         depth: 0,
         scope: Vec::new(),
     };
     for statement in statements {
         match &statement.node {
+            // An extern is the built-in unsafe function: calling C is
+            // unchecked, so a call to one is gated exactly as a call to a
+            // user's `unsafe fn` is.
             Statement::Extern { name, .. } => {
                 checker.externs.insert(name.clone());
+            }
+            Statement::Constant(name, Expression::UnsafeFn(_)) => {
+                checker.unsafe_fns.insert(name.clone());
             }
             Statement::Struct(name, _, declared) => {
                 checker.fields.insert(name.clone(), declared.clone());
@@ -54,8 +61,109 @@ pub fn check_unsafety(statements: &[Spanned<Statement>]) -> Result<()> {
     Ok(())
 }
 
+// Replace every `unsafe fn(...)` with the plain function it wraps, once the
+// unsafety check has read which names were unsafe. No pass after that point
+// needs to know, so this keeps the marker out of lowering and the backends.
+pub fn strip_unsafe_fns(statements: &mut [Spanned<Statement>]) {
+    for statement in statements {
+        strip_statement(&mut statement.node);
+    }
+}
+
+fn strip_statement(statement: &mut Statement) {
+    match statement {
+        Statement::Let { value, .. }
+        | Statement::Constant(_, value)
+        | Statement::Return(value)
+        | Statement::Expression(value) => strip_expression(value),
+        Statement::Assignment(place, value) => {
+            strip_expression(place);
+            strip_expression(value);
+        }
+        Statement::For(_, range, body) => {
+            strip_expression(range);
+            strip_block(body);
+        }
+        Statement::While(condition, body) => {
+            strip_expression(condition);
+            strip_block(body);
+        }
+        Statement::With(_, body) => strip_block(body),
+        Statement::Defer(inner) => strip_statement(inner),
+        _ => {}
+    }
+}
+
+fn strip_block(block: &mut Block) {
+    for statement in block {
+        strip_statement(&mut statement.node);
+    }
+}
+
+fn strip_expression(expression: &mut Expression) {
+    if let Expression::UnsafeFn(inner) = expression {
+        let mut taken = std::mem::replace(
+            inner.as_mut(),
+            Expression::Boolean(false),
+        );
+        strip_expression(&mut taken);
+        *expression = taken;
+        return;
+    }
+    match expression {
+        Expression::Function(_, _, body)
+        | Expression::Proc(_, _, body)
+        | Expression::Unsafe(body) => strip_block(body),
+        Expression::If(condition, consequence, alternative) => {
+            strip_expression(condition);
+            strip_block(consequence);
+            if let Some(alternative) = alternative {
+                strip_block(alternative);
+            }
+        }
+        Expression::Switch(subject, cases) => {
+            strip_expression(subject);
+            for case in cases {
+                strip_block(&mut case.body);
+            }
+        }
+        Expression::Call(callee, arguments) => {
+            strip_expression(callee);
+            for argument in arguments {
+                strip_expression(argument);
+            }
+        }
+        Expression::Prefix(_, inner)
+        | Expression::AddressOf(inner)
+        | Expression::Borrow(inner)
+        | Expression::BorrowMut(inner)
+        | Expression::Dereference(inner)
+        | Expression::Try(inner)
+        | Expression::FieldAccess(inner, _) => strip_expression(inner),
+        Expression::Infix(left, _, right)
+        | Expression::Index(left, right)
+        | Expression::Range(left, right, _) => {
+            strip_expression(left);
+            strip_expression(right);
+        }
+        Expression::Tuple(parts) => {
+            for part in parts {
+                strip_expression(part);
+            }
+        }
+        Expression::StructInit(_, initializers)
+        | Expression::EnumVariantInit(_, _, initializers) => {
+            for (_, initializer) in initializers {
+                strip_expression(initializer);
+            }
+        }
+        _ => {}
+    }
+}
+
 struct Checker {
     externs: HashSet<String>,
+    unsafe_fns: HashSet<String>,
     fields: HashMap<String, Vec<StructField>>,
     // How many `unsafe` blocks enclose what is being walked. Nesting one inside
     // another is allowed and means nothing extra, the same as in Rust.
@@ -204,6 +312,15 @@ impl Checker {
                 self.depth -= 1;
                 return outcome;
             }
+            // An `unsafe fn`'s body is an implicit unsafe block: the whole
+            // function is the dangerous region, so the gated operations are
+            // allowed throughout it without a nested block.
+            Expression::UnsafeFn(inner) => {
+                self.depth += 1;
+                let outcome = self.expression(inner, at);
+                self.depth -= 1;
+                return outcome;
+            }
             Expression::Dereference(inner) => {
                 self.refuse("reading through a raw pointer", at)?;
                 self.expression(inner, at)?;
@@ -222,6 +339,11 @@ impl Checker {
                     } else if self.externs.contains(name) {
                         self.refuse(
                             &format!("calling the C function '{name}'"),
+                            at,
+                        )?;
+                    } else if self.unsafe_fns.contains(name) {
+                        self.refuse(
+                            &format!("calling the unsafe function '{name}'"),
                             at,
                         )?;
                     }

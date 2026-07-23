@@ -563,6 +563,10 @@ pub enum Expression {
     EnumVariantInit(Identifier, Identifier, Vec<(Identifier, Expression)>),
     TypeValue(Type),
     Unsafe(Block),
+    // `unsafe fn(...)`: a function whose body is an implicit `unsafe` block and
+    // whose call is itself a gated operation. Stripped to the inner function
+    // right after the unsafety check reads it, so no later pass sees it.
+    UnsafeFn(Box<Expression>),
     // `expr?`: on a fallible expression, unwrap the value or propagate the
     // failure to the enclosing fallible function.
     Try(Box<Expression>),
@@ -753,6 +757,7 @@ impl Display for Expression {
                     body.iter().map(|s| s.to_string()).collect();
                 format!("unsafe {{ {} }}", body_str.join("; "))
             }
+            Self::UnsafeFn(inner) => format!("unsafe {inner}"),
         };
         write!(f, "{}", expression)
     }
@@ -1188,6 +1193,7 @@ impl<'a> Parser<'a> {
                             | Token::True
                             | Token::False
                             | Token::Function
+                            | Token::Unsafe
                             | Token::LeftBracket
                             | Token::LeftBrace
                             | Token::Minus
@@ -2816,8 +2822,14 @@ impl<'a> Parser<'a> {
 
     fn parse_unsafe_expression(&mut self) -> Result<Expression> {
         self.read_token();
+        // `unsafe fn(...)` is an unsafe function, not a block. Calling it is a
+        // gated operation and its body is an implicit unsafe block.
+        if matches!(self.peek_nth(0), Token::Function) {
+            let function = self.parse_function_literal()?;
+            return Ok(Expression::UnsafeFn(Box::new(function)));
+        }
         if !matches!(self.peek_nth(0), Token::LeftBrace) {
-            bail!("Expected '{{' after 'unsafe'");
+            bail!("Expected '{{' or 'fn' after 'unsafe'");
         }
         let body = self.parse_block()?;
         Ok(Expression::Unsafe(body))
