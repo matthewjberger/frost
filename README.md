@@ -117,7 +117,7 @@ anywhere in it.
 - **Three backends that must agree.** One typed IR feeds Cranelift, portable C
   and a direct interpreter, and a differential test puts every program through
   all three.
-- **Self-hosting.** `bootstrap/frost.frost` is a Frost compiler written in Frost
+- **Self-hosting.** `selfhosted/frost.frost` is a Frost compiler written in Frost
   that reproduces itself byte for byte, through both of its backends.
 - **Separate compilation.** Each module is its own object, and `--incremental`
   rebuilds only what an edit can reach.
@@ -200,7 +200,7 @@ writing correct Frost quickly.
 frost/
 ├── src/          # the reference compiler, in Rust
 ├── std/          # the standard library, in Frost
-├── bootstrap/    # a Frost compiler written in Frost
+├── selfhosted/   # a Frost compiler written in Frost
 ├── runtime/      # a small C runtime (bounds check, assert, IO helpers)
 ├── examples/     # runnable programs
 ├── bench/        # the benchmark generator

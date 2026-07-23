@@ -120,7 +120,7 @@ accessor, not a C runtime. Concretely:
   the primary allocator with the pool as its fixed-size specialization, is in
   `docs/allocators.md`.
 - **The C runtime shrinks.** What stays in C is `printf`-style FFI, the string
-  and emit helpers the bootstrap compiler uses, `frost_assert`, and
+  and emit helpers the self-hosted compiler uses, `frost_assert`, and
   `frost_bounds_check`. The pool functions and the generational logic leave C,
   and `Pool` / `pool_*` stop being reserved names.
 
@@ -156,7 +156,7 @@ abort discipline rather than a foreign definition.
    the Frost slab, the runtime no longer defines any `pool_*` function, and
    indexing by a handle requires a slab-shaped struct rather than falling back
    to an implicit `pool_get`. The runtime that is always linked is now bounds
-   and generation aborts, assertions, and the IO helpers the bootstrap compiler
+   and generation aborts, assertions, and the IO helpers the self-hosted compiler
    uses, with one `malloc` left in `frost_read_file`.
 
 This roadmap is a slice of the larger allocator plan in `docs/allocators.md`,

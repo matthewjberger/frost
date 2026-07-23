@@ -51,7 +51,7 @@ now works with no libc at all. See [native-pools.md](native-pools.md).
 
 ## Self-hosted: what the compiler is written in
 
-`bootstrap/frost.frost` is a Frost compiler written in Frost, about 5,400 lines
+`selfhosted/frost.frost` is a Frost compiler written in Frost, about 5,400 lines
 in one file.
 
 The claim it discharges is a **three-stage fixpoint**: it compiles its own

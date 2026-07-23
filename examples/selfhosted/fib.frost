@@ -1,5 +1,5 @@
 // Programs in this directory are for the self-hosted compiler
-// (bootstrap/frost.frost), which understands a subset of Frost and has its own
+// (selfhosted/frost.frost), which understands a subset of Frost and has its own
 // `print` statement. Run one with `just selfhost-native examples/selfhosted/fib.frost`
 // to go through the native backend, or `just selfhost-run ...` for the C backend.
 

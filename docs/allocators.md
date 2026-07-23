@@ -82,7 +82,7 @@ handed an allocator. Frost should not. The language's stance is that nothing run
 invisibly, and an ambient allocator is exactly the hidden, thread-local state that
 stance rules out. Frost already removed `push_context` and `push_allocator`, and
 it already threads mutable working state explicitly by second-class borrow (the
-bootstrap compiler passes its `Parser` this way). So an arena is passed as a
+self-hosted compiler passes its `Parser` this way). So an arena is passed as a
 `mut arena: Arena` parameter, the same as any other working set. That is
 in character, and it costs no more than the threading the language already does.
 

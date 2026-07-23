@@ -603,7 +603,7 @@ fn native_anonymous_functions() {
     assert_eq!(output, "42\n81\n47\n20\n");
 }
 
-const SELF_HOSTED: &str = include_str!("../bootstrap/frost.frost");
+const SELF_HOSTED: &str = include_str!("../selfhosted/frost.frost");
 
 fn c_compiler() -> Option<&'static str> {
     for compiler in ["gcc", "clang", "cc"] {
@@ -699,7 +699,7 @@ fn self_hosting_is_a_fixpoint() {
         return;
     }
     let source_file =
-        format!("{}/bootstrap/frost.frost", env!("CARGO_MANIFEST_DIR"));
+        format!("{}/selfhosted/frost.frost", env!("CARGO_MANIFEST_DIR"));
 
     // Stage 1: the frost-hosted the self-hosted compiler compiles frost.frost.
     let Some(gen1_c) =

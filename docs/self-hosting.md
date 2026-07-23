@@ -4,7 +4,7 @@ Self-hosted, native and freestanding are three different axes, and this document
 is about the first. [build-modes.md](build-modes.md) separates them.
 
 Frost has two compilers. `src/*.rs` is the reference compiler, written in Rust,
-implementing the full language. `bootstrap/frost.frost` is a compiler written in
+implementing the full language. `selfhosted/frost.frost` is a compiler written in
 Frost, and it self-hosts twice over: through its C backend and through its own
 x64 backend, each compiling its own source to a byte-identical fixpoint across
 three stages, checked by `self_hosting_is_a_fixpoint` and
@@ -145,13 +145,13 @@ answer to. The self-hosted compiler is under a self-hosting promise: it exists
 to show the language can express a real compiler, and it discharges that by
 reproducing itself byte for byte.
 
-Concretely, `bootstrap/frost.frost` is one file of about 5,400 lines with no
+Concretely, `selfhosted/frost.frost` is one file of about 5,400 lines with no
 `import` in it, and it compiles itself in about 35 ms. Separate compilation
 bounds work per module, and there is one module. Building interfaces, a build
 cache and per-module objects into it would be machinery with nothing to bound,
 and it would grow the surface that has to keep reproducing itself exactly.
 
-What would reopen it: `bootstrap/frost.frost` gaining imports, or its self-build
+What would reopen it: `selfhosted/frost.frost` gaining imports, or its self-build
 time getting far enough into the hundreds of milliseconds that the edit-compile
 loop on the compiler itself starts to bite. Neither is true, and the second is
 what to measure rather than guess at.

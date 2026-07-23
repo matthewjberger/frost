@@ -2,7 +2,7 @@
 history.txt
 *.exe
 *.o
-bootstrap/.run_target*.s
+selfhosted/.run_target*.s
 *.py
 !bench/generate.py
 bench/generated
