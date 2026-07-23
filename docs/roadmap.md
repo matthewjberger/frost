@@ -38,8 +38,8 @@ link path, and `--incremental` rebuilds a module only when its own source or an
 imported interface changes.
 
 From `just bench-incremental` on 9,484 lines across 65 files, one of which
-changed: 668 ms full against 399 ms incremental, of which about 90 ms either way
-is process start and the linker.
+changed: about 580 ms full against about 200 ms incremental, of which about
+90 ms either way is process start and the linker.
 
 Three findings worth keeping, none of which were obvious going in:
 
@@ -58,12 +58,19 @@ Three findings worth keeping, none of which were obvious going in:
   `FROST_MODULE_REPORT=1` measures how much that costs, and that measurement is
   the only thing that would justify revisiting it.
 
-**What is still whole-program**, and it is the next lever on this axis: a
-skipped module still contributes its interface, and an interface carries the
-bodies of exported functions whether or not they are generic. So the front end
-walks bodies it will not emit. Removing that needs a declaration form carrying a
-full Frost signature and no body, which `extern` cannot be, and that is a change
-to every pass that matches on a function declaration.
+**Nothing is whole-program any more.** A skipped module used to contribute its
+interface as it stood, bodies and all, so the front end walked bodies it would
+never emit. `Statement::Declared` is a Frost function's signature with no body,
+which is what a module contributes for every function whose body a caller does
+not need; a generic still contributes its body, because the caller is what
+stamps out the template. That took the skipped path from 309 ms of compiler work
+to about 110 ms.
+
+It is not an `extern`, which was the tempting reuse: an extern means C linkage
+and a C ABI, and loses the hidden out-pointer an aggregate return uses along
+with parameter modes, `uses` sets and linearity. It rides in
+`IrModule::imported`, which already means "declared here, defined in another
+object".
 
 ## 2. Bounds on compile-time arguments (done)
 

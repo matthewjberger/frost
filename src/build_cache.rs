@@ -144,6 +144,32 @@ fn blank_ordinary_body(statement: &mut Statement) {
     body.clear();
 }
 
+// What a module contributes when it is not being rebuilt. An ordinary function
+// becomes its signature and nothing else, because its body is already compiled
+// into the object about to be linked and walking it again is the last piece of
+// the front end that is still whole-program. A generic keeps its body, because
+// the caller is what stamps out the template. Everything else is carried as it
+// stands: a type is layout the caller lays out its own frame with, and a
+// constant is a value.
+pub fn as_declaration(statement: &Statement) -> Option<Statement> {
+    let Statement::Constant(name, value) = statement else {
+        return None;
+    };
+    let (Expression::Function(params, return_sig, _)
+    | Expression::Proc(params, return_sig, _)) = value
+    else {
+        return None;
+    };
+    if params.iter().any(is_compile_time) {
+        return None;
+    }
+    Some(Statement::Declared {
+        name: name.clone(),
+        params: params.clone(),
+        return_sig: return_sig.clone(),
+    })
+}
+
 fn is_compile_time(parameter: &Parameter) -> bool {
     parameter.compile_time_signature.is_some()
         || matches!(
@@ -207,6 +233,7 @@ fn stamp_statement(statement: &mut Statement, file: u32) {
         | Statement::Enum(..)
         | Statement::TypeAlias(..)
         | Statement::Extern { .. }
+        | Statement::Declared { .. }
         | Statement::Break
         | Statement::Continue
         | Statement::Import(_) => {}

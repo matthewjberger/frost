@@ -139,6 +139,7 @@ fn build_module_inner(
 
     let mut functions = Vec::new();
     let mut externs = Vec::new();
+    let mut declared = Vec::new();
     let mut top_level = Vec::new();
     let mut has_main = false;
     let mut pending: Vec<Specialization> = Vec::new();
@@ -179,6 +180,16 @@ fn build_module_inner(
                     return_type,
                     return_layout,
                 });
+            }
+            // A function some other object defines. It contributes a
+            // declaration so calls can be typed and emitted, and no body,
+            // which is the point: the module it came from is not being rebuilt.
+            Statement::Declared {
+                name,
+                params,
+                return_sig,
+            } => {
+                declared.push(declared_function(name, params, return_sig));
             }
             Statement::Struct(..)
             | Statement::Enum(..)
@@ -304,8 +315,44 @@ fn build_module_inner(
     Ok(IrModule {
         functions,
         externs,
-        imported: Vec::new(),
+        imported: declared,
     })
+}
+
+// The shape a declared function needs to have for a backend to emit a call to
+// it: parameter types, a return type, and no blocks. It rides in `imported`,
+// which already means "declared here, defined in another object", and which the
+// backends already declare with the same signature builder that builds a
+// definition.
+fn declared_function(
+    name: &str,
+    params: &[Parameter],
+    return_sig: &ReturnSignature,
+) -> IrFunction {
+    let locals: Vec<crate::ir::IrLocal> = params
+        .iter()
+        .map(|parameter| {
+            let ty = parameter_type(parameter);
+            crate::ir::IrLocal {
+                size: ty.size_of(),
+                ty,
+                name: Some(parameter.name.clone()),
+                in_memory: false,
+                linear: false,
+                position: Position::default(),
+            }
+        })
+        .collect();
+    IrFunction {
+        name: name.to_string(),
+        param_count: locals.len(),
+        return_type: return_sig.to_type().unwrap_or(Type::Void),
+        locals,
+        blocks: Vec::new(),
+        entry: 0,
+        module: 0,
+        local: false,
+    }
 }
 
 // What an extern's parameters are once C sees them. For a registration these
@@ -451,6 +498,24 @@ impl IrBuilder {
                             parameters: extern_parameter_types(params),
                             return_type: return_type
                                 .clone()
+                                .unwrap_or(Type::Void),
+                        },
+                    );
+                }
+                Statement::Declared {
+                    name,
+                    params,
+                    return_sig,
+                } => {
+                    self.signatures.insert(
+                        name.clone(),
+                        FunctionSignature {
+                            parameters: params
+                                .iter()
+                                .map(parameter_type)
+                                .collect(),
+                            return_type: return_sig
+                                .to_type()
                                 .unwrap_or(Type::Void),
                         },
                     );

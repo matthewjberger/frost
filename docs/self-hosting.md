@@ -113,8 +113,8 @@ specialization worklist dedups through a hash set rather than a scan.
 What these numbers do **not** show is the shape problem, because every program
 here is a single file, so a change to one line rebuilds everything no matter how
 little it reaches. `just bench-incremental` is the measurement that does show it:
-9,484 lines across 65 files, one changed, 668 ms full against 399 ms with
-`--incremental`. See [separate-compilation.md](separate-compilation.md).
+9,484 lines across 65 files, one changed, about 580 ms full against about 200 ms
+with `--incremental`. See [separate-compilation.md](separate-compilation.md).
 
 The backend used to be where the superlinear term lived, and is not any more:
 
@@ -124,11 +124,10 @@ The backend used to be where the superlinear term lived, and is not any more:
    generation now runs on every core and is 64 ms of a 353 ms build at 58k
    lines.
 2. **Separate compilation per module.** *Done.* Each module is its own object on
-   the link path, monomorphization is seeded per module, and `--incremental`
-   skips the modules an edit cannot reach. What is still whole-program is that a
-   skipped module contributes its interface, which carries the bodies of
-   exported functions, so the front end walks bodies it will not emit. See
-   [separate-compilation.md](separate-compilation.md).
+   the link path, monomorphization is seeded per module, `--incremental` skips
+   the modules an edit cannot reach, and a skipped module contributes signatures
+   rather than bodies, so the front end no longer walks code it will not emit.
+   See [separate-compilation.md](separate-compilation.md).
 3. **Cache specializations across builds.** Now subsumed: a module's object
    holds the specializations that module asked for, and reusing the object
    reuses them.

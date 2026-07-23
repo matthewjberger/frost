@@ -39,6 +39,10 @@ impl IrModule {
             }
         }
         let externs = self.externs;
+        // Functions another object already defines, declared for every part
+        // because any of them may call one. These come from a module the build
+        // cache answered for, whose object is linked rather than rebuilt.
+        let declared = self.imported;
         // Every part may call any module's exported function, so each declares
         // the ones it does not define. A local function belongs to exactly one
         // part and is never reachable from another.
@@ -55,11 +59,12 @@ impl IrModule {
                 .into_iter()
                 .partition(|function| function.module == module);
             functions = rest;
-            let imported = shared
+            let mut imported: Vec<IrFunction> = shared
                 .iter()
                 .filter(|function| function.module != module)
                 .cloned()
                 .collect();
+            imported.extend(declared.iter().cloned());
             parts.push(IrModule {
                 functions: mine,
                 externs: externs.clone(),

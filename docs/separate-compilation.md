@@ -244,26 +244,33 @@ rather than after.
      the process that reads it back, and module attribution is exactly what
      reads it. Interfaces are written with it zeroed and restamped on load.
 
+   **A skipped module contributes signatures, not bodies.** The first version of
+   this step spliced the interface as it stood, which carries the bodies of
+   exported functions whether or not they are generic, so the front end walked
+   every body in the program even though it emitted none of them.
+   `Statement::Declared` is a Frost function's signature with no body, produced
+   by `as_declaration` for exactly the functions whose bodies a caller does not
+   need. A generic keeps its body, because the caller stamps out the template. A
+   type keeps its fields, because the caller lays out its own frame with them.
+
+   It is not an `extern`, which would have been the tempting reuse: an extern
+   means C linkage and a C ABI, which loses the hidden out-pointer an aggregate
+   return uses and has nowhere to put parameter modes, `uses` sets or linearity.
+   It rides instead in `IrModule::imported`, which already means "declared here,
+   defined in another object" and which both backends already declare with the
+   same signature builder that builds a definition.
+
    **What it is worth**, from `just bench-incremental` on 9,484 lines across 65
    files, one of which changed:
 
-   | | full | incremental |
-   | --- | --- | --- |
-   | build | 668 ms | 399 ms |
+   | | full | incremental | incremental, bodies spliced |
+   | --- | --- | --- | --- |
+   | build | ~580 ms | ~200 ms | 399 ms |
 
    About 90 ms of each is process start and the linker, which no amount of
-   skipping removes, so the compiler's own work goes from 578 ms to 309 ms.
-
-   **Where the rest of it still goes, and it is worth naming precisely.** A
-   skipped module still contributes its interface to the flattened program, and
-   an interface carries the bodies of exported functions, generic or not. So the
-   front end still walks every exported body of every module in the program even
-   when it emits none of them. Removing that means a declaration form that
-   carries a full Frost signature and no body: not `extern`, whose ABI loses the
-   hidden out-pointer an aggregate return uses and which has nowhere to put
-   parameter modes, `uses` sets or linearity. That is the next lever and it is a
-   change to every pass that matches on a function declaration, which is why it
-   is named here rather than done quietly as part of this step.
+   skipping removes, so the compiler's own work goes from about 490 ms to about
+   110 ms, and the declaration form is most of that: it took the skipped path
+   from 309 ms of compiler work to 110 ms.
 
 ## Open questions
 

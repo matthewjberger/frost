@@ -51,7 +51,8 @@ fn collect_param_types(statements: &[Spanned<Statement>]) -> ParamTypes {
                 Expression::Function(params, _, _)
                 | Expression::Proc(params, _, _),
             ) => (name, params),
-            Statement::Extern { name, params, .. } => (name, params),
+            Statement::Extern { name, params, .. }
+            | Statement::Declared { name, params, .. } => (name, params),
             _ => continue,
         };
         param_types.insert(
@@ -85,6 +86,14 @@ fn collect_signatures(statements: &[Spanned<Statement>]) -> Signatures {
                 signatures.insert(
                     name.clone(),
                     return_type.clone().unwrap_or(Type::Void),
+                );
+            }
+            Statement::Declared {
+                name, return_sig, ..
+            } => {
+                signatures.insert(
+                    name.clone(),
+                    return_sig.to_type().unwrap_or(Type::Void),
                 );
             }
             _ => {}

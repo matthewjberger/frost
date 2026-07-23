@@ -95,8 +95,7 @@ actual work predictable.
    remembered, `just bench-scaling` and `just bench-incremental`, and recorded
    in [self-hosting.md](self-hosting.md) and
    [separate-compilation.md](separate-compilation.md);
-   [roadmap.md](roadmap.md) is the surrounding order of work and names the one
-   piece of the front end that is still whole-program.
+   [roadmap.md](roadmap.md) is the surrounding order of work.
 
 ## Non-goals
 
