@@ -373,12 +373,35 @@ impl Generator {
 
         for function in &module.functions {
             let signature = self.build_signature(function)?;
+            // A specialization is private to the object that holds it, so two
+            // objects that both instantiated the same generic do not collide.
+            let linkage = if function.local {
+                Linkage::Local
+            } else {
+                Linkage::Export
+            };
+            let func_id =
+                object.declare_function(&function.name, linkage, &signature)?;
+            self.decls.functions.insert(func_id, (signature, true));
+            self.functions.insert(function.name.clone(), func_id);
+            self.return_types
+                .insert(function.name.clone(), function.return_type.clone());
+        }
+
+        // Functions another object defines. Declared with the same signature
+        // builder as a definition, so the call this object emits agrees with
+        // the definition the linker resolves it to.
+        for function in &module.imported {
+            if self.functions.contains_key(&function.name) {
+                continue;
+            }
+            let signature = self.build_signature(function)?;
             let func_id = object.declare_function(
                 &function.name,
-                Linkage::Export,
+                Linkage::Import,
                 &signature,
             )?;
-            self.decls.functions.insert(func_id, (signature, true));
+            self.decls.functions.insert(func_id, (signature, false));
             self.functions.insert(function.name.clone(), func_id);
             self.return_types
                 .insert(function.name.clone(), function.return_type.clone());

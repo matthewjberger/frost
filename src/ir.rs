@@ -10,6 +10,64 @@ pub type BlockId = usize;
 pub struct IrModule {
     pub functions: Vec<IrFunction>,
     pub externs: Vec<IrExtern>,
+    // Functions this part calls but does not contain, because another module
+    // does. They are declared so a call can be emitted and left for the linker
+    // to resolve, and they are carried as whole `IrFunction`s rather than as
+    // externs so the signature is built by exactly the same code that built the
+    // definition. An extern's ABI is not a Frost function's ABI: aggregate
+    // returns go through a hidden out-pointer, and describing one as an extern
+    // would silently disagree with the object that defines it.
+    pub imported: Vec<IrFunction>,
+}
+
+impl IrModule {
+    // One `IrModule` per source module, each holding that module's own
+    // functions and the specializations it instantiated. Every extern goes in
+    // every part, since an extern is a declaration and an object that does not
+    // reference one simply does not emit it.
+    //
+    // This is what makes each module a compilation unit. A specialization two
+    // modules both instantiate appears in both parts, which is the duplication
+    // the design accepts in exchange for a module's work depending only on the
+    // module; see docs/separate-compilation.md. `FROST_MODULE_REPORT` measures
+    // how much of it there is.
+    pub fn split_by_module(self) -> Vec<IrModule> {
+        let mut order: Vec<u32> = Vec::new();
+        for function in &self.functions {
+            if !order.contains(&function.module) {
+                order.push(function.module);
+            }
+        }
+        let externs = self.externs;
+        // Every part may call any module's exported function, so each declares
+        // the ones it does not define. A local function belongs to exactly one
+        // part and is never reachable from another.
+        let shared: Vec<IrFunction> = self
+            .functions
+            .iter()
+            .filter(|function| !function.local)
+            .cloned()
+            .collect();
+        let mut functions = self.functions;
+        let mut parts = Vec::with_capacity(order.len());
+        for module in order {
+            let (mine, rest): (Vec<_>, Vec<_>) = functions
+                .into_iter()
+                .partition(|function| function.module == module);
+            functions = rest;
+            let imported = shared
+                .iter()
+                .filter(|function| function.module != module)
+                .cloned()
+                .collect();
+            parts.push(IrModule {
+                functions: mine,
+                externs: externs.clone(),
+                imported,
+            });
+        }
+        parts
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -67,6 +125,17 @@ pub struct IrFunction {
     pub locals: Vec<IrLocal>,
     pub blocks: Vec<IrBlock>,
     pub entry: BlockId,
+    // The module this function belongs to, as a source map file id. For a
+    // specialization it is the module that instantiated it, which is the module
+    // that would emit it once modules are compilation units. See
+    // docs/separate-compilation.md.
+    pub module: u32,
+    // Whether this symbol is private to its object file. True for
+    // specializations and anonymous function literals, which are only ever
+    // called from the module that produced them, and which therefore must not
+    // be exported: two modules that instantiate the same generic each emit
+    // their own copy, and two objects exporting one name is a duplicate symbol.
+    pub local: bool,
 }
 
 impl IrFunction {

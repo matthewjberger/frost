@@ -191,9 +191,26 @@ rather than after.
    rather than the day the compiler starts relying on it. That gate was itself
    checked by breaking the interface closure and confirming it fails.
 
-   What is left is making it the way builds work rather than a check on them,
-   and that needs each module to emit its own object file, because an interface
-   deliberately drops a module's unexported, unreached declarations.
+   *Per-module objects done.* On the link path each module is now its own
+   compilation unit: `IrModule::split_by_module` produces one part per module,
+   each becomes its own object, and the linker resolves the calls between them.
+   `--native -o x.o` still writes the single object its `-o` names, since that
+   output is one file by contract.
+
+   Three things this forced, each of which is the design becoming real:
+   - **Specializations are module-local.** Two modules that instantiate the same
+     generic each emit their own private copy, so exporting them would be a
+     duplicate symbol. `IrFunction::local` says so and the backend declares it
+     `Linkage::Local`.
+   - **The dedup had to become per-module.** With one global dedup the first
+     module to ask for `wrap<i64>` got it and the second module's object
+     referenced a symbol that was not there. `build_module_per_module` keys the
+     dedup by module and name.
+   - **Cross-module calls are declared, not externed.** A part carries the other
+     parts' functions in `imported` and declares them with the same signature
+     builder that built the definitions. Describing them as externs would lose
+     the hidden out-pointer an aggregate return uses, and the two objects would
+     silently disagree about the ABI.
 5. **Cache and skip.** Rebuild a module only when its own source or an imported
    interface hash changes. This is the step that pays, and it pays only because
    the four before it made it a scheduling question rather than a correctness one.

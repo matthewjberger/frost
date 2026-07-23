@@ -361,6 +361,62 @@ impl Renamer {
     // parameter, and this used to be skipped, so an exported function returning
     // an unexported struct kept the un-renamed name and the importer could not
     // resolve it.
+    // `Base<A, B>` with the base and every argument renamed, or `None` when the
+    // name is not an instance or nothing in it is private.
+    fn generic_instance(&self, name: &str) -> Option<String> {
+        let open = name.find('<')?;
+        let inner = name.strip_suffix('>')?.get(open + 1..)?;
+        let base = &name[..open];
+        let mut changed = false;
+        let renamed_base = match self.renames.get(base) {
+            Some(mangled) => {
+                changed = true;
+                mangled.clone()
+            }
+            None => base.to_string(),
+        };
+        // Arguments are split at the top level only, so a nested instance stays
+        // whole and is renamed by the recursive call.
+        let mut arguments: Vec<String> = Vec::new();
+        let mut depth = 0usize;
+        let mut current = String::new();
+        for character in inner.chars() {
+            match character {
+                '<' => {
+                    depth += 1;
+                    current.push(character);
+                }
+                '>' => {
+                    depth -= 1;
+                    current.push(character);
+                }
+                ',' if depth == 0 => {
+                    arguments.push(current.trim().to_string());
+                    current = String::new();
+                }
+                _ => current.push(character),
+            }
+        }
+        arguments.push(current.trim().to_string());
+        let arguments: Vec<String> = arguments
+            .into_iter()
+            .map(|argument| match self.renames.get(argument.as_str()) {
+                Some(mangled) => {
+                    changed = true;
+                    mangled.clone()
+                }
+                None => match self.generic_instance(&argument) {
+                    Some(renamed) => {
+                        changed = true;
+                        renamed
+                    }
+                    None => argument,
+                },
+            })
+            .collect();
+        changed.then(|| format!("{renamed_base}<{}>", arguments.join(", ")))
+    }
+
     fn return_signature(&self, signature: &mut ReturnSignature) {
         match &mut signature.kind {
             ReturnKind::None => {}
@@ -510,6 +566,14 @@ impl Renamer {
             Type::Struct(name) | Type::Enum(name) => {
                 if let Some(mangled) = self.renames.get(name.as_str()) {
                     *name = mangled.clone();
+                    return;
+                }
+                // A generic instance is one name, `Boxed<i64>`, so looking the
+                // whole thing up finds nothing and a private generic type kept
+                // its un-renamed name. Both the base and the arguments can name
+                // private types, and both are renamed here.
+                if let Some(renamed) = self.generic_instance(name) {
+                    *name = renamed;
                 }
             }
             Type::Ptr(inner)

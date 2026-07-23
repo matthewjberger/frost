@@ -9,10 +9,10 @@ use clap::Parser;
 use frost::{
     Expression, Lexer, Literal, Parameter, Parser as FrostParser, Position,
     ReturnKind, ReturnSignature, RunOutcome, Spanned, Statement, Type,
-    build_module, check_frame_escapes, check_linearity, check_module,
-    check_ownership, check_regions, compile_ir_to_object, emit_c,
-    lower_allocation_sources, lower_failure_sets, lower_param_modes,
-    resolve_imports, run_module,
+    build_module, build_module_per_module, check_frame_escapes,
+    check_linearity, check_module, check_ownership, check_regions,
+    compile_ir_to_object, emit_c, lower_allocation_sources, lower_failure_sets,
+    lower_param_modes, resolve_imports, run_module,
 };
 
 #[derive(Parser)]
@@ -173,7 +173,7 @@ fn main() -> Result<()> {
             .join(format!("frost_test_{stem}{}", std::env::consts::EXE_SUFFIX));
         fs::write(&object_path, object_bytes)?;
         link_executable(
-            &object_path.to_string_lossy(),
+            &[object_path.to_string_lossy().into_owned()],
             &exe_path.to_string_lossy(),
             &cli.libs,
             false,
@@ -252,25 +252,43 @@ fn main() -> Result<()> {
     }
 
     if cli.native || cli.link {
-        let module = build_module(&statements, &linear_types)
-            .context("IR lowering error")?;
+        // Linking is where a module can be its own compilation unit, so it is
+        // also where a specialization is emitted once per module that asked for
+        // it rather than once per program.
+        let module = if cli.link {
+            build_module_per_module(&statements, &linear_types)
+        } else {
+            build_module(&statements, &linear_types)
+        }
+        .context("IR lowering error")?;
         check_module(&module).context("IR type error")?;
         check_linearity(&module).context("Linearity error")?;
-        let object_bytes = compile_ir_to_object(&module)
-            .context("Native compilation error")?;
-
         let input_path = Path::new(&cli.file);
         let stem = input_path.file_stem().unwrap_or_default().to_string_lossy();
 
-        let object_path = if cli.link {
-            format!("{}.o", stem)
+        // Linking is where a module can be its own compilation unit, so the IR
+        // is split per module and each part becomes its own object. `--native`
+        // without `--link` still writes the one object file its `-o` names,
+        // since that output is a single file by contract.
+        let parts = if cli.link {
+            module.split_by_module()
         } else {
-            cli.output.clone().unwrap_or_else(|| format!("{}.o", stem))
+            vec![module]
         };
-
-        fs::write(&object_path, object_bytes).with_context(|| {
-            format!("Failed to write object file: {}", object_path)
-        })?;
+        let mut object_paths = Vec::with_capacity(parts.len());
+        for (index, part) in parts.iter().enumerate() {
+            let object_bytes = compile_ir_to_object(part)
+                .context("Native compilation error")?;
+            let object_path = if cli.link {
+                format!("{}.{}.o", stem, index)
+            } else {
+                cli.output.clone().unwrap_or_else(|| format!("{}.o", stem))
+            };
+            fs::write(&object_path, object_bytes).with_context(|| {
+                format!("Failed to write object file: {}", object_path)
+            })?;
+            object_paths.push(object_path);
+        }
 
         if cli.link {
             let exe_path = cli.output.clone().unwrap_or_else(|| {
@@ -282,17 +300,21 @@ fn main() -> Result<()> {
             });
 
             link_executable(
-                &object_path,
+                &object_paths,
                 &exe_path,
                 &cli.libs,
                 cli.freestanding,
             )?;
 
-            fs::remove_file(&object_path).ok();
+            for object_path in &object_paths {
+                fs::remove_file(object_path).ok();
+            }
 
             println!("Linked executable: {}", exe_path);
         } else {
-            println!("Compiled to: {}", object_path);
+            for object_path in &object_paths {
+                println!("Compiled to: {}", object_path);
+            }
         }
     } else {
         let module = build_module(&statements, &linear_types)
@@ -312,7 +334,7 @@ fn main() -> Result<()> {
             .join(format!("frost_run_{stem}{}", std::env::consts::EXE_SUFFIX));
         fs::write(&object_path, object_bytes)?;
         link_executable(
-            &object_path.to_string_lossy(),
+            &[object_path.to_string_lossy().into_owned()],
             &exe_path.to_string_lossy(),
             &cli.libs,
             false,
@@ -507,7 +529,7 @@ fn add_freestanding_link_args(cmd: &mut Command) {
 fn add_freestanding_link_args(_cmd: &mut Command) {}
 
 fn link_executable(
-    object_path: &str,
+    object_paths: &[String],
     exe_path: &str,
     extra_libs: &[String],
     freestanding: bool,
@@ -527,7 +549,7 @@ fn link_executable(
     let mut cmd = Command::new(linker);
 
     if linker == "cl" {
-        cmd.arg(object_path);
+        cmd.args(object_paths);
         cmd.arg(&runtime_path);
         cmd.arg(format!("/Fe:{}", exe_path));
         for lib in extra_libs {
@@ -537,7 +559,7 @@ fn link_executable(
         if freestanding {
             cmd.arg("-nostdlib");
         }
-        cmd.arg(object_path);
+        cmd.args(object_paths);
         cmd.arg(&runtime_path);
         cmd.arg("-o");
         cmd.arg(exe_path);

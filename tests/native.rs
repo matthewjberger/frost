@@ -1603,6 +1603,77 @@ fn a_program_built_from_interfaces_is_the_same_program() {
     );
 }
 
+// Each module is its own compilation unit on the link path: one object file
+// per module, cross-module calls resolved by the linker, and a specialization
+// two modules both instantiate emitted privately into each of their objects
+// rather than once into a shared one. That last part is what a single object
+// cannot do, and getting it wrong shows up as either a duplicate symbol or an
+// unresolved one, so this links a program with both shapes in it.
+#[test]
+fn each_module_becomes_its_own_object() {
+    let directory = std::env::temp_dir().join("frost_per_module_objects");
+    let library = directory.join("lib");
+    std::fs::create_dir_all(&library).unwrap();
+    std::fs::write(
+        library.join("boxed.frost"),
+        "export wrap\n\
+         Boxed :: struct($T: Type) { value: T }\n\
+         wrap :: fn(move v: $T) -> Boxed<T> { Boxed { value = v } }\n",
+    )
+    .unwrap();
+    // Both modules instantiate wrap<i64>, so both objects must carry their own
+    // private copy. The second also instantiates wrap<bool>, which only it has.
+    std::fs::write(
+        library.join("one.frost"),
+        "export use_one\n\
+         import \"boxed.frost\"\n\
+         use_one :: fn() -> i64 { b := wrap(10)  b.value }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        library.join("two.frost"),
+        "export use_two\n\
+         import \"boxed.frost\"\n\
+         use_two :: fn() -> i64 { b := wrap(20)  c := wrap(true)  b.value }\n",
+    )
+    .unwrap();
+    let root = directory.join("per_module_app.frost");
+    std::fs::write(
+        &root,
+        "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
+         import \"lib/one.frost\"\n\
+         import \"lib/two.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   printf(\"%lld\\n\", use_one() + use_two())\n\
+         \x20   0\n\
+         }\n",
+    )
+    .unwrap();
+
+    if !linker_available() {
+        let _ = std::fs::remove_dir_all(&directory);
+        return;
+    }
+    let exe = directory
+        .join(format!("per_module_app{}", std::env::consts::EXE_SUFFIX));
+    let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe)
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "linking per-module objects failed:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let ran = Command::new(&exe).output().unwrap();
+    let output = String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n");
+    let _ = std::fs::remove_dir_all(&directory);
+    assert_eq!(output, "30\n");
+}
+
 // Separate compilation gives each module its own copy of every specialization
 // it instantiates, because cranelift has no weak or COMDAT linkage to fold
 // duplicates with. Whether that duplication matters is a measurement, and this
