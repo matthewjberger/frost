@@ -26,10 +26,11 @@ export Arena, CH_0, CH_9, CH_AMP, CH_BACKSLASH, CH_BANG, CH_CARET, CH_COLON,
     TOK_MINUS, TOK_NE, TOK_OROR, TOK_PERCENT, TOK_PLUS, TOK_QUESTION,
     TOK_RBRACE, TOK_RBRACKET, TOK_RPAREN, TOK_SLASH, TOK_STAR, TOK_STR,
     TY_BOOL, TY_I64, TY_I8, TY_PARAM, TY_U8, TY_VOID, Token, TypeArg, Variant,
-    arena_at, arena_make, arena_push, cstr_eq, frost_byte_at, frost_byte_set,
-    frost_die, frost_emit_char, frost_emit_int, frost_emit_str, frost_error,
+    arena_at, arena_make, arena_push, cstr_eq, frost_arg_at, frost_arg_count,
+    frost_byte_at, frost_byte_set, frost_die, frost_emit_char, frost_emit_close,
+    frost_emit_int, frost_emit_open, frost_emit_str, frost_error,
     frost_error_int, frost_error_src, frost_getenv, frost_is_windows,
-    frost_read_file, frost_str_len, malloc
+    frost_read_file, frost_remove_file, frost_run_command, frost_str_len, malloc
 
 malloc          :: extern fn(size: i64) -> ^u8
 frost_byte_at   :: extern fn(s: ^i8, i: i64) -> i64
@@ -48,6 +49,16 @@ frost_error_int :: extern fn(value: i64)
 frost_die       :: extern fn()
 frost_is_windows :: extern fn() -> i64
 frost_getenv    :: extern fn(name: ^i8) -> ^i8
+
+// The command line, and the two things a compiler does with the world once it
+// has read one: put its output somewhere, and run the tool that finishes the
+// build. Emitted output goes to standard output until a file is opened for it.
+frost_arg_count   :: extern fn() -> i64
+frost_arg_at      :: extern fn(index: i64) -> ^i8
+frost_emit_open   :: extern fn(path: ^i8) -> i64
+frost_emit_close  :: extern fn()
+frost_run_command :: extern fn(command: ^i8) -> i64
+frost_remove_file :: extern fn(path: ^i8) -> i64
 
 // Node kinds.
 NODE_NUM        :: 0
