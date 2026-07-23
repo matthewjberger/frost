@@ -200,6 +200,8 @@ main :: fn() -> i64 {
         prov_off = 0,
         prov_len = 0,
         arrays = arena_make($ArrayDef, 1024),
+        tests = arena_make($TestCase, 1024),
+        testing = options.testing,
     }
     // Names the compiler synthesizes go past the source's terminator, so the
     // first free byte is one past the text.
@@ -258,13 +260,30 @@ main :: fn() -> i64 {
     frost_emit_close()
 
     if (options.link == 1) {
-        command := join_two(join_two(join_two("cc ", emit_path), " -o "),
+        // The test runner lives in the C runtime, so a build that runs tests
+        // links it. FROST_RUNTIME says where it is for a checkout that is not
+        // the working directory.
+        mut extra : ^i8 = ""
+        if (options.testing == 1) {
+            mut runtime := frost_getenv("FROST_RUNTIME")
+            if (frost_str_len(runtime) == 0) {
+                runtime = "runtime/frost_runtime.c"
+            }
+            extra = join_two(" ", runtime)
+        }
+        command := join_two(
+            join_two(join_two(join_two("cc ", emit_path), extra), " -o "),
             executable)
         status := frost_run_command(command)
         frost_remove_file(emit_path)
         if (status != 0) {
             frost_error("frost: the linker failed")
             frost_die()
+        }
+        // Building the tests and not running them would be half an answer, so
+        // the process ends on what they said.
+        if (options.testing == 1) {
+            return frost_run_command(executable)
         }
     }
     0

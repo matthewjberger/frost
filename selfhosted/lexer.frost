@@ -68,6 +68,7 @@ classify_ident :: fn(src: ^i8, off: i64, len: i64) -> i64 {
     if (str_range_eq(src, off, len, "import")) { return TOK_KW_IMPORT }
     if (str_range_eq(src, off, len, "export")) { return TOK_KW_EXPORT }
     if (str_range_eq(src, off, len, "enum")) { return TOK_KW_ENUM }
+    if (str_range_eq(src, off, len, "test")) { return TOK_KW_TEST }
     TOK_IDENT
 }
 

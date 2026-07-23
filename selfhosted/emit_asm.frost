@@ -486,6 +486,22 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         asm_i("movq .Lflt", id, "(%rip), %rax")
         return
     }
+    if (kind == NODE_ASSERT) {
+        shadow := abi_shadow(p)
+        emit_asm_expr(p, node^.a)
+        frost_emit_str("    movq %rax, ")
+        emit_asm_arg_reg(p, 0)
+        frost_emit_str("\n")
+        frost_emit_str("    leaq .Lpos")
+        frost_emit_int(id)
+        frost_emit_str("(%rip), ")
+        emit_asm_arg_reg(p, 1)
+        frost_emit_str("\n")
+        asm_i("subq $", shadow, ", %rsp")
+        asm("call frost_assert_at")
+        asm_i("addq $", shadow, ", %rsp")
+        return
+    }
     if (kind == NODE_SLICE_LEN) {
         inner := node^.a
         mut inner_ty := type_of(p, inner)
@@ -1202,7 +1218,7 @@ emit_asm_function :: fn(mut p: Parser, id: i64) {
     ret := sym^.ret_type
     begin_provider(p, fn_index)
     frost_emit_str("    .globl ")
-    if (is_main == 1) {
+    if (is_main == 1 && p.testing == 0) {
         frost_emit_str("main\n")
         frost_emit_str("main:\n")
     } else {
@@ -1236,6 +1252,40 @@ emit_asm_mono_function :: fn(mut p: Parser, id: i64, arg: i64, ret: i64) {
     emit_asm_frame(p, body, params, ret)
 }
 
+// The entry point a `--test` build gets instead of the program's own. Each body
+// is handed to the runner by address rather than called here, so a failing
+// assertion can escape back into the runner without ending the run.
+emit_asm_test_main :: fn(mut p: Parser) {
+    shadow := abi_shadow(p)
+    frost_emit_str("    .globl main\n")
+    frost_emit_str("main:\n")
+    asm("pushq %rbp")
+    asm("movq %rsp, %rbp")
+    mut i : i64 = 0
+    while (i < p.tests.count) {
+        entry : ^TestCase = arena_at(p.tests, i)
+        frost_emit_str("    leaq .Ltest")
+        frost_emit_int(i)
+        frost_emit_str("(%rip), ")
+        emit_asm_arg_reg(p, 0)
+        frost_emit_str("\n")
+        frost_emit_str("    leaq mf_")
+        frost_emit_int(entry^.fn_index)
+        frost_emit_str("(%rip), ")
+        emit_asm_arg_reg(p, 1)
+        frost_emit_str("\n")
+        asm_i("subq $", shadow, ", %rsp")
+        asm("call frost_test_run")
+        asm_i("addq $", shadow, ", %rsp")
+        i = i + 1
+    }
+    asm_i("subq $", shadow, ", %rsp")
+    asm("call frost_test_summary")
+    asm_i("addq $", shadow, ", %rsp")
+    asm("leave")
+    asm("ret")
+}
+
 emit_asm_program :: fn(mut p: Parser, head: i64) {
     asm(".text")
     mut id := head
@@ -1243,7 +1293,7 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
         node : ^Node = arena_at(p.arena, id)
         kind := node^.kind
         next_id := node^.next
-        if (kind == NODE_FUNC) {
+        if (kind == NODE_FUNC && (node^.c != 2 || p.testing == 1)) {
             emit_asm_function(p, id)
         }
         id = next_id
@@ -1263,7 +1313,22 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
         gi = gi + 1
     }
 
+    if (p.testing == 1) {
+        emit_asm_test_main(p)
+    }
+
     asm(".data")
+    mut ti : i64 = 0
+    while (ti < p.tests.count) {
+        entry : ^TestCase = arena_at(p.tests, ti)
+        frost_emit_str(".Ltest")
+        frost_emit_int(ti)
+        frost_emit_str(":\n")
+        frost_emit_str("    .asciz \"")
+        emit_string_content(p.src, entry^.name_off, entry^.name_len)
+        frost_emit_str("\"\n")
+        ti = ti + 1
+    }
     frost_emit_str(".Lfmt:\n")
     frost_emit_str("    .asciz \"%lld\\n\"\n")
     frost_emit_str(".Lfmtf:\n")
@@ -1285,6 +1350,14 @@ emit_asm_strings :: fn(mut p: Parser) {
             frost_emit_str(":\n")
             frost_emit_str("    .asciz \"")
             emit_string_content(p.src, off, len)
+            frost_emit_str("\"\n")
+        }
+        if (kind == NODE_ASSERT) {
+            frost_emit_str(".Lpos")
+            frost_emit_int(i)
+            frost_emit_str(":\n")
+            frost_emit_str("    .asciz \"")
+            emit_position(p.modules, p.src, node^.pos)
             frost_emit_str("\"\n")
         }
         if (kind == NODE_FLOAT) {

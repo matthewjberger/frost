@@ -3,8 +3,8 @@
 import "core.frost"
 import "lexer.frost"
 
-export SOURCE_ROOM, SYNTH_ROOM, module_at, report_where, resolve_imports,
-    source_with_room
+export SOURCE_ROOM, SYNTH_ROOM, emit_position, module_at, report_where,
+    resolve_imports, source_with_room
 
 module_seen :: fn(mut modules: Arena<Module>, path: ^i8) -> bool {
     mut i : i64 = 0
@@ -144,6 +144,43 @@ report_where :: fn(mut modules: Arena<Module>, src: ^i8, offset: i64) {
     frost_error(":")
     frost_error_int(column)
     frost_error(": ")
+}
+
+// The same position, written into the emitted program rather than to stderr,
+// for an assertion that has to name where it was written when it fails at run
+// time. A path separator is escaped, since this lands inside a C string.
+emit_position :: fn(mut modules: Arena<Module>, src: ^i8, offset: i64) {
+    index := module_at(modules, offset)
+    if (index < 0) {
+        return
+    }
+    entry : ^Module = arena_at(modules, index)
+    mut line : i64 = 1
+    mut column : i64 = 1
+    mut at := entry^.start
+    while (at < offset) {
+        if (frost_byte_at(src, at) == CH_LF) {
+            line = line + 1
+            column = 1
+        } else {
+            column = column + 1
+        }
+        at = at + 1
+    }
+    mut k : i64 = 0
+    length := frost_str_len(entry^.path)
+    while (k < length) {
+        byte := frost_byte_at(entry^.path, k)
+        if (byte == CH_BACKSLASH) {
+            frost_emit_char(CH_BACKSLASH)
+        }
+        frost_emit_char(byte)
+        k = k + 1
+    }
+    frost_emit_str(":")
+    frost_emit_int(line)
+    frost_emit_str(":")
+    frost_emit_int(column)
 }
 
 module_at :: fn(mut modules: Arena<Module>, offset: i64) -> i64 {
