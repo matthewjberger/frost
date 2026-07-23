@@ -221,13 +221,13 @@ test:
     cargo test -p frost -- --nocapture
 
 # Runs all tests with every imported module reduced to what its interface says
-# it offers, which is what separate compilation will rely on (Unix)
+# it offers, which is what --incremental relies on (Unix)
 [unix]
 test-interfaces:
     FROST_BUILD_FROM_INTERFACES=1 cargo test -p frost
 
 # Runs all tests with every imported module reduced to what its interface says
-# it offers, which is what separate compilation will rely on (Windows)
+# it offers, which is what --incremental relies on (Windows)
 [windows]
 test-interfaces:
     $env:FROST_BUILD_FROM_INTERFACES = "1"; cargo test -p frost; $env:FROST_BUILD_FROM_INTERFACES = $null

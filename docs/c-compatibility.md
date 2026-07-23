@@ -135,6 +135,7 @@ frost program.frost --link -o program            # Cranelift backend, links an e
 frost program.frost --emit-c --link -o program   # C backend, same result via emitted C
 frost program.frost --emit-c -o program.c         # just emit the C, don't link
 frost program.frost --link -o program --libs -lm  # link extra libraries
+frost program.frost --link --incremental -o program  # rebuild only what changed
 ```
 
 Both `--link` paths automatically compile and link `runtime/frost_runtime.c`, so

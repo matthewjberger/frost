@@ -33,7 +33,13 @@ compiles to native code through Cranelift or through portable C.
   fields public.
 - **One typed IR, three backends that must agree** - Cranelift, portable C, and
   a direct IR interpreter, cross-checked by a differential test.
-- **Calls C directly** with `extern fn`, no glue.
+- **Calls C directly** with `extern fn`, no glue, including C functions that
+  return a struct by value, classified per target rather than assumed.
+- **Callbacks with a typed context** - register a Frost function with a C
+  library by moving a typed context in; no `^u8`, no cast, and forgetting to
+  unregister is a compile error.
+- **Separate compilation** - each module is its own object, and
+  `--incremental` rebuilds only the modules an edit can reach.
 - **In-module tests** - `test "name" { assert(...) }` run by `frost --test`.
 
 ## Documentation
@@ -60,8 +66,8 @@ compiles to native code through Cranelift or through portable C.
 - [docs/roadmap.md](docs/roadmap.md): what is left, in the order to do it
 - [docs/separate-compilation.md](docs/separate-compilation.md): the module
   boundary, one object per module, and what `--incremental` rebuilds
-- [docs/callbacks.md](docs/callbacks.md): the design for callbacks with a typed
-  context, which is the one place the implementation contradicts a goal
+- [docs/callbacks.md](docs/callbacks.md): callbacks with a typed context, the
+  design and the record of building it
 
 ## A first program
 
@@ -124,6 +130,12 @@ frost/
 │   ├── lexer.rs        # tokenizer
 │   ├── parser.rs       # AST parser
 │   ├── imports.rs      # import resolution and module privacy
+│   ├── interface.rs    # what a caller needs to compile against a module
+│   ├── build_cache.rs  # what --incremental remembers between builds
+│   ├── regions.rs      # arena regions and frame escapes
+│   ├── param_modes.rs  # parameter modes to references and call borrows
+│   ├── callbacks.rs    # callback registrations and their declaration rules
+│   ├── c_abi.rs        # how C returns a struct, per target
 │   ├── ownership.rs    # move, borrow, and linearity checking
 │   ├── ir.rs           # typed IR definitions
 │   ├── ir_build.rs     # AST to typed IR lowering

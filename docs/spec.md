@@ -713,14 +713,53 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 malloc :: extern fn(size: i64) -> ^u8
 ```
 
-Frost scalar types map to the natural C types, `^T` is a C pointer, and
-aggregates pass by the platform ABI. String literals denote NUL-terminated bytes
-for `^i8` parameters.
+Frost scalar types map to the natural C types and `^T` is a C pointer. String
+literals denote NUL-terminated bytes for `^i8` parameters. An `extern` takes
+parameter modes like any other function.
 
-The FFI is asymmetric. **Frost calls C, but C does not call Frost.** There is no
-stable exported ABI and no attribute to expose a Frost function to a C caller.
-The emitted C is an internal lowering, not an interface. This keeps the backend
-simple.
+**Aggregate parameters and aggregate returns are not symmetric**, and the
+asymmetry is deliberate.
+
+- An aggregate **parameter** is passed as a pointer to the value, so
+  `close :: extern fn(f: File)` links against a C `void close(File*)`. This is a
+  convention rather than the C ABI, chosen because most C APIs take structs by
+  pointer, and it is what lets a `linear` resource have a terminal consumer
+  across the boundary. Passing a struct to C by value has no spelling.
+- An aggregate **return** is by value, following the target's real C ABI: in
+  registers where that target's rule says so, and through a hidden pointer where
+  it does not. A return could not have been a convention, because `-> Ctx` has
+  to mean what C means by it and `-> ^Ctx` is how a returned pointer is written.
+
+### 12.1 Callbacks
+
+An `extern` whose parameter list has a `$` parameter bound to a function
+signature is a **callback registration**:
+
+```
+Ctx :: struct { hits: i64 }
+
+on_event         :: fn(mut ctx: Ctx, code: i64) { ctx.hits = ctx.hits + code }
+register_handler :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64
+```
+
+The handler's **first parameter is the context** and must be written `mut`.
+Whichever parameter of the extern has that type is the one the context is taken
+from, found by type rather than by position because C libraries put the userdata
+on either side of the function pointer, and it must be taken by `move`. The call
+passes the handler's address and the context's address; there is no generated
+trampoline, because a `mut` parameter is already a pointer in the signature and
+Frost and C share a calling convention.
+
+The context moving in is what makes this safe rather than merely typed: the
+caller cannot touch the context while the callback can fire. A registration is
+normally a `linear` value, so it must be consumed, and the region check refuses
+to let it leave the frame that holds its context.
+
+The FFI is otherwise asymmetric. **Frost calls C, but C does not call Frost**,
+except through a registered callback, which is the one place a C library holds a
+Frost function pointer. There is no stable exported ABI and no attribute to
+expose a Frost function to a C caller. The emitted C is an internal lowering,
+not an interface.
 
 ---
 
@@ -774,9 +813,11 @@ EnumVariants  = EnumVariant ( "," EnumVariant )* ","?
 EnumVariant   = IDENT ( "{" ( IDENT ":" Type ( "," IDENT ":" Type )* )? "}" )?
 
 Params        = Param ( "," Param )*
-Param         = "$" IDENT ":" ( "Type" | "type" | ProcType )
-              | IDENT ( ":" Type )?
-ProcType      = "fn" "(" ( Type ( "," Type )* )? ")" ( "->" Type )?
+Param         = ParamMode? "$" IDENT ":" ( "Type" | "type" | ProcType )
+              | ParamMode? IDENT ( ":" Type )?
+ParamMode     = "mut" | "move"
+ProcType      = "fn" "(" ( ProcParam ( "," ProcParam )* )? ")" ( "->" Type )?
+ProcParam     = ParamMode? Type
 ```
 
 A `Name :: fn(...) { ... }` item is the `Expr` alternative of `ConstBody`, whose
@@ -888,7 +929,7 @@ Type =
     | "[" "]" Type                           // slice
     | "[" INTEGER "]" Type                   // array (size first)
     | "[" Type ";" INTEGER "]"               // array (element first)
-    | "fn" "(" ( Type ( "," Type )* )? ")" ( "->" Type )?
+    | "fn" "(" ( ProcParam ( "," ProcParam )* )? ")" ( "->" Type )?
     | "distinct" Type
     | "?" Type
     | "Handle" "<" Type ">"
