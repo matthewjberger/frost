@@ -409,6 +409,43 @@ expected type. Only when the result is concrete: a type argument written *after*
 the value it parameterizes has not been bound yet, and an expected type still
 naming a type parameter would say less than nothing.
 
+## 6. Split the self-hosted compiler into modules
+
+`selfhosted/frost.frost` is 5,457 lines in one file. Frost has modules, the
+standard library uses them, and every example does; the compiler written in the
+language does not. That is the wrong advertisement for the language, and it is
+the one program most likely to be read as an example of how to write a large one.
+
+**The obstacle is not the split, it is the order.** The file grew by accretion
+and its concerns are interleaved, so there is no line to cut at. Measured rather
+than guessed:
+
+| functions | span | foreign functions inside that span |
+| --- | --- | --- |
+| `emit_*` (42) | 2715-4924 | 41 |
+| `parse_*` (29) | 1359-3369 | 36 |
+| `record_*` (5) | 1089-4333 | 130 |
+| `is_*` (10) | 454-3904 | 139 |
+
+The section comments do not describe the file either. Everything between the
+"Native backend" banner and the "Checks" banner reads as one concern, and in it
+sit `cstr_eq`, three pieces of monomorphization machinery shared by both
+backends, and `emit_program`, which is the entry point of the *C* backend.
+
+Taking the native backend out as the first module looks like the clean cut,
+because nothing but `main` calls into it. It is not: six functions in that range
+are called from outside it, and it calls twenty-six that live outside.
+
+**So the order of work is reorganise, then split.** Move functions so that each
+concern is contiguous, with the fixpoint tests green at every step, and only then
+draw module boundaries and add `export` lines. Reordering alone should be
+provably safe: the emitted output must stay byte-identical, and both fixpoints
+already check exactly that.
+
+Likely modules, in dependency order: the arena and node types; the lexer; the
+token cursor and symbol tables; imports; the parser; the checks (types,
+ownership, regions); the C backend; the assembly backend; the driver.
+
 ## Smaller things found, and what happened to them
 
 All three are closed. Kept because the reasoning is the useful part.

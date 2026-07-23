@@ -102,6 +102,14 @@ FROST_BACKEND=asm FROST_INPUT=program.frost ./selfhosted/frost.exe > out.s
 cc out.s -o out && ./out
 ```
 
+## One file, for now
+
+This is 5,457 lines in a single file, which is not how the language wants a
+project written and not what the standard library or the examples do. Splitting
+it is item 6 of [docs/roadmap.md](../docs/roadmap.md), along with the measurement
+of why it cannot simply be cut: the concerns are interleaved, so the work is to
+reorder first and draw module boundaries second.
+
 ## Where the measurements live
 
 [docs/self-hosting.md](../docs/self-hosting.md) has the checklist in dependency
