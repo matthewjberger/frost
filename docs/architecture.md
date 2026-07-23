@@ -68,10 +68,17 @@ Without it a diagnostic from an imported module would name a line number in a
 flattened program that matches no file the reader has open.
 
 `src/interface.rs` derives what a caller would need to compile against a module
-without seeing the rest of it, and checks it. Nothing builds from interfaces
-yet; see [separate-compilation.md](separate-compilation.md) for the design and
-where it stands. The checks run under `FROST_CHECK_INTERFACES`, which the test
-suite sets on every compilation.
+without seeing the rest of it, and checks it. The checks run under
+`FROST_CHECK_INTERFACES`, which the test suite sets on every compilation, and
+the whole suite runs a second time under `FROST_BUILD_FROM_INTERFACES`, which
+reduces every imported module to its interface.
+
+`src/build_cache.rs` is what makes that pay. Under `--incremental` it keeps a
+record and an object per module, and a module whose own source and whose
+imported interfaces are unchanged is neither parsed nor code generated: it
+contributes the interface the record already holds and its object is linked. See
+[separate-compilation.md](separate-compilation.md) for the fingerprint rule and
+what is still whole-program.
 
 ## Code generation is parallel
 
@@ -399,10 +406,11 @@ AST; both point at a line.
     lines from 1.11 s to 353 ms. The two false starts are recorded in
     [roadmap.md](roadmap.md) because both came from trusting a summary statistic
     over a per-worker measurement.)*
-13. Separate compilation. *(Designed and started. A module is a file, its
-    interface is its `export` line, and a specialization is emitted in the
-    module that instantiates it. Module identity and interface derivation are
-    built and checked; per-module monomorphization and building from interfaces
-    alone are not. [separate-compilation.md](separate-compilation.md) tracks it
-    step by step, including what was found to be wrong about the original
-    design.)*
+13. Separate compilation. *(Done. A module is a file, its interface is its
+    `export` line, and a specialization is emitted in the module that
+    instantiates it. On `--link` each module is its own object, and
+    `--incremental` rebuilds a module only when its own source or an imported
+    interface changes, which is a hash over the interface with generic bodies
+    kept and ordinary ones blanked.
+    [separate-compilation.md](separate-compilation.md) tracks it step by step,
+    including what was found to be wrong about the original design.)*

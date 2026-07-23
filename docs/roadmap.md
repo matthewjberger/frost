@@ -22,36 +22,48 @@ generation is 64 ms of a 349 ms build, with the front end holding the rest. That
 tells you what not to work on next. Cranelift is done being the problem.
 
 Before item 1 landed the same program took 1.11 s, or about 52,000 lines per
-second, and the backend was 1,285 ms of it. The remaining work on speed is the
-shape question, item 3, not a constant factor.
+second, and the backend was 1,285 ms of it.
 
-## 3. Separate compilation (designed, not built)
+The shape question, item 3, is closed too: a module is a compilation unit and
+`--incremental` skips the ones an edit cannot reach. What is left on speed is
+named at the end of that item, and it is a bounded piece of work rather than an
+open question.
 
-The design is written down in
-[separate-compilation.md](separate-compilation.md). The short version: a module
-is a file, its interface is its `export` line, and a specialization is emitted in
-the module that instantiates it, which keeps the existing visibility rule as the
-interface rather than inventing a second one.
+## 3. Separate compilation (done)
 
-Two findings from writing it that were not obvious going in:
+All five steps in [separate-compilation.md](separate-compilation.md) are built.
+A module is a file, its interface is its `export` line, a specialization is
+emitted in the module that instantiates it, each module is its own object on the
+link path, and `--incremental` rebuilds a module only when its own source or an
+imported interface changes.
+
+From `just bench-incremental` on 9,484 lines across 65 files, one of which
+changed: 668 ms full against 399 ms incremental, of which about 90 ms either way
+is process start and the linker.
+
+Three findings worth keeping, none of which were obvious going in:
 
 - **A generic's body is part of its interface**, unavoidably, because the caller
-  chooses the type arguments and so the caller instantiates the template. That
-  means changing a generic's body is an interface change and rebuilds every
-  module that instantiates it, while changing an ordinary body is not.
-- **Private symbol names currently depend on import traversal order.**
-  `resolve_into` hands out `module_tag` by visit order, so a private `helper` is
-  `__m3_helper` in one program and `__m7_helper` in another. A module's symbols
-  have to be a property of the module before any of this is possible, and that
-  is step 1 because it is verifiable entirely on its own.
+  chooses the type arguments and so the caller instantiates the template. So
+  changing a generic's body is an interface change and rebuilds every module
+  that instantiates it, while changing an ordinary body is not. That distinction
+  is what the fingerprint encodes and it is the whole reason the cache pays.
+- **Private symbol names used to depend on import traversal order**, so a
+  private `helper` was `__m3_helper` in one program and `__m7_helper` in
+  another. A module's symbols have to be a property of the module before any of
+  this is possible, which is why that was step 1 and why it was verifiable
+  entirely on its own.
+- **Cranelift has no weak or COMDAT linkage**, so duplicate specializations
+  across modules are not folded and each module emits its own private copy.
+  `FROST_MODULE_REPORT=1` measures how much that costs, and that measurement is
+  the only thing that would justify revisiting it.
 
-The build order, the full interface contents, and the open questions are all in
-that document. It is not started.
-
-**Why third rather than first.** It is the shape the speed goal requires *as
-programs grow*, which is a different claim from the constant factor item 1
-closed. Parallelism made today's builds fast; this is what stops the curve
-turning over.
+**What is still whole-program**, and it is the next lever on this axis: a
+skipped module still contributes its interface, and an interface carries the
+bodies of exported functions whether or not they are generic. So the front end
+walks bodies it will not emit. Removing that needs a declaration form carrying a
+full Frost signature and no body, which `extern` cannot be, and that is a change
+to every pass that matches on a function declaration.
 
 ## 2. Bounds on compile-time arguments (done)
 
