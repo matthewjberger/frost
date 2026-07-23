@@ -115,6 +115,19 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             advance(p)
             return new_type_node(p, NODE_SIZEOF, 0, ty)
         }
+        // The position it failed at is worth more than the fact that it did,
+        // and the node already carries where it was written.
+        if (str_range_eq(p.src, offset, length, "assert")) {
+            advance(p)
+            inner := parse_expr(p)
+            advance(p)
+            made := new_unary(p, NODE_ASSERT, inner)
+            // The word itself, rather than wherever the cursor ended up after
+            // reading the condition, which is the next line.
+            node : ^Node = arena_at(p.arena, made)
+            node^.pos = offset
+            return made
+        }
         // A slice carries its length, and a fixed array's is in its type, so
         // this reads one in constant time either way.
         if (str_range_eq(p.src, offset, length, "slice_len")) {
@@ -1379,12 +1392,46 @@ parse_const :: fn(mut p: Parser) {
     register_const(p, name_offset, name_length, value)
 }
 
+// `test "name" { ... }`. The body becomes an ordinary function under a name the
+// compiler makes up, so everything after the parser treats it as one, and the
+// name it was given is kept beside it for the runner to print.
+parse_test :: fn(mut p: Parser) -> i64 {
+    advance(p)
+    name_off := cur_off(p)
+    name_len := cur_len(p)
+    advance(p)
+    fn_name_off := synth_numbered(p, "__test", p.tests.count)
+    fn_name_len := 6 + digits_in(p.tests.count)
+    fn_index := intern_global(p, fn_name_off, fn_name_len)
+    mark_defined(p, fn_index)
+    set_ret_type(p, fn_index, TY_VOID)
+    set_params(p, fn_index, 0 - 1)
+    arena_push(p.tests, TestCase { name_off = name_off, name_len = name_len,
+        fn_index = fn_index })
+    body := parse_block(p)
+    made := new_func_node(p, body, 0 - 1, fn_index, 0)
+    node : ^Node = arena_at(p.arena, made)
+    // A test is marked here rather than looked up later, which is what lets a
+    // build that is not running tests leave them out entirely.
+    node^.c = 2
+    made
+}
+
 parse_program :: fn(mut p: Parser) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
-    while (cur(p) == TOK_IDENT) {
+    while (cur(p) == TOK_IDENT || cur(p) == TOK_KW_TEST) {
         third := peek_kind(p, 2)
-        if (third == TOK_KW_ENUM) {
+        if (cur(p) == TOK_KW_TEST) {
+            item := parse_test(p)
+            if (head == (0 - 1)) {
+                head = item
+                tail = item
+            } else {
+                set_next(p, tail, item)
+                tail = item
+            }
+        } else if (third == TOK_KW_ENUM) {
             parse_enum(p)
         } else if (third == TOK_KW_STRUCT || third == TOK_KW_LINEAR) {
             parse_struct(p)

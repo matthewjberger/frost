@@ -298,6 +298,14 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         frost_emit_str("]")
         return
     }
+    if (kind == NODE_ASSERT) {
+        frost_emit_str("frost_assert_at((signed char)(")
+        emit_expr(p, node^.a)
+        frost_emit_str("), \"")
+        emit_position(p.modules, p.src, node^.pos)
+        frost_emit_str("\")")
+        return
+    }
     if (kind == NODE_SLICE_LEN) {
         // An array's length is in its type, so this is a constant there and a
         // field read only for a slice, which carries its own.
@@ -716,7 +724,10 @@ emit_prototypes :: fn(mut p: Parser, head: i64) {
         params := node^.b
         is_main := node^.c
         next_id := node^.next
-        if (kind == NODE_FUNC && is_main == 0) {
+        // A test that is not being run is left out entirely, so a program that
+        // carries one links without needing the test runtime.
+        if (kind == NODE_FUNC && (is_main != 1 || p.testing == 1)
+            && (is_main != 2 || p.testing == 1)) {
             sym : ^Sym = arena_at(p.fns, fn_index)
             if (sym^.ret_type == TY_VOID) {
                 frost_emit_str("int64_t")
@@ -856,7 +867,9 @@ emit_function :: fn(mut p: Parser, id: i64) {
     p.moved.count = 0
     record_params(p, params)
     begin_provider(p, fn_index)
-    if (is_main == 1) {
+    // In a test build the runner is the entry point, so the program's own main
+    // is emitted as an ordinary function and simply never called.
+    if (is_main == 1 && p.testing == 0) {
         frost_emit_str("int main(void) {\n")
     } else {
         // The declared return type, so a function may return a pointer or a
@@ -936,6 +949,7 @@ emit_mono_prototype :: fn(mut p: Parser, id: i64, arg: i64, ret: i64) {
 // ---------------------------------------------------------------------------
 
 emit_program :: fn(mut p: Parser, head: i64) {
+    frost_emit_str("void frost_assert_at(signed char, const char*);\n")
     emit_struct_decls(p)
     // After the structs, since an array of a struct names it.
     emit_array_decls(p)
@@ -978,11 +992,38 @@ emit_program :: fn(mut p: Parser, head: i64) {
         node : ^Node = arena_at(p.arena, id)
         kind := node^.kind
         next_id := node^.next
-        if (kind == NODE_FUNC) {
+        if (kind == NODE_FUNC && (node^.c != 2 || p.testing == 1)) {
             emit_function(p, id)
         }
         id = next_id
     }
+
+    if (p.testing == 1) {
+        emit_test_main(p)
+    }
+}
+
+// The entry point a `--test` build gets instead of the program's own. Each body
+// is handed to the runner as a function pointer rather than called here,
+// because a failing assertion has to escape back into the runner without ending
+// the run, and the setjmp that allows that has to own the call.
+emit_test_main :: fn(mut p: Parser) {
+    frost_emit_str("void frost_test_run(const char*, void(*)(void));\n")
+    frost_emit_str("int64_t frost_test_summary(void);\n")
+    frost_emit_str("int main(void) {\n")
+    mut i : i64 = 0
+    while (i < p.tests.count) {
+        entry : ^TestCase = arena_at(p.tests, i)
+        frost_emit_str("frost_test_run(\"")
+        emit_string_content(p.src, entry^.name_off, entry^.name_len)
+        frost_emit_str("\", (void(*)(void))mf_")
+        frost_emit_int(entry^.fn_index)
+        frost_emit_str(");\n")
+        i = i + 1
+    }
+    // The summary answers with how many failed, which is what the process
+    // exits on.
+    frost_emit_str("return (int)frost_test_summary();\n}\n")
 }
 
 // ---------------------------------------------------------------------------

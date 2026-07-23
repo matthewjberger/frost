@@ -235,6 +235,9 @@ type_of :: fn(mut p: Parser, id: i64) -> i64 {
     if (kind == NODE_SLICE_LEN) {
         return TY_I64
     }
+    if (kind == NODE_ASSERT) {
+        return TY_VOID
+    }
     // A literal says both halves of its own type: the element from the first
     // thing in it, the length from how many there are.
     if (kind == NODE_ARRAY_LIT) {

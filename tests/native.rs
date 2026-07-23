@@ -844,6 +844,88 @@ fn self_hosted_boolean_operators_short_circuit() {
     assert_eq!(output, "1\n2\n");
 }
 
+// `test` blocks, through both backends. A failing assertion has to end its own
+// test and let the run carry on, and it has to say where it was written.
+#[test]
+fn self_hosted_runs_test_blocks() {
+    let Some(compiler) = build_self_hosted_compiler("tests") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_selftests_input.frost");
+    std::fs::write(
+        &input,
+        "double :: fn(n: i64) -> i64 { n * 2 }\n\
+         test \"doubling\" {\n\
+         \x20   assert(double(2) == 4)\n    assert(double(0) == 0)\n}\n\
+         test \"a failing one\" {\n    assert(double(2) == 5)\n}\n\
+         main :: fn() -> i64 { print double(21)  0 }\n",
+    )
+    .unwrap();
+    let runtime =
+        format!("{}/runtime/frost_runtime.c", env!("CARGO_MANIFEST_DIR"));
+
+    for (label, backend) in [("tc", "--emit-c"), ("tasm", "--emit-asm")] {
+        let exe = directory
+            .join(format!("frost_{label}{}", std::env::consts::EXE_SUFFIX));
+        let run = Command::new(&compiler)
+            .arg(backend)
+            .arg("--test")
+            .arg("-o")
+            .arg(&exe)
+            .arg(&input)
+            .env("FROST_RUNTIME", &runtime)
+            .output()
+            .unwrap();
+        let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+        let failure =
+            String::from_utf8_lossy(&run.stderr).replace("\r\n", "\n");
+        assert!(
+            output.contains("test doubling ... ok"),
+            "{label} did not run the passing test:\n{output}{failure}"
+        );
+        assert!(
+            output.contains("1 passed, 1 failed"),
+            "{label} did not summarize:\n{output}{failure}"
+        );
+        assert!(
+            failure.contains("frost_selftests_input.frost:7:5"),
+            "{label} did not say where the assertion was:\n{failure}"
+        );
+        assert!(
+            !run.status.success(),
+            "{label} exited zero with a failing test"
+        );
+        let _ = std::fs::remove_file(&exe);
+    }
+
+    // Without --test the blocks are left out entirely, so the program links
+    // with no test runtime at all.
+    let plain =
+        directory.join(format!("frost_tplain{}", std::env::consts::EXE_SUFFIX));
+    let build = Command::new(&compiler)
+        .arg("--link")
+        .arg("-o")
+        .arg(&plain)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "a file carrying tests did not build without --test:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let ran = Command::new(&plain).output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n"),
+        "42\n"
+    );
+
+    let _ = std::fs::remove_file(&plain);
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&compiler);
+}
+
 const CLI_PROGRAM: &str = "fib :: fn(n: i64) -> i64 {\n\
      \x20   if (n < 2) { return n }\n\
      \x20   return fib(n - 1) + fib(n - 2)\n}\n\

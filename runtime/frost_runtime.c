@@ -101,6 +101,17 @@ void frost_byte_set(char *buffer, int64_t index, int64_t value) {
    longjmp back into frost_test_run, which is why the runner takes the test body
    as a function pointer rather than being a sequence the compiler emits: the
    setjmp has to own the call. */
+/* On Win64 longjmp unwinds through SEH, which needs unwind information for
+   every frame it passes. The assembly backend emits none, so a test body that
+   fails an assertion would fault on the way out rather than escaping. Setting
+   the jump with no frame makes longjmp a plain register restore, which is all
+   that escaping a hand-written frame needs. */
+#if defined(_WIN32) && defined(__GNUC__)
+#define frost_setjmp(env) _setjmp((env), 0)
+#else
+#define frost_setjmp(env) setjmp(env)
+#endif
+
 static jmp_buf frost_test_escape;
 static int frost_inside_test = 0;
 static int64_t frost_tests_passed = 0;
@@ -110,7 +121,7 @@ void frost_test_run(const char *name, void (*body)(void)) {
     printf("test %s ... ", name);
     fflush(stdout);
     frost_inside_test = 1;
-    if (setjmp(frost_test_escape) == 0) {
+    if (frost_setjmp(frost_test_escape) == 0) {
         body();
         frost_tests_passed++;
         printf("ok\n");
