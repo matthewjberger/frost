@@ -1,16 +1,16 @@
+// A small game world: entities in one slab, behaviour as a free function over
+// an enum, and identity as a handle that can be stored in an array and stays
+// checkable after the slot it names is reused.
+//
+// The slab is Frost code (lib/slab.frost). Only `world[handle]` comes from the
+// compiler, and that is the one thing that has to.
+
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
-pool_new :: extern fn(capacity: i64, elem_size: i64) -> ^u8
-pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
-pool_get :: extern fn(pool: ^u8, handle: i64) -> ^u8
-pool_contains :: extern fn(pool: ^u8, handle: i64) -> i64
-pool_free :: extern fn(pool: ^u8, handle: i64) -> i64
+import "lib/slab.frost"
 
 Kind :: enum { Hero, Monster { threat: i64 } }
 Entity :: struct { hp: i64, kind: Kind }
-
-make_pool :: fn(capacity: i64, sample: $T) -> ^u8 { pool_new(capacity, sizeof(T)) }
-spawn :: fn(world: ^u8, move value: $T) -> Handle<T> { pool_alloc(world, ptr_to(value)) }
 
 threat_of :: fn(e: Entity) -> i64 {
     match e^.kind {
@@ -19,26 +19,37 @@ threat_of :: fn(e: Entity) -> i64 {
     }
 }
 
-main :: fn() -> i64 {
-    zero := Entity { hp = 0, kind = Kind::Hero }
-    world := make_pool(16, zero)
+show :: fn(flag: bool) { if (flag) { printf("%lld\n", 1) } else { printf("%lld\n", 0) } }
 
-    mut handles : [3]Handle<Entity> = [0, 0, 0]
-    handles[0] = spawn(world, Entity { hp = 100, kind = Kind::Hero })
-    handles[1] = spawn(world, Entity { hp = 40, kind = Kind::Monster { threat = 7 } })
-    handles[2] = spawn(world, Entity { hp = 60, kind = Kind::Monster { threat = 3 } })
+main :: fn() -> i64 {
+    mut world : Slab<Entity, 16> = Slab {
+        storage = [Entity { hp = 0, kind = Kind::Hero }; 16],
+        generations = [0; 16],
+        free_list = [0; 16],
+        free_count = 0,
+    }
+    slab_reset($Entity, $16, world)
+
+    // Handles are copy values, so they go in an array like any other scalar.
+    // A reference could not.
+    mut handles : [3]Handle<Entity> = [0; 3]
+    handles[0] = slab_insert($Entity, $16, world, Entity { hp = 100, kind = Kind::Hero })
+    handles[1] = slab_insert($Entity, $16, world,
+        Entity { hp = 40, kind = Kind::Monster { threat = 7 } })
+    handles[2] = slab_insert($Entity, $16, world,
+        Entity { hp = 60, kind = Kind::Monster { threat = 3 } })
 
     mut total_threat : i64 = 0
     for i in 0..3 {
         total_threat = total_threat + threat_of(world[handles[i]])
     }
-    printf("%lld\n", total_threat)
+    printf("%lld\n", total_threat)              // 10
 
     world[handles[1]].hp = world[handles[1]].hp - 15
-    printf("%lld\n", world[handles[1]].hp)
+    printf("%lld\n", world[handles[1]].hp)      // 25
 
-    pool_free(world, handles[1])
-    printf("%lld\n", pool_contains(world, handles[1]))
-    printf("%lld\n", pool_contains(world, handles[0]))
+    show(slab_release($Entity, $16, world, handles[1]))
+    show(slab_alive($Entity, $16, world, handles[1]))   // 0
+    show(slab_alive($Entity, $16, world, handles[0]))   // 1
     0
 }

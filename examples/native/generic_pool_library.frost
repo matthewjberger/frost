@@ -1,33 +1,48 @@
+// The slab as a library: one generic implementation, used at two element types
+// in the same program, each instantiation stamped out separately with no
+// runtime dispatch and no shared type-erased storage.
+//
+// This is the point of `$T` and `$N` together. `Slab<Entity, 8>` and
+// `Slab<Tile, 4>` are different types with different layouts, and the operations
+// over them are the same source.
+
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
-pool_new :: extern fn(capacity: i64, elem_size: i64) -> ^u8
-pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
-pool_get :: extern fn(pool: ^u8, handle: i64) -> ^u8
-pool_contains :: extern fn(pool: ^u8, handle: i64) -> i64
-pool_free :: extern fn(pool: ^u8, handle: i64) -> i64
+import "lib/slab.frost"
 
 Entity :: struct { hp: i64, mana: i64 }
+Tile :: struct { height: i64 }
 
-make_pool :: fn($T: Type, capacity: i64) -> ^u8 {
-    pool_new(capacity, sizeof(T))
-}
-
-insert :: fn(pool: ^u8, move value: $T) -> Handle<T> {
-    pool_alloc(pool, ptr_to(value))
-}
+show :: fn(flag: bool) { if (flag) { printf("%lld\n", 1) } else { printf("%lld\n", 0) } }
 
 main :: fn() -> i64 {
-    world := make_pool($Entity, 8)
+    mut world : Slab<Entity, 8> = Slab {
+        storage = [Entity { hp = 0, mana = 0 }; 8],
+        generations = [0; 8],
+        free_list = [0; 8],
+        free_count = 0,
+    }
+    slab_reset($Entity, $8, world)
 
-    h : Handle<Entity> = insert(world, Entity { hp = 100, mana = 30 })
-    printf("%lld\n", world[h].hp)
-    printf("%lld\n", world[h].mana)
-
+    h := slab_insert($Entity, $8, world, Entity { hp = 100, mana = 30 })
+    printf("%lld\n", world[h].hp)               // 100
+    printf("%lld\n", world[h].mana)             // 30
     world[h].hp = 75
-    printf("%lld\n", world[h].hp)
+    printf("%lld\n", world[h].hp)               // 75
 
-    printf("%lld\n", pool_contains(world, h))
-    pool_free(world, h)
-    printf("%lld\n", pool_contains(world, h))
+    // The same code at a different element type and a different capacity.
+    mut ground : Slab<Tile, 4> = Slab {
+        storage = [Tile { height = 0 }; 4],
+        generations = [0; 4],
+        free_list = [0; 4],
+        free_count = 0,
+    }
+    slab_reset($Tile, $4, ground)
+    t := slab_insert($Tile, $4, ground, Tile { height = 12 })
+    printf("%lld\n", ground[t].height)          // 12
+
+    show(slab_alive($Entity, $8, world, h))     // 1
+    show(slab_release($Entity, $8, world, h))   // 1
+    show(slab_alive($Entity, $8, world, h))     // 0
     0
 }
