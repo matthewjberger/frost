@@ -1,0 +1,79 @@
+// Sizes, alignments and field offsets. C works these out for itself, so this
+// is what the assembly backend needs and the C backend does not.
+
+import "core.frost"
+import "names.frost"
+
+export align_up, alloc_temp, field_offset, is_byte_ty, type_size
+
+// A struct is as wide as its fields laid end to end. A field may itself be a
+// struct, so this cannot just count them: Parser carries eleven arenas, and an
+// arena is three words, not one.
+// A byte-wide type is one byte. Everything else this compiler has is a word,
+// and a struct is its fields laid end to end, each on its own alignment.
+is_byte_ty :: fn(ty: i64) -> bool {
+    (ty == TY_I8 || ty == TY_U8) && is_pointer(ty) == false
+}
+
+align_up :: fn(offset: i64, alignment: i64) -> i64 {
+    (offset + alignment - 1) / alignment * alignment
+}
+
+align_of :: fn(mut p: Parser, ty: i64) -> i64 {
+    if (is_byte_ty(ty)) {
+        return 1
+    }
+    8
+}
+
+type_size :: fn(mut p: Parser, ty: i64) -> i64 {
+    if (is_byte_ty(ty)) {
+        return 1
+    }
+    if (is_struct_ty(ty) == false) {
+        return 8
+    }
+    def : ^StructDef = arena_at(p.structs, struct_index_of(ty))
+    mut fid := def^.field_head
+    mut total : i64 = 0
+    while (fid != (0 - 1)) {
+        field : ^StructField = arena_at(p.fields, fid)
+        total = align_up(total, align_of(p, field^.ty))
+            + type_size(p, field^.ty)
+        fid = field^.next
+    }
+    align_up(total, 8)
+}
+
+field_offset :: fn(mut p: Parser, struct_ty: i64, off: i64, len: i64) -> i64 {
+    mut base := struct_ty
+    if (is_pointer(base)) {
+        base = pointee(base)
+    }
+    if (is_struct_ty(base) == false) {
+        return 0
+    }
+    def : ^StructDef = arena_at(p.structs, struct_index_of(base))
+    mut fid := def^.field_head
+    mut running : i64 = 0
+    while (fid != (0 - 1)) {
+        field : ^StructField = arena_at(p.fields, fid)
+        running = align_up(running, align_of(p, field^.ty))
+        if (field^.name_len == len
+            && bytes_equal(p.src, field^.name_off, off, len)) {
+            return running
+        }
+        running = running + type_size(p, field^.ty)
+        fid = field^.next
+    }
+    0
+}
+
+// Carve a temporary out of the bottom of the frame, for a struct literal that
+// is used as a value rather than stored straight into a local.
+alloc_temp :: fn(mut p: Parser, size: i64) -> i64 {
+    slot := p.asm_temp
+    p.asm_temp = slot + size
+    slot
+}
+

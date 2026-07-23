@@ -1,0 +1,57 @@
+// The token cursor. Everything that reads the token stream goes through here.
+
+import "core.frost"
+
+export advance, cur, cur_len, cur_off, cur_val, peek_kind
+
+peek_kind :: fn(mut p: Parser, offset: i64) -> i64 {
+    index := p.ti + offset
+    if (index >= p.tokens.count) {
+        return TOK_EOF
+    }
+    entry : ^Token = arena_at(p.tokens, index)
+    entry^.kind
+}
+
+cur :: fn(mut p: Parser) -> i64 {
+    peek_kind(p, 0)
+}
+
+cur_off :: fn(mut p: Parser) -> i64 {
+    entry : ^Token = arena_at(p.tokens, p.ti)
+    entry^.off
+}
+
+cur_len :: fn(mut p: Parser) -> i64 {
+    entry : ^Token = arena_at(p.tokens, p.ti)
+    entry^.len
+}
+
+cur_val :: fn(mut p: Parser) -> i64 {
+    entry : ^Token = arena_at(p.tokens, p.ti)
+    entry^.value
+}
+
+advance :: fn(mut p: Parser) {
+    p.ti = p.ti + 1
+}
+
+// ---------------------------------------------------------------------------
+// Symbol tables. Identifiers are byte ranges into the source, interned to small
+// integer indices by comparing bytes. Locals reset per function; functions are
+// global.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Imports. `import "path"` names a file whose declarations join this one's.
+// Every file's text reaches one buffer, so a name stays what it is everywhere
+// else in this compiler, an offset and a length into a single source, and the
+// rest of the compiler never learns that more than one file was involved.
+//
+// A file lands in the buffer once however many times it is named, which is what
+// separates this from a textual include: the second `import` of a file is a
+// reference to what is already there, not a second copy. Imports are found by
+// token rather than by scanning the text, so the word `import` inside a string
+// or a comment is not one.
+// ---------------------------------------------------------------------------
+

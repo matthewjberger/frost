@@ -1,0 +1,381 @@
+// Typing and the checks that ride on it: locals, moves, linearity, field and
+// expression types, and the concrete return type of a generic call.
+
+import "core.frost"
+import "names.frost"
+
+export call_ret_type, call_type_arg, check_linear_consumed, collect_type_args,
+    count_value_args, field_type, generic_fn_of, is_linear_type, is_moved,
+    local_exists, lookup_local, mark_moved, nth_value_arg, record_local,
+    record_mono_ret, type_of, types_compatible
+
+// A name may be bound more than once in one body, once per sibling scope, and
+// the binding in scope is the one bound most recently. Locals are recorded in
+// declaration order and never popped, so that is the last matching entry, not
+// the first: `emit_program` binds `node` to an i64 and later to a `^Node`, and
+// answering with the i64 types `node^.next` as a scalar and reads offset zero.
+lookup_local :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    mut i : i64 = 0
+    mut found : i64 = TY_I64
+    while (i < p.locals.count) {
+        entry : ^LocalVar = arena_at(p.locals, i)
+        if (entry^.name_len == len
+            && bytes_equal(p.src, entry^.name_off, off, len)) {
+            found = entry^.ty
+        }
+        i = i + 1
+    }
+    found
+}
+
+// Whether a name is in scope as a parameter or local. lookup_local answers with
+// a type and defaults an unknown name to i64, which cannot distinguish "an i64"
+// from "not declared", so a check needs this instead.
+// Whether a value of type `from` may stand in for `to`. Scalars and pointers
+// convert freely, the way the emitted C does, and a type parameter matches
+// anything because it is a placeholder. A struct only matches the same struct,
+// which is where real mistakes show up.
+types_compatible :: fn(from: i64, to: i64) -> bool {
+    if (from == to) {
+        return true
+    }
+    if (from == TY_PARAM || to == TY_PARAM) {
+        return true
+    }
+    if (is_pointer(from) && is_pointer(to)) {
+        return true
+    }
+    if (is_struct_ty(from) || is_struct_ty(to)) {
+        return false
+    }
+    true
+}
+
+local_exists :: fn(mut p: Parser, off: i64, len: i64) -> bool {
+    mut i : i64 = 0
+    while (i < p.locals.count) {
+        entry : ^LocalVar = arena_at(p.locals, i)
+        if (entry^.name_len == len
+            && bytes_equal(p.src, entry^.name_off, off, len)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+// A value handed to a `move` parameter is gone from the caller. Record it so a
+// later use is caught rather than silently reading a value that was given away.
+mark_moved :: fn(mut p: Parser, value: i64) {
+    node : ^Node = arena_at(p.arena, value)
+    if (node^.kind == NODE_VAR) {
+        off := node^.val
+        len := node^.c
+        arena_push(p.moved, LocalVar { name_off = off, name_len = len, ty = 0 })
+    }
+}
+
+is_moved :: fn(mut p: Parser, off: i64, len: i64) -> bool {
+    mut i : i64 = 0
+    while (i < p.moved.count) {
+        entry : ^LocalVar = arena_at(p.moved, i)
+        if (entry^.name_len == len
+            && bytes_equal(p.src, entry^.name_off, off, len)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+is_linear_type :: fn(mut p: Parser, ty: i64) -> bool {
+    if (is_struct_ty(ty) == false) {
+        return false
+    }
+    def : ^StructDef = arena_at(p.structs, struct_index_of(ty))
+    if (def^.is_linear == 1) {
+        return true
+    }
+    false
+}
+
+// At the end of a body every linear value must have been handed on. One that
+// was not is a resource silently dropped.
+check_linear_consumed :: fn(mut p: Parser) {
+    mut i : i64 = 0
+    while (i < p.locals.count) {
+        entry : ^LocalVar = arena_at(p.locals, i)
+        ty := entry^.ty
+        off := entry^.name_off
+        len := entry^.name_len
+        if (is_linear_type(p, ty)) {
+            if (is_moved(p, off, len) == false) {
+                frost_error("frost: linear value '")
+                frost_error_src(p.src, off, len)
+                frost_error("' is never consumed")
+                frost_die()
+            }
+        }
+        i = i + 1
+    }
+}
+
+record_local :: fn(mut p: Parser, off: i64, len: i64, ty: i64) {
+    arena_push(p.locals, LocalVar { name_off = off, name_len = len, ty = ty })
+}
+
+// The type of a struct field. The base type may be a pointer (a borrow of a
+// struct or a `^T`), which is dereferenced one level first, so `a.count` and
+// `node^.next` both resolve.
+field_type :: fn(mut p: Parser, base_ty: i64, off: i64, len: i64) -> i64 {
+    mut struct_ty := base_ty
+    if (is_pointer(struct_ty)) {
+        struct_ty = pointee(struct_ty)
+    }
+    if (is_struct_ty(struct_ty) == false) {
+        return TY_I64
+    }
+    def : ^StructDef = arena_at(p.structs, struct_index_of(struct_ty))
+    struct_off := def^.name_off
+    struct_len := def^.name_len
+    mut fid := def^.field_head
+    while (fid != (0 - 1)) {
+        field : ^StructField = arena_at(p.fields, fid)
+        if (field^.name_len == len
+            && bytes_equal(p.src, field^.name_off, off, len)) {
+            return field^.ty
+        }
+        fid = field^.next
+    }
+    // The base is a struct but carries no such field. Emitting the access
+    // verbatim would leave it for whatever compiles the output to notice.
+    frost_error("frost: struct '")
+    frost_error_src(p.src, struct_off, struct_len)
+    frost_error("' has no field '")
+    frost_error_src(p.src, off, len)
+    frost_error("'")
+    frost_die()
+    TY_I64
+}
+
+type_of :: fn(mut p: Parser, id: i64) -> i64 {
+    node : ^Node = arena_at(p.arena, id)
+    kind := node^.kind
+    if (kind == NODE_STRLIT) {
+        return POINTER_BASE + TY_I8
+    }
+    if (kind == NODE_STRUCT_LIT) {
+        return node^.val
+    }
+    if (kind == NODE_VAR) {
+        return lookup_local(p, node^.val, node^.c)
+    }
+    if (kind == NODE_CALL) {
+        // A generic function's declared return type still mentions its type
+        // parameter, so a call answers with the concrete type recorded for the
+        // instantiation it names.
+        return call_ret_type(p, node^.a, node^.val)
+    }
+    if (kind == NODE_FIELD) {
+        base := node^.a
+        off := node^.val
+        len := node^.c
+        base_ty := type_of(p, base)
+        return field_type(p, base_ty, off, len)
+    }
+    if (kind == NODE_DEREF) {
+        inner := node^.a
+        t := type_of(p, inner)
+        if (is_pointer(t)) {
+            return pointee(t)
+        }
+        return TY_I64
+    }
+    if (kind == NODE_INDEX) {
+        base := node^.a
+        t := type_of(p, base)
+        if (is_pointer(t)) {
+            return pointee(t)
+        }
+        return t
+    }
+    if (kind == NODE_ADDROF) {
+        inner := node^.a
+        return POINTER_BASE + type_of(p, inner)
+    }
+    if (kind == NODE_PTR_CAST) {
+        return POINTER_BASE + node^.val
+    }
+    TY_I64
+}
+
+// The generic-fns index of a function, or -1 if it is not generic.
+generic_fn_of :: fn(mut p: Parser, fn_index: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < p.generic_fns.count) {
+        entry : ^GenericFn = arena_at(p.generic_fns, i)
+        if (entry^.fn_index == fn_index) {
+            return i
+        }
+        i = i + 1
+    }
+    0 - 1
+}
+
+// The type argument of a concrete generic-struct instance, or -1 if the type is
+// not an instance.
+instance_arg_of :: fn(mut p: Parser, ty: i64) -> i64 {
+    if (is_struct_ty(ty) == false) {
+        return 0 - 1
+    }
+    si := struct_index_of(ty)
+    mut i : i64 = 0
+    while (i < p.instances.count) {
+        entry : ^Instance = arena_at(p.instances, i)
+        if (entry^.struct_index == si) {
+            return entry^.arg
+        }
+        i = i + 1
+    }
+    0 - 1
+}
+
+// Determine the concrete type argument of a generic call: an explicit `$Type`
+// argument if present, otherwise inferred from the first argument whose type is
+// a generic-struct instance (or a pointer to one).
+call_type_arg :: fn(mut p: Parser, head: i64) -> i64 {
+    mut id := head
+    while (id != (0 - 1)) {
+        node : ^Node = arena_at(p.arena, id)
+        value := node^.a
+        next_id := node^.next
+        vnode : ^Node = arena_at(p.arena, value)
+        if (vnode^.kind == NODE_TYPEVAL) {
+            return vnode^.val
+        }
+        id = next_id
+    }
+    id = head
+    while (id != (0 - 1)) {
+        node : ^Node = arena_at(p.arena, id)
+        value := node^.a
+        next_id := node^.next
+        mut t := type_of(p, value)
+        if (is_pointer(t)) {
+            t = pointee(t)
+        }
+        arg := instance_arg_of(p, t)
+        if (arg >= 0) {
+            return arg
+        }
+        id = next_id
+    }
+    TY_I64
+}
+
+// Arguments evaluate right to left onto the stack and only then land in the
+// registers the ABI names, so an argument that is itself a call cannot clobber
+// one already computed.
+// The value of the nth argument that survives to runtime, skipping the type
+// arguments, which are erased.
+record_mono_ret :: fn(mut p: Parser, fn_index: i64, arg: i64, ret: i64) {
+    arena_push(p.mono_rets,
+        MonoRet { fn_index = fn_index, arg = arg, ret = ret })
+}
+
+// The concrete types the generics in this program are used with. A generic
+// struct written as `Box<i64>` is one, and so is a call to a generic function,
+// which used to be missed: instantiation was driven by the struct instances
+// alone, so a generic function called with a type that no generic struct had
+// been written with was called and never emitted.
+//
+// Distinct types rather than instances, since two generic structs written with
+// the same type would otherwise have every generic function emitted twice.
+note_type_arg :: fn(mut p: Parser, arg: i64) {
+    if (arg < 0) {
+        return
+    }
+    mut i : i64 = 0
+    while (i < p.type_args.count) {
+        entry : ^TypeArg = arena_at(p.type_args, i)
+        if (entry^.arg == arg) {
+            return
+        }
+        i = i + 1
+    }
+    arena_push(p.type_args, TypeArg { arg = arg })
+}
+
+collect_type_args :: fn(mut p: Parser) {
+    mut i : i64 = 0
+    while (i < p.instances.count) {
+        entry : ^Instance = arena_at(p.instances, i)
+        note_type_arg(p, entry^.arg)
+        i = i + 1
+    }
+    i = 0
+    while (i < p.arena.count) {
+        node : ^Node = arena_at(p.arena, i)
+        if (node^.kind == NODE_CALL && generic_fn_of(p, node^.val) >= 0) {
+            note_type_arg(p, call_type_arg(p, node^.a))
+        }
+        i = i + 1
+    }
+}
+
+mono_ret_type :: fn(mut p: Parser, fn_index: i64, arg: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < p.mono_rets.count) {
+        entry : ^MonoRet = arena_at(p.mono_rets, i)
+        if (entry^.fn_index == fn_index && entry^.arg == arg) {
+            return entry^.ret
+        }
+        i = i + 1
+    }
+    TY_I64
+}
+
+// What a call answers with, which decides whether it needs a result buffer.
+call_ret_type :: fn(mut p: Parser, args: i64, fn_index: i64) -> i64 {
+    if (generic_fn_of(p, fn_index) >= 0) {
+        return mono_ret_type(p, fn_index, call_type_arg(p, args))
+    }
+    sym : ^Sym = arena_at(p.fns, fn_index)
+    sym^.ret_type
+}
+
+nth_value_arg :: fn(mut p: Parser, args: i64, n: i64) -> i64 {
+    mut id := args
+    mut seen : i64 = 0
+    while (id != (0 - 1)) {
+        node : ^Node = arena_at(p.arena, id)
+        value := node^.a
+        next_id := node^.next
+        vnode : ^Node = arena_at(p.arena, value)
+        if (vnode^.kind != NODE_TYPEVAL) {
+            if (seen == n) {
+                return value
+            }
+            seen = seen + 1
+        }
+        id = next_id
+    }
+    0 - 1
+}
+
+count_value_args :: fn(mut p: Parser, args: i64) -> i64 {
+    mut id := args
+    mut count : i64 = 0
+    while (id != (0 - 1)) {
+        node : ^Node = arena_at(p.arena, id)
+        value := node^.a
+        next_id := node^.next
+        vnode : ^Node = arena_at(p.arena, value)
+        if (vnode^.kind != NODE_TYPEVAL) {
+            count = count + 1
+        }
+        id = next_id
+    }
+    count
+}
+

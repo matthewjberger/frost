@@ -1,0 +1,195 @@
+// The lexer: source bytes to a flat arena of tokens, in one pass.
+
+import "core.frost"
+
+export str_range_eq, tokenize
+
+is_digit :: fn(c: i64) -> bool {
+    c >= CH_0 && c <= CH_9
+}
+
+is_ident_start :: fn(c: i64) -> bool {
+    (c >= CH_LOWER_A && c <= CH_LOWER_Z)
+        || (c >= CH_UPPER_A && c <= CH_UPPER_Z)
+        || c == CH_UNDERSCORE
+}
+
+is_ident_cont :: fn(c: i64) -> bool {
+    is_ident_start(c) || (c >= CH_0 && c <= CH_9)
+}
+
+// ---------------------------------------------------------------------------
+// Lexer. One pass over the source builds a flat arena of tokens: identifiers
+// (keywords classified to their own kind), integer and string literals, and
+// every operator and punctuation mark. Whitespace and `//` comments are dropped
+// here so the parser never sees them.
+// ---------------------------------------------------------------------------
+
+byte_of :: fn(src: ^i8, index: i64, len: i64) -> i64 {
+    if (index >= len) {
+        return 0 - 1
+    }
+    frost_byte_at(src, index)
+}
+
+str_range_eq :: fn(src: ^i8, off: i64, len: i64, word: ^i8) -> bool {
+    if (frost_str_len(word) != len) {
+        return false
+    }
+    mut k : i64 = 0
+    while (k < len) {
+        if (frost_byte_at(src, off + k) != frost_byte_at(word, k)) {
+            return false
+        }
+        k = k + 1
+    }
+    true
+}
+
+classify_ident :: fn(src: ^i8, off: i64, len: i64) -> i64 {
+    if (str_range_eq(src, off, len, "fn")) { return TOK_KW_FN }
+    if (str_range_eq(src, off, len, "if")) { return TOK_KW_IF }
+    if (str_range_eq(src, off, len, "let")) { return TOK_KW_LET }
+    if (str_range_eq(src, off, len, "mut")) { return TOK_KW_MUT }
+    if (str_range_eq(src, off, len, "linear")) { return TOK_KW_LINEAR }
+    if (str_range_eq(src, off, len, "move")) { return TOK_KW_MOVE }
+    if (str_range_eq(src, off, len, "else")) { return TOK_KW_ELSE }
+    if (str_range_eq(src, off, len, "case")) { return TOK_KW_CASE }
+    if (str_range_eq(src, off, len, "true")) { return TOK_KW_TRUE }
+    if (str_range_eq(src, off, len, "print")) { return TOK_KW_PRINT }
+    if (str_range_eq(src, off, len, "while")) { return TOK_KW_WHILE }
+    if (str_range_eq(src, off, len, "match")) { return TOK_KW_MATCH }
+    if (str_range_eq(src, off, len, "false")) { return TOK_KW_FALSE }
+    if (str_range_eq(src, off, len, "return")) { return TOK_KW_RETURN }
+    if (str_range_eq(src, off, len, "struct")) { return TOK_KW_STRUCT }
+    if (str_range_eq(src, off, len, "extern")) { return TOK_KW_EXTERN }
+    if (str_range_eq(src, off, len, "uses")) { return TOK_KW_USES }
+    if (str_range_eq(src, off, len, "with")) { return TOK_KW_WITH }
+    if (str_range_eq(src, off, len, "import")) { return TOK_KW_IMPORT }
+    if (str_range_eq(src, off, len, "export")) { return TOK_KW_EXPORT }
+    if (str_range_eq(src, off, len, "enum")) { return TOK_KW_ENUM }
+    TOK_IDENT
+}
+
+push_token :: fn(mut tokens: Arena<Token>, kind: i64, off: i64, len: i64,
+    value: i64) {
+    id := arena_push(tokens, Token { kind = kind, off = off, len = len,
+        value = value })
+    id
+}
+
+lex_operator :: fn(src: ^i8, i: i64, len: i64, mut tokens: Arena<Token>) -> i64 {
+    c := byte_of(src, i, len)
+    d := byte_of(src, i + 1, len)
+    if (c == CH_COLON && d == CH_COLON) {
+        push_token(tokens, TOK_COLONCOLON, i, 2, 0)
+        return i + 2
+    }
+    if (c == CH_COLON && d == CH_EQ) {
+        push_token(tokens, TOK_COLONEQ, i, 2, 0)
+        return i + 2
+    }
+    if (c == CH_MINUS && d == CH_GT) {
+        push_token(tokens, TOK_ARROW, i, 2, 0)
+        return i + 2
+    }
+    if (c == CH_LT && d == CH_EQ) {
+        push_token(tokens, TOK_LE, i, 2, 0)
+        return i + 2
+    }
+    if (c == CH_GT && d == CH_EQ) {
+        push_token(tokens, TOK_GE, i, 2, 0)
+        return i + 2
+    }
+    if (c == CH_EQ && d == CH_EQ) {
+        push_token(tokens, TOK_EQEQ, i, 2, 0)
+        return i + 2
+    }
+    if (c == CH_BANG && d == CH_EQ) {
+        push_token(tokens, TOK_NE, i, 2, 0)
+        return i + 2
+    }
+    if (c == CH_AMP && d == CH_AMP) {
+        push_token(tokens, TOK_ANDAND, i, 2, 0)
+        return i + 2
+    }
+    if (c == CH_PIPE && d == CH_PIPE) {
+        push_token(tokens, TOK_OROR, i, 2, 0)
+        return i + 2
+    }
+    mut kind : i64 = TOK_EOF
+    if (c == CH_LPAREN) { kind = TOK_LPAREN }
+    if (c == CH_RPAREN) { kind = TOK_RPAREN }
+    if (c == CH_LBRACE) { kind = TOK_LBRACE }
+    if (c == CH_RBRACE) { kind = TOK_RBRACE }
+    if (c == CH_LBRACKET) { kind = TOK_LBRACKET }
+    if (c == CH_RBRACKET) { kind = TOK_RBRACKET }
+    if (c == CH_COMMA) { kind = TOK_COMMA }
+    if (c == CH_DOT) { kind = TOK_DOT }
+    if (c == CH_COLON) { kind = TOK_COLON }
+    if (c == CH_CARET) { kind = TOK_CARET }
+    if (c == CH_AMP) { kind = TOK_AMP }
+    if (c == CH_EQ) { kind = TOK_ASSIGN }
+    if (c == CH_PLUS) { kind = TOK_PLUS }
+    if (c == CH_MINUS) { kind = TOK_MINUS }
+    if (c == CH_STAR) { kind = TOK_STAR }
+    if (c == CH_BANG) { kind = TOK_BANG }
+    if (c == CH_QUESTION) { kind = TOK_QUESTION }
+    if (c == CH_SLASH) { kind = TOK_SLASH }
+    if (c == CH_PERCENT) { kind = TOK_PERCENT }
+    if (c == CH_LT) { kind = TOK_LT }
+    if (c == CH_GT) { kind = TOK_GT }
+    if (c == CH_DOLLAR) { kind = TOK_DOLLAR }
+    push_token(tokens, kind, i, 1, 0)
+    i + 1
+}
+
+tokenize :: fn(src: ^i8, len: i64, mut tokens: Arena<Token>) {
+    mut i : i64 = 0
+    while (i < len) {
+        c := byte_of(src, i, len)
+        if (c == CH_SPACE || c == CH_TAB || c == CH_LF || c == CH_CR
+            || c == CH_SEMI) {
+            i = i + 1
+        } else if (c == CH_SLASH && byte_of(src, i + 1, len) == CH_SLASH) {
+            while (i < len && byte_of(src, i, len) != CH_LF) {
+                i = i + 1
+            }
+        } else if (is_digit(c)) {
+            start := i
+            mut value : i64 = 0
+            while (is_digit(byte_of(src, i, len))) {
+                value = value * 10 + (byte_of(src, i, len) - CH_0)
+                i = i + 1
+            }
+            push_token(tokens, TOK_INT, start, i - start, value)
+        } else if (is_ident_start(c)) {
+            start := i
+            while (is_ident_cont(byte_of(src, i, len))) {
+                i = i + 1
+            }
+            length := i - start
+            push_token(tokens, classify_ident(src, start, length), start,
+                length, 0)
+        } else if (c == CH_DQUOTE) {
+            start := i
+            i = i + 1
+            while (i < len && byte_of(src, i, len) != CH_DQUOTE) {
+                if (byte_of(src, i, len) == CH_BACKSLASH) {
+                    i = i + 1
+                }
+                i = i + 1
+            }
+            i = i + 1
+            push_token(tokens, TOK_STR, start + 1, i - start - 2, 0)
+        } else {
+            i = lex_operator(src, i, len, tokens)
+        }
+    }
+    push_token(tokens, TOK_EOF, len, 0, 0)
+}
+
+// ---------------------------------------------------------------------------
+// Token cursor. The parser reads token kinds through these rather than bytes.
+// ---------------------------------------------------------------------------
+

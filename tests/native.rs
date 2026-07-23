@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn linker_available() -> bool {
@@ -603,7 +603,37 @@ fn native_anonymous_functions() {
     assert_eq!(output, "42\n81\n47\n20\n");
 }
 
-const SELF_HOSTED: &str = include_str!("../selfhosted/frost.frost");
+// The self-hosted compiler is a set of modules that import each other, so it is
+// compiled where it sits rather than copied into a temporary directory, the way
+// the examples are.
+fn self_hosted_source() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("selfhosted")
+        .join("frost.frost")
+}
+
+// Build the self-hosted compiler, run it over `input`, and return what it wrote
+// to standard output.
+fn self_hosted_emits(
+    name: &str,
+    input: &Path,
+    backend: Option<&str>,
+) -> Option<String> {
+    let compiler = build_self_hosted_compiler(name)?;
+    let mut command = Command::new(&compiler);
+    command.env("FROST_INPUT", input);
+    if let Some(backend) = backend {
+        command.env("FROST_BACKEND", backend);
+    }
+    let run = command.output().unwrap();
+    let _ = std::fs::remove_file(&compiler);
+    assert!(
+        run.status.success(),
+        "the self-hosted compiler failed on {name}:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    Some(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"))
+}
 
 fn c_compiler() -> Option<&'static str> {
     for compiler in ["gcc", "clang", "cc"] {
@@ -648,9 +678,14 @@ fn compile_c_and_run(name: &str, c_source: &str) -> Option<String> {
 
 #[test]
 fn self_hosted_compiler_emits_working_c() {
-    let Some(c_source) = compile_and_run("selfhosted", SELF_HOSTED) else {
+    let Some(compiler) = build_self_hosted_compiler("emitsc") else {
         return;
     };
+    // With no FROST_INPUT it compiles the demonstration program it carries.
+    let run = Command::new(&compiler).output().unwrap();
+    let _ = std::fs::remove_file(&compiler);
+    assert!(run.status.success(), "the self-hosted compiler failed");
+    let c_source = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
     let Some(output) = compile_c_and_run("selfhosted", &c_source) else {
         return;
     };
@@ -698,12 +733,10 @@ fn self_hosting_is_a_fixpoint() {
     if c_compiler().is_none() {
         return;
     }
-    let source_file =
-        format!("{}/selfhosted/frost.frost", env!("CARGO_MANIFEST_DIR"));
+    let source_file = self_hosted_source();
 
-    // Stage 1: the frost-hosted the self-hosted compiler compiles frost.frost.
-    let Some(gen1_c) =
-        compile_and_run_with_input("selfhost1", SELF_HOSTED, &source_file)
+    // Stage 1: the compiler the bootstrap built compiles its own source.
+    let Some(gen1_c) = self_hosted_emits("selfhost1", &source_file, None)
     else {
         return;
     };
@@ -742,8 +775,7 @@ fn native_self_hosting_is_a_fixpoint() {
         return;
     };
     let directory = std::env::temp_dir();
-    let source = directory.join("frost_nativefix.frost");
-    std::fs::write(&source, SELF_HOSTED).unwrap();
+    let source = self_hosted_source();
 
     let emit_self = |exe: &PathBuf, stage: &str| -> String {
         let emit = Command::new(exe)
@@ -789,7 +821,6 @@ fn native_self_hosting_is_a_fixpoint() {
 
     let stage2 = emit_self(&stage1_exe, "assembly-built");
 
-    let _ = std::fs::remove_file(&source);
     let _ = std::fs::remove_file(&asm_path);
     let _ = std::fs::remove_file(&stage1_exe);
     let _ = std::fs::remove_file(&compiler);
@@ -805,22 +836,9 @@ fn self_hosted_native_backend_emits_working_assembly() {
         return;
     }
     let directory = std::env::temp_dir();
-    let compiler =
-        directory.join(format!("frost_mfasm{}", std::env::consts::EXE_SUFFIX));
-    let compiler_source = directory.join("frost_mfasm.frost");
-    std::fs::write(&compiler_source, SELF_HOSTED).unwrap();
-    let frost = env!("CARGO_BIN_EXE_frost");
-    let build = Command::new(frost)
-        .arg("--link")
-        .arg("-o")
-        .arg(&compiler)
-        .arg(&compiler_source)
-        .output()
-        .unwrap();
-    assert!(
-        build.status.success(),
-        "the self-hosted compiler failed to build"
-    );
+    let Some(compiler) = build_self_hosted_compiler("mfasm") else {
+        return;
+    };
 
     let program = "fib :: fn(n: i64) -> i64 {\n\
                    \x20   if (n < 2) { return n }\n\
@@ -864,7 +882,6 @@ fn self_hosted_native_backend_emits_working_assembly() {
     let run = Command::new(&exe_path).output().unwrap();
     let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
 
-    let _ = std::fs::remove_file(&compiler_source);
     let _ = std::fs::remove_file(&compiler);
     let _ = std::fs::remove_file(&input);
     let _ = std::fs::remove_file(&asm_path);
@@ -931,14 +948,12 @@ fn build_self_hosted_compiler(name: &str) -> Option<PathBuf> {
         "frost_selfhosted_{name}{}",
         std::env::consts::EXE_SUFFIX
     ));
-    let source = directory.join(format!("frost_selfhosted_{name}.frost"));
-    std::fs::write(&source, SELF_HOSTED).unwrap();
     let frost = env!("CARGO_BIN_EXE_frost");
     let build = Command::new(frost)
         .arg("--link")
         .arg("-o")
         .arg(&compiler)
-        .arg(&source)
+        .arg(self_hosted_source())
         .output()
         .unwrap();
     assert!(
@@ -946,7 +961,6 @@ fn build_self_hosted_compiler(name: &str) -> Option<PathBuf> {
         "the self-hosted compiler failed to build:\n{}",
         String::from_utf8_lossy(&build.stderr)
     );
-    let _ = std::fs::remove_file(&source);
     Some(compiler)
 }
 
@@ -1028,24 +1042,7 @@ fn self_hosted_rejects(name: &str, source: &str) -> Option<String> {
         return None;
     }
     let directory = std::env::temp_dir();
-    let compiler = directory
-        .join(format!("frost_mfck_{name}{}", std::env::consts::EXE_SUFFIX));
-    let compiler_source = directory.join(format!("frost_mfck_{name}.frost"));
-    std::fs::write(&compiler_source, SELF_HOSTED).unwrap();
-
-    let frost = env!("CARGO_BIN_EXE_frost");
-    let build = Command::new(frost)
-        .arg("--link")
-        .arg("-o")
-        .arg(&compiler)
-        .arg(&compiler_source)
-        .output()
-        .unwrap();
-    assert!(
-        build.status.success(),
-        "the self-hosted compiler failed to build:\n{}",
-        String::from_utf8_lossy(&build.stderr)
-    );
+    let compiler = build_self_hosted_compiler(&format!("ck_{name}"))?;
 
     let input = directory.join(format!("frost_mfck_input_{name}.frost"));
     std::fs::write(&input, source).unwrap();
@@ -1054,7 +1051,6 @@ fn self_hosted_rejects(name: &str, source: &str) -> Option<String> {
         .output()
         .unwrap();
 
-    let _ = std::fs::remove_file(&compiler_source);
     let _ = std::fs::remove_file(&input);
     let _ = std::fs::remove_file(&compiler);
 
@@ -1183,11 +1179,7 @@ fn self_hosted_allocation_sources_through_c() {
     let directory = std::env::temp_dir();
     let input = directory.join("frost_selfalloc_input.frost");
     std::fs::write(&input, SELF_HOSTED_ALLOCATION_SOURCES).unwrap();
-    let Some(c_source) = compile_and_run_with_input(
-        "selfalloc",
-        SELF_HOSTED,
-        input.to_str().unwrap(),
-    ) else {
+    let Some(c_source) = self_hosted_emits("selfalloc", &input, None) else {
         return;
     };
     let _ = std::fs::remove_file(&input);
@@ -1988,11 +1980,7 @@ fn self_hosted_failure_sets_through_c() {
     let directory = std::env::temp_dir();
     let input = directory.join("frost_selffail_input.frost");
     std::fs::write(&input, SELF_HOSTED_FAILURE_SETS).unwrap();
-    let Some(c_source) = compile_and_run_with_input(
-        "selffail",
-        SELF_HOSTED,
-        input.to_str().unwrap(),
-    ) else {
+    let Some(c_source) = self_hosted_emits("selffail", &input, None) else {
         return;
     };
     let _ = std::fs::remove_file(&input);
@@ -2051,11 +2039,7 @@ fn self_hosted_enums_through_c() {
     let directory = std::env::temp_dir();
     let input = directory.join("frost_selfenum_input.frost");
     std::fs::write(&input, SELF_HOSTED_ENUMS).unwrap();
-    let Some(c_source) = compile_and_run_with_input(
-        "selfenum",
-        SELF_HOSTED,
-        input.to_str().unwrap(),
-    ) else {
+    let Some(c_source) = self_hosted_emits("selfenum", &input, None) else {
         return;
     };
     let _ = std::fs::remove_file(&input);
@@ -2186,11 +2170,7 @@ fn self_hosted_backends_agree() {
     let directory = std::env::temp_dir();
     let input = directory.join("frost_agree_input.frost");
     std::fs::write(&input, source).unwrap();
-    let Some(c_source) = compile_and_run_with_input(
-        "agree",
-        SELF_HOSTED,
-        input.to_str().unwrap(),
-    ) else {
+    let Some(c_source) = self_hosted_emits("agree", &input, None) else {
         return;
     };
     let _ = std::fs::remove_file(&input);
@@ -2242,49 +2222,6 @@ fn self_hosted_rejects_a_call_with_the_wrong_argument_count() {
         message.contains("expects 2"),
         "expected an argument-count error, got:\n{message}"
     );
-}
-
-// Compile a Frost program to a native executable, run it with FROST_INPUT
-// set, and return its stdout.
-fn compile_and_run_with_input(
-    name: &str,
-    source: &str,
-    input: &str,
-) -> Option<String> {
-    if !linker_available() {
-        return None;
-    }
-    let directory = std::env::temp_dir();
-    let source_path = directory.join(format!("frost_native_{name}.frost"));
-    let exe_path = directory.join(format!(
-        "frost_native_{name}{}",
-        std::env::consts::EXE_SUFFIX
-    ));
-    std::fs::write(&source_path, source).unwrap();
-    let frost = env!("CARGO_BIN_EXE_frost");
-    let compile = Command::new(frost)
-        .arg("--link")
-        .arg("-o")
-        .arg(&exe_path)
-        .arg(&source_path)
-        .output()
-        .unwrap();
-    assert!(
-        compile.status.success(),
-        "compilation failed for {name}:\n{}",
-        String::from_utf8_lossy(&compile.stderr)
-    );
-    let run = Command::new(&exe_path)
-        .env("FROST_INPUT", input)
-        .output()
-        .unwrap();
-    assert!(
-        run.status.success(),
-        "native binary {name} exited with failure"
-    );
-    let _ = std::fs::remove_file(&source_path);
-    let _ = std::fs::remove_file(&exe_path);
-    Some(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"))
 }
 
 fn run_test_mode(name: &str, source: &str) -> Option<(String, bool)> {
@@ -4557,6 +4494,24 @@ fn run_example(
     Some(output)
 }
 
+// The self-hosted compiler is the largest program in the repository, so putting
+// it through both backends is the widest single differential check there is. It
+// used to ride in the list above as a source string; it is a set of modules
+// now, so it is compiled where it sits.
+#[test]
+fn cranelift_and_c_backends_agree_on_the_self_hosted_compiler() {
+    let source = self_hosted_source();
+    let Some(native) = run_example("diff_self_hosted", &source, false) else {
+        return;
+    };
+    let via_c = run_example("diff_self_hosted_c", &source, true);
+    assert_eq!(
+        Some(native),
+        via_c,
+        "Cranelift and C backends disagree on the self-hosted compiler"
+    );
+}
+
 fn normalize_newlines(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes)
         .split("\r\n")
@@ -4595,7 +4550,6 @@ fn cranelift_and_c_backends_agree() {
         ("diff_widths", WIDTHS),
         ("diff_wrapping", WRAPPING_AND_UNARY),
         ("diff_anon", ANON_FUNCTIONS),
-        ("diff_self_hosted", SELF_HOSTED),
         ("diff_strings", STRINGS),
         ("diff_strview", STR_VIEW),
         ("diff_pointers", POINTERS),
