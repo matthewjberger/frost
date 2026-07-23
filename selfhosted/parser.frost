@@ -73,6 +73,23 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         ty := parse_type(p)
         return new_type_node(p, NODE_TYPEVAL, 0, ty)
     }
+    // An `if` used where a value is wanted takes the same road a `match` does:
+    // bind a name, let each branch assign to it, queue the branch for the block
+    // being parsed, and stand for the name.
+    if (kind == TOK_KW_IF) {
+        name_off := synth_numbered(p, "__value", p.match_count)
+        name_len := 7 + digits_in(p.match_count)
+        p.match_count = p.match_count + 1
+        seed := new_node(p, NODE_NUM, 0, 0, 0)
+        bind := new_let_node(p, seed, name_off, name_len, 0 - 1)
+        chosen := parse_stmt(p)
+        node : ^Node = arena_at(p.arena, chosen)
+        assign_block_value(p, node^.b, name_off, name_len)
+        assign_block_value(p, node^.val, name_off, name_len)
+        arena_push(p.pending, LocalVar { name_off = bind, name_len = chosen,
+            ty = 0 })
+        return new_named_node(p, NODE_VAR, 0, name_off, name_len)
+    }
     // A match used where a value is wanted: bind a name, let each arm assign to
     // it, and stand for the name. The match itself is queued for the block,
     // which is the same road a `?` takes.
@@ -130,7 +147,8 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         }
         // A slice carries its length, and a fixed array's is in its type, so
         // this reads one in constant time either way.
-        if (str_range_eq(p.src, offset, length, "slice_len")) {
+        if (str_range_eq(p.src, offset, length, "slice_len")
+            || str_range_eq(p.src, offset, length, "str_len")) {
             advance(p)
             inner := parse_expr(p)
             advance(p)
@@ -656,6 +674,69 @@ parse_variant_case :: fn(mut p: Parser, subject: i64) -> i64 {
 // Turn each arm's trailing expression into an assignment to the name standing
 // for the match's value. An arm that already does something else is left as it
 // is, since it was not producing a value in the first place.
+// A branch's last statement, when it produces a value, becomes an assignment to
+// the name the whole construct stands for. This is what makes a branch an
+// expression: nothing about the branch itself changes, only where its answer
+// goes. A branch ending in something with no value was never producing one and
+// is left as it is.
+assign_block_value :: fn(mut p: Parser, head: i64, name_off: i64,
+    name_len: i64) {
+    if (head == (0 - 1)) {
+        return
+    }
+    mut last := head
+    mut following := node_next(p, last)
+    while (following != (0 - 1)) {
+        last = following
+        following = node_next(p, last)
+    }
+    body : ^Node = arena_at(p.arena, last)
+    if (body^.kind == NODE_EXPRSTMT && type_of(p, body^.a) != TY_VOID) {
+        place := new_named_node(p, NODE_VAR, 0, name_off, name_len)
+        body^.kind = NODE_ASSIGN
+        body^.b = body^.a
+        body^.a = place
+    }
+}
+
+// A block's trailing expression, made into the answer it already was.
+return_block_tail :: fn(mut p: Parser, head: i64) {
+    if (head == (0 - 1)) {
+        return
+    }
+    mut last := head
+    mut following := node_next(p, last)
+    while (following != (0 - 1)) {
+        last = following
+        following = node_next(p, last)
+    }
+    body : ^Node = arena_at(p.arena, last)
+    if (body^.kind == NODE_EXPRSTMT && type_of(p, body^.a) != TY_VOID) {
+        body^.kind = NODE_RETURN
+    }
+}
+
+// A body ending in an `if` answers with whichever branch ran, so each branch's
+// trailing expression becomes a return. A branch producing nothing is left
+// alone, and a missing else falls through to the plain answer below.
+return_trailing_branches :: fn(mut p: Parser, body: i64) {
+    if (body == (0 - 1)) {
+        return
+    }
+    mut last := body
+    mut following := node_next(p, last)
+    while (following != (0 - 1)) {
+        last = following
+        following = node_next(p, last)
+    }
+    node : ^Node = arena_at(p.arena, last)
+    if (node^.kind != NODE_IF) {
+        return
+    }
+    return_block_tail(p, node^.b)
+    return_block_tail(p, node^.val)
+}
+
 assign_case_values :: fn(mut p: Parser, match_node: i64, name_off: i64,
     name_len: i64) {
     node : ^Node = arena_at(p.arena, match_node)
@@ -1053,6 +1134,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
     if (p.result_ty != (0 - 1)) {
         wrap_trailing_ok(p, body)
     }
+    return_trailing_branches(p, body)
     new_func_node(p, body, params, fn_index, is_main)
 }
 

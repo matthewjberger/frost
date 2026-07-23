@@ -66,6 +66,11 @@ types_compatible :: fn(mut p: Parser, from: i64, to: i64) -> bool {
     // An array reaches a slice of its own element type and nothing else. Two
     // arrays that are not the same type were caught above.
     if (is_array_ty(from) || is_array_ty(to)) {
+        // A `str` is a slice of bytes, and a string literal is a bare pointer
+        // to them, so that one pointer reaches a slice by gaining a length.
+        if (is_pointer(from) && is_array_ty(to) && is_slice_ty(p, to)) {
+            return array_element(p, to) == TY_U8
+        }
         return is_array_ty(from) && is_array_ty(to) && is_slice_ty(p, to)
             && array_element(p, from) == array_element(p, to)
     }

@@ -35,6 +35,22 @@ emit_op :: fn(op: i64) {
 // is written out here rather than left to C, which would not do it.
 emit_coerced :: fn(mut p: Parser, value: i64, want: i64) {
     have := type_of(p, value)
+    // A string literal reaching a `str`. The length is counted from the source
+    // rather than measured at run time, since an escape is two bytes written
+    // and one byte held.
+    if (is_array_ty(want) && is_slice_ty(p, want) && is_pointer(have)) {
+        node : ^Node = arena_at(p.arena, value)
+        if (node^.kind == NODE_STRLIT) {
+            frost_emit_str("(")
+            emit_ctype(p, want)
+            frost_emit_str("){ (unsigned char*)")
+            emit_expr(p, value)
+            frost_emit_str(", ")
+            frost_emit_int(literal_length(p.src, node^.val, node^.c))
+            frost_emit_str(" }")
+            return
+        }
+    }
     if (is_array_ty(want) && is_array_ty(have) && is_slice_ty(p, want)
         && is_slice_ty(p, have) == false) {
         frost_emit_str("(")
@@ -310,6 +326,12 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         // An array's length is in its type, so this is a constant there and a
         // field read only for a slice, which carries its own.
         inner := node^.a
+        // A literal has no length beside it, so its own is counted here.
+        held : ^Node = arena_at(p.arena, inner)
+        if (held^.kind == NODE_STRLIT) {
+            frost_emit_int(literal_length(p.src, held^.val, held^.c))
+            return
+        }
         mut inner_ty := type_of(p, inner)
         mut through : bool = false
         if (is_pointer(inner_ty)) {
@@ -418,6 +440,15 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                 have_param = 1
                 arg_ty := type_of(p, value)
                 if (param_auto == 1 && is_pointer(arg_ty) == false) {
+                    borrow = 1
+                }
+                // A string literal is already a pointer, so the rule above
+                // leaves it alone, but a `str` parameter wants a slice built
+                // from it and handed over by address like any other aggregate.
+                if (param_auto == 1 && is_pointer(param_ty)
+                    && is_slice_ty(p, pointee(param_ty))
+                    && is_pointer(arg_ty)
+                    && is_array_ty(pointee(arg_ty)) == false) {
                     borrow = 1
                 }
                 // A generic function's parameter list belongs to whichever

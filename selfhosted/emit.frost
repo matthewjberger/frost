@@ -4,7 +4,7 @@
 import "core.frost"
 
 export PROVIDER_NONE, PROVIDER_REGION, begin_provider, emit_source,
-    emit_string_content, set_provider
+    emit_string_content, literal_length, set_provider
 
 // Re-emit an identifier from the source by its byte range, so a local reference
 // becomes the variable's own name in the generated C.
@@ -20,6 +20,28 @@ emit_source :: fn(src: ^i8, off: i64, len: i64) {
 // so a backslash escape is passed through whole; the one difference is that Frost
 // allows raw newlines and tabs inside a string, which C forbids, so those are
 // escaped.
+// How many bytes a literal is at run time, which is not how many it takes in
+// the source: an escape is two bytes written and one byte held, and a carriage
+// return is dropped. A `str` needs this, since it carries its own length rather
+// than ending at a NUL.
+literal_length :: fn(src: ^i8, off: i64, len: i64) -> i64 {
+    mut k : i64 = 0
+    mut count : i64 = 0
+    while (k < len) {
+        b := frost_byte_at(src, off + k)
+        if (b == CH_BACKSLASH) {
+            k = k + 1
+            count = count + 1
+        } else if (b == CH_CR) {
+            count = count
+        } else {
+            count = count + 1
+        }
+        k = k + 1
+    }
+    count
+}
+
 emit_string_content :: fn(src: ^i8, off: i64, len: i64) {
     mut k : i64 = 0
     while (k < len) {

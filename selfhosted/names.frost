@@ -466,6 +466,9 @@ type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     if (str_range_eq(p.src, offset, length, "usize")) { return TY_USIZE }
     if (str_range_eq(p.src, offset, length, "f64")) { return TY_F64 }
     if (str_range_eq(p.src, offset, length, "f32")) { return TY_F32 }
+    if (str_range_eq(p.src, offset, length, "str")) {
+        return array_of(p, TY_U8, 0 - 1)
+    }
     if (str_range_eq(p.src, offset, length, "bool")) { return TY_BOOL }
     mut i : i64 = 0
     while (i < p.structs.count) {
