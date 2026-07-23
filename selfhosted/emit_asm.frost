@@ -118,7 +118,9 @@ emit_asm_load_from :: fn(mut p: Parser, ty: i64, slot: i64, base: ^i8) {
         op = "movslq "
         // Writing the 32-bit register clears the rest of the 64-bit one, so
         // this is the zero extension rather than an instruction short of it.
-        if (is_unsigned(ty)) {
+        // An f32 takes the same path: its bits are a pattern rather than a
+        // number, and extending them by sign would be meaningless.
+        if (is_unsigned(ty) || is_float(ty)) {
             op = "movl "
             destination = "%eax"
         }
@@ -148,6 +150,112 @@ emit_asm_store_to :: fn(mut p: Parser, ty: i64, slot: i64, base: ^i8) {
     frost_emit_int(slot)
     frost_emit_str(base)
     frost_emit_str("\n")
+}
+
+// One two-operand instruction, written out.
+emit_asm_move :: fn(op: ^i8, from: ^i8, to: ^i8) {
+    frost_emit_str("    ")
+    frost_emit_str(op)
+    frost_emit_str(" ")
+    frost_emit_str(from)
+    frost_emit_str(", ")
+    frost_emit_str(to)
+    frost_emit_str("\n")
+}
+
+// A float travels in %rax as its bit pattern, the way every other value here
+// does, and moves into an SSE register only for the arithmetic itself. That is
+// what keeps slots, loads, stores and the stack discipline the same for every
+// type rather than forking each of them on whether a float is in hand.
+emit_asm_to_sse :: fn(ty: i64, from: ^i8, narrow: ^i8, to: ^i8) {
+    if (ty == TY_F32) {
+        emit_asm_move("movd", narrow, to)
+        return
+    }
+    emit_asm_move("movq", from, to)
+}
+
+// Change the kind of number in %rax. Nothing is emitted between two types that
+// are already the same kind, which is why this can sit on every assignment,
+// argument and return without costing anything in a program with no floats.
+emit_asm_convert :: fn(mut p: Parser, from: i64, to: i64) {
+    if (from == to || is_pointer(from) || is_pointer(to)) {
+        return
+    }
+    if (is_struct_ty(from) || is_struct_ty(to)) {
+        return
+    }
+    if (is_float(from) == false && is_float(to) == false) {
+        return
+    }
+    if (is_float(from) && is_float(to)) {
+        if (to == TY_F32) {
+            emit_asm_move("movq", "%rax", "%xmm0")
+            emit_asm_move("cvtsd2ss", "%xmm0", "%xmm0")
+            emit_asm_move("movd", "%xmm0", "%eax")
+        } else {
+            emit_asm_move("movd", "%eax", "%xmm0")
+            emit_asm_move("cvtss2sd", "%xmm0", "%xmm0")
+            emit_asm_move("movq", "%xmm0", "%rax")
+        }
+        return
+    }
+    if (is_float(to)) {
+        if (to == TY_F32) {
+            emit_asm_move("cvtsi2ssq", "%rax", "%xmm0")
+            emit_asm_move("movd", "%xmm0", "%eax")
+        } else {
+            emit_asm_move("cvtsi2sdq", "%rax", "%xmm0")
+            emit_asm_move("movq", "%xmm0", "%rax")
+        }
+        return
+    }
+    if (from == TY_F32) {
+        emit_asm_move("movd", "%eax", "%xmm0")
+        emit_asm_move("cvttss2siq", "%xmm0", "%rax")
+        return
+    }
+    emit_asm_move("movq", "%rax", "%xmm0")
+    emit_asm_move("cvttsd2siq", "%xmm0", "%rax")
+}
+
+// Both operands arrive as f64 bit patterns, the left in %rax and the right in
+// %r11. A comparison answers 0 or 1 in %rax like an integer one does, so
+// everything downstream of it is unchanged.
+emit_asm_float_binop :: fn(mut p: Parser, op: i64) {
+    emit_asm_move("movq", "%rax", "%xmm0")
+    emit_asm_move("movq", "%r11", "%xmm1")
+    if (op == OP_ADD) {
+        emit_asm_move("addsd", "%xmm1", "%xmm0")
+    } else if (op == OP_SUB) {
+        emit_asm_move("subsd", "%xmm1", "%xmm0")
+    } else if (op == OP_MUL) {
+        emit_asm_move("mulsd", "%xmm1", "%xmm0")
+    } else if (op == OP_DIV) {
+        emit_asm_move("divsd", "%xmm1", "%xmm0")
+    } else {
+        // ucomisd sets the flags the unsigned conditions read, so the below
+        // and above forms are the ones that mean less and greater here.
+        emit_asm_move("ucomisd", "%xmm1", "%xmm0")
+        mut setcc : ^i8 = "setne"
+        if (op == OP_LT) {
+            setcc = "setb"
+        } else if (op == OP_GT) {
+            setcc = "seta"
+        } else if (op == OP_LE) {
+            setcc = "setbe"
+        } else if (op == OP_GE) {
+            setcc = "setae"
+        } else if (op == OP_EQ) {
+            setcc = "sete"
+        }
+        frost_emit_str("    ")
+        frost_emit_str(setcc)
+        frost_emit_str(" %al\n")
+        asm("movzbq %al, %rax")
+        return
+    }
+    emit_asm_move("movq", "%xmm0", "%rax")
 }
 
 // The address of a place, rather than the value in it.
@@ -288,6 +396,30 @@ emit_asm_binop :: fn(op: i64) {
     asm("orq %r11, %rax")
 }
 
+abi_sse_regs :: fn(mut p: Parser) -> i64 {
+    if (p.abi_windows == 1) {
+        return 4
+    }
+    8
+}
+
+emit_asm_sse_reg :: fn(index: i64) {
+    frost_emit_str("%xmm")
+    frost_emit_int(index)
+}
+
+// What a parameter is classified as for the calling convention. A generic's
+// parameter is a placeholder with no width of its own, so a specialization
+// passes everything in the integer registers on both sides of the call, which
+// is consistent because this backend emits both sides.
+abi_class_of :: fn(mut p: Parser, params: i64, index: i64) -> i64 {
+    declared := nth_param_type(p, params, index)
+    if (declared < 0 || declared == TY_PARAM) {
+        return TY_I64
+    }
+    declared
+}
+
 emit_asm_arg_reg :: fn(mut p: Parser, index: i64) {
     if (p.abi_windows == 1) {
         if (index == 0) { frost_emit_str("%rcx")  return }
@@ -328,13 +460,38 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         emit_asm_load_from(p, local_ty, local_slot(p, off, len), "(%rbp), ")
         return
     }
+    // The literal's bits, assembled from the digits by the assembler, which
+    // already knows how to read a decimal and this compiler does not need to.
+    if (kind == NODE_FLOAT) {
+        asm_i("movq .Lflt", id, "(%rip), %rax")
+        return
+    }
     if (kind == NODE_BIN) {
+        op := node^.val
+        left_ty := type_of(p, node^.a)
+        right_ty := type_of(p, node^.b)
+        if (is_float(left_ty) || is_float(right_ty)) {
+            // Every float operation is done at f64 and narrowed after, so
+            // there is one arithmetic path rather than one per width.
+            emit_asm_expr(p, node^.a)
+            emit_asm_convert(p, left_ty, TY_F64)
+            emit_asm_push()
+            emit_asm_expr(p, node^.b)
+            emit_asm_convert(p, right_ty, TY_F64)
+            asm("movq %rax, %r11")
+            emit_asm_pop_rax()
+            emit_asm_float_binop(p, op)
+            if (op < OP_LT) {
+                emit_asm_convert(p, TY_F64, type_of(p, id))
+            }
+            return
+        }
         emit_asm_expr(p, node^.a)
         emit_asm_push()
         emit_asm_expr(p, node^.b)
         asm("movq %rax, %r11")
         emit_asm_pop_rax()
-        emit_asm_binop(node^.val)
+        emit_asm_binop(op)
         return
     }
     if (kind == NODE_CALL) {
@@ -389,12 +546,14 @@ emit_asm_struct_lit :: fn(mut p: Parser, id: i64) {
         offset := field_offset(p, struct_ty, fnode^.val, fnode^.c)
         member := field_type(p, struct_ty, fnode^.val, fnode^.c)
         emit_asm_expr(p, value)
+        emit_asm_convert(p, type_of(p, value), member)
         if (is_struct_ty(member)) {
             asm("movq %rax, %r11")
             asm_i("leaq ", slot + offset, "(%rbp), %r10")
             emit_asm_copy(type_size(p, member))
         } else {
-            asm_i("movq %rax, ", slot + offset, "(%rbp)")
+            asm("movq %rax, %r11")
+            emit_asm_store_to(p, member, slot + offset, "(%rbp)")
         }
         fid = next_id
     }
@@ -447,9 +606,20 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         emit_asm_capability(p, fn_index)
         emit_asm_push()
     }
+    generic := generic_fn_of(p, fn_index) >= 0
     mut i : i64 = value_count - 1
     while (i >= 0) {
-        emit_asm_expr(p, nth_value_arg(p, args, i))
+        argument := nth_value_arg(p, args, i)
+        emit_asm_expr(p, argument)
+        // A specialization's parameters carry no width, so nothing is
+        // converted into one; everywhere else the callee's declared type is
+        // what the value has to arrive as.
+        if (generic == false) {
+            declared := nth_param_type(p, callee^.params, i)
+            if (declared >= 0 && declared != TY_PARAM) {
+                emit_asm_convert(p, type_of(p, argument), declared)
+            }
+        }
         emit_asm_push()
         i = i - 1
     }
@@ -473,18 +643,44 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         emit_asm_arg_reg(p, 0)
         frost_emit_str("\n")
     }
+    // Windows indexes both register files by the argument's own position, so a
+    // float in slot two is %xmm2 and slot two of the integer file goes unused.
+    // System V counts the two files separately, so an argument's register
+    // depends on how many of its own kind came before it.
+    sse_regs := abi_sse_regs(p)
+    mut int_next : i64 = sret
+    mut sse_next : i64 = 0
+    mut spilled : i64 = 0
     mut r : i64 = 0
     while (r < count) {
-        dest := r + sret
-        frost_emit_str("    movq ")
-        frost_emit_int(frame + 16 * r)
-        frost_emit_str("(%rsp), ")
-        if (dest < regs) {
-            emit_asm_arg_reg(p, dest)
+        position := r + sret
+        mut wants_sse : bool = false
+        if (r < value_count && generic == false) {
+            wants_sse = is_float(abi_class_of(p, callee^.params, r))
+        }
+        mut int_reg := int_next
+        mut sse_reg := sse_next
+        if (p.abi_windows == 1) {
+            int_reg = position
+            sse_reg = position
+        }
+        asm_i("movq ", frame + 16 * r, "(%rsp), %r10")
+        if (wants_sse && sse_reg < sse_regs) {
+            frost_emit_str("    movq %r10, ")
+            emit_asm_sse_reg(sse_reg)
+            frost_emit_str("\n")
+        } else if (wants_sse == false && int_reg < regs) {
+            frost_emit_str("    movq %r10, ")
+            emit_asm_arg_reg(p, int_reg)
             frost_emit_str("\n")
         } else {
-            frost_emit_str("%r10\n")
-            asm_i("movq %r10, ", shadow + 8 * (dest - regs), "(%rsp)")
+            asm_i("movq %r10, ", shadow + 8 * spilled, "(%rsp)")
+            spilled = spilled + 1
+        }
+        if (wants_sse) {
+            sse_next = sse_next + 1
+        } else {
+            int_next = int_next + 1
         }
         r = r + 1
     }
@@ -509,6 +705,14 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     }
     frost_emit_str("\n")
     asm_i("addq $", frame + 16 * count, ", %rsp")
+    // A float answered in %xmm0, and every value here travels in %rax.
+    if (is_float(ret)) {
+        if (ret == TY_F32) {
+            emit_asm_move("movd", "%xmm0", "%eax")
+        } else {
+            emit_asm_move("movq", "%xmm0", "%rax")
+        }
+    }
 }
 
 emit_asm_stmt :: fn(mut p: Parser, id: i64) {
@@ -524,6 +728,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
             ty = type_of(p, value)
         }
         emit_asm_expr(p, value)
+        emit_asm_convert(p, type_of(p, value), ty)
         record_local(p, off, len, ty)
         slot := local_slot(p, off, len)
         if (is_struct_ty(ty)) {
@@ -543,6 +748,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         emit_asm_addr(p, place)
         emit_asm_push()
         emit_asm_expr(p, value)
+        emit_asm_convert(p, type_of(p, value), place_ty)
         if (is_struct_ty(place_ty)) {
             asm("movq %rax, %r11")
             emit_asm_pop_rax()
@@ -561,17 +767,40 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
     }
     if (kind == NODE_PRINT) {
         shadow := abi_shadow(p)
+        value_ty := type_of(p, node^.a)
         emit_asm_expr(p, node^.a)
         // printf takes the format then the value, in whichever registers this
         // convention names, and System V wants the vector register count in al.
-        frost_emit_str("    movq %rax, ")
-        emit_asm_arg_reg(p, 1)
-        frost_emit_str("\n")
-        frost_emit_str("    leaq .Lfmt(%rip), ")
+        //
+        // A float is promoted to double the way any variadic argument is, and
+        // travels in an SSE register. Windows wants it in the matching integer
+        // register as well, since a variadic callee does not know which kind
+        // it was handed and reads whichever the format says.
+        if (is_float(value_ty)) {
+            emit_asm_convert(p, value_ty, TY_F64)
+            emit_asm_move("movq", "%rax", "%xmm1")
+            if (p.abi_windows == 1) {
+                frost_emit_str("    movq %rax, ")
+                emit_asm_arg_reg(p, 1)
+                frost_emit_str("\n")
+            } else {
+                emit_asm_move("movapd", "%xmm1", "%xmm0")
+            }
+            frost_emit_str("    leaq .Lfmtf(%rip), ")
+        } else {
+            frost_emit_str("    movq %rax, ")
+            emit_asm_arg_reg(p, 1)
+            frost_emit_str("\n")
+            frost_emit_str("    leaq .Lfmt(%rip), ")
+        }
         emit_asm_arg_reg(p, 0)
         frost_emit_str("\n")
         if (p.abi_windows == 0) {
-            asm("movb $0, %al")
+            if (is_float(value_ty)) {
+                asm("movb $1, %al")
+            } else {
+                asm("movb $0, %al")
+            }
         }
         asm_i("subq $", shadow, ", %rsp")
         asm("call printf")
@@ -686,11 +915,17 @@ emit_asm_return :: fn(mut p: Parser, value: i64) {
         return
     }
     emit_asm_expr(p, value)
+    emit_asm_convert(p, type_of(p, value), p.asm_ret)
     if (is_struct_ty(p.asm_ret)) {
         asm("movq %rax, %r11")
         asm_i("movq ", p.sret_slot, "(%rbp), %r10")
         emit_asm_copy(type_size(p, p.asm_ret))
         asm_i("movq ", p.sret_slot, "(%rbp), %rax")
+    }
+    // A float answers in %xmm0, which is where the convention says to look and
+    // so where a C caller of this function would.
+    if (is_float(p.asm_ret)) {
+        emit_asm_to_sse(p.asm_ret, "%rax", "%eax", "%xmm0")
     }
     asm("leave")
     asm("ret")
@@ -775,6 +1010,10 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
     // The first four arguments arrive in registers; the rest were left on the
     // stack by the caller, above the saved frame pointer, the return address
     // and the shadow area.
+    sse_regs := abi_sse_regs(p)
+    mut int_next : i64 = shift
+    mut sse_next : i64 = 0
+    mut spilled : i64 = 0
     mut pid := params
     mut index : i64 = 0
     while (pid != (0 - 1)) {
@@ -786,28 +1025,51 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
         slot := local_slot(p, off, len)
         place := index + shift
         ptype := pnode^.b
+        // The same classification the caller used, read off the same declared
+        // types, so the two sides agree without either consulting the other.
+        wants_sse := is_float(ptype)
+        mut int_reg := int_next
+        mut sse_reg := sse_next
+        if (p.abi_windows == 1) {
+            int_reg = place
+            sse_reg = place
+        }
         // A struct argument travels as an address, so a parameter that owns one
         // copies it into its own slot rather than keeping the caller's pointer.
         if (is_struct_ty(ptype)) {
-            if (place < regs) {
+            if (int_reg < regs) {
                 frost_emit_str("    movq ")
-                emit_asm_arg_reg(p, place)
+                emit_asm_arg_reg(p, int_reg)
                 frost_emit_str(", %r11\n")
             } else {
-                asm_i("movq ", 16 + shadow + 8 * (place - regs), "(%rbp), %r11")
+                asm_i("movq ", 16 + shadow + 8 * spilled, "(%rbp), %r11")
+                spilled = spilled + 1
             }
             asm_i("leaq ", slot, "(%rbp), %r10")
             emit_asm_copy(type_size(p, ptype))
+            int_next = int_next + 1
+        } else if (wants_sse && sse_reg < sse_regs) {
+            frost_emit_str("    movq ")
+            emit_asm_sse_reg(sse_reg)
+            frost_emit_str(", ")
+            frost_emit_int(slot)
+            frost_emit_str("(%rbp)\n")
+            sse_next = sse_next + 1
+        } else if (wants_sse == false && int_reg < regs) {
+            frost_emit_str("    movq ")
+            emit_asm_arg_reg(p, int_reg)
+            frost_emit_str(", ")
+            frost_emit_int(slot)
+            frost_emit_str("(%rbp)\n")
+            int_next = int_next + 1
         } else {
-            if (place < regs) {
-                frost_emit_str("    movq ")
-                emit_asm_arg_reg(p, place)
-                frost_emit_str(", ")
-                frost_emit_int(slot)
-                frost_emit_str("(%rbp)\n")
+            asm_i("movq ", 16 + shadow + 8 * spilled, "(%rbp), %r10")
+            asm_i("movq %r10, ", slot, "(%rbp)")
+            spilled = spilled + 1
+            if (wants_sse) {
+                sse_next = sse_next + 1
             } else {
-                asm_i("movq ", 16 + shadow + 8 * (place - regs), "(%rbp), %r10")
-                asm_i("movq %r10, ", slot, "(%rbp)")
+                int_next = int_next + 1
             }
         }
         index = index + 1
@@ -894,6 +1156,8 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
     asm(".data")
     frost_emit_str(".Lfmt:\n")
     frost_emit_str("    .asciz \"%lld\\n\"\n")
+    frost_emit_str(".Lfmtf:\n")
+    frost_emit_str("    .asciz \"%g\\n\"\n")
     emit_asm_strings(p)
 }
 
@@ -912,6 +1176,15 @@ emit_asm_strings :: fn(mut p: Parser) {
             frost_emit_str("    .asciz \"")
             emit_string_content(p.src, off, len)
             frost_emit_str("\"\n")
+        }
+        if (kind == NODE_FLOAT) {
+            frost_emit_str("    .align 8\n")
+            frost_emit_str(".Lflt")
+            frost_emit_int(i)
+            frost_emit_str(":\n")
+            frost_emit_str("    .double ")
+            emit_source(p.src, off, len)
+            frost_emit_str("\n")
         }
         i = i + 1
     }

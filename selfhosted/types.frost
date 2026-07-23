@@ -6,8 +6,25 @@ import "names.frost"
 
 export call_ret_type, call_type_arg, check_linear_consumed, collect_type_args,
     count_value_args, field_type, generic_fn_of, is_linear_type, is_moved,
-    local_exists, lookup_local, mark_moved, nth_value_arg, record_local,
-    record_mono_ret, type_of, types_compatible
+    local_exists, lookup_local, mark_moved, nth_param_type, nth_value_arg,
+    record_local, record_mono_ret, type_of, types_compatible
+
+// The declared type of the nth parameter, or -1 past the end of the list. An
+// argument is classified and converted by what the callee said it takes rather
+// than by what the caller happened to write.
+nth_param_type :: fn(mut p: Parser, params: i64, n: i64) -> i64 {
+    mut id := params
+    mut index : i64 = 0
+    while (id != (0 - 1)) {
+        node : ^Node = arena_at(p.arena, id)
+        if (index == n) {
+            return node^.b
+        }
+        index = index + 1
+        id = node^.next
+    }
+    0 - 1
+}
 
 // A name may be bound more than once in one body, once per sibling scope, and
 // the binding in scope is the one bound most recently. Locals are recorded in
@@ -205,6 +222,29 @@ type_of :: fn(mut p: Parser, id: i64) -> i64 {
     }
     if (kind == NODE_PTR_CAST) {
         return POINTER_BASE + node^.val
+    }
+    if (kind == NODE_FLOAT) {
+        return TY_F64
+    }
+    // Arithmetic answers i64 whatever it was handed, which is deliberate: a
+    // narrower operand widening to the result rather than the result narrowing
+    // to the operand is what keeps a byte fed into an i64 accumulator from
+    // being computed at eight bits. Floats are the exception, since an integer
+    // result there would be the wrong kind of number rather than the wrong
+    // width, and a comparison answers a truth value either way.
+    if (kind == NODE_BIN) {
+        if (node^.val >= OP_LT) {
+            return TY_I64
+        }
+        left := type_of(p, node^.a)
+        if (is_float(left)) {
+            return left
+        }
+        right := type_of(p, node^.b)
+        if (is_float(right)) {
+            return right
+        }
+        return TY_I64
     }
     TY_I64
 }

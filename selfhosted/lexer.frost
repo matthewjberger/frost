@@ -162,7 +162,20 @@ tokenize :: fn(src: ^i8, len: i64, mut tokens: Arena<Token>) {
                 value = value * 10 + (byte_of(src, i, len) - CH_0)
                 i = i + 1
             }
-            push_token(tokens, TOK_INT, start, i - start, value)
+            // A dot with a digit behind it continues the number rather than
+            // starting a field access. The fractional part is not converted
+            // here: a float literal keeps its byte range and both backends
+            // hand the text to the tool that already knows how to read it.
+            if (byte_of(src, i, len) == CH_DOT
+                && is_digit(byte_of(src, i + 1, len))) {
+                i = i + 1
+                while (is_digit(byte_of(src, i, len))) {
+                    i = i + 1
+                }
+                push_token(tokens, TOK_FLOAT, start, i - start, 0)
+            } else {
+                push_token(tokens, TOK_INT, start, i - start, value)
+            }
         } else if (is_ident_start(c)) {
             start := i
             while (is_ident_cont(byte_of(src, i, len))) {

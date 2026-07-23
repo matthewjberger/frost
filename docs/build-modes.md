@@ -71,7 +71,7 @@ checklist and the measurements.
 
 `src/` (Rust) is the **bootstrap** and `selfhosted/frost.frost` is the compiler
 people will use. The bootstrap compiles stage 0 and serves as the differential
-oracle, which is why every feature lands there first; that ordering is the only
+oracle, which is why every feature lands there first. That ordering is the only
 reason it is ahead.
 
 Both are under the same promises: the full language, and goal 8's speed. Where

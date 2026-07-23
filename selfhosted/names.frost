@@ -6,7 +6,7 @@ import "lexer.frost"
 import "imports.frost"
 
 export append_node, bytes_equal, const_value, digits_in, generic_index_for,
-    intern_global, is_const, is_main_name, is_pointer, is_struct_ty,
+    intern_global, is_const, is_float, is_main_name, is_pointer, is_struct_ty,
     mark_defined, mark_extern, new_case, new_field_init, new_field_node,
     new_func_node, new_index, new_let_node, new_named_node, new_node,
     new_struct_lit, new_type_node, new_unary, node_next, pointee,
@@ -384,6 +384,9 @@ pointee :: fn(ty: i64) -> i64 {
 is_struct_ty :: fn(ty: i64) -> bool {
     ty >= STRUCT_BASE && ty < POINTER_BASE
 }
+is_float :: fn(ty: i64) -> bool {
+    ty == TY_F32 || ty == TY_F64
+}
 
 struct_index_of :: fn(ty: i64) -> i64 {
     ty - STRUCT_BASE
@@ -412,6 +415,8 @@ type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     if (str_range_eq(p.src, offset, length, "u16")) { return TY_U16 }
     if (str_range_eq(p.src, offset, length, "u8")) { return TY_U8 }
     if (str_range_eq(p.src, offset, length, "usize")) { return TY_USIZE }
+    if (str_range_eq(p.src, offset, length, "f64")) { return TY_F64 }
+    if (str_range_eq(p.src, offset, length, "f32")) { return TY_F32 }
     if (str_range_eq(p.src, offset, length, "bool")) { return TY_BOOL }
     mut i : i64 = 0
     while (i < p.structs.count) {

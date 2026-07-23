@@ -23,7 +23,7 @@ scalar_size :: fn(ty: i64) -> i64 {
     if (ty == TY_I16 || ty == TY_U16) {
         return 2
     }
-    if (ty == TY_I32 || ty == TY_U32) {
+    if (ty == TY_I32 || ty == TY_U32 || ty == TY_F32) {
         return 4
     }
     8
