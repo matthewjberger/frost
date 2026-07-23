@@ -511,7 +511,10 @@ Frost has no general compile-time interpreter and no macros. The compile-time
 machinery is `sizeof(T)` as a constant and monomorphization, which is driven by
 three kinds of `$` parameter: a type (`$T: Type`), an integer (`$N: usize`, which
 is Rust's const generics as values and is what sizes a `[N]T` field), and a
-function (`$f: fn(..) -> ..`). A generic function or struct is stamped out once
+function (`$f: fn(..) -> ..`). All three work on functions as well as structs, so
+an operation over a sized aggregate is written once rather than once per size,
+and unlike Rust's const generics the integer is usable as a plain value in the
+body rather than only in a type. A generic function or struct is stamped out once
 per distinct set of those arguments at the call site (chapter 11 of the spec),
 the way Rust monomorphizes generics. That is the whole of it. There is nothing
 here that corresponds to `const fn` or macro expansion.

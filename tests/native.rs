@@ -4419,6 +4419,51 @@ fn native_generational_pool_and_handles() {
     assert_eq!(output, "0\n1\n0\n100\n999\n1\n1\n0\n0\n1\n0\n");
 }
 
+// Build and run an example where it lives rather than copying its text to a
+// temp directory, because an example may import a sibling and an import is
+// resolved relative to the file that wrote it.
+fn run_example(
+    name: &str,
+    source: &std::path::Path,
+    emit_c: bool,
+) -> Option<String> {
+    if !linker_available() {
+        return None;
+    }
+    let exe_path = std::env::temp_dir().join(format!(
+        "frost_example_{name}{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
+    if emit_c {
+        command.arg("--emit-c");
+    }
+    command
+        .env("FROST_CHECK_INTERFACES", "1")
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe_path)
+        .arg(source);
+    let compile = command.output().unwrap();
+    assert!(
+        compile.status.success(),
+        "compilation failed for {name} (emit_c={emit_c}):\n{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let run = Command::new(&exe_path).output().unwrap();
+    assert!(run.status.success(), "example {name} exited with failure");
+    let output = normalize_newlines(&run.stdout);
+    let _ = std::fs::remove_file(&exe_path);
+    Some(output)
+}
+
+fn normalize_newlines(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .split("\r\n")
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[test]
 fn native_showcase_examples_build_and_agree() {
     if !linker_available() {
@@ -4434,9 +4479,8 @@ fn native_showcase_examples_build_and_agree() {
             continue;
         }
         let stem = path.file_stem().unwrap().to_string_lossy().into_owned();
-        let source = std::fs::read_to_string(&path).unwrap();
-        let native = run_backend(&format!("ex_{stem}"), &source, false);
-        let via_c = run_backend(&format!("ex_{stem}_c"), &source, true);
+        let native = run_example(&format!("ex_{stem}"), &path, false);
+        let via_c = run_example(&format!("ex_{stem}_c"), &path, true);
         assert_eq!(native, via_c, "backends disagree on example {stem}");
         checked += 1;
     }

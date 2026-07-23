@@ -34,6 +34,11 @@ fn grammar_accepts_specified_constructs() {
         // reference in the signature and the surface has no reference type.
         "hold :: fn(f: fn(mut Ctx, i64)) { }",
         "held :: fn(f: fn(move Ctx) -> i64) { }",
+        // A value parameter is a compile-time integer, on a function as well
+        // as on a struct, and stands for its value in the body.
+        "Slab :: struct($T: Type, $N: usize) { storage: [N]T }",
+        "reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) { }",
+        "size :: fn($N: usize) -> i64 { N }",
         "main :: fn() -> i64 {\n x := 5\n mut y : i64 = 0\n y = y + 1\n 0\n }",
         "cond :: fn() -> i64 { if (1 < 2) { 1 } else { 0 } }",
         "loop :: fn() -> i64 {\n mut i : i64 = 0\n while (i < 3) { i = i + 1 }\n i\n }",

@@ -1,18 +1,22 @@
-// A generational slab generic over element type and capacity. Slab<$T, $N> stores
-// [N]T elements with a parallel [N]i64 of generation counters and a free list.
+// A generational slab, generic over element type and capacity, written entirely
+// in Frost. `Slab<$T, $N>` holds `[N]T` elements beside a parallel `[N]i64` of
+// generation counters and a free list, all inside the struct, with no
+// allocation and no runtime call.
+//
 // Because the struct has a `storage` array and a `generations` array, the
 // compiler recognizes it as slab-shaped and lets you index it by a handle:
 // `world[hero].hp = 75` reads and writes the element in place, checking the
-// handle's generation against the slot's and aborting on a stale handle, exactly
-// like the runtime pool but with the storage and the logic in the language.
+// handle's generation against the slot's and aborting on a stale handle. That
+// place-deref is the one thing the compiler supplies, because "return a
+// validated reference into storage" cannot be written where references are
+// second-class. Everything else here is ordinary Frost.
 //
-// Handles are Handle<T> to callers (opaque) and i64 inside the slab, where the
-// index and generation are packed and unpacked; the two convert freely because a
-// handle is an i64 at the ABI.
+// The operations are generic over `$N` as well as `$T`, so this file is a
+// library rather than a slab of one size. A handle is `Handle<T>` to callers
+// and an i64 inside, where index and generation are packed and unpacked; the
+// two convert freely because a handle is an i64 at the ABI.
 
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
-
-Entity :: struct { hp: i64, mana: i64 }
 
 Slab :: struct($T: Type, $N: usize) {
     storage: [N]T,
@@ -21,17 +25,17 @@ Slab :: struct($T: Type, $N: usize) {
     free_count: i64,
 }
 
-slab_reset :: fn(mut s: Slab<Entity, 4>) {
+slab_reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
     mut i : i64 = 0
-    while (i < 4) {
+    while (i < N) {
         s.generations[i] = 0
-        s.free_list[i] = 3 - i
+        s.free_list[i] = N - 1 - i
         i = i + 1
     }
-    s.free_count = 4
+    s.free_count = N
 }
 
-slab_insert :: fn(mut s: Slab<Entity, 4>, move value: Entity) -> i64 {
+slab_insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> Handle<T> {
     s.free_count = s.free_count - 1
     index := s.free_list[s.free_count]
     s.storage[index] = value
@@ -39,43 +43,44 @@ slab_insert :: fn(mut s: Slab<Entity, 4>, move value: Entity) -> i64 {
     packed
 }
 
-slab_alive :: fn(s: Slab<Entity, 4>, handle: i64) -> bool {
-    index := handle & 4294967295
-    generation := handle >> 32
-    s.generations[index] == generation
+slab_alive :: fn($T: Type, $N: usize, s: Slab<T, N>, handle: Handle<T>) -> bool {
+    raw : i64 = handle
+    s.generations[raw & 4294967295] == (raw >> 32)
 }
 
-slab_release :: fn(mut s: Slab<Entity, 4>, handle: i64) {
-    index := handle & 4294967295
+// Bumping the generation is what makes every outstanding handle to this slot
+// stale, so a later read through one aborts rather than seeing the next tenant.
+slab_release :: fn($T: Type, $N: usize, mut s: Slab<T, N>, handle: Handle<T>) {
+    raw : i64 = handle
+    index := raw & 4294967295
     s.generations[index] = s.generations[index] + 1
     s.free_list[s.free_count] = index
     s.free_count = s.free_count + 1
 }
 
+Entity :: struct { hp: i64, mana: i64 }
+
 main :: fn() -> i64 {
     mut world : Slab<Entity, 4> = Slab {
-        storage = [
-            Entity { hp = 0, mana = 0 }, Entity { hp = 0, mana = 0 },
-            Entity { hp = 0, mana = 0 }, Entity { hp = 0, mana = 0 },
-        ],
-        generations = [0, 0, 0, 0],
-        free_list = [0, 0, 0, 0],
+        storage = [Entity { hp = 0, mana = 0 }; 4],
+        generations = [0; 4],
+        free_list = [0; 4],
         free_count = 0,
     }
-    slab_reset(world)
+    slab_reset($Entity, $4, world)
 
-    hero : Handle<Entity> = slab_insert(world, Entity { hp = 100, mana = 30 })
-    foe : Handle<Entity> = slab_insert(world, Entity { hp = 40, mana = 10 })
+    hero := slab_insert($Entity, $4, world, Entity { hp = 100, mana = 30 })
+    foe := slab_insert($Entity, $4, world, Entity { hp = 40, mana = 10 })
 
     printf("%lld\n", world[hero].hp)             // 100, read in place
     world[hero].hp = world[hero].hp - 25
     printf("%lld\n", world[hero].hp)             // 75, written in place
     printf("%lld\n", world[foe].hp)              // 40
 
-    if (slab_alive(world, foe)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
-    slab_release(world, foe)
-    reused := slab_insert(world, Entity { hp = 7, mana = 7 })
-    if (slab_alive(world, reused)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
-    if (slab_alive(world, foe)) { printf("%lld\n", 9) } else { printf("%lld\n", 0) }
+    if (slab_alive($Entity, $4, world, foe)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    slab_release($Entity, $4, world, foe)
+    reused := slab_insert($Entity, $4, world, Entity { hp = 7, mana = 7 })
+    if (slab_alive($Entity, $4, world, reused)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    if (slab_alive($Entity, $4, world, foe)) { printf("%lld\n", 9) } else { printf("%lld\n", 0) }
     0
 }

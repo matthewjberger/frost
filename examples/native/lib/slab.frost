@@ -1,0 +1,67 @@
+// A generational slab: fixed-capacity storage with handles that go stale when
+// the slot they name is reused. Generic over element type and capacity, written
+// entirely in Frost, with no allocation and no runtime call.
+//
+// A `Slab` is recognized by the compiler as slab-shaped because it has a
+// `storage` array and a parallel `generations` array, which is what lets a
+// caller write `world[handle].hp = 75`. That place-deref is the only part the
+// compiler supplies, because "return a validated reference into storage" cannot
+// be written in a language where references are second-class. The storage, the
+// free list, and every operation below are ordinary Frost.
+//
+// A handle is `Handle<T>` to callers and an i64 inside, where the slot index and
+// the generation are packed together; the two convert freely because a handle is
+// an i64 at the ABI.
+
+export Slab, slab_reset, slab_full, slab_insert, slab_alive, slab_release
+
+Slab :: struct($T: Type, $N: usize) {
+    storage: [N]T,
+    generations: [N]i64,
+    free_list: [N]i64,
+    free_count: i64,
+}
+
+// Every slot free, every generation back to zero. A slab is created with its
+// arrays written out and then reset, since construction cannot run code.
+slab_reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
+    mut i : i64 = 0
+    while (i < N) {
+        s.generations[i] = 0
+        s.free_list[i] = N - 1 - i
+        i = i + 1
+    }
+    s.free_count = N
+}
+
+slab_full :: fn($T: Type, $N: usize, s: Slab<T, N>) -> bool {
+    s.free_count == 0
+}
+
+// The caller checks `slab_full` first. There is no in-band "no handle" value,
+// because a handle that means nothing is exactly the thing generations exist to
+// stop being readable.
+slab_insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> Handle<T> {
+    s.free_count = s.free_count - 1
+    index := s.free_list[s.free_count]
+    s.storage[index] = value
+    packed := (s.generations[index] << 32) | index
+    packed
+}
+
+slab_alive :: fn($T: Type, $N: usize, s: Slab<T, N>, handle: Handle<T>) -> bool {
+    raw : i64 = handle
+    s.generations[raw & 4294967295] == (raw >> 32)
+}
+
+// Bumping the generation is what makes every outstanding handle to this slot
+// stale, so a later read through one aborts rather than seeing the next tenant.
+slab_release :: fn($T: Type, $N: usize, mut s: Slab<T, N>, handle: Handle<T>) -> bool {
+    raw : i64 = handle
+    index := raw & 4294967295
+    if (s.generations[index] != (raw >> 32)) { return false }
+    s.generations[index] = s.generations[index] + 1
+    s.free_list[s.free_count] = index
+    s.free_count = s.free_count + 1
+    true
+}

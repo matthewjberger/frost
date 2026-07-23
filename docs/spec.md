@@ -625,9 +625,9 @@ compile-time function parameter (11.1b).
 
 ### 11.1a Value parameters
 
-A struct parameter written `$N: usize` (or another integer type) is a value
-parameter rather than a type parameter. It is a compile-time integer, and its
-main use is sizing a fixed array field:
+A parameter written `$N: usize` is a value parameter rather than a type
+parameter. It is a compile-time integer, and its main use is sizing a fixed
+array:
 
 ```
 Slab :: struct($T: Type, $N: usize) { storage: [N]T, used: i64 }
@@ -636,9 +636,25 @@ world : Slab<Entity, 4> = ...
 
 An instantiation supplies an integer where a value parameter stands
 (`Slab<Entity, 4>`), and monomorphization resolves `[N]T` to the concrete
-`[4]Entity` for that instance. To recover the size inside a function, coerce the
-array to a slice and read `slice_len` (3.2), so the number is written once. Value
-parameters are erased from the specialized type the same way type parameters are.
+`[4]Entity` for that instance. Value parameters are erased from the specialized
+type the same way type parameters are.
+
+**A function takes them too**, which is what lets an operation over a sized
+aggregate be written once rather than once per size:
+
+```
+slab_reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
+    mut i : i64 = 0
+    while (i < N) { s.generations[i] = 0  i = i + 1 }
+}
+
+slab_reset($Entity, $4, world)
+```
+
+Inside the body the name stands for the integer wherever it appears, in a type
+(`[N]T`) and in an expression (`i < N`) alike. `examples/native/lib/slab.frost`
+is a generational pool written this way, generic over both element type and
+capacity.
 
 ### 11.1b Compile-time function parameters
 
@@ -819,7 +835,7 @@ EnumVariants  = EnumVariant ( "," EnumVariant )* ","?
 EnumVariant   = IDENT ( "{" ( IDENT ":" Type ( "," IDENT ":" Type )* )? "}" )?
 
 Params        = Param ( "," Param )*
-Param         = ParamMode? "$" IDENT ":" ( "Type" | "type" | ProcType )
+Param         = ParamMode? "$" IDENT ":" ( "Type" | "type" | "usize" | ProcType )
               | ParamMode? IDENT ( ":" Type )?
 ParamMode     = "mut" | "move"
 ProcType      = "fn" "(" ( ProcParam ( "," ProcParam )* )? ")" ( "->" Type )?
