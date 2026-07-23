@@ -1,40 +1,53 @@
+// Handles instead of pointers, the data-oriented answer to an object graph.
+// Entities live in one contiguous slab, a handle is a small copy value that can
+// be stored and returned, and a handle to a released slot can never read the
+// entity that took its place.
+//
+// The slab is Frost code (lib/slab.frost). Nothing here allocates and nothing
+// calls a memory runtime.
+
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
-pool_new :: extern fn(capacity: i64, elem_size: i64) -> ^u8
-pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
-pool_get :: extern fn(pool: ^u8, handle: i64) -> ^u8
-pool_free :: extern fn(pool: ^u8, handle: i64) -> i64
-pool_contains :: extern fn(pool: ^u8, handle: i64) -> i64
-handle_index :: extern fn(handle: i64) -> i64
-handle_generation :: extern fn(handle: i64) -> i64
+import "lib/slab.frost"
 
 Entity :: struct { hp: i64, mana: i64 }
 
+// A handle packs the slot index and the generation into one i64, which is why it
+// is a copy value rather than a pointer, and why a stale one is detectable
+// rather than dangling.
+index_of :: fn(handle: Handle<Entity>) -> i64 { raw : i64 = handle  raw & 4294967295 }
+generation_of :: fn(handle: Handle<Entity>) -> i64 { raw : i64 = handle  raw >> 32 }
+
+show :: fn(flag: bool) { if (flag) { printf("%lld\n", 1) } else { printf("%lld\n", 0) } }
+
 main :: fn() -> i64 {
-    p := pool_new(8, 16)
+    mut p : Slab<Entity, 8> = Slab {
+        storage = [Entity { hp = 0, mana = 0 }; 8],
+        generations = [0; 8],
+        free_list = [0; 8],
+        free_count = 0,
+    }
+    slab_reset($Entity, $8, p)
 
-    mut hero := Entity { hp = 100, mana = 30 }
-    mut goblin := Entity { hp = 50, mana = 10 }
-    hero_handle := pool_alloc(p, ptr_to(hero))
-    goblin_handle := pool_alloc(p, ptr_to(goblin))
+    hero := slab_insert($Entity, $8, p, Entity { hp = 100, mana = 30 })
+    goblin := slab_insert($Entity, $8, p, Entity { hp = 50, mana = 10 })
 
-    printf("%lld\n", handle_index(hero_handle))
-    printf("%lld\n", handle_index(goblin_handle))
+    printf("%lld\n", index_of(hero))            // 0
+    printf("%lld\n", index_of(goblin))          // 1
 
-    hero_ref : ^Entity = pool_get(p, hero_handle)
-    printf("%lld\n", hero_ref^.hp)
-    hero_ref^.hp = hero_ref^.hp - 25
-    reloaded : ^Entity = pool_get(p, hero_handle)
-    printf("%lld\n", reloaded^.hp)
+    printf("%lld\n", p[hero].hp)                // 100
+    p[hero].hp = p[hero].hp - 25
+    printf("%lld\n", p[hero].hp)                // 75, written in place
 
-    printf("%lld\n", pool_contains(p, goblin_handle))
-    printf("%lld\n", pool_free(p, goblin_handle))
-    printf("%lld\n", pool_contains(p, goblin_handle))
+    show(slab_alive($Entity, $8, p, goblin))    // 1
+    show(slab_release($Entity, $8, p, goblin))  // 1
+    show(slab_alive($Entity, $8, p, goblin))    // 0
 
-    mut orc := Entity { hp = 80, mana = 0 }
-    orc_handle := pool_alloc(p, ptr_to(orc))
-    printf("%lld\n", handle_index(orc_handle))
-    printf("%lld\n", handle_generation(orc_handle))
-    printf("%lld\n", pool_contains(p, goblin_handle))
+    // The released slot is reused, and the old handle stays stale because the
+    // slot's generation moved past it.
+    orc := slab_insert($Entity, $8, p, Entity { hp = 80, mana = 0 })
+    printf("%lld\n", index_of(orc))             // 1, the goblin's slot
+    printf("%lld\n", generation_of(orc))        // 1, a generation later
+    show(slab_alive($Entity, $8, p, goblin))    // 0
     0
 }
