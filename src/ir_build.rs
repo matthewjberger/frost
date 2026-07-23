@@ -4097,7 +4097,12 @@ impl<'a> FunctionLowering<'a> {
         &mut self,
         expression: &Expression,
     ) -> Result<IrOperand> {
-        if matches!(self.place_type(expression), Some(Type::Slice(_))) {
+        // A slice that lives somewhere addressable, reached by any place chain:
+        // a local, a struct field holding one, or a `mut` parameter, which
+        // param-mode lowering turns into a deref of a pointer to the slice.
+        // `place_address` walks all three, so recognizing the slice is what was
+        // missing, not addressing it.
+        if matches!(self.probe_type(expression), Some(Type::Slice(_))) {
             let (address, _) = self.place_address(expression)?;
             return Ok(address);
         }
@@ -4113,7 +4118,7 @@ impl<'a> FunctionLowering<'a> {
     }
 
     fn slice_element_of(&self, base: &Expression) -> Option<Type> {
-        match self.place_type(base) {
+        match self.probe_type(base) {
             Some(Type::Slice(element)) => Some(*element),
             _ => None,
         }
@@ -4800,13 +4805,19 @@ impl<'a> FunctionLowering<'a> {
                 Ok(temp)
             }
             _ => {
-                let (operand, _) =
+                let (operand, value_type) =
                     self.lower_expression(expression, Some(field_type))?;
+                // A slice field taking an array coerces to a {pointer, length}
+                // rather than copying the array's bytes. The coerced value is a
+                // fresh slice local, which the caller copies into the field, so
+                // it has to sit in memory to be copied out of.
+                let operand = self.coerce(operand, &value_type, field_type);
                 let IrOperand::Local(local) = operand else {
                     bail!(
                         "native backend: cannot initialize an aggregate field from this value"
                     );
                 };
+                self.mark_in_memory(local);
                 Ok(local)
             }
         }
