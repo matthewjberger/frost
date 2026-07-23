@@ -52,6 +52,10 @@ There is one execution surface. An earlier bytecode VM was retired once the
 native path covered the language, so the data-oriented native language is the
 only language.
 
+Which backend runs, what the executable depends on at run time, and what the
+compiler itself is written in are three separate questions that sound alike.
+[build-modes.md](build-modes.md) separates them.
+
 ## Modules
 
 `src/imports.rs` reads each imported file once, renames the top-level names the

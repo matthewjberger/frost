@@ -2707,10 +2707,6 @@ impl<'a> Parser<'a> {
                 self.read_token();
                 Type::Distinct(Box::new(self.parse_type()?))
             }
-            Token::Question => {
-                self.read_token();
-                Type::Optional(Box::new(self.parse_type()?))
-            }
             Token::Integer(value) => {
                 let value = *value as usize;
                 self.read_token();
@@ -4130,60 +4126,6 @@ mod tests {
             );
         } else {
             bail!("Expected let statement with Handle type");
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn optional_type_annotation() -> Result<()> {
-        let input = "x : ?i64 = y;";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Let {
-            name,
-            type_annotation,
-            ..
-        } = &program[0].node
-        {
-            assert_eq!(name, "x");
-            assert_eq!(
-                type_annotation,
-                &Some(Type::Optional(Box::new(Type::I64)))
-            );
-        } else {
-            bail!("Expected let statement with Optional type");
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn nested_handle_optional() -> Result<()> {
-        let input = "x : ?Handle<Position> = y;";
-        let mut lexer = Lexer::new(input);
-        let tokens = lexer.tokenize()?;
-        let mut parser = Parser::new(&tokens);
-        let program = parser.parse()?;
-
-        assert_eq!(program.len(), 1);
-        if let Statement::Let {
-            name,
-            type_annotation,
-            ..
-        } = &program[0].node
-        {
-            assert_eq!(name, "x");
-            assert_eq!(
-                type_annotation,
-                &Some(Type::Optional(Box::new(Type::Handle(Box::new(
-                    Type::Struct("Position".to_string())
-                )))))
-            );
-        } else {
-            bail!("Expected let statement with nested Optional<Handle> type");
         }
         Ok(())
     }
