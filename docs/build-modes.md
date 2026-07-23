@@ -51,8 +51,8 @@ now works with no libc at all. See [native-pools.md](native-pools.md).
 
 ## Self-hosted: what the compiler is written in
 
-`selfhosted/` is the Frost compiler, written in Frost, about 5,300 lines across
-thirteen modules. `src/` is the bootstrap that compiles its stage 0.
+`selfhosted/` is the Frost compiler, written in Frost. `src/` is the bootstrap
+that compiles its stage 0.
 
 The claim it discharges is a **three-stage fixpoint**: it compiles its own
 source, a compiler built from that output compiles the source again, and the two
@@ -63,9 +63,9 @@ checked on every build by `self_hosting_is_a_fixpoint` and
 
 It implements ownership and linearity (use after move, and linear values
 consumed exactly once), monomorphized generics, structs, enums with `match`, and
-`extern` FFI. What it does not implement yet is items 6 through 18 of
-[roadmap.md](roadmap.md). See [self-hosting.md](self-hosting.md) for the
-checklist and the measurements.
+`extern` FFI. What it does not implement yet is listed in
+[../selfhosted/README.md](../selfhosted/README.md). See
+[self-hosting.md](self-hosting.md) for the measurements.
 
 ## How the axes interact
 
@@ -75,9 +75,9 @@ oracle, which is why every feature lands there first. That ordering is the only
 reason it is ahead.
 
 Both are under the same promises: the full language, and goal 8's speed. Where
-the self-hosted compiler is behind, that is a port on
-[roadmap.md](roadmap.md) rather than a divergence, and that includes parallel
-code generation, separate compilation and `--incremental`.
+the self-hosted compiler is behind, that is a port waiting rather than a
+divergence, and that includes parallel code generation, separate compilation and
+`--incremental`.
 
 The axes compose freely. The self-hosted compiler emits assembly, so it is
 native without being freestanding. A `--emit-c --link` build is neither native

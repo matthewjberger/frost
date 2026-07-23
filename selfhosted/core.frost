@@ -1,7 +1,7 @@
 // Externs, the constant tables, the node and symbol records, the arena, and
 // the Parser that every pass threads through itself.
 
-export Arena, CH_0, CH_9, CH_AMP, CH_BACKSLASH, CH_BANG, CH_CARET, CH_COLON,
+export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, CH_AMP, CH_BACKSLASH, CH_BANG, CH_CARET, CH_COLON,
     CH_COMMA, CH_CR, CH_DOLLAR, CH_DOT, CH_DQUOTE, CH_EQ, CH_GT, CH_LBRACE,
     CH_LBRACKET, CH_LF, CH_LOWER_A, CH_LOWER_N, CH_LOWER_T, CH_LOWER_Z,
     CH_LPAREN, CH_LT, CH_MINUS, CH_PERCENT, CH_PIPE, CH_PLUS, CH_QUESTION,
@@ -12,8 +12,8 @@ export Arena, CH_0, CH_9, CH_AMP, CH_BACKSLASH, CH_BANG, CH_CARET, CH_COLON,
     NODE_EXPRSTMT, NODE_EXTERN, NODE_FIELD, NODE_FIELD_INIT, NODE_FUNC,
     NODE_IF, NODE_INDEX, NODE_LET, NODE_MATCH, NODE_NUM, NODE_PARAM,
     NODE_PRINT, NODE_PTR_CAST, NODE_RETURN, NODE_SIZEOF, NODE_STRLIT,
-    NODE_FLOAT, NODE_STRUCT_LIT, NODE_TYPEVAL, NODE_VAR, NODE_WHILE,
-    NODE_WITH, Node,
+    NODE_ARRAY_LIT, NODE_FLOAT, NODE_SLICE_LEN, NODE_STRUCT_LIT,
+    NODE_TYPEVAL, NODE_VAR, NODE_WHILE, NODE_WITH, Node,
     OP_ADD, OP_AND, OP_DIV, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT, OP_MOD, OP_MUL,
     OP_NE, OP_OR, OP_SUB, POINTER_BASE, Parser, STRUCT_BASE, StructDef,
     StructField, Sym, TOK_AMP, TOK_ANDAND, TOK_ARROW, TOK_ASSIGN, TOK_BANG,
@@ -93,6 +93,8 @@ NODE_STRLIT     :: 25
 NODE_TYPEVAL    :: 26
 NODE_WITH       :: 27
 NODE_FLOAT      :: 28
+NODE_ARRAY_LIT  :: 29
+NODE_SLICE_LEN  :: 30
 
 // Type codes. A type is one i64. The primitives are small constants; a struct is
 // STRUCT_BASE plus its table index; a pointer to a type T (also how a borrow
@@ -114,6 +116,10 @@ TY_USIZE :: 12
 TY_F32   :: 13
 TY_F64   :: 14
 STRUCT_BASE  :: 16
+// A fixed array and a slice are both an entry in one table, since a slice is an
+// array that did not say how long it is. That keeps `[]T` and `[N]T` one kind of
+// thing everywhere but their layout.
+ARRAY_BASE   :: 500000
 POINTER_BASE :: 1000000
 
 // Binary operator codes.
@@ -368,6 +374,13 @@ Variant :: struct {
     tag: i64,
 }
 
+// A fixed array or a slice. `length` is how many elements a `[N]T` holds, and
+// -1 says this is a `[]T`, which carries its length at run time instead.
+ArrayDef :: struct {
+    element: i64,
+    length: i64,
+}
+
 // A concrete type a generic was used with. Every generic function is emitted
 // once per distinct one of these.
 TypeArg :: struct {
@@ -479,6 +492,7 @@ Parser :: struct {
     prov_kind: i64,
     prov_off: i64,
     prov_len: i64,
+    arrays: Arena<ArrayDef>,
 }
 
 cstr_eq :: fn(a: ^i8, b: ^i8) -> bool {

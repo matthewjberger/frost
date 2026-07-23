@@ -5,8 +5,10 @@ import "core.frost"
 import "lexer.frost"
 import "imports.frost"
 
-export append_node, bytes_equal, const_value, digits_in, generic_index_for,
-    intern_global, is_const, is_float, is_main_name, is_pointer, is_struct_ty,
+export append_node, array_element, array_index_of, array_length, array_of,
+    bytes_equal, const_value, digits_in, generic_index_for,
+    intern_global, is_aggregate, is_array_ty, is_const, is_float, is_main_name,
+    is_pointer, is_slice_ty, is_struct_ty,
     mark_defined, mark_extern, new_case, new_field_init, new_field_node,
     new_func_node, new_index, new_let_node, new_named_node, new_node,
     new_struct_lit, new_type_node, new_unary, node_next, pointee,
@@ -382,10 +384,55 @@ pointee :: fn(ty: i64) -> i64 {
 }
 
 is_struct_ty :: fn(ty: i64) -> bool {
-    ty >= STRUCT_BASE && ty < POINTER_BASE
+    ty >= STRUCT_BASE && ty < ARRAY_BASE
 }
 is_float :: fn(ty: i64) -> bool {
     ty == TY_F32 || ty == TY_F64
+}
+is_array_ty :: fn(ty: i64) -> bool {
+    ty >= ARRAY_BASE && ty < POINTER_BASE
+}
+
+// Everything wider than a register, which is everything this compiler holds by
+// address rather than in one: a struct, a fixed array, and a slice, which is a
+// pointer beside a length.
+is_aggregate :: fn(ty: i64) -> bool {
+    is_struct_ty(ty) || is_array_ty(ty)
+}
+
+// The one table holds both, so a slice is told from an array by having no
+// length of its own rather than by a separate code.
+array_index_of :: fn(ty: i64) -> i64 {
+    ty - ARRAY_BASE
+}
+
+array_element :: fn(mut p: Parser, ty: i64) -> i64 {
+    def : ^ArrayDef = arena_at(p.arrays, array_index_of(ty))
+    def^.element
+}
+
+array_length :: fn(mut p: Parser, ty: i64) -> i64 {
+    def : ^ArrayDef = arena_at(p.arrays, array_index_of(ty))
+    def^.length
+}
+
+is_slice_ty :: fn(mut p: Parser, ty: i64) -> bool {
+    is_array_ty(ty) && array_length(p, ty) < 0
+}
+
+// One code per (element, length) pair, so two spellings of the same array are
+// the same type and the backends can key their declarations on the code.
+array_of :: fn(mut p: Parser, element: i64, length: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < p.arrays.count) {
+        entry : ^ArrayDef = arena_at(p.arrays, i)
+        if (entry^.element == element && entry^.length == length) {
+            return ARRAY_BASE + i
+        }
+        i = i + 1
+    }
+    ARRAY_BASE + arena_push(p.arrays,
+        ArrayDef { element = element, length = length })
 }
 
 struct_index_of :: fn(ty: i64) -> i64 {

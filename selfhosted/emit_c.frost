@@ -30,6 +30,25 @@ emit_op :: fn(op: i64) {
 // A struct's C name: its source name, plus the module that declared it when
 // that is not the root, since two files may each keep a private struct of the
 // same name, and plus `_<instance_id>` for a monomorphized instance.
+// An array becomes a slice of the whole of itself wherever one is wanted. That
+// is the only implicit conversion between aggregates the language has, and it
+// is written out here rather than left to C, which would not do it.
+emit_coerced :: fn(mut p: Parser, value: i64, want: i64) {
+    have := type_of(p, value)
+    if (is_array_ty(want) && is_array_ty(have) && is_slice_ty(p, want)
+        && is_slice_ty(p, have) == false) {
+        frost_emit_str("(")
+        emit_ctype(p, want)
+        frost_emit_str("){ (")
+        emit_expr(p, value)
+        frost_emit_str(").items, ")
+        frost_emit_int(array_length(p, have))
+        frost_emit_str(" }")
+        return
+    }
+    emit_expr(p, value)
+}
+
 emit_struct_name :: fn(mut p: Parser, struct_index: i64) {
     def : ^StructDef = arena_at(p.structs, struct_index)
     name_off := def^.name_off
@@ -99,6 +118,11 @@ emit_ctype :: fn(mut p: Parser, ty: i64) {
     }
     if (ty == TY_VOID) {
         frost_emit_str("void")
+        return
+    }
+    if (is_array_ty(ty)) {
+        frost_emit_str("struct __arr")
+        frost_emit_int(array_index_of(ty))
         return
     }
     frost_emit_str("struct ")
@@ -242,10 +266,73 @@ emit_expr :: fn(mut p: Parser, id: i64) {
     if (kind == NODE_INDEX) {
         base := node^.a
         index := node^.b
+        base_ty := type_of(p, base)
+        mut through := base_ty
+        if (is_pointer(through)) {
+            through = pointee(through)
+        }
+        // An array and a slice are both a named C struct, so the run of
+        // elements inside one has to be named before it can be indexed.
+        if (is_array_ty(through)) {
+            frost_emit_str("(")
+            emit_expr(p, base)
+            if (is_pointer(base_ty)) {
+                frost_emit_str(")->")
+            } else {
+                frost_emit_str(").")
+            }
+            if (is_slice_ty(p, through)) {
+                frost_emit_str("data[")
+            } else {
+                frost_emit_str("items[")
+            }
+            emit_expr(p, index)
+            frost_emit_str("]")
+            return
+        }
         emit_expr(p, base)
         frost_emit_str("[")
         emit_expr(p, index)
         frost_emit_str("]")
+        return
+    }
+    if (kind == NODE_SLICE_LEN) {
+        // An array's length is in its type, so this is a constant there and a
+        // field read only for a slice, which carries its own.
+        inner := node^.a
+        mut inner_ty := type_of(p, inner)
+        mut through : bool = false
+        if (is_pointer(inner_ty)) {
+            inner_ty = pointee(inner_ty)
+            through = true
+        }
+        if (is_array_ty(inner_ty) && is_slice_ty(p, inner_ty) == false) {
+            frost_emit_int(array_length(p, inner_ty))
+            return
+        }
+        frost_emit_str("(")
+        emit_expr(p, inner)
+        if (through) {
+            frost_emit_str(")->len")
+        } else {
+            frost_emit_str(").len")
+        }
+        return
+    }
+    if (kind == NODE_ARRAY_LIT) {
+        frost_emit_str("(")
+        emit_ctype(p, type_of(p, id))
+        frost_emit_str("){{")
+        mut element := node^.a
+        while (element != (0 - 1)) {
+            enode : ^Node = arena_at(p.arena, element)
+            emit_expr(p, enode^.a)
+            element = enode^.next
+            if (element != (0 - 1)) {
+                frost_emit_str(", ")
+            }
+        }
+        frost_emit_str("}}")
         return
     }
     if (kind == NODE_ADDROF) {
@@ -312,10 +399,11 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
             mut moves : i64 = 0
             mut param_next : i64 = 0 - 1
             mut have_param : i64 = 0
+            mut param_ty : i64 = 0 - 1
             if (param != (0 - 1)) {
                 pnode : ^Node = arena_at(p.arena, param)
                 param_auto := pnode^.a
-                param_ty := pnode^.b
+                param_ty = pnode^.b
                 param_next = pnode^.next
                 have_param = 1
                 arg_ty := type_of(p, value)
@@ -329,12 +417,12 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                 // passed as it is.
                 if (generic_fn_of(p, fn_index) >= 0) {
                     borrow = 0
-                    if (param_auto != 2 && is_struct_ty(arg_ty)) {
+                    if (param_auto != 2 && is_aggregate(arg_ty)) {
                         borrow = 1
                     }
                 }
                 // A struct handed to a parameter that does not borrow is moved.
-                if (param_auto != 1 && is_struct_ty(arg_ty)) {
+                if (param_auto != 1 && is_aggregate(arg_ty)) {
                     moves = 1
                 }
                 // Check the argument against the parameter. A generic
@@ -347,7 +435,7 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                     if (borrow == 1) {
                         expected = pointee(param_ty)
                     }
-                    if (types_compatible(arg_ty, expected) == false) {
+                    if (types_compatible(p, arg_ty, expected) == false) {
                         frost_error("frost: '")
                         frost_error_src(p.src, sym^.off, sym^.len)
                         frost_error("' was passed an argument of the wrong type")
@@ -356,9 +444,21 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                 }
             }
             if (borrow == 1) {
-                frost_emit_str("(&(")
-                emit_expr(p, value)
-                frost_emit_str("))")
+                // A borrowed parameter takes an address, and an array reaching
+                // a slice parameter has to become one first. The slice itself
+                // is what the callee is handed the address of.
+                want := pointee(param_ty)
+                if (is_array_ty(want) && is_slice_ty(p, want)) {
+                    frost_emit_str("(&")
+                    emit_coerced(p, value, want)
+                    frost_emit_str(")")
+                } else {
+                    frost_emit_str("(&(")
+                    emit_expr(p, value)
+                    frost_emit_str("))")
+                }
+            } else if (have_param == 1) {
+                emit_coerced(p, value, param_ty)
             } else {
                 emit_expr(p, value)
             }
@@ -397,7 +497,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         frost_emit_str(" ")
         emit_source(p.src, off, len)
         frost_emit_str(" = ")
-        emit_expr(p, value)
+        emit_coerced(p, value, ty)
         frost_emit_str(";\n")
         record_local(p, off, len, ty)
         return
@@ -407,13 +507,13 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         value := node^.b
         place_ty := type_of(p, place)
         value_ty := type_of(p, value)
-        if (types_compatible(value_ty, place_ty) == false) {
+        if (types_compatible(p, value_ty, place_ty) == false) {
             frost_error("frost: assigning a value of the wrong type")
             frost_die()
         }
         emit_expr(p, place)
         frost_emit_str(" = ")
-        emit_expr(p, value)
+        emit_coerced(p, value, place_ty)
         frost_emit_str(";\n")
         return
     }
@@ -469,7 +569,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
             if (is_linear_type(p, value_ty)) {
                 mark_moved(p, value)
             }
-            if (types_compatible(value_ty, p.current_ret) == false) {
+            if (types_compatible(p, value_ty, p.current_ret) == false) {
                 frost_error("frost: '")
                 frost_error_src(p.src, p.current_fn_off, p.current_fn_len)
                 frost_error("' returns a value of the wrong type")
@@ -651,6 +751,31 @@ emit_extern_prototypes :: fn(mut p: Parser, head: i64) {
     }
 }
 
+// One C struct per array type, so `[N]T` and `[]T` are values C can hold, pass,
+// return and assign. A fixed array wraps the run itself, a slice wraps a
+// pointer to one beside its length.
+emit_array_decls :: fn(mut p: Parser) {
+    mut i : i64 = 0
+    while (i < p.arrays.count) {
+        def : ^ArrayDef = arena_at(p.arrays, i)
+        element := def^.element
+        length := def^.length
+        frost_emit_str("struct __arr")
+        frost_emit_int(i)
+        frost_emit_str(" { ")
+        if (length < 0) {
+            emit_ctype(p, element)
+            frost_emit_str("* data; int64_t len; };\n")
+        } else {
+            emit_ctype(p, element)
+            frost_emit_str(" items[")
+            frost_emit_int(length)
+            frost_emit_str("]; };\n")
+        }
+        i = i + 1
+    }
+}
+
 emit_struct_decls :: fn(mut p: Parser) {
     mut i : i64 = 0
     while (i < p.structs.count) {
@@ -806,6 +931,8 @@ emit_mono_prototype :: fn(mut p: Parser, id: i64, arg: i64, ret: i64) {
 
 emit_program :: fn(mut p: Parser, head: i64) {
     emit_struct_decls(p)
+    // After the structs, since an array of a struct names it.
+    emit_array_decls(p)
     emit_extern_prototypes(p, head)
 
     // Prototypes for each monomorphization, so they may be called before defined.

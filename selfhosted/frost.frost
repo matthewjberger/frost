@@ -199,6 +199,7 @@ main :: fn() -> i64 {
         prov_kind = 0,
         prov_off = 0,
         prov_len = 0,
+        arrays = arena_make($ArrayDef, 1024),
     }
     // Names the compiler synthesizes go past the source's terminator, so the
     // first free byte is one past the text.

@@ -8,7 +8,7 @@ bootstrap: it compiles stage 0, and it is the differential oracle the tests
 compare against. Both are scaffolding. What a person writing Frost is meant to
 run is this one, which is why it is held to the full language and to the same
 speed promise rather than to a lower bar. Where it is behind, that is a port
-waiting on [docs/roadmap.md](../docs/roadmap.md) rather than a divergence.
+waiting rather than a divergence.
 
 **It self-hosts, twice over.** It compiles its own source; a compiler built from
 that output compiles the same source again; the two outputs are byte-identical.
@@ -50,17 +50,10 @@ Both backends emit from the same checked program: C through
 
 ## What is not here yet
 
-All of it is a work list, in order, as items 6 through 18 of
-[docs/roadmap.md](../docs/roadmap.md). Derived by reading `src/types.rs` against
-this file's type codes and the bootstrap's flags against `main`, rather than
-from memory:
+The target is the full language, so everything below is work waiting rather than
+a decision.
 
-- **A command line.** This is the largest one and the nearest to a user. It
-  reads `FROST_INPUT`, writes to standard output, and links nothing. No file
-  argument, no `-o`, no `--native`, no `--link`.
-- **Most of the scalar types.** `i16`, `i32`, `isize`, `u16`, `u32`, `u64`,
-  `usize`, `f32`, `f64`, `str`. The floats need SSE in the assembly backend,
-  which has none.
+- **`str`**, the only scalar type still missing.
 - **Arrays and slices**, so a fixed buffer is a `malloc` and a pointer.
 - **Value generics** (`$N: usize`) and compile-time function arguments (`$f`),
   since a template here carries one type parameter rather than a list.
@@ -123,30 +116,19 @@ cc out.s -o out && ./out
 
 ## The modules
 
-In dependency order, which is also a topological order of what calls what. Each
-file states what it is about at the top and lists what it offers on one `export`
-line.
+Each file states what it is about at the top and lists what it offers on one
+`export` line, so the shape of the compiler is readable from the imports.
 
-| module | lines | what it is |
-| --- | --- | --- |
-| `core.frost` | 444 | externs, the constant tables, the records, the arena, `Parser` |
-| `lexer.frost` | 181 | source bytes to a flat arena of tokens, in one pass |
-| `cursor.frost` | 46 | the token cursor everything reading tokens goes through |
-| `imports.frost` | 203 | every file's text into one buffer, dependencies first |
-| `names.frost` | 428 | interning, visibility, synthesized names, type codes, AST constructors |
-| `types.frost` | 358 | typing, and the checks that ride on it: moves, linearity, field and call types |
-| `parser.frost` | 1,373 | recursive descent, and the re-parse that instantiates a generic |
-| `emit.frost` | 69 | what both backends emit through |
-| `layout.frost` | 70 | sizes, alignments, field offsets |
-| `emit_c.frost` | 794 | the C backend |
-| `emit_asm.frost` | 864 | the x86-64 backend |
-| `regions.frost` | 251 | the region check |
-| `frost.frost` | 206 | the driver |
+`core` holds the externs, the constant tables, the records and the arena.
+`lexer` and `cursor` turn source into tokens and read them. `imports` lays every
+file's text into one buffer. `names` interns and resolves. `types` does the
+typing and the checks that ride on it. `parser` is recursive descent. `layout`
+works out sizes and offsets, `emit` is what both backends write through, and
+`emit_c` and `emit_asm` are the backends. `regions` is the region check, and
+`frost` is the driver.
 
-The order is acyclic: no module names anything from a module below it. The
-assembly backend does not depend on the C one, which is what `emit.frost` is
-for. How the boundaries were drawn is item 6 of
-[docs/roadmap.md](../docs/roadmap.md).
+The import order is acyclic, and the assembly backend does not depend on the C
+one, which is what `emit` is for.
 
 ## Where the measurements live
 

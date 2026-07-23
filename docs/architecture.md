@@ -423,9 +423,8 @@ AST; both point at a line.
     there is a path with no C compiler in the loop. It is written in the
     data-oriented native surface, a pool-backed AST arena with integer node
     indices instead of pointers, and carries imports and modules, failure sets,
-    enums with payloads, and generics. It is the compiler Frost is for, and this
-    file describes the bootstrap that builds its stage 0; reaching parity is
-    items 6 through 18 of [roadmap.md](roadmap.md). See
+    enums with payloads, and generics. It is the compiler Frost is for, and
+    this file describes the bootstrap that builds its stage 0. See
     [self-hosting.md](self-hosting.md).)*
 11. Parser error recovery. *(Done: the parser recovers at statement boundaries
     instead of stopping at the first error, at the top level and inside function
