@@ -5015,3 +5015,58 @@ fn a_registration_declaration_is_checked() {
         "expected the context to have to be taken by move, got:\n{message}"
     );
 }
+
+// docs/callbacks.md, step 2, and the whole safety argument. A registration
+// holds its context for as long as it is registered, so the value it answers
+// with names storage in the frame that holds the context. A context in that
+// frame is the ordinary case and is safe, because `check_linearity` forces the
+// registration to be consumed in the function that made it; what has to be
+// stopped is the registration leaving that function by another road.
+#[test]
+fn a_registration_may_not_outlive_its_context() {
+    let message = compile_error(
+        "callback_escape",
+        "Ctx :: struct { hits: i64 }\n\
+         Registration :: linear struct { token: i64 }\n\
+         on_event :: fn(mut ctx: Ctx, code: i64) { ctx.hits = ctx.hits + code }\n\
+         register :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> Registration\n\
+         leak :: fn() -> Registration {\n\
+         \x20   c := Ctx { hits = 0 }\n\
+         \x20   register($on_event, c)\n\
+         }\n\
+         main :: fn() -> i64 { 0 }\n",
+    );
+    assert!(
+        message.contains("pointer into the frame of 'leak'"),
+        "expected the registration to be held to its context's frame, got:\n{message}"
+    );
+}
+
+// The other half of that check, which matters more: registering a context in
+// this frame and unregistering it here is the shape the design is for, and it
+// has to get past every check the language has. Only lowering is missing, which
+// is steps 3 and 4, so this fails there and nowhere earlier. When those land
+// this stops being a compile error and becomes a program to run, which is the
+// point at which it should be rewritten rather than deleted.
+#[test]
+fn registering_and_unregistering_in_one_frame_is_allowed() {
+    let message = compile_error(
+        "callback_roundtrip",
+        "Ctx :: struct { hits: i64 }\n\
+         Registration :: linear struct { token: i64 }\n\
+         on_event :: fn(mut ctx: Ctx, code: i64) { ctx.hits = ctx.hits + code }\n\
+         register :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> Registration\n\
+         unregister :: fn(move r: Registration) -> i64 { r.token }\n\
+         main :: fn() -> i64 {\n\
+         \x20   c := Ctx { hits = 0 }\n\
+         \x20   r := register($on_event, c)\n\
+         \x20   unregister(r)\n\
+         }\n",
+    );
+    for premature in ["Region error", "Ownership error", "Linearity error"] {
+        assert!(
+            !message.contains(premature),
+            "the safe shape was rejected by {premature}:\n{message}"
+        );
+    }
+}

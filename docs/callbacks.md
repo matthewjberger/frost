@@ -4,8 +4,8 @@ This is the design and the record of building it. It is item 3 in
 [roadmap.md](roadmap.md), and the same method that produced
 [separate-compilation.md](separate-compilation.md) is used here: work the design
 against the code that exists until it either survives or does not, before
-writing any of it. Step 1 of the five at the bottom is built; the rest is
-design.
+writing any of it. Steps 1 and 2 of the five at the bottom are built, which is
+everything up to but not including emitting code; the rest is design.
 
 ## The contradiction it exists to remove
 
@@ -147,27 +147,33 @@ in the language could keep it until now.
 So the feature adds exactly one obligation, and it is the whole safety argument:
 
 > The context argument of a callback registration must name storage that outlives
-> the registration. A place in the current frame does not.
+> the registration.
 
-Which means the context has to come from somewhere with a longer life, and Frost
-already has the two somewheres: an arena entered with `with`, whose region rule
-is enforced in `src/regions.rs`, or a pool, whose `Handle<T>` is a copy value
-that may be stored and returned by design (spec 3.4). Both are checkable with the
-machinery that exists. A frame temporary is not, and is rejected.
+The first answer written here was that the context therefore has to live in an
+arena or a pool, and a place in the current frame is rejected. **That answer is
+wrong, and it is wrong in a way worth recording**, because it does not survive
+contact with the language it is a rule for. A context is a value of a struct
+type, and a value lives where it is bound; putting one in an arena means holding
+a `^Ctx`, and then the registration's context parameter is a pointer rather than
+a moved value and the ownership argument above evaporates. The rule would have
+rejected every program anyone could write.
 
-That obligation is what makes this different from the C idiom rather than a
-prettier spelling of it. Without it the trampoline is type-safe and the program
-still has a dangling pointer.
+**The obligation is satisfied from the other end.** A `Registration` is `linear`,
+so `check_linearity` already forces it to be consumed exactly once in the
+function that made it. A context in that same frame therefore outlives the
+registration by construction, and the frame is exactly the right place for it.
+What is left to stop is the registration *leaving* that function by some other
+road, which is the same shape `src/regions.rs` already enforces for pointers:
+returned, stored where the call cannot see, or handed back as the call's answer.
 
-**A second, smaller consequence.** The registration is linear and the context is
-inside the region, so `unregister` returning the context by value has to be a
-move out of the region and into the caller's, which is the ordinary case the
-region check already covers. But a `Registration` that outlives its `with` block
-would strand a pointer into a dead arena, so `Registration` must be region-bound
-in the same way a `^T` into that arena is. That is not a new rule either: it is
-`src/regions.rs` treating a linear registration as arena-derived, which it can
-do because provenance is a flow question and the registration is produced from
-the context.
+So the rule is not a new kind of check. A registration whose context is rooted in
+this frame counts as a value that points into this frame, and the three roads out
+are closed by the code that was already closing them. Linearity closes the
+fourth, which is not consuming it at all.
+
+That is what makes this different from the C idiom rather than a prettier
+spelling of it. Without it the trampoline is type-safe and the program still has
+a dangling pointer.
 
 ## The order to build it in
 
@@ -199,11 +205,20 @@ both self-hosting fixpoints, in the way the separate-compilation steps were.
    so `move ctx: Ctx` on an extern makes the argument a move with no further
    work, and a program that registers a context and then reads it is rejected
    by the pass that was already there.
-2. **Reject the unsafe case.** Extend `check_frame_escapes` so that a place in
-   the current frame passed as the context of a registration is an error. This
-   is the whole safety argument and it lands before anything is emitted, so
-   there is a window where the feature can only say no, which is the right way
-   round. Breakable on purpose to confirm it fails.
+2. **Close the roads out.** *Done.* `check_frame_escapes` now treats a
+   registration whose context is rooted in this frame as a value that points
+   into this frame, so it cannot be returned, stored where the call cannot see,
+   or be the call's answer. `callback_registrations` in `src/callbacks.rs` is
+   what tells it which calls those are and which argument is the context.
+
+   This lands before anything is emitted, so there is a window where the feature
+   can only say no, which is the right way round. It was checked in both
+   directions: a registration returned out of the frame holding its context is
+   rejected, and the shape the design is for, registering and unregistering in
+   one frame, gets past every check the language has and stops only at lowering,
+   which is steps 3 and 4. Emptying the registration table makes the first of
+   those stop failing, which is the confirmation that the check is what catches
+   it rather than something downstream.
 3. **Emit the trampoline.** One function per `(handler, context type)` pair, with
    `IrFunction::local` set, since it is called only from the object that
    registered it, exactly as a specialization is. Its body is one `ptr_cast` and
@@ -212,14 +227,14 @@ both self-hosting fixpoints, in the way the separate-compilation steps were.
 4. **Lower the call.** The `$handler` argument becomes
    `IrRvalue::FunctionAddress` of the trampoline; the context argument becomes a
    pointer to its storage. Everything else about the extern call is unchanged.
-5. **Make the registration region-bound.** Teach `src/regions.rs` that a value
-   produced from an arena-derived context is itself arena-derived, so a
-   registration cannot outlive the region its context lives in.
+5. **Run one.** Bind a real C callback API and register against it, because
+   every step above is checkable without a library and none of them proves the
+   ABI is right. Whatever this finds is the part of the design that was never
+   tested against C, and the emitted trampoline is where it will show up.
 
-Steps 1 and 2 are parsing and a check and land before anything is emitted.
-Step 5 is the one that is easy to declare done without being done, so it wants
-the same treatment the interface closure check got: break it deliberately and
-confirm it fails before trusting it.
+Steps 1 and 2 are parsing and a check and landed before anything is emitted,
+which is the order that let the safety rule be found to be wrong while it was
+still cheap to change.
 
 ## What is still open
 

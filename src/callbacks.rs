@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::{Result, bail};
 
 use crate::parser::{ParamMode, Parameter, Program, Statement};
@@ -27,6 +29,37 @@ pub fn check_callback_declarations(program: &Program) -> Result<()> {
         }
     }
     Ok(())
+}
+
+// Every callback registration in a program, by name, with the position of the
+// argument that carries the context. The region check needs this to know that
+// the value a registration answers with names storage in the caller's frame, so
+// that letting it escape is the same error as letting a pointer escape. See
+// docs/callbacks.md.
+pub fn callback_registrations(program: &Program) -> HashMap<String, usize> {
+    let mut registrations = HashMap::new();
+    for statement in program {
+        let Statement::Extern { name, params, .. } = &statement.node else {
+            continue;
+        };
+        for parameter in params {
+            let Some(Type::Proc(handler_params, _)) =
+                &parameter.compile_time_signature
+            else {
+                continue;
+            };
+            let Some(Type::RefMut(context)) = handler_params.first() else {
+                continue;
+            };
+            let carrier = params.iter().position(|parameter| {
+                parameter.type_annotation.as_ref() == Some(context.as_ref())
+            });
+            if let Some(carrier) = carrier {
+                registrations.insert(name.clone(), carrier);
+            }
+        }
+    }
+    registrations
 }
 
 fn check_registration(
@@ -147,6 +180,19 @@ mod tests {
                 .unwrap_err()
                 .to_string();
         assert!(message.contains("no context"), "{message}");
+    }
+
+    #[test]
+    fn registrations_are_found_with_the_context_position() {
+        let source = format!(
+            "{CONTEXT}register :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64\n"
+        );
+        let mut lexer = Lexer::new(&source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(&tokens);
+        let statements = parser.parse().unwrap();
+        let found = callback_registrations(&statements);
+        assert_eq!(found.get("register"), Some(&1));
     }
 
     // An ordinary generic is not a registration and must not be dragged into

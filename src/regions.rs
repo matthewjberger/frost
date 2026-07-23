@@ -305,6 +305,13 @@ impl<'a> Region<'a> {
 // is fine to return, and only a pointer formed from this frame's own storage is
 // not.
 pub fn check_frame_escapes(program: &Program) -> Result<()> {
+    // A callback registration keeps a pointer to its context for as long as it
+    // is registered, so the value it answers with names storage in this frame
+    // exactly as `ptr_to` does. A context in this frame is the ordinary case
+    // and is safe, because `check_linearity` forces the registration to be
+    // consumed in the function that made it and this check stops it leaving
+    // that function by any other road. See docs/callbacks.md.
+    let registrations = crate::callbacks::callback_registrations(program);
     for statement in program {
         if let Statement::Constant(
             name,
@@ -323,6 +330,7 @@ pub fn check_frame_escapes(program: &Program) -> Result<()> {
                 materialized: HashSet::new(),
                 bound: HashSet::new(),
                 answers_view: escapes,
+                registrations: &registrations,
             };
             frame.check(body)?;
         }
@@ -335,7 +343,7 @@ fn is_borrowed_view(ty: &Type) -> bool {
     matches!(ty, Type::Ptr(_) | Type::Slice(_))
 }
 
-struct Frame {
+struct Frame<'a> {
     function: String,
     // Locals whose storage is this frame's.
     storage: HashSet<String>,
@@ -346,9 +354,12 @@ struct Frame {
     bound: HashSet<String>,
     // Whether this function answers with a pointer or a slice at all.
     answers_view: bool,
+    // Callback registrations in the program, and which argument of each is the
+    // context whose storage it keeps.
+    registrations: &'a HashMap<String, usize>,
 }
 
-impl Frame {
+impl Frame<'_> {
     fn check(&mut self, block: &Block) -> Result<()> {
         for (index, statement) in block.iter().enumerate() {
             let last = index + 1 == block.len();
@@ -474,7 +485,14 @@ impl Frame {
                     "ptr_cast" => arguments
                         .iter()
                         .any(|inner| self.points_into_frame(inner)),
-                    _ => false,
+                    // A registration holds its context for as long as it
+                    // lives, so it names that storage the way a pointer to it
+                    // would.
+                    _ => self
+                        .registrations
+                        .get(name)
+                        .and_then(|context| arguments.get(*context))
+                        .is_some_and(|context| self.rooted_here(context)),
                 }
             }
             _ => false,
