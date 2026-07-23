@@ -3241,8 +3241,22 @@ impl<'a> FunctionLowering<'a> {
                     plans.push(ArgPlan::Borrow(index));
                 }
             } else {
+                // The declared parameter type with everything bound so far
+                // substituted into it. That is what tells a bare generic
+                // literal which instance it is: without it
+                // `Pair { first = 3, second = 4 }` lowers as the template
+                // `Pair`, which has no layout, rather than as `Pair<i64>`.
+                //
+                // Only when the result is concrete. A type argument written
+                // after the value it parameterizes has not been bound yet, and
+                // an expected type still naming a type parameter would say less
+                // than nothing.
+                let substituted = substitute_type(&param_ty, &subst);
+                let mut unresolved = Vec::new();
+                collect_type_params(&substituted, &mut unresolved);
+                let expected = unresolved.is_empty().then_some(substituted);
                 let (operand, value_type) =
-                    self.lower_expression(argument, None)?;
+                    self.lower_expression(argument, expected.as_ref())?;
                 infer_subst_into(
                     &param_ty,
                     &value_type,
