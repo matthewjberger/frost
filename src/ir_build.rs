@@ -4125,7 +4125,7 @@ impl<'a> FunctionLowering<'a> {
         index: &Expression,
     ) -> Result<(IrOperand, Type)> {
         let (index_operand, index_type) = self.lower_expression(index, None)?;
-        if let Type::Handle(element) = index_type {
+        if matches!(index_type, Type::Handle(_)) {
             if let Some(struct_name) = self.slab_shaped_base(base) {
                 return self.slab_place_deref(
                     base,
@@ -4133,7 +4133,9 @@ impl<'a> FunctionLowering<'a> {
                     index_operand,
                 );
             }
-            return self.pool_element_address(base, index_operand, *element);
+            bail!(
+                "native backend: indexing by a Handle needs a slab-shaped struct, one with a 'storage' array and a parallel 'generations' array; see examples/native/lib/slab.frost"
+            );
         }
         if matches!(self.place_type(base), Some(Type::Str)) {
             return self.str_byte_address(base, index_operand, index_type);
@@ -4182,25 +4184,6 @@ impl<'a> FunctionLowering<'a> {
                 base: base_pointer,
                 index: index_operand,
                 element_size,
-            },
-        ));
-        Ok((IrOperand::Local(result), element_type))
-    }
-
-    fn pool_element_address(
-        &mut self,
-        base: &Expression,
-        handle_operand: IrOperand,
-        element_type: Type,
-    ) -> Result<(IrOperand, Type)> {
-        let (pool_operand, _) = self.lower_expression(base, None)?;
-        let result =
-            self.fresh_local(Type::Ptr(Box::new(element_type.clone())), None);
-        self.emit(IrStatement::Assign(
-            result,
-            IrRvalue::Call {
-                function: "pool_get".to_string(),
-                arguments: vec![pool_operand, handle_operand],
             },
         ));
         Ok((IrOperand::Local(result), element_type))

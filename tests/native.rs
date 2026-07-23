@@ -3511,22 +3511,37 @@ fn native_borrow_aggregate_literal() {
 
 const EXPLICIT_TYPE_ARGUMENTS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
-pool_new :: extern fn(capacity: i64, elem_size: i64) -> ^u8
-pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
-pool_get :: extern fn(pool: ^u8, handle: i64) -> ^u8
 
 Entity :: struct { hp: i64, mana: i64 }
 
+Slab :: struct($T: Type, $N: usize) {
+    storage: [N]T,
+    free_list: [N]i64,
+    generations: [N]i64,
+    free_count: i64,
+}
+
 size_of :: fn($T: Type) -> i64 { sizeof(T) }
-make_pool :: fn($T: Type, capacity: i64) -> ^u8 { pool_new(capacity, sizeof(T)) }
-insert :: fn(pool: ^u8, move value: $T) -> Handle<T> { pool_alloc(pool, ptr_to(value)) }
+
+insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> Handle<T> {
+    index := s.free_count
+    s.free_count = s.free_count + 1
+    s.storage[index] = value
+    packed := (s.generations[index] << 32) | index
+    packed
+}
 
 main :: fn() -> i64 {
     printf("%lld\n", size_of($i64))
     printf("%lld\n", size_of($Entity))
 
-    world := make_pool($Entity, 16)
-    h : Handle<Entity> = insert(world, Entity { hp = 100, mana = 30 })
+    mut world : Slab<Entity, 16> = Slab {
+        storage = [Entity { hp = 0, mana = 0 }; 16],
+        free_list = [0; 16],
+        generations = [0; 16],
+        free_count = 0,
+    }
+    h := insert($Entity, $16, world, Entity { hp = 100, mana = 30 })
     printf("%lld\n", world[h].hp + world[h].mana)
     0
 }
@@ -3544,19 +3559,36 @@ fn native_explicit_type_arguments() {
 
 const GENERIC_CONSTRUCTION_INFERENCE: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
-pool_new :: extern fn(capacity: i64, elem_size: i64) -> ^u8
-pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
-pool_get :: extern fn(pool: ^u8, handle: i64) -> ^u8
 
 Pair :: struct($T: Type) { first: T, second: T }
+
+Slab :: struct($T: Type, $N: usize) {
+    storage: [N]T,
+    generations: [N]i64,
+    free_count: i64,
+}
+
+zero_pair :: fn() -> Pair<i64> { Pair { first = 0, second = 0 } }
+
+insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> Handle<T> {
+    index := s.free_count
+    s.free_count = s.free_count + 1
+    s.storage[index] = value
+    packed := (s.generations[index] << 32) | index
+    packed
+}
 
 main :: fn() -> i64 {
     inferred := Pair { first = 30, second = 12 }
     printf("%lld\n", inferred.first + inferred.second)
 
-    pool := pool_new(4, 16)
-    mut v := Pair { first = 3, second = 4 }
-    h : Handle<Pair<i64>> = pool_alloc(pool, ptr_to(v))
+    mut pool : Slab<Pair<i64>, 4> = Slab {
+        storage = [zero_pair(); 4],
+        generations = [0; 4],
+        free_count = 0,
+    }
+    value : Pair<i64> = Pair { first = 3, second = 4 }
+    h := insert($Pair<i64>, $4, pool, value)
     printf("%lld\n", pool[h].first + pool[h].second)
     0
 }
@@ -3773,11 +3805,44 @@ fn native_tuple_pattern_match() {
 
 const POOL_HANDLE_DEREF: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
-pool_new :: extern fn(capacity: i64, elem_size: i64) -> ^u8
-pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
-pool_get :: extern fn(pool: ^u8, handle: i64) -> ^u8
 
 Entity :: struct { hp: i64, mana: i64 }
+
+Slab :: struct($T: Type, $N: usize) {
+    storage: [N]T,
+    generations: [N]i64,
+    free_list: [N]i64,
+    free_count: i64,
+}
+
+reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
+    mut i : i64 = 0
+    while (i < N) { s.generations[i] = 0  s.free_list[i] = N - 1 - i  i = i + 1 }
+    s.free_count = N
+}
+
+insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> Handle<T> {
+    s.free_count = s.free_count - 1
+    index := s.free_list[s.free_count]
+    s.storage[index] = value
+    packed := (s.generations[index] << 32) | index
+    packed
+}
+
+alive :: fn($T: Type, $N: usize, s: Slab<T, N>, handle: Handle<T>) -> i64 {
+    raw : i64 = handle
+    if (s.generations[raw & 4294967295] == (raw >> 32)) { 1 } else { 0 }
+}
+
+release :: fn($T: Type, $N: usize, mut s: Slab<T, N>, handle: Handle<T>) -> i64 {
+    raw : i64 = handle
+    index := raw & 4294967295
+    if (s.generations[index] != (raw >> 32)) { return 0 }
+    s.generations[index] = s.generations[index] + 1
+    s.free_list[s.free_count] = index
+    s.free_count = s.free_count + 1
+    1
+}
 
 heal :: fn(mut e: Entity, amount: i64) {
     e.hp = e.hp + amount
@@ -3787,12 +3852,16 @@ total :: fn(e: Entity) -> i64 {
 }
 
 main :: fn() -> i64 {
-    world := pool_new(8, 16)
+    mut world : Slab<Entity, 8> = Slab {
+        storage = [Entity { hp = 0, mana = 0 }; 8],
+        generations = [0; 8],
+        free_list = [0; 8],
+        free_count = 0,
+    }
+    reset($Entity, $8, world)
 
-    mut a := Entity { hp = 50, mana = 10 }
-    ha : Handle<Entity> = pool_alloc(world, ptr_to(a))
-    mut b := Entity { hp = 20, mana = 5 }
-    hb : Handle<Entity> = pool_alloc(world, ptr_to(b))
+    ha := insert($Entity, $8, world, Entity { hp = 50, mana = 10 })
+    hb := insert($Entity, $8, world, Entity { hp = 20, mana = 5 })
 
     printf("%lld\n", world[ha].hp)
     world[ha].hp = 60
@@ -4281,43 +4350,75 @@ fn native_integer_semantics_match() {
 const GENERATIONAL_POOL: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
-pool_new :: extern fn(capacity: i64, elem_size: i64) -> ^u8
-pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
-pool_get :: extern fn(pool: ^u8, handle: i64) -> ^u8
-pool_free :: extern fn(pool: ^u8, handle: i64) -> i64
-pool_contains :: extern fn(pool: ^u8, handle: i64) -> i64
-handle_index :: extern fn(handle: i64) -> i64
-handle_generation :: extern fn(handle: i64) -> i64
-
 Entity :: struct { hp: i64, mana: i64 }
 
+Slab :: struct($T: Type, $N: usize) {
+    storage: [N]T,
+    generations: [N]i64,
+    free_list: [N]i64,
+    free_count: i64,
+}
+
+reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
+    mut i : i64 = 0
+    while (i < N) { s.generations[i] = 0  s.free_list[i] = N - 1 - i  i = i + 1 }
+    s.free_count = N
+}
+
+insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> Handle<T> {
+    s.free_count = s.free_count - 1
+    index := s.free_list[s.free_count]
+    s.storage[index] = value
+    packed := (s.generations[index] << 32) | index
+    packed
+}
+
+alive :: fn($T: Type, $N: usize, s: Slab<T, N>, handle: Handle<T>) -> i64 {
+    raw : i64 = handle
+    if (s.generations[raw & 4294967295] == (raw >> 32)) { 1 } else { 0 }
+}
+
+release :: fn($T: Type, $N: usize, mut s: Slab<T, N>, handle: Handle<T>) -> i64 {
+    raw : i64 = handle
+    index := raw & 4294967295
+    if (s.generations[index] != (raw >> 32)) { return 0 }
+    s.generations[index] = s.generations[index] + 1
+    s.free_list[s.free_count] = index
+    s.free_count = s.free_count + 1
+    1
+}
+
+index_of :: fn(handle: Handle<Entity>) -> i64 { raw : i64 = handle  raw & 4294967295 }
+generation_of :: fn(handle: Handle<Entity>) -> i64 { raw : i64 = handle  raw >> 32 }
+
 main :: fn() -> i64 {
-    p := pool_new(8, 16)
+    mut p : Slab<Entity, 8> = Slab {
+        storage = [Entity { hp = 0, mana = 0 }; 8],
+        generations = [0; 8],
+        free_list = [0; 8],
+        free_count = 0,
+    }
+    reset($Entity, $8, p)
 
-    mut a := Entity { hp = 100, mana = 30 }
-    mut b := Entity { hp = 50, mana = 10 }
-    ha := pool_alloc(p, ptr_to(a))
-    hb := pool_alloc(p, ptr_to(b))
+    ha := insert($Entity, $8, p, Entity { hp = 100, mana = 30 })
+    hb := insert($Entity, $8, p, Entity { hp = 50, mana = 10 })
 
-    printf("%lld\n", handle_index(ha))
-    printf("%lld\n", handle_index(hb))
-    printf("%lld\n", handle_generation(ha))
+    printf("%lld\n", index_of(ha))
+    printf("%lld\n", index_of(hb))
+    printf("%lld\n", generation_of(ha))
 
-    ea : ^Entity = pool_get(p, ha)
-    printf("%lld\n", ea^.hp)
-    ea^.hp = 999
-    ea2 : ^Entity = pool_get(p, ha)
-    printf("%lld\n", ea2^.hp)
+    printf("%lld\n", p[ha].hp)
+    p[ha].hp = 999
+    printf("%lld\n", p[ha].hp)
 
-    printf("%lld\n", pool_contains(p, ha))
-    printf("%lld\n", pool_free(p, ha))
-    printf("%lld\n", pool_contains(p, ha))
+    printf("%lld\n", alive($Entity, $8, p, ha))
+    printf("%lld\n", release($Entity, $8, p, ha))
+    printf("%lld\n", alive($Entity, $8, p, ha))
 
-    mut c := Entity { hp = 7, mana = 7 }
-    hc := pool_alloc(p, ptr_to(c))
-    printf("%lld\n", handle_index(hc))
-    printf("%lld\n", handle_generation(hc))
-    printf("%lld\n", pool_contains(p, ha))
+    hc := insert($Entity, $8, p, Entity { hp = 7, mana = 7 })
+    printf("%lld\n", index_of(hc))
+    printf("%lld\n", generation_of(hc))
+    printf("%lld\n", alive($Entity, $8, p, ha))
     0
 }
 "#;

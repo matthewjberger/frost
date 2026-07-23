@@ -71,16 +71,22 @@ that both backends link automatically. Programs reach it through the same
 `extern fn` mechanism:
 
 ```
-pool_new   :: extern fn(capacity: i64, elem_size: i64) -> ^u8
-pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
-pool_get   :: extern fn(pool: ^u8, handle: i64) -> ^u8
+frost_bounds_check :: extern fn(index: i64, length: i64)
+frost_assert       :: extern fn(cond: bool)
+frost_read_file    :: extern fn(path: ^i8) -> ^i8
 ```
 
-Its interface is intentionally **scalar-only**. A pool is an opaque `^u8`
-pointer and a handle is a packed `i64`. Nothing is passed or returned by
+Its interface is intentionally **scalar-only**. Nothing is passed or returned by
 aggregate value, so the runtime's *natural* C ABI matches Frost's internal
 aggregate convention with zero negotiation. That is also why the identical
 compiled runtime links into both backends and they agree bit for bit.
+
+**The memory model is not in here.** The runtime used to own the generational
+pool, and it does not any more: a slab is a Frost struct with Frost operations
+over it (`examples/native/lib/slab.frost`), which is why fixed-capacity storage
+works under `--freestanding` where there is no libc at all. What is left in C is
+bounds and generation aborts, assertions, and the IO helpers the bootstrap
+compiler uses.
 
 ## 2. Frost lowers through C: `--emit-c`
 
