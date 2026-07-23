@@ -149,7 +149,10 @@ correct type and operation for each value because the IR is fully typed, and
 - Sign / zero extension and truncation casts between integer widths, and
   integer/float conversions.
 - `extern fn` C interop, including string-literal arguments with escape
-  sequences (e.g. `puts`, `printf`).
+  sequences (e.g. `puts`, `printf`), C functions that return a struct by value
+  (classified per target, see below), and callback registration, where a `$`
+  function parameter plus a context taken by `move` hands a C library a Frost
+  function pointer and a typed context.
 - `str`, a byte-slice view (pointer plus length): string-literal values,
   `str_len` in constant time, bounds-checked byte indexing `s[i]`, and passing
   and returning `str` by value.
@@ -430,8 +433,14 @@ AST; both point at a line.
     passes the handler's address and the context's address. There is no
     trampoline and no cast, because a `mut` parameter is already a pointer and
     Frost and C share a calling convention. [callbacks.md](callbacks.md) has the
-    design and the one thing it does not yet do.)*
-14. Separate compilation. *(Done. A module is a file, its interface is its
+    design and the record of building it.)*
+14. The C ABI for struct returns. *(Done. `src/c_abi.rs` classifies an
+    `extern fn`'s aggregate return the way the target's C compiler does, per
+    target, because Frost's uniform hidden out-pointer is Frost's own
+    convention and C does not share it. The C backend defers to the C compiler
+    instead by declaring a real struct type. Item 4 of
+    [roadmap.md](roadmap.md) has the table and where it was checked.)*
+15. Separate compilation. *(Done. A module is a file, its interface is its
     `export` line, and a specialization is emitted in the module that
     instantiates it. On `--link` each module is its own object, and
     `--incremental` rebuilds a module only when its own source or an imported

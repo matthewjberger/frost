@@ -69,7 +69,12 @@ actual work predictable.
    something the compiler checks and the reader can see, and it makes error
    values non-ignorable.
 5. **Speak C fluently going out.** `extern fn` reaches the entire C ecosystem
-   with no glue. See [c-compatibility.md](c-compatibility.md).
+   with no glue, including the two shapes that are easy to leave out and then
+   be stuck without: a function that returns a struct by value, which follows
+   the target's real C ABI rather than Frost's own convention, and a callback,
+   which is a `$` function parameter plus a context taken by `move` rather than
+   a raw `^u8`. See [c-compatibility.md](c-compatibility.md) and
+   [callbacks.md](callbacks.md).
 6. **One typed IR, three execution paths, kept honest.** The AST lowers to a
    single typed IR from which a Cranelift backend and a portable C backend emit
    and an IR interpreter runs directly, and a differential test puts every
@@ -104,9 +109,13 @@ actual work predictable.
 - **Not lifetime-annotated.** Frost will not grow lifetime variables or region
   syntax. The second-class-reference rule is the deliberate trade that removes
   the need for them.
-- **Not a stable C-callable ABI.** Frost calls C. C does not call Frost. The
-  emitted C is an internal lowering, and it is not an interface anyone should
-  link against. That asymmetry is what keeps the backend simple.
+- **Not a stable C-callable ABI.** Frost calls C, and there is no attribute that
+  exposes a Frost function to a C caller. The emitted C is an internal lowering,
+  not an interface anyone should link against, and that asymmetry is what keeps
+  the backend simple. The one place C does call Frost is a registered callback,
+  which works because the compiler picked the function and its signature rather
+  than a user promising one, so it is a hole in the direction of travel and not
+  in the ABI promise.
 - **Not maximally general.** Frost intentionally omits capturing closures
   (function pointers and compile-time function arguments instead), exceptions
   (errors are failure sets and linear enum returns), and implicit conversions

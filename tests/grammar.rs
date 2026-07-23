@@ -25,6 +25,15 @@ fn grammar_accepts_specified_constructs() {
         "Meters :: distinct i64",
         "printf :: extern fn(fmt: ^i8, value: i64) -> i32",
         "close :: extern fn(f: i64)",
+        // An extern takes parameter modes and compile-time parameters, which
+        // is what a callback registration is written with (spec 12.1).
+        "consume :: extern fn(move f: i64)",
+        "reg :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64",
+        "make :: extern fn(v: i64) -> Ctx",
+        // A function type may say `mut`, because a `mut` parameter is a
+        // reference in the signature and the surface has no reference type.
+        "hold :: fn(f: fn(mut Ctx, i64)) { }",
+        "held :: fn(f: fn(move Ctx) -> i64) { }",
         "main :: fn() -> i64 {\n x := 5\n mut y : i64 = 0\n y = y + 1\n 0\n }",
         "cond :: fn() -> i64 { if (1 < 2) { 1 } else { 0 } }",
         "loop :: fn() -> i64 {\n mut i : i64 = 0\n while (i < 3) { i = i + 1 }\n i\n }",

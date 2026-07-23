@@ -496,6 +496,15 @@ indirect call a plain function pointer with no hidden allocation and no captured
 lifetimes to reason about. In practice, callback-style code threads a context
 value alongside the function pointer, the same pattern C uses.
 
+Registering a callback **with a C library** is the one case where that pattern
+gets language support, because it is the case where the context outlives the
+call. It is written as a `$` function parameter on an `extern` plus a context
+taken by `move`, and it is closer to Rust's `Box::into_raw` plus a
+`extern "C" fn` shim than to a closure: the context is handed over, the caller
+cannot touch it while the callback can fire, and getting it back is what
+unregistration is for. Unlike the Rust version there is no `unsafe` and no raw
+pointer in what you write. See chapter 12.1 of [spec.md](spec.md).
+
 ## Compile-time evaluation
 
 Frost has no general compile-time interpreter and no macros. The compile-time

@@ -260,12 +260,20 @@ A few honest gaps in the current implementation:
   cover. `check_frame_escapes` narrows the hatch: a raw pointer formed from this
   frame's own storage, including one taken with `ptr_to` or a slice over a local
   array, cannot be returned.
-- **Callbacks are an unsafe API today**, because the only way to write one is
-  the C idiom of a function pointer plus an untyped `^u8`, which is long-lived
-  and outside every check here. The fix is designed and not built: a callback
-  becomes a compile-time function argument plus a typed context the caller moves
-  in and gets back on unregistration, with the registration linear so forgetting
-  to unregister is a compile error. See item 4 in [roadmap.md](roadmap.md).
+- **Callbacks used to be an unsafe API** and are no longer, which is worth
+  recording here because it was the one place the implementation contradicted
+  the goal above. A callback is now a compile-time function argument plus a
+  typed context the caller moves in and gets back on unregistration, with the
+  registration `linear` so forgetting to unregister is a compile error, and the
+  region check holding the registration to the frame that holds its context.
+  Nothing in a program that uses one names a `^u8`. See
+  [callbacks.md](callbacks.md).
+
+  What that guarantee is *not*: it says no Frost code holds the context while
+  the callback can fire, and it says the registration cannot outlive the
+  storage. It says nothing about the C library's own threading, and a library
+  that keeps the pointer after unregistration is outside anything the compiler
+  can see.
 - The static checks run on the AST, so **integer overflow** follows the backend's
   C semantics (wrapping for unsigned, two's-complement for signed) rather than
   trapping.
