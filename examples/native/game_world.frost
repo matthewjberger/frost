@@ -5,7 +5,7 @@
 // The slab is the standard library one (std/slab.frost). Only `world[handle]` comes from the
 // compiler, and that is the one thing that has to.
 
-printf :: extern fn(fmt: ^i8, value: i64) -> i32
+import "io.frost"
 
 import "slab.frost"
 
@@ -19,7 +19,7 @@ threat_of :: fn(e: Entity) -> i64 {
     }
 }
 
-show :: fn(flag: bool) { if (flag) { printf("%lld\n", 1) } else { printf("%lld\n", 0) } }
+show :: fn(flag: bool) { if (flag) { print_int_line(1) } else { print_int_line(0) } }
 
 main :: fn() -> i64 {
     mut world : Slab<Entity, 16> = Slab {
@@ -43,10 +43,10 @@ main :: fn() -> i64 {
     for i in 0..3 {
         total_threat = total_threat + threat_of(world[handles[i]])
     }
-    printf("%lld\n", total_threat)              // 10
+    print_int_line(total_threat)  // 10
 
     world[handles[1]].hp = world[handles[1]].hp - 15
-    printf("%lld\n", world[handles[1]].hp)      // 25
+    print_int_line(world[handles[1]].hp)  // 25
 
     show(slab_release($Entity, $16, world, handles[1]))
     show(slab_alive($Entity, $16, world, handles[1]))   // 0

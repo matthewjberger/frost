@@ -11,7 +11,7 @@
 // read-modify-write (slab_read / slab_write) instead. Keeping the ergonomic
 // place-deref is exactly the thin slice that stays compiler-supported.
 
-printf :: extern fn(fmt: ^i8, value: i64) -> i32
+import "io.frost"
 
 Entity :: struct { hp: i64, mana: i64 }
 
@@ -88,22 +88,22 @@ main :: fn() -> i64 {
     foe := slab_insert(world, Entity { hp = 40, mana = 10 })
 
     a := slab_read(world, hero)
-    printf("%lld\n", a.hp)
+    print_int_line(a.hp)
     b := slab_read(world, foe)
-    printf("%lld\n", b.hp)
+    print_int_line(b.hp)
 
     mut updated := slab_read(world, hero)
     updated.hp = 75
     slab_write(world, hero, updated)
     c := slab_read(world, hero)
-    printf("%lld\n", c.hp)
+    print_int_line(c.hp)
 
-    if (slab_alive(world, foe)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    if (slab_alive(world, foe)) { print_int_line(1) } else { print_int_line(0) }
     slab_release(world, foe)
-    if (slab_alive(world, foe)) { printf("%lld\n", 9) } else { printf("%lld\n", 0) }
+    if (slab_alive(world, foe)) { print_int_line(9) } else { print_int_line(0) }
 
     reused := slab_insert(world, Entity { hp = 7, mana = 7 })
-    if (slab_alive(world, reused)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
-    if (slab_alive(world, foe)) { printf("%lld\n", 9) } else { printf("%lld\n", 0) }
+    if (slab_alive(world, reused)) { print_int_line(1) } else { print_int_line(0) }
+    if (slab_alive(world, foe)) { print_int_line(9) } else { print_int_line(0) }
     0
 }

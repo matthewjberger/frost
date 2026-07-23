@@ -39,16 +39,48 @@ What replaces the things references are normally used for:
 ## A first program
 
 ```
-printf :: extern fn(fmt: ^i8, value: i64) -> i32
+import "io.frost"
+import "slab.frost"
 
-square :: fn(x: i64) -> i64 { x * x }
+Kind :: enum { Hero, Monster { threat: i64 } }
+Entity :: struct { hp: i64, kind: Kind }
+
+// `mut` borrows for the call. There is no `&`, so the borrow cannot be stored.
+wound :: fn(mut e: Entity, amount: i64) { e.hp = e.hp - amount }
+
+threat :: fn(e: Entity) -> i64 {
+    match e.kind {
+        case .Hero: 0
+        case .Monster { threat }: threat
+    }
+}
 
 main :: fn() -> i64 {
-    mut total : i64 = 0
-    for i in 0..6 {
-        total = total + square(i)
+    // Entities live contiguously in one slab. No allocation, no runtime.
+    mut world : Slab<Entity, 8> = Slab {
+        storage = [Entity { hp = 0, kind = Kind::Hero }; 8],
+        generations = [0; 8],
+        free_list = [0; 8],
+        free_count = 0,
     }
-    printf("%lld\n", total)   // 55
+    slab_reset($Entity, $8, world)
+
+    hero := slab_insert($Entity, $8, world, Entity { hp = 100, kind = Kind::Hero })
+    orc := slab_insert($Entity, $8, world,
+        Entity { hp = 30, kind = Kind::Monster { threat = 7 } })
+
+    // A handle is a copy value, not a pointer, so it can be stored and returned.
+    wound(world[hero], threat(world[orc]))
+    print_int_line(world[hero].hp)          // 93
+
+    slab_release($Entity, $8, world, orc)
+    // The slot is free for reuse, and the orc's handle can never read whatever
+    // takes it. A stale handle is detectable rather than dangling.
+    if (slab_alive($Entity, $8, world, orc)) {
+        print_line("alive")
+    } else {
+        print_line("stale")
+    }
     0
 }
 ```
@@ -56,6 +88,11 @@ main :: fn() -> i64 {
 ```bash
 frost program.frost          # compile, link, and run
 ```
+
+Entities are plain data in one contiguous slab. `mut` borrows for the call and
+the borrow cannot be stored, `match` reads the enum, and a handle is a copy
+value that goes stale rather than dangling. No allocation and no runtime call
+anywhere in it.
 
 ## Highlights
 

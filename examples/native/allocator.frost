@@ -5,7 +5,7 @@
 // directly. Here a bump allocator over a byte buffer implements the interface,
 // and `alloc` allocates through the interface without naming the bump at all.
 
-printf :: extern fn(fmt: ^i8, value: i64) -> i32
+import "io.frost"
 
 Bump :: struct {
     data: ^u8,
@@ -47,9 +47,9 @@ main :: fn() -> i64 {
     q := ptr_cast($i64, alloc(a, 8))
     q^ = 7
 
-    printf("%lld\n", p^)            // 42
-    printf("%lld\n", q^)            // 7
-    printf("%lld\n", p^ + q^)       // 49
-    printf("%lld\n", bump.offset)   // 16, two 8-byte allocations
+    print_int_line(p^)  // 42
+    print_int_line(q^)  // 7
+    print_int_line(p^ + q^)  // 49
+    print_int_line(bump.offset)  // 16, two 8-byte allocations
     0
 }

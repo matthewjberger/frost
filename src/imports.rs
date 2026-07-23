@@ -710,6 +710,14 @@ fn private_renames(
 ) -> HashMap<String, String> {
     let mut renames = HashMap::new();
     for statement in statements {
+        // An `extern` name is not this module's to rename. It is the symbol a
+        // C library actually defines, so mangling it produces a link against a
+        // name nothing exports. That only showed up once a module other than
+        // the entry file declared one, which is what a standard library doing
+        // its own IO is.
+        if matches!(statement.node, Statement::Extern { .. }) {
+            continue;
+        }
         if let Some(name) = top_level_name(&statement.node)
             && !exports.contains(name)
         {

@@ -3,14 +3,14 @@
 // gone stale. Nothing here calls a runtime; the storage and the bookkeeping are
 // the standard library slab (std/slab.frost).
 
-printf :: extern fn(fmt: ^i8, value: i64) -> i32
+import "io.frost"
 
 import "slab.frost"
 
 Stats :: struct { hp: i64, xp: i64, slot: i64 }
 Unit :: struct { id: i64, stats: Stats }
 
-show :: fn(flag: bool) { if (flag) { printf("%lld\n", 1) } else { printf("%lld\n", 0) } }
+show :: fn(flag: bool) { if (flag) { print_int_line(1) } else { print_int_line(0) } }
 
 main :: fn() -> i64 {
     mut p : Slab<Unit, 4> = Slab {
@@ -31,7 +31,7 @@ main :: fn() -> i64 {
     for i in 0..4 {
         if (slab_alive($Unit, $4, p, handles[i])) { alive = alive + 1 }
     }
-    printf("%lld\n", alive)                                   // 4
+    print_int_line(alive)  // 4
 
     show(slab_full($Unit, $4, p))                             // 1, exhausted
 
@@ -44,13 +44,13 @@ main :: fn() -> i64 {
             sum_hp = sum_hp + p[handles[i]].stats.hp
         }
     }
-    printf("%lld\n", sum_hp)                                  // 0 + 20 = 20
+    print_int_line(sum_hp)  // 0 + 20 = 20
 
     reborn := Unit { id = 99, stats = Stats { hp = 500, xp = 0, slot = 0 } }
     fresh := slab_insert($Unit, $4, p, reborn)
     show(slab_alive($Unit, $4, p, fresh))                     // 1
     show(slab_alive($Unit, $4, p, handles[3]))                // 0, the slot was reused
-    printf("%lld\n", p[fresh].id)                             // 99
-    printf("%lld\n", p[fresh].stats.hp)                       // 500
+    print_int_line(p[fresh].id)  // 99
+    print_int_line(p[fresh].stats.hp)  // 500
     0
 }

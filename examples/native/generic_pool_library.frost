@@ -6,14 +6,14 @@
 // `Slab<Tile, 4>` are different types with different layouts, and the operations
 // over them are the same source.
 
-printf :: extern fn(fmt: ^i8, value: i64) -> i32
+import "io.frost"
 
 import "slab.frost"
 
 Entity :: struct { hp: i64, mana: i64 }
 Tile :: struct { height: i64 }
 
-show :: fn(flag: bool) { if (flag) { printf("%lld\n", 1) } else { printf("%lld\n", 0) } }
+show :: fn(flag: bool) { if (flag) { print_int_line(1) } else { print_int_line(0) } }
 
 main :: fn() -> i64 {
     mut world : Slab<Entity, 8> = Slab {
@@ -25,10 +25,10 @@ main :: fn() -> i64 {
     slab_reset($Entity, $8, world)
 
     h := slab_insert($Entity, $8, world, Entity { hp = 100, mana = 30 })
-    printf("%lld\n", world[h].hp)               // 100
-    printf("%lld\n", world[h].mana)             // 30
+    print_int_line(world[h].hp)  // 100
+    print_int_line(world[h].mana)  // 30
     world[h].hp = 75
-    printf("%lld\n", world[h].hp)               // 75
+    print_int_line(world[h].hp)  // 75
 
     // The same code at a different element type and a different capacity.
     mut ground : Slab<Tile, 4> = Slab {
@@ -39,7 +39,7 @@ main :: fn() -> i64 {
     }
     slab_reset($Tile, $4, ground)
     t := slab_insert($Tile, $4, ground, Tile { height = 12 })
-    printf("%lld\n", ground[t].height)          // 12
+    print_int_line(ground[t].height)  // 12
 
     show(slab_alive($Entity, $8, world, h))     // 1
     show(slab_release($Entity, $8, world, h))   // 1

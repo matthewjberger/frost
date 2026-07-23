@@ -16,7 +16,7 @@
 // and an i64 inside, where index and generation are packed and unpacked; the
 // two convert freely because a handle is an i64 at the ABI.
 
-printf :: extern fn(fmt: ^i8, value: i64) -> i32
+import "io.frost"
 
 Slab :: struct($T: Type, $N: usize) {
     storage: [N]T,
@@ -72,15 +72,15 @@ main :: fn() -> i64 {
     hero := slab_insert($Entity, $4, world, Entity { hp = 100, mana = 30 })
     foe := slab_insert($Entity, $4, world, Entity { hp = 40, mana = 10 })
 
-    printf("%lld\n", world[hero].hp)             // 100, read in place
+    print_int_line(world[hero].hp)  // 100, read in place
     world[hero].hp = world[hero].hp - 25
-    printf("%lld\n", world[hero].hp)             // 75, written in place
-    printf("%lld\n", world[foe].hp)              // 40
+    print_int_line(world[hero].hp)  // 75, written in place
+    print_int_line(world[foe].hp)  // 40
 
-    if (slab_alive($Entity, $4, world, foe)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    if (slab_alive($Entity, $4, world, foe)) { print_int_line(1) } else { print_int_line(0) }
     slab_release($Entity, $4, world, foe)
     reused := slab_insert($Entity, $4, world, Entity { hp = 7, mana = 7 })
-    if (slab_alive($Entity, $4, world, reused)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
-    if (slab_alive($Entity, $4, world, foe)) { printf("%lld\n", 9) } else { printf("%lld\n", 0) }
+    if (slab_alive($Entity, $4, world, reused)) { print_int_line(1) } else { print_int_line(0) }
+    if (slab_alive($Entity, $4, world, foe)) { print_int_line(9) } else { print_int_line(0) }
     0
 }

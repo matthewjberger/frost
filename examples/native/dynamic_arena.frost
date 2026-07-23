@@ -8,7 +8,7 @@
 
 malloc :: extern fn(size: i64) -> ^u8
 free :: extern fn(pointer: ^u8)
-printf :: extern fn(fmt: ^i8, value: i64) -> i32
+import "io.frost"
 
 Arena :: linear struct {
     data: ^u8,
@@ -38,10 +38,10 @@ main :: fn() -> i64 {
     q := alloc_int(a)
     q^ = 100
 
-    printf("%lld\n", p^)          // 42
-    printf("%lld\n", q^)          // 100
-    printf("%lld\n", p^ + q^)     // 142
-    printf("%lld\n", a.offset)    // 16, two 8-byte allocations
+    print_int_line(p^)  // 42
+    print_int_line(q^)  // 100
+    print_int_line(p^ + q^)  // 142
+    print_int_line(a.offset)  // 16, two 8-byte allocations
 
     arena_destroy(a)              // frees the single OS allocation; required
     0

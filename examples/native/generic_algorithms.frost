@@ -1,4 +1,4 @@
-printf :: extern fn(fmt: ^i8, value: i64) -> i32
+import "io.frost"
 
 min_of :: fn(move a: $T, move b: $T) -> T { if (a < b) { a } else { b } }
 max_of :: fn(move a: $T, move b: $T) -> T { if (a > b) { a } else { b } }
@@ -15,17 +15,17 @@ bytes :: fn($T: Type) -> i64 { sizeof(T) }
 Vec3 :: struct { x: i64, y: i64, z: i64 }
 
 main :: fn() -> i64 {
-    printf("%lld\n", max_of(3, 9))
-    printf("%lld\n", min_of(3, 9))
-    printf("%lld\n", clamp(15, 0, 10))
-    printf("%lld\n", clamp(0 - 5, 0, 10))
+    print_int_line(max_of(3, 9))
+    print_int_line(min_of(3, 9))
+    print_int_line(clamp(15, 0, 10))
+    print_int_line(clamp(0 - 5, 0, 10))
 
     mut a : i64 = 100
     mut b : i64 = 200
     swap(a, b)
-    printf("%lld\n", a)
+    print_int_line(a)
 
-    printf("%lld\n", bytes($Vec3))
-    printf("%lld\n", bytes($i32))
+    print_int_line(bytes($Vec3))
+    print_int_line(bytes($i32))
     0
 }
