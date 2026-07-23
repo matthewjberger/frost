@@ -1,5 +1,6 @@
 mod allocation_sources;
 mod build_cache;
+mod c_abi;
 mod callbacks;
 mod failure_sets;
 mod imports;
@@ -21,10 +22,10 @@ mod source_map;
 mod types;
 
 pub use self::{
-    allocation_sources::*, build_cache::*, callbacks::*, failure_sets::*,
-    imports::*, interface::*, ir::*, ir_build::*, ir_c::*, ir_codegen::*,
-    ir_interp::*, ir_ownership::*, ir_typecheck::*, lexer::*, ownership::*,
-    param_modes::*, parser::*, regions::*, types::*,
+    allocation_sources::*, build_cache::*, c_abi::*, callbacks::*,
+    failure_sets::*, imports::*, interface::*, ir::*, ir_build::*, ir_c::*,
+    ir_codegen::*, ir_interp::*, ir_ownership::*, ir_typecheck::*, lexer::*,
+    ownership::*, param_modes::*, parser::*, regions::*, types::*,
 };
 
 use std::fmt::Display;

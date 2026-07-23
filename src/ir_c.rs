@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use anyhow::{Result, bail};
@@ -9,8 +9,26 @@ use crate::ir::{
 };
 use crate::types::Type;
 
-fn c_function_name(name: &str, externs: &HashSet<String>) -> String {
-    if name == "main" || externs.contains(name) {
+// What the emitter needs to know about the C side: which names are external,
+// and which of those return an aggregate. C returns a struct by a rule of its
+// own, and the way to get that rule right in emitted C is to declare a real
+// struct type and let the C compiler apply it, rather than to reimplement the
+// classification here. See src/c_abi.rs, which is the same problem where there
+// is no C compiler to defer to.
+struct Externs {
+    names: HashSet<String>,
+    // Extern name to the name and size of the struct type it returns.
+    aggregate_returns: HashMap<String, (String, usize)>,
+}
+
+impl Externs {
+    fn insert(&mut self, name: &str) {
+        self.names.insert(name.to_string());
+    }
+}
+
+fn c_function_name(name: &str, externs: &Externs) -> String {
+    if name == "main" || externs.names.contains(name) {
         name.to_string()
     } else {
         format!("frost_{name}")
@@ -18,12 +36,15 @@ fn c_function_name(name: &str, externs: &HashSet<String>) -> String {
 }
 
 pub fn emit_c(module: &IrModule) -> Result<String> {
-    let mut externs: HashSet<String> = module
-        .externs
-        .iter()
-        .map(|external| external.name.clone())
-        .collect();
-    externs.insert("frost_bounds_check".to_string());
+    let mut externs = Externs {
+        names: module
+            .externs
+            .iter()
+            .map(|external| external.name.clone())
+            .collect(),
+        aggregate_returns: HashMap::new(),
+    };
+    externs.insert("frost_bounds_check");
 
     let mut output = String::new();
     output.push_str("#include <stdint.h>\n\n");
@@ -32,7 +53,26 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
     output.push_str(
         "void frost_generation_check(int64_t stored, int64_t expected);\n\n",
     );
-    externs.insert("frost_generation_check".to_string());
+    externs.insert("frost_generation_check");
+
+    // A struct type per aggregate-returning extern, laid out field for field so
+    // that the C compiler classifies it exactly as the library's own header
+    // would.
+    for external in &module.externs {
+        let Some(layout) = &external.return_layout else {
+            continue;
+        };
+        let name = format!("frost_ret_{}", external.name);
+        writeln!(output, "typedef struct {{")?;
+        for field in c_return_fields(layout)? {
+            writeln!(output, "  {field};")?;
+        }
+        writeln!(output, "}} {name};")?;
+        externs
+            .aggregate_returns
+            .insert(external.name.clone(), (name, layout.size));
+    }
+    output.push('\n');
 
     for external in &module.externs {
         let mut params = Vec::new();
@@ -49,13 +89,11 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
         } else {
             params.join(", ")
         };
-        writeln!(
-            output,
-            "{} {}({});",
-            c_type(&external.return_type)?,
-            external.name,
-            params
-        )?;
+        let returns = match externs.aggregate_returns.get(&external.name) {
+            Some((name, _)) => name.clone(),
+            None => c_type(&external.return_type)?,
+        };
+        writeln!(output, "{returns} {}({params});", external.name)?;
     }
     output.push('\n');
 
@@ -76,7 +114,7 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
 
 fn function_signature(
     function: &IrFunction,
-    externs: &HashSet<String>,
+    externs: &Externs,
 ) -> Result<String> {
     let is_main = function.name == "main";
     let returns_aggregate = !is_main && is_aggregate(&function.return_type);
@@ -119,7 +157,7 @@ fn function_signature(
 fn emit_function(
     output: &mut String,
     function: &IrFunction,
-    externs: &HashSet<String>,
+    externs: &Externs,
 ) -> Result<()> {
     let return_type = if function.name == "main" {
         Type::I32
@@ -179,7 +217,7 @@ fn emit_statement(
     output: &mut String,
     function: &IrFunction,
     statement: &IrStatement,
-    externs: &HashSet<String>,
+    externs: &Externs,
 ) -> Result<()> {
     match statement {
         IrStatement::Assign(local, rvalue) => {
@@ -213,6 +251,20 @@ fn emit_statement(
                         let mut args = Vec::new();
                         for argument in arguments {
                             args.push(operand_expr(function, argument)?);
+                        }
+                        // A C function returning a struct hands back a value
+                        // rather than filling in an out-pointer, so the value
+                        // is taken and copied into the local's storage.
+                        if let Some((returns, size)) =
+                            externs.aggregate_returns.get(name)
+                        {
+                            writeln!(
+                                output,
+                                "  {{ {returns} __r = {}({});  __builtin_memcpy(_{local}, &__r, {size}); }}",
+                                name,
+                                args.join(", ")
+                            )?;
+                            return Ok(());
                         }
                         args.push(format!("_{local}"));
                         writeln!(
@@ -324,7 +376,7 @@ fn emit_terminator(
 fn rvalue_expr(
     function: &IrFunction,
     rvalue: &IrRvalue,
-    externs: &HashSet<String>,
+    externs: &Externs,
 ) -> Result<String> {
     Ok(match rvalue {
         IrRvalue::Use(operand) => operand_expr(function, operand)?,
@@ -480,6 +532,44 @@ fn is_aggregate(ty: &Type) -> bool {
             | Type::Str
             | Type::Slice(_)
     )
+}
+
+// The fields of the struct type an aggregate-returning extern is declared with.
+// Built from the flattened scalars in offset order with explicit padding, so
+// the declaration has the same size, the same offsets and the same floating
+// point content as the library's own type, which is everything any C ABI
+// classifies on.
+//
+// A scalar that overlaps one already taken is a variant of an enum, and only
+// one of them can be a field. That is safe while both are non-floating, since
+// then the bytes classify the same either way, and it is refused when it is not,
+// rather than guessed at.
+fn c_return_fields(layout: &crate::c_abi::CLayout) -> Result<Vec<String>> {
+    let mut scalars = layout.scalars.clone();
+    scalars.sort_by_key(|scalar| scalar.offset);
+    let mut fields = Vec::new();
+    let mut at = 0usize;
+    for scalar in &scalars {
+        let size = scalar.ty.size_of().max(1);
+        if scalar.offset < at {
+            if matches!(scalar.ty, Type::F32 | Type::F64) {
+                bail!(
+                    "C backend: '{}' overlaps a floating point field with another, which C has no way to declare and whose calling convention Frost will not guess at",
+                    layout.name
+                );
+            }
+            continue;
+        }
+        if scalar.offset > at {
+            fields.push(format!("uint8_t pad{at}[{}]", scalar.offset - at));
+        }
+        fields.push(format!("{} f{}", c_type(&scalar.ty)?, scalar.offset));
+        at = scalar.offset + size;
+    }
+    if at < layout.size {
+        fields.push(format!("uint8_t pad{at}[{}]", layout.size - at));
+    }
+    Ok(fields)
 }
 
 fn c_type(ty: &Type) -> Result<String> {

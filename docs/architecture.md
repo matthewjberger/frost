@@ -113,6 +113,23 @@ translation so each value carries a real type. Anything outside the supported
 subset fails loudly with a `native backend: ...` error rather than emitting
 incorrect code.
 
+## The C ABI is classified, not assumed
+
+`src/c_abi.rs` decides how C returns a struct, which is not how Frost returns
+one. Frost returns every aggregate through a hidden out-pointer, uniformly. C
+returns a small one in registers and a large one through a pointer, and where
+the line falls depends on the target and, on Windows, not at all on the field
+types even though it does everywhere else. So an `extern fn` returning a struct
+is classified per target rather than pushed through Frost's own convention.
+
+The Cranelift backend builds the signature from that classification and writes
+the returned registers into the caller's storage. The C backend does not
+reimplement any of it: it declares a real struct type, field for field with
+explicit padding, and lets the C compiler classify it. An aggregate *parameter*
+to an extern stays a pointer by convention, which is a different kind of answer
+and is why the two are described separately in
+[c-compatibility.md](c-compatibility.md).
+
 ## Native backends
 
 `src/ir_codegen.rs` emits a relocatable object from the IR via Cranelift and
