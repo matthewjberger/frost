@@ -41,7 +41,7 @@ pub(crate) fn names_in_statement(statement: &Statement, out: &mut Vec<String>) {
                 names_in_type(&field.field_type, out);
             }
         }
-        Statement::Enum(_, variants) => {
+        Statement::Enum(_, _, variants) => {
             for variant in variants {
                 if let Some(fields) = &variant.fields {
                     for field in fields {

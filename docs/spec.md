@@ -178,7 +178,9 @@ wider type.
   their fields in declaration order, with natural alignment.
 - **Enums** `Name`, declared `Name :: enum { Variant, Variant { f: T }, ... }`,
   are a discriminant plus the active variant's payload. Variants may be unit or
-  carry named fields, and one enum may mix both.
+  carry named fields, and one enum may mix both. An enum takes type parameters
+  exactly as a struct does, `Maybe :: enum($T: Type) { Nothing, Just { value: T } }`,
+  and instantiates the same way (chapter 11).
 - **Fixed arrays** `[N]T` are `N` contiguous `T`. The length is part of the type
   and every index is bounds-checked (10.4).
 - **Slices** `[]T` are a pointer/length view of a run of `T`, sixteen bytes and a
@@ -611,11 +613,20 @@ Raw pointers (`^T`) are outside these guarantees by design.
 ### 11.1 Type parameters
 
 A type parameter is written `$T`. It may appear on a function's parameters and on
-a struct declaration:
+a struct or enum declaration:
 
 ```
-Pair :: struct($T: Type) { first: T, second: T }
+Pair  :: struct($T: Type) { first: T, second: T }
+Maybe :: enum($T: Type) { Nothing, Just { value: T } }
 make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
+```
+
+A generic literal carries no arguments of its own, so which instance it is comes
+from the context: an annotation, or the type of the parameter it is passed to.
+
+```
+m : Maybe<i64> = Maybe::Just { value = 42 }     // the annotation names it
+unwrap_or($i64, Maybe::Nothing, 7)              // the parameter names it
 ```
 
 In a parameter or struct type-parameter position, `$` IDENT `:` is followed by
@@ -820,7 +831,7 @@ and assignments to a place.
 ```
 ConstBody =
       "linear"? "struct" GenericParams? "{" StructFields? "}"
-    | "linear"? "enum" "{" EnumVariants? "}"
+    | "linear"? "enum" GenericParams? "{" EnumVariants? "}"
     | "distinct" Type
     | "extern" "fn" "(" Params? ")" ( "->" Type )?
     | Expr                                    // function literal, or a value

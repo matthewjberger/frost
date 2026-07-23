@@ -516,7 +516,7 @@ fn top_level_name(statement: &Statement) -> Option<&str> {
     match statement {
         Statement::Constant(name, _)
         | Statement::Struct(name, _, _)
-        | Statement::Enum(name, _)
+        | Statement::Enum(name, _, _)
         | Statement::TypeAlias(name, _)
         | Statement::Extern { name, .. }
         | Statement::Declared { name, .. } => Some(name),
@@ -610,7 +610,7 @@ impl Renamer {
                     self.ty(&mut field.field_type);
                 }
             }
-            Statement::Enum(name, variants) => {
+            Statement::Enum(name, _, variants) => {
                 if let Some(mangled) = self.renames.get(name.as_str()) {
                     *name = mangled.clone();
                 }

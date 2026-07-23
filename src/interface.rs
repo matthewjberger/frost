@@ -185,7 +185,7 @@ fn declared_name(statement: &Spanned<Statement>) -> Option<&str> {
     match &statement.node {
         Statement::Constant(name, _)
         | Statement::Struct(name, _, _)
-        | Statement::Enum(name, _)
+        | Statement::Enum(name, _, _)
         | Statement::TypeAlias(name, _)
         | Statement::Extern { name, .. }
         | Statement::Declared { name, .. } => Some(name.as_str()),

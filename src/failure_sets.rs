@@ -163,8 +163,11 @@ impl Lowerer {
                 }]),
             },
         ];
-        self.enums
-            .push(spanned(Statement::Enum(name.clone(), variants)));
+        self.enums.push(spanned(Statement::Enum(
+            name.clone(),
+            Vec::new(),
+            variants,
+        )));
         self.results.insert(key, name.clone());
         name
     }
