@@ -3146,8 +3146,20 @@ impl<'a> FunctionLowering<'a> {
         if let Expression::Identifier(name) = callee
             && name == "assert"
             && self.resolve_variable(name).is_none()
-            && self.builder.signature("frost_assert").is_some()
+            && (self.builder.signature("frost_assert_at").is_some()
+                || self.builder.signature("frost_assert").is_some())
         {
+            // The position is the reader's line, and the runtime prints it, so
+            // a failed assertion names where it was written rather than only
+            // which test it was in. Programs that declare the older one-argument
+            // `frost_assert` themselves still work.
+            if self.builder.signature("frost_assert_at").is_some() {
+                let mut located = arguments.to_vec();
+                located.push(Expression::Literal(Literal::String(
+                    self.current_position.describe(),
+                )));
+                return self.lower_direct_call("frost_assert_at", &located);
+            }
             return self.lower_direct_call("frost_assert", arguments);
         }
         if let Expression::Identifier(name) = callee

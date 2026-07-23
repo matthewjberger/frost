@@ -1,3 +1,4 @@
+#include <setjmp.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -72,22 +73,67 @@ void frost_byte_set(char *buffer, int64_t index, int64_t value) {
     buffer[index] = (char)value;
 }
 
-void frost_test_start(const char *name) {
+/* The test runner. A failing assertion has to end the test it is in without
+   ending the run, or one bad test hides every test after it. The escape is a
+   longjmp back into frost_test_run, which is why the runner takes the test body
+   as a function pointer rather than being a sequence the compiler emits: the
+   setjmp has to own the call. */
+static jmp_buf frost_test_escape;
+static int frost_inside_test = 0;
+static int64_t frost_tests_passed = 0;
+static int64_t frost_tests_failed = 0;
+
+void frost_test_run(const char *name, void (*body)(void)) {
     printf("test %s ... ", name);
+    fflush(stdout);
+    frost_inside_test = 1;
+    if (setjmp(frost_test_escape) == 0) {
+        body();
+        frost_tests_passed++;
+        printf("ok\n");
+    } else {
+        frost_tests_failed++;
+    }
+    frost_inside_test = 0;
     fflush(stdout);
 }
 
-void frost_test_ok(void) {
-    printf("ok\n");
+/* Returns the failure count, so the process can exit non-zero on it. */
+int64_t frost_test_summary(void) {
+    printf("\n%lld passed, %lld failed\n", (long long)frost_tests_passed,
+           (long long)frost_tests_failed);
     fflush(stdout);
+    return frost_tests_failed;
+}
+
+/* An assertion outside a test has nowhere to escape to, so it still aborts.
+   Inside one it fails that test and the run carries on. */
+static void frost_assert_failed(const char *where) {
+    printf("FAILED\n");
+    fflush(stdout);
+    if (where != 0) {
+        fprintf(stderr, "  assertion failed at %s\n", where);
+    } else {
+        fprintf(stderr, "  assertion failed\n");
+    }
+    fflush(stderr);
+    if (frost_inside_test) {
+        longjmp(frost_test_escape, 1);
+    }
+    abort();
 }
 
 void frost_assert(int8_t condition) {
     if (!condition) {
-        printf("FAILED\n");
-        fflush(stdout);
-        fprintf(stderr, "frost: assertion failed\n");
-        abort();
+        frost_assert_failed(0);
+    }
+}
+
+/* The same assertion carrying the source position the compiler knew, so a
+   failure names the line the reader wrote rather than only the test it was in. */
+void frost_assert_at(int8_t condition, const char *where) {
+    if (!condition) {
+        frost_assert_failed(where);
     }
 }
 
