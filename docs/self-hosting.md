@@ -3,15 +3,40 @@
 Self-hosted, native and freestanding are three different axes, and this document
 is about the first. [build-modes.md](build-modes.md) separates them.
 
-Frost has two compilers. `src/*.rs` is the reference compiler, written in Rust,
-implementing the full language. `selfhosted/frost.frost` is a compiler written in
-Frost, and it self-hosts twice over: through its C backend and through its own
-x64 backend, each compiling its own source to a byte-identical fixpoint across
-three stages, checked by `self_hosting_is_a_fixpoint` and
-`native_self_hosting_is_a_fixpoint`. It checks the programs it compiles rather
-than leaving that to whatever compiles its output.
+## Which compiler is the compiler
 
-The checklist below is finished. Every item is done: self type-checking,
+**`selfhosted/frost.frost` is the one people will use.** That is the
+destination, and every other statement in this document follows from it. Frost
+is meant to be written in Frost, and the compiler someone downloads is meant to
+be the Frost one.
+
+**`src/*.rs` is the bootstrap.** Its job is to make writing the Frost compiler
+possible, which it does in two ways. It compiles stage 0, so every feature
+`frost.frost` uses has to exist in Rust before a line of it can be written in
+Frost. And it is the oracle: the differential tests compare against it, so a
+miscompilation in the Frost compiler has something to be caught by. Both roles
+are scaffolding.
+
+That fixes what the gap between them means. The bootstrap is ahead because a
+feature lands in Rust first, and being ahead is a stage of the work rather than
+a division of labour.
+
+**The target is parity, on both axes.** The self-hosted compiler implements the
+full language, everything the bootstrap supports, and it is under the same speed
+promise, goal 8 in [philosophy.md](philosophy.md). Speed matters more there than
+here, because it is the compiler a user's edit-compile loop actually runs.
+Everything not yet ported is a work list with an order, tracked in
+[roadmap.md](roadmap.md), and the shape of each port is the four-step pattern at
+the end of this document.
+
+**It self-hosts twice over**, through its C backend and through its own x64
+backend, each compiling its own source to a byte-identical fixpoint across three
+stages, checked by `self_hosting_is_a_fixpoint` and
+`native_self_hosting_is_a_fixpoint`. It checks the programs it compiles rather
+than leaving that to whatever compiles its output. The fixpoint is how the
+compiler is checked, not what it is for.
+
+The checklist below covers the first round of ports: self type-checking,
 ownership and linearity, the native backend, allocation sources, regions,
 failure sets, imports and enums. What each one cost and what it turned up is
 recorded under it, since the same shapes come up again.
@@ -134,27 +159,6 @@ The backend used to be where the superlinear term lived, and is not any more:
 3. **Cache specializations across builds.** Now subsumed: a module's object
    holds the specializations that module asked for, and reusing the object
    reuses them.
-
-## Does the self-hosted compiler grow separate compilation too?
-
-**No, and this is the decision rather than an open question.** The two compilers
-are under different promises. The reference compiler is under a speed promise
-that has to hold as programs grow, which is what goal 8 in
-[philosophy.md](philosophy.md) commits to and what separate compilation is the
-answer to. The self-hosted compiler is under a self-hosting promise: it exists
-to show the language can express a real compiler, and it discharges that by
-reproducing itself byte for byte.
-
-Concretely, `selfhosted/frost.frost` is one file of about 5,400 lines with no
-`import` in it, and it compiles itself in about 35 ms. Separate compilation
-bounds work per module, and there is one module. Building interfaces, a build
-cache and per-module objects into it would be machinery with nothing to bound,
-and it would grow the surface that has to keep reproducing itself exactly.
-
-What would reopen it: `selfhosted/frost.frost` gaining imports, or its self-build
-time getting far enough into the hundreds of milliseconds that the edit-compile
-loop on the compiler itself starts to bite. Neither is true, and the second is
-what to measure rather than guess at.
 
 What matters is that the shape is measured rather than assumed, and that the
 measurement is a command rather than a memory. Two versions of this table have
@@ -405,8 +409,11 @@ The pattern that worked for param modes:
 1. Add the capability to the self-hosted compiler while leaving frost.frost unchanged, so
    the fixpoint stays byte-identical and the change is inert.
 2. Migrate frost.frost to use it.
-3. Verify against the reference compiler with the differential tests, and keep
+3. Verify against the bootstrap compiler with the differential tests, and keep
    `self_hosting_is_a_fixpoint` green.
 4. Commit each stage separately.
 
-The reference compiler stays the oracle throughout.
+The bootstrap stays the oracle throughout. Note what that oracle does and does
+not check: it says the two compilers agree, not that either is right. The
+mixed-width arithmetic bug survived it, because every backend agreed on the
+wrong answer. A port needs a program with expected output too.

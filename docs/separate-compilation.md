@@ -274,11 +274,11 @@ rather than after.
 
 ## Open questions
 
-- **Does the self-hosted compiler grow this too?** *Decided: no.* The reference
-  compiler is under a speed promise and the self-hosted one is under a
-  self-hosting promise, and there is nothing for separate compilation to bound
-  in a single file that compiles itself in about 35 ms. The reasoning, and the
-  two things that would reopen it, are in [self-hosting.md](self-hosting.md).
+- **Does the self-hosted compiler grow this too?** *Yes, and it is on the
+  roadmap.* `selfhosted/frost.frost` is the compiler people will use, so the
+  edit-compile loop goal 8 promises about is the one it runs. Everything in this
+  document is a port waiting to happen: interfaces, the build cache, per-module
+  objects and `--incremental`. See [self-hosting.md](self-hosting.md).
 - **What is a project root?** *Settled, smallest answer.* The directory of the
   file named on the command line. A manifest would make it robust and nothing
   needs one yet. Note what this costs: the same library imported from two

@@ -198,9 +198,9 @@ writing correct Frost quickly.
 
 ```
 frost/
-├── src/          # the reference compiler, in Rust
+├── selfhosted/   # the Frost compiler, written in Frost
+├── src/          # the bootstrap compiler, in Rust: builds stage 0, and is the oracle
 ├── std/          # the standard library, in Frost
-├── selfhosted/   # a Frost compiler written in Frost
 ├── runtime/      # a small C runtime (bounds check, assert, IO helpers)
 ├── examples/     # runnable programs
 ├── bench/        # the benchmark generator
