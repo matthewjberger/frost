@@ -1,0 +1,36 @@
+// A value that may be absent. `Maybe<T>` is an ordinary generic enum with
+// nothing special about it, which is the point: the language grew generic enums
+// so that this could be written in Frost rather than built into the compiler.
+//
+// There is no null and no built-in optional. An absent value is a variant you
+// have to match, so forgetting to handle it is a compile error rather than a
+// crash.
+
+export Maybe, maybe_some, maybe_none, maybe_is_some, maybe_or
+
+Maybe :: enum($T: Type) { Nothing, Just { value: T } }
+
+maybe_some :: fn($T: Type, move value: $T) -> Maybe<T> {
+    Maybe::Just { value = value }
+}
+
+maybe_none :: fn($T: Type) -> Maybe<T> {
+    Maybe::Nothing
+}
+
+maybe_is_some :: fn($T: Type, m: Maybe<T>) -> bool {
+    match m {
+        case .Nothing: false
+        case .Just { value }: true
+    }
+}
+
+// The value if there is one, otherwise the fallback. Takes the fallback by
+// value rather than lazily, because there are no closures to defer it with and
+// pretending otherwise would hide the cost.
+maybe_or :: fn($T: Type, m: Maybe<T>, move fallback: $T) -> $T {
+    match m {
+        case .Nothing: fallback
+        case .Just { value }: value
+    }
+}

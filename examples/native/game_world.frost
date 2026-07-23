@@ -2,12 +2,12 @@
 // an enum, and identity as a handle that can be stored in an array and stays
 // checkable after the slot it names is reused.
 //
-// The slab is Frost code (lib/slab.frost). Only `world[handle]` comes from the
+// The slab is the standard library one (std/slab.frost). Only `world[handle]` comes from the
 // compiler, and that is the one thing that has to.
 
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
-import "lib/slab.frost"
+import "slab.frost"
 
 Kind :: enum { Hero, Monster { threat: i64 } }
 Entity :: struct { hp: i64, kind: Kind }
