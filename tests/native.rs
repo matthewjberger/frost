@@ -27,6 +27,13 @@ fn linker_available() -> bool {
             return true;
         }
     }
+    // Every test that links silently no-ops without a C toolchain, so a broken
+    // one on a machine that is supposed to have it would hide behind a green
+    // run. CI sets FROST_REQUIRE_LINKER to turn that silence into a failure.
+    assert!(
+        std::env::var("FROST_REQUIRE_LINKER").is_err(),
+        "no C toolchain (cc/gcc/clang) found, but FROST_REQUIRE_LINKER is set"
+    );
     false
 }
 
@@ -268,7 +275,11 @@ main :: fn() -> i64 {
     );
 }
 
-fn compile_and_run_status(name: &str, source: &str) -> Option<bool> {
+// Compiles and runs a program, answering whether it exited cleanly and what it
+// wrote to stderr. An abort test wants both: the nonzero exit and the message
+// the runtime composed, so a crash for the wrong reason does not read as the
+// right one.
+fn compile_and_run_status(name: &str, source: &str) -> Option<(bool, String)> {
     if !linker_available() {
         return None;
     }
@@ -292,7 +303,8 @@ fn compile_and_run_status(name: &str, source: &str) -> Option<bool> {
     let run = Command::new(&exe_path).output().unwrap();
     let _ = std::fs::remove_file(&source_path);
     let _ = std::fs::remove_file(&exe_path);
-    Some(run.status.success())
+    let stderr = String::from_utf8_lossy(&run.stderr).replace("\r\n", "\n");
+    Some((run.status.success(), stderr))
 }
 
 const OUT_OF_BOUNDS: &str = r#"
@@ -308,10 +320,16 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_out_of_bounds_index_aborts() {
-    let Some(succeeded) = compile_and_run_status("oob", OUT_OF_BOUNDS) else {
+    let Some((succeeded, stderr)) =
+        compile_and_run_status("oob", OUT_OF_BOUNDS)
+    else {
         return;
     };
     assert!(!succeeded, "out-of-bounds index should abort at runtime");
+    assert!(
+        stderr.contains("out of bounds"),
+        "expected the bounds-check message, got:\n{stderr}"
+    );
 }
 
 // A `ref` binding is a borrow of a container element, not a copy. Writing
@@ -3695,12 +3713,16 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_slab_stale_handle_aborts() {
-    let Some(succeeded) =
+    let Some((succeeded, stderr)) =
         compile_and_run_status("slabstale", SLAB_STALE_HANDLE)
     else {
         return;
     };
     assert!(!succeeded, "a stale handle into a slab should abort");
+    assert!(
+        stderr.contains("stale handle"),
+        "expected the generation-check message, got:\n{stderr}"
+    );
 }
 
 const SLICES: &str = r#"
@@ -3750,12 +3772,16 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_slice_index_is_bounds_checked() {
-    let Some(succeeded) =
+    let Some((succeeded, stderr)) =
         compile_and_run_status("sliceoob", SLICE_OUT_OF_BOUNDS)
     else {
         return;
     };
     assert!(!succeeded, "an out-of-range slice index should abort");
+    assert!(
+        stderr.contains("out of bounds"),
+        "expected the bounds-check message, got:\n{stderr}"
+    );
 }
 
 const NATIVE_POOL: &str = r#"
@@ -3885,6 +3911,52 @@ fn native_freestanding_links_without_libc() {
     assert_eq!(run.code(), Some(42));
 }
 
+// The bounds check reaches even a program with no libc: the freestanding
+// runtime traps rather than printing, so an out-of-range index still cannot
+// read past the array. Status only, since a trap composes no message.
+const FREESTANDING_OUT_OF_BOUNDS: &str = r#"
+main :: fn() -> i64 {
+    mut a : [3]i64 = [10, 20, 30]
+    mut i : i64 = 5
+    a[i]
+}
+"#;
+
+#[test]
+fn native_freestanding_out_of_bounds_traps() {
+    if !linker_available() {
+        return;
+    }
+    let directory = std::env::temp_dir();
+    let source_path = directory.join("frost_freestanding_oob.frost");
+    let exe_path = directory.join(format!(
+        "frost_freestanding_oob{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    std::fs::write(&source_path, FREESTANDING_OUT_OF_BOUNDS).unwrap();
+    let frost = env!("CARGO_BIN_EXE_frost");
+    let compile = Command::new(frost)
+        .env("FROST_CHECK_UNSAFE", "0")
+        .arg("--link")
+        .arg("--freestanding")
+        .arg("-o")
+        .arg(&exe_path)
+        .arg(&source_path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&source_path);
+    if !compile.status.success() {
+        // --freestanding needs gcc or clang; skip where only MSVC is present.
+        return;
+    }
+    let run = Command::new(&exe_path).status().unwrap();
+    let _ = std::fs::remove_file(&exe_path);
+    assert!(
+        !run.success(),
+        "an out-of-range index should trap in a freestanding build, not return"
+    );
+}
+
 #[test]
 fn native_binding_a_void_value_is_rejected() {
     let source = "\
@@ -3913,11 +3985,16 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_str_index_is_bounds_checked() {
-    let Some(succeeded) = compile_and_run_status("stroob", STR_OUT_OF_BOUNDS)
+    let Some((succeeded, stderr)) =
+        compile_and_run_status("stroob", STR_OUT_OF_BOUNDS)
     else {
         return;
     };
     assert!(!succeeded, "an out-of-range str index should abort");
+    assert!(
+        stderr.contains("out of bounds"),
+        "expected the bounds-check message, got:\n{stderr}"
+    );
 }
 
 const POINTERS: &str = r#"

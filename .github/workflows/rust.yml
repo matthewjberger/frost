@@ -7,6 +7,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # The runner has a C toolchain, and the abort and self-hosting tests need one.
+  # Without this they would silently no-op, so a toolchain that went missing
+  # would hide behind a green run rather than failing it.
+  FROST_REQUIRE_LINKER: "1"
 
 jobs:
   build:

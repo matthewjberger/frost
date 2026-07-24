@@ -24,6 +24,11 @@ void frost_bounds_check(frost_i64 index, frost_i64 length) {
     }
 }
 
+frost_i64 frost_check_index(frost_i64 index, frost_i64 length) {
+    frost_bounds_check(index, length);
+    return index;
+}
+
 void frost_generation_check(frost_i64 stored, frost_i64 expected) {
     if (stored != expected) {
         __builtin_trap();
