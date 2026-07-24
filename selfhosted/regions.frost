@@ -119,15 +119,13 @@ region_pointer :: fn(mut p: Parser, id: i64) -> bool {
 }
 
 region_escape :: fn(mut p: Parser, how: ^i8) {
-    unsafe {
-        report_where(p.modules, p.src, p.region_off)
-        frost_error("a pointer into arena '")
-        frost_error_src(p.src, p.region_off, p.region_len)
-        frost_error("' escapes its region by ")
-        frost_error(how)
-        frost_error("; it may not outlive the arena")
-        frost_die()
-    }
+    report_where(p.modules, p.src, p.region_off)
+    report("a pointer into arena '")
+    report_src(p.src, p.region_off, p.region_len)
+    report("' escapes its region by ")
+    report_cstr(how)
+    report("; it may not outlive the arena")
+    frost_die()
 }
 
 check_region_block :: fn(mut p: Parser, head: i64) {
@@ -290,8 +288,8 @@ check_unsafety :: fn(mut p: Parser) {
             }
             if (gated == 1 && inside_unsafe(p, node.pos) == 0) {
                 report_where(p.modules, p.src, node.pos)
-                frost_error(what)
-                frost_error(" is unchecked, so it belongs in an `unsafe` block")
+                report_cstr(what)
+                report(" is unchecked, so it belongs in an `unsafe` block")
                 frost_die()
             }
             i = i + 1
@@ -328,9 +326,9 @@ check_calls :: fn(mut p: Parser) {
                 params := sym.params
                 if (defined == 0) {
                     report_where(p.modules, p.src, node.pos)
-                    frost_error("call to undefined function '")
-                    frost_error_src(p.src, name_off, name_len)
-                    frost_error("'")
+                    report("call to undefined function '")
+                    report_src(p.src, name_off, name_len)
+                    report("'")
                     frost_die()
                 }
                 // The capability is supplied by the caller's context rather than
@@ -342,11 +340,11 @@ check_calls :: fn(mut p: Parser) {
                 got := count_args(p, args)
                 if (expected != got) {
                     report_where(p.modules, p.src, name_off)
-                    frost_error("'")
-                    frost_error_src(p.src, name_off, name_len)
-                    frost_error("' expects ")
+                    report("'")
+                    report_src(p.src, name_off, name_len)
+                    report("' expects ")
                     frost_error_int(expected)
-                    frost_error(" argument(s) but got ")
+                    report(" argument(s) but got ")
                     frost_error_int(got)
                     frost_die()
                 }

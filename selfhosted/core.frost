@@ -37,7 +37,8 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     frost_byte_at, frost_byte_set, frost_die, frost_emit_char, frost_emit_close,
     frost_emit_int, frost_emit_open, emit_text, frost_error,
     frost_error_int, frost_error_src, frost_getenv, frost_is_windows,
-    frost_file_exists, frost_read_file, frost_remove_file,
+    frost_file_exists, frost_read_file, frost_remove_file, report, report_src,
+    report_cstr,
     frost_run_command, frost_str_len, malloc, SearchRoot, add_root
 
 malloc          :: extern fn(size: i64) -> ^u8
@@ -75,10 +76,37 @@ emit_text :: fn(s: str) {
 // keep the gate: the caller is what promises the terminator.
 frost_error     :: extern fn(text: ^i8)
 frost_error_src :: extern fn(text: ^i8, offset: i64, length: i64)
+frost_error_bytes :: extern fn(data: ^u8, length: i64)
 frost_error_int :: safe extern fn(value: i64)
 frost_die       :: safe extern fn()
 frost_is_windows :: safe extern fn() -> i64
 frost_getenv    :: extern fn(name: ^i8) -> ^i8
+
+// Compose a diagnostic on stderr. A `str` is written by the length it carries,
+// a source range by the length it is given, and a C string by the length up to
+// its terminator. Each confines its one unchecked step to itself, so the code
+// that reports an error calls them without an `unsafe` block of its own.
+report :: fn(s: str) {
+    length := str_len(s)
+    if (length == 0) {
+        return
+    }
+    unsafe {
+        frost_error_bytes(ptr_to(s[0]), length)
+    }
+}
+
+report_src :: fn(src: ^i8, offset: i64, length: i64) {
+    unsafe {
+        frost_error_bytes(ptr_cast($u8, ptr_to(src[offset])), length)
+    }
+}
+
+report_cstr :: fn(s: ^i8) {
+    unsafe {
+        frost_error_bytes(ptr_cast($u8, s), frost_str_len(s))
+    }
+}
 
 // The command line, and the two things a compiler does with the world once it
 // has read one: put its output somewhere, and run the tool that finishes the
@@ -491,19 +519,17 @@ arena_make :: fn($T: Type, cap: i64) -> Arena<T> {
 }
 
 arena_push :: fn(mut a: Arena<$T>, move value: $T) -> i64 {
-    unsafe {
-        // An arena is a single fixed allocation, so running past it writes over
-        // whatever the allocator put next and the damage surfaces somewhere else
-        // entirely. Say so here instead.
-        if (a.count >= a.cap) {
-            frost_error("frost: an arena ran out of room")
-            frost_die()
-        }
-        id := a.count
-        a.data[id] = value
-        a.count = a.count + 1
-        id
+    // An arena is a single fixed allocation, so running past it writes over
+    // whatever the allocator put next and the damage surfaces somewhere else
+    // entirely. Say so here instead.
+    if (a.count >= a.cap) {
+        report("frost: an arena ran out of room")
+        frost_die()
     }
+    id := a.count
+    a.data[id] = value
+    a.count = a.count + 1
+    id
 }
 
 // An index outside the arena reads whatever happens to sit there, which lands
@@ -513,7 +539,7 @@ arena_push :: fn(mut a: Arena<$T>, move value: $T) -> i64 {
 arena_at :: fn(a: Arena<$T>, id: i64) -> ref T {
     unsafe {
         if (id < 0 || id >= a.count) {
-            frost_error("frost: an arena was indexed out of range: ")
+            report("frost: an arena was indexed out of range: ")
             frost_error_int(id)
             frost_die()
         }

@@ -195,6 +195,12 @@ void frost_error(const char *text) {
     fputs(text, stderr);
 }
 
+/* Write a counted run of bytes to stderr, so a diagnostic composed from a `str`
+   is bounded by the length it carries rather than a NUL. */
+void frost_error_bytes(const char *data, int64_t length) {
+    fwrite(data, 1, (size_t)length, stderr);
+}
+
 void frost_error_src(const char *text, int64_t offset, int64_t length) {
     fwrite(text + offset, 1, (size_t)length, stderr);
 }
