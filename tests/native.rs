@@ -1251,6 +1251,46 @@ fn a_safe_extern_needs_no_unsafe_block() {
     );
 }
 
+// Indexing a raw pointer is unchecked, so it belongs in an `unsafe` block. The
+// gate used to miss it when the pointer was bound from `ptr_to` without an
+// annotation, because the unsafety pass could not name the binding's type; the
+// index then compiled to raw pointer arithmetic with no bounds check, reading
+// out of bounds from ordinary safe code.
+#[test]
+fn indexing_a_ptr_to_binding_is_gated() {
+    let source = "main :: fn() -> i64 {\n\
+         arr := [1, 2, 3]\n\
+         p := ptr_to(arr)\n\
+         x := p[9]\n\
+         0\n\
+         }\n";
+    let directory = std::env::temp_dir();
+    let source_path = directory.join("frost_ptr_to_index_gate.frost");
+    let exe_path = directory.join(format!(
+        "frost_ptr_to_index_gate{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    std::fs::write(&source_path, source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe_path)
+        .arg(&source_path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&source_path);
+    assert!(
+        !output.status.success(),
+        "indexing a ptr_to binding should be gated but it compiled"
+    );
+    let message = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        message.contains("indexing a raw pointer")
+            && message.contains("belongs in an `unsafe` block"),
+        "expected the raw-pointer index gate, got:\n{message}"
+    );
+}
+
 // The whole point of the standard library absorbing the unsafe floor: a program
 // that uses vec, sort, format, strings and io compiles under the unsafety gate
 // with no `unsafe` of its own. The containers' raw pointers and FFI are wrapped
