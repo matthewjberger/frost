@@ -4064,6 +4064,60 @@ fn self_hosted_generic_slab_place_deref() {
     assert_eq!(output, "100\n75\n10\n");
 }
 
+// A generic enum with a payload, matched and constructed inside a generic
+// function. Each instance re-parses the body with its type bound, so the
+// variant resolves per instance rather than at the template.
+const SELFHOSTED_GENERIC_ENUM: &str = concat!(
+    "Maybe :: enum($T: Type) { Nothing, Just { value: T } }\n",
+    "unwrap_or :: fn($T: Type, m: Maybe<T>, fallback: $T) -> $T {\n",
+    "    match m {\n",
+    "        case .Just { value }: value\n",
+    "        case .Nothing: fallback\n",
+    "    }\n",
+    "}\n",
+    "main :: fn() -> i64 {\n",
+    "    a : Maybe<i64> = Maybe::Just { value = 42 }\n",
+    "    b : Maybe<i64> = Maybe::Nothing\n",
+    "    print unwrap_or($i64, a, 0)\n",
+    "    print unwrap_or($i64, b, 99)\n",
+    "    0\n",
+    "}\n",
+);
+
+#[test]
+fn self_hosted_generic_enum() {
+    let Some(output) =
+        selfhosted_native_output("genenum", SELFHOSTED_GENERIC_ENUM)
+    else {
+        return;
+    };
+    assert_eq!(output, "42\n99\n");
+}
+
+// A generic instance nested inside another as its last argument, so the lexer
+// runs the two closing angle brackets into one `>>` token that has to be split,
+// and a nested literal that has to resolve to the inner instance, not the outer.
+const SELFHOSTED_NESTED_GENERIC: &str = concat!(
+    "Pair :: struct($A: Type, $B: Type) { first: A, second: B }\n",
+    "main :: fn() -> i64 {\n",
+    "    p : Pair<i64, Pair<i64, i64>> = Pair { first = 1, second = Pair { first = 2, second = 3 } }\n",
+    "    print p.first\n",
+    "    print p.second.first\n",
+    "    print p.second.second\n",
+    "    0\n",
+    "}\n",
+);
+
+#[test]
+fn self_hosted_nested_generic() {
+    let Some(output) =
+        selfhosted_native_output("nestgen", SELFHOSTED_NESTED_GENERIC)
+    else {
+        return;
+    };
+    assert_eq!(output, "1\n2\n3\n");
+}
+
 const SLICES: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
