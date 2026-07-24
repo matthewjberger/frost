@@ -64,6 +64,13 @@ void frost_emit_str(const char *text) {
     fputs(text, frost_emit_where());
 }
 
+/* Emit a counted run of bytes rather than a NUL-terminated string, so the
+   caller passes a length-carrying `str` and the read is bounded by it. This is
+   what lets the emit path be safe: nothing scans for a terminator. */
+void frost_emit_bytes(const char *data, int64_t length) {
+    fwrite(data, 1, (size_t)length, frost_emit_where());
+}
+
 void frost_emit_int(int64_t value) {
     fprintf(frost_emit_where(), "%lld", (long long)value);
 }

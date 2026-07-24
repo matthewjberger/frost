@@ -265,8 +265,8 @@ main :: fn() -> i64 {
         if (options.backend == BACKEND_ASM) {
             emit_asm_program(parser, program)
         } else {
-            frost_emit_str("#include <stdio.h>\n")
-            frost_emit_str("#include <stdint.h>\n")
+            emit_text("#include <stdio.h>\n")
+            emit_text("#include <stdint.h>\n")
             emit_program(parser, program)
         }
         frost_emit_close()
