@@ -4167,6 +4167,36 @@ fn self_hosted_growable_vector() {
     assert_eq!(output, "3\n10\n30\n");
 }
 
+// The actual standard-library hash map, imported rather than inlined, compiled
+// by the self-hosted compiler. `std` is one of its import roots, so the harness
+// running from the crate root reaches std/map.frost. It exercises generics over
+// the value type, the heap runtime, and `unsafe { ... }` both as a statement
+// block and as a value in a comparison.
+const SELFHOSTED_STD_MAP: &str = concat!(
+    "import \"map.frost\"\n",
+    "main :: fn() -> i64 {\n",
+    "    mut m : Map<i64> = map_new($i64, 8)\n",
+    "    map_put($i64, m, 100, 42)\n",
+    "    map_put($i64, m, 200, 99)\n",
+    "    map_put($i64, m, 100, 7)\n",
+    "    print map_len($i64, m)\n",
+    "    print map_get($i64, m, 100, 0)\n",
+    "    print map_get($i64, m, 200, 0)\n",
+    "    if (map_has($i64, m, 300)) { print 1 } else { print 0 }\n",
+    "    map_free($i64, m)\n",
+    "    0\n",
+    "}\n",
+);
+
+#[test]
+fn self_hosted_standard_library_map() {
+    let Some(output) = selfhosted_native_output("stdmap", SELFHOSTED_STD_MAP)
+    else {
+        return;
+    };
+    assert_eq!(output, "2\n7\n99\n0\n");
+}
+
 const SLICES: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 

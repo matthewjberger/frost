@@ -1103,6 +1103,39 @@ parse_match :: fn(mut p: Parser) -> i64 {
     new_node(p, NODE_MATCH, scrutinee, head, 0)
 }
 
+// Whether an `unsafe` at statement position is a value used in a larger
+// expression rather than a block of statements. It looks past the block's
+// matching brace to the next token: a binary operator, `.`, `[`, `?` or `::`
+// there continues an expression, so the block is a value.
+unsafe_block_is_value :: fn(mut p: Parser) -> bool {
+    mut offset : i64 = 1
+    mut depth : i64 = 0
+    mut started : i64 = 0
+    while (peek_kind(p, offset) != TOK_EOF) {
+        k := peek_kind(p, offset)
+        if (k == TOK_LBRACE) {
+            depth = depth + 1
+            started = 1
+        }
+        if (k == TOK_RBRACE) {
+            depth = depth - 1
+            if (started == 1 && depth == 0) {
+                next := peek_kind(p, offset + 1)
+                return next == TOK_EQEQ || next == TOK_NE || next == TOK_LT
+                    || next == TOK_LE || next == TOK_GT || next == TOK_GE
+                    || next == TOK_PLUS || next == TOK_MINUS || next == TOK_STAR
+                    || next == TOK_SLASH || next == TOK_PERCENT
+                    || next == TOK_ANDAND || next == TOK_OROR || next == TOK_SHL
+                    || next == TOK_SHR || next == TOK_AMP || next == TOK_PIPE
+                    || next == TOK_DOT || next == TOK_LBRACKET
+                    || next == TOK_QUESTION || next == TOK_COLONCOLON
+            }
+        }
+        offset = offset + 1
+    }
+    false
+}
+
 parse_stmt :: fn(mut p: Parser) -> i64 {
     kind := cur(p)
 
@@ -1125,6 +1158,19 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     // statements written bare; only its span is remembered, so the gate can
     // ask whether a node was written inside one.
     if (kind == TOK_KW_UNSAFE) {
+        // An `unsafe { expr }` followed by an operator, as in
+        // `unsafe { m.state[s] } == USED`, is one expression, not a block of
+        // statements, so it goes through the expression path where the operator
+        // is applied to the value the block stands for.
+        if (unsafe_block_is_value(p)) {
+            expr := parse_expr(p)
+            if (cur(p) == TOK_ASSIGN) {
+                advance(p)
+                value := parse_expr(p)
+                return new_node(p, NODE_ASSIGN, expr, value, 0)
+            }
+            return new_unary(p, NODE_EXPRSTMT, expr)
+        }
         advance(p)
         start := cur_off(p)
         p.unsafe_depth = p.unsafe_depth + 1
