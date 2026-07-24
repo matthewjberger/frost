@@ -7,7 +7,8 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     CH_LPAREN, CH_LT, CH_MINUS, CH_PERCENT, CH_PIPE, CH_PLUS, CH_QUESTION,
     CH_RBRACE, CH_RBRACKET, CH_RPAREN, CH_SEMI, CH_SLASH, CH_SPACE, CH_STAR,
     CH_TAB, CH_UNDERSCORE, CH_UPPER_A, CH_UPPER_Z, ConstDef, Export,
-    GenericFn, Instance, LocalVar, Module, MonoNode, MonoRet, NODE_ADDROF,
+    GenericFn, GParam, GArg, GBinding, Instance, LocalVar, Module, MonoNode,
+    MonoRet, CONST_BASE, NODE_ADDROF,
     NODE_ARG, NODE_ASSIGN, NODE_BIN, NODE_CALL, NODE_CASE, NODE_DEREF,
     NODE_EXPRSTMT, NODE_EXTERN, NODE_FIELD, NODE_FIELD_INIT, NODE_FUNC,
     NODE_IF, NODE_INDEX, NODE_LET, NODE_MATCH, NODE_NUM, NODE_PARAM,
@@ -198,6 +199,14 @@ POINTER_BASE :: 1000000
 // sits far above pointer nesting so `is_pointer` still answers yes for a borrow
 // and only the gate and `pointee` tell them apart.
 BORROW_FLAG  :: 1000000000
+// A compile-time integer argument to a generic, a value generic like the `N` in
+// `Slab<T, N>`. It rides in the same i64 space as a type code so the whole
+// monomorphization machinery stays keyed on one integer per argument; a code at
+// or above this base is the value `code - CONST_BASE`. The base sits far above
+// every real type code, and a value argument never reaches layout or the
+// pointer tests: it is resolved to an array length or an integer literal while
+// the generic body is re-parsed with the argument bound.
+CONST_BASE   :: 2000000000
 
 // Binary operator codes.
 OP_ADD :: 0
@@ -396,13 +405,21 @@ StructDef :: struct {
     instance_id: i64,
     is_linear: i64,
     emitted: i64,
+    xparam_start: i64,
+    xparam_count: i64,
 }
 
 // A monomorphized instance of a generic struct: which template, the concrete
 // type argument, and the concrete struct's index in the struct table.
+// `arg` is the first generic argument; a generic with more than one parameter
+// keeps the rest as a run in the `gargs` arena, at xarg_start for xarg_count
+// entries. A single-parameter generic, which is all the compiler's own source
+// has, leaves xarg_count zero and reads exactly as it did before.
 MonoRet :: struct {
     fn_index: i64,
     arg: i64,
+    xarg_start: i64,
+    xarg_count: i64,
     ret: i64,
 }
 
@@ -414,6 +431,8 @@ MonoRet :: struct {
 MonoNode :: struct {
     gfn_index: i64,
     arg: i64,
+    xarg_start: i64,
+    xarg_count: i64,
     node: i64,
     ret: i64,
 }
@@ -421,17 +440,44 @@ MonoNode :: struct {
 Instance :: struct {
     generic_index: i64,
     arg: i64,
+    xarg_start: i64,
+    xarg_count: i64,
     struct_index: i64,
 }
 
-// A generic function template: its interned name index, its type parameter name,
-// and the token index of its name, so it can be re-parsed and emitted once per
-// concrete type argument with the parameter bound.
+// A generic function template: its interned name index, its first type parameter
+// name, the run of any further parameter names in the `gparams` arena, and the
+// token index of its name, so it can be re-parsed and emitted once per concrete
+// argument tuple with every parameter bound.
 GenericFn :: struct {
     fn_index: i64,
     tparam_off: i64,
     tparam_len: i64,
+    xparam_start: i64,
+    xparam_count: i64,
     token_start: i64,
+}
+
+// One generic parameter name beyond the first, held in the `gparams` arena.
+GParam :: struct {
+    name_off: i64,
+    name_len: i64,
+}
+
+// One generic argument beyond the first, held in the `gargs` arena. The value is
+// a type code, or a compile-time integer encoded as CONST_BASE plus the number.
+GArg :: struct {
+    value: i64,
+}
+
+// One binding in force while a generic body is re-parsed: a parameter name and
+// what it stands for, a type code or a CONST_BASE-encoded value. Bindings form a
+// stack in the `gbindings` arena so a nested instantiation shadows an outer one
+// and is popped when its parse finishes.
+GBinding :: struct {
+    name_off: i64,
+    name_len: i64,
+    bound: i64,
 }
 
 // One field of a struct: its name (byte range), its type code, and the next
@@ -497,6 +543,8 @@ ArrayDef :: struct {
 // once per distinct one of these.
 TypeArg :: struct {
     arg: i64,
+    xarg_start: i64,
+    xarg_count: i64,
 }
 
 // A local's type binding during code generation. The table is rebuilt per
@@ -583,10 +631,26 @@ Parser :: struct {
     consts: Arena<ConstDef>,
     instances: Arena<Instance>,
     generic_fns: Arena<GenericFn>,
+    gparams: Arena<GParam>,
+    gargs: Arena<GArg>,
+    gbindings: Arena<GBinding>,
     type_param_off: i64,
     type_param_len: i64,
+    // The parameters beyond the first that the current declaration collected into
+    // `gparams`, so the generic it belongs to can record its whole list.
+    xparam_start: i64,
+    xparam_count: i64,
+    // The argument tuple of the generic call last examined: the run of arguments
+    // beyond the first, in the `gargs` arena, so a call to a multi-parameter
+    // generic is monomorphized on its whole tuple.
+    call_xarg_start: i64,
+    call_xarg_count: i64,
     type_binding: i64,
     binding_active: i64,
+    // The declared type of the binding whose initializer is being parsed, so a
+    // bare generic literal like `Slab { ... }` written for a `Slab<Entity, 8>`
+    // resolves to that instance where no generic binding is in force to name it.
+    expected_type: i64,
     saw_type_param: i64,
     last_return_type: i64,
     no_struct_lit: bool,

@@ -982,10 +982,9 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     }
     emit_text("    call ")
     if (generic_fn_of(p, fn_index) >= 0) {
-        emit_text("mf_")
-        frost_emit_int(fn_index)
-        emit_text("_t")
-        frost_emit_int(call_type_arg(p, args))
+        arg := call_type_args(p, args)
+        emit_asm_mono_name(p, fn_index, arg, p.call_xarg_start,
+            p.call_xarg_count)
     } else {
         if (sym.is_extern == 1) {
             emit_source(p.src, sym.off, sym.len)
@@ -1396,22 +1395,44 @@ emit_asm_function :: fn(mut p: Parser, id: i64) {
     emit_asm_frame(p, body, params, ret)
 }
 
+// One argument's contribution to a mangled name, the assembly backend's copy of
+// the C backend's rule so the two agree: a type argument is `_t<code>`, a value
+// argument `_c<number>`.
+emit_asm_mangled_arg :: fn(mut p: Parser, arg: i64) {
+    if (arg >= CONST_BASE) {
+        emit_text("_c")
+        frost_emit_int(arg - CONST_BASE)
+    } else {
+        emit_text("_t")
+        frost_emit_int(arg)
+    }
+}
+
+emit_asm_mono_name :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
+    xarg_count: i64) {
+    emit_text("mf_")
+    frost_emit_int(fn_index)
+    emit_asm_mangled_arg(p, arg)
+    mut i : i64 = 0
+    while (i < xarg_count) {
+        garg := arena_at(p.gargs, xarg_start + i)
+        emit_asm_mangled_arg(p, garg.value)
+        i = i + 1
+    }
+}
+
 // One monomorphization, under the name its call sites use.
-emit_asm_mono_function :: fn(mut p: Parser, id: i64, arg: i64, ret: i64) {
+emit_asm_mono_function :: fn(mut p: Parser, id: i64, arg: i64, xarg_start: i64,
+    xarg_count: i64, ret: i64) {
     node := arena_at(p.arena, id)
     fn_index := node.val
     body := node.a
     params := node.b
     begin_provider(p, fn_index)
-    emit_text("    .globl mf_")
-    frost_emit_int(fn_index)
-    emit_text("_t")
-    frost_emit_int(arg)
+    emit_text("    .globl ")
+    emit_asm_mono_name(p, fn_index, arg, xarg_start, xarg_count)
     emit_text("\n")
-    emit_text("mf_")
-    frost_emit_int(fn_index)
-    emit_text("_t")
-    frost_emit_int(arg)
+    emit_asm_mono_name(p, fn_index, arg, xarg_start, xarg_count)
     emit_text(":\n")
     emit_asm_frame(p, body, params, ret)
 }
@@ -1469,9 +1490,11 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
         while (ii < p.type_args.count) {
             used := arena_at(p.type_args, ii)
             arg := used.arg
-            node := parse_generic_instance(p, gi, arg)
+            xstart := used.xarg_start
+            xcount := used.xarg_count
+            node := parse_generic_instance(p, gi, arg, xstart, xcount)
             ret := p.last_return_type
-            emit_asm_mono_function(p, node, arg, ret)
+            emit_asm_mono_function(p, node, arg, xstart, xcount, ret)
             ii = ii + 1
         }
         gi = gi + 1

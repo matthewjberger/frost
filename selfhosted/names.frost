@@ -8,7 +8,8 @@ import "imports.frost"
 
 export append_node, array_element, array_index_of, array_length, array_of,
     mark_safe,
-    bytes_equal, const_value, digits_in, generic_index_for,
+    bytes_equal, const_value, digits_in, gargs_equal, generic_index_for,
+    value_binding_of,
     intern_global, is_aggregate, is_array_ty, is_const, is_float, is_main_name,
     is_borrow, is_pointer, is_raw_pointer, is_slab_ty, is_slice_ty, is_struct_ty,
     slab_field_id, slab_field_type,
@@ -225,11 +226,12 @@ append_node :: fn(mut p: Parser, head: i64, extra: i64) -> i64 {
 }
 
 record_generic_fn :: fn(mut p: Parser, fn_index: i64, tparam_off: i64,
-    tparam_len: i64, token_start: i64) {
+    tparam_len: i64, xparam_start: i64, xparam_count: i64, token_start: i64) {
     arena_push(
         p.generic_fns,
         GenericFn { fn_index = fn_index, tparam_off = tparam_off,
-            tparam_len = tparam_len, token_start = token_start },
+            tparam_len = tparam_len, xparam_start = xparam_start,
+            xparam_count = xparam_count, token_start = token_start },
     )
 }
 
@@ -533,6 +535,20 @@ type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         }
         return TY_PARAM
     }
+    // A parameter beyond the first is bound on the `gbindings` stack while its
+    // generic's body is re-parsed. The most recent binding wins, so a nested
+    // instantiation shadows an outer one. What comes back is the bound type, or
+    // for a value parameter the CONST_BASE-encoded number, which is what lets a
+    // nested `Slab<T, N>` pass the value on.
+    mut b : i64 = p.gbindings.count
+    while (b > 0) {
+        b = b - 1
+        binding := arena_at(p.gbindings, b)
+        if (binding.name_len == length
+            && bytes_equal(p.src, binding.name_off, offset, length)) {
+            return binding.bound
+        }
+    }
     if (str_range_eq(p.src, offset, length, "i64")) { return TY_I64 }
     if (str_range_eq(p.src, offset, length, "i32")) { return TY_I32 }
     if (str_range_eq(p.src, offset, length, "i16")) { return TY_I16 }
@@ -560,6 +576,43 @@ type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         i = i + 1
     }
     TY_I64
+}
+
+// True when two argument runs in the `gargs` arena hold the same values.
+gargs_equal :: fn(mut p: Parser, a_start: i64, b_start: i64, count: i64) -> bool {
+    mut i : i64 = 0
+    while (i < count) {
+        left := arena_at(p.gargs, a_start + i)
+        right := arena_at(p.gargs, b_start + i)
+        if (left.value != right.value) {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+// The number a value generic parameter is bound to, or -1 when the name is not
+// a bound value parameter. A value binding, whether the primary one or one on
+// the stack, holds CONST_BASE plus the number; this hands back the number, for
+// an array length `[N]T` or an occurrence of `N` in an expression.
+value_binding_of :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
+    if (p.binding_active == 1 && p.type_param_len == length
+        && bytes_equal(p.src, p.type_param_off, offset, length)
+        && p.type_binding >= CONST_BASE) {
+        return p.type_binding - CONST_BASE
+    }
+    mut b : i64 = p.gbindings.count
+    while (b > 0) {
+        b = b - 1
+        binding := arena_at(p.gbindings, b)
+        if (binding.name_len == length
+            && bytes_equal(p.src, binding.name_off, offset, length)
+            && binding.bound >= CONST_BASE) {
+            return binding.bound - CONST_BASE
+        }
+    }
+    0 - 1
 }
 
 // Find the index of a generic struct template by name, or -1.
