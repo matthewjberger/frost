@@ -279,24 +279,6 @@ generic_fn_of :: fn(mut p: Parser, fn_index: i64) -> i64 {
     0 - 1
 }
 
-// The type argument of a concrete generic-struct instance, or -1 if the type is
-// not an instance.
-instance_arg_of :: fn(mut p: Parser, ty: i64) -> i64 {
-    if (is_struct_ty(ty) == false) {
-        return 0 - 1
-    }
-    si := struct_index_of(ty)
-    mut i : i64 = 0
-    while (i < p.instances.count) {
-        entry := arena_at(p.instances, i)
-        if (entry.struct_index == si) {
-            return entry.arg
-        }
-        i = i + 1
-    }
-    0 - 1
-}
-
 // Determine the concrete argument tuple of a generic call: the explicit `$Type`
 // and `$value` arguments in order if there are any, otherwise the single
 // argument inferred from the first runtime argument whose type is a generic
@@ -338,9 +320,21 @@ call_type_args :: fn(mut p: Parser, head: i64) -> i64 {
         if (is_pointer(t)) {
             t = pointee(t)
         }
-        arg := instance_arg_of(p, t)
-        if (arg >= 0) {
-            return arg
+        // A runtime argument that is a generic instance carries the whole tuple
+        // its parameters were bound to, so a call that leaves the arguments
+        // implicit is monomorphized on every one of them, not just the first.
+        if (is_struct_ty(t)) {
+            si := struct_index_of(t)
+            mut k : i64 = 0
+            while (k < p.instances.count) {
+                inst := arena_at(p.instances, k)
+                if (inst.struct_index == si) {
+                    p.call_xarg_start = inst.xarg_start
+                    p.call_xarg_count = inst.xarg_count
+                    return inst.arg
+                }
+                k = k + 1
+            }
         }
         id = next_id
     }

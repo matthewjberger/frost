@@ -194,7 +194,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     if (cur(p) == TOK_LBRACE && p.no_struct_lit == false) {
         struct_ty := resolve_lit_type(p, offset, length)
         advance(p)
-        inits := parse_field_inits(p)
+        inits := parse_field_inits(p, struct_ty)
         return new_struct_lit(p, struct_ty, inits)
     }
     // An occurrence of a value generic parameter in an expression, like the `N`
@@ -357,7 +357,7 @@ parse_factor :: fn(mut p: Parser) -> i64 {
     parse_postfix(p, parse_primary(p))
 }
 
-parse_field_inits :: fn(mut p: Parser) -> i64 {
+parse_field_inits :: fn(mut p: Parser, struct_ty: i64) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
@@ -365,7 +365,13 @@ parse_field_inits :: fn(mut p: Parser) -> i64 {
         length := cur_len(p)
         advance(p)
         advance(p)
+        // A field's value is parsed with the field's own type expected, so a
+        // nested generic literal like the inner `Pair { ... }` in a
+        // `Pair<i64, Pair<i64, i64>>` resolves to the right instance.
+        saved_expected := p.expected_type
+        p.expected_type = field_type(p, struct_ty, offset, length)
         value := parse_expr(p)
+        p.expected_type = saved_expected
         init := new_field_init(p, value, offset, length)
         if (head == (0 - 1)) {
             head = init
@@ -563,6 +569,20 @@ parse_block :: fn(mut p: Parser) -> i64 {
     head
 }
 
+// Close a generic argument list. The lexer runs two `>` together into one shift
+// token, so a `>>` that ends a nested generic closes this one and leaves a `>`
+// pending for the generic around it, as in `Vec<Vec<i64>>`.
+consume_generic_close :: fn(mut p: Parser) {
+    if (p.pending_gt == 1) {
+        p.pending_gt = 0
+    } else if (cur(p) == TOK_SHR) {
+        advance(p)
+        p.pending_gt = 1
+    } else {
+        advance(p)
+    }
+}
+
 // Parse a type and return its type code. Each pointer prefix adds a pointer
 // level (a borrow is a C pointer). A leading `$` marks a type
 // parameter; if none is bound yet in the current generic, this use establishes
@@ -634,7 +654,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
         if (str_range_eq(p.src, offset, length, "Handle")) {
             advance(p)
             parse_type(p)
-            advance(p)
+            consume_generic_close(p)
             base = TY_HANDLE
         } else {
             was_generic = 1
@@ -644,11 +664,14 @@ parse_type :: fn(mut p: Parser) -> i64 {
             // like the `8` in `Slab<Entity, 8>`, carried as CONST_BASE plus the
             // number; anything else is a type. The first is the primary argument
             // and the rest go to the `gargs` run this instance owns.
-            run_start := p.gargs.count
-            mut first_arg : i64 = TY_I64
+            // Arguments are collected on the argbuf stack first, since parsing
+            // one that is itself a generic pushes to `gargs`; copying this
+            // level's arguments out afterwards keeps its run there contiguous.
+            buf_start := p.argbuf.count
             mut count : i64 = 0
             mut all_concrete : i64 = 1
-            while (cur(p) != TOK_GT && cur(p) != TOK_EOF) {
+            while (cur(p) != TOK_GT && cur(p) != TOK_SHR
+                && p.pending_gt == 0 && cur(p) != TOK_EOF) {
                 mut a : i64 = TY_I64
                 if (cur(p) == TOK_INT) {
                     a = CONST_BASE + cur_val(p)
@@ -659,26 +682,33 @@ parse_type :: fn(mut p: Parser) -> i64 {
                 if (a == TY_PARAM) {
                     all_concrete = 0
                 }
-                if (count == 0) {
-                    first_arg = a
-                } else {
-                    arena_push(p.gargs, GArg { value = a })
-                }
+                arena_push(p.argbuf, GArg { value = a })
                 count = count + 1
                 if (cur(p) == TOK_COMMA) {
                     advance(p)
                 }
             }
-            advance(p)
-            mut xarg_count : i64 = count - 1
-            if (count == 0) {
-                xarg_count = 0
+            consume_generic_close(p)
+            mut first_arg : i64 = TY_I64
+            xarg_start := p.gargs.count
+            mut xarg_count : i64 = 0
+            if (count > 0) {
+                first := arena_at(p.argbuf, buf_start)
+                first_arg = first.value
+                mut j : i64 = 1
+                while (j < count) {
+                    entry := arena_at(p.argbuf, buf_start + j)
+                    arena_push(p.gargs, GArg { value = entry.value })
+                    j = j + 1
+                }
+                xarg_count = count - 1
             }
+            p.argbuf.count = buf_start
             // Only instantiate once every argument is concrete. While parsing a
             // generic template an argument is the TY_PARAM placeholder, and that
             // instance is created later with the parameters bound to real ones.
             if (gi >= 0 && all_concrete == 1) {
-                base = instantiate(p, gi, first_arg, run_start, xarg_count)
+                base = instantiate(p, gi, first_arg, xarg_start, xarg_count)
             }
         }
     } else {
@@ -796,6 +826,7 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64, xarg_start: i64,
     xparam_start := template.xparam_start
     xparam_count := template.xparam_count
     field_token := template.field_token
+    is_enum := template.is_enum
 
     saved_ti := p.ti
     saved_param_off := p.type_param_off
@@ -809,7 +840,16 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64, xarg_start: i64,
     mark := push_bindings(p, tparam_off, tparam_len, xparam_start, xparam_count,
         arg, xarg_start)
     p.ti = field_token
-    field_head := parse_struct_fields(p)
+    // An enum's variants are recorded against the index this instance will take,
+    // which is the current end of the table so long as the body creates no
+    // nested instance of its own, the same limitation the non-generic enum path
+    // has.
+    mut field_head : i64 = 0 - 1
+    if (is_enum == 1) {
+        field_head = parse_enum_body(p, STRUCT_BASE + p.structs.count)
+    } else {
+        field_head = parse_struct_fields(p)
+    }
     p.gbindings.count = mark
     p.ti = saved_ti
     p.type_param_off = saved_param_off
@@ -823,7 +863,7 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64, xarg_start: i64,
         StructDef { name_off = name_off, name_len = name_len,
             field_head = field_head, is_generic = 0, tparam_off = 0,
             tparam_len = 0, field_token = 0, instance_id = struct_index,
-            is_linear = 0, emitted = 0, xparam_start = 0, xparam_count = 0 },
+            is_linear = 0, emitted = 0, xparam_start = 0, xparam_count = 0, is_enum = 0 },
     )
     arena_push(
         p.instances,
@@ -845,15 +885,24 @@ parse_variant_case :: fn(mut p: Parser, subject: i64) -> i64 {
     variant_len := cur_len(p)
     advance(p)
     index := find_variant(p, 0 - 1, variant_off, variant_len)
+    mut tag : i64 = 0
     if (index < 0) {
-        report_where(p.modules, p.src, variant_off)
-        report("no enum has a variant '")
-        report_src(p.src, variant_off, variant_len)
-        report("'")
-        frost_die()
+        // While parsing a generic template the enum instance a variant belongs
+        // to does not exist yet. This parse is thrown away and re-done per
+        // instance, where the variant resolves, so a placeholder tag stands in.
+        if (p.saw_type_param == 1 && p.binding_active == 0) {
+            tag = 0
+        } else {
+            report_where(p.modules, p.src, variant_off)
+            report("no enum has a variant '")
+            report_src(p.src, variant_off, variant_len)
+            report("'")
+            frost_die()
+        }
+    } else {
+        entry := arena_at(p.variants, index)
+        tag = entry.tag
     }
-    entry := arena_at(p.variants, index)
-    tag := entry.tag
     mut bindings : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     if (cur(p) == TOK_LBRACE) {
@@ -1459,7 +1508,7 @@ parse_struct :: fn(mut p: Parser) {
                 field_head = 0 - 1, is_generic = 1, tparam_off = tparam_off,
                 tparam_len = tparam_len, field_token = field_token,
                 instance_id = 0 - 1, is_linear = linear_flag, emitted = 0,
-                xparam_start = xparam_start, xparam_count = xparam_count },
+                xparam_start = xparam_start, xparam_count = xparam_count, is_enum = 0 },
         )
     } else {
         head := parse_struct_fields(p)
@@ -1468,7 +1517,7 @@ parse_struct :: fn(mut p: Parser) {
             StructDef { name_off = name_offset, name_len = name_length,
                 field_head = head, is_generic = 0, tparam_off = 0,
                 tparam_len = 0, field_token = 0, instance_id = 0 - 1,
-                is_linear = linear_flag, emitted = 0, xparam_start = 0, xparam_count = 0 },
+                is_linear = linear_flag, emitted = 0, xparam_start = 0, xparam_count = 0, is_enum = 0 },
         )
     }
 }
@@ -1507,23 +1556,12 @@ find_variant :: fn(mut p: Parser, enum_ty: i64, off: i64, len: i64) -> i64 {
 
 // `Name :: enum { A, B { x: i64 } }`. The fields of every variant are laid out
 // in one struct behind a tag, each under the name of the variant it came from.
-parse_enum :: fn(mut p: Parser) {
-    name_offset := cur_off(p)
-    name_length := cur_len(p)
-    advance(p)
-    advance(p)
-    advance(p)
-    // `Name :: enum($T: Type) { ... }`. A generic enum would have to be
-    // instantiated per type argument the way a generic struct is, which this
-    // compiler does not do for enums, so it would misread the parameter list as
-    // variants and fail far from here.
-    if (cur(p) == TOK_LPAREN) {
-        unsafe {
-            report_where(p.modules, p.src, cur_off(p))
-            report("a generic enum is not supported yet")
-            frost_die()
-        }
-    }
+// Parse an enum body, the `{ Variant, Variant { field: T } }` after the name,
+// with the cursor on the opening brace. Returns the head of the field chain: a
+// tag field followed by every variant's fields, each named for the variant it
+// came from. The variants are recorded against `enum_ty`, so an instance parses
+// its own variants under its own type.
+parse_enum_body :: fn(mut p: Parser, enum_ty: i64) -> i64 {
     advance(p)
     result_field_names(p)
     tag_field := arena_push(
@@ -1532,10 +1570,6 @@ parse_enum :: fn(mut p: Parser) {
             next = 0 - 1 },
     )
     mut tail := tag_field
-    // The enum's own index is known before its fields are, since a variant has
-    // to record which enum it belongs to.
-    enum_index := p.structs.count
-    enum_ty := STRUCT_BASE + enum_index
     mut tag : i64 = 0
     while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
         variant_off := cur_off(p)
@@ -1575,12 +1609,75 @@ parse_enum :: fn(mut p: Parser) {
         tag = tag + 1
     }
     advance(p)
+    tag_field
+}
+
+parse_enum :: fn(mut p: Parser) {
+    name_offset := cur_off(p)
+    name_length := cur_len(p)
+    advance(p)
+    advance(p)
+    advance(p)
+    // `Name :: enum($T: Type) { ... }` is a generic enum. Like a generic struct
+    // it records its parameters and the token of its `{`, skips the body, and is
+    // re-parsed once per argument tuple with the parameters bound.
+    if (cur(p) == TOK_LPAREN) {
+        advance(p)
+        p.type_param_len = 0
+        p.xparam_count = 0
+        p.xparam_start = p.gparams.count
+        while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
+            advance(p)
+            poff := cur_off(p)
+            plen := cur_len(p)
+            advance(p)
+            record_gparam(p, poff, plen)
+            parse_type_annotation(p)
+            if (cur(p) == TOK_COMMA) {
+                advance(p)
+            }
+        }
+        advance(p)
+        tparam_off := p.type_param_off
+        tparam_len := p.type_param_len
+        xparam_start := p.xparam_start
+        xparam_count := p.xparam_count
+        field_token := p.ti
+        mut brace_depth : i64 = 0
+        mut started : i64 = 0
+        while (started == 0 || brace_depth > 0) {
+            if (cur(p) == TOK_LBRACE) {
+                brace_depth = brace_depth + 1
+                started = 1
+            }
+            if (cur(p) == TOK_RBRACE) {
+                brace_depth = brace_depth - 1
+            }
+            advance(p)
+        }
+        arena_push(
+            p.structs,
+            StructDef { name_off = name_offset, name_len = name_length,
+                field_head = 0 - 1, is_generic = 1, tparam_off = tparam_off,
+                tparam_len = tparam_len, field_token = field_token,
+                instance_id = 0 - 1, is_linear = 0, emitted = 0,
+                xparam_start = xparam_start, xparam_count = xparam_count,
+                is_enum = 1 },
+        )
+        return
+    }
+    // The enum's own index is known before its body is, since a variant has to
+    // record which enum it belongs to.
+    enum_index := p.structs.count
+    enum_ty := STRUCT_BASE + enum_index
+    field_head := parse_enum_body(p, enum_ty)
     arena_push(
         p.structs,
         StructDef { name_off = name_offset, name_len = name_length,
-            field_head = tag_field, is_generic = 0, tparam_off = 0,
+            field_head = field_head, is_generic = 0, tparam_off = 0,
             tparam_len = 0, field_token = 0, instance_id = 0 - 1,
-            is_linear = 0, emitted = 0, xparam_start = 0, xparam_count = 0 },
+            is_linear = 0, emitted = 0, xparam_start = 0, xparam_count = 0,
+            is_enum = 0 },
     )
 }
 
@@ -1593,17 +1690,27 @@ parse_variant_value :: fn(mut p: Parser, enum_off: i64, enum_len: i64) -> i64 {
     variant_len := cur_len(p)
     advance(p)
     index := find_variant(p, enum_ty, variant_off, variant_len)
+    mut variant_tag : i64 = 0
     if (index < 0) {
-        report_where(p.modules, p.src, variant_off)
-        report("'")
-        report_src(p.src, enum_off, enum_len)
-        report("' has no variant '")
-        report_src(p.src, variant_off, variant_len)
-        report("'")
-        frost_die()
+        // A construction in a generic template names a variant of an instance
+        // that does not exist yet; this parse is thrown away and re-done per
+        // instance where it resolves, so a placeholder tag stands in for now.
+        if (p.saw_type_param == 1 && p.binding_active == 0) {
+            variant_tag = 0
+        } else {
+            report_where(p.modules, p.src, variant_off)
+            report("'")
+            report_src(p.src, enum_off, enum_len)
+            report("' has no variant '")
+            report_src(p.src, variant_off, variant_len)
+            report("'")
+            frost_die()
+        }
+    } else {
+        entry := arena_at(p.variants, index)
+        variant_tag = entry.tag
     }
-    entry := arena_at(p.variants, index)
-    tag_value := new_node(p, NODE_NUM, 0, 0, entry.tag)
+    tag_value := new_node(p, NODE_NUM, 0, 0, variant_tag)
     head := new_field_init(p, tag_value, p.name_tag, 3)
     mut tail := head
     if (cur(p) == TOK_LBRACE && p.no_struct_lit == false) {
@@ -1675,7 +1782,7 @@ synth_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
         p.structs,
         StructDef { name_off = name, name_len = 8 + digits_in(p.structs.count),
             field_head = tag, is_generic = 0, tparam_off = 0, tparam_len = 0,
-            field_token = 0, instance_id = 0 - 1, is_linear = 0, emitted = 0, xparam_start = 0, xparam_count = 0 },
+            field_token = 0, instance_id = 0 - 1, is_linear = 0, emitted = 0, xparam_start = 0, xparam_count = 0, is_enum = 0 },
     )
     STRUCT_BASE + index
 }

@@ -407,6 +407,9 @@ StructDef :: struct {
     emitted: i64,
     xparam_start: i64,
     xparam_count: i64,
+    // A generic template that is an enum rather than a struct, so an
+    // instantiation re-parses its body as variants rather than as fields.
+    is_enum: i64,
 }
 
 // A monomorphized instance of a generic struct: which template, the concrete
@@ -633,6 +636,10 @@ Parser :: struct {
     generic_fns: Arena<GenericFn>,
     gparams: Arena<GParam>,
     gargs: Arena<GArg>,
+    // A stack scratch for the arguments of the generic currently being parsed,
+    // so a nested generic's arguments do not interleave with the outer one's in
+    // `gargs`. Each level pushes its arguments here, copies them out, and pops.
+    argbuf: Arena<GArg>,
     gbindings: Arena<GBinding>,
     type_param_off: i64,
     type_param_len: i64,
@@ -645,6 +652,10 @@ Parser :: struct {
     // generic is monomorphized on its whole tuple.
     call_xarg_start: i64,
     call_xarg_count: i64,
+    // A `>` left over from splitting a `>>` token that closed a nested generic,
+    // so the enclosing generic sees its own close where the lexer ran the two
+    // together, as in `Vec<Vec<i64>>`.
+    pending_gt: i64,
     type_binding: i64,
     binding_active: i64,
     // The declared type of the binding whose initializer is being parsed, so a
