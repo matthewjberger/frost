@@ -842,6 +842,20 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     unsafe {
         kind := cur(p)
 
+        // `ref x := place` binds a borrow of a place: an address that types as a
+        // borrow, so reading a field through it needs no `unsafe` block, unlike a
+        // raw pointer. It is how an arena element is reached without ptr_to.
+        if (kind == TOK_KW_REF) {
+            advance(p)
+            name_off := cur_off(p)
+            name_len := cur_len(p)
+            advance(p)
+            advance(p)
+            place := parse_expr(p)
+            value := new_unary(p, NODE_REF, place)
+            return new_let_node(p, value, name_off, name_len, 0 - 1)
+        }
+
         // `unsafe { ... }` is a block whose statements belong to the enclosing one.
         // This compiler does not enforce the unsafety gate; it only has to accept
         // source that marks its unchecked regions, and inlining the block leaves
