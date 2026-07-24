@@ -1804,6 +1804,25 @@ fn self_hosted_errors_name_a_position() {
     );
 }
 
+// A top-level form the self-hosted compiler does not implement used to fall
+// through to the function parser and die inside the arena, far from the text
+// that caused it. It names the declaration instead.
+#[test]
+fn self_hosted_rejects_an_unsupported_declaration() {
+    let source = "Id :: distinct i64\nmain :: fn() -> i64 { 0 }\n";
+    let Some(message) = self_hosted_rejects("unsupported_decl", source) else {
+        return;
+    };
+    assert!(
+        message.contains(":1:1: this declaration is not supported yet"),
+        "expected a located unsupported-declaration error, got:\n{message}"
+    );
+    assert!(
+        !message.contains("arena was indexed out of range"),
+        "an unsupported declaration should not crash the compiler:\n{message}"
+    );
+}
+
 #[test]
 fn self_hosted_rejects_a_call_to_an_undefined_function() {
     let source = "main :: fn() -> i64 {\n    return no_such_fn(1)\n}\n";

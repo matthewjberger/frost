@@ -1576,6 +1576,14 @@ parse_program :: fn(mut p: Parser) -> i64 {
                 }
             } else if (third == TOK_INT) {
                 parse_const(p)
+            } else if (third != TOK_KW_FN) {
+                // Everything above is a form this compiler knows; anything else
+                // would be read as a function and misparse into a crash far from
+                // here, so name it where it is written instead. A declaration the
+                // language has and this compiler has not yet reaches this.
+                report_where(p.modules, p.src, cur_off(p))
+                frost_error("this declaration is not supported yet")
+                frost_die()
             } else {
                 // A function. Reset the type-parameter state, remember where it
                 // starts, and parse it. If it turned out to reference a type
