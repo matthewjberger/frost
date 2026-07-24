@@ -1143,8 +1143,15 @@ check_calls :: fn(mut p: Parser) {
                 // A call whose name is not a defined function may be a call
                 // through a function-pointer parameter, which is indirect. The
                 // codegen locals do not exist yet, so the name is looked for
-                // among the function-pointer parameters instead.
-                callee_proc := proc_param_named(p, name_off, name_len)
+                // among the function-pointer parameters instead. A defined
+                // function is never also a parameter, so this only matters when
+                // the name is undefined; guarding it there keeps `proc_param_named`
+                // (a whole-arena scan) off the common path and makes this check
+                // linear instead of quadratic in the program size.
+                mut callee_proc : i64 = 0 - 1
+                if (defined == 0) {
+                    callee_proc = proc_param_named(p, name_off, name_len)
+                }
                 // `columns_new` is a compiler builtin standing for a zeroed
                 // container, so it has no defined symbol; the emitter recognizes
                 // it by name. Its zero arguments still satisfy the arity check.
