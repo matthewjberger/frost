@@ -2069,8 +2069,10 @@ fn self_hosted_errors_name_a_position() {
         return;
     };
     assert!(
-        message.contains(":4:13: struct 'Point' has no field 'z'"),
-        "expected a file, line and column, got:\n{message}"
+        message.contains(":4:13:")
+            && message.contains("print p.z")
+            && message.contains("^ struct 'Point' has no field 'z'"),
+        "expected a located error with the source line and a caret, got:\n{message}"
     );
     assert!(
         message.contains("frost_mfck_input_position.frost:"),
@@ -2088,7 +2090,8 @@ fn self_hosted_rejects_an_unsupported_declaration() {
         return;
     };
     assert!(
-        message.contains(":1:1: this declaration is not supported yet"),
+        message.contains(":1:1:")
+            && message.contains("^ this declaration is not supported yet"),
         "expected a located unsupported-declaration error, got:\n{message}"
     );
     assert!(

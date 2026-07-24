@@ -191,31 +191,50 @@ place_module :: fn(buffer: ^i8, at: i64, path: ^i8,
 // way to reporting an error and ending the process, so what it costs is not on
 // any path a working build takes.
 report_where :: fn(mut modules: Arena<Module>, src: ^i8, offset: i64) {
+    index := module_at(modules, offset)
+    if (index < 0) {
+        return
+    }
+    entry := arena_at(modules, index)
+    mut line : i64 = 1
+    mut column : i64 = 1
+    // The start of the line the offset is on, and the end of it, so the source
+    // can be shown with a caret under the column the error is at.
+    mut line_start := entry.start
+    mut line_end := offset
     unsafe {
-        index := module_at(modules, offset)
-        if (index < 0) {
-            return
-        }
-        entry := arena_at(modules, index)
-        mut line : i64 = 1
-        mut column : i64 = 1
         mut at := entry.start
         while (at < offset) {
             if (frost_byte_at(src, at) == CH_LF) {
                 line = line + 1
                 column = 1
+                line_start = at + 1
             } else {
                 column = column + 1
             }
             at = at + 1
         }
-        report_cstr(entry.path)
-        report(":")
-        frost_error_int(line)
-        report(":")
-        frost_error_int(column)
-        report(": ")
+        while (line_end < entry.finish
+            && frost_byte_at(src, line_end) != CH_LF) {
+            line_end = line_end + 1
+        }
     }
+    report_cstr(entry.path)
+    report(":")
+    frost_error_int(line)
+    report(":")
+    frost_error_int(column)
+    report(":\n")
+    // The offending line, then a caret under the column. The message the caller
+    // writes next follows the caret on that line, so it sits right at the spot.
+    report_src(src, line_start, line_end - line_start)
+    report("\n")
+    mut space : i64 = 1
+    while (space < column) {
+        report(" ")
+        space = space + 1
+    }
+    report("^ ")
 }
 
 // The same position, written into the emitted program rather than to stderr,
