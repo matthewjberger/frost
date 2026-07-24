@@ -4286,6 +4286,49 @@ fn self_hosted_standard_library_math() {
     assert_eq!(output, "32\n1\n5\n0.6\n11\n1\n5\n1\n-5\n2\n");
 }
 
+// The SoA `columns<T, N>` container, compiled by the self-hosted compiler: the
+// synthesized per-field-array layout, `columns_new()` construction, the
+// generational library (reset/insert/alive/release) imported from
+// std/columns.frost, the handle-checked place-deref `c[h].field` for read and
+// write, a column sliced into a hot loop (`c.x` is an ordinary array), and the
+// stale-handle check going false after a release. Exercises the field-
+// reflection builtin and the scatter/deref lowering on the native backend.
+const SELFHOSTED_COLUMNS: &str = concat!(
+    "import \"columns.frost\"\n",
+    "Particle :: struct { x: i64, y: i64 }\n",
+    "sum_col :: fn(xs: []i64) -> i64 {\n",
+    "    mut total : i64 = 0\n",
+    "    mut i : i64 = 0\n",
+    "    n := slice_len(xs)\n",
+    "    while (i < n) { total = total + xs[i]  i = i + 1 }\n",
+    "    total\n",
+    "}\n",
+    "main :: fn() -> i64 {\n",
+    "    mut c : columns<Particle, 8> = columns_new()\n",
+    "    columns_reset($Particle, $8, c)\n",
+    "    a := columns_insert($Particle, $8, c, Particle { x = 10, y = 1 })\n",
+    "    columns_insert($Particle, $8, c, Particle { x = 20, y = 2 })\n",
+    "    print c[a].x + c[a].y\n",
+    "    c[a].x = 100\n",
+    "    print c[a].x\n",
+    "    print sum_col(c.x)\n",
+    "    if (columns_alive($Particle, $8, c, a)) { print 1 } else { print 0 }\n",
+    "    columns_release($Particle, $8, c, a)\n",
+    "    if (columns_alive($Particle, $8, c, a)) { print 1 } else { print 0 }\n",
+    "    0\n",
+    "}\n",
+);
+
+#[test]
+fn self_hosted_columns_container() {
+    let Some(output) = selfhosted_native_output("columns", SELFHOSTED_COLUMNS)
+    else {
+        return;
+    };
+    // 10+1; then x set to 100; column sum 100+20; alive true; then false.
+    assert_eq!(output, "11\n100\n120\n1\n0\n");
+}
+
 // A runtime function pointer: a higher-order function taking a `fn(i64) -> i64`
 // and calling through it, with a function's name passed as its address. A
 // single function pointer is a closed call target, not a vtable.

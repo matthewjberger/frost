@@ -1,0 +1,67 @@
+// A generational columns container: the structure-of-arrays sibling of a slab.
+// It stores each field of the element type in its own contiguous array, so a
+// system that reads one field across many elements strides one column rather
+// than gathering whole structs. The handle scheme is the slab's, unchanged: a
+// slot goes stale when it is released and reused, and a handle to it stops
+// reading.
+//
+// `columns<T, N>` is a compiler-synthesized type, one `[N]field` array per
+// field of `T` plus the `generations`/`free_list`/`free_count` bookkeeping.
+// `columns_new()` builds a zeroed one; the deref `c[handle].field` and the
+// element scatter `c[handle] = value` are compiler-supplied because they select
+// a column before indexing, which is not writable where a struct is one value.
+// Everything below is ordinary Frost over those, mirroring std/slab.frost, so
+// switching a system from `Slab<T, N>` to `columns<T, N>` changes the container
+// token and the `slab_` prefix, nothing else.
+
+export columns_reset, columns_full, columns_insert, columns_alive,
+    columns_release
+
+// Every slot free, every generation back to zero. Built with `columns_new()`
+// and then reset, since construction cannot run code.
+columns_reset :: fn($T: Type, $N: usize, mut c: columns<T, N>) {
+    mut i : i64 = 0
+    while (i < N) {
+        c.generations[i] = 0
+        c.free_list[i] = N - 1 - i
+        i = i + 1
+    }
+    c.free_count = N
+}
+
+columns_full :: fn($T: Type, $N: usize, c: columns<T, N>) -> bool {
+    c.free_count == 0
+}
+
+// The caller checks `columns_full` first. The element is scattered into the
+// columns at the free slot; the handle carries that slot's current generation.
+columns_insert :: fn($T: Type, $N: usize, mut c: columns<T, N>, move value: $T)
+    -> Handle<T> {
+    c.free_count = c.free_count - 1
+    index := c.free_list[c.free_count]
+    handle : Handle<T> = (c.generations[index] << 32) | index
+    c[handle] = value
+    handle
+}
+
+columns_alive :: fn($T: Type, $N: usize, c: columns<T, N>, handle: Handle<T>)
+    -> bool {
+    raw : i64 = handle
+    c.generations[raw & 4294967295] == (raw >> 32)
+}
+
+// Bumping the generation makes every outstanding handle to this slot stale, so
+// a later `c[handle].field` through one aborts rather than reading the next
+// tenant.
+columns_release :: fn($T: Type, $N: usize, mut c: columns<T, N>,
+    handle: Handle<T>) -> bool {
+    raw : i64 = handle
+    index := raw & 4294967295
+    if (c.generations[index] != (raw >> 32)) {
+        return false
+    }
+    c.generations[index] = c.generations[index] + 1
+    c.free_list[c.free_count] = index
+    c.free_count = c.free_count + 1
+    true
+}

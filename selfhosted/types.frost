@@ -190,6 +190,21 @@ type_of :: fn(mut p: Parser, id: i64) -> i64 {
         base := node.a
         off := node.val
         len := node.c
+        // `c[h].field` on a columns container yields one element of that field's
+        // column, so the type is the column array's element, not the column.
+        base_node := arena_at(p.arena, base)
+        if (base_node.kind == NODE_INDEX) {
+            cbase_ty := type_of(p, base_node.a)
+            mut cthrough := cbase_ty
+            if (is_pointer(cthrough)) {
+                cthrough = pointee(cthrough)
+            }
+            if (type_of(p, base_node.b) == TY_HANDLE
+                && is_columns_ty(p, cthrough)) {
+                col := field_type_by_range(p, cthrough, off, len)
+                return array_element(p, col)
+            }
+        }
         base_ty := type_of(p, base)
         return field_type(p, base_ty, off, len)
     }
