@@ -188,6 +188,10 @@ main :: fn() -> i64 {
             region_off = 0,
             region_len = 0,
             region_returns = 0,
+            frame_storage = arena_make($LocalVar, 4096),
+            frame_bound = arena_make($LocalVar, 4096),
+            frame_materialized = arena_make($LocalVar, 4096),
+            frame_answers = 0,
             modules = modules,
             exports = exports,
             export_names = export_names,
@@ -234,6 +238,7 @@ main :: fn() -> i64 {
             check_unsafety(parser)
         }
         check_regions(parser)
+        check_frame_escapes(parser)
 
         // Where the emitted text goes. A link needs it in a file whatever the
         // caller asked for, so it writes one beside the executable and removes it

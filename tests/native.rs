@@ -2255,6 +2255,23 @@ fn self_hosted_rejects_a_returned_region_pointer() {
     );
 }
 
+// The frame check reaches the self-hosted compiler too: a pointer to a local
+// may not be returned, since the local's storage dies when the call returns.
+#[test]
+fn self_hosted_rejects_a_returned_frame_pointer() {
+    let source = "grab :: fn() -> ^i64 {\n\
+                  \x20   mut x : i64 = 5\n\
+                  \x20   ptr_to(x)\n}\n\
+                  main :: fn() -> i64 { 0 }\n";
+    let Some(message) = self_hosted_rejects("framereturn", source) else {
+        return;
+    };
+    assert!(
+        message.contains("into this frame"),
+        "expected a frame-escape error, got:\n{message}"
+    );
+}
+
 // A binding declared inside the region may hold a region pointer, and reading
 // through it is what the region is for, so this must be accepted.
 #[test]

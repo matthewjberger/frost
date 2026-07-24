@@ -595,6 +595,14 @@ Parser :: struct {
     region_off: i64,
     region_len: i64,
     region_returns: i64,
+    // The frame-escape check's sets: locals declared in the function being
+    // checked, those holding a pointer into its frame, and those built here so
+    // a view of them is a view of the frame. frame_answers records whether the
+    // function returns a borrow, pointer or slice at all.
+    frame_storage: Arena<LocalVar>,
+    frame_bound: Arena<LocalVar>,
+    frame_materialized: Arena<LocalVar>,
+    frame_answers: i64,
     modules: Arena<Module>,
     exports: Arena<Export>,
     export_names: ^i8,
