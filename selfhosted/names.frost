@@ -149,80 +149,64 @@ bytes_equal :: fn(src: ^i8, first: i64, second: i64, length: i64) -> bool {
 }
 
 intern_global :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
-    unsafe {
-        mut i : i64 = 0
-        while (i < p.fns.count) {
-            entry : ^Sym = arena_at(p.fns, i)
-            if (entry^.len == length
-                && bytes_equal(p.src, entry^.off, offset, length)
-                && name_visible(p, entry^.off, entry^.len, offset)) {
-                return i
-            }
-            i = i + 1
+    mut i : i64 = 0
+    while (i < p.fns.count) {
+        entry := arena_at(p.fns, i)
+        if (entry.len == length
+            && bytes_equal(p.src, entry.off, offset, length)
+            && name_visible(p, entry.off, entry.len, offset)) {
+            return i
         }
-        arena_push(
-            p.fns,
-            Sym { off = offset, len = length, is_extern = 0, is_safe = 0,
-                ret_type = TY_I64,
-                params = 0 - 1, defined = 0, uses_ty = 0 - 1, cap_off = 0,
-                cap_len = 0 },
-        )
+        i = i + 1
     }
+    arena_push(
+        p.fns,
+        Sym { off = offset, len = length, is_extern = 0, is_safe = 0,
+            ret_type = TY_I64,
+            params = 0 - 1, defined = 0, uses_ty = 0 - 1, cap_off = 0,
+            cap_len = 0 },
+    )
 }
 
 // A name becomes defined when its `fn` or `extern fn` is parsed. A name that is
 // only ever called is interned but never defined, which is a call to a function
 // that does not exist.
 mark_defined :: fn(mut p: Parser, fn_index: i64) {
-    unsafe {
-        entry : ^Sym = arena_at(p.fns, fn_index)
-        entry^.defined = 1
-    }
+    entry := arena_at(p.fns, fn_index)
+    entry.defined = 1
 }
 
 mark_extern :: fn(mut p: Parser, fn_index: i64) {
-    unsafe {
-        entry : ^Sym = arena_at(p.fns, fn_index)
-        entry^.is_extern = 1
-    }
+    entry := arena_at(p.fns, fn_index)
+    entry.is_extern = 1
 }
 
 // `safe extern fn`: the author vouched for this one, so its calls are not gated.
 mark_safe :: fn(mut p: Parser, fn_index: i64) {
-    unsafe {
-        entry : ^Sym = arena_at(p.fns, fn_index)
-        entry^.is_safe = 1
-    }
+    entry := arena_at(p.fns, fn_index)
+    entry.is_safe = 1
 }
 
 set_ret_type :: fn(mut p: Parser, fn_index: i64, ret: i64) {
-    unsafe {
-        entry : ^Sym = arena_at(p.fns, fn_index)
-        entry^.ret_type = ret
-    }
+    entry := arena_at(p.fns, fn_index)
+    entry.ret_type = ret
 }
 
 set_params :: fn(mut p: Parser, fn_index: i64, params: i64) {
-    unsafe {
-        entry : ^Sym = arena_at(p.fns, fn_index)
-        entry^.params = params
-    }
+    entry := arena_at(p.fns, fn_index)
+    entry.params = params
 }
 
 set_uses :: fn(mut p: Parser, fn_index: i64, ty: i64, off: i64, len: i64) {
-    unsafe {
-        entry : ^Sym = arena_at(p.fns, fn_index)
-        entry^.uses_ty = ty
-        entry^.cap_off = off
-        entry^.cap_len = len
-    }
+    entry := arena_at(p.fns, fn_index)
+    entry.uses_ty = ty
+    entry.cap_off = off
+    entry.cap_len = len
 }
 
 node_next :: fn(mut p: Parser, id: i64) -> i64 {
-    unsafe {
-        node : ^Node = arena_at(p.arena, id)
-        node^.next
-    }
+    node := arena_at(p.arena, id)
+    node.next
 }
 
 append_node :: fn(mut p: Parser, head: i64, extra: i64) -> i64 {
@@ -266,57 +250,51 @@ register_const :: fn(mut p: Parser, offset: i64, length: i64, value: i64) {
 // this answers true on the first comparison and costs nothing.
 name_visible :: fn(mut p: Parser, decl_off: i64, decl_len: i64, use_off: i64)
     -> bool {
-    unsafe {
-        owner := module_at(p.modules, decl_off)
-        if (owner == module_at(p.modules, use_off)) {
+    owner := module_at(p.modules, decl_off)
+    if (owner == module_at(p.modules, use_off)) {
+        return true
+    }
+    mut i : i64 = 0
+    while (i < p.exports.count) {
+        entry := arena_at(p.exports, i)
+        if (entry.module == owner && entry.len == decl_len
+            && bytes_equal_across(p.export_names, entry.off, p.src, decl_off,
+                decl_len)) {
             return true
         }
-        mut i : i64 = 0
-        while (i < p.exports.count) {
-            entry : ^Export = arena_at(p.exports, i)
-            if (entry^.module == owner && entry^.len == decl_len
-                && bytes_equal_across(p.export_names, entry^.off, p.src, decl_off,
-                    decl_len)) {
-                return true
-            }
-            i = i + 1
-        }
-        false
+        i = i + 1
     }
+    false
 }
 
 // If a name is a declared constant, return its value through `out` (as the
 // return) and true; otherwise false. Consts are looked up by byte comparison.
 const_value :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
-    unsafe {
-        mut i : i64 = 0
-        while (i < p.consts.count) {
-            entry : ^ConstDef = arena_at(p.consts, i)
-            if (entry^.name_len == length
-                && bytes_equal(p.src, entry^.name_off, offset, length)
-                && name_visible(p, entry^.name_off, entry^.name_len, offset)) {
-                return entry^.value
-            }
-            i = i + 1
+    mut i : i64 = 0
+    while (i < p.consts.count) {
+        entry := arena_at(p.consts, i)
+        if (entry.name_len == length
+            && bytes_equal(p.src, entry.name_off, offset, length)
+            && name_visible(p, entry.name_off, entry.name_len, offset)) {
+            return entry.value
         }
-        0 - 1
+        i = i + 1
     }
+    0 - 1
 }
 
 is_const :: fn(mut p: Parser, offset: i64, length: i64) -> bool {
-    unsafe {
-        mut i : i64 = 0
-        while (i < p.consts.count) {
-            entry : ^ConstDef = arena_at(p.consts, i)
-            if (entry^.name_len == length
-                && bytes_equal(p.src, entry^.name_off, offset, length)
-                && name_visible(p, entry^.name_off, entry^.name_len, offset)) {
-                return true
-            }
-            i = i + 1
+    mut i : i64 = 0
+    while (i < p.consts.count) {
+        entry := arena_at(p.consts, i)
+        if (entry.name_len == length
+            && bytes_equal(p.src, entry.name_off, offset, length)
+            && name_visible(p, entry.name_off, entry.name_len, offset)) {
+            return true
         }
-        false
+        i = i + 1
     }
+    false
 }
 
 is_main_name :: fn(src: ^i8, offset: i64, length: i64) -> bool {
@@ -354,8 +332,8 @@ new_named_node :: fn(mut p: Parser, kind: i64, child: i64, offset: i64,
 }
 
 // A local binding. `b` carries the annotated type, or -1 to infer the type from
-// the initializer. An annotation wins because a generic call cannot be typed
-// precisely from the callee alone (`entry : ^Token = arena_at(...)`).
+// the initializer. An annotation wins where the initializer alone does not pin
+// the type down, as a value read back at a narrower type than it was stored.
 new_let_node :: fn(mut p: Parser, value: i64, offset: i64, length: i64,
     annotation: i64) -> i64 {
     arena_push(
@@ -382,10 +360,8 @@ new_func_node :: fn(mut p: Parser, body: i64, params: i64, fn_index: i64,
 }
 
 set_next :: fn(mut p: Parser, id: i64, next_id: i64) {
-    unsafe {
-        node : ^Node = arena_at(p.arena, id)
-        node^.next = next_id
-    }
+    node := arena_at(p.arena, id)
+    node.next = next_id
 }
 
 // A field access `base.name`: `a` is the base expression, `val`/`c` the field
@@ -419,10 +395,8 @@ new_field_init :: fn(mut p: Parser, value: i64, offset: i64, length: i64) -> i64
 }
 
 set_field_next :: fn(mut p: Parser, id: i64, next_id: i64) {
-    unsafe {
-        field : ^StructField = arena_at(p.fields, id)
-        field^.next = next_id
-    }
+    field := arena_at(p.fields, id)
+    field.next = next_id
 }
 
 // Indirect: a raw pointer or a borrow, both a C pointer and both auto-derefed.
@@ -470,17 +444,13 @@ array_index_of :: fn(ty: i64) -> i64 {
 }
 
 array_element :: fn(mut p: Parser, ty: i64) -> i64 {
-    unsafe {
-        def : ^ArrayDef = arena_at(p.arrays, array_index_of(ty))
-        def^.element
-    }
+    def := arena_at(p.arrays, array_index_of(ty))
+    def.element
 }
 
 array_length :: fn(mut p: Parser, ty: i64) -> i64 {
-    unsafe {
-        def : ^ArrayDef = arena_at(p.arrays, array_index_of(ty))
-        def^.length
-    }
+    def := arena_at(p.arrays, array_index_of(ty))
+    def.length
 }
 
 is_slice_ty :: fn(mut p: Parser, ty: i64) -> bool {
@@ -490,18 +460,16 @@ is_slice_ty :: fn(mut p: Parser, ty: i64) -> bool {
 // One code per (element, length) pair, so two spellings of the same array are
 // the same type and the backends can key their declarations on the code.
 array_of :: fn(mut p: Parser, element: i64, length: i64) -> i64 {
-    unsafe {
-        mut i : i64 = 0
-        while (i < p.arrays.count) {
-            entry : ^ArrayDef = arena_at(p.arrays, i)
-            if (entry^.element == element && entry^.length == length) {
-                return ARRAY_BASE + i
-            }
-            i = i + 1
+    mut i : i64 = 0
+    while (i < p.arrays.count) {
+        entry := arena_at(p.arrays, i)
+        if (entry.element == element && entry.length == length) {
+            return ARRAY_BASE + i
         }
-        ARRAY_BASE + arena_push(p.arrays,
-            ArrayDef { element = element, length = length })
+        i = i + 1
     }
+    ARRAY_BASE + arena_push(p.arrays,
+        ArrayDef { element = element, length = length })
 }
 
 struct_index_of :: fn(ty: i64) -> i64 {
@@ -514,59 +482,55 @@ struct_index_of :: fn(ty: i64) -> i64 {
 // template struct is not returned here; `Name<Arg>` instantiation is handled in
 // parse_type. An unknown name falls back to i64.
 type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
-    unsafe {
-        if (p.type_param_len == length
-            && bytes_equal(p.src, p.type_param_off, offset, length)) {
-            if (p.binding_active == 1) {
-                return p.type_binding
-            }
-            return TY_PARAM
+    if (p.type_param_len == length
+        && bytes_equal(p.src, p.type_param_off, offset, length)) {
+        if (p.binding_active == 1) {
+            return p.type_binding
         }
-        if (str_range_eq(p.src, offset, length, "i64")) { return TY_I64 }
-        if (str_range_eq(p.src, offset, length, "i32")) { return TY_I32 }
-        if (str_range_eq(p.src, offset, length, "i16")) { return TY_I16 }
-        if (str_range_eq(p.src, offset, length, "i8")) { return TY_I8 }
-        if (str_range_eq(p.src, offset, length, "isize")) { return TY_ISIZE }
-        if (str_range_eq(p.src, offset, length, "u64")) { return TY_U64 }
-        if (str_range_eq(p.src, offset, length, "u32")) { return TY_U32 }
-        if (str_range_eq(p.src, offset, length, "u16")) { return TY_U16 }
-        if (str_range_eq(p.src, offset, length, "u8")) { return TY_U8 }
-        if (str_range_eq(p.src, offset, length, "usize")) { return TY_USIZE }
-        if (str_range_eq(p.src, offset, length, "f64")) { return TY_F64 }
-        if (str_range_eq(p.src, offset, length, "f32")) { return TY_F32 }
-        if (str_range_eq(p.src, offset, length, "str")) {
-            return array_of(p, TY_U8, 0 - 1)
-        }
-        if (str_range_eq(p.src, offset, length, "bool")) { return TY_BOOL }
-        mut i : i64 = 0
-        while (i < p.structs.count) {
-            entry : ^StructDef = arena_at(p.structs, i)
-            if (entry^.is_generic == 0 && entry^.name_len == length
-                && bytes_equal(p.src, entry^.name_off, offset, length)
-                && name_visible(p, entry^.name_off, entry^.name_len, offset)) {
-                return STRUCT_BASE + i
-            }
-            i = i + 1
-        }
-        TY_I64
+        return TY_PARAM
     }
+    if (str_range_eq(p.src, offset, length, "i64")) { return TY_I64 }
+    if (str_range_eq(p.src, offset, length, "i32")) { return TY_I32 }
+    if (str_range_eq(p.src, offset, length, "i16")) { return TY_I16 }
+    if (str_range_eq(p.src, offset, length, "i8")) { return TY_I8 }
+    if (str_range_eq(p.src, offset, length, "isize")) { return TY_ISIZE }
+    if (str_range_eq(p.src, offset, length, "u64")) { return TY_U64 }
+    if (str_range_eq(p.src, offset, length, "u32")) { return TY_U32 }
+    if (str_range_eq(p.src, offset, length, "u16")) { return TY_U16 }
+    if (str_range_eq(p.src, offset, length, "u8")) { return TY_U8 }
+    if (str_range_eq(p.src, offset, length, "usize")) { return TY_USIZE }
+    if (str_range_eq(p.src, offset, length, "f64")) { return TY_F64 }
+    if (str_range_eq(p.src, offset, length, "f32")) { return TY_F32 }
+    if (str_range_eq(p.src, offset, length, "str")) {
+        return array_of(p, TY_U8, 0 - 1)
+    }
+    if (str_range_eq(p.src, offset, length, "bool")) { return TY_BOOL }
+    mut i : i64 = 0
+    while (i < p.structs.count) {
+        entry := arena_at(p.structs, i)
+        if (entry.is_generic == 0 && entry.name_len == length
+            && bytes_equal(p.src, entry.name_off, offset, length)
+            && name_visible(p, entry.name_off, entry.name_len, offset)) {
+            return STRUCT_BASE + i
+        }
+        i = i + 1
+    }
+    TY_I64
 }
 
 // Find the index of a generic struct template by name, or -1.
 generic_index_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
-    unsafe {
-        mut i : i64 = 0
-        while (i < p.structs.count) {
-            entry : ^StructDef = arena_at(p.structs, i)
-            if (entry^.is_generic == 1 && entry^.name_len == length
-                && bytes_equal(p.src, entry^.name_off, offset, length)
-                && name_visible(p, entry^.name_off, entry^.name_len, offset)) {
-                return i
-            }
-            i = i + 1
+    mut i : i64 = 0
+    while (i < p.structs.count) {
+        entry := arena_at(p.structs, i)
+        if (entry.is_generic == 1 && entry.name_len == length
+            && bytes_equal(p.src, entry.name_off, offset, length)
+            && name_visible(p, entry.name_off, entry.name_len, offset)) {
+            return i
         }
-        0 - 1
+        i = i + 1
     }
+    0 - 1
 }
 
 // A unary node wrapping a single child expression (deref, address-of).
