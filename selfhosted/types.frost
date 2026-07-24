@@ -273,6 +273,9 @@ type_of :: fn(mut p: Parser, id: i64) -> i64 {
         if (kind == NODE_REF) {
             return BORROW_FLAG + type_of(p, node^.a)
         }
+        if (kind == NODE_SLICE_FROM) {
+            return node^.val
+        }
         if (kind == NODE_ADDROF) {
             inner := node^.a
             return POINTER_BASE + type_of(p, inner)

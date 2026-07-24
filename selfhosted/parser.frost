@@ -166,6 +166,20 @@ parse_primary :: fn(mut p: Parser) -> i64 {
                 advance(p)
                 return new_type_node(p, NODE_PTR_CAST, expr, ty)
             }
+            if (str_range_eq(p.src, offset, length, "slice_from")) {
+                advance(p)
+                if (cur(p) == TOK_DOLLAR) {
+                    advance(p)
+                }
+                element := parse_type(p)
+                advance(p)
+                ptr := parse_expr(p)
+                advance(p)
+                len := parse_expr(p)
+                advance(p)
+                slice_ty := array_of(p, element, 0 - 1)
+                return new_node(p, NODE_SLICE_FROM, ptr, len, slice_ty)
+            }
             advance(p)
             args := parse_arg_list(p)
             fn_index := intern_global(p, offset, length)
