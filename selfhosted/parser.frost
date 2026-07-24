@@ -478,6 +478,13 @@ parse_block :: fn(mut p: Parser) -> i64 {
 // on a non-generic name is consumed and treated as i64.
 parse_type :: fn(mut p: Parser) -> i64 {
     unsafe {
+        // `ref T` is a borrow of T: the same address a `^T` is, but one the
+        // checker has proven points at a live value, so reaching through it is
+        // not gated the way a raw pointer is.
+        if (cur(p) == TOK_KW_REF) {
+            advance(p)
+            return BORROW_FLAG + parse_type(p)
+        }
         mut pointer_levels : i64 = 0
         while (cur(p) == TOK_CARET) {
             advance(p)
