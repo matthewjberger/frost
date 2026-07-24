@@ -45,6 +45,11 @@ nothing downstream would catch a mistake.
 - **Imports.** `import "path"` joins another file's declarations to this one.
 - **`extern fn`** for C linkage, which is how it does its own IO, and
   `safe extern fn` for one audited not to need an `unsafe` block at its calls.
+- **The unsafety gate**, enforced rather than merely parsed. Reading through a
+  raw pointer, `ptr_cast`, and calling an `extern fn` that is not `safe` are
+  refused outside an `unsafe` block, so `unsafe` is the complete list of places
+  to look when memory is corrupted. It passes its own gate on its own source.
+  `FROST_CHECK_UNSAFE=0` turns it off, as in the bootstrap.
 - **`test` blocks**, run by `--test`, which reports each test and summarises.
 - **Diagnostics carrying a file, line and column**, since a compiler that
   refuses a program owes you the position.
