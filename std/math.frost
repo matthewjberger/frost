@@ -1,0 +1,342 @@
+// A small single-precision math library for graphics and games: vectors,
+// matrices, and quaternions as plain structs with free functions over them.
+//
+// There is no operator overloading and there are no methods, so `vec3_add(a, b)`
+// rather than `a + b` and `mat4_mul(a, b)` rather than `a * b`. The names carry
+// the type the way the rest of the standard library's do (`vec3_`, `mat4_`,
+// `quat_`), which is the namespace. Everything is `f32`; a program that needs
+// double precision keeps its own copy or waits for an `f64` variant.
+//
+// Matrices are column-major, the OpenGL and Vulkan convention: element at row
+// `r`, column `c` lives at `m.m[c * 4 + r]`, and `mat4_mul(a, b)` is the matrix
+// that applies `b` then `a` to a column vector.
+
+export Vec2, Vec3, Vec4, Mat4, Quat,
+    vec2, vec3, vec4,
+    vec2_add, vec2_sub, vec2_scale, vec2_dot, vec2_length, vec2_normalize,
+    vec3_add, vec3_sub, vec3_scale, vec3_neg, vec3_dot, vec3_cross,
+    vec3_length, vec3_length_sq, vec3_distance, vec3_normalize, vec3_lerp,
+    vec4_add, vec4_sub, vec4_scale, vec4_dot,
+    mat4_zero, mat4_identity, mat4_mul, mat4_mul_vec4,
+    mat4_translation, mat4_scale, mat4_rotation_x, mat4_rotation_y,
+    mat4_rotation_z, mat4_perspective, mat4_ortho, mat4_look_at,
+    mat4_transform_point, mat4_transform_dir,
+    quat_identity, quat_from_axis_angle, quat_mul, quat_length,
+    quat_normalize, quat_conjugate, quat_rotate_vec3, quat_to_mat4,
+    radians, degrees
+
+// The C standard library's single-precision transcendentals. Each takes and
+// returns a number with no pointer, so it is `safe` and needs no block.
+sqrtf :: safe extern fn(x: f32) -> f32
+sinf  :: safe extern fn(x: f32) -> f32
+cosf  :: safe extern fn(x: f32) -> f32
+tanf  :: safe extern fn(x: f32) -> f32
+
+Vec2 :: struct { x: f32, y: f32 }
+Vec3 :: struct { x: f32, y: f32, z: f32 }
+Vec4 :: struct { x: f32, y: f32, z: f32, w: f32 }
+Mat4 :: struct { m: [16]f32 }
+Quat :: struct { x: f32, y: f32, z: f32, w: f32 }
+
+// Degrees to radians and back, since angles read more naturally in degrees but
+// the transcendentals want radians.
+radians :: fn(degrees: f32) -> f32 { degrees * 0.017453292519943295 }
+degrees :: fn(radians: f32) -> f32 { radians * 57.29577951308232 }
+
+// ---------------------------------------------------------------------------
+// Vec2
+
+vec2 :: fn(x: f32, y: f32) -> Vec2 { Vec2 { x = x, y = y } }
+
+vec2_add :: fn(a: Vec2, b: Vec2) -> Vec2 {
+    Vec2 { x = a.x + b.x, y = a.y + b.y }
+}
+vec2_sub :: fn(a: Vec2, b: Vec2) -> Vec2 {
+    Vec2 { x = a.x - b.x, y = a.y - b.y }
+}
+vec2_scale :: fn(a: Vec2, s: f32) -> Vec2 {
+    Vec2 { x = a.x * s, y = a.y * s }
+}
+vec2_dot :: fn(a: Vec2, b: Vec2) -> f32 { a.x * b.x + a.y * b.y }
+vec2_length :: fn(a: Vec2) -> f32 { sqrtf(vec2_dot(a, a)) }
+vec2_normalize :: fn(a: Vec2) -> Vec2 {
+    length := vec2_length(a)
+    mut inv : f32 = 0.0
+    if (length != 0.0) { inv = 1.0 / length }
+    vec2_scale(a, inv)
+}
+
+// ---------------------------------------------------------------------------
+// Vec3, the workhorse
+
+vec3 :: fn(x: f32, y: f32, z: f32) -> Vec3 { Vec3 { x = x, y = y, z = z } }
+
+vec3_add :: fn(a: Vec3, b: Vec3) -> Vec3 {
+    Vec3 { x = a.x + b.x, y = a.y + b.y, z = a.z + b.z }
+}
+vec3_sub :: fn(a: Vec3, b: Vec3) -> Vec3 {
+    Vec3 { x = a.x - b.x, y = a.y - b.y, z = a.z - b.z }
+}
+vec3_scale :: fn(a: Vec3, s: f32) -> Vec3 {
+    Vec3 { x = a.x * s, y = a.y * s, z = a.z * s }
+}
+vec3_neg :: fn(a: Vec3) -> Vec3 {
+    Vec3 { x = 0.0 - a.x, y = 0.0 - a.y, z = 0.0 - a.z }
+}
+vec3_dot :: fn(a: Vec3, b: Vec3) -> f32 {
+    a.x * b.x + a.y * b.y + a.z * b.z
+}
+vec3_cross :: fn(a: Vec3, b: Vec3) -> Vec3 {
+    Vec3 {
+        x = a.y * b.z - a.z * b.y,
+        y = a.z * b.x - a.x * b.z,
+        z = a.x * b.y - a.y * b.x,
+    }
+}
+vec3_length_sq :: fn(a: Vec3) -> f32 { vec3_dot(a, a) }
+vec3_length :: fn(a: Vec3) -> f32 { sqrtf(vec3_dot(a, a)) }
+vec3_distance :: fn(a: Vec3, b: Vec3) -> f32 { vec3_length(vec3_sub(a, b)) }
+vec3_normalize :: fn(a: Vec3) -> Vec3 {
+    length := vec3_length(a)
+    mut inv : f32 = 0.0
+    if (length != 0.0) { inv = 1.0 / length }
+    vec3_scale(a, inv)
+}
+vec3_lerp :: fn(a: Vec3, b: Vec3, t: f32) -> Vec3 {
+    vec3_add(a, vec3_scale(vec3_sub(b, a), t))
+}
+
+// ---------------------------------------------------------------------------
+// Vec4
+
+vec4 :: fn(x: f32, y: f32, z: f32, w: f32) -> Vec4 {
+    Vec4 { x = x, y = y, z = z, w = w }
+}
+vec4_add :: fn(a: Vec4, b: Vec4) -> Vec4 {
+    Vec4 { x = a.x + b.x, y = a.y + b.y, z = a.z + b.z, w = a.w + b.w }
+}
+vec4_sub :: fn(a: Vec4, b: Vec4) -> Vec4 {
+    Vec4 { x = a.x - b.x, y = a.y - b.y, z = a.z - b.z, w = a.w - b.w }
+}
+vec4_scale :: fn(a: Vec4, s: f32) -> Vec4 {
+    Vec4 { x = a.x * s, y = a.y * s, z = a.z * s, w = a.w * s }
+}
+vec4_dot :: fn(a: Vec4, b: Vec4) -> f32 {
+    a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w
+}
+
+// ---------------------------------------------------------------------------
+// Mat4, column-major. `m.m[c * 4 + r]` is row r, column c.
+
+mat4_zero :: fn() -> Mat4 {
+    Mat4 { m = [
+        0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,
+    ] }
+}
+
+mat4_identity :: fn() -> Mat4 {
+    Mat4 { m = [
+        1.0, 0.0, 0.0, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.0, 0.0, 1.0, 0.0,
+        0.0, 0.0, 0.0, 1.0,
+    ] }
+}
+
+// `a` applied after `b`: the product that transforms a column vector by `b`
+// then by `a`.
+mat4_mul :: fn(a: Mat4, b: Mat4) -> Mat4 {
+    mut out := mat4_zero()
+    mut col : i64 = 0
+    while (col < 4) {
+        mut row : i64 = 0
+        while (row < 4) {
+            mut sum : f32 = 0.0
+            mut k : i64 = 0
+            while (k < 4) {
+                sum = sum + a.m[k * 4 + row] * b.m[col * 4 + k]
+                k = k + 1
+            }
+            out.m[col * 4 + row] = sum
+            row = row + 1
+        }
+        col = col + 1
+    }
+    out
+}
+
+mat4_mul_vec4 :: fn(a: Mat4, v: Vec4) -> Vec4 {
+    Vec4 {
+        x = a.m[0] * v.x + a.m[4] * v.y + a.m[8] * v.z + a.m[12] * v.w,
+        y = a.m[1] * v.x + a.m[5] * v.y + a.m[9] * v.z + a.m[13] * v.w,
+        z = a.m[2] * v.x + a.m[6] * v.y + a.m[10] * v.z + a.m[14] * v.w,
+        w = a.m[3] * v.x + a.m[7] * v.y + a.m[11] * v.z + a.m[15] * v.w,
+    }
+}
+
+// A point carries an implicit w of 1, so a translation moves it; a direction
+// carries w of 0, so a translation leaves it alone.
+mat4_transform_point :: fn(a: Mat4, v: Vec3) -> Vec3 {
+    out := mat4_mul_vec4(a, Vec4 { x = v.x, y = v.y, z = v.z, w = 1.0 })
+    Vec3 { x = out.x, y = out.y, z = out.z }
+}
+mat4_transform_dir :: fn(a: Mat4, v: Vec3) -> Vec3 {
+    out := mat4_mul_vec4(a, Vec4 { x = v.x, y = v.y, z = v.z, w = 0.0 })
+    Vec3 { x = out.x, y = out.y, z = out.z }
+}
+
+mat4_translation :: fn(v: Vec3) -> Mat4 {
+    mut out := mat4_identity()
+    out.m[12] = v.x
+    out.m[13] = v.y
+    out.m[14] = v.z
+    out
+}
+mat4_scale :: fn(v: Vec3) -> Mat4 {
+    mut out := mat4_zero()
+    out.m[0] = v.x
+    out.m[5] = v.y
+    out.m[10] = v.z
+    out.m[15] = 1.0
+    out
+}
+mat4_rotation_x :: fn(angle: f32) -> Mat4 {
+    c := cosf(angle)
+    s := sinf(angle)
+    mut out := mat4_identity()
+    out.m[5] = c
+    out.m[6] = s
+    out.m[9] = 0.0 - s
+    out.m[10] = c
+    out
+}
+mat4_rotation_y :: fn(angle: f32) -> Mat4 {
+    c := cosf(angle)
+    s := sinf(angle)
+    mut out := mat4_identity()
+    out.m[0] = c
+    out.m[2] = 0.0 - s
+    out.m[8] = s
+    out.m[10] = c
+    out
+}
+mat4_rotation_z :: fn(angle: f32) -> Mat4 {
+    c := cosf(angle)
+    s := sinf(angle)
+    mut out := mat4_identity()
+    out.m[0] = c
+    out.m[1] = s
+    out.m[4] = 0.0 - s
+    out.m[5] = c
+    out
+}
+
+// A right-handed perspective projection into the [-1, 1] depth range, the
+// OpenGL clip convention.
+mat4_perspective :: fn(fovy: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
+    f := 1.0 / tanf(fovy * 0.5)
+    mut out := mat4_zero()
+    out.m[0] = f / aspect
+    out.m[5] = f
+    out.m[10] = (far + near) / (near - far)
+    out.m[11] = 0.0 - 1.0
+    out.m[14] = (2.0 * far * near) / (near - far)
+    out
+}
+
+mat4_ortho :: fn(left: f32, right: f32, bottom: f32, top: f32,
+    near: f32, far: f32) -> Mat4 {
+    mut out := mat4_identity()
+    out.m[0] = 2.0 / (right - left)
+    out.m[5] = 2.0 / (top - bottom)
+    out.m[10] = 0.0 - 2.0 / (far - near)
+    out.m[12] = 0.0 - (right + left) / (right - left)
+    out.m[13] = 0.0 - (top + bottom) / (top - bottom)
+    out.m[14] = 0.0 - (far + near) / (far - near)
+    out
+}
+
+// A right-handed view matrix looking from `eye` toward `center`.
+mat4_look_at :: fn(eye: Vec3, center: Vec3, up: Vec3) -> Mat4 {
+    forward := vec3_normalize(vec3_sub(center, eye))
+    side := vec3_normalize(vec3_cross(forward, up))
+    upward := vec3_cross(side, forward)
+    mut out := mat4_identity()
+    out.m[0] = side.x
+    out.m[4] = side.y
+    out.m[8] = side.z
+    out.m[1] = upward.x
+    out.m[5] = upward.y
+    out.m[9] = upward.z
+    out.m[2] = 0.0 - forward.x
+    out.m[6] = 0.0 - forward.y
+    out.m[10] = 0.0 - forward.z
+    out.m[12] = 0.0 - vec3_dot(side, eye)
+    out.m[13] = 0.0 - vec3_dot(upward, eye)
+    out.m[14] = vec3_dot(forward, eye)
+    out
+}
+
+// ---------------------------------------------------------------------------
+// Quaternion, stored (x, y, z, w) with w the scalar part.
+
+quat_identity :: fn() -> Quat { Quat { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } }
+
+quat_from_axis_angle :: fn(axis: Vec3, angle: f32) -> Quat {
+    half := angle * 0.5
+    s := sinf(half)
+    unit := vec3_normalize(axis)
+    Quat { x = unit.x * s, y = unit.y * s, z = unit.z * s, w = cosf(half) }
+}
+
+quat_mul :: fn(a: Quat, b: Quat) -> Quat {
+    Quat {
+        x = a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+        y = a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+        z = a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+        w = a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+    }
+}
+
+quat_length :: fn(a: Quat) -> f32 {
+    sqrtf(a.x * a.x + a.y * a.y + a.z * a.z + a.w * a.w)
+}
+quat_normalize :: fn(a: Quat) -> Quat {
+    length := quat_length(a)
+    mut inv : f32 = 0.0
+    if (length != 0.0) { inv = 1.0 / length }
+    Quat { x = a.x * inv, y = a.y * inv, z = a.z * inv, w = a.w * inv }
+}
+quat_conjugate :: fn(a: Quat) -> Quat {
+    Quat { x = 0.0 - a.x, y = 0.0 - a.y, z = 0.0 - a.z, w = a.w }
+}
+
+// Rotate a vector by a quaternion: q * (v, 0) * conjugate(q), the scalar part
+// of which is zero, so the vector part is the answer.
+quat_rotate_vec3 :: fn(q: Quat, v: Vec3) -> Vec3 {
+    as_quat : Quat = Quat { x = v.x, y = v.y, z = v.z, w = 0.0 }
+    rotated := quat_mul(quat_mul(q, as_quat), quat_conjugate(q))
+    Vec3 { x = rotated.x, y = rotated.y, z = rotated.z }
+}
+
+quat_to_mat4 :: fn(q: Quat) -> Mat4 {
+    n := quat_normalize(q)
+    xx := n.x * n.x
+    yy := n.y * n.y
+    zz := n.z * n.z
+    xy := n.x * n.y
+    xz := n.x * n.z
+    yz := n.y * n.z
+    wx := n.w * n.x
+    wy := n.w * n.y
+    wz := n.w * n.z
+    Mat4 { m = [
+        1.0 - 2.0 * (yy + zz), 2.0 * (xy + wz), 2.0 * (xz - wy), 0.0,
+        2.0 * (xy - wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz + wx), 0.0,
+        2.0 * (xz + wy), 2.0 * (yz - wx), 1.0 - 2.0 * (xx + yy), 0.0,
+        0.0, 0.0, 0.0, 1.0,
+    ] }
+}

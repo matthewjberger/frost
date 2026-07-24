@@ -4246,6 +4246,46 @@ fn self_hosted_standard_library_format() {
     assert_eq!(output, "count = 12345-99\n");
 }
 
+// The single-precision math library, imported and compiled by the self-hosted
+// compiler: vectors, a matrix transform, a matrix product, and a quaternion
+// rotation, plus the trig-heavy projection and view builders. Cases are chosen
+// to land on clean values. Exercises floats/SSE end to end on both backends.
+const SELFHOSTED_STD_MATH: &str = concat!(
+    "import \"math.frost\"\n",
+    "main :: fn() -> i64 {\n",
+    "    print vec3_dot(vec3(1.0, 2.0, 3.0), vec3(4.0, 5.0, 6.0))\n",
+    "    c := vec3_cross(vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0))\n",
+    "    print c.z\n",
+    "    print vec3_length(vec3(3.0, 4.0, 0.0))\n",
+    "    n := vec3_normalize(vec3(3.0, 4.0, 0.0))\n",
+    "    print n.x\n",
+    "    p := mat4_transform_point(mat4_translation(vec3(1.0, 2.0, 3.0)), vec3(10.0, 20.0, 30.0))\n",
+    "    print p.x\n",
+    "    id := mat4_mul(mat4_identity(), mat4_identity())\n",
+    "    print id.m[0]\n",
+    "    rotated := mat4_transform_dir(mat4_rotation_z(radians(90.0)), vec3(3.0, 4.0, 0.0))\n",
+    "    print vec3_length(rotated)\n",
+    "    persp := mat4_perspective(radians(90.0), 1.0, 1.0, 10.0)\n",
+    "    print persp.m[0]\n",
+    "    view := mat4_look_at(vec3(0.0, 0.0, 5.0), vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0))\n",
+    "    vp := mat4_transform_point(view, vec3(0.0, 0.0, 0.0))\n",
+    "    print vp.z\n",
+    "    q := quat_from_axis_angle(vec3(0.0, 0.0, 1.0), radians(90.0))\n",
+    "    qr := quat_rotate_vec3(q, vec3(2.0, 0.0, 0.0))\n",
+    "    print vec3_length(qr)\n",
+    "    0\n",
+    "}\n",
+);
+
+#[test]
+fn self_hosted_standard_library_math() {
+    let Some(output) = selfhosted_native_output("stdmath", SELFHOSTED_STD_MATH)
+    else {
+        return;
+    };
+    assert_eq!(output, "32\n1\n5\n0.6\n11\n1\n5\n1\n-5\n2\n");
+}
+
 // A runtime function pointer: a higher-order function taking a `fn(i64) -> i64`
 // and calling through it, with a function's name passed as its address. A
 // single function pointer is a closed call target, not a vtable.
