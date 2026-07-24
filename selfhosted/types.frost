@@ -194,6 +194,11 @@ type_of :: fn(mut p: Parser, id: i64) -> i64 {
     if (kind == NODE_INDEX) {
         base := node.a
         t := type_of(p, base)
+        // A slab indexed by a handle yields one of its stored elements, so the
+        // type is the storage array's element, not the slab.
+        if (type_of(p, node.b) == TY_HANDLE && is_slab_ty(p, t)) {
+            return array_element(p, slab_field_type(p, t, "storage"))
+        }
         if (is_array_ty(t)) {
             return array_element(p, t)
         }

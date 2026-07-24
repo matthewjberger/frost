@@ -318,6 +318,14 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
         if (is_pointer(through)) {
             through = pointee(through)
         }
+        // A handle names a slot in a slab; frost_slot validates it and answers
+        // with the checked index, and the storage element at that index is the
+        // place. This is the one index whose bound is a generation as well as a
+        // length, so a handle to a released slot aborts here.
+        if (type_of(p, node.b) == TY_HANDLE && is_slab_ty(p, through)) {
+            emit_asm_slab_addr(p, base, base_ty, through, node.b)
+            return
+        }
         mut element : i64 = TY_I64
         // An array and a slice bound the index; a raw pointer does not, which
         // is what makes reading through one a gated operation.
@@ -395,6 +403,63 @@ emit_asm_bounds_call :: fn(mut p: Parser) {
     asm_i("addq $", shadow, ", %rsp")
 }
 
+// The address of a slab element named by a handle. The slab's address is kept
+// in a frame slot across frost_slot, which unpacks and validates the handle and
+// answers with the checked slot index; that index scales into the storage run.
+// frost_slot takes the handle, the storage length, and the generations run, and
+// aborts on an index out of range or a generation that has moved on.
+emit_asm_slab_addr :: fn(mut p: Parser, base: i64, base_ty: i64, through: i64,
+    index_node: i64) {
+    storage_id := slab_field_id(p, through, "storage")
+    generations_id := slab_field_id(p, through, "generations")
+    storage_field := arena_at(p.fields, storage_id)
+    storage_ty := storage_field.ty
+    storage_name_off := storage_field.name_off
+    storage_name_len := storage_field.name_len
+    generations_field := arena_at(p.fields, generations_id)
+    generations_name_off := generations_field.name_off
+    generations_name_len := generations_field.name_len
+    storage_off := field_offset(p, through, storage_name_off, storage_name_len)
+    generations_off := field_offset(p, through, generations_name_off,
+        generations_name_len)
+    count := array_length(p, storage_ty)
+    element := array_element(p, storage_ty)
+    slot := alloc_temp(p, 8)
+    if (is_pointer(base_ty)) {
+        emit_asm_expr(p, base)
+    } else {
+        emit_asm_addr(p, base)
+    }
+    asm_i("movq %rax, ", slot, "(%rbp)")
+    emit_asm_expr(p, index_node)
+    shadow := abi_shadow(p)
+    emit_text("    movq %rax, ")
+    emit_asm_arg_reg(p, 0)
+    emit_text("\n")
+    emit_text("    movq $")
+    frost_emit_int(count)
+    emit_text(", ")
+    emit_asm_arg_reg(p, 1)
+    emit_text("\n")
+    asm_i("movq ", slot, "(%rbp), %r11")
+    if (generations_off != 0) {
+        asm_i("addq $", generations_off, ", %r11")
+    }
+    emit_text("    movq %r11, ")
+    emit_asm_arg_reg(p, 2)
+    emit_text("\n")
+    asm_i("subq $", shadow, ", %rsp")
+    asm("call frost_slot")
+    asm_i("addq $", shadow, ", %rsp")
+    asm_i("imulq $", type_size(p, element), ", %rax")
+    asm("movq %rax, %r11")
+    asm_i("movq ", slot, "(%rbp), %rax")
+    if (storage_off != 0) {
+        asm_i("addq $", storage_off, ", %rax")
+    }
+    asm("addq %r11, %rax")
+}
+
 emit_asm_push :: fn() {
     asm("subq $16, %rsp")
     asm("movq %rax, (%rsp)")
@@ -467,6 +532,27 @@ emit_asm_binop :: fn(op: i64) {
     }
     if (op == 10) {
         emit_asm_compare("setne")
+        return
+    }
+    // A shift takes its count in %cl, so the right operand moves there first. The
+    // right shift is arithmetic, matching the C backend's `>>` on a signed
+    // int64_t, which is what a handle's generation is unpacked with.
+    if (op == OP_SHL) {
+        asm("movq %r11, %rcx")
+        asm("shlq %cl, %rax")
+        return
+    }
+    if (op == OP_SHR) {
+        asm("movq %r11, %rcx")
+        asm("sarq %cl, %rax")
+        return
+    }
+    if (op == OP_BITAND) {
+        asm("andq %r11, %rax")
+        return
+    }
+    if (op == OP_BITOR) {
+        asm("orq %r11, %rax")
         return
     }
     // `&&` and `||` never reach here: they branch rather than compute, so that
@@ -593,7 +679,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
     // is not an optimization: a guard like `is_array(t) && length_of(t) < 0`
     // reads a table only the guard says is safe to read, and evaluating both
     // sides makes that a bounds failure rather than a false.
-    if (kind == NODE_BIN && node.val >= OP_AND) {
+    if (kind == NODE_BIN && (node.val == OP_AND || node.val == OP_OR)) {
         done := new_label(p)
         emit_asm_expr(p, node.a)
         asm("cmpq $0, %rax")

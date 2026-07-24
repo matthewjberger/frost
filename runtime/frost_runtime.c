@@ -32,6 +32,19 @@ void frost_generation_check(int64_t stored, int64_t expected) {
     }
 }
 
+/* Validate a handle against a slab and answer with the slot it names. The low
+   32 bits are the index and the high 32 the generation; the index is bounds
+   checked and the generation matched against the slot's, so `slab[handle]`
+   reading a released or out-of-range slot aborts rather than seeing whatever
+   took its place. */
+int64_t frost_slot(int64_t handle, int64_t count, const int64_t *generations) {
+    int64_t index = handle & 0xffffffff;
+    int64_t generation = handle >> 32;
+    frost_bounds_check(index, count);
+    frost_generation_check(generations[index], generation);
+    return index;
+}
+
 int64_t frost_byte_at(const char *text, int64_t index) {
     return (int64_t)(unsigned char)text[index];
 }

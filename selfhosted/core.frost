@@ -17,7 +17,8 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     NODE_STRUCT_LIT,
     NODE_TYPEVAL, NODE_VAR, NODE_WHILE, NODE_WITH, Node,
     OP_ADD, OP_AND, OP_DIV, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT, OP_MOD, OP_MUL,
-    OP_NE, OP_OR, OP_SUB, BORROW_FLAG, POINTER_BASE, Parser, STRUCT_BASE, StructDef,
+    OP_NE, OP_OR, OP_SUB, OP_SHL, OP_SHR, OP_BITAND, OP_BITOR,
+    BORROW_FLAG, POINTER_BASE, Parser, STRUCT_BASE, StructDef,
     StructField, Sym, TOK_AMP, TOK_ANDAND, TOK_ARROW, TOK_ASSIGN, TOK_BANG,
     TOK_CARET, TOK_COLON, TOK_COLONCOLON, TOK_COLONEQ, TOK_COMMA, TOK_DOLLAR,
     TOK_DOT, TOK_EOF, TOK_EQEQ, TOK_FLOAT, TOK_GE, TOK_GT, TOK_IDENT, TOK_INT,
@@ -28,8 +29,9 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     TOK_KW_RETURN, TOK_KW_STRUCT, TOK_KW_TRUE, TOK_KW_USES, TOK_KW_WHILE,
     TOK_KW_WITH, TOK_LBRACE, TOK_LBRACKET, TOK_LE, TOK_LPAREN, TOK_LT,
     TOK_MINUS, TOK_NE, TOK_OROR, TOK_PERCENT, TOK_PLUS, TOK_QUESTION,
-    TOK_RBRACE, TOK_RBRACKET, TOK_RPAREN, TOK_SLASH, TOK_STAR, TOK_STR,
-    TY_BOOL, TY_F32, TY_F64, TY_I16, TY_I32, TY_I64, TY_I8, TY_ISIZE,
+    TOK_RBRACE, TOK_RBRACKET, TOK_RPAREN, TOK_SHL, TOK_SHR, TOK_PIPE,
+    TOK_SLASH, TOK_STAR, TOK_STR,
+    TY_BOOL, TY_F32, TY_F64, TY_HANDLE, TY_I16, TY_I32, TY_I64, TY_I8, TY_ISIZE,
     TY_PARAM, TY_U16,
     TY_U32, TY_U64, TY_U8, TY_USIZE, TY_VOID, Token, TypeArg, UnsafeSpan,
     Variant,
@@ -179,6 +181,11 @@ TY_ISIZE :: 11
 TY_USIZE :: 12
 TY_F32   :: 13
 TY_F64   :: 14
+// `Handle<T>`: a copyable i64 that packs a slot index and a generation. It is a
+// scalar at the ABI, the same width as an i64 and converting freely to one; the
+// element type it names comes from the slab it indexes, not from the code here.
+// Its own code is what tells `slab[handle]` apart from an ordinary index.
+TY_HANDLE :: 15
 STRUCT_BASE  :: 16
 // A fixed array and a slice are both an entry in one table, since a slice is an
 // array that did not say how long it is. That keeps `[]T` and `[N]T` one kind of
@@ -206,6 +213,10 @@ OP_EQ  :: 9
 OP_NE  :: 10
 OP_AND :: 11
 OP_OR  :: 12
+OP_SHL    :: 13
+OP_SHR    :: 14
+OP_BITAND :: 15
+OP_BITOR  :: 16
 
 // Token kinds. The lexer turns the source into a flat arena of these before the
 // parser runs, so the parser peeks token kinds rather than raw bytes. Identifier
@@ -272,6 +283,9 @@ TOK_OROR      :: 67
 TOK_DOLLAR    :: 68
 TOK_BANG      :: 69
 TOK_QUESTION  :: 70
+TOK_SHL       :: 73
+TOK_SHR       :: 74
+TOK_PIPE      :: 75
 
 // Character codes (the language has no character literals).
 CH_TAB     :: 9
@@ -381,6 +395,7 @@ StructDef :: struct {
     field_token: i64,
     instance_id: i64,
     is_linear: i64,
+    emitted: i64,
 }
 
 // A monomorphized instance of a generic struct: which template, the concrete
@@ -475,6 +490,7 @@ SearchRoot :: struct {
 ArrayDef :: struct {
     element: i64,
     length: i64,
+    emitted: i64,
 }
 
 // A concrete type a generic was used with. Every generic function is emitted

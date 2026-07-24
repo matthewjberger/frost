@@ -10,7 +10,8 @@ export append_node, array_element, array_index_of, array_length, array_of,
     mark_safe,
     bytes_equal, const_value, digits_in, generic_index_for,
     intern_global, is_aggregate, is_array_ty, is_const, is_float, is_main_name,
-    is_borrow, is_pointer, is_raw_pointer, is_slice_ty, is_struct_ty,
+    is_borrow, is_pointer, is_raw_pointer, is_slab_ty, is_slice_ty, is_struct_ty,
+    slab_field_id, slab_field_type,
     mark_defined, mark_extern, new_case, new_field_init, new_field_node,
     new_func_node, new_index, new_let_node, new_named_node, new_node,
     new_struct_lit, new_type_node, new_unary, node_next, pointee,
@@ -469,11 +470,54 @@ array_of :: fn(mut p: Parser, element: i64, length: i64) -> i64 {
         i = i + 1
     }
     ARRAY_BASE + arena_push(p.arrays,
-        ArrayDef { element = element, length = length })
+        ArrayDef { element = element, length = length, emitted = 0 })
 }
 
 struct_index_of :: fn(ty: i64) -> i64 {
     ty - STRUCT_BASE
+}
+
+// The field-table index of a struct field named by a literal, or -1 if there
+// is none. A pointer to the struct is looked through, so `mut s: Slab` (a
+// borrow) answers the same as a value.
+slab_field_id :: fn(mut p: Parser, struct_ty: i64, name: ^i8) -> i64 {
+    mut base := struct_ty
+    if (is_pointer(base)) {
+        base = pointee(base)
+    }
+    if (is_struct_ty(base) == false) {
+        return 0 - 1
+    }
+    def := arena_at(p.structs, struct_index_of(base))
+    mut fid := def.field_head
+    while (fid != (0 - 1)) {
+        field := arena_at(p.fields, fid)
+        if (str_range_eq(p.src, field.name_off, field.name_len, name)) {
+            return fid
+        }
+        fid = field.next
+    }
+    0 - 1
+}
+
+// The type of a struct field named by a literal, or -1 if there is none.
+slab_field_type :: fn(mut p: Parser, struct_ty: i64, name: ^i8) -> i64 {
+    fid := slab_field_id(p, struct_ty, name)
+    if (fid == (0 - 1)) {
+        return 0 - 1
+    }
+    field := arena_at(p.fields, fid)
+    field.ty
+}
+
+// A slab is a struct the compiler indexes by a handle. It is recognized
+// structurally: a `storage` array holding the elements and a parallel
+// `generations` array, one i64 per slot. That shape, not a declared type, is
+// what lets `slab[handle]` lower to a bounds- and generation-checked place.
+is_slab_ty :: fn(mut p: Parser, struct_ty: i64) -> bool {
+    storage := slab_field_type(p, struct_ty, "storage")
+    generations := slab_field_type(p, struct_ty, "generations")
+    is_array_ty(storage) && is_array_ty(generations)
 }
 
 // Resolve a type name (byte range) to a type code: the current generic type

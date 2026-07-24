@@ -35,6 +35,14 @@ void frost_generation_check(frost_i64 stored, frost_i64 expected) {
     }
 }
 
+frost_i64 frost_slot(frost_i64 handle, frost_i64 count, const frost_i64 *generations) {
+    frost_i64 index = handle & 0xffffffff;
+    frost_i64 generation = handle >> 32;
+    frost_bounds_check(index, count);
+    frost_generation_check(generations[index], generation);
+    return index;
+}
+
 extern int main(void);
 
 // The only platform-specific part: the process entry point, which calls the
