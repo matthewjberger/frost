@@ -131,24 +131,22 @@ is_linear_type :: fn(mut p: Parser, ty: i64) -> bool {
 // At the end of a body every linear value must have been handed on. One that
 // was not is a resource silently dropped.
 check_linear_consumed :: fn(mut p: Parser) {
-    unsafe {
-        mut i : i64 = 0
-        while (i < p.locals.count) {
-            entry := arena_at(p.locals, i)
-            ty := entry.ty
-            off := entry.name_off
-            len := entry.name_len
-            if (is_linear_type(p, ty)) {
-                if (is_moved(p, off, len) == false) {
-                    report_where(p.modules, p.src, entry.name_off)
-                    frost_error("linear value '")
-                    frost_error_src(p.src, off, len)
-                    frost_error("' is never consumed")
-                    frost_die()
-                }
+    mut i : i64 = 0
+    while (i < p.locals.count) {
+        entry := arena_at(p.locals, i)
+        ty := entry.ty
+        off := entry.name_off
+        len := entry.name_len
+        if (is_linear_type(p, ty)) {
+            if (is_moved(p, off, len) == false) {
+                report_where(p.modules, p.src, entry.name_off)
+                report("linear value '")
+                report_src(p.src, off, len)
+                report("' is never consumed")
+                frost_die()
             }
-            i = i + 1
         }
+        i = i + 1
     }
 }
 
@@ -160,37 +158,35 @@ record_local :: fn(mut p: Parser, off: i64, len: i64, ty: i64) {
 // struct or a `^T`), which is dereferenced one level first, so `a.count` and
 // `node^.next` both resolve.
 field_type :: fn(mut p: Parser, base_ty: i64, off: i64, len: i64) -> i64 {
-    unsafe {
-        mut struct_ty := base_ty
-        if (is_pointer(struct_ty)) {
-            struct_ty = pointee(struct_ty)
-        }
-        if (is_struct_ty(struct_ty) == false) {
-            return TY_I64
-        }
-        def := arena_at(p.structs, struct_index_of(struct_ty))
-        struct_off := def.name_off
-        struct_len := def.name_len
-        mut fid := def.field_head
-        while (fid != (0 - 1)) {
-            field := arena_at(p.fields, fid)
-            if (field.name_len == len
-                && bytes_equal(p.src, field.name_off, off, len)) {
-                return field.ty
-            }
-            fid = field.next
-        }
-        // The base is a struct but carries no such field. Emitting the access
-        // verbatim would leave it for whatever compiles the output to notice.
-        report_where(p.modules, p.src, off)
-        frost_error("struct '")
-        frost_error_src(p.src, struct_off, struct_len)
-        frost_error("' has no field '")
-        frost_error_src(p.src, off, len)
-        frost_error("'")
-        frost_die()
-        TY_I64
+    mut struct_ty := base_ty
+    if (is_pointer(struct_ty)) {
+        struct_ty = pointee(struct_ty)
     }
+    if (is_struct_ty(struct_ty) == false) {
+        return TY_I64
+    }
+    def := arena_at(p.structs, struct_index_of(struct_ty))
+    struct_off := def.name_off
+    struct_len := def.name_len
+    mut fid := def.field_head
+    while (fid != (0 - 1)) {
+        field := arena_at(p.fields, fid)
+        if (field.name_len == len
+            && bytes_equal(p.src, field.name_off, off, len)) {
+            return field.ty
+        }
+        fid = field.next
+    }
+    // The base is a struct but carries no such field. Emitting the access
+    // verbatim would leave it for whatever compiles the output to notice.
+    report_where(p.modules, p.src, off)
+    report("struct '")
+    report_src(p.src, struct_off, struct_len)
+    report("' has no field '")
+    report_src(p.src, off, len)
+    report("'")
+    frost_die()
+    TY_I64
 }
 
 type_of :: fn(mut p: Parser, id: i64) -> i64 {

@@ -350,12 +350,10 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
 }
 
 asm_unsupported :: fn(what: ^i8) {
-    unsafe {
-        frost_error("frost: the native backend does not handle ")
-        frost_error(what)
-        frost_error(" yet")
-        frost_die()
-    }
+    report("frost: the native backend does not handle ")
+    report_cstr(what)
+    report(" yet")
+    frost_die()
 }
 
 emit_asm_push :: fn() {
@@ -728,23 +726,21 @@ emit_asm_struct_lit :: fn(mut p: Parser, id: i64) {
 // The capability a call is handed, left in %rax ready to be pushed. A forwarded
 // one is already a pointer; a region supplies the arena by address.
 emit_asm_capability :: fn(mut p: Parser, fn_index: i64) {
-    unsafe {
-        if (p.prov_kind == PROVIDER_NONE) {
-            sym := arena_at(p.fns, fn_index)
-            report_where(p.modules, p.src, sym.off)
-            frost_error("calling '")
-            frost_error_src(p.src, sym.off, sym.len)
-            frost_error("' needs an allocation capability, so declare `uses` on ")
-            frost_error("the caller or wrap the call in a `with` block")
-            frost_die()
-        }
-        slot := local_slot(p, p.prov_off, p.prov_len)
-        if (p.prov_kind == PROVIDER_REGION) {
-            asm_i("leaq ", slot, "(%rbp), %rax")
-            return
-        }
-        asm_i("movq ", slot, "(%rbp), %rax")
+    if (p.prov_kind == PROVIDER_NONE) {
+        sym := arena_at(p.fns, fn_index)
+        report_where(p.modules, p.src, sym.off)
+        report("calling '")
+        report_src(p.src, sym.off, sym.len)
+        report("' needs an allocation capability, so declare `uses` on ")
+        report("the caller or wrap the call in a `with` block")
+        frost_die()
     }
+    slot := local_slot(p, p.prov_off, p.prov_len)
+    if (p.prov_kind == PROVIDER_REGION) {
+        asm_i("leaq ", slot, "(%rbp), %rax")
+        return
+    }
+    asm_i("movq ", slot, "(%rbp), %rax")
 }
 
 emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {

@@ -23,21 +23,19 @@ Options :: struct {
 }
 
 usage :: fn() {
-    unsafe {
-        frost_error("the Frost compiler\n\n")
-        frost_error("    frost [options] <file.frost>\n\n")
-        frost_error("    -o <path>     where to write the result\n")
-        frost_error("    -L <dir>      a directory to find imports under\n")
-        frost_error("    --emit-c      emit a C translation unit (the default)\n")
-        frost_error("    --emit-asm    emit x86-64 assembly\n")
-        frost_error("    --native      the same as --emit-asm\n")
-        frost_error("    --link        assemble and link an executable\n")
-        frost_error("    --test        build and run the file's `test` blocks\n")
-        frost_error("    -h, --help    this\n\n")
-        frost_error("Without -o the output goes to standard output. FROST_INPUT ")
-        frost_error("and\nFROST_BACKEND are read when the matching argument is ")
-        frost_error("absent.\n")
-    }
+    report("the Frost compiler\n\n")
+    report("    frost [options] <file.frost>\n\n")
+    report("    -o <path>     where to write the result\n")
+    report("    -L <dir>      a directory to find imports under\n")
+    report("    --emit-c      emit a C translation unit (the default)\n")
+    report("    --emit-asm    emit x86-64 assembly\n")
+    report("    --native      the same as --emit-asm\n")
+    report("    --link        assemble and link an executable\n")
+    report("    --test        build and run the file's `test` blocks\n")
+    report("    -h, --help    this\n\n")
+    report("Without -o the output goes to standard output. FROST_INPUT ")
+    report("and\nFROST_BACKEND are read when the matching argument is ")
+    report("absent.\n")
 }
 
 // Which C toolchain the emitted translation unit goes to. `CC` overrides, as
@@ -124,7 +122,7 @@ options_from_command_line :: fn() -> Options {
             } else if (cstr_eq(argument, "-L")) {
                 index = index + 1
                 if (index >= count) {
-                    frost_error("frost: -L needs a directory")
+                    report("frost: -L needs a directory")
                     options.ok = 0
                     return options
                 }
@@ -132,15 +130,15 @@ options_from_command_line :: fn() -> Options {
             } else if (cstr_eq(argument, "-o")) {
                 index = index + 1
                 if (index >= count) {
-                    frost_error("frost: -o needs a path")
+                    report("frost: -o needs a path")
                     options.ok = 0
                     return options
                 }
                 options.output = frost_arg_at(index)
             } else if (looks_like_a_flag(argument)) {
-                frost_error("frost: unknown option '")
-                frost_error(argument)
-                frost_error("'")
+                report("frost: unknown option '")
+                report_cstr(argument)
+                report("'")
                 options.ok = 0
                 return options
             } else {

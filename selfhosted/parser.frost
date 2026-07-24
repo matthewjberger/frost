@@ -214,43 +214,41 @@ resolve_lit_type :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
 // is what lets a `?` sit anywhere an expression can rather than only where a
 // statement can.
 lower_try :: fn(mut p: Parser, value: i64) -> i64 {
-    unsafe {
-        if (p.result_ty == (0 - 1)) {
-            report_where(p.modules, p.src, cur_off(p))
-            frost_error("'?' needs a function that declares a failure set")
-            frost_die()
-        }
-        name_off := synth_numbered(p, "__try", p.try_count)
-        name_len := 5 + digits_in(p.try_count)
-        p.try_count = p.try_count + 1
-
-        bind := new_let_node(p, value, name_off, name_len, 0 - 1)
-        held := new_named_node(p, NODE_VAR, 0, name_off, name_len)
-        tag := new_field_node(p, held, p.name_tag, 3)
-        zero := new_node(p, NODE_NUM, 0, 0, 0)
-        failed := new_node(p, NODE_BIN, tag, zero, OP_NE)
-        carried := new_field_node(
-            p,
-            new_named_node(p, NODE_VAR, 0, name_off, name_len),
-            p.name_error,
-            5,
-        )
-        hand_on := new_node(
-            p,
-            NODE_RETURN,
-            new_result_value(p, p.result_ty, 1, p.name_error, 5, carried),
-            0,
-            0,
-        )
-        guard := new_node(p, NODE_IF, failed, hand_on, 0 - 1)
-        arena_push(p.pending, LocalVar { name_off = bind, name_len = guard, ty = 0 })
-        new_field_node(
-            p,
-            new_named_node(p, NODE_VAR, 0, name_off, name_len),
-            p.name_value,
-            5,
-        )
+    if (p.result_ty == (0 - 1)) {
+        report_where(p.modules, p.src, cur_off(p))
+        report("'?' needs a function that declares a failure set")
+        frost_die()
     }
+    name_off := synth_numbered(p, "__try", p.try_count)
+    name_len := 5 + digits_in(p.try_count)
+    p.try_count = p.try_count + 1
+
+    bind := new_let_node(p, value, name_off, name_len, 0 - 1)
+    held := new_named_node(p, NODE_VAR, 0, name_off, name_len)
+    tag := new_field_node(p, held, p.name_tag, 3)
+    zero := new_node(p, NODE_NUM, 0, 0, 0)
+    failed := new_node(p, NODE_BIN, tag, zero, OP_NE)
+    carried := new_field_node(
+        p,
+        new_named_node(p, NODE_VAR, 0, name_off, name_len),
+        p.name_error,
+        5,
+    )
+    hand_on := new_node(
+        p,
+        NODE_RETURN,
+        new_result_value(p, p.result_ty, 1, p.name_error, 5, carried),
+        0,
+        0,
+    )
+    guard := new_node(p, NODE_IF, failed, hand_on, 0 - 1)
+    arena_push(p.pending, LocalVar { name_off = bind, name_len = guard, ty = 0 })
+    new_field_node(
+        p,
+        new_named_node(p, NODE_VAR, 0, name_off, name_len),
+        p.name_value,
+        5,
+    )
 }
 
 // A body's last expression is its answer, so in a fallible function that value
@@ -647,53 +645,51 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64) -> i64 {
 // variant's own field in the scrutinee. The bindings are ordinary lets at the
 // top of the arm, so the body sees them as it would any local.
 parse_variant_case :: fn(mut p: Parser, subject: i64) -> i64 {
-    unsafe {
-        variant_off := cur_off(p)
-        variant_len := cur_len(p)
-        advance(p)
-        index := find_variant(p, 0 - 1, variant_off, variant_len)
-        if (index < 0) {
-            report_where(p.modules, p.src, variant_off)
-            frost_error("no enum has a variant '")
-            frost_error_src(p.src, variant_off, variant_len)
-            frost_error("'")
-            frost_die()
-        }
-        entry := arena_at(p.variants, index)
-        tag := entry.tag
-        mut bindings : i64 = 0 - 1
-        mut tail : i64 = 0 - 1
-        if (cur(p) == TOK_LBRACE) {
-            advance(p)
-            while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
-                field_off := cur_off(p)
-                field_len := cur_len(p)
-                advance(p)
-                qualified := synth_join(p, variant_off, variant_len, field_off,
-                    field_len)
-                read := new_field_node(p, subject, qualified,
-                    variant_len + field_len + 1)
-                bind := new_let_node(p, read, field_off, field_len, 0 - 1)
-                if (bindings == (0 - 1)) {
-                    bindings = bind
-                } else {
-                    set_next(p, tail, bind)
-                }
-                tail = bind
-                if (cur(p) == TOK_COMMA) {
-                    advance(p)
-                }
-            }
-            advance(p)
-        }
-        advance(p)
-        body := parse_arm(p)
-        if (bindings == (0 - 1)) {
-            return new_case(p, body, tag, 0)
-        }
-        set_next(p, tail, body)
-        new_case(p, bindings, tag, 0)
+    variant_off := cur_off(p)
+    variant_len := cur_len(p)
+    advance(p)
+    index := find_variant(p, 0 - 1, variant_off, variant_len)
+    if (index < 0) {
+        report_where(p.modules, p.src, variant_off)
+        report("no enum has a variant '")
+        report_src(p.src, variant_off, variant_len)
+        report("'")
+        frost_die()
     }
+    entry := arena_at(p.variants, index)
+    tag := entry.tag
+    mut bindings : i64 = 0 - 1
+    mut tail : i64 = 0 - 1
+    if (cur(p) == TOK_LBRACE) {
+        advance(p)
+        while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
+            field_off := cur_off(p)
+            field_len := cur_len(p)
+            advance(p)
+            qualified := synth_join(p, variant_off, variant_len, field_off,
+                field_len)
+            read := new_field_node(p, subject, qualified,
+                variant_len + field_len + 1)
+            bind := new_let_node(p, read, field_off, field_len, 0 - 1)
+            if (bindings == (0 - 1)) {
+                bindings = bind
+            } else {
+                set_next(p, tail, bind)
+            }
+            tail = bind
+            if (cur(p) == TOK_COMMA) {
+                advance(p)
+            }
+        }
+        advance(p)
+    }
+    advance(p)
+    body := parse_arm(p)
+    if (bindings == (0 - 1)) {
+        return new_case(p, body, tag, 0)
+    }
+    set_next(p, tail, body)
+    new_case(p, bindings, tag, 0)
 }
 
 // Turn each arm's trailing expression into an assignment to the name standing
@@ -1222,7 +1218,7 @@ parse_struct :: fn(mut p: Parser) {
         if (str_range_eq(p.src, cur_off(p), cur_len(p), "Type") == false) {
             unsafe {
                 report_where(p.modules, p.src, cur_off(p))
-                frost_error("a value generic parameter is not supported yet")
+                report("a value generic parameter is not supported yet")
                 frost_die()
             }
         }
@@ -1230,7 +1226,7 @@ parse_struct :: fn(mut p: Parser) {
         if (cur(p) == TOK_COMMA) {
             unsafe {
                 report_where(p.modules, p.src, cur_off(p))
-                frost_error(
+                report_cstr(
                     "more than one generic parameter is not supported yet")
                 frost_die()
             }
@@ -1315,7 +1311,7 @@ parse_enum :: fn(mut p: Parser) {
     if (cur(p) == TOK_LPAREN) {
         unsafe {
             report_where(p.modules, p.src, cur_off(p))
-            frost_error("a generic enum is not supported yet")
+            report("a generic enum is not supported yet")
             frost_die()
         }
     }
@@ -1383,47 +1379,45 @@ parse_enum :: fn(mut p: Parser) {
 // value is the enum's struct with the variant's tag and the fields it was
 // given, under the names the declaration gave them.
 parse_variant_value :: fn(mut p: Parser, enum_off: i64, enum_len: i64) -> i64 {
-    unsafe {
-        enum_ty := resolve_lit_type(p, enum_off, enum_len)
-        variant_off := cur_off(p)
-        variant_len := cur_len(p)
-        advance(p)
-        index := find_variant(p, enum_ty, variant_off, variant_len)
-        if (index < 0) {
-            report_where(p.modules, p.src, variant_off)
-            frost_error("'")
-            frost_error_src(p.src, enum_off, enum_len)
-            frost_error("' has no variant '")
-            frost_error_src(p.src, variant_off, variant_len)
-            frost_error("'")
-            frost_die()
-        }
-        entry := arena_at(p.variants, index)
-        tag_value := new_node(p, NODE_NUM, 0, 0, entry.tag)
-        head := new_field_init(p, tag_value, p.name_tag, 3)
-        mut tail := head
-        if (cur(p) == TOK_LBRACE && p.no_struct_lit == false) {
-            advance(p)
-            while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
-                field_off := cur_off(p)
-                field_len := cur_len(p)
-                advance(p)
-                advance(p)
-                value := parse_expr(p)
-                qualified := synth_join(p, variant_off, variant_len, field_off,
-                    field_len)
-                init := new_field_init(p, value, qualified,
-                    variant_len + field_len + 1)
-                set_next(p, tail, init)
-                tail = init
-                if (cur(p) == TOK_COMMA) {
-                    advance(p)
-                }
-            }
-            advance(p)
-        }
-        new_struct_lit(p, enum_ty, head)
+    enum_ty := resolve_lit_type(p, enum_off, enum_len)
+    variant_off := cur_off(p)
+    variant_len := cur_len(p)
+    advance(p)
+    index := find_variant(p, enum_ty, variant_off, variant_len)
+    if (index < 0) {
+        report_where(p.modules, p.src, variant_off)
+        report("'")
+        report_src(p.src, enum_off, enum_len)
+        report("' has no variant '")
+        report_src(p.src, variant_off, variant_len)
+        report("'")
+        frost_die()
     }
+    entry := arena_at(p.variants, index)
+    tag_value := new_node(p, NODE_NUM, 0, 0, entry.tag)
+    head := new_field_init(p, tag_value, p.name_tag, 3)
+    mut tail := head
+    if (cur(p) == TOK_LBRACE && p.no_struct_lit == false) {
+        advance(p)
+        while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
+            field_off := cur_off(p)
+            field_len := cur_len(p)
+            advance(p)
+            advance(p)
+            value := parse_expr(p)
+            qualified := synth_join(p, variant_off, variant_len, field_off,
+                field_len)
+            init := new_field_init(p, value, qualified,
+                variant_len + field_len + 1)
+            set_next(p, tail, init)
+            tail = init
+            if (cur(p) == TOK_COMMA) {
+                advance(p)
+            }
+        }
+        advance(p)
+    }
+    new_struct_lit(p, enum_ty, head)
 }
 
 // ---------------------------------------------------------------------------
@@ -1595,82 +1589,80 @@ parse_test :: fn(mut p: Parser) -> i64 {
 }
 
 parse_program :: fn(mut p: Parser) -> i64 {
-    unsafe {
-        mut head : i64 = 0 - 1
-        mut tail : i64 = 0 - 1
-        while (cur(p) == TOK_IDENT || cur(p) == TOK_KW_TEST) {
-            third := peek_kind(p, 2)
-            if (cur(p) == TOK_KW_TEST) {
-                item := parse_test(p)
-                if (head == (0 - 1)) {
-                    head = item
-                    tail = item
-                } else {
-                    set_next(p, tail, item)
-                    tail = item
-                }
-            } else if (third == TOK_KW_ENUM) {
-                parse_enum(p)
-            } else if (third == TOK_KW_STRUCT || third == TOK_KW_LINEAR) {
-                parse_struct(p)
-            } else if (third == TOK_KW_EXTERN || third == TOK_KW_SAFE) {
-                item := parse_extern(p)
-                if (head == (0 - 1)) {
-                    head = item
-                    tail = item
-                } else {
-                    set_next(p, tail, item)
-                    tail = item
-                }
-            } else if (third == TOK_INT) {
-                parse_const(p)
-            } else if (third != TOK_KW_FN) {
-                // Everything above is a form this compiler knows; anything else
-                // would be read as a function and misparse into a crash far from
-                // here, so name it where it is written instead. A declaration the
-                // language has and this compiler has not yet reaches this.
-                report_where(p.modules, p.src, cur_off(p))
-                frost_error("this declaration is not supported yet")
-                frost_die()
+    mut head : i64 = 0 - 1
+    mut tail : i64 = 0 - 1
+    while (cur(p) == TOK_IDENT || cur(p) == TOK_KW_TEST) {
+        third := peek_kind(p, 2)
+        if (cur(p) == TOK_KW_TEST) {
+            item := parse_test(p)
+            if (head == (0 - 1)) {
+                head = item
+                tail = item
             } else {
-                // A function. Reset the type-parameter state, remember where it
-                // starts, and parse it. If it turned out to reference a type
-                // parameter it is a generic template, recorded for monomorphization
-                // and kept out of the emitted program list.
-                p.type_param_off = 0
-                p.type_param_len = 0
-                p.saw_type_param = 0
-                start := p.ti
-                item := parse_function(p)
-                if (p.saw_type_param == 1) {
-                    node := arena_at(p.arena, item)
-                    fn_index := node.val
-                    tparam_off := p.type_param_off
-                    tparam_len := p.type_param_len
-                    record_generic_fn(p, fn_index, tparam_off, tparam_len, start)
+                set_next(p, tail, item)
+                tail = item
+            }
+        } else if (third == TOK_KW_ENUM) {
+            parse_enum(p)
+        } else if (third == TOK_KW_STRUCT || third == TOK_KW_LINEAR) {
+            parse_struct(p)
+        } else if (third == TOK_KW_EXTERN || third == TOK_KW_SAFE) {
+            item := parse_extern(p)
+            if (head == (0 - 1)) {
+                head = item
+                tail = item
+            } else {
+                set_next(p, tail, item)
+                tail = item
+            }
+        } else if (third == TOK_INT) {
+            parse_const(p)
+        } else if (third != TOK_KW_FN) {
+            // Everything above is a form this compiler knows; anything else
+            // would be read as a function and misparse into a crash far from
+            // here, so name it where it is written instead. A declaration the
+            // language has and this compiler has not yet reaches this.
+            report_where(p.modules, p.src, cur_off(p))
+            report("this declaration is not supported yet")
+            frost_die()
+        } else {
+            // A function. Reset the type-parameter state, remember where it
+            // starts, and parse it. If it turned out to reference a type
+            // parameter it is a generic template, recorded for monomorphization
+            // and kept out of the emitted program list.
+            p.type_param_off = 0
+            p.type_param_len = 0
+            p.saw_type_param = 0
+            start := p.ti
+            item := parse_function(p)
+            if (p.saw_type_param == 1) {
+                node := arena_at(p.arena, item)
+                fn_index := node.val
+                tparam_off := p.type_param_off
+                tparam_len := p.type_param_len
+                record_generic_fn(p, fn_index, tparam_off, tparam_len, start)
+            } else {
+                if (head == (0 - 1)) {
+                    head = item
+                    tail = item
                 } else {
-                    if (head == (0 - 1)) {
-                        head = item
-                        tail = item
-                    } else {
-                        set_next(p, tail, item)
-                        tail = item
-                    }
+                    set_next(p, tail, item)
+                    tail = item
                 }
             }
         }
-        // The loop above stops at the first token that cannot begin a
-        // declaration. Stopping quietly emits whatever was read so far, so a
-        // file whose second declaration is named after a keyword compiles to an
-        // empty program and the mistake surfaces as a missing symbol at link
-        // time, or as nothing at all. Say where it stopped instead.
-        if (cur(p) != TOK_EOF) {
-            report_where(p.modules, p.src, cur_off(p))
-            frost_error("this is not the start of a declaration")
-            frost_die()
-        }
-        head
     }
+    // The loop above stops at the first token that cannot begin a
+    // declaration. Stopping quietly emits whatever was read so far, so a
+    // file whose second declaration is named after a keyword compiles to an
+    // empty program and the mistake surfaces as a missing symbol at link
+    // time, or as nothing at all. Say where it stopped instead.
+    if (cur(p) != TOK_EOF) {
+        report_where(p.modules, p.src, cur_off(p))
+        report("this is not the start of a declaration")
+        frost_die()
+    }
+    head
 }
 
 // ---------------------------------------------------------------------------
