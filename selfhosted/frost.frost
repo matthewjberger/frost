@@ -164,6 +164,8 @@ main :: fn() -> i64 {
             generic_fns = arena_make($GenericFn, 256),
             gparams = arena_make($GParam, 256),
             gargs = arena_make($GArg, 1024),
+            procs = arena_make($ProcSig, 256),
+            proc_params = arena_make($GArg, 1024),
             argbuf = arena_make($GArg, 256),
             gbindings = arena_make($GBinding, 256),
             type_param_off = 0,

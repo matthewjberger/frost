@@ -5,7 +5,8 @@ import "core.frost"
 import "imports.frost"
 import "names.frost"
 
-export call_ret_type, call_type_args, collect_type_args,
+export call_ret_type, call_type_args, collect_type_args, fn_index_of,
+    fn_proc_type,
     count_value_args, field_type, generic_fn_of, is_linear_type, is_moved,
     local_exists, lookup_local, nth_param_type, nth_value_arg,
     record_local, record_mono_ret, type_of, types_compatible
@@ -168,6 +169,15 @@ type_of :: fn(mut p: Parser, id: i64) -> i64 {
         return node.val
     }
     if (kind == NODE_VAR) {
+        // A name that is not a local but is a global function is that function
+        // used as a value: it stands for the function's address, of the
+        // function-pointer type its signature makes.
+        if (local_exists(p, node.val, node.c) == false) {
+            fi := fn_index_of(p, node.val, node.c)
+            if (fi >= 0) {
+                return fn_proc_type(p, fi)
+            }
+        }
         return lookup_local(p, node.val, node.c)
     }
     if (kind == NODE_CALL) {
@@ -430,13 +440,54 @@ mono_ret_type :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
 }
 
 // What a call answers with, which decides whether it needs a result buffer.
+// The global function of this name, or -1. A function used as a value or called
+// indirectly is found this way when the name is not a local.
+fn_index_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < p.fns.count) {
+        sym := arena_at(p.fns, i)
+        if (sym.len == len && sym.defined == 1
+            && bytes_equal(p.src, sym.off, off, len)) {
+            return i
+        }
+        i = i + 1
+    }
+    0 - 1
+}
+
+// The function-pointer type of a global function: its parameter types and its
+// return type interned as a signature. This is what a function's name stands
+// for when it is used as a value.
+fn_proc_type :: fn(mut p: Parser, fn_index: i64) -> i64 {
+    sym := arena_at(p.fns, fn_index)
+    ret := sym.ret_type
+    param_start := p.proc_params.count
+    mut count : i64 = 0
+    mut pid := sym.params
+    while (pid != (0 - 1)) {
+        pnode := arena_at(p.arena, pid)
+        arena_push(p.proc_params, GArg { value = pnode.b })
+        count = count + 1
+        pid = pnode.next
+    }
+    proc_of(p, ret, param_start, count)
+}
+
 call_ret_type :: fn(mut p: Parser, args: i64, fn_index: i64) -> i64 {
+    sym := arena_at(p.fns, fn_index)
+    // A call through a local of function-pointer type is indirect and answers
+    // with that signature's return type.
+    if (local_exists(p, sym.off, sym.len)) {
+        local_ty := lookup_local(p, sym.off, sym.len)
+        if (is_proc(local_ty)) {
+            return proc_ret(p, local_ty)
+        }
+    }
     if (generic_fn_of(p, fn_index) >= 0) {
         arg := call_type_args(p, args)
         return mono_ret_type(p, fn_index, arg, p.call_xarg_start,
             p.call_xarg_count)
     }
-    sym := arena_at(p.fns, fn_index)
     sym.ret_type
 }
 

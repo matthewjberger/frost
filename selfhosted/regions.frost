@@ -1109,6 +1109,23 @@ inside_unsafe :: fn(mut p: Parser, pos: i64) -> i64 {
     0
 }
 
+// The function-pointer type of a parameter of this name, or -1. A call through
+// a function-pointer parameter is indirect, and this is how it is recognized
+// before codegen, where the locals table that would otherwise answer does not
+// exist yet.
+proc_param_named :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < p.arena.count) {
+        node := arena_at(p.arena, i)
+        if (node.kind == NODE_PARAM && is_proc(node.b)
+            && node.c == len && bytes_equal(p.src, node.val, off, len)) {
+            return node.b
+        }
+        i = i + 1
+    }
+    0 - 1
+}
+
 check_calls :: fn(mut p: Parser) {
     unsafe {
         mut i : i64 = 0
@@ -1123,18 +1140,28 @@ check_calls :: fn(mut p: Parser) {
                 name_off := sym.off
                 name_len := sym.len
                 params := sym.params
-                if (defined == 0) {
+                // A call whose name is not a defined function may be a call
+                // through a function-pointer parameter, which is indirect. The
+                // codegen locals do not exist yet, so the name is looked for
+                // among the function-pointer parameters instead.
+                callee_proc := proc_param_named(p, name_off, name_len)
+                if (defined == 0 && callee_proc < 0) {
                     report_where(p.modules, p.src, node.pos)
                     report("call to undefined function '")
                     report_src(p.src, name_off, name_len)
                     report("'")
                     frost_die()
                 }
-                // The capability is supplied by the caller's context rather than
-                // written at the call, so it is not one of the arguments counted.
-                mut expected := count_params(p, params)
-                if (sym.uses_ty >= 0) {
-                    expected = expected - 1
+                mut expected : i64 = 0
+                if (callee_proc >= 0) {
+                    expected = proc_param_count(p, callee_proc)
+                } else {
+                    // The capability is supplied by the caller's context rather
+                    // than written at the call, so it is not counted.
+                    expected = count_params(p, params)
+                    if (sym.uses_ty >= 0) {
+                        expected = expected - 1
+                    }
                 }
                 got := count_args(p, args)
                 if (expected != got) {
