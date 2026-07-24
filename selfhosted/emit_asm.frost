@@ -95,21 +95,19 @@ emit_label :: fn(name: ^i8, id: i64) {
 // past everything recorded before it. A rebound name takes the slot of its most
 // recent binding, matching lookup_local, so the two bindings stay distinct.
 local_slot :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
-    unsafe {
-        mut i : i64 = 0
-        mut running : i64 = 0
-        mut found : i64 = 0 - 8
-        while (i < p.locals.count) {
-            entry : ^LocalVar = arena_at(p.locals, i)
-            running = running + align_up(type_size(p, entry^.ty), 8)
-            if (entry^.name_len == len
-                && bytes_equal(p.src, entry^.name_off, off, len)) {
-                found = 0 - running
-            }
-            i = i + 1
+    mut i : i64 = 0
+    mut running : i64 = 0
+    mut found : i64 = 0 - 8
+    while (i < p.locals.count) {
+        entry := arena_at(p.locals, i)
+        running = running + align_up(type_size(p, entry.ty), 8)
+        if (entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)) {
+            found = 0 - running
         }
-        found
+        i = i + 1
     }
+    found
 }
 
 // Load a scalar into %rax from `slot(base)`, where `base` closes the address
@@ -1476,37 +1474,33 @@ emit_asm_strings :: fn(mut p: Parser) {
 }
 
 count_params :: fn(mut p: Parser, head: i64) -> i64 {
-    unsafe {
-        mut count : i64 = 0
-        mut id := head
-        while (id != (0 - 1)) {
-            node : ^Node = arena_at(p.arena, id)
-            count = count + 1
-            id = node^.next
-        }
-        count
+    mut count : i64 = 0
+    mut id := head
+    while (id != (0 - 1)) {
+        node := arena_at(p.arena, id)
+        count = count + 1
+        id = node.next
     }
+    count
 }
 
 // A type argument is erased before runtime, so it is not counted against the
 // parameter list, which never has a node for a type parameter either.
 count_args :: fn(mut p: Parser, head: i64) -> i64 {
-    unsafe {
-        mut count : i64 = 0
-        mut id := head
-        while (id != (0 - 1)) {
-            node : ^Node = arena_at(p.arena, id)
-            value := node^.a
-            next_id := node^.next
-            vnode : ^Node = arena_at(p.arena, value)
-            kind := vnode^.kind
-            if (kind != NODE_TYPEVAL) {
-                count = count + 1
-            }
-            id = next_id
+    mut count : i64 = 0
+    mut id := head
+    while (id != (0 - 1)) {
+        node := arena_at(p.arena, id)
+        value := node.a
+        next_id := node.next
+        vnode := arena_at(p.arena, value)
+        kind := vnode.kind
+        if (kind != NODE_TYPEVAL) {
+            count = count + 1
         }
-        count
+        id = next_id
     }
+    count
 }
 
 // ---------------------------------------------------------------------------

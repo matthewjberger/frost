@@ -729,13 +729,11 @@ emit_capability_argument :: fn(mut p: Parser, fn_index: i64) {
 }
 
 emit_list :: fn(mut p: Parser, head: i64) {
-    unsafe {
-        mut id := head
-        while (id != (0 - 1)) {
-            emit_stmt(p, id)
-            node : ^Node = arena_at(p.arena, id)
-            id = node^.next
-        }
+    mut id := head
+    while (id != (0 - 1)) {
+        emit_stmt(p, id)
+        node := arena_at(p.arena, id)
+        id = node.next
     }
 }
 
@@ -766,17 +764,15 @@ emit_param_signature :: fn(mut p: Parser, head: i64) {
 }
 
 record_params :: fn(mut p: Parser, head: i64) {
-    unsafe {
-        mut id := head
-        while (id != (0 - 1)) {
-            node : ^Node = arena_at(p.arena, id)
-            ty := node^.b
-            off := node^.val
-            len := node^.c
-            next_id := node^.next
-            record_local(p, off, len, ty)
-            id = next_id
-        }
+    mut id := head
+    while (id != (0 - 1)) {
+        node := arena_at(p.arena, id)
+        ty := node.b
+        off := node.val
+        len := node.c
+        next_id := node.next
+        record_local(p, off, len, ty)
+        id = next_id
     }
 }
 
