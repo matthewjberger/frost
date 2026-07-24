@@ -6,7 +6,46 @@ import "imports.frost"
 import "names.frost"
 import "emit_asm.frost"
 
-export check_calls, check_frame_escapes, check_regions, check_unsafety
+export check_calls, check_frame_escapes, check_reference_fields, check_regions,
+    check_unsafety
+
+// A borrow may be returned, since the frame and region checks hold it to
+// storage that outlives the call, but it may not be stored: a struct or an
+// array that outlived the borrow would leave it pointing at freed storage with
+// no check to catch it. References are second-class for storage. A raw pointer
+// is not a borrow and stays allowed, which is what lets the arena keep its
+// `data: ^T`.
+type_contains_borrow :: fn(mut p: Parser, ty: i64) -> bool {
+    if (is_borrow(ty)) {
+        return true
+    }
+    if (is_array_ty(ty)) {
+        return type_contains_borrow(p, array_element(p, ty))
+    }
+    false
+}
+
+check_reference_fields :: fn(mut p: Parser) {
+    mut i : i64 = 0
+    while (i < p.structs.count) {
+        def := arena_at(p.structs, i)
+        mut fid := def.field_head
+        while (fid != (0 - 1)) {
+            field := arena_at(p.fields, fid)
+            if (type_contains_borrow(p, field.ty)) {
+                report_where(p.modules, p.src, def.name_off)
+                report("cannot store a reference in struct '")
+                report_src(p.src, def.name_off, def.name_len)
+                report("' (field '")
+                report_src(p.src, field.name_off, field.name_len)
+                report("'); references are second-class")
+                frost_die()
+            }
+            fid = field.next
+        }
+        i = i + 1
+    }
+}
 
 // The frame-escape check. A borrow, a pointer or a slice a function answers
 // with may not name storage that dies when the call returns: a local declared
