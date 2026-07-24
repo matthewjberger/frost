@@ -4329,6 +4329,68 @@ fn self_hosted_columns_container() {
     assert_eq!(output, "11\n100\n120\n1\n0\n");
 }
 
+// The same SoA `columns<T, N>` container, compiled by the BOOTSTRAP compiler on
+// both of its backends. Parity with the self-hosted compiler: the container is
+// synthesized by field reflection in ir_build, `columns_new()` zero-inits it,
+// `c[h].field` and `c[h] = value` lower to the generational check, and a column
+// (`c.x`) slices into a hot loop. Generic functions over `columns<T, N>` are
+// monomorphized like any other. Kept self-contained (no `print`, no std import)
+// so it runs under the bootstrap.
+const BOOTSTRAP_COLUMNS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+Particle :: struct { x: i64, y: i64 }
+col_reset :: fn($T: Type, $N: usize, mut c: columns<T, N>) {
+    mut i : i64 = 0
+    while (i < N) { c.generations[i] = 0  c.free_list[i] = N - 1 - i  i = i + 1 }
+    c.free_count = N
+}
+col_insert :: fn($T: Type, $N: usize, mut c: columns<T, N>, move value: $T) -> Handle<T> {
+    c.free_count = c.free_count - 1
+    index := c.free_list[c.free_count]
+    handle : Handle<T> = (c.generations[index] << 32) | index
+    c[handle] = value
+    handle
+}
+col_alive :: fn($T: Type, $N: usize, c: columns<T, N>, handle: Handle<T>) -> bool {
+    raw : i64 = handle
+    c.generations[raw & 4294967295] == (raw >> 32)
+}
+sum_col :: fn(xs: []i64) -> i64 {
+    mut total : i64 = 0
+    mut i : i64 = 0
+    n := slice_len(xs)
+    while (i < n) { total = total + xs[i]  i = i + 1 }
+    total
+}
+main :: fn() -> i64 {
+    mut c : columns<Particle, 8> = columns_new()
+    col_reset($Particle, $8, c)
+    a := col_insert($Particle, $8, c, Particle { x = 10, y = 1 })
+    col_insert($Particle, $8, c, Particle { x = 20, y = 2 })
+    printf("%lld\n", c[a].x + c[a].y)
+    c[a].x = 100
+    printf("%lld\n", c[a].x)
+    printf("%lld\n", sum_col(c.x))
+    if (col_alive($Particle, $8, c, a)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    0
+}
+"#;
+
+#[test]
+fn bootstrap_columns_container_both_backends() {
+    let Some(native) =
+        run_backend("columns_boot_native", BOOTSTRAP_COLUMNS, false)
+    else {
+        return;
+    };
+    let Some(c) = run_backend("columns_boot_c", BOOTSTRAP_COLUMNS, true) else {
+        return;
+    };
+    // 10+1; x set to 100; column sum 100+20; alive true.
+    assert_eq!(native, "11\n100\n120\n1\n");
+    assert_eq!(c, "11\n100\n120\n1\n");
+}
+
 // A runtime function pointer: a higher-order function taking a `fn(i64) -> i64`
 // and calling through it, with a function's name passed as its address. A
 // single function pointer is a closed call target, not a vtable.

@@ -491,6 +491,20 @@ impl Generator {
             self.functions.insert(name.to_string(), func_id);
         }
 
+        if !self.functions.contains_key("frost_mem_set") {
+            let mut signature = self.decls.make_signature();
+            signature.params.push(AbiParam::new(types::I64));
+            signature.params.push(AbiParam::new(types::I64));
+            signature.params.push(AbiParam::new(types::I64));
+            let func_id = object.declare_function(
+                "frost_mem_set",
+                Linkage::Import,
+                &signature,
+            )?;
+            self.decls.functions.insert(func_id, (signature, false));
+            self.functions.insert("frost_mem_set".to_string(), func_id);
+        }
+
         Ok(())
     }
 

@@ -1606,9 +1606,8 @@ fn expand_generic_structs(
                 .insert(name.clone(), (type_params.clone(), variants.clone()));
         }
     }
-    if generic_structs.is_empty() && generic_enums.is_empty() {
-        return Ok(Vec::new());
-    }
+    // No early return on empty templates: a `columns<T, N>` is synthesized here
+    // too and needs no user template, so the instance walk below must still run.
 
     let mut generic_functions: HashMap<String, GenericFunction> =
         HashMap::new();
@@ -1707,6 +1706,21 @@ fn expand_generic_structs(
         }
     }
 
+    // The non-generic struct definitions, so a `columns<T, N>` can reflect over
+    // T's fields to synthesize one array per field. T is required to be a plain
+    // struct, the same restriction the self-hosted compiler has.
+    let concrete_structs: HashMap<String, Vec<StructField>> = statements
+        .iter()
+        .filter_map(|statement| match &statement.node {
+            Statement::Struct(name, type_params, fields)
+                if type_params.is_empty() =>
+            {
+                Some((name.clone(), fields.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+
     let mut done: std::collections::HashSet<String> =
         std::collections::HashSet::new();
     let mut synthetic = Vec::new();
@@ -1757,6 +1771,64 @@ fn expand_generic_structs(
                 instance.clone(),
                 Vec::new(),
                 concrete_variants,
+            ));
+            continue;
+        }
+        if base == "columns" {
+            // `columns<T, N>` is the SoA container: one `[N]field` array per
+            // field of T (named after the field) plus the generational
+            // bookkeeping a slab carries. The layout cannot be written in
+            // library Frost, so it is reflected from T's fields here. Only a
+            // CONCRETE instance is synthesized; the generic template form
+            // `columns<T, N>` in a library signature is skipped, since it is
+            // monomorphized to a concrete instance where it is used.
+            if argument_strings.len() != 2 {
+                continue;
+            }
+            let Ok(count) = argument_strings[1].trim().parse::<usize>() else {
+                continue;
+            };
+            let Ok(element) =
+                crate::parser::type_from_string(&argument_strings[0])
+            else {
+                continue;
+            };
+            let Type::Struct(element_name) = &element else {
+                continue;
+            };
+            let Some(element_fields) = concrete_structs.get(element_name)
+            else {
+                continue;
+            };
+            let mut columns_fields: Vec<StructField> = element_fields
+                .iter()
+                .map(|field| StructField {
+                    name: field.name.clone(),
+                    field_type: Type::Array(
+                        Box::new(field.field_type.clone()),
+                        count,
+                    ),
+                })
+                .collect();
+            columns_fields.push(StructField {
+                name: "generations".to_string(),
+                field_type: Type::Array(Box::new(Type::I64), count),
+            });
+            columns_fields.push(StructField {
+                name: "free_list".to_string(),
+                field_type: Type::Array(Box::new(Type::I64), count),
+            });
+            columns_fields.push(StructField {
+                name: "free_count".to_string(),
+                field_type: Type::I64,
+            });
+            for field in &columns_fields {
+                collect_instances_in_type(&field.field_type, &mut queue);
+            }
+            synthetic.push(Statement::Struct(
+                instance.clone(),
+                Vec::new(),
+                columns_fields,
             ));
             continue;
         }
@@ -2799,6 +2871,14 @@ impl<'a> FunctionLowering<'a> {
                     expected,
                 ),
             Expression::Call(callee, arguments) => {
+                if let Expression::Identifier(name) = callee.as_ref()
+                    && name == "columns_new"
+                    && self.resolve_variable(name).is_none()
+                    && self.builder.signature(name).is_none()
+                    && !self.builder.generic_functions.contains_key(name)
+                {
+                    return self.lower_columns_new(expected);
+                }
                 self.lower_call(callee, arguments)
             }
             Expression::Sizeof(ty) => {
@@ -3681,13 +3761,16 @@ impl<'a> FunctionLowering<'a> {
         // view and hand over its address, rather than the array's.
         if let Type::Slice(element) = target
             && let Some(Type::Array(array_element, count)) =
-                self.place_type(argument)
+                self.probe_type(argument)
             && array_element == *element
-            && let Expression::Identifier(name) = argument
-            && let Some(array_local) = self.resolve_variable(name)
         {
-            let slice =
-                self.build_slice_from_array(array_local, element, count);
+            // Any array place, not only a bare variable: a struct field (such as
+            // a columns column `c.x`), an index, a deref. `probe_type` reads the
+            // place chain's type and `place_address` walks it, so the slice
+            // carries the right base and length instead of collapsing to a bare
+            // pointer.
+            let (base, _) = self.place_address(argument)?;
+            let slice = self.build_slice_from_address(base, element, count);
             let IrOperand::Local(slice_local) = slice else {
                 bail!(
                     "native backend: slice construction did not yield a place"
@@ -3800,6 +3883,24 @@ impl<'a> FunctionLowering<'a> {
             let coerced = self.coerce(operand, &value_type, &target_type);
             self.emit(IrStatement::Assign(local, IrRvalue::Use(coerced)));
             return Ok(());
+        }
+
+        // `c[h] = value`: scatter the whole element into the columns' per-field
+        // arrays at the handle's slot. It cannot go through `place_address`,
+        // which yields one address; the scatter is inherently multi-store.
+        if let Expression::Index(container, index_expr) = target
+            && let Some(struct_name) = self.columns_shaped_base(container)
+        {
+            let (index_operand, index_type) =
+                self.lower_expression(index_expr, None)?;
+            if matches!(index_type, Type::Handle(_)) {
+                return self.columns_scatter(
+                    container,
+                    &struct_name,
+                    index_operand,
+                    value,
+                );
+            }
         }
 
         let (address, pointee) = self.place_address(target)?;
@@ -4075,15 +4176,12 @@ impl<'a> FunctionLowering<'a> {
 
     // Build a `[]T` fat pointer viewing the whole of an in-memory `[N]T` array:
     // the data pointer is the array's address, the length is the element count.
-    fn build_slice_from_array(
+    fn build_slice_from_address(
         &mut self,
-        array_local: LocalId,
+        base: IrOperand,
         element: &Type,
         count: usize,
     ) -> IrOperand {
-        self.mark_in_memory(array_local);
-        let array_type = Type::Array(Box::new(element.clone()), count);
-        let base = self.address_of_local(array_local, &array_type);
         let slice_type = Type::Slice(Box::new(element.clone()));
         let slice_local = self.fresh_local(slice_type, None);
         self.mark_in_memory(slice_local);
@@ -4614,6 +4712,272 @@ impl<'a> FunctionLowering<'a> {
         Ok((element_address, element))
     }
 
+    // A columns container, the SoA sibling of a slab, recognized by its
+    // synthesized `columns<...>` name. Its data is one array per field of the
+    // element rather than one `storage` array, so a Handle deref picks a column
+    // before indexing.
+    fn columns_shaped_base(&self, base: &Expression) -> Option<String> {
+        match self.probe_type(base)? {
+            Type::Struct(name) if name.starts_with("columns<") => Some(name),
+            _ => None,
+        }
+    }
+
+    // The address of one element of one column, named by `c[handle].field`. The
+    // same handle validation as a slab (`frost_bounds_check` +
+    // `frost_generation_check`), but the checked index scales into the field's
+    // own `[N]field` column rather than a single storage run.
+    fn columns_place_deref(
+        &mut self,
+        base: &Expression,
+        struct_name: &str,
+        handle: IrOperand,
+        field: &str,
+    ) -> Result<(IrOperand, Type)> {
+        let (column_offset, column_element, count, generations_offset) = {
+            let layout =
+                self.builder.struct_layout(struct_name).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "native backend: unknown columns '{struct_name}'"
+                    )
+                })?;
+            let column = layout.field(field).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "native backend: columns '{struct_name}' has no field '{field}'"
+                )
+            })?;
+            let generations = layout.field("generations").ok_or_else(|| {
+                anyhow::anyhow!(
+                    "native backend: columns has no 'generations' field"
+                )
+            })?;
+            let Type::Array(_, count) = &generations.ty else {
+                bail!("native backend: columns 'generations' is not an array");
+            };
+            let Type::Array(element, _) = &column.ty else {
+                bail!(
+                    "native backend: columns field '{field}' is not a column array"
+                );
+            };
+            (
+                column.offset,
+                (**element).clone(),
+                *count,
+                generations.offset,
+            )
+        };
+
+        let (struct_address, _) = self.struct_place(base)?;
+
+        let raw_handle = self.fresh_local(Type::I64, None);
+        self.emit(IrStatement::Assign(raw_handle, IrRvalue::Use(handle)));
+        let raw_handle = IrOperand::Local(raw_handle);
+        let index = self.fresh_local(Type::I64, None);
+        self.emit(IrStatement::Assign(
+            index,
+            IrRvalue::Binary(
+                IrBinOp::BitwiseAnd,
+                raw_handle.clone(),
+                IrOperand::Constant(IrConstant::Integer(
+                    0xffff_ffff,
+                    Type::I64,
+                )),
+            ),
+        ));
+        let generation = self.fresh_local(Type::I64, None);
+        self.emit(IrStatement::Assign(
+            generation,
+            IrRvalue::Binary(
+                IrBinOp::ShiftRight,
+                raw_handle,
+                IrOperand::Constant(IrConstant::Integer(32, Type::I64)),
+            ),
+        ));
+
+        let bounds = self.fresh_local(Type::Void, None);
+        self.emit(IrStatement::Assign(
+            bounds,
+            IrRvalue::Call {
+                function: "frost_bounds_check".to_string(),
+                arguments: vec![
+                    IrOperand::Local(index),
+                    IrOperand::Constant(IrConstant::Integer(
+                        count as i64,
+                        Type::I64,
+                    )),
+                ],
+            },
+        ));
+
+        let generation_slot = self.slab_field_element_address(
+            struct_address.clone(),
+            generations_offset,
+            &Type::I64,
+            IrOperand::Local(index),
+        );
+        let stored = self.fresh_local(Type::I64, None);
+        self.emit(IrStatement::Assign(
+            stored,
+            IrRvalue::Load {
+                address: generation_slot,
+                ty: Type::I64,
+            },
+        ));
+        let generation_check = self.fresh_local(Type::Void, None);
+        self.emit(IrStatement::Assign(
+            generation_check,
+            IrRvalue::Call {
+                function: "frost_generation_check".to_string(),
+                arguments: vec![
+                    IrOperand::Local(stored),
+                    IrOperand::Local(generation),
+                ],
+            },
+        ));
+
+        let element_address = self.slab_field_element_address(
+            struct_address,
+            column_offset,
+            &column_element,
+            IrOperand::Local(index),
+        );
+        Ok((element_address, column_element))
+    }
+
+    // `c[h] = value` scatters the element's fields into the columns' per-field
+    // arrays at the handle's validated slot, one field at a time. The handle is
+    // re-validated per field, aborting identically if it is stale.
+    fn columns_scatter(
+        &mut self,
+        base: &Expression,
+        struct_name: &str,
+        handle: IrOperand,
+        value: &Expression,
+    ) -> Result<()> {
+        let column_fields: Vec<String> = {
+            let layout =
+                self.builder.struct_layout(struct_name).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "native backend: unknown columns '{struct_name}'"
+                    )
+                })?;
+            layout
+                .fields
+                .iter()
+                .filter(|field| {
+                    !matches!(
+                        field.name.as_str(),
+                        "generations" | "free_list" | "free_count"
+                    )
+                })
+                .map(|field| field.name.clone())
+                .collect()
+        };
+
+        let (value_operand, value_type) = self.lower_expression(value, None)?;
+        let IrOperand::Local(value_local) = value_operand else {
+            bail!(
+                "native backend: a columns scatter needs an addressable element"
+            );
+        };
+        let value_address = self.address_of_local(value_local, &value_type);
+        let Type::Struct(value_name) = &value_type else {
+            bail!("native backend: a columns element value must be a struct");
+        };
+
+        for field in &column_fields {
+            let (field_offset, field_ty) = {
+                let value_layout =
+                    self.builder.struct_layout(value_name).ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "native backend: unknown element struct '{value_name}'"
+                        )
+                    })?;
+                let layout_field = value_layout.field(field).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "native backend: element '{value_name}' has no field '{field}'"
+                    )
+                })?;
+                (layout_field.offset, layout_field.ty.clone())
+            };
+            let (destination, _) = self.columns_place_deref(
+                base,
+                struct_name,
+                handle.clone(),
+                field,
+            )?;
+            let source =
+                self.fresh_local(Type::Ptr(Box::new(field_ty.clone())), None);
+            self.emit(IrStatement::Assign(
+                source,
+                IrRvalue::FieldAddress {
+                    base: value_address.clone(),
+                    offset: field_offset,
+                },
+            ));
+            if needs_memory(&field_ty) {
+                let size = self.builder.byte_size(&field_ty);
+                self.emit(IrStatement::Copy {
+                    destination,
+                    source: IrOperand::Local(source),
+                    size,
+                });
+            } else {
+                let loaded = self.fresh_local(field_ty.clone(), None);
+                self.emit(IrStatement::Assign(
+                    loaded,
+                    IrRvalue::Load {
+                        address: IrOperand::Local(source),
+                        ty: field_ty.clone(),
+                    },
+                ));
+                self.emit(IrStatement::Store {
+                    address: destination,
+                    value: IrOperand::Local(loaded),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    // `columns_new()`: a zeroed columns container of the type the context wants.
+    // Zeroing sets every generation and free slot to 0; `columns_reset` lays out
+    // the free list before use, the same "construct then reset" contract a slab
+    // has.
+    fn lower_columns_new(
+        &mut self,
+        expected: Option<&Type>,
+    ) -> Result<(IrOperand, Type)> {
+        let Some(Type::Struct(name)) = expected else {
+            bail!(
+                "native backend: columns_new() needs a columns type from its context, e.g. `mut c : columns<T, N> = columns_new()`"
+            );
+        };
+        if !name.starts_with("columns<") {
+            bail!(
+                "native backend: columns_new() initializes a columns type, not '{name}'"
+            );
+        }
+        let ty = Type::Struct(name.clone());
+        let size = self.builder.byte_size(&ty) as i64;
+        let local = self.fresh_local(ty.clone(), None);
+        self.mark_in_memory(local);
+        let address = self.address_of_local(local, &ty);
+        let cleared = self.fresh_local(Type::Void, None);
+        self.emit(IrStatement::Assign(
+            cleared,
+            IrRvalue::Call {
+                function: "frost_mem_set".to_string(),
+                arguments: vec![
+                    address,
+                    IrOperand::Constant(IrConstant::Integer(0, Type::I64)),
+                    IrOperand::Constant(IrConstant::Integer(size, Type::I64)),
+                ],
+            },
+        ));
+        Ok((IrOperand::Local(local), ty))
+    }
+
     fn array_base_pointer(
         &mut self,
         base: &Expression,
@@ -4727,6 +5091,22 @@ impl<'a> FunctionLowering<'a> {
         base: &Expression,
         field: &str,
     ) -> Result<(IrOperand, Type)> {
+        // A columns element field `c[h].field`: the field selects a column, the
+        // handle a validated slot in it.
+        if let Expression::Index(container, index_expr) = base
+            && let Some(struct_name) = self.columns_shaped_base(container)
+        {
+            let (index_operand, index_type) =
+                self.lower_expression(index_expr, None)?;
+            if matches!(index_type, Type::Handle(_)) {
+                return self.columns_place_deref(
+                    container,
+                    &struct_name,
+                    index_operand,
+                    field,
+                );
+            }
+        }
         let (base_pointer, struct_name) = self.struct_place(base)?;
         let layout =
             self.builder.struct_layout(&struct_name).ok_or_else(|| {
@@ -5603,11 +5983,10 @@ impl<'a> FunctionLowering<'a> {
             && from_element == to_element
             && let IrOperand::Local(array_local) = operand
         {
-            return self.build_slice_from_array(
-                array_local,
-                from_element,
-                *count,
-            );
+            self.mark_in_memory(array_local);
+            let array_type = Type::Array(from_element.clone(), *count);
+            let base = self.address_of_local(array_local, &array_type);
+            return self.build_slice_from_address(base, from_element, *count);
         }
         match &operand {
             IrOperand::Constant(IrConstant::Integer(value, _))
