@@ -45,6 +45,9 @@ nothing downstream would catch a mistake.
 - **Imports.** `import "path"` joins another file's declarations to this one.
 - **`extern fn`** for C linkage, which is how it does its own IO, and
   `safe extern fn` for one audited not to need an `unsafe` block at its calls.
+- **`ref T`**, a returnable borrow of `T`: a raw pointer's layout but one the
+  frame and region checks hold to what outlives the call, so `arena_at` returns
+  one and arena access needs no `unsafe`.
 - **The unsafety gate**, enforced rather than merely parsed. Reading through a
   raw pointer, `ptr_cast`, and calling an `extern fn` that is not `safe` are
   refused outside an `unsafe` block, so `unsafe` is the complete list of places
@@ -103,10 +106,12 @@ carrying a file, line and column are all present and were listed as missing.
    range.
 2. **The AST is an arena of `Node` records.** `Arena<$T>` is a bump allocator
    over one `malloc`, written in the language itself. `arena_push` appends and
-   returns an index; `arena_at` turns an index back into a `^Node`. A node names
-   its children by index, which is the data-oriented replacement for pointers
-   between heap nodes, and sibling statements, parameters and arguments thread
-   through a `next` field.
+   returns an index; `arena_at` turns an index back into a `ref Node`, a borrow
+   the checker has proven names a live element, so reaching a field through it is
+   not gated and the unsafe stays inside `arena_at`'s one bounds-checked body. A
+   node names its children by index, which is the data-oriented replacement for
+   pointers between heap nodes, and sibling statements, parameters and arguments
+   thread through a `next` field.
 3. **Names are byte ranges.** An identifier occurrence is an offset and a length
    into the source. Locals re-emit those bytes, so a local becomes a named C
    variable and no local symbol table is needed. Function names intern through
