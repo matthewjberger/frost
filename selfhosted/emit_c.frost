@@ -37,7 +37,69 @@ emit_op :: fn(op: i64) {
 // An array becomes a slice of the whole of itself wherever one is wanted. That
 // is the only implicit conversion between aggregates the language has, and it
 // is written out here rather than left to C, which would not do it.
+// `c[h] = value` scatters the element's fields into the columns' per-field
+// arrays at the handle's validated slot. Each field stores independently and
+// re-validates the handle, which aborts identically if it is stale. This is the
+// SoA write, a scatter made visible rather than hidden behind a whole-struct
+// store.
+emit_columns_scatter :: fn(mut p: Parser, cbase: i64, cbase_ty: i64,
+    cthrough: i64, cindex: i64, value: i64) {
+    value_ty := type_of(p, value)
+    gens_ty := slab_field_type(p, cthrough, "generations")
+    count := array_length(p, gens_ty)
+    def := arena_at(p.structs, struct_index_of(cthrough))
+    mut fid := def.field_head
+    while (fid != (0 - 1)) {
+        field := arena_at(p.fields, fid)
+        field_off := field.name_off
+        field_len := field.name_len
+        field_next := field.next
+        if (is_columns_bookkeeping(p, field_off, field_len) == false) {
+            emit_text("(")
+            emit_expr(p, cbase)
+            if (is_pointer(cbase_ty)) {
+                emit_text(")->")
+            } else {
+                emit_text(").")
+            }
+            emit_source(p.src, field_off, field_len)
+            emit_text(".items[frost_slot(")
+            emit_expr(p, cindex)
+            emit_text(", ")
+            frost_emit_int(count)
+            emit_text(", (")
+            emit_expr(p, cbase)
+            if (is_pointer(cbase_ty)) {
+                emit_text(")->generations.items)]")
+            } else {
+                emit_text(").generations.items)]")
+            }
+            emit_text(" = ")
+            if (is_pointer(value_ty)) {
+                emit_text("(*(")
+                emit_expr(p, value)
+                emit_text(")).")
+            } else {
+                emit_text("(")
+                emit_expr(p, value)
+                emit_text(").")
+            }
+            emit_source(p.src, field_off, field_len)
+            emit_text(";\n")
+        }
+        fid = field_next
+    }
+}
+
 emit_coerced :: fn(mut p: Parser, value: i64, want: i64) {
+    // A zeroed columns container. Zero sets every generation and free slot to 0;
+    // `columns_reset` lays out the free list before the container is used.
+    if (is_columns_new_call(p, value)) {
+        emit_text("(")
+        emit_ctype(p, want)
+        emit_text("){0}")
+        return
+    }
     have := type_of(p, value)
     // A string literal reaching a `str`. The length is counted from the source
     // rather than measured at run time, since an escape is two bytes written
@@ -281,6 +343,45 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         base := node.a
         off := node.val
         len := node.c
+        // A columns element field `c[h].field`: pick the field's own column
+        // array, then index it by the handle's checked slot. SoA selects the
+        // field BEFORE indexing, so this is one recognized shape rather than a
+        // field offset added after a slab-style index. The handle is validated
+        // by `frost_slot` exactly as a slab's is.
+        base_node := arena_at(p.arena, base)
+        if (base_node.kind == NODE_INDEX) {
+            cbase := base_node.a
+            cindex := base_node.b
+            cbase_ty := type_of(p, cbase)
+            mut cthrough := cbase_ty
+            if (is_pointer(cthrough)) {
+                cthrough = pointee(cthrough)
+            }
+            if (type_of(p, cindex) == TY_HANDLE
+                && is_columns_ty(p, cthrough)) {
+                gens_ty := slab_field_type(p, cthrough, "generations")
+                emit_text("(")
+                emit_expr(p, cbase)
+                if (is_pointer(cbase_ty)) {
+                    emit_text(")->")
+                } else {
+                    emit_text(").")
+                }
+                emit_source(p.src, off, len)
+                emit_text(".items[frost_slot(")
+                emit_expr(p, cindex)
+                emit_text(", ")
+                frost_emit_int(array_length(p, gens_ty))
+                emit_text(", (")
+                emit_expr(p, cbase)
+                if (is_pointer(cbase_ty)) {
+                    emit_text(")->generations.items)]")
+                } else {
+                    emit_text(").generations.items)]")
+                }
+                return
+            }
+        }
         base_ty := type_of(p, base)
         // Resolve the field for its own sake: field_type rejects a name the
         // struct does not carry, which emitting alone would not notice.
@@ -658,6 +759,24 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
     if (kind == NODE_ASSIGN) {
         place := node.a
         value := node.b
+        // `c[h] = value`: scatter the whole element into the columns' per-field
+        // arrays at the handle's slot. Recognized before the scalar type check,
+        // since the place has no single element type to compare against.
+        place_node := arena_at(p.arena, place)
+        if (place_node.kind == NODE_INDEX) {
+            cbase := place_node.a
+            cindex := place_node.b
+            cbase_ty := type_of(p, cbase)
+            mut cthrough := cbase_ty
+            if (is_pointer(cthrough)) {
+                cthrough = pointee(cthrough)
+            }
+            if (type_of(p, cindex) == TY_HANDLE
+                && is_columns_ty(p, cthrough)) {
+                emit_columns_scatter(p, cbase, cbase_ty, cthrough, cindex, value)
+                return
+            }
+        }
         place_ty := type_of(p, place)
         value_ty := type_of(p, value)
         if (types_compatible(p, value_ty, place_ty) == false) {

@@ -723,10 +723,37 @@ parse_type :: fn(mut p: Parser) -> i64 {
     mut base : i64 = TY_I64
     mut was_generic : i64 = 0
     if (cur(p) == TOK_LT) {
+        // `columns<T, N>` is the SoA sibling of `Slab<T, N>`: a container that
+        // stores one array per field of T, addressed by the same handle, rather
+        // than one array of whole T. The compiler synthesizes the layout by
+        // reflecting over T's fields, so it is recognized by name here like
+        // `Handle`, not through the generic-template path.
+        if (str_range_eq(p.src, offset, length, "columns")) {
+            advance(p)
+            element := parse_type(p)
+            if (cur(p) == TOK_COMMA) {
+                advance(p)
+            }
+            mut n : i64 = 0
+            if (cur(p) == TOK_INT) {
+                n = cur_val(p)
+                advance(p)
+            } else {
+                bound := value_binding_of(p, cur_off(p), cur_len(p))
+                if (bound >= 0) {
+                    n = bound
+                } else {
+                    n = const_value(p, cur_off(p), cur_len(p))
+                }
+                advance(p)
+            }
+            consume_generic_close(p)
+            base = synth_columns(p, element, n)
+        }
         // `Handle<T>` is a scalar, an i64 that names a slab slot; its element
         // type comes from the slab it indexes, so the argument is consumed and
         // dropped. It is not a generic instance, so it is passed by value.
-        if (str_range_eq(p.src, offset, length, "Handle")) {
+        else if (str_range_eq(p.src, offset, length, "Handle")) {
             advance(p)
             parse_type(p)
             consume_generic_close(p)
@@ -945,6 +972,99 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64, xarg_start: i64,
         Instance { generic_index = generic_index, arg = arg,
             xarg_start = xarg_start, xarg_count = xarg_count,
             struct_index = struct_index },
+    )
+    STRUCT_BASE + struct_index
+}
+
+// The columns container for element `element` at capacity `count`, synthesized
+// once and deduped after. It is a struct with one `[count]field` array per
+// field of `element`, named after the field, plus the generational bookkeeping
+// a slab carries: parallel `generations` and `free_list` arrays and a
+// `free_count`. This is the one piece of `columns` that cannot be library
+// Frost, since "one array per field of T" is not writable in the type system,
+// so the compiler reflects over T's fields and builds it. An element whose
+// fields are named `storage`, `generations`, `free_list` or `free_count` is not
+// supported; those names are reserved for the container's own bookkeeping.
+synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
+    existing := columns_lookup(p, element, count)
+    if (existing >= 0) {
+        return existing
+    }
+    // A non-struct element (in particular the TY_PARAM placeholder while a
+    // generic template is being parsed) is not materialized; the real element
+    // arrives when the template is instantiated.
+    if (is_struct_ty(element) == false) {
+        return element
+    }
+    tdef := arena_at(p.structs, struct_index_of(element))
+    name_off := tdef.name_off
+    name_len := tdef.name_len
+
+    mut head : i64 = 0 - 1
+    mut tail : i64 = 0 - 1
+    mut fid := tdef.field_head
+    while (fid != (0 - 1)) {
+        field := arena_at(p.fields, fid)
+        field_name_off := field.name_off
+        field_name_len := field.name_len
+        field_ty := field.ty
+        field_next := field.next
+        col_ty := array_of(p, field_ty, count)
+        node := arena_push(
+            p.fields,
+            StructField { name_off = field_name_off, name_len = field_name_len,
+                ty = col_ty, next = 0 - 1 },
+        )
+        if (head == (0 - 1)) {
+            head = node
+            tail = node
+        } else {
+            set_field_next(p, tail, node)
+            tail = node
+        }
+        fid = field_next
+    }
+
+    i64_col := array_of(p, TY_I64, count)
+    gen_off := synth_literal(p, "generations")
+    gen_node := arena_push(
+        p.fields,
+        StructField { name_off = gen_off,
+            name_len = unsafe { frost_str_len("generations") },
+            ty = i64_col, next = 0 - 1 },
+    )
+    if (head == (0 - 1)) {
+        head = gen_node
+        tail = gen_node
+    } else {
+        set_field_next(p, tail, gen_node)
+        tail = gen_node
+    }
+    free_off := synth_literal(p, "free_list")
+    free_node := arena_push(
+        p.fields,
+        StructField { name_off = free_off,
+            name_len = unsafe { frost_str_len("free_list") },
+            ty = i64_col, next = 0 - 1 },
+    )
+    set_field_next(p, tail, free_node)
+    tail = free_node
+    count_off := synth_literal(p, "free_count")
+    count_node := arena_push(
+        p.fields,
+        StructField { name_off = count_off,
+            name_len = unsafe { frost_str_len("free_count") },
+            ty = TY_I64, next = 0 - 1 },
+    )
+    set_field_next(p, tail, count_node)
+
+    struct_index := p.structs.count
+    arena_push(
+        p.structs,
+        StructDef { name_off = name_off, name_len = name_len, field_head = head,
+            is_generic = 0, tparam_off = 0, tparam_len = 0, field_token = 0,
+            instance_id = struct_index, is_linear = 0, emitted = 0,
+            xparam_start = 0, xparam_count = 0, is_enum = 0 },
     )
     STRUCT_BASE + struct_index
 }

@@ -12,6 +12,8 @@ export append_node, array_element, array_index_of, array_length, array_of,
     value_binding_of,
     intern_global, is_aggregate, is_array_ty, is_const, is_float, is_main_name,
     is_borrow, is_pointer, is_proc, is_raw_pointer, is_slab_ty, is_slice_ty,
+    is_columns_ty, columns_lookup, is_columns_new_call, field_type_by_range,
+    is_columns_bookkeeping,
     is_struct_ty, proc_of, proc_ret, proc_param_count, proc_param_at,
     slab_field_id, slab_field_type,
     mark_defined, mark_extern, new_case, new_field_init, new_field_node,
@@ -587,6 +589,107 @@ is_slab_ty :: fn(mut p: Parser, struct_ty: i64) -> bool {
     storage := slab_field_type(p, struct_ty, "storage")
     generations := slab_field_type(p, struct_ty, "generations")
     is_array_ty(storage) && is_array_ty(generations)
+}
+
+// The type of the field of `struct_ty` whose name is the byte range
+// (off, len), or -1. The byte-range twin of `slab_field_type`, so one
+// synthesized field can be matched against another struct's field by name
+// without a C string.
+field_type_by_range :: fn(mut p: Parser, struct_ty: i64, off: i64, len: i64)
+    -> i64 {
+    mut base := struct_ty
+    if (is_pointer(base)) {
+        base = pointee(base)
+    }
+    if (is_struct_ty(base) == false) {
+        return 0 - 1
+    }
+    def := arena_at(p.structs, struct_index_of(base))
+    mut fid := def.field_head
+    while (fid != (0 - 1)) {
+        field := arena_at(p.fields, fid)
+        if (field.name_len == len
+            && bytes_equal(p.src, field.name_off, off, len)) {
+            return field.ty
+        }
+        fid = field.next
+    }
+    0 - 1
+}
+
+// A columns container: the SoA sibling of a slab. It keeps the same
+// generational bookkeeping (`generations` + `free_list`) but stores its
+// elements as one array per field of the element type rather than one
+// `storage` array of whole elements. Recognized structurally by that shape:
+// parallel `generations` and `free_list` arrays and NO `storage` array, which
+// is exactly what tells it apart from a slab.
+is_columns_ty :: fn(mut p: Parser, struct_ty: i64) -> bool {
+    generations := slab_field_type(p, struct_ty, "generations")
+    free_list := slab_field_type(p, struct_ty, "free_list")
+    storage := slab_field_type(p, struct_ty, "storage")
+    is_array_ty(generations) && is_array_ty(free_list) && storage == (0 - 1)
+}
+
+// Every field of the element struct `element` has a matching `[N]field` column
+// array in `candidate`, so `candidate` is the columns container for `element`.
+columns_fields_match :: fn(mut p: Parser, candidate: i64, element: i64) -> bool {
+    if (is_struct_ty(element) == false) {
+        return false
+    }
+    def := arena_at(p.structs, struct_index_of(element))
+    mut fid := def.field_head
+    while (fid != (0 - 1)) {
+        field := arena_at(p.fields, fid)
+        col := field_type_by_range(p, candidate, field.name_off, field.name_len)
+        if (is_array_ty(col) == false) {
+            return false
+        }
+        if (array_element(p, col) != field.ty) {
+            return false
+        }
+        fid = field.next
+    }
+    true
+}
+
+// `columns_new()` is a compiler builtin, not a real function: it stands for a
+// zeroed container of the type the context wants, recognized by name at the
+// call node so neither backend emits a real call to it.
+is_columns_new_call :: fn(mut p: Parser, value: i64) -> bool {
+    node := arena_at(p.arena, value)
+    if (node.kind != NODE_CALL) {
+        return false
+    }
+    sym := arena_at(p.fns, node.val)
+    str_range_eq(p.src, sym.off, sym.len, "columns_new")
+}
+
+// Whether a columns field is the container's own generational bookkeeping
+// rather than a column of the element. A scatter or gather touches only the
+// element columns, skipping these three.
+is_columns_bookkeeping :: fn(mut p: Parser, off: i64, len: i64) -> bool {
+    str_range_eq(p.src, off, len, "generations")
+        || str_range_eq(p.src, off, len, "free_list")
+        || str_range_eq(p.src, off, len, "free_count")
+}
+
+// An already-synthesized columns container for element `element` at capacity
+// `count`, or -1. Structural dedup so the same `columns<T,N>` written in two
+// places is one type, which is what lets a value pass between functions.
+columns_lookup :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < p.structs.count) {
+        candidate := STRUCT_BASE + i
+        if (is_columns_ty(p, candidate)) {
+            gens := slab_field_type(p, candidate, "generations")
+            if (array_length(p, gens) == count
+                && columns_fields_match(p, candidate, element)) {
+                return candidate
+            }
+        }
+        i = i + 1
+    }
+    0 - 1
 }
 
 // Resolve a type name (byte range) to a type code: the current generic type

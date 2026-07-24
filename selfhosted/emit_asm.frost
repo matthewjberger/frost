@@ -69,6 +69,18 @@ emit_asm_copy :: fn(size: i64) {
     }
 }
 
+// Zero `size` bytes at the address in %r10, a word at a time, the way
+// emit_asm_copy moves them. Used to build a zeroed columns container for
+// `columns_new()`.
+emit_asm_zero :: fn(size: i64) {
+    asm("xorq %rax, %rax")
+    mut cleared : i64 = 0
+    while (cleared < size) {
+        asm_i("movq %rax, ", cleared, "(%r10)")
+        cleared = cleared + 8
+    }
+}
+
 
 new_label :: fn(mut p: Parser) -> i64 {
     id := p.label_id
@@ -294,6 +306,25 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
     }
     if (kind == NODE_FIELD) {
         base := node.a
+        // A columns element field `c[handle].field`: pick the field's column and
+        // index it by the validated slot, one recognized shape (see the C
+        // backend's twin).
+        base_node := arena_at(p.arena, base)
+        if (base_node.kind == NODE_INDEX) {
+            cbase := base_node.a
+            cindex := base_node.b
+            cbase_ty := type_of(p, cbase)
+            mut cthrough := cbase_ty
+            if (is_pointer(cthrough)) {
+                cthrough = pointee(cthrough)
+            }
+            if (type_of(p, cindex) == TY_HANDLE
+                && is_columns_ty(p, cthrough)) {
+                emit_asm_columns_addr(p, cbase, cbase_ty, cthrough, node.val,
+                    node.c, cindex)
+                return
+            }
+        }
         base_ty := type_of(p, base)
         // A pointer base already holds the address; a struct place needs one.
         if (is_pointer(base_ty)) {
@@ -458,6 +489,101 @@ emit_asm_slab_addr :: fn(mut p: Parser, base: i64, base_ty: i64, through: i64,
         asm_i("addq $", storage_off, ", %rax")
     }
     asm("addq %r11, %rax")
+}
+
+// The address of one element of one column of a columns container, named by
+// `c[handle].field`. The same frost_slot validation as a slab, but the checked
+// index scales into the field's own `[N]field` array rather than one storage
+// run, so the field's element size and column offset take the place of the
+// slab's storage element size and offset.
+emit_asm_columns_addr :: fn(mut p: Parser, base: i64, base_ty: i64, through: i64,
+    field_off: i64, field_len: i64, index_node: i64) {
+    generations_id := slab_field_id(p, through, "generations")
+    generations_field := arena_at(p.fields, generations_id)
+    generations_name_off := generations_field.name_off
+    generations_name_len := generations_field.name_len
+    generations_ty := generations_field.ty
+    generations_off := field_offset(p, through, generations_name_off,
+        generations_name_len)
+    count := array_length(p, generations_ty)
+    col_ty := field_type_by_range(p, through, field_off, field_len)
+    element := array_element(p, col_ty)
+    col_off := field_offset(p, through, field_off, field_len)
+    slot := alloc_temp(p, 8)
+    if (is_pointer(base_ty)) {
+        emit_asm_expr(p, base)
+    } else {
+        emit_asm_addr(p, base)
+    }
+    asm_i("movq %rax, ", slot, "(%rbp)")
+    emit_asm_expr(p, index_node)
+    shadow := abi_shadow(p)
+    emit_text("    movq %rax, ")
+    emit_asm_arg_reg(p, 0)
+    emit_text("\n")
+    emit_text("    movq $")
+    frost_emit_int(count)
+    emit_text(", ")
+    emit_asm_arg_reg(p, 1)
+    emit_text("\n")
+    asm_i("movq ", slot, "(%rbp), %r11")
+    if (generations_off != 0) {
+        asm_i("addq $", generations_off, ", %r11")
+    }
+    emit_text("    movq %r11, ")
+    emit_asm_arg_reg(p, 2)
+    emit_text("\n")
+    asm_i("subq $", shadow, ", %rsp")
+    asm("call frost_slot")
+    asm_i("addq $", shadow, ", %rsp")
+    asm_i("imulq $", type_size(p, element), ", %rax")
+    asm("movq %rax, %r11")
+    asm_i("movq ", slot, "(%rbp), %rax")
+    if (col_off != 0) {
+        asm_i("addq $", col_off, ", %rax")
+    }
+    asm("addq %r11, %rax")
+}
+
+// `c[h] = value` scatters the element's fields into the columns' per-field
+// arrays at the handle's validated slot, one field at a time: address of the
+// column element, then the element loaded out of `value` and stored into it.
+emit_asm_columns_scatter :: fn(mut p: Parser, cbase: i64, cbase_ty: i64,
+    cthrough: i64, cindex: i64, value: i64) {
+    value_ty := type_of(p, value)
+    mut value_struct := value_ty
+    if (is_pointer(value_struct)) {
+        value_struct = pointee(value_struct)
+    }
+    def := arena_at(p.structs, struct_index_of(cthrough))
+    mut fid := def.field_head
+    while (fid != (0 - 1)) {
+        field := arena_at(p.fields, fid)
+        field_off := field.name_off
+        field_len := field.name_len
+        field_col_ty := field.ty
+        field_next := field.next
+        if (is_columns_bookkeeping(p, field_off, field_len) == false) {
+            element := array_element(p, field_col_ty)
+            emit_asm_columns_addr(p, cbase, cbase_ty, cthrough, field_off,
+                field_len, cindex)
+            emit_asm_push()
+            if (is_pointer(value_ty)) {
+                emit_asm_expr(p, value)
+            } else {
+                emit_asm_addr(p, value)
+            }
+            value_off := field_offset(p, value_struct, field_off, field_len)
+            if (value_off != 0) {
+                asm_i("addq $", value_off, ", %rax")
+            }
+            emit_asm_load_from(p, element, 0, "(%rax), ")
+            asm("movq %rax, %r11")
+            emit_asm_pop_rax()
+            emit_asm_store_to(p, element, 0, "(%rax)")
+        }
+        fid = field_next
+    }
 }
 
 emit_asm_push :: fn() {
@@ -1043,6 +1169,15 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         if (annotation == (0 - 1)) {
             ty = type_of(p, value)
         }
+        // `columns_new()` is a zeroed container; there is no call to make, just
+        // the local's slot to clear.
+        if (is_columns_new_call(p, value)) {
+            record_local(p, off, len, ty)
+            slot := local_slot(p, off, len)
+            asm_i("leaq ", slot, "(%rbp), %r10")
+            emit_asm_zero(type_size(p, ty))
+            return
+        }
         emit_asm_expr(p, value)
         emit_asm_coerce(p, value, ty)
         record_local(p, off, len, ty)
@@ -1060,6 +1195,25 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
     if (kind == NODE_ASSIGN) {
         place := node.a
         value := node.b
+        // `c[h] = value`: scatter the element into the columns' per-field arrays
+        // at the handle's slot, recognized before the ordinary place store since
+        // the place is not one contiguous value.
+        place_node := arena_at(p.arena, place)
+        if (place_node.kind == NODE_INDEX) {
+            cbase := place_node.a
+            cindex := place_node.b
+            cbase_ty := type_of(p, cbase)
+            mut cthrough := cbase_ty
+            if (is_pointer(cthrough)) {
+                cthrough = pointee(cthrough)
+            }
+            if (type_of(p, cindex) == TY_HANDLE
+                && is_columns_ty(p, cthrough)) {
+                emit_asm_columns_scatter(p, cbase, cbase_ty, cthrough, cindex,
+                    value)
+                return
+            }
+        }
         place_ty := type_of(p, place)
         emit_asm_addr(p, place)
         emit_asm_push()

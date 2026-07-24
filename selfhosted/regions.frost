@@ -1145,7 +1145,12 @@ check_calls :: fn(mut p: Parser) {
                 // codegen locals do not exist yet, so the name is looked for
                 // among the function-pointer parameters instead.
                 callee_proc := proc_param_named(p, name_off, name_len)
-                if (defined == 0 && callee_proc < 0) {
+                // `columns_new` is a compiler builtin standing for a zeroed
+                // container, so it has no defined symbol; the emitter recognizes
+                // it by name. Its zero arguments still satisfy the arity check.
+                is_columns_new := str_range_eq(p.src, name_off, name_len,
+                    "columns_new")
+                if (defined == 0 && callee_proc < 0 && is_columns_new == false) {
                     report_where(p.modules, p.src, node.pos)
                     report("call to undefined function '")
                     report_src(p.src, name_off, name_len)

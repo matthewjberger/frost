@@ -1,0 +1,46 @@
+// A structure-of-arrays container. `columns<Particle, 8>` stores the x's in one
+// array and the y's in another, so summing a single field strides one contiguous
+// column rather than gathering whole structs. Switching this from AoS to SoA is
+// one token: `Slab<Particle, 8>` would store whole particles instead, with the
+// same handle API. Compiled by the self-hosted compiler on both backends.
+
+import "columns.frost"
+
+Particle :: struct { x: i64, y: i64 }
+
+// The SoA win: one field of every element, as a contiguous slice.
+sum_x :: fn(xs: []i64) -> i64 {
+    mut total : i64 = 0
+    mut i : i64 = 0
+    n := slice_len(xs)
+    while (i < n) {
+        total = total + xs[i]
+        i = i + 1
+    }
+    total
+}
+
+main :: fn() -> i64 {
+    mut world : columns<Particle, 8> = columns_new()
+    columns_reset($Particle, $8, world)
+
+    a := columns_insert($Particle, $8, world, Particle { x = 10, y = 1 })
+    columns_insert($Particle, $8, world, Particle { x = 20, y = 2 })
+    columns_insert($Particle, $8, world, Particle { x = 30, y = 3 })
+
+    // Read and write one element through its handle, generation-checked.
+    print world[a].x + world[a].y
+    world[a].x = 100
+
+    // Stride the whole x column, the data-oriented hot path.
+    print sum_x(world.x)
+
+    // A released handle goes stale, so a later read through it would abort.
+    columns_release($Particle, $8, world, a)
+    if (columns_alive($Particle, $8, world, a)) {
+        print 1
+    } else {
+        print 0
+    }
+    0
+}
