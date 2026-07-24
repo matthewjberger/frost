@@ -3,6 +3,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if !defined(_WIN32)
+#include <sys/wait.h>
+#endif
 
 void frost_bounds_check(int64_t index, int64_t length) {
     if ((uint64_t)index >= (uint64_t)length) {
@@ -313,10 +316,21 @@ int64_t frost_remove_file(const char *path) {
 }
 
 /* Runs a command line through the shell and answers with its exit status, so
-   the compiler can drive the assembler and the linker. */
+   the compiler can drive the assembler and the linker, and so a `--test` build
+   can exit on what the tests said. POSIX `system` encodes the child's exit code
+   in the high byte of its return rather than handing it back directly, so a
+   caller that returns this value straight out of `main` would see it taken mod
+   256 and a failing run report success. Decode it to the plain exit code. */
 int64_t frost_run_command(const char *command) {
     int status = system(command);
+#if defined(_WIN32)
     return (int64_t)status;
+#else
+    if (status != -1 && WIFEXITED(status)) {
+        return (int64_t)WEXITSTATUS(status);
+    }
+    return (int64_t)status;
+#endif
 }
 
 /* OS threads. A spawn takes a function and a context pointer, runs the function
