@@ -4118,6 +4118,55 @@ fn self_hosted_nested_generic() {
     assert_eq!(output, "1\n2\n3\n");
 }
 
+// A growable heap-backed vector, the shape of std/vec.frost, compiled by the
+// self-hosted compiler. It leans on generics, an `unsafe { ... }` used as a
+// value (the allocation and the pointer cast), and the heap runtime, all of
+// which the value-generics work and the fixes around it brought in.
+const SELFHOSTED_VEC: &str = concat!(
+    "frost_heap_alloc :: extern fn(size: i64) -> ^u8\n",
+    "frost_heap_realloc :: extern fn(block: ^u8, size: i64) -> ^u8\n",
+    "frost_heap_free :: extern fn(block: ^u8)\n",
+    "Vec :: struct($T: Type) { data: ^T, len: i64, cap: i64 }\n",
+    "vec_new :: fn($T: Type, capacity: i64) -> Vec<T> {\n",
+    "    mut room := capacity\n",
+    "    if (room < 1) { room = 1 }\n",
+    "    block := unsafe { frost_heap_alloc(room * sizeof(T)) }\n",
+    "    Vec { data = unsafe { ptr_cast($T, block) }, len = 0, cap = room }\n",
+    "}\n",
+    "vec_push :: fn($T: Type, mut v: Vec<T>, move value: $T) {\n",
+    "    if (v.len >= v.cap) {\n",
+    "        mut room := v.cap * 2\n",
+    "        if (room < 1) { room = 1 }\n",
+    "        v.data = unsafe { ptr_cast($T, frost_heap_realloc(ptr_cast($u8, v.data), room * sizeof(T))) }\n",
+    "        v.cap = room\n",
+    "    }\n",
+    "    unsafe { v.data[v.len] = value }\n",
+    "    v.len = v.len + 1\n",
+    "}\n",
+    "vec_get :: fn($T: Type, v: Vec<T>, index: i64) -> $T { unsafe { v.data[index] } }\n",
+    "vec_len :: fn($T: Type, v: Vec<T>) -> i64 { v.len }\n",
+    "vec_free :: fn($T: Type, move v: Vec<T>) { unsafe { frost_heap_free(ptr_cast($u8, v.data)) } }\n",
+    "main :: fn() -> i64 {\n",
+    "    mut v : Vec<i64> = vec_new($i64, 2)\n",
+    "    vec_push($i64, v, 10)\n",
+    "    vec_push($i64, v, 20)\n",
+    "    vec_push($i64, v, 30)\n",
+    "    print vec_len($i64, v)\n",
+    "    print vec_get($i64, v, 0)\n",
+    "    print vec_get($i64, v, 2)\n",
+    "    vec_free($i64, v)\n",
+    "    0\n",
+    "}\n",
+);
+
+#[test]
+fn self_hosted_growable_vector() {
+    let Some(output) = selfhosted_native_output("vec", SELFHOSTED_VEC) else {
+        return;
+    };
+    assert_eq!(output, "3\n10\n30\n");
+}
+
 const SLICES: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
