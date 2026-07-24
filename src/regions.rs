@@ -338,9 +338,11 @@ pub fn check_frame_escapes(program: &Program) -> Result<()> {
     Ok(())
 }
 
-// A type that names storage it does not own: a raw pointer or a slice.
+// A type that names storage it does not own: a raw pointer, a slice, or a
+// borrow. A returned borrow is held to the frame the same way a returned
+// pointer is, so a view of storage built here cannot leave as one.
 fn is_borrowed_view(ty: &Type) -> bool {
-    matches!(ty, Type::Ptr(_) | Type::Slice(_))
+    matches!(ty, Type::Ptr(_) | Type::Slice(_) | Type::Ref(_) | Type::RefMut(_))
 }
 
 struct Frame<'a> {
