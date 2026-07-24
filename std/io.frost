@@ -18,22 +18,32 @@ frost_emit_char :: extern fn(byte: i64)
 // A string literal is a pointer to its bytes with a trailing NUL where `^i8` is
 // expected, so `print("hello")` works. A `str` value computed at run time is a
 // pointer and a length with no terminator, which is what `print_str` is for.
-print :: fn(text: ^i8) { frost_emit_str(text) }
+//
+// The emit calls are extern, so each is unchecked and wrapped in `unsafe` here.
+// These functions are safe to call: the runtime writes bytes and returns, so
+// there is no pointer for a caller to get wrong except a `^i8` that is not
+// NUL-terminated, which only `print` and `print_line` can be handed and which a
+// string literal always satisfies.
+print :: fn(text: ^i8) { unsafe { frost_emit_str(text) } }
 
-print_int :: fn(value: i64) { frost_emit_int(value) }
+print_int :: fn(value: i64) { unsafe { frost_emit_int(value) } }
 
-print_char :: fn(byte: i64) { frost_emit_char(byte) }
+print_char :: fn(byte: i64) { unsafe { frost_emit_char(byte) } }
 
 print_str :: fn(text: str) {
     mut i : i64 = 0
     while (i < str_len(text)) {
-        frost_emit_char(text[i])
+        unsafe { frost_emit_char(text[i]) }
         i = i + 1
     }
 }
 
-print_line :: fn(text: ^i8) { frost_emit_str(text)  frost_emit_char(10) }
+print_line :: fn(text: ^i8) {
+    unsafe { frost_emit_str(text)  frost_emit_char(10) }
+}
 
-print_int_line :: fn(value: i64) { frost_emit_int(value)  frost_emit_char(10) }
+print_int_line :: fn(value: i64) {
+    unsafe { frost_emit_int(value)  frost_emit_char(10) }
+}
 
-print_str_line :: fn(text: str) { print_str(text)  frost_emit_char(10) }
+print_str_line :: fn(text: str) { print_str(text)  print_char(10) }
