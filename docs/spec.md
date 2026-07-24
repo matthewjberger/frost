@@ -222,6 +222,12 @@ A pool is not a built-in type. It is an ordinary struct a program writes for
 itself, an array of storage indexed by `Handle<T>` (chapter 10.1). The compiler
 provides the pieces to build one, not the pool itself.
 
+`columns<T, N>` is a compiler-synthesized structure-of-arrays container for `N`
+elements of struct `T`, one array per field of `T` plus a generational free list,
+addressed by `Handle<T>` the same way a pool is (chapter 10.1a). Unlike a pool it
+cannot be written as a library, since "one array per field of `T`" is not
+expressible over an arbitrary `T`.
+
 ### 3.5 Function types
 
 `fn(T1, ...) -> R` is a function pointer. There are no closure types. A
@@ -576,6 +582,30 @@ The runtime in `runtime/frost_runtime.c` offers a ready-made generational pool
 `extern fn`, the way `malloc` is. Nothing about it is compiler-special. When a
 pool from it is indexed by a `Handle<T>`, `pool[handle]` lowers to its `pool_get`
 (10.2).
+
+### 10.1a Structure-of-arrays columns
+
+`columns<T, N>` is the structure-of-arrays transpose of a pool. Where a pool (or
+slab) stores whole elements contiguously, `columns<T, N>` stores each field of
+`T` in its own `[N]` array, so a pass reading one field across many elements
+walks a tight column rather than striding over the fields it does not want. It is
+a compiler-synthesized type, not a library struct: for a `T` with fields
+`f1..fn`, the compiler reflects over them and lays out one `[N]` array per field
+named after that field, plus the same `generations` / `free_list` / `free_count`
+bookkeeping a pool carries.
+
+Naming each column after its field gives two accesses from existing machinery.
+`c.field` is ordinary field access yielding the whole `[N]t` array, which coerces
+to a `[]t` slice for a hot loop at no cost. `c[handle].field` selects the column
+and then indexes it at the handle's slot, the mirror of a pool (which indexes
+storage and then selects the field), under the same bounds-and-generation check
+(10.3). Construction (`columns_new()`), the deref `c[handle].field`, and the
+element scatter `c[handle] = value` are compiler-supplied for the reason
+`pool[handle]` is (10.2): they select a column before indexing, which a
+second-class borrow cannot express. Everything else is a library,
+`std/columns.frost`, mirroring `std/slab.frost`. The reserved field names are
+`storage`, `generations`, `free_list`, and `free_count`. See
+`docs/native-pools.md`.
 
 ### 10.2 `pool[handle]` is a place
 

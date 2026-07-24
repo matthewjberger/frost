@@ -149,6 +149,35 @@ main :: fn() -> i64 {
 Passing `world[h]` to a function borrows it, and that borrow is a parameter mode
 like any other, so it cannot escape the scope where the pool operation is valid.
 
+## Structure-of-arrays with columns
+
+`columns<T, N>` stores each field of `T` in its own array rather than storing
+whole elements back to back, so a pass reading one field across many elements
+walks a tight column. It keeps the pool's generational handle unchanged, so
+`c[h]` is still a checked place, and `c.field` is the whole column, a slice for a
+hot loop:
+
+```
+import "columns.frost"
+
+Particle :: struct { x: i64, y: i64 }
+
+main :: fn() -> i64 {
+    mut world : columns<Particle, 8> = columns_new()
+    columns_reset($Particle, $8, world)
+    h := columns_insert($Particle, $8, world, Particle { x = 10, y = 1 })
+
+    printf("%lld\n", world[h].x)   // 10, checked at the handle's slot
+    world[h].x = 100               // scatter a field back to the slot
+    // world.x is the whole [8]i64 column, and coerces to a []i64 slice
+    0
+}
+```
+
+Moving a system from a pool to structure-of-arrays is changing `Slab<T, N>` to
+`columns<T, N>` and the `slab_` prefix to `columns_`. See
+[native-pools.md](native-pools.md).
+
 ## Generics: specialize at compile time
 
 Generic functions and structs monomorphize, so there is no runtime dispatch. A
@@ -263,6 +292,15 @@ works as a build gate.
 `extern fn` links against any C library with the natural ABI. This is how the
 examples reach `printf`, `malloc`, and the pool runtime. See
 [c-compatibility.md](c-compatibility.md).
+
+## The standard library
+
+The library under `std/` is ordinary Frost, imported by name (`import
+"math.frost"`). It carries `str` helpers, a growable `Vec<T>` and a hash map,
+file and formatted IO, a sorting routine, the `slab` and `columns` containers,
+and a single-precision graphics-math library of vectors, matrices, and
+quaternions. The math library is described in [math.md](math.md), and
+`examples/native/math_transform.frost` puts it through a model-view-projection.
 
 ## Where to next
 

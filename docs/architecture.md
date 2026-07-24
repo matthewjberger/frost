@@ -260,6 +260,15 @@ resolve). Construction uses the annotated instance type. This works over
 scalars and structs, with multiple type parameters, array fields of the
 parameter, by-reference passing, and nesting inside other structs.
 
+`columns<T, N>` is synthesized by the same pre-pass by reflecting over `T`'s
+fields rather than substituting a template: for each field it registers one
+`[N]field` array named after the field, plus the `generations` / `free_list` /
+`free_count` free list a slab carries. The deref `c[handle].field` and the
+scatter `c[handle] = value` lower to the slab's bounds-and-generation check
+(`frost_slot`) reused verbatim, selecting the column before indexing it, and
+`columns_new()` zero-initializes. It is the structure-of-arrays sibling of the
+slab; see [native-pools.md](native-pools.md).
+
 **Not yet in the native backend** (these fail loudly, they are not silently
 miscompiled): growable or heap-backed collections. Capturing closures are absent by design,
 since the language uses function pointers and non-capturing function literals,
