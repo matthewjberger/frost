@@ -9,7 +9,8 @@ export call_ret_type, call_type_args, collect_type_args, fn_index_of,
     fn_proc_type,
     count_value_args, field_type, generic_fn_of, is_linear_type, is_moved,
     local_exists, lookup_local, nth_param_type, nth_value_arg,
-    record_local, record_mono_ret, type_of, types_compatible
+    record_local, record_mono_ret, type_cache_prepare, type_of,
+    types_compatible
 
 // The declared type of the nth parameter, or -1 past the end of the list. An
 // argument is classified and converted by what the callee said it takes rather
@@ -159,7 +160,37 @@ field_type :: fn(mut p: Parser, base_ty: i64, off: i64, len: i64) -> i64 {
     TY_I64
 }
 
+// Fill the type cache with one empty slot per possible node index. The node
+// arena is a fixed allocation, so its capacity bounds every id a monomorphized
+// instance can later take, and a slot per capacity covers them all without the
+// cache ever having to grow alongside the arena.
+type_cache_prepare :: fn(mut p: Parser) {
+    while (p.type_cache.count < p.type_cache.cap) {
+        arena_push(p.type_cache, TypeCacheEntry { ty = 0 })
+    }
+}
+
+// The type of a node. During emit the answer is memoized per node index, since
+// emit asks for the same node's type many times and re-deriving it walks the
+// symbol tables each time. A slot holds the type plus one, so an untouched zero
+// slot is "not computed" and a real type of zero still stores as one. The checks
+// run with type_cache_on off, so a type derived under a generic binding it will
+// not have at emit is never cached.
 type_of :: fn(mut p: Parser, id: i64) -> i64 {
+    if (p.type_cache_on == 1 && id >= 0 && id < p.type_cache.count) {
+        slot := arena_at(p.type_cache, id)
+        if (slot.ty != 0) {
+            return slot.ty - 1
+        }
+        result := type_of_compute(p, id)
+        stored := arena_at(p.type_cache, id)
+        stored.ty = result + 1
+        return result
+    }
+    type_of_compute(p, id)
+}
+
+type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
     node := arena_at(p.arena, id)
     kind := node.kind
     if (kind == NODE_STRLIT) {

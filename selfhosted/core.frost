@@ -34,7 +34,8 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     TOK_SLASH, TOK_STAR, TOK_STR,
     TY_BOOL, TY_F32, TY_F64, TY_HANDLE, TY_I16, TY_I32, TY_I64, TY_I8, TY_ISIZE,
     TY_PARAM, TY_U16,
-    TY_U32, TY_U64, TY_U8, TY_USIZE, TY_VOID, Token, TypeArg, UnsafeSpan,
+    TY_U32, TY_U64, TY_U8, TY_USIZE, TY_VOID, Token, TypeArg,
+    TypeCacheEntry, UnsafeSpan,
     Variant,
     arena_at, arena_make, arena_push, cstr_eq, frost_arg_at, frost_arg_count,
     frost_byte_at, frost_byte_set, frost_die, frost_emit_char, frost_emit_close,
@@ -481,6 +482,15 @@ GArg :: struct {
     value: i64,
 }
 
+// One node's derived type, memoized during emit. type_of otherwise re-derives a
+// node's type from the symbol tables on every visit, and emit visits each node
+// many times over. The cache is one slot per node index. A stored answer is the
+// type plus one, so a zero slot reads as "not computed yet" without a type ever
+// colliding with it, since a type of zero (i64) stores as one.
+TypeCacheEntry :: struct {
+    ty: i64,
+}
+
 // One binding in force while a generic body is re-parsed: a parameter name and
 // what it stands for, a type code or a CONST_BASE-encoded value. Bindings form a
 // stack in the `gbindings` arena so a nested instantiation shadows an outer one
@@ -741,6 +751,12 @@ Parser :: struct {
     arrays: Arena<ArrayDef>,
     tests: Arena<TestCase>,
     testing: i64,
+    // A memo of each node's derived type, read by type_of. It is filled only
+    // while emitting, where a node's type is fixed and asked for repeatedly;
+    // type_cache_on gates it so the checks, which ask under generic bindings
+    // that change the answer, never write to it.
+    type_cache: Arena<TypeCacheEntry>,
+    type_cache_on: i64,
 }
 
 cstr_eq :: fn(a: ^i8, b: ^i8) -> bool {
