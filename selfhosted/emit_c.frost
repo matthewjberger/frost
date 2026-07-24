@@ -23,7 +23,11 @@ emit_op :: fn(op: i64) {
         case 9: emit_text(" == ")
         case 10: emit_text(" != ")
         case 11: emit_text(" && ")
-        case _: emit_text(" || ")
+        case 12: emit_text(" || ")
+        case 13: emit_text(" << ")
+        case 14: emit_text(" >> ")
+        case 15: emit_text(" & ")
+        case _: emit_text(" | ")
     }
 }
 
@@ -88,7 +92,7 @@ emit_ctype :: fn(mut p: Parser, ty: i64) {
         emit_text("*")
         return
     }
-    if (ty == TY_I64 || ty == TY_ISIZE) {
+    if (ty == TY_I64 || ty == TY_ISIZE || ty == TY_HANDLE) {
         emit_text("int64_t")
         return
     }
@@ -281,6 +285,32 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         mut through := base_ty
         if (is_pointer(through)) {
             through = pointee(through)
+        }
+        // Indexing a slab by a handle: the handle names a slot, and the slot is
+        // reached only after `frost_slot` unpacks its index, bounds-checks it
+        // against the storage run, and matches its generation against the live
+        // one. The result is the storage element, an lvalue, so a place-deref
+        // like `slab[handle].hp = 75` writes through it in place.
+        if (type_of(p, index) == TY_HANDLE && is_slab_ty(p, through)) {
+            storage_ty := slab_field_type(p, through, "storage")
+            emit_text("(")
+            emit_expr(p, base)
+            if (is_pointer(base_ty)) {
+                emit_text(")->storage.items[frost_slot(")
+            } else {
+                emit_text(").storage.items[frost_slot(")
+            }
+            emit_expr(p, index)
+            emit_text(", ")
+            frost_emit_int(array_length(p, storage_ty))
+            emit_text(", (")
+            emit_expr(p, base)
+            if (is_pointer(base_ty)) {
+                emit_text(")->generations.items)]")
+            } else {
+                emit_text(").generations.items)]")
+            }
+            return
         }
         // An array and a slice are both a named C struct, so the run of
         // elements inside one has to be named before it can be indexed. The
@@ -839,63 +869,94 @@ emit_type_forward_decls :: fn(mut p: Parser) {
 // the user structs is what lets a struct hold a `[]T` field by value. `want_slice`
 // is 1 for the slices, 0 for the fixed arrays, whose element sits inside them by
 // value and so must follow the struct it names.
-emit_array_decls :: fn(mut p: Parser, want_slice: i64) {
-    mut i : i64 = 0
-    while (i < p.arrays.count) {
-        def := arena_at(p.arrays, i)
-        element := def.element
-        length := def.length
-        is_slice := length < 0
-        mut matches : i64 = 0
-        if (is_slice && want_slice == 1) {
-            matches = 1
-        }
-        if (is_slice == false && want_slice == 0) {
-            matches = 1
-        }
-        if (matches == 1) {
-            emit_text("struct __arr")
-            frost_emit_int(i)
-            emit_text(" { ")
-            if (is_slice) {
-                emit_ctype(p, element)
-                emit_text("* data; int64_t len; };\n")
-            } else {
-                emit_ctype(p, element)
-                emit_text(" items[")
-                frost_emit_int(length)
-                emit_text("]; };\n")
-            }
-        }
-        i = i + 1
+// A C struct definition must follow every type it holds by value. A struct
+// holds its non-pointer struct and fixed-array fields inline, and a fixed array
+// holds its element inline, so those are emitted first; a pointer or slice field
+// is content with the forward declaration and creates no ordering constraint.
+// The compiler's own structs hold only scalars, pointers, and slices, so this
+// only bites a program that puts a fixed array inside a struct, like a slab.
+emit_type_dep :: fn(mut p: Parser, ty: i64) {
+    if (is_struct_ty(ty)) {
+        emit_struct_ordered(p, struct_index_of(ty))
+    }
+    if (is_array_ty(ty)) {
+        emit_array_ordered(p, array_index_of(ty))
     }
 }
 
-emit_struct_decls :: fn(mut p: Parser) {
+emit_array_ordered :: fn(mut p: Parser, i: i64) {
+    def := arena_at(p.arrays, i)
+    if (def.emitted == 1) {
+        return
+    }
+    def.emitted = 1
+    element := def.element
+    length := def.length
+    if (length >= 0) {
+        emit_type_dep(p, element)
+    }
+    emit_text("struct __arr")
+    frost_emit_int(i)
+    emit_text(" { ")
+    if (length < 0) {
+        emit_ctype(p, element)
+        emit_text("* data; int64_t len; };\n")
+    } else {
+        emit_ctype(p, element)
+        emit_text(" items[")
+        frost_emit_int(length)
+        emit_text("]; };\n")
+    }
+}
+
+emit_struct_ordered :: fn(mut p: Parser, i: i64) {
+    def := arena_at(p.structs, i)
+    if (def.is_generic == 1) {
+        return
+    }
+    if (def.emitted == 1) {
+        return
+    }
+    def.emitted = 1
+    field_head := def.field_head
+    mut fid := field_head
+    while (fid != (0 - 1)) {
+        field := arena_at(p.fields, fid)
+        dep := field.ty
+        next_field := field.next
+        emit_type_dep(p, dep)
+        fid = next_field
+    }
+    emit_text("struct ")
+    emit_struct_name(p, i)
+    emit_text(" {\n")
+    fid = field_head
+    while (fid != (0 - 1)) {
+        field := arena_at(p.fields, fid)
+        fty := field.ty
+        off := field.name_off
+        len := field.name_len
+        next_field := field.next
+        emit_ctype(p, fty)
+        emit_text(" ")
+        emit_source(p.src, off, len)
+        emit_text(";\n")
+        fid = next_field
+    }
+    emit_text("};\n")
+}
+
+// Emit every struct and array definition in dependency order. Structs are the
+// roots; an array reached by none of them is emitted by the trailing sweep.
+emit_type_defs :: fn(mut p: Parser) {
     mut i : i64 = 0
     while (i < p.structs.count) {
-        def := arena_at(p.structs, i)
-        is_generic := def.is_generic
-        field_head := def.field_head
-        if (is_generic == 0) {
-            emit_text("struct ")
-            emit_struct_name(p, i)
-            emit_text(" {\n")
-            mut fid := field_head
-            while (fid != (0 - 1)) {
-                field := arena_at(p.fields, fid)
-                fty := field.ty
-                off := field.name_off
-                len := field.name_len
-                next_field := field.next
-                emit_ctype(p, fty)
-                emit_text(" ")
-                emit_source(p.src, off, len)
-                emit_text(";\n")
-                fid = next_field
-            }
-            emit_text("};\n")
-        }
+        emit_struct_ordered(p, i)
+        i = i + 1
+    }
+    i = 0
+    while (i < p.arrays.count) {
+        emit_array_ordered(p, i)
         i = i + 1
     }
 }
@@ -1026,13 +1087,9 @@ emit_mono_prototype :: fn(mut p: Parser, id: i64, arg: i64, ret: i64) {
 emit_program :: fn(mut p: Parser, head: i64) {
     emit_text("void frost_assert_at(signed char, const char*);\n")
     emit_text("int64_t frost_check_index(int64_t, int64_t);\n")
+    emit_text("int64_t frost_slot(int64_t, int64_t, const int64_t*);\n")
     emit_type_forward_decls(p)
-    // Slices first: a slice embeds only a pointer, so a struct may hold one
-    // by value. Then the structs. Then the fixed arrays, since an array of a
-    // struct holds it by value and so names it after it is defined.
-    emit_array_decls(p, 1)
-    emit_struct_decls(p)
-    emit_array_decls(p, 0)
+    emit_type_defs(p)
     emit_extern_prototypes(p, head)
 
     // Prototypes for each monomorphization, so they may be called before defined.

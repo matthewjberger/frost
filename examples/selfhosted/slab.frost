@@ -1,0 +1,61 @@
+// A generational slab through the self-hosted compiler. A handle packs a slot
+// index and a generation into one i64, so it is a copy value rather than a
+// pointer, and `world[handle]` is a place the compiler bounds- and
+// generation-checks before it reaches storage. Reading through a handle whose
+// slot was released and reused aborts rather than seeing the next tenant.
+//
+// The slab here is a fixed four-slot struct rather than the standard library's
+// Slab<T, N>, because the self-hosted compiler has no value generics yet; what
+// the compiler keys on is the shape, a `storage` run beside a `generations`
+// run, not a named type.
+
+Entity :: struct { hp: i64, mana: i64 }
+
+Slab :: struct {
+    storage: [4]Entity,
+    generations: [4]i64,
+    free_list: [4]i64,
+    free_count: i64,
+}
+
+reset :: fn(mut s: Slab) {
+    mut i : i64 = 0
+    while (i < 4) {
+        s.generations[i] = 0
+        s.free_list[i] = 3 - i
+        i = i + 1
+    }
+    s.free_count = 4
+}
+
+insert :: fn(mut s: Slab, move value: Entity) -> Handle<Entity> {
+    s.free_count = s.free_count - 1
+    index := s.free_list[s.free_count]
+    s.storage[index] = value
+    packed := (s.generations[index] << 32) | index
+    packed
+}
+
+main :: fn() -> i64 {
+    mut world : Slab = Slab {
+        storage = [
+            Entity { hp = 0, mana = 0 },
+            Entity { hp = 0, mana = 0 },
+            Entity { hp = 0, mana = 0 },
+            Entity { hp = 0, mana = 0 },
+        ],
+        generations = [0, 0, 0, 0],
+        free_list = [0, 0, 0, 0],
+        free_count = 0,
+    }
+    reset(world)
+
+    hero := insert(world, Entity { hp = 100, mana = 30 })
+    goblin := insert(world, Entity { hp = 40, mana = 10 })
+
+    print world[hero].hp
+    world[hero].hp = world[hero].hp - 25
+    print world[hero].hp
+    print world[goblin].mana
+    0
+}

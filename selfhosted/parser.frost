@@ -400,37 +400,79 @@ parse_add :: fn(mut p: Parser) -> i64 {
     left
 }
 
+// The three bitwise levels sit between comparison and `+`, binding tighter than
+// a comparison and looser than a shift, so `a & mask == 0` groups as the C it
+// lowers to would. A shift binds tighter still, below `+`. None of the three is
+// used in this compiler's own source, so their precedence does not touch the
+// self-hosting fixpoint; they exist so handle packing, `(gen << 32) | index`,
+// can be written in the language.
+parse_shift :: fn(mut p: Parser) -> i64 {
+    mut left := parse_add(p)
+    mut kind := cur(p)
+    while (kind == TOK_SHL || kind == TOK_SHR) {
+        mut op : i64 = OP_SHL
+        if (kind == TOK_SHR) {
+            op = OP_SHR
+        }
+        advance(p)
+        right := parse_add(p)
+        left = new_node(p, NODE_BIN, left, right, op)
+        kind = cur(p)
+    }
+    left
+}
+
+parse_bitand :: fn(mut p: Parser) -> i64 {
+    mut left := parse_shift(p)
+    while (cur(p) == TOK_AMP) {
+        advance(p)
+        right := parse_shift(p)
+        left = new_node(p, NODE_BIN, left, right, OP_BITAND)
+    }
+    left
+}
+
+parse_bitor :: fn(mut p: Parser) -> i64 {
+    mut left := parse_bitand(p)
+    while (cur(p) == TOK_PIPE) {
+        advance(p)
+        right := parse_bitand(p)
+        left = new_node(p, NODE_BIN, left, right, OP_BITOR)
+    }
+    left
+}
+
 parse_cmp :: fn(mut p: Parser) -> i64 {
-    left := parse_add(p)
+    left := parse_bitor(p)
     kind := cur(p)
     if (kind == TOK_LT) {
         advance(p)
-        right := parse_add(p)
+        right := parse_bitor(p)
         return new_node(p, NODE_BIN, left, right, OP_LT)
     }
     if (kind == TOK_LE) {
         advance(p)
-        right := parse_add(p)
+        right := parse_bitor(p)
         return new_node(p, NODE_BIN, left, right, OP_LE)
     }
     if (kind == TOK_GT) {
         advance(p)
-        right := parse_add(p)
+        right := parse_bitor(p)
         return new_node(p, NODE_BIN, left, right, OP_GT)
     }
     if (kind == TOK_GE) {
         advance(p)
-        right := parse_add(p)
+        right := parse_bitor(p)
         return new_node(p, NODE_BIN, left, right, OP_GE)
     }
     if (kind == TOK_EQEQ) {
         advance(p)
-        right := parse_add(p)
+        right := parse_bitor(p)
         return new_node(p, NODE_BIN, left, right, OP_EQ)
     }
     if (kind == TOK_NE) {
         advance(p)
-        right := parse_add(p)
+        right := parse_bitor(p)
         return new_node(p, NODE_BIN, left, right, OP_NE)
     }
     left
@@ -520,16 +562,26 @@ parse_type :: fn(mut p: Parser) -> i64 {
     mut base : i64 = TY_I64
     mut was_generic : i64 = 0
     if (cur(p) == TOK_LT) {
-        was_generic = 1
-        gi := generic_index_for(p, offset, length)
-        advance(p)
-        arg := parse_type(p)
-        advance(p)
-        // Only instantiate for a concrete argument. While parsing a generic
-        // template the argument is the TY_PARAM placeholder, and that instance
-        // is created later with the parameter bound to a real type.
-        if (gi >= 0 && arg != TY_PARAM) {
-            base = instantiate(p, gi, arg)
+        // `Handle<T>` is a scalar, an i64 that names a slab slot; its element
+        // type comes from the slab it indexes, so the argument is consumed and
+        // dropped. It is not a generic instance, so it is passed by value.
+        if (str_range_eq(p.src, offset, length, "Handle")) {
+            advance(p)
+            parse_type(p)
+            advance(p)
+            base = TY_HANDLE
+        } else {
+            was_generic = 1
+            gi := generic_index_for(p, offset, length)
+            advance(p)
+            arg := parse_type(p)
+            advance(p)
+            // Only instantiate for a concrete argument. While parsing a generic
+            // template the argument is the TY_PARAM placeholder, and that
+            // instance is created later with the parameter bound to a real type.
+            if (gi >= 0 && arg != TY_PARAM) {
+                base = instantiate(p, gi, arg)
+            }
         }
     } else {
         base = type_code_for(p, offset, length)
@@ -628,7 +680,7 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64) -> i64 {
         StructDef { name_off = name_off, name_len = name_len,
             field_head = field_head, is_generic = 0, tparam_off = 0,
             tparam_len = 0, field_token = 0, instance_id = struct_index,
-            is_linear = 0 },
+            is_linear = 0, emitted = 0 },
     )
     arena_push(
         p.instances,
@@ -1257,7 +1309,7 @@ parse_struct :: fn(mut p: Parser) {
             StructDef { name_off = name_offset, name_len = name_length,
                 field_head = 0 - 1, is_generic = 1, tparam_off = tparam_off,
                 tparam_len = tparam_len, field_token = field_token,
-                instance_id = 0 - 1, is_linear = linear_flag },
+                instance_id = 0 - 1, is_linear = linear_flag, emitted = 0 },
         )
     } else {
         head := parse_struct_fields(p)
@@ -1266,7 +1318,7 @@ parse_struct :: fn(mut p: Parser) {
             StructDef { name_off = name_offset, name_len = name_length,
                 field_head = head, is_generic = 0, tparam_off = 0,
                 tparam_len = 0, field_token = 0, instance_id = 0 - 1,
-                is_linear = linear_flag },
+                is_linear = linear_flag, emitted = 0 },
         )
     }
 }
@@ -1378,7 +1430,7 @@ parse_enum :: fn(mut p: Parser) {
         StructDef { name_off = name_offset, name_len = name_length,
             field_head = tag_field, is_generic = 0, tparam_off = 0,
             tparam_len = 0, field_token = 0, instance_id = 0 - 1,
-            is_linear = 0 },
+            is_linear = 0, emitted = 0 },
     )
 }
 
@@ -1473,7 +1525,7 @@ synth_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
         p.structs,
         StructDef { name_off = name, name_len = 8 + digits_in(p.structs.count),
             field_head = tag, is_generic = 0, tparam_off = 0, tparam_len = 0,
-            field_token = 0, instance_id = 0 - 1, is_linear = 0 },
+            field_token = 0, instance_id = 0 - 1, is_linear = 0, emitted = 0 },
     )
     STRUCT_BASE + index
 }

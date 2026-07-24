@@ -1813,6 +1813,60 @@ fn selfhosted_native_output(name: &str, source: &str) -> Option<String> {
     Some(output)
 }
 
+// Like selfhosted_native_output, but for a program meant to abort: the run is
+// allowed to fail and its exit status and standard error are returned so a
+// caller can assert on the runtime's abort message.
+fn selfhosted_native_status(
+    name: &str,
+    source: &str,
+) -> Option<(bool, String)> {
+    let compiler = build_self_hosted_compiler(name)?;
+    let directory = std::env::temp_dir();
+    let input = directory.join(format!("frost_ns_{name}.frost"));
+    std::fs::write(&input, source).unwrap();
+
+    let emit = Command::new(&compiler)
+        .env("FROST_BACKEND", "asm")
+        .env("FROST_CHECK_UNSAFE", "0")
+        .env("FROST_INPUT", &input)
+        .output()
+        .unwrap();
+    assert!(
+        emit.status.success(),
+        "native backend refused {name}:\n{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+
+    let asm_path = directory.join(format!("frost_ns_{name}.s"));
+    let exe_path = directory
+        .join(format!("frost_ns_{name}{}", std::env::consts::EXE_SUFFIX));
+    std::fs::write(&asm_path, String::from_utf8_lossy(&emit.stdout).as_ref())
+        .unwrap();
+    let runtime =
+        format!("{}/runtime/frost_runtime.c", env!("CARGO_MANIFEST_DIR"));
+    let assembled = Command::new(c_compiler().unwrap())
+        .arg(&asm_path)
+        .arg(&runtime)
+        .arg("-o")
+        .arg(&exe_path)
+        .output()
+        .unwrap();
+    assert!(
+        assembled.status.success(),
+        "emitted assembly for {name} did not assemble:\n{}",
+        String::from_utf8_lossy(&assembled.stderr)
+    );
+
+    let run = Command::new(&exe_path).output().unwrap();
+    let succeeded = run.status.success();
+    let stderr = String::from_utf8_lossy(&run.stderr).replace("\r\n", "\n");
+
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&asm_path);
+    let _ = std::fs::remove_file(&exe_path);
+    Some((succeeded, stderr))
+}
+
 // Each caller gets its own copy, named after itself. The test binary runs its
 // tests in parallel, so a shared path is two tests writing one file.
 fn build_self_hosted_compiler(name: &str) -> Option<PathBuf> {
@@ -3785,6 +3839,109 @@ main :: fn() -> i64 {
 fn native_slab_stale_handle_aborts() {
     let Some((succeeded, stderr)) =
         compile_and_run_status("slabstale", SLAB_STALE_HANDLE)
+    else {
+        return;
+    };
+    assert!(!succeeded, "a stale handle into a slab should abort");
+    assert!(
+        stderr.contains("stale handle"),
+        "expected the generation-check message, got:\n{stderr}"
+    );
+}
+
+// The self-hosted compiler owes the same slab place-deref as the bootstrap. It
+// has no value generics, so the slab is a fixed-capacity struct rather than
+// Slab<T, N>, but the shape the compiler keys on, a `storage` run beside a
+// `generations` run, is the same, as is `Handle<T>` and its packing.
+const SELFHOSTED_SLAB: &str = concat!(
+    "Entity :: struct { hp: i64, mana: i64 }\n",
+    "Slab :: struct {\n",
+    "    storage: [4]Entity,\n",
+    "    generations: [4]i64,\n",
+    "    free_list: [4]i64,\n",
+    "    free_count: i64,\n",
+    "}\n",
+    "reset :: fn(mut s: Slab) {\n",
+    "    mut i : i64 = 0\n",
+    "    while (i < 4) { s.generations[i] = 0  s.free_list[i] = 3 - i  i = i + 1 }\n",
+    "    s.free_count = 4\n",
+    "}\n",
+    "insert :: fn(mut s: Slab, move value: Entity) -> Handle<Entity> {\n",
+    "    s.free_count = s.free_count - 1\n",
+    "    index := s.free_list[s.free_count]\n",
+    "    s.storage[index] = value\n",
+    "    packed := (s.generations[index] << 32) | index\n",
+    "    packed\n",
+    "}\n",
+    "main :: fn() -> i64 {\n",
+    "    mut world : Slab = Slab {\n",
+    "        storage = [Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}],\n",
+    "        generations = [0,0,0,0], free_list = [0,0,0,0], free_count = 0,\n",
+    "    }\n",
+    "    reset(world)\n",
+    "    hero : Handle<Entity> = insert(world, Entity{hp=100, mana=30})\n",
+    "    foe : Handle<Entity> = insert(world, Entity{hp=40, mana=10})\n",
+    "    print world[hero].hp\n",
+    "    world[hero].hp = world[hero].hp - 25\n",
+    "    print world[hero].hp\n",
+    "    print world[foe].mana\n",
+    "    0\n",
+    "}\n",
+);
+
+#[test]
+fn self_hosted_slab_handle_place_deref() {
+    let Some(output) = selfhosted_native_output("slab", SELFHOSTED_SLAB) else {
+        return;
+    };
+    assert_eq!(output, "100\n75\n10\n");
+}
+
+const SELFHOSTED_SLAB_STALE: &str = concat!(
+    "Entity :: struct { hp: i64, mana: i64 }\n",
+    "Slab :: struct {\n",
+    "    storage: [4]Entity,\n",
+    "    generations: [4]i64,\n",
+    "    free_list: [4]i64,\n",
+    "    free_count: i64,\n",
+    "}\n",
+    "reset :: fn(mut s: Slab) {\n",
+    "    mut i : i64 = 0\n",
+    "    while (i < 4) { s.generations[i] = 0  s.free_list[i] = 3 - i  i = i + 1 }\n",
+    "    s.free_count = 4\n",
+    "}\n",
+    "insert :: fn(mut s: Slab, move value: Entity) -> Handle<Entity> {\n",
+    "    s.free_count = s.free_count - 1\n",
+    "    index := s.free_list[s.free_count]\n",
+    "    s.storage[index] = value\n",
+    "    packed := (s.generations[index] << 32) | index\n",
+    "    packed\n",
+    "}\n",
+    "release :: fn(mut s: Slab, handle: Handle<Entity>) {\n",
+    "    raw : i64 = handle\n",
+    "    index := raw & 4294967295\n",
+    "    s.generations[index] = s.generations[index] + 1\n",
+    "    s.free_list[s.free_count] = index\n",
+    "    s.free_count = s.free_count + 1\n",
+    "}\n",
+    "main :: fn() -> i64 {\n",
+    "    mut world : Slab = Slab {\n",
+    "        storage = [Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}],\n",
+    "        generations = [0,0,0,0], free_list = [0,0,0,0], free_count = 0,\n",
+    "    }\n",
+    "    reset(world)\n",
+    "    old : Handle<Entity> = insert(world, Entity{hp=100, mana=0})\n",
+    "    release(world, old)\n",
+    "    insert(world, Entity{hp=7, mana=0})\n",
+    "    print world[old].hp\n",
+    "    0\n",
+    "}\n",
+);
+
+#[test]
+fn self_hosted_slab_stale_handle_aborts() {
+    let Some((succeeded, stderr)) =
+        selfhosted_native_status("slabstale", SELFHOSTED_SLAB_STALE)
     else {
         return;
     };

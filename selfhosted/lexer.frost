@@ -109,6 +109,14 @@ lex_operator :: fn(src: ^i8, i: i64, len: i64, mut tokens: Arena<Token>) -> i64 
         push_token(tokens, TOK_GE, i, 2, 0)
         return i + 2
     }
+    if (c == CH_LT && d == CH_LT) {
+        push_token(tokens, TOK_SHL, i, 2, 0)
+        return i + 2
+    }
+    if (c == CH_GT && d == CH_GT) {
+        push_token(tokens, TOK_SHR, i, 2, 0)
+        return i + 2
+    }
     if (c == CH_EQ && d == CH_EQ) {
         push_token(tokens, TOK_EQEQ, i, 2, 0)
         return i + 2
@@ -137,6 +145,7 @@ lex_operator :: fn(src: ^i8, i: i64, len: i64, mut tokens: Arena<Token>) -> i64 
     if (c == CH_COLON) { kind = TOK_COLON }
     if (c == CH_CARET) { kind = TOK_CARET }
     if (c == CH_AMP) { kind = TOK_AMP }
+    if (c == CH_PIPE) { kind = TOK_PIPE }
     if (c == CH_EQ) { kind = TOK_ASSIGN }
     if (c == CH_PLUS) { kind = TOK_PLUS }
     if (c == CH_MINUS) { kind = TOK_MINUS }
