@@ -667,11 +667,19 @@ fn check_borrow_exclusivity(
             .and_then(|types| types.get(index))
             .and_then(|ty| ty.as_ref());
         let borrow = match argument {
-            Expression::BorrowMut(inner) => borrow_place(inner).map(|p| (p, true)),
-            Expression::Borrow(inner) => borrow_place(inner).map(|p| (p, false)),
+            Expression::BorrowMut(inner) => {
+                borrow_place(inner).map(|p| (p, true))
+            }
+            Expression::Borrow(inner) => {
+                borrow_place(inner).map(|p| (p, false))
+            }
             _ => match mode {
-                Some(Type::RefMut(_)) => borrow_place(argument).map(|p| (p, true)),
-                Some(Type::Ref(_)) => borrow_place(argument).map(|p| (p, false)),
+                Some(Type::RefMut(_)) => {
+                    borrow_place(argument).map(|p| (p, true))
+                }
+                Some(Type::Ref(_)) => {
+                    borrow_place(argument).map(|p| (p, false))
+                }
                 _ => None,
             },
         };
