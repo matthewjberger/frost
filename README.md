@@ -166,6 +166,8 @@ writing correct Frost quickly.
   to its Frost equivalent
 - [docs/syntax-design.md](docs/syntax-design.md) - why the syntax is shaped this
   way, difference by difference
+- [docs/math.md](docs/math.md) - the standard-library graphics math: vectors,
+  matrices, and quaternions
 
 **The ideas**
 

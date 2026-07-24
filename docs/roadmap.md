@@ -511,6 +511,12 @@ way a generic struct does, so this should follow item 10 cheaply.
 runtime C (see [native-pools.md](native-pools.md)), so what is missing is the
 type machinery around it rather than the pool itself.
 
+The `columns<T, N>` structure-of-arrays sibling of the pool is built in both
+compilers on both backends now (see [native-pools.md](native-pools.md)), and the
+standard library has grown a single-precision graphics-math library of vectors,
+matrices, and quaternions (`std/math.frost`, see [math.md](math.md)). Both are
+done.
+
 ## 13. Callbacks with a typed context
 
 Item 3 above, ported. The trampoline turned out not to exist there and will not

@@ -1,0 +1,54 @@
+// The standard-library math in action: build a camera and a model transform
+// out of std/math.frost and push a point through them, the way a renderer
+// would. Everything is `f32` free functions over plain structs, no operator
+// overloading and no methods.
+//
+// Floating-point results are printed as scaled integers (three fractional
+// digits, so 0.707 reads as 707) rather than formatted floats, so the output
+// is exact and the Cranelift and C backends agree on it byte for byte.
+
+import "io.frost"
+import "math.frost"
+
+// A float scaled by a thousand and truncated to an integer, so a fractional
+// value prints without the compiler needing a float formatter.
+milli :: fn(x: f32) -> i64 {
+    scaled : i64 = x * 1000.0
+    scaled
+}
+
+show :: fn(label: ^i8, value: i64) {
+    print_cstr(label)
+    print_int_line(value)
+}
+
+main :: fn() -> i64 {
+    // Normalizing a 3-4-5 vector: the length back out is 1.000.
+    v := vec3(3.0, 4.0, 0.0)
+    unit := vec3_normalize(v)
+    show("unit length x1000 = ", milli(vec3_length(unit)))
+
+    // The cross product of two axes is the third axis.
+    right := vec3(1.0, 0.0, 0.0)
+    up := vec3(0.0, 1.0, 0.0)
+    forward := vec3_cross(right, up)
+    show("cross.z x1000 = ", milli(forward.z))
+
+    // A quaternion of ninety degrees about Y turns +Z into +X.
+    turn := quat_from_axis_angle(vec3(0.0, 1.0, 0.0), radians(90.0))
+    spun := quat_rotate_vec3(turn, vec3(0.0, 0.0, 1.0))
+    show("spun.x x1000 = ", milli(spun.x))
+    show("spun.z x1000 = ", milli(spun.z))
+
+    // A model-view-projection built from the library's own pieces, then a
+    // point carried all the way through it.
+    model := mat4_translation(vec3(0.0, 0.0, 0.0 - 5.0))
+    view := mat4_look_at(vec3(0.0, 0.0, 0.0), vec3(0.0, 0.0, 0.0 - 1.0),
+        vec3(0.0, 1.0, 0.0))
+    projection := mat4_perspective(radians(60.0), 1.0, 0.1, 100.0)
+    mvp := mat4_mul(projection, mat4_mul(view, model))
+    clip := mat4_transform_point(mvp, vec3(0.0, 0.0, 0.0))
+    show("clip.z x1000 = ", milli(clip.z))
+
+    0
+}
