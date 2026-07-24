@@ -3256,6 +3256,26 @@ fn self_hosted_rejects_a_linear_value_never_consumed() {
     );
 }
 
+// Flow-aware: a linear value consumed in only one arm of an `if` is leaked on
+// the other path. The old accumulate-only check saw the one consume and read it
+// as consumed; the flow-aware one asks whether every path consumes it.
+#[test]
+fn self_hosted_rejects_a_linear_consumed_on_one_branch() {
+    let source = "File :: linear struct { h: i64 }\n\
+                  close :: extern fn(move f: File)\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   mut c : i64 = 0\n\
+                  \x20   r := File { h = 1 }\n\
+                  \x20   if (c == 1) { close(r) } else { }\n    0\n}\n";
+    let Some(message) = self_hosted_rejects("linearonebranch", source) else {
+        return;
+    };
+    assert!(
+        message.contains("never consumed"),
+        "expected a linear-leak error for the untaken branch, got:\n{message}"
+    );
+}
+
 #[test]
 fn self_hosted_rejects_consuming_a_linear_value_twice() {
     let source = "File :: linear struct { h: i64 }\n\

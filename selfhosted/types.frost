@@ -5,9 +5,9 @@ import "core.frost"
 import "imports.frost"
 import "names.frost"
 
-export call_ret_type, call_type_arg, check_linear_consumed, collect_type_args,
+export call_ret_type, call_type_arg, collect_type_args,
     count_value_args, field_type, generic_fn_of, is_linear_type, is_moved,
-    local_exists, lookup_local, mark_moved, nth_param_type, nth_value_arg,
+    local_exists, lookup_local, nth_param_type, nth_value_arg,
     record_local, record_mono_ret, type_of, types_compatible
 
 // The declared type of the nth parameter, or -1 past the end of the list. An
@@ -93,17 +93,8 @@ local_exists :: fn(mut p: Parser, off: i64, len: i64) -> bool {
     false
 }
 
-// A value handed to a `move` parameter is gone from the caller. Record it so a
-// later use is caught rather than silently reading a value that was given away.
-mark_moved :: fn(mut p: Parser, value: i64) {
-    node := arena_at(p.arena, value)
-    if (node.kind == NODE_VAR) {
-        off := node.val
-        len := node.c
-        arena_push(p.moved, LocalVar { name_off = off, name_len = len, ty = 0 })
-    }
-}
-
+// Whether the value named (off, len) has been moved on the current path, read
+// by the flow-aware move check as it walks a function body.
 is_moved :: fn(mut p: Parser, off: i64, len: i64) -> bool {
     mut i : i64 = 0
     while (i < p.moved.count) {
@@ -126,28 +117,6 @@ is_linear_type :: fn(mut p: Parser, ty: i64) -> bool {
         return true
     }
     false
-}
-
-// At the end of a body every linear value must have been handed on. One that
-// was not is a resource silently dropped.
-check_linear_consumed :: fn(mut p: Parser) {
-    mut i : i64 = 0
-    while (i < p.locals.count) {
-        entry := arena_at(p.locals, i)
-        ty := entry.ty
-        off := entry.name_off
-        len := entry.name_len
-        if (is_linear_type(p, ty)) {
-            if (is_moved(p, off, len) == false) {
-                report_where(p.modules, p.src, entry.name_off)
-                report("linear value '")
-                report_src(p.src, off, len)
-                report("' is never consumed")
-                frost_die()
-            }
-        }
-        i = i + 1
-    }
 }
 
 record_local :: fn(mut p: Parser, off: i64, len: i64, ty: i64) {

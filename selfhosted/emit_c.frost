@@ -210,13 +210,6 @@ emit_expr :: fn(mut p: Parser, id: i64) {
                 report("'")
                 frost_die()
             }
-            if (is_moved(p, off, len)) {
-                report_where(p.modules, p.src, off)
-                report("use of moved value '")
-                report_src(p.src, off, len)
-                report("'")
-                frost_die()
-            }
             emit_source(p.src, off, len)
         }
         return
@@ -454,7 +447,6 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
             // parameter has its address taken here, unless it is already a
             // pointer (a borrow forwarded onward).
             mut borrow : i64 = 0
-            mut moves : i64 = 0
             mut param_next : i64 = 0 - 1
             mut have_param : i64 = 0
             mut param_ty : i64 = 0 - 1
@@ -487,10 +479,6 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                     if (param_auto != 2 && is_aggregate(arg_ty)) {
                         borrow = 1
                     }
-                }
-                // A struct handed to a parameter that does not borrow is moved.
-                if (param_auto != 1 && is_aggregate(arg_ty)) {
-                    moves = 1
                 }
                 // Check the argument against the parameter. A generic
                 // template's parameter types are placeholders bound per
@@ -529,9 +517,6 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                 emit_coerced(p, value, param_ty)
             } else {
                 emit_expr(p, value)
-            }
-            if (moves == 1) {
-                mark_moved(p, value)
             }
             if (have_param == 1) {
                 param = param_next
@@ -635,9 +620,6 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
             emit_text("return 0;\n")
         } else {
             value_ty := type_of(p, value)
-            if (is_linear_type(p, value_ty)) {
-                mark_moved(p, value)
-            }
             if (types_compatible(p, value_ty, p.current_ret) == false) {
                 report_where(p.modules, p.src, node.pos)
                 report("'")
@@ -960,7 +942,6 @@ emit_function :: fn(mut p: Parser, id: i64) {
     p.current_fn_off = sym.off
     p.current_fn_len = sym.len
     p.locals.count = 0
-    p.moved.count = 0
     record_params(p, params)
     begin_provider(p, fn_index)
     // In a test build the runner is the entry point, so the program's own main
@@ -984,7 +965,6 @@ emit_function :: fn(mut p: Parser, id: i64) {
         emit_text(") {\n")
     }
     emit_function_body(p, body)
-    check_linear_consumed(p)
     emit_text("}\n")
 }
 
@@ -1000,7 +980,6 @@ emit_mono_function :: fn(mut p: Parser, id: i64, arg: i64, ret: i64) {
     p.current_fn_off = msym.off
     p.current_fn_len = msym.len
     p.locals.count = 0
-    p.moved.count = 0
     record_params(p, params)
     begin_provider(p, fn_index)
     emit_ctype(p, ret)

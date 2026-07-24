@@ -607,6 +607,10 @@ Parser :: struct {
     // check can tell an exclusive borrow from a shared one where the type alone
     // cannot: a `mut` and a read of an aggregate both pass by address.
     mut_params: Arena<LocalVar>,
+    // Scratch for the move check: the values a branch moved, held while the
+    // other branch is walked, then merged back so what is moved after an `if` is
+    // whatever either arm moved.
+    move_scratch: Arena<LocalVar>,
     modules: Arena<Module>,
     exports: Arena<Export>,
     export_names: ^i8,

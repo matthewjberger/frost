@@ -1182,7 +1182,6 @@ emit_asm_block :: fn(mut p: Parser, head: i64) {
 // a buffer for a struct result.
 emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
     p.locals.count = 0
-    p.moved.count = 0
     p.asm_temp = 32 - ASM_FRAME
     p.asm_ret = ret
     asm("pushq %rbp")
