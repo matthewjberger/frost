@@ -10,7 +10,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     mark_safe,
     bytes_equal, const_value, digits_in, generic_index_for,
     intern_global, is_aggregate, is_array_ty, is_const, is_float, is_main_name,
-    is_pointer, is_slice_ty, is_struct_ty,
+    is_borrow, is_pointer, is_raw_pointer, is_slice_ty, is_struct_ty,
     mark_defined, mark_extern, new_case, new_field_init, new_field_node,
     new_func_node, new_index, new_let_node, new_named_node, new_node,
     new_struct_lit, new_type_node, new_unary, node_next, pointee,
@@ -425,11 +425,24 @@ set_field_next :: fn(mut p: Parser, id: i64, next_id: i64) {
     }
 }
 
+// Indirect: a raw pointer or a borrow, both a C pointer and both auto-derefed.
 is_pointer :: fn(ty: i64) -> bool {
     ty >= POINTER_BASE
 }
 
+// A borrow carries the flag; a raw pointer is indirect without it.
+is_borrow :: fn(ty: i64) -> bool {
+    ty >= BORROW_FLAG
+}
+
+is_raw_pointer :: fn(ty: i64) -> bool {
+    ty >= POINTER_BASE && ty < BORROW_FLAG
+}
+
 pointee :: fn(ty: i64) -> i64 {
+    if (is_borrow(ty)) {
+        return ty - BORROW_FLAG
+    }
     ty - POINTER_BASE
 }
 

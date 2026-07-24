@@ -1090,7 +1090,7 @@ parse_params :: fn(mut p: Parser) -> i64 {
                 }
             }
             if (auto_borrow == 1) {
-                ty = POINTER_BASE + ty
+                ty = BORROW_FLAG + ty
             }
             // A `move` parameter takes the value itself however wide it is, and
             // is marked so, since whether a read parameter borrows depends on
@@ -1169,7 +1169,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
         binding := synth_capability_name(p, cap_name_off, cap_name_len)
         capability := arena_push(
             p.arena,
-            Node { kind = NODE_PARAM, a = 1, b = POINTER_BASE + cap_ty,
+            Node { kind = NODE_PARAM, a = 1, b = BORROW_FLAG + cap_ty,
                 c = cap_name_len, val = binding, next = 0 - 1, pos = cur_off(p) },
         )
         params = append_node(p, params, capability)

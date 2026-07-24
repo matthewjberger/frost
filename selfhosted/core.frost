@@ -16,7 +16,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     NODE_STRUCT_LIT,
     NODE_TYPEVAL, NODE_VAR, NODE_WHILE, NODE_WITH, Node,
     OP_ADD, OP_AND, OP_DIV, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT, OP_MOD, OP_MUL,
-    OP_NE, OP_OR, OP_SUB, POINTER_BASE, Parser, STRUCT_BASE, StructDef,
+    OP_NE, OP_OR, OP_SUB, BORROW_FLAG, POINTER_BASE, Parser, STRUCT_BASE, StructDef,
     StructField, Sym, TOK_AMP, TOK_ANDAND, TOK_ARROW, TOK_ASSIGN, TOK_BANG,
     TOK_CARET, TOK_COLON, TOK_COLONCOLON, TOK_COLONEQ, TOK_COMMA, TOK_DOLLAR,
     TOK_DOT, TOK_EOF, TOK_EQEQ, TOK_FLOAT, TOK_GE, TOK_GT, TOK_IDENT, TOK_INT,
@@ -132,6 +132,12 @@ STRUCT_BASE  :: 16
 // thing everywhere but their layout.
 ARRAY_BASE   :: 500000
 POINTER_BASE :: 1000000
+// A borrow (a `mut`/read parameter, a `ref` binding) is a C pointer like a raw
+// one, and emits identically, but the two are different to the unsafety gate: a
+// borrow was proven safe where it was formed, a raw pointer was not. The flag
+// sits far above pointer nesting so `is_pointer` still answers yes for a borrow
+// and only the gate and `pointee` tell them apart.
+BORROW_FLAG  :: 1000000000
 
 // Binary operator codes.
 OP_ADD :: 0
