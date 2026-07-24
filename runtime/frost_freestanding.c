@@ -18,6 +18,13 @@ void *memcpy(void *destination, const void *source, frost_usize count) {
     return destination;
 }
 
+void frost_mem_set(void *destination, frost_i64 value, frost_i64 size) {
+    unsigned char *to = (unsigned char *)destination;
+    for (frost_i64 i = 0; i < size; i++) {
+        to[i] = (unsigned char)value;
+    }
+}
+
 void frost_bounds_check(frost_i64 index, frost_i64 length) {
     if ((frost_usize)index >= (frost_usize)length) {
         __builtin_trap();

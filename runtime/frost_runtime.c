@@ -299,6 +299,12 @@ void frost_mem_copy(void *destination, const void *source, int64_t size) {
     memcpy(destination, source, (size_t)size);
 }
 
+/* Write `size` bytes of `value` at `destination`, for zeroing a freshly built
+   aggregate such as a columns container. */
+void frost_mem_set(void *destination, int64_t value, int64_t size) {
+    memset(destination, (int)value, (size_t)size);
+}
+
 /* Whole-file read and write, for a standard library that does its own IO
    rather than reaching for the C library directly. The read returns a fresh
    heap block the caller frees; the length comes back through frost_file_size. */

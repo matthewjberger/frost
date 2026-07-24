@@ -12,8 +12,11 @@ struct Signature {
     param_count: usize,
 }
 
-const RUNTIME_INTRINSICS: &[&str] =
-    &["frost_bounds_check", "frost_generation_check"];
+const RUNTIME_INTRINSICS: &[&str] = &[
+    "frost_bounds_check",
+    "frost_generation_check",
+    "frost_mem_set",
+];
 
 fn is_runtime_intrinsic(name: &str) -> bool {
     RUNTIME_INTRINSICS.contains(&name)
