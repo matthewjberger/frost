@@ -12,9 +12,9 @@ use frost::{
     RunOutcome, SearchRoot, Spanned, Statement, Type, build_module,
     build_module_per_module, check_callback_declarations, check_frame_escapes,
     check_linearity, check_module, check_ownership, check_regions,
-    check_unsafety, strip_unsafe_fns,
-    compile_ir_to_object, emit_c, lower_allocation_sources, lower_failure_sets,
-    lower_param_modes, register_entry_file, resolve_imports_cached, run_module,
+    check_unsafety, compile_ir_to_object, emit_c, lower_allocation_sources,
+    lower_failure_sets, lower_param_modes, register_entry_file,
+    resolve_imports_cached, run_module, strip_unsafe_fns,
 };
 
 #[derive(Parser)]
@@ -320,7 +320,10 @@ fn main() -> Result<()> {
     let tests = resolved.tests;
     let mut modules = resolved.modules;
     check_callback_declarations(&statements).context("Callback error")?;
-    if std::env::var_os("FROST_CHECK_UNSAFE").is_some() {
+    // On by default now that the standard library and the self-hosted compiler
+    // are gate-clean. FROST_CHECK_UNSAFE=0 turns it off, for compiling older
+    // code that has not marked its unchecked operations yet.
+    if std::env::var("FROST_CHECK_UNSAFE").as_deref() != Ok("0") {
         check_unsafety(&statements).context("Unsafe operation error")?;
     }
     // `unsafe fn` is only meaningful to the unsafety check; strip it to the

@@ -42,6 +42,7 @@ fn run_backend(name: &str, source: &str, emit_c: bool) -> Option<String> {
     // here rather than when something tries to compile against one.
     command
         .env("FROST_CHECK_INTERFACES", "1")
+        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("-o")
         .arg(&exe_path)
@@ -71,6 +72,7 @@ fn run_ir_oracle(name: &str, source: &str) -> Option<String> {
     std::fs::write(&source_path, source).unwrap();
     let frost = env!("CARGO_BIN_EXE_frost");
     let output = Command::new(frost)
+        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--run-ir")
         .arg(&source_path)
         .output()
@@ -95,6 +97,7 @@ fn compile_error(name: &str, source: &str) -> String {
     std::fs::write(&source_path, source).unwrap();
     let frost = env!("CARGO_BIN_EXE_frost");
     let output = Command::new(frost)
+        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("-o")
         .arg(&exe_path)
@@ -222,6 +225,7 @@ fn compile_and_run_status(name: &str, source: &str) -> Option<bool> {
     std::fs::write(&source_path, source).unwrap();
     let frost = env!("CARGO_BIN_EXE_frost");
     let compile = Command::new(frost)
+        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("-o")
         .arg(&exe_path)
@@ -1088,6 +1092,28 @@ fn self_hosted_runs_test_blocks() {
     let _ = std::fs::remove_file(&compiler);
 }
 
+// The self-hosted compiler, the most pointer-heavy program in the tree, compiles
+// clean under the unsafety gate. Every function that touches raw memory marks
+// its body `unsafe`, so the gate has nothing to refuse. This is what says the
+// gate is livable for real code and why it can be on by default.
+#[test]
+fn the_self_hosted_compiler_is_clean_under_the_unsafe_gate() {
+    let build = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .env("FROST_CHECK_UNSAFE", "0")
+        .env("FROST_CHECK_UNSAFE", "1")
+        .arg("--emit-c")
+        .arg("-o")
+        .arg(std::env::temp_dir().join("frost_gate_selfhosted.c"))
+        .arg(self_hosted_source())
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "the self-hosted compiler was rejected by its own gate:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+}
+
 // OS threads from std: two threads accumulate a range into a shared word
 // through an atomic add, and the total is exact every time, which is what says
 // the atomic holds and the join waits.
@@ -1122,6 +1148,7 @@ fn self_hosted_threads_share_a_counter() {
     .unwrap();
     let c_path = directory.join("threads.c");
     let build = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .env("FROST_CHECK_UNSAFE", "0")
         .arg("-L")
         .arg(root.join("std"))
         .arg("--emit-c")
@@ -1193,8 +1220,10 @@ fn a_program_using_std_is_clean_under_the_unsafe_gate() {
          \x20   builder_free(b)  vec_free($i64, v)  0\n}\n",
     )
     .unwrap();
-    let exe = directory.join(format!("uses_std{}", std::env::consts::EXE_SUFFIX));
+    let exe =
+        directory.join(format!("uses_std{}", std::env::consts::EXE_SUFFIX));
     let build = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_CHECK_UNSAFE", "1")
         .arg("-L")
         .arg(root.join("std"))
@@ -1607,6 +1636,7 @@ fn build_self_hosted_compiler(name: &str) -> Option<PathBuf> {
     ));
     let frost = env!("CARGO_BIN_EXE_frost");
     let build = Command::new(frost)
+        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("-o")
         .arg(&compiler)
@@ -2121,6 +2151,7 @@ fn an_exported_function_may_return_an_unexported_type() {
     }
     let exe = directory.join(format!("app{}", std::env::consts::EXE_SUFFIX));
     let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("-o")
         .arg(&exe)
@@ -2190,7 +2221,9 @@ fn a_program_built_from_interfaces_is_the_same_program() {
     let emit = |from_interfaces: bool, name: &str| {
         let c_path = directory.join(format!("{name}.c"));
         let output = Command::new(frost)
+            .env("FROST_CHECK_UNSAFE", "0")
             .env("FROST_CHECK_INTERFACES", "1")
+            .env("FROST_CHECK_UNSAFE", "0")
             .env(
                 "FROST_BUILD_FROM_INTERFACES",
                 if from_interfaces { "1" } else { "0" },
@@ -2239,7 +2272,9 @@ fn a_program_built_from_interfaces_is_the_same_program() {
         let exe =
             directory.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
         let built = Command::new(frost)
+            .env("FROST_CHECK_UNSAFE", "0")
             .env("FROST_CHECK_INTERFACES", "1")
+            .env("FROST_CHECK_UNSAFE", "0")
             .env(
                 "FROST_BUILD_FROM_INTERFACES",
                 if from_interfaces { "1" } else { "0" },
@@ -2328,6 +2363,7 @@ fn each_module_becomes_its_own_object() {
     let exe = directory
         .join(format!("per_module_app{}", std::env::consts::EXE_SUFFIX));
     let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("-o")
         .arg(&exe)
@@ -2387,6 +2423,7 @@ fn the_module_report_counts_what_separate_compilation_would_duplicate() {
 
     let frost = env!("CARGO_BIN_EXE_frost");
     let output = Command::new(frost)
+        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_MODULE_REPORT", "1")
         .arg("--emit-c")
         .arg("-o")
@@ -2439,6 +2476,7 @@ fn a_diagnostic_from_an_imported_module_names_the_file() {
 
     let frost = env!("CARGO_BIN_EXE_frost");
     let output = Command::new(frost)
+        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--emit-c")
         .arg("-o")
         .arg(directory.join("out.c"))
@@ -2514,6 +2552,7 @@ fn a_modules_private_symbols_do_not_depend_on_import_order() {
         let c_path = directory.join(format!("{label}.c"));
         let frost = env!("CARGO_BIN_EXE_frost");
         let emitted = Command::new(frost)
+            .env("FROST_CHECK_UNSAFE", "0")
             .arg("--emit-c")
             .arg("-o")
             .arg(&c_path)
@@ -2910,6 +2949,7 @@ fn run_test_mode(name: &str, source: &str) -> Option<(String, bool)> {
     std::fs::write(&source_path, source).unwrap();
     let frost = env!("CARGO_BIN_EXE_frost");
     let output = Command::new(frost)
+        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--test")
         .arg(&source_path)
         .output()
@@ -2959,6 +2999,7 @@ fn native_import_resolves_across_files() {
         directory.join(format!("imp_main{}", std::env::consts::EXE_SUFFIX));
     let frost = env!("CARGO_BIN_EXE_frost");
     let compile = Command::new(frost)
+        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("-o")
         .arg(&exe_path)
@@ -2978,6 +3019,7 @@ fn native_import_resolves_across_files() {
 fn frost_compiles(dir: &std::path::Path, main: &str) -> (bool, String) {
     let exe = dir.join(format!("out{}", std::env::consts::EXE_SUFFIX));
     let output = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("-o")
         .arg(&exe)
@@ -3549,6 +3591,7 @@ fn native_freestanding_links_without_libc() {
     std::fs::write(&source_path, FREESTANDING).unwrap();
     let frost = env!("CARGO_BIN_EXE_frost");
     let compile = Command::new(frost)
+        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("--freestanding")
         .arg("-o")
@@ -5151,11 +5194,13 @@ fn run_example(
         std::env::consts::EXE_SUFFIX
     ));
     let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
+    command.env("FROST_CHECK_UNSAFE", "0");
     if emit_c {
         command.arg("--emit-c");
     }
     command
         .env("FROST_CHECK_INTERFACES", "1")
+        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("-o")
         .arg(&exe_path)
@@ -5575,6 +5620,7 @@ fn emit_c_source(name: &str, source: &str) -> Option<String> {
     std::fs::write(&source_path, source).unwrap();
     let frost = env!("CARGO_BIN_EXE_frost");
     let emitted = Command::new(frost)
+        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--emit-c")
         .arg("-o")
         .arg(&c_path)
@@ -5683,7 +5729,9 @@ fn only_the_modules_an_edit_reaches_are_rebuilt() {
     let exe = directory.join(format!("app{}", std::env::consts::EXE_SUFFIX));
     let build_once = || -> (Vec<String>, String) {
         let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+            .env("FROST_CHECK_UNSAFE", "0")
             .env("FROST_CHECK_INTERFACES", "1")
+            .env("FROST_CHECK_UNSAFE", "0")
             .arg("--link")
             .arg("--incremental")
             .arg("--build-dir")
@@ -5962,6 +6010,7 @@ fn a_callback_registered_with_a_c_library_runs() {
 
     let exe = directory.join(format!("events{}", std::env::consts::EXE_SUFFIX));
     let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("--libs")
         .arg(&library)
@@ -6106,6 +6155,7 @@ fn a_struct_returned_from_c_comes_back_correctly() {
         let exe = directory
             .join(format!("shapes_{emit_c}{}", std::env::consts::EXE_SUFFIX));
         let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
+        command.env("FROST_CHECK_UNSAFE", "0");
         if emit_c {
             command.arg("--emit-c");
         }
@@ -6189,6 +6239,7 @@ fn an_enum_returned_from_c_comes_back_correctly() {
         let exe = directory
             .join(format!("shape_{emit_c}{}", std::env::consts::EXE_SUFFIX));
         let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
+        command.env("FROST_CHECK_UNSAFE", "0");
         if emit_c {
             command.arg("--emit-c");
         }
@@ -6245,6 +6296,7 @@ fn an_error_inside_a_specialization_names_the_call() {
     .unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--emit-c")
         .arg("-o")
         .arg(directory.join("out.c"))
@@ -6451,6 +6503,7 @@ fn an_import_resolves_through_every_search_root() {
             let exe = directory
                 .join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
             let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
+            command.env("FROST_CHECK_UNSAFE", "0");
             for (key, value) in env {
                 command.env(key, value);
             }
