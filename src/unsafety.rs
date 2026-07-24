@@ -292,13 +292,24 @@ impl Checker {
                 let Expression::Identifier(name) = &**callee else {
                     return None;
                 };
-                if name != "ptr_cast" {
-                    return None;
-                }
-                match arguments.first() {
-                    Some(Expression::TypeValue(inner)) => {
-                        Some(Type::Ptr(Box::new(inner.clone())))
-                    }
+                match name.as_str() {
+                    "ptr_cast" => match arguments.first() {
+                        Some(Expression::TypeValue(inner)) => {
+                            Some(Type::Ptr(Box::new(inner.clone())))
+                        }
+                        _ => None,
+                    },
+                    // `ptr_to(place)` is the surface address-of; it always hands
+                    // back a raw pointer, so a value bound from it is one whether
+                    // or not this pass can name the pointee. Without this the
+                    // index gate below never learns the binding is a pointer and
+                    // `p[i]` slips out of the `unsafe` block it belongs in.
+                    "ptr_to" => Some(Type::Ptr(Box::new(
+                        arguments
+                            .first()
+                            .and_then(|argument| self.type_of(argument))
+                            .unwrap_or(Type::Void),
+                    ))),
                     _ => None,
                 }
             }
