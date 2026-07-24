@@ -125,6 +125,10 @@ fn test_harness(tests: &[(String, String)]) -> Vec<Spanned<Statement>> {
                 name: name.to_string(),
                 params,
                 return_type,
+                // The harness's own runtime entry points, generated here and
+                // audited by construction, so the generated body needs no
+                // `unsafe` block around a call the compiler wrote itself.
+                safe: true,
             })
         };
 

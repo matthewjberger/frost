@@ -391,6 +391,10 @@ pub enum Statement {
         name: Identifier,
         params: Vec<Parameter>,
         return_type: Option<Type>,
+        // `safe extern fn` says this C function was audited and cannot corrupt
+        // memory, so calling it needs no `unsafe` block. The assertion belongs
+        // here, once, rather than at every call site.
+        safe: bool,
     },
     // A Frost function's signature with no body. Not surface syntax: import
     // resolution produces it for a module the build cache answered for, whose
@@ -519,18 +523,22 @@ impl Display for Statement {
                 name,
                 params,
                 return_type,
+                safe,
             } => {
                 let params_str = params
                     .iter()
                     .map(|p| p.to_string())
                     .collect::<Vec<_>>()
                     .join(", ");
+                let marker = if *safe { "safe extern" } else { "extern" };
                 match return_type {
                     Some(typ) => format!(
-                        "{} :: extern fn({}) -> {}",
-                        name, params_str, typ
+                        "{} :: {} fn({}) -> {}",
+                        name, marker, params_str, typ
                     ),
-                    None => format!("{} :: extern fn({})", name, params_str),
+                    None => {
+                        format!("{} :: {} fn({})", name, marker, params_str)
+                    }
                 }
             }
         };
@@ -1188,6 +1196,7 @@ impl<'a> Parser<'a> {
                             | Token::Enum
                             | Token::Distinct
                             | Token::Extern
+                            | Token::Safe
                             | Token::Integer(_)
                             | Token::Float(_)
                             | Token::StringLiteral(_)
@@ -1485,7 +1494,14 @@ impl<'a> Parser<'a> {
                 self.read_token();
             }
             Ok(Statement::TypeAlias(identifier, typ))
-        } else if matches!(self.peek_nth(0), Token::Extern) {
+        } else if matches!(self.peek_nth(0), Token::Extern)
+            || (matches!(self.peek_nth(0), Token::Safe)
+                && matches!(self.peek_nth(1), Token::Extern))
+        {
+            let safe = matches!(self.peek_nth(0), Token::Safe);
+            if safe {
+                self.read_token();
+            }
             self.read_token();
             if !matches!(self.read_token(), Token::Function) {
                 bail!("Expected 'fn' after 'extern'");
@@ -1551,6 +1567,7 @@ impl<'a> Parser<'a> {
                 name: identifier,
                 params,
                 return_type,
+                safe,
             })
         } else {
             let expression = self.parse_expression(Precedence::Lowest)?;
@@ -4187,6 +4204,7 @@ mod tests {
             name,
             params,
             return_type,
+            ..
         } = &program[0].node
         {
             assert_eq!(name, "puts");

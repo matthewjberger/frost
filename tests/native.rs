@@ -1207,6 +1207,49 @@ fn self_hosted_threads_share_a_counter() {
     let _ = std::fs::remove_dir_all(&directory);
 }
 
+// `safe extern fn` says a C function was audited and cannot corrupt memory, so
+// calling it needs no block. The assertion belongs on the declaration, once,
+// rather than at every call site, which is what keeps `unsafe` to what can
+// actually go wrong. A plain `extern fn` is still gated.
+#[test]
+fn a_safe_extern_needs_no_unsafe_block() {
+    let audited = "printf :: safe extern fn(fmt: ^i8, v: i64) -> i32\n\
+         main :: fn() -> i64 { printf(\"%lld\\n\", 7)  0 }\n";
+    let Some(output) = compile_and_run("safe_extern", audited) else {
+        return;
+    };
+    assert_eq!(output, "7\n");
+
+    // Not `compile_error`, which turns the gate off so the other error tests do
+    // not have to satisfy it. This one is about the gate, so it runs with it on.
+    let plain = "printf :: extern fn(fmt: ^i8, v: i64) -> i32\n\
+         main :: fn() -> i64 { printf(\"%lld\\n\", 7)  0 }\n";
+    let directory = std::env::temp_dir();
+    let source_path = directory.join("frost_plain_extern.frost");
+    let exe_path = directory.join(format!(
+        "frost_plain_extern{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    std::fs::write(&source_path, plain).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe_path)
+        .arg(&source_path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&source_path);
+    assert!(
+        !output.status.success(),
+        "a plain extern should still be gated but it compiled"
+    );
+    let message = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        message.contains("unchecked, so it belongs in an `unsafe` block"),
+        "a plain extern should still be gated, got:\n{message}"
+    );
+}
+
 // The whole point of the standard library absorbing the unsafe floor: a program
 // that uses vec, sort, format, strings and io compiles under the unsafety gate
 // with no `unsafe` of its own. The containers' raw pointers and FFI are wrapped
