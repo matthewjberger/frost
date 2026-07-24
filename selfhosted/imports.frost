@@ -250,9 +250,9 @@ emit_position :: fn(mut modules: Arena<Module>, src: ^i8, offset: i64) {
             frost_emit_char(byte)
             k = k + 1
         }
-        frost_emit_str(":")
+        emit_text(":")
         frost_emit_int(line)
-        frost_emit_str(":")
+        emit_text(":")
         frost_emit_int(column)
     }
 }

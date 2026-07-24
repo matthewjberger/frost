@@ -35,7 +35,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     Variant,
     arena_at, arena_make, arena_push, cstr_eq, frost_arg_at, frost_arg_count,
     frost_byte_at, frost_byte_set, frost_die, frost_emit_char, frost_emit_close,
-    frost_emit_int, frost_emit_open, frost_emit_str, frost_error,
+    frost_emit_int, frost_emit_open, emit_text, frost_error,
     frost_error_int, frost_error_src, frost_getenv, frost_is_windows,
     frost_file_exists, frost_read_file, frost_remove_file,
     frost_run_command, frost_str_len, malloc, SearchRoot, add_root
@@ -43,11 +43,28 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
 malloc          :: extern fn(size: i64) -> ^u8
 frost_byte_at   :: extern fn(s: ^i8, i: i64) -> i64
 frost_str_len   :: extern fn(s: ^i8) -> i64
-frost_emit_str  :: extern fn(s: ^i8)
-frost_emit_int  :: extern fn(value: i64)
-frost_emit_char :: extern fn(byte: i64)
+// Emits a counted run of bytes. The read is bounded by the length, so the one
+// caller, emit_text below, hands it a `str` whose length it already knows
+// and the emit path is safe. Only this declaration keeps the gate.
+frost_emit_bytes :: extern fn(data: ^u8, length: i64)
+frost_emit_int  :: safe extern fn(value: i64)
+frost_emit_char :: safe extern fn(byte: i64)
 frost_read_file :: extern fn(path: ^i8) -> ^i8
 frost_byte_set  :: extern fn(buffer: ^i8, index: i64, value: i64)
+
+// Emit a string. A `str` carries its own length, so this reads exactly that
+// many bytes rather than scanning for a terminator, which is what lets every
+// caller emit without an `unsafe` block. A string literal is a `str` by the
+// same coercion that gives one a length everywhere else.
+emit_text :: fn(s: str) {
+    length := str_len(s)
+    if (length == 0) {
+        return
+    }
+    unsafe {
+        frost_emit_bytes(ptr_to(s[0]), length)
+    }
+}
 
 // Diagnostics. The emitted C goes to stdout, so an error is composed on stderr
 // piece by piece and frost_die ends the process.
