@@ -2662,6 +2662,16 @@ impl<'a> Parser<'a> {
                 self.read_token();
                 Type::Ptr(Box::new(self.parse_type()?))
             }
+            // `ref T` is the surface borrow type: the address a `^T` holds, but
+            // one the checker has proven names a live value, so reaching through
+            // it is not gated. It is the type a `ref` binding and a `mut`
+            // parameter already carry internally, now sayable so an accessor can
+            // return one. Lowered to the mutable reference, since the surface has
+            // one borrow and it may be written through.
+            Token::Ref => {
+                self.read_token();
+                Type::RefMut(Box::new(self.parse_type()?))
+            }
             Token::Ampersand if self.internal_types => {
                 self.read_token();
                 if matches!(self.peek_nth(0), Token::Mut) {

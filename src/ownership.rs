@@ -136,18 +136,17 @@ fn check_statement(
             }
         }
         Statement::Constant(
-            name,
-            Expression::Function(params, return_sig, body),
+            _name,
+            Expression::Function(params, _return_sig, body),
         )
         | Statement::Constant(
-            name,
-            Expression::Proc(params, return_sig, body),
+            _name,
+            Expression::Proc(params, _return_sig, body),
         ) => {
-            if let Some(reference) = return_sig.contains_reference() {
-                bail!(
-                    "ownership: function '{name}' cannot return the reference type '{reference}'; references are second-class"
-                );
-            }
+            // A reference return is allowed: the frame-escape check holds a
+            // borrow to storage that outlives the call, and the region check
+            // holds an arena borrow to its region, so returning one is only ever
+            // a borrow the caller may keep. `arena_at` is the reason it exists.
             for inner in body {
                 check_statement(inner, linear, signatures, param_types)?;
             }

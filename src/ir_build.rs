@@ -4816,8 +4816,24 @@ impl<'a> FunctionLowering<'a> {
                 };
                 Ok((address, struct_name))
             }
+            // Any other expression that yields a borrow or pointer to a struct
+            // names that struct: the operand is its address. This is what lets a
+            // borrow-returning accessor be written to, as in `at(b, i).field = x`.
             other => {
-                bail!("native backend: not a struct place: {other}")
+                let (operand, ty) = self.lower_expression(other, None)?;
+                match ty {
+                    Type::Ref(inner)
+                    | Type::RefMut(inner)
+                    | Type::Ptr(inner)
+                        if matches!(*inner, Type::Struct(_)) =>
+                    {
+                        let Type::Struct(struct_name) = *inner else {
+                            unreachable!()
+                        };
+                        Ok((operand, struct_name))
+                    }
+                    _ => bail!("native backend: not a struct place: {other}"),
+                }
             }
         }
     }
