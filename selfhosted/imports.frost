@@ -7,73 +7,79 @@ export SOURCE_ROOM, SYNTH_ROOM, emit_position, module_at, report_where,
     resolve_imports, search_roots_from, source_with_room
 
 module_seen :: fn(mut modules: Arena<Module>, path: ^i8) -> bool {
-    mut i : i64 = 0
-    while (i < modules.count) {
-        entry : ^Module = arena_at(modules, i)
-        if (cstr_eq(entry^.path, path)) {
-            return true
+    unsafe {
+        mut i : i64 = 0
+        while (i < modules.count) {
+            entry : ^Module = arena_at(modules, i)
+            if (cstr_eq(entry^.path, path)) {
+                return true
+            }
+            i = i + 1
         }
-        i = i + 1
+        false
     }
-    false
 }
 
 // A path named by an import, resolved against the directory of the file that
 // named it.
 join_path :: fn(parent: ^i8, src: ^i8, off: i64, len: i64) -> ^i8 {
-    parent_len := frost_str_len(parent)
-    mut cut : i64 = 0
-    mut k : i64 = 0
-    while (k < parent_len) {
-        c := frost_byte_at(parent, k)
-        if (c == CH_SLASH || c == CH_BACKSLASH) {
-            cut = k + 1
+    unsafe {
+        parent_len := frost_str_len(parent)
+        mut cut : i64 = 0
+        mut k : i64 = 0
+        while (k < parent_len) {
+            c := frost_byte_at(parent, k)
+            if (c == CH_SLASH || c == CH_BACKSLASH) {
+                cut = k + 1
+            }
+            k = k + 1
         }
-        k = k + 1
+        out := ptr_cast($i8, malloc(cut + len + 1))
+        k = 0
+        while (k < cut) {
+            frost_byte_set(out, k, frost_byte_at(parent, k))
+            k = k + 1
+        }
+        k = 0
+        while (k < len) {
+            frost_byte_set(out, cut + k, frost_byte_at(src, off + k))
+            k = k + 1
+        }
+        frost_byte_set(out, cut + len, 0)
+        out
     }
-    out := ptr_cast($i8, malloc(cut + len + 1))
-    k = 0
-    while (k < cut) {
-        frost_byte_set(out, k, frost_byte_at(parent, k))
-        k = k + 1
-    }
-    k = 0
-    while (k < len) {
-        frost_byte_set(out, cut + k, frost_byte_at(src, off + k))
-        k = k + 1
-    }
-    frost_byte_set(out, cut + len, 0)
-    out
 }
 
 // A path under a directory, with a separator between them when the directory
 // needs one.
 join_under :: fn(directory: ^i8, src: ^i8, off: i64, len: i64) -> ^i8 {
-    directory_len := frost_str_len(directory)
-    mut separator : i64 = 0
-    if (directory_len > 0) {
-        last := frost_byte_at(directory, directory_len - 1)
-        if (last != CH_SLASH && last != CH_BACKSLASH) {
-            separator = 1
+    unsafe {
+        directory_len := frost_str_len(directory)
+        mut separator : i64 = 0
+        if (directory_len > 0) {
+            last := frost_byte_at(directory, directory_len - 1)
+            if (last != CH_SLASH && last != CH_BACKSLASH) {
+                separator = 1
+            }
         }
+        out := ptr_cast($i8, malloc(directory_len + separator + len + 1))
+        mut k : i64 = 0
+        while (k < directory_len) {
+            frost_byte_set(out, k, frost_byte_at(directory, k))
+            k = k + 1
+        }
+        if (separator == 1) {
+            frost_byte_set(out, directory_len, CH_SLASH)
+        }
+        k = 0
+        while (k < len) {
+            frost_byte_set(out, directory_len + separator + k,
+                frost_byte_at(src, off + k))
+            k = k + 1
+        }
+        frost_byte_set(out, directory_len + separator + len, 0)
+        out
     }
-    out := ptr_cast($i8, malloc(directory_len + separator + len + 1))
-    mut k : i64 = 0
-    while (k < directory_len) {
-        frost_byte_set(out, k, frost_byte_at(directory, k))
-        k = k + 1
-    }
-    if (separator == 1) {
-        frost_byte_set(out, directory_len, CH_SLASH)
-    }
-    k = 0
-    while (k < len) {
-        frost_byte_set(out, directory_len + separator + k,
-            frost_byte_at(src, off + k))
-        k = k + 1
-    }
-    frost_byte_set(out, directory_len + separator + len, 0)
-    out
 }
 
 // Where an import is found: beside the file that named it first, then under
@@ -86,34 +92,38 @@ join_under :: fn(directory: ^i8, src: ^i8, off: i64, len: i64) -> ^i8 {
 // names where the reader would have looked.
 find_import :: fn(parent: ^i8, src: ^i8, off: i64, len: i64,
     mut roots: Arena<SearchRoot>) -> ^i8 {
-    beside := join_path(parent, src, off, len)
-    if (frost_file_exists(beside) == 1) {
-        return beside
-    }
-    mut i : i64 = 0
-    while (i < roots.count) {
-        entry : ^SearchRoot = arena_at(roots, i)
-        candidate := join_under(entry^.path, src, off, len)
-        if (frost_file_exists(candidate) == 1) {
-            return candidate
+    unsafe {
+        beside := join_path(parent, src, off, len)
+        if (frost_file_exists(beside) == 1) {
+            return beside
         }
-        i = i + 1
+        mut i : i64 = 0
+        while (i < roots.count) {
+            entry : ^SearchRoot = arena_at(roots, i)
+            candidate := join_under(entry^.path, src, off, len)
+            if (frost_file_exists(candidate) == 1) {
+                return candidate
+            }
+            i = i + 1
+        }
+        beside
     }
-    beside
 }
 
 // Copy a file's text into the buffer at `at`, terminated, and answer where the
 // next one starts.
 append_text :: fn(buffer: ^i8, at: i64, text: ^i8) -> i64 {
-    length := frost_str_len(text)
-    mut k : i64 = 0
-    while (k < length) {
-        frost_byte_set(buffer, at + k, frost_byte_at(text, k))
-        k = k + 1
+    unsafe {
+        length := frost_str_len(text)
+        mut k : i64 = 0
+        while (k < length) {
+            frost_byte_set(buffer, at + k, frost_byte_at(text, k))
+            k = k + 1
+        }
+        frost_byte_set(buffer, at + length, CH_LF)
+        frost_byte_set(buffer, at + length + 1, 0)
+        at + length + 1
     }
-    frost_byte_set(buffer, at + length, CH_LF)
-    frost_byte_set(buffer, at + length + 1, 0)
-    at + length + 1
 }
 
 // Place a file and everything it imports, imports first. A struct's name is
@@ -123,52 +133,54 @@ append_text :: fn(buffer: ^i8, at: i64, text: ^i8) -> i64 {
 place_module :: fn(buffer: ^i8, at: i64, path: ^i8,
     mut modules: Arena<Module>, mut roots: Arena<SearchRoot>,
     mut scratch: Arena<Token>) -> i64 {
-    if (module_seen(modules, path)) {
-        return at
-    }
-    mine := arena_push(modules, Module { path = path, start = 0, finish = 0 })
-    text := frost_read_file(path)
-    if (frost_str_len(text) == 0) {
-        frost_error("frost: cannot read '")
-        frost_error(path)
-        frost_error("'")
-        frost_die()
-    }
-    // Read this file's imports out before recursing, since the recursion needs
-    // the scratch tokens for the file it descends into.
-    mut children := arena_make($Module, 256)
-    scratch.count = 0
-    tokenize(text, frost_str_len(text), scratch)
-    mut i : i64 = 0
-    while (i + 1 < scratch.count) {
-        entry : ^Token = arena_at(scratch, i)
-        named : ^Token = arena_at(scratch, i + 1)
-        if (entry^.kind == TOK_KW_IMPORT && named^.kind == TOK_STR) {
-            arena_push(
-                children,
-                Module {
-                    path = find_import(path, text, named^.off, named^.len,
-                        roots),
-                    start = 0, finish = 0 },
-            )
+    unsafe {
+        if (module_seen(modules, path)) {
+            return at
         }
-        i = i + 1
+        mine := arena_push(modules, Module { path = path, start = 0, finish = 0 })
+        text := frost_read_file(path)
+        if (frost_str_len(text) == 0) {
+            frost_error("frost: cannot read '")
+            frost_error(path)
+            frost_error("'")
+            frost_die()
+        }
+        // Read this file's imports out before recursing, since the recursion needs
+        // the scratch tokens for the file it descends into.
+        mut children := arena_make($Module, 256)
+        scratch.count = 0
+        tokenize(text, frost_str_len(text), scratch)
+        mut i : i64 = 0
+        while (i + 1 < scratch.count) {
+            entry : ^Token = arena_at(scratch, i)
+            named : ^Token = arena_at(scratch, i + 1)
+            if (entry^.kind == TOK_KW_IMPORT && named^.kind == TOK_STR) {
+                arena_push(
+                    children,
+                    Module {
+                        path = find_import(path, text, named^.off, named^.len,
+                            roots),
+                        start = 0, finish = 0 },
+                )
+            }
+            i = i + 1
+        }
+        mut here := at
+        mut c : i64 = 0
+        while (c < children.count) {
+            child : ^Module = arena_at(children, c)
+            here = place_module(buffer, here, child^.path, modules, roots,
+                scratch)
+            c = c + 1
+        }
+        finish := append_text(buffer, here, text)
+        // The range is known only now, since everything this file imports went in
+        // ahead of it. It is what tells a name which file wrote it.
+        placed : ^Module = arena_at(modules, mine)
+        placed^.start = here
+        placed^.finish = finish
+        finish
     }
-    mut here := at
-    mut c : i64 = 0
-    while (c < children.count) {
-        child : ^Module = arena_at(children, c)
-        here = place_module(buffer, here, child^.path, modules, roots,
-            scratch)
-        c = c + 1
-    }
-    finish := append_text(buffer, here, text)
-    // The range is known only now, since everything this file imports went in
-    // ahead of it. It is what tells a name which file wrote it.
-    placed : ^Module = arena_at(modules, mine)
-    placed^.start = here
-    placed^.finish = finish
-    finish
 }
 
 // Which module a byte belongs to. A program compiled from a single file has no
@@ -181,85 +193,93 @@ place_module :: fn(buffer: ^i8, at: i64, path: ^i8,
 // way to reporting an error and ending the process, so what it costs is not on
 // any path a working build takes.
 report_where :: fn(mut modules: Arena<Module>, src: ^i8, offset: i64) {
-    index := module_at(modules, offset)
-    if (index < 0) {
-        return
-    }
-    entry : ^Module = arena_at(modules, index)
-    mut line : i64 = 1
-    mut column : i64 = 1
-    mut at := entry^.start
-    while (at < offset) {
-        if (frost_byte_at(src, at) == CH_LF) {
-            line = line + 1
-            column = 1
-        } else {
-            column = column + 1
+    unsafe {
+        index := module_at(modules, offset)
+        if (index < 0) {
+            return
         }
-        at = at + 1
+        entry : ^Module = arena_at(modules, index)
+        mut line : i64 = 1
+        mut column : i64 = 1
+        mut at := entry^.start
+        while (at < offset) {
+            if (frost_byte_at(src, at) == CH_LF) {
+                line = line + 1
+                column = 1
+            } else {
+                column = column + 1
+            }
+            at = at + 1
+        }
+        frost_error(entry^.path)
+        frost_error(":")
+        frost_error_int(line)
+        frost_error(":")
+        frost_error_int(column)
+        frost_error(": ")
     }
-    frost_error(entry^.path)
-    frost_error(":")
-    frost_error_int(line)
-    frost_error(":")
-    frost_error_int(column)
-    frost_error(": ")
 }
 
 // The same position, written into the emitted program rather than to stderr,
 // for an assertion that has to name where it was written when it fails at run
 // time. A path separator is escaped, since this lands inside a C string.
 emit_position :: fn(mut modules: Arena<Module>, src: ^i8, offset: i64) {
-    index := module_at(modules, offset)
-    if (index < 0) {
-        return
-    }
-    entry : ^Module = arena_at(modules, index)
-    mut line : i64 = 1
-    mut column : i64 = 1
-    mut at := entry^.start
-    while (at < offset) {
-        if (frost_byte_at(src, at) == CH_LF) {
-            line = line + 1
-            column = 1
-        } else {
-            column = column + 1
+    unsafe {
+        index := module_at(modules, offset)
+        if (index < 0) {
+            return
         }
-        at = at + 1
-    }
-    mut k : i64 = 0
-    length := frost_str_len(entry^.path)
-    while (k < length) {
-        byte := frost_byte_at(entry^.path, k)
-        if (byte == CH_BACKSLASH) {
-            frost_emit_char(CH_BACKSLASH)
+        entry : ^Module = arena_at(modules, index)
+        mut line : i64 = 1
+        mut column : i64 = 1
+        mut at := entry^.start
+        while (at < offset) {
+            if (frost_byte_at(src, at) == CH_LF) {
+                line = line + 1
+                column = 1
+            } else {
+                column = column + 1
+            }
+            at = at + 1
         }
-        frost_emit_char(byte)
-        k = k + 1
+        mut k : i64 = 0
+        length := frost_str_len(entry^.path)
+        while (k < length) {
+            byte := frost_byte_at(entry^.path, k)
+            if (byte == CH_BACKSLASH) {
+                frost_emit_char(CH_BACKSLASH)
+            }
+            frost_emit_char(byte)
+            k = k + 1
+        }
+        frost_emit_str(":")
+        frost_emit_int(line)
+        frost_emit_str(":")
+        frost_emit_int(column)
     }
-    frost_emit_str(":")
-    frost_emit_int(line)
-    frost_emit_str(":")
-    frost_emit_int(column)
 }
 
 module_at :: fn(mut modules: Arena<Module>, offset: i64) -> i64 {
-    mut i : i64 = 0
-    while (i < modules.count) {
-        entry : ^Module = arena_at(modules, i)
-        if (offset >= entry^.start && offset < entry^.finish) {
-            return i
+    unsafe {
+        mut i : i64 = 0
+        while (i < modules.count) {
+            entry : ^Module = arena_at(modules, i)
+            if (offset >= entry^.start && offset < entry^.finish) {
+                return i
+            }
+            i = i + 1
         }
-        i = i + 1
+        0
     }
-    0
 }
 
 blank_range :: fn(buffer: ^i8, from: i64, through: i64) {
-    mut b := from
-    while (b <= through) {
-        frost_byte_set(buffer, b, CH_SPACE)
-        b = b + 1
+    unsafe {
+        mut b := from
+        while (b <= through) {
+            frost_byte_set(buffer, b, CH_SPACE)
+            b = b + 1
+        }
     }
 }
 
@@ -267,73 +287,77 @@ blank_range :: fn(buffer: ^i8, from: i64, through: i64) {
 // command line said, then what the environment did, then the standard library
 // beside the compiler's own checkout.
 search_roots_from :: fn(mut roots: Arena<SearchRoot>) {
-    named := frost_getenv("FROST_PATH")
-    if (frost_str_len(named) != 0) {
-        add_root(roots, named)
+    unsafe {
+        named := frost_getenv("FROST_PATH")
+        if (frost_str_len(named) != 0) {
+            add_root(roots, named)
+        }
+        add_root(roots, "std")
+        add_root(roots, ".")
     }
-    add_root(roots, "std")
-    add_root(roots, ".")
 }
 
 resolve_imports :: fn(buffer: ^i8, root: ^i8, names: ^i8,
     mut modules: Arena<Module>, mut exports: Arena<Export>,
     mut scratch: Arena<Token>, mut roots: Arena<SearchRoot>) -> i64 {
-    mut named_at : i64 = 0
-    length := place_module(buffer, 0, root, modules, roots, scratch)
-    // Every imported file's text is in the buffer now, so the imports have
-    // nothing left to say, and an export line has said it once it is recorded.
-    // Blanking both leaves the parser one plain program with every offset where
-    // it was.
-    scratch.count = 0
-    tokenize(buffer, length, scratch)
-    mut j : i64 = 0
-    while (j + 1 < scratch.count) {
-        entry : ^Token = arena_at(scratch, j)
-        named : ^Token = arena_at(scratch, j + 1)
-        if (entry^.kind == TOK_KW_IMPORT && named^.kind == TOK_STR) {
-            blank_range(buffer, entry^.off, named^.off + named^.len)
-        }
-        if (entry^.kind == TOK_KW_EXPORT) {
-            owner := module_at(modules, entry^.off)
-            mut k := j + 1
-            mut through := entry^.off + entry^.len - 1
-            mut listing : bool = true
-            while (listing) {
-                listed : ^Token = arena_at(scratch, k)
-                if (listed^.kind != TOK_IDENT) {
-                    listing = false
-                } else {
-                    // The name is copied out because the line it is written
-                    // on is about to be blanked.
-                    mut b : i64 = 0
-                    while (b < listed^.len) {
-                        frost_byte_set(names, named_at + b,
-                            frost_byte_at(buffer, listed^.off + b))
-                        b = b + 1
-                    }
-                    arena_push(
-                        exports,
-                        Export { module = owner, off = named_at,
-                            len = listed^.len },
-                    )
-                    named_at = named_at + listed^.len
-                    through = listed^.off + listed^.len - 1
-                    k = k + 1
-                    following : ^Token = arena_at(scratch, k)
-                    if (following^.kind == TOK_COMMA) {
-                        through = following^.off
-                        k = k + 1
-                    } else {
+    unsafe {
+        mut named_at : i64 = 0
+        length := place_module(buffer, 0, root, modules, roots, scratch)
+        // Every imported file's text is in the buffer now, so the imports have
+        // nothing left to say, and an export line has said it once it is recorded.
+        // Blanking both leaves the parser one plain program with every offset where
+        // it was.
+        scratch.count = 0
+        tokenize(buffer, length, scratch)
+        mut j : i64 = 0
+        while (j + 1 < scratch.count) {
+            entry : ^Token = arena_at(scratch, j)
+            named : ^Token = arena_at(scratch, j + 1)
+            if (entry^.kind == TOK_KW_IMPORT && named^.kind == TOK_STR) {
+                blank_range(buffer, entry^.off, named^.off + named^.len)
+            }
+            if (entry^.kind == TOK_KW_EXPORT) {
+                owner := module_at(modules, entry^.off)
+                mut k := j + 1
+                mut through := entry^.off + entry^.len - 1
+                mut listing : bool = true
+                while (listing) {
+                    listed : ^Token = arena_at(scratch, k)
+                    if (listed^.kind != TOK_IDENT) {
                         listing = false
+                    } else {
+                        // The name is copied out because the line it is written
+                        // on is about to be blanked.
+                        mut b : i64 = 0
+                        while (b < listed^.len) {
+                            frost_byte_set(names, named_at + b,
+                                frost_byte_at(buffer, listed^.off + b))
+                            b = b + 1
+                        }
+                        arena_push(
+                            exports,
+                            Export { module = owner, off = named_at,
+                                len = listed^.len },
+                        )
+                        named_at = named_at + listed^.len
+                        through = listed^.off + listed^.len - 1
+                        k = k + 1
+                        following : ^Token = arena_at(scratch, k)
+                        if (following^.kind == TOK_COMMA) {
+                            through = following^.off
+                            k = k + 1
+                        } else {
+                            listing = false
+                        }
                     }
                 }
+                blank_range(buffer, entry^.off, through)
             }
-            blank_range(buffer, entry^.off, through)
+            j = j + 1
         }
-        j = j + 1
+        scratch.count = 0
+        length
     }
-    scratch.count = 0
-    length
 }
 
 // Room past the source's terminator for names the compiler makes up. A name is
@@ -346,14 +370,16 @@ SYNTH_ROOM :: 65536
 SOURCE_ROOM :: 8388608
 
 source_with_room :: fn(text: ^i8) -> ^i8 {
-    length := frost_str_len(text)
-    buffer := ptr_cast($i8, malloc(length + SYNTH_ROOM + 1))
-    mut k : i64 = 0
-    while (k < length) {
-        frost_byte_set(buffer, k, frost_byte_at(text, k))
-        k = k + 1
+    unsafe {
+        length := frost_str_len(text)
+        buffer := ptr_cast($i8, malloc(length + SYNTH_ROOM + 1))
+        mut k : i64 = 0
+        while (k < length) {
+            frost_byte_set(buffer, k, frost_byte_at(text, k))
+            k = k + 1
+        }
+        frost_byte_set(buffer, length, 0)
+        buffer
     }
-    frost_byte_set(buffer, length, 0)
-    buffer
 }
 

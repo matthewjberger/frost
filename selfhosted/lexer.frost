@@ -26,24 +26,28 @@ is_ident_cont :: fn(c: i64) -> bool {
 // ---------------------------------------------------------------------------
 
 byte_of :: fn(src: ^i8, index: i64, len: i64) -> i64 {
-    if (index >= len) {
-        return 0 - 1
+    unsafe {
+        if (index >= len) {
+            return 0 - 1
+        }
+        frost_byte_at(src, index)
     }
-    frost_byte_at(src, index)
 }
 
 str_range_eq :: fn(src: ^i8, off: i64, len: i64, word: ^i8) -> bool {
-    if (frost_str_len(word) != len) {
-        return false
-    }
-    mut k : i64 = 0
-    while (k < len) {
-        if (frost_byte_at(src, off + k) != frost_byte_at(word, k)) {
+    unsafe {
+        if (frost_str_len(word) != len) {
             return false
         }
-        k = k + 1
+        mut k : i64 = 0
+        while (k < len) {
+            if (frost_byte_at(src, off + k) != frost_byte_at(word, k)) {
+                return false
+            }
+            k = k + 1
+        }
+        true
     }
-    true
 }
 
 classify_ident :: fn(src: ^i8, off: i64, len: i64) -> i64 {
@@ -69,6 +73,7 @@ classify_ident :: fn(src: ^i8, off: i64, len: i64) -> i64 {
     if (str_range_eq(src, off, len, "export")) { return TOK_KW_EXPORT }
     if (str_range_eq(src, off, len, "enum")) { return TOK_KW_ENUM }
     if (str_range_eq(src, off, len, "test")) { return TOK_KW_TEST }
+    if (str_range_eq(src, off, len, "unsafe")) { return TOK_KW_UNSAFE }
     TOK_IDENT
 }
 

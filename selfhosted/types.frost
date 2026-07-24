@@ -14,17 +14,19 @@ export call_ret_type, call_type_arg, check_linear_consumed, collect_type_args,
 // argument is classified and converted by what the callee said it takes rather
 // than by what the caller happened to write.
 nth_param_type :: fn(mut p: Parser, params: i64, n: i64) -> i64 {
-    mut id := params
-    mut index : i64 = 0
-    while (id != (0 - 1)) {
-        node : ^Node = arena_at(p.arena, id)
-        if (index == n) {
-            return node^.b
+    unsafe {
+        mut id := params
+        mut index : i64 = 0
+        while (id != (0 - 1)) {
+            node : ^Node = arena_at(p.arena, id)
+            if (index == n) {
+                return node^.b
+            }
+            index = index + 1
+            id = node^.next
         }
-        index = index + 1
-        id = node^.next
+        0 - 1
     }
-    0 - 1
 }
 
 // A name may be bound more than once in one body, once per sibling scope, and
@@ -33,17 +35,19 @@ nth_param_type :: fn(mut p: Parser, params: i64, n: i64) -> i64 {
 // the first: `emit_program` binds `node` to an i64 and later to a `^Node`, and
 // answering with the i64 types `node^.next` as a scalar and reads offset zero.
 lookup_local :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
-    mut i : i64 = 0
-    mut found : i64 = TY_I64
-    while (i < p.locals.count) {
-        entry : ^LocalVar = arena_at(p.locals, i)
-        if (entry^.name_len == len
-            && bytes_equal(p.src, entry^.name_off, off, len)) {
-            found = entry^.ty
+    unsafe {
+        mut i : i64 = 0
+        mut found : i64 = TY_I64
+        while (i < p.locals.count) {
+            entry : ^LocalVar = arena_at(p.locals, i)
+            if (entry^.name_len == len
+                && bytes_equal(p.src, entry^.name_off, off, len)) {
+                found = entry^.ty
+            }
+            i = i + 1
         }
-        i = i + 1
+        found
     }
-    found
 }
 
 // Whether a name is in scope as a parameter or local. lookup_local answers with
@@ -81,72 +85,82 @@ types_compatible :: fn(mut p: Parser, from: i64, to: i64) -> bool {
 }
 
 local_exists :: fn(mut p: Parser, off: i64, len: i64) -> bool {
-    mut i : i64 = 0
-    while (i < p.locals.count) {
-        entry : ^LocalVar = arena_at(p.locals, i)
-        if (entry^.name_len == len
-            && bytes_equal(p.src, entry^.name_off, off, len)) {
-            return true
+    unsafe {
+        mut i : i64 = 0
+        while (i < p.locals.count) {
+            entry : ^LocalVar = arena_at(p.locals, i)
+            if (entry^.name_len == len
+                && bytes_equal(p.src, entry^.name_off, off, len)) {
+                return true
+            }
+            i = i + 1
         }
-        i = i + 1
+        false
     }
-    false
 }
 
 // A value handed to a `move` parameter is gone from the caller. Record it so a
 // later use is caught rather than silently reading a value that was given away.
 mark_moved :: fn(mut p: Parser, value: i64) {
-    node : ^Node = arena_at(p.arena, value)
-    if (node^.kind == NODE_VAR) {
-        off := node^.val
-        len := node^.c
-        arena_push(p.moved, LocalVar { name_off = off, name_len = len, ty = 0 })
+    unsafe {
+        node : ^Node = arena_at(p.arena, value)
+        if (node^.kind == NODE_VAR) {
+            off := node^.val
+            len := node^.c
+            arena_push(p.moved, LocalVar { name_off = off, name_len = len, ty = 0 })
+        }
     }
 }
 
 is_moved :: fn(mut p: Parser, off: i64, len: i64) -> bool {
-    mut i : i64 = 0
-    while (i < p.moved.count) {
-        entry : ^LocalVar = arena_at(p.moved, i)
-        if (entry^.name_len == len
-            && bytes_equal(p.src, entry^.name_off, off, len)) {
-            return true
+    unsafe {
+        mut i : i64 = 0
+        while (i < p.moved.count) {
+            entry : ^LocalVar = arena_at(p.moved, i)
+            if (entry^.name_len == len
+                && bytes_equal(p.src, entry^.name_off, off, len)) {
+                return true
+            }
+            i = i + 1
         }
-        i = i + 1
+        false
     }
-    false
 }
 
 is_linear_type :: fn(mut p: Parser, ty: i64) -> bool {
-    if (is_struct_ty(ty) == false) {
-        return false
+    unsafe {
+        if (is_struct_ty(ty) == false) {
+            return false
+        }
+        def : ^StructDef = arena_at(p.structs, struct_index_of(ty))
+        if (def^.is_linear == 1) {
+            return true
+        }
+        false
     }
-    def : ^StructDef = arena_at(p.structs, struct_index_of(ty))
-    if (def^.is_linear == 1) {
-        return true
-    }
-    false
 }
 
 // At the end of a body every linear value must have been handed on. One that
 // was not is a resource silently dropped.
 check_linear_consumed :: fn(mut p: Parser) {
-    mut i : i64 = 0
-    while (i < p.locals.count) {
-        entry : ^LocalVar = arena_at(p.locals, i)
-        ty := entry^.ty
-        off := entry^.name_off
-        len := entry^.name_len
-        if (is_linear_type(p, ty)) {
-            if (is_moved(p, off, len) == false) {
-                report_where(p.modules, p.src, entry^.name_off)
-                frost_error("linear value '")
-                frost_error_src(p.src, off, len)
-                frost_error("' is never consumed")
-                frost_die()
+    unsafe {
+        mut i : i64 = 0
+        while (i < p.locals.count) {
+            entry : ^LocalVar = arena_at(p.locals, i)
+            ty := entry^.ty
+            off := entry^.name_off
+            len := entry^.name_len
+            if (is_linear_type(p, ty)) {
+                if (is_moved(p, off, len) == false) {
+                    report_where(p.modules, p.src, entry^.name_off)
+                    frost_error("linear value '")
+                    frost_error_src(p.src, off, len)
+                    frost_error("' is never consumed")
+                    frost_die()
+                }
             }
+            i = i + 1
         }
-        i = i + 1
     }
 }
 
@@ -158,196 +172,206 @@ record_local :: fn(mut p: Parser, off: i64, len: i64, ty: i64) {
 // struct or a `^T`), which is dereferenced one level first, so `a.count` and
 // `node^.next` both resolve.
 field_type :: fn(mut p: Parser, base_ty: i64, off: i64, len: i64) -> i64 {
-    mut struct_ty := base_ty
-    if (is_pointer(struct_ty)) {
-        struct_ty = pointee(struct_ty)
-    }
-    if (is_struct_ty(struct_ty) == false) {
-        return TY_I64
-    }
-    def : ^StructDef = arena_at(p.structs, struct_index_of(struct_ty))
-    struct_off := def^.name_off
-    struct_len := def^.name_len
-    mut fid := def^.field_head
-    while (fid != (0 - 1)) {
-        field : ^StructField = arena_at(p.fields, fid)
-        if (field^.name_len == len
-            && bytes_equal(p.src, field^.name_off, off, len)) {
-            return field^.ty
+    unsafe {
+        mut struct_ty := base_ty
+        if (is_pointer(struct_ty)) {
+            struct_ty = pointee(struct_ty)
         }
-        fid = field^.next
+        if (is_struct_ty(struct_ty) == false) {
+            return TY_I64
+        }
+        def : ^StructDef = arena_at(p.structs, struct_index_of(struct_ty))
+        struct_off := def^.name_off
+        struct_len := def^.name_len
+        mut fid := def^.field_head
+        while (fid != (0 - 1)) {
+            field : ^StructField = arena_at(p.fields, fid)
+            if (field^.name_len == len
+                && bytes_equal(p.src, field^.name_off, off, len)) {
+                return field^.ty
+            }
+            fid = field^.next
+        }
+        // The base is a struct but carries no such field. Emitting the access
+        // verbatim would leave it for whatever compiles the output to notice.
+        report_where(p.modules, p.src, off)
+        frost_error("struct '")
+        frost_error_src(p.src, struct_off, struct_len)
+        frost_error("' has no field '")
+        frost_error_src(p.src, off, len)
+        frost_error("'")
+        frost_die()
+        TY_I64
     }
-    // The base is a struct but carries no such field. Emitting the access
-    // verbatim would leave it for whatever compiles the output to notice.
-    report_where(p.modules, p.src, off)
-    frost_error("struct '")
-    frost_error_src(p.src, struct_off, struct_len)
-    frost_error("' has no field '")
-    frost_error_src(p.src, off, len)
-    frost_error("'")
-    frost_die()
-    TY_I64
 }
 
 type_of :: fn(mut p: Parser, id: i64) -> i64 {
-    node : ^Node = arena_at(p.arena, id)
-    kind := node^.kind
-    if (kind == NODE_STRLIT) {
-        return POINTER_BASE + TY_I8
-    }
-    if (kind == NODE_STRUCT_LIT) {
-        return node^.val
-    }
-    if (kind == NODE_VAR) {
-        return lookup_local(p, node^.val, node^.c)
-    }
-    if (kind == NODE_CALL) {
-        // A generic function's declared return type still mentions its type
-        // parameter, so a call answers with the concrete type recorded for the
-        // instantiation it names.
-        return call_ret_type(p, node^.a, node^.val)
-    }
-    if (kind == NODE_FIELD) {
-        base := node^.a
-        off := node^.val
-        len := node^.c
-        base_ty := type_of(p, base)
-        return field_type(p, base_ty, off, len)
-    }
-    if (kind == NODE_DEREF) {
-        inner := node^.a
-        t := type_of(p, inner)
-        if (is_pointer(t)) {
-            return pointee(t)
+    unsafe {
+        node : ^Node = arena_at(p.arena, id)
+        kind := node^.kind
+        if (kind == NODE_STRLIT) {
+            return POINTER_BASE + TY_I8
         }
-        return TY_I64
-    }
-    if (kind == NODE_INDEX) {
-        base := node^.a
-        t := type_of(p, base)
-        if (is_array_ty(t)) {
-            return array_element(p, t)
+        if (kind == NODE_STRUCT_LIT) {
+            return node^.val
         }
-        if (is_pointer(t)) {
-            inner := pointee(t)
-            if (is_array_ty(inner)) {
-                return array_element(p, inner)
+        if (kind == NODE_VAR) {
+            return lookup_local(p, node^.val, node^.c)
+        }
+        if (kind == NODE_CALL) {
+            // A generic function's declared return type still mentions its type
+            // parameter, so a call answers with the concrete type recorded for the
+            // instantiation it names.
+            return call_ret_type(p, node^.a, node^.val)
+        }
+        if (kind == NODE_FIELD) {
+            base := node^.a
+            off := node^.val
+            len := node^.c
+            base_ty := type_of(p, base)
+            return field_type(p, base_ty, off, len)
+        }
+        if (kind == NODE_DEREF) {
+            inner := node^.a
+            t := type_of(p, inner)
+            if (is_pointer(t)) {
+                return pointee(t)
             }
-            return inner
-        }
-        return t
-    }
-    if (kind == NODE_SLICE_LEN) {
-        return TY_I64
-    }
-    if (kind == NODE_ASSERT) {
-        return TY_VOID
-    }
-    // A literal says both halves of its own type: the element from the first
-    // thing in it, the length from how many there are.
-    if (kind == NODE_ARRAY_LIT) {
-        mut element : i64 = TY_I64
-        if (node^.a != (0 - 1)) {
-            first : ^Node = arena_at(p.arena, node^.a)
-            element = type_of(p, first^.a)
-        }
-        return array_of(p, element, node^.c)
-    }
-    if (kind == NODE_ADDROF) {
-        inner := node^.a
-        return POINTER_BASE + type_of(p, inner)
-    }
-    if (kind == NODE_PTR_CAST) {
-        return POINTER_BASE + node^.val
-    }
-    if (kind == NODE_FLOAT) {
-        return TY_F64
-    }
-    // Arithmetic answers i64 whatever it was handed, which is deliberate: a
-    // narrower operand widening to the result rather than the result narrowing
-    // to the operand is what keeps a byte fed into an i64 accumulator from
-    // being computed at eight bits. Floats are the exception, since an integer
-    // result there would be the wrong kind of number rather than the wrong
-    // width, and a comparison answers a truth value either way.
-    if (kind == NODE_BIN) {
-        if (node^.val >= OP_LT) {
             return TY_I64
         }
-        left := type_of(p, node^.a)
-        if (is_float(left)) {
-            return left
+        if (kind == NODE_INDEX) {
+            base := node^.a
+            t := type_of(p, base)
+            if (is_array_ty(t)) {
+                return array_element(p, t)
+            }
+            if (is_pointer(t)) {
+                inner := pointee(t)
+                if (is_array_ty(inner)) {
+                    return array_element(p, inner)
+                }
+                return inner
+            }
+            return t
         }
-        right := type_of(p, node^.b)
-        if (is_float(right)) {
-            return right
+        if (kind == NODE_SLICE_LEN) {
+            return TY_I64
         }
-        return TY_I64
+        if (kind == NODE_ASSERT) {
+            return TY_VOID
+        }
+        // A literal says both halves of its own type: the element from the first
+        // thing in it, the length from how many there are.
+        if (kind == NODE_ARRAY_LIT) {
+            mut element : i64 = TY_I64
+            if (node^.a != (0 - 1)) {
+                first : ^Node = arena_at(p.arena, node^.a)
+                element = type_of(p, first^.a)
+            }
+            return array_of(p, element, node^.c)
+        }
+        if (kind == NODE_ADDROF) {
+            inner := node^.a
+            return POINTER_BASE + type_of(p, inner)
+        }
+        if (kind == NODE_PTR_CAST) {
+            return POINTER_BASE + node^.val
+        }
+        if (kind == NODE_FLOAT) {
+            return TY_F64
+        }
+        // Arithmetic answers i64 whatever it was handed, which is deliberate: a
+        // narrower operand widening to the result rather than the result narrowing
+        // to the operand is what keeps a byte fed into an i64 accumulator from
+        // being computed at eight bits. Floats are the exception, since an integer
+        // result there would be the wrong kind of number rather than the wrong
+        // width, and a comparison answers a truth value either way.
+        if (kind == NODE_BIN) {
+            if (node^.val >= OP_LT) {
+                return TY_I64
+            }
+            left := type_of(p, node^.a)
+            if (is_float(left)) {
+                return left
+            }
+            right := type_of(p, node^.b)
+            if (is_float(right)) {
+                return right
+            }
+            return TY_I64
+        }
+        TY_I64
     }
-    TY_I64
 }
 
 // The generic-fns index of a function, or -1 if it is not generic.
 generic_fn_of :: fn(mut p: Parser, fn_index: i64) -> i64 {
-    mut i : i64 = 0
-    while (i < p.generic_fns.count) {
-        entry : ^GenericFn = arena_at(p.generic_fns, i)
-        if (entry^.fn_index == fn_index) {
-            return i
+    unsafe {
+        mut i : i64 = 0
+        while (i < p.generic_fns.count) {
+            entry : ^GenericFn = arena_at(p.generic_fns, i)
+            if (entry^.fn_index == fn_index) {
+                return i
+            }
+            i = i + 1
         }
-        i = i + 1
+        0 - 1
     }
-    0 - 1
 }
 
 // The type argument of a concrete generic-struct instance, or -1 if the type is
 // not an instance.
 instance_arg_of :: fn(mut p: Parser, ty: i64) -> i64 {
-    if (is_struct_ty(ty) == false) {
-        return 0 - 1
-    }
-    si := struct_index_of(ty)
-    mut i : i64 = 0
-    while (i < p.instances.count) {
-        entry : ^Instance = arena_at(p.instances, i)
-        if (entry^.struct_index == si) {
-            return entry^.arg
+    unsafe {
+        if (is_struct_ty(ty) == false) {
+            return 0 - 1
         }
-        i = i + 1
+        si := struct_index_of(ty)
+        mut i : i64 = 0
+        while (i < p.instances.count) {
+            entry : ^Instance = arena_at(p.instances, i)
+            if (entry^.struct_index == si) {
+                return entry^.arg
+            }
+            i = i + 1
+        }
+        0 - 1
     }
-    0 - 1
 }
 
 // Determine the concrete type argument of a generic call: an explicit `$Type`
 // argument if present, otherwise inferred from the first argument whose type is
 // a generic-struct instance (or a pointer to one).
 call_type_arg :: fn(mut p: Parser, head: i64) -> i64 {
-    mut id := head
-    while (id != (0 - 1)) {
-        node : ^Node = arena_at(p.arena, id)
-        value := node^.a
-        next_id := node^.next
-        vnode : ^Node = arena_at(p.arena, value)
-        if (vnode^.kind == NODE_TYPEVAL) {
-            return vnode^.val
+    unsafe {
+        mut id := head
+        while (id != (0 - 1)) {
+            node : ^Node = arena_at(p.arena, id)
+            value := node^.a
+            next_id := node^.next
+            vnode : ^Node = arena_at(p.arena, value)
+            if (vnode^.kind == NODE_TYPEVAL) {
+                return vnode^.val
+            }
+            id = next_id
         }
-        id = next_id
+        id = head
+        while (id != (0 - 1)) {
+            node : ^Node = arena_at(p.arena, id)
+            value := node^.a
+            next_id := node^.next
+            mut t := type_of(p, value)
+            if (is_pointer(t)) {
+                t = pointee(t)
+            }
+            arg := instance_arg_of(p, t)
+            if (arg >= 0) {
+                return arg
+            }
+            id = next_id
+        }
+        TY_I64
     }
-    id = head
-    while (id != (0 - 1)) {
-        node : ^Node = arena_at(p.arena, id)
-        value := node^.a
-        next_id := node^.next
-        mut t := type_of(p, value)
-        if (is_pointer(t)) {
-            t = pointee(t)
-        }
-        arg := instance_arg_of(p, t)
-        if (arg >= 0) {
-            return arg
-        }
-        id = next_id
-    }
-    TY_I64
 }
 
 // Arguments evaluate right to left onto the stack and only then land in the
@@ -369,90 +393,102 @@ record_mono_ret :: fn(mut p: Parser, fn_index: i64, arg: i64, ret: i64) {
 // Distinct types rather than instances, since two generic structs written with
 // the same type would otherwise have every generic function emitted twice.
 note_type_arg :: fn(mut p: Parser, arg: i64) {
-    if (arg < 0) {
-        return
-    }
-    mut i : i64 = 0
-    while (i < p.type_args.count) {
-        entry : ^TypeArg = arena_at(p.type_args, i)
-        if (entry^.arg == arg) {
+    unsafe {
+        if (arg < 0) {
             return
         }
-        i = i + 1
+        mut i : i64 = 0
+        while (i < p.type_args.count) {
+            entry : ^TypeArg = arena_at(p.type_args, i)
+            if (entry^.arg == arg) {
+                return
+            }
+            i = i + 1
+        }
+        arena_push(p.type_args, TypeArg { arg = arg })
     }
-    arena_push(p.type_args, TypeArg { arg = arg })
 }
 
 collect_type_args :: fn(mut p: Parser) {
-    mut i : i64 = 0
-    while (i < p.instances.count) {
-        entry : ^Instance = arena_at(p.instances, i)
-        note_type_arg(p, entry^.arg)
-        i = i + 1
-    }
-    i = 0
-    while (i < p.arena.count) {
-        node : ^Node = arena_at(p.arena, i)
-        if (node^.kind == NODE_CALL && generic_fn_of(p, node^.val) >= 0) {
-            note_type_arg(p, call_type_arg(p, node^.a))
+    unsafe {
+        mut i : i64 = 0
+        while (i < p.instances.count) {
+            entry : ^Instance = arena_at(p.instances, i)
+            note_type_arg(p, entry^.arg)
+            i = i + 1
         }
-        i = i + 1
+        i = 0
+        while (i < p.arena.count) {
+            node : ^Node = arena_at(p.arena, i)
+            if (node^.kind == NODE_CALL && generic_fn_of(p, node^.val) >= 0) {
+                note_type_arg(p, call_type_arg(p, node^.a))
+            }
+            i = i + 1
+        }
     }
 }
 
 mono_ret_type :: fn(mut p: Parser, fn_index: i64, arg: i64) -> i64 {
-    mut i : i64 = 0
-    while (i < p.mono_rets.count) {
-        entry : ^MonoRet = arena_at(p.mono_rets, i)
-        if (entry^.fn_index == fn_index && entry^.arg == arg) {
-            return entry^.ret
+    unsafe {
+        mut i : i64 = 0
+        while (i < p.mono_rets.count) {
+            entry : ^MonoRet = arena_at(p.mono_rets, i)
+            if (entry^.fn_index == fn_index && entry^.arg == arg) {
+                return entry^.ret
+            }
+            i = i + 1
         }
-        i = i + 1
+        TY_I64
     }
-    TY_I64
 }
 
 // What a call answers with, which decides whether it needs a result buffer.
 call_ret_type :: fn(mut p: Parser, args: i64, fn_index: i64) -> i64 {
-    if (generic_fn_of(p, fn_index) >= 0) {
-        return mono_ret_type(p, fn_index, call_type_arg(p, args))
+    unsafe {
+        if (generic_fn_of(p, fn_index) >= 0) {
+            return mono_ret_type(p, fn_index, call_type_arg(p, args))
+        }
+        sym : ^Sym = arena_at(p.fns, fn_index)
+        sym^.ret_type
     }
-    sym : ^Sym = arena_at(p.fns, fn_index)
-    sym^.ret_type
 }
 
 nth_value_arg :: fn(mut p: Parser, args: i64, n: i64) -> i64 {
-    mut id := args
-    mut seen : i64 = 0
-    while (id != (0 - 1)) {
-        node : ^Node = arena_at(p.arena, id)
-        value := node^.a
-        next_id := node^.next
-        vnode : ^Node = arena_at(p.arena, value)
-        if (vnode^.kind != NODE_TYPEVAL) {
-            if (seen == n) {
-                return value
+    unsafe {
+        mut id := args
+        mut seen : i64 = 0
+        while (id != (0 - 1)) {
+            node : ^Node = arena_at(p.arena, id)
+            value := node^.a
+            next_id := node^.next
+            vnode : ^Node = arena_at(p.arena, value)
+            if (vnode^.kind != NODE_TYPEVAL) {
+                if (seen == n) {
+                    return value
+                }
+                seen = seen + 1
             }
-            seen = seen + 1
+            id = next_id
         }
-        id = next_id
+        0 - 1
     }
-    0 - 1
 }
 
 count_value_args :: fn(mut p: Parser, args: i64) -> i64 {
-    mut id := args
-    mut count : i64 = 0
-    while (id != (0 - 1)) {
-        node : ^Node = arena_at(p.arena, id)
-        value := node^.a
-        next_id := node^.next
-        vnode : ^Node = arena_at(p.arena, value)
-        if (vnode^.kind != NODE_TYPEVAL) {
-            count = count + 1
+    unsafe {
+        mut id := args
+        mut count : i64 = 0
+        while (id != (0 - 1)) {
+            node : ^Node = arena_at(p.arena, id)
+            value := node^.a
+            next_id := node^.next
+            vnode : ^Node = arena_at(p.arena, value)
+            if (vnode^.kind != NODE_TYPEVAL) {
+                count = count + 1
+            }
+            id = next_id
         }
-        id = next_id
+        count
     }
-    count
 }
 

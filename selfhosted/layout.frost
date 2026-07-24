@@ -42,75 +42,81 @@ align_up :: fn(offset: i64, alignment: i64) -> i64 {
 }
 
 align_of :: fn(mut p: Parser, ty: i64) -> i64 {
-    if (is_array_ty(ty)) {
-        // A slice is a pointer beside a length, so it aligns like a word. A
-        // fixed array aligns like the thing it holds.
-        if (is_slice_ty(p, ty)) {
-            return 8
+    unsafe {
+        if (is_array_ty(ty)) {
+            // A slice is a pointer beside a length, so it aligns like a word. A
+            // fixed array aligns like the thing it holds.
+            if (is_slice_ty(p, ty)) {
+                return 8
+            }
+            return align_of(p, array_element(p, ty))
         }
-        return align_of(p, array_element(p, ty))
-    }
-    if (is_struct_ty(ty) == false) {
-        return scalar_size(ty)
-    }
-    def : ^StructDef = arena_at(p.structs, struct_index_of(ty))
-    mut fid := def^.field_head
-    mut widest : i64 = 1
-    while (fid != (0 - 1)) {
-        field : ^StructField = arena_at(p.fields, fid)
-        one := align_of(p, field^.ty)
-        if (one > widest) {
-            widest = one
+        if (is_struct_ty(ty) == false) {
+            return scalar_size(ty)
         }
-        fid = field^.next
+        def : ^StructDef = arena_at(p.structs, struct_index_of(ty))
+        mut fid := def^.field_head
+        mut widest : i64 = 1
+        while (fid != (0 - 1)) {
+            field : ^StructField = arena_at(p.fields, fid)
+            one := align_of(p, field^.ty)
+            if (one > widest) {
+                widest = one
+            }
+            fid = field^.next
+        }
+        widest
     }
-    widest
 }
 
 type_size :: fn(mut p: Parser, ty: i64) -> i64 {
-    if (is_array_ty(ty)) {
-        if (is_slice_ty(p, ty)) {
-            return 16
+    unsafe {
+        if (is_array_ty(ty)) {
+            if (is_slice_ty(p, ty)) {
+                return 16
+            }
+            return type_size(p, array_element(p, ty)) * array_length(p, ty)
         }
-        return type_size(p, array_element(p, ty)) * array_length(p, ty)
+        if (is_struct_ty(ty) == false) {
+            return scalar_size(ty)
+        }
+        def : ^StructDef = arena_at(p.structs, struct_index_of(ty))
+        mut fid := def^.field_head
+        mut total : i64 = 0
+        while (fid != (0 - 1)) {
+            field : ^StructField = arena_at(p.fields, fid)
+            total = align_up(total, align_of(p, field^.ty))
+                + type_size(p, field^.ty)
+            fid = field^.next
+        }
+        align_up(total, align_of(p, ty))
     }
-    if (is_struct_ty(ty) == false) {
-        return scalar_size(ty)
-    }
-    def : ^StructDef = arena_at(p.structs, struct_index_of(ty))
-    mut fid := def^.field_head
-    mut total : i64 = 0
-    while (fid != (0 - 1)) {
-        field : ^StructField = arena_at(p.fields, fid)
-        total = align_up(total, align_of(p, field^.ty))
-            + type_size(p, field^.ty)
-        fid = field^.next
-    }
-    align_up(total, align_of(p, ty))
 }
 
 field_offset :: fn(mut p: Parser, struct_ty: i64, off: i64, len: i64) -> i64 {
-    mut base := struct_ty
-    if (is_pointer(base)) {
-        base = pointee(base)
-    }
-    if (is_struct_ty(base) == false) {
-        return 0
-    }
-    def : ^StructDef = arena_at(p.structs, struct_index_of(base))
-    mut fid := def^.field_head
-    mut running : i64 = 0
-    while (fid != (0 - 1)) {
-        field : ^StructField = arena_at(p.fields, fid)
-        running = align_up(running, align_of(p, field^.ty))
-        if (field^.name_len == len
-            && bytes_equal(p.src, field^.name_off, off, len)) {
-            return running
+    unsafe {
+        mut base := struct_ty
+        if (is_pointer(base)) {
+            base = pointee(base)
         }
-        running = running + type_size(p, field^.ty)
-        fid = field^.next
+        if (is_struct_ty(base) == false) {
+            return 0
+        }
+        def : ^StructDef = arena_at(p.structs, struct_index_of(base))
+        mut fid := def^.field_head
+        mut running : i64 = 0
+        while (fid != (0 - 1)) {
+            field : ^StructField = arena_at(p.fields, fid)
+            running = align_up(running, align_of(p, field^.ty))
+            if (field^.name_len == len
+                && bytes_equal(p.src, field^.name_off, off, len)) {
+                return running
+            }
+            running = running + type_size(p, field^.ty)
+            fid = field^.next
+        }
+        0
     }
-    0
 }
 
 // Carve a temporary out of the bottom of the frame, for a struct literal that

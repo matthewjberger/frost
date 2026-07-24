@@ -21,7 +21,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     TOK_CARET, TOK_COLON, TOK_COLONCOLON, TOK_COLONEQ, TOK_COMMA, TOK_DOLLAR,
     TOK_DOT, TOK_EOF, TOK_EQEQ, TOK_FLOAT, TOK_GE, TOK_GT, TOK_IDENT, TOK_INT,
     TOK_KW_CASE, TOK_KW_ELSE, TOK_KW_ENUM, TOK_KW_EXPORT, TOK_KW_EXTERN,
-    TOK_KW_TEST,
+    TOK_KW_TEST, TOK_KW_UNSAFE,
     TOK_KW_FALSE, TOK_KW_FN, TOK_KW_IF, TOK_KW_IMPORT, TOK_KW_LET,
     TOK_KW_LINEAR, TOK_KW_MATCH, TOK_KW_MOVE, TOK_KW_MUT, TOK_KW_PRINT,
     TOK_KW_RETURN, TOK_KW_STRUCT, TOK_KW_TRUE, TOK_KW_USES, TOK_KW_WHILE,
@@ -172,6 +172,7 @@ TOK_KW_IMPORT :: 28
 TOK_KW_EXPORT :: 29
 TOK_KW_ENUM   :: 30
 TOK_KW_TEST   :: 31
+TOK_KW_UNSAFE :: 32
 TOK_LPAREN    :: 40
 TOK_RPAREN    :: 41
 TOK_LBRACE    :: 42
@@ -433,22 +434,26 @@ Arena :: struct($T: Type) {
 }
 
 arena_make :: fn($T: Type, cap: i64) -> Arena<T> {
-    bytes := malloc(cap * sizeof(T))
-    Arena { data = ptr_cast($T, bytes), cap = cap, count = 0 }
+    unsafe {
+        bytes := malloc(cap * sizeof(T))
+        Arena { data = ptr_cast($T, bytes), cap = cap, count = 0 }
+    }
 }
 
 arena_push :: fn(mut a: Arena<$T>, move value: $T) -> i64 {
-    // An arena is a single fixed allocation, so running past it writes over
-    // whatever the allocator put next and the damage surfaces somewhere else
-    // entirely. Say so here instead.
-    if (a.count >= a.cap) {
-        frost_error("frost: an arena ran out of room")
-        frost_die()
+    unsafe {
+        // An arena is a single fixed allocation, so running past it writes over
+        // whatever the allocator put next and the damage surfaces somewhere else
+        // entirely. Say so here instead.
+        if (a.count >= a.cap) {
+            frost_error("frost: an arena ran out of room")
+            frost_die()
+        }
+        id := a.count
+        a.data[id] = value
+        a.count = a.count + 1
+        id
     }
-    id := a.count
-    a.data[id] = value
-    a.count = a.count + 1
-    id
 }
 
 // An index outside the arena reads whatever happens to sit there, which lands
@@ -456,12 +461,14 @@ arena_push :: fn(mut a: Arena<$T>, move value: $T) -> i64 {
 // mistake is silent corruption in one place and a crash with no explanation in
 // the other. Answer for it here instead.
 arena_at :: fn(a: Arena<$T>, id: i64) -> ^T {
-    if (id < 0 || id >= a.count) {
-        frost_error("frost: an arena was indexed out of range: ")
-        frost_error_int(id)
-        frost_die()
+    unsafe {
+        if (id < 0 || id >= a.count) {
+            frost_error("frost: an arena was indexed out of range: ")
+            frost_error_int(id)
+            frost_die()
+        }
+        ptr_to(a.data[id])
     }
-    ptr_to(a.data[id])
 }
 
 // A directory added to the search list. arena_push answers with an index
@@ -530,18 +537,20 @@ Parser :: struct {
 }
 
 cstr_eq :: fn(a: ^i8, b: ^i8) -> bool {
-    la := frost_str_len(a)
-    lb := frost_str_len(b)
-    if (la != lb) {
-        return false
-    }
-    mut i : i64 = 0
-    while (i < la) {
-        if (frost_byte_at(a, i) != frost_byte_at(b, i)) {
+    unsafe {
+        la := frost_str_len(a)
+        lb := frost_str_len(b)
+        if (la != lb) {
             return false
         }
-        i = i + 1
+        mut i : i64 = 0
+        while (i < la) {
+            if (frost_byte_at(a, i) != frost_byte_at(b, i)) {
+                return false
+            }
+            i = i + 1
+        }
+        true
     }
-    true
 }
 

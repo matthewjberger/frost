@@ -37,255 +37,257 @@ import "emit_asm.frost"
 import "regions.frost"
 
 main :: fn() -> i64 {
-    options := options_from_command_line()
-    if (options.help == 1) {
-        usage()
-        return 0
-    }
-    if (options.ok == 0) {
-        frost_die()
-    }
-
-    // With no file named anywhere, the built-in demonstration program is what
-    // gets compiled, which is what makes the compiler runnable with no
-    // arguments at all.
-    input_path := options.input
-    mut source : ^i8 = ""
-    mut modules : Arena<Module> = arena_make($Module, 1024)
-    mut exports : Arena<Export> = arena_make($Export, 4096)
-    export_names := ptr_cast($i8, malloc(SYNTH_ROOM))
-    if (frost_str_len(input_path) != 0) {
-        // One buffer holds the root file and everything it imports, so a name
-        // is an offset into a single source no matter which file wrote it.
-        buffer := ptr_cast($i8, malloc(SOURCE_ROOM + SYNTH_ROOM))
-        mut scratch : Arena<Token> = arena_make($Token, 262144)
-        search_roots_from(options.roots)
-        resolve_imports(buffer, input_path, export_names, modules, exports,
-            scratch, options.roots)
-        source = buffer
-    }
-    if (frost_str_len(source) == 0) {
-        source = "
-        strlen :: extern fn(s: ^i8) -> i64
-
-        ANSWER :: 42
-
-        fib :: fn(n: i64) -> i64 {
-            if (n < 2) { return n }
-            return fib(n - 1) + fib(n - 2)
+    unsafe {
+        options := options_from_command_line()
+        if (options.help == 1) {
+            usage()
+            return 0
+        }
+        if (options.ok == 0) {
+            frost_die()
         }
 
-        fact :: fn(n: i64) -> i64 {
-            if (n < 1) { return 1 }
-            return n * fact(n - 1)
+        // With no file named anywhere, the built-in demonstration program is what
+        // gets compiled, which is what makes the compiler runnable with no
+        // arguments at all.
+        input_path := options.input
+        mut source : ^i8 = ""
+        mut modules : Arena<Module> = arena_make($Module, 1024)
+        mut exports : Arena<Export> = arena_make($Export, 4096)
+        export_names := ptr_cast($i8, malloc(SYNTH_ROOM))
+        if (frost_str_len(input_path) != 0) {
+            // One buffer holds the root file and everything it imports, so a name
+            // is an offset into a single source no matter which file wrote it.
+            buffer := ptr_cast($i8, malloc(SOURCE_ROOM + SYNTH_ROOM))
+            mut scratch : Arena<Token> = arena_make($Token, 262144)
+            search_roots_from(options.roots)
+            resolve_imports(buffer, input_path, export_names, modules, exports,
+                scratch, options.roots)
+            source = buffer
         }
+        if (frost_str_len(source) == 0) {
+            source = "
+            strlen :: extern fn(s: ^i8) -> i64
 
-        Point :: struct { x: i64, y: i64 }
+            ANSWER :: 42
 
-        sum_point :: fn(pt: Point) -> i64 {
-            return pt.x + pt.y
-        }
-
-        bump :: fn(b: ^Point) {
-            b^.x = b^.x + 1
-        }
-
-        classify :: fn(n: i64) -> i64 {
-            mut result : i64 = 0
-            match n {
-                case 0: result = 100
-                case 1: result = 200
-                case _: result = 999
+            fib :: fn(n: i64) -> i64 {
+                if (n < 2) { return n }
+                return fib(n - 1) + fib(n - 2)
             }
-            return result
+
+            fact :: fn(n: i64) -> i64 {
+                if (n < 1) { return 1 }
+                return n * fact(n - 1)
+            }
+
+            Point :: struct { x: i64, y: i64 }
+
+            sum_point :: fn(pt: Point) -> i64 {
+                return pt.x + pt.y
+            }
+
+            bump :: fn(b: ^Point) {
+                b^.x = b^.x + 1
+            }
+
+            classify :: fn(n: i64) -> i64 {
+                mut result : i64 = 0
+                match n {
+                    case 0: result = 100
+                    case 1: result = 200
+                    case _: result = 999
+                }
+                return result
+            }
+
+            Box :: struct($T: Type) { value: $T }
+
+            Holder :: struct { item: Box<i64> }
+
+            box_make :: fn($T: Type, v: $T) -> Box<T> {
+                Box { value = v }
+            }
+
+            box_get :: fn(b: Box<$T>) -> $T {
+                b^.value
+            }
+
+            main :: fn() -> i64 {
+                print fib(10)
+                print fact(5)
+                mut sum : i64 = 0
+                mut index : i64 = 1
+                while (index <= 10) { sum = sum + index  index = index + 1 }
+                print sum
+                p := Point { x = 3, y = 4 }
+                print p.x
+                p.x = 10
+                print sum_point(p)
+                ptr := ptr_to(p)
+                bump(ptr)
+                print p.x
+                print ptr^.y
+                print ptr[0].x
+                q := ptr_cast($Point, ptr)
+                print q^.x
+                print sizeof(Point)
+                print classify(0)
+                print classify(1)
+                print classify(7)
+                print strlen(\"hello\")
+                print ANSWER
+                h := Holder { item = box_make($i64, 77) }
+                print box_get(h.item)
+            }
+        "
+        }
+        // The demo program is a literal with nowhere to write, so it needs the same
+        // copy with room past the terminator that an imported source already has.
+        if (frost_str_len(input_path) == 0) {
+            source = source_with_room(source)
         }
 
-        Box :: struct($T: Type) { value: $T }
-
-        Holder :: struct { item: Box<i64> }
-
-        box_make :: fn($T: Type, v: $T) -> Box<T> {
-            Box { value = v }
+        mut parser := Parser {
+            src = source,
+            tokens = arena_make($Token, 262144),
+            ti = 0,
+            arena = arena_make($Node, 262144),
+            fns = arena_make($Sym, 8192),
+            structs = arena_make($StructDef, 4096),
+            fields = arena_make($StructField, 8192),
+            locals = arena_make($LocalVar, 4096),
+            consts = arena_make($ConstDef, 4096),
+            instances = arena_make($Instance, 4096),
+            generic_fns = arena_make($GenericFn, 256),
+            type_param_off = 0,
+            type_param_len = 0,
+            type_binding = 0,
+            binding_active = 0,
+            saw_type_param = 0,
+            last_return_type = 0,
+            no_struct_lit = false,
+            last_type_was_generic = 0,
+            moved = arena_make($LocalVar, 4096),
+            label_id = 0,
+            abi_windows = 0,
+            asm_temp = 0,
+            asm_ret = 0,
+            sret_slot = 0,
+            mono_rets = arena_make($MonoRet, 1024),
+            mono_nodes = arena_make($MonoNode, 1024),
+            current_ret = 0,
+            current_fn_off = 0,
+            current_fn_len = 0,
+            tainted = arena_make($LocalVar, 4096),
+            inner = arena_make($LocalVar, 4096),
+            region_off = 0,
+            region_len = 0,
+            region_returns = 0,
+            modules = modules,
+            exports = exports,
+            export_names = export_names,
+            result_ty = 0 - 1,
+            failure_ty = 0 - 1,
+            variants = arena_make($Variant, 4096),
+            match_count = 0,
+            type_args = arena_make($TypeArg, 1024),
+            pending = arena_make($LocalVar, 4096),
+            try_count = 0,
+            name_tag = 0,
+            name_value = 0,
+            name_error = 0,
+            synth_next = 0,
+            prov_kind = 0,
+            prov_off = 0,
+            prov_len = 0,
+            arrays = arena_make($ArrayDef, 1024),
+            tests = arena_make($TestCase, 1024),
+            testing = options.testing,
         }
-
-        box_get :: fn(b: Box<$T>) -> $T {
-            b^.value
+        // Names the compiler synthesizes go past the source's terminator, so the
+        // first free byte is one past the text.
+        parser.synth_next = frost_str_len(source) + 1
+        // The host convention by default; FROST_ABI overrides it so the other
+        // target's output can be inspected from either host.
+        parser.abi_windows = frost_is_windows()
+        abi := frost_getenv("FROST_ABI")
+        if (cstr_eq(abi, "sysv")) {
+            parser.abi_windows = 0
         }
-
-        main :: fn() -> i64 {
-            print fib(10)
-            print fact(5)
-            mut sum : i64 = 0
-            mut index : i64 = 1
-            while (index <= 10) { sum = sum + index  index = index + 1 }
-            print sum
-            p := Point { x = 3, y = 4 }
-            print p.x
-            p.x = 10
-            print sum_point(p)
-            ptr := ptr_to(p)
-            bump(ptr)
-            print p.x
-            print ptr^.y
-            print ptr[0].x
-            q := ptr_cast($Point, ptr)
-            print q^.x
-            print sizeof(Point)
-            print classify(0)
-            print classify(1)
-            print classify(7)
-            print strlen(\"hello\")
-            print ANSWER
-            h := Holder { item = box_make($i64, 77) }
-            print box_get(h.item)
+        if (cstr_eq(abi, "win")) {
+            parser.abi_windows = 1
         }
-    "
-    }
-    // The demo program is a literal with nowhere to write, so it needs the same
-    // copy with room past the terminator that an imported source already has.
-    if (frost_str_len(input_path) == 0) {
-        source = source_with_room(source)
-    }
+        tokenize(source, frost_str_len(source), parser.tokens)
+        program := parse_program(parser)
+        collect_type_args(parser)
+        record_mono_rets(parser)
+        check_calls(parser)
+        check_regions(parser)
 
-    mut parser := Parser {
-        src = source,
-        tokens = arena_make($Token, 262144),
-        ti = 0,
-        arena = arena_make($Node, 262144),
-        fns = arena_make($Sym, 8192),
-        structs = arena_make($StructDef, 4096),
-        fields = arena_make($StructField, 8192),
-        locals = arena_make($LocalVar, 4096),
-        consts = arena_make($ConstDef, 4096),
-        instances = arena_make($Instance, 4096),
-        generic_fns = arena_make($GenericFn, 256),
-        type_param_off = 0,
-        type_param_len = 0,
-        type_binding = 0,
-        binding_active = 0,
-        saw_type_param = 0,
-        last_return_type = 0,
-        no_struct_lit = false,
-        last_type_was_generic = 0,
-        moved = arena_make($LocalVar, 4096),
-        label_id = 0,
-        abi_windows = 0,
-        asm_temp = 0,
-        asm_ret = 0,
-        sret_slot = 0,
-        mono_rets = arena_make($MonoRet, 1024),
-        mono_nodes = arena_make($MonoNode, 1024),
-        current_ret = 0,
-        current_fn_off = 0,
-        current_fn_len = 0,
-        tainted = arena_make($LocalVar, 4096),
-        inner = arena_make($LocalVar, 4096),
-        region_off = 0,
-        region_len = 0,
-        region_returns = 0,
-        modules = modules,
-        exports = exports,
-        export_names = export_names,
-        result_ty = 0 - 1,
-        failure_ty = 0 - 1,
-        variants = arena_make($Variant, 4096),
-        match_count = 0,
-        type_args = arena_make($TypeArg, 1024),
-        pending = arena_make($LocalVar, 4096),
-        try_count = 0,
-        name_tag = 0,
-        name_value = 0,
-        name_error = 0,
-        synth_next = 0,
-        prov_kind = 0,
-        prov_off = 0,
-        prov_len = 0,
-        arrays = arena_make($ArrayDef, 1024),
-        tests = arena_make($TestCase, 1024),
-        testing = options.testing,
-    }
-    // Names the compiler synthesizes go past the source's terminator, so the
-    // first free byte is one past the text.
-    parser.synth_next = frost_str_len(source) + 1
-    // The host convention by default; FROST_ABI overrides it so the other
-    // target's output can be inspected from either host.
-    parser.abi_windows = frost_is_windows()
-    abi := frost_getenv("FROST_ABI")
-    if (cstr_eq(abi, "sysv")) {
-        parser.abi_windows = 0
-    }
-    if (cstr_eq(abi, "win")) {
-        parser.abi_windows = 1
-    }
-    tokenize(source, frost_str_len(source), parser.tokens)
-    program := parse_program(parser)
-    collect_type_args(parser)
-    record_mono_rets(parser)
-    check_calls(parser)
-    check_regions(parser)
-
-    // Where the emitted text goes. A link needs it in a file whatever the
-    // caller asked for, so it writes one beside the executable and removes it
-    // afterwards; without -o and without --link it goes to standard output.
-    mut executable : ^i8 = options.output
-    mut emit_path : ^i8 = options.output
-    if (options.link == 1) {
-        if (frost_str_len(executable) == 0) {
-            executable = "a.out"
-            if (frost_is_windows() == 1) {
-                executable = "a.exe"
+        // Where the emitted text goes. A link needs it in a file whatever the
+        // caller asked for, so it writes one beside the executable and removes it
+        // afterwards; without -o and without --link it goes to standard output.
+        mut executable : ^i8 = options.output
+        mut emit_path : ^i8 = options.output
+        if (options.link == 1) {
+            if (frost_str_len(executable) == 0) {
+                executable = "a.out"
+                if (frost_is_windows() == 1) {
+                    executable = "a.exe"
+                }
+            }
+            if (options.backend == BACKEND_ASM) {
+                emit_path = join_two(executable, ".s")
+            } else {
+                emit_path = join_two(executable, ".c")
             }
         }
+        if (frost_str_len(emit_path) != 0) {
+            if (frost_emit_open(emit_path) == 0) {
+                frost_error("frost: cannot write '")
+                frost_error(emit_path)
+                frost_error("'")
+                frost_die()
+            }
+        }
+
         if (options.backend == BACKEND_ASM) {
-            emit_path = join_two(executable, ".s")
+            emit_asm_program(parser, program)
         } else {
-            emit_path = join_two(executable, ".c")
+            frost_emit_str("#include <stdio.h>\n")
+            frost_emit_str("#include <stdint.h>\n")
+            emit_program(parser, program)
         }
-    }
-    if (frost_str_len(emit_path) != 0) {
-        if (frost_emit_open(emit_path) == 0) {
-            frost_error("frost: cannot write '")
-            frost_error(emit_path)
-            frost_error("'")
-            frost_die()
-        }
-    }
+        frost_emit_close()
 
-    if (options.backend == BACKEND_ASM) {
-        emit_asm_program(parser, program)
-    } else {
-        frost_emit_str("#include <stdio.h>\n")
-        frost_emit_str("#include <stdint.h>\n")
-        emit_program(parser, program)
-    }
-    frost_emit_close()
-
-    if (options.link == 1) {
-        // The test runner lives in the C runtime, so a build that runs tests
-        // links it. FROST_RUNTIME says where it is for a checkout that is not
-        // the working directory.
-        mut extra : ^i8 = ""
-        if (options.testing == 1) {
-            mut runtime := frost_getenv("FROST_RUNTIME")
-            if (frost_str_len(runtime) == 0) {
-                runtime = "runtime/frost_runtime.c"
+        if (options.link == 1) {
+            // The test runner lives in the C runtime, so a build that runs tests
+            // links it. FROST_RUNTIME says where it is for a checkout that is not
+            // the working directory.
+            mut extra : ^i8 = ""
+            if (options.testing == 1) {
+                mut runtime := frost_getenv("FROST_RUNTIME")
+                if (frost_str_len(runtime) == 0) {
+                    runtime = "runtime/frost_runtime.c"
+                }
+                extra = join_two(" ", runtime)
             }
-            extra = join_two(" ", runtime)
+            command := join_two(
+                join_two(join_two(join_two("cc ", emit_path), extra), " -o "),
+                executable)
+            status := frost_run_command(command)
+            frost_remove_file(emit_path)
+            if (status != 0) {
+                frost_error("frost: the linker failed")
+                frost_die()
+            }
+            // Building the tests and not running them would be half an answer, so
+            // the process ends on what they said.
+            if (options.testing == 1) {
+                return frost_run_command(executable)
+            }
         }
-        command := join_two(
-            join_two(join_two(join_two("cc ", emit_path), extra), " -o "),
-            executable)
-        status := frost_run_command(command)
-        frost_remove_file(emit_path)
-        if (status != 0) {
-            frost_error("frost: the linker failed")
-            frost_die()
-        }
-        // Building the tests and not running them would be half an answer, so
-        // the process ends on what they said.
-        if (options.testing == 1) {
-            return frost_run_command(executable)
-        }
+        0
     }
-    0
 }
