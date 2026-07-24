@@ -1293,6 +1293,17 @@ parse_enum :: fn(mut p: Parser) {
     advance(p)
     advance(p)
     advance(p)
+    // `Name :: enum($T: Type) { ... }`. A generic enum would have to be
+    // instantiated per type argument the way a generic struct is, which this
+    // compiler does not do for enums, so it would misread the parameter list as
+    // variants and fail far from here.
+    if (cur(p) == TOK_LPAREN) {
+        unsafe {
+            report_where(p.modules, p.src, cur_off(p))
+            frost_error("a generic enum is not supported yet")
+            frost_die()
+        }
+    }
     advance(p)
     result_field_names(p)
     tag_field := arena_push(
@@ -1633,6 +1644,16 @@ parse_program :: fn(mut p: Parser) -> i64 {
                     }
                 }
             }
+        }
+        // The loop above stops at the first token that cannot begin a
+        // declaration. Stopping quietly emits whatever was read so far, so a
+        // file whose second declaration is named after a keyword compiles to an
+        // empty program and the mistake surfaces as a missing symbol at link
+        // time, or as nothing at all. Say where it stopped instead.
+        if (cur(p) != TOK_EOF) {
+            report_where(p.modules, p.src, cur_off(p))
+            frost_error("this is not the start of a declaration")
+            frost_die()
         }
         head
     }

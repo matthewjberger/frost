@@ -49,11 +49,16 @@ frost_byte_set  :: extern fn(buffer: ^i8, index: i64, value: i64)
 
 // Diagnostics. The emitted C goes to stdout, so an error is composed on stderr
 // piece by piece and frost_die ends the process.
+//
+// The ones taking only numbers, or nothing, cannot corrupt memory whatever they
+// are handed, so they are `safe` and need no block. The ones taking a `^i8` read
+// until a NUL, and `ptr_to` hands out a `^i8` without one at no cost, so those
+// keep the gate: the caller is what promises the terminator.
 frost_error     :: extern fn(text: ^i8)
 frost_error_src :: extern fn(text: ^i8, offset: i64, length: i64)
-frost_error_int :: extern fn(value: i64)
-frost_die       :: extern fn()
-frost_is_windows :: extern fn() -> i64
+frost_error_int :: safe extern fn(value: i64)
+frost_die       :: safe extern fn()
+frost_is_windows :: safe extern fn() -> i64
 frost_getenv    :: extern fn(name: ^i8) -> ^i8
 
 // The command line, and the two things a compiler does with the world once it

@@ -1866,6 +1866,22 @@ fn self_hosted_rejects_an_unsupported_declaration() {
     );
 }
 
+// The top-level loop stops at the first token that cannot begin a declaration.
+// Stopping quietly emitted whatever had been read, so a file whose declaration
+// is named after a keyword compiled to an empty program and the mistake showed
+// up as a missing symbol at link time, or as nothing at all.
+#[test]
+fn self_hosted_rejects_a_stray_top_level_token() {
+    let source = "add :: fn(a: i64) -> i64 { a }\nprint :: fn(v: i64) -> i64 { v }\nmain :: fn() -> i64 { 0 }\n";
+    let Some(message) = self_hosted_rejects("stray_top", source) else {
+        return;
+    };
+    assert!(
+        message.contains("this is not the start of a declaration"),
+        "expected the parse to stop loudly, got:\n{message}"
+    );
+}
+
 #[test]
 fn self_hosted_rejects_a_call_to_an_undefined_function() {
     let source = "main :: fn() -> i64 {\n    return no_such_fn(1)\n}\n";
