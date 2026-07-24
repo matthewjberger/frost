@@ -226,6 +226,8 @@ main :: fn() -> i64 {
             arrays = arena_make($ArrayDef, 1024),
             tests = arena_make($TestCase, 1024),
             testing = options.testing,
+            type_cache = arena_make($TypeCacheEntry, 262144),
+            type_cache_on = 0,
         }
         // Names the compiler synthesizes go past the source's terminator, so the
         // first free byte is one past the text.
@@ -283,6 +285,12 @@ main :: fn() -> i64 {
                 frost_die()
             }
         }
+
+        // The checks are done, so a node's type is now settled. Turn on the
+        // memo and give it a slot per node before emit, which asks for the same
+        // types repeatedly, re-derives each one.
+        type_cache_prepare(parser)
+        parser.type_cache_on = 1
 
         if (options.backend == BACKEND_ASM) {
             emit_asm_program(parser, program)

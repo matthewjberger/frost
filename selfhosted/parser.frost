@@ -2266,7 +2266,14 @@ parse_generic_instance :: fn(mut p: Parser, gfn_index: i64, arg: i64,
     mark := push_bindings(p, tparam_off, tparam_len, xparam_start, xparam_count,
         arg, xarg_start)
     p.ti = token_start
+    // Parsing an instance derives types under the bindings just pushed, and the
+    // implicit-return check calls type_of while they are live. Those answers hold
+    // only for this parse, so the cache is off across it and only emit, which
+    // sees the instance's settled types, writes to it.
+    saved_cache := p.type_cache_on
+    p.type_cache_on = 0
     node := parse_function(p)
+    p.type_cache_on = saved_cache
     p.gbindings.count = mark
     p.ti = saved_ti
     p.type_param_off = saved_off
