@@ -40,24 +40,24 @@ Quat :: struct { x: f32, y: f32, z: f32, w: f32 }
 
 // Degrees to radians and back, since angles read more naturally in degrees but
 // the transcendentals want radians.
-radians :: fn(degrees: f32) -> f32 { degrees * 0.017453292519943295 }
-degrees :: fn(radians: f32) -> f32 { radians * 57.29577951308232 }
+radians :: inline fn(degrees: f32) -> f32 { degrees * 0.017453292519943295 }
+degrees :: inline fn(radians: f32) -> f32 { radians * 57.29577951308232 }
 
 // ---------------------------------------------------------------------------
 // Vec2
 
-vec2 :: fn(x: f32, y: f32) -> Vec2 { Vec2 { x = x, y = y } }
+vec2 :: inline fn(x: f32, y: f32) -> Vec2 { Vec2 { x = x, y = y } }
 
-vec2_add :: fn(a: Vec2, b: Vec2) -> Vec2 {
+vec2_add :: inline fn(a: Vec2, b: Vec2) -> Vec2 {
     Vec2 { x = a.x + b.x, y = a.y + b.y }
 }
-vec2_sub :: fn(a: Vec2, b: Vec2) -> Vec2 {
+vec2_sub :: inline fn(a: Vec2, b: Vec2) -> Vec2 {
     Vec2 { x = a.x - b.x, y = a.y - b.y }
 }
-vec2_scale :: fn(a: Vec2, s: f32) -> Vec2 {
+vec2_scale :: inline fn(a: Vec2, s: f32) -> Vec2 {
     Vec2 { x = a.x * s, y = a.y * s }
 }
-vec2_dot :: fn(a: Vec2, b: Vec2) -> f32 { a.x * b.x + a.y * b.y }
+vec2_dot :: inline fn(a: Vec2, b: Vec2) -> f32 { a.x * b.x + a.y * b.y }
 vec2_length :: fn(a: Vec2) -> f32 { sqrtf(vec2_dot(a, a)) }
 vec2_normalize :: fn(a: Vec2) -> Vec2 {
     length := vec2_length(a)
@@ -69,31 +69,31 @@ vec2_normalize :: fn(a: Vec2) -> Vec2 {
 // ---------------------------------------------------------------------------
 // Vec3, the workhorse
 
-vec3 :: fn(x: f32, y: f32, z: f32) -> Vec3 { Vec3 { x = x, y = y, z = z } }
+vec3 :: inline fn(x: f32, y: f32, z: f32) -> Vec3 { Vec3 { x = x, y = y, z = z } }
 
-vec3_add :: fn(a: Vec3, b: Vec3) -> Vec3 {
+vec3_add :: inline fn(a: Vec3, b: Vec3) -> Vec3 {
     Vec3 { x = a.x + b.x, y = a.y + b.y, z = a.z + b.z }
 }
-vec3_sub :: fn(a: Vec3, b: Vec3) -> Vec3 {
+vec3_sub :: inline fn(a: Vec3, b: Vec3) -> Vec3 {
     Vec3 { x = a.x - b.x, y = a.y - b.y, z = a.z - b.z }
 }
-vec3_scale :: fn(a: Vec3, s: f32) -> Vec3 {
+vec3_scale :: inline fn(a: Vec3, s: f32) -> Vec3 {
     Vec3 { x = a.x * s, y = a.y * s, z = a.z * s }
 }
-vec3_neg :: fn(a: Vec3) -> Vec3 {
+vec3_neg :: inline fn(a: Vec3) -> Vec3 {
     Vec3 { x = 0.0 - a.x, y = 0.0 - a.y, z = 0.0 - a.z }
 }
-vec3_dot :: fn(a: Vec3, b: Vec3) -> f32 {
+vec3_dot :: inline fn(a: Vec3, b: Vec3) -> f32 {
     a.x * b.x + a.y * b.y + a.z * b.z
 }
-vec3_cross :: fn(a: Vec3, b: Vec3) -> Vec3 {
+vec3_cross :: inline fn(a: Vec3, b: Vec3) -> Vec3 {
     Vec3 {
         x = a.y * b.z - a.z * b.y,
         y = a.z * b.x - a.x * b.z,
         z = a.x * b.y - a.y * b.x,
     }
 }
-vec3_length_sq :: fn(a: Vec3) -> f32 { vec3_dot(a, a) }
+vec3_length_sq :: inline fn(a: Vec3) -> f32 { vec3_dot(a, a) }
 vec3_length :: fn(a: Vec3) -> f32 { sqrtf(vec3_dot(a, a)) }
 vec3_distance :: fn(a: Vec3, b: Vec3) -> f32 { vec3_length(vec3_sub(a, b)) }
 vec3_normalize :: fn(a: Vec3) -> Vec3 {
@@ -109,19 +109,19 @@ vec3_lerp :: fn(a: Vec3, b: Vec3, t: f32) -> Vec3 {
 // ---------------------------------------------------------------------------
 // Vec4
 
-vec4 :: fn(x: f32, y: f32, z: f32, w: f32) -> Vec4 {
+vec4 :: inline fn(x: f32, y: f32, z: f32, w: f32) -> Vec4 {
     Vec4 { x = x, y = y, z = z, w = w }
 }
-vec4_add :: fn(a: Vec4, b: Vec4) -> Vec4 {
+vec4_add :: inline fn(a: Vec4, b: Vec4) -> Vec4 {
     Vec4 { x = a.x + b.x, y = a.y + b.y, z = a.z + b.z, w = a.w + b.w }
 }
-vec4_sub :: fn(a: Vec4, b: Vec4) -> Vec4 {
+vec4_sub :: inline fn(a: Vec4, b: Vec4) -> Vec4 {
     Vec4 { x = a.x - b.x, y = a.y - b.y, z = a.z - b.z, w = a.w - b.w }
 }
-vec4_scale :: fn(a: Vec4, s: f32) -> Vec4 {
+vec4_scale :: inline fn(a: Vec4, s: f32) -> Vec4 {
     Vec4 { x = a.x * s, y = a.y * s, z = a.z * s, w = a.w * s }
 }
-vec4_dot :: fn(a: Vec4, b: Vec4) -> f32 {
+vec4_dot :: inline fn(a: Vec4, b: Vec4) -> f32 {
     a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w
 }
 

@@ -16,7 +16,8 @@ export append_node, array_element, array_index_of, array_length, array_of,
     is_columns_bookkeeping,
     is_struct_ty, proc_of, proc_ret, proc_param_count, proc_param_at,
     slab_field_id, slab_field_type,
-    mark_defined, mark_extern, new_case, new_field_init, new_field_node,
+    mark_defined, mark_extern, mark_inline, new_case, new_field_init,
+    new_field_node,
     new_func_node, new_index, new_let_node, new_named_node, new_node,
     new_struct_lit, new_type_node, new_unary, node_next, pointee,
     record_generic_fn, register_const, set_field_next, set_next, set_params,
@@ -167,7 +168,7 @@ intern_global :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     arena_push(
         p.fns,
         Sym { off = offset, len = length, is_extern = 0, is_safe = 0,
-            ret_type = TY_I64,
+            is_inline = 0, ret_type = TY_I64,
             params = 0 - 1, defined = 0, uses_ty = 0 - 1, cap_off = 0,
             cap_len = 0 },
     )
@@ -190,6 +191,12 @@ mark_extern :: fn(mut p: Parser, fn_index: i64) {
 mark_safe :: fn(mut p: Parser, fn_index: i64) {
     entry := arena_at(p.fns, fn_index)
     entry.is_safe = 1
+}
+
+// `inline fn`: the C backend qualifies the definition so it is always folded in.
+mark_inline :: fn(mut p: Parser, fn_index: i64) {
+    entry := arena_at(p.fns, fn_index)
+    entry.is_inline = 1
 }
 
 set_ret_type :: fn(mut p: Parser, fn_index: i64, ret: i64) {

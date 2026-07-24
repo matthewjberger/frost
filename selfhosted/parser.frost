@@ -1630,8 +1630,19 @@ parse_function :: fn(mut p: Parser) -> i64 {
     name_length := cur_len(p)
     advance(p)
     advance(p)
+    // `name :: inline fn(...)` marks a function the C backend forces inline. The
+    // keyword sits between the `::` and the `fn`, so it is consumed here before
+    // the `fn` is stepped over like any other declaration.
+    mut wants_inline : i64 = 0
+    if (cur(p) == TOK_KW_INLINE) {
+        wants_inline = 1
+        advance(p)
+    }
     advance(p)
     fn_index := intern_global(p, name_offset, name_length)
+    if (wants_inline == 1) {
+        mark_inline(p, fn_index)
+    }
     mut is_main : i64 = 0
     if (is_main_name(p.src, name_offset, name_length)) {
         is_main = 1
@@ -2174,7 +2185,7 @@ parse_program :: fn(mut p: Parser) -> i64 {
             }
         } else if (third == TOK_INT) {
             parse_const(p)
-        } else if (third != TOK_KW_FN) {
+        } else if (third != TOK_KW_FN && third != TOK_KW_INLINE) {
             // Everything above is a form this compiler knows; anything else
             // would be read as a function and misparse into a crash far from
             // here, so name it where it is written instead. A declaration the
