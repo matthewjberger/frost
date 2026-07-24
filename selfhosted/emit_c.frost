@@ -891,6 +891,17 @@ emit_array_ordered :: fn(mut p: Parser, i: i64) {
     def.emitted = 1
     element := def.element
     length := def.length
+    // A `[]T` or `[N]T` in a generic function's signature registers an array
+    // whose element is the type parameter itself, an artifact of parsing the
+    // template. It is never named in the emitted program, which uses the
+    // concrete per-instance arrays, so it is not defined here.
+    mut bare := element
+    while (is_pointer(bare)) {
+        bare = pointee(bare)
+    }
+    if (bare == TY_PARAM) {
+        return
+    }
     if (length >= 0) {
         emit_type_dep(p, element)
     }

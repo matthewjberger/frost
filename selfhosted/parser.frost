@@ -80,6 +80,27 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         ty := parse_type(p)
         return new_type_node(p, NODE_TYPEVAL, 0, ty)
     }
+    // `unsafe { expr }` where a value is wanted vouches for the one expression
+    // inside, so `x := unsafe { ptr_cast(...) }` and a `data = unsafe { ... }`
+    // field are how a wrapper hands an unsafe result up without a bare block.
+    // Its span is recorded the same way the statement form's is, so the gate
+    // sees the expression as written inside one.
+    if (kind == TOK_KW_UNSAFE) {
+        advance(p)
+        start := cur_off(p)
+        p.unsafe_depth = p.unsafe_depth + 1
+        advance(p)
+        inner := parse_expr(p)
+        advance(p)
+        // The span ends past the closing brace, since a node made while parsing
+        // the inner expression, a call for one, carries the position it ended
+        // at, which is the brace itself.
+        span_end := cur_off(p)
+        p.unsafe_depth = p.unsafe_depth - 1
+        arena_push(p.unsafe_spans,
+            UnsafeSpan { start = start, end = span_end })
+        return inner
+    }
     // An `if` used where a value is wanted takes the same road a `match` does:
     // bind a name, let each branch assign to it, queue the branch for the block
     // being parsed, and stand for the name.
