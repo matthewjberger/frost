@@ -30,7 +30,8 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     TOK_RBRACE, TOK_RBRACKET, TOK_RPAREN, TOK_SLASH, TOK_STAR, TOK_STR,
     TY_BOOL, TY_F32, TY_F64, TY_I16, TY_I32, TY_I64, TY_I8, TY_ISIZE,
     TY_PARAM, TY_U16,
-    TY_U32, TY_U64, TY_U8, TY_USIZE, TY_VOID, Token, TypeArg, Variant,
+    TY_U32, TY_U64, TY_U8, TY_USIZE, TY_VOID, Token, TypeArg, UnsafeSpan,
+    Variant,
     arena_at, arena_make, arena_push, cstr_eq, frost_arg_at, frost_arg_count,
     frost_byte_at, frost_byte_set, frost_die, frost_emit_char, frost_emit_close,
     frost_emit_int, frost_emit_open, frost_emit_str, frost_error,
@@ -178,8 +179,7 @@ TOK_KW_EXPORT :: 29
 TOK_KW_ENUM   :: 30
 TOK_KW_TEST   :: 31
 TOK_KW_UNSAFE :: 32
-// `safe extern fn`: an extern the author audited. This compiler does not
-// enforce the unsafe gate, so it only has to accept the marker.
+// `safe extern fn`: an extern the author audited, so calling it needs no block.
 TOK_KW_SAFE   :: 71
 TOK_LPAREN    :: 40
 TOK_RPAREN    :: 41
@@ -278,6 +278,8 @@ Sym :: struct {
     off: i64,
     len: i64,
     is_extern: i64,
+    // `safe extern fn`: audited, so a call needs no `unsafe` block.
+    is_safe: i64,
     ret_type: i64,
     params: i64,
     defined: i64,
@@ -430,6 +432,14 @@ LocalVar :: struct {
     ty: i64,
 }
 
+// The source span of one `unsafe { ... }`. The gate is a question about where a
+// node was written, and a name here is already an offset into one buffer, so a
+// span answers it without giving every node a flag of its own.
+UnsafeSpan :: struct {
+    start: i64,
+    end: i64,
+}
+
 // A growable, index-addressed arena over a single heap allocation. This is the
 // data-oriented allocator from docs/allocators.md, generic over its element:
 // arena_push appends and returns the element's index, arena_at turns an index
@@ -506,6 +516,10 @@ Parser :: struct {
     last_return_type: i64,
     no_struct_lit: bool,
     last_type_was_generic: i64,
+    // Where each `unsafe { ... }` was written, and how deep the parser is in
+    // one, so the gate can ask where a node came from.
+    unsafe_spans: Arena<UnsafeSpan>,
+    unsafe_depth: i64,
     moved: Arena<LocalVar>,
     label_id: i64,
     abi_windows: i64,

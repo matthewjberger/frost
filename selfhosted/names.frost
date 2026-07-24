@@ -7,6 +7,7 @@ import "cursor.frost"
 import "imports.frost"
 
 export append_node, array_element, array_index_of, array_length, array_of,
+    mark_safe,
     bytes_equal, const_value, digits_in, generic_index_for,
     intern_global, is_aggregate, is_array_ty, is_const, is_float, is_main_name,
     is_pointer, is_slice_ty, is_struct_ty,
@@ -161,7 +162,8 @@ intern_global :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         }
         arena_push(
             p.fns,
-            Sym { off = offset, len = length, is_extern = 0, ret_type = TY_I64,
+            Sym { off = offset, len = length, is_extern = 0, is_safe = 0,
+                ret_type = TY_I64,
                 params = 0 - 1, defined = 0, uses_ty = 0 - 1, cap_off = 0,
                 cap_len = 0 },
         )
@@ -182,6 +184,14 @@ mark_extern :: fn(mut p: Parser, fn_index: i64) {
     unsafe {
         entry : ^Sym = arena_at(p.fns, fn_index)
         entry^.is_extern = 1
+    }
+}
+
+// `safe extern fn`: the author vouched for this one, so its calls are not gated.
+mark_safe :: fn(mut p: Parser, fn_index: i64) {
+    unsafe {
+        entry : ^Sym = arena_at(p.fns, fn_index)
+        entry^.is_safe = 1
     }
 }
 
