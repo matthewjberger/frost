@@ -23,117 +23,125 @@ Options :: struct {
 }
 
 usage :: fn() {
-    frost_error("the Frost compiler\n\n")
-    frost_error("    frost [options] <file.frost>\n\n")
-    frost_error("    -o <path>     where to write the result\n")
-    frost_error("    -L <dir>      a directory to find imports under\n")
-    frost_error("    --emit-c      emit a C translation unit (the default)\n")
-    frost_error("    --emit-asm    emit x86-64 assembly\n")
-    frost_error("    --native      the same as --emit-asm\n")
-    frost_error("    --link        assemble and link an executable\n")
-    frost_error("    --test        build and run the file's `test` blocks\n")
-    frost_error("    -h, --help    this\n\n")
-    frost_error("Without -o the output goes to standard output. FROST_INPUT ")
-    frost_error("and\nFROST_BACKEND are read when the matching argument is ")
-    frost_error("absent.\n")
+    unsafe {
+        frost_error("the Frost compiler\n\n")
+        frost_error("    frost [options] <file.frost>\n\n")
+        frost_error("    -o <path>     where to write the result\n")
+        frost_error("    -L <dir>      a directory to find imports under\n")
+        frost_error("    --emit-c      emit a C translation unit (the default)\n")
+        frost_error("    --emit-asm    emit x86-64 assembly\n")
+        frost_error("    --native      the same as --emit-asm\n")
+        frost_error("    --link        assemble and link an executable\n")
+        frost_error("    --test        build and run the file's `test` blocks\n")
+        frost_error("    -h, --help    this\n\n")
+        frost_error("Without -o the output goes to standard output. FROST_INPUT ")
+        frost_error("and\nFROST_BACKEND are read when the matching argument is ")
+        frost_error("absent.\n")
+    }
 }
 
 // Two strings end to end, in memory the caller keeps. Command lines and derived
 // file names are the only strings this compiler builds rather than points into.
 join_two :: fn(first: ^i8, second: ^i8) -> ^i8 {
-    first_len := frost_str_len(first)
-    second_len := frost_str_len(second)
-    out := ptr_cast($i8, malloc(first_len + second_len + 1))
-    mut k : i64 = 0
-    while (k < first_len) {
-        frost_byte_set(out, k, frost_byte_at(first, k))
-        k = k + 1
+    unsafe {
+        first_len := frost_str_len(first)
+        second_len := frost_str_len(second)
+        out := ptr_cast($i8, malloc(first_len + second_len + 1))
+        mut k : i64 = 0
+        while (k < first_len) {
+            frost_byte_set(out, k, frost_byte_at(first, k))
+            k = k + 1
+        }
+        k = 0
+        while (k < second_len) {
+            frost_byte_set(out, first_len + k, frost_byte_at(second, k))
+            k = k + 1
+        }
+        frost_byte_set(out, first_len + second_len, 0)
+        out
     }
-    k = 0
-    while (k < second_len) {
-        frost_byte_set(out, first_len + k, frost_byte_at(second, k))
-        k = k + 1
-    }
-    frost_byte_set(out, first_len + second_len, 0)
-    out
 }
 
 // An argument beginning with `-` that nothing above claimed is a mistake worth
 // naming rather than a file name, since taking it as one produces a confusing
 // error about an unreadable file much later.
 looks_like_a_flag :: fn(text: ^i8) -> bool {
-    frost_str_len(text) > 0 && frost_byte_at(text, 0) == CH_MINUS
+    unsafe {
+        frost_str_len(text) > 0 && frost_byte_at(text, 0) == CH_MINUS
+    }
 }
 
 options_from_command_line :: fn() -> Options {
-    mut options := Options {
-        input = "",
-        output = "",
-        backend = 0 - 1,
-        link = 0,
-        testing = 0,
-        roots = arena_make($SearchRoot, 64),
-        help = 0,
-        ok = 1,
-    }
-    count := frost_arg_count()
-    mut index : i64 = 1
-    while (index < count) {
-        argument := frost_arg_at(index)
-        if (cstr_eq(argument, "-h") || cstr_eq(argument, "--help")) {
-            options.help = 1
-            return options
+    unsafe {
+        mut options := Options {
+            input = "",
+            output = "",
+            backend = 0 - 1,
+            link = 0,
+            testing = 0,
+            roots = arena_make($SearchRoot, 64),
+            help = 0,
+            ok = 1,
         }
-        if (cstr_eq(argument, "--emit-c")) {
-            options.backend = BACKEND_C
-        } else if (cstr_eq(argument, "--emit-asm")
-            || cstr_eq(argument, "--native")) {
-            options.backend = BACKEND_ASM
-        } else if (cstr_eq(argument, "--link")) {
-            options.link = 1
-        } else if (cstr_eq(argument, "--test")) {
-            // Running the tests means building an executable and running it,
-            // so there is no form of --test that does not also link.
-            options.testing = 1
-            options.link = 1
-        } else if (cstr_eq(argument, "-L")) {
-            index = index + 1
-            if (index >= count) {
-                frost_error("frost: -L needs a directory")
-                options.ok = 0
+        count := frost_arg_count()
+        mut index : i64 = 1
+        while (index < count) {
+            argument := frost_arg_at(index)
+            if (cstr_eq(argument, "-h") || cstr_eq(argument, "--help")) {
+                options.help = 1
                 return options
             }
-            add_root(options.roots, frost_arg_at(index))
-        } else if (cstr_eq(argument, "-o")) {
-            index = index + 1
-            if (index >= count) {
-                frost_error("frost: -o needs a path")
+            if (cstr_eq(argument, "--emit-c")) {
+                options.backend = BACKEND_C
+            } else if (cstr_eq(argument, "--emit-asm")
+                || cstr_eq(argument, "--native")) {
+                options.backend = BACKEND_ASM
+            } else if (cstr_eq(argument, "--link")) {
+                options.link = 1
+            } else if (cstr_eq(argument, "--test")) {
+                // Running the tests means building an executable and running it,
+                // so there is no form of --test that does not also link.
+                options.testing = 1
+                options.link = 1
+            } else if (cstr_eq(argument, "-L")) {
+                index = index + 1
+                if (index >= count) {
+                    frost_error("frost: -L needs a directory")
+                    options.ok = 0
+                    return options
+                }
+                add_root(options.roots, frost_arg_at(index))
+            } else if (cstr_eq(argument, "-o")) {
+                index = index + 1
+                if (index >= count) {
+                    frost_error("frost: -o needs a path")
+                    options.ok = 0
+                    return options
+                }
+                options.output = frost_arg_at(index)
+            } else if (looks_like_a_flag(argument)) {
+                frost_error("frost: unknown option '")
+                frost_error(argument)
+                frost_error("'")
                 options.ok = 0
                 return options
+            } else {
+                options.input = argument
             }
-            options.output = frost_arg_at(index)
-        } else if (looks_like_a_flag(argument)) {
-            frost_error("frost: unknown option '")
-            frost_error(argument)
-            frost_error("'")
-            options.ok = 0
-            return options
-        } else {
-            options.input = argument
+            index = index + 1
         }
-        index = index + 1
-    }
 
-    // The environment answers for whatever the arguments did not say, which is
-    // what keeps the fixpoint checks and the older callers working unchanged.
-    if (frost_str_len(options.input) == 0) {
-        options.input = frost_getenv("FROST_INPUT")
-    }
-    if (options.backend < 0) {
-        options.backend = BACKEND_C
-        if (cstr_eq(frost_getenv("FROST_BACKEND"), "asm")) {
-            options.backend = BACKEND_ASM
+        // The environment answers for whatever the arguments did not say, which is
+        // what keeps the fixpoint checks and the older callers working unchanged.
+        if (frost_str_len(options.input) == 0) {
+            options.input = frost_getenv("FROST_INPUT")
         }
+        if (options.backend < 0) {
+            options.backend = BACKEND_C
+            if (cstr_eq(frost_getenv("FROST_BACKEND"), "asm")) {
+                options.backend = BACKEND_ASM
+            }
+        }
+        options
     }
-    options
 }
