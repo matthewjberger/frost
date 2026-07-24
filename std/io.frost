@@ -11,39 +11,44 @@
 
 export print, print_int, print_char, print_str, print_line, print_int_line, print_str_line
 
+// `frost_emit_int` and `frost_emit_char` take a number and write bytes, so
+// there is nothing a caller can hand them that misbehaves: they are `safe` and
+// need no block at their call sites. `frost_emit_str` is not, because it reads
+// until a NUL and a `^i8` without one runs off the end, so it keeps the gate and
+// `print` is what vouches for the pointer.
 frost_emit_str :: extern fn(text: ^i8)
-frost_emit_int :: extern fn(value: i64)
-frost_emit_char :: extern fn(byte: i64)
+frost_emit_int :: safe extern fn(value: i64)
+frost_emit_char :: safe extern fn(byte: i64)
 
 // A string literal is a pointer to its bytes with a trailing NUL where `^i8` is
 // expected, so `print("hello")` works. A `str` value computed at run time is a
 // pointer and a length with no terminator, which is what `print_str` is for.
 //
-// The emit calls are extern, so each is unchecked and wrapped in `unsafe` here.
-// These functions are safe to call: the runtime writes bytes and returns, so
-// there is no pointer for a caller to get wrong except a `^i8` that is not
-// NUL-terminated, which only `print` and `print_line` can be handed and which a
-// string literal always satisfies.
+// The `unsafe` that remains is exactly the pointer: `print` and `print_line`
+// are what promise the `^i8` is NUL-terminated, which a string literal always
+// satisfies. Everything else writes a number and needs no block.
 print :: fn(text: ^i8) { unsafe { frost_emit_str(text) } }
 
-print_int :: fn(value: i64) { unsafe { frost_emit_int(value) } }
+print_int :: fn(value: i64) { frost_emit_int(value) }
 
-print_char :: fn(byte: i64) { unsafe { frost_emit_char(byte) } }
+print_char :: fn(byte: i64) { frost_emit_char(byte) }
 
 print_str :: fn(text: str) {
     mut i : i64 = 0
     while (i < str_len(text)) {
-        unsafe { frost_emit_char(text[i]) }
+        frost_emit_char(text[i])
         i = i + 1
     }
 }
 
 print_line :: fn(text: ^i8) {
-    unsafe { frost_emit_str(text)  frost_emit_char(10) }
+    unsafe { frost_emit_str(text) }
+    frost_emit_char(10)
 }
 
 print_int_line :: fn(value: i64) {
-    unsafe { frost_emit_int(value)  frost_emit_char(10) }
+    frost_emit_int(value)
+    frost_emit_char(10)
 }
 
 print_str_line :: fn(text: str) { print_str(text)  print_char(10) }

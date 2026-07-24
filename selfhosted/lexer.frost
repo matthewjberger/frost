@@ -67,6 +67,7 @@ classify_ident :: fn(src: ^i8, off: i64, len: i64) -> i64 {
     if (str_range_eq(src, off, len, "return")) { return TOK_KW_RETURN }
     if (str_range_eq(src, off, len, "struct")) { return TOK_KW_STRUCT }
     if (str_range_eq(src, off, len, "extern")) { return TOK_KW_EXTERN }
+    if (str_range_eq(src, off, len, "safe")) { return TOK_KW_SAFE }
     if (str_range_eq(src, off, len, "uses")) { return TOK_KW_USES }
     if (str_range_eq(src, off, len, "with")) { return TOK_KW_WITH }
     if (str_range_eq(src, off, len, "import")) { return TOK_KW_IMPORT }

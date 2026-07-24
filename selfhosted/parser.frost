@@ -1199,7 +1199,25 @@ parse_struct :: fn(mut p: Parser) {
         tparam_len := cur_len(p)
         advance(p)
         advance(p)
+        // The parameter's kind. Only `Type` is instantiable here: a value
+        // generic binds a number, and binding a number where a type belongs
+        // fails at instantiation rather than here, so say so at the parameter.
+        if (str_range_eq(p.src, cur_off(p), cur_len(p), "Type") == false) {
+            unsafe {
+                report_where(p.modules, p.src, cur_off(p))
+                frost_error("a value generic parameter is not supported yet")
+                frost_die()
+            }
+        }
         advance(p)
+        if (cur(p) == TOK_COMMA) {
+            unsafe {
+                report_where(p.modules, p.src, cur_off(p))
+                frost_error(
+                    "more than one generic parameter is not supported yet")
+                frost_die()
+            }
+        }
         advance(p)
         field_token := p.ti
         mut brace_depth : i64 = 0
@@ -1487,6 +1505,11 @@ parse_extern :: fn(mut p: Parser) -> i64 {
     name_length := cur_len(p)
     advance(p)
     advance(p)
+    // `safe extern fn` marks an extern as audited for the unsafe gate, which
+    // this compiler does not enforce, so the marker is accepted and skipped.
+    if (cur(p) == TOK_KW_SAFE) {
+        advance(p)
+    }
     advance(p)
     advance(p)
     fn_index := intern_global(p, name_offset, name_length)
@@ -1565,7 +1588,7 @@ parse_program :: fn(mut p: Parser) -> i64 {
                 parse_enum(p)
             } else if (third == TOK_KW_STRUCT || third == TOK_KW_LINEAR) {
                 parse_struct(p)
-            } else if (third == TOK_KW_EXTERN) {
+            } else if (third == TOK_KW_EXTERN || third == TOK_KW_SAFE) {
                 item := parse_extern(p)
                 if (head == (0 - 1)) {
                     head = item

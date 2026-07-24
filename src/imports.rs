@@ -793,6 +793,7 @@ impl Renamer {
                 name,
                 params,
                 return_type,
+                ..
             } => {
                 if let Some(mangled) = self.renames.get(name.as_str()) {
                     *name = mangled.clone();

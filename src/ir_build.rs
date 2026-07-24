@@ -171,6 +171,7 @@ fn build_module_inner(
                 name,
                 params,
                 return_type,
+                ..
             } => {
                 let return_type = return_type.clone().unwrap_or(Type::Void);
                 let return_layout = builder.c_layout(&return_type);
@@ -545,6 +546,7 @@ impl IrBuilder {
                     name,
                     params,
                     return_type,
+                    ..
                 } => {
                     self.signatures.insert(
                         name.clone(),

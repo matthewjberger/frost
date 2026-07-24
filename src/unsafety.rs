@@ -42,9 +42,16 @@ pub fn check_unsafety(statements: &[Spanned<Statement>]) -> Result<()> {
         match &statement.node {
             // An extern is the built-in unsafe function: calling C is
             // unchecked, so a call to one is gated exactly as a call to a
-            // user's `unsafe fn` is.
-            Statement::Extern { name, .. } => {
-                checker.externs.insert(name.clone());
+            // user's `unsafe fn` is. Unless it is declared `safe extern fn`,
+            // which is the author saying this one was audited and cannot
+            // corrupt memory. Putting that assertion on the declaration keeps
+            // `unsafe` blocks to what can actually go wrong: a call that only
+            // writes bytes and returns is not a place to look for corruption,
+            // and listing it there makes the list worth less.
+            Statement::Extern { name, safe, .. } => {
+                if !safe {
+                    checker.externs.insert(name.clone());
+                }
             }
             Statement::Constant(name, Expression::UnsafeFn(_)) => {
                 checker.unsafe_fns.insert(name.clone());
