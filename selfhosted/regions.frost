@@ -6,7 +6,7 @@ import "imports.frost"
 import "names.frost"
 import "emit_asm.frost"
 
-export check_calls, check_regions
+export check_calls, check_regions, check_unsafety
 
 name_listed :: fn(mut table: Arena<LocalVar>, src: ^i8, off: i64, len: i64)
     -> bool {
@@ -237,6 +237,77 @@ check_regions :: fn(mut p: Parser) {
             }
             i = i + 1
         }
+    }
+}
+
+// The unsafety gate. Every other check here proves something about a program it
+// can see all of. Three operations reach memory none of that covers, and an
+// `unsafe` block is where they are allowed:
+//
+//   - reading or writing through a raw pointer, `p^` and `p[i]`
+//   - `ptr_cast`, which says the bytes at an address are a different type
+//   - calling an `extern fn`, which is arbitrary C, unless it was declared
+//     `safe extern fn` and so audited once at its declaration
+//
+// The point is not that the block enables anything: it is that the three are
+// refused outside one, which makes `unsafe` the complete list of places to look
+// when something has corrupted memory. A node carries where it was written and
+// an `unsafe` block is a span of source, so the question is whether the one is
+// inside the other.
+check_unsafety :: fn(mut p: Parser) {
+    unsafe {
+        mut i : i64 = 0
+        while (i < p.arena.count) {
+            node : ^Node = arena_at(p.arena, i)
+            kind := node^.kind
+            mut gated : i64 = 0
+            mut what : ^i8 = ""
+            if (kind == NODE_DEREF) {
+                gated = 1
+                what = "reading through a raw pointer"
+            }
+            if (kind == NODE_PTR_CAST) {
+                gated = 1
+                what = "ptr_cast"
+            }
+            // An array or a slice knows its own length, so indexing one is
+            // checked; only a raw pointer is not.
+            if (kind == NODE_INDEX) {
+                if (is_pointer(type_of(p, node^.a))) {
+                    gated = 1
+                    what = "indexing a raw pointer"
+                }
+            }
+            if (kind == NODE_CALL) {
+                sym : ^Sym = arena_at(p.fns, node^.val)
+                if (sym^.is_extern == 1 && sym^.is_safe == 0) {
+                    gated = 1
+                    what = "calling a C function"
+                }
+            }
+            if (gated == 1 && inside_unsafe(p, node^.pos) == 0) {
+                report_where(p.modules, p.src, node^.pos)
+                frost_error(what)
+                frost_error(" is unchecked, so it belongs in an `unsafe` block")
+                frost_die()
+            }
+            i = i + 1
+        }
+    }
+}
+
+// Whether a source position falls in some `unsafe { ... }` the parser recorded.
+inside_unsafe :: fn(mut p: Parser, pos: i64) -> i64 {
+    unsafe {
+        mut i : i64 = 0
+        while (i < p.unsafe_spans.count) {
+            span : ^UnsafeSpan = arena_at(p.unsafe_spans, i)
+            if (pos >= span^.start && pos < span^.end) {
+                return 1
+            }
+            i = i + 1
+        }
+        0
     }
 }
 

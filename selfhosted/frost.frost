@@ -88,7 +88,7 @@ main :: fn() -> i64 {
             }
 
             bump :: fn(b: ^Point) {
-                b^.x = b^.x + 1
+                unsafe { b^.x = b^.x + 1 }
             }
 
             classify :: fn(n: i64) -> i64 {
@@ -110,7 +110,7 @@ main :: fn() -> i64 {
             }
 
             box_get :: fn(b: Box<$T>) -> $T {
-                b^.value
+                unsafe { b^.value }
             }
 
             main :: fn() -> i64 {
@@ -127,15 +127,17 @@ main :: fn() -> i64 {
                 ptr := ptr_to(p)
                 bump(ptr)
                 print p.x
-                print ptr^.y
-                print ptr[0].x
-                q := ptr_cast($Point, ptr)
-                print q^.x
+                unsafe {
+                    print ptr^.y
+                    print ptr[0].x
+                    q := ptr_cast($Point, ptr)
+                    print q^.x
+                }
                 print sizeof(Point)
                 print classify(0)
                 print classify(1)
                 print classify(7)
-                print strlen(\"hello\")
+                unsafe { print strlen(\"hello\") }
                 print ANSWER
                 h := Holder { item = box_make($i64, 77) }
                 print box_get(h.item)
@@ -168,6 +170,8 @@ main :: fn() -> i64 {
             last_return_type = 0,
             no_struct_lit = false,
             last_type_was_generic = 0,
+            unsafe_spans = arena_make($UnsafeSpan, 1024),
+            unsafe_depth = 0,
             moved = arena_make($LocalVar, 4096),
             label_id = 0,
             abi_windows = 0,
@@ -223,6 +227,12 @@ main :: fn() -> i64 {
         collect_type_args(parser)
         record_mono_rets(parser)
         check_calls(parser)
+        // On by default, the same as the bootstrap. FROST_CHECK_UNSAFE=0 turns
+        // it off, for compiling code that has not marked its unchecked
+        // operations yet.
+        if (cstr_eq(frost_getenv("FROST_CHECK_UNSAFE"), "0") == false) {
+            check_unsafety(parser)
+        }
         check_regions(parser)
 
         // Where the emitted text goes. A link needs it in a file whatever the

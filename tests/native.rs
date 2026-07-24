@@ -803,6 +803,7 @@ fn self_hosted_emits(
     let compiler = build_self_hosted_compiler(name)?;
     let mut command = Command::new(&compiler);
     command.env("FROST_INPUT", input);
+    command.env("FROST_CHECK_UNSAFE", "0");
     if let Some(backend) = backend {
         command.env("FROST_BACKEND", backend);
     }
@@ -1513,6 +1514,7 @@ fn self_hosting_is_a_fixpoint() {
         return;
     };
     let gen2 = Command::new(&gen1_exe)
+        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_INPUT", &source_file)
         .output()
         .unwrap();
@@ -1542,6 +1544,7 @@ fn native_self_hosting_is_a_fixpoint() {
     let emit_self = |exe: &PathBuf, stage: &str| -> String {
         let emit = Command::new(exe)
             .env("FROST_BACKEND", "asm")
+            .env("FROST_CHECK_UNSAFE", "0")
             .env("FROST_INPUT", &source)
             .output()
             .unwrap();
@@ -1614,6 +1617,7 @@ fn self_hosted_native_backend_emits_working_assembly() {
 
     let emit = Command::new(&compiler)
         .env("FROST_BACKEND", "asm")
+        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_INPUT", &input)
         .output()
         .unwrap();
@@ -1663,6 +1667,7 @@ fn selfhosted_native_output(name: &str, source: &str) -> Option<String> {
 
     let emit = Command::new(&compiler)
         .env("FROST_BACKEND", "asm")
+        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_INPUT", &input)
         .output()
         .unwrap();
@@ -1811,6 +1816,7 @@ fn self_hosted_rejects(name: &str, source: &str) -> Option<String> {
     let input = directory.join(format!("frost_mfck_input_{name}.frost"));
     std::fs::write(&input, source).unwrap();
     let run = Command::new(&compiler)
+        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_INPUT", &input)
         .output()
         .unwrap();
@@ -1823,6 +1829,68 @@ fn self_hosted_rejects(name: &str, source: &str) -> Option<String> {
         "expected the self-hosted compiler to reject the program"
     );
     Some(String::from_utf8_lossy(&run.stderr).to_string())
+}
+
+// The self-hosted compiler enforces the unsafety gate rather than only parsing
+// the markers, so a program it accepts has had the same thing checked of it that
+// the bootstrap checks. The helpers above turn the gate off, because most of
+// those programs predate it and are about something else; this one leaves it on.
+#[test]
+fn self_hosted_enforces_the_unsafe_gate() {
+    let Some(compiler) = build_self_hosted_compiler("gate") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    let check = |name: &str, source: &str| -> (bool, String) {
+        let input = directory.join(format!("frost_gate_{name}.frost"));
+        std::fs::write(&input, source).unwrap();
+        let run = Command::new(&compiler)
+            .env("FROST_INPUT", &input)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&input);
+        (
+            run.status.success(),
+            String::from_utf8_lossy(&run.stderr).to_string(),
+        )
+    };
+
+    let (ok, message) = check(
+        "extern",
+        "puts :: extern fn(s: ^i8) -> i64\nmain :: fn() -> i64 { puts(\"hi\")  0 }\n",
+    );
+    assert!(!ok, "a bare C call should be gated");
+    assert!(
+        message.contains("calling a C function is unchecked"),
+        "expected the gate to name the call, got:\n{message}"
+    );
+
+    let (ok, message) = check(
+        "deref",
+        "main :: fn() -> i64 { mut x : i64 = 1  p := ptr_to(x)  p^ }\n",
+    );
+    assert!(!ok, "a bare raw-pointer read should be gated");
+    assert!(
+        message.contains("reading through a raw pointer is unchecked"),
+        "expected the gate to name the read, got:\n{message}"
+    );
+
+    // `safe extern fn` is the audit, so this one stands without a block. An
+    // array knows its own length, so indexing it was never unchecked.
+    let (ok, _) = check(
+        "safe",
+        "puts :: safe extern fn(s: ^i8) -> i64\n\
+         main :: fn() -> i64 { puts(\"hi\")  mut xs : [3]i64 = [1,2,3]  xs[1] }\n",
+    );
+    assert!(ok, "a safe extern and an array index need no block");
+
+    let (ok, _) = check(
+        "wrapped",
+        "main :: fn() -> i64 { mut x : i64 = 1  p := ptr_to(x)  unsafe { p^ } }\n",
+    );
+    assert!(ok, "the same read inside a block is allowed");
+
+    let _ = std::fs::remove_file(&compiler);
 }
 
 // A diagnostic names the file, the line and the column it is about, not just
@@ -2170,6 +2238,7 @@ fn self_hosted_resolves_imports() {
     .unwrap();
 
     let emit = Command::new(&compiler)
+        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_INPUT", &root)
         .output()
         .unwrap();
@@ -2214,6 +2283,7 @@ fn self_hosted_survives_an_import_cycle() {
     .unwrap();
 
     let emit = Command::new(&compiler)
+        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_INPUT", &root)
         .output()
         .unwrap();
@@ -2745,6 +2815,7 @@ fn self_hosted_keeps_unexported_names_private() {
     std::fs::write(&root, program).unwrap();
 
     let emit = Command::new(&compiler)
+        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_INPUT", &root)
         .output()
         .unwrap();
@@ -2766,6 +2837,7 @@ fn self_hosted_keeps_unexported_names_private() {
     )
     .unwrap();
     let refused = Command::new(&compiler)
+        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_INPUT", &root)
         .output()
         .unwrap();
