@@ -4391,6 +4391,58 @@ fn bootstrap_columns_container_both_backends() {
     assert_eq!(c, "11\n100\n120\n1\n");
 }
 
+// `inline fn`, compiled by the self-hosted compiler. The marker is a no-op on
+// the native (asm) backend, which does not inline, so the program runs and
+// answers exactly as an ordinary function would.
+const SELFHOSTED_INLINE: &str = concat!(
+    "square :: inline fn(x: i64) -> i64 { x * x }\n",
+    "main :: fn() -> i64 { print square(7)  0 }\n",
+);
+
+#[test]
+fn self_hosted_inline_marker_runs_on_native() {
+    let Some(output) = selfhosted_native_output("inline", SELFHOSTED_INLINE)
+    else {
+        return;
+    };
+    assert_eq!(output, "49\n");
+}
+
+// The C backend turns `inline fn` into a forced-inline definition. The
+// self-hosted compiler's default backend is C, so its emitted translation unit
+// carries the always_inline qualifier, on both the prototype and the
+// definition, where an ordinary function carries neither.
+#[test]
+fn self_hosted_inline_emits_c_qualifier() {
+    let Some(compiler) = build_self_hosted_compiler("inline_c") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_inline_c.frost");
+    std::fs::write(&input, SELFHOSTED_INLINE).unwrap();
+    let emit = Command::new(&compiler)
+        .env("FROST_CHECK_UNSAFE", "0")
+        .env("FROST_INPUT", &input)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&compiler);
+    let _ = std::fs::remove_file(&input);
+    assert!(
+        emit.status.success(),
+        "self-hosted C backend refused the inline program:\n{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let emitted = String::from_utf8_lossy(&emit.stdout);
+    let inline_definitions = emitted
+        .matches("static inline __attribute__((always_inline))")
+        .count();
+    assert!(
+        inline_definitions >= 2,
+        "emitted C did not force the inline function on both its prototype and \
+         definition:\n{emitted}"
+    );
+}
+
 // A runtime function pointer: a higher-order function taking a `fn(i64) -> i64`
 // and calling through it, with a function's name passed as its address. A
 // single function pointer is a closed call target, not a vtable.

@@ -106,7 +106,7 @@ Reserved words of the specified language:
 
 ```
 fn struct enum match case if else while for in mut return break continue
-defer extern import linear distinct type unsafe sizeof
+defer extern inline import linear distinct type unsafe sizeof
 ```
 
 Reserved primitive type names, each its own token:
@@ -329,6 +329,12 @@ Meters :: distinct i64                // distinct type
 ```
 
 A `linear` qualifier may precede `struct` or `enum` (chapter 9).
+
+An `inline` qualifier may precede `fn` (`f :: inline fn(...) -> R { ... }`). It
+asks the C backend to force the function inline (`static inline
+__attribute__((always_inline))`); the assembly backend, which does not inline,
+ignores it. It changes no semantics, only whether the C compiler is obliged to
+fold the call rather than merely permitted to.
 
 ### 5.3 Externs and imports
 

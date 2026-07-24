@@ -1203,6 +1203,7 @@ impl<'a> Parser<'a> {
                             | Token::True
                             | Token::False
                             | Token::Function
+                            | Token::Inline
                             | Token::Unsafe
                             | Token::LeftBracket
                             | Token::LeftBrace
@@ -1569,6 +1570,17 @@ impl<'a> Parser<'a> {
                 return_type,
                 safe,
             })
+        } else if matches!(self.peek_nth(0), Token::Inline) {
+            // `name :: inline fn(...)`: the inline hint is the self-hosted C
+            // backend's to honor, where it forces the fold. The bootstrap is the
+            // oracle and its native path is Cranelift, which does not inline, so
+            // it accepts the keyword and emits an ordinary function.
+            self.read_token();
+            let expression = self.parse_expression(Precedence::Lowest)?;
+            if matches!(self.peek_nth(0), Token::Semicolon) {
+                self.read_token();
+            }
+            Ok(Statement::Constant(identifier, expression))
         } else {
             let expression = self.parse_expression(Precedence::Lowest)?;
             if matches!(self.peek_nth(0), Token::Semicolon) {

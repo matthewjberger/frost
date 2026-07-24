@@ -973,6 +973,17 @@ record_params :: fn(mut p: Parser, head: i64) {
     }
 }
 
+// The linkage qualifier a `inline fn` gets in C: static so it needs no external
+// definition and always_inline so the C compiler folds it rather than merely
+// being allowed to. A prototype and its definition both carry it, or the two
+// would disagree on linkage. A function not marked inline gets nothing.
+emit_inline_qualifier :: fn(mut p: Parser, fn_index: i64) {
+    sym := arena_at(p.fns, fn_index)
+    if (sym.is_inline == 1) {
+        emit_text("static inline __attribute__((always_inline)) ")
+    }
+}
+
 emit_prototypes :: fn(mut p: Parser, head: i64) {
     mut id := head
     while (id != (0 - 1)) {
@@ -987,6 +998,7 @@ emit_prototypes :: fn(mut p: Parser, head: i64) {
         if (kind == NODE_FUNC && (is_main != 1 || p.testing == 1)
             && (is_main != 2 || p.testing == 1)) {
             sym := arena_at(p.fns, fn_index)
+            emit_inline_qualifier(p, fn_index)
             if (sym.ret_type == TY_VOID) {
                 emit_text("int64_t")
             } else {
@@ -1214,6 +1226,7 @@ emit_function :: fn(mut p: Parser, id: i64) {
         // struct rather than everything answering as an integer. A function
         // that declares nothing still lowers to int64_t, since the body falls
         // through to `return 0`.
+        emit_inline_qualifier(p, fn_index)
         if (sym.ret_type == TY_VOID) {
             emit_text("int64_t")
         } else {
@@ -1275,6 +1288,7 @@ emit_mono_function :: fn(mut p: Parser, id: i64, arg: i64, xarg_start: i64,
     begin_provider(p, fn_index)
     // A function that answers with nothing still lowers to int64_t, since the
     // body falls through to `return 0`, exactly as a non-generic one does.
+    emit_inline_qualifier(p, fn_index)
     if (ret == TY_VOID) {
         emit_text("int64_t")
     } else {
@@ -1294,6 +1308,7 @@ emit_mono_prototype :: fn(mut p: Parser, id: i64, arg: i64, xarg_start: i64,
     node := arena_at(p.arena, id)
     fn_index := node.val
     params := node.b
+    emit_inline_qualifier(p, fn_index)
     if (ret == TY_VOID) {
         emit_text("int64_t")
     } else {

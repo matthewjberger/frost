@@ -27,6 +27,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     TOK_KW_REF, TOK_KW_SAFE, TOK_KW_TEST, TOK_KW_UNSAFE,
     TOK_KW_FALSE, TOK_KW_FN, TOK_KW_IF, TOK_KW_IMPORT, TOK_KW_LET,
     TOK_KW_LINEAR, TOK_KW_MATCH, TOK_KW_MOVE, TOK_KW_MUT, TOK_KW_PRINT,
+    TOK_KW_INLINE,
     TOK_KW_RETURN, TOK_KW_STRUCT, TOK_KW_TRUE, TOK_KW_USES, TOK_KW_WHILE,
     TOK_KW_WITH, TOK_LBRACE, TOK_LBRACKET, TOK_LE, TOK_LPAREN, TOK_LT,
     TOK_MINUS, TOK_NE, TOK_OROR, TOK_PERCENT, TOK_PLUS, TOK_QUESTION,
@@ -270,6 +271,9 @@ TOK_KW_UNSAFE :: 32
 // `safe extern fn`: an extern the author audited, so calling it needs no block.
 TOK_KW_SAFE   :: 71
 TOK_KW_REF    :: 72
+// `inline fn`: a hint that the C backend turns into a forced inline. The
+// assembly backend ignores it, since it does not inline.
+TOK_KW_INLINE :: 73
 TOK_LPAREN    :: 40
 TOK_RPAREN    :: 41
 TOK_LBRACE    :: 42
@@ -372,6 +376,9 @@ Sym :: struct {
     is_extern: i64,
     // `safe extern fn`: audited, so a call needs no `unsafe` block.
     is_safe: i64,
+    // `inline fn`: the C backend forces this one inline; the assembly backend
+    // ignores it.
+    is_inline: i64,
     ret_type: i64,
     params: i64,
     defined: i64,
