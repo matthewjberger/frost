@@ -1088,6 +1088,67 @@ fn self_hosted_runs_test_blocks() {
     let _ = std::fs::remove_file(&compiler);
 }
 
+// The whole point of the standard library absorbing the unsafe floor: a program
+// that uses vec, sort, format, strings and io compiles under the unsafety gate
+// with no `unsafe` of its own. The containers' raw pointers and FFI are wrapped
+// in their modules, so nothing above them is unchecked.
+#[test]
+fn a_program_using_std_is_clean_under_the_unsafe_gate() {
+    if !linker_available() {
+        return;
+    }
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let directory = std::env::temp_dir().join("frost_gate_std");
+    let _ = std::fs::create_dir_all(&directory);
+    let source = directory.join("uses_std.frost");
+    std::fs::write(
+        &source,
+        "import \"io.frost\"\n\
+         import \"vec.frost\"\n\
+         import \"sort.frost\"\n\
+         import \"format.frost\"\n\
+         import \"strings.frost\"\n\
+         asc :: fn(a: i64, b: i64) -> bool { a < b }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut v := vec_new($i64, 4)\n\
+         \x20   seed := [5, 2, 9, 1, 7]\n\
+         \x20   mut i : i64 = 0\n\
+         \x20   while (i < 5) { vec_push($i64, v, seed[i])  i = i + 1 }\n\
+         \x20   sort_vec($i64, $asc, v)\n\
+         \x20   mut b := builder_new(16)\n\
+         \x20   mut j : i64 = 0\n\
+         \x20   while (j < vec_len($i64, v)) {\n\
+         \x20       builder_int(b, vec_get($i64, v, j))  builder_byte(b, 32)  j = j + 1\n\
+         \x20   }\n\
+         \x20   print_str_line(builder_str(b))\n\
+         \x20   if (str_eq(\"frost\", \"frost\")) { print_line(\"ok\") }\n\
+         \x20   builder_free(b)  vec_free($i64, v)  0\n}\n",
+    )
+    .unwrap();
+    let exe = directory.join(format!("uses_std{}", std::env::consts::EXE_SUFFIX));
+    let build = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .env("FROST_CHECK_UNSAFE", "1")
+        .arg("-L")
+        .arg(root.join("std"))
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe)
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "a std program was rejected by the unsafe gate:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&exe).output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"),
+        "1 2 5 7 9 \nok\n"
+    );
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
 // The standard library, compiled and run by the Frost compiler through both
 // backends. It is the largest program written in the language that the compiler
 // did not write itself, and its `test` blocks are what say the answers are right
