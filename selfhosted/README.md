@@ -30,9 +30,9 @@ Not a toy subset. It checks its own programs rather than deferring to whatever
 compiles its output, which it has to, because through the assembly backend
 nothing downstream would catch a mistake.
 
-- **Types and layout.** `i64`, `i8`, `u8`, `bool`, pointers `^T`, structs
-  passed and returned by value, and `e^`, `e[i]`, `ptr_to`, `ptr_cast`,
-  `sizeof`.
+- **Types and layout.** `i64`, `i8`, `u8`, `bool`, `str`, pointers `^T`, fixed
+  arrays `[N]T`, slices `[]T`, `Handle<T>`, structs passed and returned by
+  value, and `e^`, `e[i]`, `ptr_to`, `ptr_cast`, `sizeof`.
 - **Ownership and linearity.** Use after move, and `linear` values that must be
   consumed exactly once, with a read parameter borrowing and `move` consuming.
 - **Generics by monomorphization** over `$T`, on structs and functions,
@@ -43,7 +43,11 @@ nothing downstream would catch a mistake.
   it.
 - **Failure sets.** `-> T ! E` and `?`.
 - **Imports.** `import "path"` joins another file's declarations to this one.
-- **`extern fn`** for C linkage, which is how it does its own IO.
+- **`extern fn`** for C linkage, which is how it does its own IO, and
+  `safe extern fn` for one audited not to need an `unsafe` block at its calls.
+- **`test` blocks**, run by `--test`, which reports each test and summarises.
+- **Diagnostics carrying a file, line and column**, since a compiler that
+  refuses a program owes you the position.
 
 Both backends emit from the same checked program: C through
 `frost_emit_*` helpers, or x86-64 assembly directly.
@@ -51,21 +55,38 @@ Both backends emit from the same checked program: C through
 ## What is not here yet
 
 The target is the full language, so everything below is work waiting rather than
-a decision.
+a decision. Each line was checked by compiling a program that uses the feature,
+rather than from memory, because this list had drifted from the compiler once
+already.
 
-- **`str`**, the only scalar type still missing.
-- **Arrays and slices**, so a fixed buffer is a `malloc` and a pointer.
-- **Value generics** (`$N: usize`) and compile-time function arguments (`$f`),
-  since a template here carries one type parameter rather than a list.
-- **Generic enums**, **handles and pools**, **distinct types**.
+- **A function may not be named after a keyword.** `print` is a statement
+  keyword here, so `std/io.frost`, which exports a function called `print`,
+  cannot be compiled by this compiler at all. Retiring the `print` statement in
+  favour of the library function is what unblocks the standard library, and is
+  the single change that buys the most.
+- **Value generics** (`$N: usize`) and **more than one generic parameter**,
+  since a template here carries one type parameter rather than a list. This is
+  what `std/slab.frost` needs.
+- **Generic enums.**
+- **`distinct` types.**
+- **Compile-time function arguments** (`$f`), and calling through a function
+  **pointer held in a parameter**: `f(x)` reads as a call to a function named
+  `f` rather than through the value.
 - **Callbacks with a typed context.**
 - **C functions returning a struct by value**, which needs the per-target ABI
-  classification in `src/c_abi.rs`.
-- **`test` blocks**, so a file carrying one does not compile.
-- **Diagnostics with a file, line and column.** Errors here have none.
+  classification in `src/c_abi.rs`. The declaration parses; the ABI does not.
 - **Module search paths**, so the standard library cannot be imported by name.
 - **Speed parity**: parallel code generation, separate compilation,
-  `--incremental`.
+  `--incremental`. The front end is already fast; these are what the bootstrap
+  has and this does not.
+
+Each unsupported form above is refused with a position rather than misparsed:
+they used to run into the function parser and die inside the arena with an
+out-of-range index, far from the source that caused it.
+
+What the earlier version of this list got wrong, since the same drift is easy to
+repeat: `str`, arrays, slices, `Handle<T>`, `test` blocks, and diagnostics
+carrying a file, line and column are all present and were listed as missing.
 
 ## How it works
 
