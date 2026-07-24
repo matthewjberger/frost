@@ -703,8 +703,14 @@ emit_asm_array_lit :: fn(mut p: Parser, id: i64) {
             enode : ^Node = arena_at(p.arena, entry)
             emit_asm_expr(p, enode^.a)
             emit_asm_coerce(p, enode^.a, element)
-            asm("movq %rax, %r11")
-            emit_asm_store_to(p, element, slot + at, "(%rbp)")
+            if (is_aggregate(element)) {
+                asm("movq %rax, %r11")
+                asm_i("leaq ", slot + at, "(%rbp), %r10")
+                emit_asm_copy(type_size(p, element))
+            } else {
+                asm("movq %rax, %r11")
+                emit_asm_store_to(p, element, slot + at, "(%rbp)")
+            }
             at = at + stride
             entry = enode^.next
         }
