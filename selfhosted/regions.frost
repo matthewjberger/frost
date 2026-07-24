@@ -6,7 +6,177 @@ import "imports.frost"
 import "names.frost"
 import "emit_asm.frost"
 
-export check_calls, check_regions, check_unsafety
+export check_calls, check_frame_escapes, check_regions, check_unsafety
+
+// The frame-escape check. A borrow, a pointer or a slice a function answers
+// with may not name storage that dies when the call returns: a local declared
+// in the function, or a value built inside it. A `ref` or `ptr_to` into an
+// arena or a struct a parameter handed in is fine, since that storage outlives
+// the call; one into a local is not. This is the frame counterpart of the
+// region check, and together they hold every returnable borrow to storage that
+// lives at least as long as it does.
+//
+// A type that names storage it does not own: a raw pointer, a borrow (both are
+// indirect) or a slice.
+is_borrowed_view :: fn(mut p: Parser, ty: i64) -> bool {
+    if (is_pointer(ty)) {
+        return true
+    }
+    is_array_ty(ty) && is_slice_ty(p, ty)
+}
+
+// Whether a place is rooted at a local of the function being checked, walking
+// down through fields, indexes and dereferences to the name it starts at.
+frame_rooted_here :: fn(mut p: Parser, id: i64) -> bool {
+    if (id == (0 - 1)) {
+        return false
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NODE_VAR) {
+        return name_listed(p.frame_storage, p.src, node.val, node.c)
+    }
+    if (kind == NODE_FIELD || kind == NODE_INDEX || kind == NODE_DEREF
+        || kind == NODE_ADDROF || kind == NODE_REF) {
+        return frame_rooted_here(p, node.a)
+    }
+    false
+}
+
+// Whether a value points into this frame: an address or borrow taken of storage
+// here, a binding already known to hold one, or, when the function answers with
+// a view, a view of storage built here.
+frame_points_into :: fn(mut p: Parser, id: i64) -> bool {
+    if (id == (0 - 1)) {
+        return false
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NODE_ADDROF || kind == NODE_REF) {
+        return frame_rooted_here(p, node.a)
+    }
+    if (kind == NODE_VAR) {
+        if (name_listed(p.frame_bound, p.src, node.val, node.c)) {
+            return true
+        }
+        return p.frame_answers == 1
+            && name_listed(p.frame_materialized, p.src, node.val, node.c)
+    }
+    if (kind == NODE_INDEX || kind == NODE_FIELD || kind == NODE_PTR_CAST
+        || kind == NODE_SLICE_FROM) {
+        return frame_points_into(p, node.a)
+    }
+    false
+}
+
+// Whether a value is a view of storage built here, which is what makes a slice
+// over a local array escape while a slice handed in does not.
+frame_views_this :: fn(mut p: Parser, id: i64) -> bool {
+    if (id == (0 - 1)) {
+        return false
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NODE_VAR) {
+        if (name_listed(p.frame_materialized, p.src, node.val, node.c)) {
+            return true
+        }
+        return name_listed(p.frame_bound, p.src, node.val, node.c)
+    }
+    if (kind == NODE_INDEX || kind == NODE_FIELD) {
+        return frame_views_this(p, node.a)
+    }
+    false
+}
+
+// Whether a binding's value is storage built here rather than one handed in: an
+// array or a struct written out lands in this frame.
+frame_materializes :: fn(mut p: Parser, id: i64) -> bool {
+    node := arena_at(p.arena, id)
+    node.kind == NODE_ARRAY_LIT || node.kind == NODE_STRUCT_LIT
+}
+
+frame_escape :: fn(mut p: Parser, pos: i64, how: ^i8) {
+    report_where(p.modules, p.src, pos)
+    report("a pointer into this frame is ")
+    report_cstr(how)
+    report("; the storage it names dies when the call returns")
+    frost_die()
+}
+
+frame_check_block :: fn(mut p: Parser, head: i64, root: i64) {
+    mut id := head
+    while (id != (0 - 1)) {
+        node := arena_at(p.arena, id)
+        kind := node.kind
+        next_id := node.next
+        if (kind == NODE_LET) {
+            value := node.a
+            annotation := node.b
+            mut views_frame : bool = false
+            if (annotation != (0 - 1) && is_borrowed_view(p, annotation)) {
+                views_frame = frame_views_this(p, value)
+            }
+            if (frame_points_into(p, value) || views_frame) {
+                list_name(p.frame_bound, node.val, node.c)
+            }
+            if (frame_materializes(p, value)) {
+                list_name(p.frame_materialized, node.val, node.c)
+            }
+            list_name(p.frame_storage, node.val, node.c)
+        }
+        if (kind == NODE_RETURN) {
+            if (frame_points_into(p, node.a)) {
+                frame_escape(p, node.pos, "returned")
+            }
+        }
+        // Writing one into a place the call cannot see hands it to the caller
+        // just as returning it does. A place rooted in this frame's own storage
+        // dies with the frame, so it may hold one.
+        if (kind == NODE_ASSIGN) {
+            if (frame_points_into(p, node.b)
+                && frame_rooted_here(p, node.a) == false) {
+                frame_escape(p, node.pos, "stored where the call cannot see it")
+            }
+        }
+        if (kind == NODE_IF) {
+            frame_check_block(p, node.b, root)
+            frame_check_block(p, node.val, root)
+        }
+        if (kind == NODE_WHILE) {
+            frame_check_block(p, node.b, 0)
+        }
+        if (kind == NODE_WITH) {
+            frame_check_block(p, node.a, 0)
+        }
+        // A body's last statement, when it is an expression, is its answer.
+        if (kind == NODE_EXPRSTMT && root == 1 && next_id == (0 - 1)) {
+            if (frame_points_into(p, node.a)) {
+                frame_escape(p, node.pos, "the block's value")
+            }
+        }
+        id = next_id
+    }
+}
+
+check_frame_escapes :: fn(mut p: Parser) {
+    mut i : i64 = 0
+    while (i < p.arena.count) {
+        node := arena_at(p.arena, i)
+        if (node.kind == NODE_FUNC) {
+            sym := arena_at(p.fns, node.val)
+            p.frame_storage.count = 0
+            p.frame_bound.count = 0
+            p.frame_materialized.count = 0
+            p.frame_answers = 0
+            if (is_borrowed_view(p, sym.ret_type)) {
+                p.frame_answers = 1
+            }
+            frame_check_block(p, node.a, 1)
+        }
+        i = i + 1
+    }
+}
 
 name_listed :: fn(mut table: Arena<LocalVar>, src: ^i8, off: i64, len: i64)
     -> bool {
