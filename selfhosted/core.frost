@@ -41,7 +41,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     report_cstr,
     frost_run_command, frost_str_len, malloc, SearchRoot, add_root
 
-malloc          :: extern fn(size: i64) -> ^u8
+malloc          :: safe extern fn(size: i64) -> ^u8
 frost_byte_at   :: extern fn(s: ^i8, i: i64) -> i64
 frost_str_len   :: extern fn(s: ^i8) -> i64
 // Emits a counted run of bytes. The read is bounded by the length, so the one
@@ -111,10 +111,10 @@ report_cstr :: fn(s: ^i8) {
 // The command line, and the two things a compiler does with the world once it
 // has read one: put its output somewhere, and run the tool that finishes the
 // build. Emitted output goes to standard output until a file is opened for it.
-frost_arg_count   :: extern fn() -> i64
-frost_arg_at      :: extern fn(index: i64) -> ^i8
+frost_arg_count   :: safe extern fn() -> i64
+frost_arg_at      :: safe extern fn(index: i64) -> ^i8
 frost_emit_open   :: extern fn(path: ^i8) -> i64
-frost_emit_close  :: extern fn()
+frost_emit_close  :: safe extern fn()
 frost_run_command :: extern fn(command: ^i8) -> i64
 frost_remove_file :: extern fn(path: ^i8) -> i64
 frost_file_exists :: extern fn(path: ^i8) -> i64
