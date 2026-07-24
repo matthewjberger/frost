@@ -5,14 +5,11 @@ import "core.frost"
 export advance, cur, cur_len, cur_off, cur_val, peek_kind
 
 peek_kind :: fn(mut p: Parser, offset: i64) -> i64 {
-    unsafe {
-        index := p.ti + offset
-        if (index >= p.tokens.count) {
-            return TOK_EOF
-        }
-        entry : ^Token = arena_at(p.tokens, index)
-        entry^.kind
+    index := p.ti + offset
+    if (index >= p.tokens.count) {
+        return TOK_EOF
     }
+    arena_at(p.tokens, index).kind
 }
 
 cur :: fn(mut p: Parser) -> i64 {
@@ -20,24 +17,15 @@ cur :: fn(mut p: Parser) -> i64 {
 }
 
 cur_off :: fn(mut p: Parser) -> i64 {
-    unsafe {
-        entry : ^Token = arena_at(p.tokens, p.ti)
-        entry^.off
-    }
+    arena_at(p.tokens, p.ti).off
 }
 
 cur_len :: fn(mut p: Parser) -> i64 {
-    unsafe {
-        entry : ^Token = arena_at(p.tokens, p.ti)
-        entry^.len
-    }
+    arena_at(p.tokens, p.ti).len
 }
 
 cur_val :: fn(mut p: Parser) -> i64 {
-    unsafe {
-        entry : ^Token = arena_at(p.tokens, p.ti)
-        entry^.value
-    }
+    arena_at(p.tokens, p.ti).value
 }
 
 advance :: fn(mut p: Parser) {

@@ -493,14 +493,15 @@ arena_push :: fn(mut a: Arena<$T>, move value: $T) -> i64 {
 // inside the heap on one host and outside the mapping on another, so the same
 // mistake is silent corruption in one place and a crash with no explanation in
 // the other. Answer for it here instead.
-arena_at :: fn(a: Arena<$T>, id: i64) -> ^T {
+arena_at :: fn(a: Arena<$T>, id: i64) -> ref T {
     unsafe {
         if (id < 0 || id >= a.count) {
             frost_error("frost: an arena was indexed out of range: ")
             frost_error_int(id)
             frost_die()
         }
-        ptr_to(a.data[id])
+        ref result := a.data[id]
+        result
     }
 }
 
