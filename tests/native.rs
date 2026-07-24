@@ -1,5 +1,20 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+// A temp-file stem no run and no other test reuses. On Windows a just-run or
+// just-deleted executable stays briefly locked, so relinking over the same name
+// fails intermittently; a fresh name every time sidesteps it. The process id
+// separates one `cargo test` run from the next, the counter separates tests
+// within a run.
+fn unique(base: &str) -> String {
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    format!(
+        "{base}_{}_{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
+}
 
 fn linker_available() -> bool {
     for linker in ["cc", "gcc", "clang"] {
@@ -1033,7 +1048,7 @@ fn self_hosted_runs_test_blocks() {
 
     for (label, backend) in [("tc", "--emit-c"), ("tasm", "--emit-asm")] {
         let exe = directory
-            .join(format!("frost_{label}{}", std::env::consts::EXE_SUFFIX));
+            .join(format!("{}{}", unique(&format!("frost_{label}")), std::env::consts::EXE_SUFFIX));
         let run = Command::new(&compiler)
             .arg(backend)
             .arg("--test")
@@ -1068,7 +1083,7 @@ fn self_hosted_runs_test_blocks() {
     // Without --test the blocks are left out entirely, so the program links
     // with no test runtime at all.
     let plain =
-        directory.join(format!("frost_tplain{}", std::env::consts::EXE_SUFFIX));
+        directory.join(format!("{}{}", unique("frost_tplain"), std::env::consts::EXE_SUFFIX));
     let build = Command::new(&compiler)
         .arg("--link")
         .arg("-o")
@@ -1163,7 +1178,7 @@ fn self_hosted_threads_share_a_counter() {
         String::from_utf8_lossy(&build.stderr)
     );
     let exe =
-        directory.join(format!("threads{}", std::env::consts::EXE_SUFFIX));
+        directory.join(format!("{}{}", unique("threads"), std::env::consts::EXE_SUFFIX));
     let runtime = format!("{}/runtime/frost_runtime.c", root.display());
     let compile = Command::new(c_compiler().unwrap())
         .arg(&c_path)
@@ -1221,7 +1236,7 @@ fn a_program_using_std_is_clean_under_the_unsafe_gate() {
     )
     .unwrap();
     let exe =
-        directory.join(format!("uses_std{}", std::env::consts::EXE_SUFFIX));
+        directory.join(format!("{}{}", unique("uses_std"), std::env::consts::EXE_SUFFIX));
     let build = Command::new(env!("CARGO_BIN_EXE_frost"))
         .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_CHECK_UNSAFE", "1")
@@ -1261,7 +1276,7 @@ fn self_hosted_runs_the_standard_library_tests() {
 
     for (label, backend) in [("stdc", "--emit-c"), ("stdasm", "--emit-asm")] {
         let exe = directory
-            .join(format!("frost_{label}{}", std::env::consts::EXE_SUFFIX));
+            .join(format!("{}{}", unique(&format!("frost_{label}")), std::env::consts::EXE_SUFFIX));
         let run = Command::new(&compiler)
             .arg(backend)
             .arg("--test")
@@ -1351,7 +1366,7 @@ fn self_hosted_compiler_takes_a_command_line() {
     for (label, backend) in [("link_c", "--emit-c"), ("link_asm", "--emit-asm")]
     {
         let exe = directory
-            .join(format!("frost_{label}{}", std::env::consts::EXE_SUFFIX));
+            .join(format!("{}{}", unique(&format!("frost_{label}")), std::env::consts::EXE_SUFFIX));
         let build = Command::new(&compiler)
             .arg(backend)
             .arg("--link")
@@ -1631,7 +1646,8 @@ fn build_self_hosted_compiler(name: &str) -> Option<PathBuf> {
     }
     let directory = std::env::temp_dir();
     let compiler = directory.join(format!(
-        "frost_selfhosted_{name}{}",
+        "{}{}",
+        unique(&format!("frost_selfhosted_{name}")),
         std::env::consts::EXE_SUFFIX
     ));
     let frost = env!("CARGO_BIN_EXE_frost");
