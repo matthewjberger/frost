@@ -1,0 +1,163 @@
+// A hash map from i64 keys to values of any type, by open addressing with
+// linear probing. Integer keys cover the common cases a data-oriented program
+// has, which is a lookup by id, a handle, or an interned name, so the key is
+// concrete and only the value is generic.
+//
+// Three parallel heap arrays: the keys, the values, and a state byte per slot
+// saying empty, used, or tombstone. The table doubles when it is half full,
+// which keeps probe runs short. The raw pointers and the allocation are the
+// unsafe floor, wrapped here.
+
+export Map, map_new, map_free, map_len, map_put, map_get, map_has, map_remove,
+    map_clear
+
+frost_heap_alloc :: extern fn(size: i64) -> ^u8
+frost_heap_free  :: extern fn(block: ^u8)
+
+SLOT_EMPTY :: 0
+SLOT_USED  :: 1
+SLOT_GONE  :: 2
+
+Map :: struct($V: Type) {
+    keys: ^i64,
+    values: ^V,
+    state: ^u8,
+    cap: i64,
+    count: i64,
+}
+
+// A power-of-two capacity, so the slot index is a mask rather than a modulo,
+// and a fresh block with every slot empty.
+map_new :: fn($V: Type, capacity: i64) -> Map<V> {
+    mut cap : i64 = 8
+    while (cap < capacity) { cap = cap * 2 }
+    keys := unsafe { ptr_cast($i64, frost_heap_alloc(cap * 8)) }
+    values := unsafe { ptr_cast($V, frost_heap_alloc(cap * sizeof(V))) }
+    state := unsafe { ptr_cast($u8, frost_heap_alloc(cap)) }
+    mut i : i64 = 0
+    while (i < cap) {
+        unsafe { state[i] = SLOT_EMPTY }
+        i = i + 1
+    }
+    Map { keys = keys, values = values, state = state, cap = cap, count = 0 }
+}
+
+map_free :: fn($V: Type, move m: Map<V>) {
+    unsafe {
+        frost_heap_free(ptr_cast($u8, m.keys))
+        frost_heap_free(ptr_cast($u8, m.values))
+        frost_heap_free(m.state)
+    }
+}
+
+map_len :: fn($V: Type, m: Map<V>) -> i64 {
+    m.count
+}
+
+// A scramble of the key, so keys that differ in low bits alone do not all land
+// in one run of slots. The mask keeps it in range for a power-of-two capacity.
+map_slot :: fn($V: Type, m: Map<V>, key: i64) -> i64 {
+    mut h := key * 2654435761
+    h = h + (h / 4096)
+    h % m.cap
+}
+
+// The slot a key sits in, or the first empty slot on its probe run, whichever
+// comes first. A tombstone is probed past rather than stopped at, so a key put
+// after a removal is still found.
+map_find :: fn($V: Type, m: Map<V>, key: i64) -> i64 {
+    mut i := map_slot($V, m, key)
+    while (true) {
+        s := unsafe { m.state[i] }
+        if (s == SLOT_EMPTY) { return i }
+        if (s == SLOT_USED && unsafe { m.keys[i] } == key) { return i }
+        i = i + 1
+        if (i >= m.cap) { i = 0 }
+    }
+    0 - 1
+}
+
+// Place a key and value into a table that is known to have room, without the
+// load-factor check or the growth. Both `map_put` and the rehash in `map_grow`
+// insert through this, which keeps the two out of a mutual recursion.
+map_insert :: fn($V: Type, mut m: Map<V>, key: i64, move value: $V) {
+    slot := map_find($V, m, key)
+    if (unsafe { m.state[slot] } != SLOT_USED) {
+        m.count = m.count + 1
+    }
+    unsafe {
+        m.keys[slot] = key
+        m.values[slot] = value
+        m.state[slot] = SLOT_USED
+    }
+}
+
+map_grow :: fn($V: Type, mut m: Map<V>) {
+    old_keys := m.keys
+    old_values := m.values
+    old_state := m.state
+    old_cap := m.cap
+    fresh := map_new($V, m.cap * 2)
+    m.keys = fresh.keys
+    m.values = fresh.values
+    m.state = fresh.state
+    m.cap = fresh.cap
+    m.count = 0
+    mut i : i64 = 0
+    while (i < old_cap) {
+        if (unsafe { old_state[i] } == SLOT_USED) {
+            map_insert($V, m, unsafe { old_keys[i] }, unsafe { old_values[i] })
+        }
+        i = i + 1
+    }
+    unsafe {
+        frost_heap_free(ptr_cast($u8, old_keys))
+        frost_heap_free(ptr_cast($u8, old_values))
+        frost_heap_free(old_state)
+    }
+}
+
+map_put :: fn($V: Type, mut m: Map<V>, key: i64, move value: $V) {
+    if (m.count * 2 >= m.cap) {
+        map_grow($V, m)
+    }
+    map_insert($V, m, key, value)
+}
+
+map_has :: fn($V: Type, m: Map<V>, key: i64) -> bool {
+    slot := map_find($V, m, key)
+    unsafe { m.state[slot] } == SLOT_USED
+}
+
+// The value for a key, or the supplied default when the key is absent, so a
+// caller reads without a separate presence check when a default will do.
+map_get :: fn($V: Type, m: Map<V>, key: i64, move fallback: $V) -> $V {
+    slot := map_find($V, m, key)
+    if (unsafe { m.state[slot] } == SLOT_USED) {
+        return unsafe { m.values[slot] }
+    }
+    fallback
+}
+
+// Remove a key, leaving a tombstone so a probe run through the slot still
+// reaches keys placed after it. Answers whether the key was there.
+map_remove :: fn($V: Type, mut m: Map<V>, key: i64) -> bool {
+    slot := map_find($V, m, key)
+    found := unsafe { m.state[slot] } == SLOT_USED
+    if (found) {
+        unsafe { m.state[slot] = SLOT_GONE }
+        m.count = m.count - 1
+    }
+    found
+}
+
+// Empty every slot without freeing the table, so it is reused rather than
+// reallocated.
+map_clear :: fn($V: Type, mut m: Map<V>) {
+    mut i : i64 = 0
+    while (i < m.cap) {
+        unsafe { m.state[i] = SLOT_EMPTY }
+        i = i + 1
+    }
+    m.count = 0
+}

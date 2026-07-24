@@ -258,6 +258,90 @@ fn native_out_of_bounds_index_aborts() {
 // through it writes to the element, which is the reusable handle a container
 // needs without a raw pointer. Both backends must agree, and the frame check
 // must refuse letting it escape.
+// The hash map from std: many puts forcing a rehash, lookups with a default,
+// removal, and presence. A dozen generic functions over one value type, several
+// sharing a lookup helper, which is the shape that exercises the specialization
+// worklist hardest. Both backends must agree.
+const MAP_LIBRARY: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+frost_heap_alloc :: extern fn(size: i64) -> ^u8
+frost_heap_free  :: extern fn(block: ^u8)
+
+Map :: struct($V: Type) { keys: ^i64, values: ^V, state: ^u8, cap: i64, count: i64 }
+
+map_new :: fn($V: Type, capacity: i64) -> Map<V> {
+    mut cap : i64 = 8
+    while (cap < capacity) { cap = cap * 2 }
+    keys := unsafe { ptr_cast($i64, frost_heap_alloc(cap * 8)) }
+    values := unsafe { ptr_cast($V, frost_heap_alloc(cap * sizeof(V))) }
+    state := unsafe { ptr_cast($u8, frost_heap_alloc(cap)) }
+    mut i : i64 = 0
+    while (i < cap) { unsafe { state[i] = 0 }  i = i + 1 }
+    Map { keys = keys, values = values, state = state, cap = cap, count = 0 }
+}
+map_find :: fn($V: Type, m: Map<V>, key: i64) -> i64 {
+    mut h := key * 2654435761
+    mut i := (h + h / 4096) % m.cap
+    while (true) {
+        s := unsafe { m.state[i] }
+        if (s == 0) { return i }
+        if (s == 1 && unsafe { m.keys[i] } == key) { return i }
+        i = i + 1
+        if (i >= m.cap) { i = 0 }
+    }
+    0 - 1
+}
+map_insert :: fn($V: Type, mut m: Map<V>, key: i64, move value: $V) {
+    slot := map_find($V, m, key)
+    if (unsafe { m.state[slot] } != 1) { m.count = m.count + 1 }
+    unsafe { m.keys[slot] = key  m.values[slot] = value  m.state[slot] = 1 }
+}
+map_grow :: fn($V: Type, mut m: Map<V>) {
+    ok := m.keys  ov := m.values  os := m.state  oc := m.cap
+    fresh := map_new($V, m.cap * 2)
+    m.keys = fresh.keys  m.values = fresh.values  m.state = fresh.state
+    m.cap = fresh.cap  m.count = 0
+    mut i : i64 = 0
+    while (i < oc) {
+        if (unsafe { os[i] } == 1) { map_insert($V, m, unsafe { ok[i] }, unsafe { ov[i] }) }
+        i = i + 1
+    }
+    unsafe { frost_heap_free(ptr_cast($u8, ok))  frost_heap_free(ptr_cast($u8, ov))  frost_heap_free(os) }
+}
+map_put :: fn($V: Type, mut m: Map<V>, key: i64, move value: $V) {
+    if (m.count * 2 >= m.cap) { map_grow($V, m) }
+    map_insert($V, m, key, value)
+}
+map_get :: fn($V: Type, m: Map<V>, key: i64, move fallback: $V) -> $V {
+    slot := map_find($V, m, key)
+    if (unsafe { m.state[slot] } == 1) { return unsafe { m.values[slot] } }
+    fallback
+}
+map_has :: fn($V: Type, m: Map<V>, key: i64) -> bool {
+    slot := map_find($V, m, key)
+    unsafe { m.state[slot] } == 1
+}
+map_remove :: fn($V: Type, mut m: Map<V>, key: i64) -> bool {
+    slot := map_find($V, m, key)
+    found := unsafe { m.state[slot] } == 1
+    if (found) { unsafe { m.state[slot] = 2 }  m.count = m.count - 1 }
+    found
+}
+main :: fn() -> i64 {
+    mut m := map_new($i64, 4)
+    mut i : i64 = 0
+    while (i < 50) { map_put($i64, m, i, i * i)  i = i + 1 }
+    printf("%lld\n", map_len_i(m))
+    printf("%lld\n", map_get($i64, m, 7, 0 - 1))
+    printf("%lld\n", map_get($i64, m, 999, 0 - 1))
+    if (map_remove($i64, m, 7)) { printf("%lld\n", 1) }
+    if (map_has($i64, m, 7)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    unsafe { frost_heap_free(ptr_cast($u8, m.keys)) }
+    0
+}
+map_len_i :: fn(m: Map<i64>) -> i64 { m.count }
+"#;
+
 // The growable vector from std, exercised end to end: pushing past capacity so
 // it reallocates, reading, setting, and summing. It leans on slice_from over
 // heap storage, sizeof inside unsafe, and a generic move value, each of which
@@ -5014,6 +5098,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_arith", ARITHMETIC),
         ("diff_refbind", REF_BINDING),
         ("diff_vec", VEC_LIBRARY),
+        ("diff_map", MAP_LIBRARY),
         ("diff_floats", FLOATS),
         ("diff_widths", WIDTHS),
         ("diff_wrapping", WRAPPING_AND_UNARY),
