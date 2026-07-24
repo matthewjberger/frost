@@ -12,7 +12,8 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     NODE_EXPRSTMT, NODE_EXTERN, NODE_FIELD, NODE_FIELD_INIT, NODE_FUNC,
     NODE_IF, NODE_INDEX, NODE_LET, NODE_MATCH, NODE_NUM, NODE_PARAM,
     NODE_PRINT, NODE_PTR_CAST, NODE_RETURN, NODE_SIZEOF, NODE_STRLIT,
-    NODE_ARRAY_LIT, NODE_ASSERT, NODE_FLOAT, NODE_REF, NODE_SLICE_LEN,
+    NODE_ARRAY_LIT, NODE_ASSERT, NODE_FLOAT, NODE_REF, NODE_SLICE_FROM,
+    NODE_SLICE_LEN,
     NODE_STRUCT_LIT,
     NODE_TYPEVAL, NODE_VAR, NODE_WHILE, NODE_WITH, Node,
     OP_ADD, OP_AND, OP_DIV, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT, OP_MOD, OP_MUL,
@@ -109,6 +110,10 @@ NODE_ASSERT     :: 31
 // `ref x := place`: a borrow of a place, an address that types as a borrow
 // rather than a raw pointer, so reading through it needs no `unsafe` block.
 NODE_REF        :: 32
+// `slice_from($T, ptr, len)`: a `[]T` view over a run of T at a raw address. The
+// claim that the bytes are that is unchecked, so the call is gated; reads
+// through the slice it returns are bounds-checked and are not.
+NODE_SLICE_FROM :: 33
 
 // Type codes. A type is one i64. The primitives are small constants; a struct is
 // STRUCT_BASE plus its table index; a pointer to a type T (also how a borrow

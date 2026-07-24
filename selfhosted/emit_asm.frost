@@ -657,6 +657,15 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
             emit_asm_expr(p, node^.a)
             return
         }
+        if (kind == NODE_SLICE_FROM) {
+            slot := alloc_temp(p, 16)
+            emit_asm_expr(p, node^.a)
+            asm_i("movq %rax, ", slot, "(%rbp)")
+            emit_asm_expr(p, node^.b)
+            asm_i("movq %rax, ", slot + 8, "(%rbp)")
+            asm_i("leaq ", slot, "(%rbp), %rax")
+            return
+        }
         if (kind == NODE_ADDROF || kind == NODE_REF) {
             emit_asm_addr(p, node^.a)
             return

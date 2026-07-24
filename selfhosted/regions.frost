@@ -270,6 +270,13 @@ check_unsafety :: fn(mut p: Parser) {
                 gated = 1
                 what = "ptr_cast"
             }
+            // Forming a slice from a raw pointer and a length is a claim the
+            // bytes are that, which nothing checks; reads through the slice are
+            // checked, so the claim is the only unsafe part.
+            if (kind == NODE_SLICE_FROM) {
+                gated = 1
+                what = "slice_from"
+            }
             // An array or a slice knows its own length, so indexing one is
             // checked; a borrow was proven safe where it formed; only a raw
             // pointer is unchecked.

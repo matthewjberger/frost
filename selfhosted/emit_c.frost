@@ -378,6 +378,16 @@ emit_expr :: fn(mut p: Parser, id: i64) {
             frost_emit_str("}}")
             return
         }
+        if (kind == NODE_SLICE_FROM) {
+            frost_emit_str("(")
+            emit_ctype(p, node^.val)
+            frost_emit_str("){ (")
+            emit_expr(p, node^.a)
+            frost_emit_str("), ")
+            emit_expr(p, node^.b)
+            frost_emit_str(" }")
+            return
+        }
         if (kind == NODE_ADDROF || kind == NODE_REF) {
             inner := node^.a
             frost_emit_str("(&(")
