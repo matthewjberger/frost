@@ -1047,8 +1047,11 @@ fn self_hosted_runs_test_blocks() {
         format!("{}/runtime/frost_runtime.c", env!("CARGO_MANIFEST_DIR"));
 
     for (label, backend) in [("tc", "--emit-c"), ("tasm", "--emit-asm")] {
-        let exe = directory
-            .join(format!("{}{}", unique(&format!("frost_{label}")), std::env::consts::EXE_SUFFIX));
+        let exe = directory.join(format!(
+            "{}{}",
+            unique(&format!("frost_{label}")),
+            std::env::consts::EXE_SUFFIX
+        ));
         let run = Command::new(&compiler)
             .arg(backend)
             .arg("--test")
@@ -1082,8 +1085,11 @@ fn self_hosted_runs_test_blocks() {
 
     // Without --test the blocks are left out entirely, so the program links
     // with no test runtime at all.
-    let plain =
-        directory.join(format!("{}{}", unique("frost_tplain"), std::env::consts::EXE_SUFFIX));
+    let plain = directory.join(format!(
+        "{}{}",
+        unique("frost_tplain"),
+        std::env::consts::EXE_SUFFIX
+    ));
     let build = Command::new(&compiler)
         .arg("--link")
         .arg("-o")
@@ -1177,8 +1183,11 @@ fn self_hosted_threads_share_a_counter() {
         "the threads program did not compile:\n{}",
         String::from_utf8_lossy(&build.stderr)
     );
-    let exe =
-        directory.join(format!("{}{}", unique("threads"), std::env::consts::EXE_SUFFIX));
+    let exe = directory.join(format!(
+        "{}{}",
+        unique("threads"),
+        std::env::consts::EXE_SUFFIX
+    ));
     let runtime = format!("{}/runtime/frost_runtime.c", root.display());
     let compile = Command::new(c_compiler().unwrap())
         .arg(&c_path)
@@ -1235,8 +1244,11 @@ fn a_program_using_std_is_clean_under_the_unsafe_gate() {
          \x20   builder_free(b)  vec_free($i64, v)  0\n}\n",
     )
     .unwrap();
-    let exe =
-        directory.join(format!("{}{}", unique("uses_std"), std::env::consts::EXE_SUFFIX));
+    let exe = directory.join(format!(
+        "{}{}",
+        unique("uses_std"),
+        std::env::consts::EXE_SUFFIX
+    ));
     let build = Command::new(env!("CARGO_BIN_EXE_frost"))
         .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_CHECK_UNSAFE", "1")
@@ -1275,8 +1287,11 @@ fn self_hosted_runs_the_standard_library_tests() {
     let directory = std::env::temp_dir();
 
     for (label, backend) in [("stdc", "--emit-c"), ("stdasm", "--emit-asm")] {
-        let exe = directory
-            .join(format!("{}{}", unique(&format!("frost_{label}")), std::env::consts::EXE_SUFFIX));
+        let exe = directory.join(format!(
+            "{}{}",
+            unique(&format!("frost_{label}")),
+            std::env::consts::EXE_SUFFIX
+        ));
         let run = Command::new(&compiler)
             .arg(backend)
             .arg("--test")
@@ -1365,8 +1380,11 @@ fn self_hosted_compiler_takes_a_command_line() {
     // --link finishes the build, through either backend.
     for (label, backend) in [("link_c", "--emit-c"), ("link_asm", "--emit-asm")]
     {
-        let exe = directory
-            .join(format!("{}{}", unique(&format!("frost_{label}")), std::env::consts::EXE_SUFFIX));
+        let exe = directory.join(format!(
+            "{}{}",
+            unique(&format!("frost_{label}")),
+            std::env::consts::EXE_SUFFIX
+        ));
         let build = Command::new(&compiler)
             .arg(backend)
             .arg("--link")

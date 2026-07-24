@@ -3,8 +3,8 @@
 
 import "core.frost"
 
-export BACKEND_ASM, BACKEND_C, Options, join_two, options_from_command_line,
-    usage
+export BACKEND_ASM, BACKEND_C, Options, c_compiler, join_two,
+    options_from_command_line, usage
 
 BACKEND_C   :: 0
 BACKEND_ASM :: 1
@@ -37,6 +37,24 @@ usage :: fn() {
         frost_error("Without -o the output goes to standard output. FROST_INPUT ")
         frost_error("and\nFROST_BACKEND are read when the matching argument is ")
         frost_error("absent.\n")
+    }
+}
+
+// Which C toolchain the emitted translation unit goes to. `CC` overrides, as
+// every build system expects. Otherwise the default follows the platform the way
+// the bootstrap's own linker search does, preferring gcc on Windows, where a
+// bare `cc` is often a stub that answers `--version` and then fails to compile
+// anything, which reads as a broken compiler rather than a missing toolchain.
+c_compiler :: fn() -> ^i8 {
+    unsafe {
+        chosen := frost_getenv("CC")
+        if (frost_str_len(chosen) != 0) {
+            return chosen
+        }
+        if (frost_is_windows() == 1) {
+            return "gcc"
+        }
+        "cc"
     }
 }
 

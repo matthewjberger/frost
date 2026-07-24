@@ -274,12 +274,21 @@ main :: fn() -> i64 {
                 extra = join_two(" ", runtime)
             }
             command := join_two(
-                join_two(join_two(join_two("cc ", emit_path), extra), " -o "),
+                join_two(
+                    join_two(
+                        join_two(join_two(c_compiler(), " "), emit_path),
+                        extra),
+                    " -o "),
                 executable)
             status := frost_run_command(command)
             frost_remove_file(emit_path)
             if (status != 0) {
-                frost_error("frost: the linker failed")
+                // Name the command, since a failing link is nearly always the
+                // toolchain being absent or a path it could not read, and
+                // neither is guessable from the bare word "failed".
+                frost_error("frost: the linker failed: ")
+                frost_error(command)
+                frost_error("\n")
                 frost_die()
             }
             // Building the tests and not running them would be half an answer, so
