@@ -1107,6 +1107,13 @@ parse_params :: fn(mut p: Parser) -> i64 {
                 Node { kind = NODE_PARAM, a = auto_borrow, b = ty, c = length,
                     val = offset, next = 0 - 1, pos = cur_off(p) },
             )
+            // A `mut` parameter borrows exclusively; record it so the exclusivity
+            // check can tell it from a shared read of an aggregate, which the
+            // auto-borrow flag alone cannot.
+            if (mode == 1) {
+                arena_push(p.mut_params,
+                    LocalVar { name_off = param, name_len = 0, ty = 0 })
+            }
             if (head == (0 - 1)) {
                 head = param
                 tail = param

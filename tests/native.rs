@@ -2287,6 +2287,24 @@ fn self_hosted_rejects_a_reference_struct_field() {
     );
 }
 
+// Exclusivity reaches the self-hosted compiler too: two mutable borrows of the
+// same place in one call conflict, over the place path, not just the variable.
+#[test]
+fn self_hosted_rejects_overlapping_mutable_borrows() {
+    let source = "Pair :: struct { x: i64, y: i64 }\n\
+                  mix :: fn(mut a: i64, mut b: i64) -> i64 { a + b }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   mut p : Pair = Pair { x = 1, y = 2 }\n\
+                  \x20   mix(p.x, p.x)\n    0\n}\n";
+    let Some(message) = self_hosted_rejects("exclusivity", source) else {
+        return;
+    };
+    assert!(
+        message.contains("exclusive"),
+        "expected an exclusivity error, got:\n{message}"
+    );
+}
+
 // A binding declared inside the region may hold a region pointer, and reading
 // through it is what the region is for, so this must be accepted.
 #[test]

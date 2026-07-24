@@ -6,8 +6,211 @@ import "imports.frost"
 import "names.frost"
 import "emit_asm.frost"
 
-export check_calls, check_frame_escapes, check_reference_fields, check_regions,
-    check_unsafety
+export check_borrow_exclusivity, check_calls, check_frame_escapes,
+    check_reference_fields, check_regions, check_unsafety
+
+// The parameter node the nth value argument lands in, walking past the ones a
+// type argument erases. The capability a `uses` function draws is a trailing
+// parameter with no value argument, so it is never reached.
+nth_param_node :: fn(mut p: Parser, params: i64, n: i64) -> i64 {
+    mut id := params
+    mut index : i64 = 0
+    while (id != (0 - 1)) {
+        if (index == n) {
+            return id
+        }
+        node := arena_at(p.arena, id)
+        index = index + 1
+        id = node.next
+    }
+    0 - 1
+}
+
+is_mut_param :: fn(mut p: Parser, param_node: i64) -> bool {
+    mut i : i64 = 0
+    while (i < p.mut_params.count) {
+        entry := arena_at(p.mut_params, i)
+        if (entry.name_off == param_node) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+// Whether an expression is a place the check can reason about: a variable and
+// the fields, indexes and dereferences off it. A call or a literal is not one
+// and cannot alias.
+is_place_expr :: fn(mut p: Parser, id: i64) -> bool {
+    if (id == (0 - 1)) {
+        return false
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NODE_VAR) {
+        return true
+    }
+    if (kind == NODE_FIELD || kind == NODE_INDEX || kind == NODE_DEREF) {
+        return is_place_expr(p, node.a)
+    }
+    false
+}
+
+// How many fields, indexes or dereferences a place puts between a root variable
+// and the storage it names. A bare variable is 0.
+place_depth :: fn(mut p: Parser, id: i64) -> i64 {
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NODE_FIELD || kind == NODE_INDEX || kind == NODE_DEREF) {
+        return 1 + place_depth(p, node.a)
+    }
+    0
+}
+
+// Strip `n` outer segments off a place, so two of unequal depth can be compared
+// at the depth of the shorter.
+strip_place :: fn(mut p: Parser, id: i64, n: i64) -> i64 {
+    if (n == 0) {
+        return id
+    }
+    node := arena_at(p.arena, id)
+    strip_place(p, node.a, n - 1)
+}
+
+// Whether two index expressions name the same element for sure: a literal or a
+// bare variable does; anything else is left distinct, since proving it equal
+// would take evaluating it, and a distinct index means no overlap rather than a
+// wrong one.
+index_equal :: fn(mut p: Parser, a: i64, b: i64) -> bool {
+    if (a == (0 - 1) || b == (0 - 1)) {
+        return false
+    }
+    na := arena_at(p.arena, a)
+    nb := arena_at(p.arena, b)
+    if (na.kind != nb.kind) {
+        return false
+    }
+    if (na.kind == NODE_NUM) {
+        return na.val == nb.val
+    }
+    if (na.kind == NODE_VAR) {
+        return na.c == nb.c && bytes_equal(p.src, na.val, nb.val, na.c)
+    }
+    false
+}
+
+places_equal :: fn(mut p: Parser, a: i64, b: i64) -> bool {
+    na := arena_at(p.arena, a)
+    nb := arena_at(p.arena, b)
+    kind := na.kind
+    if (kind != nb.kind) {
+        return false
+    }
+    if (kind == NODE_VAR) {
+        return na.c == nb.c && bytes_equal(p.src, na.val, nb.val, na.c)
+    }
+    if (kind == NODE_FIELD) {
+        if (na.c != nb.c) {
+            return false
+        }
+        if (bytes_equal(p.src, na.val, nb.val, na.c) == false) {
+            return false
+        }
+        return places_equal(p, na.a, nb.a)
+    }
+    if (kind == NODE_INDEX) {
+        return places_equal(p, na.a, nb.a) && index_equal(p, na.b, nb.b)
+    }
+    if (kind == NODE_DEREF) {
+        return places_equal(p, na.a, nb.a)
+    }
+    false
+}
+
+// Two places overlap when one contains the other: reduce the deeper to the
+// shorter's depth, then they overlap exactly when they are then the same place.
+places_overlap :: fn(mut p: Parser, a: i64, b: i64) -> bool {
+    mut left := a
+    mut right := b
+    da := place_depth(p, a)
+    db := place_depth(p, b)
+    if (da > db) {
+        left = strip_place(p, a, da - db)
+    }
+    if (db > da) {
+        right = strip_place(p, b, db - da)
+    }
+    places_equal(p, left, right)
+}
+
+// A borrowed value argument, or -1: the place it names when the parameter it
+// lands in borrows by address (a `mut`, or a read of an aggregate), and nothing
+// otherwise, since a scalar read is a copy and a raw pointer is a value.
+arg_borrows :: fn(mut p: Parser, args: i64, params: i64, index: i64) -> i64 {
+    arg := nth_value_arg(p, args, index)
+    if (is_place_expr(p, arg) == false) {
+        return 0 - 1
+    }
+    param := nth_param_node(p, params, index)
+    if (param == (0 - 1)) {
+        return 0 - 1
+    }
+    pnode := arena_at(p.arena, param)
+    if (pnode.a != 1) {
+        return 0 - 1
+    }
+    arg
+}
+
+check_call_exclusivity :: fn(mut p: Parser, args: i64, fn_index: i64, pos: i64) {
+    sym := arena_at(p.fns, fn_index)
+    params := sym.params
+    count := count_value_args(p, args)
+    mut i : i64 = 0
+    while (i < count) {
+        arg_i := arg_borrows(p, args, params, i)
+        if (arg_i != (0 - 1)) {
+            excl_i := is_mut_param(p, nth_param_node(p, params, i))
+            mut j := i + 1
+            while (j < count) {
+                arg_j := arg_borrows(p, args, params, j)
+                if (arg_j != (0 - 1)) {
+                    excl_j := is_mut_param(p, nth_param_node(p, params, j))
+                    if ((excl_i || excl_j)
+                        && places_overlap(p, arg_i, arg_j)) {
+                        report_where(p.modules, p.src, pos)
+                        if (excl_i && excl_j) {
+                            report("two arguments are both borrowed as ")
+                            report("mutable in a single call; mutable borrows ")
+                            report("are exclusive")
+                        } else {
+                            report("an argument is borrowed as both shared ")
+                            report("and mutable in a single call; mutable ")
+                            report("borrows are exclusive")
+                        }
+                        frost_die()
+                    }
+                }
+                j = j + 1
+            }
+        }
+        i = i + 1
+    }
+}
+
+// A `mut` borrow is exclusive: no other borrow in the same call may name storage
+// that overlaps it, since two writers, or a writer and a reader, of one place at
+// once is the aliasing a borrow is meant to rule out.
+check_borrow_exclusivity :: fn(mut p: Parser) {
+    mut n : i64 = 0
+    while (n < p.arena.count) {
+        node := arena_at(p.arena, n)
+        if (node.kind == NODE_CALL) {
+            check_call_exclusivity(p, node.a, node.val, node.pos)
+        }
+        n = n + 1
+    }
+}
 
 // A borrow may be returned, since the frame and region checks hold it to
 // storage that outlives the call, but it may not be stored: a struct or an

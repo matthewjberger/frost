@@ -603,6 +603,10 @@ Parser :: struct {
     frame_bound: Arena<LocalVar>,
     frame_materialized: Arena<LocalVar>,
     frame_answers: i64,
+    // The parameter nodes declared `mut`, by node index, so the exclusivity
+    // check can tell an exclusive borrow from a shared one where the type alone
+    // cannot: a `mut` and a read of an aggregate both pass by address.
+    mut_params: Arena<LocalVar>,
     modules: Arena<Module>,
     exports: Arena<Export>,
     export_names: ^i8,
