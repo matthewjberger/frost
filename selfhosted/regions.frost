@@ -10,18 +10,16 @@ export check_calls, check_regions, check_unsafety
 
 name_listed :: fn(mut table: Arena<LocalVar>, src: ^i8, off: i64, len: i64)
     -> bool {
-    unsafe {
-        mut i : i64 = 0
-        while (i < table.count) {
-            entry : ^LocalVar = arena_at(table, i)
-            if (entry^.name_len == len
-                && bytes_equal(src, entry^.name_off, off, len)) {
-                return true
-            }
-            i = i + 1
+    mut i : i64 = 0
+    while (i < table.count) {
+        entry := arena_at(table, i)
+        if (entry.name_len == len
+            && bytes_equal(src, entry.name_off, off, len)) {
+            return true
         }
-        false
+        i = i + 1
     }
+    false
 }
 
 list_name :: fn(mut table: Arena<LocalVar>, off: i64, len: i64) {
@@ -31,101 +29,93 @@ list_name :: fn(mut table: Arena<LocalVar>, off: i64, len: i64) {
 // The name a place is rooted at, walking down through fields, indexes and
 // dereferences, or -1 if the place is not rooted at a name.
 root_name :: fn(mut p: Parser, id: i64) -> i64 {
-    unsafe {
-        mut current := id
-        while (current != (0 - 1)) {
-            node : ^Node = arena_at(p.arena, current)
-            kind := node^.kind
-            if (kind == NODE_VAR) {
-                return current
-            }
-            if (kind == NODE_FIELD || kind == NODE_INDEX || kind == NODE_DEREF
-                || kind == NODE_ADDROF || kind == NODE_PTR_CAST) {
-                current = node^.a
-            } else {
-                return 0 - 1
-            }
+    mut current := id
+    while (current != (0 - 1)) {
+        node := arena_at(p.arena, current)
+        kind := node.kind
+        if (kind == NODE_VAR) {
+            return current
         }
-        0 - 1
+        if (kind == NODE_FIELD || kind == NODE_INDEX || kind == NODE_DEREF
+            || kind == NODE_ADDROF || kind == NODE_PTR_CAST) {
+            current = node.a
+        } else {
+            return 0 - 1
+        }
     }
+    0 - 1
 }
 
 // Whether an expression names the region's arena or anything already known to
 // point into it.
 mentions_region :: fn(mut p: Parser, id: i64) -> bool {
-    unsafe {
-        if (id == (0 - 1)) {
-            return false
-        }
-        node : ^Node = arena_at(p.arena, id)
-        kind := node^.kind
-        if (kind == NODE_VAR) {
-            off := node^.val
-            len := node^.c
-            if (len == p.region_len
-                && bytes_equal(p.src, p.region_off, off, len)) {
-                return true
-            }
-            return name_listed(p.tainted, p.src, off, len)
-        }
-        if (kind == NODE_NUM || kind == NODE_STRLIT || kind == NODE_TYPEVAL) {
-            return false
-        }
-        if (kind == NODE_CALL) {
-            return mentions_region_args(p, node^.a)
-        }
-        mentions_region(p, node^.a) || mentions_region(p, node^.b)
+    if (id == (0 - 1)) {
+        return false
     }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NODE_VAR) {
+        off := node.val
+        len := node.c
+        if (len == p.region_len
+            && bytes_equal(p.src, p.region_off, off, len)) {
+            return true
+        }
+        return name_listed(p.tainted, p.src, off, len)
+    }
+    if (kind == NODE_NUM || kind == NODE_STRLIT || kind == NODE_TYPEVAL) {
+        return false
+    }
+    if (kind == NODE_CALL) {
+        return mentions_region_args(p, node.a)
+    }
+    mentions_region(p, node.a) || mentions_region(p, node.b)
 }
 
 mentions_region_args :: fn(mut p: Parser, head: i64) -> bool {
-    unsafe {
-        mut id := head
-        while (id != (0 - 1)) {
-            node : ^Node = arena_at(p.arena, id)
-            next_id := node^.next
-            if (mentions_region(p, node^.a)) {
-                return true
-            }
-            id = next_id
+    mut id := head
+    while (id != (0 - 1)) {
+        node := arena_at(p.arena, id)
+        next_id := node.next
+        if (mentions_region(p, node.a)) {
+            return true
         }
-        false
+        id = next_id
     }
+    false
 }
 
 // Whether a value points into the region. A pointer taken of something that
 // mentions the arena is one; so is the result of a call that returns a pointer
 // and either draws from an allocation source or was handed the arena.
 region_pointer :: fn(mut p: Parser, id: i64) -> bool {
-    unsafe {
-        if (id == (0 - 1)) {
+    if (id == (0 - 1)) {
+        return false
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NODE_ADDROF) {
+        return mentions_region(p, node.a)
+    }
+    if (kind == NODE_VAR) {
+        return name_listed(p.tainted, p.src, node.val, node.c)
+    }
+    // A cast still points where it pointed. A dereference does not: it reads
+    // the value there, and reading out of the region is what the region is for.
+    if (kind == NODE_PTR_CAST) {
+        return region_pointer(p, node.a)
+    }
+    if (kind == NODE_CALL) {
+        sym := arena_at(p.fns, node.val)
+        if (is_pointer(sym.ret_type) == false) {
             return false
         }
-        node : ^Node = arena_at(p.arena, id)
-        kind := node^.kind
-        if (kind == NODE_ADDROF) {
-            return mentions_region(p, node^.a)
+        if (sym.uses_ty >= 0) {
+            return true
         }
-        if (kind == NODE_VAR) {
-            return name_listed(p.tainted, p.src, node^.val, node^.c)
-        }
-        // A cast still points where it pointed. A dereference does not: it reads
-        // the value there, and reading out of the region is what the region is for.
-        if (kind == NODE_PTR_CAST) {
-            return region_pointer(p, node^.a)
-        }
-        if (kind == NODE_CALL) {
-            sym : ^Sym = arena_at(p.fns, node^.val)
-            if (is_pointer(sym^.ret_type) == false) {
-                return false
-            }
-            if (sym^.uses_ty >= 0) {
-                return true
-            }
-            return mentions_region_args(p, node^.a)
-        }
-        false
+        return mentions_region_args(p, node.a)
     }
+    false
 }
 
 region_escape :: fn(mut p: Parser, how: ^i8) {
@@ -141,63 +131,61 @@ region_escape :: fn(mut p: Parser, how: ^i8) {
 }
 
 check_region_block :: fn(mut p: Parser, head: i64) {
-    unsafe {
-        mut id := head
-        while (id != (0 - 1)) {
-            node : ^Node = arena_at(p.arena, id)
-            kind := node^.kind
-            next_id := node^.next
-            if (kind == NODE_LET) {
-                // A binding declared inside the region dies with it, so it may hold
-                // a region pointer.
-                if (region_pointer(p, node^.a)) {
-                    list_name(p.tainted, node^.val, node^.c)
-                }
-                list_name(p.inner, node^.val, node^.c)
+    mut id := head
+    while (id != (0 - 1)) {
+        node := arena_at(p.arena, id)
+        kind := node.kind
+        next_id := node.next
+        if (kind == NODE_LET) {
+            // A binding declared inside the region dies with it, so it may hold
+            // a region pointer.
+            if (region_pointer(p, node.a)) {
+                list_name(p.tainted, node.val, node.c)
             }
-            if (kind == NODE_ASSIGN) {
-                if (region_pointer(p, node^.b)) {
-                    place := root_name(p, node^.a)
-                    mut outside : bool = true
-                    if (place != (0 - 1)) {
-                        pnode : ^Node = arena_at(p.arena, place)
-                        outside = name_listed(p.inner, p.src, pnode^.val,
-                            pnode^.c) == false
-                    }
-                    if (outside) {
-                        if (p.region_returns == 1) {
-                            region_escape(p, "being stored into a parameter")
-                        }
-                        region_escape(p, "being stored outside it")
-                    }
-                }
-            }
-            // Handing a pointer back is an escape from a `with` block, whose arena
-            // dies at the closing brace. It is not one from a `uses` function: the
-            // arena belongs to the caller, so the pointer is handed to the caller's
-            // region and checked there.
-            if (kind == NODE_RETURN && p.region_returns == 0) {
-                if (region_pointer(p, node^.a)) {
-                    region_escape(p, "being returned")
-                }
-            }
-            if (kind == NODE_EXPRSTMT && p.region_returns == 0) {
-                if (next_id == (0 - 1) && region_pointer(p, node^.a)) {
-                    region_escape(p, "being the block's value")
-                }
-            }
-            if (kind == NODE_IF) {
-                check_region_block(p, node^.b)
-                check_region_block(p, node^.val)
-            }
-            if (kind == NODE_WHILE) {
-                check_region_block(p, node^.b)
-            }
-            if (kind == NODE_WITH) {
-                check_region_block(p, node^.a)
-            }
-            id = next_id
+            list_name(p.inner, node.val, node.c)
         }
+        if (kind == NODE_ASSIGN) {
+            if (region_pointer(p, node.b)) {
+                place := root_name(p, node.a)
+                mut outside : bool = true
+                if (place != (0 - 1)) {
+                    pnode := arena_at(p.arena, place)
+                    outside = name_listed(p.inner, p.src, pnode.val,
+                        pnode.c) == false
+                }
+                if (outside) {
+                    if (p.region_returns == 1) {
+                        region_escape(p, "being stored into a parameter")
+                    }
+                    region_escape(p, "being stored outside it")
+                }
+            }
+        }
+        // Handing a pointer back is an escape from a `with` block, whose arena
+        // dies at the closing brace. It is not one from a `uses` function: the
+        // arena belongs to the caller, so the pointer is handed to the caller's
+        // region and checked there.
+        if (kind == NODE_RETURN && p.region_returns == 0) {
+            if (region_pointer(p, node.a)) {
+                region_escape(p, "being returned")
+            }
+        }
+        if (kind == NODE_EXPRSTMT && p.region_returns == 0) {
+            if (next_id == (0 - 1) && region_pointer(p, node.a)) {
+                region_escape(p, "being the block's value")
+            }
+        }
+        if (kind == NODE_IF) {
+            check_region_block(p, node.b)
+            check_region_block(p, node.val)
+        }
+        if (kind == NODE_WHILE) {
+            check_region_block(p, node.b)
+        }
+        if (kind == NODE_WITH) {
+            check_region_block(p, node.a)
+        }
+        id = next_id
     }
 }
 
@@ -208,35 +196,33 @@ check_region_block :: fn(mut p: Parser, head: i64) {
 // pointer can only reach an arena a function was handed directly, so following
 // the flow inside each body is enough.
 check_regions :: fn(mut p: Parser) {
-    unsafe {
-        mut i : i64 = 0
-        while (i < p.arena.count) {
-            node : ^Node = arena_at(p.arena, i)
-            kind := node^.kind
-            if (kind == NODE_WITH) {
-                body := node^.a
-                p.region_off = node^.val
-                p.region_len = node^.c
+    mut i : i64 = 0
+    while (i < p.arena.count) {
+        node := arena_at(p.arena, i)
+        kind := node.kind
+        if (kind == NODE_WITH) {
+            body := node.a
+            p.region_off = node.val
+            p.region_len = node.c
+            p.tainted.count = 0
+            p.inner.count = 0
+            p.region_returns = 0
+            check_region_block(p, body)
+        }
+        if (kind == NODE_FUNC) {
+            sym := arena_at(p.fns, node.val)
+            if (sym.uses_ty >= 0) {
+                body := node.a
+                p.region_off = sym.cap_off
+                p.region_len = sym.cap_len
                 p.tainted.count = 0
                 p.inner.count = 0
-                p.region_returns = 0
+                p.region_returns = 1
                 check_region_block(p, body)
+                p.region_returns = 0
             }
-            if (kind == NODE_FUNC) {
-                sym : ^Sym = arena_at(p.fns, node^.val)
-                if (sym^.uses_ty >= 0) {
-                    body := node^.a
-                    p.region_off = sym^.cap_off
-                    p.region_len = sym^.cap_len
-                    p.tainted.count = 0
-                    p.inner.count = 0
-                    p.region_returns = 1
-                    check_region_block(p, body)
-                    p.region_returns = 0
-                }
-            }
-            i = i + 1
         }
+        i = i + 1
     }
 }
 
@@ -258,8 +244,8 @@ check_unsafety :: fn(mut p: Parser) {
     unsafe {
         mut i : i64 = 0
         while (i < p.arena.count) {
-            node : ^Node = arena_at(p.arena, i)
-            kind := node^.kind
+            node := arena_at(p.arena, i)
+            kind := node.kind
             mut gated : i64 = 0
             mut what : ^i8 = ""
             if (kind == NODE_DEREF) {
@@ -281,7 +267,7 @@ check_unsafety :: fn(mut p: Parser) {
             // checked; a borrow was proven safe where it formed; only a raw
             // pointer is unchecked.
             if (kind == NODE_INDEX) {
-                if (is_raw_pointer(type_of(p, node^.a))) {
+                if (is_raw_pointer(type_of(p, node.a))) {
                     gated = 1
                     what = "indexing a raw pointer"
                 }
@@ -290,20 +276,20 @@ check_unsafety :: fn(mut p: Parser) {
             // `^` is; a borrow reaching its field is not, which is what lets
             // `mut p: Parser` write `p.field` without a block.
             if (kind == NODE_FIELD) {
-                if (is_raw_pointer(type_of(p, node^.a))) {
+                if (is_raw_pointer(type_of(p, node.a))) {
                     gated = 1
                     what = "reading a field through a raw pointer"
                 }
             }
             if (kind == NODE_CALL) {
-                sym : ^Sym = arena_at(p.fns, node^.val)
-                if (sym^.is_extern == 1 && sym^.is_safe == 0) {
+                sym := arena_at(p.fns, node.val)
+                if (sym.is_extern == 1 && sym.is_safe == 0) {
                     gated = 1
                     what = "calling a C function"
                 }
             }
-            if (gated == 1 && inside_unsafe(p, node^.pos) == 0) {
-                report_where(p.modules, p.src, node^.pos)
+            if (gated == 1 && inside_unsafe(p, node.pos) == 0) {
+                report_where(p.modules, p.src, node.pos)
                 frost_error(what)
                 frost_error(" is unchecked, so it belongs in an `unsafe` block")
                 frost_die()
@@ -315,35 +301,33 @@ check_unsafety :: fn(mut p: Parser) {
 
 // Whether a source position falls in some `unsafe { ... }` the parser recorded.
 inside_unsafe :: fn(mut p: Parser, pos: i64) -> i64 {
-    unsafe {
-        mut i : i64 = 0
-        while (i < p.unsafe_spans.count) {
-            span : ^UnsafeSpan = arena_at(p.unsafe_spans, i)
-            if (pos >= span^.start && pos < span^.end) {
-                return 1
-            }
-            i = i + 1
+    mut i : i64 = 0
+    while (i < p.unsafe_spans.count) {
+        span := arena_at(p.unsafe_spans, i)
+        if (pos >= span.start && pos < span.end) {
+            return 1
         }
-        0
+        i = i + 1
     }
+    0
 }
 
 check_calls :: fn(mut p: Parser) {
     unsafe {
         mut i : i64 = 0
         while (i < p.arena.count) {
-            node : ^Node = arena_at(p.arena, i)
-            kind := node^.kind
-            fn_index := node^.val
-            args := node^.a
+            node := arena_at(p.arena, i)
+            kind := node.kind
+            fn_index := node.val
+            args := node.a
             if (kind == NODE_CALL) {
-                sym : ^Sym = arena_at(p.fns, fn_index)
-                defined := sym^.defined
-                name_off := sym^.off
-                name_len := sym^.len
-                params := sym^.params
+                sym := arena_at(p.fns, fn_index)
+                defined := sym.defined
+                name_off := sym.off
+                name_len := sym.len
+                params := sym.params
                 if (defined == 0) {
-                    report_where(p.modules, p.src, node^.pos)
+                    report_where(p.modules, p.src, node.pos)
                     frost_error("call to undefined function '")
                     frost_error_src(p.src, name_off, name_len)
                     frost_error("'")
@@ -352,7 +336,7 @@ check_calls :: fn(mut p: Parser) {
                 // The capability is supplied by the caller's context rather than
                 // written at the call, so it is not one of the arguments counted.
                 mut expected := count_params(p, params)
-                if (sym^.uses_ty >= 0) {
+                if (sym.uses_ty >= 0) {
                     expected = expected - 1
                 }
                 got := count_args(p, args)
