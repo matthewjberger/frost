@@ -12,7 +12,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     NODE_EXPRSTMT, NODE_EXTERN, NODE_FIELD, NODE_FIELD_INIT, NODE_FUNC,
     NODE_IF, NODE_INDEX, NODE_LET, NODE_MATCH, NODE_NUM, NODE_PARAM,
     NODE_PRINT, NODE_PTR_CAST, NODE_RETURN, NODE_SIZEOF, NODE_STRLIT,
-    NODE_ARRAY_LIT, NODE_ASSERT, NODE_FLOAT, NODE_SLICE_LEN,
+    NODE_ARRAY_LIT, NODE_ASSERT, NODE_FLOAT, NODE_REF, NODE_SLICE_LEN,
     NODE_STRUCT_LIT,
     NODE_TYPEVAL, NODE_VAR, NODE_WHILE, NODE_WITH, Node,
     OP_ADD, OP_AND, OP_DIV, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT, OP_MOD, OP_MUL,
@@ -21,7 +21,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     TOK_CARET, TOK_COLON, TOK_COLONCOLON, TOK_COLONEQ, TOK_COMMA, TOK_DOLLAR,
     TOK_DOT, TOK_EOF, TOK_EQEQ, TOK_FLOAT, TOK_GE, TOK_GT, TOK_IDENT, TOK_INT,
     TOK_KW_CASE, TOK_KW_ELSE, TOK_KW_ENUM, TOK_KW_EXPORT, TOK_KW_EXTERN,
-    TOK_KW_SAFE, TOK_KW_TEST, TOK_KW_UNSAFE,
+    TOK_KW_REF, TOK_KW_SAFE, TOK_KW_TEST, TOK_KW_UNSAFE,
     TOK_KW_FALSE, TOK_KW_FN, TOK_KW_IF, TOK_KW_IMPORT, TOK_KW_LET,
     TOK_KW_LINEAR, TOK_KW_MATCH, TOK_KW_MOVE, TOK_KW_MUT, TOK_KW_PRINT,
     TOK_KW_RETURN, TOK_KW_STRUCT, TOK_KW_TRUE, TOK_KW_USES, TOK_KW_WHILE,
@@ -106,6 +106,9 @@ NODE_FLOAT      :: 28
 NODE_ARRAY_LIT  :: 29
 NODE_SLICE_LEN  :: 30
 NODE_ASSERT     :: 31
+// `ref x := place`: a borrow of a place, an address that types as a borrow
+// rather than a raw pointer, so reading through it needs no `unsafe` block.
+NODE_REF        :: 32
 
 // Type codes. A type is one i64. The primitives are small constants; a struct is
 // STRUCT_BASE plus its table index; a pointer to a type T (also how a borrow
@@ -187,6 +190,7 @@ TOK_KW_TEST   :: 31
 TOK_KW_UNSAFE :: 32
 // `safe extern fn`: an extern the author audited, so calling it needs no block.
 TOK_KW_SAFE   :: 71
+TOK_KW_REF    :: 72
 TOK_LPAREN    :: 40
 TOK_RPAREN    :: 41
 TOK_LBRACE    :: 42
