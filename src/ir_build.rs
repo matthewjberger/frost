@@ -4252,7 +4252,8 @@ impl<'a> FunctionLowering<'a> {
         };
         let element = element.clone();
         let (pointer, _) = self.lower_expression(&arguments[1], None)?;
-        let (length, length_type) = self.lower_expression(&arguments[2], None)?;
+        let (length, length_type) =
+            self.lower_expression(&arguments[2], None)?;
         let length = self.coerce(length, &length_type, &Type::Usize);
         let slice_type = Type::Slice(Box::new(element.clone()));
         let slice_local = self.fresh_local(slice_type.clone(), None);

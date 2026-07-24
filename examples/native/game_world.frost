@@ -13,9 +13,11 @@ Kind :: enum { Hero, Monster { threat: i64 } }
 Entity :: struct { hp: i64, kind: Kind }
 
 threat_of :: fn(e: Entity) -> i64 {
-    match e^.kind {
-        case .Hero: 0
-        case .Monster { threat }: threat
+    unsafe {
+        match e^.kind {
+            case .Hero: 0
+            case .Monster { threat }: threat
+        }
     }
 }
 

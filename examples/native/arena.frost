@@ -29,41 +29,47 @@ arena_reset :: fn(mut a: Arena<256>, mark: i64) {
 }
 
 alloc_point :: fn(mut a: Arena<256>) -> ^Point {
-    slot := ptr_to(a.data[a.offset])
-    a.offset = a.offset + sizeof(Point)
-    ptr_cast($Point, slot)
+    unsafe {
+        slot := ptr_to(a.data[a.offset])
+        a.offset = a.offset + sizeof(Point)
+        ptr_cast($Point, slot)
+    }
 }
 
 alloc_int :: fn(mut a: Arena<256>) -> ^i64 {
-    slot := ptr_to(a.data[a.offset])
-    a.offset = a.offset + sizeof(i64)
-    ptr_cast($i64, slot)
+    unsafe {
+        slot := ptr_to(a.data[a.offset])
+        a.offset = a.offset + sizeof(i64)
+        ptr_cast($i64, slot)
+    }
 }
 
 main :: fn() -> i64 {
-    mut arena : Arena<256> = Arena {
-        data = [0; 256],
-        offset = 0,
+    unsafe {
+        mut arena : Arena<256> = Arena {
+            data = [0; 256],
+            offset = 0,
+        }
+
+        p : ^Point = alloc_point(arena)
+        p^.x = 3
+        p^.y = 4
+        q : ^i64 = alloc_int(arena)
+        q^ = 99
+
+        print_int_line(p^.x)  // 3
+        print_int_line(p^.y)  // 4
+        print_int_line(q^)  // 99
+        print_int_line(arena.offset)  // 24 = Point(16) + i64(8)
+
+        // Roll back to the start and reuse the same bytes.
+        saved := arena_mark(arena)
+        arena_reset(arena, 0)
+        r : ^i64 = alloc_int(arena)
+        r^ = 7
+        print_int_line(r^)  // 7
+        print_int_line(arena.offset)  // 8, the buffer was reclaimed
+        print_int_line(saved)  // 24, the earlier high-water mark
+        0
     }
-
-    p : ^Point = alloc_point(arena)
-    p^.x = 3
-    p^.y = 4
-    q : ^i64 = alloc_int(arena)
-    q^ = 99
-
-    print_int_line(p^.x)  // 3
-    print_int_line(p^.y)  // 4
-    print_int_line(q^)  // 99
-    print_int_line(arena.offset)  // 24 = Point(16) + i64(8)
-
-    // Roll back to the start and reuse the same bytes.
-    saved := arena_mark(arena)
-    arena_reset(arena, 0)
-    r : ^i64 = alloc_int(arena)
-    r^ = 7
-    print_int_line(r^)  // 7
-    print_int_line(arena.offset)  // 8, the buffer was reclaimed
-    print_int_line(saved)  // 24, the earlier high-water mark
-    0
 }

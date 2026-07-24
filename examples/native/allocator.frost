@@ -15,10 +15,12 @@ Bump :: struct {
 
 // The bump's take function matches the Allocator interface: (state, size) -> ptr.
 bump_take :: fn(state: ^u8, size: i64) -> ^u8 {
-    b := ptr_cast($Bump, state)
-    slot := ptr_to(b^.data[b^.offset])
-    b^.offset = b^.offset + size
-    slot
+    unsafe {
+        b := ptr_cast($Bump, state)
+        slot := ptr_to(b^.data[b^.offset])
+        b^.offset = b^.offset + size
+        slot
+    }
 }
 
 Allocator :: struct {
@@ -31,25 +33,27 @@ alloc :: fn(a: Allocator, size: i64) -> ^u8 {
 }
 
 main :: fn() -> i64 {
-    mut backing : [64]u8 = [0; 64]
-    mut bump : Bump = Bump {
-        data = ptr_to(backing[0]),
-        cap = 64,
-        offset = 0,
-    }
-    a : Allocator = Allocator {
-        take = bump_take,
-        state = ptr_cast($u8, ptr_to(bump)),
-    }
+    unsafe {
+        mut backing : [64]u8 = [0; 64]
+        mut bump : Bump = Bump {
+            data = ptr_to(backing[0]),
+            cap = 64,
+            offset = 0,
+        }
+        a : Allocator = Allocator {
+            take = bump_take,
+            state = ptr_cast($u8, ptr_to(bump)),
+        }
 
-    p := ptr_cast($i64, alloc(a, 8))
-    p^ = 42
-    q := ptr_cast($i64, alloc(a, 8))
-    q^ = 7
+        p := ptr_cast($i64, alloc(a, 8))
+        p^ = 42
+        q := ptr_cast($i64, alloc(a, 8))
+        q^ = 7
 
-    print_int_line(p^)  // 42
-    print_int_line(q^)  // 7
-    print_int_line(p^ + q^)  // 49
-    print_int_line(bump.offset)  // 16, two 8-byte allocations
-    0
+        print_int_line(p^)  // 42
+        print_int_line(q^)  // 7
+        print_int_line(p^ + q^)  // 49
+        print_int_line(bump.offset)  // 16, two 8-byte allocations
+        0
+    }
 }

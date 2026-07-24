@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{Result, bail};
 
 use crate::parser::{Block, Expression, Statement, StructField};
-use crate::{Position, Spanned};
 use crate::types::Type;
+use crate::{Position, Spanned};
 
 // Where the compiler's guarantees stop.
 //
@@ -102,10 +102,8 @@ fn strip_block(block: &mut Block) {
 
 fn strip_expression(expression: &mut Expression) {
     if let Expression::UnsafeFn(inner) = expression {
-        let mut taken = std::mem::replace(
-            inner.as_mut(),
-            Expression::Boolean(false),
-        );
+        let mut taken =
+            std::mem::replace(inner.as_mut(), Expression::Boolean(false));
         strip_expression(&mut taken);
         *expression = taken;
         return;
@@ -203,12 +201,12 @@ impl Checker {
                 let base_type = self.type_of(base)?;
                 let name = match base_type {
                     Type::Struct(name) => name,
-                    Type::Ptr(inner) | Type::Ref(inner) | Type::RefMut(inner) => {
-                        match *inner {
-                            Type::Struct(name) => name,
-                            _ => return None,
-                        }
-                    }
+                    Type::Ptr(inner)
+                    | Type::Ref(inner)
+                    | Type::RefMut(inner) => match *inner {
+                        Type::Struct(name) => name,
+                        _ => return None,
+                    },
                     _ => return None,
                 };
                 self.fields
@@ -337,10 +335,7 @@ impl Checker {
                     if name == "ptr_cast" {
                         self.refuse("ptr_cast", at)?;
                     } else if name == "slice_from" {
-                        self.refuse(
-                            "forming a slice from a raw pointer",
-                            at,
-                        )?;
+                        self.refuse("forming a slice from a raw pointer", at)?;
                     } else if self.externs.contains(name) {
                         self.refuse(
                             &format!("calling the C function '{name}'"),
