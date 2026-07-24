@@ -362,8 +362,21 @@ record_mono_ret :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
 // Distinct tuples rather than instances, since two generic structs written with
 // the same arguments would otherwise have every generic function emitted twice.
 note_type_args :: fn(mut p: Parser, arg: i64, xarg_start: i64, xarg_count: i64) {
-    if (arg < 0) {
+    if (arg < 0 || arg == TY_PARAM) {
         return
+    }
+    // A call inside a generic template names the enclosing parameter as its
+    // argument, so its argument is the unbound placeholder. That call is
+    // re-parsed with a real argument for each instance; the placeholder itself
+    // must not drive an instantiation, which would emit a `^T` for a T that is
+    // no type.
+    mut g : i64 = 0
+    while (g < xarg_count) {
+        entry := arena_at(p.gargs, xarg_start + g)
+        if (entry.value == TY_PARAM) {
+            return
+        }
+        g = g + 1
     }
     mut i : i64 = 0
     while (i < p.type_args.count) {
