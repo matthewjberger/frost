@@ -618,47 +618,84 @@ impl MoveChecker<'_> {
     }
 }
 
+// The place a borrowed argument names, as a path from a root variable through
+// fields, indexes and dereferences: `s.x` is `["s", ".x"]` and `xs[i]` is
+// `["xs", "[i]"]`. An index is keyed by how it is written, so `xs[i]` and
+// `xs[j]` are distinct places while `xs[i]` and `xs[i]` are one. `None` for an
+// expression that is not a place (a call, a literal), which cannot alias.
+fn borrow_place(expression: &Expression) -> Option<Vec<String>> {
+    match expression {
+        Expression::Identifier(name) => Some(vec![name.clone()]),
+        Expression::FieldAccess(base, field) => {
+            let mut path = borrow_place(base)?;
+            path.push(format!(".{field}"));
+            Some(path)
+        }
+        Expression::Index(base, index) => {
+            let mut path = borrow_place(base)?;
+            path.push(format!("[{index}]"));
+            Some(path)
+        }
+        Expression::Dereference(base) => {
+            let mut path = borrow_place(base)?;
+            path.push("^".to_string());
+            Some(path)
+        }
+        _ => None,
+    }
+}
+
+// Two places overlap when one contains the other: they share the whole of the
+// shorter as a prefix, so `s` overlaps `s.x`, and `s.x` overlaps `s.x.y`, while
+// `s.x` and `s.y` are disjoint. Overlapping places name storage that intersects,
+// which is what an exclusive borrow may not share.
+fn places_overlap(first: &[String], second: &[String]) -> bool {
+    let common = first.len().min(second.len());
+    first[..common] == second[..common]
+}
+
 fn check_borrow_exclusivity(
     arguments: &[Expression],
     param_types: Option<&Vec<Option<Type>>>,
 ) -> Result<()> {
-    let mut mutable: Vec<&str> = Vec::new();
-    let mut shared: Vec<&str> = Vec::new();
+    // Each borrowed argument as (place path, whether it is exclusive). A `mut`
+    // parameter and an explicit `&mut` borrow exclusively; a `read` parameter
+    // and a `&` share.
+    let mut borrows: Vec<(Vec<String>, bool)> = Vec::new();
     for (index, argument) in arguments.iter().enumerate() {
-        // An explicit borrow, or a bare place auto-borrowed for a `read`/`mut`
-        // parameter. A `mut` parameter borrows exclusively, a `read` shares.
         let mode = param_types
             .and_then(|types| types.get(index))
             .and_then(|ty| ty.as_ref());
-        match argument {
-            Expression::BorrowMut(inner) => {
-                if let Expression::Identifier(name) = &**inner {
-                    mutable.push(name);
-                }
-            }
-            Expression::Borrow(inner) => {
-                if let Expression::Identifier(name) = &**inner {
-                    shared.push(name);
-                }
-            }
-            Expression::Identifier(name) => match mode {
-                Some(Type::RefMut(_)) => mutable.push(name),
-                Some(Type::Ref(_)) => shared.push(name),
-                _ => {}
+        let borrow = match argument {
+            Expression::BorrowMut(inner) => borrow_place(inner).map(|p| (p, true)),
+            Expression::Borrow(inner) => borrow_place(inner).map(|p| (p, false)),
+            _ => match mode {
+                Some(Type::RefMut(_)) => borrow_place(argument).map(|p| (p, true)),
+                Some(Type::Ref(_)) => borrow_place(argument).map(|p| (p, false)),
+                _ => None,
             },
-            _ => {}
+        };
+        if let Some(borrow) = borrow {
+            borrows.push(borrow);
         }
     }
-    for (index, name) in mutable.iter().enumerate() {
-        if mutable.iter().skip(index + 1).any(|other| other == name) {
-            bail!(
-                "ownership: '{name}' is borrowed as mutable more than once in a single call; mutable borrows are exclusive"
-            );
-        }
-        if shared.iter().any(|other| other == name) {
-            bail!(
-                "ownership: '{name}' is borrowed as both shared and mutable in a single call; mutable borrows are exclusive"
-            );
+    for (index, (place, exclusive)) in borrows.iter().enumerate() {
+        for (other_place, other_exclusive) in borrows.iter().skip(index + 1) {
+            if !(*exclusive || *other_exclusive) {
+                continue;
+            }
+            if places_overlap(place, other_place) {
+                let name = place.join("");
+                let other = other_place.join("");
+                if *exclusive && *other_exclusive {
+                    bail!(
+                        "ownership: '{name}' and '{other}' are both borrowed as mutable in a single call; mutable borrows are exclusive"
+                    );
+                }
+                bail!(
+                    "ownership: '{name}' is borrowed as both shared and mutable in a single call; mutable borrows are exclusive"
+                );
+            }
         }
     }
     Ok(())
