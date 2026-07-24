@@ -319,6 +319,87 @@ int64_t frost_run_command(const char *command) {
     return (int64_t)status;
 }
 
+/* OS threads. A spawn takes a function and a context pointer, runs the function
+   on a new thread with that pointer, and answers with a handle the caller joins
+   later. The context is a `void*` the Frost side gives a type to, the same
+   shape a callback uses, so a thread body is an ordinary `fn(mut Ctx)`.
+
+   Windows and POSIX have different thread APIs and different body signatures, so
+   each platform wraps the Frost body in a trampoline of its own shape and hands
+   the real body and context through a small heap record. */
+typedef void (*frost_thread_body)(void *);
+
+struct frost_thread_start {
+    frost_thread_body body;
+    void *context;
+};
+
+#if defined(_WIN32)
+#include <windows.h>
+
+static DWORD WINAPI frost_thread_trampoline(LPVOID raw) {
+    struct frost_thread_start *start = (struct frost_thread_start *)raw;
+    frost_thread_body body = start->body;
+    void *context = start->context;
+    free(start);
+    body(context);
+    return 0;
+}
+
+int64_t frost_thread_spawn(void *body, void *context) {
+    struct frost_thread_start *start =
+        (struct frost_thread_start *)malloc(sizeof(*start));
+    start->body = (frost_thread_body)body;
+    start->context = context;
+    HANDLE handle = CreateThread(0, 0, frost_thread_trampoline, start, 0, 0);
+    return (int64_t)(intptr_t)handle;
+}
+
+void frost_thread_join(int64_t handle) {
+    HANDLE h = (HANDLE)(intptr_t)handle;
+    WaitForSingleObject(h, INFINITE);
+    CloseHandle(h);
+}
+#else
+#include <pthread.h>
+
+static void *frost_thread_trampoline(void *raw) {
+    struct frost_thread_start *start = (struct frost_thread_start *)raw;
+    frost_thread_body body = start->body;
+    void *context = start->context;
+    free(start);
+    body(context);
+    return 0;
+}
+
+int64_t frost_thread_spawn(void *body, void *context) {
+    struct frost_thread_start *start =
+        (struct frost_thread_start *)malloc(sizeof(*start));
+    start->body = (frost_thread_body)body;
+    start->context = context;
+    pthread_t *thread = (pthread_t *)malloc(sizeof(pthread_t));
+    pthread_create(thread, 0, frost_thread_trampoline, start);
+    return (int64_t)(intptr_t)thread;
+}
+
+void frost_thread_join(int64_t handle) {
+    pthread_t *thread = (pthread_t *)(intptr_t)handle;
+    pthread_join(*thread, 0);
+    free(thread);
+}
+#endif
+
+/* An atomic add, so threads can accumulate into shared storage without a lock.
+   Answers the value before the add, like the hardware primitive. */
+int64_t frost_atomic_add_i64(void *cell, int64_t amount) {
+#if defined(_WIN32)
+    return (int64_t)InterlockedExchangeAdd64((volatile long long *)cell,
+                                             (long long)amount);
+#else
+    return __sync_fetch_and_add((int64_t *)cell, amount);
+#endif
+}
+
 /* Which calling convention the native backend must emit for. */
 int64_t frost_is_windows(void) {
 #ifdef _WIN32

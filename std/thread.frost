@@ -1,0 +1,33 @@
+// OS threads. A thread runs a `fn(^u8)` with a context pointer the spawner
+// supplies, and a join waits for it to finish. The context is a raw pointer
+// because a thread crosses into C, where the body is a `void (*)(void*)` and the
+// context is its `void*`; the body casts it back to the type it knows.
+//
+// This is the reasonable-C floor rather than a checked concurrency model. The
+// spawner owns the context and must keep it alive until the join, and any state
+// two threads touch at once has to go through `atomic_add` or the program races.
+// `spawn`, `join` and `atomic_add` are the unsafe operations, wrapped here.
+
+export spawn, join, atomic_add
+
+frost_thread_spawn :: extern fn(body: fn(^u8), context: ^u8) -> i64
+frost_thread_join  :: extern fn(handle: i64)
+frost_atomic_add_i64   :: extern fn(cell: ^i64, amount: i64) -> i64
+
+// Run `body` on a new thread with `context`, and answer a handle to join later.
+// The context must outlive the thread, so it lives in the spawner's frame and
+// the spawner holds off reading it until after the join.
+spawn :: fn(body: fn(^u8), context: ^u8) -> i64 {
+    unsafe { frost_thread_spawn(body, context) }
+}
+
+join :: fn(handle: i64) {
+    unsafe { frost_thread_join(handle) }
+}
+
+// Add to a shared word and answer its value before the add. Several threads may
+// call this on the same cell at once without a lock, which is how they combine
+// results without racing.
+atomic_add :: fn(cell: ^i64, amount: i64) -> i64 {
+    unsafe { frost_atomic_add_i64(cell, amount) }
+}
