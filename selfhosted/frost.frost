@@ -239,6 +239,7 @@ main :: fn() -> i64 {
         }
         check_regions(parser)
         check_frame_escapes(parser)
+        check_reference_fields(parser)
 
         // Where the emitted text goes. A link needs it in a file whatever the
         // caller asked for, so it writes one beside the executable and removes it

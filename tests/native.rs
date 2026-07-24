@@ -2272,6 +2272,21 @@ fn self_hosted_rejects_a_returned_frame_pointer() {
     );
 }
 
+// A borrow may be returned but not stored, so a `ref`-typed struct field is
+// refused. A raw pointer field stays allowed, which is what the arena needs.
+#[test]
+fn self_hosted_rejects_a_reference_struct_field() {
+    let source = "Bad :: struct { r: ref i64 }\n\
+                  main :: fn() -> i64 { 0 }\n";
+    let Some(message) = self_hosted_rejects("reffield", source) else {
+        return;
+    };
+    assert!(
+        message.contains("cannot store a reference"),
+        "expected a reference-field error, got:\n{message}"
+    );
+}
+
 // A binding declared inside the region may hold a region pointer, and reading
 // through it is what the region is for, so this must be accepted.
 #[test]
