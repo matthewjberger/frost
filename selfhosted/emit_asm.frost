@@ -319,8 +319,14 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
             through = pointee(through)
         }
         mut element : i64 = TY_I64
+        // An array and a slice bound the index; a raw pointer does not, which
+        // is what makes reading through one a gated operation.
+        mut checked : i64 = 0
+        mut length_const : i64 = 0
+        mut len_slot : i64 = 0
         if (is_array_ty(through)) {
             element = array_element(p, through)
+            checked = 1
             // An aggregate is reached by its address, and a slice holds the
             // address of its run in its first word rather than being one.
             if (is_pointer(base_ty)) {
@@ -329,7 +335,15 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
                 emit_asm_addr(p, base)
             }
             if (is_slice_ty(p, through)) {
+                // The length is the word past the run's address; keep it before
+                // the address itself is overwritten by the run's own.
+                length_const = 0 - 1
+                len_slot = alloc_temp(p, 8)
+                asm("movq 8(%rax), %r11")
+                asm_i("movq %r11, ", len_slot, "(%rbp)")
                 asm("movq (%rax), %rax")
+            } else {
+                length_const = array_length(p, through)
             }
         } else if (is_pointer(base_ty)) {
             element = pointee(base_ty)
@@ -340,6 +354,14 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
         }
         emit_asm_push()
         emit_asm_expr(p, node.b)
+        if (checked == 1) {
+            if (length_const == (0 - 1)) {
+                asm_i("movq ", len_slot, "(%rbp), %r11")
+            } else {
+                asm_i("movq $", length_const, ", %r11")
+            }
+            emit_asm_bounds_call(p)
+        }
         asm_i("imulq $", type_size(p, element), ", %rax")
         asm("movq %rax, %r11")
         emit_asm_pop_rax()
@@ -354,6 +376,23 @@ asm_unsupported :: fn(what: ^i8) {
     report_cstr(what)
     report(" yet")
     frost_die()
+}
+
+// Bounds-check an index in %rax against a length in %r11, leaving the checked
+// index in %rax. The runtime aborts on an out-of-range one, so what returns is
+// always in range. The pushed run pointer sits above the call's frame and is
+// untouched.
+emit_asm_bounds_call :: fn(mut p: Parser) {
+    shadow := abi_shadow(p)
+    emit_text("    movq %rax, ")
+    emit_asm_arg_reg(p, 0)
+    emit_text("\n")
+    emit_text("    movq %r11, ")
+    emit_asm_arg_reg(p, 1)
+    emit_text("\n")
+    asm_i("subq $", shadow, ", %rsp")
+    asm("call frost_check_index")
+    asm_i("addq $", shadow, ", %rsp")
 }
 
 emit_asm_push :: fn() {

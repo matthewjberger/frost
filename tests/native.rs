@@ -840,9 +840,14 @@ fn compile_c_and_run(name: &str, c_source: &str) -> Option<String> {
         std::env::consts::EXE_SUFFIX
     ));
     std::fs::write(&c_path, c_source).unwrap();
+    // The emitted code calls into the runtime for the bounds check an index
+    // compiles to and for assertions, so the runtime is linked alongside it.
+    let runtime =
+        format!("{}/runtime/frost_runtime.c", env!("CARGO_MANIFEST_DIR"));
     let compile = Command::new(compiler)
         .arg("-std=c11")
         .arg(&c_path)
+        .arg(&runtime)
         .arg("-o")
         .arg(&exe_path)
         .output()
@@ -1722,8 +1727,13 @@ fn selfhosted_native_output(name: &str, source: &str) -> Option<String> {
         .join(format!("frost_nb_{name}{}", std::env::consts::EXE_SUFFIX));
     std::fs::write(&asm_path, String::from_utf8_lossy(&emit.stdout).as_ref())
         .unwrap();
+    // The emitted code calls into the runtime for the bounds check an index
+    // compiles to and for assertions, so the runtime is linked alongside it.
+    let runtime =
+        format!("{}/runtime/frost_runtime.c", env!("CARGO_MANIFEST_DIR"));
     let assembled = Command::new(c_compiler().unwrap())
         .arg(&asm_path)
+        .arg(&runtime)
         .arg("-o")
         .arg(&exe_path)
         .output()

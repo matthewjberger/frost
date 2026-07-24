@@ -16,6 +16,13 @@ void frost_bounds_check(int64_t index, int64_t length) {
     }
 }
 
+/* Bounds-check and answer with the index, so an array or slice access can be
+   checked inline in an expression: `data[frost_check_index(i, len)]`. */
+int64_t frost_check_index(int64_t index, int64_t length) {
+    frost_bounds_check(index, length);
+    return index;
+}
+
 void frost_generation_check(int64_t stored, int64_t expected) {
     if (stored != expected) {
         fprintf(stderr,
