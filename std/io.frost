@@ -9,25 +9,27 @@
 // These go through the runtime's emit helpers rather than through `printf`, so
 // there is no format string to get wrong and nothing is variadic.
 
-export print, print_int, print_char, print_str, print_line, print_int_line, print_str_line
+export print_cstr, print_int, print_char, print_str, print_line, print_int_line, print_str_line
 
 // `frost_emit_int` and `frost_emit_char` take a number and write bytes, so
 // there is nothing a caller can hand them that misbehaves: they are `safe` and
 // need no block at their call sites. `frost_emit_str` is not, because it reads
 // until a NUL and a `^i8` without one runs off the end, so it keeps the gate and
-// `print` is what vouches for the pointer.
+// `print_cstr` is what vouches for the pointer. (The bare name `print` is a
+// statement keyword in the language, so the C-string writer is `print_cstr`.)
 frost_emit_str :: extern fn(text: ^i8)
 frost_emit_int :: safe extern fn(value: i64)
 frost_emit_char :: safe extern fn(byte: i64)
 
 // A string literal is a pointer to its bytes with a trailing NUL where `^i8` is
-// expected, so `print("hello")` works. A `str` value computed at run time is a
-// pointer and a length with no terminator, which is what `print_str` is for.
+// expected, so `print_cstr("hello")` works. A `str` value computed at run time
+// is a pointer and a length with no terminator, which is what `print_str` is
+// for.
 //
-// The `unsafe` that remains is exactly the pointer: `print` and `print_line`
-// are what promise the `^i8` is NUL-terminated, which a string literal always
-// satisfies. Everything else writes a number and needs no block.
-print :: fn(text: ^i8) { unsafe { frost_emit_str(text) } }
+// The `unsafe` that remains is exactly the pointer: `print_cstr` and
+// `print_line` are what promise the `^i8` is NUL-terminated, which a string
+// literal always satisfies. Everything else writes a number and needs no block.
+print_cstr :: fn(text: ^i8) { unsafe { frost_emit_str(text) } }
 
 print_int :: fn(value: i64) { frost_emit_int(value) }
 

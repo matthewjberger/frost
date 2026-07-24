@@ -35,6 +35,18 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         mut head : i64 = 0 - 1
         mut tail : i64 = 0 - 1
         mut count : i64 = 0
+        // When a declared type says what this literal holds, its element type is
+        // taken from there rather than guessed from the first element, so
+        // `mut d : [20]u8 = [0, 0, ...]` is a run of bytes, not of i64. The
+        // expectation is narrowed to the element for each item, so a literal of
+        // arrays resolves the same way at every level.
+        had_expected := is_array_ty(p.expected_type)
+        mut elem_expected : i64 = 0
+        if (had_expected) {
+            elem_expected = array_element(p, p.expected_type)
+        }
+        saved_expected := p.expected_type
+        p.expected_type = elem_expected
         while (cur(p) != TOK_RBRACKET) {
             element := new_node(p, NODE_ARG, parse_expr(p), 0, 0)
             if (head == (0 - 1)) {
@@ -48,10 +60,16 @@ parse_primary :: fn(mut p: Parser) -> i64 {
                 advance(p)
             }
         }
+        p.expected_type = saved_expected
         advance(p)
         made := new_node(p, NODE_ARRAY_LIT, head, 0, 0)
         node := arena_at(p.arena, made)
         node.c = count
+        // A stored element type is kept as the code plus one, so zero still
+        // means it was not set and the element is guessed from the first item.
+        if (had_expected) {
+            node.val = elem_expected + 1
+        }
         return made
     }
     if (kind == TOK_KW_TRUE) {

@@ -217,13 +217,18 @@ type_of :: fn(mut p: Parser, id: i64) -> i64 {
     if (kind == NODE_ASSERT) {
         return TY_VOID
     }
-    // A literal says both halves of its own type: the element from the first
-    // thing in it, the length from how many there are.
+    // A literal says both halves of its own type: the element from a declared
+    // type when one was in force, otherwise from the first thing in it, and the
+    // length from how many there are.
     if (kind == NODE_ARRAY_LIT) {
         mut element : i64 = TY_I64
-        if (node.a != (0 - 1)) {
-            first := arena_at(p.arena, node.a)
-            element = type_of(p, first.a)
+        if (node.val != 0) {
+            element = node.val - 1
+        } else {
+            if (node.a != (0 - 1)) {
+                first := arena_at(p.arena, node.a)
+                element = type_of(p, first.a)
+            }
         }
         return array_of(p, element, node.c)
     }
