@@ -4197,6 +4197,55 @@ fn self_hosted_standard_library_map() {
     assert_eq!(output, "2\n7\n99\n0\n");
 }
 
+// The standard-library output helpers, imported and compiled by the self-hosted
+// compiler. io.frost writes bytes through the runtime's emit helpers; its bare
+// C-string writer is `print_cstr`, since `print` is a statement keyword.
+const SELFHOSTED_STD_IO: &str = concat!(
+    "import \"io.frost\"\n",
+    "main :: fn() -> i64 {\n",
+    "    print_cstr(\"hi \")\n",
+    "    print_int_line(42)\n",
+    "    print_str_line(\"done\")\n",
+    "    0\n",
+    "}\n",
+);
+
+#[test]
+fn self_hosted_standard_library_io() {
+    let Some(output) = selfhosted_native_output("stdio", SELFHOSTED_STD_IO)
+    else {
+        return;
+    };
+    assert_eq!(output, "hi 42\ndone\n");
+}
+
+// The standard-library string builder, which formats an integer into a heap
+// buffer through a local `[20]u8` scratch. That local fixed array takes its
+// element type from its declaration, so the byte literals are bytes, not i64.
+const SELFHOSTED_STD_FORMAT: &str = concat!(
+    "import \"format.frost\"\n",
+    "import \"io.frost\"\n",
+    "main :: fn() -> i64 {\n",
+    "    mut b : Builder = builder_new(16)\n",
+    "    builder_str_value(b, \"count = \")\n",
+    "    builder_int(b, 12345)\n",
+    "    builder_int(b, 0 - 99)\n",
+    "    print_str_line(builder_str(b))\n",
+    "    builder_free(b)\n",
+    "    0\n",
+    "}\n",
+);
+
+#[test]
+fn self_hosted_standard_library_format() {
+    let Some(output) =
+        selfhosted_native_output("stdfmt", SELFHOSTED_STD_FORMAT)
+    else {
+        return;
+    };
+    assert_eq!(output, "count = 12345-99\n");
+}
+
 const SLICES: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 

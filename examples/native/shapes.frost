@@ -19,11 +19,11 @@ main :: fn() -> i64 {
     r := Shape::Rectangle { width = 4, height = 6 }
     t := Shape::Triangle { base = 8, height = 3 }
 
-    print("circle area    = ")
+    print_cstr("circle area    = ")
     print_int_line(area(c))
-    print("rectangle area = ")
+    print_cstr("rectangle area = ")
     print_int_line(area(r))
-    print("triangle area  = ")
+    print_cstr("triangle area  = ")
     print_int_line(area(t))
     0
 }
