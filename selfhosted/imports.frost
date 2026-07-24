@@ -7,17 +7,15 @@ export SOURCE_ROOM, SYNTH_ROOM, emit_position, module_at, report_where,
     resolve_imports, search_roots_from, source_with_room
 
 module_seen :: fn(mut modules: Arena<Module>, path: ^i8) -> bool {
-    unsafe {
-        mut i : i64 = 0
-        while (i < modules.count) {
-            entry : ^Module = arena_at(modules, i)
-            if (cstr_eq(entry^.path, path)) {
-                return true
-            }
-            i = i + 1
+    mut i : i64 = 0
+    while (i < modules.count) {
+        entry := arena_at(modules, i)
+        if (cstr_eq(entry.path, path)) {
+            return true
         }
-        false
+        i = i + 1
     }
+    false
 }
 
 // A path named by an import, resolved against the directory of the file that
@@ -99,8 +97,8 @@ find_import :: fn(parent: ^i8, src: ^i8, off: i64, len: i64,
         }
         mut i : i64 = 0
         while (i < roots.count) {
-            entry : ^SearchRoot = arena_at(roots, i)
-            candidate := join_under(entry^.path, src, off, len)
+            entry := arena_at(roots, i)
+            candidate := join_under(entry.path, src, off, len)
             if (frost_file_exists(candidate) == 1) {
                 return candidate
             }
@@ -152,13 +150,13 @@ place_module :: fn(buffer: ^i8, at: i64, path: ^i8,
         tokenize(text, frost_str_len(text), scratch)
         mut i : i64 = 0
         while (i + 1 < scratch.count) {
-            entry : ^Token = arena_at(scratch, i)
-            named : ^Token = arena_at(scratch, i + 1)
-            if (entry^.kind == TOK_KW_IMPORT && named^.kind == TOK_STR) {
+            entry := arena_at(scratch, i)
+            named := arena_at(scratch, i + 1)
+            if (entry.kind == TOK_KW_IMPORT && named.kind == TOK_STR) {
                 arena_push(
                     children,
                     Module {
-                        path = find_import(path, text, named^.off, named^.len,
+                        path = find_import(path, text, named.off, named.len,
                             roots),
                         start = 0, finish = 0 },
                 )
@@ -168,17 +166,17 @@ place_module :: fn(buffer: ^i8, at: i64, path: ^i8,
         mut here := at
         mut c : i64 = 0
         while (c < children.count) {
-            child : ^Module = arena_at(children, c)
-            here = place_module(buffer, here, child^.path, modules, roots,
+            child := arena_at(children, c)
+            here = place_module(buffer, here, child.path, modules, roots,
                 scratch)
             c = c + 1
         }
         finish := append_text(buffer, here, text)
         // The range is known only now, since everything this file imports went in
         // ahead of it. It is what tells a name which file wrote it.
-        placed : ^Module = arena_at(modules, mine)
-        placed^.start = here
-        placed^.finish = finish
+        placed := arena_at(modules, mine)
+        placed.start = here
+        placed.finish = finish
         finish
     }
 }
@@ -198,10 +196,10 @@ report_where :: fn(mut modules: Arena<Module>, src: ^i8, offset: i64) {
         if (index < 0) {
             return
         }
-        entry : ^Module = arena_at(modules, index)
+        entry := arena_at(modules, index)
         mut line : i64 = 1
         mut column : i64 = 1
-        mut at := entry^.start
+        mut at := entry.start
         while (at < offset) {
             if (frost_byte_at(src, at) == CH_LF) {
                 line = line + 1
@@ -211,7 +209,7 @@ report_where :: fn(mut modules: Arena<Module>, src: ^i8, offset: i64) {
             }
             at = at + 1
         }
-        frost_error(entry^.path)
+        frost_error(entry.path)
         frost_error(":")
         frost_error_int(line)
         frost_error(":")
@@ -229,10 +227,10 @@ emit_position :: fn(mut modules: Arena<Module>, src: ^i8, offset: i64) {
         if (index < 0) {
             return
         }
-        entry : ^Module = arena_at(modules, index)
+        entry := arena_at(modules, index)
         mut line : i64 = 1
         mut column : i64 = 1
-        mut at := entry^.start
+        mut at := entry.start
         while (at < offset) {
             if (frost_byte_at(src, at) == CH_LF) {
                 line = line + 1
@@ -243,9 +241,9 @@ emit_position :: fn(mut modules: Arena<Module>, src: ^i8, offset: i64) {
             at = at + 1
         }
         mut k : i64 = 0
-        length := frost_str_len(entry^.path)
+        length := frost_str_len(entry.path)
         while (k < length) {
-            byte := frost_byte_at(entry^.path, k)
+            byte := frost_byte_at(entry.path, k)
             if (byte == CH_BACKSLASH) {
                 frost_emit_char(CH_BACKSLASH)
             }
@@ -260,17 +258,15 @@ emit_position :: fn(mut modules: Arena<Module>, src: ^i8, offset: i64) {
 }
 
 module_at :: fn(mut modules: Arena<Module>, offset: i64) -> i64 {
-    unsafe {
-        mut i : i64 = 0
-        while (i < modules.count) {
-            entry : ^Module = arena_at(modules, i)
-            if (offset >= entry^.start && offset < entry^.finish) {
-                return i
-            }
-            i = i + 1
+    mut i : i64 = 0
+    while (i < modules.count) {
+        entry := arena_at(modules, i)
+        if (offset >= entry.start && offset < entry.finish) {
+            return i
         }
-        0
+        i = i + 1
     }
+    0
 }
 
 blank_range :: fn(buffer: ^i8, from: i64, through: i64) {
@@ -311,47 +307,47 @@ resolve_imports :: fn(buffer: ^i8, root: ^i8, names: ^i8,
         tokenize(buffer, length, scratch)
         mut j : i64 = 0
         while (j + 1 < scratch.count) {
-            entry : ^Token = arena_at(scratch, j)
-            named : ^Token = arena_at(scratch, j + 1)
-            if (entry^.kind == TOK_KW_IMPORT && named^.kind == TOK_STR) {
-                blank_range(buffer, entry^.off, named^.off + named^.len)
+            entry := arena_at(scratch, j)
+            named := arena_at(scratch, j + 1)
+            if (entry.kind == TOK_KW_IMPORT && named.kind == TOK_STR) {
+                blank_range(buffer, entry.off, named.off + named.len)
             }
-            if (entry^.kind == TOK_KW_EXPORT) {
-                owner := module_at(modules, entry^.off)
+            if (entry.kind == TOK_KW_EXPORT) {
+                owner := module_at(modules, entry.off)
                 mut k := j + 1
-                mut through := entry^.off + entry^.len - 1
+                mut through := entry.off + entry.len - 1
                 mut listing : bool = true
                 while (listing) {
-                    listed : ^Token = arena_at(scratch, k)
-                    if (listed^.kind != TOK_IDENT) {
+                    listed := arena_at(scratch, k)
+                    if (listed.kind != TOK_IDENT) {
                         listing = false
                     } else {
                         // The name is copied out because the line it is written
                         // on is about to be blanked.
                         mut b : i64 = 0
-                        while (b < listed^.len) {
+                        while (b < listed.len) {
                             frost_byte_set(names, named_at + b,
-                                frost_byte_at(buffer, listed^.off + b))
+                                frost_byte_at(buffer, listed.off + b))
                             b = b + 1
                         }
                         arena_push(
                             exports,
                             Export { module = owner, off = named_at,
-                                len = listed^.len },
+                                len = listed.len },
                         )
-                        named_at = named_at + listed^.len
-                        through = listed^.off + listed^.len - 1
+                        named_at = named_at + listed.len
+                        through = listed.off + listed.len - 1
                         k = k + 1
-                        following : ^Token = arena_at(scratch, k)
-                        if (following^.kind == TOK_COMMA) {
-                            through = following^.off
+                        following := arena_at(scratch, k)
+                        if (following.kind == TOK_COMMA) {
+                            through = following.off
                             k = k + 1
                         } else {
                             listing = false
                         }
                     }
                 }
-                blank_range(buffer, entry^.off, through)
+                blank_range(buffer, entry.off, through)
             }
             j = j + 1
         }
