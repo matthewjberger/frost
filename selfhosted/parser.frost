@@ -635,6 +635,42 @@ parse_type :: fn(mut p: Parser) -> i64 {
         advance(p)
         return BORROW_FLAG + parse_type(p)
     }
+    // `fn(T, U) -> R` is a function pointer: the address of a function of that
+    // signature, a callable value. A `mut` parameter is a borrow, the same as a
+    // `mut` parameter of a real function is; a `move` or plain one is the type
+    // as written. With no `-> R` the function answers with nothing.
+    if (cur(p) == TOK_KW_FN) {
+        advance(p)
+        advance(p)
+        param_start := p.proc_params.count
+        mut param_count : i64 = 0
+        while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
+            mut is_mut : i64 = 0
+            if (cur(p) == TOK_KW_MUT) {
+                is_mut = 1
+                advance(p)
+            }
+            if (cur(p) == TOK_KW_MOVE) {
+                advance(p)
+            }
+            mut param_ty := parse_type(p)
+            if (is_mut == 1 && is_pointer(param_ty) == false) {
+                param_ty = BORROW_FLAG + param_ty
+            }
+            arena_push(p.proc_params, GArg { value = param_ty })
+            param_count = param_count + 1
+            if (cur(p) == TOK_COMMA) {
+                advance(p)
+            }
+        }
+        advance(p)
+        mut ret : i64 = TY_VOID
+        if (cur(p) == TOK_ARROW) {
+            advance(p)
+            ret = parse_type(p)
+        }
+        return proc_of(p, ret, param_start, param_count)
+    }
     mut pointer_levels : i64 = 0
     while (cur(p) == TOK_CARET) {
         advance(p)

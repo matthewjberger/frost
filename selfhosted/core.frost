@@ -8,7 +8,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     CH_RBRACE, CH_RBRACKET, CH_RPAREN, CH_SEMI, CH_SLASH, CH_SPACE, CH_STAR,
     CH_TAB, CH_UNDERSCORE, CH_UPPER_A, CH_UPPER_Z, ConstDef, Export,
     GenericFn, GParam, GArg, GBinding, Instance, LocalVar, Module, MonoNode,
-    MonoRet, CONST_BASE, NODE_ADDROF,
+    MonoRet, ProcSig, CONST_BASE, PROC_BASE, NODE_ADDROF,
     NODE_ARG, NODE_ASSIGN, NODE_BIN, NODE_CALL, NODE_CASE, NODE_DEREF,
     NODE_EXPRSTMT, NODE_EXTERN, NODE_FIELD, NODE_FIELD_INIT, NODE_FUNC,
     NODE_IF, NODE_INDEX, NODE_LET, NODE_MATCH, NODE_NUM, NODE_PARAM,
@@ -207,6 +207,14 @@ BORROW_FLAG  :: 1000000000
 // pointer tests: it is resolved to an array length or an integer literal while
 // the generic body is re-parsed with the argument bound.
 CONST_BASE   :: 2000000000
+// A function pointer, a value that is the address of a function with a given
+// signature. It is a pointer at the ABI but not a data pointer: it is neither
+// dereferenced nor pointer-arithmeticked, it is called. A code at or above this
+// base names an entry in the `procs` table, its signature. This sits above the
+// value-generic range so `is_pointer` and `is_borrow`, which now stop below
+// CONST_BASE, answer no for it, since a function pointer emits its own C
+// declarator rather than a trailing `*`.
+PROC_BASE    :: 3000000000
 
 // Binary operator codes.
 OP_ADD :: 0
@@ -542,6 +550,15 @@ ArrayDef :: struct {
     emitted: i64,
 }
 
+// A function-pointer signature: the return type and a run of parameter type
+// codes in the `proc_params` arena. Every distinct signature is one entry, so a
+// function-pointer type is this table's index plus PROC_BASE.
+ProcSig :: struct {
+    ret: i64,
+    param_start: i64,
+    param_count: i64,
+}
+
 // A concrete type a generic was used with. Every generic function is emitted
 // once per distinct one of these.
 TypeArg :: struct {
@@ -636,6 +653,8 @@ Parser :: struct {
     generic_fns: Arena<GenericFn>,
     gparams: Arena<GParam>,
     gargs: Arena<GArg>,
+    procs: Arena<ProcSig>,
+    proc_params: Arena<GArg>,
     // A stack scratch for the arguments of the generic currently being parsed,
     // so a nested generic's arguments do not interleave with the outer one's in
     // `gargs`. Each level pushes its arguments here, copies them out, and pops.

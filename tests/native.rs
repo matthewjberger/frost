@@ -4246,6 +4246,55 @@ fn self_hosted_standard_library_format() {
     assert_eq!(output, "count = 12345-99\n");
 }
 
+// A runtime function pointer: a higher-order function taking a `fn(i64) -> i64`
+// and calling through it, with a function's name passed as its address. A
+// single function pointer is a closed call target, not a vtable.
+const SELFHOSTED_FUNCTION_POINTER: &str = concat!(
+    "apply :: fn(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }\n",
+    "double :: fn(x: i64) -> i64 { x * 2 }\n",
+    "inc :: fn(x: i64) -> i64 { x + 1 }\n",
+    "main :: fn() -> i64 {\n",
+    "    print apply(double, 21)\n",
+    "    print apply(inc, 41)\n",
+    "    0\n",
+    "}\n",
+);
+
+#[test]
+fn self_hosted_function_pointer() {
+    let Some(output) =
+        selfhosted_native_output("funptr", SELFHOSTED_FUNCTION_POINTER)
+    else {
+        return;
+    };
+    assert_eq!(output, "42\n42\n");
+}
+
+// A closure the data-oriented way: an explicit captured-data struct passed
+// alongside a function pointer, called through together. No hidden capture, no
+// heap, no vtable, no collector; the context is a value copied in.
+const SELFHOSTED_CLOSURE: &str = concat!(
+    "Adder :: struct { amount: i64 }\n",
+    "add_by :: fn(ctx: Adder, x: i64) -> i64 { x + ctx.amount }\n",
+    "apply_each :: fn(f: fn(Adder, i64) -> i64, ctx: Adder, a: i64, b: i64) -> i64 {\n",
+    "    f(ctx, a) + f(ctx, b)\n",
+    "}\n",
+    "main :: fn() -> i64 {\n",
+    "    plus10 : Adder = Adder { amount = 10 }\n",
+    "    print apply_each(add_by, plus10, 1, 2)\n",
+    "    0\n",
+    "}\n",
+);
+
+#[test]
+fn self_hosted_closure_as_context_and_function() {
+    let Some(output) = selfhosted_native_output("closure", SELFHOSTED_CLOSURE)
+    else {
+        return;
+    };
+    assert_eq!(output, "23\n");
+}
+
 const SLICES: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 

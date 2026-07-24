@@ -614,6 +614,16 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
             asm_i("movq $", const_value(p, off, len), ", %rax")
             return
         }
+        // A name that is a global function, used as a value, is its address.
+        if (local_exists(p, off, len) == false) {
+            fi := fn_index_of(p, off, len)
+            if (fi >= 0) {
+                emit_text("    leaq mf_")
+                frost_emit_int(fi)
+                emit_text("(%rip), %rax\n")
+                return
+            }
+        }
         // A struct is handled by its address, so naming one yields where it
         // lives rather than the first word inside it.
         local_ty := lookup_local(p, off, len)
@@ -977,11 +987,27 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     }
 
     sym := arena_at(p.fns, fn_index)
-    if (p.abi_windows == 0 && sym.is_extern == 1) {
+    // A call through a local of function-pointer type is indirect: the value is
+    // loaded into a scratch register the arguments do not use and called
+    // through. The load comes after the arguments are in place so it does not
+    // disturb them.
+    mut indirect : i64 = 0
+    if (local_exists(p, sym.off, sym.len)) {
+        callee_ty := lookup_local(p, sym.off, sym.len)
+        if (is_proc(callee_ty)) {
+            indirect = 1
+        }
+    }
+    if (indirect == 1) {
+        asm_i("movq ", local_slot(p, sym.off, sym.len), "(%rbp), %r11")
+    }
+    if (p.abi_windows == 0 && sym.is_extern == 1 && indirect == 0) {
         asm("movb $0, %al")
     }
     emit_text("    call ")
-    if (generic_fn_of(p, fn_index) >= 0) {
+    if (indirect == 1) {
+        emit_text("*%r11")
+    } else if (generic_fn_of(p, fn_index) >= 0) {
         arg := call_type_args(p, args)
         emit_asm_mono_name(p, fn_index, arg, p.call_xarg_start,
             p.call_xarg_count)

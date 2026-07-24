@@ -11,7 +11,8 @@ export append_node, array_element, array_index_of, array_length, array_of,
     bytes_equal, const_value, digits_in, gargs_equal, generic_index_for,
     value_binding_of,
     intern_global, is_aggregate, is_array_ty, is_const, is_float, is_main_name,
-    is_borrow, is_pointer, is_raw_pointer, is_slab_ty, is_slice_ty, is_struct_ty,
+    is_borrow, is_pointer, is_proc, is_raw_pointer, is_slab_ty, is_slice_ty,
+    is_struct_ty, proc_of, proc_ret, proc_param_count, proc_param_at,
     slab_field_id, slab_field_type,
     mark_defined, mark_extern, new_case, new_field_init, new_field_node,
     new_func_node, new_index, new_let_node, new_named_node, new_node,
@@ -403,17 +404,83 @@ set_field_next :: fn(mut p: Parser, id: i64, next_id: i64) {
 }
 
 // Indirect: a raw pointer or a borrow, both a C pointer and both auto-derefed.
+// A pointer (raw or borrow) is 8 bytes and emits a trailing `*`. The value
+// generic codes and the function-pointer codes ride above CONST_BASE and are
+// not pointers, even though they are numerically larger: a value is resolved
+// away before it is a type, and a function pointer emits its own declarator.
 is_pointer :: fn(ty: i64) -> bool {
-    ty >= POINTER_BASE
+    ty >= POINTER_BASE && ty < CONST_BASE
 }
 
 // A borrow carries the flag; a raw pointer is indirect without it.
 is_borrow :: fn(ty: i64) -> bool {
-    ty >= BORROW_FLAG
+    ty >= BORROW_FLAG && ty < CONST_BASE
 }
 
 is_raw_pointer :: fn(ty: i64) -> bool {
     ty >= POINTER_BASE && ty < BORROW_FLAG
+}
+
+// A function pointer: the address of a function of a given signature, a
+// callable value. It is not a data pointer, so it is never dereferenced,
+// indexed, or gated; it is called, directly through a name or through a cast on
+// a value of this type.
+is_proc :: fn(ty: i64) -> bool {
+    ty >= PROC_BASE
+}
+
+// Intern a function-pointer signature and answer its type code. Signatures are
+// deduplicated so two spellings of the same one share a code.
+proc_of :: fn(mut p: Parser, ret: i64, param_start: i64, param_count: i64)
+    -> i64 {
+    mut i : i64 = 0
+    while (i < p.procs.count) {
+        entry := arena_at(p.procs, i)
+        if (entry.ret == ret && entry.param_count == param_count
+            && gargs_run_equal(p, entry.param_start, param_start, param_count)) {
+            return PROC_BASE + i
+        }
+        i = i + 1
+    }
+    PROC_BASE + arena_push(p.procs,
+        ProcSig { ret = ret, param_start = param_start,
+            param_count = param_count })
+}
+
+proc_index_of :: fn(ty: i64) -> i64 {
+    ty - PROC_BASE
+}
+
+proc_ret :: fn(mut p: Parser, ty: i64) -> i64 {
+    entry := arena_at(p.procs, proc_index_of(ty))
+    entry.ret
+}
+
+proc_param_count :: fn(mut p: Parser, ty: i64) -> i64 {
+    entry := arena_at(p.procs, proc_index_of(ty))
+    entry.param_count
+}
+
+proc_param_at :: fn(mut p: Parser, ty: i64, n: i64) -> i64 {
+    entry := arena_at(p.procs, proc_index_of(ty))
+    param := arena_at(p.proc_params, entry.param_start + n)
+    param.value
+}
+
+// Compare two runs in the `proc_params` arena, the same shape as gargs_equal is
+// for gargs, so a signature's parameter run can be deduplicated.
+gargs_run_equal :: fn(mut p: Parser, a_start: i64, b_start: i64, count: i64)
+    -> bool {
+    mut i : i64 = 0
+    while (i < count) {
+        left := arena_at(p.proc_params, a_start + i)
+        right := arena_at(p.proc_params, b_start + i)
+        if (left.value != right.value) {
+            return false
+        }
+        i = i + 1
+    }
+    true
 }
 
 pointee :: fn(ty: i64) -> i64 {
