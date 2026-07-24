@@ -272,17 +272,15 @@ main :: fn() -> i64 {
         frost_emit_close()
 
         if (options.link == 1) {
-            // The test runner lives in the C runtime, so a build that runs tests
-            // links it. FROST_RUNTIME says where it is for a checkout that is not
-            // the working directory.
-            mut extra : ^i8 = ""
-            if (options.testing == 1) {
-                mut runtime := frost_getenv("FROST_RUNTIME")
-                if (frost_str_len(runtime) == 0) {
-                    runtime = "runtime/frost_runtime.c"
-                }
-                extra = join_two(" ", runtime)
+            // Every program links the C runtime: it holds the bounds check an
+            // index compiles to, the assertion, the string and error emitters,
+            // and the test runner a `--test` build needs. FROST_RUNTIME says
+            // where it is for a checkout that is not the working directory.
+            mut runtime := frost_getenv("FROST_RUNTIME")
+            if (frost_str_len(runtime) == 0) {
+                runtime = "runtime/frost_runtime.c"
             }
+            extra := join_two(" ", runtime)
             command := join_two(
                 join_two(
                     join_two(

@@ -290,7 +290,10 @@ emit_expr :: fn(mut p: Parser, id: i64) {
             through = pointee(through)
         }
         // An array and a slice are both a named C struct, so the run of
-        // elements inside one has to be named before it can be indexed.
+        // elements inside one has to be named before it can be indexed. The
+        // index is bounds-checked against the length, a constant for a fixed
+        // array and the slice's own field for a slice, so an out-of-range
+        // access aborts rather than reading past the run.
         if (is_array_ty(through)) {
             emit_text("(")
             emit_expr(p, base)
@@ -304,8 +307,21 @@ emit_expr :: fn(mut p: Parser, id: i64) {
             } else {
                 emit_text("items[")
             }
+            emit_text("frost_check_index(")
             emit_expr(p, index)
-            emit_text("]")
+            emit_text(", ")
+            if (is_slice_ty(p, through)) {
+                emit_text("(")
+                emit_expr(p, base)
+                if (is_pointer(base_ty)) {
+                    emit_text(")->len")
+                } else {
+                    emit_text(").len")
+                }
+            } else {
+                frost_emit_int(array_length(p, through))
+            }
+            emit_text(")]")
             return
         }
         emit_expr(p, base)
@@ -1030,6 +1046,7 @@ emit_mono_prototype :: fn(mut p: Parser, id: i64, arg: i64, ret: i64) {
 
 emit_program :: fn(mut p: Parser, head: i64) {
     emit_text("void frost_assert_at(signed char, const char*);\n")
+    emit_text("int64_t frost_check_index(int64_t, int64_t);\n")
     emit_type_forward_decls(p)
     // Slices first: a slice embeds only a pointer, so a struct may hold one
     // by value. Then the structs. Then the fixed arrays, since an array of a
