@@ -71,11 +71,13 @@ fn gen_program(rng: &mut Rng, lines: usize) -> String {
             let then = gen_expr(rng, 3);
             let els = gen_expr(rng, 3);
             source.push_str(&format!(
-                "    printf(\"%lld\\n\", if {cond} {{ {then} }} else {{ {els} }})\n"
+                "    unsafe {{ printf(\"%lld\\n\", if {cond} {{ {then} }} else {{ {els} }}) }}\n"
             ));
         } else {
             let expr = gen_expr(rng, 4);
-            source.push_str(&format!("    printf(\"%lld\\n\", {expr})\n"));
+            source.push_str(&format!(
+                "    unsafe {{ printf(\"%lld\\n\", {expr}) }}\n"
+            ));
         }
     }
     source.push_str("    0\n}\n");
