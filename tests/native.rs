@@ -180,6 +180,47 @@ main :: fn() -> i64 {
         message.contains(":6:"),
         "expected the exclusivity error at line 6, got:\n{message}"
     );
+    assert!(
+        message.contains("exclusive"),
+        "expected the exclusivity reason, got:\n{message}"
+    );
+}
+
+// Exclusivity is over the place a borrow names, not just its root variable, so
+// two mutable borrows of the same field of the same struct conflict.
+#[test]
+fn borrow_exclusivity_catches_an_overlapping_field_path() {
+    let source = r#"
+Pair :: struct { x: i64, y: i64 }
+mix :: fn(mut a: i64, mut b: i64) -> i64 { a + b }
+
+main :: fn() -> i64 {
+    mut p : Pair = Pair { x = 1, y = 2 }
+    total := mix(p.x, p.x)
+    total
+}
+"#;
+    let message = compile_error("field_exclusivity", source);
+    assert!(
+        message.contains("p.x") && message.contains("exclusive"),
+        "expected a place-path exclusivity error naming p.x, got:\n{message}"
+    );
+}
+
+// Two mutable borrows of different fields of one struct name disjoint storage,
+// so they do not conflict and the program compiles and runs.
+#[test]
+fn borrow_exclusivity_allows_disjoint_fields() {
+    let source = "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
+        Pair :: struct { x: i64, y: i64 }\n\
+        mix :: fn(mut a: i64, mut b: i64) -> i64 { a + b }\n\
+        main :: fn() -> i64 {\n\
+        \x20   mut p : Pair = Pair { x = 3, y = 4 }\n\
+        \x20   printf(\"%lld\\n\", mix(p.x, p.y))\n    0\n}\n";
+    assert_eq!(
+        compile_and_run("disjoint_fields", source),
+        Some("7\n".to_string())
+    );
 }
 
 #[test]
