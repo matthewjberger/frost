@@ -231,10 +231,9 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         fn_index := node.val
         args := node.a
         if (generic_fn_of(p, fn_index) >= 0) {
-            emit_text("mf_")
-            frost_emit_int(fn_index)
-            emit_text("_t")
-            frost_emit_int(call_type_arg(p, args))
+            arg := call_type_args(p, args)
+            emit_mono_name(p, fn_index, arg, p.call_xarg_start,
+                p.call_xarg_count)
             emit_text("(")
             emit_args(p, args, fn_index)
             emit_text(")")
@@ -1030,8 +1029,38 @@ emit_function :: fn(mut p: Parser, id: i64) {
 }
 
 // Emit one monomorphization of a generic function: the concrete return type, the
-// mangled name mf_<index>_t<arg>, concrete parameters, and the body.
-emit_mono_function :: fn(mut p: Parser, id: i64, arg: i64, ret: i64) {
+// One argument's contribution to a mangled name: a type argument is `_t<code>`,
+// as it always was, so a single-type-argument name is unchanged; a value
+// argument is `_c<number>`. Both a call and its definition mangle through here,
+// so the two always agree.
+emit_mangled_arg :: fn(mut p: Parser, arg: i64) {
+    if (arg >= CONST_BASE) {
+        emit_text("_c")
+        frost_emit_int(arg - CONST_BASE)
+    } else {
+        emit_text("_t")
+        frost_emit_int(arg)
+    }
+}
+
+// The mangled name of a monomorphization: `mf_<index>` then every argument in
+// the tuple. A one-argument generic emits `mf_<index>_t<code>`, byte for byte
+// what it did before value and multi-parameter generics existed.
+emit_mono_name :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
+    xarg_count: i64) {
+    emit_text("mf_")
+    frost_emit_int(fn_index)
+    emit_mangled_arg(p, arg)
+    mut i : i64 = 0
+    while (i < xarg_count) {
+        garg := arena_at(p.gargs, xarg_start + i)
+        emit_mangled_arg(p, garg.value)
+        i = i + 1
+    }
+}
+
+emit_mono_function :: fn(mut p: Parser, id: i64, arg: i64, xarg_start: i64,
+    xarg_count: i64, ret: i64) {
     node := arena_at(p.arena, id)
     fn_index := node.val
     body := node.a
@@ -1043,11 +1072,15 @@ emit_mono_function :: fn(mut p: Parser, id: i64, arg: i64, ret: i64) {
     p.locals.count = 0
     record_params(p, params)
     begin_provider(p, fn_index)
-    emit_ctype(p, ret)
-    emit_text(" mf_")
-    frost_emit_int(fn_index)
-    emit_text("_t")
-    frost_emit_int(arg)
+    // A function that answers with nothing still lowers to int64_t, since the
+    // body falls through to `return 0`, exactly as a non-generic one does.
+    if (ret == TY_VOID) {
+        emit_text("int64_t")
+    } else {
+        emit_ctype(p, ret)
+    }
+    emit_text(" ")
+    emit_mono_name(p, fn_index, arg, xarg_start, xarg_count)
     emit_text("(")
     emit_param_signature(p, params)
     emit_text(") {\n")
@@ -1055,15 +1088,18 @@ emit_mono_function :: fn(mut p: Parser, id: i64, arg: i64, ret: i64) {
     emit_text("}\n")
 }
 
-emit_mono_prototype :: fn(mut p: Parser, id: i64, arg: i64, ret: i64) {
+emit_mono_prototype :: fn(mut p: Parser, id: i64, arg: i64, xarg_start: i64,
+    xarg_count: i64, ret: i64) {
     node := arena_at(p.arena, id)
     fn_index := node.val
     params := node.b
-    emit_ctype(p, ret)
-    emit_text(" mf_")
-    frost_emit_int(fn_index)
-    emit_text("_t")
-    frost_emit_int(arg)
+    if (ret == TY_VOID) {
+        emit_text("int64_t")
+    } else {
+        emit_ctype(p, ret)
+    }
+    emit_text(" ")
+    emit_mono_name(p, fn_index, arg, xarg_start, xarg_count)
     emit_text("(")
     emit_param_signature(p, params)
     emit_text(");\n")
@@ -1099,9 +1135,11 @@ emit_program :: fn(mut p: Parser, head: i64) {
         while (ii < p.type_args.count) {
             used := arena_at(p.type_args, ii)
             arg := used.arg
-            node := parse_generic_instance(p, gi, arg)
+            xstart := used.xarg_start
+            xcount := used.xarg_count
+            node := parse_generic_instance(p, gi, arg, xstart, xcount)
             ret := p.last_return_type
-            emit_mono_prototype(p, node, arg, ret)
+            emit_mono_prototype(p, node, arg, xstart, xcount, ret)
             ii = ii + 1
         }
         gi = gi + 1
@@ -1116,9 +1154,11 @@ emit_program :: fn(mut p: Parser, head: i64) {
         while (ii < p.type_args.count) {
             used := arena_at(p.type_args, ii)
             arg := used.arg
-            node := parse_generic_instance(p, gi, arg)
+            xstart := used.xarg_start
+            xcount := used.xarg_count
+            node := parse_generic_instance(p, gi, arg, xstart, xcount)
             ret := p.last_return_type
-            emit_mono_function(p, node, arg, ret)
+            emit_mono_function(p, node, arg, xstart, xcount, ret)
             ii = ii + 1
         }
         gi = gi + 1

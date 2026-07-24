@@ -2326,6 +2326,25 @@ fn self_hosted_rejects_a_returned_frame_pointer() {
     );
 }
 
+// A frame pointer wrapped in a struct (or array) literal escapes the same as a
+// bare one, so the frame check must look inside an aggregate value. An enum
+// variant is a struct literal too, so the same case covers it.
+#[test]
+fn self_hosted_rejects_a_frame_pointer_inside_a_struct() {
+    let source = "Box :: struct { p: ^i64 }\n\
+                  grab :: fn() -> Box {\n\
+                  \x20   mut x : i64 = 5\n\
+                  \x20   return Box { p = ptr_to(x) }\n}\n\
+                  main :: fn() -> i64 { 0 }\n";
+    let Some(message) = self_hosted_rejects("framestruct", source) else {
+        return;
+    };
+    assert!(
+        message.contains("into this frame"),
+        "expected a frame-escape error, got:\n{message}"
+    );
+}
+
 // A borrow may be returned but not stored, so a `ref`-typed struct field is
 // refused. A raw pointer field stays allowed, which is what the arena needs.
 #[test]
@@ -3950,6 +3969,96 @@ fn self_hosted_slab_stale_handle_aborts() {
         stderr.contains("stale handle"),
         "expected the generation-check message, got:\n{stderr}"
     );
+}
+
+// A value generic: the capacity is a compile-time number the field type is sized
+// by. The self-hosted compiler had only type parameters before; a value one is a
+// parameter that binds to a number rather than a type.
+const SELFHOSTED_VALUE_GENERIC: &str = concat!(
+    "Buf :: struct($N: usize) {\n",
+    "    data: [N]i64,\n",
+    "    count: i64,\n",
+    "}\n",
+    "sum :: fn($N: usize, b: Buf<N>) -> i64 {\n",
+    "    mut total : i64 = 0\n",
+    "    mut i : i64 = 0\n",
+    "    while (i < N) {\n",
+    "        total = total + b.data[i]\n",
+    "        i = i + 1\n",
+    "    }\n",
+    "    total\n",
+    "}\n",
+    "main :: fn() -> i64 {\n",
+    "    b : Buf<4> = Buf { data = [10, 20, 30, 40], count = 4 }\n",
+    "    print b.data[0]\n",
+    "    print b.data[3]\n",
+    "    print sum($4, b)\n",
+    "    0\n",
+    "}\n",
+);
+
+#[test]
+fn self_hosted_value_generic_struct() {
+    let Some(output) =
+        selfhosted_native_output("valuegen", SELFHOSTED_VALUE_GENERIC)
+    else {
+        return;
+    };
+    assert_eq!(output, "10\n40\n100\n");
+}
+
+// The generic slab: two parameters, a type and a value, and generic functions
+// taking both as `$Type` and `$value` arguments, monomorphized on the whole
+// tuple. This is the shape std/slab.frost uses; the place-deref is the same one
+// the fixed-capacity slab test exercises, now over a generic instance.
+const SELFHOSTED_GENERIC_SLAB: &str = concat!(
+    "Entity :: struct { hp: i64, mana: i64 }\n",
+    "Slab :: struct($T: Type, $N: usize) {\n",
+    "    storage: [N]T,\n",
+    "    generations: [N]i64,\n",
+    "    free_list: [N]i64,\n",
+    "    free_count: i64,\n",
+    "}\n",
+    "slab_reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {\n",
+    "    mut i : i64 = 0\n",
+    "    while (i < N) {\n",
+    "        s.generations[i] = 0\n",
+    "        s.free_list[i] = N - 1 - i\n",
+    "        i = i + 1\n",
+    "    }\n",
+    "    s.free_count = N\n",
+    "}\n",
+    "slab_insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: T) -> Handle<T> {\n",
+    "    s.free_count = s.free_count - 1\n",
+    "    index := s.free_list[s.free_count]\n",
+    "    s.storage[index] = value\n",
+    "    packed := (s.generations[index] << 32) | index\n",
+    "    packed\n",
+    "}\n",
+    "main :: fn() -> i64 {\n",
+    "    mut world : Slab<Entity, 4> = Slab {\n",
+    "        storage = [Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}, Entity{hp=0,mana=0}],\n",
+    "        generations = [0,0,0,0], free_list = [0,0,0,0], free_count = 0,\n",
+    "    }\n",
+    "    slab_reset($Entity, $4, world)\n",
+    "    hero := slab_insert($Entity, $4, world, Entity{hp=100, mana=30})\n",
+    "    foe := slab_insert($Entity, $4, world, Entity{hp=40, mana=10})\n",
+    "    print world[hero].hp\n",
+    "    world[hero].hp = world[hero].hp - 25\n",
+    "    print world[hero].hp\n",
+    "    print world[foe].mana\n",
+    "    0\n",
+    "}\n",
+);
+
+#[test]
+fn self_hosted_generic_slab_place_deref() {
+    let Some(output) =
+        selfhosted_native_output("genslab", SELFHOSTED_GENERIC_SLAB)
+    else {
+        return;
+    };
+    assert_eq!(output, "100\n75\n10\n");
 }
 
 const SLICES: &str = r#"

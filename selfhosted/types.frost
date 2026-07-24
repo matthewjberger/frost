@@ -5,7 +5,7 @@ import "core.frost"
 import "imports.frost"
 import "names.frost"
 
-export call_ret_type, call_type_arg, collect_type_args,
+export call_ret_type, call_type_args, collect_type_args,
     count_value_args, field_type, generic_fn_of, is_linear_type, is_moved,
     local_exists, lookup_local, nth_param_type, nth_value_arg,
     record_local, record_mono_ret, type_of, types_compatible
@@ -297,10 +297,15 @@ instance_arg_of :: fn(mut p: Parser, ty: i64) -> i64 {
     0 - 1
 }
 
-// Determine the concrete type argument of a generic call: an explicit `$Type`
-// argument if present, otherwise inferred from the first argument whose type is
-// a generic-struct instance (or a pointer to one).
-call_type_arg :: fn(mut p: Parser, head: i64) -> i64 {
+// Determine the concrete argument tuple of a generic call: the explicit `$Type`
+// and `$value` arguments in order if there are any, otherwise the single
+// argument inferred from the first runtime argument whose type is a generic
+// instance. The first argument is returned; any beyond it are left in the
+// `gargs` arena at p.call_xarg_start for p.call_xarg_count entries.
+call_type_args :: fn(mut p: Parser, head: i64) -> i64 {
+    mut count : i64 = 0
+    mut first : i64 = TY_I64
+    xstart := p.gargs.count
     mut id := head
     while (id != (0 - 1)) {
         node := arena_at(p.arena, id)
@@ -308,10 +313,22 @@ call_type_arg :: fn(mut p: Parser, head: i64) -> i64 {
         next_id := node.next
         vnode := arena_at(p.arena, value)
         if (vnode.kind == NODE_TYPEVAL) {
-            return vnode.val
+            if (count == 0) {
+                first = vnode.val
+            } else {
+                arena_push(p.gargs, GArg { value = vnode.val })
+            }
+            count = count + 1
         }
         id = next_id
     }
+    if (count > 0) {
+        p.call_xarg_start = xstart
+        p.call_xarg_count = count - 1
+        return first
+    }
+    p.call_xarg_start = 0
+    p.call_xarg_count = 0
     id = head
     while (id != (0 - 1)) {
         node := arena_at(p.arena, id)
@@ -335,56 +352,64 @@ call_type_arg :: fn(mut p: Parser, head: i64) -> i64 {
 // one already computed.
 // The value of the nth argument that survives to runtime, skipping the type
 // arguments, which are erased.
-record_mono_ret :: fn(mut p: Parser, fn_index: i64, arg: i64, ret: i64) {
+record_mono_ret :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
+    xarg_count: i64, ret: i64) {
     arena_push(p.mono_rets,
-        MonoRet { fn_index = fn_index, arg = arg, ret = ret })
+        MonoRet { fn_index = fn_index, arg = arg, xarg_start = xarg_start,
+            xarg_count = xarg_count, ret = ret })
 }
 
-// The concrete types the generics in this program are used with. A generic
-// struct written as `Box<i64>` is one, and so is a call to a generic function,
-// which used to be missed: instantiation was driven by the struct instances
-// alone, so a generic function called with a type that no generic struct had
-// been written with was called and never emitted.
+// The concrete argument tuples the generics in this program are used with. A
+// generic struct written as `Box<i64>` is one, and so is a call to a generic
+// function, which used to be missed: instantiation was driven by the struct
+// instances alone, so a generic function called with a type that no generic
+// struct had been written with was called and never emitted.
 //
-// Distinct types rather than instances, since two generic structs written with
-// the same type would otherwise have every generic function emitted twice.
-note_type_arg :: fn(mut p: Parser, arg: i64) {
+// Distinct tuples rather than instances, since two generic structs written with
+// the same arguments would otherwise have every generic function emitted twice.
+note_type_args :: fn(mut p: Parser, arg: i64, xarg_start: i64, xarg_count: i64) {
     if (arg < 0) {
         return
     }
     mut i : i64 = 0
     while (i < p.type_args.count) {
         entry := arena_at(p.type_args, i)
-        if (entry.arg == arg) {
+        if (entry.arg == arg && entry.xarg_count == xarg_count
+            && gargs_equal(p, entry.xarg_start, xarg_start, xarg_count)) {
             return
         }
         i = i + 1
     }
-    arena_push(p.type_args, TypeArg { arg = arg })
+    arena_push(p.type_args, TypeArg { arg = arg, xarg_start = xarg_start,
+        xarg_count = xarg_count })
 }
 
 collect_type_args :: fn(mut p: Parser) {
     mut i : i64 = 0
     while (i < p.instances.count) {
         entry := arena_at(p.instances, i)
-        note_type_arg(p, entry.arg)
+        note_type_args(p, entry.arg, entry.xarg_start, entry.xarg_count)
         i = i + 1
     }
     i = 0
     while (i < p.arena.count) {
         node := arena_at(p.arena, i)
         if (node.kind == NODE_CALL && generic_fn_of(p, node.val) >= 0) {
-            note_type_arg(p, call_type_arg(p, node.a))
+            arg := call_type_args(p, node.a)
+            note_type_args(p, arg, p.call_xarg_start, p.call_xarg_count)
         }
         i = i + 1
     }
 }
 
-mono_ret_type :: fn(mut p: Parser, fn_index: i64, arg: i64) -> i64 {
+mono_ret_type :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
+    xarg_count: i64) -> i64 {
     mut i : i64 = 0
     while (i < p.mono_rets.count) {
         entry := arena_at(p.mono_rets, i)
-        if (entry.fn_index == fn_index && entry.arg == arg) {
+        if (entry.fn_index == fn_index && entry.arg == arg
+            && entry.xarg_count == xarg_count
+            && gargs_equal(p, entry.xarg_start, xarg_start, xarg_count)) {
             return entry.ret
         }
         i = i + 1
@@ -395,7 +420,9 @@ mono_ret_type :: fn(mut p: Parser, fn_index: i64, arg: i64) -> i64 {
 // What a call answers with, which decides whether it needs a result buffer.
 call_ret_type :: fn(mut p: Parser, args: i64, fn_index: i64) -> i64 {
     if (generic_fn_of(p, fn_index) >= 0) {
-        return mono_ret_type(p, fn_index, call_type_arg(p, args))
+        arg := call_type_args(p, args)
+        return mono_ret_type(p, fn_index, arg, p.call_xarg_start,
+            p.call_xarg_count)
     }
     sym := arena_at(p.fns, fn_index)
     sym.ret_type

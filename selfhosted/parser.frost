@@ -70,6 +70,13 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     }
     if (kind == TOK_DOLLAR) {
         advance(p)
+        // `$8` is a compile-time value argument, carried like a type argument
+        // but holding CONST_BASE plus the number; `$Entity` is a type argument.
+        if (cur(p) == TOK_INT) {
+            value := CONST_BASE + cur_val(p)
+            advance(p)
+            return new_type_node(p, NODE_TYPEVAL, 0, value)
+        }
         ty := parse_type(p)
         return new_type_node(p, NODE_TYPEVAL, 0, ty)
     }
@@ -190,17 +197,68 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         inits := parse_field_inits(p)
         return new_struct_lit(p, struct_ty, inits)
     }
+    // An occurrence of a value generic parameter in an expression, like the `N`
+    // in `while (i < N)`, is the bound number once the body is re-parsed with
+    // the argument in force.
+    bound := value_binding_of(p, offset, length)
+    if (bound >= 0) {
+        return new_node(p, NODE_NUM, 0, 0, bound)
+    }
     new_named_node(p, NODE_VAR, 0, offset, length)
 }
 
+// Instantiate a generic struct against the bindings in force, for a bare
+// `Name { ... }` literal inside a generic body. The primary argument is the
+// current primary binding; each further argument is the current binding of the
+// matching parameter name, so a multi-parameter generic resolves as a whole.
+instantiate_current :: fn(mut p: Parser, gi: i64) -> i64 {
+    template := arena_at(p.structs, gi)
+    xparam_start := template.xparam_start
+    xparam_count := template.xparam_count
+    run_start := p.gargs.count
+    mut j : i64 = 0
+    while (j < xparam_count) {
+        param := arena_at(p.gparams, xparam_start + j)
+        bound := type_code_for(p, param.name_off, param.name_len)
+        arena_push(p.gargs, GArg { value = bound })
+        j = j + 1
+    }
+    instantiate(p, gi, p.type_binding, run_start, xparam_count)
+}
+
+// The generic a concrete instance struct came from, or -1 if the type is not an
+// instance.
+instance_generic_of :: fn(mut p: Parser, ty: i64) -> i64 {
+    if (is_struct_ty(ty) == false) {
+        return 0 - 1
+    }
+    si := struct_index_of(ty)
+    mut i : i64 = 0
+    while (i < p.instances.count) {
+        entry := arena_at(p.instances, i)
+        if (entry.struct_index == si) {
+            return entry.generic_index
+        }
+        i = i + 1
+    }
+    0 - 1
+}
+
 // The struct type for a literal `Name { ... }`. A generic name resolves, under
-// an active binding, to the instance for the bound type argument; that is how the
+// an active binding, to the instance for the bound arguments; that is how the
 // bare `Arena { ... }` inside a generic function names the right instance.
 resolve_lit_type :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     gi := generic_index_for(p, offset, length)
     if (gi >= 0) {
         if (p.binding_active == 1) {
-            return instantiate(p, gi, p.type_binding)
+            return instantiate_current(p, gi)
+        }
+        // At the top level there is no binding, so the instance comes from the
+        // declared type this initializer is for, when that type is an instance
+        // of the same generic.
+        if (is_struct_ty(p.expected_type)
+            && instance_generic_of(p, p.expected_type) == gi) {
+            return p.expected_type
         }
         return TY_I64
     }
@@ -532,7 +590,15 @@ parse_type :: fn(mut p: Parser) -> i64 {
             if (cur(p) == TOK_INT) {
                 length = cur_val(p)
             } else {
-                length = const_value(p, cur_off(p), cur_len(p))
+                // A `[N]T` inside a generic body, where N is a value parameter,
+                // takes its length from the bound number; otherwise the name is
+                // a module constant.
+                bound := value_binding_of(p, cur_off(p), cur_len(p))
+                if (bound >= 0) {
+                    length = bound
+                } else {
+                    length = const_value(p, cur_off(p), cur_len(p))
+                }
             }
             advance(p)
         }
@@ -574,13 +640,45 @@ parse_type :: fn(mut p: Parser) -> i64 {
             was_generic = 1
             gi := generic_index_for(p, offset, length)
             advance(p)
-            arg := parse_type(p)
+            // Collect the argument run. An integer argument is a value generic
+            // like the `8` in `Slab<Entity, 8>`, carried as CONST_BASE plus the
+            // number; anything else is a type. The first is the primary argument
+            // and the rest go to the `gargs` run this instance owns.
+            run_start := p.gargs.count
+            mut first_arg : i64 = TY_I64
+            mut count : i64 = 0
+            mut all_concrete : i64 = 1
+            while (cur(p) != TOK_GT && cur(p) != TOK_EOF) {
+                mut a : i64 = TY_I64
+                if (cur(p) == TOK_INT) {
+                    a = CONST_BASE + cur_val(p)
+                    advance(p)
+                } else {
+                    a = parse_type(p)
+                }
+                if (a == TY_PARAM) {
+                    all_concrete = 0
+                }
+                if (count == 0) {
+                    first_arg = a
+                } else {
+                    arena_push(p.gargs, GArg { value = a })
+                }
+                count = count + 1
+                if (cur(p) == TOK_COMMA) {
+                    advance(p)
+                }
+            }
             advance(p)
-            // Only instantiate for a concrete argument. While parsing a generic
-            // template the argument is the TY_PARAM placeholder, and that
-            // instance is created later with the parameter bound to a real type.
-            if (gi >= 0 && arg != TY_PARAM) {
-                base = instantiate(p, gi, arg)
+            mut xarg_count : i64 = count - 1
+            if (count == 0) {
+                xarg_count = 0
+            }
+            // Only instantiate once every argument is concrete. While parsing a
+            // generic template an argument is the TY_PARAM placeholder, and that
+            // instance is created later with the parameters bound to real ones.
+            if (gi >= 0 && all_concrete == 1) {
+                base = instantiate(p, gi, first_arg, run_start, xarg_count)
             }
         }
     } else {
@@ -641,11 +739,51 @@ parse_struct_fields :: fn(mut p: Parser) -> i64 {
 // Get or create the concrete struct for a generic instantiation. The template's
 // fields are re-parsed with the type parameter bound to `arg`, producing a new
 // struct whose emitted name is `<generic>_<index>`.
-instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64) -> i64 {
+// Record a generic parameter as it is declared. The first fills the primary
+// slot the single-parameter path already uses, so a one-parameter generic is
+// stored and mangled exactly as before; any further one is pushed to the
+// `gparams` run this declaration owns. The kind is not kept: a parameter is a
+// type or a value by what binds to it.
+record_gparam :: fn(mut p: Parser, off: i64, len: i64) {
+    if (p.type_param_len == 0) {
+        p.type_param_off = off
+        p.type_param_len = len
+        p.xparam_start = p.gparams.count
+        p.xparam_count = 0
+    } else {
+        arena_push(p.gparams, GParam { name_off = off, name_len = len })
+        p.xparam_count = p.xparam_count + 1
+    }
+    p.saw_type_param = 1
+}
+
+// Bind every parameter of a generic while its body is re-parsed. The first
+// parameter uses the existing primary binding so the single-parameter path is
+// unchanged; the rest are pushed onto the `gbindings` stack from the argument
+// run and popped by restoring the stack's height afterwards. Returns the height
+// to restore to.
+push_bindings :: fn(mut p: Parser, tparam_off: i64, tparam_len: i64,
+    xparam_start: i64, xparam_count: i64, arg: i64, xarg_start: i64) -> i64 {
+    mark := p.gbindings.count
+    mut i : i64 = 0
+    while (i < xparam_count) {
+        param := arena_at(p.gparams, xparam_start + i)
+        garg := arena_at(p.gargs, xarg_start + i)
+        arena_push(p.gbindings, GBinding { name_off = param.name_off,
+            name_len = param.name_len, bound = garg.value })
+        i = i + 1
+    }
+    mark
+}
+
+instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64, xarg_start: i64,
+    xarg_count: i64) -> i64 {
     mut i : i64 = 0
     while (i < p.instances.count) {
         entry := arena_at(p.instances, i)
-        if (entry.generic_index == generic_index && entry.arg == arg) {
+        if (entry.generic_index == generic_index && entry.arg == arg
+            && entry.xarg_count == xarg_count
+            && gargs_equal(p, entry.xarg_start, xarg_start, xarg_count)) {
             return STRUCT_BASE + entry.struct_index
         }
         i = i + 1
@@ -655,6 +793,8 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64) -> i64 {
     name_len := template.name_len
     tparam_off := template.tparam_off
     tparam_len := template.tparam_len
+    xparam_start := template.xparam_start
+    xparam_count := template.xparam_count
     field_token := template.field_token
 
     saved_ti := p.ti
@@ -666,8 +806,11 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64) -> i64 {
     p.type_param_len = tparam_len
     p.type_binding = arg
     p.binding_active = 1
+    mark := push_bindings(p, tparam_off, tparam_len, xparam_start, xparam_count,
+        arg, xarg_start)
     p.ti = field_token
     field_head := parse_struct_fields(p)
+    p.gbindings.count = mark
     p.ti = saved_ti
     p.type_param_off = saved_param_off
     p.type_param_len = saved_param_len
@@ -680,11 +823,12 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64) -> i64 {
         StructDef { name_off = name_off, name_len = name_len,
             field_head = field_head, is_generic = 0, tparam_off = 0,
             tparam_len = 0, field_token = 0, instance_id = struct_index,
-            is_linear = 0, emitted = 0 },
+            is_linear = 0, emitted = 0, xparam_start = 0, xparam_count = 0 },
     )
     arena_push(
         p.instances,
         Instance { generic_index = generic_index, arg = arg,
+            xarg_start = xarg_start, xarg_count = xarg_count,
             struct_index = struct_index },
     )
     STRUCT_BASE + struct_index
@@ -933,7 +1077,10 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         } else {
             advance(p)
         }
+        saved_expected := p.expected_type
+        p.expected_type = ann
         value := parse_expr(p)
+        p.expected_type = saved_expected
         return new_let_node(p, value, offset, length, ann)
     }
     if (kind == TOK_KW_PRINT) {
@@ -1012,7 +1159,10 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         advance(p)
         ann := parse_type_annotation(p)
         advance(p)
+        saved_expected := p.expected_type
+        p.expected_type = ann
         value := parse_expr(p)
+        p.expected_type = saved_expected
         return new_let_node(p, value, offset, length, ann)
     }
 
@@ -1115,10 +1265,10 @@ parse_params :: fn(mut p: Parser) -> i64 {
         // the runtime signature, so no PARAM node is created for it.
         if (cur(p) == TOK_DOLLAR) {
             advance(p)
-            p.type_param_off = cur_off(p)
-            p.type_param_len = cur_len(p)
-            p.saw_type_param = 1
+            poff := cur_off(p)
+            plen := cur_len(p)
             advance(p)
+            record_gparam(p, poff, plen)
             parse_type_annotation(p)
             if (cur(p) == TOK_COMMA) {
                 advance(p)
@@ -1266,31 +1416,30 @@ parse_struct :: fn(mut p: Parser) {
     advance(p)
     if (cur(p) == TOK_LPAREN) {
         advance(p)
-        advance(p)
-        tparam_off := cur_off(p)
-        tparam_len := cur_len(p)
-        advance(p)
-        advance(p)
-        // The parameter's kind. Only `Type` is instantiable here: a value
-        // generic binds a number, and binding a number where a type belongs
-        // fails at instantiation rather than here, so say so at the parameter.
-        if (str_range_eq(p.src, cur_off(p), cur_len(p), "Type") == false) {
-            unsafe {
-                report_where(p.modules, p.src, cur_off(p))
-                report("a value generic parameter is not supported yet")
-                frost_die()
+        // Collect every parameter. A parameter is a type parameter or a value
+        // one by what binds to it, not by how it is declared, so the kind after
+        // the colon is parsed and dropped. The first fills the primary slot the
+        // single-parameter path already uses; the rest form this struct's run in
+        // the shared `gparams` arena.
+        p.type_param_len = 0
+        p.xparam_count = 0
+        p.xparam_start = p.gparams.count
+        while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
+            advance(p)
+            poff := cur_off(p)
+            plen := cur_len(p)
+            advance(p)
+            record_gparam(p, poff, plen)
+            parse_type_annotation(p)
+            if (cur(p) == TOK_COMMA) {
+                advance(p)
             }
         }
         advance(p)
-        if (cur(p) == TOK_COMMA) {
-            unsafe {
-                report_where(p.modules, p.src, cur_off(p))
-                report_cstr(
-                    "more than one generic parameter is not supported yet")
-                frost_die()
-            }
-        }
-        advance(p)
+        tparam_off := p.type_param_off
+        tparam_len := p.type_param_len
+        xparam_start := p.xparam_start
+        xparam_count := p.xparam_count
         field_token := p.ti
         mut brace_depth : i64 = 0
         mut started : i64 = 0
@@ -1309,7 +1458,8 @@ parse_struct :: fn(mut p: Parser) {
             StructDef { name_off = name_offset, name_len = name_length,
                 field_head = 0 - 1, is_generic = 1, tparam_off = tparam_off,
                 tparam_len = tparam_len, field_token = field_token,
-                instance_id = 0 - 1, is_linear = linear_flag, emitted = 0 },
+                instance_id = 0 - 1, is_linear = linear_flag, emitted = 0,
+                xparam_start = xparam_start, xparam_count = xparam_count },
         )
     } else {
         head := parse_struct_fields(p)
@@ -1318,7 +1468,7 @@ parse_struct :: fn(mut p: Parser) {
             StructDef { name_off = name_offset, name_len = name_length,
                 field_head = head, is_generic = 0, tparam_off = 0,
                 tparam_len = 0, field_token = 0, instance_id = 0 - 1,
-                is_linear = linear_flag, emitted = 0 },
+                is_linear = linear_flag, emitted = 0, xparam_start = 0, xparam_count = 0 },
         )
     }
 }
@@ -1430,7 +1580,7 @@ parse_enum :: fn(mut p: Parser) {
         StructDef { name_off = name_offset, name_len = name_length,
             field_head = tag_field, is_generic = 0, tparam_off = 0,
             tparam_len = 0, field_token = 0, instance_id = 0 - 1,
-            is_linear = 0, emitted = 0 },
+            is_linear = 0, emitted = 0, xparam_start = 0, xparam_count = 0 },
     )
 }
 
@@ -1525,7 +1675,7 @@ synth_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
         p.structs,
         StructDef { name_off = name, name_len = 8 + digits_in(p.structs.count),
             field_head = tag, is_generic = 0, tparam_off = 0, tparam_len = 0,
-            field_token = 0, instance_id = 0 - 1, is_linear = 0, emitted = 0 },
+            field_token = 0, instance_id = 0 - 1, is_linear = 0, emitted = 0, xparam_start = 0, xparam_count = 0 },
     )
     STRUCT_BASE + index
 }
@@ -1699,7 +1849,8 @@ parse_program :: fn(mut p: Parser) -> i64 {
                 fn_index := node.val
                 tparam_off := p.type_param_off
                 tparam_len := p.type_param_len
-                record_generic_fn(p, fn_index, tparam_off, tparam_len, start)
+                record_generic_fn(p, fn_index, tparam_off, tparam_len,
+                    p.xparam_start, p.xparam_count, start)
             } else {
                 if (head == (0 - 1)) {
                     head = item
@@ -1736,11 +1887,14 @@ parse_program :: fn(mut p: Parser) -> i64 {
 // return-type pass, the prototype pass and the body pass. Parsing it once is
 // worth more here than anywhere else in this compiler, because a template is
 // the one thing it reads more than once.
-parse_generic_instance :: fn(mut p: Parser, gfn_index: i64, arg: i64) -> i64 {
+parse_generic_instance :: fn(mut p: Parser, gfn_index: i64, arg: i64,
+    xarg_start: i64, xarg_count: i64) -> i64 {
     mut i : i64 = 0
     while (i < p.mono_nodes.count) {
         held := arena_at(p.mono_nodes, i)
-        if (held.gfn_index == gfn_index && held.arg == arg) {
+        if (held.gfn_index == gfn_index && held.arg == arg
+            && held.xarg_count == xarg_count
+            && gargs_equal(p, held.xarg_start, xarg_start, xarg_count)) {
             p.last_return_type = held.ret
             return held.node
         }
@@ -1749,6 +1903,8 @@ parse_generic_instance :: fn(mut p: Parser, gfn_index: i64, arg: i64) -> i64 {
     gfn := arena_at(p.generic_fns, gfn_index)
     tparam_off := gfn.tparam_off
     tparam_len := gfn.tparam_len
+    xparam_start := gfn.xparam_start
+    xparam_count := gfn.xparam_count
     token_start := gfn.token_start
     saved_ti := p.ti
     saved_off := p.type_param_off
@@ -1759,15 +1915,19 @@ parse_generic_instance :: fn(mut p: Parser, gfn_index: i64, arg: i64) -> i64 {
     p.type_param_len = tparam_len
     p.type_binding = arg
     p.binding_active = 1
+    mark := push_bindings(p, tparam_off, tparam_len, xparam_start, xparam_count,
+        arg, xarg_start)
     p.ti = token_start
     node := parse_function(p)
+    p.gbindings.count = mark
     p.ti = saved_ti
     p.type_param_off = saved_off
     p.type_param_len = saved_len
     p.type_binding = saved_bind
     p.binding_active = saved_active
     arena_push(p.mono_nodes,
-        MonoNode { gfn_index = gfn_index, arg = arg, node = node,
+        MonoNode { gfn_index = gfn_index, arg = arg, xarg_start = xarg_start,
+                   xarg_count = xarg_count, node = node,
                    ret = p.last_return_type })
     node
 }
@@ -1783,9 +1943,12 @@ record_mono_rets :: fn(mut p: Parser) {
         while (ii < p.type_args.count) {
             used := arena_at(p.type_args, ii)
             arg := used.arg
-            node := parse_generic_instance(p, gi, arg)
+            xstart := used.xarg_start
+            xcount := used.xarg_count
+            node := parse_generic_instance(p, gi, arg, xstart, xcount)
             fnode := arena_at(p.arena, node)
-            record_mono_ret(p, fnode.val, arg, p.last_return_type)
+            record_mono_ret(p, fnode.val, arg, xstart, xcount,
+                p.last_return_type)
             ii = ii + 1
         }
         gi = gi + 1

@@ -674,6 +674,27 @@ frame_points_into :: fn(mut p: Parser, id: i64) -> bool {
         || kind == NODE_SLICE_FROM) {
         return frame_points_into(p, node.a)
     }
+    // A struct or array literal carries a frame pointer out inside itself, so a
+    // value built around one points into this frame just as a bare one does. An
+    // enum variant is a struct literal too, so this covers it. Each field or
+    // element holds its value in `.a` and chains through `.next`.
+    if (kind == NODE_STRUCT_LIT || kind == NODE_ARRAY_LIT) {
+        return frame_list_points_into(p, node.a)
+    }
+    false
+}
+
+// Whether any item in a struct-literal or array-literal list points into this
+// frame. Walks the `.next` chain and asks of each item's value in `.a`.
+frame_list_points_into :: fn(mut p: Parser, head: i64) -> bool {
+    mut item := head
+    while (item != (0 - 1)) {
+        inode := arena_at(p.arena, item)
+        if (frame_points_into(p, inode.a)) {
+            return true
+        }
+        item = inode.next
+    }
     false
 }
 
