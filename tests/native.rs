@@ -1088,6 +1088,74 @@ fn self_hosted_runs_test_blocks() {
     let _ = std::fs::remove_file(&compiler);
 }
 
+// OS threads from std: two threads accumulate a range into a shared word
+// through an atomic add, and the total is exact every time, which is what says
+// the atomic holds and the join waits.
+#[test]
+fn self_hosted_threads_share_a_counter() {
+    if !linker_available() || c_compiler().is_none() {
+        return;
+    }
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let directory = std::env::temp_dir().join("frost_threads");
+    let _ = std::fs::create_dir_all(&directory);
+    let source = directory.join("threads.frost");
+    std::fs::write(
+        &source,
+        "import \"io.frost\"\n\
+         import \"thread.frost\"\n\
+         Work :: struct { start: i64, count: i64, total: ^i64 }\n\
+         worker :: fn(raw: ^u8) {\n\
+         \x20   w := ptr_cast($Work, raw)\n\
+         \x20   mut i : i64 = 0\n\
+         \x20   while (i < w^.count) { atomic_add(w^.total, w^.start + i)  i = i + 1 }\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut total : i64 = 0\n\
+         \x20   mut w1 := Work { start = 0, count = 500, total = ptr_to(total) }\n\
+         \x20   mut w2 := Work { start = 500, count = 500, total = ptr_to(total) }\n\
+         \x20   t1 := spawn(worker, ptr_cast($u8, ptr_to(w1)))\n\
+         \x20   t2 := spawn(worker, ptr_cast($u8, ptr_to(w2)))\n\
+         \x20   join(t1)  join(t2)\n\
+         \x20   print_int_line(total)\n    0\n}\n",
+    )
+    .unwrap();
+    let c_path = directory.join("threads.c");
+    let build = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("-L")
+        .arg(root.join("std"))
+        .arg("--emit-c")
+        .arg("-o")
+        .arg(&c_path)
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "the threads program did not compile:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let exe =
+        directory.join(format!("threads{}", std::env::consts::EXE_SUFFIX));
+    let runtime = format!("{}/runtime/frost_runtime.c", root.display());
+    let compile = Command::new(c_compiler().unwrap())
+        .arg(&c_path)
+        .arg(&runtime)
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .unwrap();
+    if !compile.status.success() {
+        return;
+    }
+    let run = Command::new(&exe).output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"),
+        "499500\n"
+    );
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
 // The whole point of the standard library absorbing the unsafe floor: a program
 // that uses vec, sort, format, strings and io compiles under the unsafety gate
 // with no `unsafe` of its own. The containers' raw pointers and FFI are wrapped
