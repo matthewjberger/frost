@@ -6,8 +6,374 @@ import "imports.frost"
 import "names.frost"
 import "emit_asm.frost"
 
-export check_borrow_exclusivity, check_calls, check_frame_escapes,
+export check_borrow_exclusivity, check_calls, check_frame_escapes, check_moves,
     check_reference_fields, check_regions, check_unsafety
+
+// The linear-consumption check, flow-aware. A linear value must be handed on
+// exactly once on every path out of its scope; one that is not is a resource
+// silently dropped. The old check accumulated moves as the code was emitted and
+// asked only whether a value was moved somewhere, so a value consumed in one
+// arm of an `if` and not the other read as consumed. This asks instead whether
+// every path consumes it, which is an `if` only when both arms do and never a
+// `while`, since a loop may not run.
+
+is_var_named :: fn(mut p: Parser, id: i64, off: i64, len: i64) -> bool {
+    if (id == (0 - 1)) {
+        return false
+    }
+    node := arena_at(p.arena, id)
+    if (node.kind != NODE_VAR) {
+        return false
+    }
+    node.c == len && bytes_equal(p.src, node.val, off, len)
+}
+
+// Whether a call hands the value named (off, len) to a parameter that takes it
+// rather than borrows it, which is what consumes it: an aggregate given to a
+// parameter that does not borrow (a `move`, or an extern taking it by value) is
+// moved, the same rule the backend emits by.
+call_consumes :: fn(mut p: Parser, args: i64, fn_index: i64, off: i64,
+    len: i64) -> bool {
+    sym := arena_at(p.fns, fn_index)
+    params := sym.params
+    count := count_value_args(p, args)
+    mut i : i64 = 0
+    while (i < count) {
+        arg := nth_value_arg(p, args, i)
+        param := nth_param_node(p, params, i)
+        if (param != (0 - 1) && is_var_named(p, arg, off, len)) {
+            pnode := arena_at(p.arena, param)
+            if (pnode.a != 1) {
+                return true
+            }
+        }
+        i = i + 1
+    }
+    false
+}
+
+// Whether one statement consumes the value on every path through it: it is
+// returned, or the call it makes hands it to a `move` parameter.
+stmt_consumes :: fn(mut p: Parser, id: i64, off: i64, len: i64) -> bool {
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NODE_RETURN && is_var_named(p, node.a, off, len)) {
+        return true
+    }
+    mut value : i64 = 0 - 1
+    if (kind == NODE_EXPRSTMT || kind == NODE_LET || kind == NODE_RETURN) {
+        value = node.a
+    }
+    if (kind == NODE_ASSIGN) {
+        value = node.b
+    }
+    if (value == (0 - 1)) {
+        return false
+    }
+    vnode := arena_at(p.arena, value)
+    if (vnode.kind == NODE_CALL) {
+        return call_consumes(p, vnode.a, vnode.val, off, len)
+    }
+    false
+}
+
+// Whether every arm of a match consumes the value. A match with no default arm
+// leaves a path that runs none of them, so it cannot guarantee consumption.
+match_arms_consume :: fn(mut p: Parser, cases: i64, off: i64, len: i64) -> bool {
+    mut has_default : bool = false
+    mut cid := cases
+    while (cid != (0 - 1)) {
+        cnode := arena_at(p.arena, cid)
+        if (cnode.c == 1) {
+            has_default = true
+        }
+        if (consumes_value(p, cnode.a, off, len) == false) {
+            return false
+        }
+        cid = cnode.next
+    }
+    has_default
+}
+
+// Whether a block consumes the value on every path through it: a statement that
+// consumes it, an `if` whose branches both do, or a `match` whose arms all do.
+consumes_value :: fn(mut p: Parser, head: i64, off: i64, len: i64) -> bool {
+    mut id := head
+    while (id != (0 - 1)) {
+        node := arena_at(p.arena, id)
+        if (stmt_consumes(p, id, off, len)) {
+            return true
+        }
+        if (node.kind == NODE_IF && node.val != (0 - 1)
+            && consumes_value(p, node.b, off, len)
+            && consumes_value(p, node.val, off, len)) {
+            return true
+        }
+        if (node.kind == NODE_MATCH
+            && match_arms_consume(p, node.b, off, len)) {
+            return true
+        }
+        id = node.next
+    }
+    false
+}
+
+check_linear_locals :: fn(mut p: Parser, head: i64) {
+    mut id := head
+    while (id != (0 - 1)) {
+        node := arena_at(p.arena, id)
+        kind := node.kind
+        if (kind == NODE_LET) {
+            mut ty := node.b
+            if (ty == (0 - 1)) {
+                ty = type_of(p, node.a)
+            }
+            if (is_linear_type(p, ty)
+                && consumes_value(p, node.next, node.val, node.c) == false) {
+                report_where(p.modules, p.src, node.val)
+                report("linear value '")
+                report_src(p.src, node.val, node.c)
+                report("' is never consumed")
+                frost_die()
+            }
+        }
+        if (kind == NODE_IF) {
+            check_linear_locals(p, node.b)
+            check_linear_locals(p, node.val)
+        }
+        if (kind == NODE_WHILE) {
+            check_linear_locals(p, node.b)
+        }
+        if (kind == NODE_WITH) {
+            check_linear_locals(p, node.a)
+        }
+        id = node.next
+    }
+}
+
+check_linear_params :: fn(mut p: Parser, params: i64, body: i64) {
+    mut id := params
+    while (id != (0 - 1)) {
+        node := arena_at(p.arena, id)
+        if (node.a == 2 && is_linear_type(p, node.b)
+            && consumes_value(p, body, node.val, node.c) == false) {
+            report_where(p.modules, p.src, node.val)
+            report("linear value '")
+            report_src(p.src, node.val, node.c)
+            report("' is never consumed")
+            frost_die()
+        }
+        id = node.next
+    }
+}
+
+// The use-after-move check, flow-aware. A value handed by move to a call is
+// gone from the caller, so a later read of it reads storage that was given away.
+// The old check accumulated moves as the code was emitted, so a move in one arm
+// of an `if` was seen while the other arm was walked, and a value consumed in
+// both arms read as used-after-move in the second. This walks the tree instead,
+// tracking the moved set with a union at every branch, so what a branch moved is
+// known only after both are joined. The moved set is p.moved, reset per function.
+
+walk_moves_expr :: fn(mut p: Parser, id: i64) {
+    if (id == (0 - 1)) {
+        return
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NODE_VAR) {
+        if (is_moved(p, node.val, node.c)) {
+            report_where(p.modules, p.src, node.val)
+            report("use of moved value '")
+            report_src(p.src, node.val, node.c)
+            report("'")
+            frost_die()
+        }
+        return
+    }
+    if (kind == NODE_CALL) {
+        walk_moves_call(p, node.a, node.val)
+        return
+    }
+    if (kind == NODE_BIN || kind == NODE_INDEX || kind == NODE_SLICE_FROM) {
+        walk_moves_expr(p, node.a)
+        walk_moves_expr(p, node.b)
+        return
+    }
+    if (kind == NODE_FIELD || kind == NODE_DEREF || kind == NODE_ADDROF
+        || kind == NODE_REF || kind == NODE_PTR_CAST || kind == NODE_SLICE_LEN
+        || kind == NODE_ASSERT) {
+        walk_moves_expr(p, node.a)
+        return
+    }
+    if (kind == NODE_STRUCT_LIT || kind == NODE_ARRAY_LIT) {
+        mut child := node.a
+        while (child != (0 - 1)) {
+            cnode := arena_at(p.arena, child)
+            walk_moves_expr(p, cnode.a)
+            child = cnode.next
+        }
+    }
+}
+
+// An argument is read before it is moved, so the uses inside every argument are
+// checked first, then the values a by-value parameter takes are marked moved.
+walk_moves_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
+    mut id := args
+    while (id != (0 - 1)) {
+        anode := arena_at(p.arena, id)
+        walk_moves_expr(p, anode.a)
+        id = anode.next
+    }
+    sym := arena_at(p.fns, fn_index)
+    params := sym.params
+    count := count_value_args(p, args)
+    mut i : i64 = 0
+    while (i < count) {
+        arg := nth_value_arg(p, args, i)
+        param := nth_param_node(p, params, i)
+        if (param != (0 - 1)) {
+            pnode := arena_at(p.arena, param)
+            anode := arena_at(p.arena, arg)
+            // The parameter's own type says whether it takes the value rather
+            // than borrows it; the argument's type is not resolvable here, since
+            // the locals table is a codegen structure the checks run before.
+            if (pnode.a != 1 && anode.kind == NODE_VAR
+                && is_aggregate(pnode.b)) {
+                arena_push(p.moved,
+                    LocalVar { name_off = anode.val, name_len = anode.c, ty = 0 })
+            }
+        }
+        i = i + 1
+    }
+}
+
+// Walk both arms of an `if` from the state before it, then join: a value is
+// moved after the `if` if either arm moved it. The arm moves are stacked on
+// move_scratch, so a nested branch's own scratch use does not disturb this one.
+walk_moves_if :: fn(mut p: Parser, then_head: i64, else_head: i64) {
+    base := p.moved.count
+    walk_moves_block(p, then_head)
+    scratch_base := p.move_scratch.count
+    mut k := base
+    while (k < p.moved.count) {
+        e := arena_at(p.moved, k)
+        arena_push(p.move_scratch,
+            LocalVar { name_off = e.name_off, name_len = e.name_len, ty = 0 })
+        k = k + 1
+    }
+    scratch_top := p.move_scratch.count
+    p.moved.count = base
+    walk_moves_block(p, else_head)
+    mut s := scratch_base
+    while (s < scratch_top) {
+        e := arena_at(p.move_scratch, s)
+        if (is_moved(p, e.name_off, e.name_len) == false) {
+            arena_push(p.moved,
+                LocalVar { name_off = e.name_off, name_len = e.name_len, ty = 0 })
+        }
+        s = s + 1
+    }
+    p.move_scratch.count = scratch_base
+}
+
+// A value moved in a loop body is moved on the next iteration, so the body is
+// walked a second time with the first pass's moves in hand to catch a read at
+// the top that the move at the bottom made stale.
+walk_moves_while :: fn(mut p: Parser, body: i64) {
+    walk_moves_block(p, body)
+    walk_moves_block(p, body)
+}
+
+walk_moves_block :: fn(mut p: Parser, head: i64) {
+    mut id := head
+    while (id != (0 - 1)) {
+        node := arena_at(p.arena, id)
+        kind := node.kind
+        if (kind == NODE_LET || kind == NODE_PRINT || kind == NODE_EXPRSTMT
+            || kind == NODE_RETURN) {
+            walk_moves_expr(p, node.a)
+        }
+        if (kind == NODE_ASSIGN) {
+            walk_moves_expr(p, node.b)
+            walk_moves_expr(p, node.a)
+        }
+        if (kind == NODE_IF) {
+            walk_moves_expr(p, node.a)
+            walk_moves_if(p, node.b, node.val)
+        }
+        if (kind == NODE_WHILE) {
+            walk_moves_expr(p, node.a)
+            walk_moves_while(p, node.b)
+        }
+        if (kind == NODE_WITH) {
+            walk_moves_block(p, node.a)
+        }
+        if (kind == NODE_MATCH) {
+            walk_moves_expr(p, node.a)
+            walk_moves_match(p, node.b)
+        }
+        id = node.next
+    }
+}
+
+// Each arm of a match runs from the state before it, and a value is moved after
+// the match if any arm moved it, the same join an `if` makes.
+walk_moves_match :: fn(mut p: Parser, cases: i64) {
+    base := p.moved.count
+    scratch_base := p.move_scratch.count
+    mut cid := cases
+    while (cid != (0 - 1)) {
+        cnode := arena_at(p.arena, cid)
+        p.moved.count = base
+        walk_moves_block(p, cnode.a)
+        mut k := base
+        while (k < p.moved.count) {
+            e := arena_at(p.moved, k)
+            if (in_scratch(p, scratch_base, e.name_off, e.name_len) == false) {
+                arena_push(p.move_scratch,
+                    LocalVar { name_off = e.name_off, name_len = e.name_len, ty = 0 })
+            }
+            k = k + 1
+        }
+        cid = cnode.next
+    }
+    p.moved.count = base
+    mut s := scratch_base
+    while (s < p.move_scratch.count) {
+        e := arena_at(p.move_scratch, s)
+        arena_push(p.moved,
+            LocalVar { name_off = e.name_off, name_len = e.name_len, ty = 0 })
+        s = s + 1
+    }
+    p.move_scratch.count = scratch_base
+}
+
+in_scratch :: fn(mut p: Parser, base: i64, off: i64, len: i64) -> bool {
+    mut i := base
+    while (i < p.move_scratch.count) {
+        e := arena_at(p.move_scratch, i)
+        if (e.name_len == len && bytes_equal(p.src, e.name_off, off, len)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+check_moves :: fn(mut p: Parser) {
+    mut i : i64 = 0
+    while (i < p.arena.count) {
+        node := arena_at(p.arena, i)
+        if (node.kind == NODE_FUNC) {
+            check_linear_locals(p, node.a)
+            check_linear_params(p, node.b, node.a)
+            p.moved.count = 0
+            walk_moves_block(p, node.a)
+        }
+        i = i + 1
+    }
+}
 
 // The parameter node the nth value argument lands in, walking past the ones a
 // type argument erases. The capability a `uses` function draws is a trailing
