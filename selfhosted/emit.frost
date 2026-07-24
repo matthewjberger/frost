@@ -96,13 +96,11 @@ set_provider :: fn(mut p: Parser, kind: i64, off: i64, len: i64) {
 // with none, so a `uses` call from outside a region is caught rather than
 // silently allocating from somewhere unnamed.
 begin_provider :: fn(mut p: Parser, fn_index: i64) {
-    unsafe {
-        sym : ^Sym = arena_at(p.fns, fn_index)
-        if (sym^.uses_ty >= 0) {
-            set_provider(p, PROVIDER_FORWARD, sym^.cap_off, sym^.cap_len)
-            return
-        }
-        set_provider(p, PROVIDER_NONE, 0, 0)
+    sym := arena_at(p.fns, fn_index)
+    if (sym.uses_ty >= 0) {
+        set_provider(p, PROVIDER_FORWARD, sym.cap_off, sym.cap_len)
+        return
     }
+    set_provider(p, PROVIDER_NONE, 0, 0)
 }
 
