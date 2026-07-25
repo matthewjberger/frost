@@ -393,6 +393,9 @@ fn declared_function(
     IrFunction {
         name: name.to_string(),
         param_count: locals.len(),
+        // A declaration from another object contributes no body, so nothing
+        // here collects a parameter; only the object that defines it does.
+        param_layouts: vec![None; locals.len()],
         return_type: return_sig.to_type().unwrap_or(Type::Void),
         locals,
         blocks: Vec::new(),
@@ -656,10 +659,28 @@ impl IrBuilder {
         let specializations = std::mem::take(&mut function.specializations);
         let anonymous = std::mem::take(&mut function.anonymous);
         let (locals, blocks) = function.finish();
+        // Which parameters C hands over as the struct itself. The declaration
+        // says `value`, and the type is the one it was written with, since the
+        // mode lowering has already turned it into a borrow by here.
+        let param_layouts = parameters
+            .iter()
+            .map(|parameter| {
+                if parameter.mode != crate::parser::ParamMode::Value {
+                    return None;
+                }
+                let ty = parameter.type_annotation.as_ref()?;
+                let ty = match ty {
+                    Type::Ref(inner) | Type::RefMut(inner) => inner.as_ref(),
+                    other => other,
+                };
+                self.c_layout(ty)
+            })
+            .collect();
         Ok((
             IrFunction {
                 name: name.to_string(),
                 param_count: parameters.len(),
+                param_layouts,
                 return_type,
                 locals,
                 blocks,

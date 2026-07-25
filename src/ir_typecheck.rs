@@ -443,6 +443,7 @@ mod tests {
             functions: vec![IrFunction {
                 name: "main".to_string(),
                 param_count: 0,
+                param_layouts: vec![None; 0],
                 return_type,
                 locals,
                 blocks: vec![IrBlock {

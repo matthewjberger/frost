@@ -606,6 +606,41 @@ impl Generator {
         let pointer_type = self.pointer_type;
         let mut signature = self.decls.make_signature();
         for index in 0..function.param_count {
+            // A parameter C passes as the struct itself arrives the way that
+            // target passes one: split across registers, or as an address the
+            // caller already copied to. See build_function, which puts the
+            // pieces back together.
+            if let Some(layout) =
+                function.param_layouts.get(index).and_then(Clone::clone)
+            {
+                let Some(target) = self.c_target else {
+                    bail!(
+                        "native backend: '{}' takes a parameter by value, and this target's C rule for passing a struct is not one Frost knows; see docs/c-compatibility.md",
+                        function.name
+                    );
+                };
+                match crate::c_abi::classify_argument(&layout, target) {
+                    CArgument::Registers(registers) => {
+                        for register in registers {
+                            signature
+                                .params
+                                .push(AbiParam::new(register_type(register)));
+                        }
+                    }
+                    CArgument::Indirect => {
+                        signature.params.push(AbiParam::new(pointer_type));
+                    }
+                    CArgument::Stack => {
+                        signature.params.push(AbiParam::special(
+                            pointer_type,
+                            ArgumentPurpose::StructArgument(
+                                layout.size.next_multiple_of(8) as u32,
+                            ),
+                        ));
+                    }
+                }
+                continue;
+            }
             signature.params.push(AbiParam::new(param_abi_type(
                 pointer_type,
                 function.local_type(index),
@@ -675,10 +710,56 @@ impl Generator {
 
         let memcpy = self.functions["memcpy"];
         let params = builder.block_params(entry).to_vec();
-        for (index, value) in
-            params.iter().take(function.param_count).enumerate()
-        {
+        // A by-value parameter is more than one block parameter, so the two are
+        // walked with a cursor rather than zipped.
+        let mut at = 0usize;
+        for index in 0..function.param_count {
             let local = &function.locals[index];
+            if let Some(layout) =
+                function.param_layouts.get(index).and_then(Clone::clone)
+            {
+                let target = self.c_target.expect("checked in build_signature");
+                match crate::c_abi::classify_argument(&layout, target) {
+                    // The pieces are put back into storage this function owns,
+                    // and the parameter points at it, which is the shape the
+                    // body already reads a borrowed struct through.
+                    CArgument::Registers(registers) => {
+                        let slot = builder.create_sized_stack_slot(
+                            StackSlotData::new(
+                                StackSlotKind::ExplicitSlot,
+                                layout.size.max(1) as u32,
+                                4,
+                            ),
+                        );
+                        let base =
+                            builder.ins().stack_addr(pointer_type, slot, 0);
+                        for register in &registers {
+                            store_incoming_register(
+                                &mut builder,
+                                *register,
+                                params[at],
+                                base,
+                                &layout,
+                                pointer_type,
+                                memcpy,
+                                &self.decls,
+                            );
+                            at += 1;
+                        }
+                        builder.def_var(Variable::new(index), base);
+                    }
+                    // Both of these arrive as an address the caller already
+                    // copied to, so the copy this function is entitled to is
+                    // the one it was handed.
+                    CArgument::Indirect | CArgument::Stack => {
+                        builder.def_var(Variable::new(index), params[at]);
+                        at += 1;
+                    }
+                }
+                continue;
+            }
+            let value = params[at];
+            at += 1;
             if is_aggregate(&local.ty) {
                 let slot = slots[&index];
                 let destination =
@@ -687,15 +768,15 @@ impl Generator {
                     builder.ins().iconst(pointer_type, local.size as i64);
                 let memcpy_ref =
                     self.decls.declare_func_in_func(memcpy, builder.func);
-                builder.ins().call(memcpy_ref, &[destination, *value, size]);
+                builder.ins().call(memcpy_ref, &[destination, value, size]);
             } else if let Some(slot) = slots.get(&index) {
-                builder.ins().stack_store(*value, *slot, 0);
+                builder.ins().stack_store(value, *slot, 0);
             } else {
-                builder.def_var(Variable::new(index), *value);
+                builder.def_var(Variable::new(index), value);
             }
         }
         let out_pointer = if returns_aggregate {
-            Some(params[function.param_count])
+            Some(params[at])
         } else {
             None
         };
@@ -760,6 +841,41 @@ fn register_type(register: CRegister) -> types::Type {
         3 | 4 => types::I32,
         _ => types::I64,
     }
+}
+
+// Write one incoming register into the struct this function is collecting. The
+// mirror of store_returned_register: a whole number of bytes a store can express
+// goes straight in, and anything else (a System V eightbyte with three bytes in
+// it) goes through a scratch slot so that not one byte past the aggregate is
+// written.
+#[allow(clippy::too_many_arguments)]
+fn store_incoming_register(
+    builder: &mut FunctionBuilder,
+    register: CRegister,
+    value: Value,
+    base: Value,
+    layout: &CLayout,
+    pointer_type: types::Type,
+    memcpy: FuncId,
+    decls: &Decls,
+) {
+    let bytes = register.bytes.min(layout.size - register.offset);
+    if matches!(bytes, 1 | 2 | 4 | 8) && bytes == register.bytes {
+        let at = builder.ins().iadd_imm(base, register.offset as i64);
+        builder.ins().store(MemFlags::new(), value, at, 0);
+        return;
+    }
+    let slot = builder.create_sized_stack_slot(StackSlotData::new(
+        StackSlotKind::ExplicitSlot,
+        8,
+        3,
+    ));
+    builder.ins().stack_store(value, slot, 0);
+    let source = builder.ins().stack_addr(pointer_type, slot, 0);
+    let destination = builder.ins().iadd_imm(base, register.offset as i64);
+    let size = builder.ins().iconst(pointer_type, bytes as i64);
+    let memcpy_ref = decls.declare_func_in_func(memcpy, builder.func);
+    builder.ins().call(memcpy_ref, &[destination, source, size]);
 }
 
 fn param_abi_type(pointer_type: types::Type, ty: &Type) -> Result<types::Type> {

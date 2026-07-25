@@ -87,6 +87,18 @@ main :: fn() -> i64 {
   writes to it must not write through to the caller's value, and the test that
   says so passes a struct to a function that assigns to its parameter and then
   reads the caller's copy back.
+- A function type says the same thing about its own parameters, so
+  `fn(i32, value View, i64)` is a callback C hands a struct to, and a Frost
+  function written `handler :: fn(status: i32, value message: View, tail: i64)`
+  is compiled to receive one. That is the other direction: the caller takes the
+  struct apart, the callee puts it back together, and neither needs a
+  trampoline, which is the same claim [callbacks.md](callbacks.md) makes about
+  the simpler shapes.
+
+  This is what wgpu's callbacks need. Without it the struct had to be declared
+  as one pointer, which is what Windows hands a sixteen-byte struct to a callee
+  as, so it worked there and read every argument after it out of the wrong
+  register on System V.
 - Freestanding is a separate axis. Everything on this page is about calling
   C and about the C backend. Whether the *executable* needs libc once it is
   running is a different question, answered by `--freestanding`. See

@@ -760,6 +760,7 @@ mod tests {
             functions: vec![IrFunction {
                 name: "main".to_string(),
                 param_count: 0,
+                param_layouts: vec![None; 0],
                 return_type: Type::I64,
                 locals: vec![scalar_local(Type::I32)],
                 blocks: vec![IrBlock {
@@ -802,6 +803,7 @@ mod tests {
             functions: vec![IrFunction {
                 name: "main".to_string(),
                 param_count: 0,
+                param_layouts: vec![None; 0],
                 return_type: Type::I64,
                 locals: vec![scalar_local(Type::I64)],
                 blocks: vec![IrBlock {

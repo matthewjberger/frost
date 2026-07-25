@@ -691,8 +691,24 @@ parse_type :: fn(mut p: Parser) -> i64 {
             if (cur(p) == TOK_KW_MOVE) {
                 advance(p)
             }
+            // `value T` says C passes that parameter as the struct itself,
+            // which is what a callback taking one is declared with. The callee
+            // holds a borrow of it either way, so this is the same type a
+            // definition's `value` parameter has and the two match without a
+            // rule of their own. As a mode it is followed by the type it marks,
+            // which is what tells it from a type named `value`.
+            mut is_value : i64 = 0
+            if (cur(p) == TOK_IDENT && peek_kind(p, 1) != TOK_COMMA
+                && peek_kind(p, 1) != TOK_RPAREN
+                && str_range_eq(p.src, cur_off(p), cur_len(p), "value")) {
+                is_value = 1
+                advance(p)
+            }
             mut param_ty := parse_type(p)
             if (is_mut == 1 && is_pointer(param_ty) == false) {
+                param_ty = BORROW_FLAG + param_ty
+            }
+            if (is_value == 1 && is_pointer(param_ty) == false) {
                 param_ty = BORROW_FLAG + param_ty
             }
             arena_push(p.proc_params, GArg { value = param_ty })

@@ -2413,6 +2413,17 @@ impl<'a> Parser<'a> {
                     self.read_token();
                     ParamMode::Move
                 }
+                // A Frost function that C calls back receives its struct the
+                // way C passes one. `value` is what says so, and it is the same
+                // word an `extern` uses for the other direction. Contextual, so
+                // a parameter may still be called `value`.
+                Token::Identifier(word)
+                    if word == "value"
+                        && matches!(self.peek_nth(1), Token::Identifier(_)) =>
+                {
+                    self.read_token();
+                    ParamMode::Value
+                }
                 _ => ParamMode::Read,
             };
 
@@ -2748,6 +2759,17 @@ impl<'a> Parser<'a> {
                     self.read_token();
                     ParamMode::Move
                 }
+                // A Frost function that C calls back receives its struct the
+                // way C passes one. `value` is what says so, and it is the same
+                // word an `extern` uses for the other direction. Contextual, so
+                // a parameter may still be called `value`.
+                Token::Identifier(word)
+                    if word == "value"
+                        && matches!(self.peek_nth(1), Token::Identifier(_)) =>
+                {
+                    self.read_token();
+                    ParamMode::Value
+                }
                 _ => ParamMode::Read,
             };
 
@@ -3036,20 +3058,40 @@ impl<'a> Parser<'a> {
                     // way to write a reference type. `move` is the type as
                     // written too, and is allowed so a bound can be read
                     // beside the declaration it describes.
-                    let write = match self.peek_nth(0) {
+                    // `value` says C passes that parameter as the struct
+                    // itself, which is what a callback taking one is declared
+                    // with. The callee holds a borrow of it either way, so this
+                    // is the same reference type a definition's `value`
+                    // parameter has and the two match without a rule of their
+                    // own. It is contextual, so a type may still be named
+                    // `value`: as a mode it is followed by the type it marks.
+                    let mut write = false;
+                    let mut by_value = false;
+                    match self.peek_nth(0) {
                         Token::Mut => {
                             self.read_token();
-                            true
+                            write = true;
                         }
                         Token::Move => {
                             self.read_token();
-                            false
                         }
-                        _ => false,
-                    };
+                        Token::Identifier(word)
+                            if word == "value"
+                                && !matches!(
+                                    self.peek_nth(1),
+                                    Token::Comma | Token::RightParentheses
+                                ) =>
+                        {
+                            self.read_token();
+                            by_value = true;
+                        }
+                        _ => {}
+                    }
                     let param_type = self.parse_type()?;
                     param_types.push(if write {
                         Type::RefMut(Box::new(param_type))
+                    } else if by_value {
+                        Type::Ref(Box::new(param_type))
                     } else {
                         param_type
                     });

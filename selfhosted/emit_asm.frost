@@ -1682,9 +1682,84 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
             int_reg = place
             sse_reg = place
         }
-        // A struct argument travels as an address, so a parameter that owns one
-        // copies it into its own slot rather than keeping the caller's pointer.
-        if (is_aggregate(ptype)) {
+        // A parameter C passed as the struct itself arrives the way that target
+        // passes one, so the pieces are put back into storage this function
+        // owns and the parameter holds its address, which is the shape the body
+        // already reads a borrowed struct through.
+        mut want : i64 = 0 - 1
+        if (param_node_by_value(p, pid)) {
+            want = pointee(ptype)
+        }
+        if (want >= 0) {
+            kind := value_abi_kind(p, want)
+            if (kind == 0) {
+                copy := alloc_temp(p, type_size(p, want))
+                total := value_abi_slots(p, want)
+                mut k : i64 = 0
+                while (k < total) {
+                    mut sse : bool = false
+                    if (p.abi_windows == 0) {
+                        sse = classify_eightbyte(p, want, 0, k) == 1
+                    }
+                    mut ireg := int_next
+                    mut sreg := sse_next
+                    if (p.abi_windows == 1) {
+                        ireg = place
+                        sreg = place
+                    }
+                    if (sse && sreg < sse_regs) {
+                        emit_text("    movq ")
+                        emit_asm_sse_reg(sreg)
+                        emit_text(", %r10\n")
+                        sse_next = sse_next + 1
+                    } else if (sse == false && ireg < regs) {
+                        emit_text("    movq ")
+                        emit_asm_arg_reg(p, ireg)
+                        emit_text(", %r10\n")
+                        int_next = int_next + 1
+                    } else {
+                        asm_i("movq ", 16 + shadow + 8 * spilled,
+                            "(%rbp), %r10")
+                        spilled = spilled + 1
+                        if (sse) {
+                            sse_next = sse_next + 1
+                        } else {
+                            int_next = int_next + 1
+                        }
+                    }
+                    asm_i("movq %r10, ", copy + 8 * k, "(%rbp)")
+                    k = k + 1
+                }
+                asm_i("leaq ", copy, "(%rbp), %r10")
+                asm_i("movq %r10, ", slot, "(%rbp)")
+            } else if (kind == 1) {
+                // The caller passed the address of a copy it made, and that
+                // copy is this function's own, so it is kept as it is.
+                mut ireg := int_next
+                if (p.abi_windows == 1) {
+                    ireg = place
+                }
+                if (ireg < regs) {
+                    emit_text("    movq ")
+                    emit_asm_arg_reg(p, ireg)
+                    emit_text(", ")
+                    frost_rt_emit_int(slot)
+                    emit_text("(%rbp)\n")
+                } else {
+                    asm_i("movq ", 16 + shadow + 8 * spilled, "(%rbp), %r10")
+                    asm_i("movq %r10, ", slot, "(%rbp)")
+                    spilled = spilled + 1
+                }
+                int_next = int_next + 1
+            } else {
+                // System V put the bytes in the incoming argument area, so the
+                // copy this function is entitled to is already there and its
+                // address is what the parameter holds.
+                asm_i("leaq ", 16 + shadow + 8 * spilled, "(%rbp), %r10")
+                asm_i("movq %r10, ", slot, "(%rbp)")
+                spilled = spilled + value_abi_slots(p, want)
+            }
+        } else if (is_aggregate(ptype)) {
             if (int_reg < regs) {
                 emit_text("    movq ")
                 emit_asm_arg_reg(p, int_reg)
