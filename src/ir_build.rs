@@ -904,12 +904,17 @@ fn argument_is_copy_value(
     }
     matches!(
         argument,
-        Expression::Literal(
-            Literal::Integer(_)
-                | Literal::Float(_)
-                | Literal::Float32(_)
-                | Literal::Boolean(_)
-        )
+        // `true` and `false` parse as their own expression rather than as a
+        // literal, and leaving that out here made `f($bool, true)` pass a
+        // boolean by address: a read-mode `$T` stays a reference until the
+        // argument says the type is copy, and a bare `true` said nothing.
+        Expression::Boolean(_)
+            | Expression::Literal(
+                Literal::Integer(_)
+                    | Literal::Float(_)
+                    | Literal::Float32(_)
+                    | Literal::Boolean(_)
+            )
     )
 }
 
