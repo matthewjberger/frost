@@ -3184,9 +3184,13 @@ const SELF_HOSTED_FAILURE_SETS: &str = "OpenError :: struct { code: i64 }\n\
      \x20   n / 2\n}\n\
      twice :: fn(n: i64) -> i64 ! OpenError {\n\
      \x20   a := halve(n)?\n    b := halve(a)?\n    a + b\n}\n\
+     side :: fn(n: i64) -> i64 {\n\
+     \x20   match twice(n) { case .Ok { value }: 0 case .Err { error }: 1 }\n}\n\
+     payload :: fn(n: i64) -> i64 {\n\
+     \x20   match twice(n) { case .Ok { value }: value case .Err { error }: error.code }\n}\n\
      main :: fn() -> i64 {\n\
-     \x20   good := twice(8)\n    print good.tag\n    print good.value\n\
-     \x20   bad := twice(6)\n    print bad.tag\n    print bad.error.code\n\
+     \x20   print side(8)\n    print payload(8)\n\
+     \x20   print side(6)\n    print payload(6)\n\
      \x20   0\n}\n";
 
 #[test]
@@ -3313,8 +3317,10 @@ fn self_hosted_reevaluates_a_try_in_a_loop_condition() {
                   \x20   mut n : i64 = 0\n\
                   \x20   while (step(n)? < 3) { n = n + 1 }\n\
                   \x20   n\n}\n\
+                  got :: fn() -> i64 {\n\
+                  \x20   match run() { case .Ok { value }: value case .Err { error }: 0 - 1 }\n}\n\
                   main :: fn() -> i64 {\n\
-                  \x20   r := run()\n    print r.value\n    0\n}\n";
+                  \x20   print got()\n    0\n}\n";
     let Some(output) = selfhosted_native_output("trywhile", source) else {
         return;
     };

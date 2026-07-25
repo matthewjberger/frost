@@ -761,6 +761,13 @@ Parser :: struct {
     name_tag: i64,
     name_value: i64,
     name_error: i64,
+    // A failure result is an enum with `Ok { value }` and `Err { error }`,
+    // laid out the way every other enum is: a tag beside fields named for the
+    // variant they came from.
+    name_ok: i64,
+    name_err: i64,
+    name_ok_value: i64,
+    name_err_error: i64,
     synth_next: i64,
     prov_kind: i64,
     prov_off: i64,

@@ -1,5 +1,7 @@
 // Failure sets. A function that can fail says so in its signature, and `?`
-// hands a failure on to its caller rather than checking it here.
+// hands a failure on to its caller rather than checking it here. What comes
+// back is an ordinary enum, so the two sides are read with `match` the way any
+// other variant is.
 
 ParseError :: struct { at: i64 }
 
@@ -16,13 +18,27 @@ two_digits :: fn(high: i64, low: i64) -> i64 ! ParseError {
     tens * 10 + ones
 }
 
-main :: fn() -> i64 {
-    good := two_digits(52, 55)
-    print good.tag
-    print good.value
+// Which side came back: 0 for a value, 1 for a failure.
+side :: fn(high: i64, low: i64) -> i64 {
+    match two_digits(high, low) {
+        case .Ok { value }: 0
+        case .Err { error }: 1
+    }
+}
 
-    bad := two_digits(52, 90)
-    print bad.tag
-    print bad.error.at
+// The number when it parsed, or the byte that stopped it when it did not.
+payload :: fn(high: i64, low: i64) -> i64 {
+    match two_digits(high, low) {
+        case .Ok { value }: value
+        case .Err { error }: error.at
+    }
+}
+
+main :: fn() -> i64 {
+    print side(52, 55)
+    print payload(52, 55)
+
+    print side(52, 90)
+    print payload(52, 90)
     0
 }
