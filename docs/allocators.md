@@ -91,6 +91,15 @@ arena, a scratch arena that a caller resets at a known boundary (per frame, per
 request), so transient allocations cost nothing to free. That is a use of arena
 reset, not a reason for ambient state.
 
+A function that needs both draws both: `uses Arena<256>, Scratch<64>` gives its
+body one implicit parameter per source, each reached by the source type's own
+name with the first letter lowercased. A call supplies one argument for each,
+found by that name among the capabilities the caller holds and the `with` blocks
+around the call. A function drawing a single source takes whatever is innermost
+whatever it is called, so a `with scratch` block still supplies a `uses Arena`
+callee, and a function drawing several has to be able to tell them apart, which
+is what the name does.
+
 ## Prerequisites
 
 Two language features gate the allocator stack, and both are already on the pool

@@ -23,6 +23,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     new_func_node, new_index, new_let_node, new_named_node, new_node,
     new_struct_lit, new_type_node, new_unary, node_next, pointee,
     record_generic_fn, register_const, set_field_next, set_next, set_params,
+    cap_at, cap_count_of,
     set_ret_type, set_uses, struct_index_of, synth_capability_name,
     synth_join, synth_literal, synth_numbered, type_code_for
 
@@ -209,8 +210,7 @@ intern_global :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         p.fns,
         Sym { off = offset, len = length, is_extern = 0, is_safe = 0,
             is_inline = 0, ret_type = TY_I64,
-            params = 0 - 1, defined = 0, uses_ty = 0 - 1, cap_off = 0,
-            cap_len = 0 },
+            params = 0 - 1, defined = 0, cap_start = 0, cap_count = 0 },
     )
 }
 
@@ -249,11 +249,28 @@ set_params :: fn(mut p: Parser, fn_index: i64, params: i64) {
     entry.params = params
 }
 
+// Record one more capability for a function. They are pushed in the order they
+// were declared, so a function's run is contiguous and its first push is what
+// fixes where the run starts.
 set_uses :: fn(mut p: Parser, fn_index: i64, ty: i64, off: i64, len: i64) {
+    start := arena_push(p.caps, Cap { ty = ty, off = off, len = len })
     entry := arena_at(p.fns, fn_index)
-    entry.uses_ty = ty
-    entry.cap_off = off
-    entry.cap_len = len
+    if (entry.cap_count == 0) {
+        entry.cap_start = start
+    }
+    entry.cap_count = entry.cap_count + 1
+}
+
+// The nth capability a function draws.
+cap_at :: fn(mut p: Parser, fn_index: i64, index: i64) -> Cap {
+    sym := arena_at(p.fns, fn_index)
+    held := arena_at(p.caps, sym.cap_start + index)
+    Cap { ty = held.ty, off = held.off, len = held.len }
+}
+
+cap_count_of :: fn(mut p: Parser, fn_index: i64) -> i64 {
+    sym := arena_at(p.fns, fn_index)
+    sym.cap_count
 }
 
 node_next :: fn(mut p: Parser, id: i64) -> i64 {

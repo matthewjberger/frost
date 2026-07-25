@@ -302,9 +302,9 @@ Frost is being reshaped toward a data-oriented language with:
   raw pointer into it may not outlive the block. A function's frame is checked
   the same way, so a pointer or slice naming a local cannot be returned
   (`src/regions.rs`).
-- Allocation sources: `uses A` draws an allocation capability, threaded as
-  an implicit parameter and supplied by the `with` block that provides it
-  (`src/allocation_sources.rs`).
+- Allocation sources: `uses A, B` draws allocation capabilities, threaded as
+  implicit parameters and supplied by the `with` blocks that provide them,
+  matched by the name each is reached by (`src/allocation_sources.rs`).
 - Failure sets: `-> T ! E` says how a function fails and `?` hands a failure
   on, desugared to an ordinary enum and match (`src/failure_sets.rs`).
 - Compile-time arguments: `$T` for types, `$N` for values, and `$f` for a

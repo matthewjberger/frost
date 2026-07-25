@@ -164,6 +164,8 @@ main :: fn() -> i64 {
         consts = arena_make($ConstDef, 4096),
         instances = arena_make($Instance, 4096),
         generic_fns = arena_make($GenericFn, 256),
+        caps = arena_make($Cap, 1024),
+        providers = arena_make($Provider, 256),
         gparams = arena_make($GParam, 256),
         cfn_params = arena_make($GParam, 256),
         gargs = arena_make($GArg, 1024),

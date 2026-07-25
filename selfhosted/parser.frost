@@ -2340,20 +2340,32 @@ parse_function :: fn(mut p: Parser) -> i64 {
     // `-> T uses A` draws an allocation capability. It is an implicit trailing
     // parameter that borrows the source, so after this the function is ordinary
     // and only the call sites need to know to supply it.
+    // `uses A, B` draws more than one source. Each becomes an implicit
+    // parameter its body reaches by the type's own name lowercased, in the
+    // order they were written, and a call supplies one argument for each.
     if (cur(p) == TOK_KW_USES) {
         advance(p)
-        cap_name_off := cur_off(p)
-        cap_name_len := cur_len(p)
-        cap_ty := parse_type(p)
-        binding := synth_capability_name(p, cap_name_off, cap_name_len)
-        capability := arena_push(
-            p.arena,
-            Node { kind = NodeKind::Param, a = 1, b = BORROW_FLAG + cap_ty,
-                c = cap_name_len, val = binding, next = 0 - 1, pos = cur_off(p) },
-        )
-        params = append_node(p, params, capability)
-        set_params(p, fn_index, params)
-        set_uses(p, fn_index, cap_ty, binding, cap_name_len)
+        mut reading : i64 = 1
+        while (reading == 1) {
+            cap_name_off := cur_off(p)
+            cap_name_len := cur_len(p)
+            cap_ty := parse_type(p)
+            binding := synth_capability_name(p, cap_name_off, cap_name_len)
+            capability := arena_push(
+                p.arena,
+                Node { kind = NodeKind::Param, a = 1, b = BORROW_FLAG + cap_ty,
+                    c = cap_name_len, val = binding, next = 0 - 1,
+                    pos = cur_off(p) },
+            )
+            params = append_node(p, params, capability)
+            set_params(p, fn_index, params)
+            set_uses(p, fn_index, cap_ty, binding, cap_name_len)
+            reading = 0
+            if (cur(p) == TOK_COMMA) {
+                advance(p)
+                reading = 1
+            }
+        }
     }
     body := parse_block(p)
     if (p.result_ty != (0 - 1)) {

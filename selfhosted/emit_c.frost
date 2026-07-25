@@ -779,13 +779,15 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
         }
         id = next_id
     }
-    // The capability is the last argument, supplied by the caller's context
-    // rather than written at the call.
-    if (sym.uses_ty >= 0) {
-        if (first == false) {
+    // The capabilities are the last arguments, supplied by the caller's
+    // context rather than written at the call, one per source the callee draws.
+    mut cap : i64 = 0
+    while (cap < cap_count_of(p, fn_index)) {
+        if (first == false || cap > 0) {
             emit_text(", ")
         }
-        emit_capability_argument(p, fn_index)
+        emit_capability_argument(p, fn_index, cap)
+        cap = cap + 1
     }
 }
 
@@ -933,38 +935,31 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         return
     }
     if (kind == NodeKind::With) {
-        held_kind := p.prov_kind
-        held_off := p.prov_off
-        held_len := p.prov_len
-        set_provider(p, PROVIDER_REGION, node.val, node.c)
+        mark := push_provider(p, node.val, node.c, 1)
         emit_text("{\n")
         emit_list(p, node.a)
         emit_text("}\n")
-        set_provider(p, held_kind, held_off, held_len)
+        p.providers.count = mark
         return
     }
 }
 
-// The capability a call to `fn_index` is handed, emitted as an argument. A
+// One capability a call to `fn_index` is handed, emitted as an argument. A
 // forwarded one is already a pointer and passes straight through. A region
 // supplies the arena by address, the way any borrow is passed.
-emit_capability_argument :: fn(mut p: Parser, fn_index: i64) {
-    if (p.prov_kind == PROVIDER_NONE) {
-        sym := arena_at(p.fns, fn_index)
-        report_where(p.modules, p.src, sym.off)
-        report("calling '")
-        report_src(p.src, sym.off, sym.len)
-        report("' needs an allocation capability, so declare `uses` on ")
-        report("the caller or wrap the call in a `with` block")
-        frost_rt_die()
+emit_capability_argument :: fn(mut p: Parser, fn_index: i64, index: i64) {
+    found := provider_for(p, fn_index, index)
+    if (found < 0) {
+        report_missing_capability(p, fn_index, index)
     }
-    if (p.prov_kind == PROVIDER_REGION) {
+    held := arena_at(p.providers, found)
+    if (held.borrow == 1) {
         emit_text("(&(")
-        emit_source(p.src, p.prov_off, p.prov_len)
+        emit_source(p.src, held.off, held.len)
         emit_text("))")
         return
     }
-    emit_source(p.src, p.prov_off, p.prov_len)
+    emit_source(p.src, held.off, held.len)
 }
 
 emit_list :: fn(mut p: Parser, head: i64) {
