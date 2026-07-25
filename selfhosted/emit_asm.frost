@@ -2,6 +2,7 @@
 // register use and calling convention.
 
 import "core.frost"
+import "imports.frost"
 import "names.frost"
 import "types.frost"
 import "parser.frost"

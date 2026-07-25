@@ -254,8 +254,14 @@ register_const :: fn(mut p: Parser, offset: i64, length: i64, value: i64) {
 name_visible :: fn(mut p: Parser, decl_off: i64, decl_len: i64, use_off: i64)
     -> bool {
     owner := module_at(p.modules, decl_off)
-    if (owner == module_at(p.modules, use_off)) {
+    user := module_at(p.modules, use_off)
+    if (owner == user) {
         return true
+    }
+    // An import says what a file may name. A module the file did not import
+    // has nothing to offer it, however the name got into the program.
+    if (imports_module(p, user, owner) == false) {
+        return false
     }
     mut i : i64 = 0
     while (i < p.exports.count) {
@@ -263,6 +269,21 @@ name_visible :: fn(mut p: Parser, decl_off: i64, decl_len: i64, use_off: i64)
         if (entry.module == owner && entry.len == decl_len
             && bytes_equal_across(p.export_names, entry.off, p.src, decl_off,
                 decl_len)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+// Whether one module imports another directly. A file compiled on its own has
+// no modules recorded and no edges, and everything in it belongs to the root,
+// which the caller has already answered for.
+imports_module :: fn(mut p: Parser, importer: i64, imported: i64) -> bool {
+    mut i : i64 = 0
+    while (i < p.import_edges.count) {
+        edge := arena_at(p.import_edges, i)
+        if (edge.importer == importer && edge.imported == imported) {
             return true
         }
         i = i + 1

@@ -8,6 +8,7 @@ use crate::build_cache::{
     BuildCache, ModuleRecord, digest, fnv1a, interface_fingerprint,
     module_fingerprint, stamp_file,
 };
+use crate::import_visibility::{FileNames, unimported_names};
 use crate::interface::ModuleInterface;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
@@ -240,8 +241,24 @@ pub fn resolve_imports_cached(
         resolved,
         plans,
         exported_by: HashMap::new(),
+        files: Vec::new(),
+        module_exports: HashMap::new(),
     };
+    // The entry file is a file like any other, and the one most likely to have
+    // been leaning on a name it never imported.
+    walk.files.push(FileNames::of(
+        "the entry file",
+        &statements,
+        &import_identities(&statements, base_dir, roots, &root),
+    ));
     walk.resolve_into(statements, base_dir)?;
+    let reports = unimported_names(&walk.files, &walk.module_exports);
+    if !reports.is_empty() {
+        bail!(
+            "an import says what a file may name, and these name what they did not import:\n{}",
+            reports.join("\n")
+        );
+    }
     let mut resolved = walk.resolved;
 
     resolved.modules = walk
@@ -444,6 +461,25 @@ fn plan_module(
     Ok(key)
 }
 
+fn import_identities(
+    statements: &[Spanned<Statement>],
+    base_dir: &Path,
+    roots: &[SearchRoot],
+    root: &Path,
+) -> Vec<PathBuf> {
+    import_paths(statements)
+        .iter()
+        .filter_map(|path| {
+            find_import(base_dir, path, roots, root).map(|found| {
+                found
+                    .path
+                    .canonicalize()
+                    .unwrap_or_else(|_| found.path.clone())
+            })
+        })
+        .collect()
+}
+
 fn import_paths(statements: &[Spanned<Statement>]) -> Vec<String> {
     statements
         .iter()
@@ -489,6 +525,10 @@ struct Walk<'a> {
     // is a collision rather than a silent overwrite. Only exported names are
     // tracked. A private name is renamed per module and cannot clash.
     exported_by: HashMap<String, PathBuf>,
+    // What each file declared, imported and used, and what each module exports,
+    // for the check that a file only names what it imported.
+    files: Vec<FileNames>,
+    module_exports: HashMap<PathBuf, (String, HashSet<String>)>,
 }
 
 type Contribution = (Vec<Spanned<Statement>>, HashSet<String>, String);
@@ -544,14 +584,24 @@ impl Walk<'_> {
                 self.exported_by.insert(name.clone(), full.clone());
             }
 
+            let child_dir =
+                full.parent().map(Path::to_path_buf).unwrap_or_default();
+            self.files.push(FileNames::of(
+                &found.module,
+                &imported,
+                &import_identities(
+                    &imported, &child_dir, self.roots, self.root,
+                ),
+            ));
+            self.module_exports
+                .insert(key.clone(), (found.module.clone(), exports.clone()));
+
             let renames = private_renames(&imported, &exports, &tag);
             if !renames.is_empty() {
                 let renamer = Renamer { renames };
                 renamer.block(&mut imported, &mut Vec::new());
             }
 
-            let child_dir =
-                full.parent().map(Path::to_path_buf).unwrap_or_default();
             self.resolve_into(imported, &child_dir)?;
         }
         Ok(())

@@ -3,7 +3,9 @@
 
 import "core.frost"
 import "imports.frost"
+import "lexer.frost"
 import "names.frost"
+import "types.frost"
 import "emit_asm.frost"
 
 export check_borrow_exclusivity, check_calls, check_export_collisions,

@@ -7,6 +7,12 @@ library can be named as "the slab, wherever it is installed" rather than as
 
 One rule about identity is what makes the other four safe.
 
+An import also says what the importing file may name: its own declarations plus
+the exported names of the modules it imports directly. Importing is not
+transitive, so a file that uses a name reaches for the module exporting it in
+its own import list rather than inheriting it from something else's. See section
+5.5 of [spec.md](spec.md).
+
 ## The order
 
 1. Beside the importing file. Always tried first, and always tried, because
