@@ -231,7 +231,30 @@ impl<'a> Region<'a> {
                             .is_some_and(|root| self.bound.contains(root))
                     })
             }
-            _ => false,
+            // Listed rather than caught by `_`, so a new expression form is a compile error here instead of quietly answering that it points nowhere.
+            Expression::Identifier(_)
+            | Expression::Literal(_)
+            | Expression::Boolean(_)
+            | Expression::Sizeof(_)
+            | Expression::TypeValue(_)
+            | Expression::Prefix(..)
+            | Expression::Infix(..)
+            | Expression::Range(..)
+            | Expression::Function(..)
+            | Expression::Proc(..)
+            | Expression::UnsafeFn(_)
+            | Expression::Try(_)
+            | Expression::Dereference(_)
+            | Expression::Index(..)
+            | Expression::FieldAccess(..)
+            | Expression::AddressOf(_)
+            | Expression::Borrow(_)
+            | Expression::BorrowMut(_)
+            | Expression::StructInit(..)
+            | Expression::EnumVariantInit(..)
+            | Expression::Tuple(_)
+            | Expression::If(..)
+            | Expression::Switch(..) => false,
         }
     }
 
@@ -369,7 +392,26 @@ impl<'a> Region<'a> {
                 block_value(&case.body)
                     .is_some_and(|value| self.is_region_pointer(value))
             }),
-            _ => false,
+            // Listed rather than caught by `_`, so a new expression form is a compile error here instead of quietly answering that it points nowhere.
+            Expression::Literal(_)
+            | Expression::Boolean(_)
+            | Expression::Sizeof(_)
+            | Expression::TypeValue(_)
+            | Expression::Prefix(..)
+            | Expression::Infix(..)
+            | Expression::Range(..)
+            | Expression::Function(..)
+            | Expression::Proc(..)
+            | Expression::UnsafeFn(_)
+            | Expression::Try(_)
+            | Expression::Index(..)
+            | Expression::FieldAccess(..)
+            | Expression::AddressOf(_)
+            | Expression::Borrow(_)
+            | Expression::BorrowMut(_)
+            | Expression::StructInit(..)
+            | Expression::EnumVariantInit(..)
+            | Expression::Tuple(_) => false,
         }
     }
 
@@ -393,7 +435,23 @@ impl<'a> Region<'a> {
                 .any(|argument| self.mentions_region(argument)),
             Expression::Unsafe(body) => block_value(body)
                 .is_some_and(|value| self.mentions_region(value)),
-            _ => false,
+            // Listed rather than caught by `_`, so a new expression form is a compile error here instead of quietly answering that it points nowhere.
+            Expression::Literal(_)
+            | Expression::Boolean(_)
+            | Expression::Sizeof(_)
+            | Expression::TypeValue(_)
+            | Expression::Prefix(..)
+            | Expression::Infix(..)
+            | Expression::Range(..)
+            | Expression::Function(..)
+            | Expression::Proc(..)
+            | Expression::UnsafeFn(_)
+            | Expression::Try(_)
+            | Expression::StructInit(..)
+            | Expression::EnumVariantInit(..)
+            | Expression::Tuple(_)
+            | Expression::If(..)
+            | Expression::Switch(..) => false,
         }
     }
 }
@@ -650,7 +708,18 @@ impl Frame<'_> {
                 block_value(&case.body)
                     .is_some_and(|value| self.points_into_frame(value))
             }),
-            _ => false,
+            // Listed rather than caught by `_`, so a new expression form is a compile error here instead of quietly answering that it points nowhere.
+            Expression::Literal(_)
+            | Expression::Boolean(_)
+            | Expression::Sizeof(_)
+            | Expression::TypeValue(_)
+            | Expression::Prefix(..)
+            | Expression::Infix(..)
+            | Expression::Range(..)
+            | Expression::Function(..)
+            | Expression::Proc(..)
+            | Expression::UnsafeFn(_)
+            | Expression::Try(_) => false,
         }
     }
 
@@ -666,7 +735,27 @@ impl Frame<'_> {
             | Expression::Range(base, _, _) => self.views_this_frame(base),
             Expression::Unsafe(body) => block_value(body)
                 .is_some_and(|value| self.views_this_frame(value)),
-            _ => false,
+            // Listed rather than caught by `_`, so a new expression form is a compile error here instead of quietly answering that it points nowhere.
+            Expression::Literal(_)
+            | Expression::Boolean(_)
+            | Expression::Sizeof(_)
+            | Expression::TypeValue(_)
+            | Expression::Prefix(..)
+            | Expression::Infix(..)
+            | Expression::Function(..)
+            | Expression::Proc(..)
+            | Expression::UnsafeFn(_)
+            | Expression::Try(_)
+            | Expression::Dereference(_)
+            | Expression::AddressOf(_)
+            | Expression::Borrow(_)
+            | Expression::BorrowMut(_)
+            | Expression::Call(..)
+            | Expression::StructInit(..)
+            | Expression::EnumVariantInit(..)
+            | Expression::Tuple(_)
+            | Expression::If(..)
+            | Expression::Switch(..) => false,
         }
     }
 
@@ -678,7 +767,27 @@ impl Frame<'_> {
             | Expression::FieldAccess(base, _)
             | Expression::Borrow(base)
             | Expression::BorrowMut(base) => self.rooted_here(base),
-            _ => false,
+            // Listed rather than caught by `_`, so a new expression form is a compile error here instead of quietly answering that it points nowhere.
+            Expression::Literal(_)
+            | Expression::Boolean(_)
+            | Expression::Sizeof(_)
+            | Expression::TypeValue(_)
+            | Expression::Prefix(..)
+            | Expression::Infix(..)
+            | Expression::Range(..)
+            | Expression::Function(..)
+            | Expression::Proc(..)
+            | Expression::UnsafeFn(_)
+            | Expression::Try(_)
+            | Expression::Dereference(_)
+            | Expression::AddressOf(_)
+            | Expression::Call(..)
+            | Expression::StructInit(..)
+            | Expression::EnumVariantInit(..)
+            | Expression::Tuple(_)
+            | Expression::Unsafe(_)
+            | Expression::If(..)
+            | Expression::Switch(..) => false,
         }
     }
 }

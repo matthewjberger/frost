@@ -665,7 +665,18 @@ impl MoveChecker<'_> {
                 self.check_block(body);
                 Ok(())
             }
-            _ => Ok(()),
+            // Listed rather than caught by `_`, so a new expression form is a
+            // compile error here instead of being walked past unexamined.
+            Expression::Literal(_)
+            | Expression::Boolean(_)
+            | Expression::Sizeof(_)
+            | Expression::TypeValue(_)
+            | Expression::Range(..)
+            | Expression::Function(..)
+            | Expression::Proc(..)
+            | Expression::UnsafeFn(_)
+            | Expression::Try(_)
+            | Expression::Tuple(_) => Ok(()),
         }
     }
 

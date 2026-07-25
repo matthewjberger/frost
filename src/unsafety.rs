@@ -423,7 +423,13 @@ impl Checker {
                     self.expression(initializer, at);
                 }
             }
-            _ => {}
+            // Listed rather than caught by `_`, so a new expression form is a
+            // compile error here instead of walking past whatever it holds.
+            Expression::Identifier(_)
+            | Expression::Literal(_)
+            | Expression::Boolean(_)
+            | Expression::Sizeof(_)
+            | Expression::TypeValue(_) => {}
         }
     }
 }
