@@ -245,8 +245,18 @@ append_type :: fn(mut out: Builder, mut document: Json, holder: i64) {
         builder_str_value(out, "f32")
         return
     }
-    if (json_text_eq(document, kind, "float64")) {
+    // `float64_supertype` is a double that the IDL says may stand for an f32 or
+    // an i32 as well. It is a double in the header either way. It used to reach
+    // the unrecognised case below and come out `^u8`, which is also eight bytes,
+    // so WGPUColor's four channels took float values and worked by coincidence
+    // rather than by having the right type.
+    if (json_text_eq(document, kind, "float64")
+        || json_text_eq(document, kind, "float64_supertype")) {
         builder_str_value(out, "f64")
+        return
+    }
+    if (json_text_eq(document, kind, "nullable_float32")) {
+        builder_str_value(out, "f32")
         return
     }
     // WGPUBool is a uint32, not a C _Bool.
@@ -399,7 +409,9 @@ append_default :: fn(mut out: Builder, mut document: Json, held: i64) {
         return
     }
     if (json_text_eq(document, kind, "float32")
-        || json_text_eq(document, kind, "float64")) {
+        || json_text_eq(document, kind, "float64")
+        || json_text_eq(document, kind, "float64_supertype")
+        || json_text_eq(document, kind, "nullable_float32")) {
         builder_str_value(out, "0.0")
         return
     }
