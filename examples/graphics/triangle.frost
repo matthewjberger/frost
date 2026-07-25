@@ -55,13 +55,11 @@ Slot :: struct { handle: ^u8, ready: i64 }
 
 fill_slot :: fn(status: u32, handle: ^u8, message: ^u8, userdata1: ^u8,
     userdata2: ^u8) {
-    unsafe {
-        slot := ptr_cast($Slot, userdata1)
-        if (status == REQUEST_ADAPTER_STATUS_SUCCESS) {
-            slot^.handle = handle
-        }
-        slot^.ready = 1
+    slot := unsafe { ptr_cast($Slot, userdata1) }
+    if (status == REQUEST_ADAPTER_STATUS_SUCCESS) {
+        unsafe { slot^.handle = handle }
     }
+    unsafe { slot^.ready = 1 }
 }
 
 // C's NULL. `ptr_cast` reinterprets an integer as an address, so the null
