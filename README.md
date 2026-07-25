@@ -3,129 +3,85 @@
   <img alt="license" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-fc8d62?style=for-the-badge&labelColor=555555" height="20">
 </p>
 
-`Frost` is a small, statically typed, data-oriented systems language. A program
-is plain data and free functions that transform it. It is memory-safe without a
-garbage collector and without lifetime annotations, it compiles to native code
-through Cranelift or through portable C, and it compiles itself.
+# Frost
 
-> Pre-1.0. The language is usable and the compiler is complete enough to have
-> been written in itself, but the surface is still moving and there is no
-> stability promise yet.
+**A data-oriented systems language that is memory-safe with no garbage collector and no lifetimes, and compiles itself.**
 
-## Why it looks like this
+A Frost program is plain data and free functions that transform it. There are no classes and nothing is allocated behind your back. It compiles to native code through Cranelift or to portable C, and the compiler is written in Frost.
 
-Most safe systems languages ask you to describe how long a reference lives.
-Frost removes the question instead. **A borrow is what a parameter mode means**,
-so there is no reference type to store, return, or annotate:
+> Pre-1.0. It is usable today and complete enough to have been written in itself, but the surface is still moving and nothing is promised stable yet.
+
+## The one idea
+
+Most safe systems languages make you describe how long a reference lives. Frost deletes the question. A borrow is not a type you write, it is what a parameter mode means.
 
 ```
-damage :: fn(mut e: Entity, amount: i64) { e.hp = e.hp - amount }
+wound :: fn(mut e: Entity, amount: i64) { e.hp = e.hp - amount }
 ```
 
-`mut` borrows exclusively for the call. Unmarked reads. `move` takes ownership.
-There is no `&` in the surface, so a borrow has nowhere to escape to, and that
-one decision is why there are no lifetimes anywhere in the language.
+`mut` borrows for the call and mutates in place. An unmarked parameter borrows to read. `move` takes ownership. There is no `&` anywhere in the language, so a borrow has nothing to be stored in and nowhere to escape to. That one rule is why Frost needs no lifetime annotations, and the rest of the design grows from it.
 
-What replaces the things references are normally used for:
-
-| instead of | Frost has |
+| in place of | Frost has |
 | --- | --- |
-| a long-lived reference into a collection | a **generational handle**, a copy value that cannot read a reused slot |
-| `Drop` and destructors | **linear resources**, consumed exactly once, checked |
-| exceptions or `Result` plumbing | **failure sets**, `-> T ! E` and `?` |
-| a garbage collector | **arenas and pools**, allocation you can see |
-| dynamic dispatch | **monomorphized generics**, so the inner-loop call is direct |
+| lifetimes on references | borrows that are parameter modes and cannot escape |
+| a garbage collector | arenas and pools you can see |
+| a long-lived pointer into a collection | a generational handle, a copy value that goes stale rather than dangling |
+| destructors | linear resources, consumed exactly once, checked at compile time |
+| exceptions and `Result` plumbing | failure sets, `-> T ! E` and `?` |
+| dynamic dispatch | monomorphized generics, so the inner-loop call is direct |
+| classes and methods | plain structs and free functions |
 
-## A first program
+## A taste
 
 ```
-import "io.frost"
-import "slab.frost"
-
-Kind :: enum { Hero, Monster { threat: i64 } }
+Kind :: enum { Hero, Monster { damage: i64 } }
 Entity :: struct { hp: i64, kind: Kind }
 
-// `mut` borrows for the call. There is no `&`, so the borrow cannot be stored.
-wound :: fn(mut e: Entity, amount: i64) { e.hp = e.hp - amount }
+// `mut` borrows for the call and changes the caller's value. There is no `&`.
+heal :: fn(mut e: Entity, amount: i64) {
+    e.hp = e.hp + amount
+}
 
-threat :: fn(e: Entity) -> i64 {
+// An unmarked parameter borrows to read. `match` reads the enum and binds the
+// payload of the variant it took.
+attack :: fn(e: Entity) -> i64 {
     match e.kind {
-        case .Hero: 0
-        case .Monster { threat }: threat
+        case .Hero: 10
+        case .Monster { damage }: damage
     }
 }
 
 main :: fn() -> i64 {
-    // Entities live contiguously in one slab. No allocation, no runtime.
-    mut world : Slab<Entity, 8> = Slab {
-        storage = [Entity { hp = 0, kind = Kind::Hero }; 8],
-        generations = [0; 8],
-        free_list = [0; 8],
-        free_count = 0,
-    }
-    slab_reset($Entity, $8, world)
-
-    hero := slab_insert($Entity, $8, world, Entity { hp = 100, kind = Kind::Hero })
-    orc := slab_insert($Entity, $8, world,
-        Entity { hp = 30, kind = Kind::Monster { threat = 7 } })
-
-    // A handle is a copy value, not a pointer, so it can be stored and returned.
-    wound(world[hero], threat(world[orc]))
-    print_int_line(world[hero].hp)          // 93
-
-    slab_release($Entity, $8, world, orc)
-    // The slot is free for reuse, and the orc's handle can never read whatever
-    // takes it. A stale handle is detectable rather than dangling.
-    if (slab_alive($Entity, $8, world, orc)) {
-        print_line("alive")
-    } else {
-        print_line("stale")
-    }
+    mut hero := Entity { hp = 90, kind = Kind::Hero }
+    heal(hero, 10)                 // hero is borrowed and changed
+    print hero.hp                  // 100
+    print attack(hero)             // 10
     0
 }
 ```
 
 ```bash
-frost program.frost          # compile, link, and run
+frost hero.frost                   # compile, link, and run
 ```
 
-Entities are plain data in one contiguous slab. `mut` borrows for the call and
-the borrow cannot be stored, `match` reads the enum, and a handle is a copy
-value that goes stale rather than dangling. No allocation and no runtime call
-anywhere in it.
+For long-lived data, an `Entity` lives in a pool and is named by a `Handle`, a small copy value rather than a pointer. Freeing a slot raises its generation, so a handle to a reused slot reads as stale rather than reading whatever took its place. The pool is ordinary Frost code, not a runtime, and is generic over element type and capacity. See [`examples/native/game_world.frost`](examples/native/game_world.frost).
 
-## Highlights
+## What it does
 
-- **Data-oriented, not object-oriented.** Plain structs and free functions. No
-  methods, no inheritance, no vtables. Behaviour is not attached to data.
-- **Ownership without lifetimes.** A borrow is a parameter mode and the compiler
-  inserts it at the call.
-- **Regions, still without lifetimes.** A `with arena { }` block owns an arena
-  and a pointer into it may not outlive the block. A function's frame is checked
-  the same way, so a pointer or slice naming a local cannot be returned.
-- **Linear resources instead of `Drop`.** A `linear` value must be consumed
-  exactly once, and forgetting is a compile error.
-- **Generational handles and pools.** A stale handle can never read a reused
-  slot, and the pool is ordinary Frost code rather than a runtime.
-- **Generics by monomorphization.** `$T` types, `$N` values and `$f` functions,
-  on structs, enums and functions alike, so a generic algorithm calls its
-  comparator directly rather than through a pointer.
-- **Failure sets.** `-> T ! E` says how a function fails, `?` hands a failure on,
-  and both lower to an ordinary enum and a match.
-- **Calls C directly** with `extern fn` and no glue, including functions that
-  return a struct by value and callbacks that take a typed context.
-- **Three backends that must agree.** One typed IR feeds Cranelift, portable C
-  and a direct interpreter, and a differential test puts every program through
-  all three.
-- **Self-hosting.** `selfhosted/frost.frost` is a Frost compiler written in Frost
-  that reproduces itself byte for byte, through both of its backends.
-- **Separate compilation.** Each module is its own object, and `--incremental`
-  rebuilds only what an edit can reach.
+The language has structs and tagged enums, `match` with payload and tuple patterns, and generics that monomorphize over types, values, and functions, so a call in an inner loop stays direct rather than going through a pointer. A resource that must be released is marked `linear` and the compiler counts it, consumed once on every path out or the program does not build. Long-lived data lives in pools addressed by generational handles, a region check keeps a pointer from outliving the block or the stack frame it points into, and a value constant can be a folded integer expression. There are no visibility modifiers and no methods.
 
-## Using it
+It calls C without a binding layer. An `extern fn` links against a C library with the natural ABI, including one that returns a struct by value and one that takes a Frost function as a callback with a typed context.
+
+One typed intermediate representation feeds three backends, a Cranelift native path, a portable C path, and a small interpreter. A differential test runs every program through all three and checks the answers match, so a lowering bug shows up as a disagreement rather than as a wrong binary.
+
+The compiler is written in Frost. `selfhosted/frost.frost` reproduces itself byte for byte through its own C backend and its own x86-64 assembly backend, so a build can go from source to a running compiler with no C compiler in the loop. A full native build of 58k lines runs at about 166,000 lines per second with code generation spread across cores, and `--incremental` rebuilds only the modules an edit can reach.
+
+The standard library is ordinary Frost. It has length-carrying strings, a growable `Vec` and a hash map, file and formatted output, a sort, the slab and structure-of-arrays `columns` containers, and single-precision vector, matrix, and quaternion math. See [`std/`](std) and [docs/math.md](docs/math.md).
+
+## Getting started
 
 ```bash
-cargo build --release
+cargo build --release          # build the compiler
 
 frost program.frost                              # compile, link, and run
 frost --link -o program program.frost            # link to a named executable
@@ -133,71 +89,30 @@ frost --native -o program.o program.frost        # object file only
 frost --emit-c -o program.c program.frost        # portable C instead of Cranelift
 frost --run-ir program.frost                     # interpret the typed IR
 frost --test program.frost                       # run the file's `test` blocks
-frost --test tests/                              # run every test under a directory
 
 frost --link --incremental -o program program.frost   # rebuild only what changed
 frost --link --freestanding -o program program.frost  # link no C standard library
 frost --link -L vendor -o program program.frost       # add an import search path
 ```
 
-Requires a Rust toolchain and a C compiler (gcc or clang) for linking.
+Requires a Rust toolchain and a C compiler (gcc or clang) for linking. An import is looked for beside the importing file, then on `-L` and `FROST_PATH`, then in the project's `frost.json`, then in the bundled [`std/`](std).
 
-An import is looked for beside the importing file, then on `-L` and
-`FROST_PATH`, then in the project's `frost.json`, then in the standard library
-in [`std/`](std). See [docs/modules.md](docs/modules.md).
+## Status
 
-For syntax highlighting in VS Code, `just install-editor` links the grammar in
-[`.vscode/frost`](.vscode) into the editor. See [.vscode/README.md](.vscode/README.md).
+Everything above works today and is checked by the test suite on every commit, including both self-hosting fixpoints and the three-backend differential run. The compiler has compiled itself.
 
-## Examples
+What is left, roughly in order:
 
-Runnable programs in [`examples/native/`](examples/native). Start with
-[`game_world.frost`](examples/native/game_world.frost) for handles and enums, and
-[`generic_pool_library.frost`](examples/native/generic_pool_library.frost) for
-one generic slab used at two element types.
+- Renaming a name on import. Two modules that export the same name is already a compile error. The rename was designed and then held back, since the only thing it resolves is a collision between two third-party libraries you cannot edit, and there is no third-party ecosystem yet.
+- An `f64` or scalar-generic version of the math library, and the SIMD and structure-of-arrays primitives for it to build on.
+- A full two-way audit of the two compilers. They are held to the same feature set by test, and the recent additions (the `print` statement, constant expressions, and the export-collision error) each landed in both, so the audit is a confirmation rather than a repair.
+- The move to 1.0, once the surface stops changing.
 
 ## Documentation
 
-Start with **[docs/authoring.md](docs/authoring.md)**, the practical guide to
-writing correct Frost quickly.
+[authoring](docs/authoring.md) is the practical guide to writing correct Frost quickly, and [tour](docs/tour.md) walks the language by example. [spec](docs/spec.md) is the reference and grammar, [syntax-design](docs/syntax-design.md) explains why the syntax reads the way it does, [coming-from-rust](docs/coming-from-rust.md) maps each Rust reflex across, and [math](docs/math.md) covers the standard-library math.
 
-**The language**
-
-- [docs/tour.md](docs/tour.md) - a hands-on tour by example
-- [docs/spec.md](docs/spec.md) - the reference and the grammar
-- [docs/coming-from-rust.md](docs/coming-from-rust.md) - every Rust reflex mapped
-  to its Frost equivalent
-- [docs/syntax-design.md](docs/syntax-design.md) - why the syntax is shaped this
-  way, difference by difference
-- [docs/math.md](docs/math.md) - the standard-library graphics math: vectors,
-  matrices, and quaternions
-
-**The ideas**
-
-- [docs/philosophy.md](docs/philosophy.md) - goals, non-goals, and why
-  data-oriented rather than object-oriented
-- [docs/memory-safety.md](docs/memory-safety.md) - how safety works without a GC
-  or lifetimes, and what it does not cover
-- [docs/allocators.md](docs/allocators.md) - arenas, pools, and the one platform
-  call
-- [docs/native-pools.md](docs/native-pools.md) - moving the memory model out of C
-  and into the language
-
-**The compiler**
-
-- [docs/architecture.md](docs/architecture.md) - the pipeline, and what each
-  backend supports
-- [docs/build-modes.md](docs/build-modes.md) - native, freestanding and
-  self-hosted are three separate axes
-- [docs/modules.md](docs/modules.md) - where an import is looked for, the
-  manifest, and the standard library
-- [docs/separate-compilation.md](docs/separate-compilation.md) - the module
-  boundary and what `--incremental` rebuilds
-- [docs/c-compatibility.md](docs/c-compatibility.md) - calling C, and the C
-  backend
-- [docs/callbacks.md](docs/callbacks.md) - callbacks with a typed context
-- [docs/self-hosting.md](docs/self-hosting.md) - the fixpoint, and compile speed
-- [docs/roadmap.md](docs/roadmap.md) - what was built, in the order it was built
+The reasoning behind the design is in [philosophy](docs/philosophy.md), [memory-safety](docs/memory-safety.md), [allocators](docs/allocators.md), and [native-pools](docs/native-pools.md). The compiler itself is covered by [architecture](docs/architecture.md), [build-modes](docs/build-modes.md), [modules](docs/modules.md), [separate-compilation](docs/separate-compilation.md), [c-compatibility](docs/c-compatibility.md), [callbacks](docs/callbacks.md), [self-hosting](docs/self-hosting.md), and [roadmap](docs/roadmap.md).
 
 ## Project layout
 
@@ -224,8 +139,7 @@ just bench-incremental  # what --incremental saves
 
 ## Contributing
 
-External contributions are not being accepted yet. The language surface is still
-settling. Guidelines will land here once it stops moving.
+External contributions are not being accepted yet. The language surface is still settling. Guidelines will land here once it stops moving.
 
 ## License
 
@@ -236,6 +150,4 @@ Dual-licensed under either of:
 
 at your option.
 
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in `frost` by you, as defined in the Apache-2.0 license, shall be
-dual licensed as above, without any additional terms or conditions.
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in `frost` by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
