@@ -15,3 +15,5 @@ examples/graphics/wgpu_native.dll
 examples/graphics/triangle
 examples/graphics/*.png
 examples/graphics/*.exe
+tools/*.exe
+examples/graphics/wgpu.frost
