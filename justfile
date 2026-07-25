@@ -150,6 +150,17 @@ examples-run:
 examples-run:
     Get-ChildItem examples/native/*.frost | ForEach-Object { Write-Host "== $_"; cargo run -r -q -p frost --bin frost -- --link -o "$_.exe" "$_"; & "$($_.FullName).exe"; Remove-Item "$($_.FullName).exe" -Force }
 
+# Opens a window with SDL3. SDL3_DIR overrides where SDL3.dll is found (Windows)
+[windows]
+window:
+    $dir = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "examples/graphics" }; if (-not (Test-Path "$dir/SDL3.dll")) { throw "no SDL3.dll in $dir. Set SDL3_DIR to a directory containing it." }; cargo run -r -q -p frost --bin frost -- --link --libs "$dir/SDL3.dll" -o examples/graphics/window.exe examples/graphics/window.frost; if ($dir -ne "examples/graphics") { Copy-Item "$dir/SDL3.dll" examples/graphics -Force }; & ./examples/graphics/window.exe
+
+# Opens a window with SDL3, from the system package libsdl3-dev / sdl3 (Unix)
+[unix]
+window:
+    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 -o examples/graphics/window examples/graphics/window.frost
+    ./examples/graphics/window
+
 # Builds the self-hosted compiler (frost written in frost)
 selfhost-build:
     cargo run -r -q -p frost --bin frost -- --link -o selfhosted/frost.exe selfhosted/frost.frost
