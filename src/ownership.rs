@@ -27,15 +27,41 @@ pub fn check_ownership(
     statements: &[Spanned<Statement>],
     linear: &HashSet<String>,
 ) -> Result<()> {
+    let reports = check_ownership_recovering(statements, linear);
+    if reports.is_empty() {
+        return Ok(());
+    }
+    Err(anyhow::anyhow!(reports.join("\n")))
+}
+
+/// Check each top-level item, reporting one failure per item rather than
+/// stopping at the first, so a program with a move error in three functions
+/// names all three.
+///
+/// The granularity is the item, not the statement. Within one function the
+/// walker marks a name moved as it goes, so continuing past a use-after-move
+/// would report every later use of that name as well. Items do not share that
+/// state, so stopping at the item boundary accumulates without cascading.
+///
+/// The messages are already located by `locate`, some of them by an inner
+/// position rather than the item's, which is why these are the finished strings
+/// rather than `Diagnostic`s.
+pub fn check_ownership_recovering(
+    statements: &[Spanned<Statement>],
+    linear: &HashSet<String>,
+) -> Vec<String> {
     let signatures = collect_signatures(statements);
     let param_types = collect_param_types(statements);
+    let mut reports = Vec::new();
     for statement in statements {
-        locate(
+        if let Err(error) = locate(
             check_statement(&statement.node, linear, &signatures, &param_types),
             statement.position,
-        )?;
+        ) {
+            reports.push(error.to_string());
+        }
     }
-    Ok(())
+    reports
 }
 
 // The declared type of every parameter of every function and extern, in order,
