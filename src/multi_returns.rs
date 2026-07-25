@@ -12,8 +12,8 @@
 // name is derived from the types.
 
 use crate::parser::{
-    Expression, MultiBinding, ReturnKind, Spanned, Statement, StructField,
-    SwitchCase, multi_return_field_name, multi_return_struct_name,
+    Expression, MultiBinding, ReturnKind, ReturnValue, Spanned, Statement,
+    StructField, SwitchCase, multi_return_field_name, multi_return_struct_name,
 };
 use crate::types::Type;
 use anyhow::{Result, bail};
@@ -40,8 +40,8 @@ pub fn lower_multiple_returns(
             .iter()
             .enumerate()
             .map(|(index, held)| StructField {
-                name: multi_return_field_name(index),
-                field_type: held.clone(),
+                name: multi_return_field_name(&types, index),
+                field_type: held.value_type.clone(),
             })
             .collect();
         statements.push(Spanned::new(
@@ -54,8 +54,8 @@ pub fn lower_multiple_returns(
 
 struct Lowering {
     // Every function that returns a type list, by name.
-    signatures: HashMap<String, Vec<Type>>,
-    structs: BTreeMap<String, Vec<Type>>,
+    signatures: HashMap<String, Vec<ReturnValue>>,
+    structs: BTreeMap<String, Vec<ReturnValue>>,
     counter: usize,
 }
 
@@ -93,7 +93,7 @@ impl Lowering {
         Ok(())
     }
 
-    fn struct_for(&mut self, types: &[Type]) -> String {
+    fn struct_for(&mut self, types: &[ReturnValue]) -> String {
         let name = multi_return_struct_name(types);
         self.structs
             .entry(name.clone())
@@ -104,7 +104,7 @@ impl Lowering {
     fn rewrite_statements(
         &mut self,
         statements: &mut Vec<Spanned<Statement>>,
-        returns: Option<&[Type]>,
+        returns: Option<&[ReturnValue]>,
     ) -> Result<()> {
         let mut rewritten: Vec<Spanned<Statement>> =
             Vec::with_capacity(statements.len());
@@ -130,7 +130,7 @@ impl Lowering {
     fn rewrite_statement(
         &mut self,
         statement: &mut Statement,
-        returns: Option<&[Type]>,
+        returns: Option<&[ReturnValue]>,
     ) -> Result<()> {
         match statement {
             Statement::LetMultiple(..) => {
@@ -185,15 +185,36 @@ impl Lowering {
                         .into_iter()
                         .enumerate()
                         .map(|(index, held)| {
-                            (multi_return_field_name(index), held)
+                            (multi_return_field_name(types, index), held)
                         })
                         .collect();
                     *value = Expression::StructInit(struct_name, fields);
                     return Ok(());
                 }
+                // `return { quotient = a / b, remainder = a % b }`: the values
+                // by the names the signature gave them, which is the same
+                // struct the list form builds and reads at the return site the
+                // way the signature reads at the definition.
+                if let Some(types) = returns
+                    && let Expression::StructInit(name, fields) = value
+                    && name.is_empty()
+                {
+                    if types.iter().any(|held| held.name.is_none()) {
+                        bail!(
+                            "this `return` names its values and the signature does not; name them there too, or list the values in order"
+                        );
+                    }
+                    for (_, held) in fields.iter_mut() {
+                        self.check_expression(held, returns)?;
+                    }
+                    let fields = std::mem::take(fields);
+                    *name = self.struct_for(types);
+                    *value = Expression::StructInit(name.clone(), fields);
+                    return Ok(());
+                }
                 if let Some(types) = returns {
                     bail!(
-                        "this function returns {} values, so its `return` lists them",
+                        "this function returns {} values, so its `return` lists them or names them",
                         types.len()
                     );
                 }
@@ -265,7 +286,7 @@ impl Lowering {
                 type_annotation: None,
                 value: Expression::FieldAccess(
                     Box::new(Expression::Identifier(temporary.clone())),
-                    multi_return_field_name(index),
+                    multi_return_field_name(&types, index),
                 ),
                 mutable: binding.mutable,
             });
@@ -274,7 +295,7 @@ impl Lowering {
     }
 
     // The return type list of the function a call names, if it has one.
-    fn called_signature(&self, value: &Expression) -> Option<Vec<Type>> {
+    fn called_signature(&self, value: &Expression) -> Option<Vec<ReturnValue>> {
         let Expression::Call(callee, _) = value else {
             return None;
         };
@@ -290,7 +311,7 @@ impl Lowering {
     fn check_expression(
         &mut self,
         expression: &mut Expression,
-        returns: Option<&[Type]>,
+        returns: Option<&[ReturnValue]>,
     ) -> Result<()> {
         match expression {
             Expression::Call(callee, arguments) => {

@@ -542,7 +542,7 @@ parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
             if (held.kind == NodeKind::StructLit && held.val == (0 - 1)) {
                 arena_push(p.variant_fixups,
                     VariantFixup { lit = value, callee = callee,
-                        argument = index })
+                        argument = index, kind = FixupKind::Literal })
             }
         }
         arg := new_node(p, NodeKind::Arg, value, 0, 0)
@@ -1720,6 +1720,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         head := new_let_node(p, value, temp_off, temp_len, 0 - 1)
         mut tail := head
         mut index : i64 = 0
+        callee := call_target(p, value)
         p.ti = names_at
         while (cur(p) != TOK_COLONEQ && cur(p) != TOK_EOF) {
             if (cur(p) == TOK_KW_MUT) {
@@ -1731,6 +1732,14 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             base := new_named_node(p, NodeKind::Var, 0, temp_off, temp_len)
             field := synth_numbered(p, "value", index)
             access := new_field_node(p, base, field, 5 + digits_in(index))
+            // The field is called whatever the signature called that value. A
+            // callee written later in the program has no signature yet, so the
+            // name is patched once every one is parsed.
+            if (resolve_multi_field(p, access, callee, index) == false) {
+                arena_push(p.variant_fixups,
+                    VariantFixup { lit = access, callee = callee,
+                        argument = index, kind = FixupKind::MultiField })
+            }
             bind := new_let_node(p, access, name_off, name_len, 0 - 1)
             set_next(p, tail, bind)
             tail = bind
@@ -2665,18 +2674,62 @@ resolve_untyped_literal :: fn(mut p: Parser, node_id: i64, wanted: i64) {
     }
 }
 
-// Every literal an argument left unresolved, now that every signature is
-// parsed. The parameter's declared type is what it takes its type from.
+// The function a call names, or -1 for anything else. A list binding takes its
+// field names from the signature of the call it binds.
+call_target :: fn(mut p: Parser, value: i64) -> i64 {
+    node := arena_at(p.arena, value)
+    if (node.kind != NodeKind::Call) {
+        return 0 - 1
+    }
+    node.val
+}
+
+// Name one field of a list binding after the value the callee's return type
+// list declared at that position. False when the callee has no signature yet,
+// which leaves it for the fixup pass.
+resolve_multi_field :: fn(mut p: Parser, node_id: i64, callee: i64,
+    index: i64) -> bool {
+    if (callee < 0) {
+        return false
+    }
+    entry := arena_at(p.fns, callee)
+    ret := entry.ret_type
+    fid := nth_field(p, ret, index)
+    if (fid < 0) {
+        return false
+    }
+    field := arena_at(p.fields, fid)
+    off := field.name_off
+    length := field.name_len
+    node := arena_at(p.arena, node_id)
+    node.val = off
+    node.c = length
+    true
+}
+
+// Everything an earlier parse left unresolved, now that every signature is
+// parsed: a literal that named no type, and a field of a list binding whose
+// callee was written later.
 resolve_variant_fixups :: fn(mut p: Parser) {
     mut i : i64 = 0
     while (i < p.variant_fixups.count) {
         fixup := arena_at(p.variant_fixups, i)
         lit_id := fixup.lit
         argument := fixup.argument
-        callee := arena_at(p.fns, fixup.callee)
-        params := callee.params
-        declared := nth_param_type(p, params, argument)
-        resolve_untyped_literal(p, lit_id, declared)
+        target := fixup.callee
+        kind := fixup.kind
+        if (kind == FixupKind::MultiField) {
+            if (resolve_multi_field(p, lit_id, target, argument) == false) {
+                report_where(p.modules, p.src, argument)
+                report("this binding names the values of a call whose signature is not a return type list")
+                frost_rt_die()
+            }
+        } else {
+            callee := arena_at(p.fns, target)
+            params := callee.params
+            declared := nth_param_type(p, params, argument)
+            resolve_untyped_literal(p, lit_id, declared)
+        }
         i = i + 1
     }
     p.variant_fixups.count = 0
@@ -2756,18 +2809,54 @@ synth_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
 // handles an ordinary struct return, which both backends already do.
 // ---------------------------------------------------------------------------
 
+// The nth field of a struct, or -1 past the end. A return type list's values
+// are its fields in order, so this is what turns a position at a `return` into
+// the name the signature gave it.
+nth_field :: fn(mut p: Parser, struct_ty: i64, index: i64) -> i64 {
+    if (is_struct_ty(struct_ty) == false) {
+        return 0 - 1
+    }
+    def := arena_at(p.structs, struct_index_of(struct_ty))
+    mut fid := def.field_head
+    mut at : i64 = 0
+    while (fid != (0 - 1)) {
+        if (at == index) {
+            return fid
+        }
+        held := arena_at(p.fields, fid)
+        fid = held.next
+        at = at + 1
+    }
+    0 - 1
+}
+
 // The struct standing for the list, made fresh per function so its field types
-// are the ones that function declared. The `(` has been consumed.
+// are the ones that function declared. A value the signature named keeps that
+// name as its field, so `return { quotient = .. }` writes what the signature
+// reads. The `(` has been consumed.
 synth_multi_struct :: fn(mut p: Parser) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     mut count : i64 = 0
     while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
+        mut name_off : i64 = 0 - 1
+        mut name_len : i64 = 0
+        if (cur(p) == TOK_IDENT && peek_kind(p, 1) == TOK_COLON) {
+            name_off = cur_off(p)
+            name_len = cur_len(p)
+            advance(p)
+            advance(p)
+        }
         held := parse_type(p)
-        name := synth_numbered(p, "value", count)
+        mut name := name_off
+        mut length := name_len
+        if (name_off == (0 - 1)) {
+            name = synth_numbered(p, "value", count)
+            length = 5 + digits_in(count)
+        }
         field := arena_push(
             p.fields,
-            StructField { name_off = name, name_len = 5 + digits_in(count),
+            StructField { name_off = name, name_len = length,
                 ty = held, next = 0 - 1 },
         )
         if (head == (0 - 1)) {
@@ -2800,6 +2889,21 @@ synth_multi_struct :: fn(mut p: Parser) -> i64 {
     STRUCT_BASE + index
 }
 
+// The name of a return type list's nth value, as a byte range in the source.
+// The signature's name when it gave one, and the synthesized `valueN` when it
+// did not, which is what the struct's field is called either way.
+multi_field_name_off :: fn(mut p: Parser, index: i64) -> i64 {
+    fid := nth_field(p, p.multi_ty, index)
+    field := arena_at(p.fields, fid)
+    field.name_off
+}
+
+multi_field_name_len :: fn(mut p: Parser, index: i64) -> i64 {
+    fid := nth_field(p, p.multi_ty, index)
+    field := arena_at(p.fields, fid)
+    field.name_len
+}
+
 // `return a, b` as the literal of the struct the list stands for. The first
 // value is already parsed.
 multi_return_value :: fn(mut p: Parser, first: i64) -> i64 {
@@ -2808,14 +2912,15 @@ multi_return_value :: fn(mut p: Parser, first: i64) -> i64 {
         report("this `return` lists several values and the function returns one")
         frost_rt_die()
     }
-    init := new_field_init(p, first, synth_numbered(p, "value", 0), 6)
+    init := new_field_init(p, first, multi_field_name_off(p, 0),
+        multi_field_name_len(p, 0))
     mut tail := init
     mut count : i64 = 1
     while (cur(p) == TOK_COMMA) {
         advance(p)
         value := parse_expr(p)
-        name := synth_numbered(p, "value", count)
-        following := new_field_init(p, value, name, 5 + digits_in(count))
+        following := new_field_init(p, value, multi_field_name_off(p, count),
+            multi_field_name_len(p, count))
         set_next(p, tail, following)
         tail = following
         count = count + 1

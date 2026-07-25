@@ -99,17 +99,37 @@ impl Display for Parameter {
     }
 }
 
+// One value of a return type list. `-> (quotient: i64, remainder: i64)` names
+// both; `-> (i64, i64)` names neither. A name is what the value is called at
+// the return site and in the struct the list lowers to, so it is the field name
+// a `return { quotient = .. }` writes.
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
+pub struct ReturnValue {
+    pub name: Option<Identifier>,
+    pub value_type: Type,
+}
+
+impl Display for ReturnValue {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        match &self.name {
+            Some(name) => write!(f, "{}: {}", name, self.value_type),
+            None => write!(f, "{}", self.value_type),
+        }
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
 pub struct MultiBinding {
     pub name: Identifier,
     pub mutable: bool,
 }
 
-// The struct a return type list becomes. One per distinct list, named after the
-// types it holds so that two functions returning the same list share it.
-pub fn multi_return_struct_name(types: &[Type]) -> String {
+// The struct a return type list becomes. One per distinct list, named after
+// what it holds, so two functions returning the same list under the same names
+// share it and two that name their values differently do not.
+pub fn multi_return_struct_name(values: &[ReturnValue]) -> String {
     let mut name = String::from("__multi");
-    for held in types {
+    for held in values {
         name.push('_');
         for character in held.to_string().chars() {
             if character.is_ascii_alphanumeric() {
@@ -122,21 +142,25 @@ pub fn multi_return_struct_name(types: &[Type]) -> String {
     name
 }
 
-// The field a return type list's nth value lives in.
-pub fn multi_return_field_name(index: usize) -> String {
-    format!("value{index}")
+// The field a return type list's nth value lives in: the name the signature
+// gave it, or its position when the signature gave none.
+pub fn multi_return_field_name(values: &[ReturnValue], index: usize) -> String {
+    match values.get(index).and_then(|held| held.name.as_ref()) {
+        Some(name) => name.clone(),
+        None => format!("value{index}"),
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
 pub enum ReturnKind {
     None,
     Single(Type),
-    // `-> (i64, i64)`: several values from one call, bound by
-    // `quotient, remainder := divide(a, b)`. There is no tuple type behind it.
-    // The multi-return lowering gives each distinct list of types one struct and
-    // rewrites the returns and the bindings, so nothing after the front end
-    // sees this kind.
-    Multiple(Vec<Type>),
+    // `-> (i64, i64)` or `-> (quotient: i64, remainder: i64)`: several values
+    // from one call, bound by `quotient, remainder := divide(a, b)`. There is no
+    // tuple type behind it. The multi-return lowering gives each distinct list
+    // one struct and rewrites the returns and the bindings, so nothing after the
+    // front end sees this kind.
+    Multiple(Vec<ReturnValue>),
     // `-> T ! E`: succeeds with T or fails with the error enum E. The failure set
     // is E. The value type is T.
     Fallible(Type, Type),
@@ -164,8 +188,8 @@ impl ReturnSignature {
         match &self.kind {
             ReturnKind::None => None,
             ReturnKind::Single(t) => Some(t.clone()),
-            ReturnKind::Multiple(types) => {
-                Some(Type::Struct(multi_return_struct_name(types)))
+            ReturnKind::Multiple(values) => {
+                Some(Type::Struct(multi_return_struct_name(values)))
             }
             ReturnKind::Fallible(value, _) => Some(value.clone()),
         }
@@ -193,9 +217,10 @@ impl ReturnSignature {
                     None
                 }
             }
-            ReturnKind::Multiple(types) => {
-                types.iter().find(|t| t.is_second_class())
-            }
+            ReturnKind::Multiple(values) => values
+                .iter()
+                .map(|held| &held.value_type)
+                .find(|held| held.is_second_class()),
             ReturnKind::Fallible(value, _) => {
                 if value.is_second_class() {
                     Some(value)
@@ -216,9 +241,10 @@ impl ReturnSignature {
                     None
                 }
             }
-            ReturnKind::Multiple(types) => {
-                types.iter().find(|t| t.contains_reference())
-            }
+            ReturnKind::Multiple(values) => values
+                .iter()
+                .map(|held| &held.value_type)
+                .find(|held| held.contains_reference()),
             ReturnKind::Fallible(value, _) => {
                 if value.contains_reference() {
                     Some(value)
@@ -229,9 +255,9 @@ impl ReturnSignature {
         }
     }
 
-    pub fn multiple_types(&self) -> Option<&Vec<Type>> {
+    pub fn multiple_values(&self) -> Option<&Vec<ReturnValue>> {
         match &self.kind {
-            ReturnKind::Multiple(types) => Some(types),
+            ReturnKind::Multiple(values) => Some(values),
             _ => None,
         }
     }
@@ -269,9 +295,9 @@ impl Display for ReturnSignature {
             ReturnKind::Fallible(value, error) => {
                 write!(f, " -> {} ! {}", value, error)?
             }
-            ReturnKind::Multiple(types) => {
+            ReturnKind::Multiple(values) => {
                 let parts: Vec<String> =
-                    types.iter().map(|t| t.to_string()).collect();
+                    values.iter().map(|held| held.to_string()).collect();
                 write!(f, " -> ({})", parts.join(", "))?
             }
         }
@@ -2875,32 +2901,59 @@ impl<'a> Parser<'a> {
         Ok(ReturnKind::Single(typ))
     }
 
-    // `-> (i64, i64)`. The types are positional and unnamed, since the names
-    // that matter are the ones the caller binds them to.
+    // `-> (i64, i64)`, and `-> (quotient: i64, remainder: i64)` when the values
+    // are worth naming. A name says which value is which at the definition, and
+    // it is the field name a `return { quotient = .. }` writes.
     fn parse_multiple_returns(&mut self) -> Result<ReturnKind> {
         if !matches!(self.peek_nth(0), Token::LeftParentheses) {
             bail!("Expected '(' for a multiple return");
         }
         self.read_token();
 
-        let mut types = Vec::new();
+        let mut values = Vec::new();
         while !matches!(self.peek_nth(0), Token::RightParentheses) {
             if matches!(self.peek_nth(0), Token::EndOfFile) {
                 bail!("Unexpected end of input in a return type list");
             }
-            types.push(self.parse_type()?);
+            let mut name = None;
+            if let Token::Identifier(written) = self.peek_nth(0)
+                && matches!(self.peek_nth(1), Token::Colon)
+            {
+                name = Some(written.to_string());
+                self.read_token();
+                self.read_token();
+            }
+            values.push(ReturnValue {
+                name,
+                value_type: self.parse_type()?,
+            });
             if matches!(self.peek_nth(0), Token::Comma) {
                 self.read_token();
             }
         }
         self.read_token();
 
-        if types.len() < 2 {
+        if values.len() < 2 {
             bail!(
-                "a return type list holds two or more types; write `-> T` for one"
+                "a return type list holds two or more values; write `-> T` for one"
             );
         }
-        Ok(ReturnKind::Multiple(types))
+        let named = values.iter().filter(|held| held.name.is_some()).count();
+        if named != 0 && named != values.len() {
+            bail!(
+                "a return type list names all of its values or none of them, so that a `return` by name can write every field"
+            );
+        }
+        for (index, held) in values.iter().enumerate() {
+            if let Some(name) = &held.name
+                && values[..index]
+                    .iter()
+                    .any(|earlier| earlier.name.as_ref() == Some(name))
+            {
+                bail!("this return type list names '{name}' twice");
+            }
+        }
+        Ok(ReturnKind::Multiple(values))
     }
 
     fn parse_function_parameters(&mut self) -> Result<Vec<Parameter>> {
@@ -5224,8 +5277,10 @@ mod tests {
         )) = &program[0].node
         {
             assert_eq!(params.len(), 2);
-            if let ReturnKind::Multiple(types) = &return_sig.kind {
-                assert_eq!(types, &vec![Type::I64, Type::I64]);
+            if let ReturnKind::Multiple(values) = &return_sig.kind {
+                assert_eq!(values.len(), 2);
+                assert!(values.iter().all(|held| held.name.is_none()));
+                assert!(values.iter().all(|held| held.value_type == Type::I64));
             } else {
                 bail!("Expected a return type list");
             }
@@ -5279,14 +5334,45 @@ mod tests {
 
     #[test]
     fn return_signature_to_type_multiple() {
+        use super::ReturnValue;
+        let unnamed = |value_type| ReturnValue {
+            name: None,
+            value_type,
+        };
         let sig = ReturnSignature::plain(ReturnKind::Multiple(vec![
-            Type::I64,
-            Type::Bool,
+            unnamed(Type::I64),
+            unnamed(Type::Bool),
         ]));
         assert_eq!(
             sig.to_type(),
             Some(Type::Struct("__multi_i64_bool".to_string()))
         );
+
+        // Named values are part of what the struct is, so a list that names
+        // them is a different struct from one that does not.
+        let named = |name: &str, value_type| ReturnValue {
+            name: Some(name.to_string()),
+            value_type,
+        };
+        let sig = ReturnSignature::plain(ReturnKind::Multiple(vec![
+            named("quotient", Type::I64),
+            named("remainder", Type::I64),
+        ]));
+        assert_eq!(
+            sig.to_type(),
+            Some(Type::Struct(
+                "__multi_quotient__i64_remainder__i64".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_return_type_list_names_all_of_its_values_or_none() {
+        let input = "fn(a: i64) -> (quotient: i64, i64) { return a, a }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(&tokens);
+        assert!(parser.parse().is_err());
     }
 
     #[test]

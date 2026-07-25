@@ -23,15 +23,16 @@ attack :: fn(e: Entity) -> i64 {
 
 // `for` walks a slice, an array or a `str` with no iterator to implement, and
 // a return type list answers with two values without a tuple type behind them.
-tally :: fn(party: []Entity) -> (i64, i64) {
-    mut total : i64 = 0
-    mut strongest : i64 = 0
+// Naming the values says which is which, and lets the `return` say it too.
+tally :: fn(party: []Entity) -> (total: i64, strongest: i64) {
+    mut sum : i64 = 0
+    mut best : i64 = 0
     for held in party {
         hit := attack(held)
-        total = total + hit
-        if (hit > strongest) { strongest = hit }
+        sum = sum + hit
+        if (hit > best) { best = hit }
     }
-    return total, strongest
+    return { total = sum, strongest = best }
 }
 
 // A `linear` value is consumed exactly once on every path out, or the program

@@ -716,12 +716,19 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 Point :: struct { x: i64, y: i64 }
 
-divide :: fn(a: i64, b: i64) -> (i64, i64) {
+divide :: fn(a: i64, b: i64) -> (quotient: i64, remainder: i64) {
     return a / b, a % b
 }
 
-split_bytes :: fn(value: i64) -> (i64, i64) {
-    return value / 256, value % 256
+// The same values under the same names, so both functions share one struct.
+halve :: fn(a: i64) -> (quotient: i64, remainder: i64) {
+    return a / 2, a % 2
+}
+
+// Named values can be returned by name rather than in order, which reads at
+// the `return` the way the signature reads at the definition.
+split_bytes :: fn(value: i64) -> (high: i64, low: i64) {
+    return { high = value / 256, low = value % 256 }
 }
 
 // A return from inside a nested block, and a value that is not an integer.
@@ -745,6 +752,9 @@ main :: fn() -> i64 {
     high, low := split_bytes(700)
     printf("%lld\n", high)
     printf("%lld\n", low)
+
+    half, odd := halve(9)
+    printf("%lld\n", half * 10 + odd)
 
     magnitude, mut negative := classify(0 - 9)
     printf("%lld\n", magnitude)
@@ -770,7 +780,7 @@ fn a_function_returns_several_values() {
     else {
         return;
     };
-    assert_eq!(output, "3\n2\n2\n188\n9\n1\n0\n12\n12\n20\n");
+    assert_eq!(output, "3\n2\n2\n188\n41\n9\n1\n0\n12\n12\n20\n");
 }
 
 // The things a return type list does not do, each with the diagnostic that says
@@ -782,6 +792,10 @@ fn a_return_type_list_is_held_to_its_shape() {
         (
             "return a, b, a\n",
             "lists 3 values and the function returns 2",
+        ),
+        (
+            "return { quotient = a / b, remainder = a % b }\n",
+            "names its values and the signature does not",
         ),
     ];
     for (body, expected) in cases {
@@ -804,6 +818,24 @@ fn a_return_type_list_is_held_to_its_shape() {
     assert!(
         message.contains("bound by a list of names"),
         "expected the binding diagnostic in:\n{message}"
+    );
+
+    // A list names every value or none of them, so a `return` by name can write
+    // every field, and no name is used twice.
+    let half_named = "divide :: fn(a: i64) -> (quotient: i64, i64) { return a, a }\n\
+         main :: fn() -> i64 { 0 }\n";
+    let message = compile_error("multirethalf", half_named);
+    assert!(
+        message.contains("names all of its values or none"),
+        "expected the all-or-none diagnostic in:\n{message}"
+    );
+
+    let twice = "divide :: fn(a: i64) -> (n: i64, n: i64) { return a, a }\n\
+         main :: fn() -> i64 { 0 }\n";
+    let message = compile_error("multirettwice", twice);
+    assert!(
+        message.contains("names 'n' twice"),
+        "expected the duplicate-name diagnostic in:\n{message}"
     );
 }
 
@@ -3104,8 +3136,11 @@ fn self_hosted_for_walks_a_sequence() {
 // whole feature, written out at parse time, so both backends see the struct
 // return they already handle.
 const SELF_HOSTED_MULTIPLE_RETURNS: &str =
-    "divide :: fn(a: i64, b: i64) -> (i64, i64) {
+    "divide :: fn(a: i64, b: i64) -> (quotient: i64, remainder: i64) {
          return a / b, a % b
+     }
+     split_bytes :: fn(value: i64) -> (high: i64, low: i64) {
+         return { high = value / 256, low = value % 256 }
      }
      classify :: fn(value: i64) -> (i64, bool) {
          if (value < 0) {
@@ -3117,6 +3152,9 @@ const SELF_HOSTED_MULTIPLE_RETURNS: &str =
          quotient, remainder := divide(17, 5)
          print quotient
          print remainder
+         high, low := split_bytes(700)
+         print high
+         print low
          magnitude, mut negative := classify(0 - 9)
          print magnitude
          if (negative) { print 1 } else { print 0 }
@@ -3133,15 +3171,7 @@ fn self_hosted_returns_several_values() {
     else {
         return;
     };
-    assert_eq!(
-        output,
-        "3
-2
-9
-1
-0
-"
-    );
+    assert_eq!(output, "3\n2\n2\n188\n9\n1\n0\n");
 
     let directory = std::env::temp_dir();
     let input = directory.join("frost_shmulti_input.frost");

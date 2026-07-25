@@ -33,6 +33,7 @@ normative rules see [spec.md](spec.md). For a broader Rust-to-Frost guide see
 | `for (i, x) in xs.iter().enumerate()` | `for i, x in xs { }` |
 | `fn f() -> (i64, i64)` (a tuple) | `f :: fn() -> (i64, i64)`, and no tuple type |
 | `let (q, r) = divide(a, b);` | `q, r := divide(a, b)` |
+| no equivalent | `-> (quotient: i64, remainder: i64)`, named like Odin's |
 | `Shape::Circle { r: 5 }` | `Shape::Circle { radius = 5 }`, or `.Circle { radius = 5 }` |
 | `Point { x: 1, y: 2 }` | `Point { x = 1, y = 2 }`, or `{ x = 1, y = 2 }` |
 | `while cond { }` | `while (cond) { }` |
