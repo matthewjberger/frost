@@ -692,7 +692,12 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
     mut id := head
     mut first : bool = true
     sym := arena_at(p.fns, fn_index)
-    mut param : i64 = sym.params
+    // The instance this call names, when the callee is generic, since the
+    // symbol's list belongs to whichever instance was parsed last.
+    mut param : i64 = instance_params(p, fn_index, head)
+    if (param == (0 - 1)) {
+        param = sym.params
+    }
     while (id != (0 - 1)) {
         node := arena_at(p.arena, id)
         value := node.a

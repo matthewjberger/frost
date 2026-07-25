@@ -97,6 +97,7 @@ pub enum Token {
     Ref,
     Unsafe,
     Uses,
+    Where,
     While,
     With,
 }
@@ -193,6 +194,7 @@ impl Display for Token {
             Ref => "ref".to_string(),
             Unsafe => "unsafe".to_string(),
             Uses => "uses".to_string(),
+            Where => "where".to_string(),
             While => "while".to_string(),
             With => "with".to_string(),
         };
@@ -274,6 +276,7 @@ keywords! {
     "ref" => Ref,
     "unsafe" => Unsafe,
     "uses" => Uses,
+    "where" => Where,
     "with" => With,
 }
 

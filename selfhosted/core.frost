@@ -25,7 +25,8 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     TOK_KW_IN, TOK_KW_LET,
     TOK_KW_LINEAR, TOK_KW_MATCH, TOK_KW_MOVE, TOK_KW_MUT, TOK_KW_PRINT,
     TOK_KW_INLINE,
-    TOK_KW_RETURN, TOK_KW_STRUCT, TOK_KW_TRUE, TOK_KW_USES, TOK_KW_WHILE,
+    TOK_KW_RETURN, TOK_KW_STRUCT, TOK_KW_TRUE, TOK_KW_USES, TOK_KW_WHERE,
+    TOK_KW_WHILE,
     TOK_KW_WITH, TOK_LBRACE, TOK_LBRACKET, TOK_LE, TOK_LPAREN, TOK_LT,
     TOK_MINUS, TOK_NE, TOK_OROR, TOK_PERCENT, TOK_PLUS, TOK_QUESTION,
     TOK_RBRACE, TOK_RBRACKET, TOK_RPAREN, TOK_SHL, TOK_SHR, TOK_PIPE,
@@ -256,6 +257,8 @@ TOK_KW_ENUM   :: 30
 TOK_KW_TEST   :: 31
 TOK_KW_UNSAFE :: 32
 TOK_KW_DISTINCT :: 79
+// `where`: a bound on a generic's compile-time parameters.
+TOK_KW_WHERE  :: 80
 // `safe extern fn`: an extern the author audited, so calling it needs no block.
 TOK_KW_SAFE   :: 71
 TOK_KW_REF    :: 72
@@ -478,6 +481,10 @@ Instance :: struct {
 // argument tuple with every parameter bound.
 GenericFn :: struct {
     fn_index: i64,
+    // The first token of the `where` bound, or -1. The bound is read again at
+    // each call, with that call's arguments bound, rather than kept as a tree:
+    // the vocabulary is fixed, so reading it is the same work as walking it.
+    bound_token: i64,
     tparam_off: i64,
     tparam_len: i64,
     // Whether the first parameter takes a number, and whether the body calls
@@ -780,6 +787,9 @@ Parser :: struct {
     // Whether the declaration being parsed calls its own first compile-time
     // parameter, so the generic it becomes records that a function binds there.
     tparam_called: i64,
+    // The first token of the `where` bound the declaration being parsed
+    // carries, or -1.
+    bound_token: i64,
     // Whether that first parameter was declared as taking a number.
     tparam_is_value: i64,
     last_return_type: i64,

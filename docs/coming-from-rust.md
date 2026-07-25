@@ -509,9 +509,23 @@ world := make_pool($Entity, 16)     // like make_pool::<Entity>(16)
 type parameter. Type parameters are erased after monomorphization and carry no
 runtime cost. They drive the specialization and then vanish from the ABI.
 
-There are no traits, so no `where` clauses, no associated types, and no `dyn
-Trait`. A generic function is generic over any type its body actually
-type-checks against once specialized.
+There are no traits, no associated types, and no `dyn Trait`. A generic
+function is generic over any type its body type-checks against once
+specialized.
+
+There is a `where` clause, and it is not a trait bound. It asks what the
+compiler already knows about a type, over a fixed vocabulary: `is_numeric`,
+`is_integer`, `is_float`, `is_struct`, `is_array`, `is_slice`, `is_pointer`,
+combined with `&&`, `||` and `!`.
+
+```frost
+twice :: fn($T: Type, v: $T) -> T where is_numeric(T) { v + v }
+```
+
+Nothing registers into that vocabulary and nothing implements it, so there is
+no coherence rule, no orphan rule, and no solver. The bound is a precondition
+checked at the call, which is where the error belongs: the caller chose the
+type.
 
 Where Rust would write `T: Ord` and call `a.cmp(&b)`, Frost takes the operation
 as a compile-time function parameter, and that parameter can declare the

@@ -118,10 +118,20 @@ and the wildcard `_` all work.
 
 ## Generics
 
-A type parameter is written `$T`, with no bound of its own and no traits. It
-usually
-infers from a value argument. When it cannot, declare it `$T: Type` and pass the
-type at the call site with a leading `$`.
+A type parameter is written `$T`. It usually infers from a value argument. When
+it cannot, declare it `$T: Type` and pass the type at the call site with a
+leading `$`.
+
+A `where` clause says what the generic needs of it, over a fixed vocabulary of
+questions the compiler already answers about a type (spec 11.4a):
+
+```frost
+twice :: fn($T: Type, v: $T) -> T where is_numeric(T) { v + v }
+```
+
+Without one, what a body requires of `T` is whatever its code does with it, and
+the mismatch surfaces when the specialization is compiled rather than at the
+call.
 
 ```frost
 Pair :: struct($T: Type) { first: T, second: T }

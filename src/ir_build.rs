@@ -299,7 +299,10 @@ fn build_module_inner(
                     compile_time_signature: None,
                 })
                 .collect();
+            // The bound was checked at the call that asked for this
+            // specialization, so the specialized signature carries none.
             let return_sig = ReturnSignature {
+                bound: None,
                 kind: match generic.return_sig.to_type() {
                     Some(ty) => ReturnKind::Single(substitute_type(
                         &ty,
@@ -1251,6 +1254,109 @@ fn mangle_specialization(
         }
     }
     mangled
+}
+
+// A `where` bound asks what the compiler already knows about a type. The
+// vocabulary is fixed and closed, and every one of these is a question the
+// compiler answers for itself anyway, to decide whether to emit an integer or
+// a floating point instruction, whether a value travels by address, and how
+// wide it is. So a bound is a precondition, not a set of operations a type
+// registers into: nothing implements it, nothing is named, and there is
+// nothing to resolve.
+//
+// What is deliberately absent is any predicate keyed by a string, such as
+// asking whether a type has a field of a given name. A string literal does not
+// grep back to the declaration it names, which is the one thing the flat
+// namespace is for.
+fn type_predicate(name: &str, ty: &Type) -> Option<bool> {
+    let answer = match name {
+        "is_numeric" => is_integer(ty) || ty.is_float(),
+        "is_integer" => is_integer(ty),
+        "is_float" => ty.is_float(),
+        "is_struct" => matches!(ty, Type::Struct(_) | Type::Enum(_)),
+        "is_array" => matches!(ty, Type::Array(..) | Type::ArrayGeneric(..)),
+        "is_slice" => matches!(ty, Type::Slice(_) | Type::Str),
+        "is_pointer" => {
+            matches!(ty, Type::Ptr(_) | Type::Ref(_) | Type::RefMut(_))
+        }
+        _ => return None,
+    };
+    Some(answer)
+}
+
+const BOUND_VOCABULARY: &str = "is_numeric, is_integer, is_float, is_struct, is_array, is_slice, is_pointer";
+
+fn evaluate_bound(
+    expression: &Expression,
+    subst: &HashMap<String, Type>,
+) -> Result<bool> {
+    match expression {
+        Expression::Infix(left, operator, right) => {
+            let left = evaluate_bound(left, subst)?;
+            let right = evaluate_bound(right, subst)?;
+            match operator {
+                crate::parser::Operator::And => Ok(left && right),
+                crate::parser::Operator::Or => Ok(left || right),
+                other => bail!(
+                    "a `where` bound combines its terms with `&&`, `||` and `!`, and '{other}' is none of those"
+                ),
+            }
+        }
+        Expression::Prefix(crate::parser::Operator::Not, inner) => {
+            Ok(!evaluate_bound(inner, subst)?)
+        }
+        Expression::Call(callee, arguments) => {
+            let Expression::Identifier(predicate) = callee.as_ref() else {
+                bail!(
+                    "a `where` bound is a predicate applied to a compile-time parameter"
+                )
+            };
+            if arguments.len() != 1 {
+                bail!(
+                    "'{predicate}' takes one compile-time parameter, and {} were given",
+                    arguments.len()
+                )
+            }
+            let Expression::Identifier(parameter) = &arguments[0] else {
+                bail!("'{predicate}' takes a compile-time parameter by name")
+            };
+            let Some(ty) = subst.get(parameter) else {
+                bail!(
+                    "the bound names '{parameter}', which is not a compile-time parameter of this function"
+                )
+            };
+            match type_predicate(predicate, ty) {
+                Some(answer) => Ok(answer),
+                None => bail!(
+                    "'{predicate}' is not one of the bounds a type can be held to, which are: {BOUND_VOCABULARY}"
+                ),
+            }
+        }
+        other => bail!(
+            "a `where` bound is a predicate applied to a compile-time parameter, and '{other}' is not one"
+        ),
+    }
+}
+
+// The bound, and what to say when it does not hold. The binding is named, since
+// the reader chose it at the call and the template is not theirs.
+fn check_bound(
+    bound: &Expression,
+    subst: &HashMap<String, Type>,
+    callee: &str,
+) -> Result<()> {
+    if evaluate_bound(bound, subst)? {
+        return Ok(());
+    }
+    let mut bindings: Vec<String> = subst
+        .iter()
+        .map(|(name, ty)| format!("{name} = {ty}"))
+        .collect();
+    bindings.sort();
+    bail!(
+        "'{callee}' is declared `where {bound}`, and that does not hold for {}",
+        bindings.join(", ")
+    )
 }
 
 fn is_generic_instance(name: &str) -> bool {
@@ -3922,6 +4028,12 @@ impl<'a> FunctionLowering<'a> {
             }
         }
 
+        // The bound, before the body is specialized, so a type that cannot
+        // work is refused here rather than inside code the reader never wrote.
+        if let Some(bound) = &generic.return_sig.bound {
+            check_bound(bound, &subst, name)?;
+        }
+
         for (parameter, target) in signature_checks {
             let Some(declared) = parameter.compile_time_signature.as_ref()
             else {
@@ -3980,7 +4092,29 @@ impl<'a> FunctionLowering<'a> {
         for (plan, target) in plans.into_iter().zip(&value_parameter_types) {
             match plan {
                 ArgPlan::Value(operand, value_type) => {
-                    if needs_memory(target) {
+                    // An array reaching a `[]T` parameter becomes a slice of
+                    // the whole of itself first. Without this the callee is
+                    // handed the array's own address and reads its first two
+                    // elements as a pointer and a length.
+                    if let (Type::Slice(element), Type::Array(held, count)) =
+                        (target, &value_type)
+                        && held == element
+                    {
+                        let IrOperand::Local(local) = operand else {
+                            bail!(
+                                "native backend: an array argument to a generic call is not a place"
+                            );
+                        };
+                        let base = self.address_of_local(local, &value_type);
+                        let slice = self
+                            .build_slice_from_address(base, element, *count);
+                        let IrOperand::Local(view) = slice else {
+                            bail!(
+                                "native backend: slice construction did not yield a place"
+                            );
+                        };
+                        lowered.push(self.address_of_local(view, target));
+                    } else if needs_memory(target) {
                         let IrOperand::Local(local) = operand else {
                             bail!(
                                 "native backend: aggregate argument to generic call is not a place"
