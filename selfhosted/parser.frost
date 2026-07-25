@@ -1080,6 +1080,7 @@ parse_variant_case :: fn(mut p: Parser, subject: i64) -> i64 {
     variant_len := cur_len(p)
     advance(p)
     index := find_variant(p, 0 - 1, variant_off, variant_len)
+    p.case_variant = index
     mut tag : i64 = 0
     if (index < 0) {
         // While parsing a generic template the enum instance a variant belongs
@@ -1245,6 +1246,13 @@ parse_match :: fn(mut p: Parser) -> i64 {
     }
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
+    // What the arms covered, for the exhaustiveness check below. `covered` is a
+    // bit per tag, `checkable` goes to zero when a variant did not resolve (an
+    // uninstantiated generic template) or the enum has more variants than bits.
+    mut match_enum : i64 = 0 - 1
+    mut covered : i64 = 0
+    mut checkable : i64 = 1
+    mut saw_default : i64 = 0
     while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
         advance(p)
         mut is_default : i64 = 0
@@ -1253,6 +1261,18 @@ parse_match :: fn(mut p: Parser) -> i64 {
         if (cur(p) == TOK_DOT) {
             advance(p)
             case_node = parse_variant_case(p, subject)
+            index := p.case_variant
+            if (index < 0) {
+                checkable = 0
+            } else {
+                entry := arena_at(p.variants, index)
+                match_enum = entry.enum_ty
+                if (entry.tag >= 0 && entry.tag < 63) {
+                    covered = covered | (1 << entry.tag)
+                } else {
+                    checkable = 0
+                }
+            }
         } else {
             if (cur(p) == TOK_INT) {
                 value = cur_val(p)
@@ -1264,6 +1284,9 @@ parse_match :: fn(mut p: Parser) -> i64 {
             advance(p)
             body := parse_arm(p)
             case_node = new_case(p, body, value, is_default)
+            if (is_default == 1) {
+                saw_default = 1
+            }
         }
         if (head == (0 - 1)) {
             head = case_node
@@ -1273,8 +1296,44 @@ parse_match :: fn(mut p: Parser) -> i64 {
             tail = case_node
         }
     }
+    if (saw_default == 0 && checkable == 1 && match_enum != (0 - 1)) {
+        check_match_covers(p, match_enum, covered)
+    }
     advance(p)
     new_node(p, NODE_MATCH, scrutinee, head, 0)
+}
+
+// Every variant of the matched enum has to be covered, or a `case _` has to say
+// what the rest do. Without this a missing variant falls through to whatever
+// the match was going to answer with anyway, so adding a variant to an enum
+// silently changes the meaning of every match on it rather than pointing at the
+// places that now have a case to write.
+check_match_covers :: fn(mut p: Parser, enum_ty: i64, covered: i64) {
+    mut i : i64 = 0
+    mut missing : i64 = 0
+    while (i < p.variants.count) {
+        entry := arena_at(p.variants, i)
+        if (entry.enum_ty == enum_ty && entry.tag >= 0 && entry.tag < 63) {
+            if ((covered & (1 << entry.tag)) == 0) {
+                if (missing == 0) {
+                    report_where(p.modules, p.src, cur_off(p))
+                    report("match does not cover '.")
+                    report_src(p.src, entry.name_off, entry.name_len)
+                    report("'")
+                } else {
+                    report(", '.")
+                    report_src(p.src, entry.name_off, entry.name_len)
+                    report("'")
+                }
+                missing = missing + 1
+            }
+        }
+        i = i + 1
+    }
+    if (missing > 0) {
+        report("; add the case or a `case _` for the rest")
+        frost_die()
+    }
 }
 
 // Whether an `unsafe` at statement position is a value used in a larger

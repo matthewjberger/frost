@@ -213,6 +213,7 @@ main :: fn() -> i64 {
             failure_ty = 0 - 1,
             variants = arena_make($Variant, 4096),
             match_count = 0,
+            case_variant = 0 - 1,
             type_args = arena_make($TypeArg, 1024),
             pending = arena_make($LocalVar, 4096),
             try_count = 0,

@@ -6885,6 +6885,87 @@ fn reading_a_local_through_a_pointer_is_still_allowed() {
     assert_eq!(output, "42\n");
 }
 
+const EXHAUSTIVE_SHAPE: &str =
+    "Shape :: enum { Circle { r: i64 }, Rect { w: i64, h: i64 }, Point }\n";
+
+// A match on an enum has to cover every variant or say what the rest do.
+// Without it, adding a variant silently changes the meaning of every match on
+// that enum instead of pointing at the places that now need a case.
+#[test]
+fn a_match_missing_a_variant_is_refused() {
+    let source = format!(
+        "{EXHAUSTIVE_SHAPE}\
+         area :: fn(s: Shape) -> i64 {{\n\
+         \x20   match s {{\n\
+         \x20       case .Circle {{ r }}: r * r * 3\n\
+         \x20       case .Rect {{ w, h }}: w * h\n\
+         \x20   }}\n}}\n\
+         main :: fn() -> i64 {{ area(Shape::Point {{}}) }}\n"
+    );
+    let message = compile_error("exhaustive", &source);
+    assert!(
+        message.contains("does not cover") && message.contains(".Point"),
+        "expected the uncovered variant to be named, got:\n{message}"
+    );
+}
+
+#[test]
+fn a_match_naming_every_variant_is_allowed() {
+    let source = format!(
+        "{EXHAUSTIVE_SHAPE}\
+         area :: fn(s: Shape) -> i64 {{\n\
+         \x20   match s {{\n\
+         \x20       case .Circle {{ r }}: r * r * 3\n\
+         \x20       case .Rect {{ w, h }}: w * h\n\
+         \x20       case .Point: 0\n\
+         \x20   }}\n}}\n\
+         main :: fn() -> i64 {{ print area(Shape::Rect {{ w = 3, h = 4 }})\n0 }}\n"
+    );
+    let Some(output) = compile_and_run("exhaustiveall", &source) else {
+        return;
+    };
+    assert_eq!(output, "12\n");
+}
+
+#[test]
+fn a_match_with_a_wildcard_need_not_name_every_variant() {
+    let source = format!(
+        "{EXHAUSTIVE_SHAPE}\
+         area :: fn(s: Shape) -> i64 {{\n\
+         \x20   match s {{\n\
+         \x20       case .Circle {{ r }}: r * r * 3\n\
+         \x20       case _: 0\n\
+         \x20   }}\n}}\n\
+         main :: fn() -> i64 {{ print area(Shape::Point {{}})\n0 }}\n"
+    );
+    let Some(output) = compile_and_run("exhaustivewild", &source) else {
+        return;
+    };
+    assert_eq!(output, "0\n");
+}
+
+// The same rule in the self-hosted compiler, which is held to the bootstrap's
+// feature set by test rather than by hope.
+#[test]
+fn self_hosted_refuses_a_match_missing_a_variant() {
+    let source = format!(
+        "{EXHAUSTIVE_SHAPE}\
+         area :: fn(s: Shape) -> i64 {{\n\
+         \x20   match s {{\n\
+         \x20       case .Circle {{ r }}: r * r * 3\n\
+         \x20       case .Rect {{ w, h }}: w * h\n\
+         \x20   }}\n}}\n\
+         main :: fn() -> i64 {{ area(Shape::Point {{}}) }}\n"
+    );
+    let Some(message) = self_hosted_rejects("shexhaustive", &source) else {
+        return;
+    };
+    assert!(
+        message.contains("does not cover") && message.contains(".Point"),
+        "expected the uncovered variant to be named, got:\n{message}"
+    );
+}
+
 const TRY_HEAD: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
