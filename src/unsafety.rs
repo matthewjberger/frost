@@ -2,9 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 
-use crate::parser::{
-    Block, Diagnostic, Expression, Statement, StructField,
-};
+use crate::parser::{Block, Diagnostic, Expression, Statement, StructField};
 use crate::types::Type;
 use crate::{Position, Spanned};
 
