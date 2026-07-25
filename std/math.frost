@@ -19,7 +19,8 @@ export Vec2, Vec3, Vec4, Mat4, Quat,
     vec4_add, vec4_sub, vec4_scale, vec4_dot,
     mat4_zero, mat4_identity, mat4_mul, mat4_mul_vec4,
     mat4_translation, mat4_scale, mat4_rotation_x, mat4_rotation_y,
-    mat4_rotation_z, mat4_perspective, mat4_ortho, mat4_look_at,
+    mat4_rotation_z, mat4_perspective, mat4_perspective_zo, mat4_ortho,
+    mat4_look_at,
     mat4_transform_point, mat4_transform_dir,
     quat_identity, quat_from_axis_angle, quat_mul, quat_length,
     quat_normalize, quat_conjugate, quat_rotate_vec3, quat_to_mat4,
@@ -244,6 +245,21 @@ mat4_perspective :: fn(fovy: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
     out.m[10] = (far + near) / (near - far)
     out.m[11] = 0.0 - 1.0
     out.m[14] = (2.0 * far * near) / (near - far)
+    out
+}
+
+// The same projection with the depth range [0, 1] rather than [-1, 1]. OpenGL
+// takes the second; Direct3D, Metal, Vulkan and WebGPU take the first, and a
+// matrix built for the wrong one puts half the scene behind the near plane.
+// The handedness is unchanged, looking down -z.
+mat4_perspective_zo :: fn(fovy: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
+    f := 1.0 / tanf(fovy * 0.5)
+    mut out := mat4_zero()
+    out.m[0] = f / aspect
+    out.m[5] = f
+    out.m[10] = far / (near - far)
+    out.m[11] = 0.0 - 1.0
+    out.m[14] = (far * near) / (near - far)
     out
 }
 

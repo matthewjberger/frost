@@ -1,4 +1,4 @@
-// A triangle, drawn with wgpu, in an SDL3 window.
+// A spinning triangle, drawn with wgpu, in an SDL3 window.
 //
 //   just triangle
 //
@@ -8,14 +8,13 @@
 //
 // A descriptor is passed as a pointer to a struct this program owns. A
 // callback is passed as a struct holding a function pointer beside two
-// userdata slots.
+// userdata slots. A `value` parameter is passed as C passes a struct, which is
+// what WGPUStringView needs.
 //
-// WGPUStringView is `{ pointer, length }` passed by value. A struct that size
-// goes to a Windows x64 callee as a hidden pointer, so it is spelled `^u8`
-// where it is a parameter, and written out as its two fields where it is a
-// struct member. That spelling is correct here and would not be on System V,
-// where the same struct arrives in two registers. Frost has no way to say
-// "by value" to C, so this is the seam a real binding would have to close.
+// Three vertices go to the GPU in a buffer, and the model-view-projection
+// matrix that turns them goes in a uniform rebuilt every frame. Both matrices
+// and the vertex positions come from `std/math.frost`, so what the GPU is
+// handed is what Frost computed rather than a table of constants.
 
 // ---------------------------------------------------------------------------
 // SDL3
@@ -30,6 +29,8 @@ SDL_PollEvent           :: extern fn(event: ^u8) -> bool
 SDL_GetWindowProperties :: extern fn(window: ^u8) -> u32
 SDL_GetPointerProperty  :: extern fn(properties: u32, name: ^i8,
     fallback: ^u8) -> ^u8
+// Milliseconds since SDL started, which is what drives the rotation.
+SDL_GetTicks            :: extern fn() -> u64
 
 INIT_VIDEO :: 32
 EVENT_QUIT :: 256
@@ -43,6 +44,9 @@ event_kind :: fn(e: Event) -> u32 {
 // wgpu, from the generated bindings. `just bindgen` rebuilds wgpu.frost
 // from webgpu.json, which is the same file webgpu.h is generated from.
 import "wgpu.frost"
+// Vectors and matrices. Found on the standard library search path, so this is
+// the same `math.frost` every other example imports.
+import "math.frost"
 
 // ---------------------------------------------------------------------------
 // Handing the adapter and the device back out of their callbacks
@@ -70,35 +74,49 @@ null :: fn() -> ^u8 {
     unsafe { ptr_cast($u8, zero) }
 }
 
-// The shader. Position and colour come from the vertex index, so the triangle
-// needs no vertex buffer and no bind group.
+// One vertex, laid out exactly as the shader's VertexInput reads it: a position
+// and a colour, four floats each. The struct is what goes into the buffer, so
+// the stride is its size and the second attribute starts at the size of the
+// first.
+Vertex :: struct { position: Vec4, colour: Vec4 }
+
+VERTEX_COUNT  :: 3
+VERTEX_STRIDE :: 32
+VERTEX_BYTES  :: 96
+UNIFORM_BYTES :: 64
+
+// The shader. Positions and colours arrive in a vertex buffer, and the matrix
+// that turns them arrives in a uniform, so both come from Frost rather than
+// from a table written into the shader.
 SHADER :: "
+struct Uniform {
+    mvp: mat4x4<f32>,
+};
+
+@group(0) @binding(0)
+var<uniform> ubo: Uniform;
+
+struct VertexIn {
+    @location(0) position: vec4<f32>,
+    @location(1) colour: vec4<f32>,
+}
+
 struct VertexOut {
     @builtin(position) position: vec4<f32>,
-    @location(0) colour: vec3<f32>,
+    @location(0) colour: vec4<f32>,
 }
 
 @vertex
-fn vs_main(@builtin(vertex_index) index: u32) -> VertexOut {
-    var positions = array<vec2<f32>, 3>(
-        vec2<f32>( 0.0,  0.5),
-        vec2<f32>(-0.5, -0.5),
-        vec2<f32>( 0.5, -0.5),
-    );
-    var colours = array<vec3<f32>, 3>(
-        vec3<f32>(1.0, 0.2, 0.2),
-        vec3<f32>(0.2, 1.0, 0.4),
-        vec3<f32>(0.3, 0.4, 1.0),
-    );
+fn vs_main(vertex: VertexIn) -> VertexOut {
     var out: VertexOut;
-    out.position = vec4<f32>(positions[index], 0.0, 1.0);
-    out.colour = colours[index];
+    out.position = ubo.mvp * vertex.position;
+    out.colour = vertex.colour;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(in.colour, 1.0);
+    return in.colour;
 }
 "
 
@@ -216,6 +234,99 @@ main :: fn() -> i64 {
         wgpuDeviceCreateShaderModule(device, ptr_to(module_descriptor))
     }
 
+    // The three vertices, written once into a buffer the GPU reads. The
+    // positions are what a Vec4 holds, so the bytes handed over are the bytes
+    // Frost laid out.
+    mut vertices : [VERTEX_COUNT]Vertex = [
+        Vertex {
+            position = vec4(0.0 - 1.0, 0.0 - 1.0, 0.0, 1.0),
+            colour = vec4(1.0, 0.2, 0.2, 1.0),
+        },
+        Vertex {
+            position = vec4(1.0, 0.0 - 1.0, 0.0, 1.0),
+            colour = vec4(0.2, 1.0, 0.4, 1.0),
+        },
+        Vertex {
+            position = vec4(0.0, 1.0, 0.0, 1.0),
+            colour = vec4(0.3, 0.4, 1.0, 1.0),
+        },
+    ]
+
+    mut vertex_buffer_descriptor := buffer_descriptor_init()
+    vertex_buffer_descriptor.usage = BUFFER_USAGE_VERTEX | BUFFER_USAGE_COPY_DST
+    vertex_buffer_descriptor.size = VERTEX_BYTES
+    vertex_buffer := unsafe {
+        wgpuDeviceCreateBuffer(device, ptr_to(vertex_buffer_descriptor))
+    }
+    unsafe {
+        wgpuQueueWriteBuffer(queue, vertex_buffer, 0,
+            ptr_cast($u8, ptr_to(vertices[0])), VERTEX_BYTES)
+    }
+
+    // The uniform holding the matrix, rewritten every frame.
+    mut uniform_buffer_descriptor := buffer_descriptor_init()
+    uniform_buffer_descriptor.usage =
+        BUFFER_USAGE_UNIFORM | BUFFER_USAGE_COPY_DST
+    uniform_buffer_descriptor.size = UNIFORM_BYTES
+    uniform_buffer := unsafe {
+        wgpuDeviceCreateBuffer(device, ptr_to(uniform_buffer_descriptor))
+    }
+
+    // What the shader may reach, and what it reaches there. The layout is the
+    // promise, the group is the binding that keeps it.
+    mut layout_entry := bind_group_layout_entry_init()
+    layout_entry.binding = 0
+    layout_entry.visibility = SHADER_STAGE_VERTEX
+    layout_entry.buffer.type = BUFFER_BINDING_TYPE_UNIFORM
+    layout_entry.buffer.min_binding_size = UNIFORM_BYTES
+
+    mut group_layout_descriptor := bind_group_layout_descriptor_init()
+    group_layout_descriptor.entries_count = 1
+    group_layout_descriptor.entries = unsafe {
+        ptr_cast($u8, ptr_to(layout_entry))
+    }
+    group_layout := unsafe {
+        wgpuDeviceCreateBindGroupLayout(device, ptr_to(group_layout_descriptor))
+    }
+
+    mut group_entry := bind_group_entry_init()
+    group_entry.binding = 0
+    group_entry.buffer = uniform_buffer
+    group_entry.size = UNIFORM_BYTES
+
+    mut group_descriptor := bind_group_descriptor_init()
+    group_descriptor.layout = group_layout
+    group_descriptor.entries_count = 1
+    group_descriptor.entries = unsafe { ptr_cast($u8, ptr_to(group_entry)) }
+    bind_group := unsafe {
+        wgpuDeviceCreateBindGroup(device, ptr_to(group_descriptor))
+    }
+
+    mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
+    pipeline_layout_descriptor.bind_group_layouts_count = 1
+    pipeline_layout_descriptor.bind_group_layouts = unsafe {
+        ptr_cast($u8, ptr_to(group_layout))
+    }
+    pipeline_layout := unsafe {
+        wgpuDeviceCreatePipelineLayout(device,
+            ptr_to(pipeline_layout_descriptor))
+    }
+
+    // How the vertex buffer's bytes reach the shader's two inputs.
+    mut attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
+    attributes[0].format = VERTEX_FORMAT_FLOAT32X4
+    attributes[0].offset = 0
+    attributes[0].shader_location = 0
+    attributes[1].format = VERTEX_FORMAT_FLOAT32X4
+    attributes[1].offset = 16
+    attributes[1].shader_location = 1
+
+    mut buffer_layout := vertex_buffer_layout_init()
+    buffer_layout.step_mode = VERTEX_STEP_MODE_VERTEX
+    buffer_layout.array_stride = VERTEX_STRIDE
+    buffer_layout.attributes_count = 2
+    buffer_layout.attributes = unsafe { ptr_cast($u8, ptr_to(attributes[0])) }
+
     // The pipeline.
     mut target := color_target_state_init()
     target.format = surface_format
@@ -226,9 +337,14 @@ main :: fn() -> i64 {
     fragment.targets_count = 1
     fragment.targets = unsafe { ptr_cast($u8, ptr_to(target)) }
     mut pipeline_descriptor := render_pipeline_descriptor_init()
+    pipeline_descriptor.layout = pipeline_layout
     pipeline_descriptor.vertex.module = shader
     pipeline_descriptor.vertex.entry_point =
         StringView { data = "vs_main", length = 7 }
+    pipeline_descriptor.vertex.buffers_count = 1
+    pipeline_descriptor.vertex.buffers = unsafe {
+        ptr_cast($u8, ptr_to(buffer_layout))
+    }
     pipeline_descriptor.primitive.topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
     pipeline_descriptor.multisample.count = 1
     pipeline_descriptor.multisample.mask = 4294967295
@@ -237,6 +353,17 @@ main :: fn() -> i64 {
     pipeline := unsafe {
         wgpuDeviceCreateRenderPipeline(device, ptr_to(pipeline_descriptor))
     }
+
+    // The camera does not move, so the two matrices in front of the model are
+    // built once. WebGPU's clip space runs z from 0 to 1, not from -1 to 1, so
+    // this is the zero-to-one projection.
+    width : f32 = WIDTH
+    height : f32 = HEIGHT
+    projection := mat4_perspective_zo(radians(60.0), width / height, 0.1, 100.0)
+    view := mat4_look_at(vec3(0.0, 0.0, 3.0), vec3(0.0, 0.0, 0.0),
+        vec3(0.0, 1.0, 0.0))
+    view_projection := mat4_mul(projection, view)
+    started := unsafe { SDL_GetTicks() }
 
     mut running : bool = true
     while (running) {
@@ -259,7 +386,20 @@ main :: fn() -> i64 {
         }
         if (frame.status == SURFACE_GET_CURRENT_TEXTURE_STATUS_SUCCESS_OPTIMAL
             || frame.status == SURFACE_GET_CURRENT_TEXTURE_STATUS_SUCCESS_SUBOPTIMAL) {
-            view := unsafe {
+            // A third of a turn a second, from the clock rather than from a
+            // frame count, so the speed does not follow the frame rate.
+            // Wrapped before it becomes a float, so the value stays small
+            // enough that single precision keeps every millisecond.
+            elapsed := (unsafe { SDL_GetTicks() } - started) % 100000
+            milliseconds : f32 = elapsed
+            model := mat4_rotation_y(radians(120.0) * milliseconds / 1000.0)
+            mut mvp := mat4_mul(view_projection, model)
+            unsafe {
+                wgpuQueueWriteBuffer(queue, uniform_buffer, 0,
+                    ptr_cast($u8, ptr_to(mvp.m[0])), UNIFORM_BYTES)
+            }
+
+            texture_view := unsafe {
                 wgpuTextureCreateView(frame.texture,
                     null())
             }
@@ -269,7 +409,7 @@ main :: fn() -> i64 {
             }
 
             mut attachment := render_pass_color_attachment_init()
-            attachment.view = view
+            attachment.view = texture_view
             attachment.load_op = LOAD_OP_CLEAR
             attachment.store_op = STORE_OP_STORE
             attachment.clear_value =
@@ -285,7 +425,15 @@ main :: fn() -> i64 {
                     ptr_to(pass_descriptor))
             }
             unsafe { wgpuRenderPassEncoderSetPipeline(pass, pipeline) }
-            unsafe { wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0) }
+            unsafe {
+                wgpuRenderPassEncoderSetBindGroup(pass, 0, bind_group, 0,
+                    null())
+            }
+            unsafe {
+                wgpuRenderPassEncoderSetVertexBuffer(pass, 0, vertex_buffer, 0,
+                    VERTEX_BYTES)
+            }
+            unsafe { wgpuRenderPassEncoderDraw(pass, VERTEX_COUNT, 1, 0, 0) }
             unsafe { wgpuRenderPassEncoderEnd(pass) }
 
             mut command := unsafe {
