@@ -221,6 +221,24 @@ fn signature_is_typed(signature: &ReturnSignature) -> bool {
     !matches!(signature.kind, ReturnKind::None) || !signature.uses.is_empty()
 }
 
+// The integer operators a constant expression may combine names with. Their
+// presence after `Name :: OtherName` is what marks the whole thing a constant
+// declaration rather than `Enum::Variant` access at statement position.
+fn is_constant_operator(token: &Token) -> bool {
+    matches!(
+        token,
+        Token::Plus
+            | Token::Minus
+            | Token::Asterisk
+            | Token::Slash
+            | Token::Percent
+            | Token::ShiftLeft
+            | Token::ShiftRight
+            | Token::Ampersand
+            | Token::Pipe
+    )
+}
+
 impl Display for ReturnSignature {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         match &self.kind {
@@ -1193,6 +1211,17 @@ impl<'a> Parser<'a> {
                     && !matches!(self.peek_nth(2), Token::Colon) =>
             {
                 Some(self.parse_typed_declaration(false)?)
+            }
+            // A constant whose value begins with another constant by name,
+            // `STRIDE :: POSITION + NORMAL`. The trailing operator is what tells
+            // it apart from `Enum::Variant` access, which is an expression and is
+            // never followed by an arithmetic operator where it appears.
+            Token::Identifier(_)
+                if matches!(self.peek_nth(1), Token::DoubleColon)
+                    && matches!(self.peek_nth(2), Token::Identifier(_))
+                    && is_constant_operator(self.peek_nth(3)) =>
+            {
+                Some(self.parse_constant_or_struct_statement()?)
             }
             Token::Identifier(_)
                 if matches!(self.peek_nth(1), Token::DoubleColon)
@@ -3713,6 +3742,9 @@ mod tests {
 
     #[test]
     fn scoped_identifier() -> Result<()> {
+        // Bare `Enum::Variant` at statement position stays variant access, an
+        // expression: only `Name :: value <operator>` is a constant declaration,
+        // so a variant with no trailing operator is not mistaken for one.
         let input = "Color::Green";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize()?;

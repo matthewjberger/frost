@@ -328,6 +328,15 @@ Shape :: enum { A, B { n: i64 } }     // enum
 Meters :: distinct i64                // distinct type
 ```
 
+A value constant's `<expr>` is an integer constant expression: an integer
+literal, an earlier constant by name, or those combined with the integer
+operators `+ - * / % << >> & |` and parentheses, folded to a value at compile
+time. So `STRIDE :: POSITION + NORMAL + UV` and `MASK :: 1 << FLAG_BIT` name a
+computed value, and the result may be used where a compile-time integer is
+required, such as an array length `[STRIDE]f32`. A constant whose value is a
+single other name (`X :: Y`) is not written, since `Enum::Variant` shares that
+shape; a constant that refers to one name combines it with an operator.
+
 A `linear` qualifier may precede `struct` or `enum` (chapter 9).
 
 An `inline` qualifier may precede `fn` (`f :: inline fn(...) -> R { ... }`). It
