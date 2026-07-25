@@ -60,46 +60,43 @@ nothing downstream would catch a mistake.
 Both backends emit from the same checked program: C through
 `frost_emit_*` helpers, or x86-64 assembly directly.
 
-## What is not here yet
+## Where the two compilers still differ
 
-The target is the full language, so everything below is work waiting rather than
-a decision. Each line was checked by compiling a program that uses the feature,
-rather than from memory, because this list had drifted from the compiler once
-already.
+The two compilers accepting the same language is a pillar of this project, not
+a nice-to-have. It is what lets Frost be built from a Rust toolchain and nothing
+else: the bootstrap compiles this compiler, this compiler compiles itself, and
+no seed binary is needed anywhere. A divergence is a hole in that, whichever
+side it is on.
 
-- **A function may not be named after a keyword.** `print` is a statement
-  keyword here, so `std/io.frost`, which exports a function called `print`,
-  cannot be compiled by this compiler at all. Retiring the `print` statement in
-  favour of the library function is what unblocks the standard library, and is
-  the single change that buys the most.
-- **Value generics** (`$N: usize`) and **more than one generic parameter**,
-  since a template here carries one type parameter rather than a list. This is
-  what `std/slab.frost` needs.
-- **Generic enums.**
+Every line below was checked by compiling a program through both, on
+2026-07-25, because this list had drifted from the compilers twice before.
+
+- **A compile-time function argument** (`$f`). The bootstrap takes it; this
+  compiler rejects the call through the parameter. This is the one that matters
+  most, since `std/sort.frost` is written with it.
 - **The identity of a `distinct` type.** `Meters :: distinct i64` parses and
-  compiles here, and a program using one runs the way the bootstrap runs it,
-  because the name is carried as an alias for the representation. What is not
-  carried is the identity, so this compiler accepts a `Feet` where a `Meters`
-  is wanted and the bootstrap does not. It is the one place the two disagree
-  about what to accept.
-- **Compile-time function arguments** (`$f`), and calling through a function
-  **pointer held in a parameter**: `f(x)` reads as a call to a function named
-  `f` rather than through the value.
-- **Callbacks with a typed context.**
-- **C functions returning a struct by value**, which needs the per-target ABI
-  classification in `src/c_abi.rs`. The declaration parses; the ABI does not.
-- **Module search paths**, so the standard library cannot be imported by name.
+  runs here the way it runs in the bootstrap, because the name is carried as an
+  alias for the representation. The identity is not carried, so this compiler
+  accepts a `Feet` where a `Meters` is wanted and the bootstrap does not.
+- **More than one generic type parameter**, where the *bootstrap* is the one
+  behind: this compiler compiles `Pair<i64, bool> { .. }` and the bootstrap
+  cannot parse it.
 - **Speed parity**: parallel code generation, separate compilation,
   `--incremental`. The front end is already fast; these are what the bootstrap
-  has and this does not.
+  has and this does not. Not a language difference.
 
-Each unsupported form above is refused with a position rather than misparsed:
-they used to run into the function parser and die inside the arena with an
-out-of-range index, far from the source that caused it.
+Neither compiler takes a value-generic repeat count (`[0; N]`), so that is a
+gap in the language rather than between the two.
 
-What the earlier version of this list got wrong, since the same drift is easy to
-repeat: `str`, arrays, slices, `Handle<T>`, `test` blocks, and diagnostics
-carrying a file, line and column are all present and were listed as missing.
+What this list said before and was wrong about, since the same drift keeps
+happening: generic enums, functions named after a keyword, calling through a
+function pointer held in a parameter, callbacks with a typed context, C
+functions returning a struct by value, and module search paths are all present
+here and were listed as missing.
+
+Each form that is genuinely unsupported is refused with a position rather than
+misparsed: they used to run into the function parser and die inside the arena
+with an out-of-range index, far from the source that caused it.
 
 ## How it works
 

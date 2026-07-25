@@ -74,7 +74,7 @@ people will use. The bootstrap compiles stage 0 and is the differential
 oracle, which is why every feature lands there first. That ordering is the only
 reason it is ahead.
 
-Both are under the same promises: the full language, and goal 8's speed. Where
+Both are under the same promises: the full language, and goal 9's speed. Where
 the self-hosted compiler is behind, that is a port waiting rather than a
 divergence, and that includes parallel code generation, separate compilation and
 `--incremental`.
