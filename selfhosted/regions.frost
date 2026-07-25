@@ -1269,6 +1269,21 @@ proc_param_named :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
     0 - 1
 }
 
+// Whether a name is a `$f` parameter of some generic in this program, the
+// function a call site supplies rather than one any declaration names.
+names_cfn_param :: fn(mut p: Parser, off: i64, len: i64) -> bool {
+    mut i : i64 = 0
+    while (i < p.cfn_params.count) {
+        entry := arena_at(p.cfn_params, i)
+        if (entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
 check_calls :: fn(mut p: Parser) {
     mut i : i64 = 0
     while (i < p.arena.count) {
@@ -1299,7 +1314,17 @@ check_calls :: fn(mut p: Parser) {
             // it by name. Its zero arguments still satisfy the arity check.
             is_columns_new := str_range_eq(p.src, name_off, name_len,
                 "columns_new")
-            if (defined == 0 && callee_proc < 0 && is_columns_new == false) {
+            // A call to a `$f` parameter inside the template it belongs to
+            // names no function, since which function it is comes from the
+            // call site. The instances of that template are in this arena too,
+            // and there the name is the function that was passed, so nothing
+            // goes unchecked.
+            mut is_supplied : bool = false
+            if (defined == 0) {
+                is_supplied = names_cfn_param(p, name_off, name_len)
+            }
+            if (defined == 0 && callee_proc < 0 && is_columns_new == false
+                && is_supplied == false) {
                 report_where(p.modules, p.src, node.pos)
                 report("call to undefined function '")
                 report_src(p.src, name_off, name_len)
@@ -1318,7 +1343,7 @@ check_calls :: fn(mut p: Parser) {
                 }
             }
             got := count_args(p, args)
-            if (expected != got) {
+            if (expected != got && is_supplied == false) {
                 report_where(p.modules, p.src, name_off)
                 report("'")
                 report_src(p.src, name_off, name_len)

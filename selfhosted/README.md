@@ -68,12 +68,6 @@ else: the bootstrap compiles this compiler, this compiler compiles itself, and
 no seed binary is needed anywhere. A divergence is a hole in that, whichever
 side it is on.
 
-Every line below was checked by compiling a program through both, on
-2026-07-25, because this list had drifted from the compilers twice before.
-
-- **A compile-time function argument** (`$f`). The bootstrap takes it; this
-  compiler rejects the call through the parameter. This is the one that matters
-  most, since `std/sort.frost` is written with it.
 - **The identity of a `distinct` type.** `Meters :: distinct i64` parses and
   runs here the way it runs in the bootstrap, because the name is carried as an
   alias for the representation. The identity is not carried, so this compiler
@@ -88,15 +82,8 @@ Every line below was checked by compiling a program through both, on
 Neither compiler takes a value-generic repeat count (`[0; N]`), so that is a
 gap in the language rather than between the two.
 
-What this list said before and was wrong about, since the same drift keeps
-happening: generic enums, functions named after a keyword, calling through a
-function pointer held in a parameter, callbacks with a typed context, C
-functions returning a struct by value, and module search paths are all present
-here and were listed as missing.
-
-Each form that is genuinely unsupported is refused with a position rather than
-misparsed: they used to run into the function parser and die inside the arena
-with an out-of-range index, far from the source that caused it.
+A form neither compiler supports is refused with the position it was written
+at, rather than misparsed into a crash somewhere else.
 
 ## How it works
 

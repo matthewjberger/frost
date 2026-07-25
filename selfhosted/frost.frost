@@ -165,6 +165,7 @@ main :: fn() -> i64 {
         instances = arena_make($Instance, 4096),
         generic_fns = arena_make($GenericFn, 256),
         gparams = arena_make($GParam, 256),
+        cfn_params = arena_make($GParam, 256),
         gargs = arena_make($GArg, 1024),
         procs = arena_make($ProcSig, 256),
         proc_params = arena_make($GArg, 1024),
@@ -184,6 +185,7 @@ main :: fn() -> i64 {
         ok_ty = 0 - 1,
         variant_fixups = arena_make($VariantFixup, 1024),
         saw_type_param = 0,
+        tparam_called = 0,
         last_return_type = 0,
         no_struct_lit = false,
         last_type_was_generic = 0,
@@ -273,8 +275,17 @@ main :: fn() -> i64 {
     // Every `.Variant` an argument left unresolved, now that every signature is
     // parsed.
     resolve_variant_fixups(parser)
-    collect_type_args(parser)
-    record_mono_rets(parser)
+    // Which generics to emit is a fixpoint rather than one pass. Parsing an
+    // instance creates the calls its body makes, and one of those may name an
+    // argument tuple nothing had asked for: a sort taking a comparison calls a
+    // swap that takes only the element type. Keep going until a round finds no
+    // new tuple.
+    mut known : i64 = 0 - 1
+    while (known != parser.type_args.count) {
+        known = parser.type_args.count
+        collect_type_args(parser)
+        record_mono_rets(parser)
+    }
     check_calls(parser)
     // On by default, the same as the bootstrap. FROST_CHECK_UNSAFE=0 turns
     // it off, for compiling code that has not marked its unchecked

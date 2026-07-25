@@ -3467,6 +3467,85 @@ fn self_hosted_returns_several_values() {
     assert_eq!(via_c, output, "the self-hosted C backend disagrees");
 }
 
+// A function chosen at the call site, in the self-hosted compiler. `$compare`
+// binds to a function the way `$T` binds to a type, so the body's call to it is
+// direct and specialized once per function given. The last two show why this
+// matters: `order` calls a `swap` that takes only the element type, so the
+// program uses two argument tuples of different shapes at once.
+const SELF_HOSTED_COMPILE_TIME_FUNCTIONS: &str =
+    "apply :: fn($f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
+     double :: fn(x: i64) -> i64 { x * 2 }
+     negate :: fn(x: i64) -> i64 { 0 - x }
+     ascending :: fn(a: i64, b: i64) -> bool { a < b }
+     descending :: fn(a: i64, b: i64) -> bool { a > b }
+     swap :: fn($T: Type, mut items: []T, i: i64, j: i64) {
+         hold := items[i]
+         items[i] = items[j]
+         items[j] = hold
+     }
+     order :: fn($T: Type, $less: fn(T, T) -> bool, mut items: []T, count: i64) {
+         mut i := 1
+         while (i < count) {
+             mut j := i
+             while (j > 0 && less(items[j], items[j - 1])) {
+                 swap($T, items, j, j - 1)
+                 j = j - 1
+             }
+             i = i + 1
+         }
+     }
+     show :: fn(items: []i64, count: i64) {
+         mut i := 0
+         while (i < count) {
+             print items[i]
+             i = i + 1
+         }
+     }
+     main :: fn() -> i64 {
+         print apply($double, 21)
+         print apply($negate, 9)
+         mut numbers : [5]i64 = [5, 3, 9, 1, 7]
+         order($i64, $ascending, numbers, 5)
+         show(numbers, 5)
+         order($i64, $descending, numbers, 5)
+         show(numbers, 5)
+         0
+     }
+";
+
+#[test]
+fn self_hosted_takes_a_function_as_a_compile_time_argument() {
+    let expected = "42\n-9\n1\n3\n5\n7\n9\n9\n7\n5\n3\n1\n";
+    // The bootstrap first, since the point of the feature is that both
+    // compilers take it.
+    let Some(bootstrap) =
+        compile_and_run("constfnparity", SELF_HOSTED_COMPILE_TIME_FUNCTIONS)
+    else {
+        return;
+    };
+    assert_eq!(bootstrap, expected);
+
+    let Some(output) = selfhosted_native_output(
+        "shconstfn",
+        SELF_HOSTED_COMPILE_TIME_FUNCTIONS,
+    ) else {
+        return;
+    };
+    assert_eq!(output, expected);
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shconstfn_input.frost");
+    std::fs::write(&input, SELF_HOSTED_COMPILE_TIME_FUNCTIONS).unwrap();
+    let Some(c_source) = self_hosted_emits("shconstfn", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shconstfn", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
 // The self-hosted compiler infers a variant's enum too. It resolves the tag at
 // parse time, so an argument whose function is written later is left unresolved
 // and patched once every signature is known.
