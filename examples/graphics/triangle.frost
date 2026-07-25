@@ -33,8 +33,9 @@ SDL_GetPointerProperty  :: extern fn(properties: u32, name: ^i8,
 
 INIT_VIDEO :: 32
 EVENT_QUIT :: 256
+EVENT_SIZE :: 128
 
-Event :: struct { bytes: [128]u8 }
+Event :: struct { bytes: [EVENT_SIZE]u8 }
 
 event_kind :: fn(e: Event) -> u32 {
     unsafe { ptr_cast($u32, ptr_to(e.bytes[0]))^ }
@@ -241,7 +242,7 @@ main :: fn() -> i64 {
 
     mut running : bool = true
     while (running) {
-        mut event : Event = Event { bytes = [0; 128] }
+        mut event : Event = Event { bytes = [0; EVENT_SIZE] }
         while (unsafe { SDL_PollEvent(ptr_to(event.bytes[0])) }) {
             if (event_kind(event) == EVENT_QUIT) {
                 running = false

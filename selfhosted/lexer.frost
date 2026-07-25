@@ -162,6 +162,10 @@ lex_operator :: fn(src: ^i8, i: i64, len: i64, mut tokens: Arena<Token>) -> i64 
     if (c == CH_LT) { kind = TOK_LT }
     if (c == CH_GT) { kind = TOK_GT }
     if (c == CH_DOLLAR) { kind = TOK_DOLLAR }
+    // A semicolon used to be dropped with the whitespace, which made `[0; 4]`
+    // lex as the two elements `0` and `4` and quietly build an array of two
+    // rather than four. It is a token now, skipped where a statement ends.
+    if (c == CH_SEMI) { kind = TOK_SEMI }
     if (kind == TOK_EOF) {
         report("unexpected byte ")
         frost_rt_error_int(c)
@@ -184,8 +188,7 @@ tokenize :: fn(src: ^i8, len: i64, mut tokens: Arena<Token>) {
     }
     while (i < len) {
         c := byte_of(src, i, len)
-        if (c == CH_SPACE || c == CH_TAB || c == CH_LF || c == CH_CR
-            || c == CH_SEMI) {
+        if (c == CH_SPACE || c == CH_TAB || c == CH_LF || c == CH_CR) {
             i = i + 1
         } else if (c == CH_SLASH && byte_of(src, i + 1, len) == CH_SLASH) {
             while (i < len && byte_of(src, i, len) != CH_LF) {

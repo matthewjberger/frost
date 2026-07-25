@@ -1,6 +1,7 @@
 use crate::{flatten, lexer::Position, lexer::Token, types::Type};
 use anyhow::{Result, bail};
 use std::{
+    collections::HashMap,
     fmt::{Display, Formatter, Result as FmtResult},
     matches,
     slice::Iter,
@@ -915,6 +916,173 @@ pub struct Parser<'a> {
     // spelling and are rejected in source, but they do occur internally once
     // parameter modes are lowered, so that one entry point accepts them.
     internal_types: bool,
+    // Top-level `N :: 8` constants, read off the token stream before the parse
+    // so that an array size may name one wherever it appears, including above
+    // the line that declares it.
+    integer_constants: HashMap<String, usize>,
+}
+
+// Where a top-level declaration's value ends: at the head of the next one, or
+// at the end of the file. A declaration head is a name followed by `::`, and
+// `import` is the one that starts with a keyword instead. Everything nested is
+// inside brackets of some kind, so only depth zero is looked at.
+fn declaration_value_end(tokens: &[Token], start: usize) -> usize {
+    let mut depth = 0usize;
+    for index in start..tokens.len() {
+        match &tokens[index] {
+            Token::LeftBrace | Token::LeftParentheses | Token::LeftBracket => {
+                depth += 1
+            }
+            Token::RightBrace
+            | Token::RightParentheses
+            | Token::RightBracket => depth = depth.saturating_sub(1),
+            Token::EndOfFile => return index,
+            Token::Import if depth == 0 => return index,
+            Token::Identifier(_)
+                if depth == 0
+                    && index > start
+                    && matches!(
+                        tokens.get(index + 1),
+                        Some(Token::DoubleColon)
+                    ) =>
+            {
+                return index;
+            }
+            _ => {}
+        }
+    }
+    tokens.len()
+}
+
+// An integer constant expression, evaluated over the constants already read.
+// The expression itself was parsed by the ordinary expression parser, so the
+// operators bind here exactly as they do everywhere else rather than by a
+// second precedence table written to agree with the first.
+fn evaluate_constant(
+    expression: &Expression,
+    known: &HashMap<String, i64>,
+) -> Option<i64> {
+    match expression {
+        Expression::Literal(Literal::Integer(value)) => Some(*value),
+        Expression::Identifier(name) => known.get(name).copied(),
+        Expression::Prefix(Operator::Negate, inner) => {
+            evaluate_constant(inner, known)?.checked_neg()
+        }
+        Expression::Infix(left, operator, right) => {
+            let left = evaluate_constant(left, known)?;
+            let right = evaluate_constant(right, known)?;
+            match operator {
+                Operator::Add => left.checked_add(right),
+                Operator::Subtract => left.checked_sub(right),
+                Operator::Multiply => left.checked_mul(right),
+                Operator::Divide => left.checked_div(right),
+                Operator::Modulo => left.checked_rem(right),
+                Operator::ShiftLeft => u32::try_from(right)
+                    .ok()
+                    .and_then(|by| left.checked_shl(by)),
+                Operator::ShiftRight => u32::try_from(right)
+                    .ok()
+                    .and_then(|by| left.checked_shr(by)),
+                Operator::BitwiseAnd => Some(left & right),
+                Operator::BitwiseOr => Some(left | right),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+// Top-level constants that name an integer. The value has to be known here
+// because an array size is part of a type and a repeat count is expanded into
+// elements, both of which happen while parsing, so neither can wait for a later
+// pass.
+//
+// A constant that names anything else, or that reads a constant declared below
+// it, is left out rather than half-read: it then means the same thing it always
+// did, and using it as a length is an error naming the length rather than an
+// array of the wrong size.
+fn scan_integer_constants(tokens: &[Token]) -> HashMap<String, usize> {
+    // A name written as `$N` anywhere is a compile-time parameter, and inside
+    // the declaration that takes it `[N]u8` means that parameter rather than a
+    // constant of the same name. Rather than track where each is in scope, such
+    // a name is never folded, so the generic reading always wins and the clash
+    // is reported instead of silently taking the constant's value.
+    let mut compile_time = std::collections::HashSet::new();
+    for (index, token) in tokens.iter().enumerate() {
+        if matches!(token, Token::Dollar)
+            && let Some(Token::Identifier(name)) = tokens.get(index + 1)
+        {
+            compile_time.insert(name.clone());
+        }
+    }
+
+    // In source order, so that a constant reading an earlier one sees it. The
+    // scan runs before the parse, so "earlier" is the only order there is.
+    let mut values: HashMap<String, i64> = HashMap::new();
+    let mut depth = 0usize;
+    for index in 0..tokens.len() {
+        match &tokens[index] {
+            Token::LeftBrace | Token::LeftParentheses | Token::LeftBracket => {
+                depth += 1;
+                continue;
+            }
+            Token::RightBrace
+            | Token::RightParentheses
+            | Token::RightBracket => {
+                depth = depth.saturating_sub(1);
+                continue;
+            }
+            _ => {}
+        }
+        if depth != 0 {
+            continue;
+        }
+        let Token::Identifier(name) = &tokens[index] else {
+            continue;
+        };
+        if !matches!(tokens.get(index + 1), Some(Token::DoubleColon)) {
+            continue;
+        }
+        // Only a value can start with one of these, so a function, struct or
+        // enum body is never parsed a second time just to find out it is not a
+        // number.
+        let starts_a_value = matches!(
+            tokens.get(index + 2),
+            Some(
+                Token::Integer(_)
+                    | Token::LeftParentheses
+                    | Token::Minus
+                    | Token::Identifier(_)
+            )
+        );
+        if !starts_a_value || compile_time.contains(name) {
+            continue;
+        }
+        let end = declaration_value_end(tokens, index + 2);
+        let mut sub = Parser {
+            tokens: tokens[index + 2..end].iter(),
+            linear_types: std::collections::HashSet::new(),
+            tests: Vec::new(),
+            exports: Vec::new(),
+            positions: &[],
+            consumed: 0,
+            pending_angle_close: 0,
+            diagnostics: Vec::new(),
+            internal_types: false,
+            integer_constants: HashMap::new(),
+        };
+        let Ok(expression) = sub.parse_expression(Precedence::Lowest) else {
+            continue;
+        };
+        if let Some(value) = evaluate_constant(&expression, &values) {
+            values.insert(name.clone(), value);
+        }
+    }
+    values
+        .into_iter()
+        .filter(|(_, value)| *value >= 0)
+        .map(|(name, value)| (name, value as usize))
+        .collect()
 }
 
 impl<'a> Parser<'a> {
@@ -929,6 +1097,7 @@ impl<'a> Parser<'a> {
             pending_angle_close: 0,
             diagnostics: Vec::new(),
             internal_types: false,
+            integer_constants: scan_integer_constants(tokens),
         }
     }
 
@@ -946,6 +1115,7 @@ impl<'a> Parser<'a> {
             pending_angle_close: 0,
             diagnostics: Vec::new(),
             internal_types: false,
+            integer_constants: scan_integer_constants(tokens),
         }
     }
 
@@ -1905,8 +2075,14 @@ impl<'a> Parser<'a> {
         let first = self.parse_expression(Precedence::Lowest)?;
         if matches!(self.peek_nth(0), Token::Semicolon) {
             self.read_token();
-            let count = match self.read_token() {
+            let token = self.read_token().clone();
+            let count = match &token {
                 Token::Integer(value) => *value as usize,
+                Token::Identifier(name)
+                    if self.integer_constants.contains_key(name) =>
+                {
+                    self.integer_constants[name]
+                }
                 token => bail!(
                     "Expected a count after ';' in an array literal, found {token:?}"
                 ),
@@ -2763,7 +2939,20 @@ impl<'a> Parser<'a> {
                     let size_param = size_param.to_string();
                     self.read_token();
                     self.read_token();
-                    Type::ArrayGeneric(Box::new(self.parse_type()?), size_param)
+                    // A name here is a constant when one goes by that name, and
+                    // a generic size parameter otherwise. A constant is folded
+                    // into the type, so `[N]u8` and `[8]u8` are the same type
+                    // and nothing downstream has to know the difference.
+                    let size = self.integer_constants.get(&size_param).copied();
+                    match size {
+                        Some(size) => {
+                            Type::Array(Box::new(self.parse_type()?), size)
+                        }
+                        None => Type::ArrayGeneric(
+                            Box::new(self.parse_type()?),
+                            size_param,
+                        ),
+                    }
                 } else {
                     let element_type = self.parse_type()?;
                     if !matches!(self.read_token(), Token::Semicolon) {

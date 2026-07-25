@@ -1529,6 +1529,42 @@ fn self_hosted_str_held_in_a_struct_is_indexable() {
     assert_eq!(via_c, output, "the self-hosted C backend disagrees");
 }
 
+// The self-hosted lexer dropped a semicolon with the whitespace, so `[7; 4]`
+// lexed as the two elements 7 and 4 and built an array of two. The repeat form
+// is read here, and an array size may name a constant the way the declared
+// length already could.
+const SELF_HOSTED_CONSTANT_ARRAYS: &str = "CAPACITY :: 8\n\
+     Buffer :: struct { bytes: [CAPACITY]u8, used: i64 }\n\
+     main :: fn() -> i64 {\n\
+     \x20   mut a : [4]i64 = [7; 4]\n\
+     \x20   print a[0]\n    print a[3]\n\
+     \x20   mut b : Buffer = Buffer { bytes = [0; CAPACITY], used = 0 }\n\
+     \x20   b.bytes[7] = 65\n\
+     \x20   print b.bytes[7]\n    print sizeof(Buffer)\n\
+     \x20   print 1;\n    0\n}\n";
+
+#[test]
+fn self_hosted_repeats_an_array_and_sizes_it_by_a_constant() {
+    let Some(output) =
+        selfhosted_native_output("shconstarr", SELF_HOSTED_CONSTANT_ARRAYS)
+    else {
+        return;
+    };
+    assert_eq!(output, "7\n7\n65\n16\n1\n");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shconstarr_input.frost");
+    std::fs::write(&input, SELF_HOSTED_CONSTANT_ARRAYS).unwrap();
+    let Some(c_source) = self_hosted_emits("shconstarr", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shconstarr", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
 const CLI_PROGRAM: &str = "fib :: fn(n: i64) -> i64 {\n\
      \x20   if (n < 2) { return n }\n\
      \x20   return fib(n - 1) + fib(n - 2)\n}\n\
@@ -6012,6 +6048,57 @@ fn native_function_pointer_array() {
     assert_eq!(output, "19\n42\n");
 }
 
+// An array size may name a constant, in a field, in a local's type, and as a
+// repeat count. Both are part of a type or expanded into elements while
+// parsing, so the value has to be known there; it is read off the token stream
+// before the parse, which is why CAPACITY works above the line declaring it.
+const CONSTANT_ARRAY_SIZES: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Buffer :: struct { bytes: [CAPACITY]u8, used: i64 }
+
+CAPACITY :: 8
+// A constant expression, and one that reads an earlier constant, both of which
+// the spec already allowed where a compile-time integer is required.
+DOUBLE :: CAPACITY * 2
+STRIDE :: 1 << 4 | 0
+
+fill :: fn(mut buffer: Buffer) {
+    mut index : i64 = 0
+    while (index < CAPACITY) {
+        buffer.bytes[index] = 65 + index
+        index = index + 1
+    }
+    buffer.used = CAPACITY
+}
+
+main :: fn() -> i64 {
+    mut buffer : Buffer = Buffer { bytes = [0; CAPACITY], used = 0 }
+    fill(buffer)
+    printf("%lld\n", buffer.bytes[0])
+    printf("%lld\n", buffer.bytes[7])
+    printf("%lld\n", buffer.used)
+    printf("%lld\n", sizeof(Buffer))
+
+    mut wide : [DOUBLE]i64 = [3; DOUBLE]
+    wide[15] = 9
+    printf("%lld\n", wide[0])
+    printf("%lld\n", wide[15])
+    printf("%lld\n", sizeof([DOUBLE]i64))
+    printf("%lld\n", sizeof([STRIDE]u8))
+    0
+}
+"#;
+
+#[test]
+fn a_constant_sizes_an_array() {
+    let Some(output) = compile_and_run("constarray", CONSTANT_ARRAY_SIZES)
+    else {
+        return;
+    };
+    assert_eq!(output, "65\n72\n8\n16\n3\n9\n128\n16\n");
+}
+
 const TOP_LEVEL_CONSTANTS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -6744,6 +6831,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_explicittypes", EXPLICIT_TYPE_ARGUMENTS),
         ("diff_strfield", STR_IN_A_FIELD),
         ("diff_rtnames", RUNTIME_SYMBOL_NAMES),
+        ("diff_constarray", CONSTANT_ARRAY_SIZES),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
