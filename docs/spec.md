@@ -352,22 +352,50 @@ A function returns several values by declaring a return type list, and the
 caller binds them by name:
 
 ```
-divide :: fn(a: i64, b: i64) -> (i64, i64) {
+divide :: fn(a: i64, b: i64) -> (quotient: i64, remainder: i64) {
     return a / b, a % b
 }
 
 quotient, remainder := divide(17, 5)      // 3 and 2
 ```
 
-The list is positional and the types are unnamed, since the names that matter
-are the ones the caller writes. It holds two or more types; `-> T` is how one
-value is returned and `-> (T)` is an error that says so.
+The list holds two or more values; `-> T` is how one value is returned and
+`-> (T)` is an error that says so.
 
-`return` lists the values in order and is required: a trailing expression is one
-value, so a function with a return type list ends every path with a `return`
-that lists as many values as the list has types. A `return` that lists a
-different number is a compile error, as is one that lists several values in a
-function that returns one.
+**Naming the values.** A value may be written `name: Type`, and a list names all
+of its values or none of them:
+
+```
+divide :: fn(a: i64, b: i64) -> (quotient: i64, remainder: i64)   // named
+divide :: fn(a: i64, b: i64) -> (i64, i64)                        // not
+```
+
+A name says which value is which at the definition, which is the whole reason to
+have one, and it is also the field name a `return` can write:
+
+```
+split :: fn(value: i64) -> (high: i64, low: i64) {
+    return { high = value / 256, low = value % 256 }
+}
+```
+
+That is the inferred literal of 6.5 over the struct the list becomes, so the
+`return` reads the way the signature does and cannot silently swap two values of
+the same type. A `return` by name in a function whose list names nothing is an
+error, since there would be no field names to write. Two names the same in one
+list is also an error.
+
+A name is not a variable. It is not in scope in the body, there is nothing to
+assign to it, and there is no bare `return` that hands back whatever the names
+hold. That is Go's naked return and Odin's implicit result, and it is the hidden
+control flow [philosophy.md](philosophy.md) rules out: what a function answers
+with is written at the `return` that answers.
+
+`return` lists the values in order, or names them, and it is required either
+way: a trailing expression is one value, so a function with a return type list
+ends every path with a `return`. A `return` that lists a different number of
+values than the list has is a compile error, as is one that lists several values
+in a function that returns one.
 
 `mut` goes in front of any name the body goes on to write:
 
@@ -385,14 +413,16 @@ what keeps the layout of every value in a program something the reader named
 (goal 1 of [philosophy.md](philosophy.md)): a program that wants to pass a pair
 around declares a struct and gets a name for it.
 
-What the compiler does with the list is give it one struct, whose fields are
-`value0`, `value1` and so on in order. The signature becomes a plain return of
+What the compiler does with the list is give it one struct, whose fields are the
+names the signature gave, or `value0`, `value1` and so on in order when it gave
+none. The signature becomes a plain return of
 that struct, the `return` becomes a literal of it, and the binding becomes the
 call bound to a temporary and one field read per name. Nothing after the front
 end sees a return type list, which is why every backend and the C ABI handle one
-with no code of their own. In the bootstrap compiler two functions returning the
-same list of types share the struct, since its name is derived from the types;
-the self-hosted compiler makes one per function. Neither is observable.
+with no code of their own. In the bootstrap compiler two functions returning
+the same list under the same names share the struct, since its name is derived
+from both; the self-hosted compiler makes one per function. Neither is
+observable.
 
 A return type list does not combine with a failure set: `-> (A, B) ! E` is
 rejected, because a fallible function answers with one value or one error. A
@@ -1163,11 +1193,12 @@ Grouped =
     | Expr ( "," Expr )* ")"                  // tuple, or a parenthesized expression
 
 ReturnSig = "->" ( Type ( "!" Type )? | ReturnList ) ( "uses" Type ( "," Type )* )?
-ReturnList = "(" Type "," Type ( "," Type )* ")"
+ReturnList = "(" ReturnValue "," ReturnValue ( "," ReturnValue )* ")"
+ReturnValue = ( IDENT ":" )? Type
 ```
 
-A `ReturnList` is the return type list of 5.2a. It holds two or more types and
-does not combine with the `!` of a failure set.
+A `ReturnList` is the return type list of 5.2a. It holds two or more values,
+names all of them or none, and does not combine with the `!` of a failure set.
 
 A `:` at group depth zero marks a parameter list. When a parameter-shaped group
 is not followed by a body, its contents are reinterpreted as expressions (a

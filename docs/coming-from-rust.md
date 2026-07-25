@@ -52,6 +52,7 @@ being surprises.
 | `for (i, x) in xs.iter().enumerate()` | `for i, x in xs { }` |
 | `fn f() -> (i64, i64)` (a tuple) | `f :: fn() -> (i64, i64)`, and no tuple type |
 | `let (q, r) = divide(a, b);` | `q, r := divide(a, b)` |
+| no equivalent | `-> (quotient: i64, remainder: i64)`, named like Odin's |
 | `Shape::Circle { r: 5 }` | `Shape::Circle { radius = 5 }`, or `.Circle { radius = 5 }` |
 | `Point { x: 1, y: 2 }` | `Point { x = 1, y = 2 }`, or `{ x = 1, y = 2 }` |
 | `Point(1, 2)` (tuple struct) | nothing; every field is named |
@@ -126,15 +127,26 @@ more than one value declares a return type list and the caller binds the values
 by name:
 
 ```frost
-divide :: fn(a: i64, b: i64) -> (i64, i64) {
+divide :: fn(a: i64, b: i64) -> (quotient: i64, remainder: i64) {
     return a / b, a % b
 }
 
 quotient, remainder := divide(17, 5)
 ```
 
-The `return` lists the values, and it is required here: a trailing expression is
-one value. `mut` goes in front of any name the body writes afterwards, as in
+The values can be named in the signature, the way Odin and Jai name theirs, and
+a named list can be returned by name instead of by order:
+
+```frost
+split :: fn(value: i64) -> (high: i64, low: i64) {
+    return { high = value / 256, low = value % 256 }
+}
+```
+
+A name is not a variable, though. There is no naked `return` that hands back
+whatever the names hold, because that is control flow you cannot see at the
+`return`. The `return` is required either way: a trailing expression is one
+value. `mut` goes in front of any name the body writes afterwards, as in
 `magnitude, mut negative := classify(value)`.
 
 What you cannot do is treat the list as a value. `(i64, i64)` is not a type, so

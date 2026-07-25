@@ -58,18 +58,29 @@ A function that answers with more than one value declares a return type list,
 and the caller binds the values by name:
 
 ```frost
-divide :: fn(a: i64, b: i64) -> (i64, i64) {
+divide :: fn(a: i64, b: i64) -> (quotient: i64, remainder: i64) {
     return a / b, a % b
 }
 
 quotient, remainder := divide(17, 5)      // 3 and 2
 ```
 
-There is no tuple type behind that. `(i64, i64)` is a return type list and
-nothing else: it cannot be stored in a field, passed as an argument, or bound to
-one name. A program that wants to pass a pair around declares a struct, so every
-aggregate has a name its author chose. The `return` lists the values and is
-required, since a trailing expression is one value.
+Naming the values is optional and worth it whenever two of them share a type.
+A named list can also be returned by name rather than by order:
+
+```frost
+split :: fn(value: i64) -> (high: i64, low: i64) {
+    return { high = value / 256, low = value % 256 }
+}
+```
+
+There is no tuple type behind any of that. `(i64, i64)` is a return type list
+and nothing else: it cannot be stored in a field, passed as an argument, or
+bound to one name. A program that wants to pass a pair around declares a struct,
+so every aggregate has a name its author chose. A returned name is not a
+variable either: there is nothing to assign to it and no bare `return` that
+hands back whatever it holds, so what a function answers with is always written
+at the `return`.
 
 ## Structs and enums, plain data
 

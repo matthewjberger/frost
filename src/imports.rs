@@ -954,9 +954,9 @@ impl Renamer {
         match &mut signature.kind {
             ReturnKind::None => {}
             ReturnKind::Single(ty) => self.ty(ty),
-            ReturnKind::Multiple(types) => {
-                for held in types.iter_mut() {
-                    self.ty(held);
+            ReturnKind::Multiple(values) => {
+                for held in values.iter_mut() {
+                    self.ty(&mut held.value_type);
                 }
             }
             ReturnKind::Fallible(value, failure) => {
