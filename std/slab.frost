@@ -1,4 +1,4 @@
-// A generational slab: fixed-capacity storage with handles that go stale when
+// A generational slab, fixed-capacity storage with handles that go stale when
 // the slot they name is reused. Generic over element type and capacity, written
 // entirely in Frost, with no allocation and no runtime call.
 //
@@ -10,7 +10,7 @@
 // free list, and every operation below are ordinary Frost.
 //
 // A handle is `Handle<T>` to callers and an i64 inside, where the slot index and
-// the generation are packed together; the two convert freely because a handle is
+// the generation are packed together. The two convert freely because a handle is
 // an i64 at the ABI.
 
 export Slab, slab_reset, slab_full, slab_insert, slab_alive, slab_release

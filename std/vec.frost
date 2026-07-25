@@ -4,7 +4,7 @@
 // rather than through the raw pointer inside.
 //
 // The raw pointer and the allocation calls are the unsafe floor, wrapped here so
-// nothing above this file names them. `vec_slice` is the safe face: from it a
+// nothing above this file names them. `vec_slice` is the safe face. From it a
 // caller does `vec_slice(v)[i]`, `ref e := vec_slice(v)[i]`, and `slice_len`.
 
 export Vec, vec_new, vec_free, vec_len, vec_slice, vec_push, vec_get, vec_set,
@@ -57,7 +57,7 @@ vec_push :: fn($T: Type, mut v: Vec<T>, move value: $T) {
         v.cap = room
     }
     // Written straight through the storage pointer. This is the allocator
-    // layer, where the raw pointer is the point; a caller reaches elements
+    // layer, where the raw pointer is the point. A caller reaches elements
     // through the bounds-checked `vec_slice` instead.
     unsafe { v.data[v.len] = value }
     v.len = v.len + 1

@@ -33,7 +33,7 @@ void frost_generation_check(int64_t stored, int64_t expected) {
 }
 
 /* Validate a handle against a slab and answer with the slot it names. The low
-   32 bits are the index and the high 32 the generation; the index is bounds
+   32 bits are the index and the high 32 the generation. The index is bounds
    checked and the generation matched against the slot's, so `slab[handle]`
    reading a released or out-of-range slot aborts rather than seeing whatever
    took its place. */
@@ -86,7 +86,7 @@ void frost_emit_str(const char *text) {
 
 /* Emit a counted run of bytes rather than a NUL-terminated string, so the
    caller passes a length-carrying `str` and the read is bounded by it. This is
-   what lets the emit path be safe: nothing scans for a terminator. */
+   what lets the emit path be safe. Nothing scans for a terminator. */
 void frost_emit_bytes(const char *data, int64_t length) {
     fwrite(data, 1, (size_t)length, frost_emit_where());
 }
@@ -142,7 +142,7 @@ void frost_byte_set(char *buffer, int64_t index, int64_t value) {
 /* The test runner. A failing assertion has to end the test it is in without
    ending the run, or one bad test hides every test after it. The escape is a
    longjmp back into frost_test_run, which is why the runner takes the test body
-   as a function pointer rather than being a sequence the compiler emits: the
+   as a function pointer rather than being a sequence the compiler emits. The
    setjmp has to own the call. */
 /* On Win64 longjmp unwinds through SEH, which needs unwind information for
    every frame it passes. The assembly backend emits none, so a test body that
@@ -320,7 +320,7 @@ void frost_mem_set(void *destination, int64_t value, int64_t size) {
 
 /* Whole-file read and write, for a standard library that does its own IO
    rather than reaching for the C library directly. The read returns a fresh
-   heap block the caller frees; the length comes back through frost_file_size. */
+   heap block the caller frees. The length comes back through frost_file_size. */
 static int64_t frost_last_read_length = 0;
 
 const char *frost_file_read(const char *path) {

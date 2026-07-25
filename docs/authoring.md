@@ -55,7 +55,7 @@ Scalars are `i8 i16 i32 i64 isize`, `u8 u16 u32 u64 usize`, `f32 f64`, `bool`,
 and `void`. Integer arithmetic wraps at the type width and is never overflow
 checked. Aggregates are structs, enums, fixed arrays `[N]T`, and slices `[]T`.
 A raw pointer is `^T` and `Handle<T>` names an element of a pool. There is no
-reference type to write: borrowing is a parameter mode (see below).
+reference type to write. Borrowing is a parameter mode (see below).
 
 ## Structs, enums, and match
 
@@ -88,27 +88,27 @@ and the wildcard `_` all work.
 
 ## Ownership in one page
 
-- **Borrowing is a parameter mode.** `p: T` borrows to read, `mut p: T` borrows
-  to mutate in place, `move p: T` takes ownership. The call site writes nothing:
+- Borrowing is a parameter mode. `p: T` borrows to read, `mut p: T` borrows
+  to mutate in place, `move p: T` takes ownership. The call site writes nothing.
   `scale(p, 2)`, not `scale(&mut p, 2)`. Since a borrow exists only as a
   parameter, it cannot be stored in a field, put in an array, or returned, and
   there is no reference type to write in those positions anyway. This is why
   Frost needs no lifetimes. When you want something that outlives a call, use a
   `Handle<T>`. For a raw address, `ptr_to(x)` gives a `^T`, outside the checks.
-- **Move checking.** Structs, enums, and slices move when passed by value,
+- Move checking. Structs, enums, and slices move when passed by value,
   assigned, or returned. Using one after it moves is an error. Scalars,
   pointers, handles, and `str` are copy.
-- **`str` is a byte view.** A string literal is a `str`, a pointer plus length
+- `str` is a byte view. A string literal is a `str`, a pointer plus length
   that owns nothing. `str_len(s)` is its length and `s[i]` is a bounds-checked
   `u8`. Passing `"..."` where `^i8` is expected hands C a NUL-terminated pointer,
   which is how the literal reaches `printf` and friends.
-- **Linear resources replace `Drop`.** A `linear struct` or `linear enum` must be
+- Linear resources replace `Drop`. A `linear struct` or `linear enum` must be
   consumed exactly once. Consume it by returning it, passing it by value, or
   matching it. Forgetting is a compile error.
-- **Handles and pools** are how you model long-lived, shared, or linked data. A
+- Handles and pools are how you model long-lived, shared, or linked data. A
   pool is a contiguous arena of same-typed elements addressed by a `Handle<T>`
   (an index plus a generation, a copy value you store and pass) rather than a
-  pointer. A pool is not a built-in type, it is a struct you write: a value-generic
+  pointer. A pool is not a built-in type, it is a struct you write, a value-generic
   array of storage plus a free list, with the generational handle and the
   stale-handle check as ordinary code (`examples/native/generic_slab.frost`).
   A freed slot bumps its generation, so a stale handle can never read the new
@@ -162,7 +162,7 @@ Higher-order code uses function pointers, not closures. A `fn(...) -> T`
 parameter holds one. A function literal is an expression, so an anonymous
 function is just the declaration form without the name. Prefer a compile-time
 function parameter where the function is known at the call, since that one is
-called directly; reach for a pointer when it genuinely varies at runtime.
+called directly. Reach for a pointer when it genuinely varies at runtime.
 
 ```
 apply :: fn(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }

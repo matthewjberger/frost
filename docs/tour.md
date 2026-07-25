@@ -1,4 +1,4 @@
-# A Tour of Frost
+# A tour of Frost
 
 This is a hands-on walk through the language by example. Every snippet below
 compiles and runs on both native backends. For the *why* behind these choices,
@@ -37,7 +37,7 @@ Integer widths (`i8`..`i64`, `u8`..`u64`), floats (`f32`, `f64`), and `bool`
 are all value (copy) types. Control flow is `if`/`else` (an expression),
 `while`, `for i in a..b`, `break`, `continue`, and `match`.
 
-## Structs and enums: plain data
+## Structs and enums, plain data
 
 A `struct` is just its fields. An `enum` is a tagged union with payloads.
 Neither carries methods.
@@ -102,7 +102,7 @@ Raw pointers `^T` exist as an explicit, unchecked escape hatch for FFI, and
 ## Move checking and linear resources
 
 Non-`Copy` values (structs, enums) *move* when passed by value. Using one again
-is a compile error. A `linear` type must be consumed **exactly once**, which is
+is a compile error. A `linear` type must be consumed exactly once, which is
 how Frost replaces destructors:
 
 ```
@@ -178,7 +178,7 @@ Moving a system from a pool to structure-of-arrays is changing `Slab<T, N>` to
 `columns<T, N>` and the `slab_` prefix to `columns_`. See
 [native-pools.md](native-pools.md).
 
-## Generics: specialize at compile time
+## Generics specialize at compile time
 
 Generic functions and structs monomorphize, so there is no runtime dispatch. A
 type parameter is written `$T`:
@@ -221,7 +221,7 @@ Type parameters are erased, and they drive monomorphization (`sizeof`, the retur
 type, annotations in the body) and carry no runtime cost. This is how the typed
 pool wrappers work as an ordinary Frost library, with no dummy value needed.
 
-## Higher-order code: no traits, no closures
+## Higher-order code without traits or closures
 
 A generic algorithm takes the operation it needs as a compile-time function
 parameter, which is Frost's answer to what a trait bound expresses. The
@@ -243,7 +243,7 @@ main :: fn() -> i64 {
 }
 ```
 
-When the function genuinely varies at runtime, it is an ordinary value: a
+When the function genuinely varies at runtime, it is an ordinary value. A
 `fn(...) -> T` parameter holds a pointer. There are no capturing closures.
 
 ```

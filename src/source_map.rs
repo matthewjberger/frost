@@ -5,7 +5,7 @@ use std::sync::{OnceLock, RwLock};
 // path is neither. A file id indexes this table, and 0 means "not recorded",
 // which is the entry file and anything the tests lex directly.
 //
-// This is process-wide, which is what a source map is: one program is compiled
+// This is process-wide, which is what a source map is. One program is compiled
 // per process, and every position in it means the same thing everywhere.
 fn table() -> &'static RwLock<Vec<String>> {
     static TABLE: OnceLock<RwLock<Vec<String>>> = OnceLock::new();

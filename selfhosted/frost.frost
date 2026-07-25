@@ -1,4 +1,4 @@
-// The Frost compiler, written in Frost. This file is the driver; the modules it
+// The Frost compiler, written in Frost. This file is the driver. The modules it
 // imports are named in dependency order below and each one is about a single
 // concern.
 //
@@ -232,7 +232,7 @@ main :: fn() -> i64 {
         // Names the compiler synthesizes go past the source's terminator, so the
         // first free byte is one past the text.
         parser.synth_next = frost_str_len(source) + 1
-        // The host convention by default; FROST_ABI overrides it so the other
+        // The host convention by default. FROST_ABI overrides it so the other
         // target's output can be inspected from either host.
         parser.abi_windows = frost_is_windows()
         abi := frost_getenv("FROST_ABI")
@@ -262,7 +262,7 @@ main :: fn() -> i64 {
 
         // Where the emitted text goes. A link needs it in a file whatever the
         // caller asked for, so it writes one beside the executable and removes it
-        // afterwards; without -o and without --link it goes to standard output.
+        // afterwards. Without -o and without --link it goes to standard output.
         mut executable : ^i8 = options.output
         mut emit_path : ^i8 = options.output
         if (options.link == 1) {

@@ -1,6 +1,6 @@
 // Exercises the generational slab the way a pool gets used: fill it, exhaust
 // it, release slots, reuse them, and check that handles to released slots have
-// gone stale. Nothing here calls a runtime; the storage and the bookkeeping are
+// gone stale. Nothing here calls a runtime. The storage and the bookkeeping are
 // the standard library slab (std/slab.frost).
 
 import "io.frost"

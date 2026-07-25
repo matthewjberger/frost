@@ -1,5 +1,5 @@
-// What both backends emit through: source text, string literals, and the
-// allocation capability a call is handed.
+// What both backends emit through, covering source text, string literals, and
+// the allocation capability a call is handed.
 
 import "core.frost"
 
@@ -19,11 +19,11 @@ emit_source :: fn(src: ^i8, off: i64, len: i64) {
 }
 
 // Emit the content of a string literal for C. Frost and C share escape syntax,
-// so a backslash escape is passed through whole; the one difference is that Frost
-// allows raw newlines and tabs inside a string, which C forbids, so those are
-// escaped.
+// so a backslash escape is passed through whole. The one difference is that
+// Frost allows raw newlines and tabs inside a string, which C forbids, so those
+// are escaped.
 // How many bytes a literal is at run time, which is not how many it takes in
-// the source: an escape is two bytes written and one byte held, and a carriage
+// the source. An escape is two bytes written and one byte held, and a carriage
 // return is dropped. A `str` needs this, since it carries its own length rather
 // than ending at a NUL.
 literal_length :: fn(src: ^i8, off: i64, len: i64) -> i64 {
@@ -78,9 +78,9 @@ emit_string_content :: fn(src: ^i8, off: i64, len: i64) {
 // a later `:=` or field access can be typed by walking the expression.
 // ---------------------------------------------------------------------------
 
-// The provider in force while a block is emitted: where a call to a `uses`
+// The provider in force while a block is emitted, where a call to a `uses`
 // function gets its capability. A `uses` function forwards the one it was
-// handed; a `with` block supplies the arena it names; anywhere else there is
+// handed. A `with` block supplies the arena it names. Anywhere else there is
 // none and such a call is an error.
 PROVIDER_NONE    :: 0
 PROVIDER_FORWARD :: 1

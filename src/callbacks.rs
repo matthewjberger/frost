@@ -6,13 +6,13 @@ use crate::parser::{ParamMode, Parameter, Spanned, Statement};
 use crate::types::Type;
 
 // docs/callbacks.md. An `extern fn` with a `$handler` parameter bound to a
-// function signature is a callback registration: the compiler will emit a
+// function signature is a callback registration. The compiler will emit a
 // trampoline with the C ABI the library expects, and that trampoline is the
 // only code that casts the untyped userdata back to the context type.
 //
 // This is the declaration check, which is what makes the rest derivable. The
 // handler's first parameter is the context, so the trampoline knows what to
-// cast to; every parameter after it is an argument C passes through. The extern
+// cast to. Every parameter after it is an argument C passes through. The extern
 // parameter of that same type is the one the userdata is taken from, found by
 // type rather than by position because libraries put the userdata on either
 // side of the function pointer.

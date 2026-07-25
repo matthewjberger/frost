@@ -1,20 +1,20 @@
-# How Frost Guarantees Memory Safety
+# How Frost guarantees memory safety
 
-Frost is memory-safe **without a garbage collector and without lifetime
-annotations**. Safety is enforced entirely at compile time by a pass that runs
+Frost is memory-safe without a garbage collector and without lifetime
+annotations. Safety is enforced entirely at compile time by a pass that runs
 after parsing and before any code is generated (`src/ownership.rs`), backed by a
 type system that makes the dangerous shapes *unrepresentable* rather than merely
 *checked*.
 
 This document explains each guarantee, why it holds, and where it is enforced.
 Frost removes the need for a borrow checker's hardest machinery (lifetime
-inference, region variables) by making references **second-class**. Moves,
+inference, region variables) by making references second-class. Moves,
 exclusivity, resource cleanup, and dangling-pointer freedom all follow from that
 one decision plus a small number of local rules.
 
 ## The six guarantees
 
-1. **Nothing that borrows storage outlives it.** A borrow can never outlive the
+1. Nothing that borrows storage outlives it. A borrow can never outlive the
    value it names. Borrows exist only as parameter modes and so last exactly one
    call, and the two things that could carry storage out of a frame are checked
    instead of forbidden: a raw pointer formed from a local, and a slice over one,
@@ -24,21 +24,21 @@ one decision plus a small number of local rules.
    The same check covers arenas. A raw pointer into an arena may not outlive the
    `with` block that owns it, and a `uses` function may hand one back to its
    caller, whose region checks it, but may not store one into a parameter.
-2. **No use-after-move.** A non-`Copy` value is consumed when moved. Using it
+2. No use-after-move. A non-`Copy` value is consumed when moved. Using it
    again is a compile error.
-3. **No mutable aliasing.** Within a call, a value cannot be passed to two
+3. No mutable aliasing. Within a call, a value cannot be passed to two
    `mut` parameters at once, nor to a `mut` and a read parameter at the same
    time.
-4. **No leaked resources.** A `linear` value must be consumed exactly once. A
+4. No leaked resources. A `linear` value must be consumed exactly once. A
    live-but-unconsumed linear value at end of scope is a compile error.
-5. **No use-after-free through a stale handle.** A generational handle whose slot
+5. No use-after-free through a stale handle. A generational handle whose slot
    has been freed and reused reports "not contained". It can never silently read
    a live value.
-6. **No out-of-bounds array access.** Every array index is bounds-checked against
+6. No out-of-bounds array access. Every array index is bounds-checked against
    the array's statically-known length. An out-of-range index aborts with a
    diagnostic rather than reading or writing past the array.
 
-What is not covered: a raw pointer is unchecked once it is out of the frame and
+One case is not covered. A raw pointer is unchecked once it is out of the frame and
 region checks, which is what `^T` is for. It carries no guarantee, and a program
 that casts one with `ptr_cast` and reads through it is on its own.
 
@@ -52,7 +52,7 @@ each array access.
 
 ## 1. Second-class borrows, so no dangling pointers
 
-A borrow is **second-class**: it exists only as a *parameter mode*, and there is
+A borrow is second-class. It exists only as a *parameter mode*, and there is
 no reference type in the surface language to write anywhere else. `x: T` borrows
 to read, `mut x: T` borrows to mutate, `move x: T` takes ownership, and the call
 site writes no sigil at all.
@@ -69,7 +69,7 @@ Since the only place a borrow can appear is a parameter, the shapes that would
 let one escape are not expressible. There is no way to write a reference-typed
 struct field, and no way to write a reference return type, so a borrow can never
 outlive the call it was created for. There is nothing to outlive, so there are
-**no lifetimes to infer and no lifetime annotations**. That is what lets the
+no lifetimes to infer and no lifetime annotations. That is what lets the
 borrow analysis stay entirely scope-local.
 
 The lowering still forms reference types internally, and `check_ownership` still
@@ -86,8 +86,8 @@ struct/enum field types and function return signatures.
 
 ## 2. Move checking, so no use-after-move
 
-Every type is either **Copy** (integers, floats, bools, raw pointers,
-references, function pointers, handles) or a **move** type (structs, enums,
+Every type is either Copy (integers, floats, bools, raw pointers,
+references, function pointers, handles) or a move type (structs, enums,
 strings, arrays of move types). A move-typed value is *consumed* when it is:
 
 - passed by value to a function,
@@ -103,7 +103,7 @@ b := take(p)      // error: use of moved value 'p'
 ```
 
 Passing to a read or `mut` parameter, field read (`x.f`), and dereference (`p^`)
-do **not** consume, so the common read patterns are unaffected. Only a `move`
+do not consume, so the common read patterns are unaffected. Only a `move`
 parameter takes the value. Copy types are never moved, so
 `add(x, x)` with integer `x` is fine.
 
@@ -137,8 +137,8 @@ Enforced by `check_borrow_exclusivity` per call-site argument list.
 
 ## 4. Linear resources, so no leaks, no double-free, and non-ignorable errors
 
-A struct or enum declared `linear` is a **resource** that must be consumed
-**exactly once**:
+A struct or enum declared `linear` is a resource that must be consumed
+exactly once:
 
 ```
 File :: linear struct { handle: i64 }
@@ -146,20 +146,20 @@ open  :: fn() -> File { File { handle = 1 } }
 close :: extern fn(f: File)              // terminal consumer, across the FFI boundary
 ```
 
-- **At most once** comes from the move checker (section 2). Consuming a linear
+- At most once comes from the move checker (section 2). Consuming a linear
   value moves it, so a second use is a use-after-move error, and there is no
   double-free.
-- **At least once** is the new rule. A linear value still live at the end of the
+- At least once is the new rule. A linear value still live at the end of the
   function that owns it is a "never consumed" error, and there is no leak.
 
 Consuming means moving the value onward, returning it, passing it by value to
 another function (typically an `extern` that takes ownership across the FFI
 boundary), or `match`ing it (a `match` on a linear value destructures and
-consumes it). This is how Frost **replaces `Drop`**. Cleanup is an obligation the
+consumes it). This is how Frost replaces `Drop`. Cleanup is an obligation the
 type system tracks, not an implicit call inserted behind your back.
 
 There is a useful consequence. A `linear enum` returned from a fallible function
-is a **non-ignorable error**. You cannot drop it on the floor, so a failure must
+is a non-ignorable error. You cannot drop it on the floor, so a failure must
 be matched (or otherwise consumed), and silently swallowing an error becomes a
 compile error.
 
@@ -168,8 +168,8 @@ scope exit.
 
 ## 5. Generational handles, so no use-after-free through the heap
 
-Long-lived data lives in a **pool** and is referred to by a **generational
-handle** (`Handle<T>`), not a raw pointer. A handle is a packed `(index,
+Long-lived data lives in a pool and is referred to by a generational
+handle (`Handle<T>`), not a raw pointer. A handle is a packed `(index,
 generation)` pair, which is plain copyable data you *can* freely store and return
 (unlike a reference).
 
@@ -177,7 +177,7 @@ generation)` pair, which is plain copyable data you *can* freely store and retur
   slot's current generation.
 - `slab_release` bumps the slot's generation and returns it to the free list.
 - Any later access checks the handle's generation against the slot's current
-  generation. If they differ, the handle is **stale**: `slab_alive` answers
+  generation. If they differ, the handle is stale. `slab_alive` answers
   false, and reading `world[h]` aborts rather than returning the new occupant.
 
 ```
@@ -188,7 +188,7 @@ slab_alive($Entity, $8, world, h)               // false, the old handle can nev
                                                 // read the new occupant
 ```
 
-Those operations are ordinary Frost, not compiler builtins or a runtime:
+Those operations are ordinary Frost, not compiler builtins or a runtime.
 `examples/native/lib/slab.frost` is the whole implementation, generic over
 element type and capacity. The only part the compiler supplies is the validated
 place-deref `world[h]`, because "return a checked reference into storage" cannot
@@ -201,13 +201,13 @@ use-after-free detection without a GC and without reference counting.
 
 ### Handle-dereference-as-borrow
 
-`pool[handle]` is a **place**. You can read and write fields through it
+`pool[handle]` is a place. You can read and write fields through it
 (`world[h].hp = 60`), copy the element out (`e := world[h]`), or pass it to a
 function, which borrows it under that function's parameter mode. The element
 type is recovered from the handle's `Handle<T>`, so the pool itself stays a raw
 pointer.
 
-The borrow you get is **second-class** (section 1), so there is nowhere to put it
+The borrow you get is second-class (section 1), so there is nowhere to put it
 that would let it escape the region where the pool operation is valid. Handles
 unify with the borrow discipline. The *handle* is data you keep. The *borrow*
 through it is a scoped thing the language gives you no way to save.
@@ -237,7 +237,7 @@ generational check instead (section 5).
 
 ## Why this is enough, and why it is small
 
-Traditional borrow checking spends most of its complexity on **lifetimes**,
+Traditional borrow checking spends most of its complexity on lifetimes,
 inferring how long each reference is valid, relating those regions to each other,
 and threading them through generics. Frost pays a different price up front, that
 references cannot escape, and in exchange deletes that entire machinery.
@@ -260,22 +260,22 @@ compare per handle access and one per array index.
 
 A few honest gaps in the current implementation:
 
-- **Raw pointers** (`^T`) are an explicit escape hatch, used for FFI and the pool
+- Raw pointers (`^T`) are an explicit escape hatch, used for FFI and the pool
   runtime's internals. They are `Copy` and unchecked, exactly like C pointers,
   and code that uses them takes on the corresponding responsibility. The safe
   surface of borrows, handles, and linear resources is what the guarantees above
-  cover. `check_frame_escapes` narrows the hatch: a raw pointer formed from this
+  cover. `check_frame_escapes` narrows the hatch. A raw pointer formed from this
   frame's own storage, including one taken with `ptr_to` or a slice over a local
   array, cannot be returned.
-- **A callback's guarantee stops at the C boundary.** The Frost side is checked:
-  the context moves in and comes back out, the registration is `linear` so
+- A callback's guarantee stops at the C boundary. The Frost side is checked.
+  The context moves in and comes back out, the registration is `linear` so
   forgetting to unregister is a compile error, and the region check holds the
   registration to the frame that holds its context, so no Frost code can read
   the context while the callback might fire. None of that says anything about
   the library's own threading, and a library that keeps the pointer after
   unregistration is outside what the compiler can see. See
   [callbacks.md](callbacks.md).
-- The static checks run on the AST, so **integer overflow** follows the backend's
+- The static checks run on the AST, so integer overflow follows the backend's
   C semantics (wrapping for unsigned, two's-complement for signed) rather than
   trapping.
 

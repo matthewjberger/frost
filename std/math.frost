@@ -4,10 +4,10 @@
 // There is no operator overloading and there are no methods, so `vec3_add(a, b)`
 // rather than `a + b` and `mat4_mul(a, b)` rather than `a * b`. The names carry
 // the type the way the rest of the standard library's do (`vec3_`, `mat4_`,
-// `quat_`), which is the namespace. Everything is `f32`; a program that needs
+// `quat_`), which is the namespace. Everything is `f32`. A program that needs
 // double precision keeps its own copy or waits for an `f64` variant.
 //
-// Matrices are column-major, the OpenGL and Vulkan convention: element at row
+// Matrices are column-major, the OpenGL and Vulkan convention. Element at row
 // `r`, column `c` lives at `m.m[c * 4 + r]`, and `mat4_mul(a, b)` is the matrix
 // that applies `b` then `a` to a column vector.
 
@@ -177,7 +177,7 @@ mat4_mul_vec4 :: fn(a: Mat4, v: Vec4) -> Vec4 {
     }
 }
 
-// A point carries an implicit w of 1, so a translation moves it; a direction
+// A point carries an implicit w of 1, so a translation moves it. A direction
 // carries w of 0, so a translation leaves it alone.
 mat4_transform_point :: fn(a: Mat4, v: Vec3) -> Vec3 {
     out := mat4_mul_vec4(a, Vec4 { x = v.x, y = v.y, z = v.z, w = 1.0 })

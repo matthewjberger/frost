@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 // already serde and JSON and a second format would be a second thing to learn.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Default)]
 pub struct Manifest {
-    // What the project calls itself. Not used for resolution; it is here so a
+    // What the project calls itself. Not used for resolution. It is here so a
     // diagnostic can name the project rather than a directory.
     #[serde(default)]
     pub name: String,
@@ -27,7 +27,7 @@ pub const MANIFEST_NAME: &str = "frost.json";
 
 impl Manifest {
     // Reads the manifest beside the entry file, if there is one. A project
-    // without a manifest is not an error: the common case is one file that
+    // without a manifest is not an error. The common case is one file that
     // imports its neighbours and needs nothing declared.
     pub fn find(project_root: &Path) -> Result<Option<Self>> {
         let path = project_root.join(MANIFEST_NAME);
@@ -55,7 +55,7 @@ impl Manifest {
 // `FROST_STD` wins, because someone who says exactly where it is means it. Then
 // a `std` beside the compiler, which is what an installed layout looks like.
 // Then two directories up from the compiler, which is what a `cargo build`
-// layout looks like: the binary lands in `target/debug` and the library is at
+// layout looks like. The binary lands in `target/debug` and the library is at
 // the repository root.
 pub fn bundled_std() -> Option<PathBuf> {
     if let Ok(named) = std::env::var("FROST_STD") {

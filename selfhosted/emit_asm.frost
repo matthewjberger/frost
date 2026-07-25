@@ -326,7 +326,7 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
             }
         }
         base_ty := type_of(p, base)
-        // A pointer base already holds the address; a struct place needs one.
+        // A pointer base already holds the address. A struct place needs one.
         if (is_pointer(base_ty)) {
             emit_asm_expr(p, base)
         } else {
@@ -349,7 +349,7 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
         if (is_pointer(through)) {
             through = pointee(through)
         }
-        // A handle names a slot in a slab; frost_slot validates it and answers
+        // A handle names a slot in a slab. frost_slot validates it and answers
         // with the checked index, and the storage element at that index is the
         // place. This is the one index whose bound is a generation as well as a
         // length, so a handle to a released slot aborts here.
@@ -358,7 +358,7 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
             return
         }
         mut element : i64 = TY_I64
-        // An array and a slice bound the index; a raw pointer does not, which
+        // An array and a slice bound the index. A raw pointer does not, which
         // is what makes reading through one a gated operation.
         mut checked : i64 = 0
         mut length_const : i64 = 0
@@ -374,7 +374,7 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
                 emit_asm_addr(p, base)
             }
             if (is_slice_ty(p, through)) {
-                // The length is the word past the run's address; keep it before
+                // The length is the word past the run's address. Keep it before
                 // the address itself is overwritten by the run's own.
                 length_const = 0 - 1
                 len_slot = alloc_temp(p, 8)
@@ -436,7 +436,7 @@ emit_asm_bounds_call :: fn(mut p: Parser) {
 
 // The address of a slab element named by a handle. The slab's address is kept
 // in a frame slot across frost_slot, which unpacks and validates the handle and
-// answers with the checked slot index; that index scales into the storage run.
+// answers with the checked slot index. That index scales into the storage run.
 // frost_slot takes the handle, the storage length, and the generations run, and
 // aborts on an index out of range or a generation that has moved on.
 emit_asm_slab_addr :: fn(mut p: Parser, base: i64, base_ty: i64, through: i64,
@@ -681,7 +681,7 @@ emit_asm_binop :: fn(op: i64) {
         asm("orq %r11, %rax")
         return
     }
-    // `&&` and `||` never reach here: they branch rather than compute, so that
+    // `&&` and `||` never reach here. They branch rather than compute, so that
     // the right side is not evaluated when the left settles the answer.
     asm_unsupported("this operator")
 }
@@ -812,7 +812,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         return
     }
     // `&&` and `||` do not evaluate their right side unless they have to. This
-    // is not an optimization: a guard like `is_array(t) && length_of(t) < 0`
+    // is not an optimization. A guard like `is_array(t) && length_of(t) < 0`
     // reads a table only the guard says is safe to read, and evaluating both
     // sides makes that a bounds failure rather than a false.
     if (kind == NODE_BIN && (node.val == OP_AND || node.val == OP_OR)) {
@@ -844,7 +844,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         right_ty := type_of(p, node.b)
         if (is_float(left_ty) || is_float(right_ty)) {
             // Every float operation is done at f64 and narrowed after, so
-            // there is one arithmetic path rather than one per width.
+            // the arithmetic follows one path rather than one per width.
             emit_asm_expr(p, node.a)
             emit_asm_convert(p, left_ty, TY_F64)
             emit_asm_push()
@@ -897,7 +897,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         return
     }
     // A struct is handled by its address, so reading one of these yields the
-    // address and only a scalar is actually loaded.
+    // address and only a scalar is loaded.
     if (kind == NODE_FIELD || kind == NODE_DEREF || kind == NODE_INDEX) {
         emit_asm_addr(p, id)
         result := type_of(p, id)
@@ -981,11 +981,11 @@ emit_asm_struct_lit :: fn(mut p: Parser, id: i64) {
 
 // Arguments evaluate right to left onto the stack and only then move into
 // place, so an argument that is itself a call cannot clobber one already
-// computed. The first four travel in registers; the rest sit above the shadow
+// computed. The first four travel in registers. The rest sit above the shadow
 // area the callee is entitled to, and the whole call frame stays 16 byte
 // aligned.
 // The capability a call is handed, left in %rax ready to be pushed. A forwarded
-// one is already a pointer; a region supplies the arena by address.
+// one is already a pointer. A region supplies the arena by address.
 emit_asm_capability :: fn(mut p: Parser, fn_index: i64) {
     if (p.prov_kind == PROVIDER_NONE) {
         sym := arena_at(p.fns, fn_index)
@@ -1032,7 +1032,7 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         argument := nth_value_arg(p, args, i)
         emit_asm_expr(p, argument)
         // A specialization's parameters carry no width, so nothing is
-        // converted into one; everywhere else the callee's declared type is
+        // converted into one. Everywhere else the callee's declared type is
         // what the value has to arrive as.
         if (generic == false) {
             declared := nth_param_type(p, callee.params, i)
@@ -1113,7 +1113,7 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     }
 
     sym := arena_at(p.fns, fn_index)
-    // A call through a local of function-pointer type is indirect: the value is
+    // A call through a local of function-pointer type is indirect. The value is
     // loaded into a scratch register the arguments do not use and called
     // through. The load comes after the arguments are in place so it does not
     // disturb them.
@@ -1169,7 +1169,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         if (annotation == (0 - 1)) {
             ty = type_of(p, value)
         }
-        // `columns_new()` is a zeroed container; there is no call to make, just
+        // `columns_new()` is a zeroed container. There is no call to make, only
         // the local's slot to clear.
         if (is_columns_new_call(p, value)) {
             record_local(p, off, len, ty)
@@ -1476,7 +1476,7 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
         emit_text("(%rbp)\n")
     }
 
-    // The first four arguments arrive in registers; the rest were left on the
+    // The first four arguments arrive in registers. The rest were left on the
     // stack by the caller, above the saved frame pointer, the return address
     // and the shadow area.
     sse_regs := abi_sse_regs(p)
@@ -1771,7 +1771,7 @@ count_args :: fn(mut p: Parser, head: i64) -> i64 {
 }
 
 // ---------------------------------------------------------------------------
-// Regions. A `with arena { ... }` block is a region: a raw pointer derived from
+// Regions. A `with arena { ... }` block is a region. A raw pointer derived from
 // the arena inside it dies with the block, so it may not be assigned to
 // anything declared outside the block or returned. There are no lifetimes and
 // no region types on pointers, only a walk over the block tracking which names

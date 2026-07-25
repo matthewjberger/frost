@@ -143,7 +143,7 @@ fn check_statement(
             _name,
             Expression::Proc(params, _return_sig, body),
         ) => {
-            // A reference return is allowed: the frame-escape check holds a
+            // A reference return is allowed. The frame-escape check holds a
             // borrow to storage that outlives the call, and the region check
             // holds an arena borrow to its region, so returning one is only ever
             // a borrow the caller may keep. `arena_at` is the reason it exists.
@@ -645,7 +645,7 @@ fn borrow_place(expression: &Expression) -> Option<Vec<String>> {
     }
 }
 
-// Two places overlap when one contains the other: they share the whole of the
+// Two places overlap when one contains the other. They share the whole of the
 // shorter as a prefix, so `s` overlaps `s.x`, and `s.x` overlaps `s.x.y`, while
 // `s.x` and `s.y` are disjoint. Overlapping places name storage that intersects,
 // which is what an exclusive borrow may not share.
@@ -659,7 +659,7 @@ fn check_borrow_exclusivity(
     param_types: Option<&Vec<Option<Type>>>,
 ) -> Result<()> {
     // Each borrowed argument as (place path, whether it is exclusive). A `mut`
-    // parameter and an explicit `&mut` borrow exclusively; a `read` parameter
+    // parameter and an explicit `&mut` borrow exclusively. A `read` parameter
     // and a `&` share.
     let mut borrows: Vec<(Vec<String>, bool)> = Vec::new();
     for (index, argument) in arguments.iter().enumerate() {
@@ -943,7 +943,7 @@ mod tests {
 
     #[test]
     fn a_linear_destructor_may_be_written_in_frost() {
-        // The destructor takes the linear value by value and unpacks it; the
+        // The destructor takes the linear value by value and unpacks it. The
         // parameter is not passed on, and that is allowed.
         let source = "\
             Arena :: linear struct { data: i64 }\n\

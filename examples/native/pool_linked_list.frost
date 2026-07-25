@@ -11,7 +11,7 @@ import "io.frost"
 import "slab.frost"
 
 // `next` is a handle into the same slab, or -1 for the end of the list. The
-// sentinel is safe here in a way a null pointer is not: reading through it is
+// sentinel is safe here in a way a null pointer is not. Reading through it is
 // a bounds and generation check away from the storage, not a trap.
 Node :: struct { value: i64, next: i64 }
 

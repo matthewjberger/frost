@@ -20,7 +20,7 @@ use crate::types::Type;
 //     binding that lives past the block;
 //   - inside a `uses` function, it may be returned (that hands it to the caller's
 //     region, checked where the `with` block is) but not stored into a parameter.
-// A pointer confined to a binding declared in the region is fine; that binding
+// A pointer confined to a binding declared in the region is fine. That binding
 // dies with the region.
 
 struct Signatures {
@@ -55,7 +55,7 @@ pub fn check_regions(program: &Program) -> Result<()> {
         ) = &statement.node
         {
             // A `uses` function's whole body is a region whose arena is the
-            // implicit capability; it may return arena pointers but not leak
+            // implicit capability. It may return arena pointers but not leak
             // them into its parameters.
             if let Some(capability) = sig.uses.first() {
                 let mut region = Region::new(
@@ -71,7 +71,7 @@ pub fn check_regions(program: &Program) -> Result<()> {
     Ok(())
 }
 
-// Walk a block looking for `with` regions to check; an ordinary block imposes no
+// Walk a block looking for `with` regions to check. An ordinary block imposes no
 // region rule of its own.
 fn find_regions(block: &Block, signatures: &Signatures) -> Result<()> {
     for statement in block {
@@ -133,7 +133,7 @@ struct Region<'a> {
     // Whether a returned arena pointer is allowed (true in a `uses` body, false
     // in a `with` block).
     allow_return: bool,
-    // Bindings declared inside the region; they die with it, so they may hold a
+    // Bindings declared inside the region. They die with it, so they may hold a
     // region pointer.
     inner: HashSet<String>,
     // Bindings that currently hold, or transitively contain, a region pointer.
@@ -187,7 +187,7 @@ impl<'a> Region<'a> {
                 _ => {}
             }
         }
-        // The block's trailing expression is its value; in a `with` block that
+        // The block's trailing expression is its value. In a `with` block that
         // value flows to the enclosing scope, so an arena pointer there escapes.
         if root
             && !self.allow_return
@@ -201,7 +201,7 @@ impl<'a> Region<'a> {
     }
 
     // Storing a region pointer into a binding declared inside the region keeps it
-    // in the region (and taints that binding); storing it anywhere else escapes.
+    // in the region (and taints that binding). Storing it anywhere else escapes.
     fn bind_or_escape(&mut self, place: &Expression, how: &str) -> Result<()> {
         match root_identifier(place) {
             Some(name) if self.inner.contains(name) => {
@@ -261,7 +261,7 @@ impl<'a> Region<'a> {
                     return false;
                 }
                 // A pointer-returning function hands back an arena pointer only if
-                // it draws on this arena: it is a `uses` function, or it is passed
+                // it draws on this arena. It is a `uses` function, or it is passed
                 // the arena (or a value already bound to the region).
                 self.signatures.uses_arena.contains(function)
                     || arguments
@@ -301,7 +301,7 @@ impl<'a> Region<'a> {
 // and it is what stops `ptr_to(local)` and a slice over a local array from
 // outliving the storage they name.
 //
-// Provenance again rather than rooting: a local holding a pointer it was handed
+// Provenance again rather than rooting. A local holding a pointer it was handed
 // is fine to return, and only a pointer formed from this frame's own storage is
 // not.
 pub fn check_frame_escapes(program: &Program) -> Result<()> {
@@ -433,7 +433,7 @@ impl Frame<'_> {
         Ok(())
     }
 
-    // A branch of a block used as a value: check it as a block, and when the
+    // A branch of a block used as a value. Check it as a block, and when the
     // block is the function's answer, check what the branch ends with too.
     fn answers_here(&mut self, block: &Block, answers: bool) -> Result<()> {
         self.check(block)?;
@@ -532,7 +532,7 @@ impl Frame<'_> {
 }
 
 // Whether a binding's value is storage built here rather than one handed in. An
-// array or a struct written out lands in this frame; anything else came from
+// array or a struct written out lands in this frame. Anything else came from
 // somewhere that outlives it.
 fn materializes(expression: &Expression) -> bool {
     matches!(

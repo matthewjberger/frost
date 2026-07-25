@@ -13,7 +13,7 @@
 //
 // The operations are generic over `$N` as well as `$T`, so this file is a
 // library rather than a slab of one size. A handle is `Handle<T>` to callers
-// and an i64 inside, where index and generation are packed and unpacked; the
+// and an i64 inside, where index and generation are packed and unpacked. The
 // two convert freely because a handle is an i64 at the ABI.
 
 import "io.frost"

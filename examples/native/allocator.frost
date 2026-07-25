@@ -1,4 +1,4 @@
-// The allocator interface: an allocator is a value, so a data structure can be
+// The allocator interface. An allocator is a value, so a data structure can be
 // backed by any of them and the backing can be swapped. Following the Odin model
 // (docs/allocators.md), an Allocator is a function pointer plus the allocator's
 // own state, no closures and no vtable. Frost's function pointers express this
@@ -13,7 +13,7 @@ Bump :: struct {
     offset: i64,
 }
 
-// The bump's take function matches the Allocator interface: (state, size) -> ptr.
+// The bump's take function matches the Allocator interface, (state, size) -> ptr.
 bump_take :: fn(state: ^u8, size: i64) -> ^u8 {
     unsafe {
         b := ptr_cast($Bump, state)

@@ -17,14 +17,14 @@ Where Frost stands today, from `just bench-scaling` on 58,107 lines:
 | front end (`--emit-c`, 318 ms) | ~183,000 lines/sec |
 | full build (`--native`, 349 ms) | ~166,000 lines/sec |
 
-Both clear the bar, and the backend is no longer the gap: on that program code
+Both clear the bar, and the backend is no longer the gap. On that program code
 generation is 64 ms of a 349 ms build, with the front end holding the rest. That
 tells you what not to work on next. Cranelift is done being the problem.
 
 Before item 1 landed the same program took 1.11 s, or about 52,000 lines per
 second, and the backend was 1,285 ms of it.
 
-The shape question, item 3, is closed too: a module is a compilation unit and
+The shape question, item 3, is closed too. A module is a compilation unit and
 `--incremental` skips the ones an edit cannot reach. What is left on speed is
 named at the end of that item, and it is a bounded piece of work rather than an
 open question.
@@ -43,30 +43,30 @@ changed: about 580 ms full against about 200 ms incremental, of which about
 
 Three findings worth keeping, none of which were obvious going in:
 
-- **A generic's body is part of its interface**, unavoidably, because the caller
+- A generic's body is part of its interface, unavoidably, because the caller
   chooses the type arguments and so the caller instantiates the template. So
   changing a generic's body is an interface change and rebuilds every module
   that instantiates it, while changing an ordinary body is not. That distinction
   is what the fingerprint encodes and it is the whole reason the cache pays.
-- **Private symbol names used to depend on import traversal order**, so a
+- Private symbol names used to depend on import traversal order, so a
   private `helper` was `__m3_helper` in one program and `__m7_helper` in
   another. A module's symbols have to be a property of the module before any of
   this is possible, which is why that was step 1 and why it was verifiable
   entirely on its own.
-- **Cranelift has no weak or COMDAT linkage**, so duplicate specializations
+- Cranelift has no weak or COMDAT linkage, so duplicate specializations
   across modules are not folded and each module emits its own private copy.
   `FROST_MODULE_REPORT=1` measures how much that costs, and that measurement is
   the only thing that would justify revisiting it.
 
-**Nothing is whole-program any more.** A skipped module used to contribute its
+Nothing is whole-program any more. A skipped module used to contribute its
 interface as it stood, bodies and all, so the front end walked bodies it would
 never emit. `Statement::Declared` is a Frost function's signature with no body,
 which is what a module contributes for every function whose body a caller does
-not need; a generic still contributes its body, because the caller is what
+not need. A generic still contributes its body, because the caller is what
 stamps out the template. That took the skipped path from 309 ms of compiler work
 to about 110 ms.
 
-It is not an `extern`, which was the tempting reuse: an extern means C linkage
+It is not an `extern`, which was the tempting reuse. An extern means C linkage
 and a C ABI, and loses the hidden out-pointer an aggregate return uses along
 with parameter modes, `uses` sets and linearity. It rides in
 `IrModule::imported`, which already means "declared here, defined in another
@@ -87,11 +87,11 @@ Passing a type where a function is declared, or a function whose signature does
 not match, is reported against the parameter list rather than against a line
 inside the specialized body the reader never wrote.
 
-**What it is not.** Not a trait system. No coherence, no orphan rules, no solver.
+It is not a trait system. No coherence, no orphan rules, no solver.
 A comparison of one signature against another, on one parameter kind. See the
 "Not trait-based" non-goal.
 
-**The catch, since it will bite again.** `is_type_parameter` keys on the
+The catch, since it will bite again, is that `is_type_parameter` keys on the
 annotation *being* `Type::TypeParam(name)`, so putting the signature there flips
 the parameter to a runtime parameter and breaks every generic. It lives in a
 separate `compile_time_signature: Option<Type>` on `Parameter`, beside the
@@ -100,19 +100,19 @@ annotation rather than replacing it.
 The check is deferred until every argument has been walked, because a bound can
 name type parameters that later value arguments are what bind.
 
-**Still open**, and deliberately: `$T: Type` has no bound of its own, so
+This stays open, and deliberately. `$T: Type` has no bound of its own, so
 `double :: fn(v: $T) -> T` still requires `T` to be numeric silently. Bounding a
 type rather than a function is the thing that turns into a trait system if it is
 approached carelessly, and nothing needs it yet.
 
 ## 3. Callbacks with a typed context (done)
 
-**Why it mattered.** It was the one place the implementation contradicted a goal
+It mattered because it was the one place the implementation contradicted a goal
 rather than merely falling short of an aspiration, so it was correctness rather
 than performance. It came after items 1 and 2 because both change what a
 function signature can say, and this leans on that.
 
-**The contradiction.** Goal 2 says safety comes from making dangerous shapes
+Goal 2 says safety comes from making dangerous shapes
 unrepresentable. The only way to write a callback used to be the C idiom, a
 function pointer plus an untyped `^u8` userdata, which is long-lived, first
 class, and outside every check in `src/regions.rs` and `src/ownership.rs`. So
@@ -121,7 +121,7 @@ unsafe but because the only expression of one was a raw escape hatch. That was
 the inversion the surface `&` removal was meant to prevent, reappearing at the C
 boundary.
 
-**The design.** Closures stay a non-goal. Capture is not the answer; a written
+Closures stay a non-goal. Capture is not the answer. A written
 down context is. A callback is a compile-time function argument plus a typed
 context the caller owns:
 
@@ -135,10 +135,10 @@ register :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64
 
 The user writes a typed `mut ctx: Ctx` and the perimeter holds everywhere a
 person is looking. What the compiler does at the call is pass the handler's
-address and the context's address; see below for why that is all it does.
+address and the context's address. See below for why that is all it does.
 
-**Who owns the context, settled.** This was the open question, and the answer is
-that **registration moves the context in and unregistration moves it back out**,
+Who owns the context is settled. This was the open question, and the answer is
+that registration moves the context in and unregistration moves it back out,
 with the registration itself a `linear` value. Not a borrow.
 
 ```
@@ -161,58 +161,58 @@ run :: fn() -> i64 {
 
 Three things fall out, and each is a reason to prefer this over a borrow.
 
-- **No new machinery.** A borrow that outlives its call would be the first thing
+- No new machinery is needed. A borrow that outlives its call would be the first thing
   in the language that does, and inventing it means inventing the region
-  annotation the whole design is built on not having. Moving needs nothing new:
+  annotation the whole design is built on not having. Moving needs nothing new.
   `check_ownership` already stops the caller touching a moved value, and
   `check_linearity` already forces a `linear` value to be consumed exactly once.
-- **The aliasing guarantee is the one you want.** While registered, the callback
+- The aliasing guarantee is the one you want. While registered, the callback
   may fire at any moment, so the caller must not be reading or writing the
   context. Having moved it in, the caller *cannot*, and that is enforced by the
   checker that already exists rather than by a comment.
-- **Forgetting to unregister becomes a compile error**, which is a real bug class
+- Forgetting to unregister becomes a compile error, which is a real bug class
   in every C callback API. A dangling callback into freed context is the exact
   failure this is meant to prevent, and linearity prevents it at the source
   rather than at the boundary.
 
-**The fire-and-forget case**, where the library never gives the callback back,
+The fire-and-forget case, where the library never gives the callback back,
 does not get an exception. The registration is still linear, and a program that
 means to abandon it says so with a terminal consumer that takes it and returns
 nothing. "I am deliberately leaking this" is a thing worth having to write.
 
-**The design is now written down** in [callbacks.md](callbacks.md), worked
+The design is now written down in [callbacks.md](callbacks.md), worked
 against the code the way the separate compilation design was, with a step order
 to build it in. Three things it settles and one it found:
 
-- `uses CallbackAbi` is **dropped**. A `$handler` parameter with a function bound
+- `uses CallbackAbi` is dropped. A `$handler` parameter with a function bound
   on an `extern fn` already says the extern takes a callback, and a capability
   that supplies nothing is a keyword pretending to be one.
-- The handler's **first parameter is the context**, which is what makes the
+- The handler's first parameter is the context, which is what makes the
   lowering derivable, and the extern parameter of that same type is the one
   passed as the `void*`, so the declaration is written in the order C wants.
 - The registration is `linear` and the context moves in and back out, which
-  needs no new machinery: `check_ownership` and `check_linearity` already do it.
-- **What it found:** the context has to name storage that outlives the
+  needs no new machinery. `check_ownership` and `check_linearity` already do it.
+- It found that the context has to name storage that outlives the
   registration, and nothing enforced that, because until now nothing in the
   language could keep a pointer past a call. The first answer written down, that
   the context must therefore live in an arena, was wrong and would have rejected
   every program anyone could write. The obligation is satisfied from the other
-  end instead: a registration is `linear`, so it must be consumed in the
+  end instead. A registration is `linear`, so it must be consumed in the
   function that made it, and a context in that frame outlives it by
   construction. What was left to stop is the registration leaving that function,
   which is the same three roads `src/regions.rs` already closes for pointers.
 
-**All five steps are built**, and a Frost handler with a Frost context runs
+All five steps are built, and a Frost handler with a Frost context runs
 through a real C callback API, on both backends, checked by linking a small C
 library that stores the pair and calls it back later.
 
-**The trampoline turned out not to exist**, which is the largest thing building
+The trampoline turned out not to exist, which is the largest thing building
 it changed. A `mut` parameter is already a pointer in the signature and Frost
 and C share a calling convention, so a Frost handler *is* the
 `void (*)(void*, ...)` the library wants. The cast the whole design set out to
 hide inside generated code never has to happen, so there is no generated code.
 
-**Getting the context back needed nothing from callbacks.** It goes in by
+Getting the context back needed nothing from callbacks. It goes in by
 `move`, so the name is dead for the rest of the function while the callback
 writes that exact storage, and for a while a caller could not read what its own
 callback did. The answer is an ordinary extern that hands the context back by
@@ -233,7 +233,7 @@ byte. The sweep, with `FROST_THREADS=n`, on 10,401 functions:
 That is 7.0x on a machine with eight physical cores, which is about as close to
 linear as this gets.
 
-**It took two false starts, both worth recording.** The first landed version won
+It took two false starts, both worth recording. The first landed version won
 only 1.2x from sixteen threads, and a processor-time-against-wall-time reading
 said total CPU was roughly flat across thread counts. That reading was correct
 and the conclusion drawn from it, that the threads were somehow serialized, was
@@ -245,7 +245,7 @@ worker 641 functions, build 30 ms, compile 989 ms, wall 1019 ms   (x1)
 ```
 
 Fifteen threads did their share in 28 ms. One took 989 ms for the same count of
-functions. Nothing was serialized; one function was 97% of the work, because
+functions. Nothing was serialized. One function was 97% of the work, because
 `bench/generate.py` emitted a `main` with ten thousand call sites and a single
 function cannot be split across threads. Fifteen threads doing 28 ms each adds
 only ~400 ms of CPU over a 1,000 ms wall, which is exactly the 1.3x ratio that
@@ -254,9 +254,9 @@ had been read as evidence of serialization. The benchmark was the bug.
 The generator now fans its calls through intermediate functions, which is the
 shape real code has. That alone took 1,021 ms to 211 ms.
 
-**The second false start** was static chunking. With `main` fixed the expensive
+The second false start was static chunking. With `main` fixed the expensive
 functions still clustered, since `chunks(per_thread)` is contiguous and the
-module's function list is ordered, so one thread got all of them: 209 ms against
+module's function list is ordered, so one thread got all of them, 209 ms against
 31 ms for the rest. Cost per function varies by more than an order of magnitude,
 so the split is now a shared atomic cursor handing out one function at a time,
 with results sorted back into module order so the object does not depend on how
@@ -267,7 +267,7 @@ statistic over a per-worker measurement. Whole-process CPU time could not
 distinguish "threads are serialized" from "one thread has all the work", and
 those want opposite fixes.
 
-What else helped and is kept: not cloning each function's IR out of the context
+What else helped and is kept is not cloning each function's IR out of the context
 to hand to `define_function_bytes`. That backend uses the function only to
 resolve relocation targets against its imported names, so the value is moved out
 with `mem::replace` rather than deep copied, worth about 130 ms at the old size.
@@ -277,19 +277,19 @@ declaration (9 ms), serial defining (3 ms), object emission (3 ms), allocator
 contention (mimalloc changed nothing), and one ISA per thread against a shared
 one (flat, and kept anyway since it is free).
 
-**The remaining serial floor** is a single large function, which no amount of
+The remaining serial floor is a single large function, which no amount of
 threading divides. It does not bind on real code, where the self-hosted compiler
 is 244 functions and 6 ms of code generation, but it is the thing that would
 bind first if it ever bound.
 
-**The API path, already verified.** `Module::declare_func_in_func` only reads
+The API path is already verified. `Module::declare_func_in_func` only reads
 `self.declarations()` despite taking `&mut self`, so it can be replicated against
 an immutable snapshot. `define_function_bytes(func_id, func, alignment, bytes,
 relocs)` exists in cranelift-module 0.116 and is the seam for handing back
-separately compiled code. So: declare serially, build and `Context::compile` in
-parallel, `define_function_bytes` serially.
+separately compiled code. So declare serially, build and `Context::compile` in
+parallel, then `define_function_bytes` serially.
 
-**The shape, worked out.** `Generator` touches the module in fifteen places, but
+The shape is worked out. `Generator` touches the module in fifteen places, but
 only eight of them need the real thing, and they are all in `declare_strings`,
 `declare_functions`, and the last two lines of `define_function`. The other seven
 are `make_signature` and the two `*_in_func` helpers, which need nothing but the
@@ -327,7 +327,7 @@ fn declare_func_in_func(&self, id: FuncId, func: &mut ir::Function) -> ir::FuncR
 
 Name the field `module` and the seven translation sites do not change at all.
 
-**The three phases.** Declare serially as now. Then, per thread over a chunk of
+There are three phases. Declare serially as now. Then, per thread over a chunk of
 functions, build the `ir::Function` and call
 `context.compile(isa, &mut ControlPlane::default())`, keeping
 `code.buffer.data().to_vec()`, `code.buffer.relocs().to_vec()` and
@@ -336,11 +336,11 @@ functions, build the `ir::Function` and call
 &relocs)`. `std::thread::scope` over chunks avoids taking a dependency on rayon
 for what is one `map`.
 
-Note that `Module::define_function` compiles inside itself, which is why the
+`Module::define_function` compiles inside itself, which is why the
 compile has to move to `Context::compile` explicitly. That is the whole reason
 this is a refactor rather than a loop change.
 
-**The cost.** That is a real refactor of the backend's core, and the class
+The cost is a real refactor of the backend's core, and the class
 of bug it invites is the one that passes the test suite and corrupts output, the
 way the sret register and the byte-stride bugs both did. Do it with the
 differential oracle running, not after.
@@ -352,9 +352,9 @@ Goal 3 in [philosophy.md](philosophy.md) makes C interop a first-class concern
 rather than an escape hatch, and "you may call any C function except the ones
 that return a struct" was a hole in that rather than a rough edge.
 
-**Why it was not a small fix.** The compiler returns its own aggregates through
+It was not a small fix. The compiler returns its own aggregates through
 a hidden out-pointer, uniformly, which it is entitled to decide about its own
-calling convention. C is not uniform: a small struct comes back in registers and
+calling convention. C is not uniform. A small struct comes back in registers and
 a large one through an out-pointer, and where the line falls depends on the
 target and, on some targets, on the field types. So it meant classifying return
 types the way the target's C compiler does. `src/c_abi.rs` is that
@@ -366,8 +366,8 @@ classification, and it is a hundred lines because there are three rules:
 | System V AMD64 | up to two eightbytes, each SSE or INTEGER by what touches it | over 16 bytes |
 | AAPCS64 | a homogeneous float aggregate up to 4 wide, else up to 16 bytes | over 16 bytes |
 
-The Windows row is the one worth reading twice, and it was **read off the host
-compiler rather than off a document**: a `struct { float a; }` comes back in RAX
+The Windows row is the one worth reading twice, and it was read off the host
+compiler rather than off a document. A `struct { float a; }` comes back in RAX
 rather than XMM0, and a `struct { char a[3]; }` goes indirect despite fitting in
 a register. Both would have been guessed wrong.
 
@@ -375,13 +375,13 @@ The C backend does not reimplement any of this. It declares a real struct type,
 field for field with explicit padding, and lets the C compiler classify it,
 which is the same answer arrived at by the only party guaranteed to be right.
 
-**How it is checked.** `a_struct_returned_from_c_comes_back_correctly` compiles
+It is checked by `a_struct_returned_from_c_comes_back_correctly`, which compiles
 a C library returning eleven shapes chosen to land on opposite sides of every
 boundary, links it, and runs both backends against it. Misclassifying one size
 scrambles exactly the values of that size, which is how the test was confirmed
 to be sharp.
 
-**What is still by pointer**, deliberately: an aggregate *parameter* to an
+What is still by pointer, deliberately, is an aggregate *parameter* to an
 extern. `close :: extern fn(f: File)` links against `void close(File*)`, which
 is the documented convention in [c-compatibility.md](c-compatibility.md) and
 matches how most C APIs take structs. So returns follow the real C ABI and
@@ -405,14 +405,14 @@ it was really a dropped expectation.
 
 The parameter's type is known at the call, so lowering now substitutes what is
 bound so far into the declared parameter type and hands that down as the
-expected type. Only when the result is concrete: a type argument written *after*
+expected type. Only when the result is concrete. A type argument written *after*
 the value it parameterizes has not been bound yet, and an expected type still
 naming a type parameter would say less than nothing.
 
 ## The rest of the roadmap is one project
 
-**`selfhosted/frost.frost` is the compiler people will use, and `src/*.rs` is the
-bootstrap that makes writing it possible.** Everything below follows from that.
+`selfhosted/frost.frost` is the compiler people will use, and `src/*.rs` is the
+bootstrap that makes writing it possible. Everything below follows from that.
 The bootstrap compiles stage 0 and is the differential oracle, which is the only
 reason it is ahead. Being ahead is a stage of the work rather than a division of
 labour. See [self-hosting.md](self-hosting.md).
@@ -420,10 +420,10 @@ labour. See [self-hosting.md](self-hosting.md).
 So the target is parity on both axes: the full language, and goal 8's speed. Two
 things follow that are worth saying before the list.
 
-- **Speed matters more in the Frost compiler than in the Rust one.** The
+- Speed matters more in the Frost compiler than in the Rust one. The
   measurements at the top of this document are of the bootstrap. They are the
   bar, not the achievement, until the compiler a user actually runs meets them.
-- **Nothing here is optional.** Items 7 through 18 are what the bootstrap
+- Nothing here is optional. Items 7 through 18 are what the bootstrap
   supports and the Frost compiler does not, derived by reading both rather than
   by memory: `src/types.rs` against the eight type codes in `frost.frost`, and
   the bootstrap's flags against `main`.
@@ -433,8 +433,8 @@ things follow that are worth saying before the list.
 It was one file. It is a set of modules now, in an order that is a topological
 order of what calls what.
 
-**The boundaries come from the call graph between concerns, not from where
-functions sit on the page.** Mapping every top-level name to a concern and
+The boundaries come from the call graph between concerns, not from where
+functions sit on the page. Mapping every top-level name to a concern and
 taking that graph leaves four edges running backwards, each a single call:
 
 ```
@@ -475,11 +475,11 @@ parameter, a struct and a pointer. `src/types.rs` has `i8` through `i64`,
 So missing: `i16`, `i32`, `isize`, `u16`, `u32`, `u64`, `usize`, `f32`, `f64`,
 `str`. The integers are width and signedness work through `type_size`,
 `align_of`, the loads and stores, and the C backend's `emit_ctype`. The floats
-are more: the assembly backend has no SSE at all, so it needs XMM registers, a
+are more. The assembly backend has no SSE at all, so it needs XMM registers, a
 second argument class in the calling convention, and float literals in the
 lexer.
 
-**Do the integers before the floats**, and note the bug the bootstrap had here.
+Do the integers before the floats, and note the bug the bootstrap had here.
 Mixed-width arithmetic truncated to the *narrower* operand, so an `i64`
 accumulator fed by `u8` bytes computed at eight bits. Every backend agreed on
 the wrong answer, so the differential oracle could not see it. Whatever is
@@ -495,7 +495,7 @@ allow for, so this and item 8 touch the same code.
 ## 10. Value generics and compile-time function arguments
 
 `$N: usize` and `$f: fn(T, T) -> bool`, with the signature bounds from item 2
-above. The Frost compiler monomorphizes over types only: `GenericFn` carries one
+above. The Frost compiler monomorphizes over types only. `GenericFn` carries one
 `tparam_off`/`tparam_len` and `Instance` carries one `arg`, so the first piece of
 work is that a template takes a list of parameters rather than one.
 
@@ -526,7 +526,7 @@ checks. It depends on item 10 for the compile-time function argument.
 
 ## 14. C functions returning a struct by value
 
-Item 4 above, ported: `src/c_abi.rs` classification for Microsoft x64, System V
+Item 4 above, ported. `src/c_abi.rs` classification for Microsoft x64, System V
 AMD64 and AAPCS64. The Frost compiler's C backend can do what the bootstrap's
 does and declare a real struct type, letting the C compiler classify it. Its
 assembly backend cannot, and needs the classification written out.
@@ -584,7 +584,7 @@ All three are closed. Kept because the reasoning is the useful part.
   generic, and no mangled symbol anywhere. The entry file is registered in the
   source map too, so every position now names a file rather than a bare line.
 - ~~The self-hosted compiler has no incremental or separate compilation
-  either, and it is undecided whether it should.~~ *Settled: yes, and it is
+  either, and it is undecided whether it should.~~ *Settled, yes, and it is
   item 18.* This was recorded for a while as a decision against, on the
   reasoning that the two compilers were under different promises. They are not.
   The Frost compiler is the one people will use, so it is under every promise

@@ -22,7 +22,7 @@ use crate::types::Type;
 // A module's identity has to be a property of the module, not of where the
 // machine happens to keep it, because private symbol names and the build cache
 // are both keyed on it. So identity is the path relative to the root it was
-// found under, with that root's label in front: a project file stays
+// found under, with that root's label in front. A project file stays
 // `lib/slab.frost` exactly as before, and a standard library module is
 // `std/maybe.frost` wherever the standard library is installed.
 #[derive(Debug, Clone)]
@@ -49,7 +49,7 @@ impl SearchRoot {
 
 // A test block lowers to a function, and a test's body calls `assert`, which
 // only exists when the test harness declares it. So an imported module's tests
-// have to be dropped rather than spliced: otherwise a library with tests breaks
+// have to be dropped rather than spliced. Otherwise a library with tests breaks
 // every program that imports it, and `--test` on a program would run its
 // dependencies' tests as well as its own.
 //
@@ -128,7 +128,7 @@ pub struct Resolved {
     pub linear_types: HashSet<String>,
     pub tests: Vec<(String, String)>,
     // One per imported module, and empty unless interface checking is on. The
-    // compiler does not build from these yet; see step 2 of
+    // compiler does not build from these yet. See step 2 of
     // docs/separate-compilation.md.
     pub interfaces: Vec<crate::interface::ModuleInterface>,
     // One per imported module, and empty without a build cache. What the driver
@@ -182,7 +182,7 @@ pub struct Resolution<'a> {
 
 // Step 5 of docs/separate-compilation.md. With a cache, a module whose own
 // source and whose imported interfaces are all unchanged is not read past its
-// first line: it contributes the interface the cache already holds, and its
+// first line. It contributes the interface the cache already holds, and its
 // object is linked rather than built.
 pub fn resolve_imports_cached(
     statements: Vec<Spanned<Statement>>,
@@ -286,7 +286,7 @@ struct Planned {
     source_hash: String,
     imports: Vec<String>,
     // Absent when the module was answered for from the cache, which is the
-    // whole point: its source was never parsed.
+    // whole point. Its source was never parsed.
     parsed: Option<ParsedModule>,
     interface: ModuleInterface,
     interface_hash: String,
@@ -487,7 +487,7 @@ struct Walk<'a> {
     plans: Plans,
     // Which module exported each name, so a second module exporting the same one
     // is a collision rather than a silent overwrite. Only exported names are
-    // tracked; a private name is renamed per module and cannot clash.
+    // tracked. A private name is renamed per module and cannot clash.
     exported_by: HashMap<String, PathBuf>,
 }
 
@@ -530,7 +530,7 @@ impl Walk<'_> {
             // definitions of it, and a reference elsewhere would bind to
             // whichever the resolver reached first. The flat namespace is
             // deliberate (a name carries its own prefix), so this is a loud
-            // error, not a silent pick; the fix is to prefix one of them.
+            // error, not a silent pick. The fix is to prefix one of them.
             for name in &exports {
                 if let Some(first) = self.exported_by.get(name)
                     && first != &full
@@ -560,7 +560,7 @@ impl Walk<'_> {
     // What a planned module contributes. A module the plan could answer for
     // contributes its interface and its own import lines, which is exactly what
     // the `FROST_BUILD_FROM_INTERFACES` oracle has been checking on every commit
-    // since step 4; the difference is that here its object is not rebuilt
+    // since step 4. The difference is that here its object is not rebuilt
     // either.
     fn planned_module(&mut self, key: &Path) -> Result<Contribution> {
         let planned = self
@@ -674,7 +674,7 @@ fn check_and_reduce(
     // declarations and not dependencies, and the modules behind them still have
     // to be reached. Everything else the module declared is replaced by the
     // interface's view of it, so anything it kept private and nothing reaches
-    // is simply gone.
+    // is gone.
     if crate::interface::built_from_interfaces() {
         let mut rebuilt: Vec<Spanned<Statement>> = statements
             .iter()

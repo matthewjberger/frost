@@ -343,7 +343,7 @@ generic_fn_of :: fn(mut p: Parser, fn_index: i64) -> i64 {
 // Determine the concrete argument tuple of a generic call: the explicit `$Type`
 // and `$value` arguments in order if there are any, otherwise the single
 // argument inferred from the first runtime argument whose type is a generic
-// instance. The first argument is returned; any beyond it are left in the
+// instance. The first argument is returned. Any beyond it are left in the
 // `gargs` arena at p.call_xarg_start for p.call_xarg_count entries.
 call_type_args :: fn(mut p: Parser, head: i64) -> i64 {
     mut count : i64 = 0
@@ -428,7 +428,7 @@ note_type_args :: fn(mut p: Parser, arg: i64, xarg_start: i64, xarg_count: i64) 
     }
     // A call inside a generic template names the enclosing parameter as its
     // argument, so its argument is the unbound placeholder. That call is
-    // re-parsed with a real argument for each instance; the placeholder itself
+    // re-parsed with a real argument for each instance. The placeholder itself
     // must not drive an instantiation, which would emit a `^T` for a T that is
     // no type.
     mut g : i64 = 0

@@ -9,14 +9,14 @@ One rule about identity is what makes the other four safe.
 
 ## The order
 
-1. **Beside the importing file.** Always tried first, and always tried, because
+1. Beside the importing file. Always tried first, and always tried, because
    a file's neighbours are the most specific thing it could mean and because
    every program written before this relied on it.
-2. **`-L DIR` on the command line**, repeatable, in the order given.
-3. **`FROST_PATH`**, split the way the platform splits a path list.
-4. **The project manifest**, `frost.json` beside the file named on the command
+2. `-L DIR` on the command line, repeatable, in the order given.
+3. `FROST_PATH`, split the way the platform splits a path list.
+4. The project manifest, `frost.json` beside the file named on the command
    line, which may declare `paths`.
-5. **The standard library.**
+5. The standard library.
 
 Command line beats environment beats project file, which is the order of how
 deliberately each one was said. The standard library is last so a project can
@@ -43,8 +43,8 @@ JSON and a second format is a second thing to learn.
 
 `std/` in this repository. It is found, in order, at `FROST_STD` if that is set,
 then `std` beside the compiler, which is what an installed layout looks like,
-then two directories up from the compiler, which is what `cargo build` produces:
-the binary lands in `target/debug` and the library is at the repository root.
+then two directories up from the compiler, which is what `cargo build` produces.
+The binary lands in `target/debug` and the library is at the repository root.
 
 So `import "maybe.frost"` works from anywhere with nothing declared.
 
@@ -56,7 +56,7 @@ over `str`, whose only primitives are `str_len` and `s[i]`. `std/io.frost` is
 the runtime's emit helpers wrapped so a first program does not have to declare
 `printf` itself.
 
-**A module's `test` blocks are its own.** They are compiled when that file is the
+A module's `test` blocks are its own. They are compiled when that file is the
 one named to `--test`, and dropped when it is imported, so a library with tests
 does not drag the test harness into every program that uses it and `--test` on a
 program runs its tests rather than its dependencies'. `frost --test std/` runs
@@ -69,12 +69,12 @@ mangled from it and the build cache is keyed on it, so if identity varied by
 install path then a cached object would not be portable and two machines would
 disagree about a symbol.
 
-So identity is **the path relative to the root the module was found under, with
-that root's label in front**:
+So identity is the path relative to the root the module was found under, with
+that root's label in front:
 
-- a file in the project stays `lib/slab.frost`, exactly as before;
+- a file in the project stays `lib/slab.frost`, exactly as before.
 - a standard library module is `std/maybe.frost` wherever the standard library
-  is installed;
+  is installed.
 - a file from `-L`, `FROST_PATH` or the manifest is named relative to that
   directory.
 

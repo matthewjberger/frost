@@ -8,7 +8,7 @@ use crate::parser::{Expression, Parameter, Spanned, Statement};
 use crate::types::Type;
 
 // What the compiler remembers about a module between builds. Step 5 of
-// docs/separate-compilation.md: a module is rebuilt only when its own source or
+// docs/separate-compilation.md. A module is rebuilt only when its own source or
 // an imported interface changes, and this is the thing that answers that
 // question without reading the module.
 //
@@ -116,7 +116,7 @@ pub(crate) fn digest(text: &str) -> String {
 // most of the edits anyone makes.
 //
 // The bodies stay in the interface itself. They are how the module's own object
-// gets built when it is the module being rebuilt; it is only the fingerprint
+// gets built when it is the module being rebuilt. It is only the fingerprint
 // that looks past them.
 pub fn interface_fingerprint(interface: &ModuleInterface) -> Result<String> {
     let mut view = interface.clone();
@@ -149,7 +149,7 @@ fn blank_ordinary_body(statement: &mut Statement) {
 // into the object about to be linked and walking it again is the last piece of
 // the front end that is still whole-program. A generic keeps its body, because
 // the caller is what stamps out the template. Everything else is carried as it
-// stands: a type is layout the caller lays out its own frame with, and a
+// stands. A type is layout the caller lays out its own frame with, and a
 // constant is a value.
 pub fn as_declaration(statement: &Statement) -> Option<Statement> {
     let Statement::Constant(name, value) = statement else {
@@ -319,7 +319,7 @@ mod tests {
         )
     }
 
-    // The whole distinction step 5 rests on: an ordinary body is the module's
+    // The whole distinction step 5 rests on. An ordinary body is the module's
     // own business, a generic body is its callers' business too.
     #[test]
     fn an_ordinary_body_is_not_part_of_the_fingerprint() {

@@ -1,7 +1,7 @@
 // OS threads. A thread runs a `fn(^u8)` with a context pointer the spawner
 // supplies, and a join waits for it to finish. The context is a raw pointer
 // because a thread crosses into C, where the body is a `void (*)(void*)` and the
-// context is its `void*`; the body casts it back to the type it knows.
+// context is its `void*`. The body casts it back to the type it knows.
 //
 // This is the reasonable-C floor rather than a checked concurrency model. The
 // spawner owns the context and must keep it alive until the join, and any state

@@ -1,4 +1,4 @@
-# Frost vs Rust: Syntax Design Advantages
+# Frost vs Rust syntax design advantages
 
 This is an analysis of the syntax differences between Rust and Frost, read
 through one lens. Frost is a minimal, borrow-checked, procedurally oriented
@@ -51,16 +51,16 @@ and `name :: extern fn(...)` are all the same grammar production,
 
 The uniform form means the following.
 
-**The name always comes first and left-aligned.** Answering "where is Point
+The name always comes first and left-aligned. Answering "where is Point
 defined" is searching for `Point ::`, no matter what kind of thing Point is. In
 Rust you need to know what kind of item you are looking for before you can grep
 for it.
 
-**One grammar rule instead of five.** A smaller parser, a smaller spec, and for
+One grammar rule instead of five. A smaller parser, a smaller spec, and for
 a model author, one pattern to emit rather than five keyword orderings to keep
 straight.
 
-**Functions become ordinary values by construction.** See the next section.
+Functions become ordinary values by construction. See the next section.
 
 ## 2. Functions as values, anonymous functions for free
 
@@ -108,7 +108,7 @@ function and referenced by its address, so passing one inline or binding it to a
 name both work. There is no capture, which is what keeps this pure lambda
 lifting rather than a closure.
 
-**Caveat. Functions, not closures.** This gives anonymous functions for free,
+Caveat. Functions, not closures. This gives anonymous functions for free,
 but not closures in the capturing sense. Whether `fn(x) { x + y }` may capture
 `y` from the enclosing scope, and how (by value, by borrow, with what lifetime),
 is a semantic decision the uniform syntax does not answer. Jai and Odin, which
@@ -157,7 +157,7 @@ rule. (Frost still uses one small local look-ahead elsewhere, to tell a struct
 literal from a `match` body, so this trade buys simplicity, not its total
 absence.)
 
-## 6. Postfix deref: `p^`
+## 6. Postfix deref `p^`
 
 Dereference chains read left to right in evaluation order with no wrapping
 parentheses:
@@ -172,13 +172,13 @@ and ergonomic at once, so the language needs no auto-deref machinery, and a
 reader (or a generator) never has to reason about where the compiler inserted a
 deref.
 
-## 7. One pointer type: `^T`
+## 7. One pointer type `^T`
 
 Rust has `*const T` and `*mut T`. Frost has one raw pointer type, `^T`, and moves
 mutability to bindings and borrows where it already lives. Less redundant state
 to keep consistent, less to write, less to keep in sync.
 
-## 8. Inferred variant shorthand: `.Circle`
+## 8. Inferred variant shorthand `.Circle`
 
 When the compiler already knows the scrutinee is a `Shape`, you do not repeat
 `Shape` in the pattern:
@@ -223,24 +223,24 @@ a file in with `import` makes its names available, and that is the whole story.
 
 ## Honest tradeoffs
 
-**Unbounded type parameters.** `$T` carries no bound, so an error about what a
+Unbounded type parameters. `$T` carries no bound, so an error about what a
 body requires of `T` surfaces at instantiation rather than at the declaration.
 This is the C++ template experience that Rust's trait bounds were designed to
 fix, where error messages point into the generic's body instead of at the call
 site's contract. If the corpus author is a model iterating against compiler
 output, that may be acceptable, but it is a real cost.
 
-The common case is narrower than it looks, and it is answered: a compile-time
+The common case is narrower than it looks, and it is answered. A compile-time
 function parameter can declare the signature it needs (`$before: fn(T, T) ->
 bool`), and a mismatch there is reported against the parameter list. What remains
 unbounded is what a body does with `T` itself, such as requiring it to be
 numeric.
 
-**Ergonomics traded for predictability.** Mandatory parentheses and explicit
+Ergonomics traded for predictability. Mandatory parentheses and explicit
 consumers cost some human ergonomics in exchange for machine predictability. That
 is a coherent trade given the audience, but it is a trade, not a free win.
 
-**Capture semantics still owed.** The uniform function syntax defers rather than
+Capture semantics still owed. The uniform function syntax defers rather than
 solves the closure-capture question. A borrow-checked language eventually has to
 answer it, and the answer will reintroduce either a restriction (no capture) or
 some syntax (capture lists).

@@ -16,7 +16,7 @@ use crate::types::Type;
 // A compiler that promises to stay fast should be able to say where its time
 // goes. `FROST_TIMINGS=1` reports the split between generating code for each
 // function and writing the object, which are the two halves of the backend and
-// want different answers: one parallelizes, the other wants more compilation
+// want different answers. One parallelizes, the other wants more compilation
 // units. Off unless asked for, and it prints to stderr so it never reaches
 // emitted output.
 // One ISA per thread. Sharing a single one across threads is allowed, but the
@@ -231,7 +231,7 @@ struct Decls {
     functions: HashMap<FuncId, (Signature, bool)>,
     data: HashMap<DataId, bool>,
     // How C returns each extern that returns an aggregate. Frost returns its
-    // own aggregates through a hidden out-pointer no matter what they are; C
+    // own aggregates through a hidden out-pointer no matter what they are. C
     // does not, so a call to one of these is emitted from what
     // `src/c_abi.rs` says the target does rather than from what Frost does.
     c_returns: HashMap<String, (CLayout, CReturn)>,

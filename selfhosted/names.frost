@@ -255,7 +255,7 @@ register_const :: fn(mut p: Parser, offset: i64, length: i64, value: i64) {
 }
 
 // Whether a declaration whose name sits at `decl_off` may be named from
-// `use_off`. A file's own names are its own to use; another file's are only
+// `use_off`. A file's own names are its own to use. Another file's are only
 // what it exported. The declaration's offset is what says which file wrote it,
 // so no table has to carry an owner.
 //
@@ -415,13 +415,13 @@ set_field_next :: fn(mut p: Parser, id: i64, next_id: i64) {
 // Indirect: a raw pointer or a borrow, both a C pointer and both auto-derefed.
 // A pointer (raw or borrow) is 8 bytes and emits a trailing `*`. The value
 // generic codes and the function-pointer codes ride above CONST_BASE and are
-// not pointers, even though they are numerically larger: a value is resolved
+// not pointers, even though they are numerically larger. A value is resolved
 // away before it is a type, and a function pointer emits its own declarator.
 is_pointer :: fn(ty: i64) -> bool {
     ty >= POINTER_BASE && ty < CONST_BASE
 }
 
-// A borrow carries the flag; a raw pointer is indirect without it.
+// A borrow carries the flag. A raw pointer is indirect without it.
 is_borrow :: fn(ty: i64) -> bool {
     ty >= BORROW_FLAG && ty < CONST_BASE
 }
@@ -432,7 +432,7 @@ is_raw_pointer :: fn(ty: i64) -> bool {
 
 // A function pointer: the address of a function of a given signature, a
 // callable value. It is not a data pointer, so it is never dereferenced,
-// indexed, or gated; it is called, directly through a name or through a cast on
+// indexed, or gated. It is called, directly through a name or through a cast on
 // a value of this type.
 is_proc :: fn(ty: i64) -> bool {
     ty >= PROC_BASE
@@ -659,7 +659,7 @@ columns_fields_match :: fn(mut p: Parser, candidate: i64, element: i64) -> bool 
     true
 }
 
-// `columns_new()` is a compiler builtin, not a real function: it stands for a
+// `columns_new()` is a compiler builtin, not a real function. It stands for a
 // zeroed container of the type the context wants, recognized by name at the
 // call node so neither backend emits a real call to it.
 is_columns_new_call :: fn(mut p: Parser, value: i64) -> bool {
@@ -702,7 +702,7 @@ columns_lookup :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
 // Resolve a type name (byte range) to a type code: the current generic type
 // parameter (bound to its concrete type while monomorphizing, otherwise the
 // TY_PARAM placeholder), a primitive keyword, or the named struct. A generic
-// template struct is not returned here; `Name<Arg>` instantiation is handled in
+// template struct is not returned here. `Name<Arg>` instantiation is handled in
 // parse_type. An unknown name falls back to i64.
 type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     if (p.type_param_len == length
@@ -771,7 +771,7 @@ gargs_equal :: fn(mut p: Parser, a_start: i64, b_start: i64, count: i64) -> bool
 
 // The number a value generic parameter is bound to, or -1 when the name is not
 // a bound value parameter. A value binding, whether the primary one or one on
-// the stack, holds CONST_BASE plus the number; this hands back the number, for
+// the stack, holds CONST_BASE plus the number. This hands back the number, for
 // an array length `[N]T` or an occurrence of `N` in an expression.
 value_binding_of :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     if (p.binding_active == 1 && p.type_param_len == length
