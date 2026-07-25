@@ -12,7 +12,7 @@ emit_source :: fn(src: ^i8, off: i64, len: i64) {
     unsafe {
         mut k : i64 = 0
         while (k < len) {
-            frost_emit_char(frost_byte_at(src, off + k))
+            frost_rt_emit_char(frost_rt_byte_at(src, off + k))
             k = k + 1
         }
     }
@@ -31,7 +31,7 @@ literal_length :: fn(src: ^i8, off: i64, len: i64) -> i64 {
         mut k : i64 = 0
         mut count : i64 = 0
         while (k < len) {
-            b := frost_byte_at(src, off + k)
+            b := frost_rt_byte_at(src, off + k)
             if (b == CH_BACKSLASH) {
                 k = k + 1
                 count = count + 1
@@ -50,23 +50,23 @@ emit_string_content :: fn(src: ^i8, off: i64, len: i64) {
     unsafe {
         mut k : i64 = 0
         while (k < len) {
-            b := frost_byte_at(src, off + k)
+            b := frost_rt_byte_at(src, off + k)
             if (b == CH_BACKSLASH) {
-                frost_emit_char(b)
+                frost_rt_emit_char(b)
                 k = k + 1
                 if (k < len) {
-                    frost_emit_char(frost_byte_at(src, off + k))
+                    frost_rt_emit_char(frost_rt_byte_at(src, off + k))
                 }
             } else if (b == CH_LF) {
-                frost_emit_char(CH_BACKSLASH)
-                frost_emit_char(CH_LOWER_N)
+                frost_rt_emit_char(CH_BACKSLASH)
+                frost_rt_emit_char(CH_LOWER_N)
             } else if (b == CH_TAB) {
-                frost_emit_char(CH_BACKSLASH)
-                frost_emit_char(CH_LOWER_T)
+                frost_rt_emit_char(CH_BACKSLASH)
+                frost_rt_emit_char(CH_LOWER_T)
             } else if (b == CH_CR) {
                 k = k
             } else {
-                frost_emit_char(b)
+                frost_rt_emit_char(b)
             }
             k = k + 1
         }

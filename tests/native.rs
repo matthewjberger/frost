@@ -355,17 +355,17 @@ fn native_out_of_bounds_index_aborts() {
 // worklist hardest. Both backends must agree.
 const MAP_LIBRARY: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
-frost_heap_alloc :: extern fn(size: i64) -> ^u8
-frost_heap_free  :: extern fn(block: ^u8)
+frost_rt_heap_alloc :: extern fn(size: i64) -> ^u8
+frost_rt_heap_free  :: extern fn(block: ^u8)
 
 Map :: struct($V: Type) { keys: ^i64, values: ^V, state: ^u8, cap: i64, count: i64 }
 
 map_new :: fn($V: Type, capacity: i64) -> Map<V> {
     mut cap : i64 = 8
     while (cap < capacity) { cap = cap * 2 }
-    keys := unsafe { ptr_cast($i64, frost_heap_alloc(cap * 8)) }
-    values := unsafe { ptr_cast($V, frost_heap_alloc(cap * sizeof(V))) }
-    state := unsafe { ptr_cast($u8, frost_heap_alloc(cap)) }
+    keys := unsafe { ptr_cast($i64, frost_rt_heap_alloc(cap * 8)) }
+    values := unsafe { ptr_cast($V, frost_rt_heap_alloc(cap * sizeof(V))) }
+    state := unsafe { ptr_cast($u8, frost_rt_heap_alloc(cap)) }
     mut i : i64 = 0
     while (i < cap) { unsafe { state[i] = 0 }  i = i + 1 }
     Map { keys = keys, values = values, state = state, cap = cap, count = 0 }
@@ -397,7 +397,7 @@ map_grow :: fn($V: Type, mut m: Map<V>) {
         if (unsafe { os[i] } == 1) { map_insert($V, m, unsafe { ok[i] }, unsafe { ov[i] }) }
         i = i + 1
     }
-    unsafe { frost_heap_free(ptr_cast($u8, ok))  frost_heap_free(ptr_cast($u8, ov))  frost_heap_free(os) }
+    unsafe { frost_rt_heap_free(ptr_cast($u8, ok))  frost_rt_heap_free(ptr_cast($u8, ov))  frost_rt_heap_free(os) }
 }
 map_put :: fn($V: Type, mut m: Map<V>, key: i64, move value: $V) {
     if (m.count * 2 >= m.cap) { map_grow($V, m) }
@@ -427,7 +427,7 @@ main :: fn() -> i64 {
     printf("%lld\n", map_get($i64, m, 999, 0 - 1))
     if (map_remove($i64, m, 7)) { printf("%lld\n", 1) }
     if (map_has($i64, m, 7)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
-    unsafe { frost_heap_free(ptr_cast($u8, m.keys)) }
+    unsafe { frost_rt_heap_free(ptr_cast($u8, m.keys)) }
     0
 }
 map_len_i :: fn(m: Map<i64>) -> i64 { m.count }
@@ -439,23 +439,23 @@ map_len_i :: fn(m: Map<i64>) -> i64 { m.count }
 // was a compiler fix. Both backends must agree.
 const VEC_LIBRARY: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
-frost_heap_alloc   :: extern fn(size: i64) -> ^u8
-frost_heap_realloc :: extern fn(block: ^u8, size: i64) -> ^u8
-frost_heap_free    :: extern fn(block: ^u8)
+frost_rt_heap_alloc   :: extern fn(size: i64) -> ^u8
+frost_rt_heap_realloc :: extern fn(block: ^u8, size: i64) -> ^u8
+frost_rt_heap_free    :: extern fn(block: ^u8)
 
 Vec :: struct($T: Type) { data: ^T, len: i64, cap: i64 }
 
 vec_new :: fn($T: Type, capacity: i64) -> Vec<T> {
     mut room := capacity
     if (room < 1) { room = 1 }
-    block := unsafe { frost_heap_alloc(room * sizeof(T)) }
+    block := unsafe { frost_rt_heap_alloc(room * sizeof(T)) }
     Vec { data = unsafe { ptr_cast($T, block) }, len = 0, cap = room }
 }
 vec_push :: fn($T: Type, mut v: Vec<T>, move value: $T) {
     if (v.len >= v.cap) {
         mut room := v.cap * 2
         if (room < 1) { room = 1 }
-        v.data = unsafe { ptr_cast($T, frost_heap_realloc(ptr_cast($u8, v.data), room * sizeof(T))) }
+        v.data = unsafe { ptr_cast($T, frost_rt_heap_realloc(ptr_cast($u8, v.data), room * sizeof(T))) }
         v.cap = room
     }
     unsafe { v.data[v.len] = value }
@@ -477,7 +477,7 @@ main :: fn() -> i64 {
     mut j : i64 = 0
     while (j < vec_len($i64, v)) { sum = sum + vec_get($i64, v, j)  j = j + 1 }
     printf("%lld\n", sum)
-    unsafe { frost_heap_free(ptr_cast($u8, v.data)) }
+    unsafe { frost_rt_heap_free(ptr_cast($u8, v.data)) }
     0
 }
 "#;
@@ -4242,21 +4242,21 @@ fn self_hosted_nested_generic() {
 // value (the allocation and the pointer cast), and the heap runtime, all of
 // which the value-generics work and the fixes around it brought in.
 const SELFHOSTED_VEC: &str = concat!(
-    "frost_heap_alloc :: extern fn(size: i64) -> ^u8\n",
-    "frost_heap_realloc :: extern fn(block: ^u8, size: i64) -> ^u8\n",
-    "frost_heap_free :: extern fn(block: ^u8)\n",
+    "frost_rt_heap_alloc :: extern fn(size: i64) -> ^u8\n",
+    "frost_rt_heap_realloc :: extern fn(block: ^u8, size: i64) -> ^u8\n",
+    "frost_rt_heap_free :: extern fn(block: ^u8)\n",
     "Vec :: struct($T: Type) { data: ^T, len: i64, cap: i64 }\n",
     "vec_new :: fn($T: Type, capacity: i64) -> Vec<T> {\n",
     "    mut room := capacity\n",
     "    if (room < 1) { room = 1 }\n",
-    "    block := unsafe { frost_heap_alloc(room * sizeof(T)) }\n",
+    "    block := unsafe { frost_rt_heap_alloc(room * sizeof(T)) }\n",
     "    Vec { data = unsafe { ptr_cast($T, block) }, len = 0, cap = room }\n",
     "}\n",
     "vec_push :: fn($T: Type, mut v: Vec<T>, move value: $T) {\n",
     "    if (v.len >= v.cap) {\n",
     "        mut room := v.cap * 2\n",
     "        if (room < 1) { room = 1 }\n",
-    "        v.data = unsafe { ptr_cast($T, frost_heap_realloc(ptr_cast($u8, v.data), room * sizeof(T))) }\n",
+    "        v.data = unsafe { ptr_cast($T, frost_rt_heap_realloc(ptr_cast($u8, v.data), room * sizeof(T))) }\n",
     "        v.cap = room\n",
     "    }\n",
     "    unsafe { v.data[v.len] = value }\n",
@@ -4264,7 +4264,7 @@ const SELFHOSTED_VEC: &str = concat!(
     "}\n",
     "vec_get :: fn($T: Type, v: Vec<T>, index: i64) -> $T { unsafe { v.data[index] } }\n",
     "vec_len :: fn($T: Type, v: Vec<T>) -> i64 { v.len }\n",
-    "vec_free :: fn($T: Type, move v: Vec<T>) { unsafe { frost_heap_free(ptr_cast($u8, v.data)) } }\n",
+    "vec_free :: fn($T: Type, move v: Vec<T>) { unsafe { frost_rt_heap_free(ptr_cast($u8, v.data)) } }\n",
     "main :: fn() -> i64 {\n",
     "    mut v : Vec<i64> = vec_new($i64, 2)\n",
     "    vec_push($i64, v, 10)\n",
@@ -4512,7 +4512,7 @@ fn bootstrap_columns_container_both_backends() {
 
 // The `print` statement, compiled by the BOOTSTRAP on both backends. It was a
 // self-hosted-only statement; the bootstrap now has it too, lowering an integer
-// through frost_print_i64 (%lld) and a float through frost_print_f64 (%g), the
+// through frost_rt_print_i64 (%lld) and a float through frost_rt_print_f64 (%g), the
 // same two forms the self-hosted compiler emits inline. Parity: a program using
 // `print` now compiles on either compiler.
 const PRINT_STATEMENT: &str = concat!(
@@ -4940,7 +4940,7 @@ Document :: struct { source: str, at: i64 }
 
 Outer :: struct { inner: Document }
 
-read_byte :: fn(document: Document, index: i64) -> i64 {
+byte_at :: fn(document: Document, index: i64) -> i64 {
     document.source[index]
 }
 
@@ -4948,7 +4948,7 @@ main :: fn() -> i64 {
     document := Document { source = "hello", at = 1 }
     printf("%lld\n", document.source[0])
     printf("%lld\n", document.source[document.at])
-    printf("%lld\n", read_byte(document, 4))
+    printf("%lld\n", byte_at(document, 4))
     printf("%lld\n", str_len(document.source))
 
     outer := Outer { inner = document }
@@ -4963,6 +4963,48 @@ fn native_str_held_in_a_struct_is_indexable() {
         return;
     };
     assert_eq!(output, "104\n101\n111\n5\n108\n");
+}
+
+// Every name here belongs to a runtime symbol. A Frost function is emitted as
+// `frost_u_<name>` and the runtime owns `frost_rt_<name>`, so the two sets are
+// disjoint at a fixed position and no name is reserved. `byte_at` used to fail
+// to link, and there was no list saying which other names would.
+const RUNTIME_SYMBOL_NAMES: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+byte_at :: fn(text: str, index: i64) -> i64 { text[index] }
+str_len :: fn(n: i64) -> i64 { n * 2 }
+die :: fn(n: i64) -> i64 { n + 1 }
+error :: fn(n: i64) -> i64 { n + 2 }
+slot :: fn(n: i64) -> i64 { n + 3 }
+getenv :: fn(n: i64) -> i64 { n + 4 }
+mem_set :: fn(n: i64) -> i64 { n + 5 }
+bounds_check :: fn(n: i64) -> i64 { n + 6 }
+check_index :: fn(n: i64) -> i64 { n + 7 }
+assert_at :: fn(n: i64) -> i64 { n + 8 }
+print_i64 :: fn(n: i64) -> i64 { n + 9 }
+heap_alloc :: fn(n: i64) -> i64 { n + 10 }
+// A name in the runtime's own prefix space, which a Frost function reaches
+// only by being called this and so must not land on the runtime's `slot`.
+rt_slot :: fn(n: i64) -> i64 { n + 11 }
+
+main :: fn() -> i64 {
+    printf("%lld\n", byte_at("hello", 1))
+    printf("%lld\n", str_len(1))
+    printf("%lld\n", die(1) + error(1) + slot(1) + getenv(1))
+    printf("%lld\n", mem_set(1) + bounds_check(1) + check_index(1))
+    printf("%lld\n", assert_at(1) + print_i64(1) + heap_alloc(1))
+    printf("%lld\n", rt_slot(1))
+    0
+}
+"#;
+
+#[test]
+fn a_frost_function_may_carry_a_runtime_symbols_name() {
+    let Some(output) = compile_and_run("rtnames", RUNTIME_SYMBOL_NAMES) else {
+        return;
+    };
+    assert_eq!(output, "101\n2\n14\n21\n30\n12\n");
 }
 
 const STR_OUT_OF_BOUNDS: &str = r#"
@@ -5609,7 +5651,7 @@ fn native_generic_construction_inference() {
 
 const LINEAR_RESOURCE_NATIVE: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
-frost_read_i64 :: extern fn(data: File) -> i64
+frost_rt_read_i64 :: extern fn(data: File) -> i64
 
 File :: linear struct { fd: i64 }
 
@@ -5617,7 +5659,7 @@ open :: fn(n: i64) -> File { File { fd = n } }
 
 main :: fn() -> i64 {
     f := open(42)
-    printf("%lld\n", frost_read_i64(f))
+    printf("%lld\n", frost_rt_read_i64(f))
     0
 }
 "#;
@@ -6674,6 +6716,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_borrowstruct", BORROW_STRUCT_LITERAL),
         ("diff_explicittypes", EXPLICIT_TYPE_ARGUMENTS),
         ("diff_strfield", STR_IN_A_FIELD),
+        ("diff_rtnames", RUNTIME_SYMBOL_NAMES),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
@@ -7345,7 +7388,7 @@ fn a_compile_time_function_argument_specializes_and_calls_directly() {
         "expected a specialization named for the function:\n{c_source}"
     );
     assert!(
-        c_source.contains("= frost_cmp("),
+        c_source.contains("= frost_u_cmp("),
         "expected a direct call to the comparator:\n{c_source}"
     );
 }

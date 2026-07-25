@@ -478,7 +478,7 @@ impl Generator {
             self.functions.insert("memcpy".to_string(), func_id);
         }
 
-        for name in ["frost_bounds_check", "frost_generation_check"] {
+        for name in ["frost_rt_bounds_check", "frost_rt_generation_check"] {
             if self.functions.contains_key(name) {
                 continue;
             }
@@ -491,44 +491,45 @@ impl Generator {
             self.functions.insert(name.to_string(), func_id);
         }
 
-        if !self.functions.contains_key("frost_mem_set") {
+        if !self.functions.contains_key("frost_rt_mem_set") {
             let mut signature = self.decls.make_signature();
             signature.params.push(AbiParam::new(types::I64));
             signature.params.push(AbiParam::new(types::I64));
             signature.params.push(AbiParam::new(types::I64));
             let func_id = object.declare_function(
-                "frost_mem_set",
-                Linkage::Import,
-                &signature,
-            )?;
-            self.decls.functions.insert(func_id, (signature, false));
-            self.functions.insert("frost_mem_set".to_string(), func_id);
-        }
-
-        if !self.functions.contains_key("frost_print_i64") {
-            let mut signature = self.decls.make_signature();
-            signature.params.push(AbiParam::new(types::I64));
-            let func_id = object.declare_function(
-                "frost_print_i64",
+                "frost_rt_mem_set",
                 Linkage::Import,
                 &signature,
             )?;
             self.decls.functions.insert(func_id, (signature, false));
             self.functions
-                .insert("frost_print_i64".to_string(), func_id);
+                .insert("frost_rt_mem_set".to_string(), func_id);
         }
 
-        if !self.functions.contains_key("frost_print_f64") {
+        if !self.functions.contains_key("frost_rt_print_i64") {
+            let mut signature = self.decls.make_signature();
+            signature.params.push(AbiParam::new(types::I64));
+            let func_id = object.declare_function(
+                "frost_rt_print_i64",
+                Linkage::Import,
+                &signature,
+            )?;
+            self.decls.functions.insert(func_id, (signature, false));
+            self.functions
+                .insert("frost_rt_print_i64".to_string(), func_id);
+        }
+
+        if !self.functions.contains_key("frost_rt_print_f64") {
             let mut signature = self.decls.make_signature();
             signature.params.push(AbiParam::new(types::F64));
             let func_id = object.declare_function(
-                "frost_print_f64",
+                "frost_rt_print_f64",
                 Linkage::Import,
                 &signature,
             )?;
             self.decls.functions.insert(func_id, (signature, false));
             self.functions
-                .insert("frost_print_f64".to_string(), func_id);
+                .insert("frost_rt_print_f64".to_string(), func_id);
         }
 
         Ok(())

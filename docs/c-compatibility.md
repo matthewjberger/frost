@@ -75,9 +75,9 @@ that both backends link automatically. Programs reach it through the same
 `extern fn` mechanism:
 
 ```frost
-frost_bounds_check :: extern fn(index: i64, length: i64)
-frost_assert       :: extern fn(cond: bool)
-frost_read_file    :: extern fn(path: ^i8) -> ^i8
+frost_rt_bounds_check :: extern fn(index: i64, length: i64)
+frost_rt_assert       :: extern fn(cond: bool)
+frost_rt_read_file    :: extern fn(path: ^i8) -> ^i8
 ```
 
 Its interface is intentionally scalar-only. Nothing is passed or returned by

@@ -6,47 +6,47 @@
 // nothing else, so a fixed or static-arena Frost program reaches a target with
 // no libc at all. Output is the process exit code.
 
-typedef long long frost_i64;
-typedef unsigned long long frost_usize;
+typedef long long frost_rt_i64;
+typedef unsigned long long frost_rt_usize;
 
-void *memcpy(void *destination, const void *source, frost_usize count) {
+void *memcpy(void *destination, const void *source, frost_rt_usize count) {
     unsigned char *to = (unsigned char *)destination;
     const unsigned char *from = (const unsigned char *)source;
-    for (frost_usize i = 0; i < count; i++) {
+    for (frost_rt_usize i = 0; i < count; i++) {
         to[i] = from[i];
     }
     return destination;
 }
 
-void frost_mem_set(void *destination, frost_i64 value, frost_i64 size) {
+void frost_rt_mem_set(void *destination, frost_rt_i64 value, frost_rt_i64 size) {
     unsigned char *to = (unsigned char *)destination;
-    for (frost_i64 i = 0; i < size; i++) {
+    for (frost_rt_i64 i = 0; i < size; i++) {
         to[i] = (unsigned char)value;
     }
 }
 
-void frost_bounds_check(frost_i64 index, frost_i64 length) {
-    if ((frost_usize)index >= (frost_usize)length) {
+void frost_rt_bounds_check(frost_rt_i64 index, frost_rt_i64 length) {
+    if ((frost_rt_usize)index >= (frost_rt_usize)length) {
         __builtin_trap();
     }
 }
 
-frost_i64 frost_check_index(frost_i64 index, frost_i64 length) {
-    frost_bounds_check(index, length);
+frost_rt_i64 frost_rt_check_index(frost_rt_i64 index, frost_rt_i64 length) {
+    frost_rt_bounds_check(index, length);
     return index;
 }
 
-void frost_generation_check(frost_i64 stored, frost_i64 expected) {
+void frost_rt_generation_check(frost_rt_i64 stored, frost_rt_i64 expected) {
     if (stored != expected) {
         __builtin_trap();
     }
 }
 
-frost_i64 frost_slot(frost_i64 handle, frost_i64 count, const frost_i64 *generations) {
-    frost_i64 index = handle & 0xffffffff;
-    frost_i64 generation = handle >> 32;
-    frost_bounds_check(index, count);
-    frost_generation_check(generations[index], generation);
+frost_rt_i64 frost_rt_slot(frost_rt_i64 handle, frost_rt_i64 count, const frost_rt_i64 *generations) {
+    frost_rt_i64 index = handle & 0xffffffff;
+    frost_rt_i64 generation = handle >> 32;
+    frost_rt_bounds_check(index, count);
+    frost_rt_generation_check(generations[index], generation);
     return index;
 }
 

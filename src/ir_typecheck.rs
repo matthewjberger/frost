@@ -13,11 +13,11 @@ struct Signature {
 }
 
 const RUNTIME_INTRINSICS: &[&str] = &[
-    "frost_bounds_check",
-    "frost_generation_check",
-    "frost_mem_set",
-    "frost_print_i64",
-    "frost_print_f64",
+    "frost_rt_bounds_check",
+    "frost_rt_generation_check",
+    "frost_rt_mem_set",
+    "frost_rt_print_i64",
+    "frost_rt_print_f64",
 ];
 
 fn is_runtime_intrinsic(name: &str) -> bool {

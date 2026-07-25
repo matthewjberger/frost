@@ -44,7 +44,7 @@ main :: fn() -> i64 {
             return 0
         }
         if (options.ok == 0) {
-            frost_die()
+            frost_rt_die()
         }
 
         // With no file named anywhere, the built-in demonstration program is what
@@ -55,7 +55,7 @@ main :: fn() -> i64 {
         mut modules : Arena<Module> = arena_make($Module, 1024)
         mut exports : Arena<Export> = arena_make($Export, 4096)
         export_names := ptr_cast($i8, malloc(SYNTH_ROOM))
-        if (frost_str_len(input_path) != 0) {
+        if (frost_rt_str_len(input_path) != 0) {
             // One buffer holds the root file and everything it imports, so a name
             // is an offset into a single source no matter which file wrote it.
             buffer := ptr_cast($i8, malloc(SOURCE_ROOM + SYNTH_ROOM))
@@ -65,7 +65,7 @@ main :: fn() -> i64 {
                 scratch, options.roots)
             source = buffer
         }
-        if (frost_str_len(source) == 0) {
+        if (frost_rt_str_len(source) == 0) {
             source = "
             strlen :: extern fn(s: ^i8) -> i64
 
@@ -146,7 +146,7 @@ main :: fn() -> i64 {
         }
         // The demo program is a literal with nowhere to write, so it needs the same
         // copy with room past the terminator that an imported source already has.
-        if (frost_str_len(input_path) == 0) {
+        if (frost_rt_str_len(input_path) == 0) {
             source = source_with_room(source)
         }
 
@@ -238,18 +238,18 @@ main :: fn() -> i64 {
         }
         // Names the compiler synthesizes go past the source's terminator, so the
         // first free byte is one past the text.
-        parser.synth_next = frost_str_len(source) + 1
+        parser.synth_next = frost_rt_str_len(source) + 1
         // The host convention by default. FROST_ABI overrides it so the other
         // target's output can be inspected from either host.
-        parser.abi_windows = frost_is_windows()
-        abi := frost_getenv("FROST_ABI")
+        parser.abi_windows = frost_rt_is_windows()
+        abi := frost_rt_getenv("FROST_ABI")
         if (cstr_eq(abi, "sysv")) {
             parser.abi_windows = 0
         }
         if (cstr_eq(abi, "win")) {
             parser.abi_windows = 1
         }
-        tokenize(source, frost_str_len(source), parser.tokens)
+        tokenize(source, frost_rt_str_len(source), parser.tokens)
         program := parse_program(parser)
         check_export_collisions(parser)
         collect_type_args(parser)
@@ -258,7 +258,7 @@ main :: fn() -> i64 {
         // On by default, the same as the bootstrap. FROST_CHECK_UNSAFE=0 turns
         // it off, for compiling code that has not marked its unchecked
         // operations yet.
-        if (cstr_eq(frost_getenv("FROST_CHECK_UNSAFE"), "0") == false) {
+        if (cstr_eq(frost_rt_getenv("FROST_CHECK_UNSAFE"), "0") == false) {
             check_unsafety(parser)
         }
         check_regions(parser)
@@ -273,9 +273,9 @@ main :: fn() -> i64 {
         mut executable : ^i8 = options.output
         mut emit_path : ^i8 = options.output
         if (options.link == 1) {
-            if (frost_str_len(executable) == 0) {
+            if (frost_rt_str_len(executable) == 0) {
                 executable = "a.out"
-                if (frost_is_windows() == 1) {
+                if (frost_rt_is_windows() == 1) {
                     executable = "a.exe"
                 }
             }
@@ -285,12 +285,12 @@ main :: fn() -> i64 {
                 emit_path = join_two(executable, ".c")
             }
         }
-        if (frost_str_len(emit_path) != 0) {
-            if (frost_emit_open(emit_path) == 0) {
+        if (frost_rt_str_len(emit_path) != 0) {
+            if (frost_rt_emit_open(emit_path) == 0) {
                 report("frost: cannot write '")
                 report_cstr(emit_path)
                 report("'")
-                frost_die()
+                frost_rt_die()
             }
         }
 
@@ -307,15 +307,15 @@ main :: fn() -> i64 {
             emit_text("#include <stdint.h>\n")
             emit_program(parser, program)
         }
-        frost_emit_close()
+        frost_rt_emit_close()
 
         if (options.link == 1) {
             // Every program links the C runtime: it holds the bounds check an
             // index compiles to, the assertion, the string and error emitters,
             // and the test runner a `--test` build needs. FROST_RUNTIME says
             // where it is for a checkout that is not the working directory.
-            mut runtime := frost_getenv("FROST_RUNTIME")
-            if (frost_str_len(runtime) == 0) {
+            mut runtime := frost_rt_getenv("FROST_RUNTIME")
+            if (frost_rt_str_len(runtime) == 0) {
                 runtime = "runtime/frost_runtime.c"
             }
             extra := join_two(" ", runtime)
@@ -331,11 +331,11 @@ main :: fn() -> i64 {
             // the C runtime, which is Linux and the BSDs. Windows keeps them in
             // the CRT, so the flag is only added off Windows.
             mut command := base
-            if (frost_is_windows() == 0) {
+            if (frost_rt_is_windows() == 0) {
                 command = join_two(base, " -lm")
             }
-            status := frost_run_command(command)
-            frost_remove_file(emit_path)
+            status := frost_rt_run_command(command)
+            frost_rt_remove_file(emit_path)
             if (status != 0) {
                 // Name the command, since a failing link is nearly always the
                 // toolchain being absent or a path it could not read, and
@@ -343,12 +343,12 @@ main :: fn() -> i64 {
                 report("frost: the linker failed: ")
                 report_cstr(command)
                 report("\n")
-                frost_die()
+                frost_rt_die()
             }
             // Building the tests and not running them would be half an answer, so
             // the process ends on what they said.
             if (options.testing == 1) {
-                return frost_run_command(executable)
+                return frost_rt_run_command(executable)
             }
         }
         0

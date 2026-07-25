@@ -647,7 +647,7 @@ a stale handle can never read or write freed-and-reused data.
 ### 10.4 Bounds checking
 
 Every fixed-array index is checked against the statically known length. An
-out-of-range index aborts (`frost_bounds_check`). There is no unchecked-index
+out-of-range index aborts (`frost_rt_bounds_check`). There is no unchecked-index
 form.
 
 ### 10.5 The six guarantees

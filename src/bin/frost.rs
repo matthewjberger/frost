@@ -138,16 +138,16 @@ fn test_harness(tests: &[(String, String)]) -> Vec<Spanned<Statement>> {
     // that possible has to own the call. See runtime/frost_runtime.c.
     let mut items = vec![
         external(
-            "frost_test_run",
+            "frost_rt_test_run",
             vec![
                 param("name", Type::Ptr(Box::new(Type::I8))),
                 param("body", Type::Proc(Vec::new(), Box::new(Type::Void))),
             ],
             None,
         ),
-        external("frost_test_summary", Vec::new(), Some(Type::I64)),
+        external("frost_rt_test_summary", Vec::new(), Some(Type::I64)),
         external(
-            "frost_assert_at",
+            "frost_rt_assert_at",
             vec![
                 param("cond", Type::Bool),
                 param("where", Type::Ptr(Box::new(Type::I8))),
@@ -159,7 +159,7 @@ fn test_harness(tests: &[(String, String)]) -> Vec<Spanned<Statement>> {
     let mut body = Vec::new();
     for (test_name, function_name) in tests {
         body.push(call_stmt(
-            "frost_test_run",
+            "frost_rt_test_run",
             vec![
                 Expression::Literal(Literal::String(test_name.clone())),
                 Expression::Identifier(function_name.clone()),
@@ -169,7 +169,7 @@ fn test_harness(tests: &[(String, String)]) -> Vec<Spanned<Statement>> {
     // The summary is the last expression, so its failure count is what `main`
     // answers with and what the process exits on.
     body.push(spanned(Statement::Expression(call(
-        "frost_test_summary",
+        "frost_rt_test_summary",
         Vec::new(),
     ))));
 

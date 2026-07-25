@@ -226,7 +226,7 @@ arr[5]   // aborts: "frost: index 5 out of bounds for length 3"
 ```
 
 The check is a single call to a small runtime routine
-(`frost_bounds_check(index, length)`) that aborts if the index is out of range.
+(`frost_rt_bounds_check(index, length)`) that aborts if the index is out of range.
 The comparison is unsigned, so a negative index (which would wrap to a huge
 unsigned value) is caught too. Valid accesses are unaffected. A silent
 out-of-bounds read or write, the classic C memory-safety hole, becomes a loud,

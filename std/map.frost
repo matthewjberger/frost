@@ -11,8 +11,8 @@
 export Map, map_new, map_free, map_len, map_put, map_get, map_has, map_remove,
     map_clear
 
-frost_heap_alloc :: extern fn(size: i64) -> ^u8
-frost_heap_free  :: extern fn(block: ^u8)
+frost_rt_heap_alloc :: extern fn(size: i64) -> ^u8
+frost_rt_heap_free  :: extern fn(block: ^u8)
 
 SLOT_EMPTY :: 0
 SLOT_USED  :: 1
@@ -31,9 +31,9 @@ Map :: struct($V: Type) {
 map_new :: fn($V: Type, capacity: i64) -> Map<V> {
     mut cap : i64 = 8
     while (cap < capacity) { cap = cap * 2 }
-    keys := unsafe { ptr_cast($i64, frost_heap_alloc(cap * 8)) }
-    values := unsafe { ptr_cast($V, frost_heap_alloc(cap * sizeof(V))) }
-    state := unsafe { ptr_cast($u8, frost_heap_alloc(cap)) }
+    keys := unsafe { ptr_cast($i64, frost_rt_heap_alloc(cap * 8)) }
+    values := unsafe { ptr_cast($V, frost_rt_heap_alloc(cap * sizeof(V))) }
+    state := unsafe { ptr_cast($u8, frost_rt_heap_alloc(cap)) }
     mut i : i64 = 0
     while (i < cap) {
         unsafe { state[i] = SLOT_EMPTY }
@@ -44,9 +44,9 @@ map_new :: fn($V: Type, capacity: i64) -> Map<V> {
 
 map_free :: fn($V: Type, move m: Map<V>) {
     unsafe {
-        frost_heap_free(ptr_cast($u8, m.keys))
-        frost_heap_free(ptr_cast($u8, m.values))
-        frost_heap_free(m.state)
+        frost_rt_heap_free(ptr_cast($u8, m.keys))
+        frost_rt_heap_free(ptr_cast($u8, m.values))
+        frost_rt_heap_free(m.state)
     }
 }
 
@@ -111,9 +111,9 @@ map_grow :: fn($V: Type, mut m: Map<V>) {
         i = i + 1
     }
     unsafe {
-        frost_heap_free(ptr_cast($u8, old_keys))
-        frost_heap_free(ptr_cast($u8, old_values))
-        frost_heap_free(old_state)
+        frost_rt_heap_free(ptr_cast($u8, old_keys))
+        frost_rt_heap_free(ptr_cast($u8, old_values))
+        frost_rt_heap_free(old_state)
     }
 }
 

@@ -156,7 +156,7 @@ field_type :: fn(mut p: Parser, base_ty: i64, off: i64, len: i64) -> i64 {
     report("' has no field '")
     report_src(p.src, off, len)
     report("'")
-    frost_die()
+    frost_rt_die()
     TY_I64
 }
 

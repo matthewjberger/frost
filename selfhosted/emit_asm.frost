@@ -21,7 +21,7 @@ asm :: fn(text: str) {
 asm_i :: fn(before: str, value: i64, after: str) {
     emit_text("    ")
     emit_text(before)
-    frost_emit_int(value)
+    frost_rt_emit_int(value)
     emit_text(after)
     emit_text("\n")
 }
@@ -29,7 +29,7 @@ asm_i :: fn(before: str, value: i64, after: str) {
 // A label definition, and a jump or branch to one.
 asm_label :: fn(name: str, id: i64) {
     emit_text(name)
-    frost_emit_int(id)
+    frost_rt_emit_int(id)
     emit_text(":\n")
 }
 
@@ -38,7 +38,7 @@ asm_jump :: fn(op: str, name: str, id: i64) {
     emit_text(op)
     emit_text(" ")
     emit_text(name)
-    frost_emit_int(id)
+    frost_rt_emit_int(id)
     emit_text("\n")
 }
 
@@ -90,7 +90,7 @@ new_label :: fn(mut p: Parser) -> i64 {
 
 emit_label :: fn(name: str, id: i64) {
     emit_text(name)
-    frost_emit_int(id)
+    frost_rt_emit_int(id)
 }
 
 // Locals are laid end to end from the top of the frame down, so a local sits
@@ -139,7 +139,7 @@ emit_asm_load_from :: fn(mut p: Parser, ty: i64, slot: i64, base: str) {
     }
     emit_text("    ")
     emit_text(op)
-    frost_emit_int(slot)
+    frost_rt_emit_int(slot)
     emit_text(base)
     emit_text(destination)
     emit_text("\n")
@@ -159,7 +159,7 @@ emit_asm_store_to :: fn(mut p: Parser, ty: i64, slot: i64, base: str) {
     }
     emit_text("    ")
     emit_text(op)
-    frost_emit_int(slot)
+    frost_rt_emit_int(slot)
     emit_text(base)
     emit_text("\n")
 }
@@ -349,7 +349,7 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
         if (is_pointer(through)) {
             through = pointee(through)
         }
-        // A handle names a slot in a slab. frost_slot validates it and answers
+        // A handle names a slot in a slab. frost_rt_slot validates it and answers
         // with the checked index, and the storage element at that index is the
         // place. This is the one index whose bound is a generation as well as a
         // length, so a handle to a released slot aborts here.
@@ -414,7 +414,7 @@ asm_unsupported :: fn(what: ^i8) {
     report("frost: the native backend does not handle ")
     report_cstr(what)
     report(" yet")
-    frost_die()
+    frost_rt_die()
 }
 
 // Bounds-check an index in %rax against a length in %r11, leaving the checked
@@ -430,14 +430,14 @@ emit_asm_bounds_call :: fn(mut p: Parser) {
     emit_asm_arg_reg(p, 1)
     emit_text("\n")
     asm_i("subq $", shadow, ", %rsp")
-    asm("call frost_check_index")
+    asm("call frost_rt_check_index")
     asm_i("addq $", shadow, ", %rsp")
 }
 
 // The address of a slab element named by a handle. The slab's address is kept
-// in a frame slot across frost_slot, which unpacks and validates the handle and
+// in a frame slot across frost_rt_slot, which unpacks and validates the handle and
 // answers with the checked slot index. That index scales into the storage run.
-// frost_slot takes the handle, the storage length, and the generations run, and
+// frost_rt_slot takes the handle, the storage length, and the generations run, and
 // aborts on an index out of range or a generation that has moved on.
 emit_asm_slab_addr :: fn(mut p: Parser, base: i64, base_ty: i64, through: i64,
     index_node: i64) {
@@ -468,7 +468,7 @@ emit_asm_slab_addr :: fn(mut p: Parser, base: i64, base_ty: i64, through: i64,
     emit_asm_arg_reg(p, 0)
     emit_text("\n")
     emit_text("    movq $")
-    frost_emit_int(count)
+    frost_rt_emit_int(count)
     emit_text(", ")
     emit_asm_arg_reg(p, 1)
     emit_text("\n")
@@ -480,7 +480,7 @@ emit_asm_slab_addr :: fn(mut p: Parser, base: i64, base_ty: i64, through: i64,
     emit_asm_arg_reg(p, 2)
     emit_text("\n")
     asm_i("subq $", shadow, ", %rsp")
-    asm("call frost_slot")
+    asm("call frost_rt_slot")
     asm_i("addq $", shadow, ", %rsp")
     asm_i("imulq $", type_size(p, element), ", %rax")
     asm("movq %rax, %r11")
@@ -492,7 +492,7 @@ emit_asm_slab_addr :: fn(mut p: Parser, base: i64, base_ty: i64, through: i64,
 }
 
 // The address of one element of one column of a columns container, named by
-// `c[handle].field`. The same frost_slot validation as a slab, but the checked
+// `c[handle].field`. The same frost_rt_slot validation as a slab, but the checked
 // index scales into the field's own `[N]field` array rather than one storage
 // run, so the field's element size and column offset take the place of the
 // slab's storage element size and offset.
@@ -522,7 +522,7 @@ emit_asm_columns_addr :: fn(mut p: Parser, base: i64, base_ty: i64, through: i64
     emit_asm_arg_reg(p, 0)
     emit_text("\n")
     emit_text("    movq $")
-    frost_emit_int(count)
+    frost_rt_emit_int(count)
     emit_text(", ")
     emit_asm_arg_reg(p, 1)
     emit_text("\n")
@@ -534,7 +534,7 @@ emit_asm_columns_addr :: fn(mut p: Parser, base: i64, base_ty: i64, through: i64
     emit_asm_arg_reg(p, 2)
     emit_text("\n")
     asm_i("subq $", shadow, ", %rsp")
-    asm("call frost_slot")
+    asm("call frost_rt_slot")
     asm_i("addq $", shadow, ", %rsp")
     asm_i("imulq $", type_size(p, element), ", %rax")
     asm("movq %rax, %r11")
@@ -695,7 +695,7 @@ abi_sse_regs :: fn(mut p: Parser) -> i64 {
 
 emit_asm_sse_reg :: fn(index: i64) {
     emit_text("%xmm")
-    frost_emit_int(index)
+    frost_rt_emit_int(index)
 }
 
 // What a parameter is classified as for the calling convention. A generic's
@@ -745,7 +745,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
             fi := fn_index_of(p, off, len)
             if (fi >= 0) {
                 emit_text("    leaq mf_")
-                frost_emit_int(fi)
+                frost_rt_emit_int(fi)
                 emit_text("(%rip), %rax\n")
                 return
             }
@@ -773,12 +773,12 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         emit_asm_arg_reg(p, 0)
         emit_text("\n")
         emit_text("    leaq .Lpos")
-        frost_emit_int(id)
+        frost_rt_emit_int(id)
         emit_text("(%rip), ")
         emit_asm_arg_reg(p, 1)
         emit_text("\n")
         asm_i("subq $", shadow, ", %rsp")
-        asm("call frost_assert_at")
+        asm("call frost_rt_assert_at")
         asm_i("addq $", shadow, ", %rsp")
         return
     }
@@ -994,7 +994,7 @@ emit_asm_capability :: fn(mut p: Parser, fn_index: i64) {
         report_src(p.src, sym.off, sym.len)
         report("' needs an allocation capability, so declare `uses` on ")
         report("the caller or wrap the call in a `with` block")
-        frost_die()
+        frost_rt_die()
     }
     slot := local_slot(p, p.prov_off, p.prov_len)
     if (p.prov_kind == PROVIDER_REGION) {
@@ -1065,7 +1065,7 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     // pushes every real argument along by one.
     if (sret == 1) {
         emit_text("    leaq ")
-        frost_emit_int(result_slot)
+        frost_rt_emit_int(result_slot)
         emit_text("(%rbp), ")
         emit_asm_arg_reg(p, 0)
         emit_text("\n")
@@ -1142,7 +1142,7 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
             emit_source(p.src, sym.off, sym.len)
         } else {
             emit_text("mf_")
-            frost_emit_int(fn_index)
+            frost_rt_emit_int(fn_index)
         }
     }
     emit_text("\n")
@@ -1472,7 +1472,7 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
         emit_text("    movq ")
         emit_asm_arg_reg(p, 0)
         emit_text(", ")
-        frost_emit_int(p.sret_slot)
+        frost_rt_emit_int(p.sret_slot)
         emit_text("(%rbp)\n")
     }
 
@@ -1521,14 +1521,14 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
             emit_text("    movq ")
             emit_asm_sse_reg(sse_reg)
             emit_text(", ")
-            frost_emit_int(slot)
+            frost_rt_emit_int(slot)
             emit_text("(%rbp)\n")
             sse_next = sse_next + 1
         } else if (wants_sse == false && int_reg < regs) {
             emit_text("    movq ")
             emit_asm_arg_reg(p, int_reg)
             emit_text(", ")
-            frost_emit_int(slot)
+            frost_rt_emit_int(slot)
             emit_text("(%rbp)\n")
             int_next = int_next + 1
         } else {
@@ -1566,10 +1566,10 @@ emit_asm_function :: fn(mut p: Parser, id: i64) {
         emit_text("main:\n")
     } else {
         emit_text("mf_")
-        frost_emit_int(fn_index)
+        frost_rt_emit_int(fn_index)
         emit_text("\n")
         emit_text("mf_")
-        frost_emit_int(fn_index)
+        frost_rt_emit_int(fn_index)
         emit_text(":\n")
     }
     emit_asm_frame(p, body, params, ret)
@@ -1581,17 +1581,17 @@ emit_asm_function :: fn(mut p: Parser, id: i64) {
 emit_asm_mangled_arg :: fn(mut p: Parser, arg: i64) {
     if (arg >= CONST_BASE) {
         emit_text("_c")
-        frost_emit_int(arg - CONST_BASE)
+        frost_rt_emit_int(arg - CONST_BASE)
     } else {
         emit_text("_t")
-        frost_emit_int(arg)
+        frost_rt_emit_int(arg)
     }
 }
 
 emit_asm_mono_name :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
     xarg_count: i64) {
     emit_text("mf_")
-    frost_emit_int(fn_index)
+    frost_rt_emit_int(fn_index)
     emit_asm_mangled_arg(p, arg)
     mut i : i64 = 0
     while (i < xarg_count) {
@@ -1630,22 +1630,22 @@ emit_asm_test_main :: fn(mut p: Parser) {
     while (i < p.tests.count) {
         entry := arena_at(p.tests, i)
         emit_text("    leaq .Ltest")
-        frost_emit_int(i)
+        frost_rt_emit_int(i)
         emit_text("(%rip), ")
         emit_asm_arg_reg(p, 0)
         emit_text("\n")
         emit_text("    leaq mf_")
-        frost_emit_int(entry.fn_index)
+        frost_rt_emit_int(entry.fn_index)
         emit_text("(%rip), ")
         emit_asm_arg_reg(p, 1)
         emit_text("\n")
         asm_i("subq $", shadow, ", %rsp")
-        asm("call frost_test_run")
+        asm("call frost_rt_test_run")
         asm_i("addq $", shadow, ", %rsp")
         i = i + 1
     }
     asm_i("subq $", shadow, ", %rsp")
-    asm("call frost_test_summary")
+    asm("call frost_rt_test_summary")
     asm_i("addq $", shadow, ", %rsp")
     asm("leave")
     asm("ret")
@@ -1689,7 +1689,7 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
     while (ti < p.tests.count) {
         entry := arena_at(p.tests, ti)
         emit_text(".Ltest")
-        frost_emit_int(ti)
+        frost_rt_emit_int(ti)
         emit_text(":\n")
         emit_text("    .asciz \"")
         emit_string_content(p.src, entry.name_off, entry.name_len)
@@ -1713,7 +1713,7 @@ emit_asm_strings :: fn(mut p: Parser) {
         len := node.c
         if (kind == NODE_STRLIT) {
             emit_text(".Lstr")
-            frost_emit_int(i)
+            frost_rt_emit_int(i)
             emit_text(":\n")
             emit_text("    .asciz \"")
             emit_string_content(p.src, off, len)
@@ -1721,7 +1721,7 @@ emit_asm_strings :: fn(mut p: Parser) {
         }
         if (kind == NODE_ASSERT) {
             emit_text(".Lpos")
-            frost_emit_int(i)
+            frost_rt_emit_int(i)
             emit_text(":\n")
             emit_text("    .asciz \"")
             emit_position(p.modules, p.src, node.pos)
@@ -1730,7 +1730,7 @@ emit_asm_strings :: fn(mut p: Parser) {
         if (kind == NODE_FLOAT) {
             emit_text("    .align 8\n")
             emit_text(".Lflt")
-            frost_emit_int(i)
+            frost_rt_emit_int(i)
             emit_text(":\n")
             emit_text("    .double ")
             emit_source(p.src, off, len)

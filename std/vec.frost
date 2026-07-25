@@ -10,9 +10,9 @@
 export Vec, vec_new, vec_free, vec_len, vec_slice, vec_push, vec_get, vec_set,
     vec_clear
 
-frost_heap_alloc   :: extern fn(size: i64) -> ^u8
-frost_heap_realloc :: extern fn(block: ^u8, size: i64) -> ^u8
-frost_heap_free    :: extern fn(block: ^u8)
+frost_rt_heap_alloc   :: extern fn(size: i64) -> ^u8
+frost_rt_heap_realloc :: extern fn(block: ^u8, size: i64) -> ^u8
+frost_rt_heap_free    :: extern fn(block: ^u8)
 
 Vec :: struct($T: Type) {
     data: ^T,
@@ -25,12 +25,12 @@ Vec :: struct($T: Type) {
 vec_new :: fn($T: Type, capacity: i64) -> Vec<T> {
     mut room := capacity
     if (room < 1) { room = 1 }
-    block := unsafe { frost_heap_alloc(room * sizeof(T)) }
+    block := unsafe { frost_rt_heap_alloc(room * sizeof(T)) }
     Vec { data = unsafe { ptr_cast($T, block) }, len = 0, cap = room }
 }
 
 vec_free :: fn($T: Type, move v: Vec<T>) {
-    unsafe { frost_heap_free(ptr_cast($u8, v.data)) }
+    unsafe { frost_rt_heap_free(ptr_cast($u8, v.data)) }
 }
 
 vec_len :: fn($T: Type, v: Vec<T>) -> i64 {
@@ -52,7 +52,7 @@ vec_push :: fn($T: Type, mut v: Vec<T>, move value: $T) {
         mut room := v.cap * 2
         if (room < 1) { room = 1 }
         v.data = unsafe {
-            ptr_cast($T, frost_heap_realloc(ptr_cast($u8, v.data), room * sizeof(T)))
+            ptr_cast($T, frost_rt_heap_realloc(ptr_cast($u8, v.data), room * sizeof(T)))
         }
         v.cap = room
     }

@@ -120,8 +120,8 @@ accessor, not a C runtime. Concretely:
   the primary allocator with the pool as its fixed-size specialization, is in
   `docs/allocators.md`.
 - The C runtime shrinks. What stays in C is `printf`-style FFI, the string
-  and emit helpers the self-hosted compiler uses, `frost_assert`, and
-  `frost_bounds_check`. The pool functions and the generational logic leave C,
+  and emit helpers the self-hosted compiler uses, `frost_rt_assert`, and
+  `frost_rt_bounds_check`. The pool functions and the generational logic leave C,
   and `Pool` / `pool_*` stop being reserved names.
 
 This is the right boundary because it dogfoods the model (the pool is Frost code),
@@ -157,7 +157,7 @@ abort discipline rather than a foreign definition.
    indexing by a handle requires a slab-shaped struct rather than falling back
    to an implicit `pool_get`. The runtime that is always linked is now bounds
    and generation aborts, assertions, and the IO helpers the self-hosted compiler
-   uses, with one `malloc` left in `frost_read_file`.
+   uses, with one `malloc` left in `frost_rt_read_file`.
 
 This roadmap is a slice of the larger allocator plan in `docs/allocators.md`,
 which puts the pool on top of an arena and pushes the one remaining OS call to
@@ -210,7 +210,7 @@ access patterns fall out of machinery that already exists:
 - `c[handle].field` is the checked single element. It selects the column
   first and then indexes it at the handle's slot, the mirror image of the slab
   (which indexes storage first and then selects the field). The slot comes from
-  the same `frost_slot` bounds-and-generation check the slab uses, so a stale
+  the same `frost_rt_slot` bounds-and-generation check the slab uses, so a stale
   handle aborts here exactly as it does there.
 
 Construction (`columns_new()`, a zeroed container), the deref `c[handle].field`

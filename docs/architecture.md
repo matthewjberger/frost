@@ -265,7 +265,7 @@ fields rather than substituting a template: for each field it registers one
 `[N]field` array named after the field, plus the `generations` / `free_list` /
 `free_count` free list a slab carries. The deref `c[handle].field` and the
 scatter `c[handle] = value` lower to the slab's bounds-and-generation check
-(`frost_slot`) reused verbatim, selecting the column before indexing it, and
+(`frost_rt_slot`) reused verbatim, selecting the column before indexing it, and
 `columns_new()` zero-initializes. It is the structure-of-arrays sibling of the
 slab. See [native-pools.md](native-pools.md).
 

@@ -38,25 +38,25 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     TY_U32, TY_U64, TY_U8, TY_USIZE, TY_VOID, Token, TypeArg,
     TypeCacheEntry, UnsafeSpan,
     Variant,
-    arena_at, arena_make, arena_push, cstr_eq, frost_arg_at, frost_arg_count,
-    frost_byte_at, frost_byte_set, frost_die, frost_emit_char, frost_emit_close,
-    frost_emit_int, frost_emit_open, emit_text, frost_error,
-    frost_error_int, frost_error_src, frost_getenv, frost_is_windows,
-    frost_file_exists, frost_read_file, frost_remove_file, report, report_src,
+    arena_at, arena_make, arena_push, cstr_eq, frost_rt_arg_at, frost_rt_arg_count,
+    frost_rt_byte_at, frost_rt_byte_set, frost_rt_die, frost_rt_emit_char, frost_rt_emit_close,
+    frost_rt_emit_int, frost_rt_emit_open, emit_text, frost_rt_error,
+    frost_rt_error_int, frost_rt_error_src, frost_rt_getenv, frost_rt_is_windows,
+    frost_rt_file_exists, frost_rt_read_file, frost_rt_remove_file, report, report_src,
     report_cstr,
-    frost_run_command, frost_str_len, malloc, SearchRoot, add_root
+    frost_rt_run_command, frost_rt_str_len, malloc, SearchRoot, add_root
 
 malloc          :: safe extern fn(size: i64) -> ^u8
-frost_byte_at   :: extern fn(s: ^i8, i: i64) -> i64
-frost_str_len   :: extern fn(s: ^i8) -> i64
+frost_rt_byte_at   :: extern fn(s: ^i8, i: i64) -> i64
+frost_rt_str_len   :: extern fn(s: ^i8) -> i64
 // Emits a counted run of bytes. The read is bounded by the length, so the one
 // caller, emit_text below, hands it a `str` whose length it already knows
 // and the emit path is safe. Only this declaration keeps the gate.
-frost_emit_bytes :: extern fn(data: ^u8, length: i64)
-frost_emit_int  :: safe extern fn(value: i64)
-frost_emit_char :: safe extern fn(byte: i64)
-frost_read_file :: extern fn(path: ^i8) -> ^i8
-frost_byte_set  :: extern fn(buffer: ^i8, index: i64, value: i64)
+frost_rt_emit_bytes :: extern fn(data: ^u8, length: i64)
+frost_rt_emit_int  :: safe extern fn(value: i64)
+frost_rt_emit_char :: safe extern fn(byte: i64)
+frost_rt_read_file :: extern fn(path: ^i8) -> ^i8
+frost_rt_byte_set  :: extern fn(buffer: ^i8, index: i64, value: i64)
 
 // Emit a string. A `str` carries its own length, so this reads exactly that
 // many bytes rather than scanning for a terminator, which is what lets every
@@ -68,24 +68,24 @@ emit_text :: fn(s: str) {
         return
     }
     unsafe {
-        frost_emit_bytes(ptr_to(s[0]), length)
+        frost_rt_emit_bytes(ptr_to(s[0]), length)
     }
 }
 
 // Diagnostics. The emitted C goes to stdout, so an error is composed on stderr
-// piece by piece and frost_die ends the process.
+// piece by piece and frost_rt_die ends the process.
 //
 // The ones taking only numbers, or nothing, cannot corrupt memory whatever they
 // are handed, so they are `safe` and need no block. The ones taking a `^i8` read
 // until a NUL, and `ptr_to` hands out a `^i8` without one at no cost, so those
 // keep the gate. The caller is what promises the terminator.
-frost_error     :: extern fn(text: ^i8)
-frost_error_src :: extern fn(text: ^i8, offset: i64, length: i64)
-frost_error_bytes :: extern fn(data: ^u8, length: i64)
-frost_error_int :: safe extern fn(value: i64)
-frost_die       :: safe extern fn()
-frost_is_windows :: safe extern fn() -> i64
-frost_getenv    :: extern fn(name: ^i8) -> ^i8
+frost_rt_error     :: extern fn(text: ^i8)
+frost_rt_error_src :: extern fn(text: ^i8, offset: i64, length: i64)
+frost_rt_error_bytes :: extern fn(data: ^u8, length: i64)
+frost_rt_error_int :: safe extern fn(value: i64)
+frost_rt_die       :: safe extern fn()
+frost_rt_is_windows :: safe extern fn() -> i64
+frost_rt_getenv    :: extern fn(name: ^i8) -> ^i8
 
 // Compose a diagnostic on stderr. A `str` is written by the length it carries,
 // a source range by the length it is given, and a C string by the length up to
@@ -97,32 +97,32 @@ report :: fn(s: str) {
         return
     }
     unsafe {
-        frost_error_bytes(ptr_to(s[0]), length)
+        frost_rt_error_bytes(ptr_to(s[0]), length)
     }
 }
 
 report_src :: fn(src: ^i8, offset: i64, length: i64) {
     unsafe {
-        frost_error_bytes(ptr_cast($u8, ptr_to(src[offset])), length)
+        frost_rt_error_bytes(ptr_cast($u8, ptr_to(src[offset])), length)
     }
 }
 
 report_cstr :: fn(s: ^i8) {
     unsafe {
-        frost_error_bytes(ptr_cast($u8, s), frost_str_len(s))
+        frost_rt_error_bytes(ptr_cast($u8, s), frost_rt_str_len(s))
     }
 }
 
 // The command line, and the two things a compiler does with the world once it
 // has read one: put its output somewhere, and run the tool that finishes the
 // build. Emitted output goes to standard output until a file is opened for it.
-frost_arg_count   :: safe extern fn() -> i64
-frost_arg_at      :: safe extern fn(index: i64) -> ^i8
-frost_emit_open   :: extern fn(path: ^i8) -> i64
-frost_emit_close  :: safe extern fn()
-frost_run_command :: extern fn(command: ^i8) -> i64
-frost_remove_file :: extern fn(path: ^i8) -> i64
-frost_file_exists :: extern fn(path: ^i8) -> i64
+frost_rt_arg_count   :: safe extern fn() -> i64
+frost_rt_arg_at      :: safe extern fn(index: i64) -> ^i8
+frost_rt_emit_open   :: extern fn(path: ^i8) -> i64
+frost_rt_emit_close  :: safe extern fn()
+frost_rt_run_command :: extern fn(command: ^i8) -> i64
+frost_rt_remove_file :: extern fn(path: ^i8) -> i64
+frost_rt_file_exists :: extern fn(path: ^i8) -> i64
 
 // Node kinds.
 NODE_NUM        :: 0
@@ -625,7 +625,7 @@ arena_push :: fn(mut a: Arena<$T>, move value: $T) -> i64 {
     // entirely. Say so here instead.
     if (a.count >= a.cap) {
         report("frost: an arena ran out of room")
-        frost_die()
+        frost_rt_die()
     }
     id := a.count
     a.data[id] = value
@@ -641,8 +641,8 @@ arena_at :: fn(a: Arena<$T>, id: i64) -> ref T {
     unsafe {
         if (id < 0 || id >= a.count) {
             report("frost: an arena was indexed out of range: ")
-            frost_error_int(id)
-            frost_die()
+            frost_rt_error_int(id)
+            frost_rt_die()
         }
         ref result := a.data[id]
         result
@@ -785,14 +785,14 @@ Parser :: struct {
 
 cstr_eq :: fn(a: ^i8, b: ^i8) -> bool {
     unsafe {
-        la := frost_str_len(a)
-        lb := frost_str_len(b)
+        la := frost_rt_str_len(a)
+        lb := frost_rt_str_len(b)
         if (la != lb) {
             return false
         }
         mut i : i64 = 0
         while (i < la) {
-            if (frost_byte_at(a, i) != frost_byte_at(b, i)) {
+            if (frost_rt_byte_at(a, i) != frost_rt_byte_at(b, i)) {
                 return false
             }
             i = i + 1

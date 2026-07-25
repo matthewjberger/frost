@@ -63,10 +63,10 @@ emit_columns_scatter :: fn(mut p: Parser, cbase: i64, cbase_ty: i64,
                 emit_text(").")
             }
             emit_source(p.src, field_off, field_len)
-            emit_text(".items[frost_slot(")
+            emit_text(".items[frost_rt_slot(")
             emit_expr(p, cindex)
             emit_text(", ")
-            frost_emit_int(count)
+            frost_rt_emit_int(count)
             emit_text(", (")
             emit_expr(p, cbase)
             if (is_pointer(cbase_ty)) {
@@ -112,7 +112,7 @@ emit_coerced :: fn(mut p: Parser, value: i64, want: i64) {
             emit_text("){ (unsigned char*)")
             emit_expr(p, value)
             emit_text(", ")
-            frost_emit_int(literal_length(p.src, node.val, node.c))
+            frost_rt_emit_int(literal_length(p.src, node.val, node.c))
             emit_text(" }")
             return
         }
@@ -124,7 +124,7 @@ emit_coerced :: fn(mut p: Parser, value: i64, want: i64) {
         emit_text("){ (")
         emit_expr(p, value)
         emit_text(").items, ")
-        frost_emit_int(array_length(p, have))
+        frost_rt_emit_int(array_length(p, have))
         emit_text(" }")
         return
     }
@@ -140,11 +140,11 @@ emit_struct_name :: fn(mut p: Parser, struct_index: i64) {
     owner := module_at(p.modules, name_off)
     if (owner > 0) {
         emit_text("_m")
-        frost_emit_int(owner)
+        frost_rt_emit_int(owner)
     }
     if (instance_id >= 0) {
         emit_text("_")
-        frost_emit_int(instance_id)
+        frost_rt_emit_int(instance_id)
     }
 }
 
@@ -211,7 +211,7 @@ emit_ctype :: fn(mut p: Parser, ty: i64) {
     }
     if (is_array_ty(ty)) {
         emit_text("struct __arr")
-        frost_emit_int(array_index_of(ty))
+        frost_rt_emit_int(array_index_of(ty))
         return
     }
     emit_text("struct ")
@@ -261,7 +261,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
     kind := node.kind
     if (kind == NODE_NUM) {
-        frost_emit_int(node.val)
+        frost_rt_emit_int(node.val)
         return
     }
     // The digits as written. C reads a decimal literal the same way the source
@@ -274,7 +274,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         off := node.val
         len := node.c
         if (is_const(p, off, len)) {
-            frost_emit_int(const_value(p, off, len))
+            frost_rt_emit_int(const_value(p, off, len))
         } else {
             // Neither a constant nor anything in scope, so the name does not
             // exist. Without this the name would be emitted verbatim and only
@@ -286,14 +286,14 @@ emit_expr :: fn(mut p: Parser, id: i64) {
                 fi := fn_index_of(p, off, len)
                 if (fi >= 0) {
                     emit_text("(void*)mf_")
-                    frost_emit_int(fi)
+                    frost_rt_emit_int(fi)
                     return
                 }
                 report_where(p.modules, p.src, off)
                 report("undefined variable '")
                 report_src(p.src, off, len)
                 report("'")
-                frost_die()
+                frost_rt_die()
             }
             emit_source(p.src, off, len)
         }
@@ -335,7 +335,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
             emit_source(p.src, sym.off, sym.len)
         } else {
             emit_text("mf_")
-            frost_emit_int(fn_index)
+            frost_rt_emit_int(fn_index)
         }
         emit_text("(")
         emit_args(p, args, fn_index)
@@ -350,7 +350,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         // array, then index it by the handle's checked slot. SoA selects the
         // field BEFORE indexing, so this is one recognized shape rather than a
         // field offset added after a slab-style index. The handle is validated
-        // by `frost_slot` exactly as a slab's is.
+        // by `frost_rt_slot` exactly as a slab's is.
         base_node := arena_at(p.arena, base)
         if (base_node.kind == NODE_INDEX) {
             cbase := base_node.a
@@ -371,10 +371,10 @@ emit_expr :: fn(mut p: Parser, id: i64) {
                     emit_text(").")
                 }
                 emit_source(p.src, off, len)
-                emit_text(".items[frost_slot(")
+                emit_text(".items[frost_rt_slot(")
                 emit_expr(p, cindex)
                 emit_text(", ")
-                frost_emit_int(array_length(p, gens_ty))
+                frost_rt_emit_int(array_length(p, gens_ty))
                 emit_text(", (")
                 emit_expr(p, cbase)
                 if (is_pointer(cbase_ty)) {
@@ -416,7 +416,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
             through = pointee(through)
         }
         // Indexing a slab by a handle: the handle names a slot, and the slot is
-        // reached only after `frost_slot` unpacks its index, bounds-checks it
+        // reached only after `frost_rt_slot` unpacks its index, bounds-checks it
         // against the storage run, and matches its generation against the live
         // one. The result is the storage element, an lvalue, so a place-deref
         // like `slab[handle].hp = 75` writes through it in place.
@@ -425,13 +425,13 @@ emit_expr :: fn(mut p: Parser, id: i64) {
             emit_text("(")
             emit_expr(p, base)
             if (is_pointer(base_ty)) {
-                emit_text(")->storage.items[frost_slot(")
+                emit_text(")->storage.items[frost_rt_slot(")
             } else {
-                emit_text(").storage.items[frost_slot(")
+                emit_text(").storage.items[frost_rt_slot(")
             }
             emit_expr(p, index)
             emit_text(", ")
-            frost_emit_int(array_length(p, storage_ty))
+            frost_rt_emit_int(array_length(p, storage_ty))
             emit_text(", (")
             emit_expr(p, base)
             if (is_pointer(base_ty)) {
@@ -459,7 +459,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
             } else {
                 emit_text("items[")
             }
-            emit_text("frost_check_index(")
+            emit_text("frost_rt_check_index(")
             emit_expr(p, index)
             emit_text(", ")
             if (is_slice_ty(p, through)) {
@@ -471,7 +471,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
                     emit_text(").len")
                 }
             } else {
-                frost_emit_int(array_length(p, through))
+                frost_rt_emit_int(array_length(p, through))
             }
             emit_text(")]")
             return
@@ -483,7 +483,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         return
     }
     if (kind == NODE_ASSERT) {
-        emit_text("frost_assert_at((signed char)(")
+        emit_text("frost_rt_assert_at((signed char)(")
         emit_expr(p, node.a)
         emit_text("), \"")
         emit_position(p.modules, p.src, node.pos)
@@ -497,7 +497,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         // A literal has no length beside it, so its own is counted here.
         held := arena_at(p.arena, inner)
         if (held.kind == NODE_STRLIT) {
-            frost_emit_int(literal_length(p.src, held.val, held.c))
+            frost_rt_emit_int(literal_length(p.src, held.val, held.c))
             return
         }
         mut inner_ty := type_of(p, inner)
@@ -507,7 +507,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
             through = true
         }
         if (is_array_ty(inner_ty) && is_slice_ty(p, inner_ty) == false) {
-            frost_emit_int(array_length(p, inner_ty))
+            frost_rt_emit_int(array_length(p, inner_ty))
             return
         }
         emit_text("(")
@@ -699,7 +699,7 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                         report("'")
                         report_src(p.src, sym.off, sym.len)
                         report("' was passed an argument of the wrong type")
-                        frost_die()
+                        frost_rt_die()
                     }
                 }
             }
@@ -785,7 +785,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         if (types_compatible(p, value_ty, place_ty) == false) {
             report_where(p.modules, p.src, node.pos)
             report("assigning a value of the wrong type")
-            frost_die()
+            frost_rt_die()
         }
         emit_expr(p, place)
         emit_text(" = ")
@@ -815,7 +815,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
                 emit_text("default: {\n")
             } else {
                 emit_text("case ")
-                frost_emit_int(value)
+                frost_rt_emit_int(value)
                 emit_text(": {\n")
             }
             emit_list(p, body)
@@ -847,7 +847,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
                 report("'")
                 report_src(p.src, p.current_fn_off, p.current_fn_len)
                 report("' returns a value of the wrong type")
-                frost_die()
+                frost_rt_die()
             }
             emit_text("return (")
             emit_expr(p, value)
@@ -919,7 +919,7 @@ emit_capability_argument :: fn(mut p: Parser, fn_index: i64) {
         report_src(p.src, sym.off, sym.len)
         report("' needs an allocation capability, so declare `uses` on ")
         report("the caller or wrap the call in a `with` block")
-        frost_die()
+        frost_rt_die()
     }
     if (p.prov_kind == PROVIDER_REGION) {
         emit_text("(&(")
@@ -1008,7 +1008,7 @@ emit_prototypes :: fn(mut p: Parser, head: i64) {
                 emit_ctype(p, sym.ret_type)
             }
             emit_text(" mf_")
-            frost_emit_int(fn_index)
+            frost_rt_emit_int(fn_index)
             emit_text("(")
             emit_param_signature(p, params)
             emit_text(");\n")
@@ -1062,7 +1062,7 @@ emit_type_forward_decls :: fn(mut p: Parser) {
     i = 0
     while (i < p.arrays.count) {
         emit_text("struct __arr")
-        frost_emit_int(i)
+        frost_rt_emit_int(i)
         emit_text(";\n")
         i = i + 1
     }
@@ -1111,7 +1111,7 @@ emit_array_ordered :: fn(mut p: Parser, i: i64) {
         emit_type_dep(p, element)
     }
     emit_text("struct __arr")
-    frost_emit_int(i)
+    frost_rt_emit_int(i)
     emit_text(" { ")
     if (length < 0) {
         emit_ctype(p, element)
@@ -1119,7 +1119,7 @@ emit_array_ordered :: fn(mut p: Parser, i: i64) {
     } else {
         emit_ctype(p, element)
         emit_text(" items[")
-        frost_emit_int(length)
+        frost_rt_emit_int(length)
         emit_text("]; };\n")
     }
 }
@@ -1236,7 +1236,7 @@ emit_function :: fn(mut p: Parser, id: i64) {
             emit_ctype(p, sym.ret_type)
         }
         emit_text(" mf_")
-        frost_emit_int(fn_index)
+        frost_rt_emit_int(fn_index)
         emit_text("(")
         emit_param_signature(p, params)
         emit_text(") {\n")
@@ -1253,10 +1253,10 @@ emit_function :: fn(mut p: Parser, id: i64) {
 emit_mangled_arg :: fn(mut p: Parser, arg: i64) {
     if (arg >= CONST_BASE) {
         emit_text("_c")
-        frost_emit_int(arg - CONST_BASE)
+        frost_rt_emit_int(arg - CONST_BASE)
     } else {
         emit_text("_t")
-        frost_emit_int(arg)
+        frost_rt_emit_int(arg)
     }
 }
 
@@ -1266,7 +1266,7 @@ emit_mangled_arg :: fn(mut p: Parser, arg: i64) {
 emit_mono_name :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
     xarg_count: i64) {
     emit_text("mf_")
-    frost_emit_int(fn_index)
+    frost_rt_emit_int(fn_index)
     emit_mangled_arg(p, arg)
     mut i : i64 = 0
     while (i < xarg_count) {
@@ -1340,9 +1340,9 @@ emit_mono_prototype :: fn(mut p: Parser, id: i64, arg: i64, xarg_start: i64,
 // ---------------------------------------------------------------------------
 
 emit_program :: fn(mut p: Parser, head: i64) {
-    emit_text("void frost_assert_at(signed char, const char*);\n")
-    emit_text("int64_t frost_check_index(int64_t, int64_t);\n")
-    emit_text("int64_t frost_slot(int64_t, int64_t, const int64_t*);\n")
+    emit_text("void frost_rt_assert_at(signed char, const char*);\n")
+    emit_text("int64_t frost_rt_check_index(int64_t, int64_t);\n")
+    emit_text("int64_t frost_rt_slot(int64_t, int64_t, const int64_t*);\n")
     emit_type_forward_decls(p)
     emit_type_defs(p)
     emit_extern_prototypes(p, head)
@@ -1404,22 +1404,22 @@ emit_program :: fn(mut p: Parser, head: i64) {
 // because a failing assertion has to escape back into the runner without ending
 // the run, and the setjmp that allows that has to own the call.
 emit_test_main :: fn(mut p: Parser) {
-    emit_text("void frost_test_run(const char*, void(*)(void));\n")
-    emit_text("int64_t frost_test_summary(void);\n")
+    emit_text("void frost_rt_test_run(const char*, void(*)(void));\n")
+    emit_text("int64_t frost_rt_test_summary(void);\n")
     emit_text("int main(void) {\n")
     mut i : i64 = 0
     while (i < p.tests.count) {
         entry := arena_at(p.tests, i)
-        emit_text("frost_test_run(\"")
+        emit_text("frost_rt_test_run(\"")
         emit_string_content(p.src, entry.name_off, entry.name_len)
         emit_text("\", (void(*)(void))mf_")
-        frost_emit_int(entry.fn_index)
+        frost_rt_emit_int(entry.fn_index)
         emit_text(");\n")
         i = i + 1
     }
     // The summary answers with how many failed, which is what the process
     // exits on.
-    emit_text("return (int)frost_test_summary();\n}\n")
+    emit_text("return (int)frost_rt_test_summary();\n}\n")
 }
 
 // ---------------------------------------------------------------------------
