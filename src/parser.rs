@@ -1193,6 +1193,28 @@ impl<'a> Parser<'a> {
         Some(self.positions[index])
     }
 
+    // Whether the token about to be read sits on the same line as the one
+    // before it. A call's `(` and an index's `[` bind to what is on their left,
+    // and a statement ends at the line break rather than at a semicolon, so on
+    // a new line they would take the previous statement as the thing being
+    // called or indexed:
+    //
+    //     if (n == 1) { return 1 }
+    //     (n + 7) / 8
+    //
+    // read as calling the `if` with `n + 7`, and failed with "cannot call a
+    // value that is not a function pointer" pointing at the `if`.
+    fn on_the_same_line(&self) -> bool {
+        if self.positions.is_empty() || self.consumed == 0 {
+            return true;
+        }
+        let here = self.consumed.min(self.positions.len() - 1);
+        if here == 0 {
+            return true;
+        }
+        self.positions[here].line == self.positions[here - 1].line
+    }
+
     fn spanned_here(&self, statement: Statement) -> Spanned<Statement> {
         Spanned::new(statement, self.current_position().unwrap_or_default())
     }
@@ -1964,10 +1986,16 @@ impl<'a> Parser<'a> {
                         self.parse_range_expression(expression.clone(), true)?;
                 }
                 Token::LeftBracket => {
+                    if !self.on_the_same_line() {
+                        break;
+                    }
                     expression =
                         self.parse_index_expression(expression.clone())?;
                 }
                 Token::LeftParentheses => {
+                    if !self.on_the_same_line() {
+                        break;
+                    }
                     expression =
                         self.parse_call_expression(expression.clone())?;
                 }

@@ -706,6 +706,49 @@ main :: fn() -> i64 {
 }
 "#;
 
+// A statement ends at the line break, so a `(` starting the next line begins a
+// new statement rather than calling what came before it. It used to bind to the
+// left, so a function whose body ended in a parenthesised expression after an
+// `if` was read as calling the `if`, and failed with "cannot call a value that
+// is not a function pointer" pointing at a line with no call on it.
+const PARENTHESISED_STATEMENT: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+eightbytes :: fn(size: i64) -> i64 {
+    if (size == 0) { return 0 }
+    (size + 7) / 8
+}
+
+doubled :: fn(n: i64) -> i64 {
+    mut total := n
+    (total)
+}
+
+// A call still binds when the parenthesis is where the call is written, across
+// as many lines as the arguments take.
+spread :: fn(a: i64, b: i64) -> i64 { a * 10 + b }
+
+main :: fn() -> i64 {
+    printf("%lld\n", eightbytes(0))
+    printf("%lld\n", eightbytes(24))
+    printf("%lld\n", eightbytes(1))
+    printf("%lld\n", doubled(5))
+    printf("%lld\n", spread(
+        3,
+        4))
+    0
+}
+"#;
+
+#[test]
+fn a_parenthesis_on_a_new_line_starts_a_statement() {
+    let Some(output) = compile_and_run("parenstmt", PARENTHESISED_STATEMENT)
+    else {
+        return;
+    };
+    assert_eq!(output, "0\n3\n1\n5\n34\n");
+}
+
 // `print` widens whatever it is given to the width of the helper that prints
 // it. A `bool` is one byte and was not counted as an integer for that, so the
 // native backend built a call handing an i8 where an i64 belonged and failed in
@@ -7201,6 +7244,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_kwfield", KEYWORD_FIELD_NAMES),
         ("diff_structfail", STRUCT_FAILURE_TYPE),
         ("diff_printnarrow", PRINT_NARROW_VALUES),
+        ("diff_parenstmt", PARENTHESISED_STATEMENT),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
