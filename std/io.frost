@@ -36,10 +36,8 @@ print_int :: fn(value: i64) { frost_rt_emit_int(value) }
 print_char :: fn(byte: i64) { frost_rt_emit_char(byte) }
 
 print_str :: fn(text: str) {
-    mut i : i64 = 0
-    while (i < str_len(text)) {
-        frost_rt_emit_char(text[i])
-        i = i + 1
+    for byte in text {
+        frost_rt_emit_char(byte)
     }
 }
 

@@ -55,10 +55,8 @@ builder_bytes :: fn(mut b: Builder, data: ^u8, length: i64) {
 
 // Append a `str`, byte for byte.
 builder_str_value :: fn(mut b: Builder, text: str) {
-    mut i : i64 = 0
-    while (i < str_len(text)) {
-        vec_push($u8, b.bytes, text[i])
-        i = i + 1
+    for byte in text {
+        vec_push($u8, b.bytes, byte)
     }
 }
 

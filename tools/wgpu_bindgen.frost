@@ -176,12 +176,10 @@ type_starts :: fn(mut document: Json, node: i64, prefix: str) -> bool {
         return false
     }
     source := document.source
-    mut index : i64 = 0
-    while (index < str_len(prefix)) {
-        if (source[off + index] != prefix[index]) {
+    for index, byte in prefix {
+        if (source[off + index] != byte) {
             return false
         }
-        index = index + 1
     }
     true
 }

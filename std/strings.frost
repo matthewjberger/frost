@@ -14,20 +14,16 @@ str_is_empty :: fn(s: str) -> bool { str_len(s) == 0 }
 
 str_eq :: fn(a: str, b: str) -> bool {
     if (str_len(a) != str_len(b)) { return false }
-    mut i : i64 = 0
-    while (i < str_len(a)) {
-        if (a[i] != b[i]) { return false }
-        i = i + 1
+    for index, byte in a {
+        if (byte != b[index]) { return false }
     }
     true
 }
 
 str_starts_with :: fn(s: str, prefix: str) -> bool {
     if (str_len(prefix) > str_len(s)) { return false }
-    mut i : i64 = 0
-    while (i < str_len(prefix)) {
-        if (s[i] != prefix[i]) { return false }
-        i = i + 1
+    for index, byte in prefix {
+        if (s[index] != byte) { return false }
     }
     true
 }
@@ -35,10 +31,8 @@ str_starts_with :: fn(s: str, prefix: str) -> bool {
 str_ends_with :: fn(s: str, suffix: str) -> bool {
     if (str_len(suffix) > str_len(s)) { return false }
     offset := str_len(s) - str_len(suffix)
-    mut i : i64 = 0
-    while (i < str_len(suffix)) {
-        if (s[offset + i] != suffix[i]) { return false }
-        i = i + 1
+    for index, byte in suffix {
+        if (s[offset + index] != byte) { return false }
     }
     true
 }
@@ -70,10 +64,8 @@ str_contains :: fn(s: str, needle: str) -> bool {
 
 str_count :: fn(s: str, byte: i64) -> i64 {
     mut found : i64 = 0
-    mut i : i64 = 0
-    while (i < str_len(s)) {
-        if (s[i] == byte) { found = found + 1 }
-        i = i + 1
+    for held in s {
+        if (held == byte) { found = found + 1 }
     }
     found
 }
