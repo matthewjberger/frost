@@ -15,6 +15,15 @@ use crate::parser::{
 use crate::types::Type;
 use crate::{Literal, Operator};
 
+pub const BUILTIN_FUNCTIONS: &[&str] = &[
+    "assert",
+    "ptr_cast",
+    "ptr_to",
+    "slice_from",
+    "slice_len",
+    "str_len",
+];
+
 struct FunctionSignature {
     parameters: Vec<Type>,
     return_type: Type,

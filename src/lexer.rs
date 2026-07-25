@@ -202,6 +202,69 @@ impl Display for Token {
 
 pub const EOF_CHAR: char = '\0';
 
+macro_rules! keywords {
+    ($($word:literal => $token:ident),* $(,)?) => {
+        pub const KEYWORD_NAMES: &[&str] = &[$($word),*];
+
+        fn lookup_identifier(identifier: &str) -> Token {
+            match identifier {
+                $($word => $token,)*
+                _ => Identifier(identifier.to_string()),
+            }
+        }
+    };
+}
+
+keywords! {
+    "_" => Underscore,
+    "fn" => Function,
+    "mut" => Mut,
+    "move" => Move,
+    "true" => True,
+    "false" => False,
+    "return" => Return,
+    "if" => If,
+    "import" => Import,
+    "else" => Else,
+    "struct" => Struct,
+    "linear" => Linear,
+    "enum" => Enum,
+    "extern" => Extern,
+    "safe" => Safe,
+    "inline" => Inline,
+    "print" => Print,
+    "defer" => Defer,
+    "while" => While,
+    "for" => For,
+    "in" => In,
+    "distinct" => Distinct,
+    "sizeof" => Sizeof,
+    "break" => Break,
+    "continue" => Continue,
+    "match" => Match,
+    "type" => Type,
+    "case" => Case,
+    "i8" => TypeI8,
+    "i16" => TypeI16,
+    "i32" => TypeI32,
+    "i64" => TypeI64,
+    "isize" => TypeIsize,
+    "u8" => TypeU8,
+    "u16" => TypeU16,
+    "u32" => TypeU32,
+    "u64" => TypeU64,
+    "usize" => TypeUsize,
+    "f32" => TypeF32,
+    "f64" => TypeF64,
+    "bool" => TypeBool,
+    "str" => TypeStr,
+    "void" => TypeVoid,
+    "ref" => Ref,
+    "unsafe" => Unsafe,
+    "uses" => Uses,
+    "with" => With,
+}
+
 #[derive(
     serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Default,
 )]
@@ -421,7 +484,7 @@ impl<'a> Lexer<'a> {
             c if Self::is_ident_start(c) => {
                 let mut identifier = c.to_string();
                 identifier.push_str(&self.take_while(Self::is_ident_char));
-                Self::lookup_identifier(&identifier)
+                lookup_identifier(&identifier)
             }
             c if Self::is_digit(c) => {
                 let mut number = c.to_string();
@@ -501,59 +564,6 @@ impl<'a> Lexer<'a> {
 
     fn is_whitespace(c: char) -> bool {
         c == ' ' || c == '\t' || c == '\n' || c == '\r'
-    }
-
-    fn lookup_identifier(identifier: &str) -> Token {
-        match identifier {
-            "_" => Underscore,
-            "fn" => Function,
-            "mut" => Mut,
-            "move" => Move,
-            "true" => True,
-            "false" => False,
-            "return" => Return,
-            "if" => If,
-            "import" => Import,
-            "else" => Else,
-            "struct" => Struct,
-            "linear" => Linear,
-            "enum" => Enum,
-            "extern" => Extern,
-            "safe" => Safe,
-            "inline" => Inline,
-            "print" => Print,
-            "defer" => Defer,
-            "while" => While,
-            "for" => For,
-            "in" => In,
-            "distinct" => Distinct,
-            "sizeof" => Sizeof,
-            "break" => Break,
-            "continue" => Continue,
-            "match" => Match,
-            "type" => Type,
-            "case" => Case,
-            "i8" => TypeI8,
-            "i16" => TypeI16,
-            "i32" => TypeI32,
-            "i64" => TypeI64,
-            "isize" => TypeIsize,
-            "u8" => TypeU8,
-            "u16" => TypeU16,
-            "u32" => TypeU32,
-            "u64" => TypeU64,
-            "usize" => TypeUsize,
-            "f32" => TypeF32,
-            "f64" => TypeF64,
-            "bool" => TypeBool,
-            "str" => TypeStr,
-            "void" => TypeVoid,
-            "ref" => Ref,
-            "unsafe" => Unsafe,
-            "uses" => Uses,
-            "with" => With,
-            _ => Identifier(identifier.to_string()),
-        }
     }
 
     fn next_char_or(
