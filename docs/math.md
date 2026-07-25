@@ -65,9 +65,15 @@ transforms apply.
 - `mat4_transform_point`, `mat4_transform_dir`: carry a `Vec3` through a matrix. A
   point carries an implicit `w` of 1, so a translation moves it. A direction
   carries `w` of 0, so a translation leaves it alone.
-- `mat4_perspective`, `mat4_ortho`, `mat4_look_at`: a right-handed perspective
-  projection into the `[-1, 1]` depth range (the OpenGL clip convention), an
+- `mat4_perspective`, `mat4_perspective_zo`, `mat4_ortho`, `mat4_look_at`: a
+  right-handed perspective projection into the `[-1, 1]` depth range (the OpenGL
+  clip convention), the same projection into `[0, 1]` (what Direct3D, Metal,
+  Vulkan and WebGPU take, and what `examples/graphics/triangle.frost` uses), an
   orthographic projection, and a view matrix looking from an eye toward a center.
+
+  The depth range is the one thing here that is not a matter of taste. A matrix
+  built for the wrong one puts half the scene behind the near plane, and it does
+  so without any error, so the projection has to match the API being drawn with.
 
 ## Quaternions
 
@@ -111,6 +117,27 @@ main :: fn() -> i64 {
     0
 }
 ```
+
+## Tests
+
+Every exported function has a `test` block beside it in `std/math.frost`, run
+with:
+
+```bash
+frost --test std/math.frost
+```
+
+The suite runs them through both backends of both compilers. A differential test
+would only say the backends agree, and a rotation that turns the wrong way, a
+projection with its depth range inverted and a quaternion that is its own
+inverse all agree across backends while all being wrong, so these check the
+answers rather than the agreement.
+
+Results are compared within a tolerance, because a square root or a
+trigonometric call does not land on an exact float. Where a rotation can be
+expressed two ways the tests check the two against each other, so
+`quat_to_mat4` has to be the rotation `quat_rotate_vec3` applies and not its
+inverse.
 
 ## What is not here
 
