@@ -33,6 +33,7 @@ normative rules see [spec.md](spec.md). For a broader Rust-to-Frost guide see
 | `for (i, x) in xs.iter().enumerate()` | `for i, x in xs { }` |
 | `fn f() -> (i64, i64)` (a tuple) | `f :: fn() -> (i64, i64)`, and no tuple type |
 | `let (q, r) = divide(a, b);` | `q, r := divide(a, b)` |
+| `Shape::Circle { r: 5 }` | `Shape::Circle { radius = 5 }`, or `.Circle { radius = 5 }` |
 | `while cond { }` | `while (cond) { }` |
 | `&x`, `&mut x` | nothing: a borrow is what a parameter mode means |
 | `&T`, `&mut T` (parameter) | `x: T` (read), `mut x: T` (write) |
@@ -196,6 +197,19 @@ match s {
 
 This Swift-style inferred enum scoping is fewer tokens, and pattern code does not
 break when the enum is renamed. Every arm keeps working.
+
+Construction reads the same way wherever the type is already stated:
+
+```frost
+c : Color = .Red                   // the annotation says which enum
+paint(.Green)                      // the parameter's type does
+Theme { primary = .Red }           // the field's type does
+round :: fn(r: i64) -> Shape { return .Circle { radius = r } }
+```
+
+The rule is the same one the pattern follows: the dot means the enum the context
+already knows. Where there is no context to read it from, as in a bare
+`c := .Red`, it is an error rather than a guess.
 
 ## 9. `foo($u32)` instead of turbofish
 

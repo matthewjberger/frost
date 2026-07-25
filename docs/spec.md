@@ -493,10 +493,45 @@ operators are left-associative.
 Point { x = 1, y = 2 }                // struct literal (fields use =)
 Shape::Circle { radius = 5 }          // enum variant with payload
 Shape::Player                         // unit variant
+.Circle { radius = 5 }                // the enum comes from the context
+.Player                               // the same, with no payload
 ```
 
 Struct and enum-variant construction are recognized only when the operand to the
 left of `{` or `::` is a bare identifier.
+
+**The leading dot.** `.Variant` names a variant without naming its enum, and
+takes the enum from the type the surrounding code expects. It is the
+construction counterpart of the `case .Variant` a pattern writes (6.7): the code
+does not repeat a type the compiler already knows, and it does not have to be
+rewritten when the enum is renamed.
+
+The contexts that supply a type are the ones that state it:
+
+| Context | What supplies the enum |
+| --- | --- |
+| `c : Color = .Red` | the annotation |
+| `paint(.Red)` | the parameter's declared type |
+| `Theme { primary = .Red }` | the field's declared type |
+| `return .Circle { radius = r }` | the function's declared return type |
+| `c = .Blue` | the type of the place assigned to |
+| `wheel : [3]Color = [.Red, .Green, .Blue]` | the array's element type |
+
+In a function with a failure set the return is two types, so `.Denied` names a
+variant of the failure set when it has one and a variant of the value type
+otherwise. That is how `return .Denied` fails and `return .Some { value = 3 }`
+succeeds in the same function.
+
+A dot with nothing to take its enum from is an error naming the variant, not a
+guess. `c := .Red` has no annotation and no context, so it is rejected and the
+fix is `c : Color = .Red` or `c := Color::Red`.
+
+The two compilers reach the same answer by different routes, which is worth
+knowing when reading them. The bootstrap resolves the dot while lowering, where
+every expression already carries the type its context expects. The self-hosted
+compiler resolves a variant's tag at parse time, so a dot written as an argument
+to a function defined later in the program is recorded and patched once every
+signature is parsed.
 
 A literal must write every field. There is no partial construction, no
 `..rest`, and no implicit zero. A field left out would name storage nothing
@@ -1046,8 +1081,11 @@ Primary =
     | "[" Expr ";" INTEGER "]"                // repeat array literal
     | IfExpr
     | MatchExpr
-    | "fn" "(" Params? ")" ( "->" Type )? Block
+    | "." IDENT ( "{" FieldInits? "}" )?      // inferred variant (6.5)
+    | "fn" "(" Params? ")" ReturnSig? Block
     | "unsafe" Block
+
+FieldInits = IDENT "=" Expr ( "," IDENT "=" Expr )* ","?
 ```
 
 Postfix and infix forms, applied by the precedence loop:
