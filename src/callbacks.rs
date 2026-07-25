@@ -11,11 +11,18 @@ use crate::types::Type;
 // only code that casts the untyped userdata back to the context type.
 //
 // This is the declaration check, which is what makes the rest derivable. The
-// handler's first parameter is the context, so the trampoline knows what to
-// cast to. Every parameter after it is an argument C passes through. The extern
-// parameter of that same type is the one the userdata is taken from, found by
-// type rather than by position because libraries put the userdata on either
-// side of the function pointer.
+// handler's one `mut` parameter is the context, wherever it is written; every
+// other parameter is an argument C passes through. The extern parameter of that
+// same type is the one the userdata is taken from, found by type rather than by
+// position because libraries put the userdata on either side of the function
+// pointer.
+//
+// The context used to have to come first, which is the order a C library takes
+// when it puts the userdata first and the wrong order for one that puts it
+// last. wgpu-native does, so its callbacks could not be declared at all while
+// the same function pointer in a struct field went unchecked. The position is
+// not what makes the context identifiable; being the one parameter the handler
+// can write is.
 pub fn check_callback_declarations(
     program: &[Spanned<Statement>],
 ) -> Result<()> {
@@ -52,19 +59,35 @@ pub fn callback_shape(params: &[Parameter]) -> Option<CallbackShape> {
         else {
             continue;
         };
-        let Some(Type::RefMut(context_type)) = handler_params.first() else {
+        let Some(context_type) = sole_context(handler_params) else {
             continue;
         };
         let context = params.iter().position(|parameter| {
-            parameter.type_annotation.as_ref() == Some(context_type.as_ref())
+            parameter.type_annotation.as_ref() == Some(context_type)
         })?;
         return Some(CallbackShape {
             handler,
             context,
-            context_type: (**context_type).clone(),
+            context_type: context_type.clone(),
         });
     }
     None
+}
+
+// The handler's context: its one `mut` parameter. None when it has no such
+// parameter, and none when it has more than one, since then nothing says which
+// of them the library is being asked to keep.
+fn sole_context(handler_params: &[Type]) -> Option<&Type> {
+    let mut found = None;
+    for parameter in handler_params {
+        if let Type::RefMut(context) = parameter {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(context.as_ref());
+        }
+    }
+    found
 }
 
 // Every callback registration in a program, by name.
@@ -95,24 +118,31 @@ fn check_registration(
             handler.name
         );
     };
-    let Some(first) = handler_params.first() else {
-        bail!(
-            "the callback '${}' of the extern '{name}' takes no parameters, so it has no context, and a callback with no context is an ordinary function pointer",
-            handler.name
-        );
-    };
+    let writable = handler_params
+        .iter()
+        .filter(|parameter| matches!(parameter, Type::RefMut(_)))
+        .count();
     // A callback that cannot write its context cannot do anything, and the
     // read-only case is what a plain function pointer already covers.
-    let Type::RefMut(context) = first else {
+    if writable == 0 {
         bail!(
-            "the first parameter of the callback '${}' of the extern '{name}' is the context and has to be written 'mut', since a callback that cannot write its context has nothing to do",
+            "the callback '${}' of the extern '{name}' has no 'mut' parameter, so it has no context, and a callback that cannot write its context has nothing to do that a plain function pointer does not",
             handler.name
         );
+    }
+    if writable > 1 {
+        bail!(
+            "the callback '${}' of the extern '{name}' has {writable} 'mut' parameters, so nothing says which one is the context the library is being asked to keep; a callback has one context",
+            handler.name
+        );
+    }
+    let Some(context) = sole_context(handler_params) else {
+        unreachable!("exactly one mut parameter was just counted")
     };
 
-    let carrier = params.iter().find(|parameter| {
-        parameter.type_annotation.as_ref() == Some(context.as_ref())
-    });
+    let carrier = params
+        .iter()
+        .find(|parameter| parameter.type_annotation.as_ref() == Some(context));
     let Some(carrier) = carrier else {
         bail!(
             "the callback '${}' of the extern '{name}' takes a context of type '{context}', but '{name}' has no parameter of that type to take it from",
@@ -162,6 +192,46 @@ mod tests {
             "{CONTEXT}register :: extern fn(move ctx: Ctx, $handler: fn(mut Ctx, i64)) -> i64\n"
         ))
         .unwrap();
+    }
+
+    // wgpu-native's shape: the arguments C passes through come first and the
+    // userdata comes last. This used to be undeclarable, so the same function
+    // pointer had to go through a struct field, where nothing checks it.
+    #[test]
+    fn the_context_may_come_last_in_the_handler() {
+        check(&format!(
+            "{CONTEXT}request :: extern fn($handler: fn(i32, i64, mut Ctx), move ctx: Ctx) -> i64\n"
+        ))
+        .unwrap();
+    }
+
+    #[test]
+    fn a_context_written_last_is_still_found() {
+        let source = format!(
+            "{CONTEXT}request :: extern fn($handler: fn(i32, mut Ctx), move ctx: Ctx) -> i64\n"
+        );
+        let mut lexer = Lexer::new(&source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(&tokens);
+        let statements = parser.parse().unwrap();
+        let shape = callback_registrations(&statements);
+        let shape = shape.get("request").unwrap();
+        assert_eq!(shape.handler, 0);
+        assert_eq!(shape.context, 1);
+        assert_eq!(shape.context_type, Type::Struct("Ctx".to_string()));
+    }
+
+    // Two writable parameters and nothing says which the library keeps, so the
+    // position rule is replaced by a uniqueness rule rather than dropped.
+    #[test]
+    fn a_callback_with_two_contexts_is_rejected() {
+        let message = check(
+            "Ctx :: struct { hits: i64 }\n\
+             register :: extern fn($handler: fn(mut Ctx, mut Ctx), move ctx: Ctx) -> i64\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(message.contains("which one is the context"), "{message}");
     }
 
     #[test]

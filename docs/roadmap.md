@@ -187,9 +187,10 @@ to build it in. Three things it settles and one it found:
 - `uses CallbackAbi` is dropped. A `$handler` parameter with a function bound
   on an `extern fn` already says the extern takes a callback, and a capability
   that supplies nothing is a keyword pretending to be one.
-- The handler's first parameter is the context, which is what makes the
-  lowering derivable, and the extern parameter of that same type is the one
-  passed as the `void*`, so the declaration is written in the order C wants.
+- The handler's one `mut` parameter is the context, wherever it is written,
+  which is what makes the lowering derivable, and the extern parameter of that
+  same type is the one passed as the `void*`, so the declaration is written in
+  the order C wants.
 - The registration is `linear` and the context moves in and back out, which
   needs no new machinery. `check_ownership` and `check_linearity` already do it.
 - It found that the context has to name storage that outlives the
