@@ -745,6 +745,10 @@ Parser :: struct {
     failure_ty: i64,
     variants: Arena<Variant>,
     match_count: i64,
+    // Which entry of `variants` the case just parsed named, so a match can tell
+    // whether it covered every variant of the enum it switched on. -1 when the
+    // variant did not resolve, which is an uninstantiated generic template.
+    case_variant: i64,
     type_args: Arena<TypeArg>,
     pending: Arena<LocalVar>,
     try_count: i64,

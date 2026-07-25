@@ -5482,6 +5482,56 @@ impl<'a> FunctionLowering<'a> {
         Ok(())
     }
 
+    /// Every variant of the matched enum has to be covered, or a `case _`
+    /// has to say what the rest do.
+    ///
+    /// Without this a missing variant falls through to whatever the match was
+    /// going to answer with anyway, so adding a variant to an enum silently
+    /// changes the meaning of every match on it rather than pointing at the
+    /// places that now have a case to write.
+    fn check_exhaustive(
+        &self,
+        enum_name: &str,
+        cases: &[SwitchCase],
+    ) -> Result<()> {
+        let catches_rest = cases.iter().any(|case| {
+            matches!(case.pattern, Pattern::Wildcard | Pattern::Identifier(_))
+        });
+        if catches_rest {
+            return Ok(());
+        }
+        let Some(layout) = self.builder.enum_layout(enum_name) else {
+            return Ok(());
+        };
+        let covered = cases
+            .iter()
+            .filter_map(|case| match &case.pattern {
+                Pattern::EnumVariant { variant_name, .. } => {
+                    Some(variant_name.as_str())
+                }
+                _ => None,
+            })
+            .collect::<HashSet<_>>();
+        let missing = layout
+            .variants
+            .iter()
+            .map(|variant| variant.name.as_str())
+            .filter(|name| !covered.contains(name))
+            .collect::<Vec<_>>();
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let named = missing
+            .iter()
+            .map(|name| format!("'.{name}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let readable = crate::imports::demangle_private_names(enum_name);
+        bail!(
+            "match on '{readable}' does not cover {named}; add the case or a `case _` for the rest"
+        )
+    }
+
     fn lower_match(
         &mut self,
         scrutinee: &Expression,
@@ -5538,6 +5588,10 @@ impl<'a> FunctionLowering<'a> {
                     (None, None, None, Some((value, value_type)))
                 }
             };
+
+        if let Some(name) = &enum_name {
+            self.check_exhaustive(name, cases)?;
+        }
 
         let merge = self.new_block();
         let mut result_local: Option<LocalId> = None;
