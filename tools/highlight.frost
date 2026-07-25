@@ -1,0 +1,385 @@
+// Renders a Frost source file as a syntax-highlighted SVG.
+//
+//   just tour-image
+//
+// The README shows a tour of the language, and a picture of code says more at a
+// glance than a fenced block does. This draws that picture from the file, so it
+// cannot drift from the program the test suite runs, which is the same reason
+// the tour is a file at all.
+//
+// SVG rather than a bitmap: it is text, so a change to the tour is a readable
+// diff rather than an opaque blob, it stays sharp at any size, and it needs no
+// image library on any platform.
+//
+// The colours are the ones a dark editor theme uses, so the picture looks like
+// the file does in an editor rather than inventing a palette of its own.
+
+import "fs.frost"
+import "format.frost"
+import "strings.frost"
+
+IN  :: "examples/tour.frost"
+OUT :: "docs/tour.svg"
+
+// A monospace grid. The advance is what a 13px monospace font measures at, and
+// every position is a multiple of it, so nothing has to be measured at runtime.
+CHAR_WIDTH  :: 78
+LINE_HEIGHT :: 190
+FONT_SIZE   :: 130
+LEFT_MARGIN :: 90
+TOP_MARGIN  :: 250
+// Wide enough for a two digit line number, right aligned against the code.
+GUTTER      :: 260
+
+// Token classes, which are the colours.
+PLAIN    :: 0
+COMMENT  :: 1
+KEYWORD  :: 2
+TYPE     :: 3
+FUNCTION :: 4
+NUMBER   :: 5
+STRING   :: 6
+PUNCT    :: 7
+
+colour_of :: fn(class: i64) -> str {
+    if (class == COMMENT)  { return "#6a9955" }
+    if (class == KEYWORD)  { return "#c586c0" }
+    if (class == TYPE)     { return "#4ec9b0" }
+    if (class == FUNCTION) { return "#dcdcaa" }
+    if (class == NUMBER)   { return "#b5cea8" }
+    if (class == STRING)   { return "#ce9178" }
+    if (class == PUNCT)    { return "#d4d4d4" }
+    "#9cdcfe"
+}
+
+// The language's own words. A keyword added to the compiler and not to this
+// list shows up as an ordinary name in the picture, which is wrong but not
+// misleading, so this is a list rather than something the compiler is asked for.
+is_keyword :: fn(text: str, off: i64, len: i64) -> bool {
+    word_is(text, off, len, "fn") || word_is(text, off, len, "mut")
+        || word_is(text, off, len, "move") || word_is(text, off, len, "struct")
+        || word_is(text, off, len, "enum") || word_is(text, off, len, "linear")
+        || word_is(text, off, len, "match") || word_is(text, off, len, "case")
+        || word_is(text, off, len, "if") || word_is(text, off, len, "else")
+        || word_is(text, off, len, "while") || word_is(text, off, len, "for")
+        || word_is(text, off, len, "in") || word_is(text, off, len, "return")
+        || word_is(text, off, len, "print") || word_is(text, off, len, "import")
+        || word_is(text, off, len, "export") || word_is(text, off, len, "extern")
+        || word_is(text, off, len, "safe") || word_is(text, off, len, "inline")
+        || word_is(text, off, len, "unsafe") || word_is(text, off, len, "defer")
+        || word_is(text, off, len, "ref") || word_is(text, off, len, "uses")
+        || word_is(text, off, len, "with") || word_is(text, off, len, "test")
+        || word_is(text, off, len, "true") || word_is(text, off, len, "false")
+        || word_is(text, off, len, "break")
+        || word_is(text, off, len, "continue")
+        || word_is(text, off, len, "distinct")
+        || word_is(text, off, len, "sizeof") || word_is(text, off, len, "value")
+}
+
+// The built-in type names, which read as types rather than as keywords.
+is_type_word :: fn(text: str, off: i64, len: i64) -> bool {
+    word_is(text, off, len, "i8") || word_is(text, off, len, "i16")
+        || word_is(text, off, len, "i32") || word_is(text, off, len, "i64")
+        || word_is(text, off, len, "u8") || word_is(text, off, len, "u16")
+        || word_is(text, off, len, "u32") || word_is(text, off, len, "u64")
+        || word_is(text, off, len, "f32") || word_is(text, off, len, "f64")
+        || word_is(text, off, len, "isize") || word_is(text, off, len, "usize")
+        || word_is(text, off, len, "bool") || word_is(text, off, len, "str")
+}
+
+word_is :: fn(text: str, off: i64, len: i64, word: str) -> bool {
+    if (len != str_len(word)) {
+        return false
+    }
+    mut index : i64 = 0
+    while (index < len) {
+        if (text[off + index] != word[index]) {
+            return false
+        }
+        index = index + 1
+    }
+    true
+}
+
+is_ident_start :: fn(byte: i64) -> bool {
+    (byte >= 97 && byte <= 122) || (byte >= 65 && byte <= 90) || byte == 95
+}
+
+is_ident_byte :: fn(byte: i64) -> bool {
+    is_ident_start(byte) || (byte >= 48 && byte <= 57)
+}
+
+is_digit_byte :: fn(byte: i64) -> bool {
+    byte >= 48 && byte <= 57
+}
+
+// XML has five characters it cannot take literally, and source has three of
+// them often enough to matter.
+append_escaped :: fn(mut out: Builder, text: str, off: i64, len: i64) {
+    mut index : i64 = 0
+    while (index < len) {
+        byte := text[off + index]
+        if (byte == 38) {
+            builder_str_value(out, "&amp;")
+        } else if (byte == 60) {
+            builder_str_value(out, "&lt;")
+        } else if (byte == 62) {
+            builder_str_value(out, "&gt;")
+        } else {
+            builder_byte(out, byte)
+        }
+        index = index + 1
+    }
+}
+
+// One run of source. The spans follow one another rather than each carrying its
+// own position, so the font's own advance decides the spacing and nothing here
+// has to agree with it about how wide a character is.
+emit_span :: fn(mut out: Builder, text: str, off: i64, len: i64, class: i64) {
+    if (len == 0) {
+        return
+    }
+    builder_str_value(out, "<tspan fill=\"")
+    builder_str_value(out, colour_of(class))
+    builder_str_value(out, "\">")
+    append_escaped(out, text, off, len)
+    builder_str_value(out, "</tspan>")
+}
+
+// Which class an identifier belongs to. A name written in Capitals is a type,
+// by the same convention the whole standard library follows; a name followed by
+// `::` or `(` is a function; everything else is a plain name.
+name_class :: fn(text: str, off: i64, len: i64, after: i64) -> i64 {
+    if (is_keyword(text, off, len)) {
+        return KEYWORD
+    }
+    if (is_type_word(text, off, len)) {
+        return TYPE
+    }
+    first := text[off]
+    if (first >= 65 && first <= 90) {
+        return TYPE
+    }
+    if (after == 58 || after == 40) {
+        return FUNCTION
+    }
+    PLAIN
+}
+
+// The byte after a run of spaces from `at`, which is what says whether a name
+// is being declared or called.
+byte_after_spaces :: fn(text: str, at: i64) -> i64 {
+    mut index := at
+    while (index < str_len(text) && text[index] == 32) {
+        index = index + 1
+    }
+    if (index >= str_len(text)) {
+        return 0
+    }
+    text[index]
+}
+
+// One line of source, as a run of coloured spans.
+emit_line :: fn(mut out: Builder, text: str, start: i64, finish: i64) {
+    mut at := start
+    while (at < finish) {
+        byte := text[at]
+        // A comment runs to the end of the line, whatever is in it.
+        if (byte == 47 && at + 1 < finish && text[at + 1] == 47) {
+            emit_span(out, text, at, finish - at, COMMENT)
+            return
+        }
+        if (byte == 34) {
+            mut end := at + 1
+            while (end < finish && text[end] != 34) {
+                if (text[end] == 92) {
+                    end = end + 1
+                }
+                end = end + 1
+            }
+            end = end + 1
+            if (end > finish) {
+                end = finish
+            }
+            emit_span(out, text, at, end - at, STRING)
+            at = end
+            continue
+        }
+        if (is_ident_start(byte)) {
+            mut end := at
+            while (end < finish && is_ident_byte(text[end])) {
+                end = end + 1
+            }
+            after := byte_after_spaces(text, end)
+            emit_span(out, text, at, end - at,
+                name_class(text, at, end - at, after))
+            at = end
+            continue
+        }
+        if (is_digit_byte(byte)) {
+            mut end := at
+            while (end < finish
+                && (is_digit_byte(text[end]) || text[end] == 46)) {
+                end = end + 1
+            }
+            emit_span(out, text, at, end - at, NUMBER)
+            at = end
+            continue
+        }
+        if (byte == 32) {
+            mut end := at
+            while (end < finish && text[end] == 32) {
+                end = end + 1
+            }
+            emit_span(out, text, at, end - at, PLAIN)
+            at = end
+            continue
+        }
+        // A run of punctuation, so `::` and `->` are one span rather than two.
+        mut end := at
+        while (end < finish && is_punct_byte(text[end])) {
+            end = end + 1
+        }
+        emit_span(out, text, at, end - at, PUNCT)
+        at = end
+    }
+}
+
+is_punct_byte :: fn(byte: i64) -> bool {
+    byte != 32 && byte != 34 && is_ident_byte(byte) == false
+        && is_digit_byte(byte) == false
+}
+
+// The width the picture needs, which is the longest line. A fixed width would
+// either crop the file or leave a margin of empty pixels.
+widest_line :: fn(text: str, begin: i64) -> i64 {
+    mut widest : i64 = 0
+    mut run : i64 = 0
+    mut index := begin
+    while (index < str_len(text)) {
+        if (text[index] == 10) {
+            if (run > widest) {
+                widest = run
+            }
+            run = 0
+        } else if (text[index] != 13) {
+            run = run + 1
+        }
+        index = index + 1
+    }
+    if (run > widest) {
+        widest = run
+    }
+    widest
+}
+
+count_lines :: fn(text: str, begin: i64) -> i64 {
+    mut lines : i64 = 1
+    mut index := begin
+    while (index < str_len(text)) {
+        if (text[index] == 10) {
+            lines = lines + 1
+        }
+        index = index + 1
+    }
+    lines
+}
+
+// Where the code starts, past the file's own header comment. The README shows
+// the tour from its first declaration, and the header says where the file is
+// shown, which would be circular inside the picture.
+first_declaration :: fn(text: str) -> i64 {
+    mut at : i64 = 0
+    while (at < str_len(text)) {
+        mut end := at
+        while (end < str_len(text) && text[end] != 10) {
+            end = end + 1
+        }
+        blank := end == at || (end == at + 1 && text[at] == 13)
+        comment := end > at + 1 && text[at] == 47 && text[at + 1] == 47
+        if (blank == false && comment == false) {
+            return at
+        }
+        at = end + 1
+    }
+    0
+}
+
+main :: fn() -> i64 {
+    read := fs_read(IN)
+    if (read.ok == false) {
+        print 0
+        return 1
+    }
+    text := read.text
+    begin := first_declaration(text)
+
+    lines := count_lines(text, begin)
+    columns := widest_line(text, begin)
+    width := LEFT_MARGIN * 2 + GUTTER + columns * CHAR_WIDTH
+    height := TOP_MARGIN + lines * LINE_HEIGHT
+
+    mut out := builder_new(65536)
+    builder_str_value(out, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"")
+    builder_int(out, width / 10)
+    builder_str_value(out, "\" height=\"")
+    builder_int(out, height / 10)
+    builder_str_value(out, "\" viewBox=\"0 0 ")
+    builder_int(out, width)
+    builder_str_value(out, " ")
+    builder_int(out, height)
+    builder_str_value(out, "\" font-family=\"ui-monospace,SFMono-Regular,Menlo,Consolas,monospace\" font-size=\"")
+    builder_int(out, FONT_SIZE)
+    builder_str_value(out, "\">\n")
+    builder_str_value(out, "<rect width=\"100%\" height=\"100%\" rx=\"60\" fill=\"#1e1e1e\"/>\n")
+
+    mut line : i64 = 0
+    mut start := begin
+    mut index := begin
+    while (index <= str_len(text)) {
+        at_end := index == str_len(text)
+        mut is_break : bool = at_end
+        if (at_end == false) {
+            is_break = text[index] == 10
+        }
+        if (is_break) {
+            mut finish := index
+            if (finish > start && text[finish - 1] == 13) {
+                finish = finish - 1
+            }
+            baseline := TOP_MARGIN + line * LINE_HEIGHT
+            // The line number, in the gutter, dim enough to read past.
+            builder_str_value(out, "<text x=\"")
+            builder_int(out, LEFT_MARGIN + GUTTER - 60)
+            builder_str_value(out, "\" y=\"")
+            builder_int(out, baseline)
+            builder_str_value(out, "\" fill=\"#5a5a5a\" text-anchor=\"end\">")
+            builder_int(out, line + 1)
+            builder_str_value(out, "</text>")
+            builder_str_value(out, "<text x=\"")
+            builder_int(out, LEFT_MARGIN + GUTTER)
+            builder_str_value(out, "\" y=\"")
+            builder_int(out, baseline)
+            builder_str_value(out, "\" xml:space=\"preserve\">")
+            emit_line(out, text, start, finish)
+            builder_str_value(out, "</text>\n")
+            line = line + 1
+            start = index + 1
+        }
+        index = index + 1
+    }
+
+    builder_str_value(out, "</svg>\n")
+
+    if (fs_write(OUT, builder_str(out)) == false) {
+        print 0
+        return 1
+    }
+    print lines
+    print columns
+    print builder_len(out)
+
+    builder_free(out)
+    fs_free(read)
+    0
+}

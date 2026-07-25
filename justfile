@@ -166,6 +166,11 @@ bindgen:
     cargo run -r -q -p frost --bin frost -- --link -o tools/wgpu_bindgen.exe tools/wgpu_bindgen.frost
     ./tools/wgpu_bindgen.exe
 
+# Redraws docs/tour.svg, the picture of examples/tour.frost the README shows
+tour-image:
+    cargo run -r -q -p frost --bin frost -- --link -o tools/highlight.exe tools/highlight.frost
+    ./tools/highlight.exe
+
 # Draws a triangle with wgpu in an SDL3 window (Windows)
 [windows]
 triangle:

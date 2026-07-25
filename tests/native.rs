@@ -2511,17 +2511,48 @@ fn the_readme_snippet_is_the_tour_program() {
         .unwrap()
         .replace("\r\n", "\n");
 
-    // The file leads with a header comment saying where it is shown, which the
-    // README does not repeat. Everything after it has to match exactly.
+    // The README shows the tour as a picture, drawn from this file by
+    // tools/highlight.frost. Stripping the markup back out gives the source it
+    // was drawn from, so a change to the tour that was never re-rendered fails
+    // here rather than leaving a stale image nobody looks at twice.
+    assert!(
+        readme.contains("docs/tour.svg"),
+        "README.md no longer shows the tour"
+    );
+    let svg = std::fs::read_to_string(root.join("docs/tour.svg")).unwrap();
+    let mut drawn = String::new();
+    let mut inside = false;
+    for character in svg.chars() {
+        match character {
+            '<' => inside = true,
+            '>' => inside = false,
+            _ if !inside => drawn.push(character),
+            _ => {}
+        }
+    }
+    let drawn = drawn
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&");
+    let squashed: String =
+        drawn.chars().filter(|c| !c.is_whitespace()).collect();
+    // The header comment says where the file is shown, which would be circular
+    // inside the picture, so the drawing starts at the first declaration.
     let body = program
         .split_once("\nKind :: enum")
         .expect("the tour program starts with Kind")
         .1;
-    let body = format!("Kind :: enum{body}");
-    assert!(
-        readme.contains(body.trim_end()),
-        "README.md and examples/tour.frost have drifted apart"
-    );
+    for line in format!("Kind :: enum{body}").lines() {
+        let wanted: String =
+            line.chars().filter(|c| !c.is_whitespace()).collect();
+        if wanted.is_empty() {
+            continue;
+        }
+        assert!(
+            squashed.contains(&wanted),
+            "docs/tour.svg is missing a line of the tour, so it needs redrawing with `just tour-image`:\n{line}"
+        );
+    }
 
     let Some(output) = compile_and_run("tour", &program) else {
         return;
