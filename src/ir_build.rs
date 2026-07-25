@@ -5419,9 +5419,8 @@ impl<'a> FunctionLowering<'a> {
                 },
             ));
             if needs_memory(element_type) {
-                let source_local =
-                    self.materialize_field_value(element, element_type)?;
-                let source = self.address_of_local(source_local, element_type);
+                let source =
+                    self.aggregate_field_source(element, element_type)?;
                 self.emit(IrStatement::Copy {
                     destination: IrOperand::Local(address),
                     source,
@@ -5653,9 +5652,8 @@ impl<'a> FunctionLowering<'a> {
                 },
             ));
             if needs_memory(field_type) {
-                let source_local =
-                    self.materialize_field_value(field_value, field_type)?;
-                let source = self.address_of_local(source_local, field_type);
+                let source =
+                    self.aggregate_field_source(field_value, field_type)?;
                 self.emit(IrStatement::Copy {
                     destination: IrOperand::Local(address),
                     source,
@@ -5674,34 +5672,40 @@ impl<'a> FunctionLowering<'a> {
         Ok(())
     }
 
-    fn materialize_field_value(
+    // The address to copy an aggregate field's value out of. An expression that
+    // already names a place is copied straight from it, which matters for a
+    // borrowed parameter: the local there holds the caller's address, so taking
+    // the address of the local again would copy the pointer rather than what it
+    // points at.
+    fn aggregate_field_source(
         &mut self,
         expression: &Expression,
         field_type: &Type,
-    ) -> Result<LocalId> {
+    ) -> Result<IrOperand> {
         match expression {
             Expression::StructInit(..)
             | Expression::EnumVariantInit(..)
             | Expression::Literal(Literal::Array(_)) => {
                 let temp = self.fresh_local(field_type.clone(), None);
                 self.materialize_aggregate(temp, expression)?;
-                Ok(temp)
+                Ok(self.address_of_local(temp, field_type))
             }
             _ => {
-                let (operand, value_type) =
-                    self.lower_expression(expression, Some(field_type))?;
-                // A slice field taking an array coerces to a {pointer, length}
-                // rather than copying the array's bytes. The coerced value is a
-                // fresh slice local, which the caller copies into the field, so
-                // it has to sit in memory to be copied out of.
-                let operand = self.coerce(operand, &value_type, field_type);
-                let IrOperand::Local(local) = operand else {
-                    bail!(
-                        "native backend: cannot initialize an aggregate field from this value"
-                    );
-                };
-                self.mark_in_memory(local);
-                Ok(local)
+                // A borrowed parameter's local holds the caller's address
+                // already, so that value is the source. Taking the address of
+                // the local would copy the pointer instead of the aggregate.
+                if let Some(
+                    Type::Ref(inner) | Type::RefMut(inner) | Type::Ptr(inner),
+                ) = self.probe_type(expression)
+                    && inner.as_ref() == field_type
+                {
+                    let (operand, _) =
+                        self.lower_expression(expression, None)?;
+                    return Ok(operand);
+                }
+                // A value written into a field is moved there, so a linear one
+                // is consumed by the literal that holds it.
+                self.aggregate_argument_address(expression, field_type, true)
             }
         }
     }
@@ -5793,9 +5797,8 @@ impl<'a> FunctionLowering<'a> {
                 },
             ));
             if needs_memory(field_type) {
-                let source_local =
-                    self.materialize_field_value(field_value, field_type)?;
-                let source = self.address_of_local(source_local, field_type);
+                let source =
+                    self.aggregate_field_source(field_value, field_type)?;
                 self.emit(IrStatement::Copy {
                     destination: IrOperand::Local(address),
                     source,

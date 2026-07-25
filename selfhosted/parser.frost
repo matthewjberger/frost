@@ -13,7 +13,7 @@ export parse_generic_instance, parse_program, record_mono_rets,
 parse_number :: fn(mut p: Parser) -> i64 {
     value := cur_val(p)
     advance(p)
-    new_node(p, NODE_NUM, 0, 0, value)
+    new_node(p, NodeKind::Num, 0, 0, value)
 }
 
 // The count in `[value; n]`. It reads the same way an array's declared length
@@ -50,7 +50,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         offset := cur_off(p)
         length := cur_len(p)
         advance(p)
-        return new_named_node(p, NODE_FLOAT, 0, offset, length)
+        return new_named_node(p, NodeKind::Float, 0, offset, length)
     }
     // `[a, b, c]`. The element type and the length both come from what is
     // written, so an array literal needs no annotation to have a type.
@@ -72,7 +72,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         saved_expected := p.expected_type
         p.expected_type = elem_expected
         while (cur(p) != TOK_RBRACKET) {
-            element := new_node(p, NODE_ARG, parse_expr(p), 0, 0)
+            element := new_node(p, NodeKind::Arg, parse_expr(p), 0, 0)
             if (head == (0 - 1)) {
                 head = element
             } else {
@@ -89,7 +89,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
                 value := held.a
                 total := array_repeat_count(p)
                 while (count < total) {
-                    copy := new_node(p, NODE_ARG, value, 0, 0)
+                    copy := new_node(p, NodeKind::Arg, value, 0, 0)
                     set_next(p, tail, copy)
                     tail = copy
                     count = count + 1
@@ -101,7 +101,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         }
         p.expected_type = saved_expected
         advance(p)
-        made := new_node(p, NODE_ARRAY_LIT, head, 0, 0)
+        made := new_node(p, NodeKind::ArrayLit, head, 0, 0)
         node := arena_at(p.arena, made)
         node.c = count
         // A stored element type is kept as the code plus one, so zero still
@@ -113,17 +113,17 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     }
     if (kind == TOK_KW_TRUE) {
         advance(p)
-        return new_node(p, NODE_NUM, 0, 0, 1)
+        return new_node(p, NodeKind::Num, 0, 0, 1)
     }
     if (kind == TOK_KW_FALSE) {
         advance(p)
-        return new_node(p, NODE_NUM, 0, 0, 0)
+        return new_node(p, NodeKind::Num, 0, 0, 0)
     }
     if (kind == TOK_STR) {
         offset := cur_off(p)
         length := cur_len(p)
         advance(p)
-        return new_named_node(p, NODE_STRLIT, 0, offset, length)
+        return new_named_node(p, NodeKind::StrLit, 0, offset, length)
     }
     if (kind == TOK_DOLLAR) {
         advance(p)
@@ -132,10 +132,10 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         if (cur(p) == TOK_INT) {
             value := CONST_BASE + cur_val(p)
             advance(p)
-            return new_type_node(p, NODE_TYPEVAL, 0, value)
+            return new_type_node(p, NodeKind::TypeVal, 0, value)
         }
         ty := parse_type(p)
-        return new_type_node(p, NODE_TYPEVAL, 0, ty)
+        return new_type_node(p, NodeKind::TypeVal, 0, ty)
     }
     // `unsafe { expr }` where a value is wanted vouches for the one expression
     // inside, so `x := unsafe { ptr_cast(...) }` and a `data = unsafe { ... }`
@@ -165,7 +165,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         name_off := synth_numbered(p, "__value", p.match_count)
         name_len := 7 + digits_in(p.match_count)
         p.match_count = p.match_count + 1
-        seed := new_node(p, NODE_NUM, 0, 0, 0)
+        seed := new_node(p, NodeKind::Num, 0, 0, 0)
         bind := new_let_node(p, seed, name_off, name_len, 0 - 1)
         chosen := parse_stmt(p)
         node := arena_at(p.arena, chosen)
@@ -173,7 +173,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         assign_block_value(p, node.val, name_off, name_len)
         arena_push(p.pending, LocalVar { name_off = bind, name_len = chosen,
             ty = 0 })
-        return new_named_node(p, NODE_VAR, 0, name_off, name_len)
+        return new_named_node(p, NodeKind::Var, 0, name_off, name_len)
     }
     // A match used where a value is wanted: bind a name, let each arm assign to
     // it, and stand for the name. The match itself is queued for the block,
@@ -182,13 +182,13 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         name_off := synth_numbered(p, "__value", p.match_count)
         name_len := 7 + digits_in(p.match_count)
         p.match_count = p.match_count + 1
-        seed := new_node(p, NODE_NUM, 0, 0, 0)
+        seed := new_node(p, NodeKind::Num, 0, 0, 0)
         bind := new_let_node(p, seed, name_off, name_len, 0 - 1)
         chosen := parse_match(p)
         assign_case_values(p, chosen, name_off, name_len)
         arena_push(p.pending, LocalVar { name_off = bind, name_len = chosen,
             ty = 0 })
-        return new_named_node(p, NODE_VAR, 0, name_off, name_len)
+        return new_named_node(p, NodeKind::Var, 0, name_off, name_len)
     }
     // `.Circle { radius = 5 }`, whose enum comes from what the context expects.
     if (kind == TOK_DOT) {
@@ -225,13 +225,13 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             advance(p)
             inner := parse_expr(p)
             advance(p)
-            return new_unary(p, NODE_ADDROF, inner)
+            return new_unary(p, NodeKind::AddrOf, inner)
         }
         if (str_range_eq(p.src, offset, length, "sizeof")) {
             advance(p)
             ty := parse_type(p)
             advance(p)
-            return new_type_node(p, NODE_SIZEOF, 0, ty)
+            return new_type_node(p, NodeKind::Sizeof, 0, ty)
         }
         // The position it failed at is worth more than the fact that it did,
         // and the node already carries where it was written.
@@ -239,7 +239,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             advance(p)
             inner := parse_expr(p)
             advance(p)
-            made := new_unary(p, NODE_ASSERT, inner)
+            made := new_unary(p, NodeKind::Assert, inner)
             // The word itself, rather than wherever the cursor ended up after
             // reading the condition, which is the next line.
             node := arena_at(p.arena, made)
@@ -253,7 +253,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             advance(p)
             inner := parse_expr(p)
             advance(p)
-            return new_unary(p, NODE_SLICE_LEN, inner)
+            return new_unary(p, NodeKind::SliceLen, inner)
         }
         if (str_range_eq(p.src, offset, length, "ptr_cast")) {
             advance(p)
@@ -264,7 +264,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             advance(p)
             expr := parse_expr(p)
             advance(p)
-            return new_type_node(p, NODE_PTR_CAST, expr, ty)
+            return new_type_node(p, NodeKind::PtrCast, expr, ty)
         }
         if (str_range_eq(p.src, offset, length, "slice_from")) {
             advance(p)
@@ -278,12 +278,12 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             len := parse_expr(p)
             advance(p)
             slice_ty := array_of(p, element, 0 - 1)
-            return new_node(p, NODE_SLICE_FROM, ptr, len, slice_ty)
+            return new_node(p, NodeKind::SliceFrom, ptr, len, slice_ty)
         }
         advance(p)
         fn_index := intern_global(p, offset, length)
         args := parse_arg_list_for(p, fn_index)
-        return new_node(p, NODE_CALL, args, 0, fn_index)
+        return new_node(p, NodeKind::Call, args, 0, fn_index)
     }
     if (cur(p) == TOK_LBRACE && p.no_struct_lit == false) {
         struct_ty := resolve_lit_type(p, offset, length)
@@ -296,9 +296,9 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     // the argument in force.
     bound := value_binding_of(p, offset, length)
     if (bound >= 0) {
-        return new_node(p, NODE_NUM, 0, 0, bound)
+        return new_node(p, NodeKind::Num, 0, 0, bound)
     }
-    new_named_node(p, NODE_VAR, 0, offset, length)
+    new_named_node(p, NodeKind::Var, 0, offset, length)
 }
 
 // Instantiate a generic struct against the bindings in force, for a bare
@@ -376,28 +376,28 @@ lower_try :: fn(mut p: Parser, value: i64) -> i64 {
     p.try_count = p.try_count + 1
 
     bind := new_let_node(p, value, name_off, name_len, 0 - 1)
-    held := new_named_node(p, NODE_VAR, 0, name_off, name_len)
+    held := new_named_node(p, NodeKind::Var, 0, name_off, name_len)
     tag := new_field_node(p, held, p.name_tag, 3)
-    zero := new_node(p, NODE_NUM, 0, 0, 0)
-    failed := new_node(p, NODE_BIN, tag, zero, OP_NE)
+    zero := new_node(p, NodeKind::Num, 0, 0, 0)
+    failed := new_node(p, NodeKind::Bin, tag, zero, OP_NE)
     carried := new_field_node(
         p,
-        new_named_node(p, NODE_VAR, 0, name_off, name_len),
+        new_named_node(p, NodeKind::Var, 0, name_off, name_len),
         p.name_err_error,
         9,
     )
     hand_on := new_node(
         p,
-        NODE_RETURN,
+        NodeKind::Return,
         new_result_value(p, p.result_ty, 1, p.name_err_error, 9, carried),
         0,
         0,
     )
-    guard := new_node(p, NODE_IF, failed, hand_on, 0 - 1)
+    guard := new_node(p, NodeKind::If, failed, hand_on, 0 - 1)
     arena_push(p.pending, LocalVar { name_off = bind, name_len = guard, ty = 0 })
     new_field_node(
         p,
-        new_named_node(p, NODE_VAR, 0, name_off, name_len),
+        new_named_node(p, NodeKind::Var, 0, name_off, name_len),
         p.name_ok_value,
         8,
     )
@@ -416,7 +416,7 @@ wrap_trailing_ok :: fn(mut p: Parser, body: i64) {
         id = node_next(p, id)
     }
     node := arena_at(p.arena, last)
-    if (node.kind == NODE_EXPRSTMT) {
+    if (node.kind == NodeKind::ExprStmt) {
         node.a = wrap_result(p, node.a)
     }
 }
@@ -436,7 +436,7 @@ parse_postfix :: fn(mut p: Parser, start: i64) -> i64 {
             node = new_field_node(p, node, offset, length)
         } else if (cur(p) == TOK_CARET) {
             advance(p)
-            node = new_unary(p, NODE_DEREF, node)
+            node = new_unary(p, NodeKind::Deref, node)
         } else {
             advance(p)
             index := parse_expr(p)
@@ -487,7 +487,7 @@ parse_field_inits :: fn(mut p: Parser, struct_ty: i64) -> i64 {
 // binding is what the address is taken of.
 hold_struct_result :: fn(mut p: Parser, value: i64) -> i64 {
     node := arena_at(p.arena, value)
-    if (node.kind != NODE_CALL) {
+    if (node.kind != NodeKind::Call) {
         return value
     }
     callee := arena_at(p.fns, node.val)
@@ -499,7 +499,7 @@ hold_struct_result :: fn(mut p: Parser, value: i64) -> i64 {
     p.match_count = p.match_count + 1
     bind := new_let_node(p, value, name_off, name_len, 0 - 1)
     arena_push(p.pending, LocalVar { name_off = bind, name_len = bind, ty = 0 })
-    new_named_node(p, NODE_VAR, 0, name_off, name_len)
+    new_named_node(p, NodeKind::Var, 0, name_off, name_len)
 }
 
 parse_arg_list :: fn(mut p: Parser) -> i64 {
@@ -533,13 +533,13 @@ parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
         p.expected_alt = saved_alt
         if (callee >= 0) {
             held := arena_at(p.arena, value)
-            if (held.kind == NODE_STRUCT_LIT && held.val == (0 - 1)) {
+            if (held.kind == NodeKind::StructLit && held.val == (0 - 1)) {
                 arena_push(p.variant_fixups,
                     VariantFixup { lit = value, callee = callee,
                         argument = index })
             }
         }
-        arg := new_node(p, NODE_ARG, value, 0, 0)
+        arg := new_node(p, NodeKind::Arg, value, 0, 0)
         if (head == (0 - 1)) {
             head = arg
             tail = arg
@@ -569,7 +569,7 @@ parse_mul :: fn(mut p: Parser) -> i64 {
         }
         advance(p)
         right := parse_factor(p)
-        left = new_node(p, NODE_BIN, left, right, op)
+        left = new_node(p, NodeKind::Bin, left, right, op)
         kind = cur(p)
     }
     left
@@ -585,7 +585,7 @@ parse_add :: fn(mut p: Parser) -> i64 {
         }
         advance(p)
         right := parse_mul(p)
-        left = new_node(p, NODE_BIN, left, right, op)
+        left = new_node(p, NodeKind::Bin, left, right, op)
         kind = cur(p)
     }
     left
@@ -607,7 +607,7 @@ parse_shift :: fn(mut p: Parser) -> i64 {
         }
         advance(p)
         right := parse_add(p)
-        left = new_node(p, NODE_BIN, left, right, op)
+        left = new_node(p, NodeKind::Bin, left, right, op)
         kind = cur(p)
     }
     left
@@ -618,7 +618,7 @@ parse_bitand :: fn(mut p: Parser) -> i64 {
     while (cur(p) == TOK_AMP) {
         advance(p)
         right := parse_shift(p)
-        left = new_node(p, NODE_BIN, left, right, OP_BITAND)
+        left = new_node(p, NodeKind::Bin, left, right, OP_BITAND)
     }
     left
 }
@@ -628,7 +628,7 @@ parse_bitor :: fn(mut p: Parser) -> i64 {
     while (cur(p) == TOK_PIPE) {
         advance(p)
         right := parse_bitand(p)
-        left = new_node(p, NODE_BIN, left, right, OP_BITOR)
+        left = new_node(p, NodeKind::Bin, left, right, OP_BITOR)
     }
     left
 }
@@ -639,32 +639,32 @@ parse_cmp :: fn(mut p: Parser) -> i64 {
     if (kind == TOK_LT) {
         advance(p)
         right := parse_bitor(p)
-        return new_node(p, NODE_BIN, left, right, OP_LT)
+        return new_node(p, NodeKind::Bin, left, right, OP_LT)
     }
     if (kind == TOK_LE) {
         advance(p)
         right := parse_bitor(p)
-        return new_node(p, NODE_BIN, left, right, OP_LE)
+        return new_node(p, NodeKind::Bin, left, right, OP_LE)
     }
     if (kind == TOK_GT) {
         advance(p)
         right := parse_bitor(p)
-        return new_node(p, NODE_BIN, left, right, OP_GT)
+        return new_node(p, NodeKind::Bin, left, right, OP_GT)
     }
     if (kind == TOK_GE) {
         advance(p)
         right := parse_bitor(p)
-        return new_node(p, NODE_BIN, left, right, OP_GE)
+        return new_node(p, NodeKind::Bin, left, right, OP_GE)
     }
     if (kind == TOK_EQEQ) {
         advance(p)
         right := parse_bitor(p)
-        return new_node(p, NODE_BIN, left, right, OP_EQ)
+        return new_node(p, NodeKind::Bin, left, right, OP_EQ)
     }
     if (kind == TOK_NE) {
         advance(p)
         right := parse_bitor(p)
-        return new_node(p, NODE_BIN, left, right, OP_NE)
+        return new_node(p, NodeKind::Bin, left, right, OP_NE)
     }
     left
 }
@@ -674,7 +674,7 @@ parse_and :: fn(mut p: Parser) -> i64 {
     while (cur(p) == TOK_ANDAND) {
         advance(p)
         right := parse_cmp(p)
-        left = new_node(p, NODE_BIN, left, right, OP_AND)
+        left = new_node(p, NodeKind::Bin, left, right, OP_AND)
     }
     left
 }
@@ -684,7 +684,7 @@ parse_expr :: fn(mut p: Parser) -> i64 {
     while (cur(p) == TOK_OROR) {
         advance(p)
         right := parse_and(p)
-        left = new_node(p, NODE_BIN, left, right, OP_OR)
+        left = new_node(p, NodeKind::Bin, left, right, OP_OR)
     }
     left
 }
@@ -1257,9 +1257,9 @@ assign_block_value :: fn(mut p: Parser, head: i64, name_off: i64,
         following = node_next(p, last)
     }
     body := arena_at(p.arena, last)
-    if (body.kind == NODE_EXPRSTMT && type_of(p, body.a) != TY_VOID) {
-        place := new_named_node(p, NODE_VAR, 0, name_off, name_len)
-        body.kind = NODE_ASSIGN
+    if (body.kind == NodeKind::ExprStmt && type_of(p, body.a) != TY_VOID) {
+        place := new_named_node(p, NodeKind::Var, 0, name_off, name_len)
+        body.kind = NodeKind::Assign
         body.b = body.a
         body.a = place
     }
@@ -1277,8 +1277,8 @@ return_block_tail :: fn(mut p: Parser, head: i64) {
         following = node_next(p, last)
     }
     body := arena_at(p.arena, last)
-    if (body.kind == NODE_EXPRSTMT && type_of(p, body.a) != TY_VOID) {
-        body.kind = NODE_RETURN
+    if (body.kind == NodeKind::ExprStmt && type_of(p, body.a) != TY_VOID) {
+        body.kind = NodeKind::Return
     }
 }
 
@@ -1296,7 +1296,7 @@ return_trailing_branches :: fn(mut p: Parser, body: i64) {
         following = node_next(p, last)
     }
     node := arena_at(p.arena, last)
-    if (node.kind != NODE_IF) {
+    if (node.kind != NodeKind::If) {
         return
     }
     return_block_tail(p, node.b)
@@ -1318,9 +1318,9 @@ assign_case_values :: fn(mut p: Parser, match_node: i64, name_off: i64,
         body := arena_at(p.arena, last)
         // An arm that ends in something with no value, a call to a void
         // function say, was never producing one, so it is left as it is.
-        if (body.kind == NODE_EXPRSTMT && type_of(p, body.a) != TY_VOID) {
-            place := new_named_node(p, NODE_VAR, 0, name_off, name_len)
-            body.kind = NODE_ASSIGN
+        if (body.kind == NodeKind::ExprStmt && type_of(p, body.a) != TY_VOID) {
+            place := new_named_node(p, NodeKind::Var, 0, name_off, name_len)
+            body.kind = NodeKind::Assign
             body.b = body.a
             body.a = place
         }
@@ -1345,7 +1345,7 @@ parse_match :: fn(mut p: Parser) -> i64 {
         bind := new_let_node(p, scrutinee, name_off, name_len, 0 - 1)
         arena_push(p.pending, LocalVar { name_off = bind, name_len = bind,
             ty = 0 })
-        subject = new_named_node(p, NODE_VAR, 0, name_off, name_len)
+        subject = new_named_node(p, NodeKind::Var, 0, name_off, name_len)
         scrutinee = new_field_node(p, subject, p.name_tag, 3)
     }
     mut head : i64 = 0 - 1
@@ -1404,7 +1404,7 @@ parse_match :: fn(mut p: Parser) -> i64 {
         check_match_covers(p, match_enum, covered)
     }
     advance(p)
-    new_node(p, NODE_MATCH, scrutinee, head, 0)
+    new_node(p, NodeKind::Match, scrutinee, head, 0)
 }
 
 // Every variant of the matched enum has to be covered, or a `case _` has to say
@@ -1496,7 +1496,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         advance(p)
         advance(p)
         place := parse_expr(p)
-        value := new_unary(p, NODE_REF, place)
+        value := new_unary(p, NodeKind::Ref, place)
         return new_let_node(p, value, name_off, name_len, 0 - 1)
     }
 
@@ -1514,9 +1514,9 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             if (cur(p) == TOK_ASSIGN) {
                 advance(p)
                 value := parse_expr(p)
-                return new_node(p, NODE_ASSIGN, expr, value, 0)
+                return new_node(p, NodeKind::Assign, expr, value, 0)
             }
-            return new_unary(p, NODE_EXPRSTMT, expr)
+            return new_unary(p, NodeKind::ExprStmt, expr)
         }
         advance(p)
         start := cur_off(p)
@@ -1554,7 +1554,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             name_off := cur_off(p)
             name_len := cur_len(p)
             advance(p)
-            base := new_named_node(p, NODE_VAR, 0, temp_off, temp_len)
+            base := new_named_node(p, NodeKind::Var, 0, temp_off, temp_len)
             field := synth_numbered(p, "value", index)
             access := new_field_node(p, base, field, 5 + digits_in(index))
             bind := new_let_node(p, access, name_off, name_len, 0 - 1)
@@ -1590,12 +1590,12 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     if (kind == TOK_KW_PRINT) {
         advance(p)
         value := parse_expr(p)
-        return new_node(p, NODE_PRINT, value, 0, 0)
+        return new_node(p, NodeKind::Print, value, 0, 0)
     }
     if (kind == TOK_KW_RETURN) {
         advance(p)
         if (cur(p) == TOK_RBRACE) {
-            return new_node(p, NODE_RETURN, 0 - 1, 0, 0)
+            return new_node(p, NodeKind::Return, 0 - 1, 0, 0)
         }
         saved_expected := p.expected_type
         saved_alt := p.expected_alt
@@ -1610,7 +1610,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         if (p.result_ty != (0 - 1)) {
             value = wrap_result(p, value)
         }
-        return new_node(p, NODE_RETURN, value, 0, 0)
+        return new_node(p, NodeKind::Return, value, 0, 0)
     }
     if (kind == TOK_KW_IF) {
         advance(p)
@@ -1627,7 +1627,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
                 else_head = parse_block(p)
             }
         }
-        return new_node(p, NODE_IF, condition, then_head, else_head)
+        return new_node(p, NodeKind::If, condition, then_head, else_head)
     }
     // `for item in items { ... }` over a slice, an array or a `str`, and
     // `for index, item in items` when the position is wanted too.
@@ -1674,13 +1674,13 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         // sequence instead of asking the reader for an `unsafe` block.
         seq_node := arena_at(p.arena, sequence)
         seq_kind := seq_node.kind
-        in_place := seq_kind == NODE_VAR
+        in_place := seq_kind == NodeKind::Var
         mut seq_off := seq_node.val
         mut seq_len := seq_node.c
         mut bind_seq : i64 = 0 - 1
         if (in_place == false) {
             mut annotation : i64 = 0 - 1
-            if (seq_kind == NODE_STRLIT) {
+            if (seq_kind == NodeKind::StrLit) {
                 annotation = array_of(p, TY_U8, 0 - 1)
             }
             seq_off = synth_numbered(p, "__for_seq", unique)
@@ -1688,8 +1688,8 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             bind_seq = new_let_node(p, sequence, seq_off, seq_len, annotation)
         }
 
-        seq_var := new_named_node(p, NODE_VAR, 0, seq_off, seq_len)
-        length := new_unary(p, NODE_SLICE_LEN, seq_var)
+        seq_var := new_named_node(p, NodeKind::Var, 0, seq_off, seq_len)
+        length := new_unary(p, NodeKind::SliceLen, seq_var)
         len_off := synth_numbered(p, "__for_len", unique)
         len_len := 9 + digits_in(unique)
         bind_len := new_let_node(p, length, len_off, len_len, 0 - 1)
@@ -1703,29 +1703,29 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             index_off = synth_numbered(p, "__for_at", unique)
             index_len = 8 + digits_in(unique)
         }
-        zero := new_node(p, NODE_NUM, 0, 0, 0)
+        zero := new_node(p, NodeKind::Num, 0, 0, 0)
         bind_index := new_let_node(p, zero, index_off, index_len, 0 - 1)
 
-        index_var := new_named_node(p, NODE_VAR, 0, index_off, index_len)
-        len_var := new_named_node(p, NODE_VAR, 0, len_off, len_len)
-        condition := new_node(p, NODE_BIN, index_var, len_var, OP_LT)
+        index_var := new_named_node(p, NodeKind::Var, 0, index_off, index_len)
+        len_var := new_named_node(p, NodeKind::Var, 0, len_off, len_len)
+        condition := new_node(p, NodeKind::Bin, index_var, len_var, OP_LT)
 
         body := parse_block(p)
 
         // The element, bound under the name the reader wrote, ahead of the
         // body they wrote.
-        seq_again := new_named_node(p, NODE_VAR, 0, seq_off, seq_len)
-        at_again := new_named_node(p, NODE_VAR, 0, index_off, index_len)
+        seq_again := new_named_node(p, NodeKind::Var, 0, seq_off, seq_len)
+        at_again := new_named_node(p, NodeKind::Var, 0, index_off, index_len)
         element := new_index(p, seq_again, at_again)
         bind_item := new_let_node(p, element, item_off, item_len, 0 - 1)
         set_next(p, bind_item, body)
 
         // The step, after everything the body does.
-        step_at := new_named_node(p, NODE_VAR, 0, index_off, index_len)
-        one := new_node(p, NODE_NUM, 0, 0, 1)
-        bumped := new_node(p, NODE_BIN, step_at, one, OP_ADD)
-        step_place := new_named_node(p, NODE_VAR, 0, index_off, index_len)
-        step := new_node(p, NODE_ASSIGN, step_place, bumped, 0)
+        step_at := new_named_node(p, NodeKind::Var, 0, index_off, index_len)
+        one := new_node(p, NodeKind::Num, 0, 0, 1)
+        bumped := new_node(p, NodeKind::Bin, step_at, one, OP_ADD)
+        step_place := new_named_node(p, NodeKind::Var, 0, index_off, index_len)
+        step := new_node(p, NodeKind::Assign, step_place, bumped, 0)
         mut tail := bind_item
         mut following := node_next(p, tail)
         while (following != (0 - 1)) {
@@ -1734,7 +1734,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         }
         set_next(p, tail, step)
 
-        loop := new_node(p, NODE_WHILE, condition, bind_item, 0)
+        loop := new_node(p, NodeKind::While, condition, bind_item, 0)
         // The condition needs nothing set up ahead of it, and an unset preamble
         // is -1 rather than 0, which is a real node.
         set_while_preamble(p, loop, 0 - 1)
@@ -1757,7 +1757,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         preamble := flush_pending(p, mark, 0 - 1)
         advance(p)
         body := parse_block(p)
-        loop := new_node(p, NODE_WHILE, condition, body, 0)
+        loop := new_node(p, NodeKind::While, condition, body, 0)
         set_while_preamble(p, loop, preamble)
         return loop
     }
@@ -1770,7 +1770,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         name_length := cur_len(p)
         advance(p)
         body := parse_block(p)
-        return new_named_node(p, NODE_WITH, body, name_offset, name_length)
+        return new_named_node(p, NodeKind::With, body, name_offset, name_length)
     }
 
     // A local binding `x := e` or `x : T = e` is recognised by the token after
@@ -1803,9 +1803,9 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     if (cur(p) == TOK_ASSIGN) {
         advance(p)
         value := parse_expr(p)
-        return new_node(p, NODE_ASSIGN, expr, value, 0)
+        return new_node(p, NodeKind::Assign, expr, value, 0)
     }
-    new_unary(p, NODE_EXPRSTMT, expr)
+    new_unary(p, NodeKind::ExprStmt, expr)
 }
 
 // Everything a `?` or a match queued while this statement was being parsed goes
@@ -1968,7 +1968,7 @@ parse_params :: fn(mut p: Parser) -> i64 {
             }
             param := arena_push(
                 p.arena,
-                Node { kind = NODE_PARAM, a = auto_borrow, b = ty, c = length,
+                Node { kind = NodeKind::Param, a = auto_borrow, b = ty, c = length,
                     val = offset, next = 0 - 1, pos = cur_off(p) },
             )
             // A `mut` parameter borrows exclusively. Record it so the exclusivity
@@ -2073,7 +2073,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
         binding := synth_capability_name(p, cap_name_off, cap_name_len)
         capability := arena_push(
             p.arena,
-            Node { kind = NODE_PARAM, a = 1, b = BORROW_FLAG + cap_ty,
+            Node { kind = NodeKind::Param, a = 1, b = BORROW_FLAG + cap_ty,
                 c = cap_name_len, val = binding, next = 0 - 1, pos = cur_off(p) },
         )
         params = append_node(p, params, capability)
@@ -2367,7 +2367,7 @@ parse_variant_body :: fn(mut p: Parser, enum_ty: i64, enum_off: i64,
         entry := arena_at(p.variants, index)
         variant_tag = entry.tag
     }
-    tag_value := new_node(p, NODE_NUM, 0, 0, variant_tag)
+    tag_value := new_node(p, NodeKind::Num, 0, 0, variant_tag)
     head := new_field_init(p, tag_value, p.name_tag, 3)
     mut tail := head
     if (cur(p) == TOK_LBRACE && p.no_struct_lit == false) {
@@ -2442,7 +2442,7 @@ parse_inferred_variant :: fn(mut p: Parser) -> i64 {
 // the fields are walked, so a literal nested inside one resolves too.
 resolve_untyped_literal :: fn(mut p: Parser, node_id: i64, wanted: i64) {
     node := arena_at(p.arena, node_id)
-    if (node.kind != NODE_STRUCT_LIT || node.val != (0 - 1)) {
+    if (node.kind != NodeKind::StructLit || node.val != (0 - 1)) {
         return
     }
     mut struct_ty := wanted
@@ -2668,7 +2668,7 @@ returns_failure :: fn(mut p: Parser, value: i64) -> bool {
         return false
     }
     node := arena_at(p.arena, value)
-    node.kind == NODE_STRUCT_LIT && node.val == p.failure_ty
+    node.kind == NodeKind::StructLit && node.val == p.failure_ty
 }
 
 // Wrap a returned value as whichever side of the failure set it is.
@@ -2686,7 +2686,7 @@ new_result_value :: fn(mut p: Parser, result_ty: i64, which: i64, name_off: i64,
     name_len: i64, payload: i64) -> i64 {
     which_node := arena_push(
         p.arena,
-        Node { kind = NODE_NUM, a = 0, b = 0, c = 0, val = which,
+        Node { kind = NodeKind::Num, a = 0, b = 0, c = 0, val = which,
             next = 0 - 1, pos = cur_off(p) },
     )
     tag_init := new_field_init(p, which_node, p.name_tag, 3)
@@ -2730,7 +2730,7 @@ parse_extern :: fn(mut p: Parser) -> i64 {
     set_ret_type(p, fn_index, ret)
     arena_push(
         p.arena,
-        Node { kind = NODE_EXTERN, a = 0, b = params, c = ret, val = fn_index,
+        Node { kind = NodeKind::Extern, a = 0, b = params, c = ret, val = fn_index,
             next = 0 - 1, pos = cur_off(p) },
     )
 }
@@ -2761,10 +2761,10 @@ is_arith_op :: fn(kind: i64) -> bool {
 fold_const :: fn(mut p: Parser, id: i64) -> i64 {
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NODE_NUM) {
+    if (kind == NodeKind::Num) {
         return node.val
     }
-    if (kind == NODE_VAR) {
+    if (kind == NodeKind::Var) {
         if (is_const(p, node.val, node.c) == false) {
             report_where(p.modules, p.src, node.val)
             report("'")
@@ -2774,7 +2774,7 @@ fold_const :: fn(mut p: Parser, id: i64) -> i64 {
         }
         return const_value(p, node.val, node.c)
     }
-    if (kind == NODE_BIN) {
+    if (kind == NodeKind::Bin) {
         left := fold_const(p, node.a)
         right := fold_const(p, node.b)
         op := node.val

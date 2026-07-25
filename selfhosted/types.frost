@@ -68,7 +68,7 @@ lower_enum_compare :: fn(mut p: Parser, id: i64) {
 // read out of it.
 enum_tag_operand :: fn(mut p: Parser, side: i64) -> i64 {
     node := arena_at(p.arena, side)
-    if (node.kind == NODE_STRUCT_LIT) {
+    if (node.kind == NodeKind::StructLit) {
         mut init := node.a
         while (init != (0 - 1)) {
             held := arena_at(p.arena, init)
@@ -296,13 +296,13 @@ type_of :: fn(mut p: Parser, id: i64) -> i64 {
 type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NODE_STRLIT) {
+    if (kind == NodeKind::StrLit) {
         return POINTER_BASE + TY_I8
     }
-    if (kind == NODE_STRUCT_LIT) {
+    if (kind == NodeKind::StructLit) {
         return node.val
     }
-    if (kind == NODE_VAR) {
+    if (kind == NodeKind::Var) {
         // A name that is not a local but is a global function is that function
         // used as a value: it stands for the function's address, of the
         // function-pointer type its signature makes.
@@ -314,20 +314,20 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
         }
         return lookup_local(p, node.val, node.c)
     }
-    if (kind == NODE_CALL) {
+    if (kind == NodeKind::Call) {
         // A generic function's declared return type still mentions its type
         // parameter, so a call answers with the concrete type recorded for the
         // instantiation it names.
         return call_ret_type(p, node.a, node.val)
     }
-    if (kind == NODE_FIELD) {
+    if (kind == NodeKind::Field) {
         base := node.a
         off := node.val
         len := node.c
         // `c[h].field` on a columns container yields one element of that field's
         // column, so the type is the column array's element, not the column.
         base_node := arena_at(p.arena, base)
-        if (base_node.kind == NODE_INDEX) {
+        if (base_node.kind == NodeKind::Index) {
             cbase_ty := type_of(p, base_node.a)
             mut cthrough := cbase_ty
             if (is_pointer(cthrough)) {
@@ -342,7 +342,7 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
         base_ty := type_of(p, base)
         return field_type(p, base_ty, off, len)
     }
-    if (kind == NODE_DEREF) {
+    if (kind == NodeKind::Deref) {
         inner := node.a
         t := type_of(p, inner)
         if (is_pointer(t)) {
@@ -350,7 +350,7 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
         }
         return TY_I64
     }
-    if (kind == NODE_INDEX) {
+    if (kind == NodeKind::Index) {
         base := node.a
         t := type_of(p, base)
         // A slab indexed by a handle yields one of its stored elements, so the
@@ -370,16 +370,16 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
         }
         return t
     }
-    if (kind == NODE_SLICE_LEN) {
+    if (kind == NodeKind::SliceLen) {
         return TY_I64
     }
-    if (kind == NODE_ASSERT) {
+    if (kind == NodeKind::Assert) {
         return TY_VOID
     }
     // A literal says both halves of its own type: the element from a declared
     // type when one was in force, otherwise from the first thing in it, and the
     // length from how many there are.
-    if (kind == NODE_ARRAY_LIT) {
+    if (kind == NodeKind::ArrayLit) {
         mut element : i64 = TY_I64
         if (node.val != 0) {
             element = node.val - 1
@@ -391,20 +391,20 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
         }
         return array_of(p, element, node.c)
     }
-    if (kind == NODE_REF) {
+    if (kind == NodeKind::Ref) {
         return BORROW_FLAG + type_of(p, node.a)
     }
-    if (kind == NODE_SLICE_FROM) {
+    if (kind == NodeKind::SliceFrom) {
         return node.val
     }
-    if (kind == NODE_ADDROF) {
+    if (kind == NodeKind::AddrOf) {
         inner := node.a
         return POINTER_BASE + type_of(p, inner)
     }
-    if (kind == NODE_PTR_CAST) {
+    if (kind == NodeKind::PtrCast) {
         return POINTER_BASE + node.val
     }
-    if (kind == NODE_FLOAT) {
+    if (kind == NodeKind::Float) {
         return TY_F64
     }
     // Arithmetic answers i64 whatever it was handed, which is deliberate: a
@@ -413,7 +413,7 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
     // being computed at eight bits. Floats are the exception, since an integer
     // result there would be the wrong kind of number rather than the wrong
     // width, and a comparison answers a truth value either way.
-    if (kind == NODE_BIN) {
+    if (kind == NodeKind::Bin) {
         if (node.val >= OP_LT) {
             return TY_I64
         }
@@ -458,7 +458,7 @@ call_type_args :: fn(mut p: Parser, head: i64) -> i64 {
         value := node.a
         next_id := node.next
         vnode := arena_at(p.arena, value)
-        if (vnode.kind == NODE_TYPEVAL) {
+        if (vnode.kind == NodeKind::TypeVal) {
             if (count == 0) {
                 first = vnode.val
             } else {
@@ -565,7 +565,7 @@ collect_type_args :: fn(mut p: Parser) {
     i = 0
     while (i < p.arena.count) {
         node := arena_at(p.arena, i)
-        if (node.kind == NODE_CALL && generic_fn_of(p, node.val) >= 0) {
+        if (node.kind == NodeKind::Call && generic_fn_of(p, node.val) >= 0) {
             arg := call_type_args(p, node.a)
             note_type_args(p, arg, p.call_xarg_start, p.call_xarg_count)
         }
@@ -648,7 +648,7 @@ nth_value_arg :: fn(mut p: Parser, args: i64, n: i64) -> i64 {
         value := node.a
         next_id := node.next
         vnode := arena_at(p.arena, value)
-        if (vnode.kind != NODE_TYPEVAL) {
+        if (vnode.kind != NodeKind::TypeVal) {
             if (seen == n) {
                 return value
             }
@@ -667,7 +667,7 @@ count_value_args :: fn(mut p: Parser, args: i64) -> i64 {
         value := node.a
         next_id := node.next
         vnode := arena_at(p.arena, value)
-        if (vnode.kind != NODE_TYPEVAL) {
+        if (vnode.kind != NodeKind::TypeVal) {
             count = count + 1
         }
         id = next_id
