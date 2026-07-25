@@ -382,6 +382,12 @@ name that helper, and two files may share a private name without colliding.
 There is no `pub` and no per-item visibility marker. The `export` line is the
 only control, and struct fields are always public (3.2).
 
+The exported namespace is flat, and a name carries its own prefix by convention
+(`vec3_add`, not a qualified `math.add`), which keeps it a single token to search
+for. Two imported modules exporting the same name is therefore a compile error
+naming both modules, not a silent choice between them. The fix is to prefix one
+of them, or to rename it where it is imported.
+
 ---
 
 ## 6. Expressions

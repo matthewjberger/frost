@@ -2498,6 +2498,67 @@ fn self_hosted_resolves_imports() {
 // A file names another that names it back. Each file lands in the buffer once,
 // so this settles rather than running forever.
 #[test]
+fn export_name_collision_is_rejected_by_both_compilers() {
+    let directory = std::env::temp_dir().join("frost_export_collision");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("coll_a.frost"),
+        "export helper\nhelper :: fn() -> i64 { 1 }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("coll_b.frost"),
+        "export helper\nhelper :: fn() -> i64 { 2 }\n",
+    )
+    .unwrap();
+    let root = directory.join("coll_main.frost");
+    std::fs::write(
+        &root,
+        "import \"coll_a.frost\"\n\
+         import \"coll_b.frost\"\n\
+         main :: fn() -> i64 { helper() }\n",
+    )
+    .unwrap();
+
+    // The bootstrap rejects it during import resolution.
+    let bootstrap = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .env("FROST_CHECK_UNSAFE", "0")
+        .arg("--emit-c")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        !bootstrap.status.success(),
+        "the bootstrap accepted two modules exporting the same name"
+    );
+    let bootstrap_error = String::from_utf8_lossy(&bootstrap.stderr);
+    assert!(
+        bootstrap_error.contains("exported by two modules"),
+        "unexpected bootstrap collision message:\n{bootstrap_error}"
+    );
+
+    // The self-hosted compiler rejects it the same way.
+    let Some(compiler) = build_self_hosted_compiler("exportcollision") else {
+        return;
+    };
+    let selfhosted = Command::new(&compiler)
+        .env("FROST_CHECK_UNSAFE", "0")
+        .env("FROST_INPUT", &root)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&compiler);
+    assert!(
+        !selfhosted.status.success(),
+        "the self-hosted compiler accepted two modules exporting the same name"
+    );
+    let selfhosted_error = String::from_utf8_lossy(&selfhosted.stderr);
+    assert!(
+        selfhosted_error.contains("exported by two modules"),
+        "unexpected self-hosted collision message:\n{selfhosted_error}"
+    );
+}
+
+#[test]
 fn self_hosted_survives_an_import_cycle() {
     let Some(compiler) = build_self_hosted_compiler("importcycle") else {
         return;
