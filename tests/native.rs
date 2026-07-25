@@ -6885,6 +6885,70 @@ fn reading_a_local_through_a_pointer_is_still_allowed() {
     assert_eq!(output, "42\n");
 }
 
+const TRY_HEAD: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
+FileError :: enum { NotFound, Denied }
+
+read_size :: fn(ok: i64) -> i64 ! FileError {
+    if (ok == 0) { return FileError::NotFound {} }
+    return 42
+}
+"#;
+
+const TRY_TAIL: &str = r#"
+report :: fn(ok: i64) -> i64 {
+    match use_it(ok) {
+        case .Ok { value }: value
+        case .Err { error }: 0 - 1
+    }
+}
+
+main :: fn() -> i64 {
+    unsafe { printf("%lld\n", report(1)) }
+    unsafe { printf("%lld\n", report(0)) }
+    0
+}
+"#;
+
+// `?` inside an `unsafe` block or a `with` block is still `?`. The failure-set
+// lowering looked for one in neither, so the desugaring never ran and the
+// operator survived into the backend as an unsupported expression. Each answers
+// the same as the plain form, which is what says the desugaring is equivalent
+// and not merely present.
+#[test]
+fn a_try_inside_an_unsafe_block_lowers_like_any_other() {
+    let source = format!(
+        "{TRY_HEAD}\n\
+         use_it :: fn(ok: i64) -> i64 ! FileError {{\n\
+         \x20   n := unsafe {{ read_size(ok)? }}\n\
+         \x20   return n + 1\n}}\n{TRY_TAIL}"
+    );
+    let Some(output) = compile_and_run("tryinunsafe", &source) else {
+        return;
+    };
+    assert_eq!(output, "43\n-1\n");
+}
+
+#[test]
+fn a_try_inside_a_with_block_lowers_like_any_other() {
+    let source = format!(
+        "{TRY_HEAD}\n\
+         use_it :: fn(ok: i64) -> i64 ! FileError {{\n\
+         \x20   mut arena : Arena<64> = Arena {{ data = [0; 64], offset = 0 }}\n\
+         \x20   mut n : i64 = 0\n\
+         \x20   with arena {{\n\
+         \x20       n = read_size(ok)?\n\
+         \x20   }}\n\
+         \x20   return n + 1\n}}\n{TRY_TAIL}"
+    );
+    let Some(output) = compile_and_run("tryinwith", &source) else {
+        return;
+    };
+    assert_eq!(output, "43\n-1\n");
+}
+
 // A move made inside an `unsafe` block is a move. Found by asking which checks
 // were only ever tested with the unsafety gate off, which is what let the frame
 // escapes through for as long as it did.
