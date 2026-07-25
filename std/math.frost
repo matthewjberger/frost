@@ -356,3 +356,317 @@ quat_to_mat4 :: fn(q: Quat) -> Mat4 {
         0.0, 0.0, 0.0, 1.0,
     ] }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+//
+//   frost --test std/math.frost
+//
+// Every exported function is exercised here. A square root or a trigonometric
+// call does not land on an exact float, so results are compared within a
+// tolerance rather than for equality, loose enough for single precision to have
+// room and tight enough that a wrong formula fails.
+// ---------------------------------------------------------------------------
+
+near :: fn(a: f32, b: f32) -> bool {
+    d := a - b
+    if (d < 0.0) {
+        return 0.0 - d < 0.0001
+    }
+    d < 0.0001
+}
+
+near_vec3 :: fn(a: Vec3, b: Vec3) -> bool {
+    near(a.x, b.x) && near(a.y, b.y) && near(a.z, b.z)
+}
+
+near_vec4 :: fn(a: Vec4, b: Vec4) -> bool {
+    near(a.x, b.x) && near(a.y, b.y) && near(a.z, b.z) && near(a.w, b.w)
+}
+
+near_mat4 :: fn(a: Mat4, b: Mat4) -> bool {
+    mut index : i64 = 0
+    while (index < 16) {
+        if (near(a.m[index], b.m[index]) == false) {
+            return false
+        }
+        index = index + 1
+    }
+    true
+}
+
+test "angles convert both ways" {
+    assert(near(radians(180.0), 3.14159265))
+    assert(near(radians(0.0), 0.0))
+    assert(near(degrees(3.14159265), 180.0))
+    assert(near(degrees(radians(37.0)), 37.0))
+}
+
+test "vec2 arithmetic" {
+    a := vec2(1.0, 2.0)
+    b := vec2(3.0, 5.0)
+    assert(near(a.x, 1.0) && near(a.y, 2.0))
+    sum := vec2_add(a, b)
+    assert(near(sum.x, 4.0) && near(sum.y, 7.0))
+    difference := vec2_sub(b, a)
+    assert(near(difference.x, 2.0) && near(difference.y, 3.0))
+    scaled := vec2_scale(a, 3.0)
+    assert(near(scaled.x, 3.0) && near(scaled.y, 6.0))
+    assert(near(vec2_dot(a, b), 13.0))
+}
+
+test "vec2 length and direction" {
+    assert(near(vec2_length(vec2(3.0, 4.0)), 5.0))
+    assert(near(vec2_length(vec2(0.0, 0.0)), 0.0))
+    unit := vec2_normalize(vec2(3.0, 4.0))
+    assert(near(unit.x, 0.6) && near(unit.y, 0.8))
+    // A zero vector has no direction, so normalizing one answers zero rather
+    // than dividing by zero.
+    zero := vec2_normalize(vec2(0.0, 0.0))
+    assert(near(zero.x, 0.0) && near(zero.y, 0.0))
+}
+
+test "vec3 arithmetic" {
+    a := vec3(1.0, 2.0, 3.0)
+    b := vec3(4.0, 5.0, 6.0)
+    assert(near(a.x, 1.0) && near(a.y, 2.0) && near(a.z, 3.0))
+    assert(near_vec3(vec3_add(a, b), vec3(5.0, 7.0, 9.0)))
+    assert(near_vec3(vec3_sub(b, a), vec3(3.0, 3.0, 3.0)))
+    assert(near_vec3(vec3_scale(a, 2.0), vec3(2.0, 4.0, 6.0)))
+    assert(near_vec3(vec3_neg(a), vec3(0.0 - 1.0, 0.0 - 2.0, 0.0 - 3.0)))
+    assert(near(vec3_dot(a, b), 32.0))
+}
+
+test "vec3 cross product follows the right hand" {
+    x := vec3(1.0, 0.0, 0.0)
+    y := vec3(0.0, 1.0, 0.0)
+    z := vec3(0.0, 0.0, 1.0)
+    assert(near_vec3(vec3_cross(x, y), z))
+    assert(near_vec3(vec3_cross(y, z), x))
+    assert(near_vec3(vec3_cross(z, x), y))
+    // Reversing the operands reverses the result, and a vector crossed with
+    // itself has no perpendicular.
+    assert(near_vec3(vec3_cross(y, x), vec3_neg(z)))
+    assert(near_vec3(vec3_cross(x, x), vec3(0.0, 0.0, 0.0)))
+}
+
+test "vec3 lengths and distance" {
+    v := vec3(1.0, 2.0, 2.0)
+    assert(near(vec3_length(v), 3.0))
+    assert(near(vec3_length_sq(v), 9.0))
+    assert(near(vec3_distance(vec3(1.0, 0.0, 0.0), vec3(4.0, 4.0, 0.0)), 5.0))
+    assert(near(vec3_distance(v, v), 0.0))
+    unit := vec3_normalize(vec3(0.0, 0.0, 5.0))
+    assert(near_vec3(unit, vec3(0.0, 0.0, 1.0)))
+    assert(near_vec3(vec3_normalize(vec3(0.0, 0.0, 0.0)),
+        vec3(0.0, 0.0, 0.0)))
+}
+
+test "vec3 lerp reaches both ends" {
+    a := vec3(0.0, 0.0, 0.0)
+    b := vec3(10.0, 20.0, 30.0)
+    assert(near_vec3(vec3_lerp(a, b, 0.0), a))
+    assert(near_vec3(vec3_lerp(a, b, 1.0), b))
+    assert(near_vec3(vec3_lerp(a, b, 0.5), vec3(5.0, 10.0, 15.0)))
+}
+
+test "vec4 arithmetic" {
+    a := vec4(1.0, 2.0, 3.0, 4.0)
+    b := vec4(5.0, 6.0, 7.0, 8.0)
+    assert(near(a.x, 1.0) && near(a.w, 4.0))
+    assert(near_vec4(vec4_add(a, b), vec4(6.0, 8.0, 10.0, 12.0)))
+    assert(near_vec4(vec4_sub(b, a), vec4(4.0, 4.0, 4.0, 4.0)))
+    assert(near_vec4(vec4_scale(a, 2.0), vec4(2.0, 4.0, 6.0, 8.0)))
+    assert(near(vec4_dot(a, b), 70.0))
+}
+
+test "mat4 zero and identity" {
+    zero := mat4_zero()
+    mut index : i64 = 0
+    while (index < 16) {
+        assert(near(zero.m[index], 0.0))
+        index = index + 1
+    }
+    one := mat4_identity()
+    assert(near(one.m[0], 1.0) && near(one.m[5], 1.0))
+    assert(near(one.m[10], 1.0) && near(one.m[15], 1.0))
+    assert(near(one.m[1], 0.0) && near(one.m[4], 0.0))
+    v := vec4(1.0, 2.0, 3.0, 1.0)
+    assert(near_vec4(mat4_mul_vec4(one, v), v))
+}
+
+test "mat4 multiplication applies the right one first" {
+    one := mat4_identity()
+    move_by := mat4_translation(vec3(1.0, 0.0, 0.0))
+    grow := mat4_scale(vec3(2.0, 2.0, 2.0))
+    assert(near_mat4(mat4_mul(one, move_by), move_by))
+    assert(near_mat4(mat4_mul(move_by, one), move_by))
+    // Scale then translate moves by one; translate then scale moves by two,
+    // which is what says the order is not symmetric and which way round it is.
+    scale_then_move := mat4_mul(move_by, grow)
+    move_then_scale := mat4_mul(grow, move_by)
+    at := vec3(1.0, 0.0, 0.0)
+    assert(near_vec3(mat4_transform_point(scale_then_move, at),
+        vec3(3.0, 0.0, 0.0)))
+    assert(near_vec3(mat4_transform_point(move_then_scale, at),
+        vec3(4.0, 0.0, 0.0)))
+}
+
+test "mat4 translation moves a point and not a direction" {
+    move_by := mat4_translation(vec3(3.0, 4.0, 5.0))
+    assert(near_vec3(mat4_transform_point(move_by, vec3(1.0, 1.0, 1.0)),
+        vec3(4.0, 5.0, 6.0)))
+    // A direction has no position, so translating one changes nothing. That is
+    // the whole difference between the two.
+    assert(near_vec3(mat4_transform_dir(move_by, vec3(1.0, 0.0, 0.0)),
+        vec3(1.0, 0.0, 0.0)))
+    assert(near_vec4(mat4_mul_vec4(move_by, vec4(0.0, 0.0, 0.0, 1.0)),
+        vec4(3.0, 4.0, 5.0, 1.0)))
+}
+
+test "mat4 scale" {
+    grow := mat4_scale(vec3(2.0, 3.0, 4.0))
+    assert(near_vec3(mat4_transform_point(grow, vec3(1.0, 1.0, 1.0)),
+        vec3(2.0, 3.0, 4.0)))
+    assert(near_vec3(mat4_transform_dir(grow, vec3(1.0, 1.0, 1.0)),
+        vec3(2.0, 3.0, 4.0)))
+}
+
+test "mat4 rotations turn one axis into the next" {
+    quarter := radians(90.0)
+    x := vec3(1.0, 0.0, 0.0)
+    y := vec3(0.0, 1.0, 0.0)
+    z := vec3(0.0, 0.0, 1.0)
+    assert(near_vec3(mat4_transform_dir(mat4_rotation_x(quarter), y), z))
+    assert(near_vec3(mat4_transform_dir(mat4_rotation_y(quarter), z), x))
+    assert(near_vec3(mat4_transform_dir(mat4_rotation_z(quarter), x), y))
+    // A full turn is the identity, which catches a sign that a quarter turn
+    // does not.
+    full := radians(360.0)
+    assert(near_vec3(mat4_transform_dir(mat4_rotation_x(full), y), y))
+    assert(near_vec3(mat4_transform_dir(mat4_rotation_y(full), z), z))
+    assert(near_vec3(mat4_transform_dir(mat4_rotation_z(full), x), x))
+}
+
+test "perspective maps the near and far planes to minus one and one" {
+    projection := mat4_perspective(radians(90.0), 1.0, 1.0, 101.0)
+    // A point on the near plane, in front of a camera looking down -z.
+    at_near := mat4_mul_vec4(projection, vec4(0.0, 0.0, 0.0 - 1.0, 1.0))
+    assert(near(at_near.z / at_near.w, 0.0 - 1.0))
+    at_far := mat4_mul_vec4(projection, vec4(0.0, 0.0, 0.0 - 101.0, 1.0))
+    assert(near(at_far.z / at_far.w, 1.0))
+    // A ninety degree field of view puts the edge of the frustum on the
+    // diagonal, so a point with x equal to -z lands on the edge of clip space.
+    edge := mat4_mul_vec4(projection, vec4(2.0, 0.0, 0.0 - 2.0, 1.0))
+    assert(near(edge.x / edge.w, 1.0))
+}
+
+test "the zero to one perspective maps the near plane to zero" {
+    projection := mat4_perspective_zo(radians(90.0), 1.0, 1.0, 101.0)
+    at_near := mat4_mul_vec4(projection, vec4(0.0, 0.0, 0.0 - 1.0, 1.0))
+    assert(near(at_near.z / at_near.w, 0.0))
+    at_far := mat4_mul_vec4(projection, vec4(0.0, 0.0, 0.0 - 101.0, 1.0))
+    assert(near(at_far.z / at_far.w, 1.0))
+    // Across the view it is the same projection; only the depth range differs.
+    edge := mat4_mul_vec4(projection, vec4(2.0, 0.0, 0.0 - 2.0, 1.0))
+    assert(near(edge.x / edge.w, 1.0))
+    // Twice the aspect ratio is half the horizontal spread.
+    wide := mat4_perspective_zo(radians(90.0), 2.0, 1.0, 101.0)
+    squeezed := mat4_mul_vec4(wide, vec4(2.0, 0.0, 0.0 - 2.0, 1.0))
+    assert(near(squeezed.x / squeezed.w, 0.5))
+}
+
+test "ortho maps its box onto clip space" {
+    box := mat4_ortho(0.0 - 2.0, 2.0, 0.0 - 1.0, 1.0, 1.0, 11.0)
+    left := mat4_transform_point(box, vec3(0.0 - 2.0, 0.0, 0.0))
+    assert(near(left.x, 0.0 - 1.0))
+    right := mat4_transform_point(box, vec3(2.0, 0.0, 0.0))
+    assert(near(right.x, 1.0))
+    top := mat4_transform_point(box, vec3(0.0, 1.0, 0.0))
+    assert(near(top.y, 1.0))
+    // Depth runs from the near plane at -1 to the far plane at 1, both of them
+    // in front of a camera looking down -z.
+    at_near := mat4_transform_point(box, vec3(0.0, 0.0, 0.0 - 1.0))
+    assert(near(at_near.z, 0.0 - 1.0))
+    at_far := mat4_transform_point(box, vec3(0.0, 0.0, 0.0 - 11.0))
+    assert(near(at_far.z, 1.0))
+}
+
+test "look at puts the camera where it says" {
+    up := vec3(0.0, 1.0, 0.0)
+    view := mat4_look_at(vec3(0.0, 0.0, 3.0), vec3(0.0, 0.0, 0.0), up)
+    // What the camera looks at lands in front of it, three away down -z.
+    assert(near_vec3(mat4_transform_point(view, vec3(0.0, 0.0, 0.0)),
+        vec3(0.0, 0.0, 0.0 - 3.0)))
+    // The camera's own position lands on the origin, which is what a view
+    // matrix is for.
+    assert(near_vec3(mat4_transform_point(view, vec3(0.0, 0.0, 3.0)),
+        vec3(0.0, 0.0, 0.0)))
+    // Right stays right and up stays up when the camera has not rolled.
+    assert(near_vec3(mat4_transform_dir(view, vec3(1.0, 0.0, 0.0)),
+        vec3(1.0, 0.0, 0.0)))
+    assert(near_vec3(mat4_transform_dir(view, up), up))
+    // Looking from the side instead, the same target is still three ahead.
+    from_x := mat4_look_at(vec3(3.0, 0.0, 0.0), vec3(0.0, 0.0, 0.0), up)
+    assert(near_vec3(mat4_transform_point(from_x, vec3(0.0, 0.0, 0.0)),
+        vec3(0.0, 0.0, 0.0 - 3.0)))
+}
+
+test "quaternion identity and length" {
+    one := quat_identity()
+    assert(near(one.x, 0.0) && near(one.y, 0.0))
+    assert(near(one.z, 0.0) && near(one.w, 1.0))
+    assert(near(quat_length(one), 1.0))
+    assert(near(quat_length(Quat { x = 0.0, y = 3.0, z = 4.0, w = 0.0 }), 5.0))
+    unit := quat_normalize(Quat { x = 0.0, y = 3.0, z = 4.0, w = 0.0 })
+    assert(near(quat_length(unit), 1.0))
+    assert(near(unit.y, 0.6) && near(unit.z, 0.8))
+    // A zero quaternion has no direction, so normalizing one answers zero
+    // rather than dividing by zero, the same as the vector normalizers. It is
+    // not a rotation, but quat_to_mat4 normalizes again and reads it as the
+    // identity, so nothing downstream sees a NaN.
+    flat := quat_normalize(Quat { x = 0.0, y = 0.0, z = 0.0, w = 0.0 })
+    assert(near(quat_length(flat), 0.0))
+    assert(near_mat4(quat_to_mat4(flat), mat4_identity()))
+}
+
+test "a quaternion rotates the way the matrix does" {
+    quarter := radians(90.0)
+    x := vec3(1.0, 0.0, 0.0)
+    y := vec3(0.0, 1.0, 0.0)
+    z := vec3(0.0, 0.0, 1.0)
+    about_y := quat_from_axis_angle(y, quarter)
+    assert(near_vec3(quat_rotate_vec3(about_y, z), x))
+    assert(near_vec3(quat_rotate_vec3(about_y, y), y))
+    // The two ways of applying one rotation have to agree, which is what says
+    // quat_to_mat4 is that rotation and not its inverse.
+    assert(near_mat4(quat_to_mat4(about_y), mat4_rotation_y(quarter)))
+    assert(near_vec3(mat4_transform_dir(quat_to_mat4(about_y), z),
+        quat_rotate_vec3(about_y, z)))
+    assert(near_mat4(quat_to_mat4(quat_identity()), mat4_identity()))
+    assert(near_vec3(quat_rotate_vec3(quat_identity(), x), x))
+}
+
+test "quaternion multiplication composes rotations" {
+    quarter := radians(90.0)
+    y := vec3(0.0, 1.0, 0.0)
+    z := vec3(0.0, 0.0, 1.0)
+    about_y := quat_from_axis_angle(y, quarter)
+    // Two quarter turns about one axis are a half turn about it.
+    half := quat_mul(about_y, about_y)
+    assert(near_vec3(quat_rotate_vec3(half, z), vec3(0.0, 0.0, 0.0 - 1.0)))
+    assert(near_mat4(quat_to_mat4(half), mat4_rotation_y(radians(180.0))))
+    // The identity composes with anything and changes nothing.
+    assert(near_mat4(quat_to_mat4(quat_mul(quat_identity(), about_y)),
+        quat_to_mat4(about_y)))
+    // The conjugate of a unit quaternion is its inverse, so the two together
+    // are the identity.
+    back := quat_mul(about_y, quat_conjugate(about_y))
+    assert(near_vec3(quat_rotate_vec3(back, z), z))
+    // The conjugate negates the vector part and keeps the scalar one.
+    reversed := quat_conjugate(about_y)
+    assert(near(reversed.x, 0.0 - about_y.x))
+    assert(near(reversed.y, 0.0 - about_y.y))
+    assert(near(reversed.z, 0.0 - about_y.z))
+    assert(near(reversed.w, about_y.w))
+}

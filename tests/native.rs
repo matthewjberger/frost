@@ -1512,6 +1512,45 @@ fn a_program_using_std_is_clean_under_the_unsafe_gate() {
     let _ = std::fs::remove_dir_all(&directory);
 }
 
+// std/math.frost's own test blocks, run through both of the bootstrap's
+// backends. Every exported function is covered: a differential test says the
+// two backends agree, and these say the answers are right. A rotation that
+// turns the wrong way, a projection with the depth range inverted and a
+// quaternion that is its own inverse all agree across backends and are all
+// wrong, so agreement was never going to be enough on its own.
+#[test]
+fn the_math_library_passes_its_own_tests() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source = root.join("std").join("math.frost");
+    let directory = std::env::temp_dir();
+
+    for (label, emit_c) in [("mathnative", false), ("mathc", true)] {
+        let exe = directory.join(format!(
+            "{}{}",
+            unique(&format!("frost_{label}")),
+            std::env::consts::EXE_SUFFIX
+        ));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
+        if emit_c {
+            command.arg("--emit-c");
+        }
+        let run = command
+            .arg("--test")
+            .arg("-o")
+            .arg(&exe)
+            .arg(&source)
+            .output()
+            .unwrap();
+        let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+        assert!(
+            output.contains("20 passed, 0 failed"),
+            "{label}:\n{output}{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        let _ = std::fs::remove_file(&exe);
+    }
+}
+
 // The standard library, compiled and run by the Frost compiler through both
 // backends. It is the largest program written in the language that the compiler
 // did not write itself, and its `test` blocks are what say the answers are right
@@ -1525,28 +1564,36 @@ fn self_hosted_runs_the_standard_library_tests() {
     let runtime = format!("{}/runtime/frost_runtime.c", root.display());
     let directory = std::env::temp_dir();
 
+    // Both modules that carry `test` blocks, through both of the self-hosted
+    // compiler's backends. math.frost is the one that exercises floats,
+    // fixed arrays and a struct returned by value, none of which strings.frost
+    // reaches.
+    let modules = [("strings.frost", "6 passed"), ("math.frost", "20 passed")];
     for (label, backend) in [("stdc", "--emit-c"), ("stdasm", "--emit-asm")] {
-        let exe = directory.join(format!(
-            "{}{}",
-            unique(&format!("frost_{label}")),
-            std::env::consts::EXE_SUFFIX
-        ));
-        let run = Command::new(&compiler)
-            .arg(backend)
-            .arg("--test")
-            .arg("-o")
-            .arg(&exe)
-            .arg(root.join("std").join("strings.frost"))
-            .env("FROST_RUNTIME", &runtime)
-            .output()
-            .unwrap();
-        let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
-        assert!(
-            output.contains("6 passed, 0 failed"),
-            "{label}:\n{output}{}",
-            String::from_utf8_lossy(&run.stderr)
-        );
-        let _ = std::fs::remove_file(&exe);
+        for (module, expected) in modules {
+            let exe = directory.join(format!(
+                "{}{}",
+                unique(&format!("frost_{label}")),
+                std::env::consts::EXE_SUFFIX
+            ));
+            let run = Command::new(&compiler)
+                .arg(backend)
+                .arg("--test")
+                .arg("-o")
+                .arg(&exe)
+                .arg(root.join("std").join(module))
+                .env("FROST_RUNTIME", &runtime)
+                .output()
+                .unwrap();
+            let output =
+                String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+            assert!(
+                output.contains(expected) && output.contains("0 failed"),
+                "{label} on {module}:\n{output}{}",
+                String::from_utf8_lossy(&run.stderr)
+            );
+            let _ = std::fs::remove_file(&exe);
+        }
     }
     let _ = std::fs::remove_file(&compiler);
 }
