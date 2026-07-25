@@ -202,6 +202,7 @@ main :: fn() -> i64 {
             region_returns = 0,
             frame_storage = arena_make($LocalVar, 4096),
             frame_bound = arena_make($LocalVar, 4096),
+            frame_via_pointer = arena_make($LocalVar, 4096),
             frame_materialized = arena_make($LocalVar, 4096),
             frame_answers = 0,
             mut_params = arena_make($LocalVar, 8192),
