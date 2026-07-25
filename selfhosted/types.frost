@@ -8,10 +8,82 @@ import "names.frost"
 export call_ret_type, call_type_args, collect_type_args, fn_index_of,
     fn_proc_type,
     count_value_args, field_type, generic_fn_of, is_linear_type, is_moved,
-    local_exists, lookup_local, nth_param_by_value, nth_param_type,
-    nth_value_arg, param_node_by_value,
+    local_exists, lookup_local, lower_enum_compare, nth_param_by_value,
+    nth_param_type, nth_value_arg, param_node_by_value,
     record_local, record_mono_ret, type_cache_prepare, type_of,
     types_compatible
+
+// `a == b` on two enum values asks which variant each is, and that is the tag
+// they both carry. An enum is laid out as a struct with `tag` beside every
+// variant's fields, so this rewrites the two sides to read that field, the same
+// way a `match` on an enum switches on `e.tag`. Both backends call it, so
+// neither has to know that an enum comparison is different from any other.
+//
+// It runs during emit rather than before it, because a local's type is recorded
+// as the emitter walks the body, so nothing earlier can say what `a` is. It is
+// idempotent: once rewritten the sides are integers and the test is false.
+//
+// A variant with fields makes the question ambiguous, since two values can be
+// the same variant and hold different things, so that one is refused.
+lower_enum_compare :: fn(mut p: Parser, id: i64) {
+    node := arena_at(p.arena, id)
+    op := node.val
+    left := node.a
+    right := node.b
+    position := node.pos
+    if (op != OP_EQ && op != OP_NE) {
+        return
+    }
+    ty := type_of(p, left)
+    if (is_struct_ty(ty) == false) {
+        return
+    }
+    def := arena_at(p.structs, struct_index_of(ty))
+    if (def.is_enum != 1) {
+        return
+    }
+    first_field := def.field_head
+    if (first_field != (0 - 1)) {
+        field := arena_at(p.fields, first_field)
+        if (field.next != (0 - 1)) {
+            report_where(p.modules, p.src, position)
+            report("an enum whose variants carry fields cannot be compared with ==, since two values can be the same variant and hold different things; match on it instead")
+            frost_rt_die()
+        }
+    }
+    // Both nodes are made before the one being rewritten is reached for, since
+    // pushing to the arena can move it and a borrow taken first would be
+    // writing to where it was.
+    tag_left := enum_tag_operand(p, left)
+    tag_right := enum_tag_operand(p, right)
+    mut held := arena_at(p.arena, id)
+    held.a = tag_left
+    held.b = tag_right
+}
+
+// The tag of one side of an enum comparison. `Kind::Var` is a struct literal
+// whose tag is written into it, so the value it was given is used directly:
+// reading a field of a literal would need its address, and a literal is not a
+// place either backend can take one of. Anything else is a place, so the tag is
+// read out of it.
+enum_tag_operand :: fn(mut p: Parser, side: i64) -> i64 {
+    node := arena_at(p.arena, side)
+    if (node.kind == NODE_STRUCT_LIT) {
+        mut init := node.a
+        while (init != (0 - 1)) {
+            held := arena_at(p.arena, init)
+            value := held.a
+            name_off := held.val
+            name_len := held.c
+            next_init := held.next
+            if (name_len == 3 && name_off == p.name_tag) {
+                return value
+            }
+            init = next_init
+        }
+    }
+    new_field_node(p, side, p.name_tag, 3)
+}
 
 // The declared type of the nth parameter, or -1 past the end of the list. An
 // argument is classified and converted by what the callee said it takes rather

@@ -626,9 +626,11 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         emit_struct_lit(p, struct_ty, inits)
         return
     }
-    left := node.a
-    op := node.val
-    right := node.b
+    lower_enum_compare(p, id)
+    bin := arena_at(p.arena, id)
+    left := bin.a
+    op := bin.val
+    right := bin.b
     emit_text("(")
     emit_expr(p, left)
     emit_op(op)

@@ -10,6 +10,7 @@ export check_borrow_exclusivity, check_calls, check_export_collisions,
     check_frame_escapes, check_moves,
     check_reference_fields, check_regions, check_unsafety
 
+
 // Two imported modules that export the same name is a collision: a reference to
 // it in a third module resolves to whichever the name lookup reaches first,
 // silently. The flat namespace is the point (a name carries its own prefix,

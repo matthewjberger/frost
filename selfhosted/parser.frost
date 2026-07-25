@@ -2078,7 +2078,7 @@ parse_enum :: fn(mut p: Parser) {
             field_head = field_head, is_generic = 0, tparam_off = 0,
             tparam_len = 0, field_token = 0, instance_id = 0 - 1,
             is_linear = 0, emitted = 0, xparam_start = 0, xparam_count = 0,
-            is_enum = 0 },
+            is_enum = 1 },
     )
 }
 

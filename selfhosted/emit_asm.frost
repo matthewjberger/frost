@@ -954,16 +954,18 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         return
     }
     if (kind == NODE_BIN) {
-        op := node.val
-        left_ty := type_of(p, node.a)
-        right_ty := type_of(p, node.b)
+        lower_enum_compare(p, id)
+        bin := arena_at(p.arena, id)
+        op := bin.val
+        left_ty := type_of(p, bin.a)
+        right_ty := type_of(p, bin.b)
         if (is_float(left_ty) || is_float(right_ty)) {
             // Every float operation is done at f64 and narrowed after, so
             // the arithmetic follows one path rather than one per width.
-            emit_asm_expr(p, node.a)
+            emit_asm_expr(p, bin.a)
             emit_asm_convert(p, left_ty, TY_F64)
             emit_asm_push()
-            emit_asm_expr(p, node.b)
+            emit_asm_expr(p, bin.b)
             emit_asm_convert(p, right_ty, TY_F64)
             asm("movq %rax, %r11")
             emit_asm_pop_rax()
@@ -973,9 +975,9 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
             }
             return
         }
-        emit_asm_expr(p, node.a)
+        emit_asm_expr(p, bin.a)
         emit_asm_push()
-        emit_asm_expr(p, node.b)
+        emit_asm_expr(p, bin.b)
         asm("movq %rax, %r11")
         emit_asm_pop_rax()
         emit_asm_binop(op)

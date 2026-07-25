@@ -706,6 +706,68 @@ main :: fn() -> i64 {
 }
 "#;
 
+// Two enum values compare by their tags, which for an enum whose variants carry
+// nothing is the whole value. Asking which variant something is used to need a
+// `match` with a case per variant, which is a lot of lines to answer one
+// question, and the node kinds in the self-hosted compiler are integer
+// constants partly because of it.
+const ENUM_EQUALITY: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Kind :: enum { Num, Var, Bin }
+Node :: struct { kind: Kind, weight: i64 }
+
+// Through a borrowed parameter, where the field's type is still a name the
+// parser has not resolved to an enum.
+is_var :: fn(node: Node) -> i64 {
+    if (node.kind == Kind::Var) { return 1 }
+    0
+}
+
+main :: fn() -> i64 {
+    a := Kind::Var
+    b := Kind::Var
+    c := Kind::Bin
+    printf("%lld\n", a == b)
+    printf("%lld\n", a == c)
+    printf("%lld\n", a != c)
+
+    node := Node { kind = Kind::Var, weight = 7 }
+    printf("%lld\n", is_var(node))
+    printf("%lld\n", node.kind == Kind::Bin)
+
+    held := node.kind
+    printf("%lld\n", held == Kind::Var)
+    0
+}
+"#;
+
+#[test]
+fn enum_values_compare_by_variant() {
+    let Some(output) = compile_and_run("enumeq", ENUM_EQUALITY) else {
+        return;
+    };
+    assert_eq!(output, "1\n0\n1\n1\n0\n1\n");
+}
+
+// A variant carrying fields makes the question ambiguous: two values can be the
+// same variant and different values. Rather than pick one reading, it says so
+// and points at `match`.
+#[test]
+fn an_enum_carrying_fields_is_not_compared_with_equals() {
+    let source = "Shape :: enum { Round, Sized { at: i64 } }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   a := Shape::Round {}\n\
+                  \x20   if (a == Shape::Round {}) { return 1 }\n\
+                  \x20   0\n\
+                  }\n";
+    let message = compile_error("enumeqfields", source);
+    assert!(
+        message.contains("carries fields") && message.contains("match"),
+        "expected the ambiguity to be named, got:\n{message}"
+    );
+}
+
 // Matching several values at once against a tuple of patterns. This has always
 // worked; what did not was the message when a tuple pattern met a value that is
 // not one, which said the feature was missing rather than that the case had
@@ -2533,6 +2595,53 @@ const BY_VALUE_LIBRARY: &str = "#include <stdint.h>\n\
      int64_t mixed(int64_t before, Pair p, int64_t after) {\n\
      \x20   return before * 100 + p.x * 10 + p.y + after;\n\
      }\n";
+
+// The self-hosted compiler compares enums by tag too, through both backends.
+// It lays an enum out as a struct with a `tag` beside every variant's fields,
+// so the rewrite reads that field. A variant value is a struct literal with the
+// tag written into it, and a literal is not a place either backend can address,
+// so that side uses the value it was given.
+const SELF_HOSTED_ENUM_EQUALITY: &str = "Kind :: enum { Num, Var, Bin }\n\
+     Node :: struct { kind: Kind, weight: i64 }\n\
+     is_var :: fn(node: Node) -> i64 {\n\
+     \x20   if (node.kind == Kind::Var) { return 1 }\n\
+     \x20   0\n\
+     }\n\
+     main :: fn() -> i64 {\n\
+     \x20   a := Kind::Var\n\
+     \x20   b := Kind::Var\n\
+     \x20   c := Kind::Bin\n\
+     \x20   if (a == b) { print 1 } else { print 0 }\n\
+     \x20   if (a == c) { print 1 } else { print 0 }\n\
+     \x20   if (a != c) { print 1 } else { print 0 }\n\
+     \x20   node := Node { kind = Kind::Var, weight = 7 }\n\
+     \x20   print is_var(node)\n\
+     \x20   held := node.kind\n\
+     \x20   if (held == Kind::Var) { print 1 } else { print 0 }\n\
+     \x20   0\n\
+     }\n";
+
+#[test]
+fn self_hosted_compares_enums_by_variant() {
+    let Some(output) =
+        selfhosted_native_output("shenumeq", SELF_HOSTED_ENUM_EQUALITY)
+    else {
+        return;
+    };
+    assert_eq!(output, "1\n0\n1\n1\n1\n");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shenumeq_input.frost");
+    std::fs::write(&input, SELF_HOSTED_ENUM_EQUALITY).unwrap();
+    let Some(c_source) = self_hosted_emits("shenumeq", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shenumeq", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
 
 // The receiving direction, through both self-hosted backends: C calls a Frost
 // function and hands it a struct by value. Its assembly backend has to put the
@@ -7412,6 +7521,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_printnarrow", PRINT_NARROW_VALUES),
         ("diff_parenstmt", PARENTHESISED_STATEMENT),
         ("diff_tuplepat", TUPLE_PATTERNS),
+        ("diff_enumeq", ENUM_EQUALITY),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);

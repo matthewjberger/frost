@@ -3117,6 +3117,29 @@ impl<'a> FunctionLowering<'a> {
         }
     }
 
+    // The tag of an enum value, which sits at offset zero. Comparing two of
+    // them is comparing which variant each is.
+    fn load_enum_tag(
+        &mut self,
+        operand: IrOperand,
+        ty: &Type,
+    ) -> Result<IrOperand> {
+        let IrOperand::Local(local) = operand else {
+            bail!("native backend: enum value is not addressable");
+        };
+        self.mark_in_memory(local);
+        let address = self.address_of_local(local, ty);
+        let tag = self.fresh_local(Type::I32, None);
+        self.emit(IrStatement::Assign(
+            tag,
+            IrRvalue::Load {
+                address,
+                ty: Type::I32,
+            },
+        ));
+        Ok(IrOperand::Local(tag))
+    }
+
     fn lower_infix(
         &mut self,
         left: &Expression,
@@ -3134,6 +3157,42 @@ impl<'a> FunctionLowering<'a> {
                 self.lower_expression(left, None)?;
             let (right_operand, right_type) =
                 self.lower_expression(right, Some(&left_type))?;
+            // Two enum values are compared by their tags, which for an enum
+            // whose variants carry nothing is the whole value. A variant with
+            // fields makes the question ambiguous, since `.Some { value = 1 }`
+            // and `.Some { value = 2 }` are the same variant and different
+            // values, so that one is a `match` rather than a guess about which
+            // was meant.
+            // A name reaches here as a struct until something resolves it, so
+            // the enum is asked for by name rather than read off the type.
+            if let Some(name) = self.enum_name_of(&left_type)
+                && matches!(binop, IrBinOp::Equal | IrBinOp::NotEqual)
+            {
+                let Some(layout) = self.builder.enum_layout(&name) else {
+                    bail!("native backend: unknown enum '{name}'");
+                };
+                if let Some(carrying) = layout
+                    .variants
+                    .iter()
+                    .find(|variant| !variant.fields.is_empty())
+                {
+                    let readable =
+                        crate::imports::demangle_private_names(&name);
+                    bail!(
+                        "'{readable}' cannot be compared with == because its variant '.{}' carries fields, so two values of it can be the same variant and different values; match on it instead",
+                        carrying.name
+                    );
+                }
+                let left_tag = self.load_enum_tag(left_operand, &left_type)?;
+                let right_tag =
+                    self.load_enum_tag(right_operand, &right_type)?;
+                let result = self.fresh_local(Type::Bool, None);
+                self.emit(IrStatement::Assign(
+                    result,
+                    IrRvalue::Binary(binop, left_tag, right_tag),
+                ));
+                return Ok((IrOperand::Local(result), Type::Bool));
+            }
             let operand_type = unify(&left_type, &right_type);
             let left_final =
                 self.coerce(left_operand, &left_type, &operand_type);
