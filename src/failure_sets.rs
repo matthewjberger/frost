@@ -137,7 +137,17 @@ fn expression_has_try(expression: &Expression) -> bool {
         }
         Expression::Unsafe(body) => block_has_try(body),
         Expression::Tuple(items) => items.iter().any(expression_has_try),
-        _ => false,
+        // Listed rather than caught by `_`, so a new expression form is a
+        // compile error here instead of silently reporting no `?` inside it.
+        Expression::Identifier(_)
+        | Expression::Literal(_)
+        | Expression::Boolean(_)
+        | Expression::Sizeof(_)
+        | Expression::TypeValue(_)
+        | Expression::Range(..)
+        | Expression::Function(..)
+        | Expression::Proc(..)
+        | Expression::UnsafeFn(_) => false,
     }
 }
 
@@ -338,7 +348,15 @@ impl Lowerer {
             Expression::Unsafe(body) => {
                 self.rewrite_inner_block(body, result, error)
             }
-            _ => {}
+            Expression::Identifier(_)
+            | Expression::Literal(_)
+            | Expression::Boolean(_)
+            | Expression::Sizeof(_)
+            | Expression::TypeValue(_)
+            | Expression::Range(..)
+            | Expression::Function(..)
+            | Expression::Proc(..)
+            | Expression::UnsafeFn(_) => {}
         }
     }
 

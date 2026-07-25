@@ -262,7 +262,14 @@ fn read_through_expression(
         Expression::Unsafe(body) => read_through_block(body, through, bound),
         // A nested function has parameters of its own and does not see these.
         Expression::Function(..) | Expression::Proc(..) => {}
-        _ => {}
+        // Listed rather than caught by `_`, so a new expression form is a
+        // compile error here instead of silently reading through nothing.
+        Expression::Identifier(_)
+        | Expression::Literal(_)
+        | Expression::Boolean(_)
+        | Expression::Sizeof(_)
+        | Expression::TypeValue(_)
+        | Expression::UnsafeFn(_) => {}
     }
 }
 
@@ -352,7 +359,13 @@ fn rewrite_expression(
             }
         }
         Expression::Unsafe(block) => rewrite_block(block, signatures),
-        _ => {}
+        Expression::Try(inner) => rewrite_expression(inner, signatures),
+        Expression::Identifier(_)
+        | Expression::Literal(_)
+        | Expression::Boolean(_)
+        | Expression::Sizeof(_)
+        | Expression::TypeValue(_)
+        | Expression::UnsafeFn(_) => {}
     }
 }
 
