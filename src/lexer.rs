@@ -303,9 +303,12 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
+    /// A byte-order mark is not part of the program. Windows editors write one
+    /// on a UTF-8 save, and without this the first token of an otherwise valid
+    /// file is an illegal character at line 1, column 1.
     pub fn new(input: &'a str) -> Lexer<'a> {
         Self {
-            chars: input.chars(),
+            chars: input.strip_prefix('\u{feff}').unwrap_or(input).chars(),
             line: 1,
             column: 1,
             token_start: Position {
@@ -594,6 +597,19 @@ mod tests {
             assert_eq!(token, *expected_token);
         }
         Ok(())
+    }
+
+    #[test]
+    fn a_byte_order_mark_is_not_a_token() -> Result<()> {
+        check_tokens(
+            "\u{feff}five := 5;",
+            &[
+                Token::Identifier("five".to_string()),
+                Token::ColonAssign,
+                Token::Integer(5),
+                Token::Semicolon,
+            ],
+        )
     }
 
     #[test]
