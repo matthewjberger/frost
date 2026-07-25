@@ -2426,7 +2426,8 @@ impl<'a> Parser<'a> {
             return Ok(Expression::Tuple(vec![]));
         }
 
-        let looks_like_params = self.looks_like_function_params();
+        let looks_like_params =
+            self.looks_like_function_params() && !self.no_struct_literal;
 
         if looks_like_params {
             let parameters = self.parse_function_parameters_inner()?;
@@ -2631,7 +2632,15 @@ impl<'a> Parser<'a> {
 
     fn parse_match_expression(&mut self) -> Result<Expression> {
         self.read_token();
+        // A `{` after the scrutinee opens the arms, so neither a struct literal
+        // nor a function literal is available here. Without that, the `(a, b)`
+        // of a match on several values reads as a parameter list with a body,
+        // since bare names in parentheses are what a function literal starts
+        // with too.
+        let held = self.no_struct_literal;
+        self.no_struct_literal = true;
         let scrutinee = self.parse_expression(Precedence::Lowest)?;
+        self.no_struct_literal = held;
         if !matches!(self.read_token(), Token::LeftBrace) {
             bail!("Expected '{{' after match expression");
         }
