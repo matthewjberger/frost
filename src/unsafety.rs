@@ -101,7 +101,7 @@ fn strip_statement(statement: &mut Statement) {
             strip_expression(place);
             strip_expression(value);
         }
-        Statement::For(_, range, body) => {
+        Statement::For(_, _, range, body) => {
             strip_expression(range);
             strip_block(body);
         }
@@ -279,7 +279,7 @@ impl Checker {
                     position: at,
                 });
             }
-            Statement::For(name, range, body) => {
+            Statement::For(name, _, range, body) => {
                 self.expression(range, at);
                 self.scope.push(HashMap::new());
                 self.bind(name, Some(Type::I64));

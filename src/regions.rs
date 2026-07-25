@@ -101,7 +101,7 @@ fn find_regions(
                 diagnostics.append(&mut region.diagnostics);
                 find_regions(body, signatures, diagnostics);
             }
-            Statement::While(_, body) | Statement::For(_, _, body) => {
+            Statement::While(_, body) | Statement::For(_, _, _, body) => {
                 find_regions(body, signatures, diagnostics);
             }
             Statement::Defer(inner) => {
@@ -283,7 +283,7 @@ impl<'a> Region<'a> {
                     }
                 }
                 Statement::While(_, body) => self.check(body, false),
-                Statement::For(variable, _, body) => {
+                Statement::For(variable, _, _, body) => {
                     self.inner.insert(variable.clone());
                     self.check(body, false);
                 }
@@ -582,7 +582,7 @@ impl Frame<'_> {
                 }
                 Statement::While(_, body)
                 | Statement::With(_, body)
-                | Statement::For(_, _, body) => self.check(body, false),
+                | Statement::For(_, _, _, body) => self.check(body, false),
                 Statement::Defer(inner) => {
                     let deferred = vec![Spanned::new(
                         (**inner).clone(),

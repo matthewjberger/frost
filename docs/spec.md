@@ -507,8 +507,20 @@ value is its trailing expression (or `void`).
   index, or a dereference.
 - `return`, `return` or `return Expr`.
 - `while`, `while ( Cond ) Block`.
-- `for`, `for name in Expr Block` iterates `name` over the value of `Expr`,
-  normally a range.
+- `for`, `for name in Expr Block` walks `name` over the value of `Expr`, which
+  is a range, a slice `[]T`, a fixed array `[N]T`, or a `str` (yielding its
+  bytes). `for index, name in Expr Block` names the position as well.
+
+  Over a sequence this is the index-and-bound loop written out, not an iterator
+  protocol: nothing is called per element, there is no trait to implement, and
+  `break` and `continue` mean what they do in any other loop. The element binds
+  the way a parameter of its type would, so an aggregate is borrowed and a
+  scalar is copied. The sequence is evaluated once and its length read once
+  before the first step, so a call in that position happens once and a body that
+  appends to the same container does not walk what it just added.
+
+  A name followed by `{` is a struct literal everywhere else, so the literal is
+  not available in the `Expr` of a `for`, whose brace opens the body.
 - `break` and `continue` are loop control.
 - `defer`, `defer Stmt` runs `Stmt` at scope exit, LIFO (chapter 9.3).
 - `print`, `print Expr` writes the value and a newline to standard output, an

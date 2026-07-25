@@ -220,7 +220,7 @@ fn stamp_statement(statement: &mut Statement, file: u32) {
             stamp_expression(value, file);
         }
         Statement::Defer(inner) => stamp_statement(inner, file),
-        Statement::For(_, range, body) => {
+        Statement::For(_, _, range, body) => {
             stamp_expression(range, file);
             stamp_file(body, file);
         }

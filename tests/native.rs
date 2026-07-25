@@ -706,6 +706,113 @@ main :: fn() -> i64 {
 }
 "#;
 
+// `for item in items` over a slice, an array and a `str`. It is the
+// index-and-bound loop written out rather than an iterator: nothing is called
+// per element, and what the backend sees is what the same loop written by hand
+// produces. The manual triple appeared dozens of times across std/ before this.
+const FOR_OVER_A_SEQUENCE: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Point :: struct { x: i64, y: i64 }
+
+sum_slice :: fn(xs: []i64) -> i64 {
+    mut total : i64 = 0
+    for value in xs {
+        total = total + value
+    }
+    total
+}
+
+// The sequence is evaluated once, so a call in that position happens once
+// however many elements it answers with.
+counted :: fn(mut calls: i64) -> []i64 {
+    calls = calls + 1
+    slice_from($i64, ptr_cast($i64, ptr_to(calls)), 1)
+}
+
+main :: fn() -> i64 {
+    mut numbers : [4]i64 = [10, 20, 30, 40]
+    mut total : i64 = 0
+    for value in numbers {
+        total = total + value
+    }
+    printf("%lld\n", total)
+    printf("%lld\n", sum_slice(numbers))
+
+    // The position as well as the element.
+    mut weighted : i64 = 0
+    for index, value in numbers {
+        weighted = weighted + index * value
+    }
+    printf("%lld\n", weighted)
+
+    // An aggregate element binds as a borrow, so nothing is copied per step.
+    mut points : [3]Point = [
+        Point { x = 1, y = 2 },
+        Point { x = 3, y = 4 },
+        Point { x = 5, y = 6 },
+    ]
+    mut sum : i64 = 0
+    for p in points {
+        sum = sum + p.x * p.y
+    }
+    printf("%lld\n", sum)
+
+    // A `str` yields its bytes.
+    mut bytes : i64 = 0
+    for byte in "abc" {
+        bytes = bytes + byte
+    }
+    printf("%lld\n", bytes)
+
+    // `break` and `continue` reach the loop the same as in a range.
+    mut first : i64 = 0
+    for value in numbers {
+        if (value == 10) { continue }
+        first = value
+        break
+    }
+    printf("%lld\n", first)
+
+    mut empty : [0]i64 = []
+    mut never : i64 = 7
+    for value in empty {
+        never = value
+    }
+    printf("%lld\n", never)
+
+    mut calls : i64 = 0
+    mut seen : i64 = 0
+    for value in counted(calls) {
+        seen = seen + value
+    }
+    printf("%lld\n", calls)
+    0
+}
+"#;
+
+#[test]
+fn a_for_walks_a_sequence() {
+    let Some(output) = compile_and_run("forseq", FOR_OVER_A_SEQUENCE) else {
+        return;
+    };
+    assert_eq!(output, "100\n100\n200\n44\n294\n20\n7\n1\n");
+}
+
+#[test]
+fn a_for_over_something_that_is_not_a_sequence_says_so() {
+    let source = "main :: fn() -> i64 {\n\
+                  \x20   n := 7\n\
+                  \x20   for x in n { print x }\n\
+                  \x20   0\n\
+                  }\n";
+    let message = compile_error("fornotseq", source);
+    assert!(
+        message.contains("walks a range") && message.contains("i64"),
+        "expected the type to be named, got:\n{message}"
+    );
+}
+
 // Two enum values compare by their tags, which for an enum whose variants carry
 // nothing is the whole value. Asking which variant something is used to need a
 // `match` with a case per variant, which is a lot of lines to answer one
@@ -7553,6 +7660,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_parenstmt", PARENTHESISED_STATEMENT),
         ("diff_tuplepat", TUPLE_PATTERNS),
         ("diff_enumeq", ENUM_EQUALITY),
+        ("diff_forseq", FOR_OVER_A_SEQUENCE),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
