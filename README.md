@@ -35,70 +35,9 @@ Three of the things Frost has instead of the usual machinery: borrows that are
 parameter modes, a resource the compiler counts, and a failure that travels in
 the signature.
 
-```frost
-Kind :: enum { Hero, Monster { damage: i64 } }
-Entity :: struct { hp: i64, kind: Kind }
-
-// `mut` borrows for the call and changes the caller's value. There is no `&`.
-heal :: fn(mut e: Entity, amount: i64) {
-    e.hp = e.hp + amount
-}
-
-// An unmarked parameter borrows to read. `match` reads the enum, binds the
-// payload of the variant it took, and has to cover every one.
-attack :: fn(e: Entity) -> i64 {
-    match e.kind {
-        case .Hero: 10
-        case .Monster { damage }: damage
-    }
-}
-
-// A `linear` value is consumed exactly once on every path out, or the program
-// does not build. `move` is what consumes it, so forgetting to close a session
-// is a compile error rather than a leak found later.
-Session :: linear struct { id: i64 }
-
-close :: fn(move s: Session) -> i64 {
-    s.id
-}
-
-// `-> i64 ! Blocked` says how this can fail, and `?` hands a failure to the
-// caller instead of checking it here. What comes back is an ordinary enum.
-Blocked :: struct { at: i64 }
-
-strike :: fn(e: Entity) -> i64 ! Blocked {
-    if (e.hp <= 0) {
-        return Blocked { at = e.hp }
-    }
-    attack(e)
-}
-
-round :: fn(e: Entity) -> i64 ! Blocked {
-    hit := strike(e)?
-    hit * 2
-}
-
-// The value it answered with, or the health that stopped it.
-damage_of :: fn(e: Entity) -> i64 {
-    match round(e) {
-        case .Ok { value }: value
-        case .Err { error }: error.at
-    }
-}
-
-main :: fn() -> i64 {
-    mut hero := Entity { hp = 90, kind = Kind::Hero }
-    heal(hero, 10)                 // hero is borrowed and changed
-    print hero.hp                  // 100
-    print attack(hero)             // 10
-
-    print damage_of(hero)          // 20
-
-    s := Session { id = 7 }
-    print close(s)                 // s cannot be named again
-    0
-}
-```
+<p align="center">
+  <img src="docs/tour.svg" alt="A tour of Frost: parameter modes, a linear resource, and a failure set" width="700">
+</p>
 
 ```bash
 frost examples/tour.frost          # compile, link, and run
