@@ -184,8 +184,11 @@ impl Lowerer {
         name
     }
 
-    // Does this expression construct a variant of the failure type? A bare type
-    // name parses as a struct, so accept either spelling of the error's name.
+    // Does this expression build the failure type? A failure set may be an enum
+    // or a struct, and the two are written differently: `Denied {}` names a
+    // variant and `Blocked { at = 3 }` is a struct literal. Only the first used
+    // to count, so a struct failure was wrapped as the Ok value instead and
+    // reached the backend as a struct where the value type belonged.
     fn is_error_construction(
         &self,
         expression: &Expression,
@@ -195,10 +198,11 @@ impl Lowerer {
             Type::Enum(name) | Type::Struct(name) => name,
             _ => return false,
         };
-        matches!(
-            expression,
-            Expression::EnumVariantInit(enum_name, _, _) if enum_name == error_name
-        )
+        match expression {
+            Expression::EnumVariantInit(name, _, _)
+            | Expression::StructInit(name, _) => name == error_name,
+            _ => false,
+        }
     }
 
     fn wrap_return(
