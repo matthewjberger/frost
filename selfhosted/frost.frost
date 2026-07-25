@@ -299,6 +299,10 @@ main :: fn() -> i64 {
     check_reference_fields(parser)
     check_borrow_exclusivity(parser)
     check_moves(parser)
+    // Last of the checks, because it is the one that walks functions the way
+    // the emitters do, and the passes before it read whatever local table the
+    // parse left behind.
+    check_types(parser, program)
 
     // Where the emitted text goes. A link needs it in a file whatever the
     // caller asked for, so it writes one beside the executable and removes it
