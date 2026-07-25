@@ -174,7 +174,7 @@
         },
         {
           "name": "variable.language.wildcard.frost",
-          "match": "\\b_\\b"
+          "match": "\\b(_)\\b"
         }
       ]
     },
