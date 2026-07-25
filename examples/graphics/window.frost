@@ -35,8 +35,9 @@ INIT_VIDEO :: 32
 // not need one to carry it: the union is 128 bytes with the event kind in the
 // first four, so the bytes are the type and the kind is read out of them.
 EVENT_QUIT :: 256
+EVENT_SIZE :: 128
 
-Event :: struct { bytes: [128]u8 }
+Event :: struct { bytes: [EVENT_SIZE]u8 }
 
 event_kind :: fn(e: Event) -> u32 {
     unsafe { ptr_cast($u32, ptr_to(e.bytes[0]))^ }
@@ -53,7 +54,7 @@ main :: fn() -> i64 {
 
     mut running : bool = true
     while (running) {
-        mut event : Event = Event { bytes = [0; 128] }
+        mut event : Event = Event { bytes = [0; EVENT_SIZE] }
         while (unsafe { SDL_PollEvent(ptr_to(event.bytes[0])) }) {
             if (event_kind(event) == EVENT_QUIT) {
                 running = false

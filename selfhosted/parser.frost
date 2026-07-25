@@ -15,6 +15,29 @@ parse_number :: fn(mut p: Parser) -> i64 {
     new_node(p, NODE_NUM, 0, 0, value)
 }
 
+// The count in `[value; n]`. It reads the same way an array's declared length
+// does: a literal, a value bound for the generic being instantiated, or a
+// module constant.
+array_repeat_count :: fn(mut p: Parser) -> i64 {
+    if (cur(p) == TOK_INT) {
+        total := cur_val(p)
+        advance(p)
+        return total
+    }
+    bound := value_binding_of(p, cur_off(p), cur_len(p))
+    mut total := bound
+    if (bound < 0) {
+        total = const_value(p, cur_off(p), cur_len(p))
+    }
+    if (total < 0) {
+        report_where(p.modules, p.src, cur_off(p))
+        report("an array repeat count has to be a literal or a constant")
+        frost_rt_die()
+    }
+    advance(p)
+    total
+}
+
 parse_primary :: fn(mut p: Parser) -> i64 {
     kind := cur(p)
     if (kind == TOK_INT) {
@@ -56,6 +79,21 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             }
             tail = element
             count = count + 1
+            // `[value; n]` is the same value n times. The count is a literal or
+            // a constant, since the elements are laid out here rather than at
+            // run time, and it follows the one element the form allows.
+            if (cur(p) == TOK_SEMI) {
+                advance(p)
+                held := arena_at(p.arena, element)
+                value := held.a
+                total := array_repeat_count(p)
+                while (count < total) {
+                    copy := new_node(p, NODE_ARG, value, 0, 0)
+                    set_next(p, tail, copy)
+                    tail = copy
+                    count = count + 1
+                }
+            }
             if (cur(p) == TOK_COMMA) {
                 advance(p)
             }
@@ -1575,6 +1613,12 @@ parse_arm :: fn(mut p: Parser) -> i64 {
 parse_stmt_list :: fn(mut p: Parser, terminator: i64) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
+    // A statement may end with a semicolon, which says nothing the line break
+    // has not already said. It is a token rather than whitespace so that an
+    // array repeat count can be told from an element.
+    while (cur(p) == TOK_SEMI) {
+        advance(p)
+    }
     while (cur(p) != terminator && cur(p) != TOK_EOF) {
         mark := p.pending.count
         parsed := parse_stmt(p)
@@ -1591,6 +1635,9 @@ parse_stmt_list :: fn(mut p: Parser, terminator: i64) -> i64 {
             set_next(p, tail, statement)
         }
         tail = last
+        while (cur(p) == TOK_SEMI) {
+            advance(p)
+        }
     }
     head
 }
