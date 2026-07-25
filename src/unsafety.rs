@@ -1,8 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 
-use crate::parser::{Block, Expression, Statement, StructField};
+use crate::parser::{
+    Block, Diagnostic, Expression, Statement, StructField,
+};
 use crate::types::Type;
 use crate::{Position, Spanned};
 
@@ -31,12 +33,26 @@ use crate::{Position, Spanned};
 // complaint. Dereference, `ptr_cast` and extern calls are exact, since none of
 // them needs a type to be recognized.
 pub fn check_unsafety(statements: &[Spanned<Statement>]) -> Result<()> {
+    let diagnostics = check_unsafety_recovering(statements);
+    if diagnostics.is_empty() {
+        return Ok(());
+    }
+    Err(anyhow::anyhow!(crate::flatten(&diagnostics, "\n")))
+}
+
+/// Walk the whole program, reporting every operation that belongs in an
+/// `unsafe` block rather than stopping at the first. Each refusal is
+/// independent of the others, so one does not colour what follows it.
+pub fn check_unsafety_recovering(
+    statements: &[Spanned<Statement>],
+) -> Vec<Diagnostic> {
     let mut checker = Checker {
         externs: HashSet::new(),
         unsafe_fns: HashSet::new(),
         fields: HashMap::new(),
         depth: 0,
         scope: Vec::new(),
+        diagnostics: Vec::new(),
     };
     for statement in statements {
         match &statement.node {
@@ -63,9 +79,9 @@ pub fn check_unsafety(statements: &[Spanned<Statement>]) -> Result<()> {
         }
     }
     for statement in statements {
-        checker.statement(statement)?;
+        checker.statement(statement);
     }
-    Ok(())
+    checker.diagnostics
 }
 
 // Replace every `unsafe fn(...)` with the plain function it wraps, once the
@@ -174,18 +190,20 @@ struct Checker {
     // another is allowed and means nothing extra, the same as in Rust.
     depth: usize,
     scope: Vec<HashMap<String, Type>>,
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl Checker {
-    fn refuse(&self, what: &str, position: Position) -> Result<()> {
+    fn refuse(&mut self, what: &str, position: Position) {
         if self.depth > 0 {
-            return Ok(());
+            return;
         }
-        bail!(
-            "{}:{}: {what} is unchecked, so it belongs in an `unsafe` block",
-            position.line,
-            position.column
-        )
+        self.diagnostics.push(Diagnostic {
+            position,
+            message: format!(
+                "{what} is unchecked, so it belongs in an `unsafe` block"
+            ),
+        });
     }
 
     fn bind(&mut self, name: &str, ty: Option<Type>) {
@@ -226,19 +244,15 @@ impl Checker {
         }
     }
 
-    fn block(&mut self, block: &Block) -> Result<()> {
+    fn block(&mut self, block: &Block) {
         self.scope.push(HashMap::new());
-        let outcome = (|| {
-            for statement in block {
-                self.statement(statement)?;
-            }
-            Ok(())
-        })();
+        for statement in block {
+            self.statement(statement);
+        }
         self.scope.pop();
-        outcome
     }
 
-    fn statement(&mut self, statement: &Spanned<Statement>) -> Result<()> {
+    fn statement(&mut self, statement: &Spanned<Statement>) {
         let at = statement.position;
         match &statement.node {
             Statement::Let {
@@ -247,42 +261,40 @@ impl Checker {
                 value,
                 ..
             } => {
-                self.expression(value, at)?;
+                self.expression(value, at);
                 let known = type_annotation
                     .clone()
                     .or_else(|| self.produced_type(value));
                 self.bind(name, known);
             }
             Statement::Constant(_, value) | Statement::Return(value) => {
-                self.expression(value, at)?;
+                self.expression(value, at);
             }
-            Statement::Expression(value) => self.expression(value, at)?,
+            Statement::Expression(value) => self.expression(value, at),
             Statement::Assignment(place, value) => {
-                self.expression(place, at)?;
-                self.expression(value, at)?;
+                self.expression(place, at);
+                self.expression(value, at);
             }
             Statement::Defer(inner) => {
                 self.statement(&Spanned {
                     node: (**inner).clone(),
                     position: at,
-                })?;
+                });
             }
             Statement::For(name, range, body) => {
-                self.expression(range, at)?;
+                self.expression(range, at);
                 self.scope.push(HashMap::new());
                 self.bind(name, Some(Type::I64));
-                let outcome = self.block(body);
+                self.block(body);
                 self.scope.pop();
-                outcome?;
             }
             Statement::While(condition, body) => {
-                self.expression(condition, at)?;
-                self.block(body)?;
+                self.expression(condition, at);
+                self.block(body);
             }
-            Statement::With(_, body) => self.block(body)?,
+            Statement::With(_, body) => self.block(body),
             _ => {}
         }
-        Ok(())
     }
 
     // The type an expression hands back, for the few forms that say so plainly.
@@ -320,55 +332,50 @@ impl Checker {
         }
     }
 
-    fn expression(&mut self, value: &Expression, at: Position) -> Result<()> {
+    fn expression(&mut self, value: &Expression, at: Position) {
         match value {
             Expression::Unsafe(body) => {
                 self.depth += 1;
-                let outcome = self.block(body);
+                self.block(body);
                 self.depth -= 1;
-                return outcome;
             }
             // An `unsafe fn`'s body is an implicit unsafe block. The whole
             // function is the dangerous region, so the gated operations are
             // allowed throughout it without a nested block.
             Expression::UnsafeFn(inner) => {
                 self.depth += 1;
-                let outcome = self.expression(inner, at);
+                self.expression(inner, at);
                 self.depth -= 1;
-                return outcome;
             }
             Expression::Dereference(inner) => {
-                self.refuse("reading through a raw pointer", at)?;
-                self.expression(inner, at)?;
+                self.refuse("reading through a raw pointer", at);
+                self.expression(inner, at);
             }
             Expression::Index(base, index) => {
                 if matches!(self.type_of(base), Some(Type::Ptr(_))) {
-                    self.refuse("indexing a raw pointer", at)?;
+                    self.refuse("indexing a raw pointer", at);
                 }
-                self.expression(base, at)?;
-                self.expression(index, at)?;
+                self.expression(base, at);
+                self.expression(index, at);
             }
             Expression::Call(callee, arguments) => {
                 if let Expression::Identifier(name) = &**callee {
                     if name == "ptr_cast" {
-                        self.refuse("ptr_cast", at)?;
+                        self.refuse("ptr_cast", at);
                     } else if name == "slice_from" {
-                        self.refuse("forming a slice from a raw pointer", at)?;
+                        self.refuse("forming a slice from a raw pointer", at);
                     } else if self.externs.contains(name) {
-                        self.refuse(
-                            &format!("calling the C function '{name}'"),
-                            at,
-                        )?;
+                        let what = format!("calling the C function '{name}'");
+                        self.refuse(&what, at);
                     } else if self.unsafe_fns.contains(name) {
-                        self.refuse(
-                            &format!("calling the unsafe function '{name}'"),
-                            at,
-                        )?;
+                        let what =
+                            format!("calling the unsafe function '{name}'");
+                        self.refuse(&what, at);
                     }
                 }
-                self.expression(callee, at)?;
+                self.expression(callee, at);
                 for argument in arguments {
-                    self.expression(argument, at)?;
+                    self.expression(argument, at);
                 }
             }
             Expression::Function(parameters, _, body)
@@ -378,21 +385,20 @@ impl Checker {
                     let annotation = parameter.type_annotation.clone();
                     self.bind(&parameter.name, annotation);
                 }
-                let outcome = self.block(body);
+                self.block(body);
                 self.scope.pop();
-                return outcome;
             }
             Expression::If(condition, consequence, alternative) => {
-                self.expression(condition, at)?;
-                self.block(consequence)?;
+                self.expression(condition, at);
+                self.block(consequence);
                 if let Some(alternative) = alternative {
-                    self.block(alternative)?;
+                    self.block(alternative);
                 }
             }
             Expression::Switch(subject, cases) => {
-                self.expression(subject, at)?;
+                self.expression(subject, at);
                 for case in cases {
-                    self.block(&case.body)?;
+                    self.block(&case.body);
                 }
             }
             Expression::Prefix(_, inner)
@@ -401,26 +407,25 @@ impl Checker {
             | Expression::BorrowMut(inner)
             | Expression::Try(inner)
             | Expression::FieldAccess(inner, _) => {
-                self.expression(inner, at)?;
+                self.expression(inner, at);
             }
             Expression::Infix(left, _, right)
             | Expression::Range(left, right, _) => {
-                self.expression(left, at)?;
-                self.expression(right, at)?;
+                self.expression(left, at);
+                self.expression(right, at);
             }
             Expression::Tuple(parts) => {
                 for part in parts {
-                    self.expression(part, at)?;
+                    self.expression(part, at);
                 }
             }
             Expression::StructInit(_, initializers)
             | Expression::EnumVariantInit(_, _, initializers) => {
                 for (_, initializer) in initializers {
-                    self.expression(initializer, at)?;
+                    self.expression(initializer, at);
                 }
             }
             _ => {}
         }
-        Ok(())
     }
 }
