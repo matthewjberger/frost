@@ -247,7 +247,10 @@ emit_struct_lit :: fn(mut p: Parser, struct_ty: i64, inits: i64) {
             emit_expr(p, value)
             emit_text("))")
         } else {
-            emit_expr(p, value)
+            // Every other field takes the value the way a parameter of that
+            // type would, so a string literal reaching a `str` field is given
+            // its length here rather than stored as a bare pointer.
+            emit_coerced(p, value, field_ty)
         }
         id = next_id
     }

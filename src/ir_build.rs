@@ -4052,15 +4052,6 @@ impl<'a> FunctionLowering<'a> {
         });
     }
 
-    fn place_type(&self, place: &Expression) -> Option<Type> {
-        match place {
-            Expression::Identifier(name) => self
-                .resolve_variable(name)
-                .map(|local| self.type_of_local(local)),
-            _ => None,
-        }
-    }
-
     // Best-effort static type of a place expression, without lowering it. Used to
     // recognize a raw-pointer base for indexing. Handles the identifier, deref,
     // and field-access chains that a pointer flows through.
@@ -4120,7 +4111,7 @@ impl<'a> FunctionLowering<'a> {
         &mut self,
         expression: &Expression,
     ) -> Result<IrOperand> {
-        if matches!(self.place_type(expression), Some(Type::Str)) {
+        if matches!(self.probe_type(expression), Some(Type::Str)) {
             let (address, _) = self.place_address(expression)?;
             return Ok(address);
         }
@@ -4506,7 +4497,7 @@ impl<'a> FunctionLowering<'a> {
                 "native backend: indexing by a Handle needs a slab-shaped struct, one with a 'storage' array and a parallel 'generations' array; see examples/native/lib/slab.frost"
             );
         }
-        if matches!(self.place_type(base), Some(Type::Str)) {
+        if matches!(self.probe_type(base), Some(Type::Str)) {
             return self.str_byte_address(base, index_operand, index_type);
         }
         if let Some(element) = self.slice_element_of(base) {
