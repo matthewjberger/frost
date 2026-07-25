@@ -107,7 +107,7 @@ emit_coerced :: fn(mut p: Parser, value: i64, want: i64) {
     // and one byte held.
     if (is_array_ty(want) && is_slice_ty(p, want) && is_pointer(have)) {
         node := arena_at(p.arena, value)
-        if (node.kind == NODE_STRLIT) {
+        if (node.kind == NodeKind::StrLit) {
             emit_text("(")
             emit_ctype(p, want)
             emit_text("){ (unsigned char*)")
@@ -311,17 +311,17 @@ emit_struct_lit :: fn(mut p: Parser, struct_ty: i64, inits: i64) {
 emit_expr :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NODE_NUM) {
+    if (kind == NodeKind::Num) {
         frost_rt_emit_int(node.val)
         return
     }
     // The digits as written. C reads a decimal literal the same way the source
     // means it, so nothing here converts one.
-    if (kind == NODE_FLOAT) {
+    if (kind == NodeKind::Float) {
         emit_source(p.src, node.val, node.c)
         return
     }
-    if (kind == NODE_VAR) {
+    if (kind == NodeKind::Var) {
         off := node.val
         len := node.c
         if (is_const(p, off, len)) {
@@ -350,16 +350,16 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         }
         return
     }
-    if (kind == NODE_STRLIT) {
+    if (kind == NodeKind::StrLit) {
         emit_text("\"")
         emit_string_content(p.src, node.val, node.c)
         emit_text("\"")
         return
     }
-    if (kind == NODE_TYPEVAL) {
+    if (kind == NodeKind::TypeVal) {
         return
     }
-    if (kind == NODE_CALL) {
+    if (kind == NodeKind::Call) {
         fn_index := node.val
         args := node.a
         // A call whose name is a local of function-pointer type is indirect: the
@@ -393,7 +393,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         emit_text(")")
         return
     }
-    if (kind == NODE_FIELD) {
+    if (kind == NodeKind::Field) {
         base := node.a
         off := node.val
         len := node.c
@@ -403,7 +403,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         // field offset added after a slab-style index. The handle is validated
         // by `frost_rt_slot` exactly as a slab's is.
         base_node := arena_at(p.arena, base)
-        if (base_node.kind == NODE_INDEX) {
+        if (base_node.kind == NodeKind::Index) {
             cbase := base_node.a
             cindex := base_node.b
             cbase_ty := type_of(p, cbase)
@@ -451,14 +451,14 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         emit_field_name(p, off, len)
         return
     }
-    if (kind == NODE_DEREF) {
+    if (kind == NodeKind::Deref) {
         inner := node.a
         emit_text("(*(")
         emit_expr(p, inner)
         emit_text("))")
         return
     }
-    if (kind == NODE_INDEX) {
+    if (kind == NodeKind::Index) {
         base := node.a
         index := node.b
         base_ty := type_of(p, base)
@@ -533,7 +533,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         emit_text("]")
         return
     }
-    if (kind == NODE_ASSERT) {
+    if (kind == NodeKind::Assert) {
         emit_text("frost_rt_assert_at((signed char)(")
         emit_expr(p, node.a)
         emit_text("), \"")
@@ -541,13 +541,13 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         emit_text("\")")
         return
     }
-    if (kind == NODE_SLICE_LEN) {
+    if (kind == NodeKind::SliceLen) {
         // An array's length is in its type, so this is a constant there and a
         // field read only for a slice, which carries its own.
         inner := node.a
         // A literal has no length beside it, so its own is counted here.
         held := arena_at(p.arena, inner)
-        if (held.kind == NODE_STRLIT) {
+        if (held.kind == NodeKind::StrLit) {
             frost_rt_emit_int(literal_length(p.src, held.val, held.c))
             return
         }
@@ -570,7 +570,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         }
         return
     }
-    if (kind == NODE_ARRAY_LIT) {
+    if (kind == NodeKind::ArrayLit) {
         emit_text("(")
         emit_ctype(p, type_of(p, id))
         emit_text("){{")
@@ -586,7 +586,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         emit_text("}}")
         return
     }
-    if (kind == NODE_SLICE_FROM) {
+    if (kind == NodeKind::SliceFrom) {
         emit_text("(")
         emit_ctype(p, node.val)
         emit_text("){ (")
@@ -596,14 +596,14 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         emit_text(" }")
         return
     }
-    if (kind == NODE_ADDROF || kind == NODE_REF) {
+    if (kind == NodeKind::AddrOf || kind == NodeKind::Ref) {
         inner := node.a
         emit_text("(&(")
         emit_expr(p, inner)
         emit_text("))")
         return
     }
-    if (kind == NODE_PTR_CAST) {
+    if (kind == NodeKind::PtrCast) {
         target := node.val
         expr := node.a
         emit_text("(")
@@ -613,14 +613,14 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         emit_text(")")
         return
     }
-    if (kind == NODE_SIZEOF) {
+    if (kind == NodeKind::Sizeof) {
         target := node.val
         emit_text("sizeof(")
         emit_ctype(p, target)
         emit_text(")")
         return
     }
-    if (kind == NODE_STRUCT_LIT) {
+    if (kind == NodeKind::StructLit) {
         struct_ty := node.val
         inits := node.a
         emit_struct_lit(p, struct_ty, inits)
@@ -695,7 +695,7 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
         value := node.a
         next_id := node.next
         vnode := arena_at(p.arena, value)
-        if (vnode.kind != NODE_TYPEVAL) {
+        if (vnode.kind != NodeKind::TypeVal) {
             if (first == false) {
                 emit_text(", ")
             }
@@ -802,7 +802,7 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
 emit_stmt :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
     kind := node.kind
-    if (kind == NODE_LET) {
+    if (kind == NodeKind::Let) {
         value := node.a
         annotation := node.b
         off := node.val
@@ -820,14 +820,14 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         record_local(p, off, len, ty)
         return
     }
-    if (kind == NODE_ASSIGN) {
+    if (kind == NodeKind::Assign) {
         place := node.a
         value := node.b
         // `c[h] = value`: scatter the whole element into the columns' per-field
         // arrays at the handle's slot. Recognized before the scalar type check,
         // since the place has no single element type to compare against.
         place_node := arena_at(p.arena, place)
-        if (place_node.kind == NODE_INDEX) {
+        if (place_node.kind == NodeKind::Index) {
             cbase := place_node.a
             cindex := place_node.b
             cbase_ty := type_of(p, cbase)
@@ -854,12 +854,12 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         emit_text(";\n")
         return
     }
-    if (kind == NODE_EXPRSTMT) {
+    if (kind == NodeKind::ExprStmt) {
         emit_expr(p, node.a)
         emit_text(";\n")
         return
     }
-    if (kind == NODE_MATCH) {
+    if (kind == NodeKind::Match) {
         scrutinee := node.a
         cases := node.b
         emit_text("switch (")
@@ -886,7 +886,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         emit_text("}\n")
         return
     }
-    if (kind == NODE_PRINT) {
+    if (kind == NodeKind::Print) {
         value := node.a
         if (is_float(type_of(p, value))) {
             emit_text("printf(\"%g\\n\", (double)(")
@@ -897,7 +897,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         emit_text("));\n")
         return
     }
-    if (kind == NODE_RETURN) {
+    if (kind == NodeKind::Return) {
         value := node.a
         if (value == (0 - 1)) {
             emit_text("return 0;\n")
@@ -916,7 +916,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         }
         return
     }
-    if (kind == NODE_IF) {
+    if (kind == NodeKind::If) {
         cond := node.a
         then_head := node.b
         else_head := node.val
@@ -933,7 +933,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         emit_text("\n")
         return
     }
-    if (kind == NODE_WHILE) {
+    if (kind == NodeKind::While) {
         cond := node.a
         body := node.b
         preamble := node.c
@@ -956,7 +956,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         emit_text("}\n")
         return
     }
-    if (kind == NODE_WITH) {
+    if (kind == NodeKind::With) {
         held_kind := p.prov_kind
         held_off := p.prov_off
         held_len := p.prov_len
@@ -1073,7 +1073,7 @@ emit_prototypes :: fn(mut p: Parser, head: i64) {
         next_id := node.next
         // A test that is not being run is left out entirely, so a program that
         // carries one links without needing the test runtime.
-        if (kind == NODE_FUNC && (is_main != 1 || p.testing == 1)
+        if (kind == NodeKind::Func && (is_main != 1 || p.testing == 1)
             && (is_main != 2 || p.testing == 1)) {
             sym := arena_at(p.fns, fn_index)
             emit_inline_qualifier(p, fn_index)
@@ -1101,7 +1101,7 @@ emit_extern_prototypes :: fn(mut p: Parser, head: i64) {
         params := node.b
         ret := node.c
         next_id := node.next
-        if (kind == NODE_EXTERN) {
+        if (kind == NodeKind::Extern) {
             sym := arena_at(p.fns, fn_index)
             name_off := sym.off
             name_len := sym.len
@@ -1265,13 +1265,13 @@ emit_function_body :: fn(mut p: Parser, body: i64) {
         kind := node.kind
         next_id := node.next
         if (next_id == (0 - 1)) {
-            if (kind == NODE_EXPRSTMT && type_of(p, node.a) != TY_VOID) {
+            if (kind == NodeKind::ExprStmt && type_of(p, node.a) != TY_VOID) {
                 emit_text("return (")
                 emit_expr(p, node.a)
                 emit_text(");\n")
             } else {
                 emit_stmt(p, id)
-                if (kind != NODE_RETURN) {
+                if (kind != NodeKind::Return) {
                     emit_text("return 0;\n")
                 }
             }
@@ -1491,7 +1491,7 @@ emit_program :: fn(mut p: Parser, head: i64) {
         node := arena_at(p.arena, id)
         kind := node.kind
         next_id := node.next
-        if (kind == NODE_FUNC && (node.c != 2 || p.testing == 1)) {
+        if (kind == NodeKind::Func && (node.c != 2 || p.testing == 1)) {
             emit_function(p, id)
         }
         id = next_id
