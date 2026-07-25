@@ -223,9 +223,9 @@ handle can never silently read a live value. Storing the *handle* is fine (it
 is plain copyable data, not a reference). The borrow you get by dereferencing
 through the pool is what stays second-class.
 
-Today the pool's memory management lives in the raw runtime, but the typed
-surface over it is now an ordinary Frost library (see below), not a set of
-privileged builtins.
+The pool's memory management lives in the raw runtime. The typed surface over it
+is an ordinary Frost library (see below) rather than a set of privileged
+builtins.
 
 ### Generic functions, specialization, and sizeof
 
@@ -447,10 +447,9 @@ AST. Both point at a line.
     yet in scope.)*
 12. Parallel code generation. *(Done: `src/ir_codegen.rs` builds and compiles
     functions across every core from a shared work queue. 385 ms to 55 ms on
-    sixteen threads at 10,401 functions, which took a full native build of 58k
-    lines from 1.11 s to 353 ms. The two false starts are recorded in
-    [roadmap.md](roadmap.md) because both came from trusting a summary statistic
-    over a per-worker measurement.)*
+    sixteen threads at 10,401 functions, and a full native build of 58k lines
+    in 353 ms. [roadmap.md](roadmap.md) has the sweep, and why a shared cursor
+    beats splitting the function list into equal chunks.)*
 13. Callbacks with a typed context. *(Done. An `extern fn` with a `$handler`
     parameter bound to a function signature is a callback registration:
     `src/callbacks.rs` checks the declaration, `src/regions.rs` holds the
@@ -458,13 +457,13 @@ AST. Both point at a line.
     passes the handler's address and the context's address. There is no
     trampoline and no cast, because a `mut` parameter is already a pointer and
     Frost and C share a calling convention. [callbacks.md](callbacks.md) has the
-    design and the record of building it.)*
+    design.)*
 14. The C ABI for struct returns. *(Done. `src/c_abi.rs` classifies an
     `extern fn`'s aggregate return the way the target's C compiler does, per
     target, because Frost's uniform hidden out-pointer is Frost's own
     convention and C does not share it. The C backend defers to the C compiler
-    instead by declaring a real struct type. Item 4 of
-    [roadmap.md](roadmap.md) has the table and where it was checked.)*
+    instead by declaring a real struct type.
+    [c-compatibility.md](c-compatibility.md) has the rules.)*
 15. Separate compilation. *(Done. A module is a file, its interface is its
     `export` line, and a specialization is emitted in the module that
     instantiates it. On `--link` each module is its own object, and

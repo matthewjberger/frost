@@ -1,13 +1,12 @@
 # Separate compilation
 
-This started as the design and is now also the record of building it. All five
-steps at the bottom are done. What a module's compiled artifact contains, and
-what has to be in it for a caller to compile against it without seeing the body,
-is the question the whole document is answering.
+What a module's compiled artifact contains, and what has to be in it for a
+caller to compile against it without seeing the body, is the question this
+document answers.
 
-The short version of the result: `frost --link --incremental` gives each module
-its own object and rebuilds a module only when its own source or an imported
-interface changes.
+The short version: `frost --link --incremental` gives each module its own object
+and rebuilds a module only when its own source or an imported interface
+changes.
 
 ## Why the shape has to change
 
@@ -177,7 +176,7 @@ rather than after.
    only *how the worklist is seeded*. The copies become real at step 4, when
    each module emits its own object, and that is also when their linkage becomes
    module-local. Step 3 is therefore a refactor whose output is byte-identical,
-   which is exactly the kind that should be landed against the fixpoint tests.
+   which is exactly the kind the fixpoint tests are there to hold.
 4. Compile a module from interfaces alone. *Available as an oracle.*
    `FROST_BUILD_FROM_INTERFACES=1` makes an imported module contribute what its
    interface says and nothing else, so a program that still behaves identically

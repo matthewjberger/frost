@@ -111,11 +111,10 @@ roadmap:
 
 ## Disposition of the vestigial types
 
-- `Arena` is now a Frost struct name, not a compiler type. The inert
-  `Type::Arena` placeholder was removed so a program (or the standard library)
-  can define its own `Arena` struct, which is exactly what
+- `Arena` is a Frost struct name rather than a compiler type. A program, or the
+  standard library, defines its own `Arena` struct, which is what
   `examples/native/arena.frost` does. The arena is language code, so the compiler
-  has no business reserving the name.
+  reserves nothing for it.
 - `Context` is removed. It was dead (not even parseable), and the ambient
   context it stood for is explicitly rejected above in favor of passing
   allocators by reference.
@@ -135,7 +134,7 @@ roadmap, the order is:
 4. The allocator interface: an allocator is a function-pointer struct plus
    state, so a data structure can be backed by any of them.
    *(Done: `examples/native/allocator.frost`, a bump allocator implementing the
-   interface, on top of raw-pointer indexing `p[i]` which landed here.)* The pool
+   interface, on top of raw-pointer indexing `p[i]`.)* The pool
    rebuilt over an arena in Frost with `pool[handle]` staying the one
    compiler-supported place deref remains.
 5. The OS extern and a freestanding path. *(Done. The OS extern: a dynamic
@@ -178,5 +177,4 @@ scoped precisely rather than discovered mid-flight.
   The storage and the bump logic live in the language, and the compiler provides
   only the raw address-of and the reinterpret. See
   `examples/native/arena.frost`. Constructing the backing buffer uses the repeat
-  array literal `[0; N]`, which also landed here and covers the zeroed-array case
-  the pool roadmap wanted.
+  array literal `[0; N]`, which covers the zeroed-array case a pool needs.

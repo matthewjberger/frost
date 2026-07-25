@@ -47,8 +47,8 @@ main :: fn() -> i64 {
   `extern fn(...) -> Ctx` returns whatever the target's C compiler returns:
   in registers when the rule says so and through a hidden pointer when it does
   not. Frost's own uniform out-pointer convention is not imposed on C, because C
-  does not use it. `src/c_abi.rs` has the three rules and where they were checked
-  against, and item 4 of [roadmap.md](roadmap.md) has the table.
+  does not use it. `src/c_abi.rs` has the three rules and what each was checked
+  against.
 
   Note the asymmetry with the line above it. A struct parameter to an extern
   is a pointer by convention, a struct return is by value with the real ABI.

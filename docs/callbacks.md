@@ -1,19 +1,16 @@
 # Callbacks with a typed context
 
-This is the design and the record of building it. It is item 3 in
-[roadmap.md](roadmap.md), and the same method that produced
-[separate-compilation.md](separate-compilation.md) is used here. Work the design
-against the code that exists until it either survives or does not, before
-writing any of it. All five steps at the bottom are built, and a Frost handler
-with a Frost context now runs through a real C callback API.
+How a Frost function and a Frost context cross into a C library that takes a
+callback, and why the crossing needs no generated code. A handler with a typed
+context runs through a real C callback API on both backends, which the end of
+this document walks through.
 
 ## The contradiction it exists to remove
 
 Goal 2 in [philosophy.md](philosophy.md) says safety comes from making dangerous
-shapes unrepresentable. The only way to write a callback used to be the C idiom,
-a function pointer plus an untyped `^u8` the callee casts back. Every piece of
-that already exists in the language, verified against the source rather than
-remembered:
+shapes unrepresentable. Without a callback form of its own, the only way to write
+one is the C idiom: a function pointer beside an untyped `^u8` the callee casts
+back. Every piece of that idiom is already in the language:
 
 - `fn(T1, ...) -> R` is a function pointer type (spec 3.5), and a named function
   used as a value lowers to `IrRvalue::FunctionAddress` in `src/ir.rs`.
@@ -68,8 +65,8 @@ call, which `src/allocation_sources.rs` inserts. A capability that supplies
 nothing is a keyword pretending to be a capability.
 
 This also settles which form of compile-time parameter it is. Not `$handler:
-Type`, which says only "some type", but the bound form from item 2 of the
-roadmap, `$handler: fn(mut Ctx, i64)`, so the handler's signature is checked
+Type`, which says only "some type", but the bound form `$handler: fn(mut Ctx,
+i64)` (spec 11.1b), so the handler's signature is checked
 against what the library expects at the call, by the code already in
 `src/ir_build.rs` that checks compile-time signatures.
 
@@ -168,14 +165,14 @@ So the feature adds exactly one obligation, and it is the whole safety argument:
 > The context argument of a callback registration must name storage that outlives
 > the registration.
 
-The first answer written here was that the context therefore has to live in an
-arena or a pool, and a place in the current frame is rejected. That answer is
-wrong, and it is wrong in a way worth recording, because it does not survive
-contact with the language it is a rule for. A context is a value of a struct
-type, and a value lives where it is bound. Putting one in an arena means holding
-a `^Ctx`, and then the registration's context parameter is a pointer rather than
-a moved value and the ownership argument above evaporates. The rule would have
-rejected every program anyone could write.
+The obvious answer, that the context therefore has to live in an arena or a
+pool and a place in the current frame is rejected, is wrong, and it is wrong in
+a way worth understanding, because it does not survive contact with the language
+it is a rule for. A context is a value of a struct type, and a value lives where
+it is bound. Putting one in an arena means holding a `^Ctx`, and then the
+registration's context parameter is a pointer rather than a moved value and the
+ownership argument above evaporates. That rule would reject every program anyone
+could write.
 
 The obligation is satisfied from the other end. A `Registration` is `linear`,
 so `check_linearity` already forces it to be consumed exactly once in the
@@ -261,9 +258,9 @@ both self-hosting fixpoints, in the way the separate-compilation steps were.
    step 3 being true rather than argued. If the ABI did not line up, this is
    where it would crash.
 
-Steps 1 and 2 are parsing and a check and landed before anything was emitted,
-which is the order that let the safety rule be found to be wrong while it was
-still cheap to change.
+Steps 1 and 2 are parsing and a check, and they come before anything is
+emitted, which is the order that catches a wrong safety rule while it is still
+cheap to change.
 
 ## What is still open
 
@@ -281,10 +278,9 @@ still cheap to change.
   The caller rebinds the result and reads it, and nothing about callbacks has to
   know.
 
-  What blocked it was unrelated to callbacks and is now item 4 of
-  [roadmap.md](roadmap.md), an `extern fn` returning a struct by value, which
-  neither backend supported. `src/c_abi.rs` classifies return types the way the
-  target's C compiler does, and with that the round trip runs end to end in
+  What this needs is unrelated to callbacks: an `extern fn` returning a
+  struct by value. `src/c_abi.rs` classifies return types the way the target's
+  C compiler does, and with that the round trip runs end to end in
   `a_callback_registered_with_a_c_library_runs`.
 - What `token` holds for a library whose unregister takes something other
   than an integer. The `Registration` in the end-to-end test is an ordinary

@@ -88,8 +88,8 @@ actual work predictable.
    makes the language buildable from a Rust toolchain and nothing else: the
    bootstrap compiles the Frost compiler, the Frost compiler compiles itself,
    and no seed binary has to exist or be trusted. Every feature lands in both,
-   and what still differs is listed and dated in
-   [../selfhosted/README.md](../selfhosted/README.md) rather than remembered.
+   and what still differs between them is listed in
+   [../selfhosted/README.md](../selfhosted/README.md).
 9. Compilation stays fast as programs grow. Not fast at the sizes tested so
    far, which any compiler manages, but fast on a curve that does not turn over.
    This is a promise rather than a happy accident, and it has a bill attached.
