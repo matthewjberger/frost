@@ -752,6 +752,12 @@ Parser :: struct {
     export_names: ^i8,
     result_ty: i64,
     failure_ty: i64,
+    // `-> (i64, i64)`: the struct standing for the return type list of the
+    // function being parsed, and how many values it holds. -1 when the function
+    // returns one value, which is what a `return` with a comma is measured
+    // against.
+    multi_ty: i64,
+    multi_count: i64,
     variants: Arena<Variant>,
     match_count: i64,
     // Which entry of `variants` the case just parsed named, so a match can tell

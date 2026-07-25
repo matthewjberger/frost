@@ -29,6 +29,10 @@ normative rules see [spec.md](spec.md). For a broader Rust-to-Frost guide see
 | `match s { Shape::Circle { r } => .. }` | `match s { case .Circle { r }: .. }` |
 | `if x > 5 { a } else { b }` | `if (x > 5) { a } else { b }` |
 | `for i in 0..n { }` | `for i in 0..n { }` |
+| `for x in &xs { }` | `for x in xs { }` |
+| `for (i, x) in xs.iter().enumerate()` | `for i, x in xs { }` |
+| `fn f() -> (i64, i64)` (a tuple) | `f :: fn() -> (i64, i64)`, and no tuple type |
+| `let (q, r) = divide(a, b);` | `q, r := divide(a, b)` |
 | `while cond { }` | `while (cond) { }` |
 | `&x`, `&mut x` | nothing: a borrow is what a parameter mode means |
 | `&T`, `&mut T` (parameter) | `x: T` (read), `mut x: T` (write) |

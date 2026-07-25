@@ -307,6 +307,7 @@ externs, and imports.
 | `name := expr` | bind a local, type inferred |
 | `name : Type = expr` | bind a local, type explicit |
 | `mut name := expr` / `mut name : Type = expr` | bind a mutable local |
+| `a, b := call()` | bind the several values of one call (5.2a) |
 | `NAME :: expr` | declare a constant, evaluated once |
 
 Bindings are immutable unless `mut`. A `mut` local is reassigned with `=`.
@@ -344,6 +345,60 @@ asks the C backend to force the function inline (`static inline
 __attribute__((always_inline))`). The assembly backend, which does not inline,
 ignores it. It changes no semantics, only whether the C compiler is obliged to
 fold the call rather than merely permitted to.
+
+### 5.2a Multiple return values
+
+A function returns several values by declaring a return type list, and the
+caller binds them by name:
+
+```
+divide :: fn(a: i64, b: i64) -> (i64, i64) {
+    return a / b, a % b
+}
+
+quotient, remainder := divide(17, 5)      // 3 and 2
+```
+
+The list is positional and the types are unnamed, since the names that matter
+are the ones the caller writes. It holds two or more types; `-> T` is how one
+value is returned and `-> (T)` is an error that says so.
+
+`return` lists the values in order and is required: a trailing expression is one
+value, so a function with a return type list ends every path with a `return`
+that lists as many values as the list has types. A `return` that lists a
+different number is a compile error, as is one that lists several values in a
+function that returns one.
+
+`mut` goes in front of any name the body goes on to write:
+
+```
+magnitude, mut negative := classify(value)
+negative = false
+```
+
+**There is no tuple type.** The list is not a value, cannot be named, stored in
+a field, passed as an argument, or returned from anything but the function that
+declares it, and `(A, B)` is not a type anywhere else in the grammar. A call
+that returns several values is bound by a list of names and used nowhere else;
+binding it to a single name is a compile error that says so. That restriction is
+what keeps the layout of every value in a program something the reader named
+(goal 1 of [philosophy.md](philosophy.md)): a program that wants to pass a pair
+around declares a struct and gets a name for it.
+
+What the compiler does with the list is give it one struct, whose fields are
+`value0`, `value1` and so on in order. The signature becomes a plain return of
+that struct, the `return` becomes a literal of it, and the binding becomes the
+call bound to a temporary and one field read per name. Nothing after the front
+end sees a return type list, which is why every backend and the C ABI handle one
+with no code of their own. In the bootstrap compiler two functions returning the
+same list of types share the struct, since its name is derived from the types;
+the self-hosted compiler makes one per function. Neither is observable.
+
+A return type list does not combine with a failure set: `-> (A, B) ! E` is
+rejected, because a fallible function answers with one value or one error. A
+function that wants both returns a struct it names. A return type list on a
+function with a compile-time parameter is rejected for the same reason it is one
+struct rather than one per specialization.
 
 ### 5.3 Externs and imports
 
@@ -505,7 +560,8 @@ value is its trailing expression (or `void`).
 - Binding, the forms in 5.1.
 - Assignment, `Place = Expr`, where `Place` is a `mut` local, a field, an
   index, or a dereference.
-- `return`, `return` or `return Expr`.
+- `return`, `return`, `return Expr`, or `return Expr ( "," Expr )+` in a
+  function whose signature is a return type list (5.2a).
 - `while`, `while ( Cond ) Block`.
 - `for`, `for name in Expr Block` walks `name` over the value of `Expr`, which
   is a range, a slice `[]T`, a fixed array `[N]T`, or a `str` (yielding its
@@ -900,19 +956,28 @@ current parser also accepts are listed in 13.9 and are not part of the language.
 Program   = Statement*
 
 Statement =
-      "return" Expr? ";"?
+      "return" ( Expr ( "," Expr )* )? ";"?
     | "defer" Statement
-    | "for" IDENT "in" Expr Block
+    | "for" IDENT ( "," IDENT )? "in" Expr Block
     | "while" "(" Expr ")" Block
     | "break" ";"?
     | "continue" ";"?
     | "import" STRING ";"?
     | "mut" IDENT ( ":=" Expr | ":" Type "=" Expr ) ";"?
+    | MultiNames ":=" Expr ";"?              // several values from one call
     | IDENT ":=" Expr ";"?
     | IDENT ":" Type "=" Expr ";"?           // lookahead: ":" not followed by ":"
     | IDENT "::" ConstBody ";"?
     | Expr ( "=" Expr )? ";"?                 // expression statement or assignment
 ```
+
+```
+MultiNames = MultiName ( "," MultiName )+
+MultiName  = "mut"? IDENT
+```
+
+A name followed by a comma at statement position is a list binding and nothing
+else, which is what tells the two `:=` forms apart.
 
 The `mut` / `:=` / `: =` / `::` forms are selected by the token after the
 identifier. These are `:=` (inferred binding), `:` then a non-`:` (typed
@@ -1033,11 +1098,17 @@ A `(` begins one of three things, chosen by a bounded look-ahead scan
 
 ```
 Grouped =
-      ")" ( "->" Type )? Block               // zero-parameter function literal
+      ")" ReturnSig? Block                    // zero-parameter function literal
     | ")"                                     // empty tuple  ()
-    | Params ")" ( ( "->" Type )? Block )?    // function literal (if a body follows)
+    | Params ")" ( ReturnSig? Block )?        // function literal (if a body follows)
     | Expr ( "," Expr )* ")"                  // tuple, or a parenthesized expression
+
+ReturnSig = "->" ( Type ( "!" Type )? | ReturnList ) ( "uses" Type ( "," Type )* )?
+ReturnList = "(" Type "," Type ( "," Type )* ")"
 ```
+
+A `ReturnList` is the return type list of 5.2a. It holds two or more types and
+does not combine with the `!` of a failure set.
 
 A `:` at group depth zero marks a parameter list. When a parameter-shaped group
 is not followed by a body, its contents are reinterpreted as expressions (a

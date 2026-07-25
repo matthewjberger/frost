@@ -48,6 +48,10 @@ being surprises.
 | `match s { Shape::Circle { r } => .. }` | `match s { case .Circle { r }: .. }` |
 | `if x > 5 { a } else { b }` | `if (x > 5) { a } else { b }` |
 | `for i in 0..n { }` | `for i in 0..n { }` |
+| `for x in &xs { }` | `for x in xs { }` |
+| `for (i, x) in xs.iter().enumerate()` | `for i, x in xs { }` |
+| `fn f() -> (i64, i64)` (a tuple) | `f :: fn() -> (i64, i64)`, and no tuple type |
+| `let (q, r) = divide(a, b);` | `q, r := divide(a, b)` |
 | `while cond { }` | `while (cond) { }` |
 | `&x`, `&mut x` (at a call) | nothing, the callee's mode decides |
 | `fn f(x: &T)`, `fn f(x: &mut T)` | `f :: fn(x: T)`, `f :: fn(mut x: T)` |
@@ -111,6 +115,31 @@ missing feature. It is the design. Separating data from the code that walks it
 is what keeps the memory layout visible and the control flow explicit.
 
 Higher-order code uses function pointers, covered below. There are no closures.
+
+## Returning several values
+
+Rust returns a tuple. Frost has no tuple type, so a function that answers with
+more than one value declares a return type list and the caller binds the values
+by name:
+
+```frost
+divide :: fn(a: i64, b: i64) -> (i64, i64) {
+    return a / b, a % b
+}
+
+quotient, remainder := divide(17, 5)
+```
+
+The `return` lists the values, and it is required here: a trailing expression is
+one value. `mut` goes in front of any name the body writes afterwards, as in
+`magnitude, mut negative := classify(value)`.
+
+What you cannot do is treat the list as a value. `(i64, i64)` is not a type, so
+it cannot be stored in a field, passed as an argument, or bound to one name. A
+program that wants to pass a pair around declares a struct, which is the point:
+every aggregate in a Frost program has a name its author chose. A fallible
+function still answers with one value, so `-> (A, B) ! E` is rejected and a
+function that wants both returns a struct it names.
 
 ## Types and arithmetic
 
@@ -557,9 +586,9 @@ files pulled in by `import`, not as a module tree with visibility rules.
 | `Drop`, RAII guards | `linear` types (consume exactly once), plus `defer` |
 | Closures, `Fn`/`FnMut`/`FnOnce` | Function pointers plus an explicit context argument |
 | `Box`, `Rc`, `Arc`, `RefCell` | Pools and `Handle<T>` (generational indices) |
-| `Vec`, `HashMap`, `String` | Fixed arrays and pools; no general collections or string library |
+| `Vec`, `HashMap`, `String` | `std/vec.frost`, `std/map.frost`, `str` and `std/strings.frost` |
 | `#[derive(..)]`, macros, attributes | None; write what you need explicitly |
-| `?`, `Result`, `#[must_use]` | `linear enum` returns that must be consumed |
+| `?`, `Result`, `#[must_use]` | `-> T ! E` failure sets and `?`, over `linear enum` returns |
 | Overflow checks in debug | None; arithmetic always wraps at width |
 | `unsafe` blocks and raw pointers | `^T` raw pointers as the explicit escape hatch |
 | `pub`, `pub(crate)`, field privacy | None; every struct field is public |
@@ -568,6 +597,10 @@ files pulled in by `import`, not as a module tree with visibility rules.
 ## Gotchas checklist for the first hour
 
 - `if` and `while` conditions need parentheses, as in `if (x > 5) { .. }`.
+- `for x in xs` walks a slice, an array or a `str` with no iterator and no
+  `.iter()`, and `for index, x in xs` names the position too. It is the
+  index-and-bound loop written out, so `break` and `continue` mean what they
+  always do and nothing is called per element.
 - Struct fields are set with `=`, not `:`, as in `Point { x = 1, y = 2 }`.
 - Match arms are `case <pattern>: <expr>`, and variant patterns lead with a dot,
   as in `case .Circle { radius }:`.

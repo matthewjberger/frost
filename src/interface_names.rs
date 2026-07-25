@@ -22,9 +22,9 @@ pub(crate) fn names_in_statement(statement: &Statement, out: &mut Vec<String>) {
             match &return_sig.kind {
                 crate::parser::ReturnKind::None => {}
                 crate::parser::ReturnKind::Single(ty) => names_in_type(ty, out),
-                crate::parser::ReturnKind::Named(params) => {
-                    for param in params {
-                        names_in_type(&param.param_type, out);
+                crate::parser::ReturnKind::Multiple(types) => {
+                    for held in types {
+                        names_in_type(held, out);
                     }
                 }
                 crate::parser::ReturnKind::Fallible(value, failure) => {
@@ -75,7 +75,8 @@ pub(crate) fn names_in_statement(statement: &Statement, out: &mut Vec<String>) {
             }
             names_in_expression(value, out);
         }
-        Statement::Return(value)
+        Statement::LetMultiple(_, value)
+        | Statement::Return(value)
         | Statement::Expression(value)
         | Statement::Print(value) => names_in_expression(value, out),
         Statement::Assignment(place, value) => {

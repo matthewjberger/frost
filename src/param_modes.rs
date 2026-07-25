@@ -165,6 +165,14 @@ fn read_through_statement(
                 frame.push(name.clone());
             }
         }
+        Statement::LetMultiple(bindings, value) => {
+            read_through_expression(value, through, bound);
+            if let Some(frame) = bound.last_mut() {
+                for binding in bindings.iter() {
+                    frame.push(binding.name.clone());
+                }
+            }
+        }
         Statement::Constant(_, value)
         | Statement::Return(value)
         | Statement::Expression(value)

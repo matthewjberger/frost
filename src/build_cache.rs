@@ -211,7 +211,9 @@ pub fn stamp_file(statements: &mut [Spanned<Statement>], file: u32) {
 fn stamp_statement(statement: &mut Statement, file: u32) {
     match statement {
         Statement::Constant(_, value) => stamp_expression(value, file),
-        Statement::Let { value, .. } => stamp_expression(value, file),
+        Statement::Let { value, .. } | Statement::LetMultiple(_, value) => {
+            stamp_expression(value, file)
+        }
         Statement::Return(value)
         | Statement::Expression(value)
         | Statement::Print(value) => stamp_expression(value, file),
