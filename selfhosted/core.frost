@@ -640,15 +640,13 @@ arena_push :: fn(mut a: Arena<$T>, move value: $T) -> i64 {
 // mistake is silent corruption in one place and a crash with no explanation in
 // the other. Answer for it here instead.
 arena_at :: fn(a: Arena<$T>, id: i64) -> ref T {
-    unsafe {
-        if (id < 0 || id >= a.count) {
-            report("frost: an arena was indexed out of range: ")
-            frost_rt_error_int(id)
-            frost_rt_die()
-        }
-        ref result := a.data[id]
-        result
+    if (id < 0 || id >= a.count) {
+        report("frost: an arena was indexed out of range: ")
+        frost_rt_error_int(id)
+        frost_rt_die()
     }
+    ref result := a.data[id]
+    result
 }
 
 // A directory added to the search list. arena_push answers with an index
