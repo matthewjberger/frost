@@ -2963,9 +2963,10 @@ fn the_readme_snippet_is_the_tour_program() {
     let Some(output) = compile_and_run("tour", &program) else {
         return;
     };
-    // 90 healed by 10, a Hero's 10 damage, that doubled by `round`, and the
-    // session's id handed back by the `move` that consumed it.
-    assert_eq!(output, "100\n10\n20\n7\n");
+    // 90 healed by 10, a Hero's 10 damage, that doubled by `round`, the party
+    // walked by `for` and answered for in two values, and the session's id
+    // handed back by the `move` that consumed it.
+    assert_eq!(output, "100\n10\n20\n52\n30\n7\n");
 }
 
 // The self-hosted compiler passes a struct to C by value too, through both of

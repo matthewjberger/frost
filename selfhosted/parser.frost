@@ -199,7 +199,13 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     // an argument whose callee is written later, patched by the fixup pass.
     if (kind == TOK_LBRACE) {
         advance(p)
+        // The second place to look is what a `return` in a fallible function
+        // sets: the value it answers with is not a struct there, so a literal
+        // written without a name is the failure.
         mut struct_ty := p.expected_type
+        if (is_struct_ty(struct_ty) == false) {
+            struct_ty = p.expected_alt
+        }
         if (is_struct_ty(struct_ty) == false) {
             struct_ty = 0 - 1
         }

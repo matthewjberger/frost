@@ -31,12 +31,14 @@ wound :: fn(mut e: Entity, amount: i64) { e.hp = e.hp - amount }
 
 ## A short tour
 
-Three of the things Frost has instead of the usual machinery: borrows that are
-parameter modes, a resource the compiler counts, and a failure that travels in
-the signature.
+What Frost has instead of the usual machinery: borrows that are parameter modes,
+a resource the compiler counts, a failure that travels in the signature, a `for`
+with no iterator to implement, a function that answers with two values and no
+tuple type behind them, and literals that leave out a type the context already
+carries while every field keeps its name.
 
 <p align="center">
-  <img src="docs/tour.svg" alt="A tour of Frost: parameter modes, a linear resource, and a failure set" width="700">
+  <img src="docs/tour.svg" alt="A tour of Frost: parameter modes, a linear resource, a failure set, and the inference in a literal" width="700">
 </p>
 
 ```bash
@@ -50,7 +52,7 @@ For long-lived data, an `Entity` lives in a pool and is named by a `Handle`, a s
 
 ## What it does
 
-The language has structs and tagged enums, `match` with payload and tuple patterns that has to cover every variant or say what the rest do, and generics that monomorphize over types, values, and functions, so a call in an inner loop stays direct rather than going through a pointer. A resource that must be released is marked `linear` and the compiler counts it, consumed once on every path out or the program does not build. Long-lived data lives in pools addressed by generational handles, a region check keeps a pointer from outliving the block or the stack frame it points into, and a value constant can be a folded integer expression. There are no visibility modifiers and no methods.
+The language has structs and tagged enums, `match` with payload and tuple patterns that has to cover every variant or say what the rest do, and generics that monomorphize over types, values, and functions, so a call in an inner loop stays direct rather than going through a pointer. A `for` walks a range or a sequence as the index-and-bound loop it stands for, a function answers with several values through a return type list rather than a tuple type, and a literal leaves out a type the context already carries, while every field keeps its name because the name is what says where the value lands. A resource that must be released is marked `linear` and the compiler counts it, consumed once on every path out or the program does not build. Long-lived data lives in pools addressed by generational handles, a region check keeps a pointer from outliving the block or the stack frame it points into, and a value constant can be a folded integer expression. There are no visibility modifiers and no methods.
 
 It calls C without a binding layer. An `extern fn` links against a C library with the natural ABI, including one that returns a struct by value and one that takes a Frost function as a callback with a typed context.
 
