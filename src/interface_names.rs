@@ -96,7 +96,7 @@ pub(crate) fn names_in_statement(statement: &Statement, out: &mut Vec<String>) {
             out.push(capability.clone());
             names_in_block(body, out);
         }
-        Statement::Break | Statement::Continue | Statement::Import(_) => {}
+        Statement::Break | Statement::Continue | Statement::Import(..) => {}
     }
 }
 

@@ -238,7 +238,7 @@ fn stamp_statement(statement: &mut Statement, file: u32) {
         | Statement::Declared { .. }
         | Statement::Break
         | Statement::Continue
-        | Statement::Import(_) => {}
+        | Statement::Import(..) => {}
     }
 }
 

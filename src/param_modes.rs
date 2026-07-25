@@ -205,7 +205,7 @@ fn read_through_statement(
         | Statement::Declared { .. }
         | Statement::Break
         | Statement::Continue
-        | Statement::Import(_) => {}
+        | Statement::Import(..) => {}
     }
 }
 

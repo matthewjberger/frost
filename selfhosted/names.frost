@@ -7,7 +7,7 @@ import "cursor.frost"
 import "imports.frost"
 
 export append_node, array_element, array_index_of, array_length, array_of,
-    mark_safe,
+    mark_safe, place_renames,
     bytes_equal, const_value, digits_in, gargs_equal, generic_index_for,
     value_binding_of,
     intern_global, is_aggregate, is_array_ty, is_const, is_float, is_main_name,
@@ -145,15 +145,57 @@ bytes_equal :: fn(src: ^i8, first: i64, second: i64, length: i64) -> bool {
 }
 
 intern_global :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
+    // A renamed import is looked up under the name the module declares, and
+    // only in that module.
+    mut sought_off := offset
+    mut sought_len := length
+    mut wanted : i64 = 0 - 1
+    held := rename_for(p, offset, length)
+    if (held >= 0) {
+        entry := arena_at(p.renames, held)
+        sought_off = entry.exported_off
+        sought_len = entry.exported_len
+        wanted = entry.imported
+    }
     mut i : i64 = 0
+    mut found : i64 = 0 - 1
     while (i < p.fns.count) {
         entry := arena_at(p.fns, i)
-        if (entry.len == length
-            && bytes_equal(p.src, entry.off, offset, length)
-            && name_visible(p, entry.off, entry.len, offset)) {
-            return i
+        if (entry.len == sought_len
+            && bytes_equal(p.src, entry.off, sought_off, sought_len)
+            && name_visible(p, entry.off, entry.len, offset)
+            && (wanted < 0 || module_at(p.modules, entry.off) == wanted)) {
+            if (found < 0) {
+                found = i
+                // Nothing else can match unless two modules in this program
+                // export the same name, so the rest of the scan is skipped in
+                // every program that does not.
+                if (p.shared_exports == 0) {
+                    return found
+                }
+            } else {
+                // Two modules this file imports both offer the name, and it
+                // wrote the name, so there is no answer to give.
+                held := arena_at(p.fns, found)
+                report_where(p.modules, p.src, offset)
+                report("'")
+                report_src(p.src, offset, length)
+                report("' is exported by two modules this file imports, ")
+                first := arena_at(p.modules, module_at(p.modules, held.off))
+                report_cstr(first.path)
+                report(" and ")
+                second := arena_at(p.modules, module_at(p.modules, entry.off))
+                report_cstr(second.path)
+                report("; read one of them under another name with `import \"...\" (")
+                report_src(p.src, offset, length)
+                report(" as ...)`")
+                frost_rt_die()
+            }
         }
         i = i + 1
+    }
+    if (found >= 0) {
+        return found
     }
     arena_push(
         p.fns,
@@ -274,6 +316,51 @@ name_visible :: fn(mut p: Parser, decl_off: i64, decl_len: i64, use_off: i64)
         i = i + 1
     }
     false
+}
+
+// Move each rename's two names into the source buffer, where every name lives
+// once the parser is running. They were copied out of the import line before it
+// was blanked.
+place_renames :: fn(mut p: Parser, held: ^i8) {
+    mut i : i64 = 0
+    while (i < p.renames.count) {
+        entry := arena_at(p.renames, i)
+        local_len := entry.local_len
+        exported_len := entry.exported_len
+        local_from := entry.local_off
+        exported_from := entry.exported_off
+        local_at := p.synth_next
+        copy_name(p.src, local_at, held, local_from, local_len)
+        unsafe { frost_rt_byte_set(p.src, local_at + local_len, 0) }
+        exported_at := local_at + local_len + 1
+        copy_name(p.src, exported_at, held, exported_from, exported_len)
+        unsafe { frost_rt_byte_set(p.src, exported_at + exported_len, 0) }
+        p.synth_next = exported_at + exported_len + 1
+        moved := arena_at(p.renames, i)
+        moved.local_off = local_at
+        moved.exported_off = exported_at
+        i = i + 1
+    }
+}
+
+// The rename a file wrote for a name it is using, or -1. A file reads a name
+// under whatever it called it, and the module it came from is pinned, so two
+// imports offering the same name stay apart.
+rename_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
+    if (p.renames.count == 0) {
+        return 0 - 1
+    }
+    user := module_at(p.modules, offset)
+    mut i : i64 = 0
+    while (i < p.renames.count) {
+        entry := arena_at(p.renames, i)
+        if (entry.importer == user && entry.local_len == length
+            && bytes_equal(p.src, entry.local_off, offset, length)) {
+            return i
+        }
+        i = i + 1
+    }
+    0 - 1
 }
 
 // Whether one module imports another directly. A file compiled on its own has

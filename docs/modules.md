@@ -10,8 +10,12 @@ One rule about identity is what makes the other four safe.
 An import also says what the importing file may name: its own declarations plus
 the exported names of the modules it imports directly. Importing is not
 transitive, so a file that uses a name reaches for the module exporting it in
-its own import list rather than inheriting it from something else's. See section
-5.5 of [spec.md](spec.md).
+its own import list rather than inheriting it from something else's.
+
+`import "list.frost" (insert as list_insert)` reads one of those names under
+another, which is the answer when two modules you cannot edit export the same
+name. The rename belongs to the file that wrote it. See section 5.5 of
+[spec.md](spec.md).
 
 ## The order
 

@@ -4296,8 +4296,10 @@ fn self_hosted_resolves_imports() {
     assert_eq!(output, "49\n27\n9\n");
 }
 
-// A file names another that names it back. Each file lands in the buffer once,
-// so this settles rather than running forever.
+// Two modules exporting the same name is no longer a collision on its own: a
+// file that imports one of them sees one name. It is a collision when a file
+// imports both and writes the name, and the answer is to read one of them
+// under another name.
 #[test]
 fn export_name_collision_is_rejected_by_both_compilers() {
     let directory = std::env::temp_dir().join("frost_export_collision");
@@ -4334,7 +4336,8 @@ fn export_name_collision_is_rejected_by_both_compilers() {
     );
     let bootstrap_error = String::from_utf8_lossy(&bootstrap.stderr);
     assert!(
-        bootstrap_error.contains("exported by two modules"),
+        bootstrap_error.contains("exported by two modules")
+            && bootstrap_error.contains("as ..."),
         "unexpected bootstrap collision message:\n{bootstrap_error}"
     );
 
@@ -4354,9 +4357,114 @@ fn export_name_collision_is_rejected_by_both_compilers() {
     );
     let selfhosted_error = String::from_utf8_lossy(&selfhosted.stderr);
     assert!(
-        selfhosted_error.contains("exported by two modules"),
+        selfhosted_error.contains("exported by two modules")
+            && selfhosted_error.contains("as ..."),
         "unexpected self-hosted collision message:\n{selfhosted_error}"
     );
+}
+
+// The escape hatch the collision message points at, in both compilers. This is
+// the case the flat namespace cannot answer any other way: two libraries you
+// cannot edit that export the same name.
+#[test]
+fn a_name_can_be_read_under_another_on_import() {
+    let directory = std::env::temp_dir().join(unique("frost_rename"));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("list.frost"),
+        "export insert\ninsert :: fn(value: i64) -> i64 { value * 10 }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("tree.frost"),
+        "export insert\ninsert :: fn(value: i64) -> i64 { value + 1 }\n",
+    )
+    .unwrap();
+    // A third module imports one of them and never renames anything, which is
+    // what says a rename belongs to the file that wrote it.
+    std::fs::write(
+        directory.join("plain.frost"),
+        "import \"list.frost\"\n\
+         export doubled\n\
+         doubled :: fn(x: i64) -> i64 { insert(x) * 2 }\n",
+    )
+    .unwrap();
+    let root = directory.join("app.frost");
+    std::fs::write(
+        &root,
+        "import \"list.frost\" (insert as list_insert)\n\
+         import \"tree.frost\" (insert as tree_insert)\n\
+         import \"plain.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   print list_insert(4)\n\
+         \x20   print tree_insert(4)\n\
+         \x20   print doubled(4)\n\
+         \x20   0\n\
+         }\n",
+    )
+    .unwrap();
+
+    let exe = directory.join(format!("app{}", std::env::consts::EXE_SUFFIX));
+    let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .env("FROST_CHECK_UNSAFE", "0")
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe)
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "the bootstrap rejected a rename on import:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let run = Command::new(&exe).output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"),
+        "40\n5\n80\n"
+    );
+
+    // Renaming a name the module does not export is an error that says so.
+    let wrong = directory.join("wrong.frost");
+    std::fs::write(
+        &wrong,
+        "import \"list.frost\" (missing as gone)\n\
+         main :: fn() -> i64 { 0 }\n",
+    )
+    .unwrap();
+    let rejected = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .env("FROST_CHECK_UNSAFE", "0")
+        .arg("--emit-c")
+        .arg(&wrong)
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr)
+            .contains("does not export 'missing'"),
+        "expected the missing-export diagnostic"
+    );
+
+    // The same program through the self-hosted compiler.
+    if let Some(compiler) = build_self_hosted_compiler("rename") {
+        let emitted = Command::new(&compiler)
+            .env("FROST_CHECK_UNSAFE", "0")
+            .env("FROST_INPUT", &root)
+            .output()
+            .unwrap();
+        assert!(
+            emitted.status.success(),
+            "the self-hosted compiler rejected a rename on import:\n{}",
+            String::from_utf8_lossy(&emitted.stderr)
+        );
+        let c_source = String::from_utf8_lossy(&emitted.stdout).to_string();
+        if let Some(output) = compile_c_and_run("rename", &c_source) {
+            assert_eq!(output, "40\n5\n80\n");
+        }
+        let _ = std::fs::remove_file(&compiler);
+    }
+    let _ = std::fs::remove_dir_all(&directory);
 }
 
 #[test]

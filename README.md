@@ -97,9 +97,10 @@ Everything above works today and is checked by the test suite on every commit, i
 
 The two compilers have been audited against each other by running the same programs through both and comparing what each accepts. That was expected to be a confirmation and was not. It found four places where they disagreed, one of them a case where the same source meant different things rather than a compiler missing a check, and all four are closed. The probes that found them are tests now.
 
-What is left, roughly in order:
-
-- Renaming a name on import. Two modules that export the same name is already a compile error naming both. The rename is the escape hatch for the one case that error cannot be answered by editing a module: two third-party libraries that clash. It was tried and put back. A rename that is only a local alias parses and works but does not resolve a collision, because the flat splice keeps every exported name bare and the collision error fires first. Making it resolve one means mangling exported names per module, which is what `module_tag_of` and separate compilation are built on not happening, plus a per-importer binding map and a decision about whether imports stay transitive. That is a name-resolution change, not an escape hatch, and there is no third-party ecosystem yet to need it.
+What is left: nothing on the list this section used to carry. An import now says
+what a file may name, and the rename that answers a collision between two
+libraries you cannot edit is in both compilers. What comes next is whatever
+using the language turns up.
 
 ## Documentation
 

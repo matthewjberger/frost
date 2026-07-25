@@ -30,6 +30,7 @@ import "core.frost"
 import "cli.frost"
 import "lexer.frost"
 import "imports.frost"
+import "names.frost"
 import "types.frost"
 import "parser.frost"
 import "emit_c.frost"
@@ -54,6 +55,7 @@ main :: fn() -> i64 {
     mut modules : Arena<Module> = arena_make($Module, 1024)
     mut exports : Arena<Export> = arena_make($Export, 4096)
     mut import_edges : Arena<ImportEdge> = arena_make($ImportEdge, 4096)
+    mut renames : Arena<Rename> = arena_make($Rename, 1024)
     export_names := unsafe { ptr_cast($i8, malloc(SYNTH_ROOM)) }
     if (unsafe { frost_rt_str_len(input_path) } != 0) {
         // One buffer holds the root file and everything it imports, so a name
@@ -62,7 +64,7 @@ main :: fn() -> i64 {
         mut scratch : Arena<Token> = arena_make($Token, 262144)
         search_roots_from(options.roots)
         resolve_imports(buffer, input_path, export_names, modules, exports,
-            import_edges, scratch, options.roots)
+            import_edges, renames, scratch, options.roots)
         source = buffer
     }
     if (unsafe { frost_rt_str_len(source) } == 0) {
@@ -215,6 +217,8 @@ main :: fn() -> i64 {
         modules = modules,
         exports = exports,
         import_edges = import_edges,
+        renames = renames,
+        shared_exports = 0,
         export_names = export_names,
         result_ty = 0 - 1,
         failure_ty = 0 - 1,
@@ -247,6 +251,9 @@ main :: fn() -> i64 {
     // Names the compiler synthesizes go past the source's terminator, so the
     // first free byte is one past the text.
     parser.synth_next = unsafe { frost_rt_str_len(source) } + 1
+    // The two names of each rename move into the source, so every lookup
+    // compares bytes in one buffer the way it always has.
+    place_renames(parser, export_names)
     // The host convention by default. FROST_ABI overrides it so the other
     // target's output can be inspected from either host.
     parser.abi_windows = frost_rt_is_windows()
@@ -258,11 +265,14 @@ main :: fn() -> i64 {
         parser.abi_windows = 1
     }
     tokenize(source, unsafe { frost_rt_str_len(source) }, parser.tokens)
+    // Whether two modules here export the same name, which decides how careful
+    // a name lookup has to be. Known from the export lines alone, so it is
+    // answered before anything is parsed.
+    check_export_collisions(parser)
     program := parse_program(parser)
     // Every `.Variant` an argument left unresolved, now that every signature is
     // parsed.
     resolve_variant_fixups(parser)
-    check_export_collisions(parser)
     collect_type_args(parser)
     record_mono_rets(parser)
     check_calls(parser)

@@ -19,6 +19,12 @@ export check_borrow_exclusivity, check_calls, check_export_collisions,
 // `vec3_add` not `math.add`), so this is a loud error rather than a resolution
 // rule, and the fix is to prefix one of them. Only exported names collide. A
 // private name stays the module's own.
+// Two modules exporting the same name is not itself a problem now that an
+// import says what a file may name: a file that imports only one of them sees
+// only that one. What is a problem is a file that imports both and then writes
+// the name, which is caught where the name is looked up. This records that
+// there is such a pair at all, so the lookup pays for the careful answer only
+// in a program that has one.
 check_export_collisions :: fn(mut p: Parser) {
     mut i : i64 = 0
     while (i < p.exports.count) {
@@ -29,16 +35,8 @@ check_export_collisions :: fn(mut p: Parser) {
             if (first.module != second.module && first.len == second.len
                 && bytes_equal(p.export_names, first.off, second.off,
                     first.len)) {
-                report("frost: '")
-                report_src(p.export_names, first.off, first.len)
-                report("' is exported by two modules, ")
-                first_module := arena_at(p.modules, first.module)
-                report_cstr(first_module.path)
-                report(" and ")
-                second_module := arena_at(p.modules, second.module)
-                report_cstr(second_module.path)
-                report("; prefix one of them to keep the names distinct\n")
-                frost_rt_die()
+                p.shared_exports = 1
+                return
             }
             j = j + 1
         }

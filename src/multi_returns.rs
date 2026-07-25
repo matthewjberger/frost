@@ -242,7 +242,7 @@ impl Lowering {
             | Statement::TypeAlias(..)
             | Statement::Break
             | Statement::Continue
-            | Statement::Import(_)
+            | Statement::Import(..)
             | Statement::Extern { .. } => Ok(()),
         }
     }
