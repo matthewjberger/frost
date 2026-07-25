@@ -7,10 +7,337 @@ import "lexer.frost"
 import "names.frost"
 import "types.frost"
 import "emit_asm.frost"
+import "parser.frost"
 
 export check_borrow_exclusivity, check_calls, check_export_collisions,
     check_frame_escapes, check_moves,
-    check_reference_fields, check_regions, check_unsafety
+    check_reference_fields, check_regions, check_types, check_unsafety
+
+// ---------------------------------------------------------------------------
+// The type check: every place a value crosses into something that already says
+// what it is.
+//
+// There are four of them and no more: a binding that gave its type, an
+// assignment, an argument, and a return. Everything else about a type is
+// derived rather than declared, so there is nothing for it to disagree with.
+//
+// This is a pass rather than something an emitter does, because which backend
+// runs must not decide which programs compile. The rule belongs to the
+// language; a backend is a way of writing an accepted program down.
+//
+// It walks what is emitted, the program list and one instance per
+// monomorphization, rather than every function node in the arena. A generic
+// template's own body names parameters nothing has bound yet, and reading it as
+// if it were a program reports errors against code no one wrote.
+// ---------------------------------------------------------------------------
+
+check_types :: fn(mut p: Parser, head: i64) {
+    mut id := head
+    while (id != (0 - 1)) {
+        node := arena_at(p.arena, id)
+        kind := node.kind
+        next_id := node.next
+        if (kind == NodeKind::Func) {
+            sym := arena_at(p.fns, node.val)
+            check_types_in(p, node.a, node.b, node.val, sym.ret_type)
+        }
+        id = next_id
+    }
+    mut gi : i64 = 0
+    while (gi < p.generic_fns.count) {
+        mut ii : i64 = 0
+        while (ii < p.type_args.count) {
+            used := arena_at(p.type_args, ii)
+            arg := used.arg
+            xstart := used.xarg_start
+            xcount := used.xarg_count
+            if (instance_fits(p, gi, arg, xstart, xcount)) {
+                instance := parse_generic_instance(p, gi, arg, xstart, xcount)
+                // The return type worked out for this instance. The template's
+                // own still names its parameters.
+                ret := p.last_return_type
+                fnode := arena_at(p.arena, instance)
+                check_types_in(p, fnode.a, fnode.b, fnode.val, ret)
+            }
+            ii = ii + 1
+        }
+        gi = gi + 1
+    }
+}
+
+check_types_in :: fn(mut p: Parser, body: i64, params: i64, fn_index: i64,
+    ret: i64) {
+    sym := arena_at(p.fns, fn_index)
+    p.current_ret = ret
+    p.current_fn_off = sym.off
+    p.current_fn_len = sym.len
+    p.locals.count = 0
+    check_record_params(p, params)
+    check_types_list(p, body)
+}
+
+// A parameter is a local of its declared type, which is what lets the rest of
+// this walk ask what a name is.
+check_record_params :: fn(mut p: Parser, head: i64) {
+    mut id := head
+    while (id != (0 - 1)) {
+        node := arena_at(p.arena, id)
+        next_id := node.next
+        record_local(p, node.val, node.c, node.b)
+        id = next_id
+    }
+}
+
+check_types_list :: fn(mut p: Parser, head: i64) {
+    mut id := head
+    while (id != (0 - 1)) {
+        node := arena_at(p.arena, id)
+        next_id := node.next
+        check_types_stmt(p, id)
+        id = next_id
+    }
+}
+
+check_types_stmt :: fn(mut p: Parser, id: i64) {
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NodeKind::Let) {
+        value := node.a
+        annotation := node.b
+        off := node.val
+        len := node.c
+        check_types_expr(p, value)
+        mut ty := annotation
+        if (annotation == (0 - 1)) {
+            ty = type_of(p, value)
+        } else if (is_columns_new_call(p, value)) {
+            // `columns_new()` stands for a zeroed container rather than a call,
+            // so it has no declaration to answer with a type.
+            ty = annotation
+        } else {
+            value_ty := type_of(p, value)
+            if (value_fits(p, value, value_ty, annotation) == false) {
+                report_where(p.modules, p.src, node.pos)
+                report("this binding is a '")
+                report_type_name(p, annotation)
+                report("' and the value is a '")
+                report_type_name(p, value_ty)
+                report("'")
+                report_distinct_note(p, value_ty, annotation)
+                frost_rt_die()
+            }
+        }
+        record_local(p, off, len, ty)
+        return
+    }
+    if (kind == NodeKind::Assign) {
+        place := node.a
+        value := node.b
+        check_types_expr(p, place)
+        check_types_expr(p, value)
+        // A scatter into a columns container writes a whole element through a
+        // handle, so the place is every column at once rather than one value
+        // with a type to compare against.
+        place_node := arena_at(p.arena, place)
+        if (place_node.kind == NodeKind::Index) {
+            mut through := type_of(p, place_node.a)
+            if (is_pointer(through)) {
+                through = pointee(through)
+            }
+            if (type_of(p, place_node.b) == TY_HANDLE
+                && is_columns_ty(p, through)) {
+                return
+            }
+        }
+        place_ty := type_of(p, place)
+        value_ty := type_of(p, value)
+        if (value_fits(p, value, value_ty, place_ty) == false) {
+            report_where(p.modules, p.src, node.pos)
+            report("assigning a value of the wrong type: the place is a '")
+            report_type_name(p, place_ty)
+            report("' and the value is a '")
+            report_type_name(p, value_ty)
+            report("'")
+            report_distinct_note(p, value_ty, place_ty)
+            frost_rt_die()
+        }
+        return
+    }
+    if (kind == NodeKind::Return) {
+        value := node.a
+        if (value == (0 - 1)) {
+            return
+        }
+        check_types_expr(p, value)
+        value_ty := type_of(p, value)
+        if (value_fits(p, value, value_ty, p.current_ret) == false) {
+            report_where(p.modules, p.src, node.pos)
+            report("'")
+            report_src(p.src, p.current_fn_off, p.current_fn_len)
+            report("' returns a value of the wrong type")
+            report_distinct_note(p, value_ty, p.current_ret)
+            frost_rt_die()
+        }
+        return
+    }
+    if (kind == NodeKind::ExprStmt || kind == NodeKind::Print) {
+        check_types_expr(p, node.a)
+        return
+    }
+    if (kind == NodeKind::If) {
+        check_types_expr(p, node.a)
+        check_types_list(p, node.b)
+        if (node.val != (0 - 1)) {
+            check_types_list(p, node.val)
+        }
+        return
+    }
+    if (kind == NodeKind::While) {
+        if (node.c != (0 - 1)) {
+            check_types_list(p, node.c)
+        }
+        check_types_expr(p, node.a)
+        check_types_list(p, node.b)
+        return
+    }
+    if (kind == NodeKind::Match) {
+        check_types_expr(p, node.a)
+        mut cid := node.b
+        while (cid != (0 - 1)) {
+            cnode := arena_at(p.arena, cid)
+            next_case := cnode.next
+            check_types_list(p, cnode.a)
+            cid = next_case
+        }
+        return
+    }
+    if (kind == NodeKind::With) {
+        check_types_list(p, node.a)
+        return
+    }
+    // Anything else in statement position is an expression that answers with
+    // nothing, and is walked as one.
+    check_types_expr(p, id)
+}
+
+// The expression walk is here to find calls, since an argument is one of the
+// four places a value crosses. The rest of it is the recursion that reaches
+// them.
+check_types_expr :: fn(mut p: Parser, id: i64) {
+    if (id < 0) {
+        return
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NodeKind::Call) {
+        check_call_arguments(p, node.a, node.val)
+        return
+    }
+    if (kind == NodeKind::StructLit) {
+        mut fid := node.a
+        while (fid != (0 - 1)) {
+            fnode := arena_at(p.arena, fid)
+            next_field := fnode.next
+            check_types_expr(p, fnode.a)
+            fid = next_field
+        }
+        return
+    }
+    if (kind == NodeKind::ArrayLit) {
+        mut eid := node.a
+        while (eid != (0 - 1)) {
+            enode := arena_at(p.arena, eid)
+            next_element := enode.next
+            check_types_expr(p, enode.a)
+            eid = next_element
+        }
+        return
+    }
+    if (kind == NodeKind::Bin || kind == NodeKind::Index
+        || kind == NodeKind::SliceFrom) {
+        check_types_expr(p, node.a)
+        check_types_expr(p, node.b)
+        return
+    }
+    if (kind == NodeKind::Field || kind == NodeKind::Deref
+        || kind == NodeKind::AddrOf || kind == NodeKind::Ref
+        || kind == NodeKind::PtrCast || kind == NodeKind::SliceLen
+        || kind == NodeKind::Assert) {
+        check_types_expr(p, node.a)
+        return
+    }
+}
+
+// Each argument against the parameter it lands in. A borrowed parameter is a
+// pointer to what it takes and the call site is what takes the address, so the
+// argument answers to the pointee. A generic callee's parameter list belongs to
+// whichever instance was parsed last, so it says nothing about this call, and
+// the instances are checked in their own right.
+check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64) {
+    sym := arena_at(p.fns, fn_index)
+    if (generic_fn_of(p, fn_index) >= 0) {
+        check_argument_expressions(p, args)
+        return
+    }
+    // A call through a function-pointer local is indirect, and answers to the
+    // local's signature rather than to any declaration.
+    if (local_exists(p, sym.off, sym.len)) {
+        check_argument_expressions(p, args)
+        return
+    }
+    mut index : i64 = 0
+    mut id := args
+    while (id != (0 - 1)) {
+        node := arena_at(p.arena, id)
+        value := node.a
+        next_id := node.next
+        vnode := arena_at(p.arena, value)
+        if (vnode.kind != NodeKind::TypeVal) {
+            check_types_expr(p, value)
+            declared := nth_param_type(p, sym.params, index)
+            if (declared >= 0) {
+                mut expected := declared
+                if (is_borrow(expected)) {
+                    expected = pointee(expected)
+                }
+                arg_ty := type_of(p, value)
+                // Either shape does: the caller hands over a value and the
+                // call takes its address, or it hands over a reference it
+                // already holds, which is what a `mut` parameter passed on to
+                // another function is.
+                mut fits := value_fits(p, value, arg_ty, expected)
+                if (fits == false && expected != declared) {
+                    fits = value_fits(p, value, arg_ty, declared)
+                }
+                if (expected != TY_PARAM && fits == false) {
+                    report_where(p.modules, p.src, vnode.pos)
+                    report("'")
+                    report_src(p.src, sym.off, sym.len)
+                    report("' was passed an argument of the wrong type: ")
+                    report("it takes a '")
+                    report_type_name(p, expected)
+                    report("' and this is a '")
+                    report_type_name(p, arg_ty)
+                    report("'")
+                    report_distinct_note(p, arg_ty, expected)
+                    frost_rt_die()
+                }
+            }
+            index = index + 1
+        }
+        id = next_id
+    }
+}
+
+check_argument_expressions :: fn(mut p: Parser, args: i64) {
+    mut id := args
+    while (id != (0 - 1)) {
+        node := arena_at(p.arena, id)
+        next_id := node.next
+        check_types_expr(p, node.a)
+        id = next_id
+    }
+}
 
 
 // Two imported modules that export the same name is a collision: a reference to

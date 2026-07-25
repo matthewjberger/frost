@@ -745,25 +745,6 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                 // instantiation, so they carry nothing to check against. An
                 // auto-borrowed argument is a value whose address is taken
                 // here, so it answers to the pointee rather than the pointer.
-                if (generic_fn_of(p, fn_index) < 0) {
-                    mut expected := param_ty
-                    if (borrow == 1) {
-                        expected = pointee(param_ty)
-                    }
-                    if (value_fits(p, value, arg_ty, expected) == false) {
-                        report_where(p.modules, p.src, vnode.pos)
-                        report("'")
-                        report_src(p.src, sym.off, sym.len)
-                        report("' was passed an argument of the wrong type: ")
-                        report("it takes a '")
-                        report_type_name(p, expected)
-                        report("' and this is a '")
-                        report_type_name(p, arg_ty)
-                        report("'")
-                        report_distinct_note(p, arg_ty, expected)
-                        frost_rt_die()
-                    }
-                }
             }
             // A `value` parameter is declared as the struct, so it is handed
             // the struct. The C compiler applies the target's rule for passing
@@ -820,21 +801,6 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         if (annotation == (0 - 1)) {
             ty = type_of(p, value)
         }
-        // A binding that said what it is takes only what fits, which is where a
-        // distinct type is first told from what it is represented by.
-        if (annotation != (0 - 1) && is_distinct(annotation)) {
-            value_ty := type_of(p, value)
-            if (value_fits(p, value, value_ty, annotation) == false) {
-                report_where(p.modules, p.src, node.pos)
-                report("this binding is a '")
-                report_type_name(p, annotation)
-                report("' and the value is a '")
-                report_type_name(p, value_ty)
-                report("'")
-                report_distinct_note(p, value_ty, annotation)
-                frost_rt_die()
-            }
-        }
         emit_ctype(p, ty)
         emit_text(" ")
         emit_source(p.src, off, len)
@@ -866,17 +832,6 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
             }
         }
         place_ty := type_of(p, place)
-        value_ty := type_of(p, value)
-        if (value_fits(p, value, value_ty, place_ty) == false) {
-            report_where(p.modules, p.src, node.pos)
-            report("assigning a value of the wrong type: the place is a '")
-            report_type_name(p, place_ty)
-            report("' and the value is a '")
-            report_type_name(p, value_ty)
-            report("'")
-            report_distinct_note(p, value_ty, place_ty)
-            frost_rt_die()
-        }
         emit_expr(p, place)
         emit_text(" = ")
         emit_coerced(p, value, place_ty)
@@ -931,15 +886,6 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         if (value == (0 - 1)) {
             emit_text("return 0;\n")
         } else {
-            value_ty := type_of(p, value)
-            if (value_fits(p, value, value_ty, p.current_ret) == false) {
-                report_where(p.modules, p.src, node.pos)
-                report("'")
-                report_src(p.src, p.current_fn_off, p.current_fn_len)
-                report("' returns a value of the wrong type")
-                report_distinct_note(p, value_ty, p.current_ret)
-                frost_rt_die()
-            }
             emit_text("return (")
             emit_expr(p, value)
             emit_text(");\n")

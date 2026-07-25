@@ -3030,6 +3030,70 @@ fn native_backend_covers_the_language() {
 // Build the self-hosted compiler, feed it a program, and return what it wrote to stderr after
 // rejecting it. The self-hosted compiler answers for its own errors rather than deferring them
 // to whatever compiles its output.
+// A program the compiler refuses has to be refused whichever backend was asked
+// for. The type rules belong to the language, not to the C emitter that used to
+// hold them, so this runs each rejected program through both backends and
+// insists on the same answer from each.
+#[test]
+fn both_self_hosted_backends_refuse_the_same_programs() {
+    let cases = [
+        // An argument of the wrong type.
+        (
+            "P :: struct { x: i64 }\n\
+          take :: fn(n: i64) -> i64 { n }\n\
+          main :: fn() -> i64 { p := P { x = 1 }  return take(p) }\n",
+            "argument of the wrong type",
+        ),
+        // A value of the wrong type assigned to a place.
+        (
+            "P :: struct { x: i64 }\n\
+          main :: fn() -> i64 { mut n : i64 = 0  p := P { x = 1 }  n = p  0 }\n",
+            "assigning a value of the wrong type",
+        ),
+        // A returned value of the wrong type.
+        (
+            "P :: struct { x: i64 }\n\
+          bad :: fn() -> i64 { p := P { x = 1 }  return p }\n\
+          main :: fn() -> i64 { bad() }\n",
+            "wrong type",
+        ),
+        // A binding that said what it is.
+        (
+            "Meters :: distinct i64\n\
+          Feet :: distinct i64\n\
+          main :: fn() -> i64 { f : Feet = 4  m : Meters = f  0 }\n",
+            "a distinct type is not its representation",
+        ),
+    ];
+    let Some(compiler) = build_self_hosted_compiler("bothrefuse") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    for (index, (source, expected)) in cases.iter().enumerate() {
+        let input = directory.join(format!("frost_bothrefuse{index}.frost"));
+        std::fs::write(&input, source).unwrap();
+        for backend in ["", "asm"] {
+            let run = Command::new(&compiler)
+                .env("FROST_CHECK_UNSAFE", "0")
+                .env("FROST_BACKEND", backend)
+                .env("FROST_INPUT", &input)
+                .output()
+                .unwrap();
+            assert!(
+                !run.status.success(),
+                "case {index} was accepted with FROST_BACKEND='{backend}'"
+            );
+            let said = String::from_utf8_lossy(&run.stderr);
+            assert!(
+                said.contains(expected),
+                "case {index} with FROST_BACKEND='{backend}' said:\n{said}"
+            );
+        }
+        let _ = std::fs::remove_file(&input);
+    }
+    let _ = std::fs::remove_file(&compiler);
+}
+
 fn self_hosted_rejects(name: &str, source: &str) -> Option<String> {
     if !linker_available() {
         return None;
