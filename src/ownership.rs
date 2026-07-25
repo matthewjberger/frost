@@ -423,7 +423,7 @@ impl MoveChecker<'_> {
                 self.check_loop_body(body)?;
                 Ok(false)
             }
-            Statement::For(variable, range, body) => {
+            Statement::For(variable, _, range, body) => {
                 self.visit(range, false)?;
                 self.note_binding(variable, Some(Type::I64));
                 self.check_loop_body(body)?;

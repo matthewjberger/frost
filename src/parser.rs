@@ -409,7 +409,9 @@ pub enum Statement {
     TypeAlias(Identifier, Type),
     Defer(Box<Statement>),
     Assignment(Expression, Expression),
-    For(Identifier, Expression, Block),
+    // As written: one name binds the element, two bind the index and then the
+    // element. The iterable is a range, or a sequence to walk.
+    For(Identifier, Option<Identifier>, Expression, Block),
     While(Expression, Block),
     // `with arena { ... }`: inside the block, `arena` supplies the allocation
     // capability threaded into `uses` calls. The block is a region.
@@ -519,12 +521,16 @@ impl Display for Statement {
             }
             Self::Defer(statement) => format!("defer {}", statement),
             Self::Assignment(lhs, rhs) => format!("{} = {}", lhs, rhs),
-            Self::For(iterator, range, body) => {
+            Self::For(iterator, second, range, body) => {
                 let body_str: Vec<String> =
                     body.iter().map(|s| s.to_string()).collect();
+                let names = match second {
+                    Some(second) => format!("{iterator}, {second}"),
+                    None => iterator.clone(),
+                };
                 format!(
                     "for {} in {} {{ {} }}",
-                    iterator,
+                    names,
                     range,
                     body_str.join("; ")
                 )
@@ -922,6 +928,11 @@ pub struct Parser<'a> {
     // spelling and are rejected in source, but they do occur internally once
     // parameter modes are lowered, so that one entry point accepts them.
     internal_types: bool,
+    // Set while reading the thing a `for` walks. `for item in items {` ends
+    // with a brace that opens the body, and a name followed by a brace is
+    // otherwise a struct literal, so the literal is not available there. The
+    // same rule `match` needs, which it gets by looking for `case`.
+    no_struct_literal: bool,
     // Top-level `N :: 8` constants, read off the token stream before the parse
     // so that an array size may name one wherever it appears, including above
     // the line that declares it.
@@ -1075,6 +1086,7 @@ fn scan_integer_constants(tokens: &[Token]) -> HashMap<String, usize> {
             pending_angle_close: 0,
             diagnostics: Vec::new(),
             internal_types: false,
+            no_struct_literal: false,
             integer_constants: HashMap::new(),
         };
         let Ok(expression) = sub.parse_expression(Precedence::Lowest) else {
@@ -1103,6 +1115,7 @@ impl<'a> Parser<'a> {
             pending_angle_close: 0,
             diagnostics: Vec::new(),
             internal_types: false,
+            no_struct_literal: false,
             integer_constants: scan_integer_constants(tokens),
         }
     }
@@ -1121,6 +1134,7 @@ impl<'a> Parser<'a> {
             pending_angle_close: 0,
             diagnostics: Vec::new(),
             internal_types: false,
+            no_struct_literal: false,
             integer_constants: scan_integer_constants(tokens),
         }
     }
@@ -1479,16 +1493,33 @@ impl<'a> Parser<'a> {
             Token::Identifier(name) => name.to_string(),
             _ => bail!("Expected identifier after 'for'"),
         };
+        // `for index, item in items` names the position as well as the element,
+        // for the loops that need to know where they are.
+        let second = if matches!(self.peek_nth(0), Token::Comma) {
+            self.read_token();
+            match self.read_token() {
+                Token::Identifier(name) => Some(name.to_string()),
+                other => bail!(
+                    "Expected a second name after ',' in a for loop, found {other:?}"
+                ),
+            }
+        } else {
+            None
+        };
 
         if !matches!(self.read_token(), Token::In) {
             bail!("Expected 'in' after for loop iterator");
         }
 
-        let range = self.parse_expression(Precedence::Lowest)?;
+        let held = self.no_struct_literal;
+        self.no_struct_literal = true;
+        let range = self.parse_expression(Precedence::Lowest);
+        self.no_struct_literal = held;
+        let range = range?;
 
         let body = self.parse_block()?;
 
-        Ok(Statement::For(iterator, range, body))
+        Ok(Statement::For(iterator, second, range, body))
     }
 
     fn parse_while_statement(&mut self) -> Result<Statement> {
@@ -2010,7 +2041,9 @@ impl<'a> Parser<'a> {
                     expression = Expression::Try(Box::new(expression.clone()));
                 }
                 Token::LeftBrace => {
-                    if self.peek_nth(1) == &Token::Case {
+                    if self.peek_nth(1) == &Token::Case
+                        || self.no_struct_literal
+                    {
                         return Ok(expression);
                     }
                     if let Expression::Identifier(name) = &expression {
@@ -3957,7 +3990,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::For(iterator, range, body) = &program[0].node {
+        if let Statement::For(iterator, _, range, body) = &program[0].node {
             assert_eq!(iterator, "i");
             if let Expression::Range(start, end, inclusive) = range {
                 assert_eq!(
@@ -4604,7 +4637,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::For(_, range_expr, _) = &program[0].node {
+        if let Statement::For(_, _, range_expr, _) = &program[0].node {
             if let Expression::Range(_, _, inclusive) = range_expr {
                 assert!(inclusive, "Expected inclusive range");
             } else {
@@ -4625,7 +4658,7 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::For(_, range_expr, _) = &program[0].node {
+        if let Statement::For(_, _, range_expr, _) = &program[0].node {
             if let Expression::Range(_, _, inclusive) = range_expr {
                 assert!(!inclusive, "Expected exclusive range");
             } else {

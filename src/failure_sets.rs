@@ -98,7 +98,7 @@ fn statement_has_try(statement: &Statement) -> bool {
         Statement::While(condition, body) => {
             expression_has_try(condition) || block_has_try(body)
         }
-        Statement::For(_, iterable, body) => {
+        Statement::For(_, _, iterable, body) => {
             expression_has_try(iterable) || block_has_try(body)
         }
         Statement::With(_, body) => block_has_try(body),
@@ -267,7 +267,7 @@ impl Lowerer {
                 self.rewrite_expression(condition, result, error);
                 self.rewrite_inner_block(body, result, error);
             }
-            Statement::For(_, iterable, body) => {
+            Statement::For(_, _, iterable, body) => {
                 self.rewrite_expression(iterable, result, error);
                 self.rewrite_inner_block(body, result, error);
             }

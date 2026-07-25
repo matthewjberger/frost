@@ -1276,7 +1276,7 @@ fn collect_instances_in_statement(
             collect_instances_in_expression(target, out);
             collect_instances_in_expression(value, out);
         }
-        Statement::For(_, range, body) => {
+        Statement::For(_, _, range, body) => {
             collect_instances_in_expression(range, out);
             collect_instances_in_block(body, out);
         }
@@ -1508,7 +1508,7 @@ fn collect_call_instances_in_statement(
             collect_call_instances_in_expression(target, env, discovery, out);
             collect_call_instances_in_expression(value, env, discovery, out);
         }
-        Statement::For(variable, range, body) => {
+        Statement::For(variable, _, range, body) => {
             collect_call_instances_in_expression(range, env, discovery, out);
             env.insert(variable.clone(), Type::I64);
             collect_call_instances_in_block(body, env, discovery, out);
@@ -1982,8 +1982,9 @@ fn substitute_statement(
             substitute_expression(target, subst),
             substitute_expression(value, subst),
         ),
-        Statement::For(variable, range, body) => Statement::For(
+        Statement::For(variable, second, range, body) => Statement::For(
             variable.clone(),
+            second.clone(),
             substitute_expression(range, subst),
             substitute_block(body, subst),
         ),
@@ -2741,8 +2742,8 @@ impl<'a> FunctionLowering<'a> {
             Statement::While(condition, body) => {
                 self.lower_while(condition, body)
             }
-            Statement::For(variable, range, body) => {
-                self.lower_for(variable, range, body)
+            Statement::For(variable, second, range, body) => {
+                self.lower_for(variable, second.as_deref(), range, body)
             }
             Statement::Break => {
                 let Some(targets) = self.loops.last() else {
@@ -2794,15 +2795,180 @@ impl<'a> FunctionLowering<'a> {
         Ok(())
     }
 
+    // `for item in items` over a slice, a fixed array, or a `str`. This is the
+    // index-and-bound loop written out, not an iterator: there is no protocol,
+    // nothing is called per element, and the emitted code is what the same loop
+    // written by hand produces. The element binds the way a parameter of its
+    // type would, so an aggregate is borrowed and a scalar is copied.
+    fn lower_for_sequence(
+        &mut self,
+        variable: &str,
+        second: Option<&str>,
+        iterable: &Expression,
+        body: &Block,
+    ) -> Result<()> {
+        // The sequence is evaluated once, into a local the loop owns, so
+        // `for x in make()` calls `make` once and a body that appends to the
+        // same container does not walk what it just added.
+        let (sequence, sequence_type) =
+            self.lower_expression(iterable, None)?;
+        let element = match &sequence_type {
+            Type::Array(element, _) => (**element).clone(),
+            Type::Slice(element) => (**element).clone(),
+            Type::Str => Type::U8,
+            other => bail!(
+                "a `for` walks a range, a slice, an array or a `str`, and '{other}' is none of those"
+            ),
+        };
+        let IrOperand::Local(held) = sequence else {
+            bail!("native backend: the sequence a `for` walks is not a place");
+        };
+        let sequence_name = format!("__for_sequence_{held}");
+        self.define_variable(&sequence_name, held);
+        let walked = Expression::Identifier(sequence_name);
+
+        let (length, length_type) = match &sequence_type {
+            Type::Array(_, count) => (
+                IrOperand::Constant(IrConstant::Integer(
+                    *count as i64,
+                    Type::I64,
+                )),
+                Type::I64,
+            ),
+            Type::Str => {
+                self.lower_str_len(std::slice::from_ref(&walked.clone()))?
+            }
+            _ => self.lower_slice_len(std::slice::from_ref(&walked.clone()))?,
+        };
+        let bound = self.fresh_local(Type::I64, None);
+        let coerced = self.coerce(length, &length_type, &Type::I64);
+        self.emit(IrStatement::Assign(bound, IrRvalue::Use(coerced)));
+
+        let index_name = second.map(|_| variable);
+        let index = self
+            .fresh_local(Type::I64, index_name.map(|name| name.to_string()));
+        self.emit(IrStatement::Assign(
+            index,
+            IrRvalue::Use(IrOperand::Constant(IrConstant::Integer(
+                0,
+                Type::I64,
+            ))),
+        ));
+
+        let header = self.new_block();
+        let body_block = self.new_block();
+        let step_block = self.new_block();
+        let exit = self.new_block();
+
+        self.set_terminator(IrTerminator::Jump(header));
+        self.switch_to(header);
+        let condition = self.fresh_local(Type::Bool, None);
+        self.emit(IrStatement::Assign(
+            condition,
+            IrRvalue::Binary(
+                IrBinOp::LessThan,
+                IrOperand::Local(index),
+                IrOperand::Local(bound),
+            ),
+        ));
+        self.set_terminator(IrTerminator::Branch {
+            condition: IrOperand::Local(condition),
+            then_block: body_block,
+            else_block: exit,
+        });
+
+        self.switch_to(body_block);
+        self.push_scope();
+        if let Some(item) = second {
+            self.define_variable(variable, index);
+            self.bind_sequence_element(item, &walked, index, &element)?;
+        } else {
+            self.bind_sequence_element(variable, &walked, index, &element)?;
+        }
+        self.loops.push(LoopTargets {
+            continue_block: step_block,
+            break_block: exit,
+        });
+        self.lower_block(body, None)?;
+        self.loops.pop();
+        self.pop_scope();
+        self.set_terminator(IrTerminator::Jump(step_block));
+
+        self.switch_to(step_block);
+        self.emit(IrStatement::Assign(
+            index,
+            IrRvalue::Binary(
+                IrBinOp::Add,
+                IrOperand::Local(index),
+                IrOperand::Constant(IrConstant::Integer(1, Type::I64)),
+            ),
+        ));
+        self.set_terminator(IrTerminator::Jump(header));
+
+        self.switch_to(exit);
+        Ok(())
+    }
+
+    // The element at the index, bound under `name`. An aggregate binds as a
+    // borrow of where it sits, so walking a run of structs copies nothing; a
+    // scalar binds as the value, which is what a parameter of that type is.
+    fn bind_sequence_element(
+        &mut self,
+        name: &str,
+        iterable: &Expression,
+        index: LocalId,
+        element: &Type,
+    ) -> Result<()> {
+        let indexed = Expression::Index(
+            Box::new(iterable.clone()),
+            Box::new(Expression::Identifier(format!("__for_index_{index}"))),
+        );
+        // The index is a local the loop owns rather than something the reader
+        // wrote, so it is named into scope only for this lookup.
+        self.define_variable(&format!("__for_index_{index}"), index);
+        let (address, _) = self.element_address_of(&indexed)?;
+        if needs_memory(element) {
+            let local = self.fresh_local(
+                Type::Ref(Box::new(element.clone())),
+                Some(name.to_string()),
+            );
+            self.emit(IrStatement::Assign(local, IrRvalue::Use(address)));
+            self.define_variable(name, local);
+            return Ok(());
+        }
+        let (value, value_type) = self.load_from(address, element.clone())?;
+        let local =
+            self.fresh_local(value_type.clone(), Some(name.to_string()));
+        self.emit(IrStatement::Assign(local, IrRvalue::Use(value)));
+        self.define_variable(name, local);
+        Ok(())
+    }
+
+    fn element_address_of(
+        &mut self,
+        indexed: &Expression,
+    ) -> Result<(IrOperand, Type)> {
+        let Expression::Index(base, index) = indexed else {
+            bail!("native backend: expected an index expression");
+        };
+        self.element_address(base, index)
+    }
+
     fn lower_for(
         &mut self,
         variable: &str,
+        second: Option<&str>,
         range: &Expression,
         body: &Block,
     ) -> Result<()> {
         let Expression::Range(start, end, inclusive) = range else {
-            bail!("native backend: for loop requires a range");
+            return self.lower_for_sequence(variable, second, range, body);
         };
+        if let Some(second) = second {
+            bail!(
+                "a `for` over a range binds one name, and this one names '{variable}' and '{second}'; two names are for walking a sequence, where the first is the position"
+            );
+        }
 
         let (start_operand, start_type) =
             self.lower_expression(start, Some(&Type::I64))?;

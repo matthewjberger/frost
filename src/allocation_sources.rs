@@ -150,8 +150,9 @@ impl Threader {
             Statement::Defer(inner) => Statement::Defer(Box::new(
                 self.thread_statement(*inner, provider)?,
             )),
-            Statement::For(variable, iterable, body) => Statement::For(
+            Statement::For(variable, second, iterable, body) => Statement::For(
                 variable,
+                second,
                 self.thread_expression(iterable, provider)?,
                 self.thread_block(body, provider)?,
             ),

@@ -83,7 +83,7 @@ pub(crate) fn names_in_statement(statement: &Statement, out: &mut Vec<String>) {
             names_in_expression(value, out);
         }
         Statement::Defer(inner) => names_in_statement(inner, out),
-        Statement::For(_, iterable, body) => {
+        Statement::For(_, _, iterable, body) => {
             names_in_expression(iterable, out);
             names_in_block(body, out);
         }

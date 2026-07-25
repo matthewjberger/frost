@@ -100,7 +100,7 @@ fn rewrite_statement(
             rewrite_expression(place, signatures);
             rewrite_expression(value, signatures);
         }
-        Statement::For(_, iterable, body) => {
+        Statement::For(_, _, iterable, body) => {
             rewrite_expression(iterable, signatures);
             rewrite_block(body, signatures);
         }
@@ -178,7 +178,7 @@ fn read_through_statement(
         Statement::Defer(inner) => {
             read_through_statement(inner, through, bound)
         }
-        Statement::For(variable, iterable, body) => {
+        Statement::For(variable, _, iterable, body) => {
             read_through_expression(iterable, through, bound);
             bound.push(vec![variable.clone()]);
             read_through_block(body, through, bound);
