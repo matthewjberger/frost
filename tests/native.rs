@@ -1493,6 +1493,42 @@ fn self_hosted_strings_and_if_expressions() {
     assert_eq!(output, "1234567\n-7\n0\n3\n");
 }
 
+// A `str` kept in a struct, read through the field. The C backend used to store
+// the literal as a bare pointer, so the length beside it stayed zero and the
+// first index aborted; the field now takes the value the way a parameter of the
+// same type would.
+const SELF_HOSTED_STR_FIELD: &str = "Document :: struct { source: str, at: i64 }\n\
+     read_at :: fn(document: Document, index: i64) -> i64 {\n\
+     \x20   document.source[index]\n}\n\
+     main :: fn() -> i64 {\n\
+     \x20   document := Document { source = \"hello\", at = 1 }\n\
+     \x20   print document.source[0]\n\
+     \x20   print document.source[document.at]\n\
+     \x20   print read_at(document, 4)\n\
+     \x20   print str_len(document.source)\n    0\n}\n";
+
+#[test]
+fn self_hosted_str_held_in_a_struct_is_indexable() {
+    let Some(output) =
+        selfhosted_native_output("shstrfield", SELF_HOSTED_STR_FIELD)
+    else {
+        return;
+    };
+    assert_eq!(output, "104\n101\n111\n5\n");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shstrfield_input.frost");
+    std::fs::write(&input, SELF_HOSTED_STR_FIELD).unwrap();
+    let Some(c_source) = self_hosted_emits("shstrfield", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shstrfield", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
 const CLI_PROGRAM: &str = "fib :: fn(n: i64) -> i64 {\n\
      \x20   if (n < 2) { return n }\n\
      \x20   return fib(n - 1) + fib(n - 2)\n}\n\
@@ -4894,6 +4930,41 @@ main :: fn() -> i64 {\n\
     );
 }
 
+// A `str` held in a struct is indexed where it sits. Before this, only a `str`
+// bound to a local could be indexed, so every reader over a string kept in a
+// struct had to copy the field into a local first.
+const STR_IN_A_FIELD: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Document :: struct { source: str, at: i64 }
+
+Outer :: struct { inner: Document }
+
+read_byte :: fn(document: Document, index: i64) -> i64 {
+    document.source[index]
+}
+
+main :: fn() -> i64 {
+    document := Document { source = "hello", at = 1 }
+    printf("%lld\n", document.source[0])
+    printf("%lld\n", document.source[document.at])
+    printf("%lld\n", read_byte(document, 4))
+    printf("%lld\n", str_len(document.source))
+
+    outer := Outer { inner = document }
+    printf("%lld\n", outer.inner.source[2])
+    0
+}
+"#;
+
+#[test]
+fn native_str_held_in_a_struct_is_indexable() {
+    let Some(output) = compile_and_run("strfield", STR_IN_A_FIELD) else {
+        return;
+    };
+    assert_eq!(output, "104\n101\n111\n5\n108\n");
+}
+
 const STR_OUT_OF_BOUNDS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -6602,6 +6673,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_borrowlit", BORROW_AGGREGATE_LITERAL),
         ("diff_borrowstruct", BORROW_STRUCT_LITERAL),
         ("diff_explicittypes", EXPLICIT_TYPE_ARGUMENTS),
+        ("diff_strfield", STR_IN_A_FIELD),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
