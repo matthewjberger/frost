@@ -53,6 +53,8 @@ being surprises.
 | `fn f() -> (i64, i64)` (a tuple) | `f :: fn() -> (i64, i64)`, and no tuple type |
 | `let (q, r) = divide(a, b);` | `q, r := divide(a, b)` |
 | `Shape::Circle { r: 5 }` | `Shape::Circle { radius = 5 }`, or `.Circle { radius = 5 }` |
+| `Point { x: 1, y: 2 }` | `Point { x = 1, y = 2 }`, or `{ x = 1, y = 2 }` |
+| `Point(1, 2)` (tuple struct) | nothing; every field is named |
 | `while cond { }` | `while (cond) { }` |
 | `&x`, `&mut x` (at a call) | nothing, the callee's mode decides |
 | `fn f(x: &T)`, `fn f(x: &mut T)` | `f :: fn(x: T)`, `f :: fn(mut x: T)` |
@@ -601,6 +603,9 @@ files pulled in by `import`, not as a module tree with visibility rules.
 - A variant can leave its enum out where the type is already stated, as in
   `paint(.Red)` or `c : Color = .Red`. Rust has this only in a `use`; here it
   reads from the context the way the `case .Red` of a match does.
+- A struct literal can leave its name out the same way, as in
+  `p : Point = { x = 1, y = 2 }`. The field names stay: there is no tuple struct
+  and no positional literal, so a value never lands in a field by counting.
 - `for x in xs` walks a slice, an array or a `str` with no iterator and no
   `.iter()`, and `for index, x in xs` names the position too. It is the
   index-and-bound loop written out, so `break` and `continue` mean what they

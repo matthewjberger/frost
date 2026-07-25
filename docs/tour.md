@@ -111,8 +111,18 @@ printf("%lld
 round :: fn(r: i64) -> Shape { return .Circle { radius = r } }   // the return does
 ```
 
-Where there is nothing to read the type from, as in a bare `c := .Red`, it is an
-error naming the variant rather than a guess.
+A struct literal leaves its name out the same way, and the two nest, each inner
+literal taking its type from the field it fills:
+
+```frost
+p : Point = { x = 3, y = 4 }
+printf("%lld\n", area(.Rect { width = 4, height = 5 }))
+```
+
+Where there is nothing to read the type from, as in a bare `c := .Red` or
+`p := { x = 1, y = 2 }`, it is an error naming what could not be resolved rather
+than a guess. What never goes away is the field names: there is no positional
+literal in Frost, because the name is what says where a value lands.
 
 ## Borrowing is a parameter mode
 

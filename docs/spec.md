@@ -495,6 +495,7 @@ Shape::Circle { radius = 5 }          // enum variant with payload
 Shape::Player                         // unit variant
 .Circle { radius = 5 }                // the enum comes from the context
 .Player                               // the same, with no payload
+{ x = 1, y = 2 }                      // the struct comes from the context
 ```
 
 Struct and enum-variant construction are recognized only when the operand to the
@@ -526,12 +527,31 @@ A dot with nothing to take its enum from is an error naming the variant, not a
 guess. `c := .Red` has no annotation and no context, so it is rejected and the
 fix is `c : Color = .Red` or `c := Color::Red`.
 
+**The inferred literal.** `{ x = 1, y = 2 }` is a struct literal that leaves out
+a type name the context already carries. It reads from the same contexts the
+leading dot does, and the two nest: a literal's field supplies the type of a
+literal written inside it, so
+`{ from = { x = 0, y = 0 }, to = { x = 3, y = 4 } }` and
+`{ at = { x = 7, y = 0 }, colour = .Green }` both resolve all the way down.
+
+Every field is still named. **There is no positional literal**, here or
+anywhere else in the language, and there is not going to be one. A field's name
+is what says where the value lands, and a positional form would make the meaning
+of a literal depend on the declaration order of a struct the reader is not
+looking at. Leaving out a type the compiler already knows costs nothing; leaving
+out the field names costs the reader the layout, which goal 1 of
+[philosophy.md](philosophy.md) says is the design itself.
+
+A literal with nothing to take its type from is an error, the same as a bare
+dot. `p := { x = 1, y = 2 }` is rejected and the fix is `p : Point = { .. }` or
+`p := Point { .. }`.
+
 The two compilers reach the same answer by different routes, which is worth
-knowing when reading them. The bootstrap resolves the dot while lowering, where
-every expression already carries the type its context expects. The self-hosted
-compiler resolves a variant's tag at parse time, so a dot written as an argument
-to a function defined later in the program is recorded and patched once every
-signature is parsed.
+knowing when reading them. The bootstrap resolves both forms while lowering,
+where every expression already carries the type its context expects. The
+self-hosted compiler resolves a variant's tag and a literal's layout at parse
+time, so either form written as an argument to a function defined later in the
+program is recorded and patched once every signature is parsed, fields and all.
 
 A literal must write every field. There is no partial construction, no
 `..rest`, and no implicit zero. A field left out would name storage nothing
@@ -1082,6 +1102,7 @@ Primary =
     | IfExpr
     | MatchExpr
     | "." IDENT ( "{" FieldInits? "}" )?      // inferred variant (6.5)
+    | "{" FieldInits? "}"                     // inferred struct literal (6.5)
     | "fn" "(" Params? ")" ReturnSig? Block
     | "unsafe" Block
 

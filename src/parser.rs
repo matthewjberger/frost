@@ -2048,6 +2048,14 @@ impl<'a> Parser<'a> {
                 advance = false;
                 self.parse_inferred_variant()?
             }
+            // `{ x = 1, y = 2 }`, a struct literal that leaves out a type name
+            // the context already carries. The name is empty here and the
+            // lowering fills it in. Every field is still named: there is no
+            // positional form of this literal or of any other.
+            Token::LeftBrace => {
+                advance = false;
+                self.parse_struct_init(String::new())?
+            }
             Token::LeftBracket => {
                 advance = false;
                 self.parse_array_literal()?
@@ -2212,25 +2220,12 @@ impl<'a> Parser<'a> {
         if matches!(self.peek_nth(0), Token::LeftBrace)
             && !self.no_struct_literal
         {
-            self.read_token();
-            while self.peek_nth(0) != &Token::RightBrace {
-                if matches!(self.peek_nth(0), Token::EndOfFile) {
-                    bail!("Unexpected end of input in a variant literal");
-                }
-                let field =
-                    self.read_field_name("a field name in a variant literal")?;
-                if !matches!(self.read_token(), Token::Assign) {
-                    bail!(
-                        "Expected '=' after a field name in a variant literal"
-                    );
-                }
-                fields
-                    .push((field, self.parse_expression(Precedence::Lowest)?));
-                if matches!(self.peek_nth(0), Token::Comma) {
-                    self.read_token();
-                }
-            }
-            self.read_token();
+            let Expression::StructInit(_, parsed) =
+                self.parse_struct_init(String::new())?
+            else {
+                bail!("Expected the fields of a variant literal");
+            };
+            fields = parsed;
         }
         Ok(Expression::EnumVariantInit(String::new(), variant, fields))
     }
