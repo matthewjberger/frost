@@ -9,8 +9,6 @@
 
 A Frost program is plain data and free functions that transform it. There are no classes and nothing is allocated behind your back. It compiles to native code through Cranelift or to portable C, and the compiler is written in Frost.
 
-> Pre-1.0. It is usable today and complete enough to have been written in itself, but the surface is still moving and nothing is promised stable yet.
-
 ## Borrows are parameter modes
 
 Most safe systems languages make you describe how long a reference lives. Frost deletes the question. A borrow is not a type you write, it is what a parameter mode means.
