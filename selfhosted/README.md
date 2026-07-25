@@ -78,12 +78,6 @@ program may say:
 - **Output**: the bootstrap emits an object through Cranelift, portable C, or
   runs the IR. This one emits C or x86-64 assembly of its own.
 
-Two forms neither compiler takes, so they are holes in the language rather than
-between the two: a value-generic repeat count (`[0; N]`), and a generic literal
-that names its arguments (`Pair<i64, bool> { .. }`). A generic literal is
-written bare, `Pair { first = 7, second = true }`, and takes its instance from
-the context.
-
 A form neither compiler supports is refused with the position it was written
 at, rather than misparsed into a crash somewhere else.
 

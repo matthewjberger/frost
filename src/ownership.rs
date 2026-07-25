@@ -664,6 +664,7 @@ impl MoveChecker<'_> {
                 }
                 Ok(())
             }
+            Expression::ArrayRepeat(value, _) => self.visit(value, true),
             Expression::If(..) | Expression::Switch(..) => {
                 self.check_conditional(expression)?;
                 Ok(())

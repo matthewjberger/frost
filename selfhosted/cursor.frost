@@ -1,8 +1,21 @@
 // The token cursor. Everything that reads the token stream goes through here.
 
 import "core.frost"
+import "lexer.frost"
 
-export advance, cur, cur_len, cur_off, cur_val, peek_kind
+export advance, cur, cur_len, cur_off, cur_val, peek_kind, peek_is_word
+
+// Whether the token `offset` ahead is written as the given word. Reading a
+// token's spelling rather than its kind is how a word that is not a keyword,
+// `Type` and `value` among them, is recognized where one is expected.
+peek_is_word :: fn(mut p: Parser, offset: i64, word: ^i8) -> bool {
+    index := p.ti + offset
+    if (index >= p.tokens.count) {
+        return false
+    }
+    token := arena_at(p.tokens, index)
+    str_range_eq(p.src, token.off, token.len, word)
+}
 
 peek_kind :: fn(mut p: Parser, offset: i64) -> i64 {
     index := p.ti + offset

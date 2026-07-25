@@ -566,7 +566,9 @@ only when the alternative is not being able to use two libraries at once.
 The primary expressions are integer, float, string, and boolean literals,
 identifiers, parenthesized expressions `( Expr )`, and array literals, either the
 listed form `[ e, ... ]` or the repeat form `[ e ; N ]` for `N` copies of `e`
-(the way a large or zeroed backing buffer is written, e.g. `[0; 256]`).
+(the way a large or zeroed backing buffer is written, e.g. `[0; 256]`). The
+count is an integer, a constant, or a value parameter of the generic the literal
+is written in (11.1a).
 
 ### 6.2 Operators
 
@@ -906,13 +908,24 @@ Option :: enum($T: Type) { None, Some { value: T } }
 make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
 ```
 
-A generic literal carries no arguments of its own, so which instance it is comes
-from the context: an annotation, or the type of the parameter it is passed to.
+A generic literal usually carries no arguments of its own, and which instance it
+is comes from the context: an annotation, or the type of the parameter it is
+passed to.
 
 ```
 m : Option<i64> = Option::Some { value = 42 }     // the annotation names it
 unwrap_or($i64, Option::None, 7)              // the parameter names it
 ```
+
+Where there is no context to read it from, the literal says which instance it
+is:
+
+```
+p := Pair<i64, bool> { first = 7, second = true }
+```
+
+Both forms name every field. There is no positional struct literal, generic or
+otherwise.
 
 In a parameter or struct type-parameter position, `$` IDENT `:` is followed by
 the contextual word `Type` (or the keyword `type`). In a function's parameter
@@ -934,6 +947,15 @@ An instantiation supplies an integer where a value parameter stands
 (`Slab<Entity, 4>`), and monomorphization resolves `[N]T` to the concrete
 `[4]Entity` for that instance. Value parameters are erased from the specialized
 type the same way type parameters are.
+
+A repeat literal takes one as its count, which is how a generic's backing array
+is filled without naming a size:
+
+```frost
+filled :: fn($T: Type, $N: usize, value: $T) -> Buffer<T, N> {
+    Buffer { items = [value; N], count = N }
+}
+```
 
 A function takes them too, which is what lets an operation over a sized
 aggregate be written once rather than once per size:
@@ -1203,7 +1225,8 @@ Primary =
     | IDENT
     | "(" Grouped                             // group, tuple, or function literal
     | "[" ( Expr ( "," Expr )* )? "]"         // array literal
-    | "[" Expr ";" INTEGER "]"                // repeat array literal
+    | "[" Expr ";" ( INTEGER | IDENT ) "]"    // repeat array literal
+    | IDENT "<" TypeArgs ">" "{" FieldInits? "}"  // generic literal (11.1)
     | IfExpr
     | MatchExpr
     | "." IDENT ( "{" FieldInits? "}" )?      // inferred variant (6.5)

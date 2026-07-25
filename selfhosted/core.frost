@@ -462,8 +462,9 @@ GenericFn :: struct {
     fn_index: i64,
     tparam_off: i64,
     tparam_len: i64,
-    // Whether the body calls the first parameter, the same question `is_fn`
-    // asks of the rest.
+    // Whether the first parameter takes a number, and whether the body calls
+    // it, the same two questions `is_value` and `is_fn` ask of the rest.
+    tparam_is_value: i64,
     tparam_is_fn: i64,
     xparam_start: i64,
     xparam_count: i64,
@@ -474,6 +475,9 @@ GenericFn :: struct {
 GParam :: struct {
     name_off: i64,
     name_len: i64,
+    // Whether this parameter takes a number rather than a type, which is what
+    // `$N: usize` says and `$T: Type` does not.
+    is_value: i64,
     // Whether the body calls this parameter, which is what says a function
     // rather than a type binds to it. The kind written after the colon does
     // not say: a comparison is declared `$less: fn(T, T) -> bool` in one
@@ -754,6 +758,8 @@ Parser :: struct {
     // Whether the declaration being parsed calls its own first compile-time
     // parameter, so the generic it becomes records that a function binds there.
     tparam_called: i64,
+    // Whether that first parameter was declared as taking a number.
+    tparam_is_value: i64,
     last_return_type: i64,
     no_struct_lit: bool,
     last_type_was_generic: i64,

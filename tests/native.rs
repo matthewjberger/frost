@@ -7827,6 +7827,79 @@ main :: fn() -> i64 {
 }
 "#;
 
+// A literal that says which instance it is, and a repeat count that is a value
+// parameter. Both are written inside a generic and both are only knowable once
+// the generic is instantiated: the literal names the instance rather than
+// waiting for the context to say, and the count arrives with the argument.
+const GENERIC_WRITTEN_OUT: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Pair :: struct($A: Type, $B: Type) { first: A, second: B }
+Buffer :: struct($T: Type, $N: usize) { items: [N]T, count: i64 }
+
+filled :: fn($T: Type, $N: usize, value: $T) -> Buffer<T, N> {
+    Buffer { items = [value; N], count = N }
+}
+
+main :: fn() -> i64 {
+    p := Pair<i64, bool> { first = 7, second = true }
+    printf("%lld\n", p.first)
+    if (p.second) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+
+    mut b := filled($i64, $4, 3)
+    b.items[1] = 9
+    printf("%lld\n", b.items[0] + b.items[1] + b.count)
+    0
+}
+"#;
+
+#[test]
+fn a_generic_literal_may_name_its_arguments() {
+    let Some(output) = compile_and_run("genwritten", GENERIC_WRITTEN_OUT)
+    else {
+        return;
+    };
+    assert_eq!(output, "7\n1\n16\n");
+}
+
+// The same program through the self-hosted compiler, on both of its backends.
+const SELF_HOSTED_GENERIC_WRITTEN: &str = "Pair :: struct($A: Type, $B: Type) { first: A, second: B }\n\
+     Buffer :: struct($T: Type, $N: usize) { items: [N]T, count: i64 }\n\
+     filled :: fn($T: Type, $N: usize, value: $T) -> Buffer<T, N> {\n\
+     \x20   Buffer { items = [value; N], count = N }\n\
+     }\n\
+     main :: fn() -> i64 {\n\
+     \x20   p := Pair<i64, bool> { first = 7, second = true }\n\
+     \x20   print p.first\n\
+     \x20   if (p.second) { print 1 } else { print 0 }\n\
+     \x20   mut b := filled($i64, $4, 3)\n\
+     \x20   b.items[1] = 9\n\
+     \x20   print b.items[0] + b.items[1] + b.count\n\
+     \x20   0\n\
+     }\n";
+
+#[test]
+fn self_hosted_takes_a_generic_literal_written_out() {
+    let Some(output) =
+        selfhosted_native_output("shgenwritten", SELF_HOSTED_GENERIC_WRITTEN)
+    else {
+        return;
+    };
+    assert_eq!(output, "7\n1\n16\n");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shgenwritten_input.frost");
+    std::fs::write(&input, SELF_HOSTED_GENERIC_WRITTEN).unwrap();
+    let Some(c_source) = self_hosted_emits("shgenwritten", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shgenwritten", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
 #[test]
 fn a_boolean_is_a_value_when_it_is_a_generic_argument() {
     let Some(output) = compile_and_run("genericbool", GENERIC_BOOL_ARGUMENT)
@@ -8878,6 +8951,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_indagg", INDIRECT_AGGREGATE_RETURN),
         ("diff_distinct", DISTINCT_TYPES),
         ("diff_genbool", GENERIC_BOOL_ARGUMENT),
+        ("diff_genwritten", GENERIC_WRITTEN_OUT),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);

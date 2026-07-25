@@ -404,6 +404,7 @@ impl Checker {
             | Expression::Borrow(inner)
             | Expression::BorrowMut(inner)
             | Expression::Try(inner)
+            | Expression::ArrayRepeat(inner, _)
             | Expression::FieldAccess(inner, _) => {
                 self.expression(inner, at);
             }

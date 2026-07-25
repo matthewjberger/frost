@@ -694,12 +694,19 @@ pub enum Expression {
     // `expr?`: on a fallible expression, unwrap the value or propagate the
     // failure to the enclosing fallible function.
     Try(Box<Expression>),
+    // `[value; N]` where `N` is a generic's value parameter, so how many
+    // elements there are is not known until the generic is specialized. Every
+    // other repeat count is a number the parser can read, and those expand to
+    // an array literal where they are written. This one carries the parameter's
+    // name until the substitution that binds it, and expands there.
+    ArrayRepeat(Box<Expression>, Identifier),
 }
 
 impl Display for Expression {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         let expression = match self {
             Self::Try(inner) => format!("{}?", inner),
+            Self::ArrayRepeat(value, count) => format!("[{value}; {count}]"),
             Self::Identifier(identifier) => identifier.to_string(),
             Self::Literal(literal) => literal.to_string(),
             Self::Boolean(boolean) => boolean.to_string(),
@@ -1016,6 +1023,11 @@ pub struct Parser<'a> {
     // so that an array size may name one wherever it appears, including above
     // the line that declares it.
     integer_constants: HashMap<String, usize>,
+    // Every generic struct and enum declared in this file, by name. A literal
+    // may say which instance it is, `Pair<i64, bool> { .. }`, and telling that
+    // from the comparison `a < b` is a question of whether the name is one of
+    // these.
+    generic_types: std::collections::HashSet<String>,
 }
 
 // Where a top-level declaration's value ends: at the head of the next one, or
@@ -1097,6 +1109,31 @@ fn evaluate_constant(
 // it, is left out rather than half-read: it then means the same thing it always
 // did, and using it as a length is an error naming the length rather than an
 // array of the wrong size.
+// The names declared as `Name :: struct($T: Type)` or the enum equivalent. A
+// generic instance written as a literal names the type in expression position,
+// where `Pair<i64, bool> {` would otherwise read as two comparisons, so which
+// names can start one is settled before the parse rather than guessed at during
+// it.
+fn scan_generic_types(tokens: &[Token]) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    for index in 0..tokens.len() {
+        let Token::Identifier(name) = &tokens[index] else {
+            continue;
+        };
+        if !matches!(tokens.get(index + 1), Some(Token::DoubleColon)) {
+            continue;
+        }
+        if !matches!(tokens.get(index + 2), Some(Token::Struct | Token::Enum)) {
+            continue;
+        }
+        if !matches!(tokens.get(index + 3), Some(Token::LeftParentheses)) {
+            continue;
+        }
+        names.insert(name.clone());
+    }
+    names
+}
+
 fn scan_integer_constants(tokens: &[Token]) -> HashMap<String, usize> {
     // A name written as `$N` anywhere is a compile-time parameter, and inside
     // the declaration that takes it `[N]u8` means that parameter rather than a
@@ -1167,6 +1204,7 @@ fn scan_integer_constants(tokens: &[Token]) -> HashMap<String, usize> {
             internal_types: false,
             no_struct_literal: false,
             integer_constants: HashMap::new(),
+            generic_types: std::collections::HashSet::new(),
         };
         let Ok(expression) = sub.parse_expression(Precedence::Lowest) else {
             continue;
@@ -1196,6 +1234,7 @@ impl<'a> Parser<'a> {
             internal_types: false,
             no_struct_literal: false,
             integer_constants: scan_integer_constants(tokens),
+            generic_types: scan_generic_types(tokens),
         }
     }
 
@@ -1215,6 +1254,7 @@ impl<'a> Parser<'a> {
             internal_types: false,
             no_struct_literal: false,
             integer_constants: scan_integer_constants(tokens),
+            generic_types: scan_generic_types(tokens),
         }
     }
 
@@ -2101,7 +2141,21 @@ impl<'a> Parser<'a> {
         let mut advance = true;
         let mut expression = match self.peek_nth(0) {
             Token::Identifier(identifier) => {
-                Expression::Identifier(identifier.to_string())
+                let identifier = identifier.to_string();
+                // `Pair<i64, bool> { .. }`: the literal says which instance it
+                // is. What comes out is the instance's name, so the literal
+                // itself is read the way every other one is.
+                if matches!(self.peek_nth(1), Token::LessThan)
+                    && self.generic_types.contains(&identifier)
+                {
+                    advance = false;
+                    self.read_token();
+                    Expression::Identifier(
+                        self.parse_generic_instance_name(&identifier)?,
+                    )
+                } else {
+                    Expression::Identifier(identifier)
+                }
             }
             Token::StringLiteral(string) => {
                 Expression::Literal(Literal::String(string.to_string()))
@@ -2377,6 +2431,18 @@ impl<'a> Parser<'a> {
                 {
                     self.integer_constants[name]
                 }
+                // A name that is not a constant is a generic's value
+                // parameter, whose number arrives with the instantiation. The
+                // literal is carried unexpanded until then.
+                Token::Identifier(name) => {
+                    if !matches!(self.read_token(), Token::RightBracket) {
+                        bail!("Expected ']' after an array repeat count");
+                    }
+                    return Ok(Expression::ArrayRepeat(
+                        Box::new(first),
+                        name.clone(),
+                    ));
+                }
                 token => bail!(
                     "Expected a count after ';' in an array literal, found {token:?}"
                 ),
@@ -2468,6 +2534,32 @@ impl<'a> Parser<'a> {
     ) -> Result<Expression> {
         self.read_token();
         Ok(Expression::Dereference(Box::new(expression)))
+    }
+
+    // The name of a generic instance written in expression position, read from
+    // the `<` this is called on. It is the same spelling the type parser
+    // produces, since the two have to name one type.
+    fn parse_generic_instance_name(&mut self, base: &str) -> Result<String> {
+        self.read_token();
+        let mut arguments = Vec::new();
+        while !self.is_type_arg_close() {
+            if let Token::Integer(value) = self.peek_nth(0) {
+                let value = *value as usize;
+                self.read_token();
+                arguments.push(Type::ConstUsize(value));
+            } else {
+                arguments.push(self.parse_type()?);
+            }
+            if matches!(self.peek_nth(0), Token::Comma) {
+                self.read_token();
+            }
+        }
+        self.consume_type_arg_close()?;
+        let rendered: Vec<String> = arguments
+            .iter()
+            .map(|argument| argument.to_string())
+            .collect();
+        Ok(format!("{base}<{}>", rendered.join(", ")))
     }
 
     fn parse_struct_init(&mut self, struct_name: String) -> Result<Expression> {

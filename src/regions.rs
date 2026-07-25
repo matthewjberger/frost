@@ -234,6 +234,7 @@ impl<'a> Region<'a> {
             // Listed rather than caught by `_`, so a new expression form is a compile error here instead of quietly answering that it points nowhere.
             Expression::Identifier(_)
             | Expression::Literal(_)
+            | Expression::ArrayRepeat(..)
             | Expression::Boolean(_)
             | Expression::Sizeof(_)
             | Expression::TypeValue(_)
@@ -394,6 +395,7 @@ impl<'a> Region<'a> {
             }),
             // Listed rather than caught by `_`, so a new expression form is a compile error here instead of quietly answering that it points nowhere.
             Expression::Literal(_)
+            | Expression::ArrayRepeat(..)
             | Expression::Boolean(_)
             | Expression::Sizeof(_)
             | Expression::TypeValue(_)
@@ -437,6 +439,7 @@ impl<'a> Region<'a> {
                 .is_some_and(|value| self.mentions_region(value)),
             // Listed rather than caught by `_`, so a new expression form is a compile error here instead of quietly answering that it points nowhere.
             Expression::Literal(_)
+            | Expression::ArrayRepeat(..)
             | Expression::Boolean(_)
             | Expression::Sizeof(_)
             | Expression::TypeValue(_)
@@ -715,6 +718,7 @@ impl Frame<'_> {
             }),
             // Listed rather than caught by `_`, so a new expression form is a compile error here instead of quietly answering that it points nowhere.
             Expression::Literal(_)
+            | Expression::ArrayRepeat(..)
             | Expression::Boolean(_)
             | Expression::Sizeof(_)
             | Expression::TypeValue(_)
@@ -742,6 +746,7 @@ impl Frame<'_> {
                 .is_some_and(|value| self.views_this_frame(value)),
             // Listed rather than caught by `_`, so a new expression form is a compile error here instead of quietly answering that it points nowhere.
             Expression::Literal(_)
+            | Expression::ArrayRepeat(..)
             | Expression::Boolean(_)
             | Expression::Sizeof(_)
             | Expression::TypeValue(_)
@@ -774,6 +779,7 @@ impl Frame<'_> {
             | Expression::BorrowMut(base) => self.rooted_here(base),
             // Listed rather than caught by `_`, so a new expression form is a compile error here instead of quietly answering that it points nowhere.
             Expression::Literal(_)
+            | Expression::ArrayRepeat(..)
             | Expression::Boolean(_)
             | Expression::Sizeof(_)
             | Expression::TypeValue(_)
@@ -804,6 +810,7 @@ fn materializes(expression: &Expression) -> bool {
     matches!(
         expression,
         Expression::Literal(crate::parser::Literal::Array(_))
+            | Expression::ArrayRepeat(..)
             | Expression::Tuple(_)
             | Expression::StructInit(..)
             | Expression::EnumVariantInit(..)
