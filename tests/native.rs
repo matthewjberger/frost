@@ -706,6 +706,55 @@ main :: fn() -> i64 {
 }
 "#;
 
+// The failure type as a struct rather than an enum, which is the other half of
+// what a failure set accepts and the half nothing covered. `return Blocked {
+// at = hp }` is a struct literal, and only an enum-variant literal counted as
+// building the error, so it was wrapped as the Ok value and reached the backend
+// as a struct where the value type belonged. examples/selfhosted/failures.frost
+// had been failing on the bootstrap the whole time for this reason.
+const STRUCT_FAILURE_TYPE: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Blocked :: struct { at: i64, why: i64 }
+
+strike :: fn(hp: i64) -> i64 ! Blocked {
+    if (hp <= 0) {
+        return Blocked { at = hp, why = 7 }
+    }
+    hp * 2
+}
+
+twice :: fn(hp: i64) -> i64 ! Blocked {
+    once := strike(hp)?
+    once + 1
+}
+
+// Both sides read, including a field of the error, which is the part that only
+// works if the error really is the error.
+report :: fn(hp: i64) -> i64 {
+    match twice(hp) {
+        case .Ok { value }: value
+        case .Err { error }: error.at * 100 + error.why
+    }
+}
+
+main :: fn() -> i64 {
+    printf("%lld\n", report(5))
+    printf("%lld\n", report(0))
+    printf("%lld\n", report(0 - 3))
+    0
+}
+"#;
+
+#[test]
+fn a_failure_type_may_be_a_struct() {
+    let Some(output) = compile_and_run("structfail", STRUCT_FAILURE_TYPE)
+    else {
+        return;
+    };
+    assert_eq!(output, "11\n7\n-293\n");
+}
+
 // A fallible function returns `-> T ! E`; `?` unwraps the Ok value and returns
 // the enclosing function's Err on failure; the caller matches Ok/Err.
 #[test]
@@ -2218,6 +2267,41 @@ fn self_hosted_rejects_an_unsupported_declaration() {
         !message.contains("arena was indexed out of range"),
         "an unsupported declaration should not crash the compiler:\n{message}"
     );
+}
+
+// The README's snippet is the first Frost anyone reads, and prose in a README
+// is the one kind of example nothing compiles. So it is a file, and this checks
+// that the file is what the README shows and that it prints what its comments
+// claim. Either drifting is a failing test rather than a wrong first
+// impression.
+#[test]
+fn the_readme_snippet_is_the_tour_program() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let program = std::fs::read_to_string(root.join("examples/tour.frost"))
+        .unwrap()
+        .replace("\r\n", "\n");
+    let readme = std::fs::read_to_string(root.join("README.md"))
+        .unwrap()
+        .replace("\r\n", "\n");
+
+    // The file leads with a header comment saying where it is shown, which the
+    // README does not repeat. Everything after it has to match exactly.
+    let body = program
+        .split_once("\nKind :: enum")
+        .expect("the tour program starts with Kind")
+        .1;
+    let body = format!("Kind :: enum{body}");
+    assert!(
+        readme.contains(body.trim_end()),
+        "README.md and examples/tour.frost have drifted apart"
+    );
+
+    let Some(output) = compile_and_run("tour", &program) else {
+        return;
+    };
+    // 90 healed by 10, a Hero's 10 damage, that doubled by `round`, and the
+    // session's id handed back by the `move` that consumed it.
+    assert_eq!(output, "100\n10\n20\n7\n");
 }
 
 // The self-hosted compiler passes every aggregate to C as a pointer and has no
@@ -6930,6 +7014,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_rtnames", RUNTIME_SYMBOL_NAMES),
         ("diff_constarray", CONSTANT_ARRAY_SIZES),
         ("diff_kwfield", KEYWORD_FIELD_NAMES),
+        ("diff_structfail", STRUCT_FAILURE_TYPE),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);

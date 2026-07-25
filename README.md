@@ -29,7 +29,11 @@ wound :: fn(mut e: Entity, amount: i64) { e.hp = e.hp - amount }
 | dynamic dispatch | monomorphized generics, so the inner-loop call is direct |
 | classes and methods | plain structs and free functions |
 
-## Hello, Frost
+## A short tour
+
+Three of the things Frost has instead of the usual machinery: borrows that are
+parameter modes, a resource the compiler counts, and a failure that travels in
+the signature.
 
 ```frost
 Kind :: enum { Hero, Monster { damage: i64 } }
@@ -40,12 +44,45 @@ heal :: fn(mut e: Entity, amount: i64) {
     e.hp = e.hp + amount
 }
 
-// An unmarked parameter borrows to read. `match` reads the enum and binds the
-// payload of the variant it took.
+// An unmarked parameter borrows to read. `match` reads the enum, binds the
+// payload of the variant it took, and has to cover every one.
 attack :: fn(e: Entity) -> i64 {
     match e.kind {
         case .Hero: 10
         case .Monster { damage }: damage
+    }
+}
+
+// A `linear` value is consumed exactly once on every path out, or the program
+// does not build. `move` is what consumes it, so forgetting to close a session
+// is a compile error rather than a leak found later.
+Session :: linear struct { id: i64 }
+
+close :: fn(move s: Session) -> i64 {
+    s.id
+}
+
+// `-> i64 ! Blocked` says how this can fail, and `?` hands a failure to the
+// caller instead of checking it here. What comes back is an ordinary enum.
+Blocked :: struct { at: i64 }
+
+strike :: fn(e: Entity) -> i64 ! Blocked {
+    if (e.hp <= 0) {
+        return Blocked { at = e.hp }
+    }
+    attack(e)
+}
+
+round :: fn(e: Entity) -> i64 ! Blocked {
+    hit := strike(e)?
+    hit * 2
+}
+
+// The value it answered with, or the health that stopped it.
+damage_of :: fn(e: Entity) -> i64 {
+    match round(e) {
+        case .Ok { value }: value
+        case .Err { error }: error.at
     }
 }
 
@@ -54,13 +91,21 @@ main :: fn() -> i64 {
     heal(hero, 10)                 // hero is borrowed and changed
     print hero.hp                  // 100
     print attack(hero)             // 10
+
+    print damage_of(hero)          // 20
+
+    s := Session { id = 7 }
+    print close(s)                 // s cannot be named again
     0
 }
 ```
 
 ```bash
-frost hero.frost                   # compile, link, and run
+frost examples/tour.frost          # compile, link, and run
 ```
+
+That is [`examples/tour.frost`](examples/tour.frost), not prose. A test compiles
+it, checks what it prints, and checks it still matches what is written here.
 
 For long-lived data, an `Entity` lives in a pool and is named by a `Handle`, a small copy value rather than a pointer. Freeing a slot raises its generation, so a handle to a reused slot reads as stale rather than reading whatever took its place. The pool is ordinary Frost code, not a runtime, and is generic over element type and capacity. See [`examples/native/game_world.frost`](examples/native/game_world.frost).
 
