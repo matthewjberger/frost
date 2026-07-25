@@ -505,7 +505,7 @@ pub fn check_frame_escapes_recovering(program: &Program) -> Vec<Diagnostic> {
                 registrations: &registrations,
                 diagnostics: Vec::new(),
             };
-            frame.check(body);
+            frame.check(body, true);
             diagnostics.append(&mut frame.diagnostics);
         }
     }
@@ -540,7 +540,12 @@ struct Frame<'a> {
 }
 
 impl Frame<'_> {
-    fn check(&mut self, block: &Block) {
+    /// Walk a block. `answers` says whether this block's trailing value is
+    /// what the function hands back, which only the function's own body and a
+    /// block in value position can be. Without it, descending into a nested
+    /// block treats its last statement as the call's answer and refuses code
+    /// that returns nothing of the sort.
+    fn check(&mut self, block: &Block, answers: bool) {
         for (index, statement) in block.iter().enumerate() {
             let last = index + 1 == block.len();
             let at = statement.position;
@@ -577,13 +582,13 @@ impl Frame<'_> {
                 }
                 Statement::While(_, body)
                 | Statement::With(_, body)
-                | Statement::For(_, _, body) => self.check(body),
+                | Statement::For(_, _, body) => self.check(body, false),
                 Statement::Defer(inner) => {
                     let deferred = vec![Spanned::new(
                         (**inner).clone(),
                         statement.position,
                     )];
-                    self.check(&deferred);
+                    self.check(&deferred, false);
                 }
                 // A block used as a value answers for the whole function, so
                 // its branches are checked and, when it is the last statement,
@@ -603,10 +608,10 @@ impl Frame<'_> {
                 // formed, bound and returned, and a walk that steps over the
                 // block never sees any of it.
                 Statement::Expression(Expression::Unsafe(body)) => {
-                    self.answers_here(body, last);
+                    self.check(body, last && answers);
                 }
                 Statement::Expression(value)
-                    if last && self.points_into_frame(value) =>
+                    if last && answers && self.points_into_frame(value) =>
                 {
                     self.escape("the call's answer", at);
                 }
@@ -618,7 +623,7 @@ impl Frame<'_> {
     // A branch of a block used as a value. Check it as a block, and when the
     // block is the function's answer, check what the branch ends with too.
     fn answers_here(&mut self, block: &Block, answers: bool) {
-        self.check(block);
+        self.check(block, answers);
         if answers
             && let Some(last) = block.last()
             && let Statement::Expression(value) = &last.node
