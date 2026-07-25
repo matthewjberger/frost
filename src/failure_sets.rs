@@ -25,6 +25,11 @@ struct Lowerer {
     // returned value: the leading dot names no enum, and the failure set is
     // what it belongs to when the error type has that variant.
     variants: HashMap<String, Vec<String>>,
+    // Whether the function being rewritten answers with a struct or an enum.
+    // An untyped `{ ... }` in its `return` is that value when it does and the
+    // failure otherwise, since only one of the two can be written without a
+    // name.
+    value_is_aggregate: bool,
     counter: usize,
 }
 
@@ -41,6 +46,7 @@ pub fn lower_failure_sets(program: &mut Program) -> Result<()> {
         enums: Vec::new(),
         fallible: HashMap::new(),
         variants: HashMap::new(),
+        value_is_aggregate: false,
         counter: 0,
     };
 
@@ -77,9 +83,11 @@ pub fn lower_failure_sets(program: &mut Program) -> Result<()> {
             Expression::Function(_, sig, body) | Expression::Proc(_, sig, body),
         ) = &mut statement.node
         {
-            if let ReturnKind::Fallible(_, error) = sig.kind.clone() {
+            if let ReturnKind::Fallible(value, error) = sig.kind.clone() {
                 let result = lowerer.fallible.get(name).unwrap().clone();
                 sig.kind = ReturnKind::Single(Type::Enum(result.clone()));
+                lowerer.value_is_aggregate =
+                    matches!(value, Type::Struct(_) | Type::Enum(_));
                 lowerer.rewrite_block(body, &result, &error);
             } else if block_has_try(body) {
                 bail!(
@@ -227,6 +235,14 @@ impl Lowerer {
                 self.variants
                     .get(error_name)
                     .is_some_and(|names| names.contains(variant))
+            }
+            // `return { at = 3 }`: the literal names no type either. It is the
+            // failure when the value the function answers with is not itself a
+            // struct or an enum, since then only the failure can be written
+            // this way. A function that answers with one names it.
+            Expression::StructInit(name, _) if name.is_empty() => {
+                !self.value_is_aggregate
+                    && matches!(error, Type::Struct(_) | Type::Enum(_))
             }
             Expression::EnumVariantInit(name, _, _)
             | Expression::StructInit(name, _) => name == error_name,

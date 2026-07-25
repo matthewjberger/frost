@@ -21,6 +21,19 @@ attack :: fn(e: Entity) -> i64 {
     }
 }
 
+// `for` walks a slice, an array or a `str` with no iterator to implement, and
+// a return type list answers with two values without a tuple type behind them.
+tally :: fn(party: []Entity) -> (i64, i64) {
+    mut total : i64 = 0
+    mut strongest : i64 = 0
+    for held in party {
+        hit := attack(held)
+        total = total + hit
+        if (hit > strongest) { strongest = hit }
+    }
+    return total, strongest
+}
+
 // A `linear` value is consumed exactly once on every path out, or the program
 // does not build. `move` is what consumes it, so forgetting to close a session
 // is a compile error rather than a leak found later.
@@ -36,7 +49,7 @@ Blocked :: struct { at: i64 }
 
 strike :: fn(e: Entity) -> i64 ! Blocked {
     if (e.hp <= 0) {
-        return Blocked { at = e.hp }
+        return { at = e.hp }
     }
     attack(e)
 }
@@ -55,12 +68,23 @@ damage_of :: fn(e: Entity) -> i64 {
 }
 
 main :: fn() -> i64 {
-    mut hero := Entity { hp = 90, kind = Kind::Hero }
+    // A literal leaves out a type the context already carries and a variant
+    // leaves out its enum. Every field is still named.
+    mut hero : Entity = { hp = 90, kind = .Hero }
     heal(hero, 10)                 // hero is borrowed and changed
     print hero.hp                  // 100
     print attack(hero)             // 10
 
     print damage_of(hero)          // 20
+
+    party : [3]Entity = [
+        { hp = 100, kind = .Hero },
+        { hp = 40, kind = .Monster { damage = 12 } },
+        { hp = 25, kind = .Monster { damage = 30 } },
+    ]
+    total, strongest := tally(party)
+    print total                    // 52
+    print strongest                // 30
 
     s := Session { id = 7 }
     print close(s)                 // s cannot be named again
