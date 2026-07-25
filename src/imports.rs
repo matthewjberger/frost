@@ -239,6 +239,7 @@ pub fn resolve_imports_cached(
         seen: HashSet::new(),
         resolved,
         plans,
+        exported_by: HashMap::new(),
     };
     walk.resolve_into(statements, base_dir)?;
     let mut resolved = walk.resolved;
@@ -484,6 +485,10 @@ struct Walk<'a> {
     seen: HashSet<PathBuf>,
     resolved: Resolved,
     plans: Plans,
+    // Which module exported each name, so a second module exporting the same one
+    // is a collision rather than a silent overwrite. Only exported names are
+    // tracked; a private name is renamed per module and cannot clash.
+    exported_by: HashMap<String, PathBuf>,
 }
 
 type Contribution = (Vec<Spanned<Statement>>, HashSet<String>, String);
@@ -520,6 +525,25 @@ impl Walk<'_> {
             } else {
                 self.read_module(&full, &found.module)?
             };
+
+            // Two modules exporting the same name would splice two bare
+            // definitions of it, and a reference elsewhere would bind to
+            // whichever the resolver reached first. The flat namespace is
+            // deliberate (a name carries its own prefix), so this is a loud
+            // error, not a silent pick; the fix is to prefix one or rename it on
+            // import.
+            for name in &exports {
+                if let Some(first) = self.exported_by.get(name)
+                    && first != &full
+                {
+                    bail!(
+                        "'{name}' is exported by two modules, {} and {}; prefix one of them or rename it on import",
+                        first.display(),
+                        full.display()
+                    );
+                }
+                self.exported_by.insert(name.clone(), full.clone());
+            }
 
             let renames = private_renames(&imported, &exports, &tag);
             if !renames.is_empty() {

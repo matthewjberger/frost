@@ -244,6 +244,7 @@ main :: fn() -> i64 {
         }
         tokenize(source, frost_str_len(source), parser.tokens)
         program := parse_program(parser)
+        check_export_collisions(parser)
         collect_type_args(parser)
         record_mono_rets(parser)
         check_calls(parser)

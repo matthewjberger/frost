@@ -6,8 +6,42 @@ import "imports.frost"
 import "names.frost"
 import "emit_asm.frost"
 
-export check_borrow_exclusivity, check_calls, check_frame_escapes, check_moves,
+export check_borrow_exclusivity, check_calls, check_export_collisions,
+    check_frame_escapes, check_moves,
     check_reference_fields, check_regions, check_unsafety
+
+// Two imported modules that export the same name is a collision: a reference to
+// it in a third module resolves to whichever the name lookup reaches first,
+// silently. The flat namespace is the point (a name carries its own prefix,
+// `vec3_add` not `math.add`), so this is a loud error rather than a resolution
+// rule, and the fix is to prefix one of them or rename it on import. Only
+// exported names collide; a private name stays the module's own.
+check_export_collisions :: fn(mut p: Parser) {
+    mut i : i64 = 0
+    while (i < p.exports.count) {
+        first := arena_at(p.exports, i)
+        mut j := i + 1
+        while (j < p.exports.count) {
+            second := arena_at(p.exports, j)
+            if (first.module != second.module && first.len == second.len
+                && bytes_equal(p.export_names, first.off, second.off,
+                    first.len)) {
+                report("frost: '")
+                report_src(p.export_names, first.off, first.len)
+                report("' is exported by two modules, ")
+                first_module := arena_at(p.modules, first.module)
+                report_cstr(first_module.path)
+                report(" and ")
+                second_module := arena_at(p.modules, second.module)
+                report_cstr(second_module.path)
+                report("; prefix one of them or rename it on import\n")
+                frost_die()
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+}
 
 // The linear-consumption check, flow-aware. A linear value must be handed on
 // exactly once on every path out of its scope; one that is not is a resource
