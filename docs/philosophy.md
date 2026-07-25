@@ -82,7 +82,15 @@ actual work predictable.
    match catch miscompilations a single backend would hide.
 7. Predictability over cleverness. The generated code should be something you
    can reason about. Simple, explicit lowerings are preferred to clever ones.
-8. Compilation stays fast as programs grow. Not fast at the sizes tested so
+8. The two compilers accept the same language. The Rust bootstrap and the
+   self-hosted compiler are held to the same surface, and a divergence is a bug
+   in whichever one is behind rather than a division of labour. This is what
+   makes the language buildable from a Rust toolchain and nothing else: the
+   bootstrap compiles the Frost compiler, the Frost compiler compiles itself,
+   and no seed binary has to exist or be trusted. Every feature lands in both,
+   and what still differs is listed and dated in
+   [../selfhosted/README.md](../selfhosted/README.md) rather than remembered.
+9. Compilation stays fast as programs grow. Not fast at the sizes tested so
    far, which any compiler manages, but fast on a curve that does not turn over.
    This is a promise rather than a happy accident, and it has a bill attached.
    Whole-program monomorphization with imports flattened into one AST is the

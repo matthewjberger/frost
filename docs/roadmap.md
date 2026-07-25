@@ -418,7 +418,7 @@ The bootstrap compiles stage 0 and is the differential oracle, which is the only
 reason it is ahead. Being ahead is a stage of the work rather than a division of
 labour. See [self-hosting.md](self-hosting.md).
 
-So the target is parity on both axes: the full language, and goal 8's speed. Two
+So the target is parity on both axes: the full language, and goal 9's speed. Two
 things follow that are worth saying before the list.
 
 - Speed matters more in the Frost compiler than in the Rust one. The
@@ -565,7 +565,7 @@ cache and `--incremental`. See
 This is last because it depends on items 6, 7 and 17 (modules to compile
 separately, a command line to pass `--incremental` to, and module identity to
 key a cache by), not because it is optional. A user's project is many files, and
-their edit-compile loop is the thing goal 8 promises about.
+their edit-compile loop is the thing goal 9 promises about.
 
 ## Smaller things found, and what happened to them
 
