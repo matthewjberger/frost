@@ -185,22 +185,6 @@ check_linear_locals :: fn(mut p: Parser, head: i64) {
     }
 }
 
-check_linear_params :: fn(mut p: Parser, params: i64, body: i64) {
-    mut id := params
-    while (id != (0 - 1)) {
-        node := arena_at(p.arena, id)
-        if (node.a == 2 && is_linear_type(p, node.b)
-            && consumes_value(p, body, node.val, node.c) == false) {
-            report_where(p.modules, p.src, node.val)
-            report("linear value '")
-            report_src(p.src, node.val, node.c)
-            report("' is never consumed")
-            frost_die()
-        }
-        id = node.next
-    }
-}
-
 // The use-after-move check, flow-aware. A value handed by move to a call is
 // gone from the caller, so a later read of it reads storage that was given away.
 // The old check accumulated moves as the code was emitted, so a move in one arm
@@ -401,7 +385,6 @@ check_moves :: fn(mut p: Parser) {
         node := arena_at(p.arena, i)
         if (node.kind == NODE_FUNC) {
             check_linear_locals(p, node.a)
-            check_linear_params(p, node.b, node.a)
             p.moved.count = 0
             walk_moves_block(p, node.a)
         }
