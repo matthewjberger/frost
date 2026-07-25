@@ -85,11 +85,9 @@ map_insert :: fn($V: Type, mut m: Map<V>, key: i64, move value: $V) {
     if (unsafe { m.state[slot] } != SLOT_USED) {
         m.count = m.count + 1
     }
-    unsafe {
-        m.keys[slot] = key
-        m.values[slot] = value
-        m.state[slot] = SLOT_USED
-    }
+    m.keys[slot] = key
+    m.values[slot] = value
+    m.state[slot] = SLOT_USED
 }
 
 map_grow :: fn($V: Type, mut m: Map<V>) {

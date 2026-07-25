@@ -706,6 +706,35 @@ main :: fn() -> i64 {
 }
 "#;
 
+// `print` widens whatever it is given to the width of the helper that prints
+// it. A `bool` is one byte and was not counted as an integer for that, so the
+// native backend built a call handing an i8 where an i64 belonged and failed in
+// the Cranelift verifier. C widened it silently, so only one backend saw it.
+const PRINT_NARROW_VALUES: &str = r#"
+answered :: fn(n: i64) -> bool { n > 0 }
+narrow :: fn() -> i32 { 7 }
+byte :: fn() -> u8 { 200 }
+
+main :: fn() -> i64 {
+    print answered(1)
+    print answered(0 - 1)
+    print narrow()
+    print byte()
+    print true
+    print 3 < 4
+    0
+}
+"#;
+
+#[test]
+fn print_widens_a_narrow_value() {
+    let Some(output) = compile_and_run("printnarrow", PRINT_NARROW_VALUES)
+    else {
+        return;
+    };
+    assert_eq!(output, "1\n0\n7\n200\n1\n1\n");
+}
+
 // The failure type as a struct rather than an enum, which is the other half of
 // what a failure set accepts and the half nothing covered. `return Blocked {
 // at = hp }` is a struct literal, and only an enum-variant literal counted as
@@ -7015,6 +7044,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_constarray", CONSTANT_ARRAY_SIZES),
         ("diff_kwfield", KEYWORD_FIELD_NAMES),
         ("diff_structfail", STRUCT_FAILURE_TYPE),
+        ("diff_printnarrow", PRINT_NARROW_VALUES),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);

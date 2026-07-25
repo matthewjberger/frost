@@ -1182,61 +1182,59 @@ check_regions :: fn(mut p: Parser) {
 // an `unsafe` block is a span of source, so the question is whether the one is
 // inside the other.
 check_unsafety :: fn(mut p: Parser) {
-    unsafe {
-        mut i : i64 = 0
-        while (i < p.arena.count) {
-            node := arena_at(p.arena, i)
-            kind := node.kind
-            mut gated : i64 = 0
-            mut what : ^i8 = ""
-            if (kind == NODE_DEREF) {
-                gated = 1
-                what = "reading through a raw pointer"
-            }
-            if (kind == NODE_PTR_CAST) {
-                gated = 1
-                what = "ptr_cast"
-            }
-            // Forming a slice from a raw pointer and a length is a claim the
-            // bytes are that, which nothing checks. Reads through the slice are
-            // checked, so the claim is the only unsafe part.
-            if (kind == NODE_SLICE_FROM) {
-                gated = 1
-                what = "slice_from"
-            }
-            // An array or a slice knows its own length, so indexing one is
-            // checked. A borrow was proven safe where it formed. Only a raw
-            // pointer is unchecked.
-            if (kind == NODE_INDEX) {
-                if (is_raw_pointer(type_of(p, node.a))) {
-                    gated = 1
-                    what = "indexing a raw pointer"
-                }
-            }
-            // Reading a field through a raw pointer is the same unchecked read a
-            // `^` is. A borrow reaching its field is not, which is what lets
-            // `mut p: Parser` write `p.field` without a block.
-            if (kind == NODE_FIELD) {
-                if (is_raw_pointer(type_of(p, node.a))) {
-                    gated = 1
-                    what = "reading a field through a raw pointer"
-                }
-            }
-            if (kind == NODE_CALL) {
-                sym := arena_at(p.fns, node.val)
-                if (sym.is_extern == 1 && sym.is_safe == 0) {
-                    gated = 1
-                    what = "calling a C function"
-                }
-            }
-            if (gated == 1 && inside_unsafe(p, node.pos) == 0) {
-                report_where(p.modules, p.src, node.pos)
-                report_cstr(what)
-                report(" is unchecked, so it belongs in an `unsafe` block")
-                frost_rt_die()
-            }
-            i = i + 1
+    mut i : i64 = 0
+    while (i < p.arena.count) {
+        node := arena_at(p.arena, i)
+        kind := node.kind
+        mut gated : i64 = 0
+        mut what : ^i8 = ""
+        if (kind == NODE_DEREF) {
+            gated = 1
+            what = "reading through a raw pointer"
         }
+        if (kind == NODE_PTR_CAST) {
+            gated = 1
+            what = "ptr_cast"
+        }
+        // Forming a slice from a raw pointer and a length is a claim the
+        // bytes are that, which nothing checks. Reads through the slice are
+        // checked, so the claim is the only unsafe part.
+        if (kind == NODE_SLICE_FROM) {
+            gated = 1
+            what = "slice_from"
+        }
+        // An array or a slice knows its own length, so indexing one is
+        // checked. A borrow was proven safe where it formed. Only a raw
+        // pointer is unchecked.
+        if (kind == NODE_INDEX) {
+            if (is_raw_pointer(type_of(p, node.a))) {
+                gated = 1
+                what = "indexing a raw pointer"
+            }
+        }
+        // Reading a field through a raw pointer is the same unchecked read a
+        // `^` is. A borrow reaching its field is not, which is what lets
+        // `mut p: Parser` write `p.field` without a block.
+        if (kind == NODE_FIELD) {
+            if (is_raw_pointer(type_of(p, node.a))) {
+                gated = 1
+                what = "reading a field through a raw pointer"
+            }
+        }
+        if (kind == NODE_CALL) {
+            sym := arena_at(p.fns, node.val)
+            if (sym.is_extern == 1 && sym.is_safe == 0) {
+                gated = 1
+                what = "calling a C function"
+            }
+        }
+        if (gated == 1 && inside_unsafe(p, node.pos) == 0) {
+            report_where(p.modules, p.src, node.pos)
+            report_cstr(what)
+            report(" is unchecked, so it belongs in an `unsafe` block")
+            frost_rt_die()
+        }
+        i = i + 1
     }
 }
 
@@ -1271,68 +1269,66 @@ proc_param_named :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
 }
 
 check_calls :: fn(mut p: Parser) {
-    unsafe {
-        mut i : i64 = 0
-        while (i < p.arena.count) {
-            node := arena_at(p.arena, i)
-            kind := node.kind
-            fn_index := node.val
-            args := node.a
-            if (kind == NODE_CALL) {
-                sym := arena_at(p.fns, fn_index)
-                defined := sym.defined
-                name_off := sym.off
-                name_len := sym.len
-                params := sym.params
-                // A call whose name is not a defined function may be a call
-                // through a function-pointer parameter, which is indirect. The
-                // codegen locals do not exist yet, so the name is looked for
-                // among the function-pointer parameters instead. A defined
-                // function is never also a parameter, so this only matters when
-                // the name is undefined. Guarding it there keeps `proc_param_named`
-                // (a whole-arena scan) off the common path and makes this check
-                // linear instead of quadratic in the program size.
-                mut callee_proc : i64 = 0 - 1
-                if (defined == 0) {
-                    callee_proc = proc_param_named(p, name_off, name_len)
-                }
-                // `columns_new` is a compiler builtin standing for a zeroed
-                // container, so it has no defined symbol. The emitter recognizes
-                // it by name. Its zero arguments still satisfy the arity check.
-                is_columns_new := str_range_eq(p.src, name_off, name_len,
-                    "columns_new")
-                if (defined == 0 && callee_proc < 0 && is_columns_new == false) {
-                    report_where(p.modules, p.src, node.pos)
-                    report("call to undefined function '")
-                    report_src(p.src, name_off, name_len)
-                    report("'")
-                    frost_rt_die()
-                }
-                mut expected : i64 = 0
-                if (callee_proc >= 0) {
-                    expected = proc_param_count(p, callee_proc)
-                } else {
-                    // The capability is supplied by the caller's context rather
-                    // than written at the call, so it is not counted.
-                    expected = count_params(p, params)
-                    if (sym.uses_ty >= 0) {
-                        expected = expected - 1
-                    }
-                }
-                got := count_args(p, args)
-                if (expected != got) {
-                    report_where(p.modules, p.src, name_off)
-                    report("'")
-                    report_src(p.src, name_off, name_len)
-                    report("' expects ")
-                    frost_rt_error_int(expected)
-                    report(" argument(s) but got ")
-                    frost_rt_error_int(got)
-                    frost_rt_die()
+    mut i : i64 = 0
+    while (i < p.arena.count) {
+        node := arena_at(p.arena, i)
+        kind := node.kind
+        fn_index := node.val
+        args := node.a
+        if (kind == NODE_CALL) {
+            sym := arena_at(p.fns, fn_index)
+            defined := sym.defined
+            name_off := sym.off
+            name_len := sym.len
+            params := sym.params
+            // A call whose name is not a defined function may be a call
+            // through a function-pointer parameter, which is indirect. The
+            // codegen locals do not exist yet, so the name is looked for
+            // among the function-pointer parameters instead. A defined
+            // function is never also a parameter, so this only matters when
+            // the name is undefined. Guarding it there keeps `proc_param_named`
+            // (a whole-arena scan) off the common path and makes this check
+            // linear instead of quadratic in the program size.
+            mut callee_proc : i64 = 0 - 1
+            if (defined == 0) {
+                callee_proc = proc_param_named(p, name_off, name_len)
+            }
+            // `columns_new` is a compiler builtin standing for a zeroed
+            // container, so it has no defined symbol. The emitter recognizes
+            // it by name. Its zero arguments still satisfy the arity check.
+            is_columns_new := str_range_eq(p.src, name_off, name_len,
+                "columns_new")
+            if (defined == 0 && callee_proc < 0 && is_columns_new == false) {
+                report_where(p.modules, p.src, node.pos)
+                report("call to undefined function '")
+                report_src(p.src, name_off, name_len)
+                report("'")
+                frost_rt_die()
+            }
+            mut expected : i64 = 0
+            if (callee_proc >= 0) {
+                expected = proc_param_count(p, callee_proc)
+            } else {
+                // The capability is supplied by the caller's context rather
+                // than written at the call, so it is not counted.
+                expected = count_params(p, params)
+                if (sym.uses_ty >= 0) {
+                    expected = expected - 1
                 }
             }
-            i = i + 1
+            got := count_args(p, args)
+            if (expected != got) {
+                report_where(p.modules, p.src, name_off)
+                report("'")
+                report_src(p.src, name_off, name_len)
+                report("' expects ")
+                frost_rt_error_int(expected)
+                report(" argument(s) but got ")
+                frost_rt_error_int(got)
+                frost_rt_die()
+            }
         }
+        i = i + 1
     }
 }
 

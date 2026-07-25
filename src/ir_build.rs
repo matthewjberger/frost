@@ -6162,11 +6162,21 @@ fn is_integer(ty: &Type) -> bool {
     )
 }
 
+// A `bool` is one byte, so widening one to the width something takes is the
+// same instruction as widening any narrow integer. It is not `is_integer`,
+// because arithmetic on a bool is not a thing the language has, but a `print`
+// of one reaches the same `%lld` helper every integer does and has to arrive at
+// its width. C widened it for free, so only the native backend saw this, as a
+// verifier error rather than a wrong answer.
+fn is_castable_integer(ty: &Type) -> bool {
+    is_integer(ty) || matches!(ty, Type::Bool)
+}
+
 fn needs_cast(from: &Type, to: &Type) -> bool {
-    (is_integer(from) && is_integer(to))
+    (is_castable_integer(from) && is_castable_integer(to))
         || (matches!(from, Type::F32 | Type::F64)
             && matches!(to, Type::F32 | Type::F64))
-        || (is_integer(from) && matches!(to, Type::F32 | Type::F64))
+        || (is_castable_integer(from) && matches!(to, Type::F32 | Type::F64))
         || (matches!(from, Type::F32 | Type::F64) && is_integer(to))
 }
 
