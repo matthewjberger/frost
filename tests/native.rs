@@ -6770,6 +6770,109 @@ fn a_frame_pointer_bound_inside_an_unsafe_block_may_not_be_returned() {
     );
 }
 
+// Every road out of an `unsafe` block, since that block is where a frame
+// pointer is necessarily formed. Reading the value the block answers with is
+// not enough on its own: the pointer can be returned from inside it, bound
+// inside it, or handed back by a branch of a block used as a value.
+#[test]
+fn a_frame_pointer_may_not_leave_an_unsafe_block_by_any_road() {
+    let cases = [
+        (
+            "returninside",
+            "leak :: fn() -> ^i64 {\n\
+             \x20   mut x : i64 = 42\n\
+             \x20   unsafe { return ptr_to(x) }\n}\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+        (
+            "boundinside",
+            "leak :: fn() -> ^i64 {\n\
+             \x20   mut x : i64 = 42\n\
+             \x20   unsafe { p := ptr_to(x)\n\
+             \x20   p }\n}\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+        (
+            "ifasvalue",
+            "leak :: fn(c: bool) -> ^i64 {\n\
+             \x20   mut x : i64 = 42\n\
+             \x20   mut y : i64 = 7\n\
+             \x20   unsafe { if (c) { ptr_to(x) } else { ptr_to(y) } }\n}\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+        (
+            "matchasvalue",
+            "Pick :: enum { One, Two }\n\
+             leak :: fn(p: Pick) -> ^i64 {\n\
+             \x20   mut x : i64 = 42\n\
+             \x20   unsafe { match p { case .One: ptr_to(x) case .Two: ptr_to(x) } }\n}\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+        (
+            "nestedunsafe",
+            "leak :: fn() -> ^i64 {\n\
+             \x20   mut x : i64 = 42\n\
+             \x20   unsafe { unsafe { ptr_to(x) } }\n}\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+        (
+            "structwrap",
+            "Box :: struct { p: ^i64 }\n\
+             leak :: fn() -> Box {\n\
+             \x20   mut x : i64 = 42\n\
+             \x20   unsafe { Box { p = ptr_to(x) } }\n}\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+        (
+            "sliceinside",
+            "leak :: fn() -> []i64 {\n\
+             \x20   arr := [11, 22, 33]\n\
+             \x20   unsafe { slice_from($i64, ptr_to(arr[0]), 3) }\n}\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+        (
+            "slicebound",
+            "leak :: fn() -> []i64 {\n\
+             \x20   arr := [11, 22, 33]\n\
+             \x20   unsafe { v := slice_from($i64, ptr_to(arr[0]), 3)\n\
+             \x20   v }\n}\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+    ];
+    for (name, source) in cases {
+        let message = compile_error_checked(name, source);
+        assert!(
+            message.contains("pointer into the frame of"),
+            "{name} should not compile, got:\n{message}"
+        );
+    }
+}
+
+// The tightened check must not start refusing a pointer the function was handed,
+// which is not its frame's to begin with.
+#[test]
+fn a_pointer_handed_in_still_passes_back_out() {
+    let source = "pass :: fn(p: ^i64) -> ^i64 { p }\n\
+                  main :: fn() -> i64 { 0 }\n";
+    let directory = std::env::temp_dir();
+    let source_path = directory.join("frost_ok_handedin.frost");
+    let object = directory.join("frost_ok_handedin.o");
+    std::fs::write(&source_path, source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--native")
+        .arg("-o")
+        .arg(&object)
+        .arg(&source_path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&source_path);
+    assert!(
+        output.status.success(),
+        "a pointer handed in should still be returnable, got:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn a_slice_over_a_local_may_not_be_returned() {
     let source = "leak :: fn() -> []i64 {\n\
