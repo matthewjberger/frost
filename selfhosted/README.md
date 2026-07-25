@@ -68,10 +68,6 @@ else: the bootstrap compiles this compiler, this compiler compiles itself, and
 no seed binary is needed anywhere. A divergence is a hole in that, whichever
 side it is on.
 
-- **The identity of a `distinct` type.** `Meters :: distinct i64` parses and
-  runs here the way it runs in the bootstrap, because the name is carried as an
-  alias for the representation. The identity is not carried, so this compiler
-  accepts a `Feet` where a `Meters` is wanted and the bootstrap does not.
 - **More than one generic type parameter**, where the *bootstrap* is the one
   behind: this compiler compiles `Pair<i64, bool> { .. }` and the bootstrap
   cannot parse it.

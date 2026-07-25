@@ -957,11 +957,16 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 Meters :: distinct i64
 Feet :: distinct i64
+// The representation decides the arithmetic, so a distinct float subtracts as
+// a float rather than lowering to an integer subtract on float registers.
+Seconds :: distinct f64
 
 add_meters :: fn(a: Meters, b: Meters) -> Meters { a + b }
+elapsed :: fn(from: Seconds, to: Seconds) -> Seconds { to - from }
 
 // A distinct type crosses a signature and lands in a struct like any other.
 Trip :: struct { there: Meters, back: Meters }
+Leg :: struct { distance: Meters, took: Seconds }
 
 total :: fn(t: Trip) -> Meters { add_meters(t.there, t.back) }
 
@@ -975,6 +980,13 @@ main :: fn() -> i64 {
 
     trip := Trip { there = a, back = b }
     printf("%lld\n", total(trip))
+
+    leg := Leg { distance = 12, took = 1.5 }
+    print elapsed(leg.took, 4.25)
+    printf("%lld\n", leg.distance)
+
+    mut marks : [3]Meters = [1, 2, 3]
+    printf("%lld\n", marks[2])
     0
 }
 "#;
@@ -984,7 +996,7 @@ fn a_distinct_type_carries_its_own_name() {
     let Some(output) = compile_and_run("distinct", DISTINCT_TYPES) else {
         return;
     };
-    assert_eq!(output, "7\n10\n7\n");
+    assert_eq!(output, "7\n10\n7\n2.75\n12\n3\n");
 }
 
 // The identity is the point, so the places a value crosses are the places the
@@ -1023,21 +1035,52 @@ fn a_distinct_type_is_not_its_representation() {
             message.contains("a distinct type is not its representation"),
             "expected the nominal diagnostic in:\n{message}"
         );
+        // The identity is a rule of the language, so the self-hosted compiler
+        // refuses the same three programs for the same reason.
+        let Some(compiler) = build_self_hosted_compiler("distinctbad") else {
+            continue;
+        };
+        let directory = std::env::temp_dir();
+        let input = directory.join(format!("frost_distinctbad{index}.frost"));
+        std::fs::write(&input, &source).unwrap();
+        let refused = Command::new(&compiler)
+            .env("FROST_CHECK_UNSAFE", "0")
+            .env("FROST_INPUT", &input)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&input);
+        assert!(
+            !refused.status.success(),
+            "the self-hosted compiler accepted case {index}"
+        );
+        let said = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            said.contains("a distinct type is not its representation"),
+            "expected the nominal diagnostic from the self-hosted compiler in:\n{said}"
+        );
+        let _ = std::fs::remove_file(&compiler);
     }
 }
 
-// The self-hosted compiler carries a distinct type as an alias for what it
-// stands for: a program using one compiles and runs the way the bootstrap runs
-// it. What it does not carry yet is the identity, which is why the rejection
-// above is a bootstrap test.
+// The same program through the self-hosted compiler. Both compilers give a
+// distinct type a code of its own, carrying the representation it computes as
+// beside the identity that separates it from every other type.
 const SELF_HOSTED_DISTINCT: &str = "Meters :: distinct i64\n\
+     Seconds :: distinct f64\n\
      add_meters :: fn(a: Meters, b: Meters) -> Meters {\n\
      \x20   a + b\n\
      }\n\
+     elapsed :: fn(from: Seconds, to: Seconds) -> Seconds {\n\
+     \x20   to - from\n\
+     }\n\
+     Leg :: struct { distance: Meters, took: Seconds }\n\
      main :: fn() -> i64 {\n\
      \x20   a : Meters = 3\n\
      \x20   b : Meters = 4\n\
      \x20   print add_meters(a, b)\n\
+     \x20   leg := Leg { distance = 12, took = 1.5 }\n\
+     \x20   print elapsed(leg.took, 4.25)\n\
+     \x20   print leg.distance\n\
      \x20   0\n\
      }\n";
 
@@ -1048,7 +1091,7 @@ fn self_hosted_compiles_a_distinct_type() {
     else {
         return;
     };
-    assert_eq!(output, "7\n");
+    assert_eq!(output, "7\n2.75\n12\n");
 
     let directory = std::env::temp_dir();
     let input = directory.join("frost_shdistinct_input.frost");

@@ -692,7 +692,7 @@ fn c_return_fields(layout: &crate::c_abi::CLayout) -> Result<Vec<String>> {
     for scalar in &scalars {
         let size = scalar.ty.size_of().max(1);
         if scalar.offset < at {
-            if matches!(scalar.ty, Type::F32 | Type::F64) {
+            if scalar.ty.is_float() {
                 bail!(
                     "C backend: '{}' overlaps a floating point field with another, which C has no way to declare and whose calling convention Frost will not guess at",
                     layout.name

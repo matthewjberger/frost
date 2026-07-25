@@ -1064,7 +1064,7 @@ impl Translator<'_, '_> {
                 let operand_type = self.operand_type(operand);
                 Ok(match op {
                     IrUnOp::Negate => {
-                        if is_float(&operand_type) {
+                        if operand_type.is_float() {
                             self.builder.ins().fneg(value)
                         } else {
                             self.builder.ins().ineg(value)
@@ -1181,7 +1181,7 @@ impl Translator<'_, '_> {
         right: Value,
         operand_type: &Type,
     ) -> Result<Value> {
-        let float = is_float(operand_type);
+        let float = operand_type.is_float();
         let signed = is_signed(operand_type);
         let instructions = self.builder.ins();
         Ok(match op {
@@ -1214,7 +1214,7 @@ impl Translator<'_, '_> {
         right: Value,
         operand_type: &Type,
     ) -> Result<Value> {
-        let float = is_float(operand_type);
+        let float = operand_type.is_float();
         let signed = is_signed(operand_type);
         if float {
             let condition = match op {
@@ -1259,8 +1259,8 @@ impl Translator<'_, '_> {
         if source_clif == target_clif {
             return Ok(value);
         }
-        let source_float = is_float(source);
-        let target_float = is_float(target);
+        let source_float = source.is_float();
+        let target_float = target.is_float();
         Ok(match (source_float, target_float) {
             (false, false) => {
                 if target_clif.bits() > source_clif.bits() {
@@ -1650,15 +1650,16 @@ impl Translator<'_, '_> {
     }
 }
 
-fn is_float(ty: &Type) -> bool {
-    matches!(ty, Type::F32 | Type::F64)
-}
-
+// A distinct type computes as what it is represented by, so this looks through
+// it, the same way `Type::is_float` does. Missing that emitted an integer
+// subtract for two `distinct f64` values, which Cranelift's verifier caught and
+// nothing else would have.
 fn is_signed(ty: &Type) -> bool {
-    matches!(
-        ty,
-        Type::I8 | Type::I16 | Type::I32 | Type::I64 | Type::Isize
-    )
+    match ty {
+        Type::I8 | Type::I16 | Type::I32 | Type::I64 | Type::Isize => true,
+        Type::Distinct(_, inner) => is_signed(inner),
+        _ => false,
+    }
 }
 
 fn collect_strings(

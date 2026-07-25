@@ -2808,12 +2808,11 @@ impl<'a> FunctionLowering<'a> {
                 // An integer prints through the %lld helper and a float through
                 // the %g one, so the value is widened to the width that helper
                 // takes: i64 for an integer of any width, f64 for either float.
-                let (function, target) =
-                    if matches!(value_type, Type::F32 | Type::F64) {
-                        ("frost_rt_print_f64", Type::F64)
-                    } else {
-                        ("frost_rt_print_i64", Type::I64)
-                    };
+                let (function, target) = if value_type.is_float() {
+                    ("frost_rt_print_f64", Type::F64)
+                } else {
+                    ("frost_rt_print_i64", Type::I64)
+                };
                 let coerced = self.coerce(operand, &value_type, &target);
                 let sink = self.fresh_local(Type::Void, None);
                 self.emit(IrStatement::Assign(
@@ -6521,20 +6520,23 @@ fn zero_operand(ty: &Type) -> IrOperand {
     }
 }
 
+// A distinct type is stored and computed as what it is represented by, so a
+// `distinct i32` widens and narrows exactly as an `i32` does.
 fn is_integer(ty: &Type) -> bool {
-    matches!(
-        ty,
+    match ty {
         Type::I8
-            | Type::I16
-            | Type::I32
-            | Type::I64
-            | Type::Isize
-            | Type::U8
-            | Type::U16
-            | Type::U32
-            | Type::U64
-            | Type::Usize
-    )
+        | Type::I16
+        | Type::I32
+        | Type::I64
+        | Type::Isize
+        | Type::U8
+        | Type::U16
+        | Type::U32
+        | Type::U64
+        | Type::Usize => true,
+        Type::Distinct(_, inner) => is_integer(inner),
+        _ => false,
+    }
 }
 
 // A `bool` is one byte, so widening one to the width something takes is the
@@ -6549,10 +6551,9 @@ fn is_castable_integer(ty: &Type) -> bool {
 
 fn needs_cast(from: &Type, to: &Type) -> bool {
     (is_castable_integer(from) && is_castable_integer(to))
-        || (matches!(from, Type::F32 | Type::F64)
-            && matches!(to, Type::F32 | Type::F64))
-        || (is_castable_integer(from) && matches!(to, Type::F32 | Type::F64))
-        || (matches!(from, Type::F32 | Type::F64) && is_integer(to))
+        || (from.is_float() && to.is_float())
+        || (is_castable_integer(from) && to.is_float())
+        || (from.is_float() && is_integer(to))
 }
 
 // The type a binary operation is computed at. Spec 3.1: the narrower operand

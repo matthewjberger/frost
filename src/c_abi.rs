@@ -167,7 +167,7 @@ fn classify_sysv(layout: &CLayout) -> CReturn {
         let last = (scalar.offset + size - 1) / 8;
         for eightbyte in first..=last.min(count - 1) {
             occupied[eightbyte] = true;
-            if !is_float(&scalar.ty) {
+            if !scalar.ty.is_float() {
                 float[eightbyte] = false;
             }
         }
@@ -223,7 +223,7 @@ fn classify_aarch64(layout: &CLayout) -> CReturn {
 
 fn homogeneous_float(layout: &CLayout) -> Option<Type> {
     let first = layout.scalars.first()?.ty.clone();
-    if !is_float(&first) {
+    if !first.is_float() {
         return None;
     }
     layout
@@ -231,10 +231,6 @@ fn homogeneous_float(layout: &CLayout) -> Option<Type> {
         .iter()
         .all(|scalar| scalar.ty == first)
         .then_some(first)
-}
-
-fn is_float(ty: &Type) -> bool {
-    matches!(ty, Type::F32 | Type::F64)
 }
 
 #[cfg(test)]

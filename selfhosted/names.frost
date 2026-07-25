@@ -10,6 +10,8 @@ export append_node, array_element, array_index_of, array_length, array_of,
     mark_safe, place_renames,
     bytes_equal, const_value, digits_in, gargs_equal, generic_index_for,
     value_binding_of, fn_binding_of, is_type_name,
+    is_distinct, distinct_repr, distinct_id, distinct_type,
+    report_type_name, report_distinct_note,
     intern_global, is_aggregate, is_array_ty, is_const, is_float, is_main_name,
     is_borrow, is_pointer, is_proc, is_raw_pointer, is_slab_ty, is_slice_ty,
     is_columns_ty, columns_lookup, is_columns_new_call, field_type_by_range,
@@ -516,22 +518,111 @@ set_field_next :: fn(mut p: Parser, id: i64, next_id: i64) {
     field.next = next_id
 }
 
+// A `distinct` type, a name of its own for another type's representation.
+is_distinct :: fn(ty: i64) -> bool {
+    ty >= DISTINCT_BASE
+}
+
+// What a distinct type is represented by, which is what everything but the
+// identity check wants: its size, its alignment, how it travels to C, and which
+// register it goes in. Anything else answers with itself, so this can sit at the
+// front of every type predicate.
+distinct_repr :: fn(ty: i64) -> i64 {
+    if (ty < DISTINCT_BASE) {
+        return ty
+    }
+    (ty - DISTINCT_BASE) / DISTINCT_STRIDE
+}
+
+// The identity half: which declaration this is. Two distinct types over the
+// same representation differ only here.
+distinct_id :: fn(ty: i64) -> i64 {
+    (ty - DISTINCT_BASE) % DISTINCT_STRIDE
+}
+
+// The code for the `index`th distinct type declared in this program, over
+// `repr`. A distinct type over a distinct type is represented by what the inner
+// one is represented by, so the representation stored is never itself distinct
+// and no lookup ever has to walk a chain.
+distinct_type :: fn(repr: i64, index: i64) -> i64 {
+    DISTINCT_BASE + distinct_repr(repr) * DISTINCT_STRIDE + index
+}
+
+// Write a type the way the source writes it, for a diagnostic. A distinct type
+// is named, since the name is the whole of what is being complained about.
+report_type_name :: fn(mut p: Parser, ty: i64) {
+    if (is_distinct(ty)) {
+        mut a : i64 = 0
+        while (a < p.type_aliases.count) {
+            entry := arena_at(p.type_aliases, a)
+            if (entry.value == ty) {
+                report_src(p.src, entry.name_off, entry.name_len)
+                return
+            }
+            a = a + 1
+        }
+    }
+    held := distinct_repr(ty)
+    if (held == TY_I64) { report("i64")   return }
+    if (held == TY_I32) { report("i32")   return }
+    if (held == TY_I16) { report("i16")   return }
+    if (held == TY_I8) { report("i8")     return }
+    if (held == TY_ISIZE) { report("isize") return }
+    if (held == TY_U64) { report("u64")   return }
+    if (held == TY_U32) { report("u32")   return }
+    if (held == TY_U16) { report("u16")   return }
+    if (held == TY_U8) { report("u8")     return }
+    if (held == TY_USIZE) { report("usize") return }
+    if (held == TY_F64) { report("f64")   return }
+    if (held == TY_F32) { report("f32")   return }
+    if (held == TY_BOOL) { report("bool") return }
+    if (held == TY_VOID) { report("nothing") return }
+    if (held == TY_HANDLE) { report("Handle") return }
+    if (is_pointer(held)) {
+        report("^")
+        report_type_name(p, pointee(held))
+        return
+    }
+    if (is_array_ty(held)) {
+        report("[]")
+        report_type_name(p, array_element(p, held))
+        return
+    }
+    if (is_struct_ty(held)) {
+        def := arena_at(p.structs, struct_index_of(held))
+        report_src(p.src, def.name_off, def.name_len)
+        return
+    }
+    report("a value")
+}
+
+// The sentence that says which rule was broken, when the rule is the one about
+// distinct types. Nothing is written when some other mismatch is at fault.
+report_distinct_note :: fn(mut p: Parser, from: i64, to: i64) {
+    if (is_distinct(to) && from != to) {
+        report("; a distinct type is not its representation")
+    }
+}
+
 // Indirect: a raw pointer or a borrow, both a C pointer and both auto-derefed.
 // A pointer (raw or borrow) is 8 bytes and emits a trailing `*`. The value
 // generic codes and the function-pointer codes ride above CONST_BASE and are
 // not pointers, even though they are numerically larger. A value is resolved
 // away before it is a type, and a function pointer emits its own declarator.
 is_pointer :: fn(ty: i64) -> bool {
-    ty >= POINTER_BASE && ty < CONST_BASE
+    held := distinct_repr(ty)
+    held >= POINTER_BASE && held < CONST_BASE
 }
 
 // A borrow carries the flag. A raw pointer is indirect without it.
 is_borrow :: fn(ty: i64) -> bool {
-    ty >= BORROW_FLAG && ty < CONST_BASE
+    held := distinct_repr(ty)
+    held >= BORROW_FLAG && held < CONST_BASE
 }
 
 is_raw_pointer :: fn(ty: i64) -> bool {
-    ty >= POINTER_BASE && ty < BORROW_FLAG
+    held := distinct_repr(ty)
+    held >= POINTER_BASE && held < BORROW_FLAG
 }
 
 // A function pointer: the address of a function of a given signature, a
@@ -539,7 +630,8 @@ is_raw_pointer :: fn(ty: i64) -> bool {
 // indexed, or gated. It is called, directly through a name or through a cast on
 // a value of this type.
 is_proc :: fn(ty: i64) -> bool {
-    ty >= PROC_BASE && ty < FN_BASE
+    held := distinct_repr(ty)
+    held >= PROC_BASE && held < FN_BASE
 }
 
 // Intern a function-pointer signature and answer its type code. Signatures are
@@ -561,7 +653,7 @@ proc_of :: fn(mut p: Parser, ret: i64, param_start: i64, param_count: i64)
 }
 
 proc_index_of :: fn(ty: i64) -> i64 {
-    ty - PROC_BASE
+    distinct_repr(ty) - PROC_BASE
 }
 
 proc_ret :: fn(mut p: Parser, ty: i64) -> i64 {
@@ -597,20 +689,24 @@ gargs_run_equal :: fn(mut p: Parser, a_start: i64, b_start: i64, count: i64)
 }
 
 pointee :: fn(ty: i64) -> i64 {
-    if (is_borrow(ty)) {
-        return ty - BORROW_FLAG
+    held := distinct_repr(ty)
+    if (is_borrow(held)) {
+        return held - BORROW_FLAG
     }
-    ty - POINTER_BASE
+    held - POINTER_BASE
 }
 
 is_struct_ty :: fn(ty: i64) -> bool {
-    ty >= STRUCT_BASE && ty < ARRAY_BASE
+    held := distinct_repr(ty)
+    held >= STRUCT_BASE && held < ARRAY_BASE
 }
 is_float :: fn(ty: i64) -> bool {
-    ty == TY_F32 || ty == TY_F64
+    held := distinct_repr(ty)
+    held == TY_F32 || held == TY_F64
 }
 is_array_ty :: fn(ty: i64) -> bool {
-    ty >= ARRAY_BASE && ty < POINTER_BASE
+    held := distinct_repr(ty)
+    held >= ARRAY_BASE && held < POINTER_BASE
 }
 
 // Everything wider than a register, which is everything this compiler holds by
@@ -623,7 +719,7 @@ is_aggregate :: fn(ty: i64) -> bool {
 // The one table holds both, so a slice is told from an array by having no
 // length of its own rather than by a separate code.
 array_index_of :: fn(ty: i64) -> i64 {
-    ty - ARRAY_BASE
+    distinct_repr(ty) - ARRAY_BASE
 }
 
 array_element :: fn(mut p: Parser, ty: i64) -> i64 {
@@ -656,7 +752,7 @@ array_of :: fn(mut p: Parser, element: i64, length: i64) -> i64 {
 }
 
 struct_index_of :: fn(ty: i64) -> i64 {
-    ty - STRUCT_BASE
+    distinct_repr(ty) - STRUCT_BASE
 }
 
 // The field-table index of a struct field named by a literal, or -1 if there
