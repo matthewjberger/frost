@@ -7,4 +7,4 @@ Rect :: struct { width: i64, height: i64 }
 
 scale :: fn(n: i64) -> i64 { n * 2 }
 
-area :: fn(r: Rect) -> i64 { scale(r^.width * r^.height) }
+area :: fn(r: Rect) -> i64 { scale(r.width * r.height) }
