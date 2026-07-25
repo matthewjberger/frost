@@ -60,7 +60,7 @@ One typed intermediate representation feeds three backends, a Cranelift native p
 
 The compiler is written in Frost. `selfhosted/frost.frost` reproduces itself byte for byte through its own C backend and its own x86-64 assembly backend, so a build can go from source to a running compiler with no C compiler in the loop. A full native build of 58k lines runs at about 166,000 lines per second with code generation spread across cores, and `--incremental` rebuilds only the modules an edit can reach.
 
-The standard library is ordinary Frost. It has length-carrying strings, a growable `Vec` and a hash map, file and formatted output, a sort, the slab and structure-of-arrays `columns` containers, and single-precision vector, matrix, and quaternion math. See [`std/`](std) and [docs/math.md](docs/math.md).
+The standard library is ordinary Frost. It has length-carrying strings, a growable `Vec` and a hash map, file and formatted output, a sort, the slab and structure-of-arrays `columns` containers, and vector, matrix, and quaternion math at both single and double precision. See [`std/`](std) and [docs/math.md](docs/math.md).
 
 ## Getting started
 
@@ -100,7 +100,6 @@ The two compilers have been audited against each other by running the same progr
 What is left, roughly in order:
 
 - Renaming a name on import. Two modules that export the same name is already a compile error. The rename was designed and then held back, since the only thing it resolves is a collision between two third-party libraries you cannot edit, and there is no third-party ecosystem yet.
-- An `f64` or scalar-generic version of the math library.
 
 ## Documentation
 
