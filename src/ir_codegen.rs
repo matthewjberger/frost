@@ -427,12 +427,20 @@ impl Generator {
                     CArgument::Indirect => {
                         signature.params.push(AbiParam::new(pointer_type));
                     }
+                    // A System V struct too large for registers goes on the
+                    // stack as part of the argument area. Cranelift places it
+                    // given the size, and the value handed over at the call is
+                    // a pointer to the bytes, which it copies. The size is
+                    // rounded up to a whole number of eightbytes because that
+                    // is how the argument area is laid out and what the x64
+                    // backend asserts.
                     CArgument::Stack => {
-                        bail!(
-                            "native backend: '{}' takes '{}' by value, and this target passes a struct that size on the stack, which the native backend does not emit yet; the C backend does, so build this with --emit-c",
-                            external.name,
-                            layout.name
-                        );
+                        signature.params.push(AbiParam::special(
+                            pointer_type,
+                            ArgumentPurpose::StructArgument(
+                                layout.size.next_multiple_of(8) as u32,
+                            ),
+                        ));
                     }
                 }
                 by_value.push((index, layout, passed));
@@ -1206,12 +1214,10 @@ impl Translator<'_, '_> {
                     self.emit_memcpy(copy, address, layout.size);
                     values.push(copy);
                 }
-                CArgument::Stack => {
-                    bail!(
-                        "native backend: '{function}' takes '{}' by value on the stack, which the native backend does not emit yet",
-                        layout.name
-                    );
-                }
+                // Cranelift copies the bytes into the argument area itself,
+                // given their address, so this is the one shape that needs no
+                // copy of its own.
+                CArgument::Stack => values.push(address),
             }
         }
         Ok(values)

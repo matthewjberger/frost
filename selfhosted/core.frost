@@ -740,6 +740,10 @@ Parser :: struct {
     // check can tell an exclusive borrow from a shared one where the type alone
     // cannot. A `mut` and a read of an aggregate both pass by address.
     mut_params: Arena<LocalVar>,
+    // The parameter nodes declared `value` on an `extern`, by node index. The
+    // parameter behaves as a borrow everywhere else, so only the call's
+    // argument placement consults this, which is the one thing that differs.
+    value_params: Arena<LocalVar>,
     // Scratch for the move check: the values a branch moved, held while the
     // other branch is walked, then merged back so what is moved after an `if` is
     // whatever either arm moved.
