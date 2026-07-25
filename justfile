@@ -161,6 +161,11 @@ window:
     cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 -o examples/graphics/window examples/graphics/window.frost
     ./examples/graphics/window
 
+# Regenerates the wgpu bindings from webgpu.json
+bindgen:
+    cargo run -r -q -p frost --bin frost -- --link -o tools/wgpu_bindgen.exe tools/wgpu_bindgen.frost
+    ./tools/wgpu_bindgen.exe
+
 # Draws a triangle with wgpu in an SDL3 window (Windows)
 [windows]
 triangle:

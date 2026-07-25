@@ -8371,6 +8371,30 @@ fn an_import_resolves_through_every_search_root() {
     let _ = std::fs::remove_dir_all(&directory);
 }
 
+// The JSON reader parses into one flat array of nodes addressed by index, so
+// these exercise a nested document rather than a scalar: object, array, member
+// lookup by name, element by position, and a number read back out.
+#[test]
+fn the_standard_json_reader_walks_a_nested_document() {
+    let source = "import \"json.frost\"\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   text := \"{\\\"name\\\":\\\"color\\\",\\\"members\\\":[{\\\"n\\\":1},{\\\"n\\\":22}],\\\"ok\\\":true}\"\n\
+                  \x20   mut document := json_parse(text)\n\
+                  \x20   root := json_root(document)\n\
+                  \x20   print json_kind(document, root)\n\
+                  \x20   if (json_text_eq(document, json_member(document, root, \"name\"), \"color\")) { print 1 } else { print 0 }\n\
+                  \x20   members := json_member(document, root, \"members\")\n\
+                  \x20   print json_count(document, members)\n\
+                  \x20   print json_number(document, json_member(document, json_at(document, members, 1), \"n\"))\n\
+                  \x20   print json_kind(document, json_member(document, root, \"ok\"))\n\
+                  \x20   json_free(document)\n\
+                  \x20   0\n}\n";
+    let Some(output) = compile_and_run("stdjson", source) else {
+        return;
+    };
+    assert_eq!(output, "6\n1\n2\n22\n1\n");
+}
+
 // The optional type is an ordinary generic enum in the standard library. Both
 // variants and every function it exports.
 #[test]

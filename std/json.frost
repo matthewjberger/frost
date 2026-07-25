@@ -1,0 +1,378 @@
+// A JSON reader.
+//
+// The document is parsed into one flat array of nodes and every reference is
+// an index into it, the way the self-hosted compiler carries its own tree. A
+// node never owns another, so nothing here is recursive except the walk, and
+// the whole document is freed by freeing one vector.
+//
+// Strings are not copied. A string node records where it sits in the source,
+// so reading one is a comparison against the bytes already in memory and the
+// parse allocates nothing per string.
+//
+// Numbers are integers. The documents this exists to read (interface files,
+// manifests, C API descriptions) carry counts and sizes, not measurements, and
+// a float field would be a promise this cannot keep without a float parser.
+
+import "vec.frost"
+import "strings.frost"
+
+export JSON_NULL, JSON_TRUE, JSON_FALSE, JSON_NUMBER, JSON_STRING, JSON_ARRAY,
+    JSON_OBJECT, Json, JsonNode, json_parse, json_free, json_root, json_kind,
+    json_number, json_text_eq, json_member, json_at, json_count, json_is_null,
+    json_text_off, json_text_len
+
+JSON_NULL   :: 0
+JSON_TRUE   :: 1
+JSON_FALSE  :: 2
+JSON_NUMBER :: 3
+JSON_STRING :: 4
+JSON_ARRAY  :: 5
+JSON_OBJECT :: 6
+
+// `first` and `next` chain children the way a linked list does, so an array of
+// a thousand elements costs a thousand nodes and no reallocation of the parent.
+JsonNode :: struct {
+    kind: i64,
+    number: i64,
+    text_off: i64,
+    text_len: i64,
+    key_off: i64,
+    key_len: i64,
+    first: i64,
+    next: i64,
+}
+
+Json :: struct {
+    source: str,
+    nodes: Vec<JsonNode>,
+    at: i64,
+    failed: i64,
+}
+
+json_free :: fn(move document: Json) {
+    vec_free($JsonNode, document.nodes)
+}
+
+json_root :: fn(document: Json) -> i64 {
+    if (document.failed == 1) {
+        return 0 - 1
+    }
+    if (vec_len($JsonNode, document.nodes) == 0) {
+        return 0 - 1
+    }
+    0
+}
+
+json_kind :: fn(mut document: Json, node: i64) -> i64 {
+    if (node < 0) {
+        return JSON_NULL
+    }
+    vec_slice($JsonNode, document.nodes)[node].kind
+}
+
+json_number :: fn(mut document: Json, node: i64) -> i64 {
+    if (node < 0) {
+        return 0
+    }
+    vec_slice($JsonNode, document.nodes)[node].number
+}
+
+json_is_null :: fn(mut document: Json, node: i64) -> bool {
+    json_kind(document, node) == JSON_NULL
+}
+
+json_text_off :: fn(mut document: Json, node: i64) -> i64 {
+    if (node < 0) {
+        return 0
+    }
+    vec_slice($JsonNode, document.nodes)[node].text_off
+}
+
+json_text_len :: fn(mut document: Json, node: i64) -> i64 {
+    if (node < 0) {
+        return 0
+    }
+    vec_slice($JsonNode, document.nodes)[node].text_len
+}
+
+// Whether a string node holds exactly this text. The node's bytes are compared
+// where they lie, so nothing is copied to ask.
+json_text_eq :: fn(mut document: Json, node: i64, text: str) -> bool {
+    if (node < 0) {
+        return false
+    }
+    held := vec_slice($JsonNode, document.nodes)[node]
+    if (held.text_len != str_len(text)) {
+        return false
+    }
+    source := document.source
+    mut index : i64 = 0
+    while (index < held.text_len) {
+        if (source[held.text_off + index] != text[index]) {
+            return false
+        }
+        index = index + 1
+    }
+    true
+}
+
+// The value of an object's member, or -1 when the object has no such member.
+json_member :: fn(mut document: Json, object: i64, name: str) -> i64 {
+    if (object < 0) {
+        return 0 - 1
+    }
+    mut child := vec_slice($JsonNode, document.nodes)[object].first
+    while (child >= 0) {
+        held := vec_slice($JsonNode, document.nodes)[child]
+        if (key_is(document, held, name)) {
+            return child
+        }
+        child = held.next
+    }
+    0 - 1
+}
+
+key_is :: fn(mut document: Json, node: JsonNode, name: str) -> bool {
+    if (node.key_len != str_len(name)) {
+        return false
+    }
+    source := document.source
+    mut index : i64 = 0
+    while (index < node.key_len) {
+        if (source[node.key_off + index] != name[index]) {
+            return false
+        }
+        index = index + 1
+    }
+    true
+}
+
+// The nth element of an array or object.
+json_at :: fn(mut document: Json, container: i64, wanted: i64) -> i64 {
+    if (container < 0) {
+        return 0 - 1
+    }
+    mut child := vec_slice($JsonNode, document.nodes)[container].first
+    mut index : i64 = 0
+    while (child >= 0) {
+        if (index == wanted) {
+            return child
+        }
+        index = index + 1
+        child = vec_slice($JsonNode, document.nodes)[child].next
+    }
+    0 - 1
+}
+
+json_count :: fn(mut document: Json, container: i64) -> i64 {
+    if (container < 0) {
+        return 0
+    }
+    mut child := vec_slice($JsonNode, document.nodes)[container].first
+    mut total : i64 = 0
+    while (child >= 0) {
+        total = total + 1
+        child = vec_slice($JsonNode, document.nodes)[child].next
+    }
+    total
+}
+
+// ---------------------------------------------------------------------------
+// The parse
+// ---------------------------------------------------------------------------
+
+json_parse :: fn(source: str) -> Json {
+    mut document : Json = Json {
+        source = source,
+        nodes = vec_new($JsonNode, 1024),
+        at = 0,
+        failed = 0,
+    }
+    skip_space(document)
+    parsed := parse_value(document)
+    if (parsed < 0) {
+        document.failed = 1
+    }
+    document
+}
+
+new_node :: fn(mut document: Json, kind: i64) -> i64 {
+    index := vec_len($JsonNode, document.nodes)
+    vec_push($JsonNode, document.nodes, JsonNode {
+        kind = kind, number = 0, text_off = 0, text_len = 0,
+        key_off = 0, key_len = 0, first = 0 - 1, next = 0 - 1,
+    })
+    index
+}
+
+peek :: fn(mut document: Json) -> i64 {
+    source := document.source
+    if (document.at >= str_len(source)) {
+        return 0
+    }
+    source[document.at]
+}
+
+skip_space :: fn(mut document: Json) {
+    source := document.source
+    while (document.at < str_len(source)
+        && str_byte_is_space(source[document.at])) {
+        document.at = document.at + 1
+    }
+}
+
+parse_value :: fn(mut document: Json) -> i64 {
+    skip_space(document)
+    byte := peek(document)
+    if (byte == 123) {
+        return parse_object(document)
+    }
+    if (byte == 91) {
+        return parse_array(document)
+    }
+    if (byte == 34) {
+        return parse_string(document)
+    }
+    if (byte == 116) {
+        document.at = document.at + 4
+        return new_node(document, JSON_TRUE)
+    }
+    if (byte == 102) {
+        document.at = document.at + 5
+        return new_node(document, JSON_FALSE)
+    }
+    if (byte == 110) {
+        document.at = document.at + 4
+        return new_node(document, JSON_NULL)
+    }
+    if (byte == 45 || str_byte_is_digit(byte)) {
+        return parse_number(document)
+    }
+    0 - 1
+}
+
+parse_string :: fn(mut document: Json) -> i64 {
+    document.at = document.at + 1
+    source := document.source
+    start := document.at
+    while (document.at < str_len(source) && source[document.at] != 34) {
+        // A backslash escapes the next byte, including a quote, so the scan
+        // steps over both rather than ending the string early.
+        if (source[document.at] == 92) {
+            document.at = document.at + 1
+        }
+        document.at = document.at + 1
+    }
+    node := new_node(document, JSON_STRING)
+    slot := vec_slice($JsonNode, document.nodes)
+    ref held := slot[node]
+    held.text_off = start
+    held.text_len = document.at - start
+    document.at = document.at + 1
+    node
+}
+
+parse_number :: fn(mut document: Json) -> i64 {
+    mut negative : i64 = 0
+    if (peek(document) == 45) {
+        negative = 1
+        document.at = document.at + 1
+    }
+    source := document.source
+    mut value : i64 = 0
+    while (document.at < str_len(source)
+        && str_byte_is_digit(source[document.at])) {
+        value = value * 10 + (source[document.at] - 48)
+        document.at = document.at + 1
+    }
+    // A fraction or an exponent is read past and dropped, since every number
+    // this reader is asked for is a count.
+    while (document.at < str_len(source)
+        && (source[document.at] == 46
+            || str_byte_is_digit(source[document.at])
+            || source[document.at] == 101
+            || source[document.at] == 69
+            || source[document.at] == 43
+            || source[document.at] == 45)) {
+        document.at = document.at + 1
+    }
+    node := new_node(document, JSON_NUMBER)
+    slot := vec_slice($JsonNode, document.nodes)
+    ref held := slot[node]
+    if (negative == 1) {
+        held.number = 0 - value
+    } else {
+        held.number = value
+    }
+    node
+}
+
+parse_array :: fn(mut document: Json) -> i64 {
+    document.at = document.at + 1
+    node := new_node(document, JSON_ARRAY)
+    mut tail : i64 = 0 - 1
+    skip_space(document)
+    while (document.at < str_len(document.source) && peek(document) != 93) {
+        child := parse_value(document)
+        if (child < 0) {
+            return 0 - 1
+        }
+        tail = attach(document, node, tail, child)
+        skip_space(document)
+        if (peek(document) == 44) {
+            document.at = document.at + 1
+            skip_space(document)
+        }
+    }
+    document.at = document.at + 1
+    node
+}
+
+parse_object :: fn(mut document: Json) -> i64 {
+    document.at = document.at + 1
+    node := new_node(document, JSON_OBJECT)
+    mut tail : i64 = 0 - 1
+    skip_space(document)
+    while (document.at < str_len(document.source) && peek(document) != 125) {
+        key := parse_string(document)
+        if (key < 0) {
+            return 0 - 1
+        }
+        key_off := json_text_off(document, key)
+        key_len := json_text_len(document, key)
+        skip_space(document)
+        if (peek(document) == 58) {
+            document.at = document.at + 1
+        }
+        child := parse_value(document)
+        if (child < 0) {
+            return 0 - 1
+        }
+        slot := vec_slice($JsonNode, document.nodes)
+        ref held := slot[child]
+        held.key_off = key_off
+        held.key_len = key_len
+        tail = attach(document, node, tail, child)
+        skip_space(document)
+        if (peek(document) == 44) {
+            document.at = document.at + 1
+            skip_space(document)
+        }
+    }
+    document.at = document.at + 1
+    node
+}
+
+// Hang a child off its parent, keeping the tail so appending stays constant
+// time rather than walking the chain for every element.
+attach :: fn(mut document: Json, parent: i64, tail: i64, child: i64) -> i64 {
+    slot := vec_slice($JsonNode, document.nodes)
+    if (tail < 0) {
+        ref owner := slot[parent]
+        owner.first = child
+    } else {
+        ref previous := slot[tail]
+        previous.next = child
+    }
+    child
+}
