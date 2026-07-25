@@ -385,12 +385,10 @@ near_vec4 :: fn(a: Vec4, b: Vec4) -> bool {
 }
 
 near_mat4 :: fn(a: Mat4, b: Mat4) -> bool {
-    mut index : i64 = 0
-    while (index < 16) {
-        if (near(a.m[index], b.m[index]) == false) {
+    for index, held in a.m {
+        if (near(held, b.m[index]) == false) {
             return false
         }
-        index = index + 1
     }
     true
 }
@@ -482,10 +480,8 @@ test "vec4 arithmetic" {
 
 test "mat4 zero and identity" {
     zero := mat4_zero()
-    mut index : i64 = 0
-    while (index < 16) {
-        assert(near(zero.m[index], 0.0))
-        index = index + 1
+    for held in zero.m {
+        assert(near(held, 0.0))
     }
     one := mat4_identity()
     assert(near(one.m[0], 1.0) && near(one.m[5], 1.0))

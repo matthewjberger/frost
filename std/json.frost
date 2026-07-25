@@ -105,12 +105,10 @@ json_text_eq :: fn(mut document: Json, node: i64, text: str) -> bool {
         return false
     }
     source := document.source
-    mut index : i64 = 0
-    while (index < held.text_len) {
-        if (source[held.text_off + index] != text[index]) {
+    for index, byte in text {
+        if (source[held.text_off + index] != byte) {
             return false
         }
-        index = index + 1
     }
     true
 }
@@ -136,12 +134,10 @@ key_is :: fn(mut document: Json, node: JsonNode, name: str) -> bool {
         return false
     }
     source := document.source
-    mut index : i64 = 0
-    while (index < node.key_len) {
-        if (source[node.key_off + index] != name[index]) {
+    for index, byte in name {
+        if (source[node.key_off + index] != byte) {
             return false
         }
-        index = index + 1
     }
     true
 }
