@@ -1,0 +1,605 @@
+// A triangle, drawn with wgpu, in an SDL3 window.
+//
+//   just triangle
+//
+// This is the window example plus a wgpu binding. Every wgpu type below is a
+// plain struct whose fields are in the order webgpu.h declares them, because
+// that is all a C struct is. Nothing here is generated.
+//
+// Two shapes of the C API are worth naming, since they are what a binding has
+// to get right rather than what a graphics program has to get right.
+//
+// A descriptor is passed as a pointer to a struct this program owns, which is
+// `ptr_to(desc)`. A callback is passed as a struct holding a function pointer
+// beside two userdata slots, which is a plain field of function type. Neither
+// needs anything from the language beyond what a struct already is.
+//
+// WGPUStringView is `{ pointer, length }` passed by value. A struct that size
+// goes to a Windows x64 callee as a hidden pointer, so it is spelled `^u8`
+// where it is a parameter, and written out as its two fields where it is a
+// struct member. That spelling is correct here and would not be on System V,
+// where the same struct arrives in two registers. Frost has no way to say
+// "by value" to C, so this is the seam a real binding would have to close.
+
+// ---------------------------------------------------------------------------
+// SDL3
+// ---------------------------------------------------------------------------
+
+SDL_Init                :: extern fn(flags: u32) -> bool
+SDL_Quit                :: extern fn()
+SDL_CreateWindow        :: extern fn(title: ^i8, width: i32, height: i32,
+    flags: u64) -> ^u8
+SDL_DestroyWindow       :: extern fn(window: ^u8)
+SDL_PollEvent           :: extern fn(event: ^u8) -> bool
+SDL_GetWindowProperties :: extern fn(window: ^u8) -> u32
+SDL_GetPointerProperty  :: extern fn(properties: u32, name: ^i8,
+    fallback: ^u8) -> ^u8
+
+INIT_VIDEO :: 32
+EVENT_QUIT :: 256
+
+Event :: struct { bytes: [128]u8 }
+
+event_kind :: fn(e: Event) -> u32 {
+    unsafe { ptr_cast($u32, ptr_to(e.bytes[0]))^ }
+}
+
+// ---------------------------------------------------------------------------
+// wgpu, as webgpu.h declares it
+// ---------------------------------------------------------------------------
+
+STYPE_SURFACE_SOURCE_WINDOWS_HWND :: 5
+STYPE_SHADER_SOURCE_WGSL          :: 2
+
+CALLBACK_MODE_ALLOW_PROCESS_EVENTS :: 2
+
+TEXTURE_FORMAT_BGRA8UNORM :: 27
+TEXTURE_USAGE_RENDER_ATTACHMENT :: 16
+PRESENT_MODE_FIFO :: 1
+COMPOSITE_ALPHA_AUTO :: 0
+
+LOAD_OP_CLEAR :: 2
+STORE_OP_STORE :: 1
+PRIMITIVE_TOPOLOGY_TRIANGLE_LIST :: 4
+COLOR_WRITE_MASK_ALL :: 15
+
+SURFACE_TEXTURE_SUCCESS_OPTIMAL    :: 1
+SURFACE_TEXTURE_SUCCESS_SUBOPTIMAL :: 2
+
+REQUEST_SUCCESS :: 1
+FEATURE_LEVEL_CORE :: 2
+
+// WGPUChainedStruct, the header every extension struct begins with.
+Chained :: struct { next: ^u8, stype: u32 }
+
+// WGPUStringView, written out as its two fields wherever it is a member.
+StringView :: struct { data: ^i8, length: u64 }
+
+SurfaceSourceWindowsHWND :: struct {
+    chain: Chained,
+    hinstance: ^u8,
+    hwnd: ^u8,
+}
+
+SurfaceDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+}
+
+SurfaceConfiguration :: struct {
+    next_in_chain: ^u8,
+    device: ^u8,
+    format: u32,
+    usage: u64,
+    width: u32,
+    height: u32,
+    view_format_count: u64,
+    view_formats: ^u8,
+    alpha_mode: u32,
+    present_mode: u32,
+}
+
+SurfaceCapabilities :: struct {
+    next_in_chain: ^u8,
+    usages: u64,
+    format_count: u64,
+    formats: ^u32,
+    present_mode_count: u64,
+    present_modes: ^u32,
+    alpha_mode_count: u64,
+    alpha_modes: ^u32,
+}
+
+SurfaceTexture :: struct {
+    next_in_chain: ^u8,
+    texture: ^u8,
+    status: u32,
+}
+
+RequestAdapterOptions :: struct {
+    next_in_chain: ^u8,
+    feature_level: u32,
+    power_preference: u32,
+    force_fallback_adapter: u32,
+    backend_type: u32,
+    compatible_surface: ^u8,
+}
+
+RequestAdapterCallbackInfo :: struct {
+    next_in_chain: ^u8,
+    mode: u32,
+    callback: fn(u32, ^u8, ^u8, ^u8, ^u8),
+    userdata1: ^u8,
+    userdata2: ^u8,
+}
+
+RequestDeviceCallbackInfo :: struct {
+    next_in_chain: ^u8,
+    mode: u32,
+    callback: fn(u32, ^u8, ^u8, ^u8, ^u8),
+    userdata1: ^u8,
+    userdata2: ^u8,
+}
+
+ShaderSourceWGSL :: struct {
+    chain: Chained,
+    code: StringView,
+}
+
+ShaderModuleDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+}
+
+VertexState :: struct {
+    next_in_chain: ^u8,
+    module: ^u8,
+    entry_point: StringView,
+    constant_count: u64,
+    constants: ^u8,
+    buffer_count: u64,
+    buffers: ^u8,
+}
+
+PrimitiveState :: struct {
+    next_in_chain: ^u8,
+    topology: u32,
+    strip_index_format: u32,
+    front_face: u32,
+    cull_mode: u32,
+    unclipped_depth: u32,
+}
+
+MultisampleState :: struct {
+    next_in_chain: ^u8,
+    count: u32,
+    mask: u32,
+    alpha_to_coverage_enabled: u32,
+}
+
+ColorTargetState :: struct {
+    next_in_chain: ^u8,
+    format: u32,
+    blend: ^u8,
+    write_mask: u64,
+}
+
+FragmentState :: struct {
+    next_in_chain: ^u8,
+    module: ^u8,
+    entry_point: StringView,
+    constant_count: u64,
+    constants: ^u8,
+    target_count: u64,
+    targets: ^ColorTargetState,
+}
+
+RenderPipelineDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+    layout: ^u8,
+    vertex: VertexState,
+    primitive: PrimitiveState,
+    depth_stencil: ^u8,
+    multisample: MultisampleState,
+    fragment: ^FragmentState,
+}
+
+Color :: struct { r: f64, g: f64, b: f64, a: f64 }
+
+RenderPassColorAttachment :: struct {
+    next_in_chain: ^u8,
+    view: ^u8,
+    depth_slice: u32,
+    resolve_target: ^u8,
+    load_op: u32,
+    store_op: u32,
+    clear_value: Color,
+}
+
+RenderPassDescriptor :: struct {
+    next_in_chain: ^u8,
+    label: StringView,
+    color_attachment_count: u64,
+    color_attachments: ^RenderPassColorAttachment,
+    depth_stencil_attachment: ^u8,
+    occlusion_query_set: ^u8,
+    timestamp_writes: ^u8,
+}
+
+wgpuCreateInstance        :: extern fn(descriptor: ^u8) -> ^u8
+wgpuInstanceCreateSurface :: extern fn(instance: ^u8,
+    descriptor: ^SurfaceDescriptor) -> ^u8
+wgpuInstanceRequestAdapter :: extern fn(instance: ^u8,
+    options: ^RequestAdapterOptions,
+    callback_info: ^RequestAdapterCallbackInfo) -> u64
+wgpuAdapterRequestDevice  :: extern fn(adapter: ^u8, descriptor: ^u8,
+    callback_info: ^RequestDeviceCallbackInfo) -> u64
+wgpuInstanceProcessEvents :: extern fn(instance: ^u8)
+wgpuDeviceGetQueue        :: extern fn(device: ^u8) -> ^u8
+wgpuSurfaceGetCapabilities :: extern fn(surface: ^u8, adapter: ^u8,
+    capabilities: ^SurfaceCapabilities) -> u32
+wgpuSurfaceConfigure      :: extern fn(surface: ^u8,
+    config: ^SurfaceConfiguration)
+wgpuDeviceCreateShaderModule :: extern fn(device: ^u8,
+    descriptor: ^ShaderModuleDescriptor) -> ^u8
+wgpuDeviceCreateRenderPipeline :: extern fn(device: ^u8,
+    descriptor: ^RenderPipelineDescriptor) -> ^u8
+wgpuSurfaceGetCurrentTexture :: extern fn(surface: ^u8,
+    surface_texture: ^SurfaceTexture)
+wgpuTextureCreateView     :: extern fn(texture: ^u8, descriptor: ^u8) -> ^u8
+wgpuDeviceCreateCommandEncoder :: extern fn(device: ^u8,
+    descriptor: ^u8) -> ^u8
+wgpuCommandEncoderBeginRenderPass :: extern fn(encoder: ^u8,
+    descriptor: ^RenderPassDescriptor) -> ^u8
+wgpuRenderPassEncoderSetPipeline :: extern fn(pass: ^u8, pipeline: ^u8)
+wgpuRenderPassEncoderDraw :: extern fn(pass: ^u8, vertex_count: u32,
+    instance_count: u32, first_vertex: u32, first_instance: u32)
+wgpuRenderPassEncoderEnd  :: extern fn(pass: ^u8)
+wgpuCommandEncoderFinish  :: extern fn(encoder: ^u8, descriptor: ^u8) -> ^u8
+wgpuQueueSubmit           :: extern fn(queue: ^u8, count: u64,
+    commands: ^^u8)
+wgpuSurfacePresent        :: extern fn(surface: ^u8) -> u32
+
+// ---------------------------------------------------------------------------
+// Handing the adapter and the device back out of their callbacks
+// ---------------------------------------------------------------------------
+
+// wgpu answers asynchronously even when the answer is already known, so the
+// callback writes what it was given into a slot this program owns and the
+// caller pumps until the slot fills. `userdata1` is that slot's address.
+Slot :: struct { handle: ^u8, ready: i64 }
+
+fill_slot :: fn(status: u32, handle: ^u8, message: ^u8, userdata1: ^u8,
+    userdata2: ^u8) {
+    unsafe {
+        slot := ptr_cast($Slot, userdata1)
+        if (status == REQUEST_SUCCESS) {
+            slot^.handle = handle
+        }
+        slot^.ready = 1
+    }
+}
+
+// C's NULL. `ptr_cast` reinterprets an integer as an address, so the null
+// pointer is the zero address and nothing in the language needs to know it is
+// special. Reading through it is refused the same as any other raw pointer.
+null :: fn() -> ^u8 {
+    zero := 0
+    unsafe { ptr_cast($u8, zero) }
+}
+
+// The shader. Position and colour come from the vertex index, so the triangle
+// needs no vertex buffer and no bind group.
+SHADER :: "
+struct VertexOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) colour: vec3<f32>,
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) index: u32) -> VertexOut {
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>( 0.0,  0.5),
+        vec2<f32>(-0.5, -0.5),
+        vec2<f32>( 0.5, -0.5),
+    );
+    var colours = array<vec3<f32>, 3>(
+        vec3<f32>(1.0, 0.2, 0.2),
+        vec3<f32>(0.2, 1.0, 0.4),
+        vec3<f32>(0.3, 0.4, 1.0),
+    );
+    var out: VertexOut;
+    out.position = vec4<f32>(positions[index], 0.0, 1.0);
+    out.colour = colours[index];
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(in.colour, 1.0);
+}
+"
+
+WIDTH  :: 960
+HEIGHT :: 540
+
+main :: fn() -> i64 {
+    if (unsafe { SDL_Init(INIT_VIDEO) } == false) {
+        print 0
+        return 1
+    }
+    window := unsafe { SDL_CreateWindow("Frost triangle", WIDTH, HEIGHT, 0) }
+
+    properties := unsafe { SDL_GetWindowProperties(window) }
+    hwnd := unsafe {
+        SDL_GetPointerProperty(properties, "SDL.window.win32.hwnd",
+            null())
+    }
+
+    instance := unsafe { wgpuCreateInstance(null()) }
+    if (instance == null()) { return 21 }
+
+    // The surface, chained off the platform window handle.
+    mut source : SurfaceSourceWindowsHWND = SurfaceSourceWindowsHWND {
+        chain = Chained {
+            next = null(),
+            stype = STYPE_SURFACE_SOURCE_WINDOWS_HWND,
+        },
+        hinstance = null(),
+        hwnd = hwnd,
+    }
+    mut surface_descriptor : SurfaceDescriptor = SurfaceDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, ptr_to(source)) },
+        label = StringView { data = "surface", length = 7 },
+    }
+    surface := unsafe {
+        wgpuInstanceCreateSurface(instance, ptr_to(surface_descriptor))
+    }
+    if (surface == null()) { return 22 }
+    if (hwnd == null()) { return 23 }
+
+    // The adapter.
+    mut adapter_slot : Slot = Slot { handle = null(), ready = 0 }
+    mut adapter_info : RequestAdapterCallbackInfo = RequestAdapterCallbackInfo {
+        next_in_chain = null(),
+        mode = CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
+        callback = fill_slot,
+        userdata1 = unsafe { ptr_cast($u8, ptr_to(adapter_slot)) },
+        userdata2 = null(),
+    }
+    // The adapter has to be chosen knowing which surface it will draw to, or
+    // it may be one this surface cannot use, and the surface only says so when
+    // it is asked for its capabilities.
+    mut adapter_options : RequestAdapterOptions = RequestAdapterOptions {
+        next_in_chain = null(),
+        feature_level = FEATURE_LEVEL_CORE,
+        power_preference = 0,
+        force_fallback_adapter = 0,
+        backend_type = 0,
+        compatible_surface = surface,
+    }
+    unsafe {
+        wgpuInstanceRequestAdapter(instance, ptr_to(adapter_options),
+            ptr_to(adapter_info))
+    }
+    mut adapter_spins : i64 = 0
+    while (adapter_slot.ready == 0 && adapter_spins < 2000000) {
+        unsafe { wgpuInstanceProcessEvents(instance) }
+        adapter_spins = adapter_spins + 1
+    }
+    if (adapter_slot.ready == 0) { return 11 }
+    adapter := adapter_slot.handle
+    if (adapter == null()) { return 24 }
+
+    // The device.
+    mut device_slot : Slot = Slot { handle = null(), ready = 0 }
+    mut device_info : RequestDeviceCallbackInfo = RequestDeviceCallbackInfo {
+        next_in_chain = null(),
+        mode = CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
+        callback = fill_slot,
+        userdata1 = unsafe { ptr_cast($u8, ptr_to(device_slot)) },
+        userdata2 = null(),
+    }
+    unsafe {
+        wgpuAdapterRequestDevice(adapter,
+            null(), ptr_to(device_info))
+    }
+    mut device_spins : i64 = 0
+    while (device_slot.ready == 0 && device_spins < 2000000) {
+        unsafe { wgpuInstanceProcessEvents(instance) }
+        device_spins = device_spins + 1
+    }
+    if (device_slot.ready == 0) { return 12 }
+    device := device_slot.handle
+    if (device == null()) { return 25 }
+    queue := unsafe { wgpuDeviceGetQueue(device) }
+
+    // The swapchain. The format comes from the surface rather than from a
+    // guess, because which formats a surface accepts is a property of the
+    // driver and the window, not of the API.
+    mut capabilities : SurfaceCapabilities = SurfaceCapabilities {
+        next_in_chain = null(),
+        usages = 0,
+        format_count = 0,
+        formats = unsafe { ptr_cast($u32, null()) },
+        present_mode_count = 0,
+        present_modes = unsafe { ptr_cast($u32, null()) },
+        alpha_mode_count = 0,
+        alpha_modes = unsafe { ptr_cast($u32, null()) },
+    }
+    capability_status := unsafe {
+        wgpuSurfaceGetCapabilities(surface, adapter, ptr_to(capabilities))
+    }
+    if (capability_status != 1) { return 30 }
+    if (capabilities.format_count == 0) { return 31 }
+    surface_format := unsafe { capabilities.formats[0] }
+
+    mut configuration : SurfaceConfiguration = SurfaceConfiguration {
+        next_in_chain = null(),
+        device = device,
+        format = surface_format,
+        usage = TEXTURE_USAGE_RENDER_ATTACHMENT,
+        width = WIDTH,
+        height = HEIGHT,
+        view_format_count = 0,
+        view_formats = null(),
+        alpha_mode = COMPOSITE_ALPHA_AUTO,
+        present_mode = PRESENT_MODE_FIFO,
+    }
+    unsafe { wgpuSurfaceConfigure(surface, ptr_to(configuration)) }
+
+    // The shader, chained off the module descriptor as WGSL source.
+    mut wgsl : ShaderSourceWGSL = ShaderSourceWGSL {
+        chain = Chained {
+            next = null(),
+            stype = STYPE_SHADER_SOURCE_WGSL,
+        },
+        code = StringView { data = SHADER, length = str_len(SHADER) },
+    }
+    mut module_descriptor : ShaderModuleDescriptor = ShaderModuleDescriptor {
+        next_in_chain = unsafe { ptr_cast($u8, ptr_to(wgsl)) },
+        label = StringView { data = "triangle", length = 8 },
+    }
+    shader := unsafe {
+        wgpuDeviceCreateShaderModule(device, ptr_to(module_descriptor))
+    }
+
+    // The pipeline.
+    mut target : ColorTargetState = ColorTargetState {
+        next_in_chain = null(),
+        format = surface_format,
+        blend = null(),
+        write_mask = COLOR_WRITE_MASK_ALL,
+    }
+    mut fragment : FragmentState = FragmentState {
+        next_in_chain = null(),
+        module = shader,
+        entry_point = StringView { data = "fs_main", length = 7 },
+        constant_count = 0,
+        constants = null(),
+        target_count = 1,
+        targets = unsafe { ptr_to(target) },
+    }
+    mut pipeline_descriptor : RenderPipelineDescriptor =
+        RenderPipelineDescriptor {
+            next_in_chain = null(),
+            label = StringView { data = "triangle", length = 8 },
+            layout = null(),
+            vertex = VertexState {
+                next_in_chain = null(),
+                module = shader,
+                entry_point = StringView { data = "vs_main", length = 7 },
+                constant_count = 0,
+                constants = null(),
+                buffer_count = 0,
+                buffers = null(),
+            },
+            primitive = PrimitiveState {
+                next_in_chain = null(),
+                topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+                strip_index_format = 0,
+                front_face = 0,
+                cull_mode = 0,
+                unclipped_depth = 0,
+            },
+            depth_stencil = null(),
+            multisample = MultisampleState {
+                next_in_chain = null(),
+                count = 1,
+                mask = 4294967295,
+                alpha_to_coverage_enabled = 0,
+            },
+            fragment = unsafe { ptr_to(fragment) },
+        }
+    pipeline := unsafe {
+        wgpuDeviceCreateRenderPipeline(device, ptr_to(pipeline_descriptor))
+    }
+
+    mut running : bool = true
+    while (running) {
+        mut event : Event = Event { bytes = [0; 128] }
+        while (unsafe { SDL_PollEvent(ptr_to(event.bytes[0])) }) {
+            if (event_kind(event) == EVENT_QUIT) {
+                running = false
+            }
+        }
+
+        mut frame : SurfaceTexture = SurfaceTexture {
+            next_in_chain = null(),
+            texture = null(),
+            status = 0,
+        }
+        unsafe { wgpuSurfaceGetCurrentTexture(surface, ptr_to(frame)) }
+        // A surface goes stale when the window changes under it. Skipping the
+        // frame is not enough, because nothing would ever make it fresh again
+        // and the window would stay black for good, so it is reconfigured
+        // before the frame is dropped.
+        if (frame.status != SURFACE_TEXTURE_SUCCESS_OPTIMAL
+            && frame.status != SURFACE_TEXTURE_SUCCESS_SUBOPTIMAL) {
+            unsafe { wgpuSurfaceConfigure(surface, ptr_to(configuration)) }
+        }
+        if (frame.status == SURFACE_TEXTURE_SUCCESS_OPTIMAL
+            || frame.status == SURFACE_TEXTURE_SUCCESS_SUBOPTIMAL) {
+            view := unsafe {
+                wgpuTextureCreateView(frame.texture,
+                    null())
+            }
+            encoder := unsafe {
+                wgpuDeviceCreateCommandEncoder(device,
+                    null())
+            }
+
+            mut attachment : RenderPassColorAttachment =
+                RenderPassColorAttachment {
+                    next_in_chain = unsafe {
+                        null()
+                    },
+                    view = view,
+                    depth_slice = 4294967295,
+                    resolve_target = unsafe {
+                        null()
+                    },
+                    load_op = LOAD_OP_CLEAR,
+                    store_op = STORE_OP_STORE,
+                    clear_value = Color {
+                        r = 0.05, g = 0.05, b = 0.08, a = 1.0
+                    },
+                }
+            mut pass_descriptor : RenderPassDescriptor = RenderPassDescriptor {
+                next_in_chain = null(),
+                label = StringView { data = "frame", length = 5 },
+                color_attachment_count = 1,
+                color_attachments = unsafe { ptr_to(attachment) },
+                depth_stencil_attachment = unsafe {
+                    null()
+                },
+                occlusion_query_set = unsafe {
+                    null()
+                },
+                timestamp_writes = unsafe {
+                    null()
+                },
+            }
+
+            pass := unsafe {
+                wgpuCommandEncoderBeginRenderPass(encoder,
+                    ptr_to(pass_descriptor))
+            }
+            unsafe { wgpuRenderPassEncoderSetPipeline(pass, pipeline) }
+            unsafe { wgpuRenderPassEncoderDraw(pass, 3, 1, 0, 0) }
+            unsafe { wgpuRenderPassEncoderEnd(pass) }
+
+            mut command := unsafe {
+                wgpuCommandEncoderFinish(encoder,
+                    null())
+            }
+            unsafe { wgpuQueueSubmit(queue, 1, ptr_to(command)) }
+            unsafe { wgpuSurfacePresent(surface) }
+        }
+    }
+
+    unsafe { SDL_DestroyWindow(window) }
+    unsafe { SDL_Quit() }
+    0
+}
