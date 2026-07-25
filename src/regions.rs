@@ -270,6 +270,7 @@ impl<'a> Region<'a> {
                     self.check(body, false);
                 }
             }
+            Expression::Unsafe(body) => self.check(body, false),
             _ => {}
         }
     }
@@ -281,7 +282,7 @@ impl<'a> Region<'a> {
                 let Expression::Identifier(function) = callee.as_ref() else {
                     return false;
                 };
-                if function == "ptr_to" {
+                if function == "ptr_to" || function == "slice_from" {
                     return arguments
                         .iter()
                         .any(|argument| self.mentions_region(argument));
@@ -305,6 +306,17 @@ impl<'a> Region<'a> {
             }
             Expression::Unsafe(body) => block_value(body)
                 .is_some_and(|value| self.is_region_pointer(value)),
+            Expression::If(_, consequence, alternative) => {
+                let branches = [Some(consequence), alternative.as_ref()];
+                branches.into_iter().flatten().any(|block| {
+                    block_value(block)
+                        .is_some_and(|value| self.is_region_pointer(value))
+                })
+            }
+            Expression::Switch(_, cases) => cases.iter().any(|case| {
+                block_value(&case.body)
+                    .is_some_and(|value| self.is_region_pointer(value))
+            }),
             _ => false,
         }
     }
@@ -476,6 +488,13 @@ impl Frame<'_> {
                         self.answers_here(block, last);
                     }
                 }
+                // An `unsafe` block is transparent here. `ptr_to` is refused
+                // outside one, so its statements are where a frame pointer is
+                // formed, bound and returned, and a walk that steps over the
+                // block never sees any of it.
+                Statement::Expression(Expression::Unsafe(body)) => {
+                    self.answers_here(body, last);
+                }
                 Statement::Expression(value)
                     if last && self.points_into_frame(value) =>
                 {
@@ -542,7 +561,10 @@ impl Frame<'_> {
                     "ptr_to" => {
                         arguments.iter().any(|place| self.rooted_here(place))
                     }
-                    "ptr_cast" => arguments
+                    // `ptr_cast` keeps pointing where it pointed, and
+                    // `slice_from` wraps a pointer in a length, so a slice
+                    // built over this frame is a view of it.
+                    "ptr_cast" | "slice_from" => arguments
                         .iter()
                         .any(|inner| self.points_into_frame(inner)),
                     // A registration holds its context for as long as it
@@ -557,6 +579,19 @@ impl Frame<'_> {
             }
             Expression::Unsafe(body) => block_value(body)
                 .is_some_and(|value| self.points_into_frame(value)),
+            // A block used as a value answers with whichever branch runs, so
+            // the frame escapes if any of them hands one back.
+            Expression::If(_, consequence, alternative) => {
+                let branches = [Some(consequence), alternative.as_ref()];
+                branches.into_iter().flatten().any(|block| {
+                    block_value(block)
+                        .is_some_and(|value| self.points_into_frame(value))
+                })
+            }
+            Expression::Switch(_, cases) => cases.iter().any(|case| {
+                block_value(&case.body)
+                    .is_some_and(|value| self.points_into_frame(value))
+            }),
             _ => false,
         }
     }
