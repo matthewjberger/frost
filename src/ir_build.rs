@@ -5697,9 +5697,21 @@ impl<'a> FunctionLowering<'a> {
                         else_block: next_block,
                     });
                 }
-                Pattern::Tuple(_) => {
+                // A tuple pattern matches a tuple, which `lower_tuple_match`
+                // above has already taken. Reaching here means the pattern has
+                // parts and the value being matched does not, so this is a
+                // mismatch to report rather than a feature to miss.
+                Pattern::Tuple(patterns) => {
+                    let parts = patterns.len();
+                    let described = match (&enum_name, &scalar) {
+                        (Some(name), _) => {
+                            crate::imports::demangle_private_names(name)
+                        }
+                        (None, Some((_, ty))) => ty.to_string(),
+                        (None, None) => "the matched value".to_string(),
+                    };
                     bail!(
-                        "native backend: tuple patterns are not supported yet"
+                        "a `case` of {parts} parts matches a tuple, and this match is on '{described}', which has none; match on `(a, b)` to compare several values at once"
                     );
                 }
             }

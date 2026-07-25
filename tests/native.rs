@@ -706,6 +706,52 @@ main :: fn() -> i64 {
 }
 "#;
 
+// Matching several values at once against a tuple of patterns. This has always
+// worked; what did not was the message when a tuple pattern met a value that is
+// not one, which said the feature was missing rather than that the case had
+// parts the value does not.
+const TUPLE_PATTERNS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+label :: fn(n: i64) -> i64 {
+    match (n % 3, n % 5) {
+        case (0, 0): 15
+        case (0, _): 3
+        case (_, 0): 5
+        case _: 0
+    }
+}
+
+main :: fn() -> i64 {
+    printf("%lld\n", label(15))
+    printf("%lld\n", label(9))
+    printf("%lld\n", label(10))
+    printf("%lld\n", label(7))
+    0
+}
+"#;
+
+#[test]
+fn a_match_compares_several_values_at_once() {
+    let Some(output) = compile_and_run("tuplepat", TUPLE_PATTERNS) else {
+        return;
+    };
+    assert_eq!(output, "15\n3\n5\n0\n");
+}
+
+#[test]
+fn a_tuple_case_on_a_scalar_says_what_is_wrong() {
+    let source = "main :: fn() -> i64 {\n\
+                  \x20   x := 4\n\
+                  \x20   match x { case (0, 0): 1  case _: 2 }\n\
+                  }\n";
+    let message = compile_error("tuplescalar", source);
+    assert!(
+        message.contains("matches a tuple") && message.contains("'i64'"),
+        "expected the mismatch to name the type, got:\n{message}"
+    );
+}
+
 // A statement ends at the line break, so a `(` starting the next line begins a
 // new statement rather than calling what came before it. It used to bind to the
 // left, so a function whose body ended in a parenthesised expression after an
@@ -7365,6 +7411,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_structfail", STRUCT_FAILURE_TYPE),
         ("diff_printnarrow", PRINT_NARROW_VALUES),
         ("diff_parenstmt", PARENTHESISED_STATEMENT),
+        ("diff_tuplepat", TUPLE_PATTERNS),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
