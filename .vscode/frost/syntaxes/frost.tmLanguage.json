@@ -1,0 +1,234 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Frost",
+  "scopeName": "source.frost",
+  "fileTypes": ["frost"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#declarations" },
+    { "include": "#numbers" },
+    { "include": "#type-parameters" },
+    { "include": "#keywords" },
+    { "include": "#builtin-functions" },
+    { "include": "#builtin-types" },
+    { "include": "#enum-variants" },
+    { "include": "#constants" },
+    { "include": "#types" },
+    { "include": "#function-calls" },
+    { "include": "#members" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.frost",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.comment.begin.frost" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.comment.end.frost" }
+          }
+        },
+        {
+          "name": "comment.line.double-slash.frost",
+          "match": "(//).*$",
+          "captures": {
+            "1": { "name": "punctuation.definition.comment.frost" }
+          }
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.frost",
+      "begin": "\"",
+      "end": "\"|$",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.string.begin.frost" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.string.end.frost" }
+      },
+      "patterns": [
+        {
+          "name": "constant.character.escape.frost",
+          "match": "\\\\[ntr0\\\\\"']"
+        },
+        {
+          "name": "invalid.illegal.unknown-escape.frost",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "comment": "name :: fn, with the extern / safe / inline markers before it. A declaration head opens its line, which is what tells it from the Type::Variant below",
+          "match": "^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(::)(?=\\s*(?:safe\\s+|extern\\s+|inline\\s+)*fn\\b)",
+          "captures": {
+            "1": { "name": "entity.name.function.frost" },
+            "2": { "name": "keyword.operator.declaration.frost" }
+          }
+        },
+        {
+          "comment": "name :: struct / enum / type / distinct",
+          "match": "^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(::)(?=\\s*(?:linear\\s+|distinct\\s+)*(?:struct|enum|type)\\b)",
+          "captures": {
+            "1": { "name": "entity.name.type.frost" },
+            "2": { "name": "keyword.operator.declaration.frost" }
+          }
+        },
+        {
+          "comment": "Type::Variant, constructing an enum value. Written tight, where a declaration head is spaced, which is what tells the two apart when the construction opens a line",
+          "match": "\\b([A-Z][A-Za-z0-9_]*)(::)([A-Z][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "1": { "name": "entity.name.type.frost" },
+            "2": { "name": "keyword.operator.frost" },
+            "3": { "name": "variable.other.enummember.frost" }
+          }
+        },
+        {
+          "comment": "name :: expr, a constant",
+          "match": "^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s+(::)",
+          "captures": {
+            "1": { "name": "variable.other.constant.frost" },
+            "2": { "name": "keyword.operator.declaration.frost" }
+          }
+        },
+        {
+          "comment": "name := expr, a local binding",
+          "match": "\\b(mut\\s+)?([a-z_][A-Za-z0-9_]*)\\s*(:=)",
+          "captures": {
+            "1": { "name": "storage.modifier.frost" },
+            "2": { "name": "variable.other.frost" },
+            "3": { "name": "keyword.operator.declaration.frost" }
+          }
+        },
+        {
+          "comment": "the (old as new) rename form on an export line",
+          "match": "(\\()\\s*([A-Za-z_][A-Za-z0-9_]*)\\s+(as)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(\\))",
+          "captures": {
+            "2": { "name": "variable.other.frost" },
+            "3": { "name": "keyword.control.import.frost" },
+            "4": { "name": "variable.other.frost" }
+          }
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.frost",
+          "match": "\\b[0-9]+\\.[0-9]+(f32|f)?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.frost",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "type-parameters": {
+      "comment": "$T in a declaration, $i64 or $Point at a call site, $f for a function argument",
+      "match": "(\\$)([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.operator.generic.frost" },
+        "2": { "name": "entity.name.type.parameter.frost" }
+      }
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.frost",
+          "match": "\\b(if|else|match|case|while|for|in|break|continue|return|defer|with)\\b"
+        },
+        {
+          "name": "keyword.control.import.frost",
+          "match": "\\b(import)\\b"
+        },
+        {
+          "name": "keyword.control.import.frost",
+          "match": "\\b(export)\\b(?=\\s+[A-Za-z_(])"
+        },
+        {
+          "name": "keyword.other.test.frost",
+          "match": "\\b(test)\\b(?=\\s*\")"
+        },
+        {
+          "name": "storage.type.frost",
+          "match": "\\b(fn|struct|enum|type)\\b"
+        },
+        {
+          "name": "storage.modifier.frost",
+          "match": "\\b(mut|move|ref|linear|distinct|extern|safe|inline|unsafe|uses)\\b"
+        },
+        {
+          "name": "keyword.other.frost",
+          "match": "\\b(print|sizeof)\\b"
+        },
+        {
+          "name": "constant.language.boolean.frost",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "variable.language.wildcard.frost",
+          "match": "\\b_\\b"
+        }
+      ]
+    },
+    "builtin-functions": {
+      "comment": "the primitives the compiler provides rather than the standard library",
+      "name": "support.function.builtin.frost",
+      "match": "\\b(ptr_to|ptr_cast|slice_from|slice_len)\\b"
+    },
+    "builtin-types": {
+      "patterns": [
+        {
+          "name": "support.type.primitive.frost",
+          "match": "\\b(i8|i16|i32|i64|isize|u8|u16|u32|u64|usize|f32|f64|bool|str|void)\\b"
+        },
+        {
+          "name": "support.type.frost",
+          "match": "\\b(Type|Handle|columns)\\b"
+        }
+      ]
+    },
+    "enum-variants": {
+      "comment": "case .Nothing, case .Just { value }, and .Variant construction",
+      "match": "(\\.)([A-Z][A-Za-z0-9_]*)\\b",
+      "captures": {
+        "1": { "name": "punctuation.accessor.frost" },
+        "2": { "name": "variable.other.enummember.frost" }
+      }
+    },
+    "constants": {
+      "comment": "SCREAMING_CASE, two characters or more so a single-letter type parameter is still a type",
+      "name": "variable.other.constant.frost",
+      "match": "\\b[A-Z][A-Z0-9_]*[A-Z0-9]\\b"
+    },
+    "types": {
+      "comment": "types are the capitalized names, functions and bindings the lowercase ones",
+      "name": "entity.name.type.frost",
+      "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+    },
+    "function-calls": {
+      "match": "\\b(?!(?:if|else|match|case|while|for|in|break|continue|return|defer|with|fn|struct|enum|type|mut|move|ref|linear|distinct|extern|safe|inline|unsafe|uses|print|sizeof|true|false|import|export|test)\\b)([a-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "captures": {
+        "1": { "name": "entity.name.function.frost" }
+      }
+    },
+    "members": {
+      "match": "(\\.)([a-z_][A-Za-z0-9_]*)\\b",
+      "captures": {
+        "1": { "name": "punctuation.accessor.frost" },
+        "2": { "name": "variable.other.member.frost" }
+      }
+    },
+    "operators": {
+      "name": "keyword.operator.frost",
+      "match": "->|::|:=|\\.\\.=|\\.\\.|==|!=|<=|>=|&&|\\|\\||<<|>>|[-+*/%^&|!<>=?]"
+    }
+  }
+}

@@ -54,6 +54,46 @@ uninstall-hooks:
 uninstall-hooks:
     rm -f .git/hooks/pre-commit
 
+# Prints where this VS Code keeps its extensions, portable installs included (Windows)
+[windows]
+editor-dir:
+    @$cli = Get-Command code -ErrorAction SilentlyContinue; if (-not $cli) { throw "code is not on PATH" }; $root = Split-Path (Split-Path $cli.Source -Parent) -Parent; if (Test-Path "$root\data\extensions") { "$root\data\extensions" } else { "$env:USERPROFILE\.vscode\extensions" }
+
+# Prints where this VS Code keeps its extensions, portable installs included (Unix)
+[unix]
+editor-dir:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    CLI=$(command -v code) || { echo "code is not on PATH" >&2; exit 1; }
+    ROOT=$(dirname "$(dirname "$(readlink -f "$CLI")")")
+    if [ -d "$ROOT/data/extensions" ]; then echo "$ROOT/data/extensions"; else echo "$HOME/.vscode/extensions"; fi
+
+# Install the VS Code syntax highlighting for .frost files (Windows)
+[windows]
+install-editor:
+    $dir = just editor-dir; $target = Join-Path $dir "frost"; New-Item -ItemType Directory -Force $dir | Out-Null; Remove-Item -Recurse -Force $target -ErrorAction Ignore; Copy-Item -Recurse -Force .vscode\frost $target; Write-Host "Installed to $target. Reload the VS Code window to pick it up." -ForegroundColor Green
+
+# Install the VS Code syntax highlighting for .frost files (Unix)
+[unix]
+install-editor:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    DIR=$(just editor-dir)
+    mkdir -p "$DIR"
+    rm -rf "$DIR/frost"
+    ln -s "$PWD/.vscode/frost" "$DIR/frost"
+    echo "Linked $DIR/frost. Reload the VS Code window to pick it up."
+
+# Remove the VS Code syntax highlighting for .frost files (Windows)
+[windows]
+uninstall-editor:
+    $dir = just editor-dir; Remove-Item -Recurse -Force (Join-Path $dir "frost") -ErrorAction Ignore
+
+# Remove the VS Code syntax highlighting for .frost files (Unix)
+[unix]
+uninstall-editor:
+    rm -rf "$(just editor-dir)/frost"
+
 # Runs linter and displays warnings
 lint:
     cargo clippy --all --tests -- -D warnings

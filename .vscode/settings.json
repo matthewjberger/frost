@@ -1,0 +1,14 @@
+{
+  // Highlighting for .frost comes from the grammar in .vscode/frost, which has
+  // to be installed once per machine. See .vscode/README.md, or run
+  // `just install-editor`.
+  "files.associations": {
+    "*.frost": "frost"
+  },
+  "[frost]": {
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    "editor.detectIndentation": false,
+    "editor.rulers": [80]
+  }
+}

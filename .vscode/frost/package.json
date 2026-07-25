@@ -1,0 +1,36 @@
+{
+  "name": "frost",
+  "displayName": "Frost",
+  "description": "Syntax highlighting for the Frost language",
+  "version": "0.1.0",
+  "publisher": "frost-lang",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "frost",
+        "aliases": [
+          "Frost",
+          "frost"
+        ],
+        "extensions": [
+          ".frost"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "frost",
+        "scopeName": "source.frost",
+        "path": "./syntaxes/frost.tmLanguage.json"
+      }
+    ]
+  }
+}
