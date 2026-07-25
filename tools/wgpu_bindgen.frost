@@ -266,6 +266,209 @@ append_type :: fn(mut out: Builder, mut document: Json, holder: i64) {
 // Emitters
 // ---------------------------------------------------------------------------
 
+// The IDL's own constants, the sentinels descriptors default to.
+emit_constants :: fn(mut out: Builder, mut names: Builder,
+    mut document: Json, root: i64) -> i64 {
+    constants := json_member(document, root, "constants")
+    total := json_count(document, constants)
+    mut index : i64 = 0
+    while (index < total) {
+        each := json_at(document, constants, index)
+        name := json_member(document, each, "name")
+        value := json_member(document, each, "value")
+        append_screaming(out, document, name)
+        append_screaming(names, document, name)
+        builder_str_value(names, ", ")
+        builder_str_value(out, " :: ")
+        if (json_text_eq(document, value, "uint32_max")) {
+            builder_str_value(out, "4294967295")
+        } else {
+            // uint64_max, usize_max and nan all land on what an i64 can hold.
+            builder_str_value(out, "9223372036854775807")
+        }
+        builder_byte(out, 10)
+        index = index + 1
+    }
+    builder_byte(out, 10)
+    total
+}
+
+// The value a member takes when a literal does not name it. The IDL says so
+// for ninety of them, including the non-zero sentinels a hand written literal
+// gets wrong. The rest are the zero of their type.
+append_default :: fn(mut out: Builder, mut document: Json, held: i64) {
+    kind := json_member(document, held, "type")
+    given := json_member(document, held, "default")
+
+    if (given >= 0) {
+        if (json_kind(document, given) == JSON_NUMBER) {
+            builder_int(out, json_number(document, given))
+            return
+        }
+        if (json_kind(document, given) == JSON_TRUE) {
+            builder_int(out, 1)
+            return
+        }
+        if (json_kind(document, given) == JSON_FALSE) {
+            builder_int(out, 0)
+            return
+        }
+        if (type_starts(document, given, "constant.")) {
+            append_after_dot_screaming(out, document, given)
+            return
+        }
+        // Otherwise it names an entry of this member's own enum or bitflag.
+        if (type_starts(document, kind, "enum.")
+            || type_starts(document, kind, "bitflag.")) {
+            append_after_dot_screaming(out, document, kind)
+            builder_byte(out, 95)
+            append_screaming(out, document, given)
+            return
+        }
+        // A struct member's named default is `zero`, which is what its own
+        // initialiser already means, so the name is ignored and the struct is
+        // built rather than assigned an integer.
+        if (type_starts(document, kind, "struct.")) {
+            if (json_member(document, held, "pointer") >= 0) {
+                builder_str_value(out, "unsafe { ptr_cast($u8, zero) }")
+            } else {
+                append_after_dot_snake(out, document, kind)
+                builder_str_value(out, "_init()")
+            }
+            return
+        }
+        builder_int(out, 0)
+        return
+    }
+
+    if (type_starts(document, kind, "string")
+        || type_starts(document, kind, "out_string")
+        || type_starts(document, kind, "nullable_string")) {
+        builder_str_value(out, "StringView { data = unsafe { ptr_cast($i8, zero) }, length = 0 }")
+        return
+    }
+    if (type_starts(document, kind, "struct.")) {
+        if (json_member(document, held, "pointer") >= 0) {
+            builder_str_value(out, "unsafe { ptr_cast($u8, zero) }")
+        } else {
+            append_after_dot_snake(out, document, kind)
+            builder_str_value(out, "_init()")
+        }
+        return
+    }
+    if (type_starts(document, kind, "object.")
+        || type_starts(document, kind, "callback.")
+        || type_starts(document, kind, "array<")
+        || json_text_eq(document, kind, "c_void")) {
+        builder_str_value(out, "unsafe { ptr_cast($u8, zero) }")
+        return
+    }
+    if (json_text_eq(document, kind, "float32")
+        || json_text_eq(document, kind, "float64")) {
+        builder_str_value(out, "0.0")
+        return
+    }
+    builder_int(out, 0)
+}
+
+// The part after the dot, in SCREAMING_CASE.
+append_after_dot_screaming :: fn(mut out: Builder, mut document: Json,
+    node: i64) {
+    off := json_text_off(document, node)
+    length := json_text_len(document, node)
+    source := document.source
+    mut start : i64 = 0
+    mut index : i64 = 0
+    while (index < length) {
+        if (source[off + index] == 46) {
+            start = index + 1
+        }
+        index = index + 1
+    }
+    index = start
+    while (index < length) {
+        byte := source[off + index]
+        if (byte >= 97 && byte <= 122) {
+            builder_byte(out, byte - 32)
+        } else {
+            builder_byte(out, byte)
+        }
+        index = index + 1
+    }
+}
+
+// The same, left in snake_case.
+append_after_dot_snake :: fn(mut out: Builder, mut document: Json, node: i64) {
+    off := json_text_off(document, node)
+    length := json_text_len(document, node)
+    source := document.source
+    mut start : i64 = 0
+    mut index : i64 = 0
+    while (index < length) {
+        if (source[off + index] == 46) {
+            start = index + 1
+        }
+        index = index + 1
+    }
+    index = start
+    while (index < length) {
+        builder_byte(out, source[off + index])
+        index = index + 1
+    }
+}
+
+// One initialiser per struct, so a literal names only the fields it means.
+emit_inits :: fn(mut out: Builder, mut names: Builder, mut document: Json,
+    root: i64) -> i64 {
+    structs := json_member(document, root, "structs")
+    total := json_count(document, structs)
+    mut index : i64 = 0
+    while (index < total) {
+        each := json_at(document, structs, index)
+        name := json_member(document, each, "name")
+        kind := json_member(document, each, "type")
+
+        append_snake(out, document, name)
+        builder_str_value(out, "_init :: fn() -> ")
+        append_pascal(out, document, name)
+        builder_str_value(out, " {\n    zero := 0\n    ")
+        append_pascal(out, document, name)
+        builder_str_value(out, " {\n")
+
+        append_snake(names, document, name)
+        builder_str_value(names, "_init, ")
+
+        if (json_text_eq(document, kind, "extensible")) {
+            builder_str_value(out, "        next_in_chain = unsafe { ptr_cast($u8, zero) },\n")
+        }
+        if (json_text_eq(document, kind, "extension")) {
+            builder_str_value(out, "        chain = Chained { next = unsafe { ptr_cast($u8, zero) }, stype = 0 },\n")
+        }
+        members := json_member(document, each, "members")
+        count := json_count(document, members)
+        mut member : i64 = 0
+        while (member < count) {
+            held := json_at(document, members, member)
+            member_name := json_member(document, held, "name")
+            member_type := json_member(document, held, "type")
+            if (type_starts(document, member_type, "array<")) {
+                builder_str_value(out, "        ")
+                append_member_name(out, document, member_name)
+                builder_str_value(out, "_count = 0,\n")
+            }
+            builder_str_value(out, "        ")
+            append_member_name(out, document, member_name)
+            builder_str_value(out, " = ")
+            append_default(out, document, held)
+            builder_str_value(out, ",\n")
+            member = member + 1
+        }
+        builder_str_value(out, "    }\n}\n\n")
+        index = index + 1
+    }
+    total
+}
+
 emit_enums :: fn(mut out: Builder, mut names: Builder,
     mut document: Json, root: i64) -> i64 {
     enums := json_member(document, root, "enums")
@@ -300,6 +503,73 @@ emit_enums :: fn(mut out: Builder, mut names: Builder,
     total
 }
 
+// Whether two JSON string nodes hold the same text.
+text_same :: fn(mut document: Json, left: i64, right: i64) -> bool {
+    left_len := json_text_len(document, left)
+    if (left_len != json_text_len(document, right)) {
+        return false
+    }
+    left_off := json_text_off(document, left)
+    right_off := json_text_off(document, right)
+    source := document.source
+    mut index : i64 = 0
+    while (index < left_len) {
+        if (source[left_off + index] != source[right_off + index]) {
+            return false
+        }
+        index = index + 1
+    }
+    true
+}
+
+// The value of one bitflag entry.
+//
+// The first entry is the empty set. An entry naming others in
+// `value_combination` is their union, which is how `all` is spelled. Every
+// other entry takes the next single bit, and a combination does not consume
+// one, so the bit a name gets depends on how many plain entries precede it.
+bitflag_value :: fn(mut document: Json, entries: i64, wanted: i64) -> i64 {
+    if (wanted == 0) {
+        return 0
+    }
+    entry := json_at(document, entries, wanted)
+    combination := json_member(document, entry, "value_combination")
+    if (combination >= 0) {
+        mut total : i64 = 0
+        mut piece : i64 = 0
+        pieces := json_count(document, combination)
+        while (piece < pieces) {
+            named := json_at(document, combination, piece)
+            total = total | named_value(document, entries, named)
+            piece = piece + 1
+        }
+        return total
+    }
+    mut bit : i64 = 0
+    mut index : i64 = 1
+    while (index < wanted) {
+        each := json_at(document, entries, index)
+        if (json_member(document, each, "value_combination") < 0) {
+            bit = bit + 1
+        }
+        index = index + 1
+    }
+    shift_left(bit)
+}
+
+named_value :: fn(mut document: Json, entries: i64, name: i64) -> i64 {
+    total := json_count(document, entries)
+    mut index : i64 = 0
+    while (index < total) {
+        each := json_at(document, entries, index)
+        if (text_same(document, json_member(document, each, "name"), name)) {
+            return bitflag_value(document, entries, index)
+        }
+        index = index + 1
+    }
+    0
+}
+
 emit_bitflags :: fn(mut out: Builder, mut names: Builder,
     mut document: Json, root: i64) -> i64 {
     flags := json_member(document, root, "bitflags")
@@ -322,12 +592,7 @@ emit_bitflags :: fn(mut out: Builder, mut names: Builder,
             append_screaming(names, document, entry_name)
             builder_str_value(names, ", ")
             builder_str_value(out, " :: ")
-            // The first entry is the empty set and the rest are single bits.
-            if (entry == 0) {
-                builder_int(out, 0)
-            } else {
-                builder_int(out, shift_left(entry - 1))
-            }
+            builder_int(out, bitflag_value(document, entries, entry))
             builder_byte(out, 10)
             entry = entry + 1
         }
@@ -392,6 +657,113 @@ emit_structs :: fn(mut out: Builder, mut names: Builder,
             member = member + 1
         }
         builder_str_value(out, "}\n\n")
+        index = index + 1
+    }
+    total
+}
+
+
+// A callback's info struct is not in the IDL's `structs`. The header derives
+// one per callback, so this does too: the chain pointer, when the callback may
+// fire, the function itself, and two userdata slots C hands back untouched.
+//
+// The function field is written as a function type rather than a pointer so a
+// Frost function can be assigned to it directly. Its arguments are the
+// callback's own, then the two userdata pointers. A string argument arrives as
+// a WGPUStringView by value, which on this ABI reaches the callee as a pointer
+// and so occupies one argument slot.
+emit_callback_infos :: fn(mut out: Builder, mut names: Builder,
+    mut document: Json, root: i64) -> i64 {
+    callbacks := json_member(document, root, "callbacks")
+    total := json_count(document, callbacks)
+    mut index : i64 = 0
+    while (index < total) {
+        each := json_at(document, callbacks, index)
+        name := json_member(document, each, "name")
+
+        append_pascal(out, document, name)
+        builder_str_value(out, "CallbackInfo :: struct {
+")
+        append_pascal(names, document, name)
+        builder_str_value(names, "CallbackInfo, ")
+        builder_str_value(out, "    next_in_chain: ^u8,
+")
+        builder_str_value(out, "    mode: u32,
+")
+        builder_str_value(out, "    callback: fn(")
+
+        args := json_member(document, each, "args")
+        count := json_count(document, args)
+        mut arg : i64 = 0
+        while (arg < count) {
+            held := json_at(document, args, arg)
+            kind := json_member(document, held, "type")
+            // By value a StringView is two words, which this ABI hands to the
+            // callee as a pointer to a copy. As a parameter it is therefore
+            // one pointer, not the struct.
+            if (type_starts(document, kind, "string")
+                || type_starts(document, kind, "out_string")
+                || type_starts(document, kind, "nullable_string")) {
+                builder_str_value(out, "^u8")
+            } else {
+                append_type(out, document, held)
+            }
+            builder_str_value(out, ", ")
+            arg = arg + 1
+        }
+        builder_str_value(out, "^u8, ^u8),
+")
+        builder_str_value(out, "    userdata1: ^u8,
+")
+        builder_str_value(out, "    userdata2: ^u8,
+")
+        builder_str_value(out, "}
+
+")
+        index = index + 1
+    }
+    total
+}
+
+// The handful of functions that belong to no object, `wgpuCreateInstance`
+// among them.
+emit_free_functions :: fn(mut out: Builder, mut names: Builder,
+    mut document: Json, root: i64) -> i64 {
+    functions := json_member(document, root, "functions")
+    total := json_count(document, functions)
+    mut index : i64 = 0
+    while (index < total) {
+        each := json_at(document, functions, index)
+        name := json_member(document, each, "name")
+
+        builder_str_value(out, "wgpu")
+        append_pascal(out, document, name)
+        builder_str_value(names, "wgpu")
+        append_pascal(names, document, name)
+        builder_str_value(names, ", ")
+        builder_str_value(out, " :: extern fn(")
+
+        args := json_member(document, each, "args")
+        count := json_count(document, args)
+        mut arg : i64 = 0
+        while (arg < count) {
+            held := json_at(document, args, arg)
+            if (arg > 0) {
+                builder_str_value(out, ", ")
+            }
+            append_member_name(out, document, json_member(document, held, "name"))
+            builder_str_value(out, ": ")
+            append_type(out, document, held)
+            arg = arg + 1
+        }
+        builder_byte(out, 41)
+
+        returns := json_member(document, each, "returns")
+        if (returns >= 0) {
+            builder_str_value(out, " -> ")
+            append_type(out, document, returns)
+        }
+        builder_byte(out, 10)
         index = index + 1
     }
     total
@@ -480,10 +852,14 @@ main :: fn() -> i64 {
     mut names := builder_new(65536)
     builder_str_value(names, "Chained, StringView, ")
 
+    constants := emit_constants(body, names, document, root)
     enums := emit_enums(body, names, document, root)
     flags := emit_bitflags(body, names, document, root)
     structs := emit_structs(body, names, document, root)
+    infos := emit_callback_infos(body, names, document, root)
     functions := emit_functions(body, names, document, root)
+    free_functions := emit_free_functions(body, names, document, root)
+    inits := emit_inits(body, names, document, root)
 
     // A module offers only what it exports, so the generated file names
     // everything it defined.
@@ -514,6 +890,10 @@ main :: fn() -> i64 {
     print flags
     print structs
     print functions
+    print infos
+    print free_functions
+    print constants
+    print inits
     print builder_len(out)
 
     builder_free(out)
