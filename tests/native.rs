@@ -1190,11 +1190,22 @@ label :: fn(n: i64) -> i64 {
     }
 }
 
+shape :: fn(a: i64, b: i64, c: i64) -> i64 {
+    match (a, b, c) {
+        case (1, 2, 3): 123
+        case (1, _, 3): 103
+        case _: 0
+    }
+}
+
 main :: fn() -> i64 {
     printf("%lld\n", label(15))
     printf("%lld\n", label(9))
     printf("%lld\n", label(10))
     printf("%lld\n", label(7))
+    printf("%lld\n", shape(1, 2, 3))
+    printf("%lld\n", shape(1, 9, 3))
+    printf("%lld\n", shape(4, 5, 6))
     0
 }
 "#;
@@ -1204,7 +1215,7 @@ fn a_match_compares_several_values_at_once() {
     let Some(output) = compile_and_run("tuplepat", TUPLE_PATTERNS) else {
         return;
     };
-    assert_eq!(output, "15\n3\n5\n0\n");
+    assert_eq!(output, "15\n3\n5\n0\n123\n103\n0\n");
 }
 
 #[test]
@@ -3265,6 +3276,59 @@ fn self_hosted_infers_a_literal_type() {
     };
     let _ = std::fs::remove_file(&input);
     let Some(via_c) = compile_c_and_run("shlit", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
+// The self-hosted compiler matches on several values too. It has no tuple type
+// and no tuple pattern of its own: each value is bound once and each arm is the
+// `and` of the tests its pattern names, so what runs is the chain of `if`s the
+// patterns stand for.
+const SELF_HOSTED_TUPLE_PATTERNS: &str = "label :: fn(n: i64) -> i64 {\n\
+     \x20   match (n % 3, n % 5) {\n\
+     \x20       case (0, 0): 15\n\
+     \x20       case (0, _): 3\n\
+     \x20       case (_, 0): 5\n\
+     \x20       case _: 0\n\
+     \x20   }\n\
+     }\n\
+     // An arm that names nothing runs when the value falls past every test.\n\
+     shape :: fn(a: i64, b: i64, c: i64) -> i64 {\n\
+     \x20   match (a, b, c) {\n\
+     \x20       case (1, 2, 3): 123\n\
+     \x20       case (1, _, 3): 103\n\
+     \x20       case _: 0\n\
+     \x20   }\n\
+     }\n\
+     main :: fn() -> i64 {\n\
+     \x20   print label(15)\n\
+     \x20   print label(9)\n\
+     \x20   print label(10)\n\
+     \x20   print label(7)\n\
+     \x20   print shape(1, 2, 3)\n\
+     \x20   print shape(1, 9, 3)\n\
+     \x20   print shape(4, 5, 6)\n\
+     \x20   0\n\
+     }\n";
+
+#[test]
+fn self_hosted_matches_several_values_at_once() {
+    let Some(output) =
+        selfhosted_native_output("shtuple", SELF_HOSTED_TUPLE_PATTERNS)
+    else {
+        return;
+    };
+    assert_eq!(output, "15\n3\n5\n0\n123\n103\n0\n");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shtuple_input.frost");
+    std::fs::write(&input, SELF_HOSTED_TUPLE_PATTERNS).unwrap();
+    let Some(c_source) = self_hosted_emits("shtuple", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shtuple", &c_source) else {
         return;
     };
     assert_eq!(via_c, output, "the self-hosted C backend disagrees");

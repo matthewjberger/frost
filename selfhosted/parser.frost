@@ -185,7 +185,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         seed := new_node(p, NodeKind::Num, 0, 0, 0)
         bind := new_let_node(p, seed, name_off, name_len, 0 - 1)
         chosen := parse_match(p)
-        assign_case_values(p, chosen, name_off, name_len)
+        assign_match_values(p, chosen, name_off, name_len)
         arena_push(p.pending, LocalVar { name_off = bind, name_len = chosen,
             ty = 0 })
         return new_named_node(p, NodeKind::Var, 0, name_off, name_len)
@@ -1309,6 +1309,45 @@ return_trailing_branches :: fn(mut p: Parser, body: i64) {
     return_block_tail(p, node.val)
 }
 
+// A match used where a value is wanted, whichever shape it took. A match on
+// one value is a NodeKind::Match with a case per arm; a match on several is the
+// chain of `if`s the tuple patterns stand for, so the arms are its branches.
+assign_match_values :: fn(mut p: Parser, chosen: i64, name_off: i64,
+    name_len: i64) {
+    node := arena_at(p.arena, chosen)
+    kind := node.kind
+    if (kind == NodeKind::Match) {
+        assign_case_values(p, chosen, name_off, name_len)
+        return
+    }
+    assign_chain_values(p, chosen, name_off, name_len)
+}
+
+// The last statement of every branch of an `if` chain, made into the answer it
+// already was. The chain's else is either another `if` or a block, so this is
+// the branching counterpart of assign_block_value.
+assign_chain_values :: fn(mut p: Parser, head: i64, name_off: i64,
+    name_len: i64) {
+    if (head == (0 - 1)) {
+        return
+    }
+    mut last := head
+    mut following := node_next(p, last)
+    while (following != (0 - 1)) {
+        last = following
+        following = node_next(p, last)
+    }
+    node := arena_at(p.arena, last)
+    if (node.kind == NodeKind::If) {
+        then_head := node.b
+        else_head := node.val
+        assign_chain_values(p, then_head, name_off, name_len)
+        assign_chain_values(p, else_head, name_off, name_len)
+        return
+    }
+    assign_block_value(p, last, name_off, name_len)
+}
+
 assign_case_values :: fn(mut p: Parser, match_node: i64, name_off: i64,
     name_len: i64) {
     node := arena_at(p.arena, match_node)
@@ -1334,8 +1373,137 @@ assign_case_values :: fn(mut p: Parser, match_node: i64, name_off: i64,
     }
 }
 
+// Whether what follows `match` is several values rather than one: a `(` with a
+// comma at its own depth before the `)` that closes it.
+match_is_tuple :: fn(mut p: Parser) -> bool {
+    if (cur(p) != TOK_LPAREN) {
+        return false
+    }
+    mut offset : i64 = 1
+    mut depth : i64 = 0
+    while (peek_kind(p, offset) != TOK_EOF) {
+        k := peek_kind(p, offset)
+        if (k == TOK_LPAREN) {
+            depth = depth + 1
+        }
+        if (k == TOK_RPAREN) {
+            if (depth == 0) {
+                return false
+            }
+            depth = depth - 1
+        }
+        if (k == TOK_COMMA && depth == 0) {
+            return true
+        }
+        offset = offset + 1
+    }
+    false
+}
+
+set_if_else :: fn(mut p: Parser, node_id: i64, else_head: i64) {
+    node := arena_at(p.arena, node_id)
+    node.val = else_head
+}
+
+// `match (a, b) { case (0, 0): ... }` compares several values at once. It is
+// written out as the chain of comparisons it stands for: each value is bound
+// once ahead of the chain, and an arm's test is the `and` of the elements its
+// pattern names, with `_` naming none. An arm whose pattern is all wildcards,
+// or a bare `case _`, ends the chain as its final else.
+//
+// No node kind and no backend learns anything new, the same as `for`. The
+// cursor is on the `(`.
+parse_tuple_match :: fn(mut p: Parser) -> i64 {
+    advance(p)
+    unique := p.arena.count
+    mut count : i64 = 0
+    while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
+        value := parse_expr(p)
+        name_off := synth_numbered(p, "__tup", unique + count)
+        name_len := 5 + digits_in(unique + count)
+        bind := new_let_node(p, value, name_off, name_len, 0 - 1)
+        arena_push(p.pending,
+            LocalVar { name_off = bind, name_len = bind, ty = 0 })
+        count = count + 1
+        if (cur(p) == TOK_COMMA) {
+            advance(p)
+        }
+    }
+    advance(p)
+    advance(p)
+
+    mut head : i64 = 0 - 1
+    mut tail : i64 = 0 - 1
+    mut closed : i64 = 0
+    while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
+        advance(p)
+        mut condition : i64 = 0 - 1
+        if (cur(p) == TOK_LPAREN) {
+            advance(p)
+            mut index : i64 = 0
+            while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
+                if (cur(p) == TOK_INT) {
+                    wanted := cur_val(p)
+                    advance(p)
+                    name_off := synth_numbered(p, "__tup", unique + index)
+                    name_len := 5 + digits_in(unique + index)
+                    held := new_named_node(p, NodeKind::Var, 0, name_off,
+                        name_len)
+                    literal := new_node(p, NodeKind::Num, 0, 0, wanted)
+                    equals := new_node(p, NodeKind::Bin, held, literal, OP_EQ)
+                    if (condition == (0 - 1)) {
+                        condition = equals
+                    } else {
+                        condition = new_node(p, NodeKind::Bin, condition,
+                            equals, OP_AND)
+                    }
+                } else {
+                    advance(p)
+                }
+                index = index + 1
+                if (cur(p) == TOK_COMMA) {
+                    advance(p)
+                }
+            }
+            advance(p)
+        } else {
+            advance(p)
+        }
+        advance(p)
+        body := parse_arm(p)
+        if (closed == 1) {
+            report_where(p.modules, p.src, cur_off(p))
+            report("this arm follows one that matches everything, so nothing reaches it")
+            frost_rt_die()
+        }
+        if (condition == (0 - 1)) {
+            // Matches whatever is left, so it is the chain's else and the last
+            // arm that can run.
+            if (head == (0 - 1)) {
+                head = body
+            } else {
+                set_if_else(p, tail, body)
+            }
+            closed = 1
+        } else {
+            branch := new_node(p, NodeKind::If, condition, body, 0 - 1)
+            if (head == (0 - 1)) {
+                head = branch
+            } else {
+                set_if_else(p, tail, branch)
+            }
+            tail = branch
+        }
+    }
+    advance(p)
+    head
+}
+
 parse_match :: fn(mut p: Parser) -> i64 {
     advance(p)
+    if (match_is_tuple(p)) {
+        return parse_tuple_match(p)
+    }
     p.no_struct_lit = true
     mut scrutinee := parse_expr(p)
     p.no_struct_lit = false
