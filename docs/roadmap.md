@@ -542,7 +542,7 @@ the Frost compiler cannot compile a file containing one.
 The bootstrap reports `app.frost:5:5: instantiating 'add<Point>':
 lib/g.frost:2:41: ...`: a file, a line and a column, with the instantiation
 behind it and no mangled symbol anywhere. The Frost compiler composes an error
-out of `frost_error`, `frost_error_src` and `frost_error_int` and has no line
+out of `frost_rt_error`, `frost_rt_error_src` and `frost_rt_error_int` and has no line
 numbers at all. It needs a source map over the one buffer every file is laid
 into, which is the same structure `Module` already records.
 

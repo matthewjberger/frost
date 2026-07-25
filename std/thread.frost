@@ -10,24 +10,24 @@
 
 export spawn, join, atomic_add
 
-frost_thread_spawn :: extern fn(body: fn(^u8), context: ^u8) -> i64
-frost_thread_join  :: extern fn(handle: i64)
-frost_atomic_add_i64   :: extern fn(cell: ^i64, amount: i64) -> i64
+frost_rt_thread_spawn :: extern fn(body: fn(^u8), context: ^u8) -> i64
+frost_rt_thread_join  :: extern fn(handle: i64)
+frost_rt_atomic_add_i64   :: extern fn(cell: ^i64, amount: i64) -> i64
 
 // Run `body` on a new thread with `context`, and answer a handle to join later.
 // The context must outlive the thread, so it lives in the spawner's frame and
 // the spawner holds off reading it until after the join.
 spawn :: fn(body: fn(^u8), context: ^u8) -> i64 {
-    unsafe { frost_thread_spawn(body, context) }
+    unsafe { frost_rt_thread_spawn(body, context) }
 }
 
 join :: fn(handle: i64) {
-    unsafe { frost_thread_join(handle) }
+    unsafe { frost_rt_thread_join(handle) }
 }
 
 // Add to a shared word and answer its value before the add. Several threads may
 // call this on the same cell at once without a lock, which is how they combine
 // results without racing.
 atomic_add :: fn(cell: ^i64, amount: i64) -> i64 {
-    unsafe { frost_atomic_add_i64(cell, amount) }
+    unsafe { frost_rt_atomic_add_i64(cell, amount) }
 }

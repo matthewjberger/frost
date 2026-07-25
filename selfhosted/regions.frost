@@ -35,7 +35,7 @@ check_export_collisions :: fn(mut p: Parser) {
                 second_module := arena_at(p.modules, second.module)
                 report_cstr(second_module.path)
                 report("; prefix one of them to keep the names distinct\n")
-                frost_die()
+                frost_rt_die()
             }
             j = j + 1
         }
@@ -168,7 +168,7 @@ check_linear_locals :: fn(mut p: Parser, head: i64) {
                 report("linear value '")
                 report_src(p.src, node.val, node.c)
                 report("' is never consumed")
-                frost_die()
+                frost_rt_die()
             }
         }
         if (kind == NODE_IF) {
@@ -205,7 +205,7 @@ walk_moves_expr :: fn(mut p: Parser, id: i64) {
             report("use of moved value '")
             report_src(p.src, node.val, node.c)
             report("'")
-            frost_die()
+            frost_rt_die()
         }
         return
     }
@@ -571,7 +571,7 @@ check_call_exclusivity :: fn(mut p: Parser, args: i64, fn_index: i64, pos: i64) 
                             report("and mutable in a single call; mutable ")
                             report("borrows are exclusive")
                         }
-                        frost_die()
+                        frost_rt_die()
                     }
                 }
                 j = j + 1
@@ -625,7 +625,7 @@ check_reference_fields :: fn(mut p: Parser) {
                 report("' (field '")
                 report_src(p.src, field.name_off, field.name_len)
                 report("'); references are second-class")
-                frost_die()
+                frost_rt_die()
             }
             fid = field.next
         }
@@ -815,7 +815,7 @@ frame_escape :: fn(mut p: Parser, pos: i64, how: ^i8) {
     report("a pointer into this frame is ")
     report_cstr(how)
     report("; the storage it names dies when the call returns")
-    frost_die()
+    frost_rt_die()
 }
 
 frame_check_block :: fn(mut p: Parser, head: i64, root: i64) {
@@ -1063,7 +1063,7 @@ region_escape :: fn(mut p: Parser, how: ^i8) {
     report("' escapes its region by ")
     report_cstr(how)
     report("; it may not outlive the arena")
-    frost_die()
+    frost_rt_die()
 }
 
 check_region_block :: fn(mut p: Parser, head: i64) {
@@ -1233,7 +1233,7 @@ check_unsafety :: fn(mut p: Parser) {
                 report_where(p.modules, p.src, node.pos)
                 report_cstr(what)
                 report(" is unchecked, so it belongs in an `unsafe` block")
-                frost_die()
+                frost_rt_die()
             }
             i = i + 1
         }
@@ -1306,7 +1306,7 @@ check_calls :: fn(mut p: Parser) {
                     report("call to undefined function '")
                     report_src(p.src, name_off, name_len)
                     report("'")
-                    frost_die()
+                    frost_rt_die()
                 }
                 mut expected : i64 = 0
                 if (callee_proc >= 0) {
@@ -1325,10 +1325,10 @@ check_calls :: fn(mut p: Parser) {
                     report("'")
                     report_src(p.src, name_off, name_len)
                     report("' expects ")
-                    frost_error_int(expected)
+                    frost_rt_error_int(expected)
                     report(" argument(s) but got ")
-                    frost_error_int(got)
-                    frost_die()
+                    frost_rt_error_int(got)
+                    frost_rt_die()
                 }
             }
             i = i + 1

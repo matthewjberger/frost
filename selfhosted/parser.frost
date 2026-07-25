@@ -314,7 +314,7 @@ lower_try :: fn(mut p: Parser, value: i64) -> i64 {
     if (p.result_ty == (0 - 1)) {
         report_where(p.modules, p.src, cur_off(p))
         report("'?' needs a function that declares a failure set")
-        frost_die()
+        frost_rt_die()
     }
     name_off := synth_numbered(p, "__try", p.try_count)
     name_len := 5 + digits_in(p.try_count)
@@ -1030,7 +1030,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
     gen_node := arena_push(
         p.fields,
         StructField { name_off = gen_off,
-            name_len = unsafe { frost_str_len("generations") },
+            name_len = unsafe { frost_rt_str_len("generations") },
             ty = i64_col, next = 0 - 1 },
     )
     if (head == (0 - 1)) {
@@ -1044,7 +1044,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
     free_node := arena_push(
         p.fields,
         StructField { name_off = free_off,
-            name_len = unsafe { frost_str_len("free_list") },
+            name_len = unsafe { frost_rt_str_len("free_list") },
             ty = i64_col, next = 0 - 1 },
     )
     set_field_next(p, tail, free_node)
@@ -1053,7 +1053,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
     count_node := arena_push(
         p.fields,
         StructField { name_off = count_off,
-            name_len = unsafe { frost_str_len("free_count") },
+            name_len = unsafe { frost_rt_str_len("free_count") },
             ty = TY_I64, next = 0 - 1 },
     )
     set_field_next(p, tail, count_node)
@@ -1093,7 +1093,7 @@ parse_variant_case :: fn(mut p: Parser, subject: i64) -> i64 {
             report("no enum has a variant '")
             report_src(p.src, variant_off, variant_len)
             report("'")
-            frost_die()
+            frost_rt_die()
         }
     } else {
         entry := arena_at(p.variants, index)
@@ -1332,7 +1332,7 @@ check_match_covers :: fn(mut p: Parser, enum_ty: i64, covered: i64) {
     }
     if (missing > 0) {
         report("; add the case or a `case _` for the rest")
-        frost_die()
+        frost_rt_die()
     }
 }
 
@@ -2015,7 +2015,7 @@ parse_variant_value :: fn(mut p: Parser, enum_off: i64, enum_len: i64) -> i64 {
             report("' has no variant '")
             report_src(p.src, variant_off, variant_len)
             report("'")
-            frost_die()
+            frost_rt_die()
         }
     } else {
         entry := arena_at(p.variants, index)
@@ -2229,7 +2229,7 @@ fold_const :: fn(mut p: Parser, id: i64) -> i64 {
             report("'")
             report_src(p.src, node.val, node.c)
             report("' is not a constant, so it cannot appear in a constant")
-            frost_die()
+            frost_rt_die()
         }
         return const_value(p, node.val, node.c)
     }
@@ -2249,7 +2249,7 @@ fold_const :: fn(mut p: Parser, id: i64) -> i64 {
     }
     report_where(p.modules, p.src, node.pos)
     report("this is not a constant expression")
-    frost_die()
+    frost_rt_die()
     0
 }
 
@@ -2329,7 +2329,7 @@ parse_program :: fn(mut p: Parser) -> i64 {
             // language has and this compiler has not yet reaches this.
             report_where(p.modules, p.src, cur_off(p))
             report("this declaration is not supported yet")
-            frost_die()
+            frost_rt_die()
         } else {
             // A function. Reset the type-parameter state, remember where it
             // starts, and parse it. If it turned out to reference a type
@@ -2366,7 +2366,7 @@ parse_program :: fn(mut p: Parser) -> i64 {
     if (cur(p) != TOK_EOF) {
         report_where(p.modules, p.src, cur_off(p))
         report("this is not the start of a declaration")
-        frost_die()
+        frost_rt_die()
     }
     head
 }

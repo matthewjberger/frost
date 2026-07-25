@@ -2680,9 +2680,9 @@ impl<'a> FunctionLowering<'a> {
                 // takes: i64 for an integer of any width, f64 for either float.
                 let (function, target) =
                     if matches!(value_type, Type::F32 | Type::F64) {
-                        ("frost_print_f64", Type::F64)
+                        ("frost_rt_print_f64", Type::F64)
                     } else {
-                        ("frost_print_i64", Type::I64)
+                        ("frost_rt_print_i64", Type::I64)
                     };
                 let coerced = self.coerce(operand, &value_type, &target);
                 let sink = self.fresh_local(Type::Void, None);
@@ -3288,21 +3288,21 @@ impl<'a> FunctionLowering<'a> {
         if let Expression::Identifier(name) = callee
             && name == "assert"
             && self.resolve_variable(name).is_none()
-            && (self.builder.signature("frost_assert_at").is_some()
-                || self.builder.signature("frost_assert").is_some())
+            && (self.builder.signature("frost_rt_assert_at").is_some()
+                || self.builder.signature("frost_rt_assert").is_some())
         {
             // The position is the reader's line, and the runtime prints it, so
             // a failed assertion names where it was written rather than only
             // which test it was in. Programs that declare the older one-argument
-            // `frost_assert` themselves still work.
-            if self.builder.signature("frost_assert_at").is_some() {
+            // `frost_rt_assert` themselves still work.
+            if self.builder.signature("frost_rt_assert_at").is_some() {
                 let mut located = arguments.to_vec();
                 located.push(Expression::Literal(Literal::String(
                     self.current_position.describe(),
                 )));
-                return self.lower_direct_call("frost_assert_at", &located);
+                return self.lower_direct_call("frost_rt_assert_at", &located);
             }
-            return self.lower_direct_call("frost_assert", arguments);
+            return self.lower_direct_call("frost_rt_assert", arguments);
         }
         if let Expression::Identifier(name) = callee
             && name == "str_len"
@@ -4181,7 +4181,7 @@ impl<'a> FunctionLowering<'a> {
         self.emit(IrStatement::Assign(
             check,
             IrRvalue::Call {
-                function: "frost_bounds_check".to_string(),
+                function: "frost_rt_bounds_check".to_string(),
                 arguments: vec![index.clone(), length],
             },
         ));
@@ -4310,7 +4310,7 @@ impl<'a> FunctionLowering<'a> {
         self.emit(IrStatement::Assign(
             check,
             IrRvalue::Call {
-                function: "frost_bounds_check".to_string(),
+                function: "frost_rt_bounds_check".to_string(),
                 arguments: vec![index.clone(), length],
             },
         ));
@@ -4548,7 +4548,7 @@ impl<'a> FunctionLowering<'a> {
             self.emit(IrStatement::Assign(
                 check_result,
                 IrRvalue::Call {
-                    function: "frost_bounds_check".to_string(),
+                    function: "frost_rt_bounds_check".to_string(),
                     arguments: vec![
                         index_operand.clone(),
                         IrOperand::Constant(IrConstant::Integer(
@@ -4689,7 +4689,7 @@ impl<'a> FunctionLowering<'a> {
         self.emit(IrStatement::Assign(
             bounds,
             IrRvalue::Call {
-                function: "frost_bounds_check".to_string(),
+                function: "frost_rt_bounds_check".to_string(),
                 arguments: vec![
                     IrOperand::Local(index),
                     IrOperand::Constant(IrConstant::Integer(
@@ -4718,7 +4718,7 @@ impl<'a> FunctionLowering<'a> {
         self.emit(IrStatement::Assign(
             generation_check,
             IrRvalue::Call {
-                function: "frost_generation_check".to_string(),
+                function: "frost_rt_generation_check".to_string(),
                 arguments: vec![
                     IrOperand::Local(stored),
                     IrOperand::Local(generation),
@@ -4747,8 +4747,8 @@ impl<'a> FunctionLowering<'a> {
     }
 
     // The address of one element of one column, named by `c[handle].field`. The
-    // same handle validation as a slab (`frost_bounds_check` +
-    // `frost_generation_check`), but the checked index scales into the field's
+    // same handle validation as a slab (`frost_rt_bounds_check` +
+    // `frost_rt_generation_check`), but the checked index scales into the field's
     // own `[N]field` column rather than a single storage run.
     fn columns_place_deref(
         &mut self,
@@ -4821,7 +4821,7 @@ impl<'a> FunctionLowering<'a> {
         self.emit(IrStatement::Assign(
             bounds,
             IrRvalue::Call {
-                function: "frost_bounds_check".to_string(),
+                function: "frost_rt_bounds_check".to_string(),
                 arguments: vec![
                     IrOperand::Local(index),
                     IrOperand::Constant(IrConstant::Integer(
@@ -4850,7 +4850,7 @@ impl<'a> FunctionLowering<'a> {
         self.emit(IrStatement::Assign(
             generation_check,
             IrRvalue::Call {
-                function: "frost_generation_check".to_string(),
+                function: "frost_rt_generation_check".to_string(),
                 arguments: vec![
                     IrOperand::Local(stored),
                     IrOperand::Local(generation),
@@ -4990,7 +4990,7 @@ impl<'a> FunctionLowering<'a> {
         self.emit(IrStatement::Assign(
             cleared,
             IrRvalue::Call {
-                function: "frost_mem_set".to_string(),
+                function: "frost_rt_mem_set".to_string(),
                 arguments: vec![
                     address,
                     IrOperand::Constant(IrConstant::Integer(0, Type::I64)),

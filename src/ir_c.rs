@@ -27,11 +27,17 @@ impl Externs {
     }
 }
 
+// A Frost function's C name. The prefix is `frost_u_` rather than `frost_`
+// because the runtime owns `frost_rt_`: two fixed prefixes that differ at the
+// same position cannot collide whatever a function is called, where a single
+// shared prefix made every runtime symbol a name users could not use. A Frost
+// function named `byte_at` used to become `frost_byte_at` and fail to link
+// against the runtime's own.
 fn c_function_name(name: &str, externs: &Externs) -> String {
     if name == "main" || externs.names.contains(name) {
         name.to_string()
     } else {
-        format!("frost_{name}")
+        format!("frost_u_{name}")
     }
 }
 
@@ -44,24 +50,25 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
             .collect(),
         aggregate_returns: HashMap::new(),
     };
-    externs.insert("frost_bounds_check");
+    externs.insert("frost_rt_bounds_check");
 
     let mut output = String::new();
     output.push_str("#include <stdint.h>\n\n");
-    output
-        .push_str("void frost_bounds_check(int64_t index, int64_t length);\n");
     output.push_str(
-        "void frost_generation_check(int64_t stored, int64_t expected);\n\n",
+        "void frost_rt_bounds_check(int64_t index, int64_t length);\n",
     );
-    externs.insert("frost_generation_check");
     output.push_str(
-        "void frost_mem_set(void *destination, int64_t value, int64_t size);\n\n",
+        "void frost_rt_generation_check(int64_t stored, int64_t expected);\n\n",
     );
-    externs.insert("frost_mem_set");
-    output.push_str("void frost_print_i64(int64_t value);\n");
-    externs.insert("frost_print_i64");
-    output.push_str("void frost_print_f64(double value);\n\n");
-    externs.insert("frost_print_f64");
+    externs.insert("frost_rt_generation_check");
+    output.push_str(
+        "void frost_rt_mem_set(void *destination, int64_t value, int64_t size);\n\n",
+    );
+    externs.insert("frost_rt_mem_set");
+    output.push_str("void frost_rt_print_i64(int64_t value);\n");
+    externs.insert("frost_rt_print_i64");
+    output.push_str("void frost_rt_print_f64(double value);\n\n");
+    externs.insert("frost_rt_print_f64");
 
     // A struct type per aggregate-returning extern, laid out field for field so
     // that the C compiler classifies it exactly as the library's own header
