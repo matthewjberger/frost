@@ -199,7 +199,10 @@ emit_struct_name :: fn(mut p: Parser, struct_index: i64) {
     }
 }
 
-emit_ctype :: fn(mut p: Parser, ty: i64) {
+emit_ctype :: fn(mut p: Parser, held: i64) {
+    // A distinct type is its representation in C. The name is Frost's, and it
+    // is checked before anything is emitted.
+    ty := distinct_repr(held)
     // A function pointer is a plain `void*` at every place it is declared. Its
     // real signature is written only as a cast at the call site, so the name
     // never has to go inside a `(*name)(...)` declarator.
@@ -747,11 +750,17 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                     if (borrow == 1) {
                         expected = pointee(param_ty)
                     }
-                    if (types_compatible(p, arg_ty, expected) == false) {
+                    if (value_fits(p, value, arg_ty, expected) == false) {
                         report_where(p.modules, p.src, vnode.pos)
                         report("'")
                         report_src(p.src, sym.off, sym.len)
-                        report("' was passed an argument of the wrong type")
+                        report("' was passed an argument of the wrong type: ")
+                        report("it takes a '")
+                        report_type_name(p, expected)
+                        report("' and this is a '")
+                        report_type_name(p, arg_ty)
+                        report("'")
+                        report_distinct_note(p, arg_ty, expected)
                         frost_rt_die()
                     }
                 }
@@ -811,6 +820,21 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         if (annotation == (0 - 1)) {
             ty = type_of(p, value)
         }
+        // A binding that said what it is takes only what fits, which is where a
+        // distinct type is first told from what it is represented by.
+        if (annotation != (0 - 1) && is_distinct(annotation)) {
+            value_ty := type_of(p, value)
+            if (value_fits(p, value, value_ty, annotation) == false) {
+                report_where(p.modules, p.src, node.pos)
+                report("this binding is a '")
+                report_type_name(p, annotation)
+                report("' and the value is a '")
+                report_type_name(p, value_ty)
+                report("'")
+                report_distinct_note(p, value_ty, annotation)
+                frost_rt_die()
+            }
+        }
         emit_ctype(p, ty)
         emit_text(" ")
         emit_source(p.src, off, len)
@@ -843,9 +867,14 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         }
         place_ty := type_of(p, place)
         value_ty := type_of(p, value)
-        if (types_compatible(p, value_ty, place_ty) == false) {
+        if (value_fits(p, value, value_ty, place_ty) == false) {
             report_where(p.modules, p.src, node.pos)
-            report("assigning a value of the wrong type")
+            report("assigning a value of the wrong type: the place is a '")
+            report_type_name(p, place_ty)
+            report("' and the value is a '")
+            report_type_name(p, value_ty)
+            report("'")
+            report_distinct_note(p, value_ty, place_ty)
             frost_rt_die()
         }
         emit_expr(p, place)
@@ -903,11 +932,12 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
             emit_text("return 0;\n")
         } else {
             value_ty := type_of(p, value)
-            if (types_compatible(p, value_ty, p.current_ret) == false) {
+            if (value_fits(p, value, value_ty, p.current_ret) == false) {
                 report_where(p.modules, p.src, node.pos)
                 report("'")
                 report_src(p.src, p.current_fn_off, p.current_fn_len)
                 report("' returns a value of the wrong type")
+                report_distinct_note(p, value_ty, p.current_ret)
                 frost_rt_die()
             }
             emit_text("return (")

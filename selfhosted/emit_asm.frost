@@ -180,7 +180,8 @@ emit_asm_move :: fn(op: str, from: str, to: str) {
 // does, and moves into an SSE register only for the arithmetic itself. That is
 // what keeps slots, loads, stores and the stack discipline the same for every
 // type rather than forking each of them on whether a float is in hand.
-emit_asm_to_sse :: fn(ty: i64, from: str, narrow: str, to: str) {
+emit_asm_to_sse :: fn(held: i64, from: str, narrow: str, to: str) {
+    ty := distinct_repr(held)
     if (ty == TY_F32) {
         emit_asm_move("movd", narrow, to)
         return
@@ -191,7 +192,11 @@ emit_asm_to_sse :: fn(ty: i64, from: str, narrow: str, to: str) {
 // Change the kind of number in %rax. Nothing is emitted between two types that
 // are already the same kind, which is why this can sit on every assignment,
 // argument and return without costing anything in a program with no floats.
-emit_asm_convert :: fn(mut p: Parser, from: i64, to: i64) {
+emit_asm_convert :: fn(mut p: Parser, held_from: i64, held_to: i64) {
+    // A distinct type converts as what it is represented by. Its name is a
+    // Frost-side question, settled before any of this runs.
+    from := distinct_repr(held_from)
+    to := distinct_repr(held_to)
     if (from == to || is_pointer(from) || is_pointer(to)) {
         return
     }
@@ -1337,7 +1342,7 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     asm_i("addq $", frame + 16 * count, ", %rsp")
     // A float answered in %xmm0, and every value here travels in %rax.
     if (is_float(ret)) {
-        if (ret == TY_F32) {
+        if (distinct_repr(ret) == TY_F32) {
             emit_asm_move("movd", "%xmm0", "%eax")
         } else {
             emit_asm_move("movq", "%xmm0", "%rax")

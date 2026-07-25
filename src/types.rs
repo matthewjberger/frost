@@ -128,6 +128,17 @@ impl Type {
         matches!(self, Type::Ref(_) | Type::RefMut(_))
     }
 
+    // A distinct type computes, is passed and is stored as what it is
+    // represented by, so anything asking which kind of number it is has to look
+    // through the name.
+    pub fn is_float(&self) -> bool {
+        match self {
+            Type::F32 | Type::F64 => true,
+            Type::Distinct(_, inner) => inner.is_float(),
+            _ => false,
+        }
+    }
+
     pub fn contains_reference(&self) -> bool {
         match self {
             Type::Ref(_) | Type::RefMut(_) => true,

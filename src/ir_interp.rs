@@ -384,7 +384,7 @@ fn operand_type(function: &IrFunction, operand: &IrOperand) -> Type {
 }
 
 fn binary(op: IrBinOp, left: Value, right: Value, ty: &Type) -> Eval<Value> {
-    if is_float(ty) {
+    if ty.is_float() {
         return binary_float(op, left.as_f64(), right.as_f64(), ty);
     }
     let (bits, signed) = integer_info(ty);
@@ -476,7 +476,7 @@ fn binary_float(op: IrBinOp, left: f64, right: f64, ty: &Type) -> Eval<Value> {
 fn unary(op: IrUnOp, value: Value, ty: &Type) -> Value {
     match op {
         IrUnOp::Negate => {
-            if is_float(ty) {
+            if ty.is_float() {
                 Value::Float(round_to_type(-value.as_f64(), ty))
             } else {
                 let (bits, signed) = integer_info(ty);
@@ -492,11 +492,11 @@ fn unary(op: IrUnOp, value: Value, ty: &Type) -> Value {
 }
 
 fn cast(value: Value, source: &Type, target: &Type) -> Value {
-    if is_float(target) {
+    if target.is_float() {
         return Value::Float(round_to_type(value.as_f64(), target));
     }
     let (bits, signed) = integer_info(target);
-    if is_float(source) {
+    if source.is_float() {
         return Value::Int(normalize(value.as_f64() as i64, bits, signed));
     }
     Value::Int(normalize(value.as_i64(), bits, signed))
@@ -544,14 +544,6 @@ fn integer_info(ty: &Type) -> (u32, bool) {
     }
 }
 
-fn is_float(ty: &Type) -> bool {
-    match ty {
-        Type::F32 | Type::F64 => true,
-        Type::Distinct(_, inner) => is_float(inner),
-        _ => false,
-    }
-}
-
 fn is_scalar(ty: &Type) -> bool {
     match ty {
         Type::I8
@@ -578,7 +570,7 @@ fn is_scalar(ty: &Type) -> bool {
 }
 
 fn default_value(ty: &Type) -> Value {
-    if is_float(ty) {
+    if ty.is_float() {
         Value::Float(0.0)
     } else {
         Value::Int(0)

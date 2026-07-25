@@ -14,7 +14,8 @@ export align_of, align_up, alloc_temp, field_offset, is_unsigned, scalar_size,
 //
 // A field may itself be a struct, so a size cannot be counted rather than
 // measured. Parser carries eleven arenas and an arena is three words, not one.
-scalar_size :: fn(ty: i64) -> i64 {
+scalar_size :: fn(held: i64) -> i64 {
+    ty := distinct_repr(held)
     if (is_pointer(ty)) {
         return 8
     }
@@ -32,7 +33,8 @@ scalar_size :: fn(ty: i64) -> i64 {
 
 // Which of the two extensions a narrow value takes on its way into a register.
 // `bool` is emitted as a word, so it is not narrow and does not appear here.
-is_unsigned :: fn(ty: i64) -> bool {
+is_unsigned :: fn(held: i64) -> bool {
+    ty := distinct_repr(held)
     is_pointer(ty) == false
         && (ty == TY_U8 || ty == TY_U16 || ty == TY_U32 || ty == TY_U64
             || ty == TY_USIZE)

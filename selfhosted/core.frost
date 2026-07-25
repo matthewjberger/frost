@@ -10,7 +10,8 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     GenericFn, GParam, GArg, GBinding, ImportEdge, Instance, LocalVar, Module,
     Rename,
     MonoNode,
-    MonoRet, ProcSig, CONST_BASE, PROC_BASE, FN_BASE, Node, NodeKind,
+    MonoRet, ProcSig, CONST_BASE, PROC_BASE, FN_BASE, DISTINCT_BASE,
+    DISTINCT_STRIDE, Node, NodeKind,
     OP_ADD, OP_AND, OP_DIV, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT, OP_MOD, OP_MUL,
     OP_NE, OP_OR, OP_SUB, OP_SHL, OP_SHR, OP_BITAND, OP_BITOR,
     BORROW_FLAG, POINTER_BASE, Parser, STRUCT_BASE, StructDef,
@@ -193,6 +194,15 @@ PROC_BASE    :: 3000000000
 // It is not a type and never reaches layout. What it does reach is name
 // resolution, where the body's `f(x)` finds the function that was passed.
 FN_BASE      :: 4000000000
+// A `distinct` type: `Meters :: distinct i64` is laid out, computed and passed
+// to C as an i64, and is not one. The code carries both halves of that. The
+// number above the base divides into the type it is represented by and an index
+// that is its identity, so `Meters` and `Feet` over the same i64 are different
+// codes. Carrying the representation in the code rather than in a table is what
+// lets `is_float`, `scalar_size` and the rest resolve a distinct type without
+// the parser, and they all take a bare type code.
+DISTINCT_BASE   :: 5000000000
+DISTINCT_STRIDE :: 4096
 
 // Binary operator codes.
 OP_ADD :: 0

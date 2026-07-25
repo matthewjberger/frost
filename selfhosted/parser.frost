@@ -3095,9 +3095,12 @@ fold_const :: fn(mut p: Parser, id: i64) -> i64 {
     0
 }
 
-// `Meters :: distinct i64`, a name of its own for the representation of
-// another type. The name is recorded as an alias, so every use of it types as
-// what it stands for.
+// `Meters :: distinct i64`, a name of its own for another type's
+// representation. The name goes in the alias table like any other type name,
+// but what it stands for is a code of its own rather than the inner type, so
+// two of them over the same representation are two types. The alias table's
+// position is the identity, which is unique by construction and stable, since
+// nothing is ever removed from it.
 parse_distinct :: fn(mut p: Parser) {
     name_offset := cur_off(p)
     name_length := cur_len(p)
@@ -3108,7 +3111,7 @@ parse_distinct :: fn(mut p: Parser) {
     arena_push(
         p.type_aliases,
         ConstDef { name_off = name_offset, name_len = name_length,
-            value = inner },
+            value = distinct_type(inner, p.type_aliases.count) },
     )
 }
 

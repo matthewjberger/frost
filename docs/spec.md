@@ -281,11 +281,10 @@ would be needed for in the direction that is checked.
 A literal is exempt because it has no type of its own until the context gives it
 one, which is what makes `m : Meters = 3` read the way it should.
 
-The self-hosted compiler carries a distinct type as an alias for what it stands
-for, so a program using one compiles and runs there identically. What it does
-not carry yet is the identity, so it accepts the mismatches above. That is the
-one place the two compilers currently disagree about what to accept, and it is
-recorded in [../selfhosted/README.md](../selfhosted/README.md).
+Arithmetic answers with the distinct type, so adding two lengths gives a length
+and the sum goes back where either operand came from. Everything else about the
+value follows the representation: its size, its alignment, which register it
+travels in, and how it crosses to C.
 
 ### 3.7 Strings
 
