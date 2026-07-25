@@ -101,6 +101,7 @@ fn statement_has_try(statement: &Statement) -> bool {
         Statement::For(_, iterable, body) => {
             expression_has_try(iterable) || block_has_try(body)
         }
+        Statement::With(_, body) => block_has_try(body),
         _ => false,
     }
 }
@@ -134,6 +135,7 @@ fn expression_has_try(expression: &Expression) -> bool {
             expression_has_try(scrutinee)
                 || cases.iter().any(|case| block_has_try(&case.body))
         }
+        Expression::Unsafe(body) => block_has_try(body),
         Expression::Tuple(items) => items.iter().any(expression_has_try),
         _ => false,
     }
@@ -255,6 +257,9 @@ impl Lowerer {
                 self.rewrite_expression(iterable, result, error);
                 self.rewrite_inner_block(body, result, error);
             }
+            Statement::With(_, body) => {
+                self.rewrite_inner_block(body, result, error)
+            }
             _ => {}
         }
     }
@@ -329,6 +334,9 @@ impl Lowerer {
                 for item in items.iter_mut() {
                     self.rewrite_expression(item, result, error);
                 }
+            }
+            Expression::Unsafe(body) => {
+                self.rewrite_inner_block(body, result, error)
             }
             _ => {}
         }
