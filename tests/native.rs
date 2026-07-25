@@ -7126,6 +7126,42 @@ fn reading_the_value_an_arena_pointer_names_is_allowed() {
     assert_eq!(output, "7\n");
 }
 
+// A callback registration names storage in this frame on purpose, and is safe
+// because linearity forces it to be consumed in the same function. Wrapping it
+// in an `unsafe` block must not turn it into an escape: only the block a
+// function actually answers with can carry one out.
+#[test]
+fn a_registration_inside_a_non_final_unsafe_block_is_not_an_escape() {
+    let source = "Ctx :: struct { got: i64 }
+                  reg :: extern fn($cb: fn(mut Ctx, ^u8), move ctx: Ctx)
+                  on :: fn(mut c: Ctx, a: ^u8) { c.got = 1 }
+                  f :: fn() -> i64 {
+                      mut ctx : Ctx = Ctx { got = 0 }
+                      unsafe { reg($on, ctx) }
+                      0
+}
+                  main :: fn() -> i64 { f() }
+";
+    let directory = std::env::temp_dir();
+    let source_path = directory.join("frost_ok_registration.frost");
+    let object = directory.join("frost_ok_registration.o");
+    std::fs::write(&source_path, source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--native")
+        .arg("-o")
+        .arg(&object)
+        .arg(&source_path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&source_path);
+    assert!(
+        output.status.success(),
+        "a registration in a non-final unsafe block should compile, got:
+{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 // The tightened check must not start refusing a pointer the function was handed,
 // which is not its frame's to begin with.
 #[test]
