@@ -512,6 +512,18 @@ call_type_args :: fn(mut p: Parser, head: i64) -> i64 {
 // arguments, which are erased.
 record_mono_ret :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
     xarg_count: i64, ret: i64) {
+    // The discovery pass runs until it finds nothing new, so the same
+    // monomorphization is offered more than once and only the first is kept.
+    mut i : i64 = 0
+    while (i < p.mono_rets.count) {
+        entry := arena_at(p.mono_rets, i)
+        if (entry.fn_index == fn_index && entry.arg == arg
+            && entry.xarg_count == xarg_count
+            && gargs_equal(p, entry.xarg_start, xarg_start, xarg_count)) {
+            return
+        }
+        i = i + 1
+    }
     arena_push(p.mono_rets,
         MonoRet { fn_index = fn_index, arg = arg, xarg_start = xarg_start,
             xarg_count = xarg_count, ret = ret })
@@ -525,6 +537,10 @@ record_mono_ret :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
 //
 // Distinct tuples rather than instances, since two generic structs written with
 // the same arguments would otherwise have every generic function emitted twice.
+// Which generic each tuple belongs to is deliberately not kept: the tuple of a
+// call is inferred from its arguments, and out here, away from the function the
+// call sits in, there is no local to infer from. A generic is tried against
+// every tuple and `instance_fits` says which pairings are real.
 note_type_args :: fn(mut p: Parser, arg: i64, xarg_start: i64, xarg_count: i64) {
     if (arg < 0 || arg == TY_PARAM) {
         return

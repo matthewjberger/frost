@@ -1152,16 +1152,22 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         // A specialization's parameters carry no width, so nothing is
         // converted into one. Everywhere else the callee's declared type is
         // what the value has to arrive as.
-        if (generic == false) {
-            declared := nth_param_type(p, callee.params, i)
-            // A borrowed parameter's declared type is a pointer to what it
-            // takes, and an aggregate is already an address here, so the
-            // conversion is against what the pointer points at.
-            mut want := declared
-            if (is_pointer(want) && is_aggregate(pointee(want))) {
-                want = pointee(want)
-            }
-            if (declared >= 0 && want != TY_PARAM) {
+        declared := nth_param_type(p, callee.params, i)
+        // A borrowed parameter's declared type is a pointer to what it
+        // takes, and an aggregate is already an address here, so the
+        // conversion is against what the pointer points at.
+        mut want := declared
+        if (is_pointer(want) && is_aggregate(pointee(want))) {
+            want = pointee(want)
+        }
+        if (declared >= 0 && want != TY_PARAM) {
+            // Whether a parameter is a slice holds whatever the type argument
+            // is, so the one conversion between aggregates still applies to a
+            // generic call: an array reaching a `[]T` becomes a slice of the
+            // whole of itself, and without it the callee is handed the array's
+            // first two words as a pointer and a length. The C backend reads
+            // the parameter list the same way here.
+            if (generic == false || (is_array_ty(want) && is_slice_ty(p, want))) {
                 emit_asm_coerce(p, argument, want)
             }
         }
@@ -1834,9 +1840,12 @@ emit_asm_function :: fn(mut p: Parser, id: i64) {
 
 // One argument's contribution to a mangled name, the assembly backend's copy of
 // the C backend's rule so the two agree: a type argument is `_t<code>`, a value
-// argument `_c<number>`.
+// argument `_c<number>`, a function argument `_f<index>`.
 emit_asm_mangled_arg :: fn(mut p: Parser, arg: i64) {
-    if (arg >= CONST_BASE) {
+    if (arg >= FN_BASE) {
+        emit_text("_f")
+        frost_rt_emit_int(arg - FN_BASE)
+    } else if (arg >= CONST_BASE) {
         emit_text("_c")
         frost_rt_emit_int(arg - CONST_BASE)
     } else {
@@ -1929,9 +1938,11 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
             arg := used.arg
             xstart := used.xarg_start
             xcount := used.xarg_count
-            node := parse_generic_instance(p, gi, arg, xstart, xcount)
-            ret := p.last_return_type
-            emit_asm_mono_function(p, node, arg, xstart, xcount, ret)
+            if (instance_fits(p, gi, arg, xstart, xcount)) {
+                node := parse_generic_instance(p, gi, arg, xstart, xcount)
+                ret := p.last_return_type
+                emit_asm_mono_function(p, node, arg, xstart, xcount, ret)
+            }
             ii = ii + 1
         }
         gi = gi + 1

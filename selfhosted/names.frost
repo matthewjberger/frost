@@ -9,7 +9,7 @@ import "imports.frost"
 export append_node, array_element, array_index_of, array_length, array_of,
     mark_safe, place_renames,
     bytes_equal, const_value, digits_in, gargs_equal, generic_index_for,
-    value_binding_of,
+    value_binding_of, fn_binding_of, is_type_name,
     intern_global, is_aggregate, is_array_ty, is_const, is_float, is_main_name,
     is_borrow, is_pointer, is_proc, is_raw_pointer, is_slab_ty, is_slice_ty,
     is_columns_ty, columns_lookup, is_columns_new_call, field_type_by_range,
@@ -145,6 +145,12 @@ bytes_equal :: fn(src: ^i8, first: i64, second: i64, length: i64) -> bool {
 }
 
 intern_global :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
+    // A `$f` parameter stands for the function the call site passed, so inside
+    // an instance the name resolves to that function and nothing is looked up.
+    supplied := fn_binding_of(p, offset, length)
+    if (supplied >= 0) {
+        return supplied
+    }
     // A renamed import is looked up under the name the module declares, and
     // only in that module.
     mut sought_off := offset
@@ -268,11 +274,13 @@ append_node :: fn(mut p: Parser, head: i64, extra: i64) -> i64 {
 }
 
 record_generic_fn :: fn(mut p: Parser, fn_index: i64, tparam_off: i64,
-    tparam_len: i64, xparam_start: i64, xparam_count: i64, token_start: i64) {
+    tparam_len: i64, tparam_is_fn: i64, xparam_start: i64, xparam_count: i64,
+    token_start: i64) {
     arena_push(
         p.generic_fns,
         GenericFn { fn_index = fn_index, tparam_off = tparam_off,
-            tparam_len = tparam_len, xparam_start = xparam_start,
+            tparam_len = tparam_len, tparam_is_fn = tparam_is_fn,
+            xparam_start = xparam_start,
             xparam_count = xparam_count, token_start = token_start },
     )
 }
@@ -531,7 +539,7 @@ is_raw_pointer :: fn(ty: i64) -> bool {
 // indexed, or gated. It is called, directly through a name or through a cast on
 // a value of this type.
 is_proc :: fn(ty: i64) -> bool {
-    ty >= PROC_BASE
+    ty >= PROC_BASE && ty < FN_BASE
 }
 
 // Intern a function-pointer signature and answer its type code. Signatures are
@@ -881,7 +889,7 @@ gargs_equal :: fn(mut p: Parser, a_start: i64, b_start: i64, count: i64) -> bool
 value_binding_of :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     if (p.binding_active == 1 && p.type_param_len == length
         && bytes_equal(p.src, p.type_param_off, offset, length)
-        && p.type_binding >= CONST_BASE) {
+        && p.type_binding >= CONST_BASE && p.type_binding < PROC_BASE) {
         return p.type_binding - CONST_BASE
     }
     mut b : i64 = p.gbindings.count
@@ -890,11 +898,88 @@ value_binding_of :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         binding := arena_at(p.gbindings, b)
         if (binding.name_len == length
             && bytes_equal(p.src, binding.name_off, offset, length)
-            && binding.bound >= CONST_BASE) {
+            && binding.bound >= CONST_BASE && binding.bound < PROC_BASE) {
             return binding.bound - CONST_BASE
         }
     }
     0 - 1
+}
+
+// The function a compile-time function parameter is bound to, or -1 when the
+// name is not one. A binding holds FN_BASE plus an index into the `fns` table,
+// so what comes back is the index of whichever function the call site passed.
+fn_binding_of :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
+    if (p.binding_active == 1 && p.type_param_len == length
+        && bytes_equal(p.src, p.type_param_off, offset, length)
+        && p.type_binding >= FN_BASE) {
+        return p.type_binding - FN_BASE
+    }
+    mut b : i64 = p.gbindings.count
+    while (b > 0) {
+        b = b - 1
+        binding := arena_at(p.gbindings, b)
+        if (binding.name_len == length
+            && bytes_equal(p.src, binding.name_off, offset, length)
+            && binding.bound >= FN_BASE) {
+            return binding.bound - FN_BASE
+        }
+    }
+    0 - 1
+}
+
+// Whether a name is a type: a bound generic parameter, an alias, a primitive,
+// or a declared struct. `$Entity` and `$sort_less` are both written the same
+// way at a call, and this is what tells the type argument from the function
+// argument.
+is_type_name :: fn(mut p: Parser, offset: i64, length: i64) -> bool {
+    if (p.type_param_len == length
+        && bytes_equal(p.src, p.type_param_off, offset, length)) {
+        return true
+    }
+    mut b : i64 = p.gbindings.count
+    while (b > 0) {
+        b = b - 1
+        binding := arena_at(p.gbindings, b)
+        if (binding.name_len == length
+            && bytes_equal(p.src, binding.name_off, offset, length)) {
+            return true
+        }
+    }
+    mut a : i64 = 0
+    while (a < p.type_aliases.count) {
+        entry := arena_at(p.type_aliases, a)
+        if (entry.name_len == length
+            && bytes_equal(p.src, entry.name_off, offset, length)) {
+            return true
+        }
+        a = a + 1
+    }
+    if (str_range_eq(p.src, offset, length, "i64")) { return true }
+    if (str_range_eq(p.src, offset, length, "i32")) { return true }
+    if (str_range_eq(p.src, offset, length, "i16")) { return true }
+    if (str_range_eq(p.src, offset, length, "i8")) { return true }
+    if (str_range_eq(p.src, offset, length, "isize")) { return true }
+    if (str_range_eq(p.src, offset, length, "u64")) { return true }
+    if (str_range_eq(p.src, offset, length, "u32")) { return true }
+    if (str_range_eq(p.src, offset, length, "u16")) { return true }
+    if (str_range_eq(p.src, offset, length, "u8")) { return true }
+    if (str_range_eq(p.src, offset, length, "usize")) { return true }
+    if (str_range_eq(p.src, offset, length, "f64")) { return true }
+    if (str_range_eq(p.src, offset, length, "f32")) { return true }
+    if (str_range_eq(p.src, offset, length, "str")) { return true }
+    if (str_range_eq(p.src, offset, length, "bool")) { return true }
+    if (str_range_eq(p.src, offset, length, "Handle")) { return true }
+    if (str_range_eq(p.src, offset, length, "columns")) { return true }
+    mut i : i64 = 0
+    while (i < p.structs.count) {
+        entry := arena_at(p.structs, i)
+        if (entry.name_len == length
+            && bytes_equal(p.src, entry.name_off, offset, length)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
 }
 
 // Find the index of a generic struct template by name, or -1.

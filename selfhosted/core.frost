@@ -10,7 +10,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     GenericFn, GParam, GArg, GBinding, ImportEdge, Instance, LocalVar, Module,
     Rename,
     MonoNode,
-    MonoRet, ProcSig, CONST_BASE, PROC_BASE, Node, NodeKind,
+    MonoRet, ProcSig, CONST_BASE, PROC_BASE, FN_BASE, Node, NodeKind,
     OP_ADD, OP_AND, OP_DIV, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT, OP_MOD, OP_MUL,
     OP_NE, OP_OR, OP_SUB, OP_SHL, OP_SHR, OP_BITAND, OP_BITOR,
     BORROW_FLAG, POINTER_BASE, Parser, STRUCT_BASE, StructDef,
@@ -186,6 +186,13 @@ CONST_BASE   :: 2000000000
 // CONST_BASE, answer no for it, since a function pointer emits its own C
 // declarator rather than a trailing `*`.
 PROC_BASE    :: 3000000000
+// A function chosen at the call site, the argument a `$f: fn(i64) -> i64`
+// parameter is given. It rides in the same i64 space as a type code because a
+// compile-time function argument is monomorphized on exactly like a type: a
+// code at or above this base names entry `code - FN_BASE` of the `fns` table.
+// It is not a type and never reaches layout. What it does reach is name
+// resolution, where the body's `f(x)` finds the function that was passed.
+FN_BASE      :: 4000000000
 
 // Binary operator codes.
 OP_ADD :: 0
@@ -445,6 +452,9 @@ GenericFn :: struct {
     fn_index: i64,
     tparam_off: i64,
     tparam_len: i64,
+    // Whether the body calls the first parameter, the same question `is_fn`
+    // asks of the rest.
+    tparam_is_fn: i64,
     xparam_start: i64,
     xparam_count: i64,
     token_start: i64,
@@ -454,6 +464,13 @@ GenericFn :: struct {
 GParam :: struct {
     name_off: i64,
     name_len: i64,
+    // Whether the body calls this parameter, which is what says a function
+    // rather than a type binds to it. The kind written after the colon does
+    // not say: a comparison is declared `$less: fn(T, T) -> bool` in one
+    // place and `$less: Type` in another. Being called is the difference that
+    // matters, since only then does the body name something that has to be
+    // there.
+    is_fn: i64,
 }
 
 // One generic argument beyond the first, held in the `gargs` arena. The value is
@@ -679,6 +696,12 @@ Parser :: struct {
     instances: Arena<Instance>,
     generic_fns: Arena<GenericFn>,
     gparams: Arena<GParam>,
+    // Every `$f: fn(..)` parameter name in the program. A template's body is
+    // parsed once before any call to it is seen, so `f(x)` in there names no
+    // function yet and would read as a call to one that does not exist. This
+    // says which names are a function the caller supplies, and each instance
+    // resolves them to the function it was actually given.
+    cfn_params: Arena<GParam>,
     gargs: Arena<GArg>,
     procs: Arena<ProcSig>,
     proc_params: Arena<GArg>,
@@ -718,6 +741,9 @@ Parser :: struct {
     ok_ty: i64,
     variant_fixups: Arena<VariantFixup>,
     saw_type_param: i64,
+    // Whether the declaration being parsed calls its own first compile-time
+    // parameter, so the generic it becomes records that a function binds there.
+    tparam_called: i64,
     last_return_type: i64,
     no_struct_lit: bool,
     last_type_was_generic: i64,
