@@ -46,11 +46,14 @@ main :: fn() -> i64 {
         offset = 0,
     }
 
-    // Reaching through a raw pointer is what the gate is for, so each of these
-    // carries one and nothing else. The allocation itself is an ordinary call.
+    // Reaching through a raw pointer is what the gate is for, so these blocks
+    // carry the writes through one and nothing else. The allocation itself is
+    // an ordinary call.
     p : ^Point = alloc_point(arena)
-    unsafe { p^.x = 3 }
-    unsafe { p^.y = 4 }
+    unsafe {
+        p^.x = 3
+        p^.y = 4
+    }
     q : ^i64 = alloc_int(arena)
     unsafe { q^ = 99 }
 

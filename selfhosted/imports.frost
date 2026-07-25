@@ -113,8 +113,10 @@ append_text :: fn(buffer: ^i8, at: i64, text: ^i8) -> i64 {
         unsafe { frost_rt_byte_set(buffer, at + k, unsafe { frost_rt_byte_at(text, k) }) }
         k = k + 1
     }
-    unsafe { frost_rt_byte_set(buffer, at + length, CH_LF) }
-    unsafe { frost_rt_byte_set(buffer, at + length + 1, 0) }
+    unsafe {
+        frost_rt_byte_set(buffer, at + length, CH_LF)
+        frost_rt_byte_set(buffer, at + length + 1, 0)
+    }
     at + length + 1
 }
 
