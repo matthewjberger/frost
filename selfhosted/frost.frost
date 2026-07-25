@@ -37,320 +37,318 @@ import "emit_asm.frost"
 import "regions.frost"
 
 main :: fn() -> i64 {
-    unsafe {
-        options := options_from_command_line()
-        if (options.help == 1) {
-            usage()
-            return 0
+    options := options_from_command_line()
+    if (options.help == 1) {
+        usage()
+        return 0
+    }
+    if (options.ok == 0) {
+        frost_rt_die()
+    }
+
+    // With no file named anywhere, the built-in demonstration program is what
+    // gets compiled, which is what makes the compiler runnable with no
+    // arguments at all.
+    input_path := options.input
+    mut source : ^i8 = ""
+    mut modules : Arena<Module> = arena_make($Module, 1024)
+    mut exports : Arena<Export> = arena_make($Export, 4096)
+    export_names := unsafe { ptr_cast($i8, malloc(SYNTH_ROOM)) }
+    if (unsafe { frost_rt_str_len(input_path) } != 0) {
+        // One buffer holds the root file and everything it imports, so a name
+        // is an offset into a single source no matter which file wrote it.
+        buffer := unsafe { ptr_cast($i8, malloc(SOURCE_ROOM + SYNTH_ROOM)) }
+        mut scratch : Arena<Token> = arena_make($Token, 262144)
+        search_roots_from(options.roots)
+        resolve_imports(buffer, input_path, export_names, modules, exports,
+            scratch, options.roots)
+        source = buffer
+    }
+    if (unsafe { frost_rt_str_len(source) } == 0) {
+        source = "
+        strlen :: extern fn(s: ^i8) -> i64
+
+        ANSWER :: 42
+
+        fib :: fn(n: i64) -> i64 {
+            if (n < 2) { return n }
+            return fib(n - 1) + fib(n - 2)
         }
-        if (options.ok == 0) {
+
+        fact :: fn(n: i64) -> i64 {
+            if (n < 1) { return 1 }
+            return n * fact(n - 1)
+        }
+
+        Point :: struct { x: i64, y: i64 }
+
+        sum_point :: fn(pt: Point) -> i64 {
+            return pt.x + pt.y
+        }
+
+        bump :: fn(b: ^Point) {
+            unsafe { b^.x = b^.x + 1 }
+        }
+
+        classify :: fn(n: i64) -> i64 {
+            mut result : i64 = 0
+            match n {
+                case 0: result = 100
+                case 1: result = 200
+                case _: result = 999
+            }
+            return result
+        }
+
+        Box :: struct($T: Type) { value: $T }
+
+        Holder :: struct { item: Box<i64> }
+
+        box_make :: fn($T: Type, v: $T) -> Box<T> {
+            Box { value = v }
+        }
+
+        box_get :: fn(b: Box<$T>) -> $T {
+            unsafe { b^.value }
+        }
+
+        main :: fn() -> i64 {
+            print fib(10)
+            print fact(5)
+            mut sum : i64 = 0
+            mut index : i64 = 1
+            while (index <= 10) { sum = sum + index  index = index + 1 }
+            print sum
+            p := Point { x = 3, y = 4 }
+            print p.x
+            p.x = 10
+            print sum_point(p)
+            ptr := ptr_to(p)
+            bump(ptr)
+            print p.x
+            unsafe {
+                print ptr^.y
+                print ptr[0].x
+                q := ptr_cast($Point, ptr)
+                print q^.x
+            }
+            print sizeof(Point)
+            print classify(0)
+            print classify(1)
+            print classify(7)
+            unsafe { print strlen(\"hello\") }
+            print ANSWER
+            h := Holder { item = box_make($i64, 77) }
+            print box_get(h.item)
+        }
+    "
+    }
+    // The demo program is a literal with nowhere to write, so it needs the same
+    // copy with room past the terminator that an imported source already has.
+    if (unsafe { frost_rt_str_len(input_path) } == 0) {
+        source = source_with_room(source)
+    }
+
+    mut parser := Parser {
+        src = source,
+        tokens = arena_make($Token, 262144),
+        ti = 0,
+        arena = arena_make($Node, 262144),
+        fns = arena_make($Sym, 8192),
+        structs = arena_make($StructDef, 4096),
+        fields = arena_make($StructField, 8192),
+        locals = arena_make($LocalVar, 4096),
+        consts = arena_make($ConstDef, 4096),
+        instances = arena_make($Instance, 4096),
+        generic_fns = arena_make($GenericFn, 256),
+        gparams = arena_make($GParam, 256),
+        gargs = arena_make($GArg, 1024),
+        procs = arena_make($ProcSig, 256),
+        proc_params = arena_make($GArg, 1024),
+        argbuf = arena_make($GArg, 256),
+        gbindings = arena_make($GBinding, 256),
+        type_param_off = 0,
+        type_param_len = 0,
+        xparam_start = 0,
+        xparam_count = 0,
+        call_xarg_start = 0,
+        call_xarg_count = 0,
+        pending_gt = 0,
+        type_binding = 0,
+        binding_active = 0,
+        expected_type = 0,
+        saw_type_param = 0,
+        last_return_type = 0,
+        no_struct_lit = false,
+        last_type_was_generic = 0,
+        unsafe_spans = arena_make($UnsafeSpan, 1024),
+        unsafe_depth = 0,
+        moved = arena_make($LocalVar, 4096),
+        label_id = 0,
+        abi_windows = 0,
+        asm_temp = 0,
+        asm_ret = 0,
+        sret_slot = 0,
+        mono_rets = arena_make($MonoRet, 1024),
+        mono_nodes = arena_make($MonoNode, 1024),
+        current_ret = 0,
+        current_fn_off = 0,
+        current_fn_len = 0,
+        tainted = arena_make($LocalVar, 4096),
+        inner = arena_make($LocalVar, 4096),
+        region_off = 0,
+        region_len = 0,
+        region_returns = 0,
+        frame_storage = arena_make($LocalVar, 4096),
+        frame_bound = arena_make($LocalVar, 4096),
+        frame_via_pointer = arena_make($LocalVar, 4096),
+        region_via_pointer = arena_make($LocalVar, 4096),
+        frame_materialized = arena_make($LocalVar, 4096),
+        frame_answers = 0,
+        mut_params = arena_make($LocalVar, 8192),
+        move_scratch = arena_make($LocalVar, 4096),
+        modules = modules,
+        exports = exports,
+        export_names = export_names,
+        result_ty = 0 - 1,
+        failure_ty = 0 - 1,
+        variants = arena_make($Variant, 4096),
+        match_count = 0,
+        case_variant = 0 - 1,
+        type_args = arena_make($TypeArg, 1024),
+        pending = arena_make($LocalVar, 4096),
+        try_count = 0,
+        name_tag = 0,
+        name_value = 0,
+        name_error = 0,
+        name_ok = 0,
+        name_err = 0,
+        name_ok_value = 0,
+        name_err_error = 0,
+        synth_next = 0,
+        prov_kind = 0,
+        prov_off = 0,
+        prov_len = 0,
+        arrays = arena_make($ArrayDef, 1024),
+        tests = arena_make($TestCase, 1024),
+        testing = options.testing,
+        type_cache = arena_make($TypeCacheEntry, 262144),
+        type_cache_on = 0,
+    }
+    // Names the compiler synthesizes go past the source's terminator, so the
+    // first free byte is one past the text.
+    parser.synth_next = unsafe { frost_rt_str_len(source) } + 1
+    // The host convention by default. FROST_ABI overrides it so the other
+    // target's output can be inspected from either host.
+    parser.abi_windows = frost_rt_is_windows()
+    abi := unsafe { frost_rt_getenv("FROST_ABI") }
+    if (cstr_eq(abi, "sysv")) {
+        parser.abi_windows = 0
+    }
+    if (cstr_eq(abi, "win")) {
+        parser.abi_windows = 1
+    }
+    tokenize(source, unsafe { frost_rt_str_len(source) }, parser.tokens)
+    program := parse_program(parser)
+    check_export_collisions(parser)
+    collect_type_args(parser)
+    record_mono_rets(parser)
+    check_calls(parser)
+    // On by default, the same as the bootstrap. FROST_CHECK_UNSAFE=0 turns
+    // it off, for compiling code that has not marked its unchecked
+    // operations yet.
+    if (cstr_eq(unsafe { frost_rt_getenv("FROST_CHECK_UNSAFE") }, "0") == false) {
+        check_unsafety(parser)
+    }
+    check_regions(parser)
+    check_frame_escapes(parser)
+    check_reference_fields(parser)
+    check_borrow_exclusivity(parser)
+    check_moves(parser)
+
+    // Where the emitted text goes. A link needs it in a file whatever the
+    // caller asked for, so it writes one beside the executable and removes it
+    // afterwards. Without -o and without --link it goes to standard output.
+    mut executable : ^i8 = options.output
+    mut emit_path : ^i8 = options.output
+    if (options.link == 1) {
+        if (unsafe { frost_rt_str_len(executable) } == 0) {
+            executable = "a.out"
+            if (frost_rt_is_windows() == 1) {
+                executable = "a.exe"
+            }
+        }
+        if (options.backend == BACKEND_ASM) {
+            emit_path = join_two(executable, ".s")
+        } else {
+            emit_path = join_two(executable, ".c")
+        }
+    }
+    if (unsafe { frost_rt_str_len(emit_path) } != 0) {
+        if (unsafe { frost_rt_emit_open(emit_path) } == 0) {
+            report("frost: cannot write '")
+            report_cstr(emit_path)
+            report("'")
             frost_rt_die()
         }
-
-        // With no file named anywhere, the built-in demonstration program is what
-        // gets compiled, which is what makes the compiler runnable with no
-        // arguments at all.
-        input_path := options.input
-        mut source : ^i8 = ""
-        mut modules : Arena<Module> = arena_make($Module, 1024)
-        mut exports : Arena<Export> = arena_make($Export, 4096)
-        export_names := ptr_cast($i8, malloc(SYNTH_ROOM))
-        if (frost_rt_str_len(input_path) != 0) {
-            // One buffer holds the root file and everything it imports, so a name
-            // is an offset into a single source no matter which file wrote it.
-            buffer := ptr_cast($i8, malloc(SOURCE_ROOM + SYNTH_ROOM))
-            mut scratch : Arena<Token> = arena_make($Token, 262144)
-            search_roots_from(options.roots)
-            resolve_imports(buffer, input_path, export_names, modules, exports,
-                scratch, options.roots)
-            source = buffer
-        }
-        if (frost_rt_str_len(source) == 0) {
-            source = "
-            strlen :: extern fn(s: ^i8) -> i64
-
-            ANSWER :: 42
-
-            fib :: fn(n: i64) -> i64 {
-                if (n < 2) { return n }
-                return fib(n - 1) + fib(n - 2)
-            }
-
-            fact :: fn(n: i64) -> i64 {
-                if (n < 1) { return 1 }
-                return n * fact(n - 1)
-            }
-
-            Point :: struct { x: i64, y: i64 }
-
-            sum_point :: fn(pt: Point) -> i64 {
-                return pt.x + pt.y
-            }
-
-            bump :: fn(b: ^Point) {
-                unsafe { b^.x = b^.x + 1 }
-            }
-
-            classify :: fn(n: i64) -> i64 {
-                mut result : i64 = 0
-                match n {
-                    case 0: result = 100
-                    case 1: result = 200
-                    case _: result = 999
-                }
-                return result
-            }
-
-            Box :: struct($T: Type) { value: $T }
-
-            Holder :: struct { item: Box<i64> }
-
-            box_make :: fn($T: Type, v: $T) -> Box<T> {
-                Box { value = v }
-            }
-
-            box_get :: fn(b: Box<$T>) -> $T {
-                unsafe { b^.value }
-            }
-
-            main :: fn() -> i64 {
-                print fib(10)
-                print fact(5)
-                mut sum : i64 = 0
-                mut index : i64 = 1
-                while (index <= 10) { sum = sum + index  index = index + 1 }
-                print sum
-                p := Point { x = 3, y = 4 }
-                print p.x
-                p.x = 10
-                print sum_point(p)
-                ptr := ptr_to(p)
-                bump(ptr)
-                print p.x
-                unsafe {
-                    print ptr^.y
-                    print ptr[0].x
-                    q := ptr_cast($Point, ptr)
-                    print q^.x
-                }
-                print sizeof(Point)
-                print classify(0)
-                print classify(1)
-                print classify(7)
-                unsafe { print strlen(\"hello\") }
-                print ANSWER
-                h := Holder { item = box_make($i64, 77) }
-                print box_get(h.item)
-            }
-        "
-        }
-        // The demo program is a literal with nowhere to write, so it needs the same
-        // copy with room past the terminator that an imported source already has.
-        if (frost_rt_str_len(input_path) == 0) {
-            source = source_with_room(source)
-        }
-
-        mut parser := Parser {
-            src = source,
-            tokens = arena_make($Token, 262144),
-            ti = 0,
-            arena = arena_make($Node, 262144),
-            fns = arena_make($Sym, 8192),
-            structs = arena_make($StructDef, 4096),
-            fields = arena_make($StructField, 8192),
-            locals = arena_make($LocalVar, 4096),
-            consts = arena_make($ConstDef, 4096),
-            instances = arena_make($Instance, 4096),
-            generic_fns = arena_make($GenericFn, 256),
-            gparams = arena_make($GParam, 256),
-            gargs = arena_make($GArg, 1024),
-            procs = arena_make($ProcSig, 256),
-            proc_params = arena_make($GArg, 1024),
-            argbuf = arena_make($GArg, 256),
-            gbindings = arena_make($GBinding, 256),
-            type_param_off = 0,
-            type_param_len = 0,
-            xparam_start = 0,
-            xparam_count = 0,
-            call_xarg_start = 0,
-            call_xarg_count = 0,
-            pending_gt = 0,
-            type_binding = 0,
-            binding_active = 0,
-            expected_type = 0,
-            saw_type_param = 0,
-            last_return_type = 0,
-            no_struct_lit = false,
-            last_type_was_generic = 0,
-            unsafe_spans = arena_make($UnsafeSpan, 1024),
-            unsafe_depth = 0,
-            moved = arena_make($LocalVar, 4096),
-            label_id = 0,
-            abi_windows = 0,
-            asm_temp = 0,
-            asm_ret = 0,
-            sret_slot = 0,
-            mono_rets = arena_make($MonoRet, 1024),
-            mono_nodes = arena_make($MonoNode, 1024),
-            current_ret = 0,
-            current_fn_off = 0,
-            current_fn_len = 0,
-            tainted = arena_make($LocalVar, 4096),
-            inner = arena_make($LocalVar, 4096),
-            region_off = 0,
-            region_len = 0,
-            region_returns = 0,
-            frame_storage = arena_make($LocalVar, 4096),
-            frame_bound = arena_make($LocalVar, 4096),
-            frame_via_pointer = arena_make($LocalVar, 4096),
-            region_via_pointer = arena_make($LocalVar, 4096),
-            frame_materialized = arena_make($LocalVar, 4096),
-            frame_answers = 0,
-            mut_params = arena_make($LocalVar, 8192),
-            move_scratch = arena_make($LocalVar, 4096),
-            modules = modules,
-            exports = exports,
-            export_names = export_names,
-            result_ty = 0 - 1,
-            failure_ty = 0 - 1,
-            variants = arena_make($Variant, 4096),
-            match_count = 0,
-            case_variant = 0 - 1,
-            type_args = arena_make($TypeArg, 1024),
-            pending = arena_make($LocalVar, 4096),
-            try_count = 0,
-            name_tag = 0,
-            name_value = 0,
-            name_error = 0,
-            name_ok = 0,
-            name_err = 0,
-            name_ok_value = 0,
-            name_err_error = 0,
-            synth_next = 0,
-            prov_kind = 0,
-            prov_off = 0,
-            prov_len = 0,
-            arrays = arena_make($ArrayDef, 1024),
-            tests = arena_make($TestCase, 1024),
-            testing = options.testing,
-            type_cache = arena_make($TypeCacheEntry, 262144),
-            type_cache_on = 0,
-        }
-        // Names the compiler synthesizes go past the source's terminator, so the
-        // first free byte is one past the text.
-        parser.synth_next = frost_rt_str_len(source) + 1
-        // The host convention by default. FROST_ABI overrides it so the other
-        // target's output can be inspected from either host.
-        parser.abi_windows = frost_rt_is_windows()
-        abi := frost_rt_getenv("FROST_ABI")
-        if (cstr_eq(abi, "sysv")) {
-            parser.abi_windows = 0
-        }
-        if (cstr_eq(abi, "win")) {
-            parser.abi_windows = 1
-        }
-        tokenize(source, frost_rt_str_len(source), parser.tokens)
-        program := parse_program(parser)
-        check_export_collisions(parser)
-        collect_type_args(parser)
-        record_mono_rets(parser)
-        check_calls(parser)
-        // On by default, the same as the bootstrap. FROST_CHECK_UNSAFE=0 turns
-        // it off, for compiling code that has not marked its unchecked
-        // operations yet.
-        if (cstr_eq(frost_rt_getenv("FROST_CHECK_UNSAFE"), "0") == false) {
-            check_unsafety(parser)
-        }
-        check_regions(parser)
-        check_frame_escapes(parser)
-        check_reference_fields(parser)
-        check_borrow_exclusivity(parser)
-        check_moves(parser)
-
-        // Where the emitted text goes. A link needs it in a file whatever the
-        // caller asked for, so it writes one beside the executable and removes it
-        // afterwards. Without -o and without --link it goes to standard output.
-        mut executable : ^i8 = options.output
-        mut emit_path : ^i8 = options.output
-        if (options.link == 1) {
-            if (frost_rt_str_len(executable) == 0) {
-                executable = "a.out"
-                if (frost_rt_is_windows() == 1) {
-                    executable = "a.exe"
-                }
-            }
-            if (options.backend == BACKEND_ASM) {
-                emit_path = join_two(executable, ".s")
-            } else {
-                emit_path = join_two(executable, ".c")
-            }
-        }
-        if (frost_rt_str_len(emit_path) != 0) {
-            if (frost_rt_emit_open(emit_path) == 0) {
-                report("frost: cannot write '")
-                report_cstr(emit_path)
-                report("'")
-                frost_rt_die()
-            }
-        }
-
-        // The checks are done, so a node's type is now settled. Turn on the
-        // memo and give it a slot per node before emit, which asks for the same
-        // types repeatedly, re-derives each one.
-        type_cache_prepare(parser)
-        parser.type_cache_on = 1
-
-        if (options.backend == BACKEND_ASM) {
-            emit_asm_program(parser, program)
-        } else {
-            emit_text("#include <stdio.h>\n")
-            emit_text("#include <stdint.h>\n")
-            emit_program(parser, program)
-        }
-        frost_rt_emit_close()
-
-        if (options.link == 1) {
-            // Every program links the C runtime: it holds the bounds check an
-            // index compiles to, the assertion, the string and error emitters,
-            // and the test runner a `--test` build needs. FROST_RUNTIME says
-            // where it is for a checkout that is not the working directory.
-            mut runtime := frost_rt_getenv("FROST_RUNTIME")
-            if (frost_rt_str_len(runtime) == 0) {
-                runtime = "runtime/frost_runtime.c"
-            }
-            extra := join_two(" ", runtime)
-            base := join_two(
-                join_two(
-                    join_two(
-                        join_two(join_two(c_compiler(), " "), emit_path),
-                        extra),
-                    " -o "),
-                executable)
-            // A program that reaches the C math functions (std/math.frost's
-            // sqrtf and the rest) needs libm where the platform keeps it out of
-            // the C runtime, which is Linux and the BSDs. Windows keeps them in
-            // the CRT, so the flag is only added off Windows.
-            mut command := base
-            if (frost_rt_is_windows() == 0) {
-                command = join_two(base, " -lm")
-            }
-            status := frost_rt_run_command(command)
-            frost_rt_remove_file(emit_path)
-            if (status != 0) {
-                // Name the command, since a failing link is nearly always the
-                // toolchain being absent or a path it could not read, and
-                // neither is guessable from the bare word "failed".
-                report("frost: the linker failed: ")
-                report_cstr(command)
-                report("\n")
-                frost_rt_die()
-            }
-            // Building the tests and not running them would be half an answer, so
-            // the process ends on what they said.
-            if (options.testing == 1) {
-                return frost_rt_run_command(executable)
-            }
-        }
-        0
     }
+
+    // The checks are done, so a node's type is now settled. Turn on the
+    // memo and give it a slot per node before emit, which asks for the same
+    // types repeatedly, re-derives each one.
+    type_cache_prepare(parser)
+    parser.type_cache_on = 1
+
+    if (options.backend == BACKEND_ASM) {
+        emit_asm_program(parser, program)
+    } else {
+        emit_text("#include <stdio.h>\n")
+        emit_text("#include <stdint.h>\n")
+        emit_program(parser, program)
+    }
+    frost_rt_emit_close()
+
+    if (options.link == 1) {
+        // Every program links the C runtime: it holds the bounds check an
+        // index compiles to, the assertion, the string and error emitters,
+        // and the test runner a `--test` build needs. FROST_RUNTIME says
+        // where it is for a checkout that is not the working directory.
+        mut runtime := unsafe { frost_rt_getenv("FROST_RUNTIME") }
+        if (unsafe { frost_rt_str_len(runtime) } == 0) {
+            runtime = "runtime/frost_runtime.c"
+        }
+        extra := join_two(" ", runtime)
+        base := join_two(
+            join_two(
+                join_two(
+                    join_two(join_two(c_compiler(), " "), emit_path),
+                    extra),
+                " -o "),
+            executable)
+        // A program that reaches the C math functions (std/math.frost's
+        // sqrtf and the rest) needs libm where the platform keeps it out of
+        // the C runtime, which is Linux and the BSDs. Windows keeps them in
+        // the CRT, so the flag is only added off Windows.
+        mut command := base
+        if (frost_rt_is_windows() == 0) {
+            command = join_two(base, " -lm")
+        }
+        status := unsafe { frost_rt_run_command(command) }
+        unsafe { frost_rt_remove_file(emit_path) }
+        if (status != 0) {
+            // Name the command, since a failing link is nearly always the
+            // toolchain being absent or a path it could not read, and
+            // neither is guessable from the bare word "failed".
+            report("frost: the linker failed: ")
+            report_cstr(command)
+            report("\n")
+            frost_rt_die()
+        }
+        // Building the tests and not running them would be half an answer, so
+        // the process ends on what they said.
+        if (options.testing == 1) {
+            return unsafe { frost_rt_run_command(executable) }
+        }
+    }
+    0
 }
