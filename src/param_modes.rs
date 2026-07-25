@@ -25,8 +25,12 @@ fn effective_type(parameter: &Parameter) -> Option<Type> {
     Some(match parameter.mode {
         ParamMode::Move => ty.clone(),
         ParamMode::Write => Type::RefMut(Box::new(ty.clone())),
-        ParamMode::Read if ty.is_copy() => ty.clone(),
-        ParamMode::Read => Type::Ref(Box::new(ty.clone())),
+        // `value` says how the bytes cross to C, not what the caller gives up.
+        // C is handed a copy, so the caller still holds its own value and the
+        // parameter borrows exactly as an unmarked one does. The copy is made
+        // at the call, by the backend, from this same borrow.
+        ParamMode::Read | ParamMode::Value if ty.is_copy() => ty.clone(),
+        ParamMode::Read | ParamMode::Value => Type::Ref(Box::new(ty.clone())),
     })
 }
 

@@ -54,8 +54,26 @@ main :: fn() -> i64 {
   is a pointer by convention, a struct return is by value with the real ABI.
   A return could not have been a convention, because `-> Ctx` has to mean what C
   means by it and `-> ^Ctx` is how a returned pointer is written. A parameter had
-  a choice, and passing by pointer is what most C APIs want. Passing a struct to
-  C by value has no spelling.
+  a choice, and passing by pointer is what most C APIs want.
+- A parameter written `value` is passed to C the way C passes a struct.
+  `set_label :: extern fn(handle: ^u8, value label: View)` links against
+  `void set_label(void*, View)`, with the bytes split across registers or pushed
+  on the stack by the same target rule the return uses. `src/c_abi.rs` has both
+  classifications side by side.
+
+  `value` is a word rather than a keyword, so a parameter may still be called
+  `value`; what tells them apart is that a mode is followed by the name and a
+  name is followed by its type. It says how the bytes cross, not what the caller
+  gives up: C receives a copy, so the caller still holds its own value and the
+  argument is borrowed exactly as an unmarked one is. That copy is real, and a
+  callee that writes to its parameter is writing to its own.
+
+  Two gaps, both loud rather than silent. On System V a struct over sixteen
+  bytes is pushed onto the stack, which the native backend does not emit yet and
+  reports; `--emit-c` handles it, since there the C compiler applies the rule.
+  And the self-hosted compiler refuses `value` outright, because it has no ABI
+  classifier and passing a pointer instead would be the wrong call rather than a
+  missing feature.
 - Freestanding is a separate axis. Everything on this page is about calling
   C and about the C backend. Whether the *executable* needs libc once it is
   running is a different question, answered by `--freestanding`. See

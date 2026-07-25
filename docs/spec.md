@@ -829,7 +829,13 @@ asymmetry is deliberate.
   `close :: extern fn(f: File)` links against a C `void close(File*)`. This is a
   convention rather than the C ABI, chosen because most C APIs take structs by
   pointer, and it is what lets a `linear` resource have a terminal consumer
-  across the boundary. Passing a struct to C by value has no spelling.
+  across the boundary.
+- A parameter written `value` is passed as C passes a struct instead, following
+  the target's real ABI, so `label :: extern fn(value v: View)` links against a
+  C `void label(View)`. `value` is a word rather than a keyword and is only a
+  mode where a mode can appear, so a parameter may still be named `value`. It
+  says how the bytes cross rather than what the caller gives up: C receives a
+  copy and the argument is borrowed, exactly as an unmarked one is.
 - An aggregate return is by value, following the target's real C ABI: in
   registers where that target's rule says so, and through a hidden pointer where
   it does not. A return could not have been a convention, because `-> Ctx` has

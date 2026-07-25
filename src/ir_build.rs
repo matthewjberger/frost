@@ -184,9 +184,31 @@ fn build_module_inner(
             } => {
                 let return_type = return_type.clone().unwrap_or(Type::Void);
                 let return_layout = builder.c_layout(&return_type);
+                let param_layouts = params
+                    .iter()
+                    .map(|parameter| {
+                        if parameter.mode != crate::parser::ParamMode::Value {
+                            return Ok(None);
+                        }
+                        let Some(ty) = &parameter.type_annotation else {
+                            bail!(
+                                "native backend: the parameter '{}' of the extern '{name}' is written 'value' but has no type",
+                                parameter.name
+                            );
+                        };
+                        let Some(layout) = builder.c_layout(ty) else {
+                            bail!(
+                                "'{}' of the extern '{name}' is written 'value', but '{ty}' is not an aggregate; a scalar already goes to C by value and needs no mode",
+                                parameter.name
+                            );
+                        };
+                        Ok(Some(layout))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
                 externs.push(IrExtern {
                     name: name.clone(),
                     params: extern_parameter_types(params),
+                    param_layouts,
                     return_type,
                     return_layout,
                 });

@@ -118,6 +118,34 @@ is_reserved :: fn(mut document: Json, node: i64) -> bool {
     false
 }
 
+// Whether C takes this argument as the struct itself rather than as a pointer
+// to it. A StringView is the common one, in thirty exported functions, and a
+// struct argument that the IDL does not mark as a pointer is the other.
+//
+// Frost hands C a pointer for every aggregate unless the parameter says
+// `value`, so without this the call is wrong wherever the target passes a
+// struct in registers. It happened to work on Windows, where a sixteen-byte
+// struct reaches the callee as a pointer anyway, and would have been wrong on
+// System V, where it arrives in two registers.
+is_by_value :: fn(mut document: Json, held: i64) -> bool {
+    kind := json_member(document, held, "type")
+    if (type_starts(document, kind, "string")
+        || type_starts(document, kind, "out_string")
+        || type_starts(document, kind, "nullable_string")) {
+        return true
+    }
+    if (type_starts(document, kind, "struct.")) {
+        return json_member(document, held, "pointer") < 0
+    }
+    false
+}
+
+append_value_mode :: fn(mut out: Builder, mut document: Json, held: i64) {
+    if (is_by_value(document, held)) {
+        builder_str_value(out, "value ")
+    }
+}
+
 // A parameter name, escaped if the language claims it.
 append_param_name :: fn(mut out: Builder, mut document: Json, node: i64) {
     append_snake(out, document, node)
@@ -705,9 +733,13 @@ emit_callback_infos :: fn(mut out: Builder, mut names: Builder,
         while (arg < count) {
             held := json_at(document, args, arg)
             kind := json_member(document, held, "type")
-            // By value a StringView is two words, which this ABI hands to the
-            // callee as a pointer to a copy. As a parameter it is therefore
-            // one pointer, not the struct.
+            // This is a function pointer type in a struct field, not an
+            // `extern` parameter, so `value` cannot be written on it and the
+            // struct-by-value spelling does not reach here. A StringView is
+            // sixteen bytes, which Windows hands to a callee as a pointer to a
+            // copy, so one pointer is right there and wrong on System V, where
+            // it arrives in two registers. It stays a pointer until a function
+            // type can say how its parameters cross.
             if (type_starts(document, kind, "string")
                 || type_starts(document, kind, "out_string")
                 || type_starts(document, kind, "nullable_string")) {
@@ -758,6 +790,7 @@ emit_free_functions :: fn(mut out: Builder, mut names: Builder,
             if (arg > 0) {
                 builder_str_value(out, ", ")
             }
+            append_value_mode(out, document, held)
             append_param_name(out, document, json_member(document, held, "name"))
             builder_str_value(out, ": ")
             append_type(out, document, held)
@@ -814,6 +847,7 @@ emit_functions :: fn(mut out: Builder, mut names: Builder,
                     builder_str_value(out, "_count: u64")
                 }
                 builder_str_value(out, ", ")
+                append_value_mode(out, document, each)
                 append_param_name(out, document, arg_name)
                 builder_str_value(out, ": ")
                 append_type(out, document, each)
