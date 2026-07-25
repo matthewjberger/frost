@@ -27,28 +27,24 @@ arena_destroy :: fn(move a: Arena) {
 }
 
 alloc_int :: fn(mut a: Arena) -> ^i64 {
-    unsafe {
-        slot := ptr_to(a.data[a.offset])
-        a.offset = a.offset + sizeof(i64)
-        ptr_cast($i64, slot)
-    }
+    slot := unsafe { ptr_to(a.data[a.offset]) }
+    a.offset = a.offset + sizeof(i64)
+    unsafe { ptr_cast($i64, slot) }
 }
 
 main :: fn() -> i64 {
-    unsafe {
-        mut a := arena_new(256)
+    mut a := arena_new(256)
 
-        p := alloc_int(a)
-        p^ = 42
-        q := alloc_int(a)
-        q^ = 100
+    p := alloc_int(a)
+    unsafe { p^ = 42 }
+    q := alloc_int(a)
+    unsafe { q^ = 100 }
 
-        print_int_line(p^)  // 42
-        print_int_line(q^)  // 100
-        print_int_line(p^ + q^)  // 142
-        print_int_line(a.offset)  // 16, two 8-byte allocations
+    print_int_line(unsafe { p^ })  // 42
+    print_int_line(unsafe { q^ })  // 100
+    print_int_line(unsafe { p^ } + unsafe { q^ })  // 142
+    print_int_line(a.offset)  // 16, two 8-byte allocations
 
-        arena_destroy(a)              // frees the single OS allocation, required
-        0
-    }
+    arena_destroy(a)              // frees the single OS allocation, required
+    0
 }
