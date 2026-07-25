@@ -868,9 +868,22 @@ frame_check_block :: fn(mut p: Parser, head: i64, root: i64) {
         // just as returning it does. A place rooted in this frame's own storage
         // dies with the frame, so it may hold one.
         if (kind == NODE_ASSIGN) {
-            if (frame_points_into(p, node.b)
-                && frame_rooted_here(p, node.a) == false) {
-                frame_escape(p, node.pos, "stored where the call cannot see it")
+            if (frame_points_into(p, node.b)) {
+                if (frame_rooted_here(p, node.a) == false) {
+                    frame_escape(p, node.pos,
+                        "stored where the call cannot see it")
+                } else {
+                    // Writing one into a local this frame owns is allowed, but
+                    // the local now holds it. Without this a `match` or `if`
+                    // used as a value escapes unseen, since those desugar into
+                    // a synthesized local the arms assign to, and the block
+                    // answers with that local rather than with the branch.
+                    target := root_name(p, node.a)
+                    if (target != (0 - 1)) {
+                        tnode := arena_at(p.arena, target)
+                        list_name(p.frame_bound, tnode.val, tnode.c)
+                    }
+                }
             }
         }
         if (kind == NODE_IF) {
@@ -1001,6 +1014,24 @@ mentions_region_args :: fn(mut p: Parser, head: i64) -> bool {
 // Whether a value points into the region. A pointer taken of something that
 // mentions the arena is one. So is the result of a call that returns a pointer
 // and either draws from an allocation source or was handed the arena.
+// Whether a value is the address of a binding that already holds an arena
+// pointer, which is the only way a dereference can hand one back out.
+region_points_at_tainted :: fn(mut p: Parser, id: i64) -> bool {
+    if (id == (0 - 1)) {
+        return false
+    }
+    node := arena_at(p.arena, id)
+    if (node.kind != NODE_ADDROF && node.kind != NODE_REF) {
+        return false
+    }
+    root := root_name(p, node.a)
+    if (root == (0 - 1)) {
+        return false
+    }
+    rnode := arena_at(p.arena, root)
+    name_listed(p.tainted, p.src, rnode.val, rnode.c)
+}
+
 region_pointer :: fn(mut p: Parser, id: i64) -> bool {
     if (id == (0 - 1)) {
         return false
@@ -1017,6 +1048,17 @@ region_pointer :: fn(mut p: Parser, id: i64) -> bool {
     // the value there, and reading out of the region is what the region is for.
     if (kind == NODE_PTR_CAST) {
         return region_pointer(p, node.a)
+    }
+    // Reading back through a pointer at a binding that holds an arena pointer
+    // hands that pointer out again. `pp^` where `pp` was taken from something
+    // already tainted, not `p^` where `p` is the arena pointer itself.
+    if (kind == NODE_DEREF) {
+        root := root_name(p, node.a)
+        if (root == (0 - 1)) {
+            return false
+        }
+        rnode := arena_at(p.arena, root)
+        return name_listed(p.region_via_pointer, p.src, rnode.val, rnode.c)
     }
     if (kind == NODE_CALL) {
         sym := arena_at(p.fns, node.val)
@@ -1052,6 +1094,9 @@ check_region_block :: fn(mut p: Parser, head: i64) {
             // a region pointer.
             if (region_pointer(p, node.a)) {
                 list_name(p.tainted, node.val, node.c)
+            }
+            if (region_points_at_tainted(p, node.a)) {
+                list_name(p.region_via_pointer, node.val, node.c)
             }
             list_name(p.inner, node.val, node.c)
         }
@@ -1116,6 +1161,7 @@ check_regions :: fn(mut p: Parser) {
             p.region_off = node.val
             p.region_len = node.c
             p.tainted.count = 0
+            p.region_via_pointer.count = 0
             p.inner.count = 0
             p.region_returns = 0
             check_region_block(p, body)
@@ -1127,6 +1173,7 @@ check_regions :: fn(mut p: Parser) {
                 p.region_off = sym.cap_off
                 p.region_len = sym.cap_len
                 p.tainted.count = 0
+                p.region_via_pointer.count = 0
                 p.inner.count = 0
                 p.region_returns = 1
                 check_region_block(p, body)
