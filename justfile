@@ -54,6 +54,16 @@ uninstall-hooks:
 uninstall-hooks:
     rm -f .git/hooks/pre-commit
 
+# Checks a frost file without producing an executable, for the editor (Windows)
+[windows]
+check-file file:
+    @New-Item -ItemType Directory -Force .frost-build | Out-Null; $env:RUST_BACKTRACE = "0"; cargo run -r -q -p frost --bin frost -- --native -o .frost-build/check.o {{file}}
+
+# Checks a frost file without producing an executable, for the editor (Unix)
+[unix]
+check-file file:
+    @mkdir -p .frost-build && RUST_BACKTRACE=0 cargo run -r -q -p frost --bin frost -- --native -o .frost-build/check.o {{file}}
+
 # Prints where this VS Code keeps its extensions, portable installs included (Windows)
 [windows]
 editor-dir:

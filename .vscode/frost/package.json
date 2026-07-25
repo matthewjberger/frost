@@ -31,6 +31,22 @@
         "scopeName": "source.frost",
         "path": "./syntaxes/frost.tmLanguage.json"
       }
+    ],
+    "problemMatchers": [
+      {
+        "name": "frost",
+        "owner": "frost",
+        "source": "frost",
+        "fileLocation": ["relative", "${fileDirname}"],
+        "severity": "error",
+        "pattern": {
+          "regexp": "^\\s*(?:\\d+:\\s*)?at (.+?):(\\d+):(\\d+): (.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "message": 4
+        }
+      }
     ]
   }
 }
