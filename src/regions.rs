@@ -135,6 +135,27 @@ fn capability_binding(capability: &Type) -> String {
     }
 }
 
+/// Record an escape unless the same one is already recorded.
+///
+/// A block reachable both as a nested block and as the thing its enclosing
+/// block answers with is walked down both roads, and the reader wants the
+/// escape named once rather than once per road.
+fn record_once(
+    diagnostics: &mut Vec<Diagnostic>,
+    at: Position,
+    message: String,
+) {
+    let already = diagnostics
+        .iter()
+        .any(|held| held.position == at && held.message == message);
+    if !already {
+        diagnostics.push(Diagnostic {
+            position: at,
+            message,
+        });
+    }
+}
+
 /// The expression an `unsafe` block answers with.
 ///
 /// `ptr_to` and `slice_from` are refused outside such a block, so every pointer
@@ -246,13 +267,11 @@ impl<'a> Region<'a> {
     }
 
     fn escape(&mut self, how: &str, at: Position) {
-        self.diagnostics.push(Diagnostic {
-            position: at,
-            message: format!(
-                "region: a pointer into arena '{}' escapes its region by {how}; it may not outlive the arena",
-                self.arena
-            ),
-        });
+        let message = format!(
+            "region: a pointer into arena '{}' escapes its region by {how}; it may not outlive the arena",
+            self.arena
+        );
+        record_once(&mut self.diagnostics, at, message);
     }
 
     // An `if`/`match` used as a statement carries blocks that are still inside
@@ -520,12 +539,10 @@ impl Frame<'_> {
 
     fn escape(&mut self, how: &str, at: Position) {
         let function = self.function.clone();
-        self.diagnostics.push(Diagnostic {
-            position: at,
-            message: format!(
-                "region: a pointer into the frame of '{function}' is {how}; the storage it names dies when the call returns"
-            ),
-        });
+        let message = format!(
+            "region: a pointer into the frame of '{function}' is {how}; the storage it names dies when the call returns"
+        );
+        record_once(&mut self.diagnostics, at, message);
     }
 
     // Whether a value points into this frame: an address taken of storage here,
@@ -579,6 +596,14 @@ impl Frame<'_> {
             }
             Expression::Unsafe(body) => block_value(body)
                 .is_some_and(|value| self.points_into_frame(value)),
+            // Reading back through a pointer into this frame hands out whatever
+            // that storage holds, which is a frame pointer again when the
+            // storage held one. Only where the function answers with a view at
+            // all, since otherwise `p^` is the ordinary way to read a local and
+            // flagging it would refuse honest code.
+            Expression::Dereference(inner) => {
+                self.answers_view && self.points_into_frame(inner)
+            }
             // A block used as a value answers with whichever branch runs, so
             // the frame escapes if any of them hands one back.
             Expression::If(_, consequence, alternative) => {

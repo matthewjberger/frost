@@ -6848,6 +6848,43 @@ fn a_frame_pointer_may_not_leave_an_unsafe_block_by_any_road() {
     }
 }
 
+// Reading back through a pointer at a local that holds a frame pointer hands
+// the frame pointer out again.
+#[test]
+fn a_frame_pointer_read_back_through_a_pointer_may_not_be_returned() {
+    let source = "leak :: fn() -> ^i64 {\n\
+                  \x20   mut x : i64 = 42\n\
+                  \x20   mut p : ^i64 = unsafe { ptr_to(x) }\n\
+                  \x20   unsafe { pp := ptr_to(p)\n\
+                  \x20   pp^ }\n}\n\
+                  main :: fn() -> i64 { 0 }\n";
+    let message = compile_error_checked("framederef", source);
+    assert!(
+        message.contains("pointer into the frame of"),
+        "expected a frame escape error, got:\n{message}"
+    );
+    assert_eq!(
+        message.matches("pointer into the frame of").count(),
+        1,
+        "one escape should be named once, got:\n{message}"
+    );
+}
+
+// `p^` is the ordinary way to read a local through a pointer. A function
+// answering with a scalar is not handing out a view of anything.
+#[test]
+fn reading_a_local_through_a_pointer_is_still_allowed() {
+    let source = "read :: fn() -> i64 {\n\
+                  \x20   mut x : i64 = 42\n\
+                  \x20   p := unsafe { ptr_to(x) }\n\
+                  \x20   unsafe { p^ }\n}\n\
+                  main :: fn() -> i64 { print read()\n0 }\n";
+    let Some(output) = compile_and_run("okderef", source) else {
+        return;
+    };
+    assert_eq!(output, "42\n");
+}
+
 // The tightened check must not start refusing a pointer the function was handed,
 // which is not its frame's to begin with.
 #[test]
