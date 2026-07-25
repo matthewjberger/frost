@@ -14,8 +14,8 @@ export check_borrow_exclusivity, check_calls, check_export_collisions,
 // it in a third module resolves to whichever the name lookup reaches first,
 // silently. The flat namespace is the point (a name carries its own prefix,
 // `vec3_add` not `math.add`), so this is a loud error rather than a resolution
-// rule, and the fix is to prefix one of them or rename it on import. Only
-// exported names collide; a private name stays the module's own.
+// rule, and the fix is to prefix one of them. Only exported names collide; a
+// private name stays the module's own.
 check_export_collisions :: fn(mut p: Parser) {
     mut i : i64 = 0
     while (i < p.exports.count) {
@@ -34,7 +34,7 @@ check_export_collisions :: fn(mut p: Parser) {
                 report(" and ")
                 second_module := arena_at(p.modules, second.module)
                 report_cstr(second_module.path)
-                report("; prefix one of them or rename it on import\n")
+                report("; prefix one of them to keep the names distinct\n")
                 frost_die()
             }
             j = j + 1
