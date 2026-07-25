@@ -1,0 +1,28 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "frost: check file",
+      "detail": "Run every compiler check over the open .frost file",
+      "type": "shell",
+      "command": "just check-file ${file}",
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared",
+        "clear": true,
+        "showReuseMessage": false
+      },
+      "problemMatcher": "$frost"
+    },
+    {
+      "label": "frost: run file",
+      "detail": "Compile, link and run the open .frost file",
+      "type": "shell",
+      "command": "just run ${file}",
+      "group": "test",
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": "$frost"
+    }
+  ]
+}
