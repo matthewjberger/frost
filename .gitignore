@@ -7,3 +7,6 @@ selfhosted/.run_target*.s
 !bench/generate.py
 bench/generated
 .frost-build
+examples/graphics/SDL3.dll
+examples/graphics/SDL3.lib
+examples/graphics/window
