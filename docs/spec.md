@@ -179,7 +179,7 @@ wider type.
 - Enums `Name`, declared `Name :: enum { Variant, Variant { f: T }, ... }`,
   are a discriminant plus the active variant's payload. Variants may be unit or
   carry named fields, and one enum may mix both. An enum takes type parameters
-  exactly as a struct does, `Maybe :: enum($T: Type) { Nothing, Just { value: T } }`,
+  exactly as a struct does, `Option :: enum($T: Type) { None, Some { value: T } }`,
   and instantiates the same way (chapter 11).
 - Fixed arrays `[N]T` are `N` contiguous `T`. The length is part of the type
   and every index is bounds-checked (10.4).
@@ -242,7 +242,7 @@ too, allowed so a function type can be read beside the declaration it describes.
 ### 3.6 Other type forms
 
 There is no built-in optional, and none is needed: a generic enum (3.2) writes
-one in the language. `Maybe :: enum($T: Type) { Nothing, Just { value: T } }` is
+one in the language. `Option :: enum($T: Type) { None, Some { value: T } }` is
 that type, with nothing special about it.
 
 - `distinct T` is a nominal type with `T`'s representation, not interchangeable
@@ -674,7 +674,7 @@ a struct or enum declaration:
 
 ```frost
 Pair  :: struct($T: Type) { first: T, second: T }
-Maybe :: enum($T: Type) { Nothing, Just { value: T } }
+Option :: enum($T: Type) { None, Some { value: T } }
 make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
 ```
 
@@ -682,8 +682,8 @@ A generic literal carries no arguments of its own, so which instance it is comes
 from the context: an annotation, or the type of the parameter it is passed to.
 
 ```
-m : Maybe<i64> = Maybe::Just { value = 42 }     // the annotation names it
-unwrap_or($i64, Maybe::Nothing, 7)              // the parameter names it
+m : Option<i64> = Option::Some { value = 42 }     // the annotation names it
+unwrap_or($i64, Option::None, 7)              // the parameter names it
 ```
 
 In a parameter or struct type-parameter position, `$` IDENT `:` is followed by

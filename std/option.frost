@@ -1,0 +1,36 @@
+// A value that may be absent. `Option<T>` is an ordinary generic enum with
+// nothing special about it, which is the point. The language grew generic enums
+// so that this could be written in Frost rather than built into the compiler.
+//
+// There is no null and no built-in optional. An absent value is a variant you
+// have to match, and a match has to cover every variant, so forgetting to
+// handle it is a compile error rather than a crash.
+
+export Option, option_some, option_none, option_is_some, option_unwrap_or
+
+Option :: enum($T: Type) { None, Some { value: T } }
+
+option_some :: fn($T: Type, move value: $T) -> Option<T> {
+    Option::Some { value = value }
+}
+
+option_none :: fn($T: Type) -> Option<T> {
+    Option::None
+}
+
+option_is_some :: fn($T: Type, o: Option<T>) -> bool {
+    match o {
+        case .None: false
+        case .Some { value }: true
+    }
+}
+
+// The value if there is one, otherwise the fallback. Takes the fallback by
+// value rather than lazily, because there are no closures to defer it with and
+// pretending otherwise would hide the cost.
+option_unwrap_or :: fn($T: Type, o: Option<T>, move fallback: $T) -> $T {
+    match o {
+        case .None: fallback
+        case .Some { value }: value
+    }
+}

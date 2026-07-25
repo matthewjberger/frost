@@ -1473,7 +1473,7 @@ impl<'a> Parser<'a> {
             self.read_token();
             // An enum takes type parameters exactly as a struct does, and for
             // the same reason. Without them there is no way to write a sum type
-            // over an arbitrary element, so `Maybe<T>` and `Result<T, E>` would
+            // over an arbitrary element, so `Option<T>` and `Result<T, E>` would
             // have to be rewritten once per element type.
             let type_params = self.parse_generic_params()?;
             if !matches!(self.read_token(), Token::LeftBrace) {
