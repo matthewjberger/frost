@@ -60,7 +60,7 @@ To make backing memory swappable, an allocator is a value, not a hardcoded call.
 Frost has function pointers and no closures, so the Odin shape fits without a
 vtable:
 
-```
+```frost
 Allocator :: struct {
     allocate: fn(^u8, usize, usize) -> ^u8,   // data, size, align
     release:  fn(^u8, ^u8),                    // data, pointer

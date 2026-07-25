@@ -18,7 +18,7 @@ lowering (char buffers, mangled names) without owing anyone a stable ABI.
 An `extern fn` declares a function implemented outside Frost, linked at build
 time. It is available on both native backends (Cranelift and C).
 
-```
+```frost
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 malloc :: extern fn(size: i64) -> ^u8
 free   :: extern fn(ptr: ^u8)
@@ -74,7 +74,7 @@ The generational pool runtime (`runtime/frost_runtime.c`) is an ordinary C file
 that both backends link automatically. Programs reach it through the same
 `extern fn` mechanism:
 
-```
+```frost
 frost_bounds_check :: extern fn(index: i64, length: i64)
 frost_assert       :: extern fn(cond: bool)
 frost_read_file    :: extern fn(path: ^i8) -> ^i8

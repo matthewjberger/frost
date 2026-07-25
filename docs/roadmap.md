@@ -76,7 +76,7 @@ object".
 
 A compile-time function parameter may now say what signature it needs:
 
-```
+```frost
 best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T
 ```
 
@@ -125,7 +125,7 @@ Closures stay a non-goal. Capture is not the answer. A written
 down context is. A callback is a compile-time function argument plus a typed
 context the caller owns:
 
-```
+```frost
 Ctx :: struct { hits: i64 }
 
 on_event :: fn(mut ctx: Ctx, code: i64) { ctx.hits = ctx.hits + code }
@@ -141,7 +141,7 @@ Who owns the context is settled. This was the open question, and the answer is
 that registration moves the context in and unregistration moves it back out,
 with the registration itself a `linear` value. Not a borrow.
 
-```
+```frost
 Ctx          :: struct { hits: i64 }
 Registration :: linear struct { token: i64 }
 

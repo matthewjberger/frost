@@ -38,7 +38,7 @@ Closures stay a non-goal. Capture is not the answer. A context written down is.
 A callback is a compile-time function argument plus a typed context the caller
 owns:
 
-```
+```frost
 Ctx :: struct { hits: i64 }
 
 on_event :: fn(mut ctx: Ctx, code: i64) { ctx.hits = ctx.hits + code }
@@ -80,7 +80,7 @@ in the position it is written. The context contributes the `void*`, in
 the position it is written. So the declaration is written in the order C wants
 and the mapping needs no further rule:
 
-```
+```frost
 register :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64
 ```
 
@@ -103,7 +103,7 @@ one is the case a plain function pointer with no context already covers.
 Registration moves it in, unregistration moves it back out, and the registration
 is a `linear` value. Not a borrow.
 
-```
+```frost
 Ctx          :: struct { hits: i64 }
 Registration :: linear struct { token: i64 }
 

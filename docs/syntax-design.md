@@ -80,7 +80,7 @@ coercion rules between the two.
 
 In Frost, the named function is already a binding of a value:
 
-```
+```frost
 add :: fn(a: i64, b: i64) -> i64 { a + b }
 ```
 
@@ -89,7 +89,7 @@ This is the same shape as `MAX :: 10`. The right-hand side,
 The binding just names it. So the anonymous form falls out of the grammar. Delete
 the name and what remains is already a legal expression.
 
-```
+```frost
 apply(fn(a: i64, b: i64) -> i64 { a + b }, 3, 4)
 
 callbacks := [
@@ -183,7 +183,7 @@ to keep consistent, less to write, less to keep in sync.
 When the compiler already knows the scrutinee is a `Shape`, you do not repeat
 `Shape` in the pattern:
 
-```
+```frost
 match s {
     case .Circle { radius }: ...
     case .Rect { width, height }: ...

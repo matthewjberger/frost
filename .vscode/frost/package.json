@@ -30,6 +30,14 @@
         "language": "frost",
         "scopeName": "source.frost",
         "path": "./syntaxes/frost.tmLanguage.json"
+      },
+      {
+        "scopeName": "markdown.frost.codeblock",
+        "path": "./syntaxes/frost.markdown.tmLanguage.json",
+        "injectTo": ["text.html.markdown"],
+        "embeddedLanguages": {
+          "meta.embedded.block.frost": "frost"
+        }
       }
     ],
     "snippets": [

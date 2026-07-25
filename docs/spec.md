@@ -376,7 +376,7 @@ diamond of imports.
 Top-level items are private to their file by default. A file lists what it offers
 with an `export` line at the top.
 
-```
+```frost
 export area, Shape
 
 Shape :: enum { Circle { r: i64 }, Rect { w: i64, h: i64 } }
@@ -672,7 +672,7 @@ Raw pointers (`^T`) are outside these guarantees by design.
 A type parameter is written `$T`. It may appear on a function's parameters and on
 a struct or enum declaration:
 
-```
+```frost
 Pair  :: struct($T: Type) { first: T, second: T }
 Maybe :: enum($T: Type) { Nothing, Just { value: T } }
 make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
@@ -697,7 +697,7 @@ A parameter written `$N: usize` is a value parameter rather than a type
 parameter. It is a compile-time integer, and its main use is sizing a fixed
 array:
 
-```
+```frost
 Slab :: struct($T: Type, $N: usize) { storage: [N]T, used: i64 }
 world : Slab<Entity, 4> = ...
 ```
@@ -710,7 +710,7 @@ type the same way type parameters are.
 A function takes them too, which is what lets an operation over a sized
 aggregate be written once rather than once per size:
 
-```
+```frost
 slab_reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) {
     mut i : i64 = 0
     while (i < N) { s.generations[i] = 0  i = i + 1 }
@@ -730,7 +730,7 @@ A parameter written `$f: Type` whose argument names a declared function is a
 compile-time function parameter. The specialization calls it directly, with no
 function pointer and no indirect call:
 
-```
+```frost
 ascending :: fn(a: i64, b: i64) -> bool { a < b }
 
 best :: fn($T: Type, $before: Type, move x: $T, move y: $T) -> $T {
@@ -746,7 +746,7 @@ Written `$f: Type` the parameter accepts a function of any signature, and a
 mismatch surfaces inside the specialized body. Writing the signature instead
 states what the argument has to be:
 
-```
+```frost
 best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T
 ```
 
@@ -770,7 +770,7 @@ the specialized ABI once monomorphization chooses concrete types.
 There is no turbofish. A type is passed as an ordinary argument by writing `$`
 before it, which forms a type value:
 
-```
+```frost
 make_pool :: fn($T: Type, capacity: i64) -> ^u8 { pool_new(capacity, sizeof(T)) }
 world := make_pool($Entity, 16)
 ```
@@ -813,7 +813,7 @@ symbol names and the build cache are keyed on. See
 
 An `extern fn` declares a function with C linkage:
 
-```
+```frost
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 malloc :: extern fn(size: i64) -> ^u8
 ```
@@ -840,7 +840,7 @@ asymmetry is deliberate.
 An `extern` whose parameter list has a `$` parameter bound to a function
 signature is a callback registration:
 
-```
+```frost
 Ctx :: struct { hits: i64 }
 
 on_event         :: fn(mut ctx: Ctx, code: i64) { ctx.hits = ctx.hits + code }
