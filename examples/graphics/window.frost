@@ -13,10 +13,10 @@
 // Windows it is a path to SDL3.dll, which then has to sit beside the
 // executable or on PATH when it runs.
 //
-// SDL3's event API is a polling loop rather than a callback, which is what
-// makes it bindable here. A C callback with no context parameter, the shape
-// Win32's WNDPROC has, cannot be written in Frost at all, so SDL is not just
-// the convenient way to get a window, it is the available one.
+// SDL3's event API is a polling loop rather than a callback. A C callback
+// declared through an extern's parameter list must take its context first, so
+// Win32's WNDPROC, which has no context parameter, cannot be declared that
+// way.
 
 SDL_Init          :: extern fn(flags: u32) -> bool
 SDL_Quit          :: extern fn()

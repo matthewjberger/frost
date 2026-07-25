@@ -2,17 +2,13 @@
 //
 //   just triangle
 //
-// This is the window example plus a wgpu binding. Every wgpu type below is a
-// plain struct whose fields are in the order webgpu.h declares them, because
-// that is all a C struct is. Nothing here is generated.
+// Every wgpu type below is a struct whose fields are in the order webgpu.h
+// declares them. `tools/wgpu_bindgen.frost` generates the same declarations
+// from webgpu.json.
 //
-// Two shapes of the C API are worth naming, since they are what a binding has
-// to get right rather than what a graphics program has to get right.
-//
-// A descriptor is passed as a pointer to a struct this program owns, which is
-// `ptr_to(desc)`. A callback is passed as a struct holding a function pointer
-// beside two userdata slots, which is a plain field of function type. Neither
-// needs anything from the language beyond what a struct already is.
+// A descriptor is passed as a pointer to a struct this program owns. A
+// callback is passed as a struct holding a function pointer beside two
+// userdata slots.
 //
 // WGPUStringView is `{ pointer, length }` passed by value. A struct that size
 // goes to a Windows x64 callee as a hidden pointer, so it is spelled `^u8`
