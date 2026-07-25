@@ -2,6 +2,10 @@
 history.txt
 *.exe
 *.o
+# `--emit-c` and `--emit-asm` write beside the source they were given, which for
+# a file in the tree means into the tree.
+/*.c
+/*.s
 selfhosted/.run_target*.s
 *.py
 !bench/generate.py
