@@ -311,13 +311,21 @@ main :: fn() -> i64 {
                 runtime = "runtime/frost_runtime.c"
             }
             extra := join_two(" ", runtime)
-            command := join_two(
+            base := join_two(
                 join_two(
                     join_two(
                         join_two(join_two(c_compiler(), " "), emit_path),
                         extra),
                     " -o "),
                 executable)
+            // A program that reaches the C math functions (std/math.frost's
+            // sqrtf and the rest) needs libm where the platform keeps it out of
+            // the C runtime, which is Linux and the BSDs. Windows keeps them in
+            // the CRT, so the flag is only added off Windows.
+            mut command := base
+            if (frost_is_windows() == 0) {
+                command = join_two(base, " -lm")
+            }
             status := frost_run_command(command)
             frost_remove_file(emit_path)
             if (status != 0) {
