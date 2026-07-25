@@ -146,6 +146,9 @@ An import is looked for beside the importing file, then on `-L` and
 `FROST_PATH`, then in the project's `frost.json`, then in the standard library
 in [`std/`](std). See [docs/modules.md](docs/modules.md).
 
+For syntax highlighting in VS Code, `just install-editor` links the grammar in
+[`.vscode/frost`](.vscode) into the editor. See [.vscode/README.md](.vscode/README.md).
+
 ## Examples
 
 Runnable programs in [`examples/native/`](examples/native). Start with
@@ -206,6 +209,7 @@ frost/
 ├── runtime/      # a small C runtime (bounds check, assert, IO helpers)
 ├── examples/     # runnable programs
 ├── bench/        # the benchmark generator
+├── .vscode/      # editor settings, and the VS Code grammar for .frost
 └── docs/
 ```
 
