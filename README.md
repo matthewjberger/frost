@@ -50,6 +50,41 @@ it, checks what it prints, and checks it still matches what is written here.
 
 For long-lived data, an `Entity` lives in a pool and is named by a `Handle`, a small copy value rather than a pointer. Freeing a slot raises its generation, so a handle to a reused slot reads as stale rather than reading whatever took its place. The pool is ordinary Frost code, not a runtime, and is generic over element type and capacity. See [`examples/native/game_world.frost`](examples/native/game_world.frost).
 
+## Documentation
+
+**Learning the language**
+
+| Document | What it covers |
+| --- | --- |
+| [tour](docs/tour.md) | The language by example, one feature at a time |
+| [authoring](docs/authoring.md) | Writing correct Frost quickly, and the mistakes to expect |
+| [coming-from-rust](docs/coming-from-rust.md) | Each Rust reflex and what it becomes here |
+| [spec](docs/spec.md) | The reference: types, semantics, and the grammar |
+| [math](docs/math.md) | The standard-library math, `f32` and `f64` |
+
+**Why it is the way it is**
+
+| Document | What it covers |
+| --- | --- |
+| [philosophy](docs/philosophy.md) | The nine goals every decision is measured against |
+| [syntax-design](docs/syntax-design.md) | Why the syntax reads the way it does |
+| [memory-safety](docs/memory-safety.md) | What the safety guarantee covers, and what it does not |
+| [allocators](docs/allocators.md) | Arenas, regions, and where memory comes from |
+| [native-pools](docs/native-pools.md) | Generational handles, and why the pool is Frost rather than C |
+
+**The compiler**
+
+| Document | What it covers |
+| --- | --- |
+| [architecture](docs/architecture.md) | The passes, in order, and what each one decides |
+| [build-modes](docs/build-modes.md) | Native, C, and the IR interpreter |
+| [modules](docs/modules.md) | Imports, the flat namespace, and name collisions |
+| [separate-compilation](docs/separate-compilation.md) | Module interfaces and `--incremental` |
+| [c-compatibility](docs/c-compatibility.md) | Calling C, being called by C, and the ABI |
+| [callbacks](docs/callbacks.md) | Passing a function and a typed context across a boundary |
+| [self-hosting](docs/self-hosting.md) | The Frost compiler in Frost, and the fixpoints |
+| [roadmap](docs/roadmap.md) | What is planned, and what each item is waiting on |
+
 ## What it does
 
 The language has structs and tagged enums, `match` with payload and tuple patterns that has to cover every variant or say what the rest do, and generics that monomorphize over types, values, and functions, so a call in an inner loop stays direct rather than going through a pointer. A `for` walks a range or a sequence as the index-and-bound loop it stands for, a function answers with several values through a return type list rather than a tuple type, and a literal leaves out a type the context already carries, while every field keeps its name because the name is what says where the value lands. A resource that must be released is marked `linear` and the compiler counts it, consumed once on every path out or the program does not build. Long-lived data lives in pools addressed by generational handles, a region check keeps a pointer from outliving the block or the stack frame it points into, and a value constant can be a folded integer expression. There are no visibility modifiers and no methods.
@@ -95,18 +130,7 @@ The extension is in [`.vscode/frost`](.vscode) rather than on the marketplace, s
 
 Everything above works today and is checked by the test suite on every commit, including both self-hosting fixpoints and the three-backend differential run. The compiler has compiled itself.
 
-The two compilers have been audited against each other by running the same programs through both and comparing what each accepts. That was expected to be a confirmation and was not. It found four places where they disagreed, one of them a case where the same source meant different things rather than a compiler missing a check, and all four are closed. The probes that found them are tests now.
-
-What is left: nothing on the list this section used to carry. An import now says
-what a file may name, and the rename that answers a collision between two
-libraries you cannot edit is in both compilers. What comes next is whatever
-using the language turns up.
-
-## Documentation
-
-[authoring](docs/authoring.md) is the practical guide to writing correct Frost quickly, and [tour](docs/tour.md) walks the language by example. [spec](docs/spec.md) is the reference and grammar, [syntax-design](docs/syntax-design.md) explains why the syntax reads the way it does, [coming-from-rust](docs/coming-from-rust.md) maps each Rust reflex across, and [math](docs/math.md) covers the standard-library math.
-
-The reasoning behind the design is in [philosophy](docs/philosophy.md), [memory-safety](docs/memory-safety.md), [allocators](docs/allocators.md), and [native-pools](docs/native-pools.md). The compiler itself is covered by [architecture](docs/architecture.md), [build-modes](docs/build-modes.md), [modules](docs/modules.md), [separate-compilation](docs/separate-compilation.md), [c-compatibility](docs/c-compatibility.md), [callbacks](docs/callbacks.md), [self-hosting](docs/self-hosting.md), and [roadmap](docs/roadmap.md).
+The two compilers accept the same language. They are held to it by running the same programs through both and comparing what each accepts, and every form the language has is a test that both of them compile.
 
 ## Project layout
 

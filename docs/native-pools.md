@@ -1,33 +1,32 @@
 # Pools, the C runtime, and the road to a native memory model
 
-Frost's thesis is that pools and generational handles *are* the memory model. So
-a fair question is whether the pool primitive living in the C runtime
-(`runtime/frost_runtime.c`, reached through the compiler's `Pool<T>` type) holds
-the language back. This note records what a spike found and what the engine
-should do long-term.
+Frost's thesis is that pools and generational handles *are* the memory model, so
+where the pool itself lives is a question about whether the language can carry
+its own thesis. It lives in Frost.
 
-## Done, and what it took
+## The shape
 
-The pool has left C. `runtime/frost_runtime.c` no longer defines
-`pool_new`, `pool_alloc`, `pool_get`, `pool_contains`, `pool_free`,
-`pool_destroy`, `handle_index` or `handle_generation`, and the compiler no
-longer emits an implicit call to `pool_get` when a `Handle` indexes something
-that is not slab-shaped. A slab is a Frost struct with Frost operations over it,
-generic over element type and capacity, `examples/native/lib/slab.frost`. Every
-example and every test uses that, and the runtime shrank by about a hundred
-lines to bounds and generation aborts, assertions, and IO helpers.
+A slab is a Frost struct with Frost operations over it, generic over element
+type and capacity: `examples/native/lib/slab.frost`. Every example and every
+test uses it. `runtime/frost_runtime.c` defines no `pool_new`, `pool_alloc`,
+`pool_get`, `pool_contains`, `pool_free`, `pool_destroy`, `handle_index` or
+`handle_generation`, and the compiler emits no implicit `pool_get` when a
+`Handle` indexes something that is not slab-shaped. What is left of the runtime
+is about a hundred lines: bounds and generation aborts, assertions, and IO
+helpers.
 
-The reasoning below is kept because it is the argument that decided the shape,
-and because the distinction underlying it is the reusable part.
+The argument below is what decided that shape, and the distinction underlying
+it is the part that applies again elsewhere.
 
-## The question it answered
+## The question it answers
 
-`Pool<T>` used to be a compiler type that lowered to an opaque `^u8` and called
-a C runtime. The runtime was tiny and portable, and libc is the most portable
-ABI there is, so functionally it cost nothing. The concern was strategic. The
-flagship data-oriented primitive was uninspectable, unwritable C, which meant the
-language could not demonstrate its own core idea in itself, could not reach
-freestanding targets without libc, and defined the pool's behavior outside its
+The alternative was a `Pool<T>` built into the compiler, lowering to an opaque
+`^u8` and calling a C runtime. That runtime is tiny and portable, and libc is the
+most portable ABI there is, so functionally it costs nothing. The concern is
+strategic. It makes the flagship data-oriented primitive uninspectable,
+unwritable C, which means the language cannot demonstrate its own core idea in
+itself, cannot reach freestanding targets without libc, and defines the pool's
+behavior outside its
 own safety story.
 
 The distinction is that the dependency worth shedding was the *allocator*,

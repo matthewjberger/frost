@@ -126,13 +126,11 @@ process startup. Four times the input costs roughly four times the time on both
 curves, so the pipeline is close to linear with a mild superlinear term that
 grows with function count.
 
-The gap between the two columns used to be the story and is now nearly nothing:
-58k lines is 338 ms through the front end and 353 ms for the whole native build,
-about 165,000 lines per second. Code generation is 64 ms of that, because it
-runs on every core (see item 1 in [roadmap.md](roadmap.md)). Before that landed
-the same program took 1.11 s and the backend was two thirds of it.
+The two columns are nearly the same: 58k lines is 338 ms through the front end
+and 353 ms for the whole native build, about 165,000 lines per second. Code
+generation is 64 ms of that, because it runs on every core.
 
-So the front end is now what the curve is made of. Parse, parameter modes,
+So the front end is what the curve is made of. Parse, parameter modes,
 regions, ownership, IR lowering, type checking, monomorphization to fixpoint and
 C emission together stay near-linear because every one of them is a local pass:
 no traits to solve, no lifetimes to infer, no global inference, and the
@@ -144,39 +142,37 @@ little it reaches. `just bench-incremental` is the measurement that does show it
 9,484 lines across 65 files, one changed, about 580 ms full against about 200 ms
 with `--incremental`. See [separate-compilation.md](separate-compilation.md).
 
-The backend used to be where the superlinear term lived, and is not any more:
+What keeps the backend off the curve:
 
-1. Compile functions in parallel. *Done.* The type system is local and
+1. Functions compile in parallel. The type system is local and
    signature-based, so once signatures are collected functions are independent,
    which is a large part of why the language was designed the way it is. Code
-   generation now runs on every core and is 64 ms of a 353 ms build at 58k
+   generation runs on every core and is 64 ms of a 353 ms build at 58k
    lines.
-2. Separate compilation per module. *Done.* Each module is its own object on
-   the link path, monomorphization is seeded per module, `--incremental` skips
-   the modules an edit cannot reach, and a skipped module contributes signatures
-   rather than bodies, so the front end no longer walks code it will not emit.
-   See [separate-compilation.md](separate-compilation.md).
-3. Cache specializations across builds. Now subsumed, since a module's object
-   holds the specializations that module asked for, and reusing the object
-   reuses them.
+2. Modules compile separately. Each module is its own object on the link path,
+   monomorphization is seeded per module, `--incremental` skips the modules an
+   edit cannot reach, and a skipped module contributes signatures rather than
+   bodies, so the front end never walks code it will not emit. See
+   [separate-compilation.md](separate-compilation.md).
+3. Specializations carry across builds, since a module's object holds the ones
+   that module asked for and reusing the object reuses them.
 
-What matters is that the shape is measured rather than assumed, and that the
-measurement is a command rather than a memory. Two versions of this table have
-now been wrong for benchmark reasons rather than compiler reasons: the first
-because the generated programs named a function `f32`, so the timings were of a
-parse error, and the second because every program had a `main` with thousands of
-call sites, which is one function no amount of threading can split and which
-made parallel code generation look like it did not work. Re-run the benchmark
-before trusting any of it, and look at the shape of what it generates too.
+The shape is measured rather than assumed, and the measurement is a command
+rather than a memory. A benchmark is easy to get wrong in ways that look like a
+compiler result: generated programs that name a function `f32` time a parse
+error, and programs whose `main` holds thousands of call sites make parallel
+code generation look like it does nothing, because one function is one thread
+however many cores there are. Re-run the benchmark before trusting any of it,
+and look at the shape of what it generates too.
 
 Second-order levers, worth doing but small next to the above:
 
-2. ~~Parse each generic template once per instantiation.~~ *Done.* Every
-   instantiation used to be re-parsed three times over, once to record its
-   concrete return type and once each for its prototype and its body, all three
-   producing the same AST from the same template and the same argument.
-   `parse_generic_instance` now remembers `(template, argument)` and hands back
-   the node and the return type it worked out. Compiling the self-hosted
+2. ~~Parse each generic template once per instantiation.~~ *Done.* Three passes
+   ask for the same instance, once to record its concrete return type and once
+   each for its prototype and its body, all three producing the same AST from
+   the same template and the same argument. `parse_generic_instance` remembers
+   `(template, argument)` and hands back the node and the return type it worked
+   out. Compiling the self-hosted
    compiler with itself went from a median of 87 ms to 35 ms, and both
    fixpoints stayed byte-identical, which is what says the memo is a memo and
    not a change of meaning.
