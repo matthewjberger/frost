@@ -63,7 +63,9 @@ main :: fn() -> i64 {
         unsafe { SDL_Delay(16) }
     }
 
-    unsafe { SDL_DestroyWindow(window) }
-    unsafe { SDL_Quit() }
+    unsafe {
+        SDL_DestroyWindow(window)
+        SDL_Quit()
+    }
     0
 }

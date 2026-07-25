@@ -428,28 +428,30 @@ main :: fn() -> i64 {
                 wgpuCommandEncoderBeginRenderPass(encoder,
                     ptr_to(pass_descriptor))
             }
-            unsafe { wgpuRenderPassEncoderSetPipeline(pass, pipeline) }
             unsafe {
+                wgpuRenderPassEncoderSetPipeline(pass, pipeline)
                 wgpuRenderPassEncoderSetBindGroup(pass, 0, bind_group, 0,
                     null())
-            }
-            unsafe {
                 wgpuRenderPassEncoderSetVertexBuffer(pass, 0, vertex_buffer, 0,
                     VERTEX_BYTES)
+                wgpuRenderPassEncoderDraw(pass, VERTEX_COUNT, 1, 0, 0)
+                wgpuRenderPassEncoderEnd(pass)
             }
-            unsafe { wgpuRenderPassEncoderDraw(pass, VERTEX_COUNT, 1, 0, 0) }
-            unsafe { wgpuRenderPassEncoderEnd(pass) }
 
             mut command := unsafe {
                 wgpuCommandEncoderFinish(encoder,
                     null())
             }
-            unsafe { wgpuQueueSubmit(queue, 1, ptr_to(command)) }
-            unsafe { wgpuSurfacePresent(surface) }
+            unsafe {
+                wgpuQueueSubmit(queue, 1, ptr_to(command))
+                wgpuSurfacePresent(surface)
+            }
         }
     }
 
-    unsafe { SDL_DestroyWindow(window) }
-    unsafe { SDL_Quit() }
+    unsafe {
+        SDL_DestroyWindow(window)
+        SDL_Quit()
+    }
     0
 }
