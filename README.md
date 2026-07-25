@@ -68,7 +68,7 @@ For long-lived data, an `Entity` lives in a pool and is named by a `Handle`, a s
 
 ## What it does
 
-The language has structs and tagged enums, `match` with payload and tuple patterns, and generics that monomorphize over types, values, and functions, so a call in an inner loop stays direct rather than going through a pointer. A resource that must be released is marked `linear` and the compiler counts it, consumed once on every path out or the program does not build. Long-lived data lives in pools addressed by generational handles, a region check keeps a pointer from outliving the block or the stack frame it points into, and a value constant can be a folded integer expression. There are no visibility modifiers and no methods.
+The language has structs and tagged enums, `match` with payload and tuple patterns that has to cover every variant or say what the rest do, and generics that monomorphize over types, values, and functions, so a call in an inner loop stays direct rather than going through a pointer. A resource that must be released is marked `linear` and the compiler counts it, consumed once on every path out or the program does not build. Long-lived data lives in pools addressed by generational handles, a region check keeps a pointer from outliving the block or the stack frame it points into, and a value constant can be a folded integer expression. There are no visibility modifiers and no methods.
 
 It calls C without a binding layer. An `extern fn` links against a C library with the natural ABI, including one that returns a struct by value and one that takes a Frost function as a callback with a typed context.
 
@@ -111,12 +111,12 @@ The extension is in [`.vscode/frost`](.vscode) rather than on the marketplace, s
 
 Everything above works today and is checked by the test suite on every commit, including both self-hosting fixpoints and the three-backend differential run. The compiler has compiled itself.
 
+The two compilers have been audited against each other by running the same programs through both and comparing what each accepts. That was expected to be a confirmation and was not. It found four places where they disagreed, one of them a case where the same source meant different things rather than a compiler missing a check, and all four are closed. The probes that found them are tests now.
+
 What is left, roughly in order:
 
 - Renaming a name on import. Two modules that export the same name is already a compile error. The rename was designed and then held back, since the only thing it resolves is a collision between two third-party libraries you cannot edit, and there is no third-party ecosystem yet.
-- An `f64` or scalar-generic version of the math library, and the SIMD and structure-of-arrays primitives for it to build on.
-- A full two-way audit of the two compilers. They are held to the same feature set by test, and the recent additions (the `print` statement, constant expressions, and the export-collision error) each landed in both, so the audit is a confirmation rather than a repair.
-- The move to 1.0, once the surface stops changing.
+- An `f64` or scalar-generic version of the math library.
 
 ## Documentation
 
