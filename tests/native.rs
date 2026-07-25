@@ -4151,16 +4151,16 @@ fn self_hosted_generic_slab_place_deref() {
 // function. Each instance re-parses the body with its type bound, so the
 // variant resolves per instance rather than at the template.
 const SELFHOSTED_GENERIC_ENUM: &str = concat!(
-    "Maybe :: enum($T: Type) { Nothing, Just { value: T } }\n",
-    "unwrap_or :: fn($T: Type, m: Maybe<T>, fallback: $T) -> $T {\n",
+    "Option :: enum($T: Type) { None, Some { value: T } }\n",
+    "unwrap_or :: fn($T: Type, m: Option<T>, fallback: $T) -> $T {\n",
     "    match m {\n",
-    "        case .Just { value }: value\n",
-    "        case .Nothing: fallback\n",
+    "        case .Some { value }: value\n",
+    "        case .None: fallback\n",
     "    }\n",
     "}\n",
     "main :: fn() -> i64 {\n",
-    "    a : Maybe<i64> = Maybe::Just { value = 42 }\n",
-    "    b : Maybe<i64> = Maybe::Nothing\n",
+    "    a : Option<i64> = Option::Some { value = 42 }\n",
+    "    b : Option<i64> = Option::None\n",
     "    print unwrap_or($i64, a, 0)\n",
     "    print unwrap_or($i64, b, 99)\n",
     "    0\n",
@@ -8178,26 +8178,26 @@ fn an_enum_can_be_generic() {
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 Point :: struct { x: i64, y: i64 }
-Maybe :: enum($T: Type) { Nothing, Just { value: T } }
+Option :: enum($T: Type) { None, Some { value: T } }
 Either :: enum($L: Type, $R: Type) { Left { value: L }, Right { value: R } }
 
-unwrap_or :: fn($T: Type, m: Maybe<T>, fallback: $T) -> $T {
+unwrap_or :: fn($T: Type, m: Option<T>, fallback: $T) -> $T {
     match m {
-        case .Nothing: fallback
-        case .Just { value }: value
+        case .None: fallback
+        case .Some { value }: value
     }
 }
 
 main :: fn() -> i64 {
-    a : Maybe<i64> = Maybe::Just { value = 42 }
-    b : Maybe<i64> = Maybe::Nothing
+    a : Option<i64> = Option::Some { value = 42 }
+    b : Option<i64> = Option::None
     printf("%lld\n", unwrap_or($i64, a, 0))
     printf("%lld\n", unwrap_or($i64, b, 7))
 
-    p : Maybe<Point> = Maybe::Just { value = Point { x = 3, y = 4 } }
+    p : Option<Point> = Option::Some { value = Point { x = 3, y = 4 } }
     match p {
-        case .Nothing: printf("%lld\n", 0)
-        case .Just { value }: printf("%lld\n", value.x + value.y)
+        case .None: printf("%lld\n", 0)
+        case .Some { value }: printf("%lld\n", value.x + value.y)
     }
 
     e : Either<i64, Point> = Either::Right { value = Point { x = 5, y = 6 } }
@@ -8206,12 +8206,12 @@ main :: fn() -> i64 {
         case .Right { value }: printf("%lld\n", value.y)
     }
 
-    nested : Maybe<Maybe<i64>> = Maybe::Just { value = Maybe::Just { value = 8 } }
+    nested : Option<Option<i64>> = Option::Some { value = Option::Some { value = 8 } }
     match nested {
-        case .Nothing: printf("%lld\n", 0)
-        case .Just { value }: match value {
-            case .Nothing: printf("%lld\n", 0)
-            case .Just { value }: printf("%lld\n", value)
+        case .None: printf("%lld\n", 0)
+        case .Some { value }: match value {
+            case .None: printf("%lld\n", 0)
+            case .Some { value }: printf("%lld\n", value)
         }
     }
     0
@@ -8324,15 +8324,34 @@ fn an_import_resolves_through_every_search_root() {
 
     // 5. The standard library, which needs nothing declared at all.
     let uses_std = "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
-         import \"maybe.frost\"\n\
+         import \"option.frost\"\n\
          main :: fn() -> i64 {\n\
-         \x20   m := maybe_some($i64, 42)\n\
-         \x20   printf(\"%lld\n\", maybe_or($i64, m, 0))\n\
+         \x20   m := option_some($i64, 42)\n\
+         \x20   printf(\"%lld\n\", option_unwrap_or($i64, m, 0))\n\
          \x20   0\n\
          }\n";
     assert_eq!(build("standard", uses_std, &[], &[]), "42\n");
 
     let _ = std::fs::remove_dir_all(&directory);
+}
+
+// The optional type is an ordinary generic enum in the standard library. Both
+// variants and every function it exports.
+#[test]
+fn the_standard_option_covers_both_variants() {
+    let source = "import \"option.frost\"\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   a := option_some($i64, 42)\n\
+                  \x20   b := option_none($i64)\n\
+                  \x20   print option_unwrap_or($i64, a, 0)\n\
+                  \x20   print option_unwrap_or($i64, b, 7)\n\
+                  \x20   if (option_is_some($i64, a)) { print 1 } else { print 0 }\n\
+                  \x20   if (option_is_some($i64, b)) { print 1 } else { print 0 }\n\
+                  \x20   0\n}\n";
+    let Some(output) = compile_and_run("stdoption", source) else {
+        return;
+    };
+    assert_eq!(output, "42\n7\n1\n0\n");
 }
 
 // A failing test used to end the run, so one bad test hid every test after it,

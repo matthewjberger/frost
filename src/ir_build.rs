@@ -2601,7 +2601,7 @@ impl<'a> FunctionLowering<'a> {
                     field_inits,
                 ) = value
                 {
-                    // `m : Maybe<i64> = Maybe::Just { value = 3 }`: the
+                    // `o : Option<i64> = Option::Some { value = 3 }`: the
                     // annotation says which instance, the literal does not
                     // carry arguments, so the annotation is what names the
                     // layout. Same rule as a generic struct literal above.
@@ -2963,7 +2963,7 @@ impl<'a> FunctionLowering<'a> {
                 Ok((IrOperand::Local(temp), ty))
             }
             Expression::EnumVariantInit(enum_name, _, _) => {
-                // A generic enum is written `Maybe::Just { value = 3 }` with no
+                // A generic enum is written `Option::Some { value = 3 }` with no
                 // arguments on it, so which instance it is comes from what the
                 // context expects, exactly as for a generic struct literal.
                 let ty = match expected {

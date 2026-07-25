@@ -24,7 +24,7 @@ use crate::types::Type;
 // are both keyed on it. So identity is the path relative to the root it was
 // found under, with that root's label in front. A project file stays
 // `lib/slab.frost` exactly as before, and a standard library module is
-// `std/maybe.frost` wherever the standard library is installed.
+// `std/option.frost` wherever the standard library is installed.
 #[derive(Debug, Clone)]
 pub struct SearchRoot {
     pub label: String,
@@ -463,7 +463,7 @@ fn import_paths(statements: &[Spanned<Statement>]) -> Vec<String> {
 // produce the symbols every other module expects to link against.
 // The tag for a module identity. Taken from the identity rather than from a
 // path, so a module found through a search root is tagged by what it is called
-// (`std/maybe.frost`) rather than by where the machine keeps it.
+// (`std/option.frost`) rather than by where the machine keeps it.
 fn module_tag_of(module: &str) -> String {
     format!("{:016x}", fnv1a(module.as_bytes()))
 }

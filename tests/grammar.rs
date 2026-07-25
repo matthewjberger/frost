@@ -40,7 +40,7 @@ fn grammar_accepts_specified_constructs() {
         "reset :: fn($T: Type, $N: usize, mut s: Slab<T, N>) { }",
         "size :: fn($N: usize) -> i64 { N }",
         // An enum takes type parameters the same way a struct does.
-        "Maybe :: enum($T: Type) { Nothing, Just { value: T } }",
+        "Option :: enum($T: Type) { None, Some { value: T } }",
         "Either :: enum($L: Type, $R: Type) { Left { v: L }, Right { v: R } }",
         "main :: fn() -> i64 {\n x := 5\n mut y : i64 = 0\n y = y + 1\n 0\n }",
         "cond :: fn() -> i64 { if (1 < 2) { 1 } else { 0 } }",

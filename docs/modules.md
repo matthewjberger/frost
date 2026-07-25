@@ -46,9 +46,9 @@ then `std` beside the compiler, which is what an installed layout looks like,
 then two directories up from the compiler, which is what `cargo build` produces.
 The binary lands in `target/debug` and the library is at the repository root.
 
-So `import "maybe.frost"` works from anywhere with nothing declared.
+So `import "option.frost"` works from anywhere with nothing declared.
 
-What is in it is Frost, not compiler magic. `std/maybe.frost` is a generic enum,
+What is in it is Frost, not compiler magic. `std/option.frost` is a generic enum,
 and it exists because the language grew generic enums rather than because the
 compiler has an optional type. `std/slab.frost` is the generational pool, whose
 storage and free list are ordinary struct fields. `std/strings.frost` is walks
@@ -73,7 +73,7 @@ So identity is the path relative to the root the module was found under, with
 that root's label in front:
 
 - a file in the project stays `lib/slab.frost`, exactly as before.
-- a standard library module is `std/maybe.frost` wherever the standard library
+- a standard library module is `std/option.frost` wherever the standard library
   is installed.
 - a file from `-L`, `FROST_PATH` or the manifest is named relative to that
   directory.
