@@ -328,13 +328,13 @@ lower_try :: fn(mut p: Parser, value: i64) -> i64 {
     carried := new_field_node(
         p,
         new_named_node(p, NODE_VAR, 0, name_off, name_len),
-        p.name_error,
-        5,
+        p.name_err_error,
+        9,
     )
     hand_on := new_node(
         p,
         NODE_RETURN,
-        new_result_value(p, p.result_ty, 1, p.name_error, 5, carried),
+        new_result_value(p, p.result_ty, 1, p.name_err_error, 9, carried),
         0,
         0,
     )
@@ -343,8 +343,8 @@ lower_try :: fn(mut p: Parser, value: i64) -> i64 {
     new_field_node(
         p,
         new_named_node(p, NODE_VAR, 0, name_off, name_len),
-        p.name_value,
-        5,
+        p.name_ok_value,
+        8,
     )
 }
 
@@ -2064,6 +2064,10 @@ result_field_names :: fn(mut p: Parser) {
         p.name_tag = synth_literal(p, "tag")
         p.name_value = synth_literal(p, "value")
         p.name_error = synth_literal(p, "error")
+        p.name_ok = synth_literal(p, "Ok")
+        p.name_err = synth_literal(p, "Err")
+        p.name_ok_value = synth_join(p, p.name_ok, 2, p.name_value, 5)
+        p.name_err_error = synth_join(p, p.name_err, 3, p.name_error, 5)
     }
 }
 
@@ -2078,12 +2082,12 @@ synth_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
     )
     value := arena_push(
         p.fields,
-        StructField { name_off = p.name_value, name_len = 5, ty = ok,
+        StructField { name_off = p.name_ok_value, name_len = 8, ty = ok,
             next = 0 - 1 },
     )
     bad_field := arena_push(
         p.fields,
-        StructField { name_off = p.name_error, name_len = 5, ty = bad,
+        StructField { name_off = p.name_err_error, name_len = 9, ty = bad,
             next = 0 - 1 },
     )
     set_next_field(p, tag, value)
@@ -2093,9 +2097,20 @@ synth_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
         p.structs,
         StructDef { name_off = name, name_len = 8 + digits_in(p.structs.count),
             field_head = tag, is_generic = 0, tparam_off = 0, tparam_len = 0,
-            field_token = 0, instance_id = 0 - 1, is_linear = 0, emitted = 0, xparam_start = 0, xparam_count = 0, is_enum = 0 },
+            field_token = 0, instance_id = 0 - 1, is_linear = 0, emitted = 0, xparam_start = 0, xparam_count = 0, is_enum = 1 },
     )
-    STRUCT_BASE + index
+    result_ty := STRUCT_BASE + index
+    arena_push(
+        p.variants,
+        Variant { enum_ty = result_ty, name_off = p.name_ok, name_len = 2,
+            tag = 0 },
+    )
+    arena_push(
+        p.variants,
+        Variant { enum_ty = result_ty, name_off = p.name_err, name_len = 3,
+            tag = 1 },
+    )
+    result_ty
 }
 
 set_next_field :: fn(mut p: Parser, id: i64, following: i64) {
@@ -2118,9 +2133,9 @@ returns_failure :: fn(mut p: Parser, value: i64) -> bool {
 // Wrap a returned value as whichever side of the failure set it is.
 wrap_result :: fn(mut p: Parser, value: i64) -> i64 {
     if (returns_failure(p, value)) {
-        return new_result_value(p, p.result_ty, 1, p.name_error, 5, value)
+        return new_result_value(p, p.result_ty, 1, p.name_err_error, 9, value)
     }
-    new_result_value(p, p.result_ty, 0, p.name_value, 5, value)
+    new_result_value(p, p.result_ty, 0, p.name_ok_value, 8, value)
 }
 
 // `Result { tag = <which>, <name> = <payload> }`, the value a fallible function

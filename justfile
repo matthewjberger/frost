@@ -181,7 +181,7 @@ selfhost-native file: selfhost-build
 # Runs every self-hosted example through the native backend (Windows)
 [windows]
 selfhost-examples: selfhost-build
-    Get-ChildItem examples/selfhosted/*.frost | ForEach-Object { Write-Host "== $($_.Name)"; $env:FROST_BACKEND = "asm"; $env:FROST_INPUT = $_.FullName; $asm = & ./selfhosted/frost.exe; $env:FROST_BACKEND = $null; [System.IO.File]::WriteAllLines($_.FullName + ".s", $asm); gcc ($_.FullName + ".s") runtime/frost_runtime.c -o ($_.FullName + ".exe"); & ($_.FullName + ".exe"); Remove-Item ($_.FullName + ".s"), ($_.FullName + ".exe") -Force }
+    Get-ChildItem examples/selfhosted/*.frost | ForEach-Object { Write-Host "== $($_.Name)"; $env:FROST_BACKEND = "asm"; $env:FROST_INPUT = $_.FullName; $asm = & ./selfhosted/frost.exe; if ($LASTEXITCODE -ne 0) { throw "the self-hosted compiler failed on $($_.Name)" }; $env:FROST_BACKEND = $null; [System.IO.File]::WriteAllLines($_.FullName + ".s", $asm); gcc ($_.FullName + ".s") runtime/frost_runtime.c -o ($_.FullName + ".exe"); & ($_.FullName + ".exe"); Remove-Item ($_.FullName + ".s"), ($_.FullName + ".exe") -Force }
 
 # Runs every self-hosted example through the native backend (Unix)
 [unix]
