@@ -188,6 +188,7 @@ main :: fn() -> i64 {
         variant_fixups = arena_make($VariantFixup, 1024),
         saw_type_param = 0,
         tparam_called = 0,
+        bound_token = 0 - 1,
         tparam_is_value = 0,
         last_return_type = 0,
         no_struct_lit = false,

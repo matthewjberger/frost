@@ -14,6 +14,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     report_type_name, report_distinct_note,
     intern_global, is_aggregate, is_array_ty, is_const, is_float, is_main_name,
     is_borrow, is_pointer, is_proc, is_raw_pointer, is_slab_ty, is_slice_ty,
+    is_integer,
     is_columns_ty, columns_lookup, is_columns_new_call, field_type_by_range,
     is_columns_bookkeeping,
     is_struct_ty, proc_of, proc_ret, proc_param_count, proc_param_at,
@@ -294,14 +295,16 @@ append_node :: fn(mut p: Parser, head: i64, extra: i64) -> i64 {
 
 record_generic_fn :: fn(mut p: Parser, fn_index: i64, tparam_off: i64,
     tparam_len: i64, tparam_is_value: i64, tparam_is_fn: i64,
-    xparam_start: i64, xparam_count: i64, token_start: i64) {
+    xparam_start: i64, xparam_count: i64, token_start: i64,
+    bound_token: i64) {
     arena_push(
         p.generic_fns,
         GenericFn { fn_index = fn_index, tparam_off = tparam_off,
             tparam_len = tparam_len, tparam_is_value = tparam_is_value,
             tparam_is_fn = tparam_is_fn,
             xparam_start = xparam_start,
-            xparam_count = xparam_count, token_start = token_start },
+            xparam_count = xparam_count, token_start = token_start,
+            bound_token = bound_token },
     )
 }
 
@@ -718,6 +721,16 @@ is_struct_ty :: fn(ty: i64) -> bool {
     held := distinct_repr(ty)
     held >= STRUCT_BASE && held < ARRAY_BASE
 }
+// Whether a type is an integer, which is one of the questions a `where` bound
+// may ask. `bool` is not one: it is one byte holding a truth value, and
+// arithmetic on it means nothing.
+is_integer :: fn(ty: i64) -> bool {
+    held := distinct_repr(ty)
+    held == TY_I8 || held == TY_I16 || held == TY_I32 || held == TY_I64
+        || held == TY_ISIZE || held == TY_U8 || held == TY_U16
+        || held == TY_U32 || held == TY_U64 || held == TY_USIZE
+}
+
 is_float :: fn(ty: i64) -> bool {
     held := distinct_repr(ty)
     held == TY_F32 || held == TY_F64

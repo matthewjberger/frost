@@ -182,6 +182,11 @@ pub enum ReturnKind {
 pub struct ReturnSignature {
     pub kind: ReturnKind,
     pub uses: Vec<Type>,
+    // A `where` bound on the function's compile-time parameters, checked at
+    // every call before the body is specialized. It is a precondition rather
+    // than a set of operations a type joins: nothing registers into it and
+    // nothing implements it.
+    pub bound: Option<Box<Expression>>,
 }
 
 impl ReturnSignature {
@@ -189,6 +194,7 @@ impl ReturnSignature {
         Self {
             kind,
             uses: Vec::new(),
+            bound: None,
         }
     }
 
@@ -311,6 +317,9 @@ impl Display for ReturnSignature {
         }
         for capability in &self.uses {
             write!(f, " uses {}", capability)?;
+        }
+        if let Some(bound) = &self.bound {
+            write!(f, " where {}", bound)?;
         }
         Ok(())
     }
@@ -3032,7 +3041,18 @@ impl<'a> Parser<'a> {
                 uses.push(self.parse_type()?);
             }
         }
-        Ok(ReturnSignature { kind, uses })
+        // `where is_numeric(T)`. The body's `{` follows the bound, so no
+        // struct literal is read here.
+        let mut bound = None;
+        if matches!(self.peek_nth(0), Token::Where) {
+            self.read_token();
+            let held = self.no_struct_literal;
+            self.no_struct_literal = true;
+            let expression = self.parse_expression(Precedence::Lowest);
+            self.no_struct_literal = held;
+            bound = Some(Box::new(expression?));
+        }
+        Ok(ReturnSignature { kind, uses, bound })
     }
 
     fn parse_return_kind(&mut self) -> Result<ReturnKind> {

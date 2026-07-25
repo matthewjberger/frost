@@ -162,7 +162,7 @@
         },
         {
           "name": "storage.modifier.frost",
-          "match": "\\b(mut|move|ref|linear|distinct|extern|safe|inline|unsafe|uses)\\b"
+          "match": "\\b(mut|move|ref|linear|distinct|extern|safe|inline|unsafe|uses|where)\\b"
         },
         {
           "name": "keyword.other.frost",
@@ -214,7 +214,7 @@
       "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
     },
     "function-calls": {
-      "match": "\\b(?!(?:if|else|match|case|while|for|in|break|continue|return|defer|with|fn|struct|enum|type|mut|move|ref|linear|distinct|extern|safe|inline|unsafe|uses|print|sizeof|true|false|import|export|test)\\b)([a-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "match": "\\b(?!(?:if|else|match|case|while|for|in|break|continue|return|defer|with|fn|struct|enum|type|mut|move|ref|linear|distinct|extern|safe|inline|unsafe|uses|where|print|sizeof|true|false|import|export|test)\\b)([a-z_][A-Za-z0-9_]*)\\s*(?=\\()",
       "captures": {
         "1": { "name": "entity.name.function.frost" }
       }

@@ -9094,6 +9094,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_distinct", DISTINCT_TYPES),
         ("diff_genbool", GENERIC_BOOL_ARGUMENT),
         ("diff_genwritten", GENERIC_WRITTEN_OUT),
+        ("diff_wherebound", WHERE_BOUNDS),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
@@ -9716,6 +9717,133 @@ main :: fn() -> i64 {
         return;
     };
     assert_eq!(output, "7\n");
+}
+
+// A `where` bound holds a generic to what its body needs, over a fixed
+// vocabulary of questions the compiler already answers about a type. It is a
+// precondition rather than a set of operations a type registers into: nothing
+// implements it, nothing is named, and there is nothing to resolve. The bound
+// is read at the call, so a type that cannot work is refused against the line
+// the reader wrote.
+const WHERE_BOUNDS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+twice :: fn($T: Type, v: $T) -> T where is_numeric(T) {
+    v + v
+}
+
+first :: fn($T: Type, xs: []T) -> T where is_numeric(T) && !is_pointer(T) {
+    xs[0]
+}
+
+widest :: fn($T: Type, a: $T, b: $T) -> T where is_integer(T) || is_float(T) {
+    if (a > b) { a } else { b }
+}
+
+main :: fn() -> i64 {
+    printf("%lld\n", twice($i64, 21))
+    mut numbers : [3]i64 = [7, 8, 9]
+    printf("%lld\n", first($i64, numbers))
+    printf("%lld\n", widest($i64, 4, 9))
+    0
+}
+"#;
+
+#[test]
+fn a_where_bound_holds_a_generic_to_what_it_needs() {
+    let Some(output) = compile_and_run("wherebound", WHERE_BOUNDS) else {
+        return;
+    };
+    assert_eq!(output, "42\n7\n9\n");
+}
+
+// The bound is the point, so what it refuses is the test. Both compilers refuse
+// the same two programs: a type the bound does not hold for, and a predicate
+// that is not one of the bounds a type can be held to.
+#[test]
+fn a_where_bound_is_checked_at_the_call() {
+    let cases = [
+        (
+            "Point :: struct { x: i64 }\n\
+             twice :: fn($T: Type, v: $T) -> T where is_numeric(T) { v }\n\
+             main :: fn() -> i64 {\n\
+             \x20   p := Point { x = 1 }\n\
+             \x20   q := twice($Point, p)\n\
+             \x20   q.x\n\
+             }\n",
+            "does not hold",
+        ),
+        (
+            "twice :: fn($T: Type, v: $T) -> T where is_sortable(T) { v }\n\
+             main :: fn() -> i64 { twice($i64, 1) }\n",
+            "not one of the bounds",
+        ),
+    ];
+    for (index, (source, expected)) in cases.iter().enumerate() {
+        let message = compile_error(&format!("boundbad{index}"), source);
+        assert!(message.contains(expected), "the bootstrap said:\n{message}");
+        let Some(compiler) = build_self_hosted_compiler("boundbad") else {
+            continue;
+        };
+        let directory = std::env::temp_dir();
+        let input = directory.join(format!("frost_boundbad{index}.frost"));
+        std::fs::write(&input, source).unwrap();
+        let refused = Command::new(&compiler)
+            .env("FROST_CHECK_UNSAFE", "0")
+            .env("FROST_INPUT", &input)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&input);
+        let _ = std::fs::remove_file(&compiler);
+        assert!(
+            !refused.status.success(),
+            "the self-hosted compiler accepted case {index}"
+        );
+        let said = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            said.contains(expected),
+            "the self-hosted compiler said:\n{said}"
+        );
+    }
+}
+
+// The same program through the self-hosted compiler, on both of its backends.
+// The float case is here because a generic instantiated at `f64` used to pass
+// its argument in an integer register while the specialized body read it from
+// an SSE one.
+const SELF_HOSTED_WHERE: &str = "twice :: fn($T: Type, v: $T) -> T where is_numeric(T) {\n\
+     \x20   v + v\n\
+     }\n\
+     first :: fn($T: Type, xs: []T) -> T where !is_pointer(T) {\n\
+     \x20   xs[0]\n\
+     }\n\
+     main :: fn() -> i64 {\n\
+     \x20   print twice($i64, 21)\n\
+     \x20   print twice($f64, 1.5)\n\
+     \x20   mut numbers : [3]i64 = [7, 8, 9]\n\
+     \x20   print first($i64, numbers)\n\
+     \x20   0\n\
+     }\n";
+
+#[test]
+fn self_hosted_holds_a_generic_to_its_bound() {
+    let Some(output) = selfhosted_native_output("shwhere", SELF_HOSTED_WHERE)
+    else {
+        return;
+    };
+    assert_eq!(output, "42\n3\n7\n");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shwhere_input.frost");
+    std::fs::write(&input, SELF_HOSTED_WHERE).unwrap();
+    let Some(c_source) = self_hosted_emits("shwhere", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shwhere", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
 }
 
 // A compile-time function argument. `$f` names a function at the call, the

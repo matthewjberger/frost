@@ -1125,6 +1125,18 @@ emit_asm_capability :: fn(mut p: Parser, fn_index: i64, index: i64) {
 
 emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     callee := arena_at(p.fns, fn_index)
+    // The instance this call names, when the callee is generic, since the
+    // symbol's list belongs to whichever instance was parsed last.
+    mut params_of_call : i64 = instance_params(p, fn_index, args)
+    // A call inside a template names its enclosing parameters rather than
+    // types, so there is no instance to read and nothing here can be trusted
+    // to say how an argument travels. That call is emitted again for each
+    // instance, where there is.
+    mut typed_params : bool = true
+    if (params_of_call == (0 - 1)) {
+        params_of_call = callee.params
+        typed_params = generic_fn_of(p, fn_index) < 0
+    }
     capability := cap_count_of(p, fn_index)
     value_count := count_value_args(p, args)
     count := value_count + capability
@@ -1152,7 +1164,7 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         // A specialization's parameters carry no width, so nothing is
         // converted into one. Everywhere else the callee's declared type is
         // what the value has to arrive as.
-        declared := nth_param_type(p, callee.params, i)
+        declared := nth_param_type(p, params_of_call, i)
         // A borrowed parameter's declared type is a pointer to what it
         // takes, and an aggregate is already an address here, so the
         // conversion is against what the pointer points at.
@@ -1167,7 +1179,7 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
             // whole of itself, and without it the callee is handed the array's
             // first two words as a pointer and a length. The C backend reads
             // the parameter list the same way here.
-            if (generic == false || (is_array_ty(want) && is_slice_ty(p, want))) {
+            if (typed_params || (is_array_ty(want) && is_slice_ty(p, want))) {
                 emit_asm_coerce(p, argument, want)
             }
         }
@@ -1186,8 +1198,8 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     mut counted : i64 = 0
     while (counted < count) {
         want := 0 - 1
-        if (counted < value_count && generic == false) {
-            want = value_param_type(p, callee.params, counted)
+        if (counted < value_count && typed_params) {
+            want = value_param_type(p, params_of_call, counted)
         }
         if (want >= 0) {
             total = total + value_abi_slots(p, want)
@@ -1225,8 +1237,8 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     mut r : i64 = 0
     while (r < count) {
         mut want : i64 = 0 - 1
-        if (r < value_count && generic == false) {
-            want = value_param_type(p, callee.params, r)
+        if (r < value_count && typed_params) {
+            want = value_param_type(p, params_of_call, r)
         }
         mut slots : i64 = 1
         mut kind : i64 = 0
@@ -1261,8 +1273,8 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
                         wants_sse = classify_eightbyte(p, want, 0, slot) == 1
                     }
                 }
-            } else if (r < value_count && generic == false) {
-                wants_sse = is_float(abi_class_of(p, callee.params, r))
+            } else if (r < value_count && typed_params) {
+                wants_sse = is_float(abi_class_of(p, params_of_call, r))
             }
             mut int_reg := int_next
             mut sse_reg := sse_next

@@ -67,6 +67,7 @@ classify_ident :: fn(src: ^i8, off: i64, len: i64) -> i64 {
     if (str_range_eq(src, off, len, "inline")) { return TOK_KW_INLINE }
     if (str_range_eq(src, off, len, "ref")) { return TOK_KW_REF }
     if (str_range_eq(src, off, len, "uses")) { return TOK_KW_USES }
+    if (str_range_eq(src, off, len, "where")) { return TOK_KW_WHERE }
     if (str_range_eq(src, off, len, "with")) { return TOK_KW_WITH }
     if (str_range_eq(src, off, len, "for")) { return TOK_KW_FOR }
     if (str_range_eq(src, off, len, "in")) { return TOK_KW_IN }

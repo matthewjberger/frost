@@ -7,11 +7,214 @@ import "lexer.frost"
 import "names.frost"
 import "types.frost"
 import "emit_asm.frost"
+import "cursor.frost"
 import "parser.frost"
 
 export check_borrow_exclusivity, check_calls, check_export_collisions,
     check_frame_escapes, check_moves,
     check_reference_fields, check_regions, check_types, check_unsafety
+
+
+// ---------------------------------------------------------------------------
+// `where` bounds.
+//
+// A bound asks what the compiler already knows about a type. The vocabulary is
+// fixed and closed, and every question in it is one the compiler answers for
+// itself anyway, to decide whether to emit an integer or a floating point
+// instruction, whether a value travels by address, and how wide it is. So a
+// bound is a precondition rather than a set of operations a type registers
+// into: nothing implements it, nothing is named, and there is nothing to
+// resolve.
+//
+// It is read at the call, with that call's arguments in hand, so a type that
+// cannot work is refused against the line the reader wrote rather than against
+// a line inside a body they never saw.
+//
+// Deliberately absent is any predicate keyed by a string, such as asking
+// whether a type has a field of a given name. A string literal does not grep
+// back to the declaration it names, which is the one thing the flat namespace
+// is for.
+// ---------------------------------------------------------------------------
+
+// One predicate against one type. -1 says the name is not one of the bounds.
+bound_predicate :: fn(mut p: Parser, off: i64, len: i64, ty: i64) -> i64 {
+    if (str_range_eq(p.src, off, len, "is_numeric")) {
+        if (is_integer(ty) || is_float(ty)) { return 1 }
+        return 0
+    }
+    if (str_range_eq(p.src, off, len, "is_integer")) {
+        if (is_integer(ty)) { return 1 }
+        return 0
+    }
+    if (str_range_eq(p.src, off, len, "is_float")) {
+        if (is_float(ty)) { return 1 }
+        return 0
+    }
+    if (str_range_eq(p.src, off, len, "is_struct")) {
+        if (is_struct_ty(ty)) { return 1 }
+        return 0
+    }
+    if (str_range_eq(p.src, off, len, "is_array")) {
+        if (is_array_ty(ty) && is_slice_ty(p, ty) == false) { return 1 }
+        return 0
+    }
+    if (str_range_eq(p.src, off, len, "is_slice")) {
+        if (is_array_ty(ty) && is_slice_ty(p, ty)) { return 1 }
+        return 0
+    }
+    if (str_range_eq(p.src, off, len, "is_pointer")) {
+        if (is_pointer(ty)) { return 1 }
+        return 0
+    }
+    0 - 1
+}
+
+// What a compile-time parameter of this generic is bound to at this call, or -1
+// when the name is not one of its parameters.
+bound_argument :: fn(mut p: Parser, gfn_index: i64, off: i64, len: i64,
+    arg: i64, xarg_start: i64, xarg_count: i64) -> i64 {
+    gfn := arena_at(p.generic_fns, gfn_index)
+    if (gfn.tparam_len == len
+        && bytes_equal(p.src, gfn.tparam_off, off, len)) {
+        return arg
+    }
+    mut i : i64 = 0
+    while (i < gfn.xparam_count && i < xarg_count) {
+        param := arena_at(p.gparams, gfn.xparam_start + i)
+        if (param.name_len == len
+            && bytes_equal(p.src, param.name_off, off, len)) {
+            garg := arena_at(p.gargs, xarg_start + i)
+            return garg.value
+        }
+        i = i + 1
+    }
+    0 - 1
+}
+
+// `pred(T)`, `!term`, and a parenthesized bound. The cursor is left just past
+// what was read.
+bound_term :: fn(mut p: Parser, gfn_index: i64, arg: i64, xarg_start: i64,
+    xarg_count: i64) -> bool {
+    if (cur(p) == TOK_BANG) {
+        advance(p)
+        return bound_term(p, gfn_index, arg, xarg_start, xarg_count) == false
+    }
+    if (cur(p) == TOK_LPAREN) {
+        advance(p)
+        held := bound_expr(p, gfn_index, arg, xarg_start, xarg_count)
+        advance(p)
+        return held
+    }
+    pred_off := cur_off(p)
+    pred_len := cur_len(p)
+    advance(p)
+    if (cur(p) != TOK_LPAREN) {
+        report_where(p.modules, p.src, pred_off)
+        report("a `where` bound is a predicate applied to a compile-time parameter")
+        frost_rt_die()
+    }
+    advance(p)
+    param_off := cur_off(p)
+    param_len := cur_len(p)
+    advance(p)
+    advance(p)
+    ty := bound_argument(p, gfn_index, param_off, param_len, arg, xarg_start,
+        xarg_count)
+    if (ty < 0) {
+        report_where(p.modules, p.src, param_off)
+        report("the bound names ")
+        report_src(p.src, param_off, param_len)
+        report(", which is not a compile-time parameter of this function")
+        frost_rt_die()
+    }
+    answer := bound_predicate(p, pred_off, pred_len, ty)
+    if (answer < 0) {
+        report_where(p.modules, p.src, pred_off)
+        report_src(p.src, pred_off, pred_len)
+        report(" is not one of the bounds a type can be held to, which are: ")
+        report("is_numeric, is_integer, is_float, is_struct, is_array, is_slice, is_pointer")
+        frost_rt_die()
+    }
+    answer == 1
+}
+
+// Terms joined by `&&` and `||`, left to right, with `&&` binding tighter.
+bound_conjunction :: fn(mut p: Parser, gfn_index: i64, arg: i64,
+    xarg_start: i64, xarg_count: i64) -> bool {
+    mut held := bound_term(p, gfn_index, arg, xarg_start, xarg_count)
+    while (cur(p) == TOK_ANDAND) {
+        advance(p)
+        right := bound_term(p, gfn_index, arg, xarg_start, xarg_count)
+        held = held && right
+    }
+    held
+}
+
+bound_expr :: fn(mut p: Parser, gfn_index: i64, arg: i64, xarg_start: i64,
+    xarg_count: i64) -> bool {
+    mut held := bound_conjunction(p, gfn_index, arg, xarg_start, xarg_count)
+    while (cur(p) == TOK_OROR) {
+        advance(p)
+        right := bound_conjunction(p, gfn_index, arg, xarg_start, xarg_count)
+        held = held || right
+    }
+    held
+}
+
+// The bound of the generic this call names, against the arguments this call
+// gives it.
+check_bound_at_call :: fn(mut p: Parser, gfn_index: i64, fn_index: i64,
+    args: i64, at: i64) {
+    gfn := arena_at(p.generic_fns, gfn_index)
+    if (gfn.bound_token < 0) {
+        return
+    }
+    arg := call_type_args(p, args)
+    xarg_start := p.call_xarg_start
+    xarg_count := p.call_xarg_count
+    // A call written inside a template names its enclosing parameters, which
+    // are bound only once that template is instantiated. The instance is
+    // checked in its own right, so the placeholder is left alone here.
+    if (arg == TY_PARAM) {
+        return
+    }
+    held := p.ti
+    p.ti = gfn.bound_token
+    holds := bound_expr(p, gfn_index, arg, xarg_start, xarg_count)
+    p.ti = held
+    if (holds) {
+        return
+    }
+    sym := arena_at(p.fns, fn_index)
+    report_where(p.modules, p.src, at)
+    report_src(p.src, sym.off, sym.len)
+    report(" is declared `where ")
+    mut i : i64 = gfn.bound_token
+    while (i < p.tokens.count) {
+        token := arena_at(p.tokens, i)
+        if (token.kind == TOK_LBRACE) {
+            i = p.tokens.count
+        } else {
+            report_src(p.src, token.off, token.len)
+            i = i + 1
+        }
+    }
+    report("`, and that does not hold for ")
+    report_src(p.src, gfn.tparam_off, gfn.tparam_len)
+    report(" = ")
+    report_type_name(p, arg)
+    mut x : i64 = 0
+    while (x < gfn.xparam_count && x < xarg_count) {
+        param := arena_at(p.gparams, gfn.xparam_start + x)
+        garg := arena_at(p.gargs, xarg_start + x)
+        report(", ")
+        report_src(p.src, param.name_off, param.name_len)
+        report(" = ")
+        report_type_name(p, garg.value)
+        x = x + 1
+    }
+    frost_rt_die()
+}
 
 // ---------------------------------------------------------------------------
 // The type check: every place a value crosses into something that already says
@@ -230,7 +433,7 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
     kind := node.kind
     if (kind == NodeKind::Call) {
-        check_call_arguments(p, node.a, node.val)
+        check_call_arguments(p, node.a, node.val, node.c)
         return
     }
     if (kind == NodeKind::StructLit) {
@@ -273,9 +476,12 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
 // argument answers to the pointee. A generic callee's parameter list belongs to
 // whichever instance was parsed last, so it says nothing about this call, and
 // the instances are checked in their own right.
-check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64) {
+check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64,
+    at: i64) {
     sym := arena_at(p.fns, fn_index)
-    if (generic_fn_of(p, fn_index) >= 0) {
+    generic := generic_fn_of(p, fn_index)
+    if (generic >= 0) {
+        check_bound_at_call(p, generic, fn_index, args, at)
         check_argument_expressions(p, args)
         return
     }

@@ -1032,15 +1032,61 @@ token, the parser splits it when it closes two nested argument lists, so
 `Pair<Pair<i64>>` parses correctly. This splitting is wired into the `Handle<T>`
 and `Name<...>` type forms.
 
+### 11.4a Bounds
+
+A generic may say what it needs of its compile-time parameters, with a `where`
+clause after the signature:
+
+```frost
+twice :: fn($T: Type, v: $T) -> T where is_numeric(T) { v + v }
+first :: fn($T: Type, xs: []T) -> T where is_numeric(T) && !is_pointer(T) {
+    xs[0]
+}
+```
+
+The bound is read at each call, with that call's arguments in hand, so a type
+that cannot work is refused against the line the caller wrote rather than
+against a line inside a specialized body they never saw.
+
+The vocabulary is fixed and closed:
+
+| bound | holds for |
+| --- | --- |
+| `is_numeric(T)` | an integer or a float |
+| `is_integer(T)` | an integer of any width, signed or unsigned |
+| `is_float(T)` | `f32` or `f64` |
+| `is_struct(T)` | a struct or an enum |
+| `is_array(T)` | a fixed array `[N]T` |
+| `is_slice(T)` | a slice `[]T`, which includes `str` |
+| `is_pointer(T)` | a raw pointer or a borrow |
+
+Terms combine with `&&`, `||` and `!`. A distinct type answers as what it is
+represented by, since that is what its arithmetic and its layout follow.
+
+Every one of these is a question the compiler already answers for itself, to
+decide whether to emit an integer or a floating point instruction, whether a
+value travels by address, and how wide it is. That is why the vocabulary is
+closed rather than open: a bound asks what the compiler knows about a type by
+itself, and nothing else.
+
+There is no bound keyed by a name, such as asking whether a type has a field
+called `position`. A string literal does not grep back to the declaration it
+names, which is the one thing the flat namespace (11.5) is for.
+
 ### 11.5 No traits
 
-There are no traits, and therefore no `where` clauses, associated types, trait
-objects, or dynamic dispatch. A generic body type-checks once specialized.
+A bound is not a trait. Nothing registers into it, nothing implements it, there
+is no set to name, and there is nothing to resolve, so there is no coherence
+rule, no orphan rule, and no method lookup. There are no associated types, no
+trait objects, and no dynamic dispatch. A generic body type-checks once
+specialized.
 
-To abstract over an operation, pass it as a compile-time function parameter
-(11.1b), which keeps the call direct. A type parameter written `$T: Type` carries
-no bound of its own: what a body requires of `T` is whatever its code does with
-it, and that is checked when the specialization is compiled.
+To abstract over an *operation* rather than over a kind of type, pass it: a
+compile-time function parameter (11.1b) keeps the call direct, and what other
+languages call an interface is a struct whose fields are function pointers,
+which is an ordinary value with an ordinary type
+(`examples/native/allocator.frost`). Neither needs machinery the language does
+not already have.
 
 ---
 

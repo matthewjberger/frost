@@ -128,8 +128,12 @@ actual work predictable.
   (errors are failure sets and linear enum returns), and implicit conversions
   that hide cost.
 - Not trait-based. There are no traits, no coherence rules, and no bound
-  solving. A generic algorithm takes the functions it needs as compile-time
-  arguments, which is what makes its calls direct. Do not reach for a generic
+  solving. A `where` clause is a precondition over a fixed vocabulary of
+  questions the compiler already answers about a type, not a set of operations
+  a type registers into, so nothing implements it and there is nothing to
+  resolve. A generic algorithm takes the functions it needs as compile-time
+  arguments, which is what makes its calls direct, and what other languages
+  call an interface is a struct whose fields are function pointers. Do not reach for a generic
   sort, hash or equality that works over everything. Write the one you need over
   the layout you have, and pass `$compare` or `$hash` when it varies. The
   self-hosted compiler is 5,000 lines and wanted a generic function three times,
