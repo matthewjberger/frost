@@ -71,9 +71,10 @@ append_snake :: fn(mut out: Builder, mut document: Json, node: i64) {
     }
 }
 
-// A member whose name is a reserved word cannot be written as one, so it takes
-// a trailing underscore. Only the name changes; a struct's layout is positional
-// and the field still sits where the C header puts it.
+// A parameter whose name is a reserved word cannot be written as one, so it
+// takes a trailing underscore. A struct field can be named for a keyword, since
+// a field name is read where nothing else can appear, so only a parameter needs
+// this.
 //
 // The list is the language's own, kept here because a Frost program has no way
 // to ask the compiler for it. A keyword added to the language and not to this
@@ -117,12 +118,18 @@ is_reserved :: fn(mut document: Json, node: i64) -> bool {
     false
 }
 
-// A member or argument name, escaped if the language claims it.
-append_member_name :: fn(mut out: Builder, mut document: Json, node: i64) {
+// A parameter name, escaped if the language claims it.
+append_param_name :: fn(mut out: Builder, mut document: Json, node: i64) {
     append_snake(out, document, node)
     if (is_reserved(document, node)) {
         builder_byte(out, 95)
     }
+}
+
+// A field name, as the C header spells it. `type` is a keyword and a field all
+// the same, so nothing is renamed here.
+append_member_name :: fn(mut out: Builder, mut document: Json, node: i64) {
+    append_snake(out, document, node)
 }
 
 // ---------------------------------------------------------------------------
@@ -751,7 +758,7 @@ emit_free_functions :: fn(mut out: Builder, mut names: Builder,
             if (arg > 0) {
                 builder_str_value(out, ", ")
             }
-            append_member_name(out, document, json_member(document, held, "name"))
+            append_param_name(out, document, json_member(document, held, "name"))
             builder_str_value(out, ": ")
             append_type(out, document, held)
             arg = arg + 1
@@ -803,11 +810,11 @@ emit_functions :: fn(mut out: Builder, mut names: Builder,
                 arg_type := json_member(document, each, "type")
                 if (type_starts(document, arg_type, "array<")) {
                     builder_str_value(out, ", ")
-                    append_member_name(out, document, arg_name)
+                    append_param_name(out, document, arg_name)
                     builder_str_value(out, "_count: u64")
                 }
                 builder_str_value(out, ", ")
-                append_member_name(out, document, arg_name)
+                append_param_name(out, document, arg_name)
                 builder_str_value(out, ": ")
                 append_type(out, document, each)
                 arg = arg + 1

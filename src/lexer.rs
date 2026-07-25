@@ -212,6 +212,18 @@ macro_rules! keywords {
                 _ => Identifier(identifier.to_string()),
             }
         }
+
+        // The word a keyword token was written as. A field name is read in a
+        // position where nothing else can appear, so a struct may carry a field
+        // called `type` or `match` and the keyword is taken as the name there.
+        // Reading it off the same table as the lexer is what keeps the two from
+        // drifting apart.
+        pub fn keyword_spelling(token: &Token) -> Option<&'static str> {
+            match token {
+                $($token => Some($word),)*
+                _ => None,
+            }
+        }
     };
 }
 

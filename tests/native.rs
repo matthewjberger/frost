@@ -1565,6 +1565,38 @@ fn self_hosted_repeats_an_array_and_sizes_it_by_a_constant() {
     assert_eq!(via_c, output, "the self-hosted C backend disagrees");
 }
 
+// The self-hosted parser already read a field name as a source range and never
+// classified it, so a keyword there always worked. Its C backend wrote the name
+// through, which for a C keyword is a syntax error rather than a field.
+const SELF_HOSTED_KEYWORD_FIELDS: &str = "Node :: struct { struct: i64, return: i64, case: i64, int: i64 }\n\
+     main :: fn() -> i64 {\n\
+     \x20   mut n : Node = Node { struct = 1, return = 2, case = 3, int = 4 }\n\
+     \x20   n.int = 9\n\
+     \x20   print n.struct\n    print n.return\n\
+     \x20   print n.case\n    print n.int\n    0\n}\n";
+
+#[test]
+fn self_hosted_emits_a_field_named_for_a_c_keyword() {
+    let Some(output) =
+        selfhosted_native_output("shkwfield", SELF_HOSTED_KEYWORD_FIELDS)
+    else {
+        return;
+    };
+    assert_eq!(output, "1\n2\n3\n9\n");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shkwfield_input.frost");
+    std::fs::write(&input, SELF_HOSTED_KEYWORD_FIELDS).unwrap();
+    let Some(c_source) = self_hosted_emits("shkwfield", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shkwfield", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
 const CLI_PROGRAM: &str = "fib :: fn(n: i64) -> i64 {\n\
      \x20   if (n < 2) { return n }\n\
      \x20   return fib(n - 1) + fib(n - 2)\n}\n\
@@ -6048,6 +6080,50 @@ fn native_function_pointer_array() {
     assert_eq!(output, "19\n42\n");
 }
 
+// A field name is read where nothing else can appear, so a keyword is taken as
+// the name it is written as. webgpu.json calls a member `type`, and every
+// generated binding had to rename it. `struct` and `return` are also C
+// keywords, so the C backend has to prefix them or write a syntax error.
+const KEYWORD_FIELD_NAMES: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Descriptor :: struct { type: i64, match: i64, struct: i64, return: i64 }
+
+// A variant field may be named for a keyword too. A pattern binding may not,
+// since that name becomes a local and `type` in expression position is the
+// keyword, so a variant's keyword field is bound alongside a named one here.
+Shape :: enum { Round { type: i64, id: i64 }, Flat { id: i64 } }
+
+kind_of :: fn(shape: Shape) -> i64 {
+    match shape {
+        case .Round { id }: id
+        case .Flat { id }: id
+    }
+}
+
+main :: fn() -> i64 {
+    mut d : Descriptor = Descriptor {
+        type = 3, match = 4, struct = 5, return = 6,
+    }
+    d.type = 9
+    printf("%lld\n", d.type)
+    printf("%lld\n", d.match)
+    printf("%lld\n", d.struct)
+    printf("%lld\n", d.return)
+    printf("%lld\n", kind_of(Shape::Round { type = 1, id = 7 }))
+    printf("%lld\n", kind_of(Shape::Flat { id = 8 }))
+    0
+}
+"#;
+
+#[test]
+fn a_field_may_be_named_for_a_keyword() {
+    let Some(output) = compile_and_run("kwfield", KEYWORD_FIELD_NAMES) else {
+        return;
+    };
+    assert_eq!(output, "9\n4\n5\n6\n7\n8\n");
+}
+
 // An array size may name a constant, in a field, in a local's type, and as a
 // repeat count. Both are part of a type or expanded into elements while
 // parsing, so the value has to be known there; it is read off the token stream
@@ -6832,6 +6908,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_strfield", STR_IN_A_FIELD),
         ("diff_rtnames", RUNTIME_SYMBOL_NAMES),
         ("diff_constarray", CONSTANT_ARRAY_SIZES),
+        ("diff_kwfield", KEYWORD_FIELD_NAMES),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
