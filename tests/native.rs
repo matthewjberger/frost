@@ -4394,6 +4394,34 @@ fn bootstrap_columns_container_both_backends() {
     assert_eq!(c, "11\n100\n120\n1\n");
 }
 
+// The `print` statement, compiled by the BOOTSTRAP on both backends. It was a
+// self-hosted-only statement; the bootstrap now has it too, lowering an integer
+// through frost_print_i64 (%lld) and a float through frost_print_f64 (%g), the
+// same two forms the self-hosted compiler emits inline. Parity: a program using
+// `print` now compiles on either compiler.
+const PRINT_STATEMENT: &str = concat!(
+    "main :: fn() -> i64 {\n",
+    "    print 42\n",
+    "    print 7 * 6\n",
+    "    x : f32 = 0.5\n",
+    "    print x\n",
+    "    0\n",
+    "}\n",
+);
+
+#[test]
+fn bootstrap_print_statement_both_backends() {
+    let Some(native) = run_backend("print_boot_native", PRINT_STATEMENT, false)
+    else {
+        return;
+    };
+    let Some(c) = run_backend("print_boot_c", PRINT_STATEMENT, true) else {
+        return;
+    };
+    assert_eq!(native, "42\n42\n0.5\n");
+    assert_eq!(c, "42\n42\n0.5\n");
+}
+
 // `inline fn`, compiled by the self-hosted compiler. The marker is a no-op on
 // the native (asm) backend, which does not inline, so the program runs and
 // answers exactly as an ordinary function would.

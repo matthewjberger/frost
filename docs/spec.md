@@ -106,7 +106,7 @@ Reserved words of the specified language:
 
 ```
 fn struct enum match case if else while for in mut return break continue
-defer extern inline import linear distinct type unsafe sizeof
+defer extern inline import linear distinct type unsafe sizeof print
 ```
 
 Reserved primitive type names, each its own token:
@@ -496,6 +496,9 @@ value is its trailing expression (or `void`).
   normally a range.
 - **`break`** and **`continue`** are loop control.
 - **`defer`**, `defer Stmt` runs `Stmt` at scope exit, LIFO (chapter 9.3).
+- **`print`**, `print Expr` writes the value and a newline to standard output, an
+  integer as `%lld` and a float as `%g`. A convenience for small programs and the
+  standard library's examples, not a general formatting facility.
 
 ---
 

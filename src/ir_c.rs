@@ -58,6 +58,10 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
         "void frost_mem_set(void *destination, int64_t value, int64_t size);\n\n",
     );
     externs.insert("frost_mem_set");
+    output.push_str("void frost_print_i64(int64_t value);\n");
+    externs.insert("frost_print_i64");
+    output.push_str("void frost_print_f64(double value);\n\n");
+    externs.insert("frost_print_f64");
 
     // A struct type per aggregate-returning extern, laid out field for field so
     // that the C compiler classifies it exactly as the library's own header

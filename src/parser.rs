@@ -374,6 +374,11 @@ pub enum Statement {
     Constant(Identifier, Expression),
     Return(Expression),
     Expression(Expression),
+    // `print expr`: write the value and a newline to standard output, an integer
+    // as `%lld` and a float as `%g`, the way the self-hosted compiler's `print`
+    // statement does. A convenience for small programs and the standard library's
+    // examples, lowered to a runtime call rather than a synthesized `printf`.
+    Print(Expression),
     Struct(Identifier, Vec<String>, Vec<StructField>),
     Enum(Identifier, Vec<String>, Vec<EnumVariant>),
     TypeAlias(Identifier, Type),
@@ -433,6 +438,7 @@ impl Display for Statement {
                 format!("{} :: {};", identifier, expression)
             }
             Self::Return(expression) => format!("return {};", expression),
+            Self::Print(expression) => format!("print {};", expression),
             Self::Expression(expression) => expression.to_string(),
             Self::Struct(name, type_params, fields) => {
                 let field_strs: Vec<String> = fields
@@ -1155,6 +1161,7 @@ impl<'a> Parser<'a> {
                 Some(self.parse_test_statement()?)
             }
             Token::Return => Some(self.parse_return_statement()?),
+            Token::Print => Some(self.parse_print_statement()?),
             Token::Defer => Some(self.parse_defer_statement()?),
             Token::For => Some(self.parse_for_statement()?),
             Token::While => Some(self.parse_while_statement()?),
@@ -1588,6 +1595,17 @@ impl<'a> Parser<'a> {
             }
             Ok(Statement::Constant(identifier, expression))
         }
+    }
+
+    fn parse_print_statement(&mut self) -> Result<Statement> {
+        if !matches!(self.read_token(), Token::Print) {
+            bail!("Expected 'print' token!");
+        }
+        let expression = self.parse_expression(Precedence::Lowest)?;
+        if matches!(self.peek_nth(0), Token::Semicolon) {
+            self.read_token();
+        }
+        Ok(Statement::Print(expression))
     }
 
     fn parse_return_statement(&mut self) -> Result<Statement> {
