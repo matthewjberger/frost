@@ -1146,6 +1146,7 @@ impl Renamer {
             | Expression::Borrow(operand)
             | Expression::BorrowMut(operand)
             | Expression::Try(operand)
+            | Expression::ArrayRepeat(operand, _)
             | Expression::Dereference(operand) => {
                 self.expression(operand, scope)
             }

@@ -1387,6 +1387,18 @@ fn collect_instances_in_expression(
         Expression::FieldAccess(base, _) => {
             collect_instances_in_expression(base, out);
         }
+        // A literal that says which instance it is asks for that instance, the
+        // same as a type annotation naming one. Without this the only literals
+        // that reached an instance were the ones a name elsewhere had already
+        // built.
+        Expression::StructInit(name, fields)
+            if is_generic_instance(name) && !out.contains(name) =>
+        {
+            out.push(name.clone());
+            for (_, value) in fields {
+                collect_instances_in_expression(value, out);
+            }
+        }
         Expression::StructInit(_, fields)
         | Expression::EnumVariantInit(_, _, fields) => {
             for (_, value) in fields {
@@ -2155,6 +2167,18 @@ fn substitute_expression(
         }
         Expression::Sizeof(ty) => {
             Expression::Sizeof(substitute_type(ty, subst))
+        }
+        // `[value; N]` becomes the array it always meant, now that N is a
+        // number. A count still unbound is one the enclosing generic passes on
+        // to a further instantiation, so the form is carried along.
+        Expression::ArrayRepeat(value, count) => {
+            let value = substitute_expression(value, subst);
+            match subst.get(count) {
+                Some(Type::ConstUsize(size)) => {
+                    Expression::Literal(Literal::Array(vec![value; *size]))
+                }
+                _ => Expression::ArrayRepeat(Box::new(value), count.clone()),
+            }
         }
         // A compile-time argument handed on to another generic. Without this a
         // `$T` or a `$f` forwarded from one generic to the next arrived as the
@@ -3296,6 +3320,14 @@ impl<'a> FunctionLowering<'a> {
                 let temp = self.fresh_local(ty.clone(), None);
                 self.materialize_aggregate(temp, expression)?;
                 Ok((IrOperand::Local(temp), ty))
+            }
+            // A repeat count that no generic bound. Written outside one, or
+            // naming something that is not a parameter of the generic it is
+            // written in, so there is no number to expand it to.
+            Expression::ArrayRepeat(_, count) => {
+                bail!(
+                    "'{count}' is not a constant or a value parameter, so there is no count for this array literal"
+                )
             }
             other => {
                 bail!("native backend: unsupported expression: {other}")

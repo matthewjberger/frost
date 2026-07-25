@@ -30,13 +30,46 @@ array_repeat_count :: fn(mut p: Parser) -> i64 {
     if (bound < 0) {
         total = const_value(p, cur_off(p), cur_len(p))
     }
+    // The generic's own parse, before any instantiation, where the count is
+    // still the parameter's name. Nothing of that parse is emitted: the body is
+    // read again with the parameter bound to a number for each instance, and
+    // this stands in until then.
+    if (total < 0 && names_gparam(p, cur_off(p), cur_len(p))) {
+        advance(p)
+        return 0
+    }
     if (total < 0) {
         report_where(p.modules, p.src, cur_off(p))
-        report("an array repeat count has to be a literal or a constant")
+        report("an array repeat count has to be a literal, a constant, or a value parameter of the generic it is written in")
         frost_rt_die()
     }
     advance(p)
     total
+}
+
+// Whether a name is a compile-time parameter of the declaration being parsed
+// that nothing is bound to yet. That is the generic's own parse, before any
+// argument exists. Once an instance binds the name, it is whatever it was bound
+// to, and a name used as something it is not is an error rather than a
+// placeholder.
+names_gparam :: fn(mut p: Parser, offset: i64, length: i64) -> bool {
+    if (binding_of(p, offset, length) >= 0) {
+        return false
+    }
+    if (p.type_param_len == length
+        && bytes_equal(p.src, p.type_param_off, offset, length)) {
+        return true
+    }
+    mut i : i64 = 0
+    while (i < p.xparam_count) {
+        param := arena_at(p.gparams, p.xparam_start + i)
+        if (param.name_len == length
+            && bytes_equal(p.src, param.name_off, offset, length)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
 }
 
 parse_primary :: fn(mut p: Parser) -> i64 {
@@ -304,6 +337,23 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         args := parse_arg_list_for(p, fn_index)
         return new_node(p, NodeKind::Call, args, 0, fn_index)
     }
+    // `Pair<i64, bool> { first = 7, second = true }` says which instance the
+    // literal is of instead of leaving it to the context. The type is read the
+    // way every other generic instance is: rewind to the name and let the type
+    // parser instantiate it.
+    if (cur(p) == TOK_LT && p.no_struct_lit == false
+        && generic_index_for(p, offset, length) >= 0) {
+        p.ti = p.ti - 1
+        struct_ty := parse_type(p)
+        if (cur(p) != TOK_LBRACE) {
+            report_where(p.modules, p.src, offset)
+            report("a generic type named here is the type of a literal, so it is followed by its fields in braces")
+            frost_rt_die()
+        }
+        advance(p)
+        inits := parse_field_inits(p, struct_ty)
+        return new_struct_lit(p, struct_ty, inits)
+    }
     if (cur(p) == TOK_LBRACE && p.no_struct_lit == false) {
         struct_ty := resolve_lit_type(p, offset, length)
         advance(p)
@@ -316,6 +366,12 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     bound := value_binding_of(p, offset, length)
     if (bound >= 0) {
         return new_node(p, NodeKind::Num, 0, 0, bound)
+    }
+    // The generic's own parse, where a value parameter is still a name. Nothing
+    // of that parse is emitted, and the body is read again with a number bound
+    // for each instance, so this stands in until then.
+    if (names_gparam(p, offset, length)) {
+        return new_node(p, NodeKind::Num, 0, 0, 0)
     }
     new_named_node(p, NodeKind::Var, 0, offset, length)
 }
@@ -999,15 +1055,28 @@ parse_struct_fields :: fn(mut p: Parser) -> i64 {
 // stored and mangled exactly as before. Any further one is pushed to the
 // `gparams` run this declaration owns. The kind is not kept. A parameter is a
 // type or a value by what binds to it.
-record_gparam :: fn(mut p: Parser, off: i64, len: i64) {
+// What kind a compile-time parameter was declared with, read off the word after
+// the colon the cursor is sitting on. `$N: usize` takes a number. `$T: Type`
+// takes a type and `$less: fn(T, T) -> bool` takes a function, and neither of
+// those is a number, which is the distinction that decides what may be bound.
+kind_is_value :: fn(mut p: Parser) -> i64 {
+    if (peek_is_word(p, 1, "Type") || peek_kind(p, 1) == TOK_KW_FN) {
+        return 0
+    }
+    1
+}
+
+record_gparam :: fn(mut p: Parser, off: i64, len: i64, is_value: i64) {
     if (p.type_param_len == 0) {
         p.type_param_off = off
         p.type_param_len = len
+        p.tparam_is_value = is_value
         p.xparam_start = p.gparams.count
         p.xparam_count = 0
     } else {
         arena_push(p.gparams,
-            GParam { name_off = off, name_len = len, is_fn = 0 })
+            GParam { name_off = off, name_len = len, is_value = is_value,
+                is_fn = 0 })
         p.xparam_count = p.xparam_count + 1
     }
     p.saw_type_param = 1
@@ -2116,7 +2185,7 @@ parse_params :: fn(mut p: Parser) -> i64 {
             poff := cur_off(p)
             plen := cur_len(p)
             advance(p)
-            record_gparam(p, poff, plen)
+            record_gparam(p, poff, plen, kind_is_value(p))
             parse_type_annotation(p)
             // A compile-time parameter given a function is called by name in
             // the body, and nothing declares that name. Every one of them is
@@ -2125,7 +2194,8 @@ parse_params :: fn(mut p: Parser) -> i64 {
             // that turns out to stand for a type is never called, so nothing
             // is lost by holding it here.
             arena_push(p.cfn_params,
-                GParam { name_off = poff, name_len = plen, is_fn = 1 })
+                GParam { name_off = poff, name_len = plen, is_value = 0,
+                    is_fn = 1 })
             if (cur(p) == TOK_COMMA) {
                 advance(p)
             }
@@ -2325,7 +2395,7 @@ parse_struct :: fn(mut p: Parser) {
             poff := cur_off(p)
             plen := cur_len(p)
             advance(p)
-            record_gparam(p, poff, plen)
+            record_gparam(p, poff, plen, kind_is_value(p))
             parse_type_annotation(p)
             if (cur(p) == TOK_COMMA) {
                 advance(p)
@@ -2478,7 +2548,7 @@ parse_enum :: fn(mut p: Parser) {
             poff := cur_off(p)
             plen := cur_len(p)
             advance(p)
-            record_gparam(p, poff, plen)
+            record_gparam(p, poff, plen, kind_is_value(p))
             parse_type_annotation(p)
             if (cur(p) == TOK_COMMA) {
                 advance(p)
@@ -3211,7 +3281,8 @@ parse_program :: fn(mut p: Parser) -> i64 {
                 tparam_off := p.type_param_off
                 tparam_len := p.type_param_len
                 record_generic_fn(p, fn_index, tparam_off, tparam_len,
-                    p.tparam_called, p.xparam_start, p.xparam_count, start)
+                    p.tparam_is_value, p.tparam_called, p.xparam_start,
+                    p.xparam_count, start)
             } else {
                 if (head == (0 - 1)) {
                     head = item
@@ -3271,6 +3342,9 @@ instance_fits :: fn(mut p: Parser, gfn_index: i64, arg: i64, xarg_start: i64,
     if ((arg >= FN_BASE) != (gfn.tparam_is_fn == 1)) {
         return false
     }
+    if (is_number(arg) != (gfn.tparam_is_value == 1)) {
+        return false
+    }
     mut i : i64 = 0
     while (i < gfn.xparam_count) {
         param := arena_at(p.gparams, gfn.xparam_start + i)
@@ -3278,9 +3352,18 @@ instance_fits :: fn(mut p: Parser, gfn_index: i64, arg: i64, xarg_start: i64,
         if ((garg.value >= FN_BASE) != (param.is_fn == 1)) {
             return false
         }
+        if (is_number(garg.value) != (param.is_value == 1)) {
+            return false
+        }
         i = i + 1
     }
     true
+}
+
+// Whether an argument is a compile-time number rather than a type or a
+// function. A number rides above CONST_BASE and below the bases above it.
+is_number :: fn(arg: i64) -> bool {
+    arg >= CONST_BASE && arg < PROC_BASE
 }
 
 // Note that the declaration being parsed calls this name. A compile-time

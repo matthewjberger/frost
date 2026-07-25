@@ -228,6 +228,7 @@ fn read_through_expression(
         | Expression::BorrowMut(inner)
         | Expression::Try(inner)
         | Expression::Dereference(inner)
+        | Expression::ArrayRepeat(inner, _)
         | Expression::FieldAccess(inner, _) => {
             read_through_expression(inner, through, bound)
         }
@@ -339,7 +340,8 @@ fn rewrite_expression(
             rewrite_expression(left, signatures);
             rewrite_expression(right, signatures);
         }
-        Expression::FieldAccess(inner, _) => {
+        Expression::FieldAccess(inner, _)
+        | Expression::ArrayRepeat(inner, _) => {
             rewrite_expression(inner, signatures);
         }
         Expression::If(condition, then_block, else_block) => {

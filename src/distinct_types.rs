@@ -196,6 +196,7 @@ fn walk_expression(
         | Expression::Dereference(inner)
         | Expression::UnsafeFn(inner)
         | Expression::FieldAccess(inner, _)
+        | Expression::ArrayRepeat(inner, _)
         | Expression::Try(inner) => walk_expression(inner, declared),
         Expression::Infix(left, _, right)
         | Expression::Index(left, right)

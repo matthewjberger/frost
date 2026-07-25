@@ -250,6 +250,7 @@ fn stamp_expression(expression: &mut Expression, file: u32) {
         | Expression::BorrowMut(operand)
         | Expression::Try(operand)
         | Expression::Dereference(operand)
+        | Expression::ArrayRepeat(operand, _)
         | Expression::FieldAccess(operand, _) => {
             stamp_expression(operand, file)
         }

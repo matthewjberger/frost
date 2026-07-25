@@ -190,6 +190,7 @@ fn names_in_expression(expression: &Expression, out: &mut Vec<String>) {
         }
         Expression::Unsafe(body) => names_in_block(body, out),
         Expression::UnsafeFn(inner) => names_in_expression(inner, out),
+        Expression::ArrayRepeat(value, _) => names_in_expression(value, out),
         Expression::Literal(_) | Expression::Boolean(_) => {}
     }
 }

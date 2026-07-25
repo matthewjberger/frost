@@ -387,6 +387,9 @@ impl Lowering {
                 }
                 Ok(())
             }
+            Expression::ArrayRepeat(value, _) => {
+                self.check_expression(value, returns)
+            }
             Expression::Identifier(_)
             | Expression::Literal(_)
             | Expression::Boolean(_)

@@ -139,6 +139,7 @@ fn expression_has_try(expression: &Expression) -> bool {
         | Expression::Borrow(inner)
         | Expression::BorrowMut(inner)
         | Expression::Dereference(inner)
+        | Expression::ArrayRepeat(inner, _)
         | Expression::FieldAccess(inner, _) => expression_has_try(inner),
         Expression::Infix(left, _, right) | Expression::Index(left, right) => {
             expression_has_try(left) || expression_has_try(right)
@@ -362,6 +363,7 @@ impl Lowerer {
             | Expression::Borrow(inner)
             | Expression::BorrowMut(inner)
             | Expression::Dereference(inner)
+            | Expression::ArrayRepeat(inner, _)
             | Expression::FieldAccess(inner, _) => {
                 self.rewrite_expression(inner, result, error);
             }
