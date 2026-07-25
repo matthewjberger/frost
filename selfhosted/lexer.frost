@@ -26,28 +26,24 @@ is_ident_cont :: fn(c: i64) -> bool {
 // ---------------------------------------------------------------------------
 
 byte_of :: fn(src: ^i8, index: i64, len: i64) -> i64 {
-    unsafe {
-        if (index >= len) {
-            return 0 - 1
-        }
-        frost_rt_byte_at(src, index)
+    if (index >= len) {
+        return 0 - 1
     }
+    unsafe { frost_rt_byte_at(src, index) }
 }
 
 str_range_eq :: fn(src: ^i8, off: i64, len: i64, word: ^i8) -> bool {
-    unsafe {
-        if (frost_rt_str_len(word) != len) {
+    if (unsafe { frost_rt_str_len(word) } != len) {
+        return false
+    }
+    mut k : i64 = 0
+    while (k < len) {
+        if (unsafe { frost_rt_byte_at(src, off + k) } != unsafe { frost_rt_byte_at(word, k) }) {
             return false
         }
-        mut k : i64 = 0
-        while (k < len) {
-            if (frost_rt_byte_at(src, off + k) != frost_rt_byte_at(word, k)) {
-                return false
-            }
-            k = k + 1
-        }
-        true
+        k = k + 1
     }
+    true
 }
 
 classify_ident :: fn(src: ^i8, off: i64, len: i64) -> i64 {

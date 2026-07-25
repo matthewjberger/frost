@@ -69,7 +69,7 @@ emit_text :: fn(s: str) {
         return
     }
     unsafe {
-        frost_rt_emit_bytes(ptr_to(s[0]), length)
+        unsafe { frost_rt_emit_bytes(unsafe { ptr_to(s[0]) }, length) }
     }
 }
 
@@ -98,19 +98,19 @@ report :: fn(s: str) {
         return
     }
     unsafe {
-        frost_rt_error_bytes(ptr_to(s[0]), length)
+        unsafe { frost_rt_error_bytes(unsafe { ptr_to(s[0]) }, length) }
     }
 }
 
 report_src :: fn(src: ^i8, offset: i64, length: i64) {
     unsafe {
-        frost_rt_error_bytes(ptr_cast($u8, ptr_to(src[offset])), length)
+        unsafe { frost_rt_error_bytes(unsafe { ptr_cast($u8, unsafe { ptr_to(src[offset]) }) }, length) }
     }
 }
 
 report_cstr :: fn(s: ^i8) {
     unsafe {
-        frost_rt_error_bytes(ptr_cast($u8, s), frost_rt_str_len(s))
+        unsafe { frost_rt_error_bytes(unsafe { ptr_cast($u8, s) }, unsafe { frost_rt_str_len(s) }) }
     }
 }
 
@@ -617,7 +617,7 @@ Arena :: struct($T: Type) {
 arena_make :: fn($T: Type, cap: i64) -> Arena<T> {
     unsafe {
         bytes := malloc(cap * sizeof(T))
-        Arena { data = ptr_cast($T, bytes), cap = cap, count = 0 }
+        Arena { data = unsafe { ptr_cast($T, bytes) }, cap = cap, count = 0 }
     }
 }
 
@@ -784,20 +784,18 @@ Parser :: struct {
 }
 
 cstr_eq :: fn(a: ^i8, b: ^i8) -> bool {
-    unsafe {
-        la := frost_rt_str_len(a)
-        lb := frost_rt_str_len(b)
-        if (la != lb) {
+    la := unsafe { frost_rt_str_len(a) }
+    lb := unsafe { frost_rt_str_len(b) }
+    if (la != lb) {
+        return false
+    }
+    mut i : i64 = 0
+    while (i < la) {
+        if (unsafe { frost_rt_byte_at(a, i) } != unsafe { frost_rt_byte_at(b, i) }) {
             return false
         }
-        mut i : i64 = 0
-        while (i < la) {
-            if (frost_rt_byte_at(a, i) != frost_rt_byte_at(b, i)) {
-                return false
-            }
-            i = i + 1
-        }
-        true
+        i = i + 1
     }
+    true
 }
 

@@ -9,12 +9,10 @@ export PROVIDER_NONE, PROVIDER_REGION, begin_provider, emit_source,
 // Re-emit an identifier from the source by its byte range, so a local reference
 // becomes the variable's own name in the generated C.
 emit_source :: fn(src: ^i8, off: i64, len: i64) {
-    unsafe {
-        mut k : i64 = 0
-        while (k < len) {
-            frost_rt_emit_char(frost_rt_byte_at(src, off + k))
-            k = k + 1
-        }
+    mut k : i64 = 0
+    while (k < len) {
+        frost_rt_emit_char(unsafe { frost_rt_byte_at(src, off + k) })
+        k = k + 1
     }
 }
 
@@ -27,49 +25,45 @@ emit_source :: fn(src: ^i8, off: i64, len: i64) {
 // return is dropped. A `str` needs this, since it carries its own length rather
 // than ending at a NUL.
 literal_length :: fn(src: ^i8, off: i64, len: i64) -> i64 {
-    unsafe {
-        mut k : i64 = 0
-        mut count : i64 = 0
-        while (k < len) {
-            b := frost_rt_byte_at(src, off + k)
-            if (b == CH_BACKSLASH) {
-                k = k + 1
-                count = count + 1
-            } else if (b == CH_CR) {
-                count = count
-            } else {
-                count = count + 1
-            }
+    mut k : i64 = 0
+    mut count : i64 = 0
+    while (k < len) {
+        b := unsafe { frost_rt_byte_at(src, off + k) }
+        if (b == CH_BACKSLASH) {
             k = k + 1
+            count = count + 1
+        } else if (b == CH_CR) {
+            count = count
+        } else {
+            count = count + 1
         }
-        count
+        k = k + 1
     }
+    count
 }
 
 emit_string_content :: fn(src: ^i8, off: i64, len: i64) {
-    unsafe {
-        mut k : i64 = 0
-        while (k < len) {
-            b := frost_rt_byte_at(src, off + k)
-            if (b == CH_BACKSLASH) {
-                frost_rt_emit_char(b)
-                k = k + 1
-                if (k < len) {
-                    frost_rt_emit_char(frost_rt_byte_at(src, off + k))
-                }
-            } else if (b == CH_LF) {
-                frost_rt_emit_char(CH_BACKSLASH)
-                frost_rt_emit_char(CH_LOWER_N)
-            } else if (b == CH_TAB) {
-                frost_rt_emit_char(CH_BACKSLASH)
-                frost_rt_emit_char(CH_LOWER_T)
-            } else if (b == CH_CR) {
-                k = k
-            } else {
-                frost_rt_emit_char(b)
-            }
+    mut k : i64 = 0
+    while (k < len) {
+        b := unsafe { frost_rt_byte_at(src, off + k) }
+        if (b == CH_BACKSLASH) {
+            frost_rt_emit_char(b)
             k = k + 1
+            if (k < len) {
+                frost_rt_emit_char(unsafe { frost_rt_byte_at(src, off + k) })
+            }
+        } else if (b == CH_LF) {
+            frost_rt_emit_char(CH_BACKSLASH)
+            frost_rt_emit_char(CH_LOWER_N)
+        } else if (b == CH_TAB) {
+            frost_rt_emit_char(CH_BACKSLASH)
+            frost_rt_emit_char(CH_LOWER_T)
+        } else if (b == CH_CR) {
+            k = k
+        } else {
+            frost_rt_emit_char(b)
         }
+        k = k + 1
     }
 }
 

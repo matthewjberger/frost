@@ -45,120 +45,115 @@ usage :: fn() {
 // bare `cc` is often a stub that answers `--version` and then fails to compile
 // anything, which reads as a broken compiler rather than a missing toolchain.
 c_compiler :: fn() -> ^i8 {
-    unsafe {
-        chosen := frost_rt_getenv("CC")
-        if (frost_rt_str_len(chosen) != 0) {
-            return chosen
-        }
-        if (frost_rt_is_windows() == 1) {
-            return "gcc"
-        }
-        "cc"
+    chosen := unsafe { frost_rt_getenv("CC") }
+    if (unsafe { frost_rt_str_len(chosen) } != 0) {
+        return chosen
     }
+    if (frost_rt_is_windows() == 1) {
+        return "gcc"
+    }
+    "cc"
 }
 
 // Two strings end to end, in memory the caller keeps. Command lines and derived
 // file names are the only strings this compiler builds rather than points into.
 join_two :: fn(first: ^i8, second: ^i8) -> ^i8 {
-    unsafe {
-        first_len := frost_rt_str_len(first)
-        second_len := frost_rt_str_len(second)
-        out := ptr_cast($i8, malloc(first_len + second_len + 1))
-        mut k : i64 = 0
-        while (k < first_len) {
-            frost_rt_byte_set(out, k, frost_rt_byte_at(first, k))
-            k = k + 1
-        }
-        k = 0
-        while (k < second_len) {
-            frost_rt_byte_set(out, first_len + k, frost_rt_byte_at(second, k))
-            k = k + 1
-        }
-        frost_rt_byte_set(out, first_len + second_len, 0)
-        out
+    first_len := unsafe { frost_rt_str_len(first) }
+    second_len := unsafe { frost_rt_str_len(second) }
+    out := unsafe { ptr_cast($i8, malloc(first_len + second_len + 1)) }
+    mut k : i64 = 0
+    while (k < first_len) {
+        unsafe { frost_rt_byte_set(out, k, frost_rt_byte_at(first, k)) }
+        k = k + 1
     }
+    k = 0
+    while (k < second_len) {
+        unsafe {
+            frost_rt_byte_set(out, first_len + k, frost_rt_byte_at(second, k))
+        }
+        k = k + 1
+    }
+    unsafe { frost_rt_byte_set(out, first_len + second_len, 0) }
+    out
 }
 
 // An argument beginning with `-` that nothing above claimed is a mistake worth
 // naming rather than a file name, since taking it as one produces a confusing
 // error about an unreadable file much later.
 looks_like_a_flag :: fn(text: ^i8) -> bool {
-    unsafe {
-        frost_rt_str_len(text) > 0 && frost_rt_byte_at(text, 0) == CH_MINUS
-    }
+    unsafe { frost_rt_str_len(text) } > 0
+        && unsafe { frost_rt_byte_at(text, 0) } == CH_MINUS
 }
 
 options_from_command_line :: fn() -> Options {
-    unsafe {
-        mut options := Options {
-            input = "",
-            output = "",
-            backend = 0 - 1,
-            link = 0,
-            testing = 0,
-            roots = arena_make($SearchRoot, 64),
-            help = 0,
-            ok = 1,
+    mut options := Options {
+        input = "",
+        output = "",
+        backend = 0 - 1,
+        link = 0,
+        testing = 0,
+        roots = arena_make($SearchRoot, 64),
+        help = 0,
+        ok = 1,
+    }
+    count := frost_rt_arg_count()
+    mut index : i64 = 1
+    while (index < count) {
+        argument := frost_rt_arg_at(index)
+        if (cstr_eq(argument, "-h") || cstr_eq(argument, "--help")) {
+            options.help = 1
+            return options
         }
-        count := frost_rt_arg_count()
-        mut index : i64 = 1
-        while (index < count) {
-            argument := frost_rt_arg_at(index)
-            if (cstr_eq(argument, "-h") || cstr_eq(argument, "--help")) {
-                options.help = 1
-                return options
-            }
-            if (cstr_eq(argument, "--emit-c")) {
-                options.backend = BACKEND_C
-            } else if (cstr_eq(argument, "--emit-asm")
-                || cstr_eq(argument, "--native")) {
-                options.backend = BACKEND_ASM
-            } else if (cstr_eq(argument, "--link")) {
-                options.link = 1
-            } else if (cstr_eq(argument, "--test")) {
-                // Running the tests means building an executable and running it,
-                // so a --test build always links as well.
-                options.testing = 1
-                options.link = 1
-            } else if (cstr_eq(argument, "-L")) {
-                index = index + 1
-                if (index >= count) {
-                    report("frost: -L needs a directory")
-                    options.ok = 0
-                    return options
-                }
-                add_root(options.roots, frost_rt_arg_at(index))
-            } else if (cstr_eq(argument, "-o")) {
-                index = index + 1
-                if (index >= count) {
-                    report("frost: -o needs a path")
-                    options.ok = 0
-                    return options
-                }
-                options.output = frost_rt_arg_at(index)
-            } else if (looks_like_a_flag(argument)) {
-                report("frost: unknown option '")
-                report_cstr(argument)
-                report("'")
+        if (cstr_eq(argument, "--emit-c")) {
+            options.backend = BACKEND_C
+        } else if (cstr_eq(argument, "--emit-asm")
+            || cstr_eq(argument, "--native")) {
+            options.backend = BACKEND_ASM
+        } else if (cstr_eq(argument, "--link")) {
+            options.link = 1
+        } else if (cstr_eq(argument, "--test")) {
+            // Running the tests means building an executable and running it,
+            // so a --test build always links as well.
+            options.testing = 1
+            options.link = 1
+        } else if (cstr_eq(argument, "-L")) {
+            index = index + 1
+            if (index >= count) {
+                report("frost: -L needs a directory")
                 options.ok = 0
                 return options
-            } else {
-                options.input = argument
             }
+            add_root(options.roots, frost_rt_arg_at(index))
+        } else if (cstr_eq(argument, "-o")) {
             index = index + 1
-        }
-
-        // The environment answers for whatever the arguments did not say, which is
-        // what keeps the fixpoint checks and the older callers working unchanged.
-        if (frost_rt_str_len(options.input) == 0) {
-            options.input = frost_rt_getenv("FROST_INPUT")
-        }
-        if (options.backend < 0) {
-            options.backend = BACKEND_C
-            if (cstr_eq(frost_rt_getenv("FROST_BACKEND"), "asm")) {
-                options.backend = BACKEND_ASM
+            if (index >= count) {
+                report("frost: -o needs a path")
+                options.ok = 0
+                return options
             }
+            options.output = frost_rt_arg_at(index)
+        } else if (looks_like_a_flag(argument)) {
+            report("frost: unknown option '")
+            report_cstr(argument)
+            report("'")
+            options.ok = 0
+            return options
+        } else {
+            options.input = argument
         }
-        options
+        index = index + 1
     }
+
+    // The environment answers for whatever the arguments did not say, which is
+    // what keeps the fixpoint checks and the older callers working unchanged.
+    if (unsafe { frost_rt_str_len(options.input) } == 0) {
+        options.input = unsafe { frost_rt_getenv("FROST_INPUT") }
+    }
+    if (options.backend < 0) {
+        options.backend = BACKEND_C
+        if (cstr_eq(unsafe { frost_rt_getenv("FROST_BACKEND") }, "asm")) {
+            options.backend = BACKEND_ASM
+        }
+    }
+    options
 }
