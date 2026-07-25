@@ -3,13 +3,7 @@
 //   just bindgen
 //
 // `webgpu.h` is itself generated from that file upstream, so this reads the
-// same source of truth the C header does rather than parsing the header. That
-// is why this is a few hundred lines and not a C parser.
-//
-// It is written in Frost on purpose. Everything it needs already existed: a
-// JSON reader over `str`, a growable `Vec`, a string builder, and file IO. The
-// only thing missing was the JSON reader, which is now `std/json.frost` and is
-// useful to anything else that wants one.
+// same source of truth the C header does rather than parsing the header.
 
 import "json.frost"
 import "fs.frost"

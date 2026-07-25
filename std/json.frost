@@ -1,9 +1,8 @@
 // A JSON reader.
 //
 // The document is parsed into one flat array of nodes and every reference is
-// an index into it, the way the self-hosted compiler carries its own tree. A
-// node never owns another, so nothing here is recursive except the walk, and
-// the whole document is freed by freeing one vector.
+// an index into it. A node never owns another, so nothing here is recursive
+// except the walk, and the whole document is freed by freeing one vector.
 //
 // Strings are not copied. A string node records where it sits in the source,
 // so reading one is a comparison against the bytes already in memory and the
