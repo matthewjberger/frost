@@ -4483,6 +4483,50 @@ fn bootstrap_print_statement_both_backends() {
     assert_eq!(c, "42\n42\n0.5\n");
 }
 
+// Constant expressions: a constant whose value is an integer expression over
+// literals and earlier constants, folded at compile time, including as an array
+// size (`[STRIDE]i64`), the vertex-layout case. Exercised on both compilers and
+// all backends, since they must agree on the folded values.
+const CONST_EXPRESSIONS: &str = concat!(
+    "POS :: 3\n",
+    "NORMAL :: 3\n",
+    "UV :: 2\n",
+    "STRIDE :: POS + NORMAL + UV\n",
+    "FLAGS :: 1 << 3\n",
+    "NEG :: 0 - 5\n",
+    "main :: fn() -> i64 {\n",
+    "    data : [STRIDE]i64 = [1, 2, 3, 4, 5, 6, 7, 8]\n",
+    "    print STRIDE\n",
+    "    print FLAGS\n",
+    "    print NEG\n",
+    "    print data[STRIDE - 1]\n",
+    "    0\n",
+    "}\n",
+);
+
+#[test]
+fn self_hosted_const_expressions() {
+    let Some(output) = selfhosted_native_output("constexpr", CONST_EXPRESSIONS)
+    else {
+        return;
+    };
+    assert_eq!(output, "8\n8\n-5\n8\n");
+}
+
+#[test]
+fn bootstrap_const_expressions_both_backends() {
+    let Some(native) =
+        run_backend("constexpr_native", CONST_EXPRESSIONS, false)
+    else {
+        return;
+    };
+    let Some(c) = run_backend("constexpr_c", CONST_EXPRESSIONS, true) else {
+        return;
+    };
+    assert_eq!(native, "8\n8\n-5\n8\n");
+    assert_eq!(c, "8\n8\n-5\n8\n");
+}
+
 // `inline fn`, compiled by the self-hosted compiler. The marker is a no-op on
 // the native (asm) backend, which does not inline, so the program runs and
 // answers exactly as an ordinary function would.

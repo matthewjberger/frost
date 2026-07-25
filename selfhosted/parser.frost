@@ -2121,13 +2121,71 @@ parse_extern :: fn(mut p: Parser) -> i64 {
 }
 
 // A constant `name :: value`, registered for inlining at use sites.
+// The integer operators a constant expression combines names with. One after
+// `NAME :: OtherName` is what marks the whole line a constant rather than an
+// `Enum::Variant` access, which never carries a trailing operator, keeping the
+// two apart the same way the bootstrap does.
+is_arith_op :: fn(kind: i64) -> bool {
+    if (kind == TOK_PLUS) { return true }
+    if (kind == TOK_MINUS) { return true }
+    if (kind == TOK_STAR) { return true }
+    if (kind == TOK_SLASH) { return true }
+    if (kind == TOK_PERCENT) { return true }
+    if (kind == TOK_SHL) { return true }
+    if (kind == TOK_SHR) { return true }
+    if (kind == TOK_AMP) { return true }
+    if (kind == TOK_PIPE) { return true }
+    false
+}
+
+// Fold a constant expression to its integer value. A constant is an integer
+// literal, another constant named earlier, or those combined with the integer
+// operators, all evaluated here so a `[N]T` size or a layout offset can be
+// written as `A + B` rather than a magic number. Anything that is not one of
+// those (a call, a float, a name that is not a constant) is refused.
+fold_const :: fn(mut p: Parser, id: i64) -> i64 {
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NODE_NUM) {
+        return node.val
+    }
+    if (kind == NODE_VAR) {
+        if (is_const(p, node.val, node.c) == false) {
+            report_where(p.modules, p.src, node.val)
+            report("'")
+            report_src(p.src, node.val, node.c)
+            report("' is not a constant, so it cannot appear in a constant")
+            frost_die()
+        }
+        return const_value(p, node.val, node.c)
+    }
+    if (kind == NODE_BIN) {
+        left := fold_const(p, node.a)
+        right := fold_const(p, node.b)
+        op := node.val
+        if (op == OP_ADD) { return left + right }
+        if (op == OP_SUB) { return left - right }
+        if (op == OP_MUL) { return left * right }
+        if (op == OP_DIV) { return left / right }
+        if (op == OP_MOD) { return left % right }
+        if (op == OP_SHL) { return left << right }
+        if (op == OP_SHR) { return left >> right }
+        if (op == OP_BITAND) { return left & right }
+        if (op == OP_BITOR) { return left | right }
+    }
+    report_where(p.modules, p.src, node.pos)
+    report("this is not a constant expression")
+    frost_die()
+    0
+}
+
 parse_const :: fn(mut p: Parser) {
     name_offset := cur_off(p)
     name_length := cur_len(p)
     advance(p)
     advance(p)
-    value := cur_val(p)
-    advance(p)
+    value_node := parse_expr(p)
+    value := fold_const(p, value_node)
     register_const(p, name_offset, name_length, value)
 }
 
@@ -2183,7 +2241,12 @@ parse_program :: fn(mut p: Parser) -> i64 {
                 set_next(p, tail, item)
                 tail = item
             }
-        } else if (third == TOK_INT) {
+        } else if (third == TOK_INT || third == TOK_LPAREN
+            || (third == TOK_IDENT && is_arith_op(peek_kind(p, 3)))) {
+            // A constant, whose value is an integer expression: a literal, a
+            // parenthesized combination, or an earlier constant combined with
+            // another by an operator. A bare `Name :: OtherName` is left alone,
+            // so `Enum::Variant` is not read as a constant.
             parse_const(p)
         } else if (third != TOK_KW_FN && third != TOK_KW_INLINE) {
             // Everything above is a form this compiler knows; anything else
