@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 
+use crate::lexer::Position;
 use crate::parser::{
-    Block, Expression, Program, ReturnKind, Spanned, Statement, SwitchCase,
+    Block, Diagnostic, Expression, Program, ReturnKind, Spanned, Statement,
+    SwitchCase,
 };
 use crate::types::Type;
 
@@ -29,6 +31,17 @@ struct Signatures {
 }
 
 pub fn check_regions(program: &Program) -> Result<()> {
+    let diagnostics = check_regions_recovering(program);
+    if diagnostics.is_empty() {
+        return Ok(());
+    }
+    Err(anyhow::anyhow!(crate::flatten(&diagnostics, "\n")))
+}
+
+/// Check every region in the program, reporting each escape rather than
+/// stopping at the first. Regions are independent of one another, and within
+/// one an escape does not change what the rest of the block means.
+pub fn check_regions_recovering(program: &Program) -> Vec<Diagnostic> {
     let mut signatures = Signatures {
         returns_pointer: HashMap::new(),
         uses_arena: HashSet::new(),
@@ -48,6 +61,7 @@ pub fn check_regions(program: &Program) -> Result<()> {
         }
     }
 
+    let mut diagnostics = Vec::new();
     for statement in program {
         if let Statement::Constant(
             _,
@@ -63,38 +77,44 @@ pub fn check_regions(program: &Program) -> Result<()> {
                     &signatures,
                     true,
                 );
-                region.check(body, true)?;
+                region.check(body, true);
+                diagnostics.append(&mut region.diagnostics);
             }
-            find_regions(body, &signatures)?;
+            find_regions(body, &signatures, &mut diagnostics);
         }
     }
-    Ok(())
+    diagnostics
 }
 
 // Walk a block looking for `with` regions to check. An ordinary block imposes no
 // region rule of its own.
-fn find_regions(block: &Block, signatures: &Signatures) -> Result<()> {
+fn find_regions(
+    block: &Block,
+    signatures: &Signatures,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
     for statement in block {
         match &statement.node {
             Statement::With(arena, body) => {
                 let mut region = Region::new(arena.clone(), signatures, false);
-                region.check(body, true)?;
-                find_regions(body, signatures)?;
+                region.check(body, true);
+                diagnostics.append(&mut region.diagnostics);
+                find_regions(body, signatures, diagnostics);
             }
             Statement::While(_, body) | Statement::For(_, _, body) => {
-                find_regions(body, signatures)?;
+                find_regions(body, signatures, diagnostics);
             }
             Statement::Defer(inner) => {
                 if let Statement::With(arena, body) = inner.as_ref() {
                     let mut region =
                         Region::new(arena.clone(), signatures, false);
-                    region.check(body, true)?;
+                    region.check(body, true);
+                    diagnostics.append(&mut region.diagnostics);
                 }
             }
             _ => {}
         }
     }
-    Ok(())
 }
 
 // The capability binding name for an arena type: its base name with the first
@@ -138,6 +158,7 @@ struct Region<'a> {
     inner: HashSet<String>,
     // Bindings that currently hold, or transitively contain, a region pointer.
     bound: HashSet<String>,
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl<'a> Region<'a> {
@@ -152,11 +173,13 @@ impl<'a> Region<'a> {
             allow_return,
             inner: HashSet::new(),
             bound: HashSet::new(),
+            diagnostics: Vec::new(),
         }
     }
 
-    fn check(&mut self, block: &Block, root: bool) -> Result<()> {
+    fn check(&mut self, block: &Block, root: bool) {
         for statement in block {
+            let at = statement.position;
             match &statement.node {
                 Statement::Let { name, value, .. }
                 | Statement::Constant(name, value) => {
@@ -167,22 +190,22 @@ impl<'a> Region<'a> {
                 }
                 Statement::Assignment(place, value) => {
                     if self.is_region_pointer(value) {
-                        self.bind_or_escape(place, "assignment")?;
+                        self.bind_or_escape(place, "assignment", at);
                     }
                 }
                 Statement::Return(value) => {
                     if self.is_region_pointer(value) && !self.allow_return {
-                        bail!(self.escape("being returned"));
+                        self.escape("being returned", at);
                     }
                 }
-                Statement::While(_, body) => self.check(body, false)?,
+                Statement::While(_, body) => self.check(body, false),
                 Statement::For(variable, _, body) => {
                     self.inner.insert(variable.clone());
-                    self.check(body, false)?;
+                    self.check(body, false);
                 }
-                Statement::With(_, body) => self.check(body, false)?,
+                Statement::With(_, body) => self.check(body, false),
                 Statement::Expression(value) => {
-                    self.check_conditional(value)?;
+                    self.check_conditional(value);
                 }
                 _ => {}
             }
@@ -195,48 +218,48 @@ impl<'a> Region<'a> {
             && let Statement::Expression(value) = &last.node
             && self.is_region_pointer(value)
         {
-            bail!(self.escape("being the block's value"));
+            self.escape("being the block's value", last.position);
         }
-        Ok(())
     }
 
     // Storing a region pointer into a binding declared inside the region keeps it
     // in the region (and taints that binding). Storing it anywhere else escapes.
-    fn bind_or_escape(&mut self, place: &Expression, how: &str) -> Result<()> {
+    fn bind_or_escape(&mut self, place: &Expression, how: &str, at: Position) {
         match root_identifier(place) {
             Some(name) if self.inner.contains(name) => {
                 self.bound.insert(name.to_string());
-                Ok(())
             }
-            _ => bail!(self.escape(how)),
+            _ => self.escape(how, at),
         }
     }
 
-    fn escape(&self, how: &str) -> String {
-        format!(
-            "region: a pointer into arena '{}' escapes its region by {how}; it may not outlive the arena",
-            self.arena
-        )
+    fn escape(&mut self, how: &str, at: Position) {
+        self.diagnostics.push(Diagnostic {
+            position: at,
+            message: format!(
+                "region: a pointer into arena '{}' escapes its region by {how}; it may not outlive the arena",
+                self.arena
+            ),
+        });
     }
 
     // An `if`/`match` used as a statement carries blocks that are still inside
     // the region.
-    fn check_conditional(&mut self, expression: &Expression) -> Result<()> {
+    fn check_conditional(&mut self, expression: &Expression) {
         match expression {
             Expression::If(_, consequence, alternative) => {
-                self.check(consequence, false)?;
+                self.check(consequence, false);
                 if let Some(block) = alternative {
-                    self.check(block, false)?;
+                    self.check(block, false);
                 }
             }
             Expression::Switch(_, cases) => {
                 for SwitchCase { body, .. } in cases {
-                    self.check(body, false)?;
+                    self.check(body, false);
                 }
             }
             _ => {}
         }
-        Ok(())
     }
 
     fn is_region_pointer(&self, expression: &Expression) -> bool {
@@ -305,6 +328,16 @@ impl<'a> Region<'a> {
 // is fine to return, and only a pointer formed from this frame's own storage is
 // not.
 pub fn check_frame_escapes(program: &Program) -> Result<()> {
+    let diagnostics = check_frame_escapes_recovering(program);
+    if diagnostics.is_empty() {
+        return Ok(());
+    }
+    Err(anyhow::anyhow!(crate::flatten(&diagnostics, "\n")))
+}
+
+/// Check every function for a view of its own frame leaving it, reporting each
+/// rather than stopping at the first. Frames are independent of one another.
+pub fn check_frame_escapes_recovering(program: &Program) -> Vec<Diagnostic> {
     // A callback registration keeps a pointer to its context for as long as it
     // is registered, so the value it answers with names storage in this frame
     // exactly as `ptr_to` does. A context in this frame is the ordinary case
@@ -312,6 +345,7 @@ pub fn check_frame_escapes(program: &Program) -> Result<()> {
     // consumed in the function that made it and this check stops it leaving
     // that function by any other road. See docs/callbacks.md.
     let registrations = crate::callbacks::callback_registrations(program);
+    let mut diagnostics = Vec::new();
     for statement in program {
         if let Statement::Constant(
             name,
@@ -331,11 +365,13 @@ pub fn check_frame_escapes(program: &Program) -> Result<()> {
                 bound: HashSet::new(),
                 answers_view: escapes,
                 registrations: &registrations,
+                diagnostics: Vec::new(),
             };
-            frame.check(body)?;
+            frame.check(body);
+            diagnostics.append(&mut frame.diagnostics);
         }
     }
-    Ok(())
+    diagnostics
 }
 
 // A type that names storage it does not own: a raw pointer, a slice, or a
@@ -362,12 +398,14 @@ struct Frame<'a> {
     // Callback registrations in the program, and which argument of each is the
     // context whose storage it keeps.
     registrations: &'a HashMap<String, crate::callbacks::CallbackShape>,
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl Frame<'_> {
-    fn check(&mut self, block: &Block) -> Result<()> {
+    fn check(&mut self, block: &Block) {
         for (index, statement) in block.iter().enumerate() {
             let last = index + 1 == block.len();
+            let at = statement.position;
             match &statement.node {
                 Statement::Let {
                     name,
@@ -388,7 +426,7 @@ impl Frame<'_> {
                 }
                 Statement::Return(value) => {
                     if self.points_into_frame(value) {
-                        bail!(self.escape("returned"));
+                        self.escape("returned", at);
                     }
                 }
                 // Writing one into a parameter hands it to the caller just as
@@ -396,18 +434,18 @@ impl Frame<'_> {
                 Statement::Assignment(place, value) => {
                     if self.points_into_frame(value) && !self.rooted_here(place)
                     {
-                        bail!(self.escape("stored where the call cannot see"));
+                        self.escape("stored where the call cannot see", at);
                     }
                 }
                 Statement::While(_, body)
                 | Statement::With(_, body)
-                | Statement::For(_, _, body) => self.check(body)?,
+                | Statement::For(_, _, body) => self.check(body),
                 Statement::Defer(inner) => {
                     let deferred = vec![Spanned::new(
                         (**inner).clone(),
                         statement.position,
                     )];
-                    self.check(&deferred)?;
+                    self.check(&deferred);
                 }
                 // A block used as a value answers for the whole function, so
                 // its branches are checked and, when it is the last statement,
@@ -417,41 +455,42 @@ impl Frame<'_> {
                     consequence,
                     alternative,
                 )) => {
-                    self.answers_here(consequence, last)?;
+                    self.answers_here(consequence, last);
                     if let Some(block) = alternative {
-                        self.answers_here(block, last)?;
+                        self.answers_here(block, last);
                     }
                 }
                 Statement::Expression(value)
                     if last && self.points_into_frame(value) =>
                 {
-                    bail!(self.escape("the call's answer"));
+                    self.escape("the call's answer", at);
                 }
                 _ => {}
             }
         }
-        Ok(())
     }
 
     // A branch of a block used as a value. Check it as a block, and when the
     // block is the function's answer, check what the branch ends with too.
-    fn answers_here(&mut self, block: &Block, answers: bool) -> Result<()> {
-        self.check(block)?;
+    fn answers_here(&mut self, block: &Block, answers: bool) {
+        self.check(block);
         if answers
             && let Some(last) = block.last()
             && let Statement::Expression(value) = &last.node
             && self.points_into_frame(value)
         {
-            bail!(self.escape("the call's answer"));
+            self.escape("the call's answer", last.position);
         }
-        Ok(())
     }
 
-    fn escape(&self, how: &str) -> String {
-        format!(
-            "region: a pointer into the frame of '{}' is {how}; the storage it names dies when the call returns",
-            self.function
-        )
+    fn escape(&mut self, how: &str, at: Position) {
+        let function = self.function.clone();
+        self.diagnostics.push(Diagnostic {
+            position: at,
+            message: format!(
+                "region: a pointer into the frame of '{function}' is {how}; the storage it names dies when the call returns"
+            ),
+        });
     }
 
     // Whether a value points into this frame: an address taken of storage here,
