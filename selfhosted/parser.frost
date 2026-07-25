@@ -1519,6 +1519,123 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         }
         return new_node(p, NODE_IF, condition, then_head, else_head)
     }
+    // `for item in items { ... }` over a slice, an array or a `str`, and
+    // `for index, item in items` when the position is wanted too.
+    //
+    // It is written out here as the index-and-bound loop it stands for, so no
+    // node kind, no pass and no backend learns anything new. The sequence and
+    // its length are bound once before the loop, so a call in that position
+    // happens once and a body that grows the same container does not walk what
+    // it just added.
+    if (kind == TOK_KW_FOR) {
+        advance(p)
+        first_off := cur_off(p)
+        first_len := cur_len(p)
+        advance(p)
+        mut item_off := first_off
+        mut item_len := first_len
+        mut has_index : i64 = 0
+        if (cur(p) == TOK_COMMA) {
+            advance(p)
+            item_off = cur_off(p)
+            item_len = cur_len(p)
+            advance(p)
+            has_index = 1
+        }
+        if (cur(p) != TOK_KW_IN) {
+            report_where(p.modules, p.src, cur_off(p))
+            report("a `for` needs `in` between the name and what it walks")
+            frost_rt_die()
+        }
+        advance(p)
+        // A name followed by a brace is a struct literal everywhere else, and
+        // the brace here opens the body, so the literal is not available.
+        held_no_lit := p.no_struct_lit
+        p.no_struct_lit = true
+        sequence := parse_expr(p)
+        p.no_struct_lit = held_no_lit
+
+        unique := p.arena.count
+        // A name is already evaluated once and already carries its own type, so
+        // it is walked where it stands. Anything else is bound first, so a call
+        // in that position happens once rather than once per element. A string
+        // literal is bound as a `str` rather than left as the `^i8` it would
+        // otherwise infer, so walking it is bounds-checked like any other
+        // sequence instead of asking the reader for an `unsafe` block.
+        seq_node := arena_at(p.arena, sequence)
+        seq_kind := seq_node.kind
+        in_place := seq_kind == NODE_VAR
+        mut seq_off := seq_node.val
+        mut seq_len := seq_node.c
+        mut bind_seq : i64 = 0 - 1
+        if (in_place == false) {
+            mut annotation : i64 = 0 - 1
+            if (seq_kind == NODE_STRLIT) {
+                annotation = array_of(p, TY_U8, 0 - 1)
+            }
+            seq_off = synth_numbered(p, "__for_seq", unique)
+            seq_len = 9 + digits_in(unique)
+            bind_seq = new_let_node(p, sequence, seq_off, seq_len, annotation)
+        }
+
+        seq_var := new_named_node(p, NODE_VAR, 0, seq_off, seq_len)
+        length := new_unary(p, NODE_SLICE_LEN, seq_var)
+        len_off := synth_numbered(p, "__for_len", unique)
+        len_len := 9 + digits_in(unique)
+        bind_len := new_let_node(p, length, len_off, len_len, 0 - 1)
+
+        mut index_off := item_off
+        mut index_len := item_len
+        if (has_index == 1) {
+            index_off = first_off
+            index_len = first_len
+        } else {
+            index_off = synth_numbered(p, "__for_at", unique)
+            index_len = 8 + digits_in(unique)
+        }
+        zero := new_node(p, NODE_NUM, 0, 0, 0)
+        bind_index := new_let_node(p, zero, index_off, index_len, 0 - 1)
+
+        index_var := new_named_node(p, NODE_VAR, 0, index_off, index_len)
+        len_var := new_named_node(p, NODE_VAR, 0, len_off, len_len)
+        condition := new_node(p, NODE_BIN, index_var, len_var, OP_LT)
+
+        body := parse_block(p)
+
+        // The element, bound under the name the reader wrote, ahead of the
+        // body they wrote.
+        seq_again := new_named_node(p, NODE_VAR, 0, seq_off, seq_len)
+        at_again := new_named_node(p, NODE_VAR, 0, index_off, index_len)
+        element := new_index(p, seq_again, at_again)
+        bind_item := new_let_node(p, element, item_off, item_len, 0 - 1)
+        set_next(p, bind_item, body)
+
+        // The step, after everything the body does.
+        step_at := new_named_node(p, NODE_VAR, 0, index_off, index_len)
+        one := new_node(p, NODE_NUM, 0, 0, 1)
+        bumped := new_node(p, NODE_BIN, step_at, one, OP_ADD)
+        step_place := new_named_node(p, NODE_VAR, 0, index_off, index_len)
+        step := new_node(p, NODE_ASSIGN, step_place, bumped, 0)
+        mut tail := bind_item
+        mut following := node_next(p, tail)
+        while (following != (0 - 1)) {
+            tail = following
+            following = node_next(p, tail)
+        }
+        set_next(p, tail, step)
+
+        loop := new_node(p, NODE_WHILE, condition, bind_item, 0)
+        // The condition needs nothing set up ahead of it, and an unset preamble
+        // is -1 rather than 0, which is a real node.
+        set_while_preamble(p, loop, 0 - 1)
+        set_next(p, bind_len, bind_index)
+        set_next(p, bind_index, loop)
+        if (in_place) {
+            return bind_len
+        }
+        set_next(p, bind_seq, bind_len)
+        return bind_seq
+    }
     if (kind == TOK_KW_WHILE) {
         advance(p)
         advance(p)

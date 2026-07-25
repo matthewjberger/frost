@@ -2734,6 +2734,59 @@ const BY_VALUE_LIBRARY: &str = "#include <stdint.h>\n\
      \x20   return before * 100 + p.x * 10 + p.y + after;\n\
      }\n";
 
+// The self-hosted compiler walks a sequence too. It has no `for` of its own to
+// extend, so this is the whole statement, written out at parse time as the
+// index-and-bound loop it stands for. No node kind, no pass and no backend
+// learns anything new, which is why one desugaring covers both backends.
+const SELF_HOSTED_FOR: &str = "sum_slice :: fn(xs: []i64) -> i64 {\n\
+     \x20   mut total : i64 = 0\n\
+     \x20   for value in xs {\n\
+     \x20       total = total + value\n\
+     \x20   }\n\
+     \x20   total\n\
+     }\n\
+     main :: fn() -> i64 {\n\
+     \x20   mut numbers : [4]i64 = [10, 20, 30, 40]\n\
+     \x20   mut total : i64 = 0\n\
+     \x20   for value in numbers {\n\
+     \x20       total = total + value\n\
+     \x20   }\n\
+     \x20   print total\n\
+     \x20   print sum_slice(numbers)\n\
+     \x20   mut weighted : i64 = 0\n\
+     \x20   for index, value in numbers {\n\
+     \x20       weighted = weighted + index * value\n\
+     \x20   }\n\
+     \x20   print weighted\n\
+     \x20   mut bytes : i64 = 0\n\
+     \x20   for byte in \"abc\" {\n\
+     \x20       bytes = bytes + byte\n\
+     \x20   }\n\
+     \x20   print bytes\n\
+     \x20   0\n\
+     }\n";
+
+#[test]
+fn self_hosted_for_walks_a_sequence() {
+    let Some(output) = selfhosted_native_output("shfor", SELF_HOSTED_FOR)
+    else {
+        return;
+    };
+    assert_eq!(output, "100\n100\n200\n294\n");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shfor_input.frost");
+    std::fs::write(&input, SELF_HOSTED_FOR).unwrap();
+    let Some(c_source) = self_hosted_emits("shfor", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shfor", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
 // The self-hosted compiler compares enums by tag too, through both backends.
 // It lays an enum out as a struct with a `tag` beside every variant's fields,
 // so the rewrite reads that field. A variant value is a struct literal with the
