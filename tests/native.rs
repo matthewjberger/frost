@@ -3098,6 +3098,114 @@ fn self_hosted_errors_name_a_position() {
     );
 }
 
+// An import says what a file may name. A file used to see every exported name
+// in the program, so it could call a function from a module it never imported,
+// an import line could be deleted with the build still passing, and the list at
+// the top of a file was not the list of what it depends on. Both compilers hold
+// the line now, which is checked here through both, since they enforce it
+// differently: the bootstrap compares each file's uses against what it
+// imported, and the self-hosted compiler makes the import an edge that name
+// resolution has to cross.
+#[test]
+fn a_file_may_only_name_what_it_imported() {
+    let directory = std::env::temp_dir().join(unique("frost_visibility"));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+
+    std::fs::write(
+        directory.join("deep.frost"),
+        "export deep\n\
+         deep :: fn() -> i64 { 42 }\n",
+    )
+    .unwrap();
+    // The middle module imports deep and re-exports nothing of it, which is
+    // exactly the shape that used to leak.
+    std::fs::write(
+        directory.join("middle.frost"),
+        "import \"deep.frost\"\n\
+         export middle\n\
+         middle :: fn() -> i64 { deep() }\n",
+    )
+    .unwrap();
+    let entry = directory.join("app.frost");
+    std::fs::write(
+        &entry,
+        "import \"middle.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   print deep()\n\
+         \x20   0\n\
+         }\n",
+    )
+    .unwrap();
+
+    let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .env("FROST_CHECK_UNSAFE", "0")
+        .arg("--native")
+        .arg("-o")
+        .arg(directory.join("app.o"))
+        .arg(&entry)
+        .output()
+        .unwrap();
+    let message = String::from_utf8_lossy(&built.stderr).to_string();
+    assert!(
+        !built.status.success(),
+        "expected a rejection:
+{message}"
+    );
+    assert!(
+        message.contains("does not import"),
+        "the bootstrap let a file name what it did not import:\n{message}"
+    );
+
+    // The same program through the self-hosted compiler, which rejects it by
+    // never finding the name rather than by comparing lists.
+    if let Some(compiler) = build_self_hosted_compiler("visibility") {
+        let run = Command::new(&compiler)
+            .env("FROST_INPUT", &entry)
+            .env("FROST_CHECK_UNSAFE", "0")
+            .output()
+            .unwrap();
+        let said = format!(
+            "{}{}",
+            String::from_utf8_lossy(&run.stdout),
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert!(
+            said.contains("undefined function 'deep'"),
+            "the self-hosted compiler let a file name what it did not import:\n{said}"
+        );
+    }
+
+    // Adding the import is the whole fix, and then both compile it.
+    std::fs::write(
+        &entry,
+        "import \"middle.frost\"\n\
+         import \"deep.frost\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   print deep()\n\
+         \x20   0\n\
+         }\n",
+    )
+    .unwrap();
+    let exe = directory.join(format!("app{}", std::env::consts::EXE_SUFFIX));
+    let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .env("FROST_CHECK_UNSAFE", "0")
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe)
+        .arg(&entry)
+        .output()
+        .unwrap();
+    if built.status.success() {
+        let run = Command::new(&exe).output().unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"),
+            "42\n"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
 // A top-level form the self-hosted compiler does not implement used to fall
 // through to the function parser and die inside the arena, far from the text
 // that caused it. It names the declaration instead.
@@ -9379,6 +9487,7 @@ fn only_the_modules_an_edit_reaches_are_rebuilt() {
         &root,
         "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
          import \"lib/mid.frost\"\n\
+         import \"lib/leaf.frost\"\n\
          main :: fn() -> i64 {\n\
          \x20   b := boxed(1)\n\
          \x20   printf(\"%lld\n\", combine(5) + b.value + twice($i64, 2))\n\

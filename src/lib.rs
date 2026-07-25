@@ -4,6 +4,7 @@ mod c_abi;
 mod callbacks;
 mod distinct_types;
 mod failure_sets;
+mod import_visibility;
 mod imports;
 mod interface;
 mod interface_names;
@@ -27,10 +28,10 @@ mod unsafety;
 
 pub use self::{
     allocation_sources::*, build_cache::*, c_abi::*, callbacks::*,
-    distinct_types::*, failure_sets::*, imports::*, interface::*, ir::*,
-    ir_build::*, ir_c::*, ir_codegen::*, ir_interp::*, ir_ownership::*,
-    ir_typecheck::*, lexer::*, manifest::*, multi_returns::*, ownership::*,
-    param_modes::*, parser::*, regions::*, types::*, unsafety::*,
+    distinct_types::*, failure_sets::*, import_visibility::*, imports::*,
+    interface::*, ir::*, ir_build::*, ir_c::*, ir_codegen::*, ir_interp::*,
+    ir_ownership::*, ir_typecheck::*, lexer::*, manifest::*, multi_returns::*,
+    ownership::*, param_modes::*, parser::*, regions::*, types::*, unsafety::*,
 };
 
 use std::fmt::Display;

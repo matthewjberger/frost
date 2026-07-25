@@ -298,8 +298,22 @@ search_roots_from :: fn(mut roots: Arena<SearchRoot>) {
     add_root(roots, ".")
 }
 
+// Which module a path is, or -1 for one that was never placed.
+module_index_of :: fn(mut modules: Arena<Module>, path: ^i8) -> i64 {
+    mut i : i64 = 0
+    while (i < modules.count) {
+        entry := arena_at(modules, i)
+        if (cstr_eq(entry.path, path)) {
+            return i
+        }
+        i = i + 1
+    }
+    0 - 1
+}
+
 resolve_imports :: fn(buffer: ^i8, root: ^i8, names: ^i8,
     mut modules: Arena<Module>, mut exports: Arena<Export>,
+    mut edges: Arena<ImportEdge>,
     mut scratch: Arena<Token>, mut roots: Arena<SearchRoot>) -> i64 {
     mut named_at : i64 = 0
     length := place_module(buffer, 0, root, modules, roots, scratch)
@@ -314,6 +328,22 @@ resolve_imports :: fn(buffer: ^i8, root: ^i8, names: ^i8,
         entry := arena_at(scratch, j)
         named := arena_at(scratch, j + 1)
         if (entry.kind == TOK_KW_IMPORT && named.kind == TOK_STR) {
+            // The line is about to be blanked, so the edge it stands for is
+            // recorded first. The importer is whoever wrote the line; the
+            // module it names is resolved against that file's own directory,
+            // the same way it was when the text was placed.
+            importer := module_at(modules, entry.off)
+            if (importer >= 0) {
+                mine := arena_at(modules, importer)
+                found := find_import(mine.path, buffer, named.off, named.len,
+                    roots)
+                imported := module_index_of(modules, found)
+                if (imported >= 0) {
+                    arena_push(edges,
+                        ImportEdge { importer = importer,
+                            imported = imported })
+                }
+            }
             blank_range(buffer, entry.off, named.off + named.len)
         }
         if (entry.kind == TOK_KW_EXPORT) {

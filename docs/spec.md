@@ -513,6 +513,24 @@ name that helper, and two files may share a private name without colliding.
 There is no `pub` and no per-item visibility marker. The `export` line is the
 only control, and struct fields are always public (3.2).
 
+**An import says what a file may name.** A file sees the names it declares and
+the exported names of the modules it imports *directly*, and nothing else.
+Importing is not transitive: if `a.frost` imports `b.frost` and `b.frost`
+imports `c.frost`, then `a.frost` cannot name what `c.frost` exports until it
+imports `c.frost` itself.
+
+That makes the list at the top of a file the list of what it depends on, which
+is the only reason to have one. Without it a file could call a function from a
+module it never named, and an import line could be deleted with the build still
+passing.
+
+The two compilers reach it differently, which is worth knowing when reading
+them. The bootstrap splices every module into one program, so it compares what
+each file used against what that file imported. The self-hosted compiler
+resolves a name by scanning declarations with a visibility rule, so the import
+becomes an edge that rule has to cross, and an unimported name is simply never
+found.
+
 The exported namespace is flat, and a name carries its own prefix by convention
 (`vec3_add`, not a qualified `math.add`), which keeps it a single token to search
 for. Two imported modules exporting the same name is therefore a compile error

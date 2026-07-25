@@ -53,6 +53,7 @@ main :: fn() -> i64 {
     mut source : ^i8 = ""
     mut modules : Arena<Module> = arena_make($Module, 1024)
     mut exports : Arena<Export> = arena_make($Export, 4096)
+    mut import_edges : Arena<ImportEdge> = arena_make($ImportEdge, 4096)
     export_names := unsafe { ptr_cast($i8, malloc(SYNTH_ROOM)) }
     if (unsafe { frost_rt_str_len(input_path) } != 0) {
         // One buffer holds the root file and everything it imports, so a name
@@ -61,7 +62,7 @@ main :: fn() -> i64 {
         mut scratch : Arena<Token> = arena_make($Token, 262144)
         search_roots_from(options.roots)
         resolve_imports(buffer, input_path, export_names, modules, exports,
-            scratch, options.roots)
+            import_edges, scratch, options.roots)
         source = buffer
     }
     if (unsafe { frost_rt_str_len(source) } == 0) {
@@ -213,6 +214,7 @@ main :: fn() -> i64 {
         move_scratch = arena_make($LocalVar, 4096),
         modules = modules,
         exports = exports,
+        import_edges = import_edges,
         export_names = export_names,
         result_ty = 0 - 1,
         failure_ty = 0 - 1,

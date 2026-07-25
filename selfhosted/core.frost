@@ -7,7 +7,8 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     CH_LPAREN, CH_LT, CH_MINUS, CH_PERCENT, CH_PIPE, CH_PLUS, CH_QUESTION,
     CH_RBRACE, CH_RBRACKET, CH_RPAREN, CH_SEMI, CH_SLASH, CH_SPACE, CH_STAR,
     CH_TAB, CH_UNDERSCORE, CH_UPPER_A, CH_UPPER_Z, ConstDef, Export,
-    GenericFn, GParam, GArg, GBinding, Instance, LocalVar, Module, MonoNode,
+    GenericFn, GParam, GArg, GBinding, ImportEdge, Instance, LocalVar, Module,
+    MonoNode,
     MonoRet, ProcSig, CONST_BASE, PROC_BASE, Node, NodeKind,
     OP_ADD, OP_AND, OP_DIV, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT, OP_MOD, OP_MUL,
     OP_NE, OP_OR, OP_SUB, OP_SHL, OP_SHR, OP_BITAND, OP_BITOR,
@@ -513,6 +514,14 @@ Module :: struct {
     finish: i64,
 }
 
+// One `import` line, as the two modules it connects. A file may name what it
+// declares and what the modules it imports directly export, and nothing else,
+// so this is what says which of the two a given file is.
+ImportEdge :: struct {
+    importer: i64,
+    imported: i64,
+}
+
 // A name a module offers to whoever imports it, from an `export a, b` line. A
 // top-level name not listed is the module's own. Another file naming it is
 // naming something else, and two modules may each keep one of the same name.
@@ -745,6 +754,7 @@ Parser :: struct {
     move_scratch: Arena<LocalVar>,
     modules: Arena<Module>,
     exports: Arena<Export>,
+    import_edges: Arena<ImportEdge>,
     export_names: ^i8,
     result_ty: i64,
     failure_ty: i64,
