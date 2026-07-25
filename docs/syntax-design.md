@@ -34,6 +34,7 @@ normative rules see [spec.md](spec.md). For a broader Rust-to-Frost guide see
 | `fn f() -> (i64, i64)` (a tuple) | `f :: fn() -> (i64, i64)`, and no tuple type |
 | `let (q, r) = divide(a, b);` | `q, r := divide(a, b)` |
 | `Shape::Circle { r: 5 }` | `Shape::Circle { radius = 5 }`, or `.Circle { radius = 5 }` |
+| `Point { x: 1, y: 2 }` | `Point { x = 1, y = 2 }`, or `{ x = 1, y = 2 }` |
 | `while cond { }` | `while (cond) { }` |
 | `&x`, `&mut x` | nothing: a borrow is what a parameter mode means |
 | `&T`, `&mut T` (parameter) | `x: T` (read), `mut x: T` (write) |
@@ -210,6 +211,19 @@ round :: fn(r: i64) -> Shape { return .Circle { radius = r } }
 The rule is the same one the pattern follows: the dot means the enum the context
 already knows. Where there is no context to read it from, as in a bare
 `c := .Red`, it is an error rather than a guess.
+
+A struct literal leaves its name out the same way, and the two nest:
+
+```frost
+p : Point = { x = 3, y = 4 }
+length_sq({ from = { x = 0, y = 0 }, to = { x = 3, y = 4 } })
+paint({ at = { x = 7, y = 0 }, colour = .Green })
+```
+
+What does not follow is a positional literal. `Point { 3, 4 }` is not syntax and
+will not become syntax. The type name is something the compiler already knows;
+the field names are the layout, which is the one thing a data-oriented language
+should not let the reader lose.
 
 ## 9. `foo($u32)` instead of turbofish
 

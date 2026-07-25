@@ -916,6 +916,95 @@ fn a_variant_without_a_context_is_rejected() {
     );
 }
 
+// `{ x = 1, y = 2 }` where the type is already stated, the struct counterpart of
+// the leading-dot variant. Every field is still named: there is no positional
+// literal, here or anywhere else, since a field's name is what says where the
+// value lands.
+const INFERRED_LITERALS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Point :: struct { x: i64, y: i64 }
+Line :: struct { from: Point, to: Point }
+Color :: enum { Red, Green, Blue }
+Marked :: struct { at: Point, colour: Color }
+
+sum :: fn(p: Point) -> i64 { p.x + p.y }
+
+length_sq :: fn(l: Line) -> i64 {
+    dx := l.to.x - l.from.x
+    dy := l.to.y - l.from.y
+    dx * dx + dy * dy
+}
+
+origin :: fn() -> Point { return { x = 0, y = 0 } }
+
+paint :: fn(m: Marked) -> i64 {
+    base := match m.colour {
+        case .Red: 1
+        case .Green: 2
+        case .Blue: 3
+    }
+    base * 100 + m.at.x
+}
+
+main :: fn() -> i64 {
+    p : Point = { x = 3, y = 4 }
+    printf("%lld\n", sum(p))
+
+    // A parameter, including one whose function is written later.
+    printf("%lld\n", sum({ x = 10, y = 20 }))
+    printf("%lld\n", later({ x = 2, y = 3 }))
+
+    // Nested, each inner literal taking its type from the field it fills.
+    printf("%lld\n", length_sq({ from = { x = 0, y = 0 }, to = { x = 3, y = 4 } }))
+
+    // A return.
+    printf("%lld\n", sum(origin()))
+
+    // A variant inside an inferred literal, taking its enum from the field.
+    printf("%lld\n", paint({ at = { x = 7, y = 0 }, colour = .Green }))
+
+    // An assignment to a place whose type is known.
+    mut q : Point = { x = 1, y = 1 }
+    q = { x = 5, y = 6 }
+    printf("%lld\n", sum(q))
+
+    // Elements of an array, from the annotation's element type.
+    grid : [2]Point = [{ x = 1, y = 2 }, { x = 3, y = 4 }]
+    mut total : i64 = 0
+    for held in grid {
+        total = total + sum(held)
+    }
+    printf("%lld\n", total)
+    0
+}
+
+later :: fn(p: Point) -> i64 { sum(p) * 10 }
+"#;
+
+#[test]
+fn a_literal_takes_its_type_from_the_context() {
+    let Some(output) = compile_and_run("inflit", INFERRED_LITERALS) else {
+        return;
+    };
+    assert_eq!(output, "7\n30\n50\n25\n0\n207\n11\n10\n");
+}
+
+// A literal with nothing to take its type from says so.
+#[test]
+fn a_literal_without_a_context_is_rejected() {
+    let source = "Point :: struct { x: i64, y: i64 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   p := { x = 1, y = 2 }\n\
+         \x20   0\n\
+         }\n";
+    let message = compile_error("inflitbad", source);
+    assert!(
+        message.contains("takes its type from what the context expects"),
+        "expected the inference diagnostic in:\n{message}"
+    );
+}
+
 // `for item in items` over a slice, an array and a `str`. It is the
 // index-and-bound loop written out rather than an iterator: nothing is called
 // per element, and what the backend sees is what the same loop written by hand
@@ -3120,6 +3209,61 @@ fn self_hosted_infers_a_variant_enum() {
     };
     let _ = std::fs::remove_file(&input);
     let Some(via_c) = compile_c_and_run("shdot", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
+// The self-hosted compiler infers a literal's type too, through the same fixup
+// an argument's variant goes through when the callee is written later.
+const SELF_HOSTED_INFERRED_LITERALS: &str = "Point :: struct { x: i64, y: i64 }\n\
+     Line :: struct { from: Point, to: Point }\n\
+     Color :: enum { Red, Green, Blue }\n\
+     Marked :: struct { at: Point, colour: Color }\n\
+     sum :: fn(p: Point) -> i64 { p.x + p.y }\n\
+     length_sq :: fn(l: Line) -> i64 {\n\
+     \x20   dx := l.to.x - l.from.x\n\
+     \x20   dy := l.to.y - l.from.y\n\
+     \x20   dx * dx + dy * dy\n\
+     }\n\
+     origin :: fn() -> Point { return { x = 0, y = 0 } }\n\
+     paint :: fn(m: Marked) -> i64 {\n\
+     \x20   base := match m.colour {\n\
+     \x20       case .Red: 1\n\
+     \x20       case .Green: 2\n\
+     \x20       case .Blue: 3\n\
+     \x20   }\n\
+     \x20   base * 100 + m.at.x\n\
+     }\n\
+     main :: fn() -> i64 {\n\
+     \x20   p : Point = { x = 3, y = 4 }\n\
+     \x20   print sum(p)\n\
+     \x20   print sum({ x = 10, y = 20 })\n\
+     \x20   print length_sq({ from = { x = 0, y = 0 }, to = { x = 3, y = 4 } })\n\
+     \x20   print sum(origin())\n\
+     \x20   print paint({ at = { x = 7, y = 0 }, colour = .Green })\n\
+     \x20   print later({ x = 2, y = 3 })\n\
+     \x20   0\n\
+     }\n\
+     later :: fn(p: Point) -> i64 { sum(p) * 10 }\n";
+
+#[test]
+fn self_hosted_infers_a_literal_type() {
+    let Some(output) =
+        selfhosted_native_output("shlit", SELF_HOSTED_INFERRED_LITERALS)
+    else {
+        return;
+    };
+    assert_eq!(output, "7\n30\n25\n0\n207\n50\n");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shlit_input.frost");
+    std::fs::write(&input, SELF_HOSTED_INFERRED_LITERALS).unwrap();
+    let Some(c_source) = self_hosted_emits("shlit", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shlit", &c_source) else {
         return;
     };
     assert_eq!(via_c, output, "the self-hosted C backend disagrees");
@@ -8054,6 +8198,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_forseq", FOR_OVER_A_SEQUENCE),
         ("diff_multiret", MULTIPLE_RETURN_VALUES),
         ("diff_dotvariant", INFERRED_VARIANTS),
+        ("diff_inflit", INFERRED_LITERALS),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);

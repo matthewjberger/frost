@@ -518,17 +518,15 @@ StructField :: struct {
     next: i64,
 }
 
-// A `.Variant` written as a call argument, whose enum is the parameter's type.
-// The callee may not be parsed when the argument is, so the literal is left
-// unresolved and patched once every signature is known. `lit` is the struct
-// literal node, `callee` the function it is an argument to, and `argument` its
-// position in that call.
+// A `.Variant` or a `{ ... }` written as a call argument, whose type is the
+// parameter's. The callee may not be parsed when the argument is, so the
+// literal is left unresolved and patched once every signature is known. `lit`
+// is the literal node, `callee` the function it is an argument to, and
+// `argument` its position in that call.
 VariantFixup :: struct {
     lit: i64,
     callee: i64,
     argument: i64,
-    name_off: i64,
-    name_len: i64,
 }
 
 // One source file. A name is an offset into the buffer every file's text was

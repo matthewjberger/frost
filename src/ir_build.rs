@@ -1151,6 +1151,19 @@ fn name_inferred_variant(
     ))
 }
 
+// The struct a `{ x = 1 }` builds, taken from what the context expects.
+fn name_inferred_literal(
+    fields: &[(String, Expression)],
+    expected: Option<&Type>,
+) -> Result<Expression> {
+    let Some(Type::Struct(name) | Type::Enum(name)) = expected else {
+        bail!(
+            "a `{{ ... }}` literal takes its type from what the context expects, and here there is nothing to take it from; name the struct"
+        );
+    };
+    Ok(Expression::StructInit(name.clone(), fields.to_vec()))
+}
+
 fn mangle_type(ty: &Type) -> String {
     match ty {
         Type::I8 => "i8".to_string(),
@@ -2623,8 +2636,11 @@ impl<'a> FunctionLowering<'a> {
                 if let Expression::StructInit(struct_name, field_inits) = value
                 {
                     let layout_name = match type_annotation {
+                        // `p : Point = { x = 1, y = 2 }`: the annotation is the
+                        // only place the struct is named.
                         Some(Type::Struct(annotated))
-                            if is_generic_instance(annotated) =>
+                            if struct_name.is_empty()
+                                || is_generic_instance(annotated) =>
                         {
                             annotated.clone()
                         }
@@ -2638,6 +2654,11 @@ impl<'a> FunctionLowering<'a> {
                         }
                         _ => struct_name.clone(),
                     };
+                    if layout_name.is_empty() {
+                        bail!(
+                            "a `{{ ... }}` literal takes its type from what the context expects, and this binding has no type to take it from; annotate it or name the struct"
+                        );
+                    }
                     let ty = Type::Struct(layout_name.clone());
                     let local = self.fresh_local(ty, Some(name.clone()));
                     self.init_struct(local, &layout_name, field_inits)?;
@@ -3072,16 +3093,20 @@ impl<'a> FunctionLowering<'a> {
         expression: &Expression,
         expected: Option<&Type>,
     ) -> Result<(IrOperand, Type)> {
-        // `.Circle { radius = 5 }` names its enum nowhere, so the type the
-        // context expects is what says which enum it is. Filling it in here
-        // covers every position that carries one: an argument, a field, a
-        // return, an assignment and an element.
+        // `.Circle { radius = 5 }` and `{ x = 1, y = 2 }` name their type
+        // nowhere, so the type the context expects is what says what they are.
+        // Filling it in here covers every position that carries one: an
+        // argument, a field, a return, an assignment and an element.
         let named;
         let expression = match expression {
             Expression::EnumVariantInit(name, variant, fields)
                 if name.is_empty() =>
             {
                 named = name_inferred_variant(variant, fields, expected)?;
+                &named
+            }
+            Expression::StructInit(name, fields) if name.is_empty() => {
+                named = name_inferred_literal(fields, expected)?;
                 &named
             }
             other => other,
@@ -4178,7 +4203,8 @@ impl<'a> FunctionLowering<'a> {
             Expression::StructInit(name, fields) => {
                 let layout_name = match self.type_of_local(local) {
                     Type::Struct(instance)
-                        if is_generic_instance(&instance) =>
+                        if name.is_empty()
+                            || is_generic_instance(&instance) =>
                     {
                         instance
                     }

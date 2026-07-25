@@ -194,6 +194,18 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     if (kind == TOK_DOT) {
         return parse_inferred_variant(p)
     }
+    // `{ x = 1, y = 2 }`, a struct literal that leaves out a type name the
+    // context already carries. Every field is still named. An unresolved one is
+    // an argument whose callee is written later, patched by the fixup pass.
+    if (kind == TOK_LBRACE) {
+        advance(p)
+        mut struct_ty := p.expected_type
+        if (is_struct_ty(struct_ty) == false) {
+            struct_ty = 0 - 1
+        }
+        head := parse_field_inits(p, struct_ty)
+        return new_struct_lit(p, struct_ty, head)
+    }
     if (kind == TOK_LPAREN) {
         advance(p)
         inner := parse_expr(p)
@@ -522,12 +534,9 @@ parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
         if (callee >= 0) {
             held := arena_at(p.arena, value)
             if (held.kind == NODE_STRUCT_LIT && held.val == (0 - 1)) {
-                name_off := held.b
-                name_len := held.c
                 arena_push(p.variant_fixups,
                     VariantFixup { lit = value, callee = callee,
-                        argument = index, name_off = name_off,
-                        name_len = name_len })
+                        argument = index })
             }
         }
         arg := new_node(p, NODE_ARG, value, 0, 0)
@@ -2368,9 +2377,16 @@ parse_variant_body :: fn(mut p: Parser, enum_ty: i64, enum_off: i64,
             field_len := cur_len(p)
             advance(p)
             advance(p)
-            value := parse_expr(p)
+            // An enum's fields are laid out under the name of the variant they
+            // came from, so that is the name the field's type is looked up by,
+            // and a nested literal is parsed under it.
             qualified := synth_join(p, variant_off, variant_len, field_off,
                 field_len)
+            saved_field_expected := p.expected_type
+            p.expected_type = field_type(p, enum_ty, qualified,
+                variant_len + field_len + 1)
+            value := parse_expr(p)
+            p.expected_type = saved_field_expected
             init := new_field_init(p, value, qualified,
                 variant_len + field_len + 1)
             set_next(p, tail, init)
@@ -2420,45 +2436,73 @@ parse_inferred_variant :: fn(mut p: Parser) -> i64 {
         variant_len)
 }
 
-// Every `.Variant` left unresolved, now that every signature is parsed. Each
-// one was written as an argument, so the parameter's declared type is the enum,
-// and what is patched is the literal's type and the tag it holds.
+// One literal that named no type, now that the type it is written into is
+// known. A `.Variant` carries the variant's name on the node and needs its tag
+// filled in as well as its type; a `{ ... }` needs only the type. Either way
+// the fields are walked, so a literal nested inside one resolves too.
+resolve_untyped_literal :: fn(mut p: Parser, node_id: i64, wanted: i64) {
+    node := arena_at(p.arena, node_id)
+    if (node.kind != NODE_STRUCT_LIT || node.val != (0 - 1)) {
+        return
+    }
+    mut struct_ty := wanted
+    if (struct_ty >= BORROW_FLAG) {
+        struct_ty = struct_ty - BORROW_FLAG
+    }
+    name_off := node.b
+    name_len := node.c
+    position := node.pos
+    if (is_struct_ty(struct_ty) == false) {
+        report_where(p.modules, p.src, position)
+        report("this literal takes its type from what the context expects, and there is no struct or enum type there")
+        frost_rt_die()
+    }
+    node.val = struct_ty
+    node.b = 0
+    node.c = 0
+    inits := node.a
+    // A variant names itself on the node, so its tag is looked up here.
+    if (name_len != 0) {
+        index := find_variant(p, struct_ty, name_off, name_len)
+        if (index < 0) {
+            report_where(p.modules, p.src, name_off)
+            report("'.")
+            report_src(p.src, name_off, name_len)
+            report("' is not a variant of the type this context expects")
+            frost_rt_die()
+        }
+        entry := arena_at(p.variants, index)
+        tag := entry.tag
+        first := arena_at(p.arena, inits)
+        tag_node := first.a
+        held := arena_at(p.arena, tag_node)
+        held.val = tag
+    }
+    mut id := inits
+    while (id != (0 - 1)) {
+        init := arena_at(p.arena, id)
+        value := init.a
+        field_off := init.val
+        field_len := init.c
+        following := init.next
+        resolve_untyped_literal(p, value,
+            field_type(p, struct_ty, field_off, field_len))
+        id = following
+    }
+}
+
+// Every literal an argument left unresolved, now that every signature is
+// parsed. The parameter's declared type is what it takes its type from.
 resolve_variant_fixups :: fn(mut p: Parser) {
     mut i : i64 = 0
     while (i < p.variant_fixups.count) {
         fixup := arena_at(p.variant_fixups, i)
         lit_id := fixup.lit
-        name_off := fixup.name_off
-        name_len := fixup.name_len
+        argument := fixup.argument
         callee := arena_at(p.fns, fixup.callee)
         params := callee.params
-        declared := nth_param_type(p, params, fixup.argument)
-        mut enum_ty := declared
-        if (enum_ty >= BORROW_FLAG) {
-            enum_ty = enum_ty - BORROW_FLAG
-        }
-        mut index : i64 = 0 - 1
-        if (is_struct_ty(enum_ty)) {
-            index = find_variant(p, enum_ty, name_off, name_len)
-        }
-        if (index < 0) {
-            report_where(p.modules, p.src, name_off)
-            report("'.")
-            report_src(p.src, name_off, name_len)
-            report("' takes its enum from what the context expects, and this argument's type is not an enum with that variant")
-            frost_rt_die()
-        }
-        entry := arena_at(p.variants, index)
-        tag := entry.tag
-        lit := arena_at(p.arena, lit_id)
-        lit.val = enum_ty
-        tag_init := lit.a
-        lit.b = 0
-        lit.c = 0
-        init := arena_at(p.arena, tag_init)
-        tag_node := init.a
-        held := arena_at(p.arena, tag_node)
-        held.val = tag
+        declared := nth_param_type(p, params, argument)
+        resolve_untyped_literal(p, lit_id, declared)
         i = i + 1
     }
     p.variant_fixups.count = 0
