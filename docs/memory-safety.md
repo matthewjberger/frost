@@ -57,7 +57,7 @@ no reference type in the surface language to write anywhere else. `x: T` borrows
 to read, `mut x: T` borrows to mutate, `move x: T` takes ownership, and the call
 site writes no sigil at all.
 
-```
+```frost
 read  :: fn(x: i64) -> i64 { x }        // borrowed to read
 bump  :: fn(mut x: i64) { x = x + 1 }   // borrowed to mutate in place
 eat   :: fn(move p: Point) -> i64 { p.x }
@@ -96,7 +96,7 @@ strings, arrays of move types). A move-typed value is *consumed* when it is:
 
 Using it afterward is a use-after-move error:
 
-```
+```frost
 p := Point { x = 1, y = 2 }
 a := take(p)      // p moved into take
 b := take(p)      // error: use of moved value 'p'
@@ -140,7 +140,7 @@ Enforced by `check_borrow_exclusivity` per call-site argument list.
 A struct or enum declared `linear` is a resource that must be consumed
 exactly once:
 
-```
+```frost
 File :: linear struct { handle: i64 }
 open  :: fn() -> File { File { handle = 1 } }
 close :: extern fn(f: File)              // terminal consumer, across the FFI boundary
@@ -180,7 +180,7 @@ generation)` pair, which is plain copyable data you *can* freely store and retur
   generation. If they differ, the handle is stale. `slab_alive` answers
   false, and reading `world[h]` aborts rather than returning the new occupant.
 
-```
+```frost
 h := slab_insert($Entity, $8, world, entity)    // slot 0, generation 0
 slab_release($Entity, $8, world, h)             // slot 0 now generation 1
 slab_insert($Entity, $8, world, other)          // reuses slot 0 at generation 1
@@ -220,7 +220,7 @@ A fixed-size array `[N]T` carries its length `N` in its type, so every index
 expression `a[i]` is compiled with a check against that known length before the
 address is computed:
 
-```
+```frost
 arr := [10, 20, 30]
 arr[5]   // aborts: "frost: index 5 out of bounds for length 3"
 ```

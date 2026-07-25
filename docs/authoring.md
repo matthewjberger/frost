@@ -32,7 +32,7 @@ greppable.
 
 ## Declarations and bindings
 
-```
+```frost
 MAX   :: 100                          // a constant
 add   :: fn(a: i64, b: i64) -> i64 { a + b }   // a function
 Point :: struct { x: i64, y: i64 }    // a struct
@@ -62,7 +62,7 @@ reference type to write. Borrowing is a parameter mode (see below).
 Fields are set with `=`, not `:`. Struct fields are always public, there is no
 visibility on fields.
 
-```
+```frost
 Shape :: enum {
     Circle { radius: i64 },
     Rect { width: i64, height: i64 },
@@ -123,7 +123,7 @@ usually
 infers from a value argument. When it cannot, declare it `$T: Type` and pass the
 type at the call site with a leading `$`.
 
-```
+```frost
 Pair :: struct($T: Type) { first: T, second: T }
 make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
 ```
@@ -131,7 +131,7 @@ make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
 A parameter may also be a value, written `$N: usize`, used to size a fixed array
 field. `Slab<Entity, 16>` then has `[16]Entity` storage, chosen at compile time.
 
-```
+```frost
 Slab :: struct($T: Type, $N: usize) { items: [N]T, count: i64 }
 ```
 
@@ -141,7 +141,7 @@ A parameter may also be a function chosen at compile time, which is how a generi
 algorithm takes the operation it needs without a trait and without an indirect
 call. Declare the signature and the argument is checked against it at the call:
 
-```
+```frost
 ascending :: fn(a: i64, b: i64) -> bool { a < b }
 
 best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
@@ -164,7 +164,7 @@ function is just the declaration form without the name. Prefer a compile-time
 function parameter where the function is known at the call, since that one is
 called directly. Reach for a pointer when it genuinely varies at runtime.
 
-```
+```frost
 apply :: fn(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
 
 apply(fn(a: i64) -> i64 { a + 1 }, 41)          // inline anonymous function
@@ -179,7 +179,7 @@ A file is a module. `import "path"` brings another file in. Top-level items are
 private by default, and a file lists what it offers with an `export` line at the
 top. There is no `pub` anywhere.
 
-```
+```frost
 // geometry.frost
 export area, Shape
 Shape :: enum { Circle { r: i64 }, Rect { w: i64, h: i64 } }
@@ -199,7 +199,7 @@ importer cannot name `scale`.
 A `test` block is a named unit test. `assert(cond)` fails it when `cond` is
 false. Run every test in a file with `frost --test file.frost`.
 
-```
+```frost
 add :: fn(a: i64, b: i64) -> i64 { a + b }
 test "addition" { assert(add(2, 3) == 5) }
 ```
@@ -210,7 +210,7 @@ test "addition" { assert(add(2, 3) == 5) }
 String literals are C-compatible for `^i8` parameters. Frost calls C, but C does
 not call Frost.
 
-```
+```frost
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 ```
 
@@ -247,7 +247,7 @@ cheap to grep, and hard to get subtly wrong.
 
 ## A complete program
 
-```
+```frost
 printf     :: extern fn(fmt: ^i8, value: i64) -> i32
 pool_new   :: extern fn(capacity: i64, elem_size: i64) -> ^u8
 pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64

@@ -47,7 +47,7 @@ list, the generation counters, the packed `(generation << 32) | index` handles,
 and the stale-handle check are all ordinary Frost code over a fixed-size array
 inside a struct:
 
-```
+```frost
 Slab :: struct {
     storage: [4]Entity,
     generations: [4]i64,
@@ -188,7 +188,7 @@ slab's generational safety unchanged.
 `f1..fn`, it lays out one `[N]` array per field, each named after the field, plus
 the same `generations` / `free_list` / `free_count` bookkeeping the slab carries:
 
-```
+```frost
 Particle :: struct { position: Vec3, velocity: Vec3, mass: f32 }
 
 // columns<Particle, 1024> is, in effect:

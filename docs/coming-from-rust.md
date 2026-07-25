@@ -74,7 +74,7 @@ There is no `let`. A name is introduced with one of three operators:
 Bindings are immutable by default, exactly as in Rust. `mut` makes a local
 assignable:
 
-```
+```frost
 mut total : i64 = 0
 total = total + 1
 ```
@@ -95,7 +95,7 @@ Frost is data-oriented, not object-oriented. There are no methods, no `self`,
 no `impl` blocks, and no traits. Behavior lives in free functions that take
 their data as parameters:
 
-```
+```frost
 Vec3 :: struct { x: i64, y: i64, z: i64 }
 
 dot :: fn(a: Vec3, b: Vec3) -> i64 {
@@ -154,7 +154,7 @@ always on, with no `get`/`get_unchecked` split.
 
 Structs and enums are plain data. Construction uses `=` for fields, not `:`:
 
-```
+```frost
 Point :: struct { x: i64, y: i64 }
 p := Point { x = 3, y = 4 }
 
@@ -168,14 +168,14 @@ c := Shape::Circle { radius = 5 }
 Enum variants may be unit variants or carry named fields, and a single enum can
 mix both:
 
-```
+```frost
 Kind :: enum { Player, Enemy { damage: i64 }, Pickup { amount: i64 } }
 ```
 
 `match` is the workhorse, and its arm syntax is `case <pattern>: <expr>`. A
 variant pattern leads with a dot and binds fields by name:
 
-```
+```frost
 delta :: fn(k: Kind) -> i64 {
     match k {
         case .Player: 0
@@ -188,7 +188,7 @@ delta :: fn(k: Kind) -> i64 {
 `match` also works over scalar values and over tuples, with `_` as the
 wildcard, which covers the common Rust idioms:
 
-```
+```frost
 label :: fn(score: i64) -> i64 {
     match score {
         case 90: 4
@@ -242,7 +242,7 @@ call. Because it can never escape, the analysis is entirely scope-local. There i
 nothing like Rust's `fn longest<'a>(x: &'a str, y: &'a str) -> &'a str` because
 you cannot return a borrow at all.
 
-```
+```frost
 scale :: fn(mut p: Point, k: i64) {
     p.x = p.x * k          // field access on a borrowed struct is direct
     p.y = p.y * k
@@ -289,7 +289,7 @@ Move semantics match your Rust intuition. A non-copy value (a struct, enum, or
 other aggregate) is moved when passed by value, assigned, or returned, and
 using it afterward is a compile error:
 
-```
+```frost
 buf := make_buffer()
 consume(buf)
 // consume(buf)   // error: use of moved value 'buf'
@@ -304,7 +304,7 @@ The larger divergence is how cleanup works. Frost has no `Drop`. In its
 place is the `linear` qualifier, which changes the affine rule (use *at most*
 once) into a linear rule (use *exactly* once):
 
-```
+```frost
 File :: linear struct { fd: i64 }
 open  :: fn(n: i64) -> File { File { fd = n } }
 close :: extern fn(f: File)          // terminal consumer, takes ownership
@@ -335,7 +335,7 @@ Two consequences a Rust programmer will appreciate:
 Because there is no `Drop`, the RAII-guard pattern is replaced by `defer`,
 which runs a statement when the scope exits, in last-in-first-out order:
 
-```
+```frost
 work :: fn() {
     defer printf("cleanup\n", 0)   // runs on the way out
     // ... body ...
@@ -353,7 +353,7 @@ This is where you put everything that Rust would model with `Rc<RefCell<T>>`,
 or interlinked data lives in a pool and is named by a `Handle<T>`, a
 small copyable value that is an index plus a generation, not a pointer.
 
-```
+```frost
 pool_new   :: extern fn(capacity: i64, elem_size: i64) -> ^u8
 pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
 pool_get   :: extern fn(pool: ^u8, handle: i64) -> ^u8
@@ -413,7 +413,7 @@ them and, more importantly, in what you cannot say.
 
 A type parameter is written `$T`. It can appear on functions and on structs:
 
-```
+```frost
 Pair :: struct($T: Type) { first: T, second: T }
 
 make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
@@ -431,7 +431,7 @@ infers `T` from a call. When it cannot be (for example a function that only uses
 the type explicitly at the call site with a leading `$`, which is Frost's
 equivalent of the turbofish:
 
-```
+```frost
 make_pool :: fn($T: Type, capacity: i64) -> ^u8 {
     pool_new(capacity, sizeof(T))
 }
@@ -451,7 +451,7 @@ Where Rust would write `T: Ord` and call `a.cmp(&b)`, Frost takes the operation
 as a compile-time function parameter, and that parameter can declare the
 signature it needs:
 
-```
+```frost
 ascending :: fn(a: i64, b: i64) -> bool { a < b }
 
 best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
@@ -480,7 +480,7 @@ and no orphan problem.
 Functions are values. A parameter of type `fn(..) -> T` holds one, and you call
 it directly:
 
-```
+```frost
 apply :: fn(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
 double :: fn(x: i64) -> i64 { x * 2 }
 
@@ -522,7 +522,7 @@ here that corresponds to `const fn` or macro expansion.
 FFI is a zero-glue path. Declaring an external function is a
 constant whose value is an `extern fn`:
 
-```
+```frost
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 malloc :: extern fn(size: i64) -> ^u8
 ```
@@ -587,7 +587,7 @@ This is the idiom you will use constantly, the Frost answer to a `Vec` of
 objects with cross-references. Entities live in a pool, are named by handles,
 and are mutated in place through the pool.
 
-```
+```frost
 printf     :: extern fn(fmt: ^i8, value: i64) -> i32
 pool_new   :: extern fn(capacity: i64, elem_size: i64) -> ^u8
 pool_alloc :: extern fn(pool: ^u8, value: ^u8) -> i64
@@ -640,4 +640,3 @@ like something missing and starts feeling like something removed.
   the three backends that must agree.
 - `examples/native/`, runnable programs, starting with `game_world.frost` and
   `pool_linked_list.frost`.
-```

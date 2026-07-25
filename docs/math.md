@@ -20,7 +20,7 @@ they are in the C runtime and need no extra link flag.
 
 ## Types
 
-```
+```frost
 Vec2 :: struct { x: f32, y: f32 }
 Vec3 :: struct { x: f32, y: f32, z: f32 }
 Vec4 :: struct { x: f32, y: f32, z: f32, w: f32 }
@@ -98,7 +98,7 @@ results as scaled integers so the Cranelift and C backends agree on the output
 byte for byte. The test `self_hosted_standard_library_math` compiles the library
 through the self-hosted compiler on both backends.
 
-```
+```frost
 import "io.frost"
 import "math.frost"
 

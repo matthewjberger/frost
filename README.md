@@ -15,7 +15,7 @@ A Frost program is plain data and free functions that transform it. There are no
 
 Most safe systems languages make you describe how long a reference lives. Frost deletes the question. A borrow is not a type you write, it is what a parameter mode means.
 
-```
+```frost
 wound :: fn(mut e: Entity, amount: i64) { e.hp = e.hp - amount }
 ```
 
@@ -33,7 +33,7 @@ wound :: fn(mut e: Entity, amount: i64) { e.hp = e.hp - amount }
 
 ## Hello, Frost
 
-```
+```frost
 Kind :: enum { Hero, Monster { damage: i64 } }
 Entity :: struct { hp: i64, kind: Kind }
 

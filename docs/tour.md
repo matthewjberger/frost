@@ -17,7 +17,7 @@ frost program.frost --link -o program && ./program
 `:` gives an explicit type, and `mut` makes a binding assignable. There are no
 methods. Behavior lives in free functions.
 
-```
+```frost
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 square :: fn(x: i64) -> i64 { x * x }
@@ -42,7 +42,7 @@ are all value (copy) types. Control flow is `if`/`else` (an expression),
 A `struct` is just its fields. An `enum` is a tagged union with payloads.
 Neither carries methods.
 
-```
+```frost
 Point :: struct { x: i64, y: i64 }
 
 Shape :: enum {
@@ -78,7 +78,7 @@ parameter, written on its declaration, and the call site says nothing:
 | write | `mut p: Point` | borrowed to mutate in place |
 | move | `move p: Point` | ownership transferred |
 
-```
+```frost
 scale :: fn(mut p: Point, k: i64) {   // borrowed to mutate in place
     p.x = p.x * k
     p.y = p.y * k
@@ -105,7 +105,7 @@ Non-`Copy` values (structs, enums) *move* when passed by value. Using one again
 is a compile error. A `linear` type must be consumed exactly once, which is
 how Frost replaces destructors:
 
-```
+```frost
 File :: linear struct { fd: i64 }
 open  :: fn(n: i64) -> File { File { fd = n } }
 close :: extern fn(f: File)     // terminal consumer, takes ownership
@@ -127,7 +127,7 @@ copyable value, not a pointer. `pool[handle]` is a *place*. Read and write
 through it, or borrow it. A freed-and-reused slot bumps its generation, so an
 old handle can never read the new occupant.
 
-```
+```frost
 pool_new    :: extern fn(capacity: i64, elem_size: i64) -> ^u8
 pool_alloc  :: extern fn(pool: ^u8, value: ^u8) -> i64
 pool_get    :: extern fn(pool: ^u8, handle: i64) -> ^u8
@@ -157,7 +157,7 @@ walks a tight column. It keeps the pool's generational handle unchanged, so
 `c[h]` is still a checked place, and `c.field` is the whole column, a slice for a
 hot loop:
 
-```
+```frost
 import "columns.frost"
 
 Particle :: struct { x: i64, y: i64 }
@@ -183,7 +183,7 @@ Moving a system from a pool to structure-of-arrays is changing `Slab<T, N>` to
 Generic functions and structs monomorphize, so there is no runtime dispatch. A
 type parameter is written `$T`:
 
-```
+```frost
 Pair :: struct($T: Type) { first: T, second: T }
 
 make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
@@ -206,7 +206,7 @@ type parameter. When a type parameter can't be inferred from a value argument
 (for example a function that only uses `sizeof(T)`), declare it as `$T: Type`
 and pass the type explicitly with a leading `$`:
 
-```
+```frost
 make_pool :: fn($T: Type, capacity: i64) -> ^u8 {
     pool_new(capacity, sizeof(T))     // T is a compile-time type
 }
@@ -228,7 +228,7 @@ parameter, which is Frost's answer to what a trait bound expresses. The
 parameter can state the signature it requires, and the call inside the
 specialization is direct rather than through a pointer:
 
-```
+```frost
 ascending :: fn(a: i64, b: i64) -> bool { a < b }
 
 best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
@@ -246,7 +246,7 @@ main :: fn() -> i64 {
 When the function genuinely varies at runtime, it is an ordinary value. A
 `fn(...) -> T` parameter holds a pointer. There are no capturing closures.
 
-```
+```frost
 apply :: fn(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
 double :: fn(x: i64) -> i64 { x * 2 }
 
@@ -260,7 +260,7 @@ main :: fn() -> i64 {
 
 A fixed-size array `[N]T` knows its length, and every index is checked:
 
-```
+```frost
 main :: fn() -> i64 {
     arr := [10, 20, 30]
     printf("%lld\n", arr[2])   // 30
@@ -274,7 +274,7 @@ main :: fn() -> i64 {
 A `test` block is a named unit test, and `assert` fails it when the condition is
 false. Run every test in a file with `frost --test file.frost`.
 
-```
+```frost
 add :: fn(a: i64, b: i64) -> i64 { a + b }
 
 test "addition" {
