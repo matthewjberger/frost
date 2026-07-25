@@ -68,6 +68,12 @@ pub enum ParamMode {
     Read,
     Write,
     Move,
+    // Only on an `extern fn`, and only for an aggregate: the bytes go to C the
+    // way C passes a struct by value, split across registers or pushed on the
+    // stack by the target's rule. Every other mode hands C a pointer, which is
+    // what most C APIs take and what Frost does internally, but a library that
+    // takes a struct by value could not be called at all. See src/c_abi.rs.
+    Value,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
@@ -1727,6 +1733,20 @@ impl<'a> Parser<'a> {
                     Token::Move => {
                         self.read_token();
                         ParamMode::Move
+                    }
+                    // `value` is a word rather than a keyword, so a parameter
+                    // may still be called `value`. What tells them apart is
+                    // that a mode is followed by the name and a name is
+                    // followed by its type.
+                    Token::Identifier(word)
+                        if word == "value"
+                            && matches!(
+                                self.peek_nth(1),
+                                Token::Identifier(_)
+                            ) =>
+                    {
+                        self.read_token();
+                        ParamMode::Value
                     }
                     _ => ParamMode::Read,
                 };

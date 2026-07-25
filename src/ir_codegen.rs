@@ -6,7 +6,7 @@ use cranelift::prelude::*;
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
-use crate::c_abi::{CLayout, CRegister, CReturn};
+use crate::c_abi::{CArgument, CLayout, CRegister, CReturn};
 use crate::ir::{
     IrBinOp, IrConstant, IrFunction, IrModule, IrOperand, IrRvalue,
     IrStatement, IrTerminator, IrUnOp,
@@ -235,6 +235,9 @@ struct Decls {
     // does not, so a call to one of these is emitted from what
     // `src/c_abi.rs` says the target does rather than from what Frost does.
     c_returns: HashMap<String, (CLayout, CReturn)>,
+    // Extern name to the parameters it takes by value: which argument, its
+    // layout, and how the target passes it.
+    c_arguments: HashMap<String, Vec<(usize, CLayout, CArgument)>>,
 }
 
 impl Decls {
@@ -317,6 +320,7 @@ impl Generator {
                     functions: HashMap::new(),
                     data: HashMap::new(),
                     c_returns: HashMap::new(),
+                    c_arguments: HashMap::new(),
                 },
                 c_target,
                 functions: HashMap::new(),
@@ -390,13 +394,53 @@ impl Generator {
             };
             // An aggregate parameter is a pointer by design, not by accident:
             // `close :: extern fn(f: File)` links against `void close(File*)`.
-            // That is the documented convention in docs/c-compatibility.md and
-            // it is why parameters need no classification while returns do.
-            for parameter in &external.params {
-                signature.params.push(AbiParam::new(param_abi_type(
-                    pointer_type,
-                    parameter,
-                )?));
+            // That is the documented convention in docs/c-compatibility.md.
+            // A parameter written `value` is the exception, and it is the one
+            // that has to be classified the way a return is, because C splits a
+            // struct across registers by a rule of the target's.
+            let mut by_value = Vec::new();
+            for (index, parameter) in external.params.iter().enumerate() {
+                let layout =
+                    external.param_layouts.get(index).and_then(Clone::clone);
+                let Some(layout) = layout else {
+                    signature.params.push(AbiParam::new(param_abi_type(
+                        pointer_type,
+                        parameter,
+                    )?));
+                    continue;
+                };
+                let Some(target) = self.c_target else {
+                    bail!(
+                        "native backend: '{}' takes a parameter by value, and this target's C rule for passing a struct is not one Frost knows; see docs/c-compatibility.md",
+                        external.name
+                    );
+                };
+                let passed = crate::c_abi::classify_argument(&layout, target);
+                match &passed {
+                    CArgument::Registers(registers) => {
+                        for register in registers {
+                            signature
+                                .params
+                                .push(AbiParam::new(register_type(*register)));
+                        }
+                    }
+                    CArgument::Indirect => {
+                        signature.params.push(AbiParam::new(pointer_type));
+                    }
+                    CArgument::Stack => {
+                        bail!(
+                            "native backend: '{}' takes '{}' by value, and this target passes a struct that size on the stack, which the native backend does not emit yet; the C backend does, so build this with --emit-c",
+                            external.name,
+                            layout.name
+                        );
+                    }
+                }
+                by_value.push((index, layout, passed));
+            }
+            if !by_value.is_empty() {
+                self.decls
+                    .c_arguments
+                    .insert(external.name.clone(), by_value);
             }
             match &returned {
                 Some(CReturn::Registers(registers)) => {
@@ -1103,12 +1147,105 @@ impl Translator<'_, '_> {
         };
         let func_ref =
             self.decls.declare_func_in_func(*func_id, self.builder.func);
-        let mut argument_values = Vec::with_capacity(arguments.len());
-        for argument in arguments {
-            argument_values.push(self.operand(argument)?);
-        }
+        let argument_values = self.call_arguments(function, arguments)?;
         let call = self.builder.ins().call(func_ref, &argument_values);
         Ok(self.builder.inst_results(call).to_vec())
+    }
+
+    // The values a call passes. Every aggregate is a pointer in the IR, so a
+    // parameter the callee takes by value is the one place that pointer is
+    // taken apart: into the registers the target splits the struct across, or
+    // into a copy the caller owns and passes the address of.
+    fn call_arguments(
+        &mut self,
+        function: &str,
+        arguments: &[IrOperand],
+    ) -> Result<Vec<Value>> {
+        let by_value = self.decls.c_arguments.get(function).cloned();
+        let Some(by_value) = by_value else {
+            let mut values = Vec::with_capacity(arguments.len());
+            for argument in arguments {
+                values.push(self.operand(argument)?);
+            }
+            return Ok(values);
+        };
+        let mut values = Vec::with_capacity(arguments.len());
+        for (index, argument) in arguments.iter().enumerate() {
+            let address = self.operand(argument)?;
+            let Some((_, layout, passed)) =
+                by_value.iter().find(|(at, _, _)| *at == index)
+            else {
+                values.push(address);
+                continue;
+            };
+            match passed {
+                CArgument::Registers(registers) => {
+                    for register in registers {
+                        values.push(self.load_argument_register(
+                            *register, address, layout,
+                        ));
+                    }
+                }
+                // The callee's parameter is its own, so what it is handed is
+                // the address of a copy. Handing over the caller's value would
+                // let a callee that writes to its parameter write through to
+                // the caller's, which passing by value does not do.
+                CArgument::Indirect => {
+                    let slot = self.builder.create_sized_stack_slot(
+                        StackSlotData::new(
+                            StackSlotKind::ExplicitSlot,
+                            layout.size.max(1) as u32,
+                            4,
+                        ),
+                    );
+                    let copy = self.builder.ins().stack_addr(
+                        self.pointer_type,
+                        slot,
+                        0,
+                    );
+                    self.emit_memcpy(copy, address, layout.size);
+                    values.push(copy);
+                }
+                CArgument::Stack => {
+                    bail!(
+                        "native backend: '{function}' takes '{}' by value on the stack, which the native backend does not emit yet",
+                        layout.name
+                    );
+                }
+            }
+        }
+        Ok(values)
+    }
+
+    // Read one register's worth of an aggregate out of the caller's storage.
+    // The mirror of store_returned_register: a whole number of bytes a load can
+    // express is loaded directly, and anything else goes through a scratch slot
+    // so that not one byte past the aggregate is read.
+    fn load_argument_register(
+        &mut self,
+        register: CRegister,
+        address: Value,
+        layout: &CLayout,
+    ) -> Value {
+        let bytes = register.bytes.min(layout.size - register.offset);
+        let clif = register_type(register);
+        if matches!(bytes, 1 | 2 | 4 | 8) && bytes == register.bytes {
+            let at =
+                self.builder.ins().iadd_imm(address, register.offset as i64);
+            return self.builder.ins().load(clif, MemFlags::new(), at, 0);
+        }
+        let slot = self.builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            8,
+            3,
+        ));
+        let scratch = self.builder.ins().stack_addr(self.pointer_type, slot, 0);
+        let zero = self.builder.ins().iconst(types::I64, 0);
+        self.builder.ins().stack_store(zero, slot, 0);
+        let source =
+            self.builder.ins().iadd_imm(address, register.offset as i64);
+        self.emit_memcpy(scratch, source, bytes);
+        self.builder.ins().stack_load(clif, slot, 0)
     }
 
     fn emit_call_indirect(
@@ -1167,9 +1304,7 @@ impl Translator<'_, '_> {
             if matches!(returned, CReturn::Indirect) {
                 argument_values.push(out);
             }
-            for argument in arguments {
-                argument_values.push(self.operand(argument)?);
-            }
+            argument_values.extend(self.call_arguments(function, arguments)?);
             let call = self.builder.ins().call(func_ref, &argument_values);
             if let CReturn::Registers(registers) = returned {
                 let results = self.builder.inst_results(call).to_vec();

@@ -2220,6 +2220,27 @@ fn self_hosted_rejects_an_unsupported_declaration() {
     );
 }
 
+// The self-hosted compiler passes every aggregate to C as a pointer and has no
+// ABI classifier, so it refuses `value` rather than compiling it into the wrong
+// call. It used to reach the arena with a parameter it could not read.
+#[test]
+fn self_hosted_refuses_a_struct_passed_by_value() {
+    let source = "View :: struct { a: i64, b: i64 }\n\
+                  take :: extern fn(value v: View) -> i64\n\
+                  main :: fn() -> i64 { 0 }\n";
+    let Some(message) = self_hosted_rejects("byvalue", source) else {
+        return;
+    };
+    assert!(
+        message.contains("by value"),
+        "expected the by-value refusal, got:\n{message}"
+    );
+    assert!(
+        !message.contains("arena was indexed out of range"),
+        "an unsupported mode should not crash the compiler:\n{message}"
+    );
+}
+
 // A byte that is no operator used to keep the "nothing matched" value, which is
 // the end-of-file token, so the parser stopped there and the compiler wrote an
 // empty program and reported success. One stray byte truncated a file in
@@ -8134,6 +8155,124 @@ fn a_callback_registered_with_a_c_library_runs() {
     // read by the library rather than by Frost because it was moved in, and
     // getting it back is the open question at the end of docs/callbacks.md.
     assert_eq!(output, "9\n77\n");
+}
+
+// docs/c-compatibility.md said outright that passing a struct to C by value had
+// no spelling, and `value` is it. Every shape here lands on a different side of
+// some rule: 16 bytes is what wgpu's WGPUStringView is and is two eightbytes on
+// System V, 8 bytes is one integer register on Windows, 4 bytes of float is
+// where Windows and System V disagree, and 12 bytes is not a power of two so
+// Windows takes the address of a copy.
+//
+// The library is compiled by the C compiler from a header written by hand, so
+// what this checks is Frost against the real ABI rather than against its own
+// idea of it. Every call is by value, so a callee that writes to its parameter
+// must not be writing to the caller's, which the last line checks.
+#[test]
+fn a_struct_is_passed_to_c_by_value() {
+    let Some(compiler) = c_compiler() else {
+        return;
+    };
+    let directory = std::env::temp_dir().join("frost_byvalue");
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+
+    let library_source = directory.join("shapes.c");
+    std::fs::write(
+        &library_source,
+        "#include <stdint.h>\n\
+         typedef struct { const char* data; int64_t len; } View;\n\
+         typedef struct { int32_t x; int32_t y; } Pair;\n\
+         typedef struct { float a; } Single;\n\
+         typedef struct { int32_t a; int32_t b; int32_t c; } Triple;\n\
+         int64_t view_len(View v) { return v.len; }\n\
+         int64_t view_first(View v) { return (int64_t)(unsigned char)v.data[0]; }\n\
+         int64_t pair_sum(Pair p) { return p.x + p.y; }\n\
+         int64_t single_ten(Single s) { return (int64_t)(s.a * 10.0f); }\n\
+         int64_t triple_sum(Triple t) { return t.a + t.b + t.c; }\n\
+         int64_t clobber(Triple t) { t.a = 999; return t.a; }\n\
+         int64_t mixed(int64_t before, Pair p, int64_t after) {\n\
+         \x20   return before * 100 + p.x * 10 + p.y + after;\n\
+         }\n",
+    )
+    .unwrap();
+    let library = directory.join("shapes.o");
+    let built = Command::new(compiler)
+        .arg("-c")
+        .arg(&library_source)
+        .arg("-o")
+        .arg(&library)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "the C library did not compile:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+
+    let source = "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
+         View :: struct { data: ^i8, len: i64 }\n\
+         Pair :: struct { x: i32, y: i32 }\n\
+         Single :: struct { a: f32 }\n\
+         Triple :: struct { a: i32, b: i32, c: i32 }\n\
+         view_len :: extern fn(value v: View) -> i64\n\
+         view_first :: extern fn(value v: View) -> i64\n\
+         pair_sum :: extern fn(value p: Pair) -> i64\n\
+         single_ten :: extern fn(value s: Single) -> i64\n\
+         triple_sum :: extern fn(value t: Triple) -> i64\n\
+         clobber :: extern fn(value t: Triple) -> i64\n\
+         mixed :: extern fn(before: i64, value p: Pair, after: i64) -> i64\n\
+         main :: fn() -> i64 {\n\
+         \x20   v := View { data = \"hello\", len = 5 }\n\
+         \x20   printf(\"%lld\n\", view_len(v))\n\
+         \x20   printf(\"%lld\n\", view_first(v))\n\
+         \x20   p := Pair { x = 3, y = 4 }\n\
+         \x20   printf(\"%lld\n\", pair_sum(p))\n\
+         \x20   printf(\"%lld\n\", single_ten(Single { a = 2.5 }))\n\
+         \x20   t := Triple { a = 1, b = 2, c = 3 }\n\
+         \x20   printf(\"%lld\n\", triple_sum(t))\n\
+         \x20   printf(\"%lld\n\", clobber(t))\n\
+         \x20   printf(\"%lld\n\", triple_sum(t))\n\
+         \x20   printf(\"%lld\n\", mixed(7, p, 9))\n\
+         \x20   0\n\
+         }\n";
+    let root = directory.join("shapes.frost");
+    std::fs::write(&root, source).unwrap();
+
+    // 5, 'h', 3+4, 2.5*10, 1+2+3, the callee's own copy, the caller's value
+    // still 6 because the copy was the callee's, then 7*100 + 3*10 + 4 + 9.
+    let expected = "5\n104\n7\n25\n6\n999\n6\n743\n";
+
+    for emit_c in [false, true] {
+        let exe = directory.join(format!(
+            "shapes{}{}",
+            u8::from(emit_c),
+            std::env::consts::EXE_SUFFIX
+        ));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
+        command.env("FROST_CHECK_UNSAFE", "0");
+        if emit_c {
+            command.arg("--emit-c");
+        }
+        let built = command
+            .arg("--link")
+            .arg("--libs")
+            .arg(&library)
+            .arg("-o")
+            .arg(&exe)
+            .arg(&root)
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "the by-value program did not build (emit_c={emit_c}):\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let ran = Command::new(&exe).output().unwrap();
+        let output = String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n");
+        assert_eq!(output, expected, "backend disagrees (emit_c={emit_c})");
+    }
+    let _ = std::fs::remove_dir_all(&directory);
 }
 
 // The same thing with the userdata last, which is the order wgpu-native and

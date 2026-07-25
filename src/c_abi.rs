@@ -60,6 +60,56 @@ pub enum CReturn {
     Registers(Vec<CRegister>),
 }
 
+// How C passes a struct by value, which is not how Frost passes one. Frost
+// passes every aggregate as a pointer, uniformly. C splits a small struct
+// across registers, and what it does with a large one differs by target:
+// Windows and AArch64 take the address of a copy the caller makes, System V
+// pushes the bytes onto the stack.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CArgument {
+    // The value goes in these registers, read out of the aggregate at the
+    // offsets given.
+    Registers(Vec<CRegister>),
+    // The caller copies the value somewhere it owns and passes that address.
+    // The copy matters: the callee's parameter is its own, and a callee that
+    // writes to it must not write to the caller's value.
+    Indirect,
+    // The bytes are pushed onto the stack as part of the argument area.
+    Stack,
+}
+
+pub fn classify_argument(layout: &CLayout, target: CTarget) -> CArgument {
+    match target {
+        // Microsoft x64: the same size rule as the return. A struct of 1, 2, 4
+        // or 8 bytes goes in one integer register whatever it holds, and every
+        // other size is passed as a pointer to the caller's copy.
+        CTarget::Windows => {
+            if matches!(layout.size, 1 | 2 | 4 | 8) {
+                CArgument::Registers(vec![CRegister {
+                    offset: 0,
+                    bytes: layout.size,
+                    float: false,
+                }])
+            } else {
+                CArgument::Indirect
+            }
+        }
+        // System V AMD64: up to two eightbytes go in registers, classified the
+        // same way a return is. Anything larger is MEMORY, which for an
+        // argument means the stack rather than a pointer.
+        CTarget::SysV => match classify_sysv(layout) {
+            CReturn::Registers(registers) => CArgument::Registers(registers),
+            CReturn::Indirect => CArgument::Stack,
+        },
+        // AAPCS64: the same register rule as the return, and a composite over
+        // sixteen bytes is passed by an address the caller provides.
+        CTarget::AArch64 => match classify_aarch64(layout) {
+            CReturn::Registers(registers) => CArgument::Registers(registers),
+            CReturn::Indirect => CArgument::Indirect,
+        },
+    }
+}
+
 pub fn target_of(triple: &target_lexicon::Triple) -> Option<CTarget> {
     use target_lexicon::{Architecture, OperatingSystem};
     match (triple.architecture, triple.operating_system) {

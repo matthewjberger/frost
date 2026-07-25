@@ -19,6 +19,11 @@ struct Externs {
     names: HashSet<String>,
     // Extern name to the name and size of the struct type it returns.
     aggregate_returns: HashMap<String, (String, usize)>,
+    // Extern name to the parameters it takes by value, each mapped to the name
+    // of the struct type declared for it. The argument is a pointer at the IR
+    // level whatever the mode, so a by-value parameter is the one place the
+    // pointer is read through at the call.
+    value_parameters: HashMap<String, HashMap<usize, String>>,
 }
 
 impl Externs {
@@ -49,6 +54,7 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
             .map(|external| external.name.clone())
             .collect(),
         aggregate_returns: HashMap::new(),
+        value_parameters: HashMap::new(),
     };
     externs.insert("frost_rt_bounds_check");
 
@@ -87,15 +93,37 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
             .aggregate_returns
             .insert(external.name.clone(), (name, layout.size));
     }
+    // A struct type per by-value parameter, for the same reason: the C compiler
+    // is the thing that knows how that target passes a struct, so it is given a
+    // real struct rather than told the answer.
+    for external in &module.externs {
+        for (index, layout) in external.param_layouts.iter().enumerate() {
+            let Some(layout) = layout else {
+                continue;
+            };
+            let name = format!("frost_arg_{}_{index}", external.name);
+            writeln!(output, "typedef struct {{")?;
+            for field in c_return_fields(layout)? {
+                writeln!(output, "  {field};")?;
+            }
+            writeln!(output, "}} {name};")?;
+            externs
+                .value_parameters
+                .entry(external.name.clone())
+                .or_default()
+                .insert(index, name);
+        }
+    }
     output.push('\n');
 
     for external in &module.externs {
+        let by_value = externs.value_parameters.get(&external.name).cloned();
         let mut params = Vec::new();
         for (index, param) in external.params.iter().enumerate() {
-            let c_ty = if is_aggregate(param) {
-                "char*".to_string()
-            } else {
-                c_type(param)?
+            let c_ty = match by_value.as_ref().and_then(|by| by.get(&index)) {
+                Some(name) => name.clone(),
+                None if is_aggregate(param) => "char*".to_string(),
+                None => c_type(param)?,
             };
             params.push(format!("{c_ty} a{index}"));
         }
@@ -263,10 +291,8 @@ fn emit_statement(
                         function: name,
                         arguments,
                     } => {
-                        let mut args = Vec::new();
-                        for argument in arguments {
-                            args.push(operand_expr(function, argument)?);
-                        }
+                        let mut args =
+                            call_arguments(function, name, arguments, externs)?;
                         // A C function returning a struct hands back a value
                         // rather than filling in an out-pointer, so the value
                         // is taken and copied into the local's storage.
@@ -388,6 +414,28 @@ fn emit_terminator(
     Ok(())
 }
 
+// The arguments of a call, written out. An argument is the same expression
+// whatever the callee, except where the callee takes that parameter by value:
+// the IR hands every aggregate over as a pointer, so there the pointer is read
+// through and the C compiler passes the struct itself.
+fn call_arguments(
+    function: &IrFunction,
+    name: &str,
+    arguments: &[IrOperand],
+    externs: &Externs,
+) -> Result<Vec<String>> {
+    let by_value = externs.value_parameters.get(name);
+    let mut args = Vec::new();
+    for (index, argument) in arguments.iter().enumerate() {
+        let expr = operand_expr(function, argument)?;
+        match by_value.and_then(|by| by.get(&index)) {
+            Some(ty) => args.push(format!("(*({ty}*)({expr}))")),
+            None => args.push(expr),
+        }
+    }
+    Ok(args)
+}
+
 fn rvalue_expr(
     function: &IrFunction,
     rvalue: &IrRvalue,
@@ -442,10 +490,7 @@ fn rvalue_expr(
             function: name,
             arguments,
         } => {
-            let mut args = Vec::new();
-            for argument in arguments {
-                args.push(operand_expr(function, argument)?);
-            }
+            let args = call_arguments(function, name, arguments, externs)?;
             format!("{}({})", c_function_name(name, externs), args.join(", "))
         }
         IrRvalue::FunctionAddress(name) => {

@@ -119,6 +119,10 @@ pub struct EnumVariantLayout {
 pub struct IrExtern {
     pub name: String,
     pub params: Vec<Type>,
+    // One entry per parameter, `Some` only where the declaration said `value`
+    // and the type is an aggregate. That is the whole record of which arguments
+    // cross to C by value rather than as a pointer. See src/c_abi.rs.
+    pub param_layouts: Vec<Option<crate::c_abi::CLayout>>,
     pub return_type: Type,
     // Present when the return type is an aggregate, which C returns by a rule
     // of its own that the backends have to follow rather than reuse Frost's.

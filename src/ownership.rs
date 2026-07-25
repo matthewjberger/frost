@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 
 use crate::lexer::Position;
 use crate::parser::{
-    Block, Expression, Literal, Parameter, Spanned, Statement,
+    Block, Expression, Literal, ParamMode, Parameter, Spanned, Statement,
 };
 use crate::types::Type;
 
@@ -89,7 +89,17 @@ fn collect_param_types(statements: &[Spanned<Statement>]) -> ParamTypes {
             name.clone(),
             params
                 .iter()
-                .map(|parameter| parameter.type_annotation.clone())
+                .map(|parameter| {
+                    let ty = parameter.type_annotation.clone()?;
+                    // An extern's parameters are not rewritten by the mode
+                    // lowering, so the mode is read here. `value` hands C a
+                    // copy, so the caller keeps its own and the argument is
+                    // borrowed rather than moved.
+                    match parameter.mode {
+                        ParamMode::Value => Some(Type::Ref(Box::new(ty))),
+                        _ => Some(ty),
+                    }
+                })
                 .collect(),
         );
     }

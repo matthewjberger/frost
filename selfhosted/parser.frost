@@ -1657,6 +1657,17 @@ parse_params :: fn(mut p: Parser) -> i64 {
             mode = 2
             advance(p)
         }
+        // `value` on an `extern` parameter says the struct crosses to C the way
+        // C passes one, split across registers or pushed on the stack by the
+        // target's rule. The bootstrap emits that; this compiler passes every
+        // aggregate as a pointer and has no ABI classifier, so the declaration
+        // is refused rather than compiled into the wrong call.
+        if (cur(p) == TOK_IDENT && peek_kind(p, 1) == TOK_IDENT
+            && str_range_eq(p.src, cur_off(p), cur_len(p), "value")) {
+            report_where(p.modules, p.src, cur_off(p))
+            report("the self-hosted compiler does not pass a struct to C by value yet; the bootstrap does")
+            frost_rt_die()
+        }
         // A `$T: Type` parameter declares the type parameter and is erased from
         // the runtime signature, so no PARAM node is created for it.
         if (cur(p) == TOK_DOLLAR) {
