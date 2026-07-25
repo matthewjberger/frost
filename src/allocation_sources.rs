@@ -15,42 +15,82 @@ use crate::types::Type;
 // rejected. After this pass a `uses A` function is an ordinary function with a
 // trailing `&mut A` parameter, and `with` blocks are plain scopes.
 
-// Where the capability for the next `uses` call comes from.
-enum Provider {
-    // No capability is available here. A `uses` call is an error.
-    None,
-    // Forward the enclosing function's capability parameter, by name.
-    Forward(String),
-    // Borrow the named arena variable a `with` block provides.
-    Provide(String),
+// What a `uses` call may draw from at this point: the capability parameters the
+// enclosing function holds, and the arenas the `with` blocks around the call
+// provide, innermost last. A function may draw more than one, so this is a set
+// rather than a single answer.
+#[derive(Default, Clone)]
+struct Provider {
+    sources: Vec<Source>,
+}
+
+#[derive(Clone)]
+struct Source {
+    // The name the capability is reached by: the type's name with its first
+    // letter lowercased for a parameter, and the written name for a `with`
+    // block.
+    name: String,
+    // A `with` block names a variable the caller owns, so the call takes its
+    // address. A forwarded capability parameter is already a reference.
+    borrow: bool,
+}
+
+impl Provider {
+    fn extended(&self, name: String, borrow: bool) -> Provider {
+        let mut sources = self.sources.clone();
+        sources.push(Source { name, borrow });
+        Provider { sources }
+    }
+
+    fn named(&self, wanted: &str) -> Option<&Source> {
+        self.sources
+            .iter()
+            .rev()
+            .find(|source| source.name == wanted)
+    }
+
+    fn innermost(&self) -> Option<&Source> {
+        self.sources.last()
+    }
+}
+
+impl Source {
+    fn expression(&self) -> Expression {
+        let name = Expression::Identifier(self.name.clone());
+        if self.borrow {
+            return Expression::BorrowMut(Box::new(name));
+        }
+        name
+    }
 }
 
 pub fn lower_allocation_sources(program: &mut Program) -> Result<()> {
-    let mut uses_functions: HashMap<String, Type> = HashMap::new();
+    let mut uses_functions: HashMap<String, Vec<Type>> = HashMap::new();
 
-    // First pass. Give every `uses` function its implicit capability parameter.
+    // First pass. Give every `uses` function one implicit capability parameter
+    // per source it draws, in the order they were declared.
     for statement in program.iter_mut() {
         if let Statement::Constant(
-            name,
+            _,
             Expression::Function(parameters, signature, _)
             | Expression::Proc(parameters, signature, _),
         ) = &mut statement.node
-            && let Some(capability) = signature.uses.first().cloned()
+            && !signature.uses.is_empty()
         {
-            if signature.uses.len() > 1 {
-                bail!(
-                    "more than one allocation source is not supported yet: '{name}'"
-                );
+            let capabilities = signature.uses.clone();
+            for capability in &capabilities {
+                parameters.push(Parameter {
+                    name: capability_binding(capability),
+                    type_annotation: Some(capability.clone()),
+                    mutable: true,
+                    mode: ParamMode::Write,
+                    compile_time_signature: None,
+                });
             }
-            parameters.push(Parameter {
-                name: capability_binding(&capability),
-                type_annotation: Some(capability.clone()),
-                mutable: true,
-                mode: ParamMode::Write,
-                compile_time_signature: None,
-            });
             signature.uses.clear();
-            uses_functions.insert(name.clone(), capability);
+            if let Statement::Constant(name, _) = &statement.node {
+                uses_functions.insert(name.clone(), capabilities);
+            }
         }
     }
 
@@ -63,12 +103,13 @@ pub fn lower_allocation_sources(program: &mut Program) -> Result<()> {
             Expression::Function(_, _, body) | Expression::Proc(_, _, body),
         ) = &mut statement.node
         {
-            let provider = match threader.uses_functions.get(name) {
-                Some(capability) => {
-                    Provider::Forward(capability_binding(capability))
+            let mut provider = Provider::default();
+            if let Some(capabilities) = threader.uses_functions.get(name) {
+                for capability in capabilities {
+                    provider = provider
+                        .extended(capability_binding(capability), false);
                 }
-                None => Provider::None,
-            };
+            }
             let taken = std::mem::take(body);
             *body = threader.thread_block(taken, &provider)?;
         }
@@ -95,7 +136,7 @@ fn capability_binding(capability: &Type) -> String {
 }
 
 struct Threader {
-    uses_functions: HashMap<String, Type>,
+    uses_functions: HashMap<String, Vec<Type>>,
 }
 
 impl Threader {
@@ -103,9 +144,10 @@ impl Threader {
         let mut threaded = Vec::with_capacity(block.len());
         for statement in block {
             if let Statement::With(capability, body) = statement.node {
-                // The block is a region. Inline it with the arena as provider.
-                let inner =
-                    self.thread_block(body, &Provider::Provide(capability))?;
+                // The block is a region. Inline it with the arena it names
+                // added to what a call inside it may draw from.
+                let inner = self
+                    .thread_block(body, &provider.extended(capability, true))?;
                 threaded.extend(inner);
             } else {
                 let position = statement.position;
@@ -183,7 +225,7 @@ impl Threader {
                 if let Expression::Identifier(name) = &callee
                     && self.uses_functions.contains_key(name)
                 {
-                    lowered.push(self.capability_argument(name, provider)?);
+                    lowered.extend(self.capability_arguments(name, provider)?);
                 }
                 Expression::Call(Box::new(callee), lowered)
             }
@@ -275,13 +317,13 @@ impl Threader {
                 Expression::Function(
                     parameters,
                     signature,
-                    self.thread_block(body, &Provider::None)?,
+                    self.thread_block(body, &Provider::default())?,
                 )
             }
             Expression::Proc(parameters, signature, body) => Expression::Proc(
                 parameters,
                 signature,
-                self.thread_block(body, &Provider::None)?,
+                self.thread_block(body, &Provider::default())?,
             ),
             other => other,
         };
@@ -300,24 +342,42 @@ impl Threader {
         Ok(threaded)
     }
 
-    fn capability_argument(
+    // One argument per source the callee draws, chosen by the name the
+    // capability is reached by. A callee drawing a single source takes whatever
+    // is innermost whatever it is called, which is what lets a `with scratch`
+    // block supply a `uses Arena`. A callee drawing several has to tell them
+    // apart, and the name is what tells them apart.
+    fn capability_arguments(
         &self,
         callee: &str,
         provider: &Provider,
-    ) -> Result<Expression> {
-        match provider {
-            Provider::Forward(binding) => {
-                Ok(Expression::Identifier(binding.clone()))
+    ) -> Result<Vec<Expression>> {
+        let capabilities = self.uses_functions.get(callee).unwrap();
+        let mut arguments = Vec::with_capacity(capabilities.len());
+        for capability in capabilities {
+            let wanted = capability_binding(capability);
+            let mut source = provider.named(&wanted);
+            if source.is_none() && capabilities.len() == 1 {
+                source = provider.innermost();
             }
-            Provider::Provide(arena) => Ok(Expression::BorrowMut(Box::new(
-                Expression::Identifier(arena.clone()),
-            ))),
-            Provider::None => {
-                let capability = self.uses_functions.get(callee).unwrap();
+            let Some(source) = source else {
+                if provider.sources.is_empty() {
+                    bail!(
+                        "calling '{callee}' needs an allocation capability; declare `uses {capability}` on the caller or wrap the call in a `with` block"
+                    )
+                }
+                let available: Vec<&str> = provider
+                    .sources
+                    .iter()
+                    .map(|source| source.name.as_str())
+                    .collect();
                 bail!(
-                    "calling '{callee}' needs an allocation capability; declare `uses {capability}` on the caller or wrap the call in a `with` block"
+                    "calling '{callee}' needs the allocation capability '{wanted}' of type '{capability}', and what is in scope here is {}",
+                    available.join(", ")
                 )
-            }
+            };
+            arguments.push(source.expression());
         }
+        Ok(arguments)
     }
 }

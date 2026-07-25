@@ -1376,7 +1376,7 @@ region_pointer :: fn(mut p: Parser, id: i64) -> bool {
         if (is_pointer(sym.ret_type) == false) {
             return false
         }
-        if (sym.uses_ty >= 0) {
+        if (sym.cap_count > 0) {
             return true
         }
         return mentions_region_args(p, node.a)
@@ -1479,16 +1479,21 @@ check_regions :: fn(mut p: Parser) {
         }
         if (kind == NodeKind::Func) {
             sym := arena_at(p.fns, node.val)
-            if (sym.uses_ty >= 0) {
+            // Once per capability the function draws, since a pointer into any
+            // of them is a pointer that may not outlive the call.
+            mut cap : i64 = 0
+            while (cap < sym.cap_count) {
+                held := cap_at(p, node.val, cap)
                 body := node.a
-                p.region_off = sym.cap_off
-                p.region_len = sym.cap_len
+                p.region_off = held.off
+                p.region_len = held.len
                 p.tainted.count = 0
                 p.region_via_pointer.count = 0
                 p.inner.count = 0
                 p.region_returns = 1
                 check_region_block(p, body)
                 p.region_returns = 0
+                cap = cap + 1
             }
         }
         i = i + 1
@@ -1664,10 +1669,7 @@ check_calls :: fn(mut p: Parser) {
             } else {
                 // The capability is supplied by the caller's context rather
                 // than written at the call, so it is not counted.
-                expected = count_params(p, params)
-                if (sym.uses_ty >= 0) {
-                    expected = expected - 1
-                }
+                expected = count_params(p, params) - sym.cap_count
             }
             got := count_args(p, args)
             if (expected != got && is_supplied == false) {

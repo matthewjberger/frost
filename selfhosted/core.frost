@@ -7,6 +7,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     CH_LPAREN, CH_LT, CH_MINUS, CH_PERCENT, CH_PIPE, CH_PLUS, CH_QUESTION,
     CH_RBRACE, CH_RBRACKET, CH_RPAREN, CH_SEMI, CH_SLASH, CH_SPACE, CH_STAR,
     CH_TAB, CH_UNDERSCORE, CH_UPPER_A, CH_UPPER_Z, ConstDef, Export,
+    Cap, Provider,
     GenericFn, GParam, GArg, GBinding, ImportEdge, Instance, LocalVar, Module,
     Rename,
     MonoNode,
@@ -357,9 +358,9 @@ Node :: struct {
 // An interned function name: a byte range into the source, a flag marking it as
 // an `extern` (so calls emit its real name rather than mf_<index>), and its
 // return type so a call expression can be typed.
-// `cap_off`/`cap_len` name the allocation capability a `uses` function draws:
-// the synthesized binding its body sees and its callers must supply. `uses_ty`
-// is the capability's type, or -1 for a function that allocates from nothing.
+// `cap_start`/`cap_count` are the run of allocation capabilities a `uses`
+// function draws, in the `caps` arena. A function that allocates from nothing
+// has a count of zero.
 Sym :: struct {
     off: i64,
     len: i64,
@@ -372,9 +373,26 @@ Sym :: struct {
     ret_type: i64,
     params: i64,
     defined: i64,
-    uses_ty: i64,
-    cap_off: i64,
-    cap_len: i64,
+    cap_start: i64,
+    cap_count: i64,
+}
+
+// One allocation capability: its type, and the name its body reaches it by,
+// which is the type's own name with the first letter lowercased. A function may
+// draw several, and the name is what tells them apart at a call.
+Cap :: struct {
+    ty: i64,
+    off: i64,
+    len: i64,
+}
+
+// One capability available where a call is being emitted: the name it is
+// reached by, and whether it is a parameter already holding a reference or a
+// variable a `with` block named, whose address the call takes.
+Provider :: struct {
+    off: i64,
+    len: i64,
+    borrow: i64,
 }
 
 // A compile-time integer constant `name :: value`, inlined at each use.
@@ -709,6 +727,10 @@ Parser :: struct {
     consts: Arena<ConstDef>,
     instances: Arena<Instance>,
     generic_fns: Arena<GenericFn>,
+    // Every allocation capability every `uses` function draws, as runs one per
+    // function, and the ones in scope where a call is being emitted.
+    caps: Arena<Cap>,
+    providers: Arena<Provider>,
     gparams: Arena<GParam>,
     // Every `$f: fn(..)` parameter name in the program. A template's body is
     // parsed once before any call to it is seen, so `f(x)` in there names no

@@ -1298,6 +1298,12 @@ ReturnValue = ( IDENT ":" )? Type
 A `ReturnList` is the return type list of 5.2a. It holds two or more values,
 names all of them or none, and does not combine with the `!` of a failure set.
 
+A `uses` list draws one allocation capability per type. Each is an implicit
+parameter the body reaches by the type's own name with the first letter
+lowercased, and a call supplies one argument per capability, found by that name
+among what the caller holds and the `with` blocks around the call. A callee
+drawing exactly one takes the innermost source whatever it is named.
+
 A `:` at group depth zero marks a parameter list. When a parameter-shaped group
 is not followed by a body, its contents are reinterpreted as expressions (a
 single expression, or a tuple).

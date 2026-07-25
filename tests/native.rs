@@ -1637,6 +1637,84 @@ main :: fn() -> i64 {
 }
 "#;
 
+// A function may draw more than one allocation source. Each is an implicit
+// parameter its body reaches by the type's own name lowercased, and a call
+// supplies one argument per source, chosen by that name, so a function drawing
+// two can tell them apart. A function drawing one takes whatever is innermost
+// whatever it is called, which is what lets a `with scratch` block supply a
+// `uses Arena`.
+const TWO_ALLOCATION_SOURCES: &str = r#"
+Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
+Scratch :: struct($N: usize) { data: [N]u8, offset: i64 }
+
+take_arena :: fn(mut a: Arena<256>) -> i64 {
+    a.offset = a.offset + 8
+    a.offset
+}
+
+take_scratch :: fn(mut s: Scratch<64>) -> i64 {
+    s.offset = s.offset + 1
+    s.offset
+}
+
+both :: fn() -> i64 uses Arena<256>, Scratch<64> {
+    take_arena(arena) + take_scratch(scratch)
+}
+
+forwards :: fn() -> i64 uses Arena<256>, Scratch<64> {
+    both()
+}
+
+only_one :: fn() -> i64 uses Scratch<64> {
+    take_scratch(scratch)
+}
+
+main :: fn() -> i64 {
+    mut arena : Arena<256> = Arena { data = [0; 256], offset = 0 }
+    mut scratch : Scratch<64> = Scratch { data = [0; 64], offset = 0 }
+    mut result : i64 = 0
+    with arena {
+        with scratch {
+            result = forwards()
+            result = result + only_one()
+        }
+    }
+    print result
+    0
+}
+"#;
+
+#[test]
+fn a_function_may_draw_two_allocation_sources() {
+    let Some(output) = compile_and_run("twosources", TWO_ALLOCATION_SOURCES)
+    else {
+        return;
+    };
+    assert_eq!(output, "11\n");
+}
+
+#[test]
+fn self_hosted_draws_two_allocation_sources() {
+    let Some(output) =
+        selfhosted_native_output("shtwosources", TWO_ALLOCATION_SOURCES)
+    else {
+        return;
+    };
+    assert_eq!(output, "11\n");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shtwosources_input.frost");
+    std::fs::write(&input, TWO_ALLOCATION_SOURCES).unwrap();
+    let Some(c_source) = self_hosted_emits("shtwosources", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shtwosources", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
 // `uses Arena<256>` declares an allocation source; the capability is threaded
 // implicitly through a `uses` call (`forward` forwards to `make_two`) and
 // supplied by a `with` block at the root. No arena is passed by hand.

@@ -1107,20 +1107,16 @@ emit_asm_struct_lit :: fn(mut p: Parser, id: i64) {
 // computed. The first four travel in registers. The rest sit above the shadow
 // area the callee is entitled to, and the whole call frame stays 16 byte
 // aligned.
-// The capability a call is handed, left in %rax ready to be pushed. A forwarded
+// One capability a call is handed, left in %rax ready to be pushed. A forwarded
 // one is already a pointer. A region supplies the arena by address.
-emit_asm_capability :: fn(mut p: Parser, fn_index: i64) {
-    if (p.prov_kind == PROVIDER_NONE) {
-        sym := arena_at(p.fns, fn_index)
-        report_where(p.modules, p.src, sym.off)
-        report("calling '")
-        report_src(p.src, sym.off, sym.len)
-        report("' needs an allocation capability, so declare `uses` on ")
-        report("the caller or wrap the call in a `with` block")
-        frost_rt_die()
+emit_asm_capability :: fn(mut p: Parser, fn_index: i64, index: i64) {
+    found := provider_for(p, fn_index, index)
+    if (found < 0) {
+        report_missing_capability(p, fn_index, index)
     }
-    slot := local_slot(p, p.prov_off, p.prov_len)
-    if (p.prov_kind == PROVIDER_REGION) {
+    held := arena_at(p.providers, found)
+    slot := local_slot(p, held.off, held.len)
+    if (held.borrow == 1) {
         asm_i("leaq ", slot, "(%rbp), %rax")
         return
     }
@@ -1129,10 +1125,7 @@ emit_asm_capability :: fn(mut p: Parser, fn_index: i64) {
 
 emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     callee := arena_at(p.fns, fn_index)
-    mut capability : i64 = 0
-    if (callee.uses_ty >= 0) {
-        capability = 1
-    }
+    capability := cap_count_of(p, fn_index)
     value_count := count_value_args(p, args)
     count := value_count + capability
     ret := call_ret_type(p, args, fn_index)
@@ -1143,10 +1136,12 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         result_slot = alloc_temp(p, type_size(p, ret))
     }
 
-    // Arguments are pushed last to first, so the capability, being last, goes
-    // first and lands in the highest slot.
-    if (capability == 1) {
-        emit_asm_capability(p, fn_index)
+    // Arguments are pushed last to first, so the capabilities, being last, go
+    // first and land in the highest slots, the last one first.
+    mut cap : i64 = capability
+    while (cap > 0) {
+        cap = cap - 1
+        emit_asm_capability(p, fn_index, cap)
         emit_asm_push()
     }
     generic := generic_fn_of(p, fn_index) >= 0
@@ -1516,12 +1511,9 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         return
     }
     if (kind == NodeKind::With) {
-        held_kind := p.prov_kind
-        held_off := p.prov_off
-        held_len := p.prov_len
-        set_provider(p, PROVIDER_REGION, node.val, node.c)
+        mark := push_provider(p, node.val, node.c, 1)
         emit_asm_block(p, node.a)
-        set_provider(p, held_kind, held_off, held_len)
+        p.providers.count = mark
         return
     }
     // A match is a chain of comparisons against the scrutinee, which is kept in

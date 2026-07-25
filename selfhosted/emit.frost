@@ -2,9 +2,12 @@
 // the allocation capability a call is handed.
 
 import "core.frost"
+import "imports.frost"
+import "names.frost"
 
-export PROVIDER_NONE, PROVIDER_REGION, begin_provider, emit_source,
-    emit_string_content, literal_length, set_provider
+export begin_provider, push_provider, provider_for,
+    report_missing_capability, emit_source,
+    emit_string_content, literal_length
 
 // Re-emit an identifier from the source by its byte range, so a local reference
 // becomes the variable's own name in the generated C.
@@ -72,29 +75,78 @@ emit_string_content :: fn(src: ^i8, off: i64, len: i64) {
 // a later `:=` or field access can be typed by walking the expression.
 // ---------------------------------------------------------------------------
 
-// The provider in force while a block is emitted, where a call to a `uses`
-// function gets its capability. A `uses` function forwards the one it was
-// handed. A `with` block supplies the arena it names. Anywhere else there is
-// none and such a call is an error.
-PROVIDER_NONE    :: 0
-PROVIDER_FORWARD :: 1
-PROVIDER_REGION  :: 2
+// What a call to a `uses` function may draw from where it is being emitted: the
+// capabilities the enclosing function was handed, and the arenas the `with`
+// blocks around the call name, innermost last. A function drawing several needs
+// several, so this is a stack rather than a single answer.
 
-set_provider :: fn(mut p: Parser, kind: i64, off: i64, len: i64) {
-    p.prov_kind = kind
-    p.prov_off = off
-    p.prov_len = len
+// Push one, and answer the height to come back to.
+push_provider :: fn(mut p: Parser, off: i64, len: i64, borrow: i64) -> i64 {
+    mark := p.providers.count
+    arena_push(p.providers, Provider { off = off, len = len, borrow = borrow })
+    mark
 }
 
-// A `uses` function forwards the capability it was handed. Anything else starts
-// with none, so a `uses` call from outside a region is caught rather than
-// silently allocating from somewhere unnamed.
+// A `uses` function starts with the capabilities it was handed. Anything else
+// starts with none, so a `uses` call from outside a region is caught rather
+// than silently allocating from somewhere unnamed.
 begin_provider :: fn(mut p: Parser, fn_index: i64) {
-    sym := arena_at(p.fns, fn_index)
-    if (sym.uses_ty >= 0) {
-        set_provider(p, PROVIDER_FORWARD, sym.cap_off, sym.cap_len)
-        return
+    p.providers.count = 0
+    count := cap_count_of(p, fn_index)
+    mut i : i64 = 0
+    while (i < count) {
+        held := cap_at(p, fn_index, i)
+        arena_push(p.providers,
+            Provider { off = held.off, len = held.len, borrow = 0 })
+        i = i + 1
     }
-    set_provider(p, PROVIDER_NONE, 0, 0)
+}
+
+// The provider a callee's nth capability is supplied from, or -1. The name is
+// what chooses, so a function drawing several tells them apart. A callee
+// drawing exactly one takes whatever is innermost whatever it is called, which
+// is what lets a `with scratch` block supply a `uses Arena`.
+provider_for :: fn(mut p: Parser, fn_index: i64, index: i64) -> i64 {
+    wanted := cap_at(p, fn_index, index)
+    mut i : i64 = p.providers.count
+    while (i > 0) {
+        i = i - 1
+        held := arena_at(p.providers, i)
+        if (held.len == wanted.len
+            && bytes_equal(p.src, held.off, wanted.off, wanted.len)) {
+            return i
+        }
+    }
+    if (cap_count_of(p, fn_index) == 1 && p.providers.count > 0) {
+        return p.providers.count - 1
+    }
+    0 - 1
+}
+
+// The diagnostic for a call with nothing to draw from.
+report_missing_capability :: fn(mut p: Parser, fn_index: i64, index: i64) {
+    sym := arena_at(p.fns, fn_index)
+    wanted := cap_at(p, fn_index, index)
+    report_where(p.modules, p.src, sym.off)
+    report("calling ")
+    report_src(p.src, sym.off, sym.len)
+    if (p.providers.count == 0) {
+        report(" needs an allocation capability, so declare `uses` on ")
+        report("the caller or wrap the call in a `with` block")
+        frost_rt_die()
+    }
+    report(" needs the allocation capability ")
+    report_src(p.src, wanted.off, wanted.len)
+    report(", and what is in scope here is ")
+    mut i : i64 = 0
+    while (i < p.providers.count) {
+        held := arena_at(p.providers, i)
+        if (i > 0) {
+            report(", ")
+        }
+        report_src(p.src, held.off, held.len)
+        i = i + 1
+    }
+    frost_rt_die()
 }
 
