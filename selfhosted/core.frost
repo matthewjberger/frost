@@ -8,6 +8,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     CH_RBRACE, CH_RBRACKET, CH_RPAREN, CH_SEMI, CH_SLASH, CH_SPACE, CH_STAR,
     CH_TAB, CH_UNDERSCORE, CH_UPPER_A, CH_UPPER_Z, ConstDef, Export,
     GenericFn, GParam, GArg, GBinding, ImportEdge, Instance, LocalVar, Module,
+    Rename,
     MonoNode,
     MonoRet, ProcSig, CONST_BASE, PROC_BASE, Node, NodeKind,
     OP_ADD, OP_AND, OP_DIV, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT, OP_MOD, OP_MUL,
@@ -514,6 +515,20 @@ Module :: struct {
     finish: i64,
 }
 
+// One `old as new` of an import. The file that wrote it reads `local` where
+// the module it names declares `exported`, and no other file is affected. The
+// two names are copied out of the import line, since the line is blanked before
+// the parser sees it, and re-pointed into the source once the parser has a
+// place to keep them.
+Rename :: struct {
+    importer: i64,
+    imported: i64,
+    local_off: i64,
+    local_len: i64,
+    exported_off: i64,
+    exported_len: i64,
+}
+
 // One `import` line, as the two modules it connects. A file may name what it
 // declares and what the modules it imports directly export, and nothing else,
 // so this is what says which of the two a given file is.
@@ -755,6 +770,11 @@ Parser :: struct {
     modules: Arena<Module>,
     exports: Arena<Export>,
     import_edges: Arena<ImportEdge>,
+    renames: Arena<Rename>,
+    // Whether two modules in this program export the same name. Nothing is
+    // wrong with that on its own, so it only turns on the careful lookup that
+    // answers for a file importing both.
+    shared_exports: i64,
     export_names: ^i8,
     result_ty: i64,
     failure_ty: i64,

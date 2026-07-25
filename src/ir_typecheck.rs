@@ -90,8 +90,11 @@ fn locate_instantiation<T>(
         let text = crate::imports::demangle_private_names(&error.to_string());
         let name = crate::imports::demangle_private_names(&instantiated.name);
         // The mangled symbol is a compiler artifact, so where the inner message
-        // names it, say what the reader wrote instead.
-        let text = text.replace(&function.name, &name);
+        // names it, say what the reader wrote instead. The text has already had
+        // the module tag taken off it, so the symbol looked for has to have
+        // lost the same thing or it is not in there to find.
+        let symbol = crate::imports::demangle_private_names(&function.name);
+        let text = text.replace(&symbol, &name);
         if instantiated.at == crate::lexer::Position::default() {
             anyhow::anyhow!("instantiating '{name}': {text}")
         } else {

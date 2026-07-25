@@ -533,9 +533,30 @@ found.
 
 The exported namespace is flat, and a name carries its own prefix by convention
 (`vec3_add`, not a qualified `math.add`), which keeps it a single token to search
-for. Two imported modules exporting the same name is therefore a compile error
-naming both modules, not a silent choice between them. The fix is to prefix one
-of them so the exported names stay distinct.
+for.
+
+Two modules exporting the same name is not itself a problem, since a file that
+imports one of them sees one name. It is a problem when one file imports both
+*and writes the name*, which is a compile error naming both modules rather than
+a silent choice between them. The fix is usually to prefix one of them, since a
+name carrying its own prefix is what the flat namespace runs on.
+
+**Reading a name under another.** When neither module is yours to edit, an
+import may say what to call what it brings in:
+
+```
+import "list.frost" (insert as list_insert)
+import "tree.frost" (insert as tree_insert)
+```
+
+Everything else still arrives under its own name; only the names listed are
+renamed. A rename belongs to the file that wrote it, so another importer of
+`list.frost` still says `insert`. Renaming a name the module does not export is
+an error saying so.
+
+This is the last resort, not a style. A renamed call no longer greps back to its
+definition, which is the one thing the flat namespace is for, so it is worth it
+only when the alternative is not being able to use two libraries at once.
 
 ---
 

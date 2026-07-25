@@ -118,6 +118,14 @@ impl Display for ReturnValue {
     }
 }
 
+// One `old as new` of an import. `exported` is what the module calls it,
+// `local` is what this file calls it.
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
+pub struct ImportRename {
+    pub exported: Identifier,
+    pub local: Identifier,
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
 pub struct MultiBinding {
     pub name: Identifier,
@@ -464,7 +472,10 @@ pub enum Statement {
     With(Identifier, Block),
     Break,
     Continue,
-    Import(String),
+    // `import "list.frost" (insert as list_insert)`. The path, and the names
+    // this file reads under a different one. A rename belongs to the file that
+    // wrote it: another importer of the same module still says `insert`.
+    Import(String, Vec<ImportRename>),
     Extern {
         name: Identifier,
         params: Vec<Parameter>,
@@ -603,7 +614,19 @@ impl Display for Statement {
             }
             Self::Break => "break".to_string(),
             Self::Continue => "continue".to_string(),
-            Self::Import(path) => format!("import \"{}\"", path),
+            Self::Import(path, renames) => {
+                if renames.is_empty() {
+                    format!("import \"{}\"", path)
+                } else {
+                    let parts: Vec<String> = renames
+                        .iter()
+                        .map(|held| {
+                            format!("{} as {}", held.exported, held.local)
+                        })
+                        .collect();
+                    format!("import \"{}\" ({})", path, parts.join(", "))
+                }
+            }
             Self::Declared {
                 name,
                 params,
@@ -1539,10 +1562,48 @@ impl<'a> Parser<'a> {
             Token::StringLiteral(path) => path.clone(),
             _ => bail!("Expected string literal after 'import'"),
         };
+        // `(insert as list_insert)`: everything else still arrives under its
+        // own name. This is the last resort for two modules you cannot edit
+        // that export the same name, so it renames the few that clash rather
+        // than qualifying every use.
+        let mut renames = Vec::new();
+        if matches!(self.peek_nth(0), Token::LeftParentheses)
+            && self.on_the_same_line()
+        {
+            self.read_token();
+            while !matches!(self.peek_nth(0), Token::RightParentheses) {
+                if matches!(self.peek_nth(0), Token::EndOfFile) {
+                    bail!("Unexpected end of input in an import rename list");
+                }
+                let exported = match self.read_token() {
+                    Token::Identifier(name) => name.to_string(),
+                    other => bail!(
+                        "Expected an exported name in an import rename, found {other}"
+                    ),
+                };
+                match self.read_token() {
+                    Token::Identifier(word) if word == "as" => {}
+                    other => bail!(
+                        "Expected 'as' after '{exported}' in an import rename, found {other}"
+                    ),
+                }
+                let local = match self.read_token() {
+                    Token::Identifier(name) => name.to_string(),
+                    other => bail!(
+                        "Expected the name to read '{exported}' under, found {other}"
+                    ),
+                };
+                renames.push(ImportRename { exported, local });
+                if matches!(self.peek_nth(0), Token::Comma) {
+                    self.read_token();
+                }
+            }
+            self.read_token();
+        }
         if matches!(self.peek_nth(0), Token::Semicolon) {
             self.read_token();
         }
-        Ok(Statement::Import(path))
+        Ok(Statement::Import(path, renames))
     }
 
     fn parse_defer_statement(&mut self) -> Result<Statement> {

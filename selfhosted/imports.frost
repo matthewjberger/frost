@@ -3,7 +3,8 @@
 import "core.frost"
 import "lexer.frost"
 
-export SOURCE_ROOM, SYNTH_ROOM, emit_position, module_at, report_where,
+export SOURCE_ROOM, SYNTH_ROOM, copy_name, emit_position, module_at,
+    report_where,
     resolve_imports, search_roots_from, source_with_room
 
 module_seen :: fn(mut modules: Arena<Module>, path: ^i8) -> bool {
@@ -311,9 +312,23 @@ module_index_of :: fn(mut modules: Arena<Module>, path: ^i8) -> i64 {
     0 - 1
 }
 
+// Copy a name out of one buffer into another, answering with the length so the
+// caller can keep its own cursor. Used for names on lines that are about to be
+// blanked.
+copy_name :: fn(into: ^i8, at: i64, from: ^i8, off: i64, len: i64) -> i64 {
+    mut b : i64 = 0
+    while (b < len) {
+        unsafe {
+            frost_rt_byte_set(into, at + b, frost_rt_byte_at(from, off + b))
+        }
+        b = b + 1
+    }
+    len
+}
+
 resolve_imports :: fn(buffer: ^i8, root: ^i8, names: ^i8,
     mut modules: Arena<Module>, mut exports: Arena<Export>,
-    mut edges: Arena<ImportEdge>,
+    mut edges: Arena<ImportEdge>, mut renames: Arena<Rename>,
     mut scratch: Arena<Token>, mut roots: Arena<SearchRoot>) -> i64 {
     mut named_at : i64 = 0
     length := place_module(buffer, 0, root, modules, roots, scratch)
@@ -333,18 +348,66 @@ resolve_imports :: fn(buffer: ^i8, root: ^i8, names: ^i8,
             // module it names is resolved against that file's own directory,
             // the same way it was when the text was placed.
             importer := module_at(modules, entry.off)
+            mut imported : i64 = 0 - 1
             if (importer >= 0) {
                 mine := arena_at(modules, importer)
                 found := find_import(mine.path, buffer, named.off, named.len,
                     roots)
-                imported := module_index_of(modules, found)
+                imported = module_index_of(modules, found)
                 if (imported >= 0) {
                     arena_push(edges,
                         ImportEdge { importer = importer,
                             imported = imported })
                 }
             }
-            blank_range(buffer, entry.off, named.off + named.len)
+            // `(insert as list_insert)`: the names are copied out because the
+            // line is about to be blanked, and the tail is blanked with it.
+            mut through := named.off + named.len
+            mut r := j + 2
+            if (r < scratch.count) {
+                opened := arena_at(scratch, r)
+                if (opened.kind == TOK_LPAREN) {
+                    through = opened.off
+                    r = r + 1
+                    mut reading : bool = true
+                    while (reading && r + 2 < scratch.count) {
+                        exported := arena_at(scratch, r)
+                        word := arena_at(scratch, r + 1)
+                        local := arena_at(scratch, r + 2)
+                        if (exported.kind != TOK_IDENT
+                            || word.kind != TOK_IDENT
+                            || local.kind != TOK_IDENT) {
+                            reading = false
+                        } else {
+                            exported_at := named_at
+                            named_at = named_at + copy_name(names, named_at,
+                                buffer, exported.off, exported.len)
+                            local_at := named_at
+                            named_at = named_at + copy_name(names, named_at,
+                                buffer, local.off, local.len)
+                            arena_push(renames,
+                                Rename { importer = importer,
+                                    imported = imported,
+                                    local_off = local_at,
+                                    local_len = local.len,
+                                    exported_off = exported_at,
+                                    exported_len = exported.len })
+                            through = local.off + local.len
+                            r = r + 3
+                            if (r < scratch.count) {
+                                following := arena_at(scratch, r)
+                                if (following.kind == TOK_COMMA) {
+                                    r = r + 1
+                                } else {
+                                    reading = false
+                                    through = following.off
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            blank_range(buffer, entry.off, through)
         }
         if (entry.kind == TOK_KW_EXPORT) {
             owner := module_at(modules, entry.off)

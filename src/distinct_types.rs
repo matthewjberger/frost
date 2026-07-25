@@ -146,7 +146,7 @@ fn walk_statement(statement: &mut Statement, declared: &HashMap<String, Type>) {
             walk_block(body, declared);
         }
         Statement::With(_, body) => walk_block(body, declared),
-        Statement::Break | Statement::Continue | Statement::Import(_) => {}
+        Statement::Break | Statement::Continue | Statement::Import(..) => {}
     }
 }
 

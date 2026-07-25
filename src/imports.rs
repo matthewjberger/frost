@@ -215,7 +215,7 @@ pub fn resolve_imports_cached(
     if let Some(cache) = cache {
         let mut stack = HashSet::new();
         for statement in &statements {
-            if let Statement::Import(path) = &statement.node {
+            if let Statement::Import(path, _) = &statement.node {
                 let Some(found) = find_import(base_dir, path, roots, &root)
                 else {
                     continue;
@@ -240,9 +240,9 @@ pub fn resolve_imports_cached(
         seen: HashSet::new(),
         resolved,
         plans,
-        exported_by: HashMap::new(),
         files: Vec::new(),
         module_exports: HashMap::new(),
+        module_view: HashMap::new(),
     };
     // The entry file is a file like any other, and the one most likely to have
     // been leaning on a name it never imported.
@@ -251,7 +251,7 @@ pub fn resolve_imports_cached(
         &statements,
         &import_identities(&statements, base_dir, roots, &root),
     ));
-    walk.resolve_into(statements, base_dir)?;
+    walk.resolve_into(statements, base_dir, "the entry file")?;
     let reports = unimported_names(&walk.files, &walk.module_exports);
     if !reports.is_empty() {
         bail!(
@@ -484,7 +484,7 @@ fn import_paths(statements: &[Spanned<Statement>]) -> Vec<String> {
     statements
         .iter()
         .filter_map(|statement| match &statement.node {
-            Statement::Import(path) => Some(path.clone()),
+            Statement::Import(path, _) => Some(path.clone()),
             _ => None,
         })
         .collect()
@@ -521,29 +521,53 @@ struct Walk<'a> {
     seen: HashSet<PathBuf>,
     resolved: Resolved,
     plans: Plans,
-    // Which module exported each name, so a second module exporting the same one
-    // is a collision rather than a silent overwrite. Only exported names are
-    // tracked. A private name is renamed per module and cannot clash.
-    exported_by: HashMap<String, PathBuf>,
     // What each file declared, imported and used, and what each module exports,
     // for the check that a file only names what it imported.
     files: Vec<FileNames>,
     module_exports: HashMap<PathBuf, (String, HashSet<String>)>,
+    // Each module's tag and exported names, for building the view of every
+    // file that imports it. A module read once is imported many times.
+    module_view: HashMap<PathBuf, ModuleView>,
 }
 
 type Contribution = (Vec<Spanned<Statement>>, HashSet<String>, String);
 
+// What an importer needs to know about a module: what it is called, what it
+// exports, and what each of its names became in the spliced program. An
+// `extern` keeps its own name, since that is the symbol a C library defines, so
+// the map is what says which of the two a given export is rather than the tag.
+struct ModuleView {
+    module: String,
+    exports: HashSet<String>,
+    symbols: HashMap<String, String>,
+}
+
 impl Walk<'_> {
+    // A file's imports are resolved before its own statements are spliced,
+    // because what its statements may name comes from them. The imports go in
+    // first either way, since a module has to be declared before it is used.
     fn resolve_into(
         &mut self,
         statements: Vec<Spanned<Statement>>,
         base_dir: &Path,
+        module: &str,
     ) -> Result<()> {
+        let mut view: HashMap<String, String> = HashMap::new();
+        // A local name two imports both offer. Naming it is the error, since
+        // importing two modules that happen to share a name you never write is
+        // not.
+        let mut ambiguous: HashMap<String, (String, String)> = HashMap::new();
+        // Which module each symbol in the view came from, so an ambiguity names
+        // the two modules rather than the two symbols.
+        let mut owner_of: HashMap<String, String> = HashMap::new();
+        let mut body = Vec::new();
+
         for statement in statements {
-            let Statement::Import(path) = &statement.node else {
-                self.resolved.statements.push(statement);
+            let Statement::Import(path, renames) = &statement.node else {
+                body.push(statement);
                 continue;
             };
+            let renames = renames.clone();
 
             let Some(found) =
                 find_import(base_dir, path, self.roots, self.root)
@@ -555,56 +579,130 @@ impl Walk<'_> {
             };
             let full = found.path.clone();
             let key = full.canonicalize().unwrap_or_else(|_| full.clone());
-            if !self.seen.insert(key.clone()) {
-                continue;
+            if self.seen.insert(key.clone()) {
+                self.splice_module(&full, &found.module, &key)?;
             }
 
-            let (mut imported, exports, tag) = if self.plans.contains_key(&key)
-            {
-                self.planned_module(&key)?
-            } else {
-                self.read_module(&full, &found.module)?
+            let Some(offered) = self.module_view.get(&key) else {
+                continue;
             };
+            let owner = offered.module.clone();
+            let exports = offered.exports.clone();
+            let symbols = offered.symbols.clone();
 
-            // Two modules exporting the same name would splice two bare
-            // definitions of it, and a reference elsewhere would bind to
-            // whichever the resolver reached first. The flat namespace is
-            // deliberate (a name carries its own prefix), so this is a loud
-            // error, not a silent pick. The fix is to prefix one of them.
-            for name in &exports {
-                if let Some(first) = self.exported_by.get(name)
-                    && first != &full
-                {
+            // Everything the module exports arrives under its own name, except
+            // the names this import renamed.
+            let local_of: HashMap<&str, &str> = renames
+                .iter()
+                .map(|held| (held.exported.as_str(), held.local.as_str()))
+                .collect();
+            for name in &renames {
+                if !exports.contains(&name.exported) {
                     bail!(
-                        "'{name}' is exported by two modules, {} and {}; prefix one of them to keep the names distinct",
-                        first.display(),
-                        full.display()
+                        "'{}' does not export '{}', so there is nothing to read as '{}'",
+                        owner,
+                        name.exported,
+                        name.local
                     );
                 }
-                self.exported_by.insert(name.clone(), full.clone());
             }
-
-            let child_dir =
-                full.parent().map(Path::to_path_buf).unwrap_or_default();
-            self.files.push(FileNames::of(
-                &found.module,
-                &imported,
-                &import_identities(
-                    &imported, &child_dir, self.roots, self.root,
-                ),
-            ));
-            self.module_exports
-                .insert(key.clone(), (found.module.clone(), exports.clone()));
-
-            let renames = private_renames(&imported, &exports, &tag);
-            if !renames.is_empty() {
-                let renamer = Renamer { renames };
-                renamer.block(&mut imported, &mut Vec::new());
+            for name in &exports {
+                let local = local_of
+                    .get(name.as_str())
+                    .map(|held| (*held).to_string())
+                    .unwrap_or_else(|| name.clone());
+                // An `extern` keeps the name the C library defines, so it is
+                // offered as itself rather than as a symbol nothing declares.
+                let symbol =
+                    symbols.get(name).cloned().unwrap_or_else(|| name.clone());
+                if let Some(first) = view.insert(local.clone(), symbol.clone())
+                    && first != symbol
+                {
+                    ambiguous.insert(
+                        local,
+                        (
+                            owner_of.get(&first).cloned().unwrap_or(first),
+                            owner.clone(),
+                        ),
+                    );
+                }
+                owner_of.insert(symbol, owner.clone());
             }
-
-            self.resolve_into(imported, &child_dir)?;
         }
+
+        // A file's own declarations win over anything it imported, so the view
+        // only reaches the names it did not declare itself.
+        for statement in &body {
+            if let Some(name) = top_level_name(&statement.node) {
+                view.remove(name);
+                ambiguous.remove(name);
+            }
+        }
+
+        if !ambiguous.is_empty() {
+            let used = FileNames::of(module, &body, &[]);
+            for name in &used.used {
+                if let Some((first, second)) = ambiguous.get(name) {
+                    bail!(
+                        "'{name}' is exported by two modules {module} imports, {first} and {second}; read one of them under another name with `import \"...\" ({name} as ...)`"
+                    );
+                }
+            }
+        }
+
+        if !view.is_empty() {
+            let renamer = Renamer { renames: view };
+            renamer.block(&mut body, &mut Vec::new());
+        }
+        self.resolved.statements.extend(body);
         Ok(())
+    }
+
+    // Read a module, mangle its names, and splice it and everything it imports.
+    fn splice_module(
+        &mut self,
+        full: &Path,
+        module: &str,
+        key: &Path,
+    ) -> Result<()> {
+        let (mut imported, exports, tag) = if self.plans.contains_key(key) {
+            self.planned_module(key)?
+        } else {
+            self.read_module(full, module)?
+        };
+
+        let child_dir =
+            full.parent().map(Path::to_path_buf).unwrap_or_default();
+        self.files.push(FileNames::of(
+            module,
+            &imported,
+            &import_identities(&imported, &child_dir, self.roots, self.root),
+        ));
+        self.module_exports
+            .insert(key.to_path_buf(), (module.to_string(), exports.clone()));
+        let renames = module_renames(&imported, &tag);
+        self.module_view.insert(
+            key.to_path_buf(),
+            ModuleView {
+                module: module.to_string(),
+                exports: exports.clone(),
+                symbols: renames.clone(),
+            },
+        );
+
+        // A linear type's name is what the ownership check keys on, so it
+        // follows its declaration.
+        for name in exports.iter().chain(renames.keys()) {
+            if self.resolved.linear_types.remove(name) {
+                self.resolved.linear_types.insert(mangled_name(&tag, name));
+            }
+        }
+        if !renames.is_empty() {
+            let renamer = Renamer { renames };
+            renamer.block(&mut imported, &mut Vec::new());
+        }
+
+        self.resolve_into(imported, &child_dir, module)
     }
 
     // What a planned module contributes. A module the plan could answer for
@@ -626,7 +724,7 @@ impl Walk<'_> {
                 .extend(interface.linear_types.iter().cloned());
             let mut statements: Vec<Spanned<Statement>> = imports
                 .into_iter()
-                .map(|path| Spanned::from(Statement::Import(path)))
+                .map(|path| Spanned::from(Statement::Import(path, Vec::new())))
                 .collect();
             // The module's object is being linked rather than rebuilt, so it
             // contributes signatures where it can and bodies only where a
@@ -728,7 +826,7 @@ fn check_and_reduce(
     if crate::interface::built_from_interfaces() {
         let mut rebuilt: Vec<Spanned<Statement>> = statements
             .iter()
-            .filter(|statement| matches!(statement.node, Statement::Import(_)))
+            .filter(|statement| matches!(statement.node, Statement::Import(..)))
             .cloned()
             .collect();
         rebuilt.extend(interface.declarations.iter().cloned());
@@ -776,9 +874,8 @@ pub fn demangle_private_names(text: &str) -> String {
     out
 }
 
-fn private_renames(
+fn module_renames(
     statements: &[Spanned<Statement>],
-    exports: &HashSet<String>,
     tag: &str,
 ) -> HashMap<String, String> {
     let mut renames = HashMap::new();
@@ -791,13 +888,21 @@ fn private_renames(
         if matches!(statement.node, Statement::Extern { .. }) {
             continue;
         }
-        if let Some(name) = top_level_name(&statement.node)
-            && !exports.contains(name)
-        {
-            renames.insert(name.to_string(), format!("__m{tag}_{name}"));
+        if let Some(name) = top_level_name(&statement.node) {
+            renames.insert(name.to_string(), mangled_name(tag, name));
         }
     }
     renames
+}
+
+// What a module's name is called in the spliced program. Exported names are
+// mangled the same way private ones are, so two modules exporting `insert` are
+// two symbols rather than a collision, and each importer binds the one it
+// imported. The tag is a property of the module identity, so the symbol is the
+// same in every program the module appears in, which is what separate
+// compilation links against.
+fn mangled_name(tag: &str, name: &str) -> String {
+    format!("__m{tag}_{name}")
 }
 
 struct Renamer {
@@ -936,7 +1041,7 @@ impl Renamer {
                 }
                 self.block(body, scope);
             }
-            Statement::Break | Statement::Continue | Statement::Import(_) => {}
+            Statement::Break | Statement::Continue | Statement::Import(..) => {}
         }
     }
 
