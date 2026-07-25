@@ -99,6 +99,19 @@ void frost_emit_char(int64_t byte) {
     fputc((int)byte, frost_emit_where());
 }
 
+/* The `print` statement. An integer prints as %lld and a float as %g, each
+   followed by a newline, and both go to standard output rather than the emit
+   target, since `print` is a program writing its own output, not the compiler
+   writing its. This matches the self-hosted compiler's `print`, which emits the
+   same two printf forms inline. */
+void frost_print_i64(int64_t value) {
+    printf("%lld\n", (long long)value);
+}
+
+void frost_print_f64(double value) {
+    printf("%g\n", value);
+}
+
 const char *frost_getenv(const char *name) {
     const char *value = getenv(name);
     if (value == 0) {

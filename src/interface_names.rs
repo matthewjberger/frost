@@ -75,9 +75,9 @@ pub(crate) fn names_in_statement(statement: &Statement, out: &mut Vec<String>) {
             }
             names_in_expression(value, out);
         }
-        Statement::Return(value) | Statement::Expression(value) => {
-            names_in_expression(value, out)
-        }
+        Statement::Return(value)
+        | Statement::Expression(value)
+        | Statement::Print(value) => names_in_expression(value, out),
         Statement::Assignment(place, value) => {
             names_in_expression(place, out);
             names_in_expression(value, out);

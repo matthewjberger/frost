@@ -832,6 +832,7 @@ impl Renamer {
             }
             Statement::Return(value) => self.expression(value, scope),
             Statement::Expression(value) => self.expression(value, scope),
+            Statement::Print(value) => self.expression(value, scope),
             Statement::Assignment(target, value) => {
                 self.expression(target, scope);
                 self.expression(value, scope);

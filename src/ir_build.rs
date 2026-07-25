@@ -2663,6 +2663,29 @@ impl<'a> FunctionLowering<'a> {
                 self.lower_expression(expression, None)?;
                 Ok(())
             }
+            Statement::Print(expression) => {
+                let (operand, value_type) =
+                    self.lower_expression(expression, None)?;
+                // An integer prints through the %lld helper and a float through
+                // the %g one, so the value is widened to the width that helper
+                // takes: i64 for an integer of any width, f64 for either float.
+                let (function, target) =
+                    if matches!(value_type, Type::F32 | Type::F64) {
+                        ("frost_print_f64", Type::F64)
+                    } else {
+                        ("frost_print_i64", Type::I64)
+                    };
+                let coerced = self.coerce(operand, &value_type, &target);
+                let sink = self.fresh_local(Type::Void, None);
+                self.emit(IrStatement::Assign(
+                    sink,
+                    IrRvalue::Call {
+                        function: function.to_string(),
+                        arguments: vec![coerced],
+                    },
+                ));
+                Ok(())
+            }
             Statement::While(condition, body) => {
                 self.lower_while(condition, body)
             }

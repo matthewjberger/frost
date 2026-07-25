@@ -212,9 +212,9 @@ fn stamp_statement(statement: &mut Statement, file: u32) {
     match statement {
         Statement::Constant(_, value) => stamp_expression(value, file),
         Statement::Let { value, .. } => stamp_expression(value, file),
-        Statement::Return(value) | Statement::Expression(value) => {
-            stamp_expression(value, file)
-        }
+        Statement::Return(value)
+        | Statement::Expression(value)
+        | Statement::Print(value) => stamp_expression(value, file),
         Statement::Assignment(target, value) => {
             stamp_expression(target, file);
             stamp_expression(value, file);
