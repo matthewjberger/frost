@@ -32,6 +32,18 @@
         "path": "./syntaxes/frost.tmLanguage.json"
       }
     ],
+    "snippets": [
+      {
+        "language": "frost",
+        "path": "./snippets/frost.json"
+      }
+    ],
+    "jsonValidation": [
+      {
+        "fileMatch": "frost.json",
+        "url": "./schemas/frost.schema.json"
+      }
+    ],
     "problemMatchers": [
       {
         "name": "frost",

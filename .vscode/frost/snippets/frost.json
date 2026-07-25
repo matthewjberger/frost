@@ -1,0 +1,110 @@
+{
+  "function": {
+    "prefix": "fn",
+    "body": ["${1:name} :: fn(${2}) -> ${3:i64} {", "\t$0", "}"],
+    "description": "A function declaration"
+  },
+  "generic function": {
+    "prefix": "gfn",
+    "body": [
+      "${1:name} :: fn(\\$${2:T}: Type${3}) -> ${2:T} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "A function generic over a type parameter"
+  },
+  "inline function": {
+    "prefix": "ifn",
+    "body": ["${1:name} :: inline fn(${2}) -> ${3:i64} { $0 }"],
+    "description": "A function the backend inlines at every call"
+  },
+  "extern function": {
+    "prefix": "extern",
+    "body": ["${1:name} :: extern fn(${2}) -> ${3:i64}"],
+    "description": "A function defined in C"
+  },
+  "main": {
+    "prefix": "main",
+    "body": ["main :: fn() -> i64 {", "\t$0", "\t0", "}"],
+    "description": "The entry point"
+  },
+  "struct": {
+    "prefix": "struct",
+    "body": ["${1:Name} :: struct {", "\t${2:field}: ${3:i64},", "}"],
+    "description": "A struct declaration"
+  },
+  "generic struct": {
+    "prefix": "gstruct",
+    "body": [
+      "${1:Name} :: struct(\\$${2:T}: Type) {",
+      "\t${3:field}: ${2:T},",
+      "}"
+    ],
+    "description": "A struct generic over a type parameter"
+  },
+  "linear struct": {
+    "prefix": "linear",
+    "body": ["${1:Name} :: linear struct {", "\t${2:field}: ${3:i64},", "}"],
+    "description": "A resource that has to be consumed exactly once"
+  },
+  "enum": {
+    "prefix": "enum",
+    "body": [
+      "${1:Name} :: enum {",
+      "\t${2:Variant},",
+      "\t${3:Other} { ${4:value}: ${5:i64} },",
+      "}"
+    ],
+    "description": "A tagged enum, with a unit variant and one carrying fields"
+  },
+  "match": {
+    "prefix": "match",
+    "body": [
+      "match ${1:value} {",
+      "\tcase .${2:Variant}: ${3:0}",
+      "\tcase _: ${4:0}",
+      "}"
+    ],
+    "description": "A match over an enum"
+  },
+  "for range": {
+    "prefix": "for",
+    "body": ["for ${1:index} in ${2:0}..${3:count} {", "\t$0", "}"],
+    "description": "A loop over a range"
+  },
+  "while": {
+    "prefix": "while",
+    "body": ["while ${1:condition} {", "\t$0", "}"],
+    "description": "A loop while a condition holds"
+  },
+  "with provider": {
+    "prefix": "with",
+    "body": ["with ${1:arena} {", "\t$0", "}"],
+    "description": "A block that supplies an allocation capability"
+  },
+  "unsafe block": {
+    "prefix": "unsafe",
+    "body": ["unsafe { $0 }"],
+    "description": "A block where unchecked operations are allowed"
+  },
+  "defer": {
+    "prefix": "defer",
+    "body": ["defer ${1:release}(${2})"],
+    "description": "Work to run when the scope ends"
+  },
+  "test block": {
+    "prefix": "test",
+    "body": ["test \"${1:what it does}\" {", "\t$0", "}"],
+    "description": "A test the compiler runs with --test"
+  },
+  "import": {
+    "prefix": "import",
+    "body": ["import \"${1:module}.frost\""],
+    "description": "Bring another module's exports into scope"
+  },
+  "export": {
+    "prefix": "export",
+    "body": ["export ${1:name}"],
+    "description": "Declare what this module offers"
+  }
+}
