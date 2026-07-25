@@ -191,6 +191,10 @@ struct Region<'a> {
     inner: HashSet<String>,
     // Bindings that currently hold, or transitively contain, a region pointer.
     bound: HashSet<String>,
+    // Bindings holding the address of one of those, so reading back through one
+    // hands the region pointer out again. This is what tells `pp^` from `p^`
+    // without types: `pp` was taken from something already bound, `p` was not.
+    via_pointer: HashSet<String>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -206,7 +210,28 @@ impl<'a> Region<'a> {
             allow_return,
             inner: HashSet::new(),
             bound: HashSet::new(),
+            via_pointer: HashSet::new(),
             diagnostics: Vec::new(),
+        }
+    }
+
+    // Whether a value is the address of a binding that already holds a region
+    // pointer, which is the only way a dereference can hand one back out.
+    fn points_at_region_pointer(&self, value: &Expression) -> bool {
+        match value {
+            Expression::Unsafe(body) => block_value(body)
+                .is_some_and(|inner| self.points_at_region_pointer(inner)),
+            Expression::Call(callee, arguments) => {
+                let Expression::Identifier(function) = callee.as_ref() else {
+                    return false;
+                };
+                function == "ptr_to"
+                    && arguments.iter().any(|argument| {
+                        root_identifier(argument)
+                            .is_some_and(|root| self.bound.contains(root))
+                    })
+            }
+            _ => false,
         }
     }
 
@@ -219,6 +244,9 @@ impl<'a> Region<'a> {
                     self.inner.insert(name.clone());
                     if self.is_region_pointer(value) {
                         self.bound.insert(name.clone());
+                    }
+                    if self.points_at_region_pointer(value) {
+                        self.via_pointer.insert(name.clone());
                     }
                 }
                 Statement::Assignment(place, value) => {
@@ -325,6 +353,11 @@ impl<'a> Region<'a> {
             }
             Expression::Unsafe(body) => block_value(body)
                 .is_some_and(|value| self.is_region_pointer(value)),
+            // `pp^` where `pp` holds the address of a region pointer reads that
+            // pointer back out. `p^` where `p` is the region pointer itself
+            // reads the value it names, which is not one.
+            Expression::Dereference(inner) => root_identifier(inner)
+                .is_some_and(|root| self.via_pointer.contains(root)),
             Expression::If(_, consequence, alternative) => {
                 let branches = [Some(consequence), alternative.as_ref()];
                 branches.into_iter().flatten().any(|block| {

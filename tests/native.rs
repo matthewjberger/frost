@@ -6885,6 +6885,96 @@ fn reading_a_local_through_a_pointer_is_still_allowed() {
     assert_eq!(output, "42\n");
 }
 
+// A move made inside an `unsafe` block is a move. Found by asking which checks
+// were only ever tested with the unsafety gate off, which is what let the frame
+// escapes through for as long as it did.
+#[test]
+fn a_value_moved_inside_an_unsafe_block_may_not_be_used_again() {
+    let source = "Thing :: struct { n: i64 }\n\
+                  eat :: fn(move t: Thing) -> i64 { t.n }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   t := Thing { n = 1 }\n\
+                  \x20   a := unsafe { eat(t) }\n\
+                  \x20   b := unsafe { eat(t) }\n\
+                  \x20   a + b\n}\n";
+    let message = compile_error_checked("moveinunsafe", source);
+    assert!(
+        message.contains("use of moved value 't'"),
+        "expected a use-after-move, got:\n{message}"
+    );
+}
+
+// The other side of it: consuming a linear value inside an unsafe block counts
+// as consuming it, so walking in must not turn that into a double report.
+#[test]
+fn a_linear_value_consumed_inside_an_unsafe_block_is_consumed() {
+    let source = "File :: linear struct { fd: i64 }\n\
+                  close :: fn(move f: File) -> i64 { f.fd }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   f := File { fd = 1 }\n\
+                  \x20   print unsafe { close(f) }\n\
+                  \x20   0\n}\n";
+    let Some(output) = compile_and_run("linearinunsafe", source) else {
+        return;
+    };
+    assert_eq!(output, "1\n");
+}
+
+const ARENA_PRELUDE: &str = "Arena :: struct($N: usize) { data: [N]u8, offset: i64 }\n\
+     alloc_int :: fn(mut a: Arena<256>) -> ^i64 {\n\
+     \x20   slot := unsafe { ptr_to(a.data[a.offset]) }\n\
+     \x20   a.offset = a.offset + sizeof(i64)\n\
+     \x20   unsafe { ptr_cast($i64, slot) }\n}\n";
+
+// An arena pointer read back through a pointer at it still belongs to the
+// region. Telling that from reading the value the arena pointer names is what
+// makes this narrow enough to be worth having.
+#[test]
+fn an_arena_pointer_read_back_through_a_pointer_may_not_outlive_its_region() {
+    let source = format!(
+        "{ARENA_PRELUDE}\
+         grab :: fn() -> i64 {{\n\
+         \x20   mut arena : Arena<256> = Arena {{ data = [0; 256], offset = 0 }}\n\
+         \x20   mut out : ^i64 = unsafe {{ ptr_to(arena.offset) }}\n\
+         \x20   with arena {{\n\
+         \x20       p := alloc_int(arena)\n\
+         \x20       pp := unsafe {{ ptr_to(p) }}\n\
+         \x20       out = unsafe {{ pp^ }}\n\
+         \x20   }}\n\
+         \x20   unsafe {{ out^ }}\n}}\n\
+         main :: fn() -> i64 {{ grab() }}\n"
+    );
+    let message = compile_error_checked("arenaderef", &source);
+    assert!(
+        message.contains("escapes its region"),
+        "expected a region escape error, got:\n{message}"
+    );
+}
+
+// Reading the value an arena pointer names is an ordinary read, not an escape.
+// This is the side the rule above has to leave alone.
+#[test]
+fn reading_the_value_an_arena_pointer_names_is_allowed() {
+    let source = format!(
+        "{ARENA_PRELUDE}\
+         grab :: fn() -> i64 {{\n\
+         \x20   mut arena : Arena<256> = Arena {{ data = [0; 256], offset = 0 }}\n\
+         \x20   mut total : i64 = 0\n\
+         \x20   with arena {{\n\
+         \x20       p := alloc_int(arena)\n\
+         \x20       unsafe {{ p^ = 7 }}\n\
+         \x20       total = unsafe {{ p^ }}\n\
+         \x20   }}\n\
+         \x20   print total\n\
+         \x20   0\n}}\n\
+         main :: fn() -> i64 {{ grab() }}\n"
+    );
+    let Some(output) = compile_and_run("arenaread", &source) else {
+        return;
+    };
+    assert_eq!(output, "7\n");
+}
+
 // The tightened check must not start refusing a pointer the function was handed,
 // which is not its frame's to begin with.
 #[test]

@@ -658,6 +658,13 @@ impl MoveChecker<'_> {
                 self.check_conditional(expression)?;
                 Ok(())
             }
+            // An `unsafe` block is a block of ordinary statements. A move made
+            // inside one is a move, and not walking in meant a value consumed
+            // there stayed live and could be consumed again.
+            Expression::Unsafe(body) => {
+                self.check_block(body);
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
