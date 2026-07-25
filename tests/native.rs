@@ -948,6 +948,54 @@ fn a_variant_without_a_context_is_rejected() {
     );
 }
 
+// A call through a function pointer that answers with a struct. A Frost
+// function hands an aggregate back through a trailing out-pointer, and a call
+// through a pointer is the same call, so the signature the call site builds is
+// the one the callee was compiled with.
+const INDIRECT_AGGREGATE_RETURN: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Point :: struct { x: i64, y: i64 }
+
+origin :: fn(scale: i64) -> Point {
+    Point { x = scale, y = scale * 2 }
+}
+
+shifted :: fn(scale: i64) -> Point {
+    Point { x = scale + 100, y = scale }
+}
+
+// The pointer as a parameter, which is how a caller varies what a loop calls.
+apply :: fn(make: fn(i64) -> Point, scale: i64) -> i64 {
+    p := make(scale)
+    p.x * 1000 + p.y
+}
+
+main :: fn() -> i64 {
+    printf("%lld\n", apply(origin, 3))
+    printf("%lld\n", apply(shifted, 3))
+
+    // And as a local that is reassigned, so the callee is not known at the
+    // call site at all.
+    mut chosen : fn(i64) -> Point = origin
+    q := chosen(5)
+    printf("%lld\n", q.x + q.y)
+    chosen = shifted
+    r := chosen(5)
+    printf("%lld\n", r.x + r.y)
+    0
+}
+"#;
+
+#[test]
+fn an_indirect_call_returns_an_aggregate() {
+    let Some(output) = compile_and_run("indagg", INDIRECT_AGGREGATE_RETURN)
+    else {
+        return;
+    };
+    assert_eq!(output, "3006\n103003\n15\n110\n");
+}
+
 // `{ x = 1, y = 2 }` where the type is already stated, the struct counterpart of
 // the leading-dot variant. Every field is still named: there is no positional
 // literal, here or anywhere else, since a field's name is what says where the
@@ -8294,6 +8342,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_multiret", MULTIPLE_RETURN_VALUES),
         ("diff_dotvariant", INFERRED_VARIANTS),
         ("diff_inflit", INFERRED_LITERALS),
+        ("diff_indagg", INDIRECT_AGGREGATE_RETURN),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);

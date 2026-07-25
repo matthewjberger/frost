@@ -4044,11 +4044,6 @@ impl<'a> FunctionLowering<'a> {
             );
         };
         let return_type = *return_type;
-        if needs_memory(&return_type) {
-            bail!(
-                "native backend: indirect call returning an aggregate is not supported yet"
-            );
-        }
         if arguments.len() != parameter_types.len() {
             bail!(
                 "native backend: function pointer expects {} argument(s) but {} were given",
