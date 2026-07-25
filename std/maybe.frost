@@ -1,5 +1,5 @@
 // A value that may be absent. `Maybe<T>` is an ordinary generic enum with
-// nothing special about it, which is the point: the language grew generic enums
+// nothing special about it, which is the point. The language grew generic enums
 // so that this could be written in Frost rather than built into the compiler.
 //
 // There is no null and no built-in optional. An absent value is a variant you

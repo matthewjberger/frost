@@ -78,7 +78,7 @@ emit_text :: fn(s: str) {
 // The ones taking only numbers, or nothing, cannot corrupt memory whatever they
 // are handed, so they are `safe` and need no block. The ones taking a `^i8` read
 // until a NUL, and `ptr_to` hands out a `^i8` without one at no cost, so those
-// keep the gate: the caller is what promises the terminator.
+// keep the gate. The caller is what promises the terminator.
 frost_error     :: extern fn(text: ^i8)
 frost_error_src :: extern fn(text: ^i8, offset: i64, length: i64)
 frost_error_bytes :: extern fn(data: ^u8, length: i64)
@@ -157,16 +157,16 @@ NODE_FLOAT      :: 28
 NODE_ARRAY_LIT  :: 29
 NODE_SLICE_LEN  :: 30
 NODE_ASSERT     :: 31
-// `ref x := place`: a borrow of a place, an address that types as a borrow
+// `ref x := place` is a borrow of a place, an address that types as a borrow
 // rather than a raw pointer, so reading through it needs no `unsafe` block.
 NODE_REF        :: 32
-// `slice_from($T, ptr, len)`: a `[]T` view over a run of T at a raw address. The
-// claim that the bytes are that is unchecked, so the call is gated; reads
+// `slice_from($T, ptr, len)` is a `[]T` view over a run of T at a raw address.
+// The claim that the bytes are that is unchecked, so the call is gated. Reads
 // through the slice it returns are bounds-checked and are not.
 NODE_SLICE_FROM :: 33
 
-// Type codes. A type is one i64. The primitives are small constants; a struct is
-// STRUCT_BASE plus its table index; a pointer to a type T (also how a borrow
+// Type codes. A type is one i64. The primitives are small constants. A struct is
+// STRUCT_BASE plus its table index. A pointer to a type T (also how a borrow
 // parameter is modelled, since a borrow is a C pointer) is POINTER_BASE plus T, so
 // pointer nesting composes by repeated addition.
 TY_I64   :: 0
@@ -185,7 +185,7 @@ TY_USIZE :: 12
 TY_F32   :: 13
 TY_F64   :: 14
 // `Handle<T>`: a copyable i64 that packs a slot index and a generation. It is a
-// scalar at the ABI, the same width as an i64 and converting freely to one; the
+// scalar at the ABI, the same width as an i64 and converting freely to one. The
 // element type it names comes from the slab it indexes, not from the code here.
 // Its own code is what tells `slab[handle]` apart from an ordinary index.
 TY_HANDLE :: 15
@@ -196,21 +196,21 @@ STRUCT_BASE  :: 16
 ARRAY_BASE   :: 500000
 POINTER_BASE :: 1000000
 // A borrow (a `mut`/read parameter, a `ref` binding) is a C pointer like a raw
-// one, and emits identically, but the two are different to the unsafety gate: a
+// one, and emits identically, but the two are different to the unsafety gate. A
 // borrow was proven safe where it was formed, a raw pointer was not. The flag
 // sits far above pointer nesting so `is_pointer` still answers yes for a borrow
 // and only the gate and `pointee` tell them apart.
 BORROW_FLAG  :: 1000000000
 // A compile-time integer argument to a generic, a value generic like the `N` in
 // `Slab<T, N>`. It rides in the same i64 space as a type code so the whole
-// monomorphization machinery stays keyed on one integer per argument; a code at
+// monomorphization machinery stays keyed on one integer per argument. A code at
 // or above this base is the value `code - CONST_BASE`. The base sits far above
 // every real type code, and a value argument never reaches layout or the
-// pointer tests: it is resolved to an array length or an integer literal while
+// pointer tests. It is resolved to an array length or an integer literal while
 // the generic body is re-parsed with the argument bound.
 CONST_BASE   :: 2000000000
 // A function pointer, a value that is the address of a function with a given
-// signature. It is a pointer at the ABI but not a data pointer: it is neither
+// signature. It is a pointer at the ABI but not a data pointer. It is neither
 // dereferenced nor pointer-arithmeticked, it is called. A code at or above this
 // base names an entry in the `procs` table, its signature. This sits above the
 // value-generic range so `is_pointer` and `is_borrow`, which now stop below
@@ -376,7 +376,7 @@ Sym :: struct {
     is_extern: i64,
     // `safe extern fn`: audited, so a call needs no `unsafe` block.
     is_safe: i64,
-    // `inline fn`: the C backend forces this one inline; the assembly backend
+    // `inline fn`: the C backend forces this one inline. The assembly backend
     // ignores it.
     is_inline: i64,
     ret_type: i64,
@@ -395,7 +395,7 @@ ConstDef :: struct {
 }
 
 // A lexed token. `off`/`len` are the byte range in the source (used to intern
-// identifiers and to re-emit string literals); `value` holds the parsed integer
+// identifiers and to re-emit string literals). `value` holds the parsed integer
 // for a TOK_INT. `kind` is one of the TOK_ constants.
 Token :: struct {
     kind: i64,
@@ -430,7 +430,7 @@ StructDef :: struct {
 
 // A monomorphized instance of a generic struct: which template, the concrete
 // type argument, and the concrete struct's index in the struct table.
-// `arg` is the first generic argument; a generic with more than one parameter
+// `arg` is the first generic argument. A generic with more than one parameter
 // keeps the rest as a run in the `gargs` arena, at xarg_start for xarg_count
 // entries. A single-parameter generic, which is all the compiler's own source
 // has, leaves xarg_count zero and reads exactly as it did before.
@@ -526,7 +526,7 @@ Module :: struct {
 }
 
 // A name a module offers to whoever imports it, from an `export a, b` line. A
-// top-level name not listed is the module's own: another file naming it is
+// top-level name not listed is the module's own. Another file naming it is
 // naming something else, and two modules may each keep one of the same name.
 Export :: struct {
     module: i64,
@@ -602,10 +602,10 @@ UnsafeSpan :: struct {
 }
 
 // A growable, index-addressed arena over a single heap allocation. This is the
-// data-oriented allocator from docs/allocators.md, generic over its element:
+// data-oriented allocator from docs/allocators.md, generic over its element.
 // arena_push appends and returns the element's index, arena_at turns an index
 // back into a pointer. The compiler is asked only for the raw memory (malloc)
-// and the pointer reinterpret; the bump logic is here.
+// and the pointer reinterpret. The bump logic is here.
 Arena :: struct($T: Type) {
     data: ^T,
     cap: i64,
@@ -732,7 +732,7 @@ Parser :: struct {
     frame_answers: i64,
     // The parameter nodes declared `mut`, by node index, so the exclusivity
     // check can tell an exclusive borrow from a shared one where the type alone
-    // cannot: a `mut` and a read of an aggregate both pass by address.
+    // cannot. A `mut` and a read of an aggregate both pass by address.
     mut_params: Arena<LocalVar>,
     // Scratch for the move check: the values a branch moved, held while the
     // other branch is walked, then merged back so what is moved after an `if` is
@@ -759,7 +759,7 @@ Parser :: struct {
     tests: Arena<TestCase>,
     testing: i64,
     // A memo of each node's derived type, read by type_of. It is filled only
-    // while emitting, where a node's type is fixed and asked for repeatedly;
+    // while emitting, where a node's type is fixed and asked for repeatedly.
     // type_cache_on gates it so the checks, which ask under generic bindings
     // that change the answer, never write to it.
     type_cache: Arena<TypeCacheEntry>,

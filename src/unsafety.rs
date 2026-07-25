@@ -19,7 +19,7 @@ use crate::{Position, Spanned};
 //   - calling an `extern fn`, which is arbitrary C
 //
 // Nothing else in the language can touch memory it has not been shown to own.
-// So the point of the block is not that it enables anything: it is that the
+// So the point of the block is not that it enables anything. It is that the
 // three are refused outside one, which makes `unsafe` the complete list of
 // places to look when something has corrupted memory. Without the refusal the
 // block would be a comment.
@@ -40,12 +40,12 @@ pub fn check_unsafety(statements: &[Spanned<Statement>]) -> Result<()> {
     };
     for statement in statements {
         match &statement.node {
-            // An extern is the built-in unsafe function: calling C is
+            // An extern is the built-in unsafe function. Calling C is
             // unchecked, so a call to one is gated exactly as a call to a
             // user's `unsafe fn` is. Unless it is declared `safe extern fn`,
             // which is the author saying this one was audited and cannot
             // corrupt memory. Putting that assertion on the declaration keeps
-            // `unsafe` blocks to what can actually go wrong: a call that only
+            // `unsafe` blocks to what can actually go wrong. A call that only
             // writes bytes and returns is not a place to look for corruption,
             // and listing it there makes the list worth less.
             Statement::Extern { name, safe, .. } => {
@@ -299,7 +299,7 @@ impl Checker {
                         }
                         _ => None,
                     },
-                    // `ptr_to(place)` is the surface address-of; it always hands
+                    // `ptr_to(place)` is the surface address-of. It always hands
                     // back a raw pointer, so a value bound from it is one whether
                     // or not this pass can name the pointee. Without this the
                     // index gate below never learns the binding is a pointer and
@@ -328,7 +328,7 @@ impl Checker {
                 self.depth -= 1;
                 return outcome;
             }
-            // An `unsafe fn`'s body is an implicit unsafe block: the whole
+            // An `unsafe fn`'s body is an implicit unsafe block. The whole
             // function is the dangerous region, so the gated operations are
             // allowed throughout it without a nested block.
             Expression::UnsafeFn(inner) => {

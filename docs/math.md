@@ -10,12 +10,12 @@ It is written the way the rest of the language is. There is no operator
 overloading and there are no methods, so it is `vec3_add(a, b)` rather than
 `a + b` and `mat4_mul(a, b)` rather than `a * b`. The type prefix on each name
 (`vec3_`, `mat4_`, `quat_`) is the namespace, the same convention the rest of the
-standard library follows. Every value is `f32`; a program that needs double
+standard library follows. Every value is `f32`. A program that needs double
 precision keeps its own copy or waits for an `f64` variant.
 
 The transcendentals it needs (`sqrtf`, `sinf`, `cosf`, `tanf`) are the C standard
 library's single-precision ones, declared `safe extern` because each takes and
-returns a number with no pointer. On a POSIX host they live in `libm`; on Windows
+returns a number with no pointer. On a POSIX host they live in `libm`. On Windows
 they are in the C runtime and need no extra link flag.
 
 ## Types
@@ -40,8 +40,8 @@ are what a geometry pass reaches for:
 - `vec3_add`, `vec3_sub`, `vec3_scale`, `vec3_neg`: componentwise arithmetic and
   scaling by a float. `vec2` and `vec4` carry the add/sub/scale set too.
 - `vec3_dot`, `vec3_cross`: the dot product (a float) and the cross product (the
-  perpendicular vector). `vec2_dot` and `vec4_dot` exist for their dimensions;
-  the cross product is `Vec3` only.
+  perpendicular vector). `vec2_dot` and `vec4_dot` exist for their dimensions.
+  The cross product is `Vec3` only.
 - `vec3_length`, `vec3_length_sq`, `vec3_distance`: the length, its square (which
   skips the square root when only a comparison is wanted), and the distance
   between two points.
@@ -51,9 +51,9 @@ are what a geometry pass reaches for:
 
 ## Matrices
 
-`Mat4` is column-major, the OpenGL and Vulkan convention: the element at row `r`,
+`Mat4` is column-major, the OpenGL and Vulkan convention. The element at row `r`,
 column `c` lives at `m.m[c * 4 + r]`. `mat4_mul(a, b)` is the product that applies
-`b` and then `a` to a column vector, so a model-view-projection is
+`b` then `a` to a column vector, so a model-view-projection is
 `mat4_mul(projection, mat4_mul(view, model))`, read right to left the way the
 transforms apply.
 
@@ -63,7 +63,7 @@ transforms apply.
   `mat4_rotation_z`: the standard affine builders, each from a `Vec3` or an angle
   in radians.
 - `mat4_transform_point`, `mat4_transform_dir`: carry a `Vec3` through a matrix. A
-  point carries an implicit `w` of 1, so a translation moves it; a direction
+  point carries an implicit `w` of 1, so a translation moves it. A direction
   carries `w` of 0, so a translation leaves it alone.
 - `mat4_perspective`, `mat4_ortho`, `mat4_look_at`: a right-handed perspective
   projection into the `[-1, 1]` depth range (the OpenGL clip convention), an
@@ -115,7 +115,7 @@ main :: fn() -> i64 {
 ## What is not here
 
 The library is single-precision and value-typed on purpose. It does not provide
-an `f64` variant (engines are single-precision; a program that needs doubles
+an `f64` variant (engines are single-precision, a program that needs doubles
 keeps its own), SIMD-packed vectors (a future language-level direction, see
 [roadmap.md](roadmap.md)), or a general N-dimensional matrix. It is the graphics
 math a renderer and a game loop actually reach for, and nothing more.

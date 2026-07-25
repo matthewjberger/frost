@@ -10,12 +10,12 @@ each of them.
 | **freestanding** | what the produced executable depends on at run time |
 | **self-hosted** | what language the compiler itself is written in |
 
-## Native: which backend produced the code
+## Native, which backend produced the code
 
 Frost has three execution paths off one typed IR, and the flag picks which.
 
 - `--native` / `--link` lower the IR through Cranelift to a relocatable object,
-  which the system C toolchain links. This is the default: bare
+  which the system C toolchain links. This is the default. Bare
   `frost program.frost` compiles, links, and runs.
 - `--emit-c` lowers the same IR to portable C, which the system C compiler
   builds. That buys portability to anywhere with a C compiler, and it is the
@@ -23,15 +23,15 @@ Frost has three execution paths off one typed IR, and the flag picks which.
 - `--run-ir` interprets the IR directly, as a reference oracle for scalar
   programs.
 
-"Native" means the Cranelift path: no C compiler in the middle for *your* code.
+"Native" means the Cranelift path, no C compiler in the middle for *your* code.
 The differential test runs programs through all three and asserts they agree,
 which is what catches a miscompilation that a single backend would hide.
 
-**This is orthogonal to freestanding.** A `--native` build still links the C
+This is orthogonal to freestanding. A `--native` build still links the C
 runtime and libc by default. Choosing Cranelift says nothing about what the
 executable needs once it is running.
 
-## Freestanding: what the executable needs at run time
+## Freestanding, what the executable needs at run time
 
 `frost --link --freestanding` links no C standard library at all: a minimal
 runtime, a custom entry point, and the single OS call for process exit.
@@ -49,12 +49,12 @@ This is the axis that made moving the pool out of C matter. A fixed-capacity
 slab lives inside a struct rather than behind `malloc`, so generational storage
 now works with no libc at all. See [native-pools.md](native-pools.md).
 
-## Self-hosted: what the compiler is written in
+## Self-hosted, what the compiler is written in
 
 `selfhosted/` is the Frost compiler, written in Frost. `src/` is the bootstrap
 that compiles its stage 0.
 
-The claim it discharges is a **three-stage fixpoint**: it compiles its own
+The claim it discharges is a three-stage fixpoint. It compiles its own
 source, a compiler built from that output compiles the source again, and the two
 outputs are byte-identical. That holds through both of its backends, the C one
 and its own assembly emitter (`FROST_BACKEND=asm`), and both fixpoints are
@@ -69,8 +69,8 @@ consumed exactly once), monomorphized generics, structs, enums with `match`, and
 
 ## How the axes interact
 
-`src/` (Rust) is the **bootstrap** and `selfhosted/frost.frost` is the compiler
-people will use. The bootstrap compiles stage 0 and serves as the differential
+`src/` (Rust) is the bootstrap and `selfhosted/frost.frost` is the compiler
+people will use. The bootstrap compiles stage 0 and is the differential
 oracle, which is why every feature lands there first. That ordering is the only
 reason it is ahead.
 

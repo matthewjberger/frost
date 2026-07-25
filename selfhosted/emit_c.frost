@@ -92,7 +92,7 @@ emit_columns_scatter :: fn(mut p: Parser, cbase: i64, cbase_ty: i64,
 }
 
 emit_coerced :: fn(mut p: Parser, value: i64, want: i64) {
-    // A zeroed columns container. Zero sets every generation and free slot to 0;
+    // A zeroed columns container. Zero sets every generation and free slot to 0.
     // `columns_reset` lays out the free list before the container is used.
     if (is_columns_new_call(p, value)) {
         emit_text("(")
@@ -906,7 +906,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
 }
 
 // The capability a call to `fn_index` is handed, emitted as an argument. A
-// forwarded one is already a pointer and passes straight through; a region
+// forwarded one is already a pointer and passes straight through. A region
 // supplies the arena by address, the way any borrow is passed.
 emit_capability_argument :: fn(mut p: Parser, fn_index: i64) {
     if (p.prov_kind == PROVIDER_NONE) {
@@ -1072,7 +1072,7 @@ emit_type_forward_decls :: fn(mut p: Parser) {
 // value and so must follow the struct it names.
 // A C struct definition must follow every type it holds by value. A struct
 // holds its non-pointer struct and fixed-array fields inline, and a fixed array
-// holds its element inline, so those are emitted first; a pointer or slice field
+// holds its element inline, so those are emitted first. A pointer or slice field
 // is content with the forward declaration and creates no ordering constraint.
 // The compiler's own structs hold only scalars, pointers, and slices, so this
 // only bites a program that puts a fixed array inside a struct, like a slab.
@@ -1159,7 +1159,7 @@ emit_struct_ordered :: fn(mut p: Parser, i: i64) {
 }
 
 // Emit every struct and array definition in dependency order. Structs are the
-// roots; an array reached by none of them is emitted by the trailing sweep.
+// roots. An array reached by none of them is emitted by the trailing sweep.
 emit_type_defs :: fn(mut p: Parser) {
     mut i : i64 = 0
     while (i < p.structs.count) {
@@ -1218,7 +1218,7 @@ emit_function :: fn(mut p: Parser, id: i64) {
     record_params(p, params)
     begin_provider(p, fn_index)
     // In a test build the runner is the entry point, so the program's own main
-    // is emitted as an ordinary function and simply never called.
+    // is emitted as an ordinary function and never called.
     if (is_main == 1 && p.testing == 0) {
         emit_text("int main(void) {\n")
     } else {
@@ -1244,7 +1244,7 @@ emit_function :: fn(mut p: Parser, id: i64) {
 
 // Emit one monomorphization of a generic function: the concrete return type, the
 // One argument's contribution to a mangled name: a type argument is `_t<code>`,
-// as it always was, so a single-type-argument name is unchanged; a value
+// as it always was, so a single-type-argument name is unchanged. A value
 // argument is `_c<number>`. Both a call and its definition mangle through here,
 // so the two always agree.
 emit_mangled_arg :: fn(mut p: Parser, arg: i64) {
@@ -1324,7 +1324,7 @@ emit_mono_prototype :: fn(mut p: Parser, id: i64, arg: i64, xarg_start: i64,
 // ---------------------------------------------------------------------------
 // Native backend. Emits x64 assembly instead of C, so a build no longer pays for
 // a C compiler parsing and optimizing generated source. Selected with
-// FROST_BACKEND=asm; the C path stays the default until this covers the
+// FROST_BACKEND=asm. The C path stays the default until this covers the
 // whole language.
 //
 // Windows x64: integer arguments arrive in rcx, rdx, r8, r9, the caller reserves

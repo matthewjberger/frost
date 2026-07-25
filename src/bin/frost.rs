@@ -78,7 +78,7 @@ struct Cli {
 // Where an import may be found, most specific first.
 //
 // The importing file's own directory is always tried before any of these and is
-// not in the list; see `find_import`. After it: directories named on the command
+// not in the list. See `find_import`. After it: directories named on the command
 // line, then `FROST_PATH`, then whatever the project's manifest declares, then
 // the standard library. Command line beats environment beats project file, which
 // is the order of how deliberately each was said.
@@ -330,7 +330,7 @@ fn main() -> Result<()> {
     if std::env::var("FROST_CHECK_UNSAFE").as_deref() != Ok("0") {
         check_unsafety(&statements).context("Unsafe operation error")?;
     }
-    // `unsafe fn` is only meaningful to the unsafety check; strip it to the
+    // `unsafe fn` is only meaningful to the unsafety check. Strip it to the
     // plain function it wraps before any later pass or backend sees one.
     strip_unsafe_fns(&mut statements);
     check_regions(&statements).context("Region error")?;
@@ -484,7 +484,7 @@ fn main() -> Result<()> {
 
         let mut object_paths = Vec::with_capacity(parts.len());
         // Objects for cached modules are named for the fingerprint that
-        // produced them and outlive the build; everything else is an
+        // produced them and outlive the build. Everything else is an
         // intermediate that goes away with it.
         let mut temporary: Vec<String> = Vec::new();
         for (index, part) in parts.iter().enumerate() {
@@ -704,7 +704,7 @@ fn compile_c(
     // The C is an intermediate, so it is compiled the way an intermediate
     // should be. Without this the C path ran unoptimized while the Cranelift
     // path asked for speed, which made the two backends answer the same thing
-    // at very different cost and made the C path a poor measurement.
+    // at different cost and made the C path a poor measurement.
     let mut cmd = Command::new(compiler);
     if compiler == "cl" {
         cmd.arg("/O2");
@@ -725,7 +725,7 @@ fn compile_c(
             cmd.arg(lib);
         }
         // The C math functions std/math.frost calls (sqrtf and the rest) live in
-        // libm on Linux and the BSDs; on macOS and mingw the flag is a harmless
+        // libm on Linux and the BSDs. On macOS and mingw the flag is a harmless
         // no-op, and MSVC keeps them in the CRT and is the `cl` branch above.
         cmd.arg("-lm");
     }
@@ -761,20 +761,20 @@ fn find_linker() -> Option<&'static str> {
 
 #[cfg(target_os = "windows")]
 fn add_freestanding_link_args(cmd: &mut Command) {
-    // Windows: exit through kernel32, entry mainCRTStartup. No C runtime.
+    // Windows. Exit through kernel32, entry mainCRTStartup. No C runtime.
     cmd.arg("-lkernel32");
     cmd.arg("-e").arg("mainCRTStartup");
 }
 
 #[cfg(target_os = "linux")]
 fn add_freestanding_link_args(cmd: &mut Command) {
-    // Linux: the runtime's _start is the entry, exit is a raw syscall. No libc.
+    // Linux. The runtime's _start is the entry, exit is a raw syscall. No libc.
     cmd.arg("-e").arg("_start");
 }
 
 #[cfg(target_os = "macos")]
 fn add_freestanding_link_args(cmd: &mut Command) {
-    // macOS: entry _start, exit via syscall, but macOS always routes syscalls
+    // macOS. Entry _start, exit via syscall, but macOS always routes syscalls
     // through libSystem, so link that one library and nothing else.
     cmd.arg("-e").arg("_start");
     cmd.arg("-lSystem");
@@ -828,13 +828,13 @@ fn link_executable(
         if !freestanding {
             // A program that calls the C math functions (sqrtf and the rest,
             // used by std/math.frost) needs libm on the platforms that keep it
-            // out of the C runtime. Linux and the BSDs do; on macOS and mingw it
-            // is folded in and the flag is a harmless no-op; MSVC keeps them in
+            // out of the C runtime. Linux and the BSDs do. On macOS and mingw it
+            // is folded in and the flag is a harmless no-op. MSVC keeps them in
             // the CRT and is the `cl` branch above.
             cmd.arg("-lm");
         }
         if freestanding {
-            // The freestanding runtime supplies the platform's entry point; the
+            // The freestanding runtime supplies the platform's entry point. The
             // linker just needs the matching entry symbol and, where the OS
             // requires it, the one library that exposes process exit. This is the
             // per-target floor, the same shape Rust's targets use.

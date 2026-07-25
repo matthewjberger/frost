@@ -11,15 +11,15 @@ use crate::types::Type;
 
 // Desugars failure sets and the `?` operator into the enum and match machinery
 // the compiler already has. A `-> T ! E` function returns a synthesized
-// `Result { Ok { value: T }, Err { error: E } }` enum; a `return` wraps its value
-// as Ok (or as Err when it constructs an E variant); and `expr?` becomes a match
+// `Result { Ok { value: T }, Err { error: E } }` enum. A `return` wraps its value
+// as Ok (or as Err when it constructs an E variant), and `expr?` becomes a match
 // that yields the Ok value or returns the enclosing function's Err. After this
 // pass nothing downstream knows failure sets exist.
 struct Lowerer {
     // Result enum name for each (value, error) pair, deduplicated.
     results: HashMap<String, String>,
     enums: Vec<Spanned<Statement>>,
-    // Fallible function name -> its Result enum name.
+    // Fallible function name to its Result enum name.
     fallible: HashMap<String, String>,
     counter: usize,
 }
@@ -39,7 +39,7 @@ pub fn lower_failure_sets(program: &mut Program) -> Result<()> {
         counter: 0,
     };
 
-    // First pass: give every fallible function a Result enum.
+    // First pass. Give every fallible function a Result enum.
     for statement in program.iter() {
         if let Statement::Constant(
             name,
@@ -52,7 +52,7 @@ pub fn lower_failure_sets(program: &mut Program) -> Result<()> {
         }
     }
 
-    // Second pass: rewrite bodies and return signatures. A `?` in a function
+    // Second pass. Rewrite bodies and return signatures. A `?` in a function
     // that declares no failure set has nowhere to propagate to, so reject it.
     for statement in program.iter_mut() {
         if let Statement::Constant(
@@ -334,7 +334,7 @@ impl Lowerer {
         }
     }
 
-    // `inner?` becomes a match: the Ok value flows out, the Err returns the
+    // `inner?` becomes a match. The Ok value flows out, the Err returns the
     // enclosing function's Err carrying the same error.
     fn desugar_try(
         &mut self,

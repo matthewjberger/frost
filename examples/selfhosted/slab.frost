@@ -5,7 +5,7 @@
 // slot was released and reused aborts rather than seeing the next tenant.
 //
 // The slab here is a fixed four-slot struct rather than the standard library's
-// Slab<T, N>, because the self-hosted compiler has no value generics yet; what
+// Slab<T, N>, because the self-hosted compiler has no value generics yet. What
 // the compiler keys on is the shape, a `storage` run beside a `generations`
 // run, not a named type.
 

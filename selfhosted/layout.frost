@@ -6,13 +6,13 @@ import "names.frost"
 
 export align_up, alloc_temp, field_offset, is_unsigned, scalar_size, type_size
 
-// What the C compiler would compute, because the two backends have to agree:
-// a scalar is as wide as its name says, a pointer is a word, and a struct is
+// What the C compiler would compute, because the two backends have to agree.
+// A scalar is as wide as its name says, a pointer is a word, and a struct is
 // its fields laid end to end, each on its own alignment, rounded up to the
 // widest alignment among them.
 //
 // A field may itself be a struct, so a size cannot be counted rather than
-// measured: Parser carries eleven arenas and an arena is three words, not one.
+// measured. Parser carries eleven arenas and an arena is three words, not one.
 scalar_size :: fn(ty: i64) -> i64 {
     if (is_pointer(ty)) {
         return 8

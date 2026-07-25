@@ -14,7 +14,7 @@ use crate::parser::{Spanned, Statement};
 // complete is the declaration itself, and a signature table would be a second
 // representation of the same facts that could drift from it.
 //
-// Non-generic bodies are not here. That is the whole point: they are what a
+// Non-generic bodies are not here. That is the whole point. They are what a
 // module can change without rebuilding its dependents.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct ModuleInterface {
@@ -99,7 +99,7 @@ impl ModuleInterface {
     }
 }
 
-// Step 2 of docs/separate-compilation.md: the compiler writes an interface out
+// Step 2 of docs/separate-compilation.md. The compiler writes an interface out
 // and reads it back, and checks that what came back says the same thing as the
 // source, while still compiling from source. This is the differential oracle
 // for the feature, and it exists because the class of bug separate compilation

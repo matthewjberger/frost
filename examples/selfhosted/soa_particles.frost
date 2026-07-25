@@ -1,14 +1,14 @@
 // A structure-of-arrays container. `columns<Particle, 8>` stores the x's in one
 // array and the y's in another, so summing a single field strides one contiguous
 // column rather than gathering whole structs. Switching this from AoS to SoA is
-// one token: `Slab<Particle, 8>` would store whole particles instead, with the
+// one token. `Slab<Particle, 8>` would store whole particles instead, with the
 // same handle API. Compiled by the self-hosted compiler on both backends.
 
 import "columns.frost"
 
 Particle :: struct { x: i64, y: i64 }
 
-// The SoA win: one field of every element, as a contiguous slice.
+// One field of every element, as a contiguous slice.
 sum_x :: fn(xs: []i64) -> i64 {
     mut total : i64 = 0
     mut i : i64 = 0

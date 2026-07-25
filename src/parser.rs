@@ -56,7 +56,7 @@ impl<T: Display> Display for Spanned<T> {
 }
 
 // How a parameter takes its argument. `read` (the default) is a shared borrow,
-// `mut` an exclusive borrow, `move` takes ownership. These are the surface; a
+// `mut` an exclusive borrow, `move` takes ownership. These are the surface. A
 // later pass turns them into the reference types the rest of the compiler
 // already handles and inserts the borrows at call sites.
 #[derive(
@@ -77,7 +77,7 @@ pub struct Parameter {
     pub mode: ParamMode,
     // For a compile-time parameter written `$compare: fn(T, T) -> bool`, the
     // signature the argument has to have. This is kept beside the annotation
-    // rather than in it: every pass that asks "is this a compile-time
+    // rather than in it. Every pass that asks "is this a compile-time
     // parameter" asks whether the annotation *is* `TypeParam(name)`, so putting
     // the signature there would turn the parameter back into a runtime one.
     pub compile_time_signature: Option<Type>,
@@ -110,7 +110,7 @@ pub enum ReturnKind {
     Single(Type),
     Named(Vec<ReturnParam>),
     // `-> T ! E`: succeeds with T or fails with the error enum E. The failure set
-    // is E; the value type is T.
+    // is E. The value type is T.
     Fallible(Type, Type),
 }
 
@@ -419,11 +419,11 @@ pub enum Statement {
         // here, once, rather than at every call site.
         safe: bool,
     },
-    // A Frost function's signature with no body. Not surface syntax: import
+    // A Frost function's signature with no body. Not surface syntax. Import
     // resolution produces it for a module the build cache answered for, whose
     // object is being linked rather than rebuilt, so the program needs the
     // signature to type and emit calls and needs nothing else. This is the last
-    // whole-program piece of the front end; see step 5 of
+    // whole-program piece of the front end. See step 5 of
     // docs/separate-compilation.md.
     //
     // Not an `Extern`, which means C linkage and a C ABI. This is a Frost
@@ -1472,7 +1472,7 @@ impl<'a> Parser<'a> {
         } else if matches!(self.peek_nth(0), Token::Enum) {
             self.read_token();
             // An enum takes type parameters exactly as a struct does, and for
-            // the same reason: without them there is no way to write a sum type
+            // the same reason. Without them there is no way to write a sum type
             // over an arbitrary element, so `Maybe<T>` and `Result<T, E>` would
             // have to be rewritten once per element type.
             let type_params = self.parse_generic_params()?;
@@ -1549,7 +1549,7 @@ impl<'a> Parser<'a> {
             let mut params = Vec::new();
             while self.peek_nth(0) != &Token::RightParentheses {
                 // An extern takes modes and compile-time parameters for the
-                // same reason an ordinary function does: a callback
+                // same reason an ordinary function does. A callback
                 // registration is declared as an extern, it takes its context
                 // by `move`, and the handler it wants is a `$` parameter with a
                 // function bound. See docs/callbacks.md.
@@ -2573,7 +2573,7 @@ impl<'a> Parser<'a> {
     // The `($T: Type, $N: usize)` list a generic declaration carries. Shared by
     // struct and enum so the two cannot drift.
     //
-    // `$T: Type` is a type parameter; `$N: usize` is a value parameter, resolved
+    // `$T: Type` is a type parameter. `$N: usize` is a value parameter, resolved
     // to a concrete integer at instantiation. Both are recorded by name here,
     // and the argument kind decides which is which.
     fn parse_generic_params(&mut self) -> Result<Vec<String>> {
@@ -3743,7 +3743,7 @@ mod tests {
     #[test]
     fn scoped_identifier() -> Result<()> {
         // Bare `Enum::Variant` at statement position stays variant access, an
-        // expression: only `Name :: value <operator>` is a constant declaration,
+        // expression. Only `Name :: value <operator>` is a constant declaration,
         // so a variant with no trailing operator is not mistaken for one.
         let input = "Color::Green";
         let mut lexer = Lexer::new(input);

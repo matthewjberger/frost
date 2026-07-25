@@ -8,7 +8,7 @@
 // This is the arena layer of docs/allocators.md, in the language: the storage and
 // the bump logic are Frost, and the only primitives the compiler provides are a
 // raw address-of and a pointer reinterpret. Allocations here are 8-byte aligned
-// because every type used is, so the running offset stays aligned; a general
+// because every type used is, so the running offset stays aligned. A general
 // arena would round the offset up to each value's alignment.
 
 import "io.frost"

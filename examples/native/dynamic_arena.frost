@@ -2,8 +2,8 @@
 // single call to the operating system instead of a fixed inline array. malloc is
 // the one platform extern at the floor of docs/allocators.md, and everything
 // above it is Frost. The arena is a `linear` resource, so the compiler requires
-// it be destroyed exactly once (arena_destroy, which frees the one allocation);
-// forgetting the destroy is a compile error, which is how a dynamic allocation
+// it be destroyed exactly once (arena_destroy, which frees the one allocation).
+// Forgetting the destroy is a compile error, which is how a dynamic allocation
 // is kept from leaking without a garbage collector.
 
 malloc :: extern fn(size: i64) -> ^u8
@@ -48,7 +48,7 @@ main :: fn() -> i64 {
         print_int_line(p^ + q^)  // 142
         print_int_line(a.offset)  // 16, two 8-byte allocations
 
-        arena_destroy(a)              // frees the single OS allocation; required
+        arena_destroy(a)              // frees the single OS allocation, required
         0
     }
 }

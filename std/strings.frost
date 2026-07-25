@@ -1,6 +1,6 @@
 // Operations over `str`, which is a pointer and a length rather than a
 // NUL-terminated buffer, so every one of these is a bounds-checked walk with no
-// allocation anywhere. None of it is compiler magic: `str_len` and `s[i]` are
+// allocation anywhere. None of it is compiler magic. `str_len` and `s[i]` are
 // the only primitives, and the rest is ordinary Frost over them.
 //
 // Nothing here returns a new string, because building one needs storage and
@@ -85,9 +85,9 @@ str_byte_is_space :: fn(byte: i64) -> bool {
 }
 
 // Reads a decimal integer, with an optional leading `-`. Answers 0 for anything
-// it cannot read, which is the same thing C's `atoi` does and is worth knowing
-// about: this does not distinguish "0" from "not a number". A caller that needs
-// the difference checks the bytes first.
+// it cannot read, which is the same thing C's `atoi` does. This does not
+// distinguish "0" from "not a number". A caller that needs the difference
+// checks the bytes first.
 str_to_i64 :: fn(s: str) -> i64 {
     mut i : i64 = 0
     mut negative := false

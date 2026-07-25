@@ -34,7 +34,7 @@ advance :: fn(mut p: Parser) {
 
 // ---------------------------------------------------------------------------
 // Symbol tables. Identifiers are byte ranges into the source, interned to small
-// integer indices by comparing bytes. Locals reset per function; functions are
+// integer indices by comparing bytes. Locals reset per function. Functions are
 // global.
 // ---------------------------------------------------------------------------
 
@@ -45,7 +45,7 @@ advance :: fn(mut p: Parser) {
 // rest of the compiler never learns that more than one file was involved.
 //
 // A file lands in the buffer once however many times it is named, which is what
-// separates this from a textual include: the second `import` of a file is a
+// separates this from a textual include. The second `import` of a file is a
 // reference to what is already there, not a second copy. Imports are found by
 // token rather than by scanning the text, so the word `import` inside a string
 // or a comment is not one.

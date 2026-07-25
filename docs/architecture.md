@@ -1,4 +1,4 @@
-# Frost Architecture
+# Frost architecture
 
 This document describes how the Frost compiler is structured today and the
 direction it is moving. It is kept honest. It states what works, what is
@@ -39,7 +39,7 @@ Source (.frost)
   object -> exe        C -> exe             direct run
 ```
 
-The **typed IR** is the single spine. Reference and move checking are discharged
+The typed IR is the single spine. Reference and move checking are discharged
 before it on the AST, type checking and the linear consume discipline are
 discharged on the IR itself, and every backend emits from it.
 `--native` / `--link` lower to the IR and emit machine code via Cranelift.
@@ -152,7 +152,7 @@ same IR (`--emit-c`), which the system C compiler builds. Both use the
 correct type and operation for each value because the IR is fully typed, and
 `tests/native.rs` checks that the two backends agree on every program.
 
-**Working today**, verified by running native binaries (`tests/native.rs`):
+Working today, verified by running native binaries (`tests/native.rs`):
 
 - Integer arithmetic at every width with correct signedness, float
   arithmetic, bitwise and shift operators.
@@ -176,7 +176,7 @@ correct type and operation for each value because the IR is fully typed, and
   length, `slice_len(s)` reads the length, and slices pass and return by value.
 - Borrows and pointers: parameter modes (`increment(mut x: i64)`), `^`
   dereference read/write, and raw pointer parameters (e.g.
-  `swap(a: ^i64, b: ^i64)`). The surface has no `&`; `lower_param_modes`
+  `swap(a: ^i64, b: ^i64)`). The surface has no `&`. `lower_param_modes`
   synthesizes the reference types the rest of the pipeline handles.
 - Structs: layout with correct field alignment, construction, field read
   and write, borrowed struct and field parameters, mutation through a
@@ -267,9 +267,9 @@ fields rather than substituting a template: for each field it registers one
 scatter `c[handle] = value` lower to the slab's bounds-and-generation check
 (`frost_slot`) reused verbatim, selecting the column before indexing it, and
 `columns_new()` zero-initializes. It is the structure-of-arrays sibling of the
-slab; see [native-pools.md](native-pools.md).
+slab. See [native-pools.md](native-pools.md).
 
-**Not yet in the native backend** (these fail loudly, they are not silently
+Not yet in the native backend (these fail loudly, they are not silently
 miscompiled): growable or heap-backed collections. Capturing closures are absent by design,
 since the language uses function pointers and non-capturing function literals,
 both of which the native backend supports. There is no other backend to fall
@@ -292,22 +292,22 @@ non-goals, and why Frost is data-oriented rather than object-oriented.
 
 Frost is being reshaped toward a data-oriented language with:
 
-- Plain data (copy/move), **linear resources** that must be consumed exactly
-  once, and generational **handles** into explicit pools.
-- **Parameter modes** rather than reference syntax: unmarked reads, `mut`
+- Plain data (copy/move), linear resources that must be consumed exactly
+  once, and generational handles into explicit pools.
+- Parameter modes rather than reference syntax: unmarked reads, `mut`
   writes, `move` takes ownership, and the compiler inserts the borrow at the
   call. `&`/`&mut` are not surface syntax, so a borrow has nowhere to be stored
   and is second-class by construction (`src/param_modes.rs`).
-- **Regions** without lifetimes: a `with arena { }` block owns an arena, and a
+- Regions without lifetimes: a `with arena { }` block owns an arena, and a
   raw pointer into it may not outlive the block. A function's frame is checked
   the same way, so a pointer or slice naming a local cannot be returned
   (`src/regions.rs`).
-- **Allocation sources**: `uses A` draws an allocation capability, threaded as
+- Allocation sources: `uses A` draws an allocation capability, threaded as
   an implicit parameter and supplied by the `with` block that provides it
   (`src/allocation_sources.rs`).
-- **Failure sets**: `-> T ! E` says how a function fails and `?` hands a failure
+- Failure sets: `-> T ! E` says how a function fails and `?` hands a failure
   on, desugared to an ordinary enum and match (`src/failure_sets.rs`).
-- **Compile-time arguments**: `$T` for types, `$N` for values, and `$f` for a
+- Compile-time arguments: `$T` for types, `$N` for values, and `$f` for a
   function, so a generic algorithm calls its comparator directly rather than
   through a pointer. A function argument may declare the signature it needs
   (`$before: fn(T, T) -> bool`), checked at the call with that call's type
@@ -323,25 +323,25 @@ Frost is being reshaped toward a data-oriented language with:
 
 `src/ownership.rs` runs after parsing and enforces two rules:
 
-- **Second-class borrows.** The reference types this pass sees are synthesized
+- Second-class borrows. The reference types this pass sees are synthesized
   by `lower_param_modes`, since the surface has none. One cannot be stored in a
   struct or enum field, and cannot be returned from a function or extern.
   Reference *parameters* are the point, and `Handle<T>` (a generational index,
   not a reference) can be stored and returned freely. Because a borrow cannot
   escape, borrow analysis stays scope-local.
-- **Borrow exclusivity.** A `mut` borrow is exclusive. A variable cannot be
+- Borrow exclusivity. A `mut` borrow is exclusive. A variable cannot be
   passed to more than one `mut` parameter, or to both a `mut` and a read
   parameter, within a single call. Multiple read borrows are fine. Because
   borrows are second-class, this per-call check is enough to keep mutable
   aliasing out.
-- **Move checking.** Per function body, a value of a move type (a struct,
+- Move checking. Per function body, a value of a move type (a struct,
   enum, or slice, anything not `Copy`) is consumed when it is passed to a
   `move` parameter, assigned, or returned. Using it again is a use-after-move
   error. A read or `mut` parameter, field access (`x.f`), and dereference do
   not consume, and copy types (integers, floats, bools, pointers, references,
   handles, and `str`) are never
   moved.
-- **Linear resources.** A struct or enum declared `linear`
+- Linear resources. A struct or enum declared `linear`
   (`File :: linear struct { ... }`) is a resource that must be consumed
   exactly once. The move checker's use-after-move rule gives "at most once".
   The "exactly once" half, the leak check, is discharged separately on the IR
@@ -369,15 +369,15 @@ lattice, joining at merge points, so it handles `if`, `match`, and loop back
 edges directly rather than by structured approximation. It reports a value
 consumed more than once, consumed before it holds a resource, or a linear local
 still owned on a path to a return (a leak), each located at the source line the
-value was created on. A leak is caught here; a use-after-move is caught on the
-AST; both point at a line.
+value was created on. A leak is caught here. A use-after-move is caught on the
+AST. Both point at a line.
 
 ### Roadmap
 
 1. Discharge ownership on the IR. *(Partly done: the linear consume discipline
    now runs as a CFG dataflow pass in `src/ir_ownership.rs`. Move tracking and
    borrow exclusivity stay on the AST, where the move-versus-borrow distinction
-   the IR erases is still visible; second-class borrows keep that analysis
+   the IR erases is still visible. Second-class borrows keep that analysis
    scope-local.)*
 2. A real type-checking pass on the IR. *(Done: `src/ir_typecheck.rs` runs on
    the typed IR after lowering and before either backend. It validates local

@@ -24,12 +24,12 @@ impl IrModule {
     // One `IrModule` per source module, each holding that module's own
     // functions and the specializations it instantiated. Every extern goes in
     // every part, since an extern is a declaration and an object that does not
-    // reference one simply does not emit it.
+    // reference one does not emit it.
     //
     // This is what makes each module a compilation unit. A specialization two
     // modules both instantiate appears in both parts, which is the duplication
     // the design accepts in exchange for a module's work depending only on the
-    // module; see docs/separate-compilation.md. `FROST_MODULE_REPORT` measures
+    // module. See docs/separate-compilation.md. `FROST_MODULE_REPORT` measures
     // how much of it there is.
     pub fn split_by_module(self) -> Vec<IrModule> {
         let mut order: Vec<u32> = Vec::new();
@@ -147,7 +147,7 @@ pub struct IrFunction {
     // Whether this symbol is private to its object file. True for
     // specializations and anonymous function literals, which are only ever
     // called from the module that produced them, and which therefore must not
-    // be exported: two modules that instantiate the same generic each emit
+    // be exported. Two modules that instantiate the same generic each emit
     // their own copy, and two objects exporting one name is a duplicate symbol.
     pub local: bool,
 }

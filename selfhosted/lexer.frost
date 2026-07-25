@@ -1,4 +1,4 @@
-// The lexer: source bytes to a flat arena of tokens, in one pass.
+// The lexer turns source bytes into a flat arena of tokens, in one pass.
 
 import "core.frost"
 
@@ -19,10 +19,10 @@ is_ident_cont :: fn(c: i64) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Lexer. One pass over the source builds a flat arena of tokens: identifiers
-// (keywords classified to their own kind), integer and string literals, and
-// every operator and punctuation mark. Whitespace and `//` comments are dropped
-// here so the parser never sees them.
+// Lexer. One pass over the source builds a flat arena of tokens, holding
+// identifiers (keywords classified to their own kind), integer and string
+// literals, and every operator and punctuation mark. Whitespace and `//`
+// comments are dropped here so the parser never sees them.
 // ---------------------------------------------------------------------------
 
 byte_of :: fn(src: ^i8, index: i64, len: i64) -> i64 {
@@ -182,7 +182,7 @@ tokenize :: fn(src: ^i8, len: i64, mut tokens: Arena<Token>) {
             }
             // A dot with a digit behind it continues the number rather than
             // starting a field access. The fractional part is not converted
-            // here: a float literal keeps its byte range and both backends
+            // here. A float literal keeps its byte range and both backends
             // hand the text to the tool that already knows how to read it.
             if (byte_of(src, i, len) == CH_DOT
                 && is_digit(byte_of(src, i + 1, len))) {

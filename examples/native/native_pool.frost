@@ -2,7 +2,7 @@
 // pool itself. The storage, the free list, the generation counters, the packed
 // handles, and the stale-handle check are all ordinary Frost code over a
 // fixed-size array inside a struct. Compare examples/native/typed_pool.frost,
-// which uses the compiler's Pool<T> type backed by the C runtime: this file
+// which uses the compiler's Pool<T> type backed by the C runtime. This file
 // shows the same data-oriented model expressed in the language itself.
 //
 // The one thing this cannot express as a library is `pool[handle].field = x`,

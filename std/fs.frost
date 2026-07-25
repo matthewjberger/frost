@@ -1,5 +1,5 @@
 // Reading and writing whole files. A read answers with the bytes as a `str`
-// over a fresh heap block, along with whether it succeeded; a write takes a
+// over a fresh heap block, along with whether it succeeded. A write takes a
 // `str` and reports the same. The buffer a read returns is the caller's to
 // free with fs_free.
 //

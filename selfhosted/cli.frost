@@ -1,5 +1,6 @@
-// The command line: what to compile, which backend to put it through, where the
-// result goes, and whether to finish the build by calling the system toolchain.
+// The command line covers what to compile, which backend to put it through,
+// where the result goes, and whether to finish the build by calling the system
+// toolchain.
 
 import "core.frost"
 
@@ -116,7 +117,7 @@ options_from_command_line :: fn() -> Options {
                 options.link = 1
             } else if (cstr_eq(argument, "--test")) {
                 // Running the tests means building an executable and running it,
-                // so there is no form of --test that does not also link.
+                // so a --test build always links as well.
                 options.testing = 1
                 options.link = 1
             } else if (cstr_eq(argument, "-L")) {

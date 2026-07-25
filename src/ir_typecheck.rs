@@ -27,7 +27,7 @@ fn is_runtime_intrinsic(name: &str) -> bool {
 pub fn check_module(module: &IrModule) -> Result<()> {
     let mut signatures: HashMap<&str, Signature> = HashMap::new();
     // A function another object defines is callable here and has a signature to
-    // check the call against; it simply has no body to check.
+    // check the call against. It has no body to check.
     for function in module.functions.iter().chain(module.imported.iter()) {
         signatures.insert(
             function.name.as_str(),
@@ -324,7 +324,7 @@ fn require_block(
 
 // Where an operand came from, so a type error points at source rather than only
 // naming the function it happened in. A local carries the position it was bound
-// at; a constant carries none, and the message stands on its own.
+// at. A constant carries none, and the message stands on its own.
 fn at(function: &IrFunction, operand: &IrOperand) -> String {
     let IrOperand::Local(id) = operand else {
         return String::new();

@@ -5,12 +5,12 @@ is about the first. [build-modes.md](build-modes.md) separates them.
 
 ## Which compiler is the compiler
 
-**`selfhosted/frost.frost` is the one people will use.** That is the
+`selfhosted/frost.frost` is the one people will use. That is the
 destination, and every other statement in this document follows from it. Frost
 is meant to be written in Frost, and the compiler someone downloads is meant to
 be the Frost one.
 
-**`src/*.rs` is the bootstrap.** Its job is to make writing the Frost compiler
+`src/*.rs` is the bootstrap. Its job is to make writing the Frost compiler
 possible, which it does in two ways. It compiles stage 0, so every feature
 `frost.frost` uses has to exist in Rust before a line of it can be written in
 Frost. And it is the oracle: the differential tests compare against it, so a
@@ -21,7 +21,7 @@ That fixes what the gap between them means. The bootstrap is ahead because a
 feature lands in Rust first, and being ahead is a stage of the work rather than
 a division of labour.
 
-**The target is parity, on both axes.** The self-hosted compiler implements the
+The target is parity, on both axes. The self-hosted compiler implements the
 full language, everything the bootstrap supports, and it is under the same speed
 promise, goal 8 in [philosophy.md](philosophy.md). Speed matters more there than
 here, because it is the compiler a user's edit-compile loop actually runs.
@@ -29,7 +29,7 @@ What is not yet ported is listed in
 [../selfhosted/README.md](../selfhosted/README.md), and the shape of each port
 is the four-step pattern at the end of this document.
 
-**It self-hosts twice over**, through its C backend and through its own x64
+It self-hosts twice over, through its C backend and through its own x64
 backend, each compiling its own source to a byte-identical fixpoint across three
 stages, checked by `self_hosting_is_a_fixpoint` and
 `native_self_hosting_is_a_fixpoint`. It checks the programs it compiles rather
@@ -66,10 +66,10 @@ on purpose.
 
 So there is one lever that matters:
 
-1. **Emit native code directly instead of C.** This removes the C compiler from
+1. Emit native code directly instead of C. This removes the C compiler from
    the loop entirely, which is exactly why Jai and Odin are fast. The reference
    compiler already proves the model with its Cranelift backend, emitting a
-   native object straight from the typed IR; the Frost-written compiler only has
+   native object straight from the typed IR. The Frost-written compiler only has
    the C path. Note the dependency: a native backend requires the compiler to
    type-check for itself first, because there is no longer a C compiler behind it
    to catch mistakes.
@@ -99,7 +99,7 @@ The only way to remove that last cost is to stop invoking an external tool at
 all, which means emitting the executable directly, PE on Windows and ELF on
 Linux. That is a mini-linker (symbol resolution, relocations, imports) and is
 what Jai does. Worth doing for self-containment more than for speed. Porting the
-runtime itself to Frost is the other half of going C-free; the pool model already
+runtime itself to Frost is the other half of going C-free. The pool model already
 exists in Frost in `examples/native/native_pool.frost`, and `--freestanding`
 already links with no libc, but it needs a prelude mechanism so a Frost-written
 runtime is compiled into every program.
@@ -138,7 +138,7 @@ C emission together stay near-linear because every one of them is a local pass:
 no traits to solve, no lifetimes to infer, no global inference, and the
 specialization worklist dedups through a hash set rather than a scan.
 
-What these numbers do **not** show is the shape problem, because every program
+What these numbers do not show is the shape problem, because every program
 here is a single file, so a change to one line rebuilds everything no matter how
 little it reaches. `just bench-incremental` is the measurement that does show it:
 9,484 lines across 65 files, one changed, about 580 ms full against about 200 ms
@@ -146,17 +146,17 @@ with `--incremental`. See [separate-compilation.md](separate-compilation.md).
 
 The backend used to be where the superlinear term lived, and is not any more:
 
-1. **Compile functions in parallel.** *Done.* The type system is local and
+1. Compile functions in parallel. *Done.* The type system is local and
    signature-based, so once signatures are collected functions are independent,
    which is a large part of why the language was designed the way it is. Code
    generation now runs on every core and is 64 ms of a 353 ms build at 58k
    lines.
-2. **Separate compilation per module.** *Done.* Each module is its own object on
+2. Separate compilation per module. *Done.* Each module is its own object on
    the link path, monomorphization is seeded per module, `--incremental` skips
    the modules an edit cannot reach, and a skipped module contributes signatures
    rather than bodies, so the front end no longer walks code it will not emit.
    See [separate-compilation.md](separate-compilation.md).
-3. **Cache specializations across builds.** Now subsumed: a module's object
+3. Cache specializations across builds. Now subsumed, since a module's object
    holds the specializations that module asked for, and reusing the object
    reuses them.
 
@@ -200,7 +200,7 @@ Second-order levers, worth doing but small next to the above:
 The self-hosted compiler checks its own programs now rather than deferring to whatever compiles
 its output. In dependency order:
 
-1. **Self type-checking.** Required before (3), because once the self-hosted compiler stops
+1. Self type-checking. Required before (3), because once the self-hosted compiler stops
    emitting C there is no C compiler behind it to catch anything.
 
    Done, and free. Every check was measured by running the build before and after
@@ -233,24 +233,24 @@ its output. In dependency order:
    which is enough for these checks but would need reworking for flow-sensitive
    ones.
 
-2. **Ownership and linearity.** Done, and also free.
+2. Ownership and linearity. Done, and also free.
 
    - Use after move. A struct handed to a parameter that does not borrow is
      moved out of the caller, so reading it afterwards reads a value that was
      given away.
-   - Linear types. `linear struct` marks a resource; `is_linear` is recorded on
+   - Linear types. `linear struct` marks a resource. `is_linear` is recorded on
      the definition, and at the end of each body every linear value must have
      been handed on, by being returned or passed to a parameter that takes
      ownership. Together with the move check this is linearity proper, consumed
      exactly once: never consumed is a leak, consumed twice is a use after move.
 
    Note the shape of a real consumer. A read parameter of struct type borrows,
-   so it does not consume; consuming takes `move`, as in
+   so it does not consume. Consuming takes `move`, as in
    `close :: extern fn(move f: File)`. A function that takes a linear value by
    `move` and only reads a field out of it is correctly rejected, because the
    resource dies there.
 
-3. **Native backend.** Done, and self-hosting with no C compiler in the loop.
+3. Native backend. Done, and self-hosting with no C compiler in the loop.
 
    The compiler emits assembly for its own 3500 lines, that assembly assembles
    into a compiler, and that compiler emits the same 29,545 lines of assembly
@@ -274,7 +274,7 @@ its output. In dependency order:
      first-stage compiler is built by the reference compiler and never runs this
      assembly. When a stage fails, check which one before assuming the emitter
      crashed.
-4. **Allocation sources.** Done. `uses A` on a function and `with a { }` around
+4. Allocation sources. Done. `uses A` on a function and `with a { }` around
    a call, mirroring `src/allocation_sources.rs`.
 
    The capability is an implicit trailing parameter that borrows its source, so
@@ -293,7 +293,7 @@ its output. In dependency order:
    lower to `int64_t` whatever it returned, so it could not return a pointer.
    It now emits its declared return type.
 
-5. **Regions.** Done, mirroring `src/regions.rs`. A `with` block is a region and
+5. Regions. Done, mirroring `src/regions.rs`. A `with` block is a region and
    a raw pointer derived from its arena may not be stored outside the block or
    returned. A binding declared inside may hold one, since it dies with the
    block, and reading through it is the point.
@@ -308,7 +308,7 @@ its output. In dependency order:
    pointer back to its caller, where the caller's region checks it, but may not
    store one into a parameter, which outlives the call.
 
-6. **Failure sets.** Done. `-> T ! E` says a function answers with a T or fails
+6. Failure sets. Done. `-> T ! E` says a function answers with a T or fails
    with an E, and `e?` hands the failure on.
 
    Both lower to what the compiler already had. A failure set is a struct
@@ -328,7 +328,7 @@ its output. In dependency order:
    already provides: `__Result<n>` per failure set, `__try<n>` per `?`, and the
    three field names.
 
-8. **Enums with payloads.** Done. `Kind :: enum { Player, Enemy { damage: i64 } }`,
+8. Enums with payloads. Done. `Kind :: enum { Player, Enemy { damage: i64 } }`,
    `Kind::Enemy { damage = 15 }`, and `case .Enemy { damage }:` in a match.
 
    An enum is a struct carrying a tag beside every variant's fields, each field
@@ -368,7 +368,7 @@ its output. In dependency order:
    struct fields sit on their own alignment, and a byte is loaded and stored
    with byte instructions. The C backend was always right here, which is how
    this survived so long.
-7. **Imports.** Done. `import "path"` names a file whose declarations join this
+7. Imports. Done. `import "path"` names a file whose declarations join this
    one's.
 
    Every file's text reaches one buffer, so a name stays what it is everywhere
@@ -385,7 +385,7 @@ its output. In dependency order:
    generic function took the template's return type, which still mentions the
    type parameter, so two arenas over different elements came out as the same
    type. The concrete return type per instantiation was already computed for the
-   native backend; it now runs before either backend, so a call answers with it
+   native backend. It now runs before either backend, so a call answers with it
    everywhere.
 
    `export a, b` lists what a file offers. A top-level name not listed is the
@@ -399,7 +399,7 @@ its output. In dependency order:
    from one file has one module, so the first comparison answers yes and this
    costs nothing.
 
-Param modes are already done: the self-hosted compiler lowers `mut`/`move`/read to pointers and
+Param modes are already done. The self-hosted compiler lowers `mut`/`move`/read to pointers and
 inserts the borrow at call sites.
 
 ## How to do each port
@@ -414,6 +414,6 @@ The pattern that worked for param modes:
 4. Commit each stage separately.
 
 The bootstrap stays the oracle throughout. Note what that oracle does and does
-not check: it says the two compilers agree, not that either is right. The
+not check. It says the two compilers agree, not that either is right. The
 mixed-width arithmetic bug survived it, because every backend agreed on the
 wrong answer. A port needs a program with expected output too.

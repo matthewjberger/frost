@@ -1,4 +1,4 @@
-# The Frost Language Specification
+# The Frost language specification
 
 This is the reference specification for the Frost language as implemented by the
 native, data-oriented compiler (the `--native`, `--link`, `--emit-c`, and
@@ -46,7 +46,7 @@ Grammar rules use EBNF:
 ### 1.2 Parsing discipline
 
 The language is parsed by recursive descent with a Pratt (precedence-climbing)
-expression parser and **bounded lookahead**. Statement and type selection is
+expression parser and bounded lookahead. Statement and type selection is
 decided by the first one to three tokens. The specific lookahead each decision
 uses is stated in the grammar. Expression parsing is driven by the operator
 precedence table in 14.1. The parser does not backtrack past a committed
@@ -123,23 +123,23 @@ identifier recognized in that position, not a keyword.
 
 ### 2.5 Literals
 
-**Integer**. `INTEGER = DIGIT+`. Decimal only. No digit separators, no
+Integer. `INTEGER = DIGIT+`. Decimal only. No digit separators, no
 hexadecimal, octal, or binary prefixes. Integer literals are non-negative. A
 negative value is the prefix `-` applied to one. An integer literal takes its
 type from context, defaulting to `i64`.
 
-**Float**. `FLOAT = DIGIT+ "." DIGIT+`, with an optional `f` or `f32` suffix that
+Float. `FLOAT = DIGIT+ "." DIGIT+`, with an optional `f` or `f32` suffix that
 makes it an `f32`, otherwise it is `f64`. A `.` is only taken as a decimal point
 when the following character is not another `.`, so `0..10` lexes as a range.
 There is no exponent notation and no leading-dot form.
 
-**String**. Delimited by `"`, with escapes `\n`, `\t`, `\r`, `\0`, `\\`, `\"`,
+String. Delimited by `"`, with escapes `\n`, `\t`, `\r`, `\0`, `\\`, `\"`,
 `\'`. Any other escape is an error. There are no numeric or Unicode escapes. A
 string literal has type `str` (3.7) and denotes a view of its bytes. Where `^i8`
 is expected it instead denotes a pointer to the same bytes with a trailing NUL,
 which is how string literals interoperate with C.
 
-**Boolean**. `true`, `false`, of type `bool`.
+Boolean. `true`, `false`, of type `bool`.
 
 ### 2.6 Operators and punctuation
 
@@ -167,28 +167,28 @@ parser splits when it closes nested generic arguments (11.4).
 | `bool` | boolean | 1 |
 | `void` | the unit/empty type | 0 |
 
-All scalar types are **copy** types (chapter 8). Integer arithmetic wraps at the
+All scalar types are copy types (chapter 8). Integer arithmetic wraps at the
 type width with two's-complement semantics and is never checked for overflow.
 Mixed-width integer arithmetic is permitted. The narrower operand widens to the
 wider type.
 
 ### 3.2 Aggregate types
 
-- **Structs** `Name`, declared `Name :: struct { field: T, ... }`, are exactly
+- Structs `Name`, declared `Name :: struct { field: T, ... }`, are exactly
   their fields in declaration order, with natural alignment.
-- **Enums** `Name`, declared `Name :: enum { Variant, Variant { f: T }, ... }`,
+- Enums `Name`, declared `Name :: enum { Variant, Variant { f: T }, ... }`,
   are a discriminant plus the active variant's payload. Variants may be unit or
   carry named fields, and one enum may mix both. An enum takes type parameters
   exactly as a struct does, `Maybe :: enum($T: Type) { Nothing, Just { value: T } }`,
   and instantiates the same way (chapter 11).
-- **Fixed arrays** `[N]T` are `N` contiguous `T`. The length is part of the type
+- Fixed arrays `[N]T` are `N` contiguous `T`. The length is part of the type
   and every index is bounds-checked (10.4).
-- **Slices** `[]T` are a pointer/length view of a run of `T`, sixteen bytes and a
+- Slices `[]T` are a pointer/length view of a run of `T`, sixteen bytes and a
   copy value, the same fat-pointer shape as `str` (which is `[]u8`). An array
   coerces to a slice of the whole array, `s[i]` is bounds-checked against the
   runtime length (10.4), and `slice_len(s)` reads the length in constant time.
 
-Aggregates are **move** types (chapter 8), copied by value at call and return
+Aggregates are move types (chapter 8), copied by value at call and return
 boundaries unless passed by borrow, with no `Copy` derive.
 
 Frost has no visibility modifiers. There is no `pub` and no private. Every struct
@@ -206,7 +206,7 @@ stored, which is what makes it second-class by construction rather than by rule.
 
 `ptr_to(place)` yields a `^T` to a place. `ptr_cast($T, p)` reinterprets a
 pointer as `^T` at no runtime cost. These are the low-level tools an allocator
-uses to hand back typed memory from a byte buffer; ordinary code does not need
+uses to hand back typed memory from a byte buffer. Ordinary code does not need
 them, and a pointer carries no safety guarantee once it is formed.
 
 A pointer or a slice that names storage in the current frame may not be
@@ -254,7 +254,7 @@ that type, with nothing special about it.
 
 `str` is an immutable, non-owning view of a run of bytes. It is a pointer and a
 length, sixteen bytes, laid out as the byte pointer at offset 0 and the length
-(a `usize`) at offset 8. It owns nothing, so it is a **copy** type (chapter 8),
+(a `usize`) at offset 8. It owns nothing, so it is a copy type (chapter 8),
 freely duplicated with no move and nothing to release. In this it is the byte
 form of a slice (`[]u8`).
 
@@ -335,13 +335,13 @@ time. So `STRIDE :: POSITION + NORMAL + UV` and `MASK :: 1 << FLAG_BIT` name a
 computed value, and the result may be used where a compile-time integer is
 required, such as an array length `[STRIDE]f32`. A constant whose value is a
 single other name (`X :: Y`) is not written, since `Enum::Variant` shares that
-shape; a constant that refers to one name combines it with an operator.
+shape. A constant that refers to one name combines it with an operator.
 
 A `linear` qualifier may precede `struct` or `enum` (chapter 9).
 
 An `inline` qualifier may precede `fn` (`f :: inline fn(...) -> R { ... }`). It
 asks the C backend to force the function inline (`static inline
-__attribute__((always_inline))`); the assembly backend, which does not inline,
+__attribute__((always_inline))`). The assembly backend, which does not inline,
 ignores it. It changes no semantics, only whether the C compiler is obliged to
 fold the call rather than merely permitted to.
 
@@ -443,7 +443,7 @@ Shape::Player                         // unit variant
 Struct and enum-variant construction are recognized only when the operand to the
 left of `{` or `::` is a bare identifier.
 
-**A literal must write every field.** There is no partial construction, no
+A literal must write every field. There is no partial construction, no
 `..rest`, and no implicit zero. A field left out would name storage nothing
 wrote, and reading it afterwards would read whatever was there, which is exactly
 the shape chapter 8 exists to make unrepresentable. A missing field is an error
@@ -501,17 +501,17 @@ lowest-binding binary form.
 A block `{ Stmt* }` is a sequence of statements and is itself an expression whose
 value is its trailing expression (or `void`).
 
-- **Expression statement**, an expression evaluated for effect.
-- **Binding**, the forms in 5.1.
-- **Assignment**, `Place = Expr`, where `Place` is a `mut` local, a field, an
+- Expression statement, an expression evaluated for effect.
+- Binding, the forms in 5.1.
+- Assignment, `Place = Expr`, where `Place` is a `mut` local, a field, an
   index, or a dereference.
-- **`return`**, `return` or `return Expr`.
-- **`while`**, `while ( Cond ) Block`.
-- **`for`**, `for name in Expr Block` iterates `name` over the value of `Expr`,
+- `return`, `return` or `return Expr`.
+- `while`, `while ( Cond ) Block`.
+- `for`, `for name in Expr Block` iterates `name` over the value of `Expr`,
   normally a range.
-- **`break`** and **`continue`** are loop control.
-- **`defer`**, `defer Stmt` runs `Stmt` at scope exit, LIFO (chapter 9.3).
-- **`print`**, `print Expr` writes the value and a newline to standard output, an
+- `break` and `continue` are loop control.
+- `defer`, `defer Stmt` runs `Stmt` at scope exit, LIFO (chapter 9.3).
+- `print`, `print Expr` writes the value and a newline to standard output, an
   integer as `%lld` and a float as `%g`. A convenience for small programs and the
   standard library's examples, not a general formatting facility.
 
@@ -524,7 +524,7 @@ borrow rules run after parsing (`src/ownership.rs`).
 
 ### 8.1 Copy and move
 
-Each type is **copy** or **move**. Scalars, pointers, function pointers, handles,
+Each type is copy or move. Scalars, pointers, function pointers, handles,
 strings, and slices are copy: a slice and a `str` are a pointer and a length, and
 copying one copies that pair rather than what it names. Structs and enums are
 move. A
@@ -564,7 +564,7 @@ intended replacement for an escaping borrow.
 
 ### 9.1 The linear rule
 
-A struct or enum declared `linear` must be consumed **exactly once**. The move
+A struct or enum declared `linear` must be consumed exactly once. The move
 rule gives "at most once". Linearity adds "at least once". A linear value still
 live at the end of its owning scope is a compile error.
 
@@ -707,7 +707,7 @@ An instantiation supplies an integer where a value parameter stands
 `[4]Entity` for that instance. Value parameters are erased from the specialized
 type the same way type parameters are.
 
-**A function takes them too**, which is what lets an operation over a sized
+A function takes them too, which is what lets an operation over a sized
 aggregate be written once rather than once per size:
 
 ```
@@ -798,7 +798,7 @@ it, and that is checked when the specialization is compiled.
 
 A module is a file. `import "x.frost"` splices that file's declarations into the
 program, and a file's `export` line is the complete set of names another file
-can use from it; everything else is private and mangled so it cannot collide.
+can use from it. Everything else is private and mangled so it cannot collide.
 
 An import is looked for beside the importing file first, then in directories
 given with `-L`, then in `FROST_PATH`, then in those a `frost.json` beside the
@@ -822,15 +822,15 @@ Frost scalar types map to the natural C types and `^T` is a C pointer. String
 literals denote NUL-terminated bytes for `^i8` parameters. An `extern` takes
 parameter modes like any other function.
 
-**Aggregate parameters and aggregate returns are not symmetric**, and the
+Aggregate parameters and aggregate returns are not symmetric, and the
 asymmetry is deliberate.
 
-- An aggregate **parameter** is passed as a pointer to the value, so
+- An aggregate parameter is passed as a pointer to the value, so
   `close :: extern fn(f: File)` links against a C `void close(File*)`. This is a
   convention rather than the C ABI, chosen because most C APIs take structs by
   pointer, and it is what lets a `linear` resource have a terminal consumer
   across the boundary. Passing a struct to C by value has no spelling.
-- An aggregate **return** is by value, following the target's real C ABI: in
+- An aggregate return is by value, following the target's real C ABI: in
   registers where that target's rule says so, and through a hidden pointer where
   it does not. A return could not have been a convention, because `-> Ctx` has
   to mean what C means by it and `-> ^Ctx` is how a returned pointer is written.
@@ -838,7 +838,7 @@ asymmetry is deliberate.
 ### 12.1 Callbacks
 
 An `extern` whose parameter list has a `$` parameter bound to a function
-signature is a **callback registration**:
+signature is a callback registration:
 
 ```
 Ctx :: struct { hits: i64 }
@@ -847,11 +847,11 @@ on_event         :: fn(mut ctx: Ctx, code: i64) { ctx.hits = ctx.hits + code }
 register_handler :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64
 ```
 
-The handler's **first parameter is the context** and must be written `mut`.
+The handler's first parameter is the context and must be written `mut`.
 Whichever parameter of the extern has that type is the one the context is taken
 from, found by type rather than by position because C libraries put the userdata
 on either side of the function pointer, and it must be taken by `move`. The call
-passes the handler's address and the context's address; there is no generated
+passes the handler's address and the context's address. There is no generated
 trampoline, because a `mut` parameter is already a pointer in the signature and
 Frost and C share a calling convention.
 
@@ -860,7 +860,7 @@ caller cannot touch the context while the callback can fire. A registration is
 normally a `linear` value, so it must be consumed, and the region check refuses
 to let it leave the frame that holds its context.
 
-The FFI is otherwise asymmetric. **Frost calls C, but C does not call Frost**,
+The FFI is otherwise asymmetric. Frost calls C, but C does not call Frost,
 except through a registered callback, which is the one place a C library holds a
 Frost function pointer. There is no stable exported ABI and no attribute to
 expose a Frost function to a C caller. The emitted C is an internal lowering,

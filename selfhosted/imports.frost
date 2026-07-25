@@ -1,4 +1,4 @@
-// Import resolution: every file's text into one buffer, dependencies first.
+// Import resolution puts every file's text into one buffer, dependencies first.
 
 import "core.frost"
 import "lexer.frost"
@@ -80,7 +80,7 @@ join_under :: fn(directory: ^i8, src: ^i8, off: i64, len: i64) -> ^i8 {
     }
 }
 
-// Where an import is found: beside the file that named it first, then under
+// An import is found beside the file that named it first, then under
 // each directory the command line or the environment offered, then under the
 // standard library. Beside-first is what lets a project's own files name each
 // other without a search path, and the rest is what lets `std/strings.frost`
@@ -298,9 +298,9 @@ blank_range :: fn(buffer: ^i8, from: i64, through: i64) {
     }
 }
 
-// The directories an import may be found under, most deliberate first: what the
-// command line said, then what the environment did, then the standard library
-// beside the compiler's own checkout.
+// The directories an import may be found under, most deliberate first. What the
+// command line said, then what the environment did, and then the standard
+// library beside the compiler's own checkout.
 search_roots_from :: fn(mut roots: Arena<SearchRoot>) {
     unsafe {
         named := frost_getenv("FROST_PATH")

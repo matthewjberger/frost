@@ -1,4 +1,4 @@
-# Frost for Rust Programmers
+# Frost for Rust programmers
 
 This guide explains Frost to someone who already thinks in Rust. It assumes you
 are comfortable with ownership, borrows, lifetimes, traits, `Drop`, and
@@ -10,30 +10,30 @@ Read [philosophy.md](philosophy.md) for the reasoning behind the design and
 [memory-safety.md](memory-safety.md) for the safety argument in full. This
 document is the practical bridge.
 
-## The one idea to internalize first
+## Second-class borrows instead of lifetimes
 
-Rust makes references safe with a borrow checker built on **lifetimes**. A
+Rust makes references safe with a borrow checker built on lifetimes. A
 reference carries a region `'a`, and the compiler proves no reference outlives
 its referent. That machinery is the price of letting references be first-class
 values you can store in structs, return from functions, and thread through data
 structures.
 
-Frost makes a different trade. Borrows are **second-class**, and they are not a
-type at all: there is no `&` in the language. How a parameter is passed is
+Frost makes a different trade. Borrows are second-class, and they are not a
+type at all. There is no `&` in the language. How a parameter is passed is
 written on the parameter (`p: T` reads, `mut p: T` mutates, `move p: T` takes),
 and the call site writes nothing. Because a borrow can only ever be a parameter,
 it cannot be stored in a field, put in an array, or returned, and the shapes that
 would let it escape are not expressible rather than merely rejected. So there is
-nothing to annotate and nothing to infer. Frost has **no lifetimes, no `'a`, no
-borrow regions, and no lifetime elision** because it does not need them.
+nothing to annotate and nothing to infer. Frost has no lifetimes, no `'a`, no
+borrow regions, and no lifetime elision because it does not need them.
 
 Everything else about the borrow system follows from that single decision.
 Where Rust reaches for a reference that must live somewhere (a graph node, a
-back-pointer, a cache), Frost reaches for a **generational handle** into a pool
+back-pointer, a cache), Frost reaches for a generational handle into a pool
 instead. If you keep that substitution in mind, most of the surprises below stop
 being surprises.
 
-## The 60-second Rosetta table
+## The Rosetta table
 
 | Rust | Frost |
 | --- | --- |
@@ -67,7 +67,7 @@ There is no `let`. A name is introduced with one of three operators:
 
 - `x := expr` binds a local with an inferred type. This is your everyday `let`.
 - `x : Type = expr` binds a local with an explicit type.
-- `NAME :: expr` declares a **constant**, evaluated once. Functions, structs,
+- `NAME :: expr` declares a constant, evaluated once. Functions, structs,
   enums, and top-level items are all constants, which is why every function is
   written `name :: fn(..)`.
 
@@ -91,8 +91,8 @@ what runs.
 
 ## Functions, and the absence of methods
 
-Frost is data-oriented, not object-oriented. There are **no methods, no `self`,
-no `impl` blocks, and no traits.** Behavior lives in free functions that take
+Frost is data-oriented, not object-oriented. There are no methods, no `self`,
+no `impl` blocks, and no traits. Behavior lives in free functions that take
 their data as parameters:
 
 ```
@@ -118,8 +118,8 @@ The scalar types are what you expect. They are `i8`, `i16`, `i32`, `i64`,
 `isize`, their unsigned `u*` counterparts, `f32`, `f64`, and `bool`. These are
 all copy types.
 
-The difference that will bite first is that **arithmetic wraps at the type width
-with two's-complement semantics, and is never checked for overflow.** Rust panics on
+The difference that will bite first is that arithmetic wraps at the type width
+with two's-complement semantics, and is never checked for overflow. Rust panics on
 overflow in debug and wraps in release. Frost always wraps, like Rust's
 `wrapping_add` family. A `u8` holding `200` plus `100` is `44`, and an `i32` at
 `2000000000` doubled is `-294967296`. Do not rely on overflow being caught.
@@ -142,11 +142,11 @@ shortcut is the string literal, which the compiler also lays down NUL-terminated
 so a literal passed where `^i8` is expected reaches C as a plain pointer at no
 cost. That is why the FFI examples below pass `"..."` straight to `printf`.
 
-Aggregates (`struct`, `enum`, fixed arrays) pass and return **by value**,
+Aggregates (`struct`, `enum`, fixed arrays) pass and return by value,
 copied at the call boundary, unless you pass a borrow. There is no implicit
 boxing and no hidden heap allocation anywhere.
 
-Fixed-size arrays are written `[N]T` and **every index is bounds-checked**. An
+Fixed-size arrays are written `[N]T` and every index is bounds-checked. An
 out-of-range access aborts at runtime rather than reading past the end. This is
 always on, with no `get`/`get_unchecked` split.
 
@@ -214,10 +214,8 @@ usually done by handing values to C's `printf`.
 
 ## The borrow system without lifetimes
 
-This is the section a Rust programmer should read twice.
-
 Shared and exclusive borrows mean what they mean in Rust, and the exclusivity
-rule is familiar: within a single call you may borrow a variable to read many
+rule is familiar. Within a single call you may borrow a variable to read many
 times or to mutate exactly once, never both. What is different is where you write
 it. There is no `&`. The mode is a property of the parameter:
 
@@ -231,8 +229,8 @@ The call is `f(x)` in all three cases. Which one it is comes from the signature
 you can go read, not from a sigil at the call, and the exclusivity check reads
 that signature too.
 
-Borrows are also **second-class**, which here means something stronger than
-"rejected": the shapes are not expressible. There is no reference type to write
+Borrows are also second-class, which here means something stronger than
+"rejected". The shapes are not expressible. There is no reference type to write
 in a struct field or a return position, so:
 
 - A borrow cannot be stored in a struct or enum field.
@@ -288,7 +286,7 @@ raw pointers far less often than you might expect.
 ## Moves, copies, and linear resources
 
 Move semantics match your Rust intuition. A non-copy value (a struct, enum, or
-other aggregate) is **moved** when passed by value, assigned, or returned, and
+other aggregate) is moved when passed by value, assigned, or returned, and
 using it afterward is a compile error:
 
 ```
@@ -297,12 +295,12 @@ consume(buf)
 // consume(buf)   // error: use of moved value 'buf'
 ```
 
-Copy-ness is decided by the **type category**, not by a `Copy` derive. Scalars,
+Copy-ness is decided by the type category, not by a `Copy` derive. Scalars,
 pointers, references, and handles are copy. Aggregates are move. There is no
 `#[derive(Clone)]` and no `.clone()`. If you want a second copy of an aggregate,
 you construct one.
 
-The larger divergence is how cleanup works. Frost has **no `Drop`**. In its
+The larger divergence is how cleanup works. Frost has no `Drop`. In its
 place is the `linear` qualifier, which changes the affine rule (use *at most*
 once) into a linear rule (use *exactly* once):
 
@@ -327,8 +325,8 @@ Two consequences a Rust programmer will appreciate:
 
 - Cleanup is a checked obligation you can see in the code, not an implicit call
   that runs at a brace you have to imagine. There is no drop order to reason
-  about and no `mem::forget` footgun. Forgetting is simply a compile error.
-- A `linear enum` returned from a fallible function **cannot be ignored**. Where
+  about and no `mem::forget` footgun. Forgetting is a compile error.
+- A `linear enum` returned from a fallible function cannot be ignored. Where
   Rust leans on `#[must_use]` as a lint, Frost makes must-use a type rule.
   The result has to be consumed, so a failure cannot be silently dropped.
 
@@ -348,11 +346,11 @@ Think of it as Go's `defer` rather than a Rust guard object. For resources with
 real ownership, prefer a `linear` type. Use `defer` for local, best-effort
 scope-exit actions.
 
-## Handles and pools: the replacement for `Rc`, `Arc`, and back-references
+## Handles and pools, the replacement for `Rc`, `Arc`, and back-references
 
 This is where you put everything that Rust would model with `Rc<RefCell<T>>`,
 `Arc`, a `Vec<T>` plus indices, or a graph of references. Long-lived, shared,
-or interlinked data lives in a **pool** and is named by a **`Handle<T>`**, a
+or interlinked data lives in a pool and is named by a `Handle<T>`, a
 small copyable value that is an index plus a generation, not a pointer.
 
 ```
@@ -370,7 +368,7 @@ printf("%lld\n", world[h].hp)       // 100
 world[h].hp = world[h].hp - 25      // pool[handle] is a place you can write
 ```
 
-`pool[handle]` is a **place**. You can read a field, write a field, copy the
+`pool[handle]` is a place. You can read a field, write a field, copy the
 element out, or take a `&`/`&mut` of it. The borrow you get is second-class like
 any other, so it cannot escape the pool operation. The subscript lowers to the
 pool runtime, so the `pool_*` functions it uses (`pool_get` here) must be
@@ -445,8 +443,8 @@ world := make_pool($Entity, 16)     // like make_pool::<Entity>(16)
 type parameter. Type parameters are erased after monomorphization and carry no
 runtime cost. They drive the specialization and then vanish from the ABI.
 
-There are **no traits, so no `where` clauses, no associated types, and no `dyn
-Trait`.** A generic function is generic over any type its body actually
+There are no traits, so no `where` clauses, no associated types, and no `dyn
+Trait`. A generic function is generic over any type its body actually
 type-checks against once specialized.
 
 Where Rust would write `T: Ord` and call `a.cmp(&b)`, Frost takes the operation
@@ -489,18 +487,18 @@ double :: fn(x: i64) -> i64 { x * 2 }
 apply(double, 21)    // 42
 ```
 
-There are **no capturing closures**, and therefore no `Fn` / `FnMut` / `FnOnce`
+There are no capturing closures, and therefore no `Fn` / `FnMut` / `FnOnce`
 distinction and no closure environment. Where a Rust closure would capture
 state, you pass that state explicitly as another argument. This keeps every
 indirect call a plain function pointer with no hidden allocation and no captured
 lifetimes to reason about. In practice, callback-style code threads a context
 value alongside the function pointer, the same pattern C uses.
 
-Registering a callback **with a C library** is the one case where that pattern
+Registering a callback with a C library is the one case where that pattern
 gets language support, because it is the case where the context outlives the
 call. It is written as a `$` function parameter on an `extern` plus a context
 taken by `move`, and it is closer to Rust's `Box::into_raw` plus a
-`extern "C" fn` shim than to a closure: the context is handed over, the caller
+`extern "C" fn` shim than to a closure. The context is handed over, the caller
 cannot touch it while the callback can fire, and getting it back is what
 unregistration is for. Unlike the Rust version there is no `unsafe` and no raw
 pointer in what you write. See chapter 12.1 of [spec.md](spec.md).
@@ -521,7 +519,7 @@ here that corresponds to `const fn` or macro expansion.
 
 ## Calling C
 
-FFI is a first-class, zero-glue path. Declaring an external function is a
+FFI is a zero-glue path. Declaring an external function is a
 constant whose value is an `extern fn`:
 
 ```
@@ -534,7 +532,7 @@ ABI, and a `^T` is a C pointer. This is how the examples reach `printf`,
 `malloc`, and the pool runtime.
 
 One asymmetry to note, coming from Rust's `extern "C"` and `#[no_mangle]`, is
-that **Frost calls C, but C does not call Frost.** There is no stable exported ABI
+that Frost calls C, but C does not call Frost. There is no stable exported ABI
 and no attribute to expose a Frost function to a C caller. The C that the
 compiler emits internally is a lowering detail, not an interface. If you need a
 library other languages link against, that is out of scope. The asymmetry is
@@ -583,7 +581,7 @@ files pulled in by `import`, not as a module tree with visibility rules.
 - A `linear` value must be consumed on every path, or it is a compile error.
 - Integer arithmetic wraps. Do not rely on overflow being caught.
 
-## A worked example: a tiny entity system
+## A worked example, a tiny entity system
 
 This is the idiom you will use constantly, the Frost answer to a `Vec` of
 objects with cross-references. Entities live in a pool, are named by handles,
@@ -626,7 +624,7 @@ main :: fn() -> i64 {
 }
 ```
 
-Notice what is doing the work. Entities are stored by value in the pool,
+Entities are stored by value in the pool,
 handles are the things that get passed around and stored, borrows (the argument
 to `delta`) last only for the duration of a call, and freeing a slot invalidates old
 handles by generation rather than by any lifetime the compiler had to track.

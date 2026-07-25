@@ -9,7 +9,7 @@ use crate::types::Type;
 
 // Lowers allocation sources. A `uses A` function draws an allocation capability
 // of type A. The capability is an implicit `&mut A` parameter, in scope under the
-// type's name (first letter lowercased), threaded automatically: a call from
+// type's name (first letter lowercased), threaded automatically. A call from
 // another `uses A` function forwards the caller's capability, and a call inside a
 // `with arena { ... }` block is supplied `&mut arena`. A call from neither is
 // rejected. After this pass a `uses A` function is an ordinary function with a
@@ -17,7 +17,7 @@ use crate::types::Type;
 
 // Where the capability for the next `uses` call comes from.
 enum Provider {
-    // No capability is available here; a `uses` call is an error.
+    // No capability is available here. A `uses` call is an error.
     None,
     // Forward the enclosing function's capability parameter, by name.
     Forward(String),
@@ -28,7 +28,7 @@ enum Provider {
 pub fn lower_allocation_sources(program: &mut Program) -> Result<()> {
     let mut uses_functions: HashMap<String, Type> = HashMap::new();
 
-    // First pass: give every `uses` function its implicit capability parameter.
+    // First pass. Give every `uses` function its implicit capability parameter.
     for statement in program.iter_mut() {
         if let Statement::Constant(
             name,
@@ -54,7 +54,7 @@ pub fn lower_allocation_sources(program: &mut Program) -> Result<()> {
         }
     }
 
-    // Second pass: thread the capability argument through calls and inline the
+    // Second pass. Thread the capability argument through calls and inline the
     // `with` blocks that provide it.
     let threader = Threader { uses_functions };
     for statement in program.iter_mut() {
@@ -103,7 +103,7 @@ impl Threader {
         let mut threaded = Vec::with_capacity(block.len());
         for statement in block {
             if let Statement::With(capability, body) = statement.node {
-                // The block is a region; inline it with the arena as provider.
+                // The block is a region. Inline it with the arena as provider.
                 let inner =
                     self.thread_block(body, &Provider::Provide(capability))?;
                 threaded.extend(inner);

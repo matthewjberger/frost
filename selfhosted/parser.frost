@@ -89,7 +89,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     if (kind == TOK_DOLLAR) {
         advance(p)
         // `$8` is a compile-time value argument, carried like a type argument
-        // but holding CONST_BASE plus the number; `$Entity` is a type argument.
+        // but holding CONST_BASE plus the number. `$Entity` is a type argument.
         if (cur(p) == TOK_INT) {
             value := CONST_BASE + cur_val(p)
             advance(p)
@@ -248,7 +248,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
 
 // Instantiate a generic struct against the bindings in force, for a bare
 // `Name { ... }` literal inside a generic body. The primary argument is the
-// current primary binding; each further argument is the current binding of the
+// current primary binding. Each further argument is the current binding of the
 // matching parameter name, so a multi-parameter generic resolves as a whole.
 instantiate_current :: fn(mut p: Parser, gi: i64) -> i64 {
     template := arena_at(p.structs, gi)
@@ -284,7 +284,7 @@ instance_generic_of :: fn(mut p: Parser, ty: i64) -> i64 {
 }
 
 // The struct type for a literal `Name { ... }`. A generic name resolves, under
-// an active binding, to the instance for the bound arguments; that is how the
+// an active binding, to the instance for the bound arguments. That is how the
 // bare `Arena { ... }` inside a generic function names the right instance.
 resolve_lit_type :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     gi := generic_index_for(p, offset, length)
@@ -507,7 +507,7 @@ parse_add :: fn(mut p: Parser) -> i64 {
 // a comparison and looser than a shift, so `a & mask == 0` groups as the C it
 // lowers to would. A shift binds tighter still, below `+`. None of the three is
 // used in this compiler's own source, so their precedence does not touch the
-// self-hosting fixpoint; they exist so handle packing, `(gen << 32) | index`,
+// self-hosting fixpoint. They exist so handle packing, `(gen << 32) | index`,
 // can be written in the language.
 parse_shift :: fn(mut p: Parser) -> i64 {
     mut left := parse_add(p)
@@ -624,7 +624,7 @@ consume_generic_close :: fn(mut p: Parser) {
 
 // Parse a type and return its type code. Each pointer prefix adds a pointer
 // level (a borrow is a C pointer). A leading `$` marks a type
-// parameter; if none is bound yet in the current generic, this use establishes
+// parameter. If none is bound yet in the current generic, this use establishes
 // it. `Generic<Arg>` instantiates the generic struct to a concrete one. A `<...>`
 // on a non-generic name is consumed and treated as i64.
 parse_type :: fn(mut p: Parser) -> i64 {
@@ -637,7 +637,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
     }
     // `fn(T, U) -> R` is a function pointer: the address of a function of that
     // signature, a callable value. A `mut` parameter is a borrow, the same as a
-    // `mut` parameter of a real function is; a `move` or plain one is the type
+    // `mut` parameter of a real function is. A `move` or plain one is the type
     // as written. With no `-> R` the function answers with nothing.
     if (cur(p) == TOK_KW_FN) {
         advance(p)
@@ -686,7 +686,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
                 length = cur_val(p)
             } else {
                 // A `[N]T` inside a generic body, where N is a value parameter,
-                // takes its length from the bound number; otherwise the name is
+                // takes its length from the bound number. Otherwise the name is
                 // a module constant.
                 bound := value_binding_of(p, cur_off(p), cur_len(p))
                 if (bound >= 0) {
@@ -750,7 +750,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
             consume_generic_close(p)
             base = synth_columns(p, element, n)
         }
-        // `Handle<T>` is a scalar, an i64 that names a slab slot; its element
+        // `Handle<T>` is a scalar, an i64 that names a slab slot. Its element
         // type comes from the slab it indexes, so the argument is consumed and
         // dropped. It is not a generic instance, so it is passed by value.
         else if (str_range_eq(p.src, offset, length, "Handle")) {
@@ -764,10 +764,10 @@ parse_type :: fn(mut p: Parser) -> i64 {
             advance(p)
             // Collect the argument run. An integer argument is a value generic
             // like the `8` in `Slab<Entity, 8>`, carried as CONST_BASE plus the
-            // number; anything else is a type. The first is the primary argument
+            // number. Anything else is a type. The first is the primary argument
             // and the rest go to the `gargs` run this instance owns.
             // Arguments are collected on the argbuf stack first, since parsing
-            // one that is itself a generic pushes to `gargs`; copying this
+            // one that is itself a generic pushes to `gargs`. Copying this
             // level's arguments out afterwards keeps its run there contiguous.
             buf_start := p.argbuf.count
             mut count : i64 = 0
@@ -873,8 +873,8 @@ parse_struct_fields :: fn(mut p: Parser) -> i64 {
 // struct whose emitted name is `<generic>_<index>`.
 // Record a generic parameter as it is declared. The first fills the primary
 // slot the single-parameter path already uses, so a one-parameter generic is
-// stored and mangled exactly as before; any further one is pushed to the
-// `gparams` run this declaration owns. The kind is not kept: a parameter is a
+// stored and mangled exactly as before. Any further one is pushed to the
+// `gparams` run this declaration owns. The kind is not kept. A parameter is a
 // type or a value by what binds to it.
 record_gparam :: fn(mut p: Parser, off: i64, len: i64) {
     if (p.type_param_len == 0) {
@@ -891,7 +891,7 @@ record_gparam :: fn(mut p: Parser, off: i64, len: i64) {
 
 // Bind every parameter of a generic while its body is re-parsed. The first
 // parameter uses the existing primary binding so the single-parameter path is
-// unchanged; the rest are pushed onto the `gbindings` stack from the argument
+// unchanged. The rest are pushed onto the `gbindings` stack from the argument
 // run and popped by restoring the stack's height afterwards. Returns the height
 // to restore to.
 push_bindings :: fn(mut p: Parser, tparam_off: i64, tparam_len: i64,
@@ -984,14 +984,14 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64, xarg_start: i64,
 // Frost, since "one array per field of T" is not writable in the type system,
 // so the compiler reflects over T's fields and builds it. An element whose
 // fields are named `storage`, `generations`, `free_list` or `free_count` is not
-// supported; those names are reserved for the container's own bookkeeping.
+// supported. Those names are reserved for the container's own bookkeeping.
 synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
     existing := columns_lookup(p, element, count)
     if (existing >= 0) {
         return existing
     }
     // A non-struct element (in particular the TY_PARAM placeholder while a
-    // generic template is being parsed) is not materialized; the real element
+    // generic template is being parsed) is not materialized. The real element
     // arrives when the template is instantiated.
     if (is_struct_ty(element) == false) {
         return element
@@ -1137,7 +1137,7 @@ parse_variant_case :: fn(mut p: Parser, subject: i64) -> i64 {
 // is, since it was not producing a value in the first place.
 // A branch's last statement, when it produces a value, becomes an assignment to
 // the name the whole construct stands for. This is what makes a branch an
-// expression: nothing about the branch itself changes, only where its answer
+// expression. Nothing about the branch itself changes, only where its answer
 // goes. A branch ending in something with no value was never producing one and
 // is left as it is.
 assign_block_value :: fn(mut p: Parser, head: i64, name_off: i64,
@@ -1329,7 +1329,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
 
     // `unsafe { ... }` is a block whose statements belong to the enclosing one.
     // The block is inlined, so what is emitted is identical to the same
-    // statements written bare; only its span is remembered, so the gate can
+    // statements written bare. Only its span is remembered, so the gate can
     // ask whether a node was written inside one.
     if (kind == TOK_KW_UNSAFE) {
         // An `unsafe { expr }` followed by an operator, as in
@@ -1422,7 +1422,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         return loop
     }
     // `with arena { ... }` supplies an allocation capability to everything the
-    // block calls. The block is the region: it is a plain scope once the calls
+    // block calls. The block is the region. It is a plain scope once the calls
     // inside it have been handed the arena.
     if (kind == TOK_KW_WITH) {
         advance(p)
@@ -1457,7 +1457,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     }
 
     // Otherwise the statement starts with a full expression. If `=` follows it is
-    // an assignment to that place; otherwise it is an expression statement (a
+    // an assignment to that place. Otherwise it is an expression statement (a
     // call). This is how `p.x = e`, `node^.next = e`, and `close(f)` are handled.
     expr := parse_expr(p)
     if (cur(p) == TOK_ASSIGN) {
@@ -1570,7 +1570,7 @@ parse_params :: fn(mut p: Parser) -> i64 {
             mut ty := parse_type_annotation(p)
             // A mode borrow of a value is passed by pointer, and the call site
             // takes its address automatically (auto_borrow = 1). `mut` always
-            // borrows; an unmarked read borrows a struct or generic instance and
+            // borrows. An unmarked read borrows a struct or generic instance and
             // passes a scalar by value. An already pointer-typed annotation
             // (a raw pointer) or a `move` stays as written.
             mut auto_borrow : i64 = 0
@@ -1599,7 +1599,7 @@ parse_params :: fn(mut p: Parser) -> i64 {
                 Node { kind = NODE_PARAM, a = auto_borrow, b = ty, c = length,
                     val = offset, next = 0 - 1, pos = cur_off(p) },
             )
-            // A `mut` parameter borrows exclusively; record it so the exclusivity
+            // A `mut` parameter borrows exclusively. Record it so the exclusivity
             // check can tell it from a shared read of an aggregate, which the
             // auto-borrow flag alone cannot.
             if (mode == 1) {
@@ -1623,7 +1623,7 @@ parse_params :: fn(mut p: Parser) -> i64 {
 }
 
 // A definition is `name :: fn(params) -> ret { body }`. The name, `::`, and `fn`
-// are consumed here; an optional `-> type` return annotation is parsed and
+// are consumed here. An optional `-> type` return annotation is parsed and
 // discarded (every function still lowers to an int64_t C function).
 parse_function :: fn(mut p: Parser) -> i64 {
     name_offset := cur_off(p)
@@ -1700,7 +1700,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
 
 // A struct definition. A plain `name :: struct { ... }` parses its fields now. A
 // generic `name :: struct($T: Type) { ... }` records its type parameter and the
-// token index of its `{`, then skips the body; each instantiation re-parses the
+// token index of its `{`, then skips the body. Each instantiation re-parses the
 // fields with the parameter bound.
 parse_struct :: fn(mut p: Parser) {
     name_offset := cur_off(p)
@@ -1720,7 +1720,7 @@ parse_struct :: fn(mut p: Parser) {
         // Collect every parameter. A parameter is a type parameter or a value
         // one by what binds to it, not by how it is declared, so the kind after
         // the colon is parsed and dropped. The first fills the primary slot the
-        // single-parameter path already uses; the rest form this struct's run in
+        // single-parameter path already uses. The rest form this struct's run in
         // the shared `gparams` arena.
         p.type_param_len = 0
         p.xparam_count = 0
@@ -1788,7 +1788,7 @@ parse_struct :: fn(mut p: Parser) {
 // ---------------------------------------------------------------------------
 
 // The variant of `enum_ty` with this name, or -1. A pattern written `.Circle`
-// names no enum, so a variant is found by its own name; two enums that each
+// names no enum, so a variant is found by its own name. Two enums that each
 // carry a variant of the same name are told apart by the scrutinee's type when
 // there is one.
 find_variant :: fn(mut p: Parser, enum_ty: i64, off: i64, len: i64) -> i64 {
@@ -1945,7 +1945,7 @@ parse_variant_value :: fn(mut p: Parser, enum_off: i64, enum_len: i64) -> i64 {
     mut variant_tag : i64 = 0
     if (index < 0) {
         // A construction in a generic template names a variant of an instance
-        // that does not exist yet; this parse is thrown away and re-done per
+        // that does not exist yet. This parse is thrown away and re-done per
         // instance where it resolves, so a placeholder tag stands in for now.
         if (p.saw_type_param == 1 && p.binding_active == 0) {
             variant_tag = 0
@@ -2045,7 +2045,7 @@ set_next_field :: fn(mut p: Parser, id: i64, following: i64) {
 }
 
 // Which side of the failure set a returned value is. Building the error type is
-// how a function fails; anything else is the value it answers with. A value
+// how a function fails. Anything else is the value it answers with. A value
 // already of the error type but not built here reads as an ok value, the same
 // way the reference compiler reads it.
 returns_failure :: fn(mut p: Parser, value: i64) -> bool {
@@ -2249,7 +2249,7 @@ parse_program :: fn(mut p: Parser) -> i64 {
             // so `Enum::Variant` is not read as a constant.
             parse_const(p)
         } else if (third != TOK_KW_FN && third != TOK_KW_INLINE) {
-            // Everything above is a form this compiler knows; anything else
+            // Everything above is a form this compiler knows. Anything else
             // would be read as a function and misparse into a crash far from
             // here, so name it where it is written instead. A declaration the
             // language has and this compiler has not yet reaches this.
@@ -2298,7 +2298,7 @@ parse_program :: fn(mut p: Parser) -> i64 {
 }
 
 // ---------------------------------------------------------------------------
-// Code generation: walk the arena and emit a C translation unit.
+// Code generation. Walk the arena and emit a C translation unit.
 // ---------------------------------------------------------------------------
 
 // Re-parse a generic function with its type parameter bound to `arg`, returning

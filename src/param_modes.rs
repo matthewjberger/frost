@@ -15,7 +15,7 @@ fn is_type_parameter(parameter: &Parameter) -> bool {
 
 // The reference-or-value type a parameter's mode desugars to. An explicit
 // reference type (legacy `&`/`&mut`) is left as written. `read` borrows a
-// non-copy value and copies a copy one; `mut` borrows exclusively; `move` takes
+// non-copy value and copies a copy one. `mut` borrows exclusively. `move` takes
 // the value.
 fn effective_type(parameter: &Parameter) -> Option<Type> {
     let ty = parameter.type_annotation.as_ref()?;

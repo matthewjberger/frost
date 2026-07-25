@@ -39,7 +39,7 @@ struct AnonRequest {
     return_sig: ReturnSignature,
     body: Block,
     // The module whose lowering produced this literal, carried for the same
-    // reason `Specialization` carries it: a generic instantiated from inside an
+    // reason `Specialization` carries it. A generic instantiated from inside an
     // anonymous function is work that module would have to do.
     requested_by: u32,
 }
@@ -184,7 +184,7 @@ fn build_module_inner(
             }
             // A function some other object defines. It contributes a
             // declaration so calls can be typed and emitted, and no body,
-            // which is the point: the module it came from is not being rebuilt.
+            // which is the point. The module it came from is not being rebuilt.
             Statement::Declared {
                 name,
                 params,
@@ -238,7 +238,7 @@ fn build_module_inner(
             };
             // The output is one object, so a specialization is emitted once no
             // matter how many modules ask for it. Per-module copies become
-            // possible only when each module emits its own object; see step 3
+            // possible only when each module emits its own object. See step 3
             // of docs/separate-compilation.md.
             if !emitted.insert((key, specialization.mangled_name.clone())) {
                 continue;
@@ -304,7 +304,7 @@ fn build_module_inner(
             });
             // A generic that instantiates another generic is still work the
             // asking module would have to do, so the attribution carries down,
-            // and so does the call site: the inner call was written inside a
+            // and so does the call site. The inner call was written inside a
             // template, and the line the reader wrote is the outer one.
             pending.extend(requested_at(
                 requested_by(requests, specialization.requested_by),
@@ -373,7 +373,7 @@ fn declared_function(
 }
 
 // What an extern's parameters are once C sees them. For a registration these
-// are not what the declaration says literally: the `$handler` parameter is the
+// are not what the declaration says literally. The `$handler` parameter is the
 // callback pointer, and the context is passed as an address, because the library
 // keeps it past the call. See docs/callbacks.md.
 fn extern_parameter_types(params: &[Parameter]) -> Vec<Type> {
@@ -815,13 +815,13 @@ struct Specialization {
     //
     // Nothing downstream uses this yet and the emitted code does not depend on
     // it. It exists to answer the question the design in
-    // docs/separate-compilation.md leaves open: separate compilation gives each
+    // docs/separate-compilation.md leaves open. Separate compilation gives each
     // module its own copy of a specialization it instantiates, and whether that
     // duplication is worth caring about is a measurement, not an opinion.
     requested_by: u32,
     // Where the call that asked for this one was written, and how it reads
     // there. A diagnostic from inside the stamped-out body names a line in the
-    // template; this is the line the reader actually wrote.
+    // template. This is the line the reader actually wrote.
     requested_at: Position,
     display: String,
 }
@@ -1606,7 +1606,7 @@ fn expand_generic_structs(
                 .insert(name.clone(), (type_params.clone(), variants.clone()));
         }
     }
-    // No early return on empty templates: a `columns<T, N>` is synthesized here
+    // No early return on empty templates. A `columns<T, N>` is synthesized here
     // too and needs no user template, so the instance walk below must still run.
 
     let mut generic_functions: HashMap<String, GenericFunction> =
@@ -1779,7 +1779,7 @@ fn expand_generic_structs(
             // field of T (named after the field) plus the generational
             // bookkeeping a slab carries. The layout cannot be written in
             // library Frost, so it is reflected from T's fields here. Only a
-            // CONCRETE instance is synthesized; the generic template form
+            // CONCRETE instance is synthesized. The generic template form
             // `columns<T, N>` in a library signature is skipped, since it is
             // monomorphized to a concrete instance where it is used.
             if argument_strings.len() != 2 {
@@ -2922,7 +2922,7 @@ impl<'a> FunctionLowering<'a> {
             }
             Expression::Dereference(inner) => self.lower_dereference(inner),
             // An `unsafe` block is a block. It changes nothing about the code
-            // it holds; it is where `check_unsafety` allows the three unchecked
+            // it holds. It is where `check_unsafety` allows the three unchecked
             // operations, and that check has already run by the time lowering
             // sees this. So the marker is discharged before here and this is a
             // plain block that answers with its last expression.
@@ -3443,8 +3443,8 @@ impl<'a> FunctionLowering<'a> {
                 }
                 other => other,
             };
-            // Auto-borrow: a value place passed to a `read`/`mut` reference
-            // parameter has its address taken; an argument that is already a
+            // Auto-borrow. A value place passed to a `read`/`mut` reference
+            // parameter has its address taken. An argument that is already a
             // reference is forwarded as-is. The type parameter is inferred from
             // the pointee against the place's type.
             if let Type::Ref(inner) | Type::RefMut(inner) = &param_ty {
@@ -3625,7 +3625,7 @@ impl<'a> FunctionLowering<'a> {
         let mut lowered = Vec::with_capacity(arguments.len());
         for (index, argument) in arguments.iter().enumerate() {
             let expected = parameter_types.get(index);
-            // Auto-borrow: a `read`/`mut` parameter is a reference, and a plain
+            // Auto-borrow. A `read`/`mut` parameter is a reference, and a plain
             // value place passed to it takes its address here. An argument that
             // is already a reference (a reference-typed local passed onward) or
             // an explicit borrow is left alone, so nothing is double-referenced.
@@ -3713,7 +3713,7 @@ impl<'a> FunctionLowering<'a> {
         let mut lowered = Vec::with_capacity(arguments.len());
         for (index, argument) in arguments.iter().enumerate() {
             let expected = parameter_types.get(index);
-            // Auto-borrow: a `read`/`mut` parameter is a reference, and a plain
+            // Auto-borrow. A `read`/`mut` parameter is a reference, and a plain
             // value place passed to it takes its address here. An argument that
             // is already a reference (a reference-typed local passed onward) or
             // an explicit borrow is left alone, so nothing is double-referenced.
@@ -3780,7 +3780,7 @@ impl<'a> FunctionLowering<'a> {
         target: &Type,
         consume: bool,
     ) -> Result<IrOperand> {
-        // Passing a `[N]T` array where a `[]T` slice is wanted: build the slice
+        // Passing a `[N]T` array where a `[]T` slice is wanted. Build the slice
         // view and hand over its address, rather than the array's.
         if let Type::Slice(element) = target
             && let Some(Type::Array(array_element, count)) =
@@ -3910,7 +3910,7 @@ impl<'a> FunctionLowering<'a> {
 
         // `c[h] = value`: scatter the whole element into the columns' per-field
         // arrays at the handle's slot. It cannot go through `place_address`,
-        // which yields one address; the scatter is inherently multi-store.
+        // which yields one address. The scatter is inherently multi-store.
         if let Expression::Index(container, index_expr) = target
             && let Some(struct_name) = self.columns_shaped_base(container)
         {
@@ -4339,7 +4339,7 @@ impl<'a> FunctionLowering<'a> {
         Ok((length, Type::Usize))
     }
 
-    // A first-class raw pointer to a place. `&x` is a second-class reference;
+    // A first-class raw pointer to a place. `&x` is a second-class reference.
     // ptr_to gives the same address as a `^T` that may be stored and returned.
     fn lower_ptr_to(
         &mut self,
@@ -4657,7 +4657,7 @@ impl<'a> FunctionLowering<'a> {
 
         let (struct_address, _) = self.struct_place(base)?;
 
-        // The handle is a `Handle<T>`, opaque and non-numeric; reinterpret it as
+        // The handle is a `Handle<T>`, opaque and non-numeric. Reinterpret it as
         // the i64 it is at the ABI before taking it apart.
         let raw_handle = self.fresh_local(Type::I64, None);
         self.emit(IrStatement::Assign(raw_handle, IrRvalue::Use(handle)));
@@ -4964,7 +4964,7 @@ impl<'a> FunctionLowering<'a> {
     }
 
     // `columns_new()`: a zeroed columns container of the type the context wants.
-    // Zeroing sets every generation and free slot to 0; `columns_reset` lays out
+    // Zeroing sets every generation and free slot to 0. `columns_reset` lays out
     // the free list before use, the same "construct then reset" contract a slab
     // has.
     fn lower_columns_new(
@@ -5220,7 +5220,7 @@ impl<'a> FunctionLowering<'a> {
                 Ok((address, struct_name))
             }
             // Any other expression that yields a borrow or pointer to a struct
-            // names that struct: the operand is its address. This is what lets a
+            // names that struct. The operand is its address. This is what lets a
             // borrow-returning accessor be written to, as in `at(b, i).field = x`.
             other => {
                 let (operand, ty) = self.lower_expression(other, None)?;
@@ -5411,7 +5411,7 @@ impl<'a> FunctionLowering<'a> {
             )),
         });
 
-        // The same hole a struct literal has: a payload field left out is
+        // The same hole a struct literal has. A payload field left out is
         // storage a `match` will happily bind and read.
         let missing: Vec<&str> = fields
             .iter()
@@ -6102,7 +6102,7 @@ fn needs_cast(from: &Type, to: &Type) -> bool {
 // with an `i64` accumulator and a `u8` digit computed the whole thing at eight
 // bits, so reading "1234567" out of a string answered 135. The rule was there to
 // keep an untyped literal from dragging a narrow value up to `i64`, and it is
-// not needed for that: the right operand is lowered with the left's type as its
+// not needed for that. The right operand is lowered with the left's type as its
 // expectation, so a literal has already taken the other side's width by the time
 // this runs.
 fn unify(left: &Type, right: &Type) -> Type {
