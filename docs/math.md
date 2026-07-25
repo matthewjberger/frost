@@ -10,8 +10,12 @@ It is written the way the rest of the language is. There is no operator
 overloading and there are no methods, so it is `vec3_add(a, b)` rather than
 `a + b` and `mat4_mul(a, b)` rather than `a * b`. The type prefix on each name
 (`vec3_`, `mat4_`, `quat_`) is the namespace, the same convention the rest of the
-standard library follows. Every value is `f32`. A program that needs double
-precision keeps its own copy or waits for an `f64` variant.
+standard library follows. Every value is `f32`.
+
+`std/math64.frost` is the same library at double precision: the same shapes, the
+same rules, the same column-major convention, with `f64` in place of `f32` and a
+`d` on every name (`Vec3d`, `vec3d_add`, `mat4d_perspective`, `radiansd`). The
+two can be imported together, since no name is shared.
 
 The transcendentals it needs (`sqrtf`, `sinf`, `cosf`, `tanf`) are the C standard
 library's single-precision ones, declared `safe extern` because each takes and
@@ -127,7 +131,9 @@ with:
 frost --test std/math.frost
 ```
 
-The suite runs them through both backends of both compilers. A differential test
+The same twenty run over `std/math64.frost`, which is where a copy that changed
+a formula shows up. The suite runs both through both backends of both
+compilers. A differential test
 would only say the backends agree, and a rotation that turns the wrong way, a
 projection with its depth range inverted and a quaternion that is its own
 inverse all agree across backends while all being wrong, so these check the
@@ -139,10 +145,26 @@ expressed two ways the tests check the two against each other, so
 `quat_to_mat4` has to be the rotation `quat_rotate_vec3` applies and not its
 inverse.
 
+## Which precision
+
+`std/math.frost` is what a renderer wants. Vertices, per-frame transforms and
+anything crossing to a GPU are single-precision, and it is half the bytes.
+
+`std/math64.frost` is for the places where range or accumulated error decides
+the answer: a simulation stepping for hours, world coordinates far from the
+origin, a solver. Reach for it there and convert at the boundary.
+
+It is a second copy rather than one library generic over the element type. A
+generic one would have to take the transcendentals as compile-time arguments at
+every call, since `sqrt` and `sqrtf` are different C functions, which costs more
+at every use than a copy costs once. That is the trade
+[philosophy.md](philosophy.md) names: no traits, so write the one you need over
+the layout you have. The copy is mechanical and the same twenty tests run over
+both, so a formula that survived the copy wrong fails.
+
 ## What is not here
 
-The library is single-precision and value-typed on purpose. It does not provide
-an `f64` variant (engines are single-precision, a program that needs doubles
-keeps its own), SIMD-packed vectors (a future language-level direction, see
-[roadmap.md](roadmap.md)), or a general N-dimensional matrix. It is the graphics
-math a renderer and a game loop actually reach for, and nothing more.
+The library is value-typed on purpose. It does not provide SIMD-packed vectors
+(a future language-level direction, see [roadmap.md](roadmap.md)) or a general
+N-dimensional matrix. It is the graphics math a renderer and a game loop
+actually reach for, and nothing more.

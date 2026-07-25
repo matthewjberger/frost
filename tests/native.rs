@@ -2284,33 +2284,39 @@ fn a_program_using_std_is_clean_under_the_unsafe_gate() {
 #[test]
 fn the_math_library_passes_its_own_tests() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let source = root.join("std").join("math.frost");
     let directory = std::env::temp_dir();
 
-    for (label, emit_c) in [("mathnative", false), ("mathc", true)] {
-        let exe = directory.join(format!(
-            "{}{}",
-            unique(&format!("frost_{label}")),
-            std::env::consts::EXE_SUFFIX
-        ));
-        let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
-        if emit_c {
-            command.arg("--emit-c");
+    // Both precisions. The f64 library is the f32 one with its element type
+    // changed, so the same twenty tests run over it and a formula that survived
+    // the copy wrong fails here.
+    for module in ["math.frost", "math64.frost"] {
+        let source = root.join("std").join(module);
+        for (label, emit_c) in [("mathnative", false), ("mathc", true)] {
+            let exe = directory.join(format!(
+                "{}{}",
+                unique(&format!("frost_{label}")),
+                std::env::consts::EXE_SUFFIX
+            ));
+            let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
+            if emit_c {
+                command.arg("--emit-c");
+            }
+            let run = command
+                .arg("--test")
+                .arg("-o")
+                .arg(&exe)
+                .arg(&source)
+                .output()
+                .unwrap();
+            let output =
+                String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+            assert!(
+                output.contains("20 passed, 0 failed"),
+                "{module} {label}:\n{output}{}",
+                String::from_utf8_lossy(&run.stderr)
+            );
+            let _ = std::fs::remove_file(&exe);
         }
-        let run = command
-            .arg("--test")
-            .arg("-o")
-            .arg(&exe)
-            .arg(&source)
-            .output()
-            .unwrap();
-        let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
-        assert!(
-            output.contains("20 passed, 0 failed"),
-            "{label}:\n{output}{}",
-            String::from_utf8_lossy(&run.stderr)
-        );
-        let _ = std::fs::remove_file(&exe);
     }
 }
 
@@ -2331,7 +2337,11 @@ fn self_hosted_runs_the_standard_library_tests() {
     // compiler's backends. math.frost is the one that exercises floats,
     // fixed arrays and a struct returned by value, none of which strings.frost
     // reaches.
-    let modules = [("strings.frost", "6 passed"), ("math.frost", "20 passed")];
+    let modules = [
+        ("strings.frost", "6 passed"),
+        ("math.frost", "20 passed"),
+        ("math64.frost", "20 passed"),
+    ];
     for (label, backend) in [("stdc", "--emit-c"), ("stdasm", "--emit-asm")] {
         for (module, expected) in modules {
             let exe = directory.join(format!(
