@@ -57,8 +57,12 @@ import "math.frost"
 // caller pumps until the slot fills. `userdata1` is that slot's address.
 Slot :: struct { handle: ^u8, ready: i64 }
 
-fill_slot :: fn(status: u32, handle: ^u8, message: ^u8, userdata1: ^u8,
-    userdata2: ^u8) {
+// `value message: StringView` is what wgpu passes here: the struct itself, not
+// a pointer to it. Windows hands a sixteen-byte struct to a callee as a pointer
+// to a copy, so declaring it `^u8` worked there and would have read `userdata1`
+// out of the wrong register on System V, where the struct takes two.
+fill_slot :: fn(status: u32, handle: ^u8, value message: StringView,
+    userdata1: ^u8, userdata2: ^u8) {
     slot := unsafe { ptr_cast($Slot, userdata1) }
     if (status == REQUEST_ADAPTER_STATUS_SUCCESS) {
         unsafe { slot^.handle = handle }

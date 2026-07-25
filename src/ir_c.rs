@@ -140,6 +140,29 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
     }
     output.push('\n');
 
+    // The same struct type per by-value parameter, for a Frost function that C
+    // calls back. Declaring it is what makes the C compiler collect the bytes
+    // the way it passed them.
+    for function in &module.functions {
+        for (index, layout) in function.param_layouts.iter().enumerate() {
+            let Some(layout) = layout else {
+                continue;
+            };
+            let name = format!("frost_val_{}_{index}", function.name);
+            writeln!(output, "typedef struct {{")?;
+            for field in c_return_fields(layout)? {
+                writeln!(output, "  {field};")?;
+            }
+            writeln!(output, "}} {name};")?;
+            externs
+                .value_parameters
+                .entry(function.name.clone())
+                .or_default()
+                .insert(index, name);
+        }
+    }
+    output.push('\n');
+
     for function in &module.functions {
         if function.name == "main" {
             continue;
@@ -167,13 +190,14 @@ fn function_signature(
         function.return_type.clone()
     };
 
+    let by_value = externs.value_parameters.get(&function.name);
     let mut params = Vec::new();
     for index in 0..function.param_count {
         let ty = function.local_type(index);
-        let c_ty = if is_aggregate(ty) {
-            "char*".to_string()
-        } else {
-            c_type(ty)?
+        let c_ty = match by_value.and_then(|by| by.get(&index)) {
+            Some(name) => name.clone(),
+            None if is_aggregate(ty) => "char*".to_string(),
+            None => c_type(ty)?,
         };
         params.push(format!("{c_ty} a{index}"));
     }
@@ -225,9 +249,24 @@ fn emit_function(
         }
     }
 
+    let by_value = externs.value_parameters.get(&function.name);
+    if let Some(by_value) = by_value {
+        let mut named: Vec<_> = by_value.iter().collect();
+        named.sort_by_key(|(index, _)| **index);
+        for (index, ty) in named {
+            writeln!(output, "  {ty} __v{index};")?;
+        }
+    }
     for index in 0..function.param_count {
         let local = &function.locals[index];
-        if is_aggregate(&local.ty) {
+        // A parameter C passed as the struct arrives as a value rather than an
+        // address, and the body reads it through one, so it is given somewhere
+        // to point at. The copy is the callee's own, which is what by value
+        // means.
+        if by_value.is_some_and(|by| by.contains_key(&index)) {
+            writeln!(output, "  __v{index} = a{index};")?;
+            writeln!(output, "  _{index} = (char*)&__v{index};")?;
+        } else if is_aggregate(&local.ty) {
             writeln!(
                 output,
                 "  __builtin_memcpy(_{index}, a{index}, {});",

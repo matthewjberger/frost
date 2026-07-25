@@ -134,6 +134,13 @@ pub struct IrExtern {
 pub struct IrFunction {
     pub name: String,
     pub param_count: usize,
+    // One entry per parameter, `Some` only where the declaration said `value`.
+    // Such a parameter arrives the way C passes a struct rather than as one
+    // pointer, which is what lets a Frost function be a C callback taking a
+    // struct by value. The mirror of IrExtern's field of the same name: that
+    // one is the caller placing the bytes, this one is the callee collecting
+    // them. See src/c_abi.rs.
+    pub param_layouts: Vec<Option<crate::c_abi::CLayout>>,
     pub return_type: Type,
     pub locals: Vec<IrLocal>,
     pub blocks: Vec<IrBlock>,

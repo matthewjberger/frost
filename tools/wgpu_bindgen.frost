@@ -745,20 +745,13 @@ emit_callback_infos :: fn(mut out: Builder, mut names: Builder,
         while (arg < count) {
             held := json_at(document, args, arg)
             kind := json_member(document, held, "type")
-            // This is a function pointer type in a struct field, not an
-            // `extern` parameter, so `value` cannot be written on it and the
-            // struct-by-value spelling does not reach here. A StringView is
-            // sixteen bytes, which Windows hands to a callee as a pointer to a
-            // copy, so one pointer is right there and wrong on System V, where
-            // it arrives in two registers. It stays a pointer until a function
-            // type can say how its parameters cross.
-            if (type_starts(document, kind, "string")
-                || type_starts(document, kind, "out_string")
-                || type_starts(document, kind, "nullable_string")) {
-                builder_str_value(out, "^u8")
-            } else {
-                append_type(out, document, held)
-            }
+            // A function type says how its parameters cross, the same way an
+            // extern's do. C hands a StringView to a callback as the struct,
+            // which is two registers on System V and a pointer to a copy on
+            // Windows, and `value` is what says so once rather than once per
+            // target.
+            append_value_mode(out, document, held)
+            append_type(out, document, held)
             builder_str_value(out, ", ")
             arg = arg + 1
         }

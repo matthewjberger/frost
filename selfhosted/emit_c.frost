@@ -1018,13 +1018,19 @@ emit_param_signature :: fn(mut p: Parser, head: i64) {
         next_id := node.next
         // A `value` parameter is the struct itself rather than a borrow of it.
         // The C compiler is what knows how this target passes one, so it is
-        // handed a real struct type and left to apply the rule.
-        if (nth_param_by_value(p, head, index)) {
+        // handed a real struct type and left to apply the rule. The name takes
+        // a suffix so that a definition can bind the body's name to its
+        // address; see emit_value_param_bindings.
+        by_value := param_node_by_value(p, id)
+        if (by_value) {
             ty = pointee(ty)
         }
         emit_ctype(p, ty)
         emit_text(" ")
         emit_source(p.src, off, len)
+        if (by_value) {
+            emit_text("__v")
+        }
         index = index + 1
         id = next_id
     }
@@ -1308,8 +1314,36 @@ emit_function :: fn(mut p: Parser, id: i64) {
         emit_param_signature(p, params)
         emit_text(") {\n")
     }
+    emit_value_param_bindings(p, params)
     emit_function_body(p, body)
     emit_text("}\n")
+}
+
+// A parameter C passed as the struct arrives as a value, and the body reads a
+// struct through an address, so it is given one to point at. The parameter
+// itself carries a suffix in the signature and this binds the name the body
+// uses. The struct is the callee's own copy, which is what by value means.
+emit_value_param_bindings :: fn(mut p: Parser, params: i64) {
+    mut id := params
+    mut index : i64 = 0
+    while (id != (0 - 1)) {
+        node := arena_at(p.arena, id)
+        off := node.val
+        len := node.c
+        ty := node.b
+        next_id := node.next
+        if (param_node_by_value(p, id)) {
+            emit_text("    ")
+            emit_ctype(p, ty)
+            emit_text(" ")
+            emit_source(p.src, off, len)
+            emit_text(" = &")
+            emit_source(p.src, off, len)
+            emit_text("__v;\n")
+        }
+        index = index + 1
+        id = next_id
+    }
 }
 
 // Emit one monomorphization of a generic function: the concrete return type, the

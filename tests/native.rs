@@ -2488,6 +2488,126 @@ const BY_VALUE_LIBRARY: &str = "#include <stdint.h>\n\
      \x20   return before * 100 + p.x * 10 + p.y + after;\n\
      }\n";
 
+// The receiving direction, through both self-hosted backends: C calls a Frost
+// function and hands it a struct by value. Its assembly backend has to put the
+// pieces back together, which is the mirror of taking them apart at a call.
+const SELF_HOSTED_CALLBACK_BY_VALUE: &str = "View :: struct { data: ^i8, len: i64 }\n\
+     Wide :: struct { a: i64, b: i64, c: i64, d: i64 }\n\
+     install :: extern fn(f: fn(i32, value View, i64))\n\
+     install_wide :: extern fn(f: fn(i32, value Wide, i64))\n\
+     fire :: extern fn()\n\
+     fire_wide :: extern fn()\n\
+     handler :: fn(status: i32, value message: View, tail: i64) {\n\
+     \x20   print status\n\
+     \x20   print message.len\n\
+     \x20   print tail\n\
+     }\n\
+     wide_handler :: fn(status: i32, value w: Wide, tail: i64) {\n\
+     \x20   print status\n\
+     \x20   print w.a + w.d\n\
+     \x20   print tail\n\
+     }\n\
+     main :: fn() -> i64 {\n\
+     \x20   unsafe { install(handler) }\n\
+     \x20   unsafe { fire() }\n\
+     \x20   unsafe { install_wide(wide_handler) }\n\
+     \x20   unsafe { fire_wide() }\n\
+     \x20   0\n\
+     }\n";
+
+const CALLBACK_BY_VALUE_LIBRARY: &str = "#include <stdint.h>\n\
+     typedef struct { const char* data; int64_t len; } View;\n\
+     typedef struct { int64_t a, b, c, d; } Wide;\n\
+     static void (*held)(int32_t, View, int64_t);\n\
+     static void (*held_wide)(int32_t, Wide, int64_t);\n\
+     void install(void (*f)(int32_t, View, int64_t)) { held = f; }\n\
+     void install_wide(void (*f)(int32_t, Wide, int64_t)) { held_wide = f; }\n\
+     void fire(void) {\n\
+     \x20   View v; v.data = \"hello\"; v.len = 5;\n\
+     \x20   held(7, v, 99);\n\
+     }\n\
+     void fire_wide(void) {\n\
+     \x20   Wide w; w.a = 1; w.b = 2; w.c = 3; w.d = 4;\n\
+     \x20   held_wide(8, w, 77);\n\
+     }\n";
+
+#[test]
+fn self_hosted_receives_a_struct_from_c_by_value() {
+    run_self_hosted_against_c(
+        "shcb",
+        SELF_HOSTED_CALLBACK_BY_VALUE,
+        CALLBACK_BY_VALUE_LIBRARY,
+        "7\n5\n99\n8\n5\n77\n",
+    );
+}
+
+// Build a Frost program with the self-hosted compiler through both of its
+// backends, link it against a C library, and check what it prints.
+fn run_self_hosted_against_c(
+    name: &str,
+    source: &str,
+    library_source: &str,
+    expected: &str,
+) {
+    let Some(cc) = c_compiler() else {
+        return;
+    };
+    let Some(compiler) = build_self_hosted_compiler(name) else {
+        return;
+    };
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let runtime = format!("{}/runtime/frost_runtime.c", root.display());
+    let directory = std::env::temp_dir();
+
+    let library =
+        directory.join(format!("{}.c", unique(&format!("{name}lib"))));
+    std::fs::write(&library, library_source).unwrap();
+    let input = directory.join(format!("{}.frost", unique(name)));
+    std::fs::write(&input, source).unwrap();
+
+    for (backend, suffix) in [("--emit-c", "c"), ("--emit-asm", "s")] {
+        let emitted = directory.join(format!("{}.{suffix}", unique(name)));
+        let built = Command::new(&compiler)
+            .arg(backend)
+            .arg("-o")
+            .arg(&emitted)
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "{name} {backend} did not emit:\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let exe = directory.join(format!(
+            "{}{}",
+            unique(name),
+            std::env::consts::EXE_SUFFIX
+        ));
+        let linked = Command::new(cc)
+            .arg(&emitted)
+            .arg(&library)
+            .arg(&runtime)
+            .arg("-o")
+            .arg(&exe)
+            .output()
+            .unwrap();
+        assert!(
+            linked.status.success(),
+            "{name} {backend} did not link:\n{}",
+            String::from_utf8_lossy(&linked.stderr)
+        );
+        let ran = Command::new(&exe).output().unwrap();
+        let output = String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n");
+        assert_eq!(output, expected, "{name} {backend} disagrees");
+        let _ = std::fs::remove_file(&emitted);
+        let _ = std::fs::remove_file(&exe);
+    }
+    let _ = std::fs::remove_file(&library);
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&compiler);
+}
+
 #[test]
 fn self_hosted_passes_a_struct_to_c_by_value() {
     let Some(cc) = c_compiler() else {
@@ -8600,6 +8720,127 @@ fn a_struct_is_passed_to_c_by_value() {
         assert!(
             built.status.success(),
             "the by-value program did not build (emit_c={emit_c}):\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let ran = Command::new(&exe).output().unwrap();
+        let output = String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n");
+        assert_eq!(output, expected, "backend disagrees (emit_c={emit_c})");
+    }
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+// The other direction: C calls a Frost function and passes a struct by value.
+// A callback's signature is a function-pointer type, and until it could say
+// `value` the struct had to be declared as one pointer. That is what Windows
+// hands a sixteen-byte struct to a callee as, so it worked there and was wrong
+// on System V, where the struct takes two registers and every argument after it
+// comes out of the wrong one. wgpu's callbacks are exactly this shape.
+//
+// There is still no trampoline. The Frost function is compiled to receive what
+// C sends, which is the same claim docs/callbacks.md makes about the simple
+// case, extended to the one shape that needed the compiler to know the rule.
+#[test]
+fn c_calls_back_with_a_struct_by_value() {
+    let Some(compiler) = c_compiler() else {
+        return;
+    };
+    let directory = std::env::temp_dir().join("frost_callback_byvalue");
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+
+    let library_source = directory.join("shapes.c");
+    std::fs::write(
+        &library_source,
+        "#include <stdint.h>\n\
+         typedef struct { const char* data; int64_t len; } View;\n\
+         typedef struct { int64_t a, b, c, d; } Wide;\n\
+         static void (*held)(int32_t, View, int64_t);\n\
+         static void (*held_wide)(int32_t, Wide, int64_t);\n\
+         void install(void (*f)(int32_t, View, int64_t)) { held = f; }\n\
+         void install_wide(void (*f)(int32_t, Wide, int64_t)) {\n\
+         \x20   held_wide = f;\n\
+         }\n\
+         void fire(void) {\n\
+         \x20   View v; v.data = \"hello\"; v.len = 5;\n\
+         \x20   held(7, v, 99);\n\
+         }\n\
+         void fire_wide(void) {\n\
+         \x20   Wide w; w.a = 1; w.b = 2; w.c = 3; w.d = 4;\n\
+         \x20   held_wide(8, w, 77);\n\
+         }\n",
+    )
+    .unwrap();
+    let library = directory.join("shapes.o");
+    let built = Command::new(compiler)
+        .arg("-c")
+        .arg(&library_source)
+        .arg("-o")
+        .arg(&library)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "the C library did not compile:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+
+    let root = directory.join("callback.frost");
+    std::fs::write(
+        &root,
+        "View :: struct { data: ^i8, len: i64 }\n\
+         Wide :: struct { a: i64, b: i64, c: i64, d: i64 }\n\
+         install :: extern fn(f: fn(i32, value View, i64))\n\
+         install_wide :: extern fn(f: fn(i32, value Wide, i64))\n\
+         fire :: extern fn()\n\
+         fire_wide :: extern fn()\n\
+         handler :: fn(status: i32, value message: View, tail: i64) {\n\
+         \x20   print status\n\
+         \x20   print message.len\n\
+         \x20   print message.data[0]\n\
+         \x20   print tail\n\
+         }\n\
+         wide_handler :: fn(status: i32, value w: Wide, tail: i64) {\n\
+         \x20   print status\n\
+         \x20   print w.a + w.d\n\
+         \x20   print tail\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   unsafe { install(handler) }\n\
+         \x20   unsafe { fire() }\n\
+         \x20   unsafe { install_wide(wide_handler) }\n\
+         \x20   unsafe { fire_wide() }\n\
+         \x20   0\n\
+         }\n",
+    )
+    .unwrap();
+
+    // 7 and 99 are the arguments either side of the struct, so reading them
+    // back is what says the struct took the register count it should have.
+    let expected = "7\n5\n104\n99\n8\n5\n77\n";
+
+    for emit_c in [false, true] {
+        let exe = directory.join(format!(
+            "callback{}{}",
+            u8::from(emit_c),
+            std::env::consts::EXE_SUFFIX
+        ));
+        let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
+        command.env("FROST_CHECK_UNSAFE", "0");
+        if emit_c {
+            command.arg("--emit-c");
+        }
+        let built = command
+            .arg("--link")
+            .arg("--libs")
+            .arg(&library)
+            .arg("-o")
+            .arg(&exe)
+            .arg(&root)
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "the callback program did not build (emit_c={emit_c}):\n{}",
             String::from_utf8_lossy(&built.stderr)
         );
         let ran = Command::new(&exe).output().unwrap();
