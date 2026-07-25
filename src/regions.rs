@@ -135,6 +135,18 @@ fn capability_binding(capability: &Type) -> String {
     }
 }
 
+/// The expression an `unsafe` block answers with.
+///
+/// `ptr_to` and `slice_from` are refused outside such a block, so every pointer
+/// a program can actually write leaves its frame or its region wrapped in one.
+/// A check that does not look through the block does not see the pointer at all.
+fn block_value(block: &Block) -> Option<&Expression> {
+    match &block.last()?.node {
+        Statement::Expression(value) => Some(value),
+        _ => None,
+    }
+}
+
 // The root variable a place is rooted at, so `s.field` and `xs[i]` are rooted at
 // `s` and `xs`.
 fn root_identifier(place: &Expression) -> Option<&str> {
@@ -291,6 +303,8 @@ impl<'a> Region<'a> {
                         .iter()
                         .any(|argument| self.mentions_region(argument))
             }
+            Expression::Unsafe(body) => block_value(body)
+                .is_some_and(|value| self.is_region_pointer(value)),
             _ => false,
         }
     }
@@ -313,6 +327,8 @@ impl<'a> Region<'a> {
             Expression::Call(_, arguments) => arguments
                 .iter()
                 .any(|argument| self.mentions_region(argument)),
+            Expression::Unsafe(body) => block_value(body)
+                .is_some_and(|value| self.mentions_region(value)),
             _ => false,
         }
     }
@@ -539,6 +555,8 @@ impl Frame<'_> {
                         .is_some_and(|context| self.rooted_here(context)),
                 }
             }
+            Expression::Unsafe(body) => block_value(body)
+                .is_some_and(|value| self.points_into_frame(value)),
             _ => false,
         }
     }
@@ -553,6 +571,8 @@ impl Frame<'_> {
             Expression::Index(base, _)
             | Expression::FieldAccess(base, _)
             | Expression::Range(base, _, _) => self.views_this_frame(base),
+            Expression::Unsafe(body) => block_value(body)
+                .is_some_and(|value| self.views_this_frame(value)),
             _ => false,
         }
     }

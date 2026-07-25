@@ -112,6 +112,19 @@ fn run_ir_oracle(name: &str, source: &str) -> Option<String> {
 }
 
 fn compile_error(name: &str, source: &str) -> String {
+    compile_error_gated(name, source, false)
+}
+
+/// A compile error from a source built with the unsafety gate on, which is the
+/// default and the only way a real program is written. `compile_error` turns
+/// the gate off, so anything it checks may say `ptr_to` bare, and a check that
+/// only ever sees the bare form is not being tested against what programs
+/// actually contain.
+fn compile_error_checked(name: &str, source: &str) -> String {
+    compile_error_gated(name, source, true)
+}
+
+fn compile_error_gated(name: &str, source: &str, gate: bool) -> String {
     let directory = std::env::temp_dir();
     let source_path = directory.join(format!("frost_err_{name}.frost"));
     let exe_path = directory
@@ -119,7 +132,7 @@ fn compile_error(name: &str, source: &str) -> String {
     std::fs::write(&source_path, source).unwrap();
     let frost = env!("CARGO_BIN_EXE_frost");
     let output = Command::new(frost)
-        .env("FROST_CHECK_UNSAFE", "0")
+        .env("FROST_CHECK_UNSAFE", if gate { "1" } else { "0" })
         .arg("--link")
         .arg("-o")
         .arg(&exe_path)
@@ -6633,6 +6646,72 @@ main :: fn() -> i64 {
     assert_eq!(output, "6\n8\n");
 }
 
+// One compile should name every mistake it can, so a fix-recompile-repeat loop
+// costs one pass rather than one pass per mistake.
+#[test]
+fn two_move_errors_in_one_function_are_both_reported() {
+    let source = "Thing :: struct { n: i64 }\n\
+                  eat :: fn(move t: Thing) -> i64 { t.n }\n\
+                  one :: fn() -> i64 {\n\
+                  \x20   t := Thing { n = 1 }\n\
+                  \x20   u := Thing { n = 2 }\n\
+                  \x20   a := eat(t)\n\
+                  \x20   b := eat(t)\n\
+                  \x20   c := eat(u)\n\
+                  \x20   d := eat(u)\n\
+                  \x20   a + b + c + d\n}\n\
+                  main :: fn() -> i64 { one() }\n";
+    let message = compile_error("twomoves", source);
+    assert!(
+        message.contains("use of moved value 't'"),
+        "expected the first move error, got:\n{message}"
+    );
+    assert!(
+        message.contains("use of moved value 'u'"),
+        "expected the second move error, got:\n{message}"
+    );
+}
+
+// Past a move the binding stays moved, so every later mention fails the same
+// way. Those are echoes of one mistake, and saying it once is the useful answer.
+#[test]
+fn a_repeated_use_of_one_moved_value_is_reported_once() {
+    let source = "Thing :: struct { n: i64 }\n\
+                  eat :: fn(move t: Thing) -> i64 { t.n }\n\
+                  one :: fn() -> i64 {\n\
+                  \x20   t := Thing { n = 1 }\n\
+                  \x20   a := eat(t)\n\
+                  \x20   b := eat(t)\n\
+                  \x20   c := eat(t)\n\
+                  \x20   a + b + c\n}\n\
+                  main :: fn() -> i64 { one() }\n";
+    let message = compile_error("echomoves", source);
+    assert_eq!(
+        message.matches("use of moved value 't'").count(),
+        1,
+        "expected the echo to be suppressed, got:\n{message}"
+    );
+}
+
+#[test]
+fn a_move_error_in_each_of_two_functions_is_reported() {
+    let source = "Thing :: struct { n: i64 }\n\
+                  eat :: fn(move t: Thing) -> i64 { t.n }\n\
+                  first :: fn() -> i64 {\n\
+                  \x20   t := Thing { n = 1 }\n\
+                  \x20   eat(t) + eat(t)\n}\n\
+                  second :: fn() -> i64 {\n\
+                  \x20   u := Thing { n = 2 }\n\
+                  \x20   eat(u) + eat(u)\n}\n\
+                  main :: fn() -> i64 { first() + second() }\n";
+    let message = compile_error("twofnmoves", source);
+    assert!(
+        message.contains("use of moved value 't'")
+            && message.contains("use of moved value 'u'"),
+        "expected a report from each function, got:\n{message}"
+    );
+}
+
 // A function's locals die when it returns, so a pointer or a slice into one of
 // them may not be the thing it answers with.
 #[test]
@@ -6642,6 +6721,49 @@ fn a_pointer_into_the_frame_may_not_be_returned() {
                   \x20   ptr_to(local)\n}\n\
                   main :: fn() -> i64 { 0 }\n";
     let message = compile_error("frameptr", source);
+    assert!(
+        message.contains("pointer into the frame of"),
+        "expected a frame escape error, got:\n{message}"
+    );
+}
+
+// `ptr_to` is refused outside an `unsafe` block, so the wrapped form is the
+// only one a real program can contain. A frame check that does not look through
+// the block does not fire on any pointer a program can actually write.
+#[test]
+fn a_frame_pointer_may_not_escape_wrapped_in_an_unsafe_block() {
+    let source = "leak :: fn() -> ^i64 {\n\
+                  \x20   mut local : i64 = 42\n\
+                  \x20   unsafe { ptr_to(local) }\n}\n\
+                  main :: fn() -> i64 { 0 }\n";
+    let message = compile_error_checked("frameunsafe", source);
+    assert!(
+        message.contains("pointer into the frame of"),
+        "expected a frame escape error, got:\n{message}"
+    );
+}
+
+#[test]
+fn a_frame_pointer_may_not_be_returned_from_an_unsafe_block() {
+    let source = "leak :: fn() -> ^i64 {\n\
+                  \x20   mut local : i64 = 42\n\
+                  \x20   return unsafe { ptr_to(local) }\n}\n\
+                  main :: fn() -> i64 { 0 }\n";
+    let message = compile_error_checked("frameunsafereturn", source);
+    assert!(
+        message.contains("pointer into the frame of"),
+        "expected a frame escape error, got:\n{message}"
+    );
+}
+
+#[test]
+fn a_frame_pointer_bound_inside_an_unsafe_block_may_not_be_returned() {
+    let source = "leak :: fn() -> ^i64 {\n\
+                  \x20   mut local : i64 = 42\n\
+                  \x20   held := unsafe { ptr_to(local) }\n\
+                  \x20   held\n}\n\
+                  main :: fn() -> i64 { 0 }\n";
+    let message = compile_error_checked("frameunsafebound", source);
     assert!(
         message.contains("pointer into the frame of"),
         "expected a frame escape error, got:\n{message}"
