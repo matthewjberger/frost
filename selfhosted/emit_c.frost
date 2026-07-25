@@ -754,7 +754,15 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                     }
                 }
             }
-            if (borrow == 1) {
+            // A `value` parameter is declared as the struct, so it is handed
+            // the struct. The C compiler applies the target's rule for passing
+            // one, which is the whole reason this goes through C's own types
+            // rather than being placed here.
+            if (borrow == 1 && have_param == 1
+                && param_node_by_value(p, param)) {
+                borrow = 0
+                emit_expr(p, value)
+            } else if (borrow == 1) {
                 // A borrowed parameter takes an address, and an array reaching
                 // a slice parameter has to become one first. The slice itself
                 // is what the callee is handed the address of.
@@ -997,19 +1005,27 @@ emit_param_signature :: fn(mut p: Parser, head: i64) {
     }
     mut id := head
     mut first : bool = true
+    mut index : i64 = 0
     while (id != (0 - 1)) {
         if (first == false) {
             emit_text(", ")
         }
         first = false
         node := arena_at(p.arena, id)
-        ty := node.b
+        mut ty := node.b
         off := node.val
         len := node.c
         next_id := node.next
+        // A `value` parameter is the struct itself rather than a borrow of it.
+        // The C compiler is what knows how this target passes one, so it is
+        // handed a real struct type and left to apply the rule.
+        if (nth_param_by_value(p, head, index)) {
+            ty = pointee(ty)
+        }
         emit_ctype(p, ty)
         emit_text(" ")
         emit_source(p.src, off, len)
+        index = index + 1
         id = next_id
     }
 }

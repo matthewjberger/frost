@@ -68,12 +68,25 @@ main :: fn() -> i64 {
   argument is borrowed exactly as an unmarked one is. That copy is real, and a
   callee that writes to its parameter is writing to its own.
 
-  Two gaps, both loud rather than silent. On System V a struct over sixteen
-  bytes is pushed onto the stack, which the native backend does not emit yet and
-  reports; `--emit-c` handles it, since there the C compiler applies the rule.
-  And the self-hosted compiler refuses `value` outright, because it has no ABI
-  classifier and passing a pointer instead would be the wrong call rather than a
-  missing feature.
+  All four paths emit it: both of the bootstrap's backends and both of the
+  self-hosted compiler's. The two C backends hand the C compiler a real struct
+  type and let it apply the rule. The two that generate code have to know the
+  rule, so `src/c_abi.rs` classifies for Cranelift and the same classification
+  is written out again in `selfhosted/emit_asm.frost`, where one argument
+  becomes the one or several slots the target wants.
+
+  The three shapes an argument takes, which is the whole of the rule:
+
+  | | Windows | System V |
+  | --- | --- | --- |
+  | 1, 2, 4 or 8 bytes | one integer register, whatever it holds | by eightbyte |
+  | up to 16 bytes | address of a copy the caller makes | one or two registers, each integer or SSE by what reaches it |
+  | over 16 bytes | address of a copy the caller makes | pushed onto the stack |
+
+  The copy matters. C gives the callee its own parameter, so a callee that
+  writes to it must not write through to the caller's value, and the test that
+  says so passes a struct to a function that assigns to its parameter and then
+  reads the caller's copy back.
 - Freestanding is a separate axis. Everything on this page is about calling
   C and about the C backend. Whether the *executable* needs libc once it is
   running is a different question, answered by `--freestanding`. See

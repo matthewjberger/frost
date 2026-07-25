@@ -206,6 +206,7 @@ main :: fn() -> i64 {
         frame_materialized = arena_make($LocalVar, 4096),
         frame_answers = 0,
         mut_params = arena_make($LocalVar, 8192),
+        value_params = arena_make($LocalVar, 1024),
         move_scratch = arena_make($LocalVar, 4096),
         modules = modules,
         exports = exports,

@@ -1659,14 +1659,15 @@ parse_params :: fn(mut p: Parser) -> i64 {
         }
         // `value` on an `extern` parameter says the struct crosses to C the way
         // C passes one, split across registers or pushed on the stack by the
-        // target's rule. The bootstrap emits that; this compiler passes every
-        // aggregate as a pointer and has no ABI classifier, so the declaration
-        // is refused rather than compiled into the wrong call.
+        // target's rule rather than handed over as an address. It is a word
+        // rather than a keyword, so a parameter may still be called `value`;
+        // what tells them apart is that a mode is followed by the name and a
+        // name is followed by its type.
+        mut by_value : i64 = 0
         if (cur(p) == TOK_IDENT && peek_kind(p, 1) == TOK_IDENT
             && str_range_eq(p.src, cur_off(p), cur_len(p), "value")) {
-            report_where(p.modules, p.src, cur_off(p))
-            report("the self-hosted compiler does not pass a struct to C by value yet; the bootstrap does")
-            frost_rt_die()
+            by_value = 1
+            advance(p)
         }
         // A `$T: Type` parameter declares the type parameter and is erased from
         // the runtime signature, so no PARAM node is created for it.
@@ -1690,9 +1691,20 @@ parse_params :: fn(mut p: Parser) -> i64 {
             // borrows. An unmarked read borrows a struct or generic instance and
             // passes a scalar by value. An already pointer-typed annotation
             // (a raw pointer) or a `move` stays as written.
+            // A `value` parameter is only about placement, so it borrows here
+            // the way an unmarked aggregate does and the type it was written
+            // with is remembered before the borrow flag goes on.
+            if (by_value == 1 && is_aggregate(ty) == false) {
+                report_where(p.modules, p.src, offset)
+                report("only an aggregate can be written 'value'; a scalar already goes to C by value")
+                frost_rt_die()
+            }
             mut auto_borrow : i64 = 0
             if (is_pointer(ty) == false) {
                 if (mode == 1) {
+                    auto_borrow = 1
+                }
+                if (by_value == 1) {
                     auto_borrow = 1
                 }
                 if (mode == 0 && is_aggregate(ty)) {
@@ -1721,6 +1733,10 @@ parse_params :: fn(mut p: Parser) -> i64 {
             // auto-borrow flag alone cannot.
             if (mode == 1) {
                 arena_push(p.mut_params,
+                    LocalVar { name_off = param, name_len = 0, ty = 0 })
+            }
+            if (by_value == 1) {
+                arena_push(p.value_params,
                     LocalVar { name_off = param, name_len = 0, ty = 0 })
             }
             if (head == (0 - 1)) {

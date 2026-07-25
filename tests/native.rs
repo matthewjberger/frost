@@ -2380,25 +2380,134 @@ fn the_readme_snippet_is_the_tour_program() {
     assert_eq!(output, "100\n10\n20\n7\n");
 }
 
-// The self-hosted compiler passes every aggregate to C as a pointer and has no
-// ABI classifier, so it refuses `value` rather than compiling it into the wrong
-// call. It used to reach the arena with a parameter it could not read.
+// The self-hosted compiler passes a struct to C by value too, through both of
+// its backends. Its C backend hands the C compiler a real struct and lets it
+// apply the rule; its assembly backend has to know the rule, so it carries the
+// same classification src/c_abi.rs does and splits one argument into the slots
+// the target wants.
+//
+// Every shape here lands somewhere different: 8 bytes is one register, 4 bytes
+// of float is where the two targets disagree about which register file, 12 is
+// neither a register size on Windows nor two eightbytes, 16 is the last size
+// System V puts in registers, and 24 and 32 are the ones it pushes onto the
+// stack. `clobber` is what says the callee got a copy.
+const SELF_HOSTED_BY_VALUE: &str = "View :: struct { data: ^i8, len: i64 }\n\
+     Pair :: struct { x: i32, y: i32 }\n\
+     Single :: struct { a: f32 }\n\
+     Triple :: struct { a: i32, b: i32, c: i32 }\n\
+     Wide :: struct { a: i64, b: i64, c: i64, d: i64 }\n\
+     Wider :: struct { a: f64, b: f64, c: f64 }\n\
+     view_len :: extern fn(value v: View) -> i64\n\
+     pair_sum :: extern fn(value p: Pair) -> i64\n\
+     single_ten :: extern fn(value s: Single) -> i64\n\
+     triple_sum :: extern fn(value t: Triple) -> i64\n\
+     clobber :: extern fn(value t: Triple) -> i64\n\
+     wide_sum :: extern fn(value w: Wide) -> i64\n\
+     wider_sum :: extern fn(value w: Wider) -> i64\n\
+     wide_after :: extern fn(before: i64, value w: Wide, after: i64) -> i64\n\
+     mixed :: extern fn(before: i64, value p: Pair, after: i64) -> i64\n\
+     main :: fn() -> i64 {\n\
+     \x20   v := View { data = \"hello\", len = 5 }\n\
+     \x20   print unsafe { view_len(v) }\n\
+     \x20   p := Pair { x = 3, y = 4 }\n\
+     \x20   print unsafe { pair_sum(p) }\n\
+     \x20   print unsafe { single_ten(Single { a = 2.5 }) }\n\
+     \x20   t := Triple { a = 1, b = 2, c = 3 }\n\
+     \x20   print unsafe { triple_sum(t) }\n\
+     \x20   print unsafe { clobber(t) }\n\
+     \x20   print unsafe { triple_sum(t) }\n\
+     \x20   print unsafe { mixed(7, p, 9) }\n\
+     \x20   w := Wide { a = 1, b = 2, c = 3, d = 4 }\n\
+     \x20   print unsafe { wide_sum(w) }\n\
+     \x20   print unsafe { wider_sum(Wider { a = 1.5, b = 2.5, c = 3.0 }) }\n\
+     \x20   print unsafe { wide_after(5, w, 6) }\n\
+     \x20   0\n\
+     }\n";
+
+const BY_VALUE_LIBRARY: &str = "#include <stdint.h>\n\
+     typedef struct { const char* data; int64_t len; } View;\n\
+     typedef struct { int32_t x; int32_t y; } Pair;\n\
+     typedef struct { float a; } Single;\n\
+     typedef struct { int32_t a; int32_t b; int32_t c; } Triple;\n\
+     typedef struct { int64_t a, b, c, d; } Wide;\n\
+     typedef struct { double a, b, c; } Wider;\n\
+     int64_t view_len(View v) { return v.len; }\n\
+     int64_t pair_sum(Pair p) { return p.x + p.y; }\n\
+     int64_t single_ten(Single s) { return (int64_t)(s.a * 10.0f); }\n\
+     int64_t triple_sum(Triple t) { return t.a + t.b + t.c; }\n\
+     int64_t clobber(Triple t) { t.a = 999; return t.a; }\n\
+     int64_t wide_sum(Wide w) { return w.a + w.b + w.c + w.d; }\n\
+     int64_t wider_sum(Wider w) { return (int64_t)(w.a + w.b + w.c); }\n\
+     int64_t wide_after(int64_t before, Wide w, int64_t after) {\n\
+     \x20   return before * 1000 + w.a + w.d + after;\n\
+     }\n\
+     int64_t mixed(int64_t before, Pair p, int64_t after) {\n\
+     \x20   return before * 100 + p.x * 10 + p.y + after;\n\
+     }\n";
+
 #[test]
-fn self_hosted_refuses_a_struct_passed_by_value() {
-    let source = "View :: struct { a: i64, b: i64 }\n\
-                  take :: extern fn(value v: View) -> i64\n\
-                  main :: fn() -> i64 { 0 }\n";
-    let Some(message) = self_hosted_rejects("byvalue", source) else {
+fn self_hosted_passes_a_struct_to_c_by_value() {
+    let Some(cc) = c_compiler() else {
         return;
     };
-    assert!(
-        message.contains("by value"),
-        "expected the by-value refusal, got:\n{message}"
-    );
-    assert!(
-        !message.contains("arena was indexed out of range"),
-        "an unsupported mode should not crash the compiler:\n{message}"
-    );
+    let Some(compiler) = build_self_hosted_compiler("byvalue") else {
+        return;
+    };
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let runtime = format!("{}/runtime/frost_runtime.c", root.display());
+    let directory = std::env::temp_dir();
+
+    let library = directory.join(format!("{}.c", unique("frost_byvalue_lib")));
+    std::fs::write(&library, BY_VALUE_LIBRARY).unwrap();
+    let input = directory.join(format!("{}.frost", unique("frost_byvalue")));
+    std::fs::write(&input, SELF_HOSTED_BY_VALUE).unwrap();
+
+    for (label, backend, suffix) in
+        [("shbvc", "--emit-c", "c"), ("shbvasm", "--emit-asm", "s")]
+    {
+        let emitted = directory.join(format!("{}.{suffix}", unique(label)));
+        let built = Command::new(&compiler)
+            .arg(backend)
+            .arg("-o")
+            .arg(&emitted)
+            .arg(&input)
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "{label} did not emit:\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let exe = directory.join(format!(
+            "{}{}",
+            unique(label),
+            std::env::consts::EXE_SUFFIX
+        ));
+        let linked = Command::new(cc)
+            .arg(&emitted)
+            .arg(&library)
+            .arg(&runtime)
+            .arg("-o")
+            .arg(&exe)
+            .output()
+            .unwrap();
+        assert!(
+            linked.status.success(),
+            "{label} did not link:\n{}",
+            String::from_utf8_lossy(&linked.stderr)
+        );
+        let ran = Command::new(&exe).output().unwrap();
+        let output = String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n");
+        assert_eq!(
+            output, "5\n7\n25\n6\n999\n6\n743\n10\n7\n5011\n",
+            "{label} disagrees"
+        );
+        let _ = std::fs::remove_file(&emitted);
+        let _ = std::fs::remove_file(&exe);
+    }
+    let _ = std::fs::remove_file(&library);
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&compiler);
 }
 
 // A byte that is no operator used to keep the "nothing matched" value, which is
@@ -8347,12 +8456,19 @@ fn a_struct_is_passed_to_c_by_value() {
          typedef struct { int32_t x; int32_t y; } Pair;\n\
          typedef struct { float a; } Single;\n\
          typedef struct { int32_t a; int32_t b; int32_t c; } Triple;\n\
+         typedef struct { int64_t a, b, c, d; } Wide;\n\
+         typedef struct { double a, b, c; } Wider;\n\
          int64_t view_len(View v) { return v.len; }\n\
          int64_t view_first(View v) { return (int64_t)(unsigned char)v.data[0]; }\n\
          int64_t pair_sum(Pair p) { return p.x + p.y; }\n\
          int64_t single_ten(Single s) { return (int64_t)(s.a * 10.0f); }\n\
          int64_t triple_sum(Triple t) { return t.a + t.b + t.c; }\n\
          int64_t clobber(Triple t) { t.a = 999; return t.a; }\n\
+         int64_t wide_sum(Wide w) { return w.a + w.b + w.c + w.d; }\n\
+         int64_t wider_sum(Wider w) { return (int64_t)(w.a + w.b + w.c); }\n\
+         int64_t wide_after(int64_t before, Wide w, int64_t after) {\n\
+         \x20   return before * 1000 + w.a + w.d + after;\n\
+         }\n\
          int64_t mixed(int64_t before, Pair p, int64_t after) {\n\
          \x20   return before * 100 + p.x * 10 + p.y + after;\n\
          }\n",
@@ -8377,6 +8493,11 @@ fn a_struct_is_passed_to_c_by_value() {
          Pair :: struct { x: i32, y: i32 }\n\
          Single :: struct { a: f32 }\n\
          Triple :: struct { a: i32, b: i32, c: i32 }\n\
+         Wide :: struct { a: i64, b: i64, c: i64, d: i64 }\n\
+         Wider :: struct { a: f64, b: f64, c: f64 }\n\
+         wide_sum :: extern fn(value w: Wide) -> i64\n\
+         wider_sum :: extern fn(value w: Wider) -> i64\n\
+         wide_after :: extern fn(before: i64, value w: Wide, after: i64) -> i64\n\
          view_len :: extern fn(value v: View) -> i64\n\
          view_first :: extern fn(value v: View) -> i64\n\
          pair_sum :: extern fn(value p: Pair) -> i64\n\
@@ -8396,6 +8517,10 @@ fn a_struct_is_passed_to_c_by_value() {
          \x20   printf(\"%lld\n\", clobber(t))\n\
          \x20   printf(\"%lld\n\", triple_sum(t))\n\
          \x20   printf(\"%lld\n\", mixed(7, p, 9))\n\
+         \x20   w := Wide { a = 1, b = 2, c = 3, d = 4 }\n\
+         \x20   printf(\"%lld\n\", wide_sum(w))\n\
+         \x20   printf(\"%lld\n\", wider_sum(Wider { a = 1.5, b = 2.5, c = 3.0 }))\n\
+         \x20   printf(\"%lld\n\", wide_after(5, w, 6))\n\
          \x20   0\n\
          }\n";
     let root = directory.join("shapes.frost");
@@ -8403,7 +8528,10 @@ fn a_struct_is_passed_to_c_by_value() {
 
     // 5, 'h', 3+4, 2.5*10, 1+2+3, the callee's own copy, the caller's value
     // still 6 because the copy was the callee's, then 7*100 + 3*10 + 4 + 9.
-    let expected = "5\n104\n7\n25\n6\n999\n6\n743\n";
+    // Then the two structs too large for registers, which System V pushes onto
+    // the stack rather than passing as an address, and one of those with an
+    // ordinary argument on either side of it: 5*1000 + 1 + 4 + 6.
+    let expected = "5\n104\n7\n25\n6\n999\n6\n743\n10\n7\n5011\n";
 
     for emit_c in [false, true] {
         let exe = directory.join(format!(

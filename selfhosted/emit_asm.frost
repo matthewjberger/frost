@@ -710,6 +710,121 @@ abi_class_of :: fn(mut p: Parser, params: i64, index: i64) -> i64 {
     declared
 }
 
+// ---------------------------------------------------------------------------
+// Passing a struct to C by value
+//
+// Every other argument this backend emits is one word. A parameter written
+// `value` is not: C splits a small struct across registers by a rule of the
+// target's and pushes a large one onto the stack, so one argument becomes one
+// or several slots. These three answer what those slots are, and the call
+// emitter walks slots rather than arguments because of them.
+//
+// The same classification is in src/c_abi.rs, checked against what the host C
+// compiler actually does. See docs/c-compatibility.md.
+// ---------------------------------------------------------------------------
+
+// Whether every scalar of `ty` reaching the eightbyte numbered `word` is
+// floating point, where `at` is the type's own offset from the start of the
+// struct. 0 when nothing reaches it, 1 when everything that does is float, and
+// 2 when anything is not. An eightbyte no field reaches is padding, and padding
+// is not floating point, which is what the 0 says.
+classify_eightbyte :: fn(mut p: Parser, ty: i64, at: i64, word: i64) -> i64 {
+    if (is_struct_ty(ty)) {
+        def := arena_at(p.structs, struct_index_of(ty))
+        mut fid := def.field_head
+        mut offset : i64 = 0
+        mut answer : i64 = 0
+        while (fid != (0 - 1)) {
+            field := arena_at(p.fields, fid)
+            field_ty := field.ty
+            next_field := field.next
+            offset = align_up(offset, align_of(p, field_ty))
+            one := classify_eightbyte(p, field_ty, at + offset, word)
+            if (one == 2) {
+                answer = 2
+            }
+            if (one == 1 && answer == 0) {
+                answer = 1
+            }
+            offset = offset + type_size(p, field_ty)
+            fid = next_field
+        }
+        return answer
+    }
+    if (is_array_ty(ty) && is_slice_ty(p, ty) == false) {
+        element := array_element(p, ty)
+        stride := type_size(p, element)
+        count := array_length(p, ty)
+        mut index : i64 = 0
+        mut answer : i64 = 0
+        while (index < count) {
+            one := classify_eightbyte(p, element, at + index * stride, word)
+            if (one == 2) {
+                answer = 2
+            }
+            if (one == 1 && answer == 0) {
+                answer = 1
+            }
+            index = index + 1
+        }
+        return answer
+    }
+    size := type_size(p, ty)
+    first := at / 8
+    last := (at + size - 1) / 8
+    if (word < first || word > last) {
+        return 0
+    }
+    if (is_float(ty)) {
+        return 1
+    }
+    2
+}
+
+// 0: the bytes go in one or two registers, read out of the struct.
+// 1: the callee is handed the address of a copy the caller makes.
+// 2: the bytes are pushed onto the stack as part of the argument area.
+value_abi_kind :: fn(mut p: Parser, ty: i64) -> i64 {
+    size := type_size(p, ty)
+    if (p.abi_windows == 1) {
+        // Microsoft x64: one integer register for a struct of 1, 2, 4 or 8
+        // bytes whatever it holds, and the address of a copy for every other
+        // size. A copy, because the callee's parameter is its own.
+        if (size == 1 || size == 2 || size == 4 || size == 8) {
+            return 0
+        }
+        return 1
+    }
+    // System V: two eightbytes at most in registers, anything larger in memory,
+    // which for an argument means the stack rather than an address.
+    if (size > 16) {
+        return 2
+    }
+    0
+}
+
+value_abi_slots :: fn(mut p: Parser, ty: i64) -> i64 {
+    if (value_abi_kind(p, ty) == 1) {
+        return 1
+    }
+    eightbytes := type_size(p, ty) + 7
+    eightbytes / 8
+}
+
+// The type a `value` parameter takes, or -1 when this argument is not one. The
+// declared type is a borrow of the struct, since the argument still arrives
+// here as an address; only the placement differs.
+value_param_type :: fn(mut p: Parser, params: i64, index: i64) -> i64 {
+    if (nth_param_by_value(p, params, index) == false) {
+        return 0 - 1
+    }
+    declared := nth_param_type(p, params, index)
+    if (is_pointer(declared)) {
+        return pointee(declared)
+    }
+    declared
+}
+
 emit_asm_arg_reg :: fn(mut p: Parser, index: i64) {
     if (p.abi_windows == 1) {
         if (index == 0) { emit_text("%rcx")  return }
@@ -1051,13 +1166,32 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         i = i - 1
     }
 
-    total := count + sret
+    // A `value` argument is one or several slots rather than one word, so the
+    // argument area is measured in slots. Every slot is given room on the
+    // stack whether or not it ends up in a register, since a System V struct
+    // in memory takes stack space with registers still free, and a frame
+    // larger than it needs costs nothing but stack.
     regs := abi_arg_regs(p)
     shadow := abi_shadow(p)
-    mut spill : i64 = 0
-    if (total > regs) {
-        spill = ((total - regs) * 8 + 15) / 16 * 16
+    mut total : i64 = sret
+    mut counted : i64 = 0
+    while (counted < count) {
+        want := 0 - 1
+        if (counted < value_count && generic == false) {
+            want = value_param_type(p, callee.params, counted)
+        }
+        if (want >= 0) {
+            total = total + value_abi_slots(p, want)
+        } else {
+            total = total + 1
+        }
+        counted = counted + 1
     }
+    // Room for every slot, whether or not it ends up in a register. A System V
+    // struct classed as memory takes stack space with registers still free, so
+    // the old rule of allocating only what would not fit wrote the argument
+    // below the stack pointer and over the return address.
+    spill := (total * 8 + 15) / 16 * 16
     frame := shadow + spill
     asm_i("subq $", frame, ", %rsp")
 
@@ -1078,36 +1212,81 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     mut int_next : i64 = sret
     mut sse_next : i64 = 0
     mut spilled : i64 = 0
+    mut position : i64 = sret
     mut r : i64 = 0
     while (r < count) {
-        position := r + sret
-        mut wants_sse : bool = false
+        mut want : i64 = 0 - 1
         if (r < value_count && generic == false) {
-            wants_sse = is_float(abi_class_of(p, callee.params, r))
+            want = value_param_type(p, callee.params, r)
         }
-        mut int_reg := int_next
-        mut sse_reg := sse_next
-        if (p.abi_windows == 1) {
-            int_reg = position
-            sse_reg = position
+        mut slots : i64 = 1
+        mut kind : i64 = 0
+        if (want >= 0) {
+            slots = value_abi_slots(p, want)
+            kind = value_abi_kind(p, want)
         }
-        asm_i("movq ", frame + 16 * r, "(%rsp), %r10")
-        if (wants_sse && sse_reg < sse_regs) {
-            emit_text("    movq %r10, ")
-            emit_asm_sse_reg(sse_reg)
-            emit_text("\n")
-        } else if (wants_sse == false && int_reg < regs) {
-            emit_text("    movq %r10, ")
-            emit_asm_arg_reg(p, int_reg)
-            emit_text("\n")
-        } else {
-            asm_i("movq %r10, ", shadow + 8 * spilled, "(%rsp)")
-            spilled = spilled + 1
-        }
-        if (wants_sse) {
-            sse_next = sse_next + 1
-        } else {
-            int_next = int_next + 1
+        // The pushed cell holds the value for an ordinary argument and the
+        // struct's address for a `value` one, so a slot of the second is read
+        // through that address at its own eightbyte.
+        mut slot : i64 = 0
+        while (slot < slots) {
+            asm_i("movq ", frame + 16 * r, "(%rsp), %r10")
+            mut wants_sse : bool = false
+            if (want >= 0) {
+                if (kind == 1) {
+                    // Windows, and a size no register holds: copy the bytes
+                    // somewhere the caller owns and hand over that address, so
+                    // a callee writing to its parameter writes to its own.
+                    copy := alloc_temp(p, type_size(p, want))
+                    asm("movq %r10, %r11")
+                    asm_i("leaq ", copy, "(%rbp), %r10")
+                    emit_asm_copy(type_size(p, want))
+                    asm_i("leaq ", copy, "(%rbp), %r10")
+                } else {
+                    asm_i("movq ", 8 * slot, "(%r10), %r10")
+                    // Only System V asks what the eightbyte holds. Windows puts
+                    // a struct of a register's size in an integer register
+                    // whatever it holds, so a `struct { float a; }` goes in
+                    // %rcx rather than %xmm0.
+                    if (p.abi_windows == 0) {
+                        wants_sse = classify_eightbyte(p, want, 0, slot) == 1
+                    }
+                }
+            } else if (r < value_count && generic == false) {
+                wants_sse = is_float(abi_class_of(p, callee.params, r))
+            }
+            mut int_reg := int_next
+            mut sse_reg := sse_next
+            if (p.abi_windows == 1) {
+                int_reg = position
+                sse_reg = position
+            }
+            // A System V struct classed as memory goes on the stack whatever
+            // is free, which is the one case a register is not tried.
+            if (kind == 2) {
+                asm_i("movq %r10, ", shadow + 8 * spilled, "(%rsp)")
+                spilled = spilled + 1
+            } else if (wants_sse && sse_reg < sse_regs) {
+                emit_text("    movq %r10, ")
+                emit_asm_sse_reg(sse_reg)
+                emit_text("\n")
+                sse_next = sse_next + 1
+            } else if (wants_sse == false && int_reg < regs) {
+                emit_text("    movq %r10, ")
+                emit_asm_arg_reg(p, int_reg)
+                emit_text("\n")
+                int_next = int_next + 1
+            } else {
+                asm_i("movq %r10, ", shadow + 8 * spilled, "(%rsp)")
+                spilled = spilled + 1
+                if (wants_sse) {
+                    sse_next = sse_next + 1
+                } else {
+                    int_next = int_next + 1
+                }
+            }
+            position = position + 1
+            slot = slot + 1
         }
         r = r + 1
     }

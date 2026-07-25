@@ -4,7 +4,8 @@
 import "core.frost"
 import "names.frost"
 
-export align_up, alloc_temp, field_offset, is_unsigned, scalar_size, type_size
+export align_of, align_up, alloc_temp, field_offset, is_unsigned, scalar_size,
+    type_size
 
 // What the C compiler would compute, because the two backends have to agree.
 // A scalar is as wide as its name says, a pointer is a word, and a struct is
