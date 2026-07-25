@@ -731,6 +731,9 @@ Parser :: struct {
     // Bindings holding the address of one already in frame_bound, so reading
     // back through one hands the frame pointer out again.
     frame_via_pointer: Arena<LocalVar>,
+    // The same idea for a region: bindings holding the address of one already
+    // tainted, so reading back through one hands the arena pointer out again.
+    region_via_pointer: Arena<LocalVar>,
     frame_materialized: Arena<LocalVar>,
     frame_answers: i64,
     // The parameter nodes declared `mut`, by node index, so the exclusivity
