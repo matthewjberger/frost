@@ -54,10 +54,14 @@ pub fn check_ownership_recovering(
     let param_types = collect_param_types(statements);
     let mut reports = Vec::new();
     for statement in statements {
-        if let Err(error) = locate(
-            check_statement(&statement.node, linear, &signatures, &param_types),
-            statement.position,
-        ) {
+        let outcome = check_statement(
+            &statement.node,
+            linear,
+            &signatures,
+            &param_types,
+            &mut reports,
+        );
+        if let Err(error) = locate(outcome, statement.position) {
             reports.push(error.to_string());
         }
     }
@@ -133,6 +137,7 @@ fn check_statement(
     linear: &HashSet<String>,
     signatures: &Signatures,
     param_types: &ParamTypes,
+    reports: &mut Vec<String>,
 ) -> Result<()> {
     match statement {
         Statement::Struct(name, _, fields) => {
@@ -174,15 +179,21 @@ fn check_statement(
             // holds an arena borrow to its region, so returning one is only ever
             // a borrow the caller may keep. `arena_at` is the reason it exists.
             for inner in body {
-                check_statement(inner, linear, signatures, param_types)?;
+                check_statement(
+                    inner,
+                    linear,
+                    signatures,
+                    param_types,
+                    reports,
+                )?;
             }
-            check_function_moves(
+            reports.extend(check_function_moves(
                 params,
                 body,
                 linear,
                 signatures,
                 param_types,
-            )?;
+            ));
         }
         Statement::Extern {
             name, return_type, ..
@@ -206,7 +217,7 @@ fn check_function_moves(
     linear: &HashSet<String>,
     signatures: &Signatures,
     param_types: &ParamTypes,
-) -> Result<()> {
+) -> Vec<String> {
     let mut checker = MoveChecker {
         types: HashMap::new(),
         states: HashMap::new(),
@@ -224,14 +235,16 @@ fn check_function_moves(
             .map(|parameter| parameter.name.clone())
             .collect(),
         in_defer: false,
+        reports: Vec::new(),
+        reported: HashSet::new(),
     };
     for parameter in params {
         if let Some(ty) = &parameter.type_annotation {
             checker.note_binding(&parameter.name, Some(ty.clone()));
         }
     }
-    checker.check_function_body(body)?;
-    Ok(())
+    checker.check_function_body(body);
+    checker.reports
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -261,6 +274,11 @@ struct MoveChecker<'a> {
     // known about what it does with its arguments until then.
     compile_time: HashSet<String>,
     in_defer: bool,
+    reports: Vec<String>,
+    // The raw text of what has already been said. Past a move the state stays
+    // moved, so every later mention of that name fails the same way, and the
+    // second telling is an echo of the first rather than a second mistake.
+    reported: HashSet<String>,
 }
 
 impl MoveChecker<'_> {
@@ -280,21 +298,35 @@ impl MoveChecker<'_> {
         self.states.get(name).copied().unwrap_or(MoveState::Live)
     }
 
-    fn check_block(&mut self, block: &Block) -> Result<bool> {
+    /// Record a failed statement and carry on to the next one, unless the same
+    /// thing has already been said.
+    fn record(&mut self, outcome: Result<bool>, position: Position) -> bool {
+        match outcome {
+            Ok(diverges) => diverges,
+            Err(error) => {
+                if self.reported.insert(error.to_string()) {
+                    let located = locate::<bool>(Err(error), position)
+                        .expect_err("an error stays an error");
+                    self.reports.push(located.to_string());
+                }
+                false
+            }
+        }
+    }
+
+    fn check_block(&mut self, block: &Block) -> bool {
         let mut diverges = false;
         for statement in block {
-            diverges = locate(
-                self.check_statement(&statement.node),
-                statement.position,
-            )?;
+            let outcome = self.check_statement(&statement.node);
+            diverges = self.record(outcome, statement.position);
             if diverges {
                 break;
             }
         }
-        Ok(diverges)
+        diverges
     }
 
-    fn check_function_body(&mut self, block: &Block) -> Result<bool> {
+    fn check_function_body(&mut self, block: &Block) -> bool {
         let mut diverges = false;
         for (index, statement) in block.iter().enumerate() {
             let is_last = index + 1 == block.len();
@@ -306,20 +338,21 @@ impl MoveChecker<'_> {
                     expression,
                     Expression::If(..) | Expression::Switch(..)
                 ) {
-                    diverges =
-                        locate(self.check_conditional(expression), position)?;
+                    let outcome = self.check_conditional(expression);
+                    diverges = self.record(outcome, position);
                 } else {
-                    locate(self.visit(expression, true), position)?;
+                    let outcome = self.visit(expression, true).map(|()| false);
+                    self.record(outcome, position);
                 }
             } else {
-                diverges =
-                    locate(self.check_statement(&statement.node), position)?;
+                let outcome = self.check_statement(&statement.node);
+                diverges = self.record(outcome, position);
                 if diverges {
                     break;
                 }
             }
         }
-        Ok(diverges)
+        diverges
     }
 
     fn check_statement(&mut self, statement: &Statement) -> Result<bool> {
@@ -401,7 +434,7 @@ impl MoveChecker<'_> {
 
     fn check_loop_body(&mut self, body: &Block) -> Result<()> {
         let before = self.states.clone();
-        self.check_block(body)?;
+        self.check_block(body);
         for name in before.keys() {
             let previous = before.get(name).copied().unwrap_or(MoveState::Live);
             if previous == MoveState::Live
@@ -441,7 +474,7 @@ impl MoveChecker<'_> {
         &mut self,
         block: &Block,
     ) -> Result<(HashMap<String, MoveState>, bool)> {
-        let diverges = self.check_block(block)?;
+        let diverges = self.check_block(block);
         let states = self.states.clone();
         Ok((states, diverges))
     }
