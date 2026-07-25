@@ -1793,6 +1793,9 @@ fn selfhosted_native_output(name: &str, source: &str) -> Option<String> {
     let assembled = Command::new(c_compiler().unwrap())
         .arg(&asm_path)
         .arg(&runtime)
+        // libm, for a program that reaches std/math.frost's sqrtf and the rest.
+        // Needed on Linux, a harmless no-op on macOS and mingw.
+        .arg("-lm")
         .arg("-o")
         .arg(&exe_path)
         .output()

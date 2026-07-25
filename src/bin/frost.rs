@@ -724,6 +724,10 @@ fn compile_c(
         for lib in extra_libs {
             cmd.arg(lib);
         }
+        // The C math functions std/math.frost calls (sqrtf and the rest) live in
+        // libm on Linux and the BSDs; on macOS and mingw the flag is a harmless
+        // no-op, and MSVC keeps them in the CRT and is the `cl` branch above.
+        cmd.arg("-lm");
     }
 
     let output = cmd.output().context("Failed to run C compiler")?;
@@ -820,6 +824,14 @@ fn link_executable(
         cmd.arg(exe_path);
         for lib in extra_libs {
             cmd.arg(lib);
+        }
+        if !freestanding {
+            // A program that calls the C math functions (sqrtf and the rest,
+            // used by std/math.frost) needs libm on the platforms that keep it
+            // out of the C runtime. Linux and the BSDs do; on macOS and mingw it
+            // is folded in and the flag is a harmless no-op; MSVC keeps them in
+            // the CRT and is the `cl` branch above.
+            cmd.arg("-lm");
         }
         if freestanding {
             // The freestanding runtime supplies the platform's entry point; the
