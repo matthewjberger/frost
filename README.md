@@ -99,7 +99,7 @@ The two compilers have been audited against each other by running the same progr
 
 What is left, roughly in order:
 
-- Renaming a name on import. Two modules that export the same name is already a compile error. The rename was designed and then held back, since the only thing it resolves is a collision between two third-party libraries you cannot edit, and there is no third-party ecosystem yet.
+- Renaming a name on import. Two modules that export the same name is already a compile error naming both. The rename is the escape hatch for the one case that error cannot be answered by editing a module: two third-party libraries that clash. It was tried and put back. A rename that is only a local alias parses and works but does not resolve a collision, because the flat splice keeps every exported name bare and the collision error fires first. Making it resolve one means mangling exported names per module, which is what `module_tag_of` and separate compilation are built on not happening, plus a per-importer binding map and a decision about whether imports stay transitive. That is a name-resolution change, not an escape hatch, and there is no third-party ecosystem yet to need it.
 
 ## Documentation
 
