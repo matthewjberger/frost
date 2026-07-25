@@ -161,6 +161,17 @@ window:
     cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 -o examples/graphics/window examples/graphics/window.frost
     ./examples/graphics/window
 
+# Draws a triangle with wgpu in an SDL3 window (Windows)
+[windows]
+triangle:
+    $sdl = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "examples/graphics" }; cargo run -r -q -p frost --bin frost -- --link --libs "$sdl/SDL3.dll" --libs "examples/graphics/wgpu/wgpu_native.dll" -o examples/graphics/triangle.exe examples/graphics/triangle.frost; Copy-Item examples/graphics/wgpu/wgpu_native.dll examples/graphics -Force; & ./examples/graphics/triangle.exe
+
+# Draws a triangle with wgpu in an SDL3 window, needs SDL3 and wgpu-native (Unix)
+[unix]
+triangle:
+    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 --libs=-lwgpu_native -o examples/graphics/triangle examples/graphics/triangle.frost
+    ./examples/graphics/triangle
+
 # Builds the self-hosted compiler (frost written in frost)
 selfhost-build:
     cargo run -r -q -p frost --bin frost -- --link -o selfhosted/frost.exe selfhosted/frost.frost

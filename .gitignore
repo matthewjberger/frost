@@ -10,3 +10,8 @@ bench/generated
 examples/graphics/SDL3.dll
 examples/graphics/SDL3.lib
 examples/graphics/window
+examples/graphics/wgpu/
+examples/graphics/wgpu_native.dll
+examples/graphics/triangle
+examples/graphics/*.png
+examples/graphics/*.exe
