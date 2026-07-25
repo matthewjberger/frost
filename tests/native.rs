@@ -807,6 +807,115 @@ fn a_return_type_list_is_held_to_its_shape() {
     );
 }
 
+// `.Circle { radius = 5 }` where the type is already known, the construction
+// counterpart of the `case .Circle` a pattern writes. The enum comes from what
+// the context expects: an annotation, a call's parameter, a struct field, a
+// return, an assignment, or an element of an array.
+const INFERRED_VARIANTS: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Shape :: enum { Circle { radius: i64 }, Square { side: i64 } }
+Color :: enum { Red, Green, Blue }
+Theme :: struct { primary: Color, accent: Color }
+Fault :: enum { Missing, Denied }
+
+area :: fn(s: Shape) -> i64 {
+    match s {
+        case .Circle { radius }: radius * radius * 3
+        case .Square { side }: side * side
+    }
+}
+
+paint :: fn(c: Color) -> i64 {
+    match c {
+        case .Red: 1
+        case .Green: 2
+        case .Blue: 3
+    }
+}
+
+// The return type is what the dot takes its enum from.
+round :: fn(r: i64) -> Shape {
+    return .Circle { radius = r }
+}
+
+// A failure set: the dot names a variant of the error, and the compiler tells
+// it apart from the value the function answers with.
+pick :: fn(want: i64) -> i64 ! Fault {
+    if (want == 0) {
+        return .Missing
+    }
+    want * 2
+}
+
+main :: fn() -> i64 {
+    s : Shape = .Circle { radius = 4 }
+    printf("%lld\n", area(s))
+
+    // A call's parameter, including one whose function is written later.
+    printf("%lld\n", area(.Square { side = 5 }))
+    printf("%lld\n", paint(.Green))
+    printf("%lld\n", later(.Blue))
+    printf("%lld\n", area(round(2)))
+
+    // A struct field.
+    t := Theme { primary = .Red, accent = .Blue }
+    printf("%lld\n", paint(t.primary))
+    printf("%lld\n", paint(t.accent))
+
+    // An assignment to a place whose type is known.
+    mut c : Color = .Red
+    c = .Blue
+    printf("%lld\n", paint(c))
+
+    // An element of an array, whose type the annotation gives.
+    mut wheel : [3]Color = [.Red, .Green, .Blue]
+    mut sum : i64 = 0
+    for held in wheel {
+        sum = sum + paint(held)
+    }
+    printf("%lld\n", sum)
+
+    good := match pick(5) {
+        case .Ok { value }: value
+        case .Err { error }: 0
+    }
+    printf("%lld\n", good)
+    bad := match pick(0) {
+        case .Ok { value }: value
+        case .Err { error }: 0 - 1
+    }
+    printf("%lld\n", bad)
+    0
+}
+
+later :: fn(c: Color) -> i64 { paint(c) * 10 }
+"#;
+
+#[test]
+fn a_variant_takes_its_enum_from_the_context() {
+    let Some(output) = compile_and_run("dotvariant", INFERRED_VARIANTS) else {
+        return;
+    };
+    assert_eq!(output, "48\n25\n2\n30\n12\n1\n3\n3\n6\n10\n-1\n");
+}
+
+// A dot with nothing to take its enum from says so, rather than failing later
+// as a nameless enum.
+#[test]
+fn a_variant_without_a_context_is_rejected() {
+    let source = "Color :: enum { Red, Green }\n\
+         main :: fn() -> i64 {\n\
+         \x20   c := .Red\n\
+         \x20   0\n\
+         }\n";
+    let message = compile_error("dotvariantbad", source);
+    assert!(
+        message.contains("takes its enum from what the context expects"),
+        "expected the inference diagnostic in:\n{message}"
+    );
+}
+
 // `for item in items` over a slice, an array and a `str`. It is the
 // index-and-bound loop written out rather than an iterator: nothing is called
 // per element, and what the backend sees is what the same loop written by hand
@@ -2941,6 +3050,76 @@ fn self_hosted_returns_several_values() {
     };
     let _ = std::fs::remove_file(&input);
     let Some(via_c) = compile_c_and_run("shmulti", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
+// The self-hosted compiler infers a variant's enum too. It resolves the tag at
+// parse time, so an argument whose function is written later is left unresolved
+// and patched once every signature is known.
+const SELF_HOSTED_INFERRED_VARIANTS: &str =
+    "Shape :: enum { Circle { radius: i64 }, Square { side: i64 } }
+     Color :: enum { Red, Green, Blue }
+     Theme :: struct { primary: Color, accent: Color }
+     area :: fn(s: Shape) -> i64 {
+         match s {
+             case .Circle { radius }: radius * radius * 3
+             case .Square { side }: side * side
+         }
+     }
+     paint :: fn(c: Color) -> i64 {
+         match c {
+             case .Red: 1
+             case .Green: 2
+             case .Blue: 3
+         }
+     }
+     round :: fn(r: i64) -> Shape {
+         return .Circle { radius = r }
+     }
+     main :: fn() -> i64 {
+         s : Shape = .Circle { radius = 4 }
+         print area(s)
+         print area(.Square { side = 5 })
+         print paint(.Green)
+         print later(.Blue)
+         print area(round(2))
+         t := Theme { primary = .Red, accent = .Blue }
+         print paint(t.primary)
+         print paint(t.accent)
+         0
+     }
+     later :: fn(c: Color) -> i64 { paint(c) * 10 }
+";
+
+#[test]
+fn self_hosted_infers_a_variant_enum() {
+    let Some(output) =
+        selfhosted_native_output("shdot", SELF_HOSTED_INFERRED_VARIANTS)
+    else {
+        return;
+    };
+    assert_eq!(
+        output,
+        "48
+25
+2
+30
+12
+1
+3
+"
+    );
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shdot_input.frost");
+    std::fs::write(&input, SELF_HOSTED_INFERRED_VARIANTS).unwrap();
+    let Some(c_source) = self_hosted_emits("shdot", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shdot", &c_source) else {
         return;
     };
     assert_eq!(via_c, output, "the self-hosted C backend disagrees");
@@ -7874,6 +8053,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_enumeq", ENUM_EQUALITY),
         ("diff_forseq", FOR_OVER_A_SEQUENCE),
         ("diff_multiret", MULTIPLE_RETURN_VALUES),
+        ("diff_dotvariant", INFERRED_VARIANTS),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);

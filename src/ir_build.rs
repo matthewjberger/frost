@@ -1131,6 +1131,26 @@ fn sanitize_identifier(name: &str) -> String {
         .collect()
 }
 
+// The enum an inferred `.Variant` belongs to, taken from what the context
+// expects. Without one there is nothing to infer from, which is what the
+// message says rather than leaving a nameless enum to fail later.
+fn name_inferred_variant(
+    variant: &str,
+    fields: &[(String, Expression)],
+    expected: Option<&Type>,
+) -> Result<Expression> {
+    let Some(Type::Enum(name) | Type::Struct(name)) = expected else {
+        bail!(
+            "`.{variant}` takes its enum from what the context expects, and here there is nothing to take it from; write `Enum::{variant}`"
+        );
+    };
+    Ok(Expression::EnumVariantInit(
+        name.clone(),
+        variant.to_string(),
+        fields.to_vec(),
+    ))
+}
+
 fn mangle_type(ty: &Type) -> String {
     match ty {
         Type::I8 => "i8".to_string(),
@@ -2650,6 +2670,12 @@ impl<'a> FunctionLowering<'a> {
                     // carry arguments, so the annotation is what names the
                     // layout. Same rule as a generic struct literal above.
                     let layout_name = match type_annotation {
+                        // `c : Color = .Red`: the annotation is the only place
+                        // the enum is named, which is the whole point of the
+                        // leading dot.
+                        Some(
+                            Type::Enum(annotated) | Type::Struct(annotated),
+                        ) if enum_name.is_empty() => annotated.clone(),
                         Some(
                             Type::Enum(annotated) | Type::Struct(annotated),
                         ) if is_generic_instance(annotated)
@@ -2660,6 +2686,11 @@ impl<'a> FunctionLowering<'a> {
                         }
                         _ => enum_name.clone(),
                     };
+                    if layout_name.is_empty() {
+                        bail!(
+                            "`.{variant_name}` takes its enum from what the context expects, and this binding has no type to take it from; annotate it or write `Enum::{variant_name}`"
+                        );
+                    }
                     let ty = Type::Enum(layout_name.clone());
                     let local = self.fresh_local(ty, Some(name.clone()));
                     self.init_enum(
@@ -3041,6 +3072,20 @@ impl<'a> FunctionLowering<'a> {
         expression: &Expression,
         expected: Option<&Type>,
     ) -> Result<(IrOperand, Type)> {
+        // `.Circle { radius = 5 }` names its enum nowhere, so the type the
+        // context expects is what says which enum it is. Filling it in here
+        // covers every position that carries one: an argument, a field, a
+        // return, an assignment and an element.
+        let named;
+        let expression = match expression {
+            Expression::EnumVariantInit(name, variant, fields)
+                if name.is_empty() =>
+            {
+                named = name_inferred_variant(variant, fields, expected)?;
+                &named
+            }
+            other => other,
+        };
         match expression {
             Expression::Literal(literal) => {
                 self.lower_literal(literal, expected)
@@ -4143,10 +4188,12 @@ impl<'a> FunctionLowering<'a> {
             }
             Expression::EnumVariantInit(name, variant, fields) => {
                 // The local's type already names the instance when the context
-                // resolved one, and that is the layout to write into.
+                // resolved one, and that is the layout to write into. It is also
+                // what names the enum of a `.Variant`, which names none itself.
                 let layout_name = match self.type_of_local(local) {
                     Type::Enum(instance) | Type::Struct(instance)
-                        if is_generic_instance(&instance) =>
+                        if name.is_empty()
+                            || is_generic_instance(&instance) =>
                     {
                         instance
                     }

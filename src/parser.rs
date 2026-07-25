@@ -2040,6 +2040,14 @@ impl<'a> Parser<'a> {
             }
             Token::True => Expression::Boolean(true),
             Token::False => Expression::Boolean(false),
+            // `.Circle { radius = 5 }` where the type is already known, the
+            // construction counterpart of the `case .Circle` a pattern writes.
+            // The enum name is left empty and filled in from what the context
+            // expects.
+            Token::Dot => {
+                advance = false;
+                self.parse_inferred_variant()?
+            }
             Token::LeftBracket => {
                 advance = false;
                 self.parse_array_literal()?
@@ -2190,6 +2198,41 @@ impl<'a> Parser<'a> {
         }
 
         Ok(expression)
+    }
+
+    // `.Variant` or `.Variant { field = value }`. The enum is whatever the
+    // context expects, so the name is empty here and the lowering fills it in.
+    fn parse_inferred_variant(&mut self) -> Result<Expression> {
+        self.read_token();
+        let variant = match self.read_token() {
+            Token::Identifier(name) => name.to_string(),
+            other => bail!("Expected a variant name after '.', found {other}"),
+        };
+        let mut fields = Vec::new();
+        if matches!(self.peek_nth(0), Token::LeftBrace)
+            && !self.no_struct_literal
+        {
+            self.read_token();
+            while self.peek_nth(0) != &Token::RightBrace {
+                if matches!(self.peek_nth(0), Token::EndOfFile) {
+                    bail!("Unexpected end of input in a variant literal");
+                }
+                let field =
+                    self.read_field_name("a field name in a variant literal")?;
+                if !matches!(self.read_token(), Token::Assign) {
+                    bail!(
+                        "Expected '=' after a field name in a variant literal"
+                    );
+                }
+                fields
+                    .push((field, self.parse_expression(Precedence::Lowest)?));
+                if matches!(self.peek_nth(0), Token::Comma) {
+                    self.read_token();
+                }
+            }
+            self.read_token();
+        }
+        Ok(Expression::EnumVariantInit(String::new(), variant, fields))
     }
 
     fn parse_prefix_expression(&mut self) -> Result<Expression> {

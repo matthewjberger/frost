@@ -21,6 +21,10 @@ struct Lowerer {
     enums: Vec<Spanned<Statement>>,
     // Fallible function name to its Result enum name.
     fallible: HashMap<String, String>,
+    // Every enum's variant names, so a `return .Denied` can be told from a
+    // returned value: the leading dot names no enum, and the failure set is
+    // what it belongs to when the error type has that variant.
+    variants: HashMap<String, Vec<String>>,
     counter: usize,
 }
 
@@ -36,8 +40,21 @@ pub fn lower_failure_sets(program: &mut Program) -> Result<()> {
         results: HashMap::new(),
         enums: Vec::new(),
         fallible: HashMap::new(),
+        variants: HashMap::new(),
         counter: 0,
     };
+
+    for statement in program.iter() {
+        if let Statement::Enum(name, _, variants) = &statement.node {
+            lowerer.variants.insert(
+                name.clone(),
+                variants
+                    .iter()
+                    .map(|variant| variant.name.clone())
+                    .collect(),
+            );
+        }
+    }
 
     // First pass. Give every fallible function a Result enum.
     for statement in program.iter() {
@@ -199,6 +216,18 @@ impl Lowerer {
             _ => return false,
         };
         match expression {
+            // `return .Denied`: the dot names no enum, so it is the failure
+            // when the error type is an enum with that variant. A value type
+            // that happens to share the name is not a case that can arise,
+            // since the two are different enums and the reader wrote the one
+            // the error declares.
+            Expression::EnumVariantInit(name, variant, _)
+                if name.is_empty() =>
+            {
+                self.variants
+                    .get(error_name)
+                    .is_some_and(|names| names.contains(variant))
+            }
             Expression::EnumVariantInit(name, _, _)
             | Expression::StructInit(name, _) => name == error_name,
             _ => false,

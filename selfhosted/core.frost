@@ -20,7 +20,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     OP_ADD, OP_AND, OP_DIV, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT, OP_MOD, OP_MUL,
     OP_NE, OP_OR, OP_SUB, OP_SHL, OP_SHR, OP_BITAND, OP_BITOR,
     BORROW_FLAG, POINTER_BASE, Parser, STRUCT_BASE, StructDef,
-    StructField, Sym, TOK_AMP, TOK_ANDAND, TOK_ARROW, TOK_ASSIGN, TOK_BANG,
+    StructField, Sym, VariantFixup, TOK_AMP, TOK_ANDAND, TOK_ARROW, TOK_ASSIGN, TOK_BANG,
     TOK_CARET, TOK_COLON, TOK_COLONCOLON, TOK_COLONEQ, TOK_COMMA, TOK_DOLLAR,
     TOK_DOT, TOK_EOF, TOK_EQEQ, TOK_FLOAT, TOK_GE, TOK_GT, TOK_IDENT, TOK_INT,
     TOK_KW_CASE, TOK_KW_ELSE, TOK_KW_ENUM, TOK_KW_EXPORT, TOK_KW_EXTERN,
@@ -518,6 +518,19 @@ StructField :: struct {
     next: i64,
 }
 
+// A `.Variant` written as a call argument, whose enum is the parameter's type.
+// The callee may not be parsed when the argument is, so the literal is left
+// unresolved and patched once every signature is known. `lit` is the struct
+// literal node, `callee` the function it is an argument to, and `argument` its
+// position in that call.
+VariantFixup :: struct {
+    lit: i64,
+    callee: i64,
+    argument: i64,
+    name_off: i64,
+    name_len: i64,
+}
+
 // One source file. A name is an offset into the buffer every file's text was
 // laid into, and a module's range is what says which file wrote it.
 Module :: struct {
@@ -697,6 +710,15 @@ Parser :: struct {
     // bare generic literal like `Slab { ... }` written for a `Slab<Entity, 8>`
     // resolves to that instance where no generic binding is in force to name it.
     expected_type: i64,
+    // The type a `.Variant` takes its enum from, and the second place to look
+    // when the first does not have the variant. The pair is what lets a
+    // `return` in a fallible function name a variant of either the value it
+    // answers with or the failure set it declares.
+    expected_alt: i64,
+    // The declared value type of the function being parsed, before a failure
+    // set wraps it, so a `return` knows what it is expected to produce.
+    ok_ty: i64,
+    variant_fixups: Arena<VariantFixup>,
     saw_type_param: i64,
     last_return_type: i64,
     no_struct_lit: bool,

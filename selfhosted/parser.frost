@@ -7,7 +7,8 @@ import "imports.frost"
 import "names.frost"
 import "types.frost"
 
-export parse_generic_instance, parse_program, record_mono_rets
+export parse_generic_instance, parse_program, record_mono_rets,
+    resolve_variant_fixups
 
 parse_number :: fn(mut p: Parser) -> i64 {
     value := cur_val(p)
@@ -189,6 +190,10 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             ty = 0 })
         return new_named_node(p, NODE_VAR, 0, name_off, name_len)
     }
+    // `.Circle { radius = 5 }`, whose enum comes from what the context expects.
+    if (kind == TOK_DOT) {
+        return parse_inferred_variant(p)
+    }
     if (kind == TOK_LPAREN) {
         advance(p)
         inner := parse_expr(p)
@@ -264,8 +269,8 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             return new_node(p, NODE_SLICE_FROM, ptr, len, slice_ty)
         }
         advance(p)
-        args := parse_arg_list(p)
         fn_index := intern_global(p, offset, length)
+        args := parse_arg_list_for(p, fn_index)
         return new_node(p, NODE_CALL, args, 0, fn_index)
     }
     if (cur(p) == TOK_LBRACE && p.no_struct_lit == false) {
@@ -486,10 +491,45 @@ hold_struct_result :: fn(mut p: Parser, value: i64) -> i64 {
 }
 
 parse_arg_list :: fn(mut p: Parser) -> i64 {
+    parse_arg_list_for(p, 0 - 1)
+}
+
+// The arguments of a call, with the callee's index when there is one. Each
+// argument is parsed under the type the parameter declares, which is what a
+// `.Variant` written there takes its enum from. A callee defined later in the
+// program has no parameters yet, so the literal is recorded and patched once
+// every signature is known.
+parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
+    mut index : i64 = 0
     while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
+        saved_expected := p.expected_type
+        saved_alt := p.expected_alt
+        if (callee >= 0) {
+            entry := arena_at(p.fns, callee)
+            params := entry.params
+            mut declared := nth_param_type(p, params, index)
+            if (declared >= BORROW_FLAG) {
+                declared = declared - BORROW_FLAG
+            }
+            p.expected_type = declared
+            p.expected_alt = 0 - 1
+        }
         value := hold_struct_result(p, parse_expr(p))
+        p.expected_type = saved_expected
+        p.expected_alt = saved_alt
+        if (callee >= 0) {
+            held := arena_at(p.arena, value)
+            if (held.kind == NODE_STRUCT_LIT && held.val == (0 - 1)) {
+                name_off := held.b
+                name_len := held.c
+                arena_push(p.variant_fixups,
+                    VariantFixup { lit = value, callee = callee,
+                        argument = index, name_off = name_off,
+                        name_len = name_len })
+            }
+        }
         arg := new_node(p, NODE_ARG, value, 0, 0)
         if (head == (0 - 1)) {
             head = arg
@@ -498,6 +538,7 @@ parse_arg_list :: fn(mut p: Parser) -> i64 {
             set_next(p, tail, arg)
             tail = arg
         }
+        index = index + 1
         if (cur(p) == TOK_COMMA) {
             advance(p)
         }
@@ -1547,7 +1588,13 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         if (cur(p) == TOK_RBRACE) {
             return new_node(p, NODE_RETURN, 0 - 1, 0, 0)
         }
+        saved_expected := p.expected_type
+        saved_alt := p.expected_alt
+        p.expected_type = p.ok_ty
+        p.expected_alt = p.failure_ty
         mut value := parse_expr(p)
+        p.expected_type = saved_expected
+        p.expected_alt = saved_alt
         if (cur(p) == TOK_COMMA) {
             value = multi_return_value(p, value)
         }
@@ -1990,6 +2037,10 @@ parse_function :: fn(mut p: Parser) -> i64 {
     // return type is the struct standing for the pair, so everything after this
     // handles an ordinary struct return.
     mut failure : i64 = 0 - 1
+    // What the function answers with, before a failure set wraps it. A `return`
+    // is parsed under this, so a `.Variant` there names a variant of it or of
+    // the failure set beside it.
+    p.ok_ty = ret
     if (cur(p) == TOK_BANG) {
         advance(p)
         failure = parse_type(p)
@@ -2271,13 +2322,28 @@ parse_variant_value :: fn(mut p: Parser, enum_off: i64, enum_len: i64) -> i64 {
     variant_off := cur_off(p)
     variant_len := cur_len(p)
     advance(p)
-    index := find_variant(p, enum_ty, variant_off, variant_len)
+    parse_variant_body(p, enum_ty, enum_off, enum_len, variant_off, variant_len)
+}
+
+// The `{ field = value }` of a variant literal and the literal itself, with the
+// enum already decided. `enum_off`/`enum_len` name the enum for the diagnostic;
+// a leading dot has no such name and passes its variant's range instead.
+parse_variant_body :: fn(mut p: Parser, enum_ty: i64, enum_off: i64,
+    enum_len: i64, variant_off: i64, variant_len: i64) -> i64 {
+    // -1 is a `.Variant` whose enum is not decided yet, so there is nothing to
+    // look the variant up in. The fixup pass resolves it once every signature
+    // is known.
+    mut index : i64 = 0 - 1
+    if (enum_ty != (0 - 1)) {
+        index = find_variant(p, enum_ty, variant_off, variant_len)
+    }
     mut variant_tag : i64 = 0
     if (index < 0) {
         // A construction in a generic template names a variant of an instance
         // that does not exist yet. This parse is thrown away and re-done per
         // instance where it resolves, so a placeholder tag stands in for now.
-        if (p.saw_type_param == 1 && p.binding_active == 0) {
+        if (enum_ty == (0 - 1)
+            || (p.saw_type_param == 1 && p.binding_active == 0)) {
             variant_tag = 0
         } else {
             report_where(p.modules, p.src, variant_off)
@@ -2315,7 +2381,87 @@ parse_variant_value :: fn(mut p: Parser, enum_off: i64, enum_len: i64) -> i64 {
         }
         advance(p)
     }
-    new_struct_lit(p, enum_ty, head)
+    lit := new_struct_lit(p, enum_ty, head)
+    // An unresolved dot carries the variant it named, so the fixup pass can
+    // look it up in the enum the callee's parameter turns out to be.
+    if (enum_ty == (0 - 1)) {
+        node := arena_at(p.arena, lit)
+        node.b = variant_off
+        node.c = variant_len
+    }
+    lit
+}
+
+// The enum a `.Variant` belongs to: the type the context expects, or the second
+// place to look when the first does not have the variant. -1 when neither does,
+// which leaves the literal for the fixup pass.
+expected_variant_enum :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    if (is_struct_ty(p.expected_type)
+        && find_variant(p, p.expected_type, off, len) >= 0) {
+        return p.expected_type
+    }
+    if (is_struct_ty(p.expected_alt)
+        && find_variant(p, p.expected_alt, off, len) >= 0) {
+        return p.expected_alt
+    }
+    0 - 1
+}
+
+// `.Variant` and `.Variant { field = value }`, the construction counterpart of
+// the `case .Variant` a match arm writes. The enum is whatever the context
+// expects rather than something the reader repeats.
+parse_inferred_variant :: fn(mut p: Parser) -> i64 {
+    advance(p)
+    variant_off := cur_off(p)
+    variant_len := cur_len(p)
+    advance(p)
+    enum_ty := expected_variant_enum(p, variant_off, variant_len)
+    parse_variant_body(p, enum_ty, variant_off, variant_len, variant_off,
+        variant_len)
+}
+
+// Every `.Variant` left unresolved, now that every signature is parsed. Each
+// one was written as an argument, so the parameter's declared type is the enum,
+// and what is patched is the literal's type and the tag it holds.
+resolve_variant_fixups :: fn(mut p: Parser) {
+    mut i : i64 = 0
+    while (i < p.variant_fixups.count) {
+        fixup := arena_at(p.variant_fixups, i)
+        lit_id := fixup.lit
+        name_off := fixup.name_off
+        name_len := fixup.name_len
+        callee := arena_at(p.fns, fixup.callee)
+        params := callee.params
+        declared := nth_param_type(p, params, fixup.argument)
+        mut enum_ty := declared
+        if (enum_ty >= BORROW_FLAG) {
+            enum_ty = enum_ty - BORROW_FLAG
+        }
+        mut index : i64 = 0 - 1
+        if (is_struct_ty(enum_ty)) {
+            index = find_variant(p, enum_ty, name_off, name_len)
+        }
+        if (index < 0) {
+            report_where(p.modules, p.src, name_off)
+            report("'.")
+            report_src(p.src, name_off, name_len)
+            report("' takes its enum from what the context expects, and this argument's type is not an enum with that variant")
+            frost_rt_die()
+        }
+        entry := arena_at(p.variants, index)
+        tag := entry.tag
+        lit := arena_at(p.arena, lit_id)
+        lit.val = enum_ty
+        tag_init := lit.a
+        lit.b = 0
+        lit.c = 0
+        init := arena_at(p.arena, tag_init)
+        tag_node := init.a
+        held := arena_at(p.arena, tag_node)
+        held.val = tag
+        i = i + 1
+    }
+    p.variant_fixups.count = 0
 }
 
 // ---------------------------------------------------------------------------
@@ -2772,6 +2918,10 @@ parse_generic_instance :: fn(mut p: Parser, gfn_index: i64, arg: i64,
     saved_cache := p.type_cache_on
     p.type_cache_on = 0
     node := parse_function(p)
+    // An instance is parsed after every signature is known, so anything its
+    // body left for the fixup pass is resolved here rather than waiting for a
+    // pass that has already run.
+    resolve_variant_fixups(p)
     p.type_cache_on = saved_cache
     p.gbindings.count = mark
     p.ti = saved_ti
