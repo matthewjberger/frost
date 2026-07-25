@@ -1617,10 +1617,7 @@ impl<'a> Parser<'a> {
             let mut fields = Vec::new();
             while self.peek_nth(0) != &Token::RightBrace {
                 {
-                    let field_name = match self.read_token() {
-                        Token::Identifier(name) => name.to_string(),
-                        _ => bail!("Expected field name"),
-                    };
+                    let field_name = self.read_field_name("a field name")?;
                     if !matches!(self.read_token(), Token::Colon) {
                         bail!("Expected ':' after field name");
                     }
@@ -1659,10 +1656,9 @@ impl<'a> Parser<'a> {
                     self.read_token();
                     let mut variant_fields = Vec::new();
                     while self.peek_nth(0) != &Token::RightBrace {
-                        let field_name = match self.read_token() {
-                            Token::Identifier(name) => name.to_string(),
-                            _ => bail!("Expected field name in enum variant"),
-                        };
+                        let field_name = self.read_field_name(
+                            "a field name in an enum variant",
+                        )?;
                         if !matches!(self.read_token(), Token::Colon) {
                             bail!(
                                 "Expected ':' after field name in enum variant"
@@ -1986,13 +1982,9 @@ impl<'a> Parser<'a> {
                             self.read_token();
                             let mut fields = Vec::new();
                             while self.peek_nth(0) != &Token::RightBrace {
-                                let field_name = match self.read_token() {
-                                    Token::Identifier(name) => name.to_string(),
-                                    token => bail!(
-                                        "Expected field name in enum variant init, found {:?}",
-                                        token
-                                    ),
-                                };
+                                let field_name = self.read_field_name(
+                                    "a field name in an enum variant literal",
+                                )?;
                                 if !matches!(self.read_token(), Token::Assign) {
                                     bail!(
                                         "Expected '=' after field name in enum variant init"
@@ -2141,15 +2133,30 @@ impl<'a> Parser<'a> {
         Ok(Expression::Sizeof(typ))
     }
 
+    // A field name, wherever one is read: declaring a struct or an enum
+    // variant, writing a literal of either, and reaching a field with `.`.
+    //
+    // A keyword is taken as the name it is written as. Nothing but a field name
+    // can appear at any of these positions, so there is nothing for `type` or
+    // `match` to be confused with, and a C header calling a member `type` needs
+    // no renaming to be bound.
+    fn read_field_name(&mut self, context: &str) -> Result<String> {
+        let token = self.read_token();
+        if let Token::Identifier(name) = token {
+            return Ok(name.to_string());
+        }
+        match crate::lexer::keyword_spelling(token) {
+            Some(word) => Ok(word.to_string()),
+            None => bail!("Expected {context}, found {token:?}"),
+        }
+    }
+
     fn parse_field_access(
         &mut self,
         expression: Expression,
     ) -> Result<Expression> {
         self.read_token();
-        let field_name = match self.read_token() {
-            Token::Identifier(name) => name.to_string(),
-            token => bail!("Expected field name after '.', found {:?}", token),
-        };
+        let field_name = self.read_field_name("a field name after '.'")?;
         Ok(Expression::FieldAccess(Box::new(expression), field_name))
     }
 
@@ -2165,13 +2172,8 @@ impl<'a> Parser<'a> {
         self.read_token();
         let mut fields = Vec::new();
         while self.peek_nth(0) != &Token::RightBrace {
-            let field_name = match self.read_token() {
-                Token::Identifier(name) => name.to_string(),
-                token => bail!(
-                    "Expected field name in struct init, found {:?}",
-                    token
-                ),
-            };
+            let field_name =
+                self.read_field_name("a field name in a struct literal")?;
             if !matches!(self.read_token(), Token::Assign) {
                 bail!("Expected '=' after field name in struct init");
             }

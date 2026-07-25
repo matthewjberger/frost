@@ -2,6 +2,7 @@
 
 import "core.frost"
 import "imports.frost"
+import "lexer.frost"
 import "names.frost"
 import "types.frost"
 import "parser.frost"
@@ -62,7 +63,7 @@ emit_columns_scatter :: fn(mut p: Parser, cbase: i64, cbase_ty: i64,
             } else {
                 emit_text(").")
             }
-            emit_source(p.src, field_off, field_len)
+            emit_field_name(p, field_off, field_len)
             emit_text(".items[frost_rt_slot(")
             emit_expr(p, cindex)
             emit_text(", ")
@@ -84,7 +85,7 @@ emit_columns_scatter :: fn(mut p: Parser, cbase: i64, cbase_ty: i64,
                 emit_expr(p, value)
                 emit_text(").")
             }
-            emit_source(p.src, field_off, field_len)
+            emit_field_name(p, field_off, field_len)
             emit_text(";\n")
         }
         fid = field_next
@@ -129,6 +130,56 @@ emit_coerced :: fn(mut p: Parser, value: i64, want: i64) {
         return
     }
     emit_expr(p, value)
+}
+
+// A field name is written into C exactly as the source spells it, so a field
+// called `struct` or `int` would be a syntax error there rather than a field.
+// Frost reserves none of these, and a C header being bound may well use one, so
+// such a name is prefixed. Every place a field name is written goes through
+// `emit_field_name`, which is what keeps the declaration and its uses agreeing.
+is_c_keyword :: fn(src: ^i8, off: i64, len: i64) -> bool {
+    str_range_eq(src, off, len, "auto")
+        || str_range_eq(src, off, len, "bool")
+        || str_range_eq(src, off, len, "break")
+        || str_range_eq(src, off, len, "case")
+        || str_range_eq(src, off, len, "char")
+        || str_range_eq(src, off, len, "const")
+        || str_range_eq(src, off, len, "continue")
+        || str_range_eq(src, off, len, "default")
+        || str_range_eq(src, off, len, "do")
+        || str_range_eq(src, off, len, "double")
+        || str_range_eq(src, off, len, "else")
+        || str_range_eq(src, off, len, "enum")
+        || str_range_eq(src, off, len, "extern")
+        || str_range_eq(src, off, len, "float")
+        || str_range_eq(src, off, len, "for")
+        || str_range_eq(src, off, len, "goto")
+        || str_range_eq(src, off, len, "if")
+        || str_range_eq(src, off, len, "inline")
+        || str_range_eq(src, off, len, "int")
+        || str_range_eq(src, off, len, "long")
+        || str_range_eq(src, off, len, "register")
+        || str_range_eq(src, off, len, "restrict")
+        || str_range_eq(src, off, len, "return")
+        || str_range_eq(src, off, len, "short")
+        || str_range_eq(src, off, len, "signed")
+        || str_range_eq(src, off, len, "sizeof")
+        || str_range_eq(src, off, len, "static")
+        || str_range_eq(src, off, len, "struct")
+        || str_range_eq(src, off, len, "switch")
+        || str_range_eq(src, off, len, "typedef")
+        || str_range_eq(src, off, len, "union")
+        || str_range_eq(src, off, len, "unsigned")
+        || str_range_eq(src, off, len, "void")
+        || str_range_eq(src, off, len, "volatile")
+        || str_range_eq(src, off, len, "while")
+}
+
+emit_field_name :: fn(mut p: Parser, off: i64, len: i64) {
+    if (is_c_keyword(p.src, off, len)) {
+        emit_text("frost_f_")
+    }
+    emit_source(p.src, off, len)
 }
 
 emit_struct_name :: fn(mut p: Parser, struct_index: i64) {
@@ -235,7 +286,7 @@ emit_struct_lit :: fn(mut p: Parser, struct_ty: i64, inits: i64) {
         value := node.a
         next_id := node.next
         emit_text(".")
-        emit_source(p.src, off, len)
+        emit_field_name(p, off, len)
         emit_text(" = ")
         // A struct handed to a generic arrives as an address, since that is how
         // a read parameter of struct type travels, so storing it into a field
@@ -370,7 +421,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
                 } else {
                     emit_text(").")
                 }
-                emit_source(p.src, off, len)
+                emit_field_name(p, off, len)
                 emit_text(".items[frost_rt_slot(")
                 emit_expr(p, cindex)
                 emit_text(", ")
@@ -397,7 +448,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
             emit_expr(p, base)
         }
         emit_text(".")
-        emit_source(p.src, off, len)
+        emit_field_name(p, off, len)
         return
     }
     if (kind == NODE_DEREF) {
@@ -1154,7 +1205,7 @@ emit_struct_ordered :: fn(mut p: Parser, i: i64) {
         next_field := field.next
         emit_ctype(p, fty)
         emit_text(" ")
-        emit_source(p.src, off, len)
+        emit_field_name(p, off, len)
         emit_text(";\n")
         fid = next_field
     }
