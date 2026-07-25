@@ -35,7 +35,41 @@ main :: fn() -> i64 {
 
 Integer widths (`i8`..`i64`, `u8`..`u64`), floats (`f32`, `f64`), and `bool`
 are all value (copy) types. Control flow is `if`/`else` (an expression),
-`while`, `for i in a..b`, `break`, `continue`, and `match`.
+`while`, `for`, `break`, `continue`, and `match`.
+
+A `for` walks a range, and it walks a sequence the same way:
+
+```frost
+mut total : i64 = 0
+for value in numbers {          // a slice, an array, or a `str`
+    total = total + value
+}
+for index, value in numbers {   // the position as well
+    total = total + index * value
+}
+```
+
+There is no iterator and nothing to implement. `for value in numbers` is the
+index-and-bound loop written out, so what the backend sees is what you would
+have written by hand. The sequence is evaluated once, so a call in that position
+happens once however many elements it answers with.
+
+A function that answers with more than one value declares a return type list,
+and the caller binds the values by name:
+
+```frost
+divide :: fn(a: i64, b: i64) -> (i64, i64) {
+    return a / b, a % b
+}
+
+quotient, remainder := divide(17, 5)      // 3 and 2
+```
+
+There is no tuple type behind that. `(i64, i64)` is a return type list and
+nothing else: it cannot be stored in a field, passed as an argument, or bound to
+one name. A program that wants to pass a pair around declares a struct, so every
+aggregate has a name its author chose. The `return` lists the values and is
+required, since a trailing expression is one value.
 
 ## Structs and enums, plain data
 

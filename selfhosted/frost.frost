@@ -213,6 +213,8 @@ main :: fn() -> i64 {
         export_names = export_names,
         result_ty = 0 - 1,
         failure_ty = 0 - 1,
+        multi_ty = 0 - 1,
+        multi_count = 0,
         variants = arena_make($Variant, 4096),
         match_count = 0,
         case_variant = 0 - 1,

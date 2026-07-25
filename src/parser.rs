@@ -100,22 +100,43 @@ impl Display for Parameter {
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
-pub struct ReturnParam {
+pub struct MultiBinding {
     pub name: Identifier,
-    pub param_type: Type,
+    pub mutable: bool,
 }
 
-impl Display for ReturnParam {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        write!(f, "{}: {}", self.name, self.param_type)
+// The struct a return type list becomes. One per distinct list, named after the
+// types it holds so that two functions returning the same list share it.
+pub fn multi_return_struct_name(types: &[Type]) -> String {
+    let mut name = String::from("__multi");
+    for held in types {
+        name.push('_');
+        for character in held.to_string().chars() {
+            if character.is_ascii_alphanumeric() {
+                name.push(character);
+            } else {
+                name.push('_');
+            }
+        }
     }
+    name
+}
+
+// The field a return type list's nth value lives in.
+pub fn multi_return_field_name(index: usize) -> String {
+    format!("value{index}")
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
 pub enum ReturnKind {
     None,
     Single(Type),
-    Named(Vec<ReturnParam>),
+    // `-> (i64, i64)`: several values from one call, bound by
+    // `quotient, remainder := divide(a, b)`. There is no tuple type behind it.
+    // The multi-return lowering gives each distinct list of types one struct and
+    // rewrites the returns and the bindings, so nothing after the front end
+    // sees this kind.
+    Multiple(Vec<Type>),
     // `-> T ! E`: succeeds with T or fails with the error enum E. The failure set
     // is E. The value type is T.
     Fallible(Type, Type),
@@ -143,12 +164,8 @@ impl ReturnSignature {
         match &self.kind {
             ReturnKind::None => None,
             ReturnKind::Single(t) => Some(t.clone()),
-            ReturnKind::Named(params) => {
-                if params.len() == 1 {
-                    Some(params[0].param_type.clone())
-                } else {
-                    Some(Type::Struct(format!("__tuple{}", params.len())))
-                }
+            ReturnKind::Multiple(types) => {
+                Some(Type::Struct(multi_return_struct_name(types)))
             }
             ReturnKind::Fallible(value, _) => Some(value.clone()),
         }
@@ -162,8 +179,8 @@ impl ReturnSignature {
         }
     }
 
-    pub fn is_named(&self) -> bool {
-        matches!(self.kind, ReturnKind::Named(_))
+    pub fn is_multiple(&self) -> bool {
+        matches!(self.kind, ReturnKind::Multiple(_))
     }
 
     pub fn has_second_class(&self) -> Option<&Type> {
@@ -176,10 +193,9 @@ impl ReturnSignature {
                     None
                 }
             }
-            ReturnKind::Named(params) => params
-                .iter()
-                .find(|p| p.param_type.is_second_class())
-                .map(|p| &p.param_type),
+            ReturnKind::Multiple(types) => {
+                types.iter().find(|t| t.is_second_class())
+            }
             ReturnKind::Fallible(value, _) => {
                 if value.is_second_class() {
                     Some(value)
@@ -200,10 +216,9 @@ impl ReturnSignature {
                     None
                 }
             }
-            ReturnKind::Named(params) => params
-                .iter()
-                .find(|p| p.param_type.contains_reference())
-                .map(|p| &p.param_type),
+            ReturnKind::Multiple(types) => {
+                types.iter().find(|t| t.contains_reference())
+            }
             ReturnKind::Fallible(value, _) => {
                 if value.contains_reference() {
                     Some(value)
@@ -214,9 +229,9 @@ impl ReturnSignature {
         }
     }
 
-    pub fn named_params(&self) -> Option<&Vec<ReturnParam>> {
+    pub fn multiple_types(&self) -> Option<&Vec<Type>> {
         match &self.kind {
-            ReturnKind::Named(params) => Some(params),
+            ReturnKind::Multiple(types) => Some(types),
             _ => None,
         }
     }
@@ -254,9 +269,9 @@ impl Display for ReturnSignature {
             ReturnKind::Fallible(value, error) => {
                 write!(f, " -> {} ! {}", value, error)?
             }
-            ReturnKind::Named(params) => {
+            ReturnKind::Multiple(types) => {
                 let parts: Vec<String> =
-                    params.iter().map(|p| p.to_string()).collect();
+                    types.iter().map(|t| t.to_string()).collect();
                 write!(f, " -> ({})", parts.join(", "))?
             }
         }
@@ -396,6 +411,11 @@ pub enum Statement {
         value: Expression,
         mutable: bool,
     },
+    // `quotient, remainder := divide(a, b)`: one call, several values, each
+    // bound by name. Only a call to a function whose return signature is a type
+    // list produces one, and the multi-return lowering rewrites it into the
+    // temporary and the field reads before any later pass sees it.
+    LetMultiple(Vec<MultiBinding>, Expression),
     Constant(Identifier, Expression),
     Return(Expression),
     Expression(Expression),
@@ -460,6 +480,16 @@ impl Display for Statement {
                     }
                     None => format!("{}{} := {};", mut_str, name, value),
                 }
+            }
+            Self::LetMultiple(bindings, value) => {
+                let names: Vec<String> = bindings
+                    .iter()
+                    .map(|binding| {
+                        let prefix = if binding.mutable { "mut " } else { "" };
+                        format!("{}{}", prefix, binding.name)
+                    })
+                    .collect();
+                format!("{} := {};", names.join(", "), value)
             }
             Self::Constant(identifier, expression) => {
                 format!("{} :: {};", identifier, expression)
@@ -1412,7 +1442,18 @@ impl<'a> Parser<'a> {
             }
             Token::Import => Some(self.parse_import_statement()?),
             Token::Ref => Some(self.parse_ref_declaration()?),
+            Token::Mut
+                if matches!(self.peek_nth(1), Token::Identifier(_))
+                    && matches!(self.peek_nth(2), Token::Comma) =>
+            {
+                Some(self.parse_multiple_declaration()?)
+            }
             Token::Mut => Some(self.parse_mutable_declaration()?),
+            Token::Identifier(_)
+                if matches!(self.peek_nth(1), Token::Comma) =>
+            {
+                Some(self.parse_multiple_declaration()?)
+            }
             Token::Identifier(_)
                 if matches!(self.peek_nth(1), Token::ColonAssign) =>
             {
@@ -1557,6 +1598,42 @@ impl<'a> Parser<'a> {
         let body = self.parse_block()?;
 
         Ok(Statement::With(capability, body))
+    }
+
+    // `quotient, remainder := divide(a, b)`, and `mut` in front of any name
+    // that the body goes on to write. The list is names, not patterns, since
+    // what it takes apart is a return type list rather than a value.
+    fn parse_multiple_declaration(&mut self) -> Result<Statement> {
+        let mut bindings = Vec::new();
+        loop {
+            let mutable = if matches!(self.peek_nth(0), Token::Mut) {
+                self.read_token();
+                true
+            } else {
+                false
+            };
+            let name = match self.read_token() {
+                Token::Identifier(name) => name.to_string(),
+                other => bail!("Expected a name to bind, found {other}"),
+            };
+            bindings.push(MultiBinding { name, mutable });
+            if matches!(self.peek_nth(0), Token::Comma) {
+                self.read_token();
+            } else {
+                break;
+            }
+        }
+
+        if !matches!(self.read_token(), Token::ColonAssign) {
+            bail!("Expected ':=' after a list of names");
+        }
+
+        let value = self.parse_expression(Precedence::Lowest)?;
+        if matches!(self.peek_nth(0), Token::Semicolon) {
+            self.read_token();
+        }
+
+        Ok(Statement::LetMultiple(bindings, value))
     }
 
     fn parse_mutable_declaration(&mut self) -> Result<Statement> {
@@ -1886,7 +1963,20 @@ impl<'a> Parser<'a> {
             {
                 Expression::Tuple(vec![])
             } else {
-                self.parse_expression(Precedence::Lowest)?
+                let first = self.parse_expression(Precedence::Lowest)?;
+                // `return quotient, remainder`, the several values a return type
+                // list declares. The multi-return lowering turns the list into
+                // the one struct the function actually returns.
+                if matches!(self.peek_nth(0), Token::Comma) {
+                    let mut values = vec![first];
+                    while matches!(self.peek_nth(0), Token::Comma) {
+                        self.read_token();
+                        values.push(self.parse_expression(Precedence::Lowest)?);
+                    }
+                    Expression::Tuple(values)
+                } else {
+                    first
+                }
             };
 
         if matches!(self.peek_nth(0), Token::Semicolon) {
@@ -2719,11 +2809,14 @@ impl<'a> Parser<'a> {
         }
         self.read_token();
 
-        if matches!(self.peek_nth(0), Token::LeftParentheses)
-            && let Token::Identifier(_) = self.peek_nth(1)
-            && matches!(self.peek_nth(2), Token::Colon)
-        {
-            return self.parse_named_returns();
+        if matches!(self.peek_nth(0), Token::LeftParentheses) {
+            let kind = self.parse_multiple_returns()?;
+            if matches!(self.peek_nth(0), Token::Bang) {
+                bail!(
+                    "a return type list and a failure set do not combine; a fallible function returns one value, so name a struct and return that"
+                );
+            }
+            return Ok(kind);
         }
 
         let typ = self.parse_type()?;
@@ -2735,40 +2828,32 @@ impl<'a> Parser<'a> {
         Ok(ReturnKind::Single(typ))
     }
 
-    fn parse_named_returns(&mut self) -> Result<ReturnKind> {
+    // `-> (i64, i64)`. The types are positional and unnamed, since the names
+    // that matter are the ones the caller binds them to.
+    fn parse_multiple_returns(&mut self) -> Result<ReturnKind> {
         if !matches!(self.peek_nth(0), Token::LeftParentheses) {
-            bail!("Expected '(' for named returns");
+            bail!("Expected '(' for a multiple return");
         }
         self.read_token();
 
-        let mut returns = Vec::new();
+        let mut types = Vec::new();
         while !matches!(self.peek_nth(0), Token::RightParentheses) {
-            if let Token::Identifier(name) = self.peek_nth(0) {
-                let name = name.to_string();
+            if matches!(self.peek_nth(0), Token::EndOfFile) {
+                bail!("Unexpected end of input in a return type list");
+            }
+            types.push(self.parse_type()?);
+            if matches!(self.peek_nth(0), Token::Comma) {
                 self.read_token();
-
-                if !matches!(self.peek_nth(0), Token::Colon) {
-                    bail!("Expected ':' after return parameter name");
-                }
-                self.read_token();
-
-                let param_type = self.parse_type()?;
-                returns.push(ReturnParam { name, param_type });
-
-                if matches!(self.peek_nth(0), Token::Comma) {
-                    self.read_token();
-                }
-            } else {
-                bail!("Expected identifier in named return parameters");
             }
         }
-
-        if !matches!(self.peek_nth(0), Token::RightParentheses) {
-            bail!("Expected ')' after named returns");
-        }
         self.read_token();
 
-        Ok(ReturnKind::Named(returns))
+        if types.len() < 2 {
+            bail!(
+                "a return type list holds two or more types; write `-> T` for one"
+            );
+        }
+        Ok(ReturnKind::Multiple(types))
     }
 
     fn parse_function_parameters(&mut self) -> Result<Vec<Parameter>> {
@@ -5077,8 +5162,8 @@ mod tests {
     }
 
     #[test]
-    fn named_returns_single() -> Result<()> {
-        let input = "fn(a: i64, b: i64) -> (result: i64) { result = a + b }";
+    fn multiple_returns_two_types() -> Result<()> {
+        let input = "fn(a: i64, b: i64) -> (i64, i64) { return a / b, a % b }";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize()?;
         let mut parser = Parser::new(&tokens);
@@ -5088,16 +5173,20 @@ mod tests {
         if let Statement::Expression(Expression::Proc(
             params,
             return_sig,
-            _body,
+            body,
         )) = &program[0].node
         {
             assert_eq!(params.len(), 2);
-            if let ReturnKind::Named(ret_params) = &return_sig.kind {
-                assert_eq!(ret_params.len(), 1);
-                assert_eq!(ret_params[0].name, "result");
-                assert_eq!(ret_params[0].param_type, Type::I64);
+            if let ReturnKind::Multiple(types) = &return_sig.kind {
+                assert_eq!(types, &vec![Type::I64, Type::I64]);
             } else {
-                bail!("Expected named return signature");
+                bail!("Expected a return type list");
+            }
+            if let Statement::Return(Expression::Tuple(values)) = &body[0].node
+            {
+                assert_eq!(values.len(), 2);
+            } else {
+                bail!("Expected a return of two values");
             }
         } else {
             bail!("Expected function expression");
@@ -5106,34 +5195,33 @@ mod tests {
     }
 
     #[test]
-    fn named_returns_multiple() -> Result<()> {
-        let input = "fn(a: i64, b: i64) -> (quotient: i64, remainder: i64) { quotient = a / b; remainder = a % b }";
+    fn multiple_returns_bind_by_name() -> Result<()> {
+        let input = "quotient, mut remainder := divide(7, 2)";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize()?;
         let mut parser = Parser::new(&tokens);
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::Proc(
-            params,
-            return_sig,
-            _body,
-        )) = &program[0].node
-        {
-            assert_eq!(params.len(), 2);
-            if let ReturnKind::Named(ret_params) = &return_sig.kind {
-                assert_eq!(ret_params.len(), 2);
-                assert_eq!(ret_params[0].name, "quotient");
-                assert_eq!(ret_params[0].param_type, Type::I64);
-                assert_eq!(ret_params[1].name, "remainder");
-                assert_eq!(ret_params[1].param_type, Type::I64);
-            } else {
-                bail!("Expected named return signature");
-            }
+        if let Statement::LetMultiple(bindings, _) = &program[0].node {
+            assert_eq!(bindings.len(), 2);
+            assert_eq!(bindings[0].name, "quotient");
+            assert!(!bindings[0].mutable);
+            assert_eq!(bindings[1].name, "remainder");
+            assert!(bindings[1].mutable);
         } else {
-            bail!("Expected function expression");
+            bail!("Expected a list binding");
         }
         Ok(())
+    }
+
+    #[test]
+    fn a_return_type_list_needs_two_types() {
+        let input = "fn(a: i64) -> (i64) { a }";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(&tokens);
+        assert!(parser.parse().is_err());
     }
 
     #[test]
@@ -5143,14 +5231,15 @@ mod tests {
     }
 
     #[test]
-    fn return_signature_to_type_named_single() {
-        use super::ReturnParam;
-        let sig =
-            ReturnSignature::plain(ReturnKind::Named(vec![ReturnParam {
-                name: "x".to_string(),
-                param_type: Type::I64,
-            }]));
-        assert_eq!(sig.to_type(), Some(Type::I64));
+    fn return_signature_to_type_multiple() {
+        let sig = ReturnSignature::plain(ReturnKind::Multiple(vec![
+            Type::I64,
+            Type::Bool,
+        ]));
+        assert_eq!(
+            sig.to_type(),
+            Some(Type::Struct("__multi_i64_bool".to_string()))
+        );
     }
 
     #[test]

@@ -1423,6 +1423,16 @@ unsafe_block_is_value :: fn(mut p: Parser) -> bool {
     false
 }
 
+// A statement that binds several names to the values of one call. A name
+// followed by a comma is nothing else at statement position.
+starts_multi_binding :: fn(mut p: Parser) -> bool {
+    if (cur(p) == TOK_IDENT && peek_kind(p, 1) == TOK_COMMA) {
+        return true
+    }
+    cur(p) == TOK_KW_MUT && peek_kind(p, 1) == TOK_IDENT
+        && peek_kind(p, 2) == TOK_COMMA
+}
+
 parse_stmt :: fn(mut p: Parser) -> i64 {
     kind := cur(p)
 
@@ -1468,6 +1478,47 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         return body
     }
 
+    // `quotient, remainder := divide(a, b)`, and `mut` in front of any name the
+    // body goes on to write. The names are walked twice: once to reach the
+    // `:=`, so the call is bound to a temporary first, and once to bind each
+    // name to its field of that temporary.
+    if (starts_multi_binding(p)) {
+        names_at := p.ti
+        while (cur(p) != TOK_COLONEQ && cur(p) != TOK_EOF) {
+            advance(p)
+        }
+        advance(p)
+        unique := p.arena.count
+        temp_off := synth_numbered(p, "__multi", unique)
+        temp_len := 7 + digits_in(unique)
+        value := parse_expr(p)
+        after := p.ti
+        head := new_let_node(p, value, temp_off, temp_len, 0 - 1)
+        mut tail := head
+        mut index : i64 = 0
+        p.ti = names_at
+        while (cur(p) != TOK_COLONEQ && cur(p) != TOK_EOF) {
+            if (cur(p) == TOK_KW_MUT) {
+                advance(p)
+            }
+            name_off := cur_off(p)
+            name_len := cur_len(p)
+            advance(p)
+            base := new_named_node(p, NODE_VAR, 0, temp_off, temp_len)
+            field := synth_numbered(p, "value", index)
+            access := new_field_node(p, base, field, 5 + digits_in(index))
+            bind := new_let_node(p, access, name_off, name_len, 0 - 1)
+            set_next(p, tail, bind)
+            tail = bind
+            index = index + 1
+            if (cur(p) == TOK_COMMA) {
+                advance(p)
+            }
+        }
+        p.ti = after
+        return head
+    }
+
     if (kind == TOK_KW_MUT) {
         advance(p)
         offset := cur_off(p)
@@ -1497,6 +1548,9 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             return new_node(p, NODE_RETURN, 0 - 1, 0, 0)
         }
         mut value := parse_expr(p)
+        if (cur(p) == TOK_COMMA) {
+            value = multi_return_value(p, value)
+        }
         if (p.result_ty != (0 - 1)) {
             value = wrap_result(p, value)
         }
@@ -1918,9 +1972,19 @@ parse_function :: fn(mut p: Parser) -> i64 {
     set_params(p, fn_index, params)
     mark_defined(p, fn_index)
     mut ret : i64 = TY_VOID
+    p.multi_ty = 0 - 1
+    p.multi_count = 0
+    // `-> (i64, i64)` is a return type list: several values from one call,
+    // standing for the struct `synth_multi_struct` makes for it.
     if (cur(p) == TOK_ARROW) {
         advance(p)
-        ret = parse_type(p)
+        if (cur(p) == TOK_LPAREN) {
+            advance(p)
+            ret = synth_multi_struct(p)
+            p.multi_ty = ret
+        } else {
+            ret = parse_type(p)
+        }
     }
     // `-> T ! E` answers with a T or fails with an E. The function's real
     // return type is the struct standing for the pair, so everything after this
@@ -2318,6 +2382,86 @@ synth_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
             tag = 1 },
     )
     result_ty
+}
+
+// ---------------------------------------------------------------------------
+// Multiple return values. `-> (i64, i64)` is a return type list, not a tuple
+// type: the list becomes one struct whose fields are `value0`, `value1` and so
+// on, `return a, b` becomes a literal of it, and `x, y := f()` becomes the call
+// bound to a temporary and one field read per name. Everything after the parse
+// handles an ordinary struct return, which both backends already do.
+// ---------------------------------------------------------------------------
+
+// The struct standing for the list, made fresh per function so its field types
+// are the ones that function declared. The `(` has been consumed.
+synth_multi_struct :: fn(mut p: Parser) -> i64 {
+    mut head : i64 = 0 - 1
+    mut tail : i64 = 0 - 1
+    mut count : i64 = 0
+    while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
+        held := parse_type(p)
+        name := synth_numbered(p, "value", count)
+        field := arena_push(
+            p.fields,
+            StructField { name_off = name, name_len = 5 + digits_in(count),
+                ty = held, next = 0 - 1 },
+        )
+        if (head == (0 - 1)) {
+            head = field
+        } else {
+            set_next_field(p, tail, field)
+        }
+        tail = field
+        count = count + 1
+        if (cur(p) == TOK_COMMA) {
+            advance(p)
+        }
+    }
+    advance(p)
+    if (count < 2) {
+        report_where(p.modules, p.src, cur_off(p))
+        report("a return type list holds two or more types; write `-> T` for one")
+        frost_rt_die()
+    }
+    struct_name := synth_numbered(p, "__Multi", p.structs.count)
+    index := arena_push(
+        p.structs,
+        StructDef { name_off = struct_name,
+            name_len = 7 + digits_in(p.structs.count),
+            field_head = head, is_generic = 0, tparam_off = 0, tparam_len = 0,
+            field_token = 0, instance_id = 0 - 1, is_linear = 0, emitted = 0,
+            xparam_start = 0, xparam_count = 0, is_enum = 0 },
+    )
+    p.multi_count = count
+    STRUCT_BASE + index
+}
+
+// `return a, b` as the literal of the struct the list stands for. The first
+// value is already parsed.
+multi_return_value :: fn(mut p: Parser, first: i64) -> i64 {
+    if (p.multi_ty == (0 - 1)) {
+        report_where(p.modules, p.src, cur_off(p))
+        report("this `return` lists several values and the function returns one")
+        frost_rt_die()
+    }
+    init := new_field_init(p, first, synth_numbered(p, "value", 0), 6)
+    mut tail := init
+    mut count : i64 = 1
+    while (cur(p) == TOK_COMMA) {
+        advance(p)
+        value := parse_expr(p)
+        name := synth_numbered(p, "value", count)
+        following := new_field_init(p, value, name, 5 + digits_in(count))
+        set_next(p, tail, following)
+        tail = following
+        count = count + 1
+    }
+    if (count != p.multi_count) {
+        report_where(p.modules, p.src, cur_off(p))
+        report("this `return` lists a different number of values than the function returns")
+        frost_rt_die()
+    }
+    new_struct_lit(p, p.multi_ty, init)
 }
 
 set_next_field :: fn(mut p: Parser, id: i64, following: i64) {

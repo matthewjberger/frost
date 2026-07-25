@@ -706,6 +706,107 @@ main :: fn() -> i64 {
 }
 "#;
 
+// `-> (i64, i64)` and the binding that takes it apart. There is no tuple type:
+// each distinct list of types becomes one struct, the `return` becomes a struct
+// literal, and the binding becomes a temporary and a field read per name. Two
+// functions returning the same list share the struct, which is what
+// `divide` and `split_bytes` check here.
+const MULTIPLE_RETURN_VALUES: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Point :: struct { x: i64, y: i64 }
+
+divide :: fn(a: i64, b: i64) -> (i64, i64) {
+    return a / b, a % b
+}
+
+split_bytes :: fn(value: i64) -> (i64, i64) {
+    return value / 256, value % 256
+}
+
+// A return from inside a nested block, and a value that is not an integer.
+classify :: fn(value: i64) -> (i64, bool) {
+    if (value < 0) {
+        return 0 - value, true
+    }
+    return value, false
+}
+
+// An aggregate is one of the values like any other.
+corners :: fn(size: i64) -> (Point, Point) {
+    return Point { x = 0, y = 0 }, Point { x = size, y = size }
+}
+
+main :: fn() -> i64 {
+    quotient, remainder := divide(17, 5)
+    printf("%lld\n", quotient)
+    printf("%lld\n", remainder)
+
+    high, low := split_bytes(700)
+    printf("%lld\n", high)
+    printf("%lld\n", low)
+
+    magnitude, mut negative := classify(0 - 9)
+    printf("%lld\n", magnitude)
+    if (negative) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    negative = false
+    if (negative) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+
+    origin, far := corners(12)
+    printf("%lld\n", origin.x + far.x)
+    printf("%lld\n", far.y)
+
+    // The values feed straight into another call.
+    a, b := divide(9, 4)
+    c, d := divide(a, b)
+    printf("%lld\n", c * 10 + d)
+    0
+}
+"#;
+
+#[test]
+fn a_function_returns_several_values() {
+    let Some(output) = compile_and_run("multiret", MULTIPLE_RETURN_VALUES)
+    else {
+        return;
+    };
+    assert_eq!(output, "3\n2\n2\n188\n9\n1\n0\n12\n12\n20\n");
+}
+
+// The things a return type list does not do, each with the diagnostic that says
+// so. They are compile errors rather than surprises at run time.
+#[test]
+fn a_return_type_list_is_held_to_its_shape() {
+    let cases = [
+        ("return a / b\n", "so its `return` lists them"),
+        (
+            "return a, b, a\n",
+            "lists 3 values and the function returns 2",
+        ),
+    ];
+    for (body, expected) in cases {
+        let source = format!(
+            "divide :: fn(a: i64, b: i64) -> (i64, i64) {{ {body} }}\nmain :: fn() -> i64 {{ 0 }}\n"
+        );
+        let message = compile_error("multiretbad", &source);
+        assert!(
+            message.contains(expected),
+            "expected {expected:?} in:\n{message}"
+        );
+    }
+
+    let bound_wrong = "divide :: fn(a: i64, b: i64) -> (i64, i64) { return a / b, a % b }\n\
+         main :: fn() -> i64 {\n\
+         \x20   only := divide(7, 2)\n\
+         \x20   0\n\
+         }\n";
+    let message = compile_error("multiretbind", bound_wrong);
+    assert!(
+        message.contains("bound by a list of names"),
+        "expected the binding diagnostic in:\n{message}"
+    );
+}
+
 // `for item in items` over a slice, an array and a `str`. It is the
 // index-and-bound loop written out rather than an iterator: nothing is called
 // per element, and what the backend sees is what the same loop written by hand
@@ -2782,6 +2883,64 @@ fn self_hosted_for_walks_a_sequence() {
     };
     let _ = std::fs::remove_file(&input);
     let Some(via_c) = compile_c_and_run("shfor", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
+// The self-hosted compiler returns several values too. `-> (i64, i64)` becomes
+// a struct made fresh for that function, `return a, b` becomes a literal of it,
+// and the binding becomes a temporary and a field read per name. That is the
+// whole feature, written out at parse time, so both backends see the struct
+// return they already handle.
+const SELF_HOSTED_MULTIPLE_RETURNS: &str =
+    "divide :: fn(a: i64, b: i64) -> (i64, i64) {
+         return a / b, a % b
+     }
+     classify :: fn(value: i64) -> (i64, bool) {
+         if (value < 0) {
+             return 0 - value, true
+         }
+         return value, false
+     }
+     main :: fn() -> i64 {
+         quotient, remainder := divide(17, 5)
+         print quotient
+         print remainder
+         magnitude, mut negative := classify(0 - 9)
+         print magnitude
+         if (negative) { print 1 } else { print 0 }
+         negative = false
+         if (negative) { print 1 } else { print 0 }
+         0
+     }
+";
+
+#[test]
+fn self_hosted_returns_several_values() {
+    let Some(output) =
+        selfhosted_native_output("shmulti", SELF_HOSTED_MULTIPLE_RETURNS)
+    else {
+        return;
+    };
+    assert_eq!(
+        output,
+        "3
+2
+9
+1
+0
+"
+    );
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shmulti_input.frost");
+    std::fs::write(&input, SELF_HOSTED_MULTIPLE_RETURNS).unwrap();
+    let Some(c_source) = self_hosted_emits("shmulti", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shmulti", &c_source) else {
         return;
     };
     assert_eq!(via_c, output, "the self-hosted C backend disagrees");
@@ -7714,6 +7873,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_tuplepat", TUPLE_PATTERNS),
         ("diff_enumeq", ENUM_EQUALITY),
         ("diff_forseq", FOR_OVER_A_SEQUENCE),
+        ("diff_multiret", MULTIPLE_RETURN_VALUES),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);

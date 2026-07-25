@@ -15,6 +15,7 @@ mod ir_ownership;
 mod ir_typecheck;
 mod lexer;
 mod manifest;
+mod multi_returns;
 mod ownership;
 mod param_modes;
 mod parser;
@@ -27,8 +28,8 @@ pub use self::{
     allocation_sources::*, build_cache::*, c_abi::*, callbacks::*,
     failure_sets::*, imports::*, interface::*, ir::*, ir_build::*, ir_c::*,
     ir_codegen::*, ir_interp::*, ir_ownership::*, ir_typecheck::*, lexer::*,
-    manifest::*, ownership::*, param_modes::*, parser::*, regions::*, types::*,
-    unsafety::*,
+    manifest::*, multi_returns::*, ownership::*, param_modes::*, parser::*,
+    regions::*, types::*, unsafety::*,
 };
 
 use std::fmt::Display;

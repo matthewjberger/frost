@@ -853,6 +853,12 @@ impl Renamer {
                 }
                 self.bind(scope, name);
             }
+            Statement::LetMultiple(bindings, value) => {
+                self.expression(value, scope);
+                for binding in bindings.iter() {
+                    self.bind(scope, &binding.name);
+                }
+            }
             Statement::Return(value) => self.expression(value, scope),
             Statement::Expression(value) => self.expression(value, scope),
             Statement::Print(value) => self.expression(value, scope),
@@ -948,9 +954,9 @@ impl Renamer {
         match &mut signature.kind {
             ReturnKind::None => {}
             ReturnKind::Single(ty) => self.ty(ty),
-            ReturnKind::Named(params) => {
-                for param in params.iter_mut() {
-                    self.ty(&mut param.param_type);
+            ReturnKind::Multiple(types) => {
+                for held in types.iter_mut() {
+                    self.ty(held);
                 }
             }
             ReturnKind::Fallible(value, failure) => {
