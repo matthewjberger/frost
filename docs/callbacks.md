@@ -88,15 +88,30 @@ becomes `int64_t register(void (*)(void*, int64_t), void*)`.
 
 Which parameter is the context is not positional and must not be, because
 libraries put the userdata on either side of the function pointer. It is the
-parameter whose type is the type of the handler's first parameter. That is
-also the definition that makes the lowering derivable. The handler's first
-parameter is the context, and every parameter after it is a callback argument
-that C passes through.
+parameter whose type is the type of the handler's context.
 
-A declaration where no parameter has that type is an error at the declaration,
-not at the call. So is a handler whose first parameter is not `mut`. A callback
-that cannot write its context is a callback that cannot do anything, and reading
-one is the case a plain function pointer with no context already covers.
+The handler's context is its one `mut` parameter, wherever it is written, and
+every other parameter is a callback argument that C passes through. Position is
+not what identifies it; being the one parameter the handler can write is. So
+both of these are registrations, and the second is the order wgpu-native and
+most modern C APIs take:
+
+```frost
+register :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64
+request  :: extern fn($handler: fn(i32, i64, mut Ctx), move ctx: Ctx) -> i64
+```
+
+The rule was originally "the first parameter", which made the second shape
+undeclarable. The alternative was to put the same function pointer in a struct
+field, where none of these checks apply, so the rule cost safety rather than
+buying it.
+
+A declaration where no extern parameter has the context's type is an error at
+the declaration, not at the call. So is a handler with no `mut` parameter: a
+callback that cannot write its context is a callback that cannot do anything,
+and reading one is the case a plain function pointer with no context already
+covers. So is a handler with more than one, since then nothing says which of
+them the library is being asked to keep.
 
 ### Ownership of the context
 
@@ -186,9 +201,9 @@ both self-hosting fixpoints, in the way the separate-compilation steps were.
 
 1. Parse the declaration. *Done.* `$handler: fn(...)` and parameter modes
    are accepted on an `extern fn`, and `src/callbacks.rs` checks at the
-   declaration that the handler's first parameter is the context and written
-   `mut`, that some parameter of the extern has that type, and that it is taken
-   by `move`. This comes first, and not the safety check, because nothing can
+   declaration that the handler has exactly one `mut` parameter, which is the
+   context, that some parameter of the extern has that type, and that it is
+   taken by `move`. This comes first, and not the safety check, because nothing can
    tell a callback registration from any other extern call until the declaration
    says so, which is the ordering the first draft of this list got backwards.
 

@@ -8136,6 +8136,100 @@ fn a_callback_registered_with_a_c_library_runs() {
     assert_eq!(output, "9\n77\n");
 }
 
+// The same thing with the userdata last, which is the order wgpu-native and
+// most modern C APIs take. Nothing about the ABI changes: the handler compiled
+// for Frost is still exactly the function pointer the library holds, only the
+// pointer sits in a different argument slot. This shape used to be
+// undeclarable, so the alternative was a function pointer in a struct field,
+// where none of the callback checks apply at all.
+#[test]
+fn a_callback_whose_context_comes_last_runs() {
+    let Some(compiler) = c_compiler() else {
+        return;
+    };
+    let directory = std::env::temp_dir().join("frost_callback_last");
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+
+    let library_source = directory.join("late.c");
+    std::fs::write(
+        &library_source,
+        "#include <stdint.h>\n\
+         static void (*held)(int32_t, int64_t, void*);\n\
+         static void* held_context;\n\
+         int64_t request(void (*handler)(int32_t, int64_t, void*), void* context) {\n\
+         \x20   held = handler;\n\
+         \x20   held_context = context;\n\
+         \x20   return 31;\n\
+         }\n\
+         void deliver(int32_t status, int64_t code) {\n\
+         \x20   held(status, code, held_context);\n\
+         }\n\
+         int64_t peek(void) { return *(int64_t*)held_context; }\n",
+    )
+    .unwrap();
+    let library = directory.join("late.o");
+    let built = Command::new(compiler)
+        .arg("-c")
+        .arg(&library_source)
+        .arg("-o")
+        .arg(&library)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "the C library did not compile:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+
+    let root = directory.join("late.frost");
+    std::fs::write(
+        &root,
+        "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
+         deliver :: extern fn(status: i32, code: i64)\n\
+         peek :: extern fn() -> i64\n\
+         Ctx :: struct { hits: i64 }\n\
+         Registration :: linear struct { token: i64 }\n\
+         on_ready :: fn(status: i32, code: i64, mut ctx: Ctx) {\n\
+         \x20   ctx.hits = ctx.hits + code\n\
+         }\n\
+         request :: extern fn($handler: fn(i32, i64, mut Ctx), move ctx: Ctx) -> i64\n\
+         unregister :: fn(move r: Registration) -> i64 { r.token }\n\
+         main :: fn() -> i64 {\n\
+         \x20   c := Ctx { hits = 0 }\n\
+         \x20   r := Registration { token = request($on_ready, c) }\n\
+         \x20   deliver(1, 6)\n\
+         \x20   deliver(1, 7)\n\
+         \x20   printf(\"%lld\n\", peek())\n\
+         \x20   printf(\"%lld\n\", unregister(r))\n\
+         \x20   0\n\
+         }\n",
+    )
+    .unwrap();
+
+    let exe = directory.join(format!("late{}", std::env::consts::EXE_SUFFIX));
+    let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .env("FROST_CHECK_UNSAFE", "0")
+        .arg("--link")
+        .arg("--libs")
+        .arg(&library)
+        .arg("-o")
+        .arg(&exe)
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "the context-last callback did not build:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+
+    let ran = Command::new(&exe).output().unwrap();
+    let output = String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n");
+    let _ = std::fs::remove_dir_all(&directory);
+    assert_eq!(output, "13\n31\n");
+}
+
 // Item 4 of docs/roadmap.md. C returns a struct by a rule of its own, and the
 // rule differs by target and, on some targets, by whether the fields are
 // floating point. Every shape here was chosen because it lands on a different

@@ -847,7 +847,10 @@ on_event         :: fn(mut ctx: Ctx, code: i64) { ctx.hits = ctx.hits + code }
 register_handler :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64
 ```
 
-The handler's first parameter is the context and must be written `mut`.
+The handler's context is its one `mut` parameter, wherever in the signature it
+is written, so a library that passes the userdata last is declared as
+`fn(i32, i64, mut Ctx)`. A handler with no `mut` parameter is not a callback,
+and one with more than one does not say which parameter is the context.
 Whichever parameter of the extern has that type is the one the context is taken
 from, found by type rather than by position because C libraries put the userdata
 on either side of the function pointer, and it must be taken by `move`. The call
