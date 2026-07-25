@@ -907,7 +907,7 @@ fn clif_type(pointer_type: types::Type, ty: &Type) -> Result<types::Type> {
         Type::Ptr(_) | Type::Ref(_) | Type::RefMut(_) | Type::Proc(_, _) => {
             pointer_type
         }
-        Type::Distinct(inner) => clif_type(pointer_type, inner)?,
+        Type::Distinct(_, inner) => clif_type(pointer_type, inner)?,
         other => {
             bail!("native backend: type not supported in codegen: {other}")
         }

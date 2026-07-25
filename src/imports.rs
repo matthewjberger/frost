@@ -1115,7 +1115,7 @@ impl Renamer {
             | Type::RefMut(inner)
             | Type::Slice(inner)
             | Type::Array(inner, _)
-            | Type::Distinct(inner)
+            | Type::Distinct(_, inner)
             | Type::Handle(inner) => self.ty(inner),
             Type::Proc(params, ret) => {
                 for param in params.iter_mut() {

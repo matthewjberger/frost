@@ -3073,6 +3073,23 @@ fold_const :: fn(mut p: Parser, id: i64) -> i64 {
     0
 }
 
+// `Meters :: distinct i64`, a name of its own for the representation of
+// another type. The name is recorded as an alias, so every use of it types as
+// what it stands for.
+parse_distinct :: fn(mut p: Parser) {
+    name_offset := cur_off(p)
+    name_length := cur_len(p)
+    advance(p)
+    advance(p)
+    advance(p)
+    inner := parse_type(p)
+    arena_push(
+        p.type_aliases,
+        ConstDef { name_off = name_offset, name_len = name_length,
+            value = inner },
+    )
+}
+
 parse_const :: fn(mut p: Parser) {
     name_offset := cur_off(p)
     name_length := cur_len(p)
@@ -3126,6 +3143,8 @@ parse_program :: fn(mut p: Parser) -> i64 {
             parse_enum(p)
         } else if (third == TOK_KW_STRUCT || third == TOK_KW_LINEAR) {
             parse_struct(p)
+        } else if (third == TOK_KW_DISTINCT) {
+            parse_distinct(p)
         } else if (third == TOK_KW_EXTERN || third == TOK_KW_SAFE) {
             item := parse_extern(p)
             if (head == (0 - 1)) {

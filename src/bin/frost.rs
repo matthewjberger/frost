@@ -14,7 +14,8 @@ use frost::{
     check_linearity, check_module, check_ownership, check_regions,
     check_unsafety, compile_ir_to_object, emit_c, lower_allocation_sources,
     lower_failure_sets, lower_multiple_returns, lower_param_modes,
-    register_entry_file, resolve_imports_cached, run_module, strip_unsafe_fns,
+    register_entry_file, resolve_distinct_types, resolve_imports_cached,
+    run_module, strip_unsafe_fns,
 };
 
 #[derive(Parser)]
@@ -333,6 +334,7 @@ fn main() -> Result<()> {
     // `unsafe fn` is only meaningful to the unsafety check. Strip it to the
     // plain function it wraps before any later pass or backend sees one.
     strip_unsafe_fns(&mut statements);
+    resolve_distinct_types(&mut statements);
     lower_multiple_returns(&mut statements).context("Multiple return error")?;
     check_regions(&statements).context("Region error")?;
     check_frame_escapes(&statements).context("Region error")?;

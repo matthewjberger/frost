@@ -76,7 +76,12 @@ already.
   since a template here carries one type parameter rather than a list. This is
   what `std/slab.frost` needs.
 - **Generic enums.**
-- **`distinct` types.**
+- **The identity of a `distinct` type.** `Meters :: distinct i64` parses and
+  compiles here, and a program using one runs the way the bootstrap runs it,
+  because the name is carried as an alias for the representation. What is not
+  carried is the identity, so this compiler accepts a `Feet` where a `Meters`
+  is wanted and the bootstrap does not. It is the one place the two disagree
+  about what to accept.
 - **Compile-time function arguments** (`$f`), and calling through a function
   **pointer held in a parameter**: `f(x)` reads as a call to a function named
   `f` rather than through the value.
