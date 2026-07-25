@@ -530,14 +530,13 @@ impl Walk<'_> {
             // definitions of it, and a reference elsewhere would bind to
             // whichever the resolver reached first. The flat namespace is
             // deliberate (a name carries its own prefix), so this is a loud
-            // error, not a silent pick; the fix is to prefix one or rename it on
-            // import.
+            // error, not a silent pick; the fix is to prefix one of them.
             for name in &exports {
                 if let Some(first) = self.exported_by.get(name)
                     && first != &full
                 {
                     bail!(
-                        "'{name}' is exported by two modules, {} and {}; prefix one of them or rename it on import",
+                        "'{name}' is exported by two modules, {} and {}; prefix one of them to keep the names distinct",
                         first.display(),
                         full.display()
                     );

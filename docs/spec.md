@@ -386,7 +386,7 @@ The exported namespace is flat, and a name carries its own prefix by convention
 (`vec3_add`, not a qualified `math.add`), which keeps it a single token to search
 for. Two imported modules exporting the same name is therefore a compile error
 naming both modules, not a silent choice between them. The fix is to prefix one
-of them, or to rename it where it is imported.
+of them so the exported names stay distinct.
 
 ---
 
