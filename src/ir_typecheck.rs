@@ -25,6 +25,25 @@ fn is_runtime_intrinsic(name: &str) -> bool {
 }
 
 pub fn check_module(module: &IrModule) -> Result<()> {
+    let reports = check_module_recovering(module);
+    if reports.is_empty() {
+        return Ok(());
+    }
+    Err(anyhow::anyhow!(reports.join("\n")))
+}
+
+/// Check each function, reporting one failure per function rather than stopping
+/// at the first.
+///
+/// The granularity is the function, not the statement. This pass derives a
+/// type for each operand as it goes, so past the first mismatch it has nothing
+/// sound to check the rest of the body against, and continuing would report
+/// consequences rather than causes. Functions share no such state.
+///
+/// The messages are already located by `locate_instantiation`, which rewrites a
+/// specialization's mangled name into what the reader wrote, so these are the
+/// finished strings rather than `Diagnostic`s.
+pub fn check_module_recovering(module: &IrModule) -> Vec<String> {
     let mut signatures: HashMap<&str, Signature> = HashMap::new();
     // A function another object defines is callable here and has a signature to
     // check the call against. It has no body to check.
@@ -44,10 +63,16 @@ pub fn check_module(module: &IrModule) -> Result<()> {
             },
         );
     }
+    let mut reports = Vec::new();
     for function in &module.functions {
-        locate_instantiation(check_function(function, &signatures), function)?;
+        if let Err(error) = locate_instantiation(
+            check_function(function, &signatures),
+            function,
+        ) {
+            reports.push(error.to_string());
+        }
     }
-    Ok(())
+    reports
 }
 
 // A type error inside a specialization names a line in the template, which is
@@ -445,6 +470,29 @@ mod tests {
             IrTerminator::Return(Some(IrOperand::Local(0))),
         );
         assert!(check_module(&module).is_ok());
+    }
+
+    // Each function is checked on its own, so a module with two bad ones names
+    // both rather than only whichever came first.
+    #[test]
+    fn reports_every_bad_function_not_only_the_first() {
+        let mut module = single_block(
+            Type::I64,
+            vec![local(Type::I64)],
+            vec![IrStatement::Assign(0, IrRvalue::Use(IrOperand::Local(9)))],
+            IrTerminator::Return(Some(IrOperand::Local(0))),
+        );
+        let mut second = module.functions[0].clone();
+        second.name = "other".to_string();
+        module.functions.push(second);
+
+        let reports = check_module_recovering(&module);
+        assert_eq!(
+            reports.len(),
+            2,
+            "expected one report per bad function, got: {reports:?}"
+        );
+        assert!(check_module(&module).is_err());
     }
 
     #[test]
