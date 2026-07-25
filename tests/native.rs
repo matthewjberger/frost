@@ -7802,6 +7802,76 @@ fn native_generic_multiple_type_parameters() {
     assert_eq!(output, "7\n42\n7\n20\n");
 }
 
+// A type argument written out, with a `bool` among them. `true` and `false` are
+// their own kind of expression rather than literals, so a read-mode `$T` bound
+// to `bool` used to stay a reference and the call tried to pass a constant by
+// address. Both compilers take this, which is what the two of them accepting
+// the same language means.
+const GENERIC_BOOL_ARGUMENT: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Pair :: struct($A: Type, $B: Type) { first: A, second: B }
+
+make :: fn($A: Type, $B: Type, a: $A, b: $B) -> Pair<A, B> {
+    Pair { first = a, second = b }
+}
+
+count :: fn($A: Type, a: $A) -> i64 { 1 }
+
+main :: fn() -> i64 {
+    q := make($i64, $bool, 9, true)
+    printf("%lld\n", q.first)
+    if (q.second) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    printf("%lld\n", count($bool, false))
+    0
+}
+"#;
+
+#[test]
+fn a_boolean_is_a_value_when_it_is_a_generic_argument() {
+    let Some(output) = compile_and_run("genericbool", GENERIC_BOOL_ARGUMENT)
+    else {
+        return;
+    };
+    assert_eq!(output, "9\n1\n1\n");
+}
+
+// The same program through the self-hosted compiler, on both of its backends.
+const SELF_HOSTED_GENERIC_BOOL: &str = "Pair :: struct($A: Type, $B: Type) { first: A, second: B }\n\
+     make :: fn($A: Type, $B: Type, a: $A, b: $B) -> Pair<A, B> {\n\
+     \x20   Pair { first = a, second = b }\n\
+     }\n\
+     count :: fn($A: Type, a: $A) -> i64 { 1 }\n\
+     main :: fn() -> i64 {\n\
+     \x20   q := make($i64, $bool, 9, true)\n\
+     \x20   print q.first\n\
+     \x20   if (q.second) { print 1 } else { print 0 }\n\
+     \x20   print count($bool, false)\n\
+     \x20   0\n\
+     }\n";
+
+#[test]
+fn self_hosted_takes_a_boolean_as_a_generic_argument() {
+    let Some(output) =
+        selfhosted_native_output("shgenbool", SELF_HOSTED_GENERIC_BOOL)
+    else {
+        return;
+    };
+    assert_eq!(output, "9\n1\n1\n");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shgenbool_input.frost");
+    std::fs::write(&input, SELF_HOSTED_GENERIC_BOOL).unwrap();
+    let Some(c_source) = self_hosted_emits("shgenbool", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shgenbool", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
 const TUPLE_MATCH: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
@@ -8807,6 +8877,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_inflit", INFERRED_LITERALS),
         ("diff_indagg", INDIRECT_AGGREGATE_RETURN),
         ("diff_distinct", DISTINCT_TYPES),
+        ("diff_genbool", GENERIC_BOOL_ARGUMENT),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);

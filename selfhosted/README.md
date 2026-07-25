@@ -68,15 +68,21 @@ else: the bootstrap compiles this compiler, this compiler compiles itself, and
 no seed binary is needed anywhere. A divergence is a hole in that, whichever
 side it is on.
 
-- **More than one generic type parameter**, where the *bootstrap* is the one
-  behind: this compiler compiles `Pair<i64, bool> { .. }` and the bootstrap
-  cannot parse it.
-- **Speed parity**: parallel code generation, separate compilation,
-  `--incremental`. The front end is already fast; these are what the bootstrap
-  has and this does not. Not a language difference.
+They accept the same language. What is left is not a difference in what a
+program may say:
 
-Neither compiler takes a value-generic repeat count (`[0; N]`), so that is a
-gap in the language rather than between the two.
+- **Speed**: the bootstrap generates code on every core, compiles modules
+  separately, and rebuilds only what an edit reaches. This compiler does none
+  of those. Its front end is already fast, so the gap is in the backend and in
+  the build, not in the language.
+- **Output**: the bootstrap emits an object through Cranelift, portable C, or
+  runs the IR. This one emits C or x86-64 assembly of its own.
+
+Two forms neither compiler takes, so they are holes in the language rather than
+between the two: a value-generic repeat count (`[0; N]`), and a generic literal
+that names its arguments (`Pair<i64, bool> { .. }`). A generic literal is
+written bare, `Pair { first = 7, second = true }`, and takes its instance from
+the context.
 
 A form neither compiler supports is refused with the position it was written
 at, rather than misparsed into a crash somewhere else.
