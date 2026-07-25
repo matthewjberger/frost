@@ -134,6 +134,10 @@ lex_operator :: fn(src: ^i8, i: i64, len: i64, mut tokens: Arena<Token>) -> i64 
         push_token(tokens, TOK_OROR, i, 2, 0)
         return i + 2
     }
+    // TOK_EOF stands for "nothing matched" here. A byte that is none of the
+    // operators below used to keep it and be pushed as an end-of-file token,
+    // so the parser stopped where the byte was and the compiler wrote an empty
+    // program and reported success. One stray byte silently truncated a file.
     mut kind : i64 = TOK_EOF
     if (c == CH_LPAREN) { kind = TOK_LPAREN }
     if (c == CH_RPAREN) { kind = TOK_RPAREN }
@@ -158,12 +162,26 @@ lex_operator :: fn(src: ^i8, i: i64, len: i64, mut tokens: Arena<Token>) -> i64 
     if (c == CH_LT) { kind = TOK_LT }
     if (c == CH_GT) { kind = TOK_GT }
     if (c == CH_DOLLAR) { kind = TOK_DOLLAR }
+    if (kind == TOK_EOF) {
+        report("unexpected byte ")
+        frost_rt_error_int(c)
+        report(" at offset ")
+        frost_rt_error_int(i)
+        frost_rt_die()
+    }
     push_token(tokens, kind, i, 1, 0)
     i + 1
 }
 
 tokenize :: fn(src: ^i8, len: i64, mut tokens: Arena<Token>) {
     mut i : i64 = 0
+    // A byte-order mark, which some editors write at the head of a UTF-8 file.
+    // It carries no meaning here and is not an operator, so it is stepped over
+    // before the first token rather than reported as a stray byte.
+    if (byte_of(src, 0, len) == 239 && byte_of(src, 1, len) == 187
+        && byte_of(src, 2, len) == 191) {
+        i = 3
+    }
     while (i < len) {
         c := byte_of(src, i, len)
         if (c == CH_SPACE || c == CH_TAB || c == CH_LF || c == CH_CR

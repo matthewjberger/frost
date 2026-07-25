@@ -2152,6 +2152,33 @@ fn self_hosted_rejects_an_unsupported_declaration() {
     );
 }
 
+// A byte that is no operator used to keep the "nothing matched" value, which is
+// the end-of-file token, so the parser stopped there and the compiler wrote an
+// empty program and reported success. One stray byte truncated a file in
+// silence.
+#[test]
+fn self_hosted_rejects_a_stray_byte() {
+    let source = "main :: fn() -> i64 {\n    print 7\u{a3}\n    0\n}\n";
+    let Some(message) = self_hosted_rejects("straybyte", source) else {
+        return;
+    };
+    assert!(
+        message.contains("unexpected byte"),
+        "expected the stray byte to be named, got:\n{message}"
+    );
+}
+
+// Some editors write a byte-order mark at the head of a UTF-8 file. It is not
+// an operator, so it used to take the same silent path as any stray byte.
+#[test]
+fn self_hosted_skips_a_byte_order_mark() {
+    let source = "\u{feff}main :: fn() -> i64 {\n    print 7\n    0\n}\n";
+    let Some(output) = selfhosted_native_output("bom", source) else {
+        return;
+    };
+    assert_eq!(output, "7\n");
+}
+
 // The top-level loop stops at the first token that cannot begin a declaration.
 // Stopping quietly emitted whatever had been read, so a file whose declaration
 // is named after a keyword compiled to an empty program and the mistake showed
