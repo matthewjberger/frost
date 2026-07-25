@@ -354,6 +354,29 @@ fn emit_statement(
                             args.join(", ")
                         )?;
                     }
+                    // A function pointer hands an aggregate back the way a
+                    // named function does, through the trailing out-pointer,
+                    // since the pointer's type is a Frost signature.
+                    IrRvalue::CallIndirect {
+                        callee,
+                        arguments,
+                        parameter_types,
+                        ..
+                    } => {
+                        let signature =
+                            indirect_signature(parameter_types, "void", true)?;
+                        let mut args = Vec::new();
+                        for argument in arguments {
+                            args.push(operand_expr(function, argument)?);
+                        }
+                        args.push(format!("_{local}"));
+                        writeln!(
+                            output,
+                            "  (({signature})({}))({});",
+                            operand_expr(function, callee)?,
+                            args.join(", ")
+                        )?;
+                    }
                     _ => bail!("C backend: unsupported aggregate assignment"),
                 }
                 return Ok(());
@@ -541,16 +564,11 @@ fn rvalue_expr(
             parameter_types,
             return_type,
         } => {
-            let return_c = c_type(return_type)?;
-            let mut param_c = Vec::new();
-            for parameter in parameter_types {
-                if is_aggregate(parameter) {
-                    param_c.push("char*".to_string());
-                } else {
-                    param_c.push(c_type(parameter)?);
-                }
-            }
-            let signature = format!("{return_c}(*)({})", param_c.join(", "));
+            let signature = indirect_signature(
+                parameter_types,
+                &c_type(return_type)?,
+                false,
+            )?;
             let mut args = Vec::new();
             for argument in arguments {
                 args.push(operand_expr(function, argument)?);
@@ -562,6 +580,29 @@ fn rvalue_expr(
             )
         }
     })
+}
+
+// The C type of a Frost function pointer. An aggregate parameter crosses as an
+// address, and an aggregate return is the trailing out-pointer the callee
+// writes through, which is why the return type is passed in rather than read
+// off the signature.
+fn indirect_signature(
+    parameter_types: &[Type],
+    return_c: &str,
+    out: bool,
+) -> Result<String> {
+    let mut param_c = Vec::new();
+    for parameter in parameter_types {
+        if is_aggregate(parameter) {
+            param_c.push("char*".to_string());
+        } else {
+            param_c.push(c_type(parameter)?);
+        }
+    }
+    if out {
+        param_c.push("char*".to_string());
+    }
+    Ok(format!("{return_c}(*)({})", param_c.join(", ")))
 }
 
 fn operand_expr(function: &IrFunction, operand: &IrOperand) -> Result<String> {

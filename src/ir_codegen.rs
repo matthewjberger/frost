@@ -878,6 +878,15 @@ fn store_incoming_register(
     builder.ins().call(memcpy_ref, &[destination, source, size]);
 }
 
+// A call through a function pointer, as the pieces the emitter needs. They
+// travel together because they describe one signature.
+struct IndirectCall<'a> {
+    callee: &'a IrOperand,
+    arguments: &'a [IrOperand],
+    parameter_types: &'a [Type],
+    return_type: &'a Type,
+}
+
 fn param_abi_type(pointer_type: types::Type, ty: &Type) -> Result<types::Type> {
     if is_aggregate(ty) {
         Ok(pointer_type)
@@ -955,10 +964,13 @@ impl Translator<'_, '_> {
                             return_type,
                         } => {
                             self.emit_call_indirect(
-                                callee,
-                                arguments,
-                                parameter_types,
-                                return_type,
+                                IndirectCall {
+                                    callee,
+                                    arguments,
+                                    parameter_types,
+                                    return_type,
+                                },
+                                None,
                             )?;
                         }
                         _ => {}
@@ -979,6 +991,27 @@ impl Translator<'_, '_> {
                         } => {
                             let out = self.slot_address(*local)?;
                             self.emit_call_with_out(function, arguments, out)?;
+                        }
+                        // A function pointer hands an aggregate back the way a
+                        // named function does, through the trailing
+                        // out-pointer, since both are Frost functions and the
+                        // pointer's type is the signature.
+                        IrRvalue::CallIndirect {
+                            callee,
+                            arguments,
+                            parameter_types,
+                            return_type,
+                        } => {
+                            let out = self.slot_address(*local)?;
+                            self.emit_call_indirect(
+                                IndirectCall {
+                                    callee,
+                                    arguments,
+                                    parameter_types,
+                                    return_type,
+                                },
+                                Some(out),
+                            )?;
                         }
                         _ => bail!(
                             "native backend: unsupported aggregate assignment"
@@ -1125,10 +1158,13 @@ impl Translator<'_, '_> {
                 return_type,
             } => {
                 let results = self.emit_call_indirect(
-                    callee,
-                    arguments,
-                    parameter_types,
-                    return_type,
+                    IndirectCall {
+                        callee,
+                        arguments,
+                        parameter_types,
+                        return_type,
+                    },
+                    None,
                 )?;
                 match results.first() {
                     Some(value) => Ok(*value),
@@ -1370,13 +1406,21 @@ impl Translator<'_, '_> {
         self.builder.ins().stack_load(clif, slot, 0)
     }
 
+    // `out` is where an aggregate result lands. A Frost function that returns
+    // one takes the address as a trailing parameter and returns nothing, and a
+    // call through a pointer is the same call, so the signature built here
+    // matches the one build_signature builds for the callee.
     fn emit_call_indirect(
         &mut self,
-        callee: &IrOperand,
-        arguments: &[IrOperand],
-        parameter_types: &[Type],
-        return_type: &Type,
+        call: IndirectCall,
+        out: Option<Value>,
     ) -> Result<Vec<Value>> {
+        let IndirectCall {
+            callee,
+            arguments,
+            parameter_types,
+            return_type,
+        } = call;
         let mut signature = self.decls.make_signature();
         for parameter in parameter_types {
             signature.params.push(AbiParam::new(param_abi_type(
@@ -1384,7 +1428,9 @@ impl Translator<'_, '_> {
                 parameter,
             )?));
         }
-        if !matches!(return_type, Type::Void) {
+        if out.is_some() {
+            signature.params.push(AbiParam::new(self.pointer_type));
+        } else if !matches!(return_type, Type::Void) {
             signature.returns.push(AbiParam::new(clif_type(
                 self.pointer_type,
                 return_type,
@@ -1392,9 +1438,12 @@ impl Translator<'_, '_> {
         }
         let signature_ref = self.builder.import_signature(signature);
         let callee_value = self.operand(callee)?;
-        let mut argument_values = Vec::with_capacity(arguments.len());
+        let mut argument_values = Vec::with_capacity(arguments.len() + 1);
         for argument in arguments {
             argument_values.push(self.operand(argument)?);
+        }
+        if let Some(out) = out {
+            argument_values.push(out);
         }
         let call = self.builder.ins().call_indirect(
             signature_ref,
