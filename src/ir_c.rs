@@ -729,7 +729,7 @@ fn c_type(ty: &Type) -> Result<String> {
         Type::Ptr(_) | Type::Ref(_) | Type::RefMut(_) => "char*".to_string(),
         Type::Proc(_, _) => "void*".to_string(),
         Type::Handle(_) => "int64_t".to_string(),
-        Type::Distinct(inner) => c_type(inner)?,
+        Type::Distinct(_, inner) => c_type(inner)?,
         other => bail!("C backend: type not supported: {other}"),
     })
 }

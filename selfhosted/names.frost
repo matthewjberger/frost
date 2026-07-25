@@ -714,6 +714,15 @@ type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
             return binding.bound
         }
     }
+    mut a : i64 = 0
+    while (a < p.type_aliases.count) {
+        entry := arena_at(p.type_aliases, a)
+        if (entry.name_len == length
+            && bytes_equal(p.src, entry.name_off, offset, length)) {
+            return entry.value
+        }
+        a = a + 1
+    }
     if (str_range_eq(p.src, offset, length, "i64")) { return TY_I64 }
     if (str_range_eq(p.src, offset, length, "i32")) { return TY_I32 }
     if (str_range_eq(p.src, offset, length, "i16")) { return TY_I16 }

@@ -744,7 +744,7 @@ impl IrBuilder {
                 Some((size * count, align))
             }
             Type::Str | Type::Slice(_) => Some((16, 8)),
-            Type::Distinct(inner) => self.size_and_align_of(inner),
+            Type::Distinct(_, inner) => self.size_and_align_of(inner),
             other => Some((other.size_of(), other.align_of())),
         }
     }
@@ -791,7 +791,9 @@ impl IrBuilder {
                 });
                 Some(())
             }
-            Type::Distinct(inner) => self.flatten_scalars(inner, offset, out),
+            Type::Distinct(_, inner) => {
+                self.flatten_scalars(inner, offset, out)
+            }
             Type::Void | Type::Unknown => None,
             other => {
                 out.push(crate::c_abi::CScalar {
@@ -982,7 +984,7 @@ fn single_inner(ty: &Type) -> Option<&Type> {
         | Type::Array(inner, _)
         | Type::Slice(inner)
         | Type::Handle(inner)
-        | Type::Distinct(inner) => Some(inner),
+        | Type::Distinct(_, inner) => Some(inner),
         _ => None,
     }
 }
@@ -1040,9 +1042,10 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
         Type::Handle(inner) => {
             Type::Handle(Box::new(substitute_type(inner, subst)))
         }
-        Type::Distinct(inner) => {
-            Type::Distinct(Box::new(substitute_type(inner, subst)))
-        }
+        Type::Distinct(name, inner) => Type::Distinct(
+            name.clone(),
+            Box::new(substitute_type(inner, subst)),
+        ),
         Type::Proc(params, ret) => Type::Proc(
             params.iter().map(|p| substitute_type(p, subst)).collect(),
             Box::new(substitute_type(ret, subst)),
@@ -1162,6 +1165,24 @@ fn name_inferred_literal(
         );
     };
     Ok(Expression::StructInit(name.clone(), fields.to_vec()))
+}
+
+// A distinct type is built only from itself. Another distinct type over the
+// same representation will not do, and neither will the representation, which
+// is the whole point of declaring one. Reading one as its representation is
+// allowed and is what a call into C is: a Meters is an i64 in memory, and
+// nothing is at stake going that way.
+//
+// A literal is exempt. It has no type of its own until the context gives it
+// one, which is what makes `m : Meters = 3` read the way it should.
+fn distinct_mismatch(value: &Expression, from: &Type, to: &Type) -> bool {
+    if from == to || !matches!(to, Type::Distinct(..)) {
+        return false;
+    }
+    !matches!(
+        value,
+        Expression::Literal(Literal::Integer(_) | Literal::Float(_))
+    )
 }
 
 fn mangle_type(ty: &Type) -> String {
@@ -2725,6 +2746,13 @@ impl<'a> FunctionLowering<'a> {
                 }
                 let (operand, value_type) =
                     self.lower_expression(value, type_annotation.as_ref())?;
+                if let Some(annotated) = type_annotation
+                    && distinct_mismatch(value, &value_type, annotated)
+                {
+                    bail!(
+                        "this binding is a '{annotated}' and the value is a '{value_type}'; a distinct type is not its representation"
+                    );
+                }
                 if matches!(value_type, Type::Void) {
                     bail!(
                         "native backend: cannot bind '{name}' to a void value; this expression produces no value"
@@ -2758,6 +2786,12 @@ impl<'a> FunctionLowering<'a> {
                 } else {
                     let (operand, value_type) =
                         self.lower_expression(expression, Some(&return_type))?;
+                    if distinct_mismatch(expression, &value_type, &return_type)
+                    {
+                        bail!(
+                            "this returns a '{value_type}' and the function answers with a '{return_type}'; a distinct type is not its representation"
+                        );
+                    }
                     let coerced =
                         self.coerce(operand, &value_type, &return_type);
                     self.emit_return(Some(coerced))?;
@@ -4013,6 +4047,13 @@ impl<'a> FunctionLowering<'a> {
                     "native backend: cannot pass a '{value_type}' by value to a reference parameter '&{value_type}'; take a reference with '&' or '&mut'"
                 );
             }
+            if let Some(target) = expected
+                && distinct_mismatch(argument, &value_type, target)
+            {
+                bail!(
+                    "'{name}' takes a '{target}' here and this argument is a '{value_type}'; a distinct type is not its representation"
+                );
+            }
             let coerced = match expected {
                 Some(target) => self.coerce(operand, &value_type, target),
                 None => operand,
@@ -4248,6 +4289,11 @@ impl<'a> FunctionLowering<'a> {
             let target_type = self.type_of_local(local);
             let (operand, value_type) =
                 self.lower_expression(value, Some(&target_type))?;
+            if distinct_mismatch(value, &value_type, &target_type) {
+                bail!(
+                    "'{name}' is a '{target_type}' and the value is a '{value_type}'; a distinct type is not its representation"
+                );
+            }
             let coerced = self.coerce(operand, &value_type, &target_type);
             self.emit(IrStatement::Assign(local, IrRvalue::Use(coerced)));
             return Ok(());

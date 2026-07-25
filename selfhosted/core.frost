@@ -16,7 +16,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     TOK_CARET, TOK_COLON, TOK_COLONCOLON, TOK_COLONEQ, TOK_COMMA, TOK_DOLLAR,
     TOK_DOT, TOK_EOF, TOK_EQEQ, TOK_FLOAT, TOK_GE, TOK_GT, TOK_IDENT, TOK_INT,
     TOK_KW_CASE, TOK_KW_ELSE, TOK_KW_ENUM, TOK_KW_EXPORT, TOK_KW_EXTERN,
-    TOK_KW_REF, TOK_KW_SAFE, TOK_KW_TEST, TOK_KW_UNSAFE,
+    TOK_KW_REF, TOK_KW_SAFE, TOK_KW_TEST, TOK_KW_UNSAFE, TOK_KW_DISTINCT,
     TOK_KW_FALSE, TOK_KW_FN, TOK_KW_FOR, TOK_KW_IF, TOK_KW_IMPORT,
     TOK_KW_IN, TOK_KW_LET,
     TOK_KW_LINEAR, TOK_KW_MATCH, TOK_KW_MOVE, TOK_KW_MUT, TOK_KW_PRINT,
@@ -235,6 +235,7 @@ TOK_KW_EXPORT :: 29
 TOK_KW_ENUM   :: 30
 TOK_KW_TEST   :: 31
 TOK_KW_UNSAFE :: 32
+TOK_KW_DISTINCT :: 79
 // `safe extern fn`: an extern the author audited, so calling it needs no block.
 TOK_KW_SAFE   :: 71
 TOK_KW_REF    :: 72
@@ -776,6 +777,11 @@ Parser :: struct {
     prov_kind: i64,
     prov_off: i64,
     prov_len: i64,
+    // `Meters :: distinct i64`. This compiler carries the name as an alias for
+    // the representation, so a program using one compiles and runs the way the
+    // bootstrap runs it. What it does not carry is the identity: the bootstrap
+    // refuses a Feet where a Meters is wanted and this does not yet.
+    type_aliases: Arena<ConstDef>,
     arrays: Arena<ArrayDef>,
     tests: Arena<TestCase>,
     testing: i64,

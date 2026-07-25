@@ -948,6 +948,121 @@ fn a_variant_without_a_context_is_rejected() {
     );
 }
 
+// `Meters :: distinct i64` is a nominal type: the representation of the inner
+// type under a name of its own. Arithmetic and layout follow the inner type,
+// its identity does not, and a literal takes the type the context wants, which
+// is what makes `m : Meters = 3` read the way it should.
+const DISTINCT_TYPES: &str = r#"
+printf :: extern fn(fmt: ^i8, value: i64) -> i32
+
+Meters :: distinct i64
+Feet :: distinct i64
+
+add_meters :: fn(a: Meters, b: Meters) -> Meters { a + b }
+
+// A distinct type crosses a signature and lands in a struct like any other.
+Trip :: struct { there: Meters, back: Meters }
+
+total :: fn(t: Trip) -> Meters { add_meters(t.there, t.back) }
+
+main :: fn() -> i64 {
+    a : Meters = 3
+    b : Meters = 4
+    printf("%lld\n", add_meters(a, b))
+
+    f : Feet = 10
+    printf("%lld\n", f)
+
+    trip := Trip { there = a, back = b }
+    printf("%lld\n", total(trip))
+    0
+}
+"#;
+
+#[test]
+fn a_distinct_type_carries_its_own_name() {
+    let Some(output) = compile_and_run("distinct", DISTINCT_TYPES) else {
+        return;
+    };
+    assert_eq!(output, "7\n10\n7\n");
+}
+
+// The identity is the point, so the places a value crosses are the places the
+// mismatch is caught.
+#[test]
+fn a_distinct_type_is_not_its_representation() {
+    let prelude = "Meters :: distinct i64\n\
+         Feet :: distinct i64\n\
+         add_meters :: fn(a: Meters, b: Meters) -> Meters { a + b }\n";
+    let cases = [
+        // Another distinct type over the same representation, at a call.
+        "main :: fn() -> i64 {\n\
+         \x20   m : Meters = 3\n\
+         \x20   f : Feet = 4\n\
+         \x20   add_meters(m, f)\n\
+         \x20   0\n\
+         }\n",
+        // The representation itself, where the distinct type is wanted.
+        "main :: fn() -> i64 {\n\
+         \x20   n : i64 = 3\n\
+         \x20   m : Meters = n\n\
+         \x20   0\n\
+         }\n",
+        // And at an assignment.
+        "main :: fn() -> i64 {\n\
+         \x20   mut m : Meters = 3\n\
+         \x20   f : Feet = 4\n\
+         \x20   m = f\n\
+         \x20   0\n\
+         }\n",
+    ];
+    for (index, body) in cases.iter().enumerate() {
+        let source = format!("{prelude}{body}");
+        let message = compile_error(&format!("distinctbad{index}"), &source);
+        assert!(
+            message.contains("a distinct type is not its representation"),
+            "expected the nominal diagnostic in:\n{message}"
+        );
+    }
+}
+
+// The self-hosted compiler carries a distinct type as an alias for what it
+// stands for: a program using one compiles and runs the way the bootstrap runs
+// it. What it does not carry yet is the identity, which is why the rejection
+// above is a bootstrap test.
+const SELF_HOSTED_DISTINCT: &str = "Meters :: distinct i64\n\
+     add_meters :: fn(a: Meters, b: Meters) -> Meters {\n\
+     \x20   a + b\n\
+     }\n\
+     main :: fn() -> i64 {\n\
+     \x20   a : Meters = 3\n\
+     \x20   b : Meters = 4\n\
+     \x20   print add_meters(a, b)\n\
+     \x20   0\n\
+     }\n";
+
+#[test]
+fn self_hosted_compiles_a_distinct_type() {
+    let Some(output) =
+        selfhosted_native_output("shdistinct", SELF_HOSTED_DISTINCT)
+    else {
+        return;
+    };
+    assert_eq!(output, "7\n");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shdistinct_input.frost");
+    std::fs::write(&input, SELF_HOSTED_DISTINCT).unwrap();
+    let Some(c_source) = self_hosted_emits("shdistinct", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shdistinct", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
 // A call through a function pointer that answers with a struct. A Frost
 // function hands an aggregate back through a trailing out-pointer, and a call
 // through a pointer is the same call, so the signature the call site builds is
@@ -2978,7 +3093,7 @@ fn self_hosted_errors_name_a_position() {
 // that caused it. It names the declaration instead.
 #[test]
 fn self_hosted_rejects_an_unsupported_declaration() {
-    let source = "Id :: distinct i64\nmain :: fn() -> i64 { 0 }\n";
+    let source = "Id :: opaque i64\nmain :: fn() -> i64 { 0 }\n";
     let Some(message) = self_hosted_rejects("unsupported_decl", source) else {
         return;
     };
@@ -8343,6 +8458,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_dotvariant", INFERRED_VARIANTS),
         ("diff_inflit", INFERRED_LITERALS),
         ("diff_indagg", INDIRECT_AGGREGATE_RETURN),
+        ("diff_distinct", DISTINCT_TYPES),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);

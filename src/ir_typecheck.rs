@@ -410,7 +410,7 @@ fn is_numeric(ty: &Type) -> bool {
         | Type::F32
         | Type::F64
         | Type::Bool => true,
-        Type::Distinct(inner) => is_numeric(inner),
+        Type::Distinct(_, inner) => is_numeric(inner),
         _ => false,
     }
 }

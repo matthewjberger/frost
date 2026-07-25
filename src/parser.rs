@@ -1858,6 +1858,12 @@ impl<'a> Parser<'a> {
             if matches!(self.peek_nth(0), Token::Semicolon) {
                 self.read_token();
             }
+            let typ = match typ {
+                Type::Distinct(_, inner) => {
+                    Type::Distinct(identifier.clone(), inner)
+                }
+                other => other,
+            };
             Ok(Statement::TypeAlias(identifier, typ))
         } else if matches!(self.peek_nth(0), Token::Extern)
             || (matches!(self.peek_nth(0), Token::Safe)
@@ -3328,7 +3334,10 @@ impl<'a> Parser<'a> {
             }
             Token::Distinct => {
                 self.read_token();
-                Type::Distinct(Box::new(self.parse_type()?))
+                // A `distinct T` written inline has no name of its own, so it
+                // is the name of the declaration it belongs to that names it.
+                // `parse_constant_or_struct_statement` fills that in.
+                Type::Distinct(String::new(), Box::new(self.parse_type()?))
             }
             Token::Integer(value) => {
                 let value = *value as usize;

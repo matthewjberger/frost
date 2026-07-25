@@ -539,7 +539,7 @@ fn integer_info(ty: &Type) -> (u32, bool) {
         Type::U64 | Type::Usize => (64, false),
         Type::Bool => (8, false),
         Type::Enum(_) => (32, false),
-        Type::Distinct(inner) => integer_info(inner),
+        Type::Distinct(_, inner) => integer_info(inner),
         _ => (64, false),
     }
 }
@@ -547,7 +547,7 @@ fn integer_info(ty: &Type) -> (u32, bool) {
 fn is_float(ty: &Type) -> bool {
     match ty {
         Type::F32 | Type::F64 => true,
-        Type::Distinct(inner) => is_float(inner),
+        Type::Distinct(_, inner) => is_float(inner),
         _ => false,
     }
 }
@@ -572,7 +572,7 @@ fn is_scalar(ty: &Type) -> bool {
         | Type::Handle(_)
         | Type::Proc(_, _)
         | Type::Enum(_) => true,
-        Type::Distinct(inner) => is_scalar(inner),
+        Type::Distinct(_, inner) => is_scalar(inner),
         _ => false,
     }
 }

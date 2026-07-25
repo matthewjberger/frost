@@ -211,7 +211,7 @@ fn names_in_type(ty: &Type, out: &mut Vec<String>) {
         | Type::Slice(inner)
         | Type::Array(inner, _)
         | Type::ArrayGeneric(inner, _)
-        | Type::Distinct(inner)
+        | Type::Distinct(_, inner)
         | Type::Handle(inner) => names_in_type(inner, out),
         Type::Proc(params, ret) => {
             for parameter in params {

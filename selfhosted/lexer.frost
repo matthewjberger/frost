@@ -75,6 +75,7 @@ classify_ident :: fn(src: ^i8, off: i64, len: i64) -> i64 {
     if (str_range_eq(src, off, len, "enum")) { return TOK_KW_ENUM }
     if (str_range_eq(src, off, len, "test")) { return TOK_KW_TEST }
     if (str_range_eq(src, off, len, "unsafe")) { return TOK_KW_UNSAFE }
+    if (str_range_eq(src, off, len, "distinct")) { return TOK_KW_DISTINCT }
     TOK_IDENT
 }
 

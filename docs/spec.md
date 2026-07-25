@@ -245,10 +245,47 @@ There is no built-in optional, and none is needed: a generic enum (3.2) writes
 one in the language. `Option :: enum($T: Type) { None, Some { value: T } }` is
 that type, with nothing special about it.
 
-- `distinct T` is a nominal type with `T`'s representation, not interchangeable
+- `distinct T` is a nominal type with `T`'s representation, built only from
+  itself (3.6a)
   with `T`.
 - `$T` is a type parameter (chapter 11).
 - `Name<T, ...>` is a generic instantiation (chapter 11).
+
+### 3.6a Distinct types
+
+`Meters :: distinct i64` declares a type with `i64`'s representation and a name
+of its own. Size, alignment, arithmetic and the C ABI all follow the inner type.
+Identity does not: a `Meters` is not an `i64`, and it is not a `Feet` declared
+the same way.
+
+The rule is one-directional. A distinct type is built only from itself, so
+neither the representation nor another distinct type over it will do:
+
+```
+Meters :: distinct i64
+Feet   :: distinct i64
+
+m : Meters = 3            // a literal takes the type the context wants
+n : i64    = 3
+m = n                     // error: a distinct type is not its representation
+add_meters(m, f)          // error, where f is a Feet
+```
+
+Reading one as its representation is allowed, and is what a call into C is: a
+`Meters` is an `i64` in memory and nothing is at stake going that way. So
+`printf("%lld\n", m)` works, and `n : i64 = m` works. What the name protects is
+what goes *in*: a bare number, or a value that means something else, cannot
+become a `Meters` by accident. There is no cast, because there is nothing a cast
+would be needed for in the direction that is checked.
+
+A literal is exempt because it has no type of its own until the context gives it
+one, which is what makes `m : Meters = 3` read the way it should.
+
+The self-hosted compiler carries a distinct type as an alias for what it stands
+for, so a program using one compiles and runs there identically. What it does
+not carry yet is the identity, so it accepts the mismatches above. That is the
+one place the two compilers currently disagree about what to accept, and it is
+recorded in [../selfhosted/README.md](../selfhosted/README.md).
 
 ### 3.7 Strings
 

@@ -235,6 +235,7 @@ main :: fn() -> i64 {
         prov_kind = 0,
         prov_off = 0,
         prov_len = 0,
+        type_aliases = arena_make($ConstDef, 256),
         arrays = arena_make($ArrayDef, 1024),
         tests = arena_make($TestCase, 1024),
         testing = options.testing,

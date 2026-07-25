@@ -30,7 +30,11 @@ pub enum Type {
     Proc(Vec<Type>, Box<Type>),
     Struct(String),
     Enum(String),
-    Distinct(Box<Type>),
+    // `Meters :: distinct i64`: the representation of the inner type under a
+    // name of its own, so a Meters is not an i64 and not a Feet. The name is
+    // what makes it nominal; without it two distinct types over the same
+    // representation would compare equal.
+    Distinct(String, Box<Type>),
     Handle(Box<Type>),
     TypeParam(String),
     Unknown,
@@ -54,7 +58,7 @@ impl Type {
             Type::Proc(_, _) => 8,
             Type::Struct(_) => 0,
             Type::Enum(_) => 4,
-            Type::Distinct(inner) => inner.size_of(),
+            Type::Distinct(_, inner) => inner.size_of(),
             Type::Handle(_) => 8,
             Type::TypeParam(_) => 0,
             Type::Unknown => 0,
@@ -83,7 +87,7 @@ impl Type {
             Type::Proc(_, _) => 8,
             Type::Struct(_) => 8,
             Type::Enum(_) => 4,
-            Type::Distinct(inner) => inner.align_of(),
+            Type::Distinct(_, inner) => inner.align_of(),
             Type::Handle(_) => 4,
             Type::TypeParam(_) => 1,
             Type::Unknown => 1,
@@ -103,7 +107,7 @@ impl Type {
             }
             Type::Str | Type::Slice(_) => true,
             Type::Struct(_) | Type::Enum(_) => false,
-            Type::Distinct(inner) => inner.is_copy(),
+            Type::Distinct(_, inner) => inner.is_copy(),
             Type::Handle(_) => true,
             Type::TypeParam(_) => false,
             Type::Unknown => false,
@@ -115,7 +119,7 @@ impl Type {
             Type::Str | Type::Slice(_) => false,
             Type::Struct(_) | Type::Enum(_) => true,
             Type::Array(inner, _) => inner.needs_drop(),
-            Type::Distinct(inner) => inner.needs_drop(),
+            Type::Distinct(_, inner) => inner.needs_drop(),
             _ => false,
         }
     }
@@ -130,7 +134,7 @@ impl Type {
             Type::Array(inner, _) => inner.contains_reference(),
             Type::Slice(inner) => inner.contains_reference(),
             Type::Ptr(inner) => inner.contains_reference(),
-            Type::Distinct(inner) => inner.contains_reference(),
+            Type::Distinct(_, inner) => inner.contains_reference(),
             Type::Handle(inner) => inner.contains_reference(),
             _ => false,
         }
@@ -176,7 +180,7 @@ impl Display for Type {
             }
             Type::Struct(name) => write!(f, "{}", name),
             Type::Enum(name) => write!(f, "{}", name),
-            Type::Distinct(inner) => write!(f, "distinct {}", inner),
+            Type::Distinct(name, _) => write!(f, "{}", name),
             Type::Handle(inner) => write!(f, "Handle<{}>", inner),
             Type::TypeParam(name) => write!(f, "${}", name),
             Type::Unknown => write!(f, "?"),
@@ -227,10 +231,14 @@ mod tests {
         assert_eq!(proc_void.to_string(), "proc() -> void");
     }
 
+    // A distinct type prints as the name it was declared under, which is what
+    // a diagnostic about it should say. `distinct i64` would name the thing it
+    // is deliberately not.
     #[test]
     fn distinct_type_display() {
-        let distinct = Type::Distinct(Box::new(Type::I64));
-        assert_eq!(distinct.to_string(), "distinct i64");
+        let distinct =
+            Type::Distinct("Meters".to_string(), Box::new(Type::I64));
+        assert_eq!(distinct.to_string(), "Meters");
     }
 
     #[test]

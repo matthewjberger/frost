@@ -56,6 +56,7 @@ being surprises.
 | `Shape::Circle { r: 5 }` | `Shape::Circle { radius = 5 }`, or `.Circle { radius = 5 }` |
 | `Point { x: 1, y: 2 }` | `Point { x = 1, y = 2 }`, or `{ x = 1, y = 2 }` |
 | `Point(1, 2)` (tuple struct) | nothing; every field is named |
+| `struct Meters(i64);` (newtype) | `Meters :: distinct i64`, no field to unwrap |
 | `while cond { }` | `while (cond) { }` |
 | `&x`, `&mut x` (at a call) | nothing, the callee's mode decides |
 | `fn f(x: &T)`, `fn f(x: &mut T)` | `f :: fn(x: T)`, `f :: fn(mut x: T)` |
@@ -155,6 +156,27 @@ program that wants to pass a pair around declares a struct, which is the point:
 every aggregate in a Frost program has a name its author chose. A fallible
 function still answers with one value, so `-> (A, B) ! E` is rejected and a
 function that wants both returns a struct it names.
+
+## Distinct types instead of the newtype
+
+Rust's newtype is a tuple struct you wrap and unwrap: `Meters(3)` going in and
+`m.0` coming out. Frost's is a type declaration:
+
+```frost
+Meters :: distinct i64
+Feet   :: distinct i64
+```
+
+The representation is the inner type, so arithmetic, layout and the C ABI are
+`i64`'s and there is nothing to unwrap. What the name buys is the same thing the
+newtype buys: a `Meters` cannot be built from a bare number or from a `Feet`.
+
+The check is one-directional, which is where it differs from the newtype. Going
+out is free, so `printf("%lld
+", m)` and `n : i64 = m` both work, because a
+`Meters` is an `i64` in memory and nothing is at stake that way. Going in is
+checked, so a value that means something else cannot become a `Meters` by
+accident. There is no cast in either direction and none is needed.
 
 ## Types and arithmetic
 
