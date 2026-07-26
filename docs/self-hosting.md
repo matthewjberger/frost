@@ -149,8 +149,10 @@ whose emitted assembly is byte for byte last build's is not assembled again.
 The cache key is that assembly: the compiler has just written what the module
 compiles to, so nothing else has to be hashed or walked. On its own source,
 `just bench-selfhost-incremental` measures about 1,500 ms whole-program against
-about 330 ms once the objects are there, and the compiler that comes out is byte
-for byte the one the whole-program build produces.
+about 1,060 ms for a first incremental build and about 330 ms once the objects
+are there, and the compiler that comes out is byte for byte the one the
+whole-program build produces. The assembler runs go out together, one OS thread
+each, which is why even the first build is the faster one.
 
 What keeps the backend off the curve:
 

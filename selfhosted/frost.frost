@@ -37,6 +37,20 @@ import "emit_c.frost"
 import "emit_asm.frost"
 import "regions.frost"
 
+// One assembler run waiting to happen: the command line, and what it answered,
+// read after the thread running it is joined.
+Assembling :: struct {
+    command: ^i8,
+    status: i64,
+}
+
+// A thread's body. The context is the job it is for, which lives in the
+// caller's arena and outlives the join.
+run_assembling :: fn(raw: ^u8) {
+    job := unsafe { ptr_cast($Assembling, raw) }
+    unsafe { job^.status = frost_rt_run_command(job^.command) }
+}
+
 // A build that compiles each module to its own object. Every module is emitted
 // to `<build>/m<n>.s`; a module whose assembly is byte for byte last build's is
 // left alone, and the rest are assembled again. Then the objects are linked.
@@ -54,6 +68,13 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
             executable = "a.exe"
         }
     }
+
+    // Every assembler run this build needs, gathered before any of them is
+    // started so they can all be handed to the machine at once. The work is one
+    // process per module and they share nothing, which is the whole reason this
+    // is worth threading and the rest of the compiler is not.
+    mut jobs : Arena<Assembling> = arena_make($Assembling, 1024)
+    mut records : Arena<Assembling> = arena_make($Assembling, 1024)
 
     mut objects : ^i8 = ""
     mut rebuilt : i64 = 0
@@ -84,17 +105,50 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
                     join_two(join_two(c_compiler(), " -c "), unit),
                     " -o "),
                 object)
-            if (unsafe { frost_rt_run_command(command) } != 0) {
-                report("frost: the assembler failed: ")
-                report_cstr(command)
-                report("\n")
-                frost_rt_die()
-            }
+            arena_push(jobs, Assembling { command = command, status = 0 })
+            // The checksum is written once the run it belongs to has answered,
+            // so a build that dies partway leaves nothing claiming to be up to
+            // date.
+            arena_push(records, Assembling { command = record, status = sum })
             rebuilt = rebuilt + 1
-            write_checksum(record, sum)
         }
         objects = join_two(join_two(objects, " "), object)
         index = index + 1
+    }
+
+    // All of them at once. One thread per run, since each is a process this one
+    // only waits on.
+    mut handles : Arena<Assembling> = arena_make($Assembling, 1024)
+    mut started : i64 = 0
+    while (started < jobs.count) {
+        // The address of the element itself, not of a copy of it: the thread
+        // reads the job while this loop goes on to the next one, and a copy
+        // would be a stack slot this loop reuses.
+        handle := unsafe {
+            frost_rt_thread_spawn(run_assembling,
+                ptr_cast($u8, ptr_to(jobs.data[started])))
+        }
+        arena_push(handles, Assembling { command = "", status = handle })
+        started = started + 1
+    }
+    mut waited : i64 = 0
+    while (waited < handles.count) {
+        held := arena_at(handles, waited)
+        unsafe { frost_rt_thread_join(held.status) }
+        waited = waited + 1
+    }
+    mut checked : i64 = 0
+    while (checked < jobs.count) {
+        job := arena_at(jobs, checked)
+        if (job.status != 0) {
+            report("frost: the assembler failed: ")
+            report_cstr(job.command)
+            report("\n")
+            frost_rt_die()
+        }
+        entry := arena_at(records, checked)
+        write_checksum(entry.command, entry.status)
+        checked = checked + 1
     }
 
     mut runtime := unsafe { frost_rt_getenv("FROST_RUNTIME") }
