@@ -11,10 +11,10 @@ export begin_provider, push_provider, provider_for,
 
 // Re-emit an identifier from the source by its byte range, so a local reference
 // becomes the variable's own name in the generated C.
-emit_source :: fn(src: ^i8, off: i64, len: i64) {
+emit_source :: fn(src: str, off: i64, len: i64) {
     mut k : i64 = 0
     while (k < len) {
-        frost_rt_emit_char(byte_at(src, off + k))
+        frost_rt_emit_char(src[off + k])
         k = k + 1
     }
 }
@@ -27,11 +27,11 @@ emit_source :: fn(src: ^i8, off: i64, len: i64) {
 // the source. An escape is two bytes written and one byte held, and a carriage
 // return is dropped. A `str` needs this, since it carries its own length rather
 // than ending at a NUL.
-literal_length :: fn(src: ^i8, off: i64, len: i64) -> i64 {
+literal_length :: fn(src: str, off: i64, len: i64) -> i64 {
     mut k : i64 = 0
     mut count : i64 = 0
     while (k < len) {
-        b := byte_at(src, off + k)
+        b := src[off + k]
         if (b == CH_BACKSLASH) {
             k = k + 1
             count = count + 1
@@ -45,15 +45,15 @@ literal_length :: fn(src: ^i8, off: i64, len: i64) -> i64 {
     count
 }
 
-emit_string_content :: fn(src: ^i8, off: i64, len: i64) {
+emit_string_content :: fn(src: str, off: i64, len: i64) {
     mut k : i64 = 0
     while (k < len) {
-        b := byte_at(src, off + k)
+        b := src[off + k]
         if (b == CH_BACKSLASH) {
             frost_rt_emit_char(b)
             k = k + 1
             if (k < len) {
-                frost_rt_emit_char(byte_at(src, off + k))
+                frost_rt_emit_char(src[off + k])
             }
         } else if (b == CH_LF) {
             frost_rt_emit_char(CH_BACKSLASH)

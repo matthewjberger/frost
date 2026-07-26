@@ -227,23 +227,26 @@ main :: fn() -> i64 {
     // gets compiled, which is what makes the compiler runnable with no
     // arguments at all.
     input_path := options.input
-    mut source : ^i8 = ""
+    // The whole program's text: the source of every module laid end to end,
+    // followed by room for the names the compiler makes up. It is a slice, so
+    // reading and writing it is a checked index everywhere below.
+    mut source := empty_source()
     mut modules : Arena<Module> = arena_make($Module, 4096)
     mut exports : Arena<Export> = arena_make($Export, 4096)
     mut import_edges : Arena<ImportEdge> = arena_make($ImportEdge, 4096)
     mut renames : Arena<Rename> = arena_make($Rename, 4096)
-    export_names := unsafe { ptr_cast($i8, malloc(SYNTH_ROOM)) }
+    export_names := buffer_of(SYNTH_ROOM)
     if (cstr_len(input_path) != 0) {
         // One buffer holds the root file and everything it imports, so a name
         // is an offset into a single source no matter which file wrote it.
-        buffer := unsafe { ptr_cast($i8, malloc(SOURCE_ROOM + SYNTH_ROOM)) }
+        buffer := buffer_of(SOURCE_ROOM + SYNTH_ROOM)
         mut scratch : Arena<Token> = arena_make($Token, 262144)
         search_roots_from(options.roots)
         resolve_imports(buffer, input_path, export_names, modules, exports,
             import_edges, renames, scratch, options.roots)
         source = buffer
     }
-    if (cstr_len(source) == 0) {
+    if (str_len(source) <= 1) {
         source = "
         strlen :: extern fn(s: ^i8) -> i64
 
@@ -448,7 +451,7 @@ main :: fn() -> i64 {
     }
     // Names the compiler synthesizes go past the source's terminator, so the
     // first free byte is one past the text.
-    parser.synth_next = cstr_len(source) + 1
+    parser.synth_next = source_end(source) + 1
     // The two names of each rename move into the source, so every lookup
     // compares bytes in one buffer the way it always has.
     place_renames(parser, export_names)
@@ -462,7 +465,7 @@ main :: fn() -> i64 {
     if (cstr_eq(abi, "win")) {
         parser.abi_windows = 1
     }
-    tokenize(source, cstr_len(source), parser.tokens)
+    tokenize(source, source_end(source), parser.tokens)
     // Whether two modules here export the same name, which decides how careful
     // a name lookup has to be. Known from the export lines alone, so it is
     // answered before anything is parsed.

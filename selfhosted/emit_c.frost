@@ -149,7 +149,7 @@ emit_coerced :: fn(mut p: Parser, value: i64, want: i64) {
 // Frost reserves none of these, and a C header being bound may well use one, so
 // such a name is prefixed. Every place a field name is written goes through
 // `emit_field_name`, which is what keeps the declaration and its uses agreeing.
-is_c_keyword :: fn(src: ^i8, off: i64, len: i64) -> bool {
+is_c_keyword :: fn(src: str, off: i64, len: i64) -> bool {
     str_range_eq(src, off, len, "auto")
         || str_range_eq(src, off, len, "bool")
         || str_range_eq(src, off, len, "break")

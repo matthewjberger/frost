@@ -23,7 +23,8 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     Variant,
     add_root, arena_at, arena_make, arena_push, cstr_eq, emit_text, malloc,
     report, report_cstr, report_src, SearchRoot,
-    byte_at, byte_set, cstr_len,
+    buffer_of, cstr_slice, empty_source, source_end, byte_at, byte_set,
+    cstr_len,
     frost_rt_arg_at, frost_rt_arg_count,
     frost_rt_die, frost_rt_emit_char, frost_rt_emit_close, frost_rt_emit_int,
     frost_rt_emit_open, frost_rt_error, frost_rt_error_int, frost_rt_error_src,
@@ -82,7 +83,7 @@ report :: fn(s: str) {
     unsafe { frost_rt_error_bytes(ptr_to(s[0]), length) }
 }
 
-report_src :: fn(src: ^i8, offset: i64, length: i64) {
+report_src :: fn(src: str, offset: i64, length: i64) {
     unsafe {
         frost_rt_error_bytes(ptr_cast($u8, ptr_to(src[offset])), length)
     }
@@ -752,6 +753,36 @@ arena_at :: fn(a: Arena<$T>, id: i64) -> ref T {
 // A directory added to the search list. arena_push answers with an index
 // this has no use for, and a branch ending in a value is a branch that
 // produced one, so it is dropped here rather than at every call.
+// A run of bytes with room for `size` of them. This is the one place the
+// compiler asks for memory, and what it hands back carries its own length, so
+// every read and write into the source buffer above is a checked index.
+buffer_of :: fn(size: i64) -> str {
+    unsafe { slice_from($u8, malloc(size), size) }
+}
+
+// A C string as a slice of the bytes it holds, for text the environment handed
+// over: a file's contents, an argument. Measuring it is the last thing done
+// through a bare pointer; everything after reads it as a slice.
+cstr_slice :: fn(text: ^i8) -> str {
+    unsafe { slice_from($u8, ptr_cast($u8, text), cstr_len(text)) }
+}
+
+// The empty buffer, for a driver that has not read anything yet.
+empty_source :: fn() -> str {
+    buffer_of(1)
+}
+
+// Where the text in a buffer stops, which is the terminator written after it.
+// The buffer is longer than its text: the room past the terminator is where the
+// names the compiler makes up go.
+source_end :: fn(text: str) -> i64 {
+    mut at : i64 = 0
+    while (at < str_len(text) && text[at] != 0) {
+        at = at + 1
+    }
+    at
+}
+
 // The compiler's own byte access, audited here so nothing above this names the
 // three unchecked operations it is built on.
 //
@@ -784,7 +815,7 @@ add_root :: fn(mut roots: Arena<SearchRoot>, directory: ^i8) {
 }
 
 Parser :: struct {
-    src: ^i8,
+    src: str,
     tokens: Arena<Token>,
     ti: i64,
     arena: Arena<Node>,
@@ -950,7 +981,7 @@ Parser :: struct {
     // wrong with that on its own, so it only turns on the careful lookup that
     // answers for a file importing both.
     shared_exports: i64,
-    export_names: ^i8,
+    export_names: str,
     result_ty: i64,
     failure_ty: i64,
     // `-> (i64, i64)`: the struct standing for the return type list of the
@@ -1002,14 +1033,14 @@ Parser :: struct {
 }
 
 cstr_eq :: fn(a: ^i8, b: ^i8) -> bool {
-    la := unsafe { cstr_len(a) }
-    lb := unsafe { cstr_len(b) }
+    la := cstr_len(a)
+    lb := cstr_len(b)
     if (la != lb) {
         return false
     }
     mut i : i64 = 0
     while (i < la) {
-        if (unsafe { byte_at(a, i) } != unsafe { byte_at(b, i) }) {
+        if (byte_at(a, i) != byte_at(b, i)) {
             return false
         }
         i = i + 1
