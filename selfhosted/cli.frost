@@ -4,19 +4,20 @@
 
 import "core.frost"
 
-export BACKEND_ASM, BACKEND_C, Options, c_compiler, join_two, join_number,
+export Backend, Options, c_compiler, join_two, join_number,
     file_checksum, stored_checksum, write_checksum, make_directory,
     options_from_command_line, usage
 
-BACKEND_C   :: 0
-BACKEND_ASM :: 1
+// Which backend the program goes through. Nothing is chosen until the arguments
+// and the environment have both had their say, so the answer starts as nothing.
+Backend :: enum { Unset, C, Asm }
 
 // `ok` is 0 when the arguments did not make sense, which is separate from
 // `help`, since one exits with a failure and the other does not.
 Options :: struct {
     input: ^i8,
     output: ^i8,
-    backend: i64,
+    backend: Backend,
     link: i64,
     testing: i64,
     audit_unsafe: i64,
@@ -213,7 +214,7 @@ options_from_command_line :: fn() -> Options {
     mut options := Options {
         input = "",
         output = "",
-        backend = 0 - 1,
+        backend = Backend::Unset,
         link = 0,
         testing = 0,
         audit_unsafe = 0,
@@ -232,10 +233,10 @@ options_from_command_line :: fn() -> Options {
             return options
         }
         if (cstr_eq(argument, "--emit-c")) {
-            options.backend = BACKEND_C
+            options.backend = Backend::C
         } else if (cstr_eq(argument, "--emit-asm")
             || cstr_eq(argument, "--native")) {
-            options.backend = BACKEND_ASM
+            options.backend = Backend::Asm
         } else if (cstr_eq(argument, "--link")) {
             options.link = 1
         } else if (cstr_eq(argument, "--incremental")) {
@@ -292,10 +293,10 @@ options_from_command_line :: fn() -> Options {
     if (cstr_len(options.input) == 0) {
         options.input = unsafe { frost_rt_getenv("FROST_INPUT") }
     }
-    if (options.backend < 0) {
-        options.backend = BACKEND_C
+    if (options.backend == Backend::Unset) {
+        options.backend = Backend::C
         if (cstr_eq(unsafe { frost_rt_getenv("FROST_BACKEND") }, "asm")) {
-            options.backend = BACKEND_ASM
+            options.backend = Backend::Asm
         }
     }
     options

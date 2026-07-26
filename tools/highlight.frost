@@ -31,24 +31,17 @@ TOP_MARGIN  :: 250
 // Wide enough for a two digit line number, right aligned against the code.
 GUTTER      :: 260
 
-// Token classes, which are the colours.
-PLAIN    :: 0
-COMMENT  :: 1
-KEYWORD  :: 2
-TYPE     :: 3
-FUNCTION :: 4
-NUMBER   :: 5
-STRING   :: 6
-PUNCT    :: 7
+// What a token is, which is what decides its colour.
+Class :: enum { Plain, Comment, Keyword, Type, Function, Number, String, Punct }
 
-colour_of :: fn(class: i64) -> str {
-    if (class == COMMENT)  { return "#6a9955" }
-    if (class == KEYWORD)  { return "#c586c0" }
-    if (class == TYPE)     { return "#4ec9b0" }
-    if (class == FUNCTION) { return "#dcdcaa" }
-    if (class == NUMBER)   { return "#b5cea8" }
-    if (class == STRING)   { return "#ce9178" }
-    if (class == PUNCT)    { return "#d4d4d4" }
+colour_of :: fn(class: Class) -> str {
+    if (class == Class::Comment)  { return "#6a9955" }
+    if (class == Class::Keyword)  { return "#c586c0" }
+    if (class == Class::Type)     { return "#4ec9b0" }
+    if (class == Class::Function) { return "#dcdcaa" }
+    if (class == Class::Number)   { return "#b5cea8" }
+    if (class == Class::String)   { return "#ce9178" }
+    if (class == Class::Punct)    { return "#d4d4d4" }
     "#9cdcfe"
 }
 
@@ -135,7 +128,7 @@ append_escaped :: fn(mut out: Builder, text: str, off: i64, len: i64) {
 // One run of source. The spans follow one another rather than each carrying its
 // own position, so the font's own advance decides the spacing and nothing here
 // has to agree with it about how wide a character is.
-emit_span :: fn(mut out: Builder, text: str, off: i64, len: i64, class: i64) {
+emit_span :: fn(mut out: Builder, text: str, off: i64, len: i64, class: Class) {
     if (len == 0) {
         return
     }
@@ -149,21 +142,21 @@ emit_span :: fn(mut out: Builder, text: str, off: i64, len: i64, class: i64) {
 // Which class an identifier belongs to. A name written in Capitals is a type,
 // by the same convention the whole standard library follows; a name followed by
 // `::` or `(` is a function; everything else is a plain name.
-name_class :: fn(text: str, off: i64, len: i64, after: i64) -> i64 {
+name_class :: fn(text: str, off: i64, len: i64, after: i64) -> Class {
     if (is_keyword(text, off, len)) {
-        return KEYWORD
+        return Class::Keyword
     }
     if (is_type_word(text, off, len)) {
-        return TYPE
+        return Class::Type
     }
     first := text[off]
     if (first >= 65 && first <= 90) {
-        return TYPE
+        return Class::Type
     }
     if (after == 58 || after == 40) {
-        return FUNCTION
+        return Class::Function
     }
-    PLAIN
+    Class::Plain
 }
 
 // The byte after a run of spaces from `at`, which is what says whether a name
@@ -186,7 +179,7 @@ emit_line :: fn(mut out: Builder, text: str, start: i64, finish: i64) {
         byte := text[at]
         // A comment runs to the end of the line, whatever is in it.
         if (byte == 47 && at + 1 < finish && text[at + 1] == 47) {
-            emit_span(out, text, at, finish - at, COMMENT)
+            emit_span(out, text, at, finish - at, Class::Comment)
             return
         }
         if (byte == 34) {
@@ -201,7 +194,7 @@ emit_line :: fn(mut out: Builder, text: str, start: i64, finish: i64) {
             if (end > finish) {
                 end = finish
             }
-            emit_span(out, text, at, end - at, STRING)
+            emit_span(out, text, at, end - at, Class::String)
             at = end
             continue
         }
@@ -222,7 +215,7 @@ emit_line :: fn(mut out: Builder, text: str, start: i64, finish: i64) {
                 && (is_digit_byte(text[end]) || text[end] == 46)) {
                 end = end + 1
             }
-            emit_span(out, text, at, end - at, NUMBER)
+            emit_span(out, text, at, end - at, Class::Number)
             at = end
             continue
         }
@@ -231,7 +224,7 @@ emit_line :: fn(mut out: Builder, text: str, start: i64, finish: i64) {
             while (end < finish && text[end] == 32) {
                 end = end + 1
             }
-            emit_span(out, text, at, end - at, PLAIN)
+            emit_span(out, text, at, end - at, Class::Plain)
             at = end
             continue
         }
@@ -240,7 +233,7 @@ emit_line :: fn(mut out: Builder, text: str, start: i64, finish: i64) {
         while (end < finish && is_punct_byte(text[end])) {
             end = end + 1
         }
-        emit_span(out, text, at, end - at, PUNCT)
+        emit_span(out, text, at, end - at, Class::Punct)
         at = end
     }
 }
