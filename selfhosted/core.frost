@@ -539,8 +539,14 @@ GParam :: struct {
 
 // One generic argument beyond the first, held in the `gargs` arena. The value is
 // a type code, or a compile-time integer encoded as CONST_BASE plus the number.
+// One argument of a generic call, or one element of a compile-time list. A list
+// element is a value or a type: a value becomes a parameter of the
+// specialization and is evaluated once at the call, a type becomes a name the
+// body writes where a type belongs and nothing at run time. `is_type` is what
+// tells the two apart, since both are held here as a type code.
 GArg :: struct {
     value: i64,
+    is_type: i64,
 }
 
 // One node's derived type, memoized during emit. type_of otherwise re-derives a
@@ -910,6 +916,10 @@ Parser :: struct {
     // generic is monomorphized on its whole tuple.
     call_xarg_start: i64,
     call_xarg_count: i64,
+    // The first compile-time argument of a call to a generic that also takes a
+    // compile-time list. Without a list this is what `call_type_args` answers
+    // with; with one the run holds both kinds and this is the primary.
+    call_pack_primary: i64,
     // A `>` left over from splitting a `>>` token that closed a nested generic,
     // so the enclosing generic sees its own close where the lexer ran the two
     // together, as in `Vec<Vec<i64>>`.

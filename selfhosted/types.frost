@@ -594,7 +594,7 @@ generic_fn_of :: fn(mut p: Parser, fn_index: i64) -> i64 {
 // one by the type arguments written at the call.
 call_args_for :: fn(mut p: Parser, head: i64, fn_index: i64) -> i64 {
     if (pack_call_args(p, head, fn_index)) {
-        return TY_I64
+        return p.call_pack_primary
     }
     call_type_args(p, head)
 }
@@ -613,7 +613,7 @@ call_type_args :: fn(mut p: Parser, head: i64) -> i64 {
             if (count == 0) {
                 first = vnode.val
             } else {
-                arena_push(p.gargs, GArg { value = vnode.val })
+                arena_push(p.gargs, GArg { value = vnode.val, is_type = 0 })
             }
             count = count + 1
         }
@@ -840,7 +840,7 @@ fn_proc_type :: fn(mut p: Parser, fn_index: i64) -> i64 {
     mut pid := sym.params
     while (pid != (0 - 1)) {
         pnode := arena_at(p.arena, pid)
-        arena_push(p.proc_params, GArg { value = pnode.b })
+        arena_push(p.proc_params, GArg { value = pnode.b, is_type = 0 })
         count = count + 1
         pid = pnode.next
     }
@@ -986,18 +986,59 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
     if (pack_len == 0) {
         return false
     }
+    // How many compile-time parameters the callee declares before its list: the
+    // primary one, if it has one, and the rest. A `$` argument fills those
+    // first; anything past them is an element of the list.
+    mut declared : i64 = gfn.xparam_count
+    if (gfn.tparam_len > 0) {
+        declared = declared + 1
+    }
+    // The run this call leaves behind is the callee's own compile-time
+    // arguments past the first, then the list's elements. Both live in `gargs`
+    // and both are part of what makes this specialization the one it is; what
+    // separates them is the count the declaration wrote, which every reader of
+    // the run already has.
     xstart := p.gargs.count
-    mut count : i64 = 0
-    mut index : i64 = 0
+    mut primary : i64 = TY_I64
+    mut types_seen : i64 = 0
     mut id := args
     while (id != (0 - 1)) {
         node := arena_at(p.arena, id)
         value := node.a
         next_id := node.next
         vnode := arena_at(p.arena, value)
-        if (vnode.kind != NodeKind::TypeVal) {
+        if (vnode.kind == NodeKind::TypeVal && types_seen < declared) {
+            if (types_seen == 0) {
+                primary = vnode.val
+            } else {
+                arena_push(p.gargs, GArg { value = vnode.val, is_type = 0 })
+            }
+            types_seen = types_seen + 1
+        }
+        id = next_id
+    }
+    mut count : i64 = 0
+    mut index : i64 = 0
+    mut seen : i64 = 0
+    id = args
+    while (id != (0 - 1)) {
+        node := arena_at(p.arena, id)
+        value := node.a
+        next_id := node.next
+        vnode := arena_at(p.arena, value)
+        // A type past the declared compile-time parameters is an element of the
+        // list: a name the body writes where a type belongs, taking no
+        // parameter and evaluated nowhere.
+        if (vnode.kind == NodeKind::TypeVal) {
+            if (seen >= declared) {
+                arena_push(p.gargs, GArg { value = vnode.val, is_type = 1 })
+                count = count + 1
+            }
+            seen = seen + 1
+        } else {
             if (index >= fixed) {
-                arena_push(p.gargs, GArg { value = pack_arg_type(p, value) })
+                arena_push(p.gargs,
+                    GArg { value = pack_arg_type(p, value), is_type = 0 })
                 count = count + 1
             }
             index = index + 1
@@ -1005,7 +1046,8 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
         id = next_id
     }
     p.call_xarg_start = xstart
-    p.call_xarg_count = count
+    p.call_xarg_count = gfn.xparam_count + count
+    p.call_pack_primary = primary
     true
 }
 

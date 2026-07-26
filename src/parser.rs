@@ -730,6 +730,11 @@ pub enum Expression {
     Dereference(Box<Expression>),
     StructInit(Identifier, Vec<(Identifier, Expression)>),
     Sizeof(Type),
+    // `type_id(T)`: a number this build gives that type, the same one wherever
+    // the type is written and different for every other type. What it is for is
+    // a table keyed by type in a program whose contents are decided at run
+    // time.
+    TypeId(Type),
     // `g(T) for T in list`, an argument that stands for one argument per
     // element of a compile-time list, with the element's name standing for it.
     // The template, the name it binds, and the list. Expanded where the
@@ -848,6 +853,7 @@ impl Display for Expression {
                     .collect();
                 format!("{} {{ {} }}", name, field_strs.join(", "))
             }
+            Self::TypeId(typ) => format!("type_id({typ})"),
             Self::Sizeof(typ) => {
                 format!("sizeof({})", typ)
             }
@@ -2292,6 +2298,25 @@ impl<'a> Parser<'a> {
     ) -> Result<Expression> {
         let mut advance = true;
         let mut expression = match self.peek_nth(0) {
+            // `type_id(T)` reads as a call and takes a type, so it is
+            // recognized here rather than left to the ordinary call path, which
+            // would have to parse a type as an expression.
+            Token::Identifier(word)
+                if word == "type_id"
+                    && matches!(self.peek_nth(1), Token::LeftParentheses) =>
+            {
+                advance = false;
+                self.read_token();
+                self.read_token();
+                if matches!(self.peek_nth(0), Token::Dollar) {
+                    self.read_token();
+                }
+                let held = self.parse_type()?;
+                if !matches!(self.read_token(), Token::RightParentheses) {
+                    bail!("Expected ')' after the type in type_id");
+                }
+                Expression::TypeId(held)
+            }
             Token::Identifier(identifier) => {
                 let identifier = identifier.to_string();
                 // `Pair<i64, bool> { .. }`: the literal says which instance it
@@ -4918,7 +4943,9 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::Sizeof(typ)) = &program[0].node
+        if let Statement::Expression(
+            Expression::Sizeof(typ) | Expression::TypeId(typ),
+        ) = &program[0].node
         {
             assert_eq!(*typ, Type::I64);
         } else {
@@ -4936,7 +4963,9 @@ mod tests {
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::Sizeof(typ)) = &program[0].node
+        if let Statement::Expression(
+            Expression::Sizeof(typ) | Expression::TypeId(typ),
+        ) = &program[0].node
         {
             assert_eq!(*typ, Type::Ptr(Box::new(Type::I64)));
         } else {

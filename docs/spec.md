@@ -1325,6 +1325,45 @@ would not compile for this element is gone rather than skipped.
 it, because the specialization takes it as an ordinary parameter and the call
 passes it once.
 
+**An element may be a type.** `f($Position, $Velocity)` gives the list two
+types. A type element takes no parameter and is evaluated nowhere; what it
+leaves behind is a name the body writes where a type belongs, so a `for` over
+the list makes `sizeof(T)`, `[]T` and `T` as a generic argument mean what they
+say. A list may hold both kinds.
+
+**Naming the list in an argument list hands over its elements.** This is how one
+generic passes its list on to another:
+
+```frost
+passed_on :: fn(values: $...) -> i64 {
+    total(values)
+}
+```
+
+**`g(T) for T in list` in an argument list is one argument per element**, with
+the element's name standing for it. This is what gives a call an arity the list
+decides, and it is the only place a list may be written this way, since it is
+the argument count that is being produced:
+
+```frost
+for_each :: fn($body: Type, mut world: World, f: Filters, types: $...) {
+    ...
+    body(query_column($T, world, q, component_of($T, world))
+        for T in types, q.count)
+}
+```
+
+### 11.1c.1 `type_id`
+
+`type_id(T)` is a number the build gives that type: the same wherever the type
+is written and different for every other type. It has no meaning outside the
+build, and nothing is promised about which number a type gets.
+
+What it is for is a table keyed by type in a program whose contents are decided
+while it runs. `std/ecs.frost` registers a component under a type and is given
+an index in return; `type_id` is what lets a query later name the component by
+writing the type, since the index is not something a type can say.
+
 **What this deliberately is not.** There is no compile-time string parsing, no
 recursion, no unbounded loop, and nothing that reads the world. Every construct
 here iterates a list whose length is known once the generic is instantiated, so

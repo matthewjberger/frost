@@ -714,6 +714,7 @@ impl MoveChecker<'_> {
             Expression::Literal(_)
             | Expression::Boolean(_)
             | Expression::Sizeof(_)
+            | Expression::TypeId(_)
             | Expression::TypeValue(_)
             | Expression::Range(..)
             | Expression::Function(..)

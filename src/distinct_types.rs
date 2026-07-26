@@ -201,9 +201,9 @@ fn walk_expression(
             }
             walk_block(body, declared);
         }
-        Expression::Sizeof(ty) | Expression::TypeValue(ty) => {
-            substitute(ty, declared)
-        }
+        Expression::Sizeof(ty)
+        | Expression::TypeId(ty)
+        | Expression::TypeValue(ty) => substitute(ty, declared),
         Expression::PackMap(inner, _, _)
         | Expression::Prefix(_, inner)
         | Expression::AddressOf(inner)

@@ -45,6 +45,12 @@ pub struct IrBuilder {
     linear: HashSet<String>,
     // Callback registrations, by name. See docs/callbacks.md.
     registrations: HashMap<String, crate::callbacks::CallbackShape>,
+    // A number per type, handed out in the order `type_id` first asks for one.
+    // What it is for is a table keyed by type in a program that decides at run
+    // time what it holds: a component registry knows a type at the call that
+    // registers it and an index only afterwards, and this is what ties the two
+    // together. The numbers are this build's own and mean nothing outside it.
+    type_ids: std::cell::RefCell<HashMap<String, i64>>,
     anon_counter: std::cell::Cell<usize>,
 }
 
@@ -171,6 +177,7 @@ fn build_module_inner(
         generic_struct_defs,
         linear: linear_with_holders(linear, statements),
         registrations: crate::callbacks::callback_registrations(statements),
+        type_ids: std::cell::RefCell::new(HashMap::new()),
         anon_counter: std::cell::Cell::new(0),
     };
     builder.collect_signatures(statements);
@@ -903,6 +910,14 @@ impl IrBuilder {
 
     fn struct_layout(&self, name: &str) -> Option<&StructLayout> {
         self.structs.get(name)
+    }
+
+    // The number this type goes by, made the first time it is asked for.
+    fn type_id(&self, ty: &Type) -> i64 {
+        let written = ty.to_string();
+        let mut held = self.type_ids.borrow_mut();
+        let next = held.len() as i64;
+        *held.entry(written).or_insert(next)
     }
 
     fn enum_layout(&self, name: &str) -> Option<&EnumLayout> {
@@ -1991,6 +2006,21 @@ impl Expansion<'_> {
         {
             return Ok(Expression::Sizeof(ty.clone()));
         }
+        // The same for `type_id`, and for a name a `for` over a list of types
+        // bound, which is a type here and nowhere else.
+        if let Expression::TypeId(Type::Struct(named)) = &expression {
+            if let Some((_, ty)) = self.fields.get(named) {
+                return Ok(Expression::TypeId(ty.clone()));
+            }
+            if let Some(ty) = self.types.get(named) {
+                return Ok(Expression::TypeId(ty.clone()));
+            }
+        }
+        if let Expression::Sizeof(Type::Struct(named)) = &expression
+            && let Some(ty) = self.types.get(named)
+        {
+            return Ok(Expression::Sizeof(ty.clone()));
+        }
         // A type predicate is a question this answers wherever it is asked, not
         // only in the condition of an `if`, so a table may carry the answer as
         // an ordinary field.
@@ -2485,7 +2515,9 @@ fn collect_instances_in_expression(
     out: &mut Vec<String>,
 ) {
     match expression {
-        Expression::Sizeof(ty) => collect_instances_in_type(ty, out),
+        Expression::Sizeof(ty) | Expression::TypeId(ty) => {
+            collect_instances_in_type(ty, out)
+        }
         Expression::Prefix(_, operand)
         | Expression::AddressOf(operand)
         | Expression::Borrow(operand)
@@ -3320,6 +3352,9 @@ fn substitute_expression(
         }
         Expression::Sizeof(ty) => {
             Expression::Sizeof(substitute_type(ty, subst))
+        }
+        Expression::TypeId(ty) => {
+            Expression::TypeId(substitute_type(ty, subst))
         }
         // `[value; N]` becomes the array it always meant, now that N is a
         // number. A count still unbound is one the enclosing generic passes on
@@ -4437,6 +4472,13 @@ impl<'a> FunctionLowering<'a> {
                 let size = self.builder.byte_size(ty) as i64;
                 Ok((
                     IrOperand::Constant(IrConstant::Integer(size, Type::I64)),
+                    Type::I64,
+                ))
+            }
+            Expression::TypeId(ty) => {
+                let id = self.builder.type_id(ty);
+                Ok((
+                    IrOperand::Constant(IrConstant::Integer(id, Type::I64)),
                     Type::I64,
                 ))
             }

@@ -125,9 +125,9 @@ fn names_in_expression(expression: &Expression, out: &mut Vec<String>) {
                 names_in_expression(value, out);
             }
         }
-        Expression::Sizeof(ty) | Expression::TypeValue(ty) => {
-            names_in_type(ty, out)
-        }
+        Expression::Sizeof(ty)
+        | Expression::TypeId(ty)
+        | Expression::TypeValue(ty) => names_in_type(ty, out),
         Expression::Function(params, return_sig, body)
         | Expression::Proc(params, return_sig, body) => {
             for parameter in params {

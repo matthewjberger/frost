@@ -32,7 +32,8 @@ export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     ecs_add, ecs_remove, ecs_has, ecs_get, ecs_set, ecs_slice,
     query_begin, query_next, query_column, query_entities,
     query_with,
-    for_each1, for_each2, for_each3,
+    query_filter, query_row_passes, for_each, for_each_row, component_of,
+    Filters, no_filters, filter_without, filter_changed, filter_added,
     tag_new, tag_free, tag_add, tag_remove, tag_has,
     commands_new, commands_free, commands_spawn, commands_despawn,
     commands_apply,
@@ -239,12 +240,20 @@ column_of :: fn($T: Type, c: Column) -> []T {
 // what a save file needs.
 // ---------------------------------------------------------------------------
 
-// A width per registered component, grown as they register. A fixed array of
-// MAX_COMPONENTS would put two kilobytes inside every World, almost all of it
-// unused, and a World is an ordinary local.
+// A width per registered component, grown as they register, and the type each
+// one was registered for. A fixed array of MAX_COMPONENTS would put two
+// kilobytes inside every World, almost all of it unused, and a World is an
+// ordinary local.
+//
+// `types` is what lets a query name a component by writing its type. A
+// component's index is decided while the program runs, by the order things
+// register, so nothing about the type says what it is; `type_id` is the number
+// the compiler already has for a type, and this is the table that turns one
+// into the other.
 Registry :: struct {
     count: i64,
     sizes: Vec<i64>,
+    types: Vec<i64>,
 }
 
 // A set of components, as one bit per registered index. Four words wide, which
@@ -552,7 +561,8 @@ World :: struct {
 
 ecs_new :: fn() -> World {
     mut world := World {
-        registry = Registry { count = 0, sizes = vec_new($i64, 16) },
+        registry = Registry { count = 0, sizes = vec_new($i64, 16),
+            types = vec_new($i64, 16) },
         slots = vec_new($EntitySlot, 64),
         free_ids = vec_new($i64, 64),
         next_id = 0,
@@ -602,6 +612,7 @@ ecs_free :: fn(move world: World) {
     vec_free($EntitySlot, world.slots)
     vec_free($i64, world.free_ids)
     vec_free($i64, world.registry.sizes)
+    vec_free($i64, world.registry.types)
     lookup_free(world.lookup)
 }
 
@@ -659,8 +670,33 @@ ecs_register :: fn($T: Type, mut world: World) -> i64 {
         return 0 - 1
     }
     vec_push($i64, world.registry.sizes, sizeof(T))
+    vec_push($i64, world.registry.types, type_id(T))
     world.registry.count = index + 1
     index
+}
+
+// The component a type was registered as, which is what lets a query be written
+// with the types it reads rather than with the indices they were given. A
+// program registers a handful of components and asks this once per table per
+// query, so the walk is over a short run of integers and touches nothing else.
+//
+// A type nothing registered is a query for a component that does not exist,
+// which would otherwise be a mask bit nothing sets and a query that silently
+// matches nothing.
+component_of :: fn($T: Type, world: World) -> i64 {
+    wanted := type_id(T)
+    known := vec_slice($i64, world.registry.types)
+    mut index : i64 = 0
+    while (index < world.registry.count) {
+        if (known[index] == wanted) {
+            return index
+        }
+        index = index + 1
+    }
+    // A type nothing registered would otherwise be a mask bit nothing sets, so
+    // the query would match nothing and say nothing about why.
+    assert(false)
+    0 - 1
 }
 
 // The width a component was registered with.
@@ -937,13 +973,20 @@ ecs_slice :: fn($T: Type, world: World, table_index: i64,
 //
 // Written this way a query has no arity limit and needs nothing captured: the
 // body is where it is written, so the resources it reads are the enclosing
-// function's locals. `for_each1` and its siblings are the same walk with the
+// function's locals. `for_each` is the same walk with the
 // body handed in, for a system short enough that the cursor is the longer half.
 // ---------------------------------------------------------------------------
 
 Query :: struct {
-    // The components a table must hold to be visited.
+    // The components a table must hold to be visited, and the ones it must not.
+    // Both are answered once per table, before a row is touched.
     wanted: Mask,
+    excluded: Mask,
+    // The components whose row-level ticks decide whether a row is visited, and
+    // the tick they are compared against.
+    changed: Mask,
+    added: Mask,
+    since: i64,
     // Where the walk is, and where it stopped.
     next_table: i64,
     table: i64,
@@ -951,7 +994,96 @@ Query :: struct {
 }
 
 query_begin :: fn(world: World) -> Query {
-    Query { wanted = mask_empty(), next_table = 0, table = 0 - 1, count = 0 }
+    Query { wanted = mask_empty(), excluded = mask_empty(),
+        changed = mask_empty(), added = mask_empty(), since = 0,
+        next_table = 0, table = 0 - 1, count = 0 }
+}
+
+// ---------------------------------------------------------------------------
+// Filters
+//
+// What a query asks for beyond the components its body reads. Two of these are
+// table-level and cost nothing per row: a table without every wanted component,
+// or with an excluded one, is skipped before any of its rows is touched. The
+// other two are row-level and read the tick arrays a column already carries.
+// The distinction is the point of archetype storage, so it is visible in which
+// function a filter goes through rather than left to a comment.
+// ---------------------------------------------------------------------------
+
+Filters :: struct {
+    // Table level: an entity holding any of these is not visited at all.
+    excluded: Mask,
+    // Row level: the row's tick for one of these has to be newer than `since`.
+    changed: Mask,
+    added: Mask,
+    since: i64,
+}
+
+no_filters :: fn() -> Filters {
+    Filters { excluded = mask_empty(), changed = mask_empty(),
+        added = mask_empty(), since = 0 }
+}
+
+// A component an entity must not have. Matched against the table's mask, so a
+// whole archetype is skipped and no row is read.
+filter_without :: fn(f: Filters, component: i64) -> Filters {
+    mut out := f
+    out.excluded = mask_with(out.excluded, component)
+    out
+}
+
+// Only rows whose tick for this component is newer than `since`, which is what
+// a system passes as the tick it last ran at. This is a row-level test: the
+// table still has to be walked, and what it saves is the body.
+filter_changed :: fn(f: Filters, component: i64, since: i64) -> Filters {
+    mut out := f
+    out.changed = mask_with(out.changed, component)
+    out.since = since
+    out
+}
+
+// The same for a component the entity was given since `since`, which is a
+// different question from having written it.
+filter_added :: fn(f: Filters, component: i64, since: i64) -> Filters {
+    mut out := f
+    out.added = mask_with(out.added, component)
+    out.since = since
+    out
+}
+
+query_filter :: fn(mut q: Query, f: Filters) {
+    q.excluded = f.excluded
+    q.changed = f.changed
+    q.added = f.added
+    q.since = f.since
+}
+
+// Whether one row of the table the cursor is on passes the row-level filters.
+// Nothing is read when none were asked for, which is the common case.
+query_row_passes :: fn(world: World, q: Query, row: i64) -> bool {
+    if (mask_is_empty(q.changed) && mask_is_empty(q.added)) {
+        return true
+    }
+    ref table := vec_slice($Table, world.tables)[q.table]
+    mut component : i64 = 0
+    while (component < world.registry.count) {
+        if (mask_has(q.changed, component)) {
+            position := column_position(table.mask, component)
+            ref column := vec_slice($Column, table.columns)[position]
+            if (column_changed(column)[row] <= q.since) {
+                return false
+            }
+        }
+        if (mask_has(q.added, component)) {
+            position := column_position(table.mask, component)
+            ref column := vec_slice($Column, table.columns)[position]
+            if (column_added(column)[row] <= q.since) {
+                return false
+            }
+        }
+        component = component + 1
+    }
+    true
 }
 
 // A component the body reads. This is a table-level test: a table without it is
@@ -969,7 +1101,8 @@ query_next :: fn(world: World, mut q: Query) -> bool {
     while (index < total) {
         ref table := vec_slice($Table, world.tables)[index]
         rows := vec_len($Entity, table.entities)
-        if (mask_covers(table.mask, q.wanted) && rows > 0) {
+        if (mask_covers(table.mask, q.wanted)
+            && mask_disjoint(table.mask, q.excluded) && rows > 0) {
             q.table = index
             q.count = rows
             q.next_table = index + 1
@@ -1179,42 +1312,66 @@ events_read :: fn($T: Type, e: Events, mut r: EventReader) -> []T {
 }
 
 // The same walk with the body handed in as a compile-time argument, so the call
-// inside folds to a direct one and nothing is reached through a pointer. There
-// is one of these per number of components a body takes.
-for_each1 :: fn($A: Type, $body: fn(mut []A, i64), mut world: World,
-    a: i64) {
+// inside folds to a direct one and nothing is reached through a pointer.
+//
+// The components are a compile-time list of types, which is what removes the
+// arity limit. The list drives both halves of the query, the mask a table is
+// matched against and the column each element reads through, and a `for` over
+// it unrolls both where the call is written, so a query over two components
+// emits exactly what a hand-written one does.
+//
+//     for_each($integrate, world, no_filters(), $Position, $Velocity)
+//
+// The body's parameters line up with the list, since the list is what says how
+// many arguments the call makes. A body taking a fourth component is a fourth
+// element and a fourth parameter, and nothing here changes.
+//
+// The filters are an ordinary argument rather than more elements, because they
+// carry component indices and an index is decided while the program runs. A
+// type cannot name one.
+// `$body` takes no signature bound, because the signature is what the list
+// decides: one column per element and the row count. A body whose parameters do
+// not line up is refused where the call is made below, which is the same
+// mistake caught one line further in.
+for_each :: fn($body: Type, mut world: World, f: Filters, types: $...) {
     mut q := query_begin(world)
-    query_with(q, a)
+    // Expansion time. What is left is one `query_with` per component, each with
+    // its index already in hand.
+    for T in types {
+        query_with(q, component_of($T, world))
+    }
+    query_filter(q, f)
     while (query_next(world, q)) {
-        mut items := query_column($A, world, q, a)
-        body(items, q.count)
+        body(query_column($T, world, q, component_of($T, world))
+            for T in types, q.count)
     }
 }
 
-for_each2 :: fn($A: Type, $B: Type, $body: fn(mut []A, mut []B, i64),
-    mut world: World, a: i64, b: i64) {
+// The same query, one row at a time, which is what the row-level filters need:
+// `changed` and `added` are questions about a row, so a body that asks them has
+// to be handed rows rather than whole columns.
+//
+//     for_each_row($upload, world,
+//         filter_changed(no_filters(), transform, last_run), $Transform)
+//
+// The table-level filters still skip whole tables, so what this costs against
+// `for_each` is one call per row and the columns fetched per row rather than
+// per table. A system that reads every row wants `for_each`.
+for_each_row :: fn($body: Type, mut world: World, f: Filters, types: $...) {
     mut q := query_begin(world)
-    query_with(q, a)
-    query_with(q, b)
-    while (query_next(world, q)) {
-        mut first := query_column($A, world, q, a)
-        mut second := query_column($B, world, q, b)
-        body(first, second, q.count)
+    for T in types {
+        query_with(q, component_of($T, world))
     }
-}
-
-for_each3 :: fn($A: Type, $B: Type, $C: Type,
-    $body: fn(mut []A, mut []B, mut []C, i64), mut world: World,
-    a: i64, b: i64, c: i64) {
-    mut q := query_begin(world)
-    query_with(q, a)
-    query_with(q, b)
-    query_with(q, c)
+    query_filter(q, f)
     while (query_next(world, q)) {
-        mut first := query_column($A, world, q, a)
-        mut second := query_column($B, world, q, b)
-        mut third := query_column($C, world, q, c)
-        body(first, second, third, q.count)
+        mut row : i64 = 0
+        while (row < q.count) {
+            if (query_row_passes(world, q, row)) {
+                body(query_column($T, world, q, component_of($T, world))
+                    for T in types, row)
+            }
+            row = row + 1
+        }
     }
 }
 
@@ -1481,7 +1638,7 @@ hierarchy_despawn_tree :: fn(mut h: Hierarchy, mut world: World, root: Entity) {
 //     schedule_run(frame, world, ANY_STATE)
 //
 // The system is a function pointer, not a compile-time argument, because a
-// schedule is built while the program runs. `for_each1` and its siblings are
+// schedule is built while the program runs. `for_each` and `for_each_row` are
 // the other half of this pair, for the inner loop where the call has to fold
 // away.
 // ---------------------------------------------------------------------------
@@ -1783,8 +1940,8 @@ test "a system writes through the columns a query hands it" {
     ecs_add($TestVelocity, world, b, velocity,
         TestVelocity { x = 1.0, y = 1.0 })
 
-    for_each2($TestPosition, $TestVelocity, $test_integrate, world, position,
-        velocity)
+    for_each($test_integrate, world, no_filters(), $TestPosition,
+        $TestVelocity)
 
     first := ecs_get($TestPosition, world, a, position)
     assert(first.x == 1.25)
@@ -2923,4 +3080,179 @@ test "time accumulates rather than replacing" {
 third_system :: fn(mut world: World) {
     held := ecs_resource($TestOrder, world, 0)
     ecs_resource_set($TestOrder, world, 0, TestOrder { steps = held.steps * 3 })
+}
+
+
+// ---------------------------------------------------------------------------
+// The query, and what it asks for
+// ---------------------------------------------------------------------------
+
+TestFrozen :: struct { held: i64 }
+
+test_hold :: fn(mut p: []TestPosition, count: i64) {
+    mut i : i64 = 0
+    while (i < count) {
+        p[i].x = p[i].x + 100.0
+        i = i + 1
+    }
+}
+
+test_three :: fn(mut p: []TestPosition, v: []TestVelocity, h: []TestHealth,
+    count: i64) {
+    mut i : i64 = 0
+    while (i < count) {
+        p[i].x = p[i].x + v[i].x + h[i].points
+        i = i + 1
+    }
+}
+
+test_one_row :: fn(mut p: []TestPosition, row: i64) {
+    p[row].y = p[row].y + 1000.0
+}
+
+// One `for_each` serves any number of components, so a body taking three is a
+// third element and a third parameter and nothing else.
+test "a query over three components reads all three" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    velocity := ecs_register($TestVelocity, world)
+    health := ecs_register($TestHealth, world)
+    a := ecs_spawn(world)
+    ecs_add($TestPosition, world, a, position, TestPosition { x = 1.0, y = 0.0 })
+    ecs_add($TestVelocity, world, a, velocity, TestVelocity { x = 2.0, y = 0.0 })
+    ecs_add($TestHealth, world, a, health, TestHealth { points = 3 })
+    // And one that holds only two, which the query must not visit.
+    b := ecs_spawn(world)
+    ecs_add($TestPosition, world, b, position, TestPosition { x = 9.0, y = 0.0 })
+    ecs_add($TestVelocity, world, b, velocity, TestVelocity { x = 9.0, y = 0.0 })
+
+    for_each($test_three, world, no_filters(), $TestPosition, $TestVelocity,
+        $TestHealth)
+
+    assert(ecs_get($TestPosition, world, a, position).x == 6.0)
+    assert(ecs_get($TestPosition, world, b, position).x == 9.0)
+    ecs_free(world)
+}
+
+// `without` is a table-level test: an entity holding the excluded component is
+// in another archetype, so the query never reaches its rows.
+test "a query without a component skips the tables that hold it" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    frozen := ecs_register($TestFrozen, world)
+    moving := ecs_spawn(world)
+    ecs_add($TestPosition, world, moving, position,
+        TestPosition { x = 1.0, y = 0.0 })
+    still := ecs_spawn(world)
+    ecs_add($TestPosition, world, still, position,
+        TestPosition { x = 1.0, y = 0.0 })
+    ecs_add($TestFrozen, world, still, frozen, TestFrozen { held = 1 })
+
+    for_each($test_hold, world, filter_without(no_filters(), frozen),
+        $TestPosition)
+
+    assert(ecs_get($TestPosition, world, moving, position).x == 101.0)
+    assert(ecs_get($TestPosition, world, still, position).x == 1.0)
+    ecs_free(world)
+}
+
+// `changed` is a row-level test, so the table is still walked and what it saves
+// is the body.
+test "a query for changed rows skips the rows nothing touched" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    a := ecs_spawn(world)
+    ecs_add($TestPosition, world, a, position, TestPosition { x = 0.0, y = 0.0 })
+    b := ecs_spawn(world)
+    ecs_add($TestPosition, world, b, position, TestPosition { x = 0.0, y = 0.0 })
+    mark := ecs_now(world)
+    ecs_tick(world)
+    // Only one of them is written after the mark.
+    ecs_set($TestPosition, world, a, position, TestPosition { x = 5.0, y = 0.0 })
+
+    for_each_row($test_one_row, world,
+        filter_changed(no_filters(), position, mark), $TestPosition)
+
+    assert(ecs_get($TestPosition, world, a, position).y == 1000.0)
+    assert(ecs_get($TestPosition, world, b, position).y == 0.0)
+    ecs_free(world)
+}
+
+// `added` asks a different question from `changed`: when the component arrived
+// rather than when it was last written.
+test "a query for added rows finds the ones given the component since" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    early := ecs_spawn(world)
+    ecs_add($TestPosition, world, early, position,
+        TestPosition { x = 0.0, y = 0.0 })
+    mark := ecs_now(world)
+    ecs_tick(world)
+    late := ecs_spawn(world)
+    ecs_add($TestPosition, world, late, position,
+        TestPosition { x = 0.0, y = 0.0 })
+
+    for_each_row($test_one_row, world,
+        filter_added(no_filters(), position, mark), $TestPosition)
+
+    assert(ecs_get($TestPosition, world, late, position).y == 1000.0)
+    assert(ecs_get($TestPosition, world, early, position).y == 0.0)
+    ecs_free(world)
+}
+
+// Every kind of filter in one query: two components read, one excluded at the
+// table level, and one tick tested per row.
+test "with, without and changed in one query" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    velocity := ecs_register($TestVelocity, world)
+    frozen := ecs_register($TestFrozen, world)
+
+    // Reads, changed since the mark: visited.
+    wanted := ecs_spawn(world)
+    ecs_add($TestPosition, world, wanted, position,
+        TestPosition { x = 0.0, y = 0.0 })
+    ecs_add($TestVelocity, world, wanted, velocity,
+        TestVelocity { x = 1.0, y = 0.0 })
+    // The same, but frozen: skipped with its whole table.
+    held := ecs_spawn(world)
+    ecs_add($TestPosition, world, held, position,
+        TestPosition { x = 0.0, y = 0.0 })
+    ecs_add($TestVelocity, world, held, velocity,
+        TestVelocity { x = 1.0, y = 0.0 })
+    ecs_add($TestFrozen, world, held, frozen, TestFrozen { held = 1 })
+    // The same, unfrozen, but not written since the mark: skipped by its row.
+    quiet := ecs_spawn(world)
+    ecs_add($TestPosition, world, quiet, position,
+        TestPosition { x = 0.0, y = 0.0 })
+    ecs_add($TestVelocity, world, quiet, velocity,
+        TestVelocity { x = 1.0, y = 0.0 })
+
+    mark := ecs_now(world)
+    ecs_tick(world)
+    ecs_set($TestVelocity, world, wanted, velocity,
+        TestVelocity { x = 1.0, y = 0.0 })
+    ecs_set($TestVelocity, world, held, velocity,
+        TestVelocity { x = 1.0, y = 0.0 })
+
+    mut f := no_filters()
+    f = filter_without(f, frozen)
+    f = filter_changed(f, velocity, mark)
+    for_each_row($test_one_row, world, f, $TestPosition)
+
+    assert(ecs_get($TestPosition, world, wanted, position).y == 1000.0)
+    assert(ecs_get($TestPosition, world, held, position).y == 0.0)
+    assert(ecs_get($TestPosition, world, quiet, position).y == 0.0)
+    ecs_free(world)
+}
+
+// A component named by a type it was never registered under is a query that
+// would otherwise match nothing and say nothing.
+test "a component is found by the type it registered under" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    velocity := ecs_register($TestVelocity, world)
+    assert(component_of($TestPosition, world) == position)
+    assert(component_of($TestVelocity, world) == velocity)
+    ecs_free(world)
 }
