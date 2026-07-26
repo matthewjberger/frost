@@ -54,7 +54,7 @@ usage :: fn() {
 // anything, which reads as a broken compiler rather than a missing toolchain.
 c_compiler :: fn() -> ^i8 {
     chosen := unsafe { frost_rt_getenv("CC") }
-    if (unsafe { frost_rt_str_len(chosen) } != 0) {
+    if (cstr_len(chosen) != 0) {
         return chosen
     }
     if (frost_rt_is_windows() == 1) {
@@ -66,22 +66,22 @@ c_compiler :: fn() -> ^i8 {
 // Two strings end to end, in memory the caller keeps. Command lines and derived
 // file names are the only strings this compiler builds rather than points into.
 join_two :: fn(first: ^i8, second: ^i8) -> ^i8 {
-    first_len := unsafe { frost_rt_str_len(first) }
-    second_len := unsafe { frost_rt_str_len(second) }
+    first_len := cstr_len(first)
+    second_len := cstr_len(second)
     out := unsafe { ptr_cast($i8, malloc(first_len + second_len + 1)) }
     mut k : i64 = 0
     while (k < first_len) {
-        unsafe { frost_rt_byte_set(out, k, frost_rt_byte_at(first, k)) }
+        byte_set(out, k, byte_at(first, k))
         k = k + 1
     }
     k = 0
     while (k < second_len) {
         unsafe {
-            frost_rt_byte_set(out, first_len + k, frost_rt_byte_at(second, k))
+            byte_set(out, first_len + k, byte_at(second, k))
         }
         k = k + 1
     }
-    unsafe { frost_rt_byte_set(out, first_len + second_len, 0) }
+    byte_set(out, first_len + second_len, 0)
     out
 }
 
@@ -96,14 +96,14 @@ join_number :: fn(first: ^i8, number: i64, last: ^i8) -> ^i8 {
         digits = digits + 1
         scale = scale * 10
     }
-    first_len := unsafe { frost_rt_str_len(first) }
-    last_len := unsafe { frost_rt_str_len(last) }
+    first_len := cstr_len(first)
+    last_len := cstr_len(last)
     out := unsafe {
         ptr_cast($i8, malloc(first_len + digits + last_len + 1))
     }
     mut k : i64 = 0
     while (k < first_len) {
-        unsafe { frost_rt_byte_set(out, k, frost_rt_byte_at(first, k)) }
+        byte_set(out, k, byte_at(first, k))
         k = k + 1
     }
     mut value := number
@@ -111,7 +111,7 @@ join_number :: fn(first: ^i8, number: i64, last: ^i8) -> ^i8 {
     while (written < digits) {
         digit := value / scale
         unsafe {
-            frost_rt_byte_set(out, first_len + written, CH_0 + digit)
+            byte_set(out, first_len + written, CH_0 + digit)
         }
         value = value - digit * scale
         scale = scale / 10
@@ -120,12 +120,12 @@ join_number :: fn(first: ^i8, number: i64, last: ^i8) -> ^i8 {
     k = 0
     while (k < last_len) {
         unsafe {
-            frost_rt_byte_set(out, first_len + digits + k,
-                frost_rt_byte_at(last, k))
+            byte_set(out, first_len + digits + k,
+                byte_at(last, k))
         }
         k = k + 1
     }
-    unsafe { frost_rt_byte_set(out, first_len + digits + last_len, 0) }
+    byte_set(out, first_len + digits + last_len, 0)
     out
 }
 
@@ -140,11 +140,11 @@ file_checksum :: fn(path: ^i8) -> i64 {
         return 0
     }
     text := unsafe { frost_rt_read_file(path) }
-    length := unsafe { frost_rt_str_len(text) }
+    length := cstr_len(text)
     mut sum : i64 = length + 1
     mut k : i64 = 0
     while (k < length) {
-        sum = sum * 131 + unsafe { frost_rt_byte_at(text, k) }
+        sum = sum * 131 + byte_at(text, k)
         k = k + 1
     }
     sum
@@ -157,12 +157,12 @@ stored_checksum :: fn(path: ^i8) -> i64 {
         return 0
     }
     text := unsafe { frost_rt_read_file(path) }
-    length := unsafe { frost_rt_str_len(text) }
+    length := cstr_len(text)
     mut value : i64 = 0
     mut negative : bool = false
     mut k : i64 = 0
     while (k < length) {
-        byte := unsafe { frost_rt_byte_at(text, k) }
+        byte := byte_at(text, k)
         if (byte == CH_MINUS) {
             negative = true
         }
@@ -205,8 +205,8 @@ make_directory :: fn(path: ^i8) {
 // naming rather than a file name, since taking it as one produces a confusing
 // error about an unreadable file much later.
 looks_like_a_flag :: fn(text: ^i8) -> bool {
-    unsafe { frost_rt_str_len(text) } > 0
-        && unsafe { frost_rt_byte_at(text, 0) } == CH_MINUS
+    cstr_len(text) > 0
+        && byte_at(text, 0) == CH_MINUS
 }
 
 options_from_command_line :: fn() -> Options {
@@ -289,7 +289,7 @@ options_from_command_line :: fn() -> Options {
 
     // The environment answers for whatever the arguments did not say, which is
     // what keeps the fixpoint checks and the older callers working unchanged.
-    if (unsafe { frost_rt_str_len(options.input) } == 0) {
+    if (cstr_len(options.input) == 0) {
         options.input = unsafe { frost_rt_getenv("FROST_INPUT") }
     }
     if (options.backend < 0) {

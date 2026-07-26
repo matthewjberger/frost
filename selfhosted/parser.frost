@@ -85,19 +85,19 @@ copy_format_piece :: fn(mut p: Parser, off: i64, from: i64,
     mut read := from
     mut written : i64 = 0
     while (read < until) {
-        byte := unsafe { frost_rt_byte_at(p.src, off + read) }
+        byte := byte_at(p.src, off + read)
         mut step : i64 = 1
         if (read + 1 < until) {
-            next := unsafe { frost_rt_byte_at(p.src, off + read + 1) }
+            next := byte_at(p.src, off + read + 1)
             if ((byte == CH_LBRACE || byte == CH_RBRACE) && next == byte) {
                 step = 2
             }
         }
-        unsafe { frost_rt_byte_set(p.src, start + written, byte) }
+        byte_set(p.src, start + written, byte)
         written = written + 1
         read = read + step
     }
-    unsafe { frost_rt_byte_set(p.src, start + written, 0) }
+    byte_set(p.src, start + written, 0)
     p.synth_next = start + written + 1
     return start, written
 }
@@ -117,10 +117,10 @@ split_format :: fn(mut p: Parser, literal: i64, arguments: i64) -> i64 {
     mut run_start : i64 = 0
     mut read : i64 = 0
     while (read < len) {
-        byte := unsafe { frost_rt_byte_at(p.src, off + read) }
+        byte := byte_at(p.src, off + read)
         mut following : i64 = 0
         if (read + 1 < len) {
-            following = unsafe { frost_rt_byte_at(p.src, off + read + 1) }
+            following = byte_at(p.src, off + read + 1)
         }
         if ((byte == CH_LBRACE || byte == CH_RBRACE) && following == byte) {
             read = read + 2
@@ -1538,7 +1538,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
     gen_node := arena_push(
         p.fields,
         StructField { name_off = gen_off,
-            name_len = unsafe { frost_rt_str_len("generations") },
+            name_len = cstr_len("generations"),
             ty = i64_col, next = 0 - 1 },
     )
     if (head == (0 - 1)) {
@@ -1552,7 +1552,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
     free_node := arena_push(
         p.fields,
         StructField { name_off = free_off,
-            name_len = unsafe { frost_rt_str_len("free_list") },
+            name_len = cstr_len("free_list"),
             ty = i64_col, next = 0 - 1 },
     )
     set_field_next(p, tail, free_node)
@@ -1561,7 +1561,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
     count_node := arena_push(
         p.fields,
         StructField { name_off = count_off,
-            name_len = unsafe { frost_rt_str_len("free_count") },
+            name_len = cstr_len("free_count"),
             ty = TY_I64, next = 0 - 1 },
     )
     set_field_next(p, tail, count_node)

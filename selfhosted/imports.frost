@@ -22,11 +22,11 @@ module_seen :: fn(mut modules: Arena<Module>, path: ^i8) -> bool {
 // A path named by an import, resolved against the directory of the file that
 // named it.
 join_path :: fn(parent: ^i8, src: ^i8, off: i64, len: i64) -> ^i8 {
-    parent_len := unsafe { frost_rt_str_len(parent) }
+    parent_len := cstr_len(parent)
     mut cut : i64 = 0
     mut k : i64 = 0
     while (k < parent_len) {
-        c := unsafe { frost_rt_byte_at(parent, k) }
+        c := byte_at(parent, k)
         if (c == CH_SLASH || c == CH_BACKSLASH) {
             cut = k + 1
         }
@@ -35,25 +35,25 @@ join_path :: fn(parent: ^i8, src: ^i8, off: i64, len: i64) -> ^i8 {
     out := unsafe { ptr_cast($i8, malloc(cut + len + 1)) }
     k = 0
     while (k < cut) {
-        unsafe { frost_rt_byte_set(out, k, frost_rt_byte_at(parent, k)) }
+        byte_set(out, k, byte_at(parent, k))
         k = k + 1
     }
     k = 0
     while (k < len) {
-        unsafe { frost_rt_byte_set(out, cut + k, frost_rt_byte_at(src, off + k)) }
+        byte_set(out, cut + k, byte_at(src, off + k))
         k = k + 1
     }
-    unsafe { frost_rt_byte_set(out, cut + len, 0) }
+    byte_set(out, cut + len, 0)
     out
 }
 
 // A path under a directory, with a separator between them when the directory
 // needs one.
 join_under :: fn(directory: ^i8, src: ^i8, off: i64, len: i64) -> ^i8 {
-    directory_len := unsafe { frost_rt_str_len(directory) }
+    directory_len := cstr_len(directory)
     mut separator : i64 = 0
     if (directory_len > 0) {
-        last := unsafe { frost_rt_byte_at(directory, directory_len - 1) }
+        last := byte_at(directory, directory_len - 1)
         if (last != CH_SLASH && last != CH_BACKSLASH) {
             separator = 1
         }
@@ -61,21 +61,21 @@ join_under :: fn(directory: ^i8, src: ^i8, off: i64, len: i64) -> ^i8 {
     out := unsafe { ptr_cast($i8, malloc(directory_len + separator + len + 1)) }
     mut k : i64 = 0
     while (k < directory_len) {
-        unsafe { frost_rt_byte_set(out, k, frost_rt_byte_at(directory, k)) }
+        byte_set(out, k, byte_at(directory, k))
         k = k + 1
     }
     if (separator == 1) {
-        unsafe { frost_rt_byte_set(out, directory_len, CH_SLASH) }
+        byte_set(out, directory_len, CH_SLASH)
     }
     k = 0
     while (k < len) {
         unsafe {
-            frost_rt_byte_set(out, directory_len + separator + k,
-                frost_rt_byte_at(src, off + k))
+            byte_set(out, directory_len + separator + k,
+                byte_at(src, off + k))
         }
         k = k + 1
     }
-    unsafe { frost_rt_byte_set(out, directory_len + separator + len, 0) }
+    byte_set(out, directory_len + separator + len, 0)
     out
 }
 
@@ -108,15 +108,15 @@ find_import :: fn(parent: ^i8, src: ^i8, off: i64, len: i64,
 // Copy a file's text into the buffer at `at`, terminated, and answer where the
 // next one starts.
 append_text :: fn(buffer: ^i8, at: i64, text: ^i8) -> i64 {
-    length := unsafe { frost_rt_str_len(text) }
+    length := cstr_len(text)
     mut k : i64 = 0
     while (k < length) {
-        unsafe { frost_rt_byte_set(buffer, at + k, frost_rt_byte_at(text, k)) }
+        byte_set(buffer, at + k, byte_at(text, k))
         k = k + 1
     }
     unsafe {
-        frost_rt_byte_set(buffer, at + length, CH_LF)
-        frost_rt_byte_set(buffer, at + length + 1, 0)
+        byte_set(buffer, at + length, CH_LF)
+        byte_set(buffer, at + length + 1, 0)
     }
     at + length + 1
 }
@@ -133,7 +133,7 @@ place_module :: fn(buffer: ^i8, at: i64, path: ^i8,
     }
     mine := arena_push(modules, Module { path = path, start = 0, finish = 0 })
     text := unsafe { frost_rt_read_file(path) }
-    if (unsafe { frost_rt_str_len(text) } == 0) {
+    if (cstr_len(text) == 0) {
         report("frost: cannot read '")
         report_cstr(path)
         report("'")
@@ -143,7 +143,7 @@ place_module :: fn(buffer: ^i8, at: i64, path: ^i8,
     // the scratch tokens for the file it descends into.
     mut children := arena_make($Module, 256)
     scratch.count = 0
-    tokenize(text, unsafe { frost_rt_str_len(text) }, scratch)
+    tokenize(text, cstr_len(text), scratch)
     mut i : i64 = 0
     while (i + 1 < scratch.count) {
         entry := arena_at(scratch, i)
@@ -199,7 +199,7 @@ report_where :: fn(mut modules: Arena<Module>, src: ^i8, offset: i64) {
     mut line_end := offset
     mut at := entry.start
     while (at < offset) {
-        if (unsafe { frost_rt_byte_at(src, at) } == CH_LF) {
+        if (byte_at(src, at) == CH_LF) {
             line = line + 1
             column = 1
             line_start = at + 1
@@ -209,7 +209,7 @@ report_where :: fn(mut modules: Arena<Module>, src: ^i8, offset: i64) {
         at = at + 1
     }
     while (line_end < entry.finish
-        && unsafe { frost_rt_byte_at(src, line_end) } != CH_LF) {
+        && byte_at(src, line_end) != CH_LF) {
         line_end = line_end + 1
     }
     report_cstr(entry.path)
@@ -243,7 +243,7 @@ emit_position :: fn(mut modules: Arena<Module>, src: ^i8, offset: i64) {
     mut column : i64 = 1
     mut at := entry.start
     while (at < offset) {
-        if (unsafe { frost_rt_byte_at(src, at) } == CH_LF) {
+        if (byte_at(src, at) == CH_LF) {
             line = line + 1
             column = 1
         } else {
@@ -252,9 +252,9 @@ emit_position :: fn(mut modules: Arena<Module>, src: ^i8, offset: i64) {
         at = at + 1
     }
     mut k : i64 = 0
-    length := unsafe { frost_rt_str_len(entry.path) }
+    length := cstr_len(entry.path)
     while (k < length) {
-        byte := unsafe { frost_rt_byte_at(entry.path, k) }
+        byte := byte_at(entry.path, k)
         if (byte == CH_BACKSLASH) {
             frost_rt_emit_char(CH_BACKSLASH)
         }
@@ -282,7 +282,7 @@ module_at :: fn(mut modules: Arena<Module>, offset: i64) -> i64 {
 blank_range :: fn(buffer: ^i8, from: i64, through: i64) {
     mut b := from
     while (b <= through) {
-        unsafe { frost_rt_byte_set(buffer, b, CH_SPACE) }
+        byte_set(buffer, b, CH_SPACE)
         b = b + 1
     }
 }
@@ -292,7 +292,7 @@ blank_range :: fn(buffer: ^i8, from: i64, through: i64) {
 // library beside the compiler's own checkout.
 search_roots_from :: fn(mut roots: Arena<SearchRoot>) {
     named := unsafe { frost_rt_getenv("FROST_PATH") }
-    if (unsafe { frost_rt_str_len(named) } != 0) {
+    if (cstr_len(named) != 0) {
         add_root(roots, named)
     }
     add_root(roots, "std")
@@ -319,7 +319,7 @@ copy_name :: fn(into: ^i8, at: i64, from: ^i8, off: i64, len: i64) -> i64 {
     mut b : i64 = 0
     while (b < len) {
         unsafe {
-            frost_rt_byte_set(into, at + b, frost_rt_byte_at(from, off + b))
+            byte_set(into, at + b, byte_at(from, off + b))
         }
         b = b + 1
     }
@@ -424,8 +424,8 @@ resolve_imports :: fn(buffer: ^i8, root: ^i8, names: ^i8,
                     mut b : i64 = 0
                     while (b < listed.len) {
                         unsafe {
-                            frost_rt_byte_set(names, named_at + b,
-                                frost_rt_byte_at(buffer, listed.off + b))
+                            byte_set(names, named_at + b,
+                                byte_at(buffer, listed.off + b))
                         }
                         b = b + 1
                     }
@@ -464,14 +464,14 @@ SYNTH_ROOM :: 65536
 SOURCE_ROOM :: 8388608
 
 source_with_room :: fn(text: ^i8) -> ^i8 {
-    length := unsafe { frost_rt_str_len(text) }
+    length := cstr_len(text)
     buffer := unsafe { ptr_cast($i8, malloc(length + SYNTH_ROOM + 1)) }
     mut k : i64 = 0
     while (k < length) {
-        unsafe { frost_rt_byte_set(buffer, k, frost_rt_byte_at(text, k)) }
+        byte_set(buffer, k, byte_at(text, k))
         k = k + 1
     }
-    unsafe { frost_rt_byte_set(buffer, length, 0) }
+    byte_set(buffer, length, 0)
     buffer
 }
 
