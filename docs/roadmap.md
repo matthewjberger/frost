@@ -8,37 +8,72 @@ sequenced so that nothing here gets built twice.
 
 Competitive with Jai and Odin, which in practice means a full build in the
 100,000 lines per second range rather than merely "fast for a compiler". That is
-a number to measure against, not a feeling.
+a number to measure against, not a feeling. Both compilers clear it; the
+measurements are below.
 
-Where the bootstrap stands, from `just bench-scaling` on 58,107 lines:
+## What is left
+
+Two things, both contained, neither on the critical path of anything else.
+
+**Extended const-eval, for layout tables.** A vertex format, a shader's uniform
+layout and a descriptor table are all the same shape: a table of offsets and
+sizes derived from a struct the program already declares. Today they are written
+out by hand beside the struct and drift from it. The compiler knows every one of
+those numbers, because it laid the struct out.
+
+The pieces this needs are mostly built. `sizeof(T)` is a compile-time constant,
+a compile-time list expands (11.1c) with a `for` that unrolls and an `if` over a
+type predicate that prunes, and `columns<T, N>` already reflects over a struct's
+fields to synthesize one array per field. What is missing is reaching a field's
+*offset* and *type* from an expansion, so a table can be written once over
+whatever fields the struct has.
+
+The line to hold is the one 11.1c holds: no compile-time string parsing, no
+recursion, no unbounded loop. A layout table is a walk over a field list whose
+length the struct fixes, which is the same bounded shape, so this stays inside
+the rule rather than reopening it. Field reflection by name is the thing to
+refuse: `has_field(T, "position")` is the string-keyed predicate 11.4a already
+ruled out, and a table built by walking every field needs no name to be written
+as a literal anywhere.
+
+**`--incremental` for the self-hosted C backend.** The assembly backend splits a
+program into one unit per module and assembles only what changed. The C backend
+still emits one translation unit, so a build through it pays for the whole
+program every time, and that is the slower of the two paths to begin with: a C
+compile of the emitted 13,000 lines is about 1,200 ms against about 750 ms to
+assemble.
+
+The design is already proven, and the split is the same one: a function goes to
+the module that declared it, a specialization to the module that declared its
+template. Two things differ from the assembly case and are the whole of the
+work. A C unit needs the type definitions and the prototypes of everything it
+calls, where an assembly unit needs neither, so each unit carries the shared
+declarations and its own bodies. And a string literal is emitted inside the
+function that holds it rather than in a data section, which removes the question
+of where the data goes.
+
+Everything the two compilers are held to is done: they accept the same language,
+and what says so is a suite of programs run through both rather than a claim.
+See [../selfhosted/README.md](../selfhosted/README.md).
+
+## What is done, and what it cost
+
+The speed bill this file was opened for is paid. Both compilers clear the target
+on a full build, and the self-hosted one rebuilds only what changed.
+
+**Where the bootstrap stands**, from `just bench-scaling` on 58,107 lines:
 
 | stage | rate |
 | --- | --- |
 | front end (`--emit-c`, 318 ms) | ~183,000 lines/sec |
 | full build (`--native`, 349 ms) | ~166,000 lines/sec |
 
-Both clear the bar. Code generation is 64 ms of that 349 ms build, with the
-front end holding the rest, which is what says where the next hour of work
-belongs. Cranelift is not the problem.
+Code generation is 64 ms of that 349 ms build, with the front end holding the
+rest. Cranelift is not the problem.
 
-A benchmark is easy to get wrong in ways that read as a compiler result.
-Generated programs that name a function `f32` time a parse error. Programs whose
-`main` holds thousands of call sites make parallel code generation look like it
-does nothing, because one function is one thread however many cores there are.
-Re-run the benchmark before trusting any of it, and read what it generates.
-
-## What is left
-
-One thing, in the compiler people will run.
-
-**Speed parity for the self-hosted compiler.** The Frost compiler compiles a
-program in one pass on one thread, whole-program: no parallel code generation,
-no per-module objects, no build cache, no `--incremental`. This is backend and
-build work rather than language work. See
-[separate-compilation.md](separate-compilation.md) for what each piece means and
-[self-hosting.md](self-hosting.md) for where its time goes.
-
-Where it stands on its own source, 14,273 lines, from `just bench-selfhost`:
+**Where the self-hosted compiler stands** on its own source, 14,273 lines, from
+`just bench-selfhost`, warm runs only since the first run after a build measures
+the file cache:
 
 | compiler and backend | full build |
 | --- | --- |
@@ -46,52 +81,44 @@ Where it stands on its own source, 14,273 lines, from `just bench-selfhost`:
 | self-hosted, C backend | ~145,000 lines/sec |
 | self-hosted, assembly backend | ~130,000 lines/sec |
 
-Both self-hosted backends clear the 100,000 lines per second bar on a full
-build, so what is left of this item is about not rebuilding what did not change,
-and about using more than one core, rather than about raw throughput. Warm runs
-only: the first run after a build measures the file cache. Measure
-before optimizing anything here: the assembly backend read as eight times slower
-than that until the measurement stopped going through a pipe, and the one real
-find under it was a slot lookup that added up every local's size at each mention
-of a name, quadratic in a function's locals. Recording the slot with the local
-took the assembly backend from 612 ms to 122 ms on this source.
+**And what a rebuild costs**, from `just bench-selfhost-incremental`:
 
-The pieces, in the order they unlock each other:
+| build | |
+| --- | --- |
+| whole program | ~1,500 ms |
+| incremental, first build | ~1,060 ms |
+| incremental, nothing changed | ~330 ms |
 
-1. **Per-module objects.** Done. `--incremental` emits one assembly unit per
-   module and assembles each to its own object. A function goes to the module
-   that declared it, a specialization to the module that declared its template,
-   and a string or a float to the module whose source wrote it, all decided by
+The four pieces that took it there:
+
+1. **Per-module objects.** `--incremental` emits one assembly unit per module
+   and assembles each to its own object. A function goes to the module that
+   declared it, a specialization to the module that declared its template, and a
+   string or a float to the module whose source wrote it, all decided by
    comparing an offset against the module's range in the one source buffer.
-2. **A build cache.** Done, and smaller than it was going to be. The cache key
-   is the emitted assembly itself: the compiler has just written what a module
-   compiles to, so whether that module's object is stale is a comparison of
-   those bytes against last build's. No source hash, no interface fingerprint,
-   no dependency graph, because the answer is already in hand. The C runtime is
-   cached the same way, since it is a compilation unit like any other.
-3. **`--incremental`.** Done, `just bench-selfhost-incremental`:
+2. **A build cache**, smaller than it was going to be. The cache key is the
+   emitted assembly itself: the compiler has just written what a module compiles
+   to, so whether that module's object is stale is a comparison of those bytes
+   against last build's. No source hash, no interface fingerprint, no dependency
+   graph, because the answer is already in hand. The C runtime is cached the
+   same way, being a compilation unit like any other.
+3. **`--incremental`**, which produces byte for byte the compiler the
+   whole-program build produces. A test checks that rather than a claim.
+4. **Parallel work**, the part of it that pays. The assembler runs go out
+   together, one OS thread each, which is why even a first build beats the
+   whole-program one: the machine-code step is where a build's time is, not the
+   compiler. Emitting could be parallel too, since the type system is local and
+   signature-based, but the compiler writes straight to one file at a time and
+   emitting is 150 ms of a 1,060 ms build, so buffering a unit in memory to
+   parallelize it would be work spent where the time is not.
 
-   | build | |
-   | --- | --- |
-   | whole program | ~1,500 ms |
-   | incremental, first build | ~1,060 ms |
-   | incremental, nothing changed | ~330 ms |
-
-   Even a first build is faster than the whole-program one, because the
-   assembler runs go out at once, and every build after it costs a fifth. The
-   compiler it produces is byte for byte the one the whole-program build
-   produces, which a test checks rather than a claim.
-4. **Parallel work.** Partly done, and the part that pays. The assembler runs
-   go out together, one OS thread each, which halves a first build: the
-   machine-code step is where a build's time is, not the compiler. The type
-   system is local and signature-based, so emitting could be parallel too, but
-   the compiler writes straight to one file at a time and emitting is 150 ms of
-   a 1,060 ms build, so buffering a unit in memory to parallelize it would be
-   work spent where the time is not.
-
-Everything else the two compilers are held to is done: they accept the same
-language, and what says so is a suite of programs run through both rather than a
-claim. See [../selfhosted/README.md](../selfhosted/README.md).
+A benchmark is easy to get wrong in ways that read as a compiler result.
+Generated programs that name a function `f32` time a parse error. Programs whose
+`main` holds thousands of call sites make parallel code generation look like it
+does nothing, because one function is one thread however many cores there are.
+Measuring through a pipe made both self-hosted backends read as ten times slower
+and hid the difference between them entirely. Re-run the benchmark before
+trusting any of it, and read what it generates.
 
 ## What the speed work already taught
 
@@ -155,6 +182,22 @@ found for you.
 
 **Folding duplicate specializations across objects.** See the Cranelift note
 above. It is measurable, and it is not measured to matter.
+
+**SIMD types and intrinsics.** The layout work that makes vectorization
+possible is already done and is the half that matters: `columns<T, N>` gives a
+C compiler separate homogeneous arrays with nothing aliasing between them, and
+the small math functions are marked `inline` so it sees through them. The C
+backend is the performance path by the same decision that left the assembly
+backend without an inliner, and clang at `-O2` vectorizes what that layout
+allows. An `f32x4` in the language would put the work where it pays least: the
+assembly backend would need vector registers, a vector ABI and per-instruction
+emission, and it is the portable-and-fast path rather than the peak one. The
+vocabulary is also the wrong shape for this language, since shuffles, blends and
+masks are open-ended and target-specific where every other vocabulary here is
+closed. A program that truly needs intrinsics writes the kernel in C and calls
+it, which the FFI already carries. Revisit when a measured Frost program says
+vector width is its limit, and check first whether the C compiler vectorized it
+and why not.
 
 **Anything that would make expansion a language of its own.** A compile-time
 list (spec 11.1c) unrolls a `for`, names an element, and answers an `if` over a
