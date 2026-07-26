@@ -17,7 +17,9 @@ frost_rt_heap_free   :: extern fn(block: ^u8)
 // `ok` is false when the file could not be opened, in which case `text` is
 // empty. `buffer` is the heap block the text views, kept so fs_free can release
 // it without reaching back through the slice.
-ReadResult :: struct {
+// A read owns the buffer its text borrows, so it is a resource: the compiler
+// refuses a read whose buffer nothing frees.
+ReadResult :: linear struct {
     text: str,
     buffer: ^u8,
     ok: bool,

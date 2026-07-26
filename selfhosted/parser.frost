@@ -1429,6 +1429,7 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64, xarg_start: i64,
     template := arena_at(p.structs, generic_index)
     name_off := template.name_off
     name_len := template.name_len
+    template_linear := template.is_linear
     tparam_off := template.tparam_off
     tparam_len := template.tparam_len
     xparam_start := template.xparam_start
@@ -1471,7 +1472,8 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64, xarg_start: i64,
         StructDef { name_off = name_off, name_len = name_len,
             field_head = field_head, is_generic = 0, tparam_off = 0,
             tparam_len = 0, field_token = 0, instance_id = struct_index,
-            is_linear = 0, emitted = 0, xparam_start = 0, xparam_count = 0, is_enum = 0 },
+            is_linear = holds_linear(p, field_head, template_linear),
+            emitted = 0, xparam_start = 0, xparam_count = 0, is_enum = 0 },
     )
     arena_push(
         p.instances,
@@ -3115,9 +3117,30 @@ parse_struct :: fn(mut p: Parser) {
             StructDef { name_off = name_offset, name_len = name_length,
                 field_head = head, is_generic = 0, tparam_off = 0,
                 tparam_len = 0, field_token = 0, instance_id = 0 - 1,
-                is_linear = linear_flag, emitted = 0, xparam_start = 0, xparam_count = 0, is_enum = 0 },
+                is_linear = holds_linear(p, head, linear_flag), emitted = 0,
+                xparam_start = 0, xparam_count = 0, is_enum = 0 },
         )
     }
+}
+
+// Whether a struct has to be consumed: it was written `linear`, or it holds a
+// value that was. A struct holding a resource is a resource, otherwise wrapping
+// one in an ordinary struct would launder the obligation away. A field's type is
+// resolved by the time its struct is recorded, so this is a walk of the fields
+// and nothing more.
+holds_linear :: fn(mut p: Parser, field_head: i64, declared: i64) -> i64 {
+    if (declared == 1) {
+        return 1
+    }
+    mut id := field_head
+    while (id != (0 - 1)) {
+        field := arena_at(p.fields, id)
+        if (is_linear_type(p, field.ty)) {
+            return 1
+        }
+        id = field.next
+    }
+    0
 }
 
 // ---------------------------------------------------------------------------

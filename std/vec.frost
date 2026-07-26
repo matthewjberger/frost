@@ -14,7 +14,7 @@ import "mem.frost"
 export Vec, vec_new, vec_free, vec_len, vec_slice, vec_push, vec_get, vec_set,
     vec_clear
 
-Vec :: struct($T: Type) {
+Vec :: linear struct($T: Type) {
     // The whole block, whose length is the capacity. The live prefix is `len`.
     storage: []T,
     len: i64,

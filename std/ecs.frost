@@ -336,22 +336,36 @@ lookup_put :: fn(mut l: Lookup, mask: i64, row: i64) {
 
 lookup_grow :: fn(mut l: Lookup) {
     old_cap := l.cap
-    mut fresh := lookup_new(old_cap * 2)
+    // The old runs are read out before the new ones go in, and the new ones are
+    // made here rather than by building a whole table and taking it apart: a
+    // table owns two vectors, and one made only to be gutted would be a
+    // resource nothing consumed.
+    old_masks := l.masks
+    old_rows := l.rows
+    room := old_cap * 2
+    mut masks := vec_new($i64, room)
+    mut rows := vec_new($i64, room)
+    mut k : i64 = 0
+    while (k < room) {
+        vec_push($i64, masks, 0)
+        vec_push($i64, rows, 0 - 1)
+        k = k + 1
+    }
+    l.masks = masks
+    l.rows = rows
+    l.cap = room
+    l.count = 0
     mut i : i64 = 0
     while (i < old_cap) {
-        held_mask := vec_slice($i64, l.masks)[i]
-        held_row := vec_slice($i64, l.rows)[i]
+        held_mask := vec_slice($i64, old_masks)[i]
+        held_row := vec_slice($i64, old_rows)[i]
         if (held_row >= 0) {
-            lookup_put(fresh, held_mask, held_row)
+            lookup_put(l, held_mask, held_row)
         }
         i = i + 1
     }
-    vec_free($i64, l.masks)
-    vec_free($i64, l.rows)
-    l.masks = fresh.masks
-    l.rows = fresh.rows
-    l.cap = fresh.cap
-    l.count = fresh.count
+    vec_free($i64, old_masks)
+    vec_free($i64, old_rows)
 }
 
 // ---------------------------------------------------------------------------
@@ -689,7 +703,7 @@ ecs_has :: fn(world: World, entity: Entity, mask: i64) -> bool {
         return false
     }
     slot := vec_slice($EntitySlot, world.slots)[entity.id]
-    table := vec_slice($Table, world.tables)[slot.table]
+    ref table := vec_slice($Table, world.tables)[slot.table]
     (table.mask & mask) != 0
 }
 
@@ -733,9 +747,9 @@ ecs_remove :: fn(mut world: World, entity: Entity, mask: i64) {
 // is the whole of it; `ecs_slice` is how a system reaches one to write.
 ecs_get :: fn($T: Type, world: World, entity: Entity, mask: i64) -> $T {
     slot := vec_slice($EntitySlot, world.slots)[entity.id]
-    table := vec_slice($Table, world.tables)[slot.table]
+    ref table := vec_slice($Table, world.tables)[slot.table]
     position := column_position(table.mask, mask)
-    column := vec_slice($Column, table.columns)[position]
+    ref column := vec_slice($Column, table.columns)[position]
     column_of($T, column)[slot.row]
 }
 
@@ -753,9 +767,9 @@ ecs_set :: fn($T: Type, mut world: World, entity: Entity, mask: i64,
 
 // One table's column as a slice, which is what a system writes through.
 ecs_slice :: fn($T: Type, world: World, table_index: i64, mask: i64) -> []T {
-    table := vec_slice($Table, world.tables)[table_index]
+    ref table := vec_slice($Table, world.tables)[table_index]
     position := column_position(table.mask, mask)
-    column := vec_slice($Column, table.columns)[position]
+    ref column := vec_slice($Column, table.columns)[position]
     column_of($T, column)
 }
 
@@ -803,7 +817,7 @@ query_next :: fn(world: World, mut q: Query) -> bool {
     mut index := q.next_table
     total := vec_len($Table, world.tables)
     while (index < total) {
-        table := vec_slice($Table, world.tables)[index]
+        ref table := vec_slice($Table, world.tables)[index]
         rows := vec_len($Entity, table.entities)
         if ((table.mask & q.mask) == q.mask && rows > 0) {
             q.table = index
@@ -826,7 +840,7 @@ query_column :: fn($T: Type, world: World, q: Query, mask: i64) -> []T {
 // The entities of the table the cursor is on, for a body that needs the handle
 // beside the components.
 query_entities :: fn(world: World, q: Query) -> []Entity {
-    table := vec_slice($Table, world.tables)[q.table]
+    ref table := vec_slice($Table, world.tables)[q.table]
     vec_slice($Entity, table.entities)
 }
 
@@ -848,16 +862,16 @@ query_entities :: fn(world: World, q: Query) -> []Entity {
 // test is written where the decision is, and a body that wants both the changed
 // and the unchanged rows has them.
 query_changed :: fn(world: World, q: Query, mask: i64) -> []i64 {
-    table := vec_slice($Table, world.tables)[q.table]
+    ref table := vec_slice($Table, world.tables)[q.table]
     position := column_position(table.mask, mask)
-    column := vec_slice($Column, table.columns)[position]
+    ref column := vec_slice($Column, table.columns)[position]
     column_changed(column)
 }
 
 query_added :: fn(world: World, q: Query, mask: i64) -> []i64 {
-    table := vec_slice($Table, world.tables)[q.table]
+    ref table := vec_slice($Table, world.tables)[q.table]
     position := column_position(table.mask, mask)
-    column := vec_slice($Column, table.columns)[position]
+    ref column := vec_slice($Column, table.columns)[position]
     column_added(column)
 }
 
@@ -869,9 +883,9 @@ ecs_changed_since :: fn(world: World, entity: Entity, mask: i64,
         return false
     }
     slot := vec_slice($EntitySlot, world.slots)[entity.id]
-    table := vec_slice($Table, world.tables)[slot.table]
+    ref table := vec_slice($Table, world.tables)[slot.table]
     position := column_position(table.mask, mask)
-    column := vec_slice($Column, table.columns)[position]
+    ref column := vec_slice($Column, table.columns)[position]
     column_changed(column)[slot.row] > since
 }
 
@@ -881,9 +895,9 @@ ecs_added_since :: fn(world: World, entity: Entity, mask: i64,
         return false
     }
     slot := vec_slice($EntitySlot, world.slots)[entity.id]
-    table := vec_slice($Table, world.tables)[slot.table]
+    ref table := vec_slice($Table, world.tables)[slot.table]
     position := column_position(table.mask, mask)
-    column := vec_slice($Column, table.columns)[position]
+    ref column := vec_slice($Column, table.columns)[position]
     column_added(column)[slot.row] > since
 }
 
@@ -906,7 +920,7 @@ ecs_resource_register :: fn($T: Type, mut world: World) -> i64 {
 
 // The one row, as a slice, which is how a resource is written in place.
 ecs_resource_slice :: fn($T: Type, world: World, slot: i64) -> []T {
-    column := vec_slice($Column, world.resources)[slot]
+    ref column := vec_slice($Column, world.resources)[slot]
     column_of($T, column)
 }
 
@@ -932,7 +946,7 @@ ecs_resource_set :: fn($T: Type, mut world: World, slot: i64, value: $T) {
 // skip what it did not.
 // ---------------------------------------------------------------------------
 
-Events :: struct {
+Events :: linear struct {
     items: Column,
     // The sequence number of the first item still held. Everything before it
     // has been cleared.

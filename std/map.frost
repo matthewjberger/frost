@@ -35,7 +35,7 @@ Slot :: enum { Empty, Used, Gone }
 // The three runs are slices of the whole table, so every read and write here is
 // bounds-checked and this file has no `unsafe` of its own. What is unchecked is
 // the allocation, and that lives in mem.frost.
-Map :: struct($K: Type, $V: Type) {
+Map :: linear struct($K: Type, $V: Type) {
     keys: []K,
     values: []V,
     state: []Slot,
@@ -179,11 +179,20 @@ map_grow :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>) {
     old_values := m.values
     old_state := m.state
     old_cap := m.cap
-    fresh := map_new($K, $V, m.cap * 2)
-    m.keys = fresh.keys
-    m.values = fresh.values
-    m.state = fresh.state
-    m.cap = fresh.cap
+    // The new runs are made here rather than by building a whole map and
+    // taking it apart: a map is a resource, and one made only to have its
+    // fields stolen would be a resource nothing consumed.
+    room := old_cap * 2
+    m.keys = heap_slice($K, room)
+    m.values = heap_slice($V, room)
+    mut fresh_state := heap_slice($Slot, room)
+    mut s : i64 = 0
+    while (s < room) {
+        fresh_state[s] = Slot::Empty
+        s = s + 1
+    }
+    m.state = fresh_state
+    m.cap = room
     m.count = 0
     mut i : i64 = 0
     while (i < old_cap) {
