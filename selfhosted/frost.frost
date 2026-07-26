@@ -168,6 +168,7 @@ main :: fn() -> i64 {
         caps = arena_make($Cap, 1024),
         providers = arena_make($Provider, 256),
         aliases = arena_make($Alias, 64),
+        frame_used = 0,
         parse_locals = arena_make($LocalVar, 4096),
         parse_param_start = 0,
         parse_param_end = 0,

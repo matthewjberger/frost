@@ -1373,6 +1373,7 @@ emit_function :: fn(mut p: Parser, id: i64) {
     p.current_fn_off = sym.off
     p.current_fn_len = sym.len
     p.locals.count = 0
+    p.frame_used = 0
     record_params(p, params)
     begin_provider(p, fn_index)
     // In a test build the runner is the entry point, so the program's own main
@@ -1472,6 +1473,7 @@ emit_mono_function :: fn(mut p: Parser, id: i64, arg: i64, xarg_start: i64,
     p.current_fn_off = msym.off
     p.current_fn_len = msym.len
     p.locals.count = 0
+    p.frame_used = 0
     record_params(p, params)
     begin_provider(p, fn_index)
     // A function that answers with nothing still lowers to int64_t, since the

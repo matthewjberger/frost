@@ -672,6 +672,11 @@ LocalVar :: struct {
     name_off: i64,
     name_len: i64,
     ty: i64,
+    // Where this local sits in the frame, decided once when it is recorded
+    // rather than by adding up every local's size at each mention of it. The
+    // native backend is what reads it; every other table of these leaves it
+    // zero.
+    slot: i64,
 }
 
 // The source span of one `unsafe { ... }`. The gate is a question about where a
@@ -756,6 +761,9 @@ Parser :: struct {
     providers: Arena<Provider>,
     // The names in force while a compile-time `for` reads its body again.
     aliases: Arena<Alias>,
+    // How much of the frame the locals recorded so far take, which is what
+    // gives the next one its slot.
+    frame_used: i64,
     // What each name binds while the declaration around it is being parsed.
     // Only what a compile-time list is given is read from here, and only at the
     // call that gives it, since that is the one question whose answer has to be

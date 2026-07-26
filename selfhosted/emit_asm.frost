@@ -97,20 +97,20 @@ emit_label :: fn(name: str, id: i64) {
 // Locals are laid end to end from the top of the frame down, so a local sits
 // past everything recorded before it. A rebound name takes the slot of its most
 // recent binding, matching lookup_local, so the two bindings stay distinct.
+// Where a name sits in the frame. Recorded with the local, so this is a search
+// for the name and nothing more. The most recent binding wins, which is what
+// walking backwards answers with first.
 local_slot :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
-    mut i : i64 = 0
-    mut running : i64 = 0
-    mut found : i64 = 0 - 8
-    while (i < p.locals.count) {
+    mut i : i64 = p.locals.count
+    while (i > 0) {
+        i = i - 1
         entry := arena_at(p.locals, i)
-        running = running + align_up(type_size(p, entry.ty), 8)
         if (entry.name_len == len
             && bytes_equal(p.src, entry.name_off, off, len)) {
-            found = 0 - running
+            return entry.slot
         }
-        i = i + 1
     }
-    found
+    0 - 8
 }
 
 // Load a scalar into %rax from `slot(base)`, where `base` closes the address
@@ -1892,6 +1892,7 @@ emit_asm_block :: fn(mut p: Parser, head: i64) {
 // a buffer for a struct result.
 emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
     p.locals.count = 0
+    p.frame_used = 0
     p.asm_temp = 32 - ASM_FRAME
     p.asm_ret = ret
     asm("pushq %rbp")

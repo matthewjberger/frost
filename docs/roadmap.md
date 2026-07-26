@@ -31,13 +31,28 @@ Re-run the benchmark before trusting any of it, and read what it generates.
 
 One thing, in the compiler people will run.
 
-**Speed parity for the self-hosted compiler.** The numbers above are the
-bootstrap's. The Frost compiler compiles a program in one pass on one thread,
-whole-program: no parallel code generation, no per-module objects, no build
-cache, no `--incremental`. Its front end is already fast, so this is backend and
+**Speed parity for the self-hosted compiler.** The Frost compiler compiles a
+program in one pass on one thread, whole-program: no parallel code generation,
+no per-module objects, no build cache, no `--incremental`. This is backend and
 build work rather than language work. See
 [separate-compilation.md](separate-compilation.md) for what each piece means and
 [self-hosting.md](self-hosting.md) for where its time goes.
+
+Where it stands on its own source, 14,273 lines, from `just bench-selfhost`:
+
+| compiler and backend | rate |
+| --- | --- |
+| bootstrap front end (`--emit-c`) | ~72,000 lines/sec |
+| self-hosted, C backend | ~145,000 lines/sec |
+| self-hosted, assembly backend | ~120,000 lines/sec |
+
+Both clear the bar for a full build, which is what says the work left is about
+not rebuilding what did not change rather than about raw throughput. Measure
+before optimizing anything here: the assembly backend read as eight times slower
+than that until the measurement stopped going through a pipe, and the one real
+find under it was a slot lookup that added up every local's size at each mention
+of a name, quadratic in a function's locals. Recording the slot with the local
+took the assembly backend from 612 ms to 122 ms on this source.
 
 The pieces, in the order they unlock each other:
 
