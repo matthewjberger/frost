@@ -527,9 +527,9 @@ no coherence rule, no orphan rule, and no solver. The bound is a precondition
 checked at the call, which is where the error belongs: the caller chose the
 type.
 
-Where Rust would write `T: Ord` and call `a.cmp(&b)`, Frost takes the operation
-as a compile-time function parameter, and that parameter can declare the
-signature it needs:
+Where Rust would write `T: Ord` and call `a.cmp(&b)`, Frost passes the
+operation. For a single operation that is a compile-time function parameter,
+which can declare the signature it needs:
 
 ```frost
 ascending :: fn(a: i64, b: i64) -> bool { a < b }
@@ -543,17 +543,136 @@ best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
 smallest := best($i64, $ascending, 7, 3)
 ```
 
-The bound is checked at the call with that call's type arguments substituted in,
-so a wrong signature is an error against the parameter list rather than a
-message pointing inside the specialized body. The call to `before` is direct,
-not through a pointer, because the specialization knows which function it is.
-This is the one form of bound in the language, and it is a comparison of one
-signature against another, not a solver.
+The signature is checked at the call with that call's type arguments substituted
+in, so a wrong one is an error against the parameter list rather than a message
+pointing inside the specialized body. The call to `before` is direct, not through
+a pointer, because the specialization knows which function it is.
 
-What you still cannot state is a requirement on `T` itself, such as "numeric".
-That surfaces when the specialization is compiled. The upside of the whole
-arrangement is that there is no trait-resolution machinery, no coherence rules,
-and no orphan problem.
+### A trait, and what replaces it
+
+In Rust the operations travel together, attached to the type:
+
+```rust
+trait Ordering {
+    fn less(a: &Self, b: &Self) -> bool;
+    fn equal(a: &Self, b: &Self) -> bool;
+}
+
+impl Ordering for i64 {
+    fn less(a: &i64, b: &i64) -> bool { a < b }
+    fn equal(a: &i64, b: &i64) -> bool { a == b }
+}
+
+fn sort<T: Ordering>(items: &mut [T]) { /* calls T::less(a, b) */ }
+
+sort(&mut numbers);
+```
+
+The implementation is attached to the type, found by a lookup, and unnamed at
+the call.
+
+In Frost the operations travel together too, in a struct whose fields are
+functions. The declaration is the bundle:
+
+```frost
+Ordering :: struct($T: Type) {
+    less:  fn(T, T) -> bool,
+    equal: fn(T, T) -> bool,
+}
+```
+
+The implementation is a constant, not a registration:
+
+```frost
+i64_less  :: fn(a: i64, b: i64) -> bool { a < b }
+i64_equal :: fn(a: i64, b: i64) -> bool { a == b }
+
+i64_ascending :: Ordering<i64> { less = i64_less, equal = i64_equal }
+```
+
+And the use is a compile-time argument:
+
+```frost
+sort :: fn($T: Type, $ops: Ordering<T>, mut items: []T) {
+    mut i := 1
+    while (i < slice_len(items)) {
+        mut j := i
+        while (j > 0 && ops.less(items[j], items[j - 1])) {
+            swap($T, items, j, j - 1)
+            j = j - 1
+        }
+        i = i + 1
+    }
+}
+
+sort($i64, $i64_ascending, numbers)
+```
+
+Because `$ops` is a compile-time argument, `ops.less(...)` folds to a direct
+call to `i64_less`. There is no vtable and no pointer in the specialization.
+`std/ordering.frost` and `std/sort.frost` are exactly this.
+
+The same shape carries through a container:
+
+```frost
+vec_index_of :: fn($T: Type, $ops: Ordering<T>, v: Vec<T>, needle: $T) -> i64 {
+    mut i : i64 = 0
+    while (i < vec_len($T, v)) {
+        if (ops.equal(vec_get($T, v, i), needle)) { return i }
+        i = i + 1
+    }
+    0 - 1
+}
+
+sort_vec :: fn($T: Type, $ops: Ordering<T>, mut v: Vec<T>) {
+    sort($T, $ops, vec_slice($T, v))
+}
+```
+
+### Where the two differ in practice
+
+Two orderings for one type. In Rust this is the newtype dance or a separate
+wrapper. In Frost it is a second constant:
+
+```frost
+i64_descending :: Ordering<i64> { less = i64_greater, equal = i64_equal }
+
+sort($i64, $i64_descending, numbers)
+```
+
+Nothing conflicts, because nothing was ever implicit.
+
+Runtime dispatch from the same declaration. Drop the `$`:
+
+```frost
+sort_at_runtime :: fn(ops: Ordering<i64>, mut items: []i64) { ... }
+```
+
+`ops` is now an ordinary value, so the bundle can be chosen while the program
+runs, stored in an array, or swapped, and the calls go through the pointers it
+holds. Rust needs `dyn Trait` and a second signature for that.
+
+Composing bounds is a struct with struct fields rather than `T: A + B`:
+
+```frost
+Element :: struct($T: Type) {
+    ordering: Ordering<T>,
+    hashing:  Hashing<T>,
+}
+```
+
+and the body reads `ops.ordering.less(a, b)`.
+
+The visible cost is that every call carries the bundle: `sort($i64,
+$i64_ascending, numbers)` rather than `sort(&mut numbers)`. That verbosity is
+the feature. The call site says which comparison it used, and `i64_ascending`
+greps to exactly one definition.
+
+What a bundle deliberately cannot do is be found for you. There is no lookup,
+so there is nothing to be coherent about, no orphan rule, and no solver. What
+you also cannot state is a requirement on `T` itself beyond the `where`
+vocabulary above; anything narrower surfaces when the specialization is
+compiled.
 
 ## Function pointers, not closures
 
@@ -587,9 +706,9 @@ pointer in what you write. See chapter 12.1 of [spec.md](spec.md).
 
 Frost has no general compile-time interpreter and no macros. The compile-time
 machinery is `sizeof(T)` as a constant and monomorphization, which is driven by
-three kinds of `$` parameter: a type (`$T: Type`), an integer (`$N: usize`, which
-is Rust's const generics as values and is what sizes a `[N]T` field), and a
-function (`$f: fn(..) -> ..`). All three work on functions as well as structs, so
+four kinds of `$` parameter: a type (`$T: Type`), an integer (`$N: usize`, which
+is Rust's const generics as values and is what sizes a `[N]T` field), a function
+(`$f: fn(..) -> ..`), and a capability bundle (`$ops: Ordering<T>`). All three work on functions as well as structs, so
 an operation over a sized aggregate is written once rather than once per size,
 and unlike Rust's const generics the integer is usable as a plain value in the
 body rather than only in a type. A generic function or struct is stamped out once
