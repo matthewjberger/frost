@@ -52,6 +52,34 @@ accepted by the bootstrap and miscompiles rather than being refused. A string
 literal reaching a `str` parameter is why the rule exists; it should ask whether
 the argument is a literal rather than whether its type is a pointer.
 
+Three more, found by widening the ECS component mask past 64:
+
+- **The native backend gives every function a fixed 4096-byte frame.** Locals
+  grow down from the top of it, temporaries grow up from the bottom, and nothing
+  says so when they meet: the result is one value written over another, which is
+  a wrong answer rather than a crash. A `[256]i64` inside a struct is enough to
+  cross it, which is how it was found. The compiler's own `main` sits close
+  enough to the line that a check written for this rejects it, so the fix is a
+  per-function frame rather than a check: the emitter would have to know a
+  function's size before writing its prologue, which today it learns while
+  writing the body. Until then, keep a large value on the heap.
+- **`mut x := p` where `p` is a struct parameter binds a second name for the
+  caller's value rather than a copy.** Writing through `x` writes through to the
+  caller. Annotating it (`mut x : P = p`) is the copy, and is what the standard
+  library now writes. Making the unannotated form copy is a one-line change in
+  each compiler and it breaks the compiler's own source in ways that took
+  longer to chase than the change was worth, so it is written down rather than
+  made.
+- **A compile-time argument list holds values, not types, and cannot be
+  forwarded.** `f($Position, $Velocity)` into `args: $...` fails with
+  "unsupported expression", and `inner(args)` fails with "a compile-time list is
+  iterated with `for` or indexed by a literal, and is not a value of its own".
+  A variadic query over a pack of component types needs both, plus a way to
+  expand a list into a call's argument list, since nothing today writes
+  `body(a, b, c)` with an arity the pack decides. That is three language
+  features, and it is what the ECS's `for_each1`/`for_each2`/`for_each3` are
+  waiting on.
+
 ## What is done, and what it cost
 
 Both compilers clear the target on a full build, and the self-hosted one

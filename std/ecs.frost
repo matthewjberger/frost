@@ -13,10 +13,10 @@
 // removing a row, carrying a row to another table. The registry holds a size
 // per component and nothing else.
 //
-// A component is named by its mask bit. A table's mask is the bits it holds,
-// its columns are in ascending bit order, and the column for a bit is found by
-// counting the bits below it, so nothing maps a component to a column at run
-// time.
+// A component is named by its index. A table's mask is the set of indices it
+// holds, its columns are in ascending index order, and the column for a
+// component is found by counting the bits below it, so nothing maps a component
+// to a column at run time.
 //
 // The unsafe floor is the column: raw bytes with a width. Everything above it
 // reaches an element through `column_of`, which hands out a bounds-checked
@@ -31,6 +31,7 @@ export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     ecs_spawn, ecs_despawn, ecs_alive, ecs_count,
     ecs_add, ecs_remove, ecs_has, ecs_get, ecs_set, ecs_slice,
     query_begin, query_next, query_column, query_entities,
+    query_with,
     for_each1, for_each2, for_each3,
     tag_new, tag_free, tag_add, tag_remove, tag_has,
     commands_new, commands_free, commands_spawn, commands_despawn,
@@ -52,11 +53,17 @@ export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     Stage, stage_order, ANY_STATE,
     States, states_new, states_request, states_apply, states_current,
     Time, time_new, time_advance,
-    column_of, column_position, bits_below, mask_of
+    column_of, column_position, bits_below, bits_in,
+    Mask, MASK_WORDS, MAX_COMPONENTS,
+    mask_empty, mask_with, mask_without, mask_has, mask_covers, mask_disjoint,
+    mask_or, mask_equal, mask_is_empty
 
 
-// A mask is one i64, so a world holds this many component types.
-MAX_COMPONENTS :: 62
+// A mask is a fixed run of 64-bit words, so a world holds this many component
+// types. Four words rather than one integer, because 64 components is a number
+// a real program passes and 256 is not.
+MASK_WORDS :: 4
+MAX_COMPONENTS :: 256
 
 // ---------------------------------------------------------------------------
 // Entities
@@ -232,30 +239,149 @@ column_of :: fn($T: Type, c: Column) -> []T {
 // what a save file needs.
 // ---------------------------------------------------------------------------
 
+// A width per registered component, grown as they register. A fixed array of
+// MAX_COMPONENTS would put two kilobytes inside every World, almost all of it
+// unused, and a World is an ordinary local.
 Registry :: struct {
     count: i64,
-    sizes: [MAX_COMPONENTS]i64,
+    sizes: Vec<i64>,
 }
 
-// The bit for the nth registered component.
-mask_of :: fn(index: i64) -> i64 {
-    1 << index
+// A set of components, as one bit per registered index. Four words wide, which
+// is a fixed size, so a mask is copied and compared without allocating and a
+// table's test against a query is a loop of four.
+Mask :: struct {
+    words: [MASK_WORDS]u64,
 }
 
-// How many bits are set below this one, which is a column's position in a
-// table whose columns are in ascending bit order.
-bits_below :: fn(mask: i64, bit: i64) -> i64 {
-    mut held := mask & (bit - 1)
+mask_empty :: fn() -> Mask {
+    Mask { words = [0; MASK_WORDS] }
+}
+
+// The word a component's bit lives in, and the bit within it. Both are
+// divisions by a power of two, so both are a shift.
+mask_word :: fn(index: i64) -> i64 {
+    index / 64
+}
+
+mask_bit :: fn(index: i64) -> u64 {
+    one : u64 = 1
+    one << (index % 64)
+}
+
+mask_with :: fn(m: Mask, index: i64) -> Mask {
+    // Annotated, so the binding is a copy of the caller's mask. Without the
+    // type written the name is a second name for what the caller holds, and
+    // setting a bit would set it there.
+    mut out : Mask = m
+    word := mask_word(index)
+    out.words[word] = out.words[word] | mask_bit(index)
+    out
+}
+
+mask_without :: fn(m: Mask, index: i64) -> Mask {
+    mut out : Mask = m
+    word := mask_word(index)
+    // No bitwise complement in the language, so the bit is cleared by taking
+    // the word apart around it: what is above it, plus what is below it.
+    held := out.words[word]
+    bit := mask_bit(index)
+    if ((held & bit) != 0) {
+        out.words[word] = held - bit
+    }
+    out
+}
+
+mask_has :: fn(m: Mask, index: i64) -> bool {
+    (m.words[mask_word(index)] & mask_bit(index)) != 0
+}
+
+mask_or :: fn(a: Mask, b: Mask) -> Mask {
+    mut out : Mask = a
+    mut i : i64 = 0
+    while (i < MASK_WORDS) {
+        out.words[i] = out.words[i] | b.words[i]
+        i = i + 1
+    }
+    out
+}
+
+// Every bit of `wanted` is on in `held`. This runs once per table per query, so
+// it is a straight loop over the words with nothing allocated and no call per
+// word.
+mask_covers :: fn(held: Mask, wanted: Mask) -> bool {
+    mut i : i64 = 0
+    while (i < MASK_WORDS) {
+        if ((held.words[i] & wanted.words[i]) != wanted.words[i]) {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+// No bit of `excluded` is on in `held`, which is what a `without` filter asks
+// of a whole table before any row is touched.
+mask_disjoint :: fn(held: Mask, excluded: Mask) -> bool {
+    mut i : i64 = 0
+    while (i < MASK_WORDS) {
+        if ((held.words[i] & excluded.words[i]) != 0) {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+mask_equal :: fn(a: Mask, b: Mask) -> bool {
+    mut i : i64 = 0
+    while (i < MASK_WORDS) {
+        if (a.words[i] != b.words[i]) {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+mask_is_empty :: fn(m: Mask) -> bool {
+    mut i : i64 = 0
+    while (i < MASK_WORDS) {
+        if (m.words[i] != 0) {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+// How many bits are set below this index, which is a column's position in a
+// table whose columns are in ascending index order.
+bits_below :: fn(m: Mask, index: i64) -> i64 {
+    word := mask_word(index)
     mut counted : i64 = 0
-    while (held != 0) {
-        held = held & (held - 1)
+    mut i : i64 = 0
+    while (i < word) {
+        counted = counted + bits_in(m.words[i])
+        i = i + 1
+    }
+    counted + bits_in(m.words[word] & (mask_bit(index) - 1))
+}
+
+// The population count of one word, by clearing the lowest set bit until there
+// is none left, so the loop runs once per bit that is set rather than 64 times.
+bits_in :: fn(held: u64) -> i64 {
+    mut rest := held
+    mut counted : i64 = 0
+    while (rest != 0) {
+        rest = rest & (rest - 1)
         counted = counted + 1
     }
     counted
 }
 
-column_position :: fn(table_mask: i64, component_mask: i64) -> i64 {
-    bits_below(table_mask, component_mask)
+column_position :: fn(table_mask: Mask, component: i64) -> i64 {
+    bits_below(table_mask, component)
 }
 
 // ---------------------------------------------------------------------------
@@ -266,7 +392,7 @@ column_position :: fn(table_mask: i64, component_mask: i64) -> i64 {
 // ---------------------------------------------------------------------------
 
 Table :: struct {
-    mask: i64,
+    mask: Mask,
     entities: Vec<Entity>,
     columns: Vec<Column>,
 }
@@ -281,22 +407,22 @@ Table :: struct {
 // ---------------------------------------------------------------------------
 
 Lookup :: struct {
-    masks: Vec<i64>,
+    masks: Vec<Mask>,
     rows: Vec<i64>,
     cap: i64,
     count: i64,
 }
 
-// A mask of zero is the empty archetype, which is a real key, so the empty slot
-// is marked by a row of -1 rather than by a mask of zero.
+// The empty mask is the empty archetype, which is a real key, so the empty slot
+// is marked by a row of -1 rather than by a mask of no bits.
 lookup_new :: fn(capacity: i64) -> Lookup {
     mut cap : i64 = 8
     while (cap < capacity) { cap = cap * 2 }
-    mut made := Lookup { masks = vec_new($i64, cap), rows = vec_new($i64, cap),
+    mut made := Lookup { masks = vec_new($Mask, cap), rows = vec_new($i64, cap),
         cap = cap, count = 0 }
     mut i : i64 = 0
     while (i < cap) {
-        vec_push($i64, made.masks, 0)
+        vec_push($Mask, made.masks, mask_empty())
         vec_push($i64, made.rows, 0 - 1)
         i = i + 1
     }
@@ -304,34 +430,46 @@ lookup_new :: fn(capacity: i64) -> Lookup {
 }
 
 lookup_free :: fn(move l: Lookup) {
-    vec_free($i64, l.masks)
+    vec_free($Mask, l.masks)
     vec_free($i64, l.rows)
+}
+
+// A whole mask mixed into one number, so a key that differs only in its fourth
+// word still lands somewhere else.
+mask_hash :: fn(m: Mask) -> i64 {
+    mut h : i64 = 0
+    mut i : i64 = 0
+    while (i < MASK_WORDS) {
+        h = h * 1099511628211 + m.words[i]
+        i = i + 1
+    }
+    h
 }
 
 // The slot a mask sits in, or the first empty one on its probe run. The table
 // is never full, since it grows at half.
-lookup_slot :: fn(l: Lookup, mask: i64) -> i64 {
-    mut h := mask * 2654435761
+lookup_slot :: fn(l: Lookup, mask: Mask) -> i64 {
+    mut h := mask_hash(mask) * 2654435761
     h = h + (h / 4096)
     mut i := h % l.cap
     if (i < 0) {
         i = 0 - i
     }
-    masks := vec_slice($i64, l.masks)
+    masks := vec_slice($Mask, l.masks)
     rows := vec_slice($i64, l.rows)
-    while (rows[i] >= 0 && masks[i] != mask) {
+    while (rows[i] >= 0 && mask_equal(masks[i], mask) == false) {
         i = i + 1
         if (i >= l.cap) { i = 0 }
     }
     i
 }
 
-lookup_get :: fn(l: Lookup, mask: i64) -> i64 {
+lookup_get :: fn(l: Lookup, mask: Mask) -> i64 {
     slot := lookup_slot(l, mask)
     vec_slice($i64, l.rows)[slot]
 }
 
-lookup_put :: fn(mut l: Lookup, mask: i64, row: i64) {
+lookup_put :: fn(mut l: Lookup, mask: Mask, row: i64) {
     if (l.count * 2 >= l.cap) {
         lookup_grow(l)
     }
@@ -340,7 +478,7 @@ lookup_put :: fn(mut l: Lookup, mask: i64, row: i64) {
     if (rows[slot] < 0) {
         l.count = l.count + 1
     }
-    vec_slice($i64, l.masks)[slot] = mask
+    vec_slice($Mask, l.masks)[slot] = mask
     vec_slice($i64, l.rows)[slot] = row
 }
 
@@ -353,11 +491,11 @@ lookup_grow :: fn(mut l: Lookup) {
     old_masks := l.masks
     old_rows := l.rows
     room := old_cap * 2
-    mut masks := vec_new($i64, room)
+    mut masks := vec_new($Mask, room)
     mut rows := vec_new($i64, room)
     mut k : i64 = 0
     while (k < room) {
-        vec_push($i64, masks, 0)
+        vec_push($Mask, masks, mask_empty())
         vec_push($i64, rows, 0 - 1)
         k = k + 1
     }
@@ -367,14 +505,14 @@ lookup_grow :: fn(mut l: Lookup) {
     l.count = 0
     mut i : i64 = 0
     while (i < old_cap) {
-        held_mask := vec_slice($i64, old_masks)[i]
+        held_mask := vec_slice($Mask, old_masks)[i]
         held_row := vec_slice($i64, old_rows)[i]
         if (held_row >= 0) {
             lookup_put(l, held_mask, held_row)
         }
         i = i + 1
     }
-    vec_free($i64, old_masks)
+    vec_free($Mask, old_masks)
     vec_free($i64, old_rows)
 }
 
@@ -389,8 +527,8 @@ ChangeKind :: enum { Spawn, Despawn, Add, Remove }
 Change :: struct {
     kind: ChangeKind,
     entity: Entity,
-    // The component the change was about, or zero for a spawn or a despawn.
-    mask: i64,
+    // The component the change was about, or -1 for a spawn or a despawn.
+    component: i64,
     tick: i64,
 }
 
@@ -417,7 +555,7 @@ World :: struct {
 
 ecs_new :: fn() -> World {
     mut world := World {
-        registry = Registry { count = 0, sizes = [0; MAX_COMPONENTS] },
+        registry = Registry { count = 0, sizes = vec_new($i64, 16) },
         slots = vec_new($EntitySlot, 64),
         free_ids = vec_new($i64, 64),
         next_id = 0,
@@ -434,10 +572,10 @@ ecs_new :: fn() -> World {
     vec_push(
         $Table,
         world.tables,
-        Table { mask = 0, entities = vec_new($Entity, 16),
+        Table { mask = mask_empty(), entities = vec_new($Entity, 16),
             columns = vec_new($Column, 1) },
     )
-    lookup_put(world.lookup, 0, 0)
+    lookup_put(world.lookup, mask_empty(), 0)
     world
 }
 
@@ -466,6 +604,7 @@ ecs_free :: fn(move world: World) {
     vec_free($Table, world.tables)
     vec_free($EntitySlot, world.slots)
     vec_free($i64, world.free_ids)
+    vec_free($i64, world.registry.sizes)
     lookup_free(world.lookup)
 }
 
@@ -489,13 +628,14 @@ ecs_now :: fn(world: World) -> i64 {
 
 // Record a structural change, when the world was asked to keep them.
 note_change :: fn(mut world: World, kind: ChangeKind, entity: Entity,
-    mask: i64) {
+    component: i64) {
     if (world.logging == false) {
         return
     }
     vec_push($Change, world.log,
         Change { kind = kind, entity = Entity { id = entity.id,
-            generation = entity.generation }, mask = mask, tick = world.tick })
+            generation = entity.generation }, component = component,
+            tick = world.tick })
 }
 
 ecs_log_enable :: fn(mut world: World, on: bool) {
@@ -510,37 +650,34 @@ ecs_log_clear :: fn(mut world: World) {
     vec_clear($Change, world.log)
 }
 
-// Register a component and answer its mask bit. The width comes from the type,
-// which is the only thing about it this has to know.
+// Register a component and answer its index, which is what every call naming
+// that component is given. The width comes from the type, which is the only
+// thing about it this has to know.
 ecs_register :: fn($T: Type, mut world: World) -> i64 {
     index := world.registry.count
-    // Past the ceiling there is no bit to give, and zero is the mask that names
-    // nothing, so a program that registers too many finds out at its next call
-    // rather than corrupting a mask.
+    // Past the ceiling there is no index to give, so a program that registers
+    // too many finds out at its next call rather than writing over a component
+    // that already exists.
     if (index >= MAX_COMPONENTS) {
-        return 0
+        return 0 - 1
     }
-    world.registry.sizes[index] = sizeof(T)
+    vec_push($i64, world.registry.sizes, sizeof(T))
     world.registry.count = index + 1
-    mask_of(index)
+    index
 }
 
-// The width a mask bit was registered with.
-ecs_component_size :: fn(world: World, mask: i64) -> i64 {
-    mut index : i64 = 0
-    while (index < world.registry.count) {
-        if (mask_of(index) == mask) {
-            return world.registry.sizes[index]
-        }
-        index = index + 1
+// The width a component was registered with.
+ecs_component_size :: fn(world: World, component: i64) -> i64 {
+    if (component < 0 || component >= world.registry.count) {
+        return 0
     }
-    0
+    vec_slice($i64, world.registry.sizes)[component]
 }
 
 // The table for a mask, made if this is the first entity to want it. Its
 // columns are created in ascending bit order, which is the order every lookup
 // assumes.
-table_for :: fn(mut world: World, mask: i64) -> i64 {
+table_for :: fn(mut world: World, mask: Mask) -> i64 {
     held := lookup_get(world.lookup, mask)
     if (held >= 0) {
         return held
@@ -549,10 +686,9 @@ table_for :: fn(mut world: World, mask: i64) -> i64 {
         columns = vec_new($Column, 4) }
     mut index : i64 = 0
     while (index < world.registry.count) {
-        bit := mask_of(index)
-        if ((mask & bit) != 0) {
+        if (mask_has(mask, index)) {
             vec_push($Column, table.columns,
-                column_new(world.registry.sizes[index]))
+                column_new(vec_slice($i64, world.registry.sizes)[index]))
         }
         index = index + 1
     }
@@ -593,7 +729,7 @@ ecs_spawn :: fn(mut world: World) -> Entity {
     slot.row = row
     world.live = world.live + 1
     made := Entity { id = id, generation = generation }
-    note_change(world, ChangeKind::Spawn, made, 0)
+    note_change(world, ChangeKind::Spawn, made, 0 - 1)
     made
 }
 
@@ -651,7 +787,7 @@ ecs_despawn :: fn(mut world: World, entity: Entity) {
     held.generation = held.generation + 1
     vec_push($i64, world.free_ids, entity.id)
     world.live = world.live - 1
-    note_change(world, ChangeKind::Despawn, entity, 0)
+    note_change(world, ChangeKind::Despawn, entity, 0 - 1)
 }
 
 // ---------------------------------------------------------------------------
@@ -663,7 +799,7 @@ ecs_despawn :: fn(mut world: World, entity: Entity) {
 
 // Move an entity to the table for `target_mask`, carrying every column the two
 // tables share. Answers the row it landed on.
-migrate :: fn(mut world: World, entity: Entity, target_mask: i64) -> i64 {
+migrate :: fn(mut world: World, entity: Entity, target_mask: Mask) -> i64 {
     slot := vec_slice($EntitySlot, world.slots)[entity.id]
     from_index := slot.table
     row := slot.row
@@ -672,17 +808,15 @@ migrate :: fn(mut world: World, entity: Entity, target_mask: i64) -> i64 {
         return row
     }
     from_mask := vec_slice($Table, world.tables)[from_index].mask
-    shared := from_mask & target_mask
     // The destination row is the same for every column, since a table's columns
     // are the same length.
     landed := vec_len($Entity, vec_slice($Table, world.tables)[to_index].entities)
     mut index : i64 = 0
     while (index < world.registry.count) {
-        bit := mask_of(index)
-        if ((target_mask & bit) != 0) {
-            to_position := column_position(target_mask, bit)
-            if ((shared & bit) != 0) {
-                from_position := column_position(from_mask, bit)
+        if (mask_has(target_mask, index)) {
+            to_position := column_position(target_mask, index)
+            if (mask_has(from_mask, index)) {
+                from_position := column_position(from_mask, index)
                 held := vec_slice($Column,
                     vec_slice($Table, world.tables)[from_index].columns)[from_position]
                 ref to_column := vec_slice($Column,
@@ -708,66 +842,66 @@ migrate :: fn(mut world: World, entity: Entity, target_mask: i64) -> i64 {
     landed
 }
 
-ecs_has :: fn(world: World, entity: Entity, mask: i64) -> bool {
+ecs_has :: fn(world: World, entity: Entity, component: i64) -> bool {
     if (ecs_alive(world, entity) == false) {
         return false
     }
     slot := vec_slice($EntitySlot, world.slots)[entity.id]
     ref table := vec_slice($Table, world.tables)[slot.table]
-    (table.mask & mask) != 0
+    mask_has(table.mask, component)
 }
 
 // Give an entity a component, or overwrite the one it has.
-ecs_add :: fn($T: Type, mut world: World, entity: Entity, mask: i64,
+ecs_add :: fn($T: Type, mut world: World, entity: Entity, component: i64,
     value: $T) {
     if (ecs_alive(world, entity) == false) {
         return
     }
     slot := vec_slice($EntitySlot, world.slots)[entity.id]
     current := vec_slice($Table, world.tables)[slot.table].mask
-    if ((current & mask) == 0) {
-        migrate(world, entity, current | mask)
-        note_change(world, ChangeKind::Add, entity, mask)
+    if (mask_has(current, component) == false) {
+        migrate(world, entity, mask_with(current, component))
+        note_change(world, ChangeKind::Add, entity, component)
     }
-    ecs_set($T, world, entity, mask, value)
+    ecs_set($T, world, entity, component, value)
     // A component the entity has just been given was added now, whatever the
     // row it landed on held before.
     ref placed := vec_slice($EntitySlot, world.slots)[entity.id]
     ref table := vec_slice($Table, world.tables)[placed.table]
-    position := column_position(table.mask, mask)
+    position := column_position(table.mask, component)
     ref column := vec_slice($Column, table.columns)[position]
     mut added := column_added(column)
     added[placed.row] = world.tick
 }
 
-ecs_remove :: fn(mut world: World, entity: Entity, mask: i64) {
+ecs_remove :: fn(mut world: World, entity: Entity, component: i64) {
     if (ecs_alive(world, entity) == false) {
         return
     }
     slot := vec_slice($EntitySlot, world.slots)[entity.id]
     current := vec_slice($Table, world.tables)[slot.table].mask
-    if ((current & mask) == 0) {
+    if (mask_has(current, component) == false) {
         return
     }
-    migrate(world, entity, current & (0 - 1 - mask))
-    note_change(world, ChangeKind::Remove, entity, mask)
+    migrate(world, entity, mask_without(current, component))
+    note_change(world, ChangeKind::Remove, entity, component)
 }
 
 // The component an entity holds, by value. A component is plain data, so a copy
 // is the whole of it; `ecs_slice` is how a system reaches one to write.
-ecs_get :: fn($T: Type, world: World, entity: Entity, mask: i64) -> $T {
+ecs_get :: fn($T: Type, world: World, entity: Entity, component: i64) -> $T {
     slot := vec_slice($EntitySlot, world.slots)[entity.id]
     ref table := vec_slice($Table, world.tables)[slot.table]
-    position := column_position(table.mask, mask)
+    position := column_position(table.mask, component)
     ref column := vec_slice($Column, table.columns)[position]
     column_of($T, column)[slot.row]
 }
 
-ecs_set :: fn($T: Type, mut world: World, entity: Entity, mask: i64,
+ecs_set :: fn($T: Type, mut world: World, entity: Entity, component: i64,
     value: $T) {
     slot := vec_slice($EntitySlot, world.slots)[entity.id]
     ref table := vec_slice($Table, world.tables)[slot.table]
-    position := column_position(table.mask, mask)
+    position := column_position(table.mask, component)
     ref column := vec_slice($Column, table.columns)[position]
     mut items := column_of($T, column)
     items[slot.row] = value
@@ -776,9 +910,10 @@ ecs_set :: fn($T: Type, mut world: World, entity: Entity, mask: i64,
 }
 
 // One table's column as a slice, which is what a system writes through.
-ecs_slice :: fn($T: Type, world: World, table_index: i64, mask: i64) -> []T {
+ecs_slice :: fn($T: Type, world: World, table_index: i64,
+    component: i64) -> []T {
     ref table := vec_slice($Table, world.tables)[table_index]
-    position := column_position(table.mask, mask)
+    position := column_position(table.mask, component)
     ref column := vec_slice($Column, table.columns)[position]
     column_of($T, column)
 }
@@ -790,7 +925,9 @@ ecs_slice :: fn($T: Type, world: World, table_index: i64, mask: i64) -> []T {
 // runs per table with the columns as slices, so the inner loop is over
 // contiguous memory and the language checks every index.
 //
-//     mut q := query_begin(world, POSITION | VELOCITY)
+//     mut q := query_begin(world)
+//     query_with(q, POSITION)
+//     query_with(q, VELOCITY)
 //     while (query_next(world, q)) {
 //         mut p := query_column($Position, world, q, POSITION)
 //         v := query_column($Velocity, world, q, VELOCITY)
@@ -809,15 +946,21 @@ ecs_slice :: fn($T: Type, world: World, table_index: i64, mask: i64) -> []T {
 
 Query :: struct {
     // The components a table must hold to be visited.
-    mask: i64,
+    wanted: Mask,
     // Where the walk is, and where it stopped.
     next_table: i64,
     table: i64,
     count: i64,
 }
 
-query_begin :: fn(world: World, mask: i64) -> Query {
-    Query { mask = mask, next_table = 0, table = 0 - 1, count = 0 }
+query_begin :: fn(world: World) -> Query {
+    Query { wanted = mask_empty(), next_table = 0, table = 0 - 1, count = 0 }
+}
+
+// A component the body reads. This is a table-level test: a table without it is
+// skipped before any of its rows is touched.
+query_with :: fn(mut q: Query, component: i64) {
+    q.wanted = mask_with(q.wanted, component)
 }
 
 // Step to the next table holding every component the query asks for, answering
@@ -829,7 +972,7 @@ query_next :: fn(world: World, mut q: Query) -> bool {
     while (index < total) {
         ref table := vec_slice($Table, world.tables)[index]
         rows := vec_len($Entity, table.entities)
-        if ((table.mask & q.mask) == q.mask && rows > 0) {
+        if (mask_covers(table.mask, q.wanted) && rows > 0) {
             q.table = index
             q.count = rows
             q.next_table = index + 1
@@ -843,8 +986,9 @@ query_next :: fn(world: World, mut q: Query) -> bool {
     false
 }
 
-query_column :: fn($T: Type, world: World, q: Query, mask: i64) -> []T {
-    ecs_slice($T, world, q.table, mask)
+query_column :: fn($T: Type, world: World, q: Query,
+    component: i64) -> []T {
+    ecs_slice($T, world, q.table, component)
 }
 
 // The entities of the table the cursor is on, for a body that needs the handle
@@ -857,7 +1001,8 @@ query_entities :: fn(world: World, q: Query) -> []Entity {
 // The write times of the table's rows for one component, beside the components
 // themselves, so a body can skip the rows nothing touched:
 //
-//     mut q := query_begin(world, TRANSFORM)
+//     mut q := query_begin(world)
+//     query_with(q, TRANSFORM)
 //     while (query_next(world, q)) {
 //         t := query_column($Transform, world, q, TRANSFORM)
 //         stamps := query_changed(world, q, TRANSFORM)
@@ -871,42 +1016,42 @@ query_entities :: fn(world: World, q: Query) -> []Entity {
 // This is change detection without a filter type: the ticks are data, so the
 // test is written where the decision is, and a body that wants both the changed
 // and the unchanged rows has them.
-query_changed :: fn(world: World, q: Query, mask: i64) -> []i64 {
+query_changed :: fn(world: World, q: Query, component: i64) -> []i64 {
     ref table := vec_slice($Table, world.tables)[q.table]
-    position := column_position(table.mask, mask)
+    position := column_position(table.mask, component)
     ref column := vec_slice($Column, table.columns)[position]
     column_changed(column)
 }
 
-query_added :: fn(world: World, q: Query, mask: i64) -> []i64 {
+query_added :: fn(world: World, q: Query, component: i64) -> []i64 {
     ref table := vec_slice($Table, world.tables)[q.table]
-    position := column_position(table.mask, mask)
+    position := column_position(table.mask, component)
     ref column := vec_slice($Column, table.columns)[position]
     column_added(column)
 }
 
 // The same question about one entity, for code holding a handle rather than
 // walking a table.
-ecs_changed_since :: fn(world: World, entity: Entity, mask: i64,
+ecs_changed_since :: fn(world: World, entity: Entity, component: i64,
     since: i64) -> bool {
-    if (ecs_has(world, entity, mask) == false) {
+    if (ecs_has(world, entity, component) == false) {
         return false
     }
     slot := vec_slice($EntitySlot, world.slots)[entity.id]
     ref table := vec_slice($Table, world.tables)[slot.table]
-    position := column_position(table.mask, mask)
+    position := column_position(table.mask, component)
     ref column := vec_slice($Column, table.columns)[position]
     column_changed(column)[slot.row] > since
 }
 
-ecs_added_since :: fn(world: World, entity: Entity, mask: i64,
+ecs_added_since :: fn(world: World, entity: Entity, component: i64,
     since: i64) -> bool {
-    if (ecs_has(world, entity, mask) == false) {
+    if (ecs_has(world, entity, component) == false) {
         return false
     }
     slot := vec_slice($EntitySlot, world.slots)[entity.id]
     ref table := vec_slice($Table, world.tables)[slot.table]
-    position := column_position(table.mask, mask)
+    position := column_position(table.mask, component)
     ref column := vec_slice($Column, table.columns)[position]
     column_added(column)[slot.row] > since
 }
@@ -1040,33 +1185,39 @@ events_read :: fn($T: Type, e: Events, mut r: EventReader) -> []T {
 // inside folds to a direct one and nothing is reached through a pointer. There
 // is one of these per number of components a body takes.
 for_each1 :: fn($A: Type, $body: fn(mut []A, i64), mut world: World,
-    a_mask: i64) {
-    mut q := query_begin(world, a_mask)
+    a: i64) {
+    mut q := query_begin(world)
+    query_with(q, a)
     while (query_next(world, q)) {
-        mut a := query_column($A, world, q, a_mask)
-        body(a, q.count)
+        mut items := query_column($A, world, q, a)
+        body(items, q.count)
     }
 }
 
 for_each2 :: fn($A: Type, $B: Type, $body: fn(mut []A, mut []B, i64),
-    mut world: World, a_mask: i64, b_mask: i64) {
-    mut q := query_begin(world, a_mask | b_mask)
+    mut world: World, a: i64, b: i64) {
+    mut q := query_begin(world)
+    query_with(q, a)
+    query_with(q, b)
     while (query_next(world, q)) {
-        mut a := query_column($A, world, q, a_mask)
-        mut b := query_column($B, world, q, b_mask)
-        body(a, b, q.count)
+        mut first := query_column($A, world, q, a)
+        mut second := query_column($B, world, q, b)
+        body(first, second, q.count)
     }
 }
 
 for_each3 :: fn($A: Type, $B: Type, $C: Type,
     $body: fn(mut []A, mut []B, mut []C, i64), mut world: World,
-    a_mask: i64, b_mask: i64, c_mask: i64) {
-    mut q := query_begin(world, a_mask | b_mask | c_mask)
+    a: i64, b: i64, c: i64) {
+    mut q := query_begin(world)
+    query_with(q, a)
+    query_with(q, b)
+    query_with(q, c)
     while (query_next(world, q)) {
-        mut a := query_column($A, world, q, a_mask)
-        mut b := query_column($B, world, q, b_mask)
-        mut c := query_column($C, world, q, c_mask)
-        body(a, b, c, q.count)
+        mut first := query_column($A, world, q, a)
+        mut second := query_column($B, world, q, b)
+        mut third := query_column($C, world, q, c)
+        body(first, second, third, q.count)
     }
 }
 
@@ -1598,7 +1749,9 @@ test "a query visits the tables holding every component it asks for" {
         TestPosition { x = 100.0, y = 100.0 })
 
     mut seen : i64 = 0
-    mut q := query_begin(world, position | velocity)
+    mut q := query_begin(world)
+    query_with(q, position)
+    query_with(q, velocity)
     while (query_next(world, q)) {
         seen = seen + q.count
     }
@@ -1607,7 +1760,8 @@ test "a query visits the tables holding every component it asks for" {
     // And a query over the position alone finds both, in two tables.
     mut tables : i64 = 0
     mut total : i64 = 0
-    mut all := query_begin(world, position)
+    mut all := query_begin(world)
+    query_with(all, position)
     while (query_next(world, all)) {
         tables = tables + 1
         total = total + all.count
@@ -1649,7 +1803,8 @@ test "the cursor form reaches the entity beside its components" {
     a := ecs_spawn(world)
     ecs_add($TestHealth, world, a, health, TestHealth { points = 7 })
     mut found : i64 = 0
-    mut q := query_begin(world, health)
+    mut q := query_begin(world)
+    query_with(q, health)
     while (query_next(world, q)) {
         entities := query_entities(world, q)
         mut points := query_column($TestHealth, world, q, health)
@@ -1680,7 +1835,8 @@ test "a tag marks an entity without moving it" {
     assert(tag_has(selected, b) == false)
     // Both are still in the one table.
     mut tables : i64 = 0
-    mut q := query_begin(world, position)
+    mut q := query_begin(world)
+    query_with(q, position)
     while (query_next(world, q)) {
         tables = tables + 1
     }
@@ -1755,7 +1911,8 @@ test "a query hands over the write times beside the components" {
     ecs_set($TestHealth, world, b, health, TestHealth { points = 20 })
 
     mut touched : i64 = 0
-    mut q := query_begin(world, health)
+    mut q := query_begin(world)
+    query_with(q, health)
     while (query_next(world, q)) {
         stamps := query_changed(world, q, health)
         points := query_column($TestHealth, world, q, health)
@@ -1950,7 +2107,7 @@ test "a world asked to keep a log says what changed structurally" {
     assert(slice_len(held) == 4)
     assert(held[0].kind == ChangeKind::Spawn)
     assert(held[1].kind == ChangeKind::Add)
-    assert(held[1].mask == health)
+    assert(held[1].component == health)
     assert(held[2].kind == ChangeKind::Remove)
     assert(held[3].kind == ChangeKind::Despawn)
     assert(held[3].entity.id == a.id)
@@ -1968,7 +2125,8 @@ test "a change made during a walk is queued and applied after it" {
     ecs_add($TestHealth, world, b, health, TestHealth { points = 0 })
 
     mut queued := commands_new()
-    mut q := query_begin(world, health)
+    mut q := query_begin(world)
+    query_with(q, health)
     while (query_next(world, q)) {
         entities := query_entities(world, q)
         points := query_column($TestHealth, world, q, health)
@@ -2180,7 +2338,8 @@ test "many entities live at once" {
     }
     assert(ecs_count(world) == 200)
     mut seen : i64 = 0
-    mut q := query_begin(world, health)
+    mut q := query_begin(world)
+    query_with(q, health)
     while (query_next(world, q)) {
         seen = seen + q.count
     }
@@ -2192,32 +2351,129 @@ test "many entities live at once" {
 // The registry
 // ---------------------------------------------------------------------------
 
-test "components are given the bits in the order they registered" {
+test "components are given their indices in the order they registered" {
     mut world := ecs_new()
     first := ecs_register($TestPosition, world)
     second := ecs_register($TestVelocity, world)
     third := ecs_register($TestHealth, world)
-    assert(first == 1)
-    assert(second == 2)
-    assert(third == 4)
+    assert(first == 0)
+    assert(second == 1)
+    assert(third == 2)
     assert(ecs_component_size(world, first) == sizeof(TestPosition))
     assert(ecs_component_size(world, third) == sizeof(TestHealth))
-    // A mask nothing registered has no width.
-    assert(ecs_component_size(world, 1 << 40) == 0)
+    // A component nothing registered has no width.
+    assert(ecs_component_size(world, 40) == 0)
     ecs_free(world)
 }
 
-test "a component past the ceiling is refused rather than given a bit" {
+test "a component past the ceiling is refused rather than given an index" {
     mut world := ecs_new()
     mut registered : i64 = 0
     while (registered < MAX_COMPONENTS) {
-        assert(ecs_register($TestHealth, world) != 0)
+        assert(ecs_register($TestHealth, world) >= 0)
         registered = registered + 1
     }
-    // Zero is the mask that names nothing, which is what says there was no bit
-    // left to give.
-    assert(ecs_register($TestHealth, world) == 0)
+    // -1 names no component, which is what says there was none left to give.
+    assert(ecs_register($TestHealth, world) == 0 - 1)
     ecs_free(world)
+}
+
+// A world past the old ceiling of 64, which is the number a real program
+// reaches. The last component registered behaves like the first: it takes a
+// column, moves an entity to its own table, and reads back.
+test "a component past the sixty-fourth still works" {
+    mut world := ecs_new()
+    mut registered : i64 = 0
+    while (registered < 200) {
+        ecs_register($TestHealth, world)
+        registered = registered + 1
+    }
+    late := ecs_register($TestHealth, world)
+    assert(late == 200)
+    a := ecs_spawn(world)
+    ecs_add($TestHealth, world, a, late, TestHealth { points = 9 })
+    assert(ecs_has(world, a, late))
+    assert(ecs_get($TestHealth, world, a, late).points == 9)
+    // And a query finds it, which is the mask test over four words rather than
+    // one.
+    mut q := query_begin(world)
+    query_with(q, late)
+    mut seen : i64 = 0
+    while (query_next(world, q)) {
+        seen = seen + q.count
+    }
+    assert(seen == 1)
+    ecs_free(world)
+}
+
+// Two components in different words of the mask, so the table test and the
+// column position both cross a word boundary.
+test "components in different mask words share a table" {
+    mut world := ecs_new()
+    mut registered : i64 = 0
+    while (registered < 70) {
+        ecs_register($TestHealth, world)
+        registered = registered + 1
+    }
+    low := ecs_register($TestPosition, world)
+    mut more : i64 = 0
+    while (more < 60) {
+        ecs_register($TestHealth, world)
+        more = more + 1
+    }
+    high := ecs_register($TestVelocity, world)
+    assert(low < 128)
+    assert(high >= 128)
+    a := ecs_spawn(world)
+    ecs_add($TestPosition, world, a, low, TestPosition { x = 1, y = 2 })
+    ecs_add($TestVelocity, world, a, high, TestVelocity { x = 3, y = 4 })
+    assert(ecs_get($TestPosition, world, a, low).x == 1)
+    assert(ecs_get($TestVelocity, world, a, high).y == 4)
+    mut q := query_begin(world)
+    query_with(q, low)
+    query_with(q, high)
+    mut seen : i64 = 0
+    while (query_next(world, q)) {
+        seen = seen + q.count
+    }
+    assert(seen == 1)
+    ecs_free(world)
+}
+
+// The mask itself, as its own unit: setting, clearing, covering and
+// disjointness across the word boundary.
+test "a mask holds bits across its words" {
+    empty := mask_empty()
+    assert(mask_is_empty(empty))
+    assert(mask_has(empty, 0) == false)
+
+    low := mask_with(empty, 3)
+    both := mask_with(low, 200)
+    assert(mask_has(both, 3))
+    assert(mask_has(both, 200))
+    assert(mask_has(both, 4) == false)
+    assert(mask_is_empty(both) == false)
+
+    cleared := mask_without(both, 200)
+    assert(mask_has(cleared, 3))
+    assert(mask_has(cleared, 200) == false)
+    // Clearing a bit that is not set changes nothing.
+    assert(mask_has(mask_without(cleared, 200), 3))
+
+    assert(mask_covers(both, low))
+    assert(mask_covers(low, both) == false)
+    assert(mask_covers(both, both))
+    assert(mask_disjoint(low, mask_with(empty, 200)))
+    assert(mask_disjoint(both, mask_with(empty, 200)) == false)
+
+    joined := mask_or(low, mask_with(empty, 200))
+    assert(mask_equal(joined, both))
+    assert(mask_equal(joined, low) == false)
+
+    // The column position counts the bits below, across words.
+    assert(bits_below(both, 3) == 0)
+    assert(bits_below(both, 200) == 1)
+    assert(bits_below(mask_with(both, 100), 200) == 2)
 }
 
 // ---------------------------------------------------------------------------
@@ -2329,7 +2585,8 @@ test "a query over a world with nothing in it visits nothing" {
     mut world := ecs_new()
     health := ecs_register($TestHealth, world)
     mut visits : i64 = 0
-    mut q := query_begin(world, health)
+    mut q := query_begin(world)
+    query_with(q, health)
     while (query_next(world, q)) {
         visits = visits + 1
     }
@@ -2340,7 +2597,8 @@ test "a query over a world with nothing in it visits nothing" {
     ecs_add($TestHealth, world, a, health, TestHealth { points = 1 })
     ecs_despawn(world, a)
     mut again : i64 = 0
-    mut second := query_begin(world, health)
+    mut second := query_begin(world)
+    query_with(second, health)
     while (query_next(world, second)) {
         again = again + 1
     }
@@ -2358,7 +2616,8 @@ test "the entities a query hands over line up with its columns" {
         made = made + 1
     }
     mut checked : i64 = 0
-    mut q := query_begin(world, health)
+    mut q := query_begin(world)
+    query_with(q, health)
     while (query_next(world, q)) {
         entities := query_entities(world, q)
         points := query_column($TestHealth, world, q, health)

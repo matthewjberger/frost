@@ -533,6 +533,13 @@ check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64,
 // conversion and gets it.
 check_flags_operator :: fn(mut p: Parser, op: i64, left: i64, right: i64,
     at: i64) {
+    // A program with no flags declaration cannot break this rule, and asking
+    // for both operand types is not free: deriving the type of a call is what
+    // instantiates the generic it names. So the question is not asked at all
+    // unless there is a set of bits in the program to ask it about.
+    if (p.flag_bits.count == 0) {
+        return
+    }
     left_ty := type_of(p, left)
     right_ty := type_of(p, right)
     mut named := left_ty
