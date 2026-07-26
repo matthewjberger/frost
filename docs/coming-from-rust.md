@@ -764,16 +764,35 @@ pointer in what you write. See chapter 12.1 of [spec.md](spec.md).
 ## Compile-time evaluation
 
 Frost has no general compile-time interpreter and no macros. The compile-time
-machinery is `sizeof(T)` as a constant and monomorphization, which is driven by
-four kinds of `$` parameter: a type (`$T: Type`), an integer (`$N: usize`, which
-is Rust's const generics as values and is what sizes a `[N]T` field), a function
-(`$f: fn(..) -> ..`), and a capability bundle (`$ops: Ordering<T>`). All three work on functions as well as structs, so
-an operation over a sized aggregate is written once rather than once per size,
-and unlike Rust's const generics the integer is usable as a plain value in the
-body rather than only in a type. A generic function or struct is stamped out once
-per distinct set of those arguments at the call site (chapter 11 of the spec),
-the way Rust monomorphizes generics. That is the whole of it. There is nothing
-here that corresponds to `const fn` or macro expansion.
+machinery is `sizeof(T)` as a constant and monomorphization, driven by five
+kinds of `$` parameter: a type (`$T: Type`), an integer (`$N: usize`, which is
+Rust's const generics as values and is what sizes a `[N]T` field), a function
+(`$f: fn(..) -> ..`), a capability bundle (`$ops: Ordering<T>`), and a list of
+arguments (`args: $...`). They work on functions as well as structs, so an
+operation over a sized aggregate is written once rather than once per size, and
+unlike Rust's const generics the integer is usable as a plain value in the body
+rather than only in a type. A generic is stamped out once per distinct set of
+those arguments at the call site (chapter 11 of the spec), the way Rust
+monomorphizes generics.
+
+A list is what a variadic macro is reached for in Rust, without being a macro. A
+`for` over one unrolls, `list[K]` names an element, and an `if` over a type
+predicate keeps the branch that survives for that element:
+
+```frost
+printall :: fn(args: $...) {
+    for value in args { print value }
+}
+
+printall(1, 2.5, 9)
+```
+
+What is deliberately missing is everything that would make this a language of
+its own: no compile-time string parsing, no recursion, no unbounded loop, and
+nothing that reads the world. Every construct walks a list whose length the call
+fixed, so expansion costs what the program's text costs. There is nothing here
+that corresponds to `const fn`, and nothing that corresponds to a procedural
+macro.
 
 ## Calling C
 

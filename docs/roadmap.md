@@ -121,10 +121,9 @@ found for you.
 **Folding duplicate specializations across objects.** See the Cranelift note
 above. It is measurable, and it is not measured to matter.
 
-**Compile-time argument packs.** `args: $...` with an expansion-time `for` and
-`if`, on top of the format expansion the compiler already does at a call. It is
-built in the bootstrap and not shipped, because a language feature that only one
-of the two compilers has is not a language feature. What blocks the other one is
-that the self-hosted compiler discovers instantiations without local types in
-scope, so a pack's shape at a call cannot be read there yet; the fix is a
-discovery walk that maintains locals the way `check_types` does.
+**Anything that would make expansion a language of its own.** A compile-time
+list (spec 11.1c) unrolls a `for`, names an element, and answers an `if` over a
+type predicate, and that is the whole of it. No compile-time string parsing, no
+recursion, no unbounded loop, and nothing that reads the world: every construct
+walks a list whose length the call fixed, so what expansion costs is bounded by
+the program's own text.

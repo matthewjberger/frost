@@ -3,7 +3,8 @@
 import "core.frost"
 import "lexer.frost"
 
-export advance, cur, cur_len, cur_off, cur_val, peek_kind, peek_is_word
+export advance, cur, cur_len, cur_off, cur_val, peek_kind, peek_is_word,
+    peek_off, peek_len
 
 // Whether the token `offset` ahead is written as the given word. Reading a
 // token's spelling rather than its kind is how a word that is not a keyword,
@@ -23,6 +24,24 @@ peek_kind :: fn(mut p: Parser, offset: i64) -> TokenKind {
         return TokenKind::Eof
     }
     arena_at(p.tokens, index).kind
+}
+
+// The source range of the token `offset` ahead, for a construct decided by
+// looking at several tokens at once rather than by consuming them.
+peek_off :: fn(mut p: Parser, offset: i64) -> i64 {
+    index := p.ti + offset
+    if (index >= p.tokens.count) {
+        return 0
+    }
+    arena_at(p.tokens, index).off
+}
+
+peek_len :: fn(mut p: Parser, offset: i64) -> i64 {
+    index := p.ti + offset
+    if (index >= p.tokens.count) {
+        return 0
+    }
+    arena_at(p.tokens, index).len
 }
 
 cur :: fn(mut p: Parser) -> TokenKind {

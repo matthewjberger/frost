@@ -98,6 +98,7 @@ pub enum Token {
     Unsafe,
     Uses,
     Where,
+    Ellipsis,
     While,
     With,
 }
@@ -195,6 +196,7 @@ impl Display for Token {
             Unsafe => "unsafe".to_string(),
             Uses => "uses".to_string(),
             Where => "where".to_string(),
+            Ellipsis => "...".to_string(),
             While => "while".to_string(),
             With => "with".to_string(),
         };
@@ -457,6 +459,9 @@ impl<'a> Lexer<'a> {
                     if self.peek_nth(0) == '=' {
                         self.read_char();
                         DotDotEqual
+                    } else if self.peek_nth(0) == '.' {
+                        self.read_char();
+                        Ellipsis
                     } else {
                         DotDot
                     }

@@ -433,6 +433,47 @@ main :: fn() -> i64 {
 }
 ```
 
+## A compile-time list of arguments
+
+A parameter written `args: $...` takes as many arguments as the call gives it,
+of whatever types they are:
+
+```frost
+printall :: fn(args: $...) {
+    for value in args {
+        print value
+    }
+}
+
+main :: fn() -> i64 {
+    printall(1, 2.5, 9)
+    0
+}
+```
+
+The `for` is not a loop. The body is compiled once per element with `value`
+standing for that element, so what runs is three `print`s of three different
+types. `args[0]` names the first element, and the index has to be a literal
+because which element it is has to be known while the body is expanded.
+
+Inside a specialization, an `if` over what a type is gets its answer at
+expansion time, and the branch that cannot run is dropped before anything checks
+it:
+
+```frost
+show :: fn(args: $...) {
+    for value in args {
+        if (is_float(value)) { print 1 } else { print 0 }
+        print value
+    }
+}
+```
+
+That is what lets one body serve elements of different types. There is no
+compile-time string parsing, no recursion and no unbounded loop: everything here
+walks a list whose length the call fixed, so expansion costs what the program's
+own text costs and no more.
+
 ## Arrays are bounds-checked
 
 A fixed-size array `[N]T` knows its length, and every index is checked:

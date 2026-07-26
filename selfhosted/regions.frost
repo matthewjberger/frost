@@ -38,35 +38,7 @@ export check_borrow_exclusivity, check_calls, check_export_collisions,
 
 // One predicate against one type. -1 says the name is not one of the bounds.
 bound_predicate :: fn(mut p: Parser, off: i64, len: i64, ty: i64) -> i64 {
-    if (str_range_eq(p.src, off, len, "is_numeric")) {
-        if (is_integer(ty) || is_float(ty)) { return 1 }
-        return 0
-    }
-    if (str_range_eq(p.src, off, len, "is_integer")) {
-        if (is_integer(ty)) { return 1 }
-        return 0
-    }
-    if (str_range_eq(p.src, off, len, "is_float")) {
-        if (is_float(ty)) { return 1 }
-        return 0
-    }
-    if (str_range_eq(p.src, off, len, "is_struct")) {
-        if (is_struct_ty(ty)) { return 1 }
-        return 0
-    }
-    if (str_range_eq(p.src, off, len, "is_array")) {
-        if (is_array_ty(ty) && is_slice_ty(p, ty) == false) { return 1 }
-        return 0
-    }
-    if (str_range_eq(p.src, off, len, "is_slice")) {
-        if (is_array_ty(ty) && is_slice_ty(p, ty)) { return 1 }
-        return 0
-    }
-    if (str_range_eq(p.src, off, len, "is_pointer")) {
-        if (is_pointer(ty)) { return 1 }
-        return 0
-    }
-    0 - 1
+    predicate_holds(p, off, len, ty)
 }
 
 // What a compile-time parameter of this generic is bound to at this call, or -1
@@ -254,7 +226,8 @@ check_types :: fn(mut p: Parser, head: i64) {
             arg := used.arg
             xstart := used.xarg_start
             xcount := used.xarg_count
-            if (instance_fits(p, gi, arg, xstart, xcount)) {
+            is_pack := used.is_pack
+            if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack)) {
                 instance := parse_generic_instance(p, gi, arg, xstart, xcount)
                 // The return type worked out for this instance. The template's
                 // own still names its parameters.
@@ -1806,7 +1779,12 @@ check_unsafety :: fn(mut p: Parser) {
         kind := node.kind
         mut gated : i64 = 0
         mut what : ^i8 = ""
-        if (kind == NodeKind::Deref) {
+        // A borrow was proven safe where it formed, and a `mut` parameter of a
+        // scalar type is one: the body reads and writes the caller's value
+        // through it. Such a read is marked where the parser makes it, since
+        // this walk has no local types in hand. Only a raw pointer is
+        // unchecked.
+        if (kind == NodeKind::Deref && node.val != 1) {
             gated = 1
             what = "reading through a raw pointer"
         }
@@ -1939,6 +1917,13 @@ check_calls :: fn(mut p: Parser) {
             mut is_supplied : bool = false
             if (defined == 0) {
                 is_supplied = names_cfn_param(p, name_off, name_len)
+                // A type predicate is a question the compiler answers where the
+                // body is expanded, not a function. It survives in a template's
+                // own parse, which nothing emits, and is gone from every
+                // instance.
+                if (is_type_predicate(p.src, name_off, name_len)) {
+                    is_supplied = true
+                }
             }
             if (defined == 0 && callee_proc < 0 && is_columns_new == false
                 && is_supplied == false) {
@@ -1957,6 +1942,12 @@ check_calls :: fn(mut p: Parser) {
                 expected = count_params(p, params) - sym.cap_count
             }
             got := count_args(p, args)
+            // A compile-time list takes every argument past the parameters
+            // written before it, so a call to one gives as many as it likes and
+            // the count says nothing.
+            if (takes_pack(p, fn_index)) {
+                expected = got
+            }
             if (expected != got && is_supplied == false) {
                 report_where(p.modules, p.src, name_off)
                 report("'")

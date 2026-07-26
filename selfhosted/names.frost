@@ -25,7 +25,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     new_func_node, new_index, new_let_node, new_named_node, new_node,
     new_struct_lit, new_type_node, new_unary, node_next, pointee,
     record_generic_fn, register_const, set_field_next, set_next, set_params,
-    cap_at, cap_count_of,
+    cap_at, cap_count_of, pack_element_name, alias_for, push_alias,
     set_ret_type, set_uses, struct_index_of, synth_capability_name,
     synth_join, synth_literal, synth_numbered, type_code_for
 
@@ -297,7 +297,7 @@ append_node :: fn(mut p: Parser, head: i64, extra: i64) -> i64 {
 record_generic_fn :: fn(mut p: Parser, fn_index: i64, tparam_off: i64,
     tparam_len: i64, tparam_is_value: i64, tparam_is_fn: i64,
     xparam_start: i64, xparam_count: i64, token_start: i64,
-    bound_token: i64) {
+    bound_token: i64, pack_off: i64, pack_len: i64, pack_fixed: i64) {
     arena_push(
         p.generic_fns,
         GenericFn { fn_index = fn_index, tparam_off = tparam_off,
@@ -305,8 +305,74 @@ record_generic_fn :: fn(mut p: Parser, fn_index: i64, tparam_off: i64,
             tparam_is_fn = tparam_is_fn,
             xparam_start = xparam_start,
             xparam_count = xparam_count, token_start = token_start,
-            bound_token = bound_token },
+            bound_token = bound_token, pack_off = pack_off,
+            pack_len = pack_len, pack_fixed = pack_fixed },
     )
+}
+
+// The name a compile-time list's nth element takes: the list's own name, two
+// underscores and the position. It is a name the body can be read against and a
+// parameter the call fills once.
+pack_element_name :: fn(mut p: Parser, off: i64, len: i64,
+    index: i64) -> (start: i64, length: i64) {
+    start := p.synth_next
+    mut k : i64 = 0
+    while (k < len) {
+        unsafe {
+            frost_rt_byte_set(p.src, start + k, frost_rt_byte_at(p.src, off + k))
+        }
+        k = k + 1
+    }
+    unsafe { frost_rt_byte_set(p.src, start + len, CH_UNDERSCORE) }
+    unsafe { frost_rt_byte_set(p.src, start + len + 1, CH_UNDERSCORE) }
+    digits := digits_in(index)
+    mut scale : i64 = 1
+    mut left : i64 = 1
+    while (left < digits) {
+        scale = scale * 10
+        left = left + 1
+    }
+    mut value := index
+    mut written : i64 = 0
+    while (written < digits) {
+        digit := value / scale
+        unsafe {
+            frost_rt_byte_set(p.src, start + len + 2 + written, CH_0 + digit)
+        }
+        value = value - digit * scale
+        scale = scale / 10
+        written = written + 1
+    }
+    total := len + 2 + digits
+    unsafe { frost_rt_byte_set(p.src, start + total, 0) }
+    p.synth_next = start + total + 1
+    return start, total
+}
+
+// Bind one name to another while a body is read again, and answer the height to
+// restore afterwards.
+push_alias :: fn(mut p: Parser, from_off: i64, from_len: i64, to_off: i64,
+    to_len: i64) -> i64 {
+    mark := p.aliases.count
+    arena_push(p.aliases, Alias { from_off = from_off, from_len = from_len,
+        to_off = to_off, to_len = to_len })
+    mark
+}
+
+// The name in force for a name being read, following the aliases a compile-time
+// `for` put there. The most recent wins, so a nested loop shadows an outer one.
+alias_for :: fn(mut p: Parser, off: i64, len: i64) -> (start: i64,
+    length: i64) {
+    mut i : i64 = p.aliases.count
+    while (i > 0) {
+        i = i - 1
+        held := arena_at(p.aliases, i)
+        if (held.from_len == len
+            && bytes_equal(p.src, held.from_off, off, len)) {
+            return held.to_off, held.to_len
+        }
+    }
+    return off, len
 }
 
 // Register `name :: value` in the constant table. Duplicate names are harmless

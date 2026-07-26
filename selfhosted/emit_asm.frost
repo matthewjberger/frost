@@ -1291,7 +1291,17 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     mut i : i64 = value_count - 1
     while (i >= 0) {
         argument := nth_value_arg(p, args, i)
-        emit_asm_expr(p, argument)
+        // A parameter that borrows what it is given takes an address, and a
+        // scalar in a slot is not one until it is taken. An aggregate already
+        // travels as its address, so naming one is enough.
+        arg_ty := type_of(p, argument)
+        if (nth_param_auto_borrows(p, params_of_call, i)
+            && is_pointer(arg_ty) == false
+            && is_aggregate(arg_ty) == false) {
+            emit_asm_addr(p, argument)
+        } else {
+            emit_asm_expr(p, argument)
+        }
         // A specialization's parameters carry no width, so nothing is
         // converted into one. Everywhere else the callee's declared type is
         // what the value has to arrive as.
@@ -1465,7 +1475,7 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     if (indirect == 1) {
         emit_text("*%r11")
     } else if (generic_fn_of(p, fn_index) >= 0) {
-        arg := call_type_args(p, args)
+        arg := call_args_for(p, args, fn_index)
         emit_asm_mono_name(p, fn_index, arg, p.call_xarg_start,
             p.call_xarg_count)
     } else {
@@ -2185,7 +2195,8 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
             arg := used.arg
             xstart := used.xarg_start
             xcount := used.xarg_count
-            if (instance_fits(p, gi, arg, xstart, xcount)) {
+            is_pack := used.is_pack
+            if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack)) {
                 node := parse_generic_instance(p, gi, arg, xstart, xcount)
                 ret := p.last_return_type
                 emit_asm_mono_function(p, node, arg, xstart, xcount, ret)
