@@ -74,18 +74,20 @@ The pieces, in the order they unlock each other:
    | build | |
    | --- | --- |
    | whole program | ~1,500 ms |
-   | incremental, first build | ~1,600 ms |
+   | incremental, first build | ~1,060 ms |
    | incremental, nothing changed | ~330 ms |
 
-   The first build costs a little more, since fourteen assembler runs cost more
-   than one, and every build after it costs a quarter. The compiler it produces
-   is byte for byte the one the whole-program build produces, which a test
-   checks rather than a claim.
-4. **Parallel code generation.** The type system is local and signature-based,
-   so once signatures are collected, functions are independent. That is a large
-   part of why the language is shaped the way it is. Still to do: the self-hosted
-   compiler has one emit target at a time, so this waits on emitting a unit into
-   memory rather than straight to the file.
+   Even a first build is faster than the whole-program one, because the
+   assembler runs go out at once, and every build after it costs a fifth. The
+   compiler it produces is byte for byte the one the whole-program build
+   produces, which a test checks rather than a claim.
+4. **Parallel work.** Partly done, and the part that pays. The assembler runs
+   go out together, one OS thread each, which halves a first build: the
+   machine-code step is where a build's time is, not the compiler. The type
+   system is local and signature-based, so emitting could be parallel too, but
+   the compiler writes straight to one file at a time and emitting is 150 ms of
+   a 1,060 ms build, so buffering a unit in memory to parallelize it would be
+   work spent where the time is not.
 
 Everything else the two compilers are held to is done: they accept the same
 language, and what says so is a suite of programs run through both rather than a
