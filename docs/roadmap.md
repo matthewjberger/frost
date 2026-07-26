@@ -58,18 +58,34 @@ took the assembly backend from 612 ms to 122 ms on this source.
 
 The pieces, in the order they unlock each other:
 
-1. **Per-module objects.** A module is already a compilation unit in the
-   bootstrap: its interface is its `export` line, and a specialization is
-   emitted in the module that instantiates it. The self-hosted compiler splices
-   every module into one AST and emits one translation unit.
-2. **A build cache keyed by module identity.** `module_tag_of` hashes what a
-   module is rather than where it sat in a traversal, which is what makes a
-   cache key possible at all.
-3. **`--incremental`.** Rebuild a module when its own source or an imported
-   interface changes, and not otherwise.
-4. **Parallel code generation.** The type system is local and
-   signature-based, so once signatures are collected, functions are independent.
-   That is a large part of why the language is shaped the way it is.
+1. **Per-module objects.** Done. `--incremental` emits one assembly unit per
+   module and assembles each to its own object. A function goes to the module
+   that declared it, a specialization to the module that declared its template,
+   and a string or a float to the module whose source wrote it, all decided by
+   comparing an offset against the module's range in the one source buffer.
+2. **A build cache.** Done, and smaller than it was going to be. The cache key
+   is the emitted assembly itself: the compiler has just written what a module
+   compiles to, so whether that module's object is stale is a comparison of
+   those bytes against last build's. No source hash, no interface fingerprint,
+   no dependency graph, because the answer is already in hand. The C runtime is
+   cached the same way, since it is a compilation unit like any other.
+3. **`--incremental`.** Done, `just bench-selfhost-incremental`:
+
+   | build | |
+   | --- | --- |
+   | whole program | ~1,500 ms |
+   | incremental, first build | ~1,600 ms |
+   | incremental, nothing changed | ~330 ms |
+
+   The first build costs a little more, since fourteen assembler runs cost more
+   than one, and every build after it costs a quarter. The compiler it produces
+   is byte for byte the one the whole-program build produces, which a test
+   checks rather than a claim.
+4. **Parallel code generation.** The type system is local and signature-based,
+   so once signatures are collected, functions are independent. That is a large
+   part of why the language is shaped the way it is. Still to do: the self-hosted
+   compiler has one emit target at a time, so this waits on emitting a unit into
+   memory rather than straight to the file.
 
 Everything else the two compilers are held to is done: they accept the same
 language, and what says so is a suite of programs run through both rather than a

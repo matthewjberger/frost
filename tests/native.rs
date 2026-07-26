@@ -10483,6 +10483,91 @@ fn self_hosted_writes_through_a_mut_scalar_parameter() {
     assert_eq!(via_c, output, "the self-hosted C backend disagrees");
 }
 
+// The self-hosted compiler's incremental build: one object per module, and a
+// module whose emitted assembly is byte for byte the last build's is not
+// assembled again. What comes out has to be the same program as the
+// whole-program build, or the cache is not a cache but a second compiler.
+#[test]
+fn the_self_hosted_incremental_build_is_the_same_program() {
+    let Some(compiler) = build_self_hosted_compiler("incremental") else {
+        return;
+    };
+    if !linker_available() {
+        return;
+    }
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let runtime = format!("{}/runtime/frost_runtime.c", root.display());
+    let directory = std::env::temp_dir().join(unique("frost_incremental"));
+    let _ = std::fs::create_dir_all(&directory);
+    let source = directory.join("program.frost");
+    std::fs::write(
+        &source,
+        "helper :: fn(n: i64) -> i64 { n * 3 }\n\
+         main :: fn() -> i64 { print helper(7)  0 }\n",
+    )
+    .unwrap();
+    let build = directory.join("build");
+    let exe = directory.join(format!("out{}", std::env::consts::EXE_SUFFIX));
+
+    let run = |exe: &std::path::Path, build: &std::path::Path| {
+        Command::new(&compiler)
+            .arg("--incremental")
+            .arg("--build-dir")
+            .arg(build)
+            .arg("-o")
+            .arg(exe)
+            .arg(&source)
+            .env("FROST_RUNTIME", &runtime)
+            .env("FROST_CHECK_UNSAFE", "0")
+            .output()
+            .unwrap()
+    };
+
+    let first = run(&exe, &build);
+    assert!(
+        first.status.success(),
+        "the incremental build failed:\n{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let output = Command::new(&exe).output().unwrap();
+    let printed =
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    assert_eq!(printed, "21\n");
+
+    // Again with nothing changed: every object is reused, and the program it
+    // links is the same one.
+    let again = run(&exe, &build);
+    assert!(
+        again.status.success(),
+        "the second incremental build failed:\n{}",
+        String::from_utf8_lossy(&again.stderr)
+    );
+    let output = Command::new(&exe).output().unwrap();
+    let printed =
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    assert_eq!(printed, "21\n");
+
+    // And after an edit, which has to reach the executable.
+    std::fs::write(
+        &source,
+        "helper :: fn(n: i64) -> i64 { n * 4 }\n\
+         main :: fn() -> i64 { print helper(7)  0 }\n",
+    )
+    .unwrap();
+    let edited = run(&exe, &build);
+    assert!(
+        edited.status.success(),
+        "the incremental rebuild failed:\n{}",
+        String::from_utf8_lossy(&edited.stderr)
+    );
+    let output = Command::new(&exe).output().unwrap();
+    let printed =
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    assert_eq!(printed, "28\n");
+
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
 // A compile-time argument list. `args: $...` takes as many arguments as the
 // call gives it, of whatever types they are, and the specialization takes one
 // ordinary parameter per element. A `for` over the list unrolls into one copy

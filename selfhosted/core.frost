@@ -764,6 +764,11 @@ Parser :: struct {
     // How much of the frame the locals recorded so far take, which is what
     // gives the next one its slot.
     frame_used: i64,
+    // Which module is being emitted, or -1 for the whole program in one unit.
+    // A build that compiles each module to its own object emits one unit per
+    // module, and a specialization goes in every unit that could call it, as a
+    // symbol local to that unit so the copies do not collide at the link.
+    emit_module: i64,
     // What each name binds while the declaration around it is being parsed.
     // Only what a compile-time list is given is read from here, and only at the
     // call that gives it, since that is the one question whose answer has to be

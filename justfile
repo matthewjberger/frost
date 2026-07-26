@@ -318,6 +318,21 @@ bench-selfhost: selfhost-build
     cargo build -r -q -p frost --bin frost
     $file = if ($env:FROST_BENCH) { $env:FROST_BENCH } else { "selfhosted/frost.frost" }; $dir = Split-Path -Parent $file; if (-not $dir) { $dir = "." }; $lines = (Get-Content (Join-Path $dir "*.frost") | Measure-Object -Line).Lines; "{0}, {1} lines" -f $file, $lines; $boot = (Measure-Command { ./target/release/frost.exe --emit-c -o "$env:TEMP/bench.c" $file }).TotalMilliseconds; $env:FROST_INPUT = $file; $env:FROST_BACKEND = $null; $shc = (Measure-Command { ./selfhosted/frost.exe -o "$env:TEMP/bench.c" }).TotalMilliseconds; $env:FROST_BACKEND = "asm"; $sha = (Measure-Command { ./selfhosted/frost.exe -o "$env:TEMP/bench.s" }).TotalMilliseconds; $env:FROST_BACKEND = $null; $env:FROST_INPUT = $null; "  {0,-22} {1,7:N0} ms  {2,8:N0} lines/sec" -f "bootstrap front end", $boot, ($lines / $boot * 1000); "  {0,-22} {1,7:N0} ms  {2,8:N0} lines/sec" -f "self-hosted C", $shc, ($lines / $shc * 1000); "  {0,-22} {1,7:N0} ms  {2,8:N0} lines/sec" -f "self-hosted assembly", $sha, ($lines / $sha * 1000)
 
+# Measures what the self-hosted compiler's --incremental saves (Windows)
+[windows]
+bench-selfhost-incremental: selfhost-build
+    Remove-Item -Recurse -Force "$env:TEMP/frost-sh-build" -ErrorAction Ignore; $whole = (Measure-Command { ./selfhosted/frost.exe --link -o "$env:TEMP/whole.exe" selfhosted/frost.frost }).TotalMilliseconds; $first = (Measure-Command { ./selfhosted/frost.exe --incremental --build-dir "$env:TEMP/frost-sh-build" -o "$env:TEMP/inc.exe" selfhosted/frost.frost }).TotalMilliseconds; $again = (Measure-Command { ./selfhosted/frost.exe --incremental --build-dir "$env:TEMP/frost-sh-build" -o "$env:TEMP/inc.exe" selfhosted/frost.frost }).TotalMilliseconds; "{0,-28} {1,7:N0} ms" -f "whole program", $whole; "{0,-28} {1,7:N0} ms" -f "incremental, first build", $first; "{0,-28} {1,7:N0} ms" -f "incremental, nothing changed", $again
+
+# Measures what the self-hosted compiler's --incremental saves (Unix)
+[unix]
+bench-selfhost-incremental: selfhost-build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rm -rf /tmp/frost-sh-build
+    echo "whole program:"; time ./selfhosted/frost --link -o /tmp/whole selfhosted/frost.frost
+    echo "incremental, first build:"; time ./selfhosted/frost --incremental --build-dir /tmp/frost-sh-build -o /tmp/inc selfhosted/frost.frost
+    echo "incremental, nothing changed:"; time ./selfhosted/frost --incremental --build-dir /tmp/frost-sh-build -o /tmp/inc selfhosted/frost.frost
+
 # Runs all tests
 test:
     cargo test -p frost -- --nocapture

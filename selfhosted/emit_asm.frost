@@ -2175,6 +2175,40 @@ emit_asm_test_main :: fn(mut p: Parser) {
     asm("ret")
 }
 
+// Whether a name written at `off` belongs to the unit being emitted. Everything
+// belongs to a whole-program unit; a per-module unit takes what the module it is
+// for wrote, which is a range of the one source buffer, so this is a comparison
+// rather than a search.
+emit_asm_here :: fn(mut p: Parser, off: i64) -> bool {
+    if (p.emit_module < 0) {
+        return true
+    }
+    entry := arena_at(p.modules, p.emit_module)
+    off >= entry.start && off < entry.finish
+}
+
+// Whether the function at `id` belongs to the unit being emitted.
+emit_asm_owns :: fn(mut p: Parser, id: i64) -> bool {
+    if (p.emit_module < 0) {
+        return true
+    }
+    node := arena_at(p.arena, id)
+    sym := arena_at(p.fns, node.val)
+    emit_asm_here(p, sym.off)
+}
+
+// Whether a generic's specializations belong to the unit being emitted. They go
+// with the template that stamped them out, once, under names of their own, and
+// every other unit calls them by those names.
+emit_asm_owns_generic :: fn(mut p: Parser, gfn_index: i64) -> bool {
+    if (p.emit_module < 0) {
+        return true
+    }
+    gfn := arena_at(p.generic_fns, gfn_index)
+    sym := arena_at(p.fns, gfn.fn_index)
+    emit_asm_here(p, sym.off)
+}
+
 emit_asm_program :: fn(mut p: Parser, head: i64) {
     asm(".text")
     mut id := head
@@ -2182,7 +2216,8 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
         node := arena_at(p.arena, id)
         kind := node.kind
         next_id := node.next
-        if (kind == NodeKind::Func && (node.c != 2 || p.testing == 1)) {
+        if (kind == NodeKind::Func && (node.c != 2 || p.testing == 1)
+            && emit_asm_owns(p, id)) {
             emit_asm_function(p, id)
         }
         id = next_id
@@ -2190,19 +2225,21 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
 
     mut gi : i64 = 0
     while (gi < p.generic_fns.count) {
-        mut ii : i64 = 0
-        while (ii < p.type_args.count) {
-            used := arena_at(p.type_args, ii)
-            arg := used.arg
-            xstart := used.xarg_start
-            xcount := used.xarg_count
-            is_pack := used.is_pack
-            if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack)) {
-                node := parse_generic_instance(p, gi, arg, xstart, xcount)
-                ret := p.last_return_type
-                emit_asm_mono_function(p, node, arg, xstart, xcount, ret)
+        if (emit_asm_owns_generic(p, gi)) {
+            mut ii : i64 = 0
+            while (ii < p.type_args.count) {
+                used := arena_at(p.type_args, ii)
+                arg := used.arg
+                xstart := used.xarg_start
+                xcount := used.xarg_count
+                is_pack := used.is_pack
+                if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack)) {
+                    node := parse_generic_instance(p, gi, arg, xstart, xcount)
+                    ret := p.last_return_type
+                    emit_asm_mono_function(p, node, arg, xstart, xcount, ret)
+                }
+                ii = ii + 1
             }
-            ii = ii + 1
         }
         gi = gi + 1
     }
@@ -2238,7 +2275,7 @@ emit_asm_strings :: fn(mut p: Parser) {
         kind := node.kind
         off := node.val
         len := node.c
-        if (kind == NodeKind::StrLit) {
+        if (kind == NodeKind::StrLit && emit_asm_here(p, off)) {
             emit_text(".Lstr")
             frost_rt_emit_int(i)
             emit_text(":\n")
@@ -2246,7 +2283,7 @@ emit_asm_strings :: fn(mut p: Parser) {
             emit_string_content(p.src, off, len)
             emit_text("\"\n")
         }
-        if (kind == NodeKind::Assert) {
+        if (kind == NodeKind::Assert && emit_asm_here(p, node.pos)) {
             emit_text(".Lpos")
             frost_rt_emit_int(i)
             emit_text(":\n")
@@ -2254,7 +2291,7 @@ emit_asm_strings :: fn(mut p: Parser) {
             emit_position(p.modules, p.src, node.pos)
             emit_text("\"\n")
         }
-        if (kind == NodeKind::Float) {
+        if (kind == NodeKind::Float && emit_asm_here(p, off)) {
             emit_text("    .align 8\n")
             emit_text(".Lflt")
             frost_rt_emit_int(i)

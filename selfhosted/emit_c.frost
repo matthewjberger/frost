@@ -182,6 +182,19 @@ emit_field_name :: fn(mut p: Parser, off: i64, len: i64) {
     emit_source(p.src, off, len)
 }
 
+// A local is written into C exactly as the source spells it, and Frost reserves
+// none of C's words, so a variable called `auto` or `register` would be a
+// syntax error there rather than a variable. Every place a local or parameter
+// name is written goes through this, which is what keeps a declaration and its
+// uses agreeing. An extern's name is not one of these: that name is the C
+// symbol being linked against and is written as it is.
+emit_local_name :: fn(mut p: Parser, off: i64, len: i64) {
+    if (is_c_keyword(p.src, off, len)) {
+        emit_text("frost_l_")
+    }
+    emit_source(p.src, off, len)
+}
+
 emit_struct_name :: fn(mut p: Parser, struct_index: i64) {
     def := arena_at(p.structs, struct_index)
     name_off := def.name_off
@@ -355,7 +368,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
                 report("'")
                 frost_rt_die()
             }
-            emit_source(p.src, off, len)
+            emit_local_name(p, off, len)
         }
         return
     }
@@ -705,7 +718,7 @@ emit_indirect_call :: fn(mut p: Parser, off: i64, len: i64, callee_node: i64,
         emit_expr(p, callee_node)
         emit_text(")")
     } else {
-        emit_source(p.src, off, len)
+        emit_local_name(p, off, len)
     }
     emit_text("))(")
     mut id := args
@@ -884,7 +897,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         }
         emit_ctype(p, ty)
         emit_text(" ")
-        emit_source(p.src, off, len)
+        emit_local_name(p, off, len)
         emit_text(" = ")
         emit_coerced(p, value, ty)
         emit_text(";\n")
@@ -1109,7 +1122,7 @@ emit_param_signature :: fn(mut p: Parser, head: i64) {
         }
         emit_ctype(p, ty)
         emit_text(" ")
-        emit_source(p.src, off, len)
+        emit_local_name(p, off, len)
         if (by_value) {
             emit_text("__v")
         }
@@ -1419,9 +1432,9 @@ emit_value_param_bindings :: fn(mut p: Parser, params: i64) {
             emit_text("    ")
             emit_ctype(p, ty)
             emit_text(" ")
-            emit_source(p.src, off, len)
+            emit_local_name(p, off, len)
             emit_text(" = &")
-            emit_source(p.src, off, len)
+            emit_local_name(p, off, len)
             emit_text("__v;\n")
         }
         index = index + 1
