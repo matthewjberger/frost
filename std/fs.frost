@@ -3,8 +3,14 @@
 // `str` and reports the same. The buffer a read returns is the caller's to
 // free with fs_free.
 //
+// A path is a `str` like any other text. C reads one until a NUL and a `str`
+// has none, so the terminator is added here, once, rather than promised by
+// every caller through a `^i8` the compiler cannot check.
+//
 // The extern calls are the unsafe floor, wrapped here so a program that reads
 // and writes files names none of them.
+
+import "mem.frost"
 
 export ReadResult, fs_read, fs_write, fs_free, fs_exists
 
@@ -25,9 +31,25 @@ ReadResult :: linear struct {
     ok: bool,
 }
 
-fs_read :: fn(path: ^i8) -> ReadResult {
-    raw := unsafe { frost_rt_file_read(path) }
+// A NUL-terminated copy of a path, for the calls below. The caller frees it.
+path_bytes :: fn(path: str) -> ^u8 {
+    length := str_len(path)
+    block := heap_bytes(length + 1)
+    mut view := bytes_as($u8, block, length + 1)
+    mut i : i64 = 0
+    while (i < length) {
+        view[i] = path[i]
+        i = i + 1
+    }
+    view[length] = 0
+    block
+}
+
+fs_read :: fn(path: str) -> ReadResult {
+    held := path_bytes(path)
+    raw := unsafe { frost_rt_file_read(ptr_cast($i8, held)) }
     length := unsafe { frost_rt_file_size() }
+    heap_release($u8, held)
     if (length < 0) {
         return ReadResult { text = unsafe { slice_from($u8, raw, 0) },
             buffer = raw, ok = false }
@@ -42,14 +64,24 @@ fs_free :: fn(move result: ReadResult) {
     unsafe { frost_rt_heap_free(result.buffer) }
 }
 
-fs_write :: fn(path: ^i8, text: str) -> bool {
+fs_write :: fn(path: str, text: str) -> bool {
+    held := path_bytes(path)
     length := str_len(text)
+    mut wrote : i64 = 0
     if (length == 0) {
-        return unsafe { frost_rt_file_write(path, ptr_cast($u8, path), 0) } == 1
+        wrote = unsafe { frost_rt_file_write(ptr_cast($i8, held), held, 0) }
+    } else {
+        wrote = unsafe {
+            frost_rt_file_write(ptr_cast($i8, held), ptr_to(text[0]), length)
+        }
     }
-    unsafe { frost_rt_file_write(path, ptr_to(text[0]), length) } == 1
+    heap_release($u8, held)
+    wrote == 1
 }
 
-fs_exists :: fn(path: ^i8) -> bool {
-    unsafe { frost_rt_file_exists(path) } == 1
+fs_exists :: fn(path: str) -> bool {
+    held := path_bytes(path)
+    found := unsafe { frost_rt_file_exists(ptr_cast($i8, held)) }
+    heap_release($u8, held)
+    found == 1
 }

@@ -309,6 +309,7 @@ main :: fn() -> i64 {
     read := fs_read(IN)
     if (read.ok == false) {
         print 0
+        fs_free(read)
         return 1
     }
     text := read.text
@@ -373,6 +374,8 @@ main :: fn() -> i64 {
 
     if (fs_write(OUT, builder_str(out)) == false) {
         print 0
+        builder_free(out)
+        fs_free(read)
         return 1
     }
     print lines
