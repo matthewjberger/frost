@@ -346,6 +346,7 @@ main :: fn() -> i64 {
         aliases = arena_make($Alias, 64),
         frame_used = 0,
         emit_module = 0 - 1,
+        field_bindings = arena_make($LocalVar, 64),
         parse_locals = arena_make($LocalVar, 4096),
         parse_param_start = 0,
         parse_param_end = 0,

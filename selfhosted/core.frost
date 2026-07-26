@@ -776,6 +776,10 @@ Parser :: struct {
     // module, and a specialization goes in every unit that could call it, as a
     // symbol local to that unit so the copies do not collide at the link.
     emit_module: i64,
+    // The fields in force: a `for` over `fields(T)` binds its name to one of
+    // them per copy of the body. `ty` is what the field holds and `slot` is
+    // where it sits, which is every question that may be asked of one.
+    field_bindings: Arena<LocalVar>,
     // What each name binds while the declaration around it is being parsed.
     // Only what a compile-time list is given is read from here, and only at the
     // call that gives it, since that is the one question whose answer has to be

@@ -474,6 +474,36 @@ compile-time string parsing, no recursion and no unbounded loop: everything here
 walks a list whose length the call fixed, so expansion costs what the program's
 own text costs and no more.
 
+## A table over a type's fields
+
+A vertex format, a uniform layout and a descriptor table are all the same
+thing: offsets and sizes over a struct you already declared. The compiler worked
+those numbers out to lay the struct out, so write the table over them rather
+than beside them:
+
+```frost
+Vertex :: struct { position: Vec3, normal: Vec3, uv: Vec2, id: i64 }
+
+main :: fn() -> i64 {
+    print field_count(Vertex)
+    for field in fields(Vertex) {
+        print offset_of(field)
+        print sizeof(field)
+        if (is_float(field)) { print 1 } else { print 0 }
+    }
+    0
+}
+```
+
+The `for` is not a loop: the body is compiled once per field. `T` may be a type
+parameter, so one description serves every type a call names, and the table
+cannot drift from the struct because it is not written twice.
+
+A field is not a value. `offset_of`, `sizeof` and the type predicates are what
+may be asked of one, and naming it anywhere else is an error. There is no
+reading a field's name, which is what keeps this a layout question rather than a
+second language for asking about types.
+
 ## Arrays are bounds-checked
 
 A fixed-size array `[N]T` knows its length, and every index is checked:

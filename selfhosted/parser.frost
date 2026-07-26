@@ -6,6 +6,7 @@ import "cursor.frost"
 import "imports.frost"
 import "names.frost"
 import "types.frost"
+import "layout.frost"
 
 export instance_fits, instance_fits_kind, instance_params,
     parse_generic_instance, parse_program,
@@ -387,9 +388,77 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         }
         if (str_range_eq(p.src, offset, length, "sizeof")) {
             advance(p)
+            // `sizeof(field)` is the width of what that field holds. A field
+            // reads as a named type here, so which of the two it is comes from
+            // whether a `for` over `fields(T)` bound the name.
+            held := field_binding_of(p, cur_off(p), cur_len(p))
+            if (held >= 0) {
+                entry := arena_at(p.field_bindings, held)
+                field_ty := entry.ty
+                advance(p)
+                advance(p)
+                return new_type_node(p, NodeKind::Sizeof, 0, field_ty)
+            }
+            if (unbound_template(p)) {
+                advance(p)
+                advance(p)
+                return new_type_node(p, NodeKind::Sizeof, 0, TY_I64)
+            }
             ty := parse_type(p)
             advance(p)
             return new_type_node(p, NodeKind::Sizeof, 0, ty)
+        }
+        // Where a field sits in the type that declares it. The compiler worked
+        // this out to lay the type out; a layout table is the same number.
+        if (str_range_eq(p.src, offset, length, "offset_of")) {
+            advance(p)
+            held := field_binding_of(p, cur_off(p), cur_len(p))
+            if (held < 0) {
+                if (unbound_template(p) == false) {
+                    report_where(p.modules, p.src, cur_off(p))
+                    report("offset_of names a field of a type, which is what a `for` over `fields(T)` binds")
+                    frost_rt_die()
+                }
+                advance(p)
+                advance(p)
+                return new_node(p, NodeKind::Num, 0, 0, 0)
+            }
+            entry := arena_at(p.field_bindings, held)
+            at := entry.slot
+            advance(p)
+            advance(p)
+            return new_node(p, NodeKind::Num, 0, 0, at)
+        }
+        // How many fields a type has, which is what sizes the table a walk over
+        // them fills.
+        if (str_range_eq(p.src, offset, length, "field_count")) {
+            advance(p)
+            ty := parse_type(p)
+            advance(p)
+            return new_node(p, NodeKind::Num, 0, 0, struct_field_count(p, ty))
+        }
+        // A type predicate asked of a field is answered here, wherever it is
+        // asked, so a table may carry the answer as an ordinary field rather
+        // than only decide a branch.
+        if (is_type_predicate(p.src, offset, length)
+            && peek_kind(p, 1) == TokenKind::Ident
+            && peek_kind(p, 2) == TokenKind::Rparen) {
+            held := field_binding_of(p, peek_off(p, 1), peek_len(p, 1))
+            if (held >= 0) {
+                entry := arena_at(p.field_bindings, held)
+                field_ty := entry.ty
+                answer := predicate_holds(p, offset, length, field_ty)
+                advance(p)
+                advance(p)
+                advance(p)
+                return new_node(p, NodeKind::Num, 0, 0, answer)
+            }
+            if (unbound_template(p)) {
+                advance(p)
+                advance(p)
+                advance(p)
+                return new_node(p, NodeKind::Num, 0, 0, 0)
+            }
         }
         // The position it failed at is worth more than the fact that it did,
         // and the node already carries where it was written.
@@ -2212,6 +2281,16 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             advance(p)
             return unroll_pack(p, item_off, item_len)
         }
+        // A `for` over a type's fields is not a loop either. The list is the
+        // struct's own field list, so its length is fixed by a declaration.
+        if (str_range_eq(p.src, cur_off(p), cur_len(p), "fields")
+            && peek_kind(p, 1) == TokenKind::Lparen) {
+            advance(p)
+            advance(p)
+            walked := parse_type(p)
+            advance(p)
+            return unroll_fields(p, item_off, item_len, walked)
+        }
         // A name followed by a brace is a struct literal everywhere else, and
         // the brace here opens the body, so the literal is not available.
         held_no_lit := p.no_struct_lit
@@ -2481,6 +2560,95 @@ expansion_answer :: fn(mut p: Parser) -> i64 {
         return 0 - 1
     }
     predicate_holds(p, name_off, name_len, ty)
+}
+
+// Whether this is a template being read with nothing bound to it. That parse is
+// thrown away and done again per instance, where every compile-time question
+// about a type has a real answer, so here a placeholder stands in rather than a
+// diagnostic about a name that is about to mean something.
+unbound_template :: fn(mut p: Parser) -> bool {
+    p.saw_type_param == 1 && p.binding_active == 0
+}
+
+// How many fields a type has, or zero for a type that is not a struct.
+struct_field_count :: fn(mut p: Parser, ty: i64) -> i64 {
+    if (is_struct_ty(ty) == false) {
+        return 0
+    }
+    def := arena_at(p.structs, struct_index_of(ty))
+    mut fid := def.field_head
+    mut counted : i64 = 0
+    while (fid != (0 - 1)) {
+        field := arena_at(p.fields, fid)
+        counted = counted + 1
+        fid = field.next
+    }
+    counted
+}
+
+// Read the body of a `for` over a type's fields once per field, with the loop's
+// name bound to that field, and answer the statements that came out. The cursor
+// is on the body's `{`, and it is left past the body however many times it was
+// read.
+unroll_fields :: fn(mut p: Parser, item_off: i64, item_len: i64,
+    walked: i64) -> i64 {
+    if (is_struct_ty(walked) == false) {
+        // A template is read once with nothing bound, so the type parameter is
+        // still a placeholder there and there is nothing to walk yet. That
+        // parse is thrown away and done again per instance, where it is a real
+        // type. Anything else that is not a struct is a mistake.
+        if (walked == TY_PARAM) {
+            parse_block(p)
+            return nothing_statement(p)
+        }
+        report_where(p.modules, p.src, cur_off(p))
+        report("a `for` over `fields(T)` walks a struct, and this is not one")
+        frost_rt_die()
+    }
+    body_start := p.ti
+    mut head : i64 = 0 - 1
+    mut tail : i64 = 0 - 1
+    def := arena_at(p.structs, struct_index_of(walked))
+    mut fid := def.field_head
+    mut running : i64 = 0
+    mut any : i64 = 0
+    while (fid != (0 - 1)) {
+        field := arena_at(p.fields, fid)
+        field_ty := field.ty
+        next_field := field.next
+        running = align_up(running, align_of(p, field_ty))
+        at := running
+        running = running + type_size(p, field_ty)
+        p.ti = body_start
+        mark := p.field_bindings.count
+        arena_push(p.field_bindings,
+            LocalVar { name_off = item_off, name_len = item_len,
+                ty = field_ty, slot = at })
+        copy := parse_block(p)
+        p.field_bindings.count = mark
+        any = 1
+        mut id := copy
+        while (id != (0 - 1)) {
+            following := node_next(p, id)
+            if (head == (0 - 1)) {
+                head = id
+            } else {
+                set_next(p, tail, id)
+            }
+            tail = id
+            id = following
+        }
+        fid = next_field
+    }
+    if (any == 0) {
+        p.ti = body_start
+        parse_block(p)
+        return nothing_statement(p)
+    }
+    if (head == (0 - 1)) {
+        return nothing_statement(p)
+    }
+    head
 }
 
 // A statement that does nothing, for a compile-time branch that was not taken

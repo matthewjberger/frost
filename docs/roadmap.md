@@ -13,28 +13,8 @@ measurements are below.
 
 ## What is left
 
-One thing, contained, and not on the critical path of anything else.
-
-**Extended const-eval, for layout tables.** A vertex format, a shader's uniform
-layout and a descriptor table are all the same shape: a table of offsets and
-sizes derived from a struct the program already declares. Today they are written
-out by hand beside the struct and drift from it. The compiler knows every one of
-those numbers, because it laid the struct out.
-
-The pieces this needs are mostly built. `sizeof(T)` is a compile-time constant,
-a compile-time list expands (11.1c) with a `for` that unrolls and an `if` over a
-type predicate that prunes, and `columns<T, N>` already reflects over a struct's
-fields to synthesize one array per field. What is missing is reaching a field's
-*offset* and *type* from an expansion, so a table can be written once over
-whatever fields the struct has.
-
-The line to hold is the one 11.1c holds: no compile-time string parsing, no
-recursion, no unbounded loop. A layout table is a walk over a field list whose
-length the struct fixes, which is the same bounded shape, so this stays inside
-the rule rather than reopening it. Field reflection by name is the thing to
-refuse: `has_field(T, "position")` is the string-keyed predicate 11.4a already
-ruled out, and a table built by walking every field needs no name to be written
-as a literal anywhere.
+Nothing on this list. The speed bill it was opened for is paid, and the two
+items that followed it are built.
 
 Everything the two compilers are held to is done: they accept the same language,
 and what says so is a suite of programs run through both rather than a claim.
@@ -42,8 +22,8 @@ See [../selfhosted/README.md](../selfhosted/README.md).
 
 ## What is done, and what it cost
 
-The speed bill this file was opened for is paid. Both compilers clear the target
-on a full build, and the self-hosted one rebuilds only what changed.
+Both compilers clear the target on a full build, and the self-hosted one
+rebuilds only what changed.
 
 **Where the bootstrap stands**, from `just bench-scaling` on 58,107 lines:
 
@@ -97,7 +77,15 @@ The four pieces that took it there:
    since a per-module build writes the definitions several times. On the
    compiler's own source that is about 1,220 ms whole-program against about
    310 ms once the objects are there.
-5. **Parallel work**, the part of it that pays. The assembler runs go out
+5. **A table over a type's fields** (spec 11.1d), which is what the layout
+   tables a renderer writes by hand are. `for field in fields(T)` expands once
+   per field, and `offset_of`, `sizeof`, the type predicates and `field_count`
+   are what may be asked of one. Every one of those is a number the compiler
+   worked out to lay the type out, so a table written this way cannot drift from
+   the struct. Reflection by name stays refused: a field's name is not readable,
+   which keeps this a layout question rather than a second language for asking
+   about types.
+6. **Parallel work**, the part of it that pays. The assembler runs go out
    together, one OS thread each, which is why even a first build beats the
    whole-program one: the machine-code step is where a build's time is, not the
    compiler. Emitting could be parallel too, since the type system is local and

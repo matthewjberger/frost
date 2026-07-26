@@ -9106,6 +9106,8 @@ fn cranelift_and_c_backends_agree() {
         ("diff_packlist", COMPILE_TIME_LIST),
         ("diff_packempty", EMPTY_LIST),
         ("diff_mutscalar", MUT_SCALAR_PARAMETER),
+        ("diff_fieldwalk", FIELD_WALK),
+        ("diff_fieldgeneric", FIELD_WALK_GENERIC),
         ("diff_failure", FAILURE_SET_PARSE),
         ("diff_bracedarm", BRACED_ARMS),
     ];
@@ -10606,6 +10608,141 @@ fn the_self_hosted_incremental_build_is_the_same_program() {
     }
 
     let _ = std::fs::remove_dir_all(&directory);
+}
+
+// A walk over a type's fields, at expansion time. A vertex format, a uniform
+// layout and a descriptor table are all a table of offsets and sizes over a
+// struct the program declared, and the compiler worked those numbers out to lay
+// the struct out. `for field in fields(T)` writes the table once, over whatever
+// fields the struct has, and `offset_of`, `sizeof` and the type predicates are
+// what may be asked of one.
+const FIELD_WALK: &str = r#"
+Vec3 :: struct { x: f32, y: f32, z: f32 }
+Vec2 :: struct { u: f32, v: f32 }
+
+Vertex :: struct {
+    position: Vec3,
+    normal: Vec3,
+    uv: Vec2,
+    id: i64,
+}
+
+main :: fn() -> i64 {
+    print field_count(Vertex)
+    for field in fields(Vertex) {
+        print offset_of(field)
+        print sizeof(field)
+        if (is_struct(field)) { print 1 } else { print 0 }
+    }
+    0
+}
+"#;
+
+#[test]
+fn a_walk_over_a_types_fields_is_a_layout_table() {
+    let Some(output) = compile_and_run("fieldwalk", FIELD_WALK) else {
+        return;
+    };
+    assert_eq!(output, "4\n0\n12\n1\n12\n12\n1\n24\n8\n1\n32\n8\n0\n");
+}
+
+#[test]
+fn self_hosted_walks_a_types_fields() {
+    let Some(output) = selfhosted_native_output("shfieldwalk", FIELD_WALK)
+    else {
+        return;
+    };
+    assert_eq!(output, "4\n0\n12\n1\n12\n12\n1\n24\n8\n1\n32\n8\n0\n");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shfieldwalk_input.frost");
+    std::fs::write(&input, FIELD_WALK).unwrap();
+    let Some(c_source) = self_hosted_emits("shfieldwalk", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shfieldwalk", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
+// The same walk inside a generic, which is where it earns its keep: one
+// description written once, and a table per type the call names.
+const FIELD_WALK_GENERIC: &str = r#"
+Vec3 :: struct { x: f32, y: f32, z: f32 }
+Vec2 :: struct { u: f32, v: f32 }
+
+Vertex :: struct { position: Vec3, uv: Vec2 }
+Particle :: struct { position: Vec3, life: f32 }
+
+Attribute :: struct { offset: i64, size: i64, floating: bool }
+
+describe :: fn($T: Type, mut out: []Attribute) -> i64 {
+    mut index : i64 = 0
+    for field in fields(T) {
+        out[index] = Attribute {
+            offset = offset_of(field),
+            size = sizeof(field),
+            floating = is_float(field),
+        }
+        index = index + 1
+    }
+    index
+}
+
+show :: fn($T: Type) {
+    mut table := [Attribute { offset = 0, size = 0, floating = false }; 8]
+    count := describe($T, table)
+    mut i : i64 = 0
+    while (i < count) {
+        print table[i].offset
+        print table[i].size
+        if (table[i].floating) { print 1 } else { print 0 }
+        i = i + 1
+    }
+}
+
+main :: fn() -> i64 {
+    show($Vertex)
+    print 0 - 1
+    show($Particle)
+    0
+}
+"#;
+
+#[test]
+fn a_field_walk_in_a_generic_describes_the_type_it_is_given() {
+    let Some(output) = compile_and_run("fieldgeneric", FIELD_WALK_GENERIC)
+    else {
+        return;
+    };
+    assert_eq!(output, "0\n12\n0\n12\n8\n0\n-1\n0\n12\n0\n12\n4\n1\n");
+}
+
+#[test]
+fn self_hosted_walks_the_fields_of_a_type_argument() {
+    let Some(output) =
+        selfhosted_native_output("shfieldgeneric", FIELD_WALK_GENERIC)
+    else {
+        return;
+    };
+    assert_eq!(output, "0\n12\n0\n12\n8\n0\n-1\n0\n12\n0\n12\n4\n1\n");
+}
+
+// A field is not a value: it is asked about, and that is all. Naming one where a
+// value belongs is caught where it is written.
+#[test]
+fn a_field_used_as_a_value_is_refused() {
+    let source = "Point :: struct { x: i64, y: i64 }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   for field in fields(Point) { print field }\n\
+                  \x20   0\n}\n";
+    let message = compile_error("fieldvalue", source);
+    assert!(
+        message.contains("not a value"),
+        "expected the message to say a field is not a value, got: {message}"
+    );
 }
 
 // A compile-time argument list. `args: $...` takes as many arguments as the

@@ -10,7 +10,7 @@ import "layout.frost"
 export call_ret_type, call_type_args, call_args_for, collect_type_args,
     fn_index_of, note_type_args, takes_pack, pack_call_args,
     is_type_predicate, predicate_holds, record_parse_local,
-    parse_local_type, parse_param_type,
+    parse_local_type, parse_param_type, field_binding_of,
     fn_proc_type, bundle_field_fn,
     count_value_args, field_type, generic_fn_of, is_linear_type, is_moved,
     local_exists, lookup_local, lower_enum_compare, nth_param_by_value,
@@ -904,6 +904,21 @@ pack_arg_type :: fn(mut p: Parser, value: i64) -> i64 {
         }
     }
     type_of(p, value)
+}
+
+// The field a name is bound to by a `for` over `fields(T)`, as the entry
+// holding what it is and where it sits, or -1 when the name is not one.
+field_binding_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    mut i : i64 = p.field_bindings.count
+    while (i > 0) {
+        i = i - 1
+        entry := arena_at(p.field_bindings, i)
+        if (entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)) {
+            return i
+        }
+    }
+    0 - 1
 }
 
 // Whether a callee takes a compile-time list.
