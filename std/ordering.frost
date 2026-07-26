@@ -1,5 +1,5 @@
-// What it means for one value of a type to come before another, as a value you
-// can name. `Ordering<T>` is an ordinary generic struct whose fields happen to
+// What it means for one value of a type to come before another, written as a
+// value with a name. `Ordering<T>` is an ordinary generic struct whose fields happen to
 // be functions, and an implementation is an ordinary constant of it. There is
 // no registry, no lookup and no coherence rule: a generic that needs an
 // ordering takes one as an argument, and the call site says which.

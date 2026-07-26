@@ -1,10 +1,10 @@
 // Writing to standard output.
 //
-// Without this you declare the C function you want yourself, which is why so
-// many examples open with `printf :: extern fn(fmt: ^i8, value: i64) -> i32`.
-// That is honest about the FFI but it is a strange first line for a first
-// program, and it hands you `printf`'s format-string footgun for the sake of
-// printing one number.
+// Without this a program declares the C function it wants itself, which is why
+// so many examples open with `printf :: extern fn(fmt: ^i8, value: i64) -> i32`.
+// That is honest about the FFI, but it is a strange first line for a first
+// program and it carries `printf`'s format string, which is one more thing to
+// get wrong when what was wanted was to print a number.
 //
 // These go through the runtime's emit helpers rather than through `printf`, so
 // there is no format string to get wrong and nothing is variadic. Nothing here

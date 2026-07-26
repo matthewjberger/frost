@@ -6,8 +6,8 @@
 // A generic here would have to take the transcendentals as compile-time
 // arguments at every call, since `sqrt` and `sqrtf` are different C functions,
 // which costs more at every use than a copy costs once. That is the trade
-// [docs/philosophy.md](../docs/philosophy.md) names: write the one you need
-// over the layout you have.
+// [docs/philosophy.md](../docs/philosophy.md) names: the code a program needs
+// over the arrangement that looks tidiest.
 //
 // Reach for this when the range or the accumulated error matters (a simulation
 // stepping for hours, world coordinates far from the origin, a solver). For

@@ -202,7 +202,8 @@ emit_asm_convert :: fn(mut p: Parser, held_from: i64, held_to: i64) {
         return
     }
     // The one conversion between aggregates: an array becomes a slice of the
-    // whole of itself. %rax holds its address, which is what a slice wants.
+    // whole of itself. %rax holds its address, and a slice is that address
+    // beside a length.
     if (is_array_ty(from) && is_array_ty(to) && is_slice_ty(p, to)
         && is_slice_ty(p, from) == false) {
         emit_asm_slice_of(p, from)
