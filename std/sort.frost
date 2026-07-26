@@ -1,13 +1,15 @@
-// Sorting a slice in place, ordered by a comparison the caller supplies as a
-// compile-time function argument. No closures and no function pointers: `$less`
-// is monomorphized into the sort, so the comparison is a direct call with no
-// indirection, which is the point of compile-time function arguments.
+// Sorting a slice in place, ordered by a capability bundle the caller names at
+// the call. `$ops` is an `Ordering<T>`, a struct whose fields are functions,
+// and because it is a compile-time argument each `ops.less(a, b)` folds to a
+// direct call to whichever function that constant's field names. No closures,
+// no function pointers and no dispatch: the comparison ends up inside the loop.
 //
 // Insertion sort for small runs, quicksort above a threshold. Quicksort is not
 // stable and picks the middle element as its pivot, which keeps already-sorted
 // and reverse-sorted input off the quadratic path that a first-element pivot
 // falls into.
 
+import "ordering.frost"
 import "vec.frost"
 
 export sort, sort_vec
@@ -19,12 +21,12 @@ swap :: fn($T: Type, mut items: []T, i: i64, j: i64) {
     items[j] = hold
 }
 
-insertion :: fn($T: Type, $less: fn(T, T) -> bool, mut items: []T,
+insertion :: fn($T: Type, $ops: Ordering<T>, mut items: []T,
     low: i64, high: i64) {
     mut i := low + 1
     while (i <= high) {
         mut j := i
-        while (j > low && less(items[j], items[j - 1])) {
+        while (j > low && ops.less(items[j], items[j - 1])) {
             swap($T, items, j, j - 1)
             j = j - 1
         }
@@ -32,38 +34,74 @@ insertion :: fn($T: Type, $less: fn(T, T) -> bool, mut items: []T,
     }
 }
 
-quicksort :: fn($T: Type, $less: fn(T, T) -> bool, mut items: []T,
+quicksort :: fn($T: Type, $ops: Ordering<T>, mut items: []T,
     low: i64, high: i64) {
     if (high - low < 12) {
-        insertion($T, $less, items, low, high)
+        insertion($T, $ops, items, low, high)
         return
     }
     pivot := items[low + (high - low) / 2]
     mut i := low
     mut j := high
     while (i <= j) {
-        while (less(items[i], pivot)) { i = i + 1 }
-        while (less(pivot, items[j])) { j = j - 1 }
+        while (ops.less(items[i], pivot)) { i = i + 1 }
+        while (ops.less(pivot, items[j])) { j = j - 1 }
         if (i <= j) {
             swap($T, items, i, j)
             i = i + 1
             j = j - 1
         }
     }
-    if (low < j) { quicksort($T, $less, items, low, j) }
-    if (i < high) { quicksort($T, $less, items, i, high) }
+    if (low < j) { quicksort($T, $ops, items, low, j) }
+    if (i < high) { quicksort($T, $ops, items, i, high) }
 }
 
-// Order a slice in place. `less` reports whether its first argument comes first,
-// so `sort($i64, $ascending, view)` with `ascending(a, b) = a < b` sorts upward.
-sort :: fn($T: Type, $less: fn(T, T) -> bool, mut items: []T) {
+// Order a slice in place. `ops.less` reports whether its first argument comes
+// first, so `sort($i64, $i64_ascending, view)` sorts upward and
+// `sort($i64, $i64_descending, view)` sorts downward, with no wrapper type and
+// nothing reversed afterwards.
+sort :: fn($T: Type, $ops: Ordering<T>, mut items: []T) {
     len := slice_len(items)
     if (len > 1) {
-        quicksort($T, $less, items, 0, len - 1)
+        quicksort($T, $ops, items, 0, len - 1)
     }
 }
 
 // The same, over a vector's live elements.
-sort_vec :: fn($T: Type, $less: fn(T, T) -> bool, mut v: Vec<T>) {
-    sort($T, $less, vec_slice($T, v))
+sort_vec :: fn($T: Type, $ops: Ordering<T>, mut v: Vec<T>) {
+    sort($T, $ops, vec_slice($T, v))
+}
+
+test "a slice is ordered by the bundle it is given" {
+    mut items := [5, 2, 9, 1, 7]
+    sort($i64, $i64_ascending, items)
+    assert(items[0] == 1)
+    assert(items[2] == 5)
+    assert(items[4] == 9)
+    sort($i64, $i64_descending, items)
+    assert(items[0] == 9)
+    assert(items[2] == 5)
+    assert(items[4] == 1)
+}
+
+test "a run longer than the insertion threshold takes the quicksort path" {
+    mut items := [13, 4, 17, 2, 8, 20, 1, 15, 6, 11, 19, 3, 9, 16, 5]
+    sort($i64, $i64_ascending, items)
+    mut i : i64 = 1
+    while (i < 15) {
+        assert(items[i - 1] < items[i])
+        i = i + 1
+    }
+}
+
+test "a vector sorts over its live elements" {
+    mut v := vec_new($i64, 4)
+    vec_push($i64, v, 3)
+    vec_push($i64, v, 1)
+    vec_push($i64, v, 2)
+    sort_vec($i64, $i64_ascending, v)
+    assert(vec_get($i64, v, 0) == 1)
+    assert(vec_get($i64, v, 1) == 2)
+    assert(vec_get($i64, v, 2) == 3)
+    vec_free($i64, v)
 }

@@ -2350,13 +2350,13 @@ fn a_program_using_std_is_clean_under_the_unsafe_gate() {
          import \"sort.frost\"\n\
          import \"format.frost\"\n\
          import \"strings.frost\"\n\
-         asc :: fn(a: i64, b: i64) -> bool { a < b }\n\
+         import \"ordering.frost\"\n\
          main :: fn() -> i64 {\n\
          \x20   mut v := vec_new($i64, 4)\n\
          \x20   seed := [5, 2, 9, 1, 7]\n\
          \x20   mut i : i64 = 0\n\
          \x20   while (i < 5) { vec_push($i64, v, seed[i])  i = i + 1 }\n\
-         \x20   sort_vec($i64, $asc, v)\n\
+         \x20   sort_vec($i64, $i64_ascending, v)\n\
          \x20   mut b := builder_new(16)\n\
          \x20   mut j : i64 = 0\n\
          \x20   while (j < vec_len($i64, v)) {\n\
@@ -2454,14 +2454,16 @@ fn self_hosted_runs_the_standard_library_tests() {
     let runtime = format!("{}/runtime/frost_runtime.c", root.display());
     let directory = std::env::temp_dir();
 
-    // Both modules that carry `test` blocks, through both of the self-hosted
-    // compiler's backends. math.frost is the one that exercises floats,
-    // fixed arrays and a struct returned by value, none of which strings.frost
-    // reaches.
+    // Every module that carries `test` blocks, through both of the self-hosted
+    // compiler's backends. math.frost is the one that exercises floats, fixed
+    // arrays and a struct returned by value, none of which strings.frost
+    // reaches, and sort.frost is the one that carries a capability bundle
+    // through two levels of generic.
     let modules = [
         ("strings.frost", "6 passed"),
         ("math.frost", "20 passed"),
         ("math64.frost", "20 passed"),
+        ("sort.frost", "3 passed"),
     ];
     for (label, backend) in [("stdc", "--emit-c"), ("stdasm", "--emit-asm")] {
         for (module, expected) in modules {
