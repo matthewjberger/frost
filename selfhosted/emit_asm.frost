@@ -1011,7 +1011,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
             asm("movq %rax, %r11")
             emit_asm_pop_rax()
             emit_asm_float_binop(p, op)
-            if (op < OP_LT) {
+            if (op_answers_truth(op) == false) {
                 emit_asm_convert(p, TY_F64, type_of(p, id))
             }
             return
