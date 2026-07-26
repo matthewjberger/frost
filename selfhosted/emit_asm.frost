@@ -413,6 +413,24 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
         asm("addq %r11, %rax")
         return
     }
+    // A call answering with an aggregate leaves that value's address, which is
+    // what reading a field of the answer needs. 
+    // reads the tag out of what the call answered with.
+    if (kind == NodeKind::Call || kind == NodeKind::CallPtr) {
+        emit_asm_expr(p, id)
+        return
+    }
+    // A literal written where an address is wanted is built in a temporary of
+    // its own, and that is what the address names. A caller that borrows an
+    // argument does this whenever the argument is a literal rather than a
+    // place, which an enum variant written at a call is.
+    if (kind == NodeKind::StructLit) {
+        emit_asm_struct_lit(p, id)
+        return
+    }
+    // Where it was written, since which expression it is, is the whole
+    // question when this fires.
+    report_where(p.modules, p.src, node.pos)
     asm_unsupported("the address of this expression")
 }
 

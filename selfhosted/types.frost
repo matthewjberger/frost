@@ -34,7 +34,13 @@ lower_enum_compare :: fn(mut p: Parser, id: i64) {
     if (op != OP_EQ && op != OP_NE) {
         return
     }
-    ty := type_of(p, left)
+    // An enum reached through a borrow is still that enum, which is what a
+    // parameter of enum type is. A field access through a pointer reads
+    // through it, so the tag is reached the same way either way.
+    mut ty := type_of(p, left)
+    if (is_pointer(ty)) {
+        ty = pointee(ty)
+    }
     if (is_struct_ty(ty) == false) {
         return
     }

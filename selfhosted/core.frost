@@ -16,22 +16,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     OP_ADD, OP_AND, OP_DIV, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT, OP_MOD, OP_MUL,
     OP_NE, OP_OR, OP_SUB, OP_SHL, OP_SHR, OP_BITAND, OP_BITOR,
     BORROW_FLAG, POINTER_BASE, Parser, STRUCT_BASE, StructDef,
-    StructField, Sym, VariantFixup, FixupKind, TOK_AMP, TOK_ANDAND, TOK_ARROW, TOK_ASSIGN, TOK_BANG,
-    TOK_CARET, TOK_COLON, TOK_COLONCOLON, TOK_COLONEQ, TOK_COMMA, TOK_DOLLAR,
-    TOK_DOT, TOK_EOF, TOK_EQEQ, TOK_FLOAT, TOK_GE, TOK_GT, TOK_IDENT, TOK_INT,
-    TOK_KW_CASE, TOK_KW_ELSE, TOK_KW_ENUM, TOK_KW_EXPORT, TOK_KW_EXTERN,
-    TOK_KW_REF, TOK_KW_SAFE, TOK_KW_TEST, TOK_KW_UNSAFE, TOK_KW_DISTINCT,
-    TOK_KW_FALSE, TOK_KW_FN, TOK_KW_FOR, TOK_KW_IF, TOK_KW_IMPORT,
-    TOK_KW_IN, TOK_KW_LET,
-    TOK_KW_LINEAR, TOK_KW_MATCH, TOK_KW_MOVE, TOK_KW_MUT, TOK_KW_PRINT,
-    TOK_KW_INLINE,
-    TOK_KW_RETURN, TOK_KW_STRUCT, TOK_KW_TRUE, TOK_KW_USES, TOK_KW_WHERE,
-    TOK_KW_WHILE,
-    TOK_KW_WITH, TOK_LBRACE, TOK_LBRACKET, TOK_LE, TOK_LPAREN, TOK_LT,
-    TOK_MINUS, TOK_NE, TOK_OROR, TOK_PERCENT, TOK_PLUS, TOK_QUESTION,
-    TOK_RBRACE, TOK_RBRACKET, TOK_RPAREN, TOK_SHL, TOK_SHR, TOK_PIPE,
-    TOK_SEMI, TOK_SLASH, TOK_STAR, TOK_STR,
-    TY_BOOL, TY_F32, TY_F64, TY_HANDLE, TY_I16, TY_I32, TY_I64, TY_I8, TY_ISIZE,
+    StructField, Sym, TokenKind, VariantFixup, FixupKind, TY_BOOL, TY_F32, TY_F64, TY_HANDLE, TY_I16, TY_I32, TY_I64, TY_I8, TY_ISIZE,
     TY_PARAM, TY_U16,
     TY_U32, TY_U64, TY_U8, TY_USIZE, TY_VOID, Token, TypeArg,
     TypeCacheEntry, UnsafeSpan,
@@ -229,83 +214,86 @@ OP_SHR    :: 14
 OP_BITAND :: 15
 OP_BITOR  :: 16
 
-// Token kinds. The lexer turns the source into a flat arena of these before the
-// parser runs, so the parser peeks token kinds rather than raw bytes. Identifier
-// runs that spell a keyword are classified to their keyword kind while lexing.
-TOK_EOF       :: 0
-TOK_INT       :: 1
-TOK_IDENT     :: 2
-TOK_STR       :: 3
-TOK_FLOAT     :: 4
-TOK_KW_FN     :: 10
-TOK_KW_LET    :: 11
-TOK_KW_IF     :: 12
-TOK_KW_ELSE   :: 13
-TOK_KW_WHILE  :: 14
-TOK_KW_RETURN :: 15
-TOK_KW_PRINT  :: 16
-TOK_KW_STRUCT :: 17
-TOK_KW_MATCH  :: 18
-TOK_KW_CASE   :: 19
-TOK_KW_EXTERN :: 20
-TOK_KW_TRUE   :: 21
-TOK_KW_FALSE  :: 22
-TOK_KW_MUT    :: 23
-TOK_KW_MOVE   :: 24
-TOK_KW_LINEAR :: 25
-TOK_KW_USES   :: 26
-TOK_KW_WITH   :: 27
-TOK_KW_IMPORT :: 28
-TOK_KW_EXPORT :: 29
-TOK_KW_ENUM   :: 30
-TOK_KW_TEST   :: 31
-TOK_KW_UNSAFE :: 32
-TOK_KW_DISTINCT :: 79
-// `where`: a bound on a generic's compile-time parameters.
-TOK_KW_WHERE  :: 80
-// `safe extern fn`: an extern the author audited, so calling it needs no block.
-TOK_KW_SAFE   :: 71
-TOK_KW_REF    :: 72
-// `inline fn`: a hint that the C backend turns into a forced inline. The
-// assembly backend ignores it, since it does not inline.
-TOK_KW_INLINE :: 73
-TOK_LPAREN    :: 40
-TOK_RPAREN    :: 41
-TOK_LBRACE    :: 42
-TOK_RBRACE    :: 43
-TOK_LBRACKET  :: 44
-TOK_RBRACKET  :: 45
-TOK_COMMA     :: 46
-TOK_DOT       :: 47
-TOK_COLON     :: 48
-TOK_COLONCOLON :: 49
-TOK_COLONEQ   :: 50
-TOK_ARROW     :: 51
-TOK_CARET     :: 52
-TOK_AMP       :: 53
-TOK_ASSIGN    :: 54
-TOK_PLUS      :: 55
-TOK_MINUS     :: 56
-TOK_STAR      :: 57
-TOK_SLASH     :: 58
-TOK_PERCENT   :: 59
-TOK_LT        :: 60
-TOK_LE        :: 61
-TOK_GT        :: 62
-TOK_GE        :: 63
-TOK_EQEQ      :: 64
-TOK_NE        :: 65
-TOK_ANDAND    :: 66
-TOK_OROR      :: 67
-TOK_DOLLAR    :: 68
-TOK_BANG      :: 69
-TOK_QUESTION  :: 70
-TOK_SHL       :: 73
-TOK_SHR       :: 74
-TOK_PIPE      :: 75
-TOK_SEMI      :: 76
-TOK_KW_FOR    :: 77
-TOK_KW_IN     :: 78
+// Token kinds. The lexer turns the source into a flat arena of these
+// before the parser runs, so the parser peeks a kind rather than raw
+// bytes. An identifier run that spells a keyword is classified to its
+// keyword kind while lexing.
+//
+// An enum rather than a run of integers, so a kind carries its own type
+// and two of them cannot quietly share a number. Two did: `inline` and
+// `<<` were both 73.
+TokenKind :: enum {
+    Eof,
+    Int,
+    Ident,
+    Str,
+    Float,
+    KwFn,
+    KwLet,
+    KwIf,
+    KwElse,
+    KwWhile,
+    KwReturn,
+    KwPrint,
+    KwStruct,
+    KwMatch,
+    KwCase,
+    KwExtern,
+    KwTrue,
+    KwFalse,
+    KwMut,
+    KwMove,
+    KwLinear,
+    KwUses,
+    KwWith,
+    KwImport,
+    KwExport,
+    KwEnum,
+    KwTest,
+    KwUnsafe,
+    KwDistinct,
+    KwWhere,
+    KwSafe,
+    KwRef,
+    KwInline,
+    Lparen,
+    Rparen,
+    Lbrace,
+    Rbrace,
+    Lbracket,
+    Rbracket,
+    Comma,
+    Dot,
+    Colon,
+    Coloncolon,
+    Coloneq,
+    Arrow,
+    Caret,
+    Amp,
+    Assign,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Eqeq,
+    Ne,
+    Andand,
+    Oror,
+    Dollar,
+    Bang,
+    Question,
+    Shl,
+    Shr,
+    Pipe,
+    Semi,
+    KwFor,
+    KwIn,
+}
 
 // Character codes (the language has no character literals).
 CH_TAB     :: 9
@@ -411,9 +399,9 @@ ConstDef :: struct {
 
 // A lexed token. `off`/`len` are the byte range in the source (used to intern
 // identifiers and to re-emit string literals). `value` holds the parsed integer
-// for a TOK_INT. `kind` is one of the TOK_ constants.
+// for a TokenKind::Int.
 Token :: struct {
-    kind: i64,
+    kind: TokenKind,
     off: i64,
     len: i64,
     value: i64,

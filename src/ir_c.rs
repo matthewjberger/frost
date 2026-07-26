@@ -257,7 +257,15 @@ fn emit_function(
                 local.size.max(1)
             )?;
         } else {
-            writeln!(output, "  {} _{index};", c_type(&local.ty)?)?;
+            // Naming the function and the slot, since a type C has no name for
+            // is a compiler bug and the next question is always which one.
+            let c_ty = c_type(&local.ty).map_err(|error| {
+                anyhow::anyhow!(
+                    "{error}, for local {index} of '{}'",
+                    function.name
+                )
+            })?;
+            writeln!(output, "  {c_ty} _{index};")?;
         }
     }
 
@@ -622,7 +630,15 @@ fn operand_expr(function: &IrFunction, operand: &IrOperand) -> Result<String> {
         IrOperand::Local(local) => {
             if function.locals[*local].in_memory {
                 let ty = function.local_type(*local);
-                format!("(*({}*)_{local})", c_type(ty)?)
+                {
+                    let c_ty = c_type(ty).map_err(|error| {
+                        anyhow::anyhow!(
+                            "{error}, reading local {local} of '{}'",
+                            function.name
+                        )
+                    })?;
+                    format!("(*({c_ty}*)_{local})")
+                }
             } else {
                 format!("_{local}")
             }
