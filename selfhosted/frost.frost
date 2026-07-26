@@ -62,7 +62,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     make_directory(options.build_dir)
     prefix := join_two(options.build_dir, "/m")
     mut executable : ^i8 = options.output
-    if (unsafe { frost_rt_str_len(executable) } == 0) {
+    if (cstr_len(executable) == 0) {
         executable = "a.out"
         if (frost_rt_is_windows() == 1) {
             executable = "a.exe"
@@ -168,7 +168,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     }
 
     mut runtime := unsafe { frost_rt_getenv("FROST_RUNTIME") }
-    if (unsafe { frost_rt_str_len(runtime) } == 0) {
+    if (cstr_len(runtime) == 0) {
         runtime = "runtime/frost_runtime.c"
     }
     // The C runtime is a compilation unit like any other, and it changes about
@@ -233,7 +233,7 @@ main :: fn() -> i64 {
     mut import_edges : Arena<ImportEdge> = arena_make($ImportEdge, 4096)
     mut renames : Arena<Rename> = arena_make($Rename, 4096)
     export_names := unsafe { ptr_cast($i8, malloc(SYNTH_ROOM)) }
-    if (unsafe { frost_rt_str_len(input_path) } != 0) {
+    if (cstr_len(input_path) != 0) {
         // One buffer holds the root file and everything it imports, so a name
         // is an offset into a single source no matter which file wrote it.
         buffer := unsafe { ptr_cast($i8, malloc(SOURCE_ROOM + SYNTH_ROOM)) }
@@ -243,7 +243,7 @@ main :: fn() -> i64 {
             import_edges, renames, scratch, options.roots)
         source = buffer
     }
-    if (unsafe { frost_rt_str_len(source) } == 0) {
+    if (cstr_len(source) == 0) {
         source = "
         strlen :: extern fn(s: ^i8) -> i64
 
@@ -324,7 +324,7 @@ main :: fn() -> i64 {
     }
     // The demo program is a literal with nowhere to write, so it needs the same
     // copy with room past the terminator that an imported source already has.
-    if (unsafe { frost_rt_str_len(input_path) } == 0) {
+    if (cstr_len(input_path) == 0) {
         source = source_with_room(source)
     }
 
@@ -448,7 +448,7 @@ main :: fn() -> i64 {
     }
     // Names the compiler synthesizes go past the source's terminator, so the
     // first free byte is one past the text.
-    parser.synth_next = unsafe { frost_rt_str_len(source) } + 1
+    parser.synth_next = cstr_len(source) + 1
     // The two names of each rename move into the source, so every lookup
     // compares bytes in one buffer the way it always has.
     place_renames(parser, export_names)
@@ -462,7 +462,7 @@ main :: fn() -> i64 {
     if (cstr_eq(abi, "win")) {
         parser.abi_windows = 1
     }
-    tokenize(source, unsafe { frost_rt_str_len(source) }, parser.tokens)
+    tokenize(source, cstr_len(source), parser.tokens)
     // Whether two modules here export the same name, which decides how careful
     // a name lookup has to be. Known from the export lines alone, so it is
     // answered before anything is parsed.
@@ -522,7 +522,7 @@ main :: fn() -> i64 {
     mut executable : ^i8 = options.output
     mut emit_path : ^i8 = options.output
     if (options.link == 1) {
-        if (unsafe { frost_rt_str_len(executable) } == 0) {
+        if (cstr_len(executable) == 0) {
             executable = "a.out"
             if (frost_rt_is_windows() == 1) {
                 executable = "a.exe"
@@ -534,7 +534,7 @@ main :: fn() -> i64 {
             emit_path = join_two(executable, ".c")
         }
     }
-    if (unsafe { frost_rt_str_len(emit_path) } != 0) {
+    if (cstr_len(emit_path) != 0) {
         if (unsafe { frost_rt_emit_open(emit_path) } == 0) {
             report("frost: cannot write '")
             report_cstr(emit_path)
@@ -558,7 +558,7 @@ main :: fn() -> i64 {
         // and the test runner a `--test` build needs. FROST_RUNTIME says
         // where it is for a checkout that is not the working directory.
         mut runtime := unsafe { frost_rt_getenv("FROST_RUNTIME") }
-        if (unsafe { frost_rt_str_len(runtime) } == 0) {
+        if (cstr_len(runtime) == 0) {
             runtime = "runtime/frost_runtime.c"
         }
         extra := join_two(" ", runtime)

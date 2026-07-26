@@ -81,7 +81,7 @@ on_same_line :: fn(mut p: Parser) -> bool {
     here := arena_at(p.tokens, p.ti)
     mut at := before.off + before.len
     while (at < here.off) {
-        if (unsafe { frost_rt_byte_at(p.src, at) } == 10) {
+        if (byte_at(p.src, at) == 10) {
             return false
         }
         at = at + 1

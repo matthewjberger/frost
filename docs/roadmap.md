@@ -41,6 +41,16 @@ One more, found the same way: the self-hosted compiler has no `continue`. The
 bootstrap does, so a loop written with one compiles under the first compiler and
 not the second.
 
+And one piece of the unsafe audit is a perimeter rather than a proof. The
+compiler reads its source buffer through `byte_at`, `byte_set` and `cstr_len`
+in core.frost, which is the whole of what it names of the three unchecked
+operations, but they take a pointer with no length beside it. Making the read
+checked means carrying the buffer as a slice, which is the length threaded
+through the forty-odd functions that take a `^i8` there. The buffer is one the
+compiler built and every offset into it came from the lexer walking the same
+buffer, so what this would catch is a bug in the compiler rather than anything
+a program can cause, which is why it is written down here rather than done.
+
 ## What is done, and what it cost
 
 Both compilers clear the target on a full build, and the self-hosted one

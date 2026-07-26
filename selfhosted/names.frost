@@ -34,13 +34,13 @@ export append_node, array_element, array_index_of, array_length, array_of,
 // a name the compiler needs that no source spells.
 synth_literal :: fn(mut p: Parser, word: ^i8) -> i64 {
     start := p.synth_next
-    length := unsafe { frost_rt_str_len(word) }
+    length := cstr_len(word)
     mut k : i64 = 0
     while (k < length) {
-        unsafe { frost_rt_byte_set(p.src, start + k, frost_rt_byte_at(word, k)) }
+        byte_set(p.src, start + k, byte_at(word, k))
         k = k + 1
     }
-    unsafe { frost_rt_byte_set(p.src, start + length, 0) }
+    byte_set(p.src, start + length, 0)
     p.synth_next = start + length + 1
     start
 }
@@ -70,12 +70,12 @@ synth_numbered :: fn(mut p: Parser, word: ^i8, number: i64) -> i64 {
     mut written : i64 = 0
     while (written < digits) {
         digit := value / scale
-        unsafe { frost_rt_byte_set(p.src, p.synth_next - 1 + written, CH_0 + digit) }
+        byte_set(p.src, p.synth_next - 1 + written, CH_0 + digit)
         value = value - digit * scale
         scale = scale / 10
         written = written + 1
     }
-    unsafe { frost_rt_byte_set(p.src, p.synth_next - 1 + digits, 0) }
+    byte_set(p.src, p.synth_next - 1 + digits, 0)
     p.synth_next = p.synth_next + digits
     start
 }
@@ -88,19 +88,19 @@ synth_join :: fn(mut p: Parser, first_off: i64, first_len: i64, second_off: i64,
     start := p.synth_next
     mut k : i64 = 0
     while (k < first_len) {
-        unsafe { frost_rt_byte_set(p.src, start + k, frost_rt_byte_at(p.src, first_off + k)) }
+        byte_set(p.src, start + k, byte_at(p.src, first_off + k))
         k = k + 1
     }
-    unsafe { frost_rt_byte_set(p.src, start + first_len, CH_UNDERSCORE) }
+    byte_set(p.src, start + first_len, CH_UNDERSCORE)
     k = 0
     while (k < second_len) {
         unsafe {
-            frost_rt_byte_set(p.src, start + first_len + 1 + k,
-                frost_rt_byte_at(p.src, second_off + k))
+            byte_set(p.src, start + first_len + 1 + k,
+                byte_at(p.src, second_off + k))
         }
         k = k + 1
     }
-    unsafe { frost_rt_byte_set(p.src, start + first_len + 1 + second_len, 0) }
+    byte_set(p.src, start + first_len + 1 + second_len, 0)
     p.synth_next = start + first_len + second_len + 2
     start
 }
@@ -112,14 +112,14 @@ synth_capability_name :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
     start := p.synth_next
     mut k : i64 = 0
     while (k < len) {
-        mut byte := unsafe { frost_rt_byte_at(p.src, off + k) }
+        mut byte := byte_at(p.src, off + k)
         if (k == 0 && byte >= CH_UPPER_A && byte <= CH_UPPER_Z) {
             byte = byte + 32
         }
-        unsafe { frost_rt_byte_set(p.src, start + k, byte) }
+        byte_set(p.src, start + k, byte)
         k = k + 1
     }
-    unsafe { frost_rt_byte_set(p.src, start + len, 0) }
+    byte_set(p.src, start + len, 0)
     p.synth_next = start + len + 1
     start
 }
@@ -130,8 +130,8 @@ bytes_equal_across :: fn(first: ^i8, first_off: i64, second: ^i8,
     second_off: i64, length: i64) -> bool {
     mut k : i64 = 0
     while (k < length) {
-        if (unsafe { frost_rt_byte_at(first, first_off + k) }
-            != unsafe { frost_rt_byte_at(second, second_off + k) }) {
+        if (byte_at(first, first_off + k)
+            != byte_at(second, second_off + k)) {
             return false
         }
         k = k + 1
@@ -142,7 +142,7 @@ bytes_equal_across :: fn(first: ^i8, first_off: i64, second: ^i8,
 bytes_equal :: fn(src: ^i8, first: i64, second: i64, length: i64) -> bool {
     mut k : i64 = 0
     while (k < length) {
-        if (unsafe { frost_rt_byte_at(src, first + k) } != unsafe { frost_rt_byte_at(src, second + k) }) {
+        if (byte_at(src, first + k) != byte_at(src, second + k)) {
             return false
         }
         k = k + 1
@@ -320,12 +320,12 @@ pack_element_name :: fn(mut p: Parser, off: i64, len: i64,
     mut k : i64 = 0
     while (k < len) {
         unsafe {
-            frost_rt_byte_set(p.src, start + k, frost_rt_byte_at(p.src, off + k))
+            byte_set(p.src, start + k, byte_at(p.src, off + k))
         }
         k = k + 1
     }
-    unsafe { frost_rt_byte_set(p.src, start + len, CH_UNDERSCORE) }
-    unsafe { frost_rt_byte_set(p.src, start + len + 1, CH_UNDERSCORE) }
+    byte_set(p.src, start + len, CH_UNDERSCORE)
+    byte_set(p.src, start + len + 1, CH_UNDERSCORE)
     digits := digits_in(index)
     mut scale : i64 = 1
     mut left : i64 = 1
@@ -338,14 +338,14 @@ pack_element_name :: fn(mut p: Parser, off: i64, len: i64,
     while (written < digits) {
         digit := value / scale
         unsafe {
-            frost_rt_byte_set(p.src, start + len + 2 + written, CH_0 + digit)
+            byte_set(p.src, start + len + 2 + written, CH_0 + digit)
         }
         value = value - digit * scale
         scale = scale / 10
         written = written + 1
     }
     total := len + 2 + digits
-    unsafe { frost_rt_byte_set(p.src, start + total, 0) }
+    byte_set(p.src, start + total, 0)
     p.synth_next = start + total + 1
     return start, total
 }
@@ -430,10 +430,10 @@ place_renames :: fn(mut p: Parser, held: ^i8) {
         exported_from := entry.exported_off
         local_at := p.synth_next
         copy_name(p.src, local_at, held, local_from, local_len)
-        unsafe { frost_rt_byte_set(p.src, local_at + local_len, 0) }
+        byte_set(p.src, local_at + local_len, 0)
         exported_at := local_at + local_len + 1
         copy_name(p.src, exported_at, held, exported_from, exported_len)
-        unsafe { frost_rt_byte_set(p.src, exported_at + exported_len, 0) }
+        byte_set(p.src, exported_at + exported_len, 0)
         p.synth_next = exported_at + exported_len + 1
         moved := arena_at(p.renames, i)
         moved.local_off = local_at
@@ -528,9 +528,9 @@ is_main_name :: fn(src: ^i8, offset: i64, length: i64) -> bool {
     if (length != 4) {
         return false
     }
-    unsafe { frost_rt_byte_at(src, offset) } == 109 && unsafe { frost_rt_byte_at(src, offset + 1) } == 97
-        && unsafe { frost_rt_byte_at(src, offset + 2) } == 105
-        && unsafe { frost_rt_byte_at(src, offset + 3) } == 110
+    byte_at(src, offset) == 109 && byte_at(src, offset + 1) == 97
+        && byte_at(src, offset + 2) == 105
+        && byte_at(src, offset + 3) == 110
 }
 
 // ---------------------------------------------------------------------------
