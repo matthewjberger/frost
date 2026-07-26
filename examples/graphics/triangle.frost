@@ -131,7 +131,6 @@ main :: fn() -> i64 {
     hwnd := window_pointer_property(properties, PROP_WIN32_HWND)
 
     instance := create_instance(null())
-    if (instance == null()) { return 21 }
 
     // The surface, chained off the platform window handle.
     mut source := surface_source_windows_HWND_init()
@@ -141,7 +140,6 @@ main :: fn() -> i64 {
     mut surface_descriptor := surface_descriptor_init()
     surface_descriptor.next_in_chain = unsafe { ptr_cast($u8, ptr_to(source)) }
     surface := instance_create_surface(instance, ptr_to(surface_descriptor))
-    if (surface == null()) { return 22 }
     if (hwnd == null()) { return 23 }
 
     // The adapter.
