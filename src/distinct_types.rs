@@ -131,7 +131,7 @@ fn walk_statement(statement: &mut Statement, declared: &HashMap<String, Type>) {
         | Statement::Constant(_, value)
         | Statement::Return(value)
         | Statement::Expression(value)
-        | Statement::Print(value) => walk_expression(value, declared),
+        | Statement::Print(value, _) => walk_expression(value, declared),
         Statement::Assignment(place, value) => {
             walk_expression(place, declared);
             walk_expression(value, declared);

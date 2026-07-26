@@ -214,9 +214,15 @@ fn stamp_statement(statement: &mut Statement, file: u32) {
         Statement::Let { value, .. } | Statement::LetMultiple(_, value) => {
             stamp_expression(value, file)
         }
-        Statement::Return(value)
-        | Statement::Expression(value)
-        | Statement::Print(value) => stamp_expression(value, file),
+        Statement::Return(value) | Statement::Expression(value) => {
+            stamp_expression(value, file)
+        }
+        Statement::Print(value, arguments) => {
+            stamp_expression(value, file);
+            for argument in arguments {
+                stamp_expression(argument, file);
+            }
+        }
         Statement::Assignment(target, value) => {
             stamp_expression(target, file);
             stamp_expression(value, file);

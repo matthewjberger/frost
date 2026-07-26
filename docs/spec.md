@@ -741,9 +741,24 @@ value is its trailing expression (or `void`).
   not available in the `Expr` of a `for`, whose brace opens the body.
 - `break` and `continue` are loop control.
 - `defer`, `defer Stmt` runs `Stmt` at scope exit, LIFO (chapter 9.3).
-- `print`, `print Expr` writes the value and a newline to standard output, an
-  integer as `%lld` and a float as `%g`. A convenience for small programs and the
-  standard library's examples, not a general formatting facility.
+- `print Expr` writes one value and a newline to standard output: an integer as
+  `%lld`, a float as `%g`, and a `str` or `^i8` as its bytes.
+- `print STRING ( "," Expr )*` writes a line built from a format literal. Each
+  `{}` in the literal is a hole filled by the value at the same position, and
+  `{{` and `}}` are one brace each. The count of holes and the count of values
+  have to agree.
+
+  ```frost
+  print "hp {} of {}", entity.hp, entity.max
+  ```
+
+  The literal is read by the compiler, which splits it into the pieces to write
+  where the statement is written. No format exists at run time, nothing parses
+  one, and the values are written by their types, so the printable set is closed
+  and lives in the compiler: the integer widths, the floats, `bool`, `Handle`,
+  `str` and `^i8`. Anything else is an error naming the type. This is the same
+  arrangement as `print` being a statement keyword rather than a library
+  function.
 
 ---
 
@@ -1196,6 +1211,7 @@ Statement =
     | IDENT ":=" Expr ";"?
     | IDENT ":" Type "=" Expr ";"?           // lookahead: ":" not followed by ":"
     | IDENT "::" ConstBody ";"?
+    | "print" Expr ( "," Expr )* ";"?         // a value, or a format and its values
     | Expr ( "=" Expr )? ";"?                 // expression statement or assignment
 ```
 
