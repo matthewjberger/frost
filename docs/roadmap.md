@@ -41,6 +41,12 @@ One more, found the same way: the self-hosted compiler has no `continue`. The
 bootstrap does, so a loop written with one compiles under the first compiler and
 not the second.
 
+The wgpu binding is generated with a safe wrapper per call now, so a program
+that draws a triangle writes no `unsafe` of its own for the graphics API: the
+perimeter is one generated file. What is left there is the same shape as the
+compiler's byte access, a perimeter rather than a proof, since a descriptor is
+a pointer C reads without checking.
+
 One more, found the same way: a `^i8` passed where a `str` is declared is
 accepted by the bootstrap and miscompiles rather than being refused. A string
 literal reaching a `str` parameter is why the rule exists; it should ask whether
