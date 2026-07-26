@@ -270,17 +270,14 @@ mask_bit :: fn(index: i64) -> u64 {
 }
 
 mask_with :: fn(m: Mask, index: i64) -> Mask {
-    // Annotated, so the binding is a copy of the caller's mask. Without the
-    // type written the name is a second name for what the caller holds, and
-    // setting a bit would set it there.
-    mut out : Mask = m
+    mut out := m
     word := mask_word(index)
     out.words[word] = out.words[word] | mask_bit(index)
     out
 }
 
 mask_without :: fn(m: Mask, index: i64) -> Mask {
-    mut out : Mask = m
+    mut out := m
     word := mask_word(index)
     // No bitwise complement in the language, so the bit is cleared by taking
     // the word apart around it: what is above it, plus what is below it.
@@ -297,7 +294,7 @@ mask_has :: fn(m: Mask, index: i64) -> bool {
 }
 
 mask_or :: fn(a: Mask, b: Mask) -> Mask {
-    mut out : Mask = a
+    mut out := a
     mut i : i64 = 0
     while (i < MASK_WORDS) {
         out.words[i] = out.words[i] | b.words[i]

@@ -820,6 +820,12 @@ operators are left-associative.
   reads and writes a field of a borrowed aggregate, and `p = q` on a `mut`
   parameter assigns the whole value through the borrow rather than rebinding
   anything local. Naming a `mut` parameter always means the caller's value.
+- Binding a parameter to a name (`x := p`) binds a *copy* of what it holds, so
+  writing through `x` does not reach back to the caller. A second name for the
+  same place is `ref x := p`, which is the one form that asks for one, and a
+  call answering with a `ref T` (10.6) hands one out on purpose and keeps it. A
+  parameter of a `linear` type cannot be bound this way at all, since a copy
+  would be a second owner of something consumed exactly once.
 
 ### 6.4 Calls, indexing, and field access
 

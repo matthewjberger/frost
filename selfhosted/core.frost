@@ -953,7 +953,9 @@ Parser :: struct {
     moved: Arena<LocalVar>,
     label_id: i64,
     abi_windows: i64,
-    asm_temp: i64,
+    // Which frame symbol the function being emitted uses. A function's frame
+    // size is written down after its body, so the two have to agree on a name.
+    frame_id: i64,
     asm_ret: i64,
     sret_slot: i64,
     mono_rets: Arena<MonoRet>,

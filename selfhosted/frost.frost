@@ -392,7 +392,7 @@ main :: fn() -> i64 {
         moved = arena_make($LocalVar, 4096),
         label_id = 0,
         abi_windows = 0,
-        asm_temp = 0,
+        frame_id = 0,
         asm_ret = 0,
         sret_slot = 0,
         mono_rets = arena_make($MonoRet, 4096),

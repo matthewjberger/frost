@@ -286,7 +286,7 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
         check_types_expr(p, value)
         mut ty := annotation
         if (annotation == (0 - 1)) {
-            ty = type_of(p, value)
+            ty = binding_type(p, value)
         } else if (is_columns_new_call(p, value)) {
             // `columns_new()` stands for a zeroed container rather than a call,
             // so it has no declaration to answer with a type.

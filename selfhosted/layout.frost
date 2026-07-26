@@ -116,11 +116,12 @@ field_offset :: fn(mut p: Parser, struct_ty: i64, off: i64, len: i64) -> i64 {
     0
 }
 
-// Carve a temporary out of the bottom of the frame, for a struct literal that
-// is used as a value rather than stored straight into a local.
+// Carve a temporary out of the frame, for a struct literal that is used as a
+// value rather than stored straight into a local. Temporaries come out of the
+// same downward-growing run the locals do, so one number says how wide a
+// function's frame has to be and the two cannot grow into each other.
 alloc_temp :: fn(mut p: Parser, size: i64) -> i64 {
-    slot := p.asm_temp
-    p.asm_temp = slot + size
-    slot
+    p.frame_used = p.frame_used + align_up(size, 8)
+    0 - p.frame_used
 }
 
