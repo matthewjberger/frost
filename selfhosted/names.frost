@@ -12,7 +12,8 @@ export append_node, array_element, array_index_of, array_length, array_of,
     generic_index_for,
     value_binding_of, fn_binding_of, binding_of, is_type_name,
     is_distinct, distinct_repr, distinct_id, distinct_type,
-    report_type_name, report_distinct_note,
+    is_flags_type, flag_bit_value, record_flag_bit,
+    report_type_name, report_distinct_note, written_number,
     intern_global, is_aggregate, is_array_ty, is_const, is_float, is_main_name,
     is_borrow, is_pointer, is_proc, is_raw_pointer, is_slab_ty, is_slice_ty,
     is_integer,
@@ -637,6 +638,44 @@ distinct_repr :: fn(ty: i64) -> i64 {
     (ty - DISTINCT_BASE) / DISTINCT_STRIDE
 }
 
+// Whether a type code is a set of bits rather than an ordinary distinct type.
+// The bit table is the only record of the difference, so this asks it. A
+// program has a handful of these, and the answer is wanted only where a flags
+// type could be one of the operands.
+is_flags_type :: fn(mut p: Parser, ty: i64) -> bool {
+    if (is_distinct(ty) == false) {
+        return false
+    }
+    mut i : i64 = 0
+    while (i < p.flag_bits.count) {
+        entry := arena_at(p.flag_bits, i)
+        if (entry.ty == ty) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+// The number a bit of `ty` stands for, or -1 when the type names no such bit.
+flag_bit_value :: fn(mut p: Parser, ty: i64, off: i64, len: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < p.flag_bits.count) {
+        entry := arena_at(p.flag_bits, i)
+        if (entry.ty == ty && entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)) {
+            return entry.value
+        }
+        i = i + 1
+    }
+    0 - 1
+}
+
+record_flag_bit :: fn(mut p: Parser, ty: i64, off: i64, len: i64, value: i64) {
+    arena_push(p.flag_bits,
+        FlagBit { ty = ty, name_off = off, name_len = len, value = value })
+}
+
 // The identity half: which declaration this is. Two distinct types over the
 // same representation differ only here.
 distinct_id :: fn(ty: i64) -> i64 {
@@ -700,11 +739,32 @@ report_type_name :: fn(mut p: Parser, ty: i64) {
 }
 
 // The sentence that says which rule was broken, when the rule is the one about
-// distinct types. Nothing is written when some other mismatch is at fault.
-report_distinct_note :: fn(mut p: Parser, from: i64, to: i64) {
+// nominal types. Nothing is written when some other mismatch is at fault.
+// `value` is the node that was written, since a number where a set of bits
+// belongs is a different mistake from a value of the wrong type.
+report_distinct_note :: fn(mut p: Parser, value: i64, from: i64, to: i64) {
+    if (is_flags_type(p, to)) {
+        if (written_number(p, value)) {
+            report("; a set of bits is built from the names declared under it, and a number is not one of them")
+            return
+        }
+        report("; a set of bits is built only from the names declared under it")
+        return
+    }
     if (is_distinct(to) && from != to) {
         report("; a distinct type is not its representation")
     }
+}
+
+// Whether what was written is a number rather than a name. A bit of a flags
+// type is also a Num node, and carries its type, which is what tells them
+// apart.
+written_number :: fn(mut p: Parser, value: i64) -> bool {
+    if (value < 0) {
+        return false
+    }
+    node := arena_at(p.arena, value)
+    node.kind == NodeKind::Num && node.b == 0
 }
 
 // Indirect: a raw pointer or a borrow, both a C pointer and both auto-derefed.

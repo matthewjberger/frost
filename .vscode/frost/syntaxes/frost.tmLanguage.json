@@ -74,8 +74,8 @@
           }
         },
         {
-          "comment": "name :: struct / enum / type / distinct",
-          "match": "^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(::)(?=\\s*(?:linear\\s+|distinct\\s+)*(?:struct|enum|type)\\b)",
+          "comment": "name :: struct / enum / flags / type / distinct",
+          "match": "^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(::)(?=\\s*(?:linear\\s+|distinct\\s+)*(?:struct|enum|flags|type)\\b)",
           "captures": {
             "1": { "name": "entity.name.type.frost" },
             "2": { "name": "keyword.operator.declaration.frost" }
@@ -158,7 +158,7 @@
         },
         {
           "name": "storage.type.frost",
-          "match": "\\b(fn|struct|enum|type)\\b"
+          "match": "\\b(fn|struct|enum|flags|type)\\b"
         },
         {
           "name": "storage.modifier.frost",
@@ -181,7 +181,7 @@
     "builtin-functions": {
       "comment": "the primitives the compiler provides rather than the standard library",
       "name": "support.function.builtin.frost",
-      "match": "\\b(assert|ptr_to|ptr_cast|slice_from|slice_len|str_len)\\b"
+      "match": "\\b(assert|flags_has|ptr_to|ptr_cast|slice_from|slice_len|str_len)\\b"
     },
     "builtin-types": {
       "patterns": [
@@ -214,7 +214,7 @@
       "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
     },
     "function-calls": {
-      "match": "\\b(?!(?:if|else|match|case|while|for|in|break|continue|return|defer|with|fn|struct|enum|type|mut|move|ref|linear|distinct|extern|safe|inline|unsafe|uses|where|print|sizeof|true|false|import|export|test)\\b)([a-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "match": "\\b(?!(?:if|else|match|case|while|for|in|break|continue|return|defer|with|fn|struct|enum|flags|type|mut|move|ref|linear|distinct|extern|safe|inline|unsafe|uses|where|print|sizeof|true|false|import|export|test)\\b)([a-z_][A-Za-z0-9_]*)\\s*(?=\\()",
       "captures": {
         "1": { "name": "entity.name.function.frost" }
       }

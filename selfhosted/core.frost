@@ -7,7 +7,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     CH_LPAREN, CH_LT, CH_MINUS, CH_PERCENT, CH_PIPE, CH_PLUS, CH_QUESTION,
     CH_RBRACE, CH_RBRACKET, CH_RPAREN, CH_SEMI, CH_SLASH, CH_SPACE, CH_STAR,
     CH_TAB, CH_UNDERSCORE, CH_UPPER_A, CH_UPPER_Z, Alias, ConstDef, Export,
-    Cap, Provider,
+    Cap, Provider, FlagBit,
     GenericFn, GParam, GArg, GBinding, ImportEdge, Instance, LocalVar, Module,
     Rename,
     MonoNode,
@@ -358,6 +358,15 @@ CH_LOWER_T    :: 116
 // diagnostic into a file, a line and a column. A node the compiler synthesizes
 // takes the position of whatever was being read when it was made, which is the
 // line the reader wrote even though the node is not.
+// One named bit of a `flags` declaration: which type it belongs to, the name
+// as a range of the source, and the number a C header wrote down.
+FlagBit :: struct {
+    ty: i64,
+    name_off: i64,
+    name_len: i64,
+    value: i64,
+}
+
 Node :: struct {
     kind: NodeKind,
     a: i64,
@@ -1023,11 +1032,14 @@ Parser :: struct {
     prov_kind: i64,
     prov_off: i64,
     prov_len: i64,
-    // `Meters :: distinct i64`. This compiler carries the name as an alias for
-    // the representation, so a program using one compiles and runs the way the
-    // bootstrap runs it. What it does not carry is the identity: the bootstrap
-    // refuses a Feet where a Meters is wanted and this does not yet.
+    // `Meters :: distinct i64` and `InitFlags :: flags u32 { ... }`, both of
+    // which put a name in this table standing for a code of its own rather than
+    // for the representation, which is what makes a Feet not a Meters.
     type_aliases: Arena<ConstDef>,
+    // The named bits of every flags type, each carrying which type it belongs
+    // to. A flags type is otherwise an ordinary distinct type, so this table is
+    // the whole of what tells one apart.
+    flag_bits: Arena<FlagBit>,
     arrays: Arena<ArrayDef>,
     tests: Arena<TestCase>,
     testing: i64,

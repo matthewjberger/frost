@@ -343,6 +343,15 @@ pub struct EnumVariant {
     pub fields: Option<Vec<StructField>>,
 }
 
+// One named bit of a `flags` declaration. The number is written rather than
+// derived, because a flags type mirrors a C header's numbers and a compiler
+// that chose them would be choosing different ones.
+#[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
+pub struct FlagBit {
+    pub name: Identifier,
+    pub value: i64,
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
 pub struct SwitchCase {
     pub pattern: Pattern,
@@ -475,6 +484,12 @@ pub enum Statement {
     Print(Expression, Vec<Expression>),
     Struct(Identifier, Vec<String>, Vec<StructField>),
     Enum(Identifier, Vec<String>, Vec<EnumVariant>),
+    // `InitFlags :: flags u32 { Video = 32, Audio = 16 }`: a named set of bits
+    // with a type of its own. The type is the representation under a name, the
+    // way a `distinct` declaration is, and the bits are constants of that type
+    // rather than loose integers beside it. The representation is written
+    // because these are a C header's numbers.
+    Flags(Identifier, Type, Vec<FlagBit>),
     TypeAlias(Identifier, Type),
     Defer(Box<Statement>),
     Assignment(Expression, Expression),
@@ -604,6 +619,18 @@ impl Display for Statement {
                     })
                     .collect();
                 format!("{} :: enum {{ {} }}", name, variant_strs.join(", "))
+            }
+            Self::Flags(name, repr, bits) => {
+                let bit_strs: Vec<String> = bits
+                    .iter()
+                    .map(|bit| format!("{} = {}", bit.name, bit.value))
+                    .collect();
+                format!(
+                    "{} :: flags {} {{ {} }}",
+                    name,
+                    repr,
+                    bit_strs.join(", ")
+                )
             }
             Self::TypeAlias(name, typ) => {
                 format!("{} :: {};", name, typ)
@@ -1609,6 +1636,15 @@ impl<'a> Parser<'a> {
             {
                 Some(self.parse_constant_or_struct_statement()?)
             }
+            // `InitFlags :: flags u32 { Video = 32 }`. The word is not a
+            // keyword, so the shape after it is what says this is a
+            // declaration rather than an expression that starts with a name.
+            Token::Identifier(_)
+                if matches!(self.peek_nth(1), Token::DoubleColon)
+                    && self.at_flags_declaration(2) =>
+            {
+                Some(self.parse_constant_or_struct_statement()?)
+            }
             // A constant that is a struct value, such as
             // `i64_ordering :: Ordering<i64> { less = i64_less }`. The brace,
             // or the generic arguments before it, is what tells this from
@@ -2014,6 +2050,44 @@ impl<'a> Parser<'a> {
                 self.read_token();
             }
             Ok(Statement::Enum(identifier, type_params, variants))
+        } else if self.at_flags_declaration(0) {
+            self.read_token();
+            let repr = self.parse_type()?;
+            if !repr.is_integer() {
+                bail!(
+                    "'{identifier}' is a set of bits, so it is written over an integer type; '{repr}' is not one"
+                );
+            }
+            self.read_token();
+            let mut bits = Vec::new();
+            while self.peek_nth(0) != &Token::RightBrace {
+                let name = match self.read_token() {
+                    Token::Identifier(name) => name.to_string(),
+                    other => bail!(
+                        "a flags declaration names its bits, and '{other}' is not a name"
+                    ),
+                };
+                if !matches!(self.read_token(), Token::Assign) {
+                    bail!(
+                        "'{name}' needs the number it stands for, written as '{name} = 32'"
+                    );
+                }
+                let value = match self.read_token() {
+                    Token::Integer(value) => *value,
+                    other => bail!(
+                        "a bit of '{identifier}' is a number a C header wrote down, and '{other}' is not one"
+                    ),
+                };
+                bits.push(FlagBit { name, value });
+                if matches!(self.peek_nth(0), Token::Comma) {
+                    self.read_token();
+                }
+            }
+            self.read_token();
+            if matches!(self.peek_nth(0), Token::Semicolon) {
+                self.read_token();
+            }
+            Ok(Statement::Flags(identifier, repr, bits))
         } else if matches!(self.peek_nth(0), Token::Distinct) {
             let typ = self.parse_type()?;
             if matches!(self.peek_nth(0), Token::Semicolon) {
@@ -3710,6 +3784,33 @@ impl<'a> Parser<'a> {
 
     fn peek_nth(&self, n: usize) -> &Token {
         self.tokens.clone().nth(n).unwrap_or(&Token::EndOfFile)
+    }
+
+    // `flags` is a word rather than a keyword, so a parameter, a local and a
+    // field may all still be called `flags`, and one is: `window_create` takes
+    // one. What tells the declaration apart is the shape after it, which no
+    // expression has: the word, a scalar type, and then a brace. A
+    // representation that is not an integer is let through here so that the
+    // declaration itself is what says so.
+    fn at_flags_declaration(&self, offset: usize) -> bool {
+        matches!(self.peek_nth(offset), Token::Identifier(word) if word == "flags")
+            && matches!(self.peek_nth(offset + 2), Token::LeftBrace)
+            && matches!(
+                self.peek_nth(offset + 1),
+                Token::TypeI8
+                    | Token::TypeI16
+                    | Token::TypeI32
+                    | Token::TypeI64
+                    | Token::TypeIsize
+                    | Token::TypeU8
+                    | Token::TypeU16
+                    | Token::TypeU32
+                    | Token::TypeU64
+                    | Token::TypeUsize
+                    | Token::TypeF32
+                    | Token::TypeF64
+                    | Token::TypeBool
+            )
     }
 
     fn parse_unsafe_expression(&mut self) -> Result<Expression> {

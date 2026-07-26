@@ -282,7 +282,7 @@ append_type :: fn(mut out: Builder, mut document: Json, holder: i64) {
         return
     }
     if (type_starts(document, kind, "bitflag.")) {
-        builder_str_value(out, "u64")
+        append_after_dot(out, document, kind)
         return
     }
     if (type_starts(document, kind, "callback.")) {
@@ -360,9 +360,16 @@ append_default :: fn(mut out: Builder, mut document: Json, held: i64) {
             append_after_dot_screaming(out, document, given)
             return
         }
-        // Otherwise it names an entry of this member's own enum or bitflag.
-        if (type_starts(document, kind, "enum.")
-            || type_starts(document, kind, "bitflag.")) {
+        // A bit of a flags type is named under it, so the default is written
+        // the way a program writes one.
+        if (type_starts(document, kind, "bitflag.")) {
+            append_after_dot(out, document, kind)
+            builder_str_value(out, "::")
+            append_pascal(out, document, given)
+            return
+        }
+        // Otherwise it names an entry of this member's own enum.
+        if (type_starts(document, kind, "enum.")) {
             append_after_dot_screaming(out, document, kind)
             builder_byte(out, 95)
             append_screaming(out, document, given)
@@ -615,6 +622,10 @@ named_value :: fn(mut document: Json, entries: i64, name: i64) -> i64 {
     0
 }
 
+// One `flags` declaration per family. A bit is named under its type rather
+// than by a prefix, so the type is what says which bits go together and a
+// buffer usage cannot be handed where a texture usage belongs. The numbers are
+// C's, which is why they are written out rather than chosen.
 emit_bitflags :: fn(mut out: Builder, mut names: Builder,
     mut document: Json, root: i64) -> i64 {
     flags := json_member(document, root, "bitflags")
@@ -625,23 +636,26 @@ emit_bitflags :: fn(mut out: Builder, mut names: Builder,
         name := json_member(document, each, "name")
         entries := json_member(document, each, "entries")
         count := json_count(document, entries)
+        append_pascal(out, document, name)
+        append_pascal(names, document, name)
+        builder_str_value(names, ", ")
+        builder_str_value(out, " :: flags u64 {
+")
         mut entry : i64 = 0
         while (entry < count) {
             value := json_at(document, entries, entry)
             entry_name := json_member(document, value, "name")
-            append_screaming(out, document, name)
-            builder_byte(out, 95)
-            append_screaming(out, document, entry_name)
-            append_screaming(names, document, name)
-            builder_byte(names, 95)
-            append_screaming(names, document, entry_name)
-            builder_str_value(names, ", ")
-            builder_str_value(out, " :: ")
+            builder_str_value(out, "    ")
+            append_pascal(out, document, entry_name)
+            builder_str_value(out, " = ")
             builder_int(out, bitflag_value(document, entries, entry))
-            builder_byte(out, 10)
+            builder_str_value(out, ",
+")
             entry = entry + 1
         }
-        builder_byte(out, 10)
+        builder_str_value(out, "}
+
+")
         index = index + 1
     }
     total

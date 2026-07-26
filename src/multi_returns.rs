@@ -246,6 +246,7 @@ impl Lowering {
             Statement::With(_, body) => self.rewrite_statements(body, returns),
             Statement::Struct(..)
             | Statement::Enum(..)
+            | Statement::Flags(..)
             | Statement::TypeAlias(..)
             | Statement::Break
             | Statement::Continue

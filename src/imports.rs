@@ -957,6 +957,7 @@ fn top_level_name(statement: &Statement) -> Option<&str> {
         Statement::Constant(name, _)
         | Statement::Struct(name, _, _)
         | Statement::Enum(name, _, _)
+        | Statement::Flags(name, _, _)
         | Statement::TypeAlias(name, _)
         | Statement::Extern { name, .. }
         | Statement::Declared { name, .. } => Some(name),
@@ -1077,7 +1078,7 @@ impl Renamer {
                     }
                 }
             }
-            Statement::TypeAlias(name, ty) => {
+            Statement::TypeAlias(name, ty) | Statement::Flags(name, ty, _) => {
                 if let Some(mangled) = self.renames.get(name.as_str()) {
                     *name = mangled.clone();
                 }

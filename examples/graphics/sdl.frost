@@ -13,9 +13,6 @@ import "mem.frost"
 
 export Window, is_no_window, Event, event_new, event_kind, event_number,
     EventKind, InitFlags, WindowFlags,
-    INIT_VIDEO, INIT_AUDIO, INIT_EVENTS, INIT_GAMEPAD,
-    WINDOW_FULLSCREEN, WINDOW_HIDDEN, WINDOW_BORDERLESS, WINDOW_RESIZABLE,
-    WINDOW_HIGH_PIXEL_DENSITY,
     PROP_WIN32_HWND, PROP_X11_DISPLAY, PROP_X11_WINDOW, PROP_COCOA_WINDOW,
     sdl_init, sdl_quit, sdl_ticks, sdl_delay, sdl_error,
     window_create, window_destroy, window_properties, window_pointer_property,
@@ -44,29 +41,29 @@ SDL_GetError            :: extern fn() -> ^i8
 // can be handed to one that wants a window.
 Window :: distinct ^u8
 
-// What a subsystem and a window flag are. These are not enums, because they are
-// not a closed set of alternatives: SDL's flags are bits, and a call takes
-// several of them at once. A type of their own is what an enum would have given
-// and a bare `u32` would not, which is that neither can be handed where the
-// other belongs, and `|` over one still answers with one.
+// What a subsystem and a window flag are. Not enums, because they are not a
+// closed set of alternatives: SDL's flags are bits and a call takes several at
+// once. The numbers are SDL's, so they are written rather than chosen.
 //
-//     mut flags : WindowFlags = WINDOW_RESIZABLE | WINDOW_HIGH_PIXEL_DENSITY
+//     window_create("Frost", 960, 540,
+//         WindowFlags::Resizable | WindowFlags::HighPixelDensity)
 //
-// is how two are asked for, since a combination is an expression rather than a
-// number written down and needs to be told what it is.
-InitFlags :: distinct u32
-WindowFlags :: distinct u64
+// is how two are asked for. The combination is a WindowFlags because both
+// operands are, so nothing has to say so.
+InitFlags :: flags u32 {
+    Audio   = 16,
+    Video   = 32,
+    Gamepad = 8192,
+    Events  = 16384,
+}
 
-INIT_AUDIO   :: 16
-INIT_VIDEO   :: 32
-INIT_EVENTS  :: 16384
-INIT_GAMEPAD :: 8192
-
-WINDOW_FULLSCREEN         :: 1
-WINDOW_HIDDEN             :: 8
-WINDOW_BORDERLESS         :: 16
-WINDOW_RESIZABLE          :: 32
-WINDOW_HIGH_PIXEL_DENSITY :: 8192
+WindowFlags :: flags u64 {
+    Fullscreen       = 1,
+    Hidden           = 8,
+    Borderless       = 16,
+    Resizable        = 32,
+    HighPixelDensity = 8192,
+}
 
 // SDL_Event is a union of every event kind. Frost has no unions and does not
 // need one to carry this: the union is 128 bytes with the kind in the first

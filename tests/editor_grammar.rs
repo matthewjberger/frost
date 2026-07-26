@@ -5,7 +5,7 @@ const GRAMMAR: &str = concat!(
     "/.vscode/frost/syntaxes/frost.tmLanguage.json"
 );
 
-const CONTEXTUAL: &[&str] = &["export", "test"];
+const CONTEXTUAL: &[&str] = &["export", "flags", "test"];
 
 const BUILTIN_TYPES: &[&str] = &["Handle", "Type", "columns"];
 

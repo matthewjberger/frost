@@ -300,7 +300,7 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
                 report("' and the value is a '")
                 report_type_name(p, value_ty)
                 report("'")
-                report_distinct_note(p, value_ty, annotation)
+                report_distinct_note(p, value, value_ty, annotation)
                 frost_rt_die()
             }
         }
@@ -335,7 +335,7 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
             report("' and the value is a '")
             report_type_name(p, value_ty)
             report("'")
-            report_distinct_note(p, value_ty, place_ty)
+            report_distinct_note(p, value, value_ty, place_ty)
             frost_rt_die()
         }
         return
@@ -352,7 +352,7 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
             report("'")
             report_src(p.src, p.current_fn_off, p.current_fn_len)
             report("' returns a value of the wrong type")
-            report_distinct_note(p, value_ty, p.current_ret)
+            report_distinct_note(p, value, value_ty, p.current_ret)
             frost_rt_die()
         }
         return
@@ -445,6 +445,9 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
             mut held := arena_at(p.arena, id)
             held.c = 1
         }
+        if (kind == NodeKind::Bin) {
+            check_flags_operator(p, node.val, node.a, node.b, node.pos)
+        }
         check_types_expr(p, node.a)
         check_types_expr(p, node.b)
         return
@@ -512,7 +515,7 @@ check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64,
                     report("' and this is a '")
                     report_type_name(p, arg_ty)
                     report("'")
-                    report_distinct_note(p, arg_ty, expected)
+                    report_distinct_note(p, value, arg_ty, expected)
                     frost_rt_die()
                 }
             }
@@ -520,6 +523,76 @@ check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64,
         }
         id = next_id
     }
+}
+
+// A set of bits answers to union, intersection and whether it is the same set.
+// Adding two of them, ordering them, or shifting one along is a question about
+// the number underneath rather than about the set, and the declaration exists
+// to say that the number is not what this is. Reading one as its representation
+// is still allowed, so a program that means the arithmetic writes the
+// conversion and gets it.
+check_flags_operator :: fn(mut p: Parser, op: i64, left: i64, right: i64,
+    at: i64) {
+    left_ty := type_of(p, left)
+    right_ty := type_of(p, right)
+    mut named := left_ty
+    if (is_flags_type(p, named) == false) {
+        named = right_ty
+    }
+    if (is_flags_type(p, named) == false) {
+        return
+    }
+    if (op != OP_BITOR && op != OP_BITAND && op != OP_EQ && op != OP_NE) {
+        report_where(p.modules, p.src, at)
+        report("'")
+        report_type_name(p, named)
+        report("' is a set of bits, and '")
+        report_operator(op)
+        report("' is not something two sets answer; combine them with '|', narrow them with '&', and compare them with '==' or 'flags_has'")
+        frost_rt_die()
+    }
+    // A written number takes the other side's type where the context gives it
+    // one, so what was written is the question rather than what it typed as.
+    if (written_number(p, left) || written_number(p, right)) {
+        report_where(p.modules, p.src, at)
+        report("'")
+        report_type_name(p, named)
+        report("' is a set of bits, built from the names declared under it, and a number is not one of them")
+        frost_rt_die()
+    }
+    // Two sets combine when they are the same set. Otherwise the answer would
+    // be a number wearing one of the two names.
+    if (left_ty != right_ty) {
+        report_where(p.modules, p.src, at)
+        report("'")
+        report_type_name(p, named)
+        report("' combines only with itself, and this is a '")
+        report_type_name(p, left_ty)
+        report("' against a '")
+        report_type_name(p, right_ty)
+        report("'")
+        frost_rt_die()
+    }
+}
+
+// An operator as the source writes it, written straight into a diagnostic the
+// way a type name is, since a function answering with one would be answering
+// with text this compiler carries as a view rather than as a literal.
+report_operator :: fn(op: i64) {
+    if (op == OP_ADD) { report("+")   return }
+    if (op == OP_SUB) { report("-")   return }
+    if (op == OP_MUL) { report("*")   return }
+    if (op == OP_DIV) { report("/")   return }
+    if (op == OP_MOD) { report("%")   return }
+    if (op == OP_LT) { report("<")    return }
+    if (op == OP_GT) { report(">")    return }
+    if (op == OP_LE) { report("<=")   return }
+    if (op == OP_GE) { report(">=")   return }
+    if (op == OP_AND) { report("&&")  return }
+    if (op == OP_OR) { report("||")   return }
+    if (op == OP_SHL) { report("<<")  return }
+    if (op == OP_SHR) { report(">>")  return }
+    report("an operator")
 }
 
 check_argument_expressions :: fn(mut p: Parser, args: i64) {

@@ -120,11 +120,12 @@ WIDTH  :: 960
 HEIGHT :: 540
 
 main :: fn() -> i64 {
-    if (sdl_init(INIT_VIDEO) == false) {
+    if (sdl_init(InitFlags::Video) == false) {
         print 0
         return 1
     }
-    window := window_create("Frost triangle", WIDTH, HEIGHT, 0)
+    window := window_create("Frost triangle", WIDTH, HEIGHT,
+        WindowFlags::Resizable)
     if (is_no_window(window)) { return 2 }
 
     properties := window_properties(window)
@@ -203,7 +204,7 @@ main :: fn() -> i64 {
     mut configuration := surface_configuration_init()
     configuration.device = device
     configuration.format = surface_format
-    configuration.usage = TEXTURE_USAGE_RENDER_ATTACHMENT
+    configuration.usage = TextureUsage::RenderAttachment
     configuration.width = WIDTH
     configuration.height = HEIGHT
     configuration.present_mode = PRESENT_MODE_FIFO
@@ -237,7 +238,7 @@ main :: fn() -> i64 {
     ]
 
     mut vertex_buffer_descriptor := buffer_descriptor_init()
-    vertex_buffer_descriptor.usage = BUFFER_USAGE_VERTEX | BUFFER_USAGE_COPY_DST
+    vertex_buffer_descriptor.usage = BufferUsage::Vertex | BufferUsage::CopyDst
     vertex_buffer_descriptor.size = VERTEX_BYTES
     vertex_buffer := device_create_buffer(device, ptr_to(vertex_buffer_descriptor))
     queue_write_buffer(queue, vertex_buffer, 0,
@@ -246,7 +247,7 @@ main :: fn() -> i64 {
     // The uniform holding the matrix, rewritten every frame.
     mut uniform_buffer_descriptor := buffer_descriptor_init()
     uniform_buffer_descriptor.usage =
-        BUFFER_USAGE_UNIFORM | BUFFER_USAGE_COPY_DST
+        BufferUsage::Uniform | BufferUsage::CopyDst
     uniform_buffer_descriptor.size = UNIFORM_BYTES
     uniform_buffer := device_create_buffer(device, ptr_to(uniform_buffer_descriptor))
 
@@ -254,7 +255,7 @@ main :: fn() -> i64 {
     // promise, the group is the binding that keeps it.
     mut layout_entry := bind_group_layout_entry_init()
     layout_entry.binding = 0
-    layout_entry.visibility = SHADER_STAGE_VERTEX
+    layout_entry.visibility = ShaderStage::Vertex
     layout_entry.buffer.type = BUFFER_BINDING_TYPE_UNIFORM
     layout_entry.buffer.min_binding_size = UNIFORM_BYTES
 

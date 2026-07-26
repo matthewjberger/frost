@@ -20,12 +20,12 @@
 import "sdl.frost"
 
 main :: fn() -> i64 {
-    if (sdl_init(INIT_VIDEO) == false) {
+    if (sdl_init(InitFlags::Video) == false) {
         print 0
         return 1
     }
 
-    window := window_create("Frost", 960, 540, 0)
+    window := window_create("Frost", 960, 540, WindowFlags::Resizable)
     if (is_no_window(window)) {
         print 0
         sdl_quit()
