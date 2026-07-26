@@ -20,27 +20,7 @@
 // SDL3
 // ---------------------------------------------------------------------------
 
-SDL_Init                :: safe extern fn(flags: u32) -> bool
-SDL_Quit                :: safe extern fn()
-SDL_CreateWindow        :: extern fn(title: ^i8, width: i32, height: i32,
-    flags: u64) -> ^u8
-SDL_DestroyWindow       :: extern fn(window: ^u8)
-SDL_PollEvent           :: extern fn(event: ^u8) -> bool
-SDL_GetWindowProperties :: extern fn(window: ^u8) -> u32
-SDL_GetPointerProperty  :: extern fn(properties: u32, name: ^i8,
-    fallback: ^u8) -> ^u8
-// Milliseconds since SDL started, which is what drives the rotation.
-SDL_GetTicks            :: safe extern fn() -> u64
-
-INIT_VIDEO :: 32
-EVENT_QUIT :: 256
-EVENT_SIZE :: 128
-
-Event :: struct { bytes: [EVENT_SIZE]u8 }
-
-event_kind :: fn(e: Event) -> u32 {
-    unsafe { ptr_cast($u32, ptr_to(e.bytes[0]))^ }
-}
+import "sdl.frost"
 // wgpu, from the generated bindings. `just bindgen` rebuilds wgpu.frost
 // from webgpu.json, which is the same file webgpu.h is generated from.
 import "wgpu.frost"
@@ -140,17 +120,15 @@ WIDTH  :: 960
 HEIGHT :: 540
 
 main :: fn() -> i64 {
-    if (SDL_Init(INIT_VIDEO) == false) {
+    if (sdl_init(INIT_VIDEO) == false) {
         print 0
         return 1
     }
-    window := unsafe { SDL_CreateWindow("Frost triangle", WIDTH, HEIGHT, 0) }
+    window := window_create("Frost triangle", WIDTH, HEIGHT, 0)
+    if (is_no_window(window)) { return 2 }
 
-    properties := unsafe { SDL_GetWindowProperties(window) }
-    hwnd := unsafe {
-        SDL_GetPointerProperty(properties, "SDL.window.win32.hwnd",
-            null())
-    }
+    properties := window_properties(window)
+    hwnd := window_pointer_property(properties, PROP_WIN32_HWND)
 
     instance := create_instance(null())
     if (instance == null()) { return 21 }
@@ -352,12 +330,12 @@ main :: fn() -> i64 {
     view := mat4_look_at(vec3(0.0, 0.0, 3.0), vec3(0.0, 0.0, 0.0),
         vec3(0.0, 1.0, 0.0))
     view_projection := mat4_mul(projection, view)
-    started := SDL_GetTicks()
+    started := sdl_ticks()
 
     mut running : bool = true
     while (running) {
-        mut event : Event = Event { bytes = [0; EVENT_SIZE] }
-        while (unsafe { SDL_PollEvent(ptr_to(event.bytes[0])) }) {
+        mut event := event_new()
+        while (poll_event(event)) {
             if (event_kind(event) == EVENT_QUIT) {
                 running = false
             }
@@ -379,7 +357,7 @@ main :: fn() -> i64 {
             // frame count, so the speed does not follow the frame rate.
             // Wrapped before it becomes a float, so the value stays small
             // enough that single precision keeps every millisecond.
-            elapsed := (SDL_GetTicks() - started) % 100000
+            elapsed := (sdl_ticks() - started) % 100000
             milliseconds : f32 = elapsed
             model := mat4_rotation_y(radians(120.0) * milliseconds / 1000.0)
             mut mvp := mat4_mul(view_projection, model)
@@ -416,7 +394,7 @@ main :: fn() -> i64 {
         }
     }
 
-    unsafe { SDL_DestroyWindow(window) }
-    SDL_Quit()
+    window_destroy(window)
+    sdl_quit()
     0
 }
