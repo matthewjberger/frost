@@ -840,11 +840,29 @@ walk_moves_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         if (param != (0 - 1)) {
             pnode := arena_at(p.arena, param)
             anode := arena_at(p.arena, arg)
-            // The parameter's own type says whether it takes the value rather
-            // than borrows it. The argument's type is not resolvable here, since
-            // the locals table is a codegen structure the checks run before.
+            // The parameter's mode says whether it takes the value rather than
+            // borrows it, and its type says whether taking it leaves anything
+            // behind: a scalar is copied, so moving one takes nothing from the
+            // caller.
+            //
+            // A generic's parameter type cannot be read that way. Its written
+            // type is the template's own name, and what the node records is
+            // whatever instantiation was made last, so `map_put($i64, m, k, n)`
+            // read as a move of a struct and left `n` unusable after it. What
+            // the call binds the template to is the type argument written at the
+            // call, which is what this asks for instead. Inside the template
+            // itself nothing is bound yet, and the specializations are walked on
+            // their own, so an unresolved one is left alone.
+            mut ptype := pnode.b
+            if (generic_fn_of(p, fn_index) >= 0
+                && (is_aggregate(pnode.b) || pnode.b == TY_PARAM)) {
+                ptype = call_type_args(p, args)
+                if (ptype == TY_PARAM) {
+                    ptype = TY_VOID
+                }
+            }
             if (pnode.a != 1 && anode.kind == NodeKind::Var
-                && is_aggregate(pnode.b)) {
+                && is_aggregate(ptype)) {
                 arena_push(p.moved,
                     LocalVar { name_off = anode.val, name_len = anode.c, ty = 0, slot = 0 })
             }
@@ -882,12 +900,78 @@ walk_moves_if :: fn(mut p: Parser, then_head: i64, else_head: i64) {
     p.move_scratch.count = scratch_base
 }
 
-// A value moved in a loop body is moved on the next iteration, so the body is
-// walked a second time with the first pass's moves in hand to catch a read at
-// the top that the move at the bottom made stale.
+// The names a block binds, including the ones its branches and nested loops
+// bind, gathered onto the scratch stack. A loop needs these to tell a value it
+// binds fresh every iteration from one it took from outside itself.
+collect_bound_names :: fn(mut p: Parser, head: i64) {
+    mut id := head
+    while (id != (0 - 1)) {
+        node := arena_at(p.arena, id)
+        kind := node.kind
+        if (kind == NodeKind::Let) {
+            arena_push(p.move_scratch,
+                LocalVar { name_off = node.val, name_len = node.c, ty = 0, slot = 0 })
+        }
+        if (kind == NodeKind::If) {
+            collect_bound_names(p, node.b)
+            collect_bound_names(p, node.val)
+        }
+        if (kind == NodeKind::While) {
+            collect_bound_names(p, node.b)
+        }
+        if (kind == NodeKind::With) {
+            collect_bound_names(p, node.a)
+        }
+        if (kind == NodeKind::Match) {
+            mut cid := node.b
+            while (cid != (0 - 1)) {
+                cnode := arena_at(p.arena, cid)
+                collect_bound_names(p, cnode.a)
+                cid = cnode.next
+            }
+        }
+        id = node.next
+    }
+}
+
+in_scratch_range :: fn(mut p: Parser, base: i64, top: i64, off: i64, len: i64) -> bool {
+    mut i := base
+    while (i < top) {
+        e := arena_at(p.move_scratch, i)
+        if (e.name_len == len && bytes_equal(p.src, e.name_off, off, len)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+// A value a loop takes from outside itself is gone on the second iteration, so
+// moving one is the error rather than the read that follows it. A value the body
+// binds is a different value every iteration, so moving that is ordinary: the
+// body is walked once and what it moved is sorted into those two cases. Walking
+// the body a second time instead reported the fresh binding as a use after move,
+// which is what a struct-returning call held in a temporary inside a loop is.
 walk_moves_while :: fn(mut p: Parser, body: i64) {
+    base := p.moved.count
+    scratch_base := p.move_scratch.count
+    collect_bound_names(p, body)
+    scratch_top := p.move_scratch.count
     walk_moves_block(p, body)
-    walk_moves_block(p, body)
+    mut k := base
+    while (k < p.moved.count) {
+        e := arena_at(p.moved, k)
+        if (in_scratch_range(p, scratch_base, scratch_top, e.name_off, e.name_len) == false) {
+            report_where(p.modules, p.src, e.name_off)
+            report("value '")
+            report_src(p.src, e.name_off, e.name_len)
+            report("' is moved inside a loop; it would be used after move on a later iteration")
+            frost_rt_die()
+        }
+        k = k + 1
+    }
+    p.moved.count = base
+    p.move_scratch.count = scratch_base
 }
 
 walk_moves_block :: fn(mut p: Parser, head: i64) {

@@ -1,0 +1,988 @@
+// An archetype entity-component system.
+//
+// Entities that hold the same set of components live in one table, and a table
+// keeps one contiguous column per component, so a system walks columns rather
+// than chasing entities. That is the same shape `columns<T, N>` gives a fixed
+// component set (docs/spec.md 10.1a); this is the version where the set is
+// decided while the program runs, which is what an editor and a save file need.
+//
+// What a component is: plain data. No destructor, no copy constructor, nothing
+// a type knows that the compiler does not. That one fact removes the table of
+// per-type function pointers an ECS in another language needs, because every
+// operation a column performs is a move of `item_size` bytes: growing it,
+// removing a row, carrying a row to another table. The registry holds a size
+// per component and nothing else.
+//
+// A component is named by its mask bit. A table's mask is the bits it holds,
+// its columns are in ascending bit order, and the column for a bit is found by
+// counting the bits below it, so nothing maps a component to a column at run
+// time.
+//
+// The unsafe floor is the column: raw bytes with a width. Everything above it
+// reaches an element through `column_of`, which hands out a bounds-checked
+// `[]T`, and through generational handles that refuse a stale entity.
+
+import "vec.frost"
+import "map.frost"
+
+export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
+    Commands,
+    ecs_new, ecs_free, ecs_register, ecs_component_size,
+    ecs_spawn, ecs_despawn, ecs_alive, ecs_count,
+    ecs_add, ecs_remove, ecs_has, ecs_get, ecs_set, ecs_slice,
+    query_begin, query_next, query_column, query_entities,
+    for_each1, for_each2, for_each3,
+    tag_new, tag_free, tag_add, tag_remove, tag_has,
+    commands_new, commands_free, commands_spawn, commands_despawn,
+    commands_apply,
+    column_of, column_position, bits_below, mask_of
+
+frost_rt_heap_alloc   :: extern fn(size: i64) -> ^u8
+frost_rt_heap_realloc :: extern fn(block: ^u8, size: i64) -> ^u8
+frost_rt_heap_free    :: extern fn(block: ^u8)
+frost_rt_mem_copy     :: extern fn(destination: ^u8, source: ^u8, size: i64)
+frost_rt_mem_set      :: extern fn(destination: ^u8, value: i64, size: i64)
+
+// A mask is one i64, so a world holds this many component types. A program that
+// wants more splits its components across two worlds, which is what the mask
+// being a plain integer makes cheap.
+MAX_COMPONENTS :: 62
+
+// ---------------------------------------------------------------------------
+// Entities
+//
+// A handle is an id and a generation. The id indexes the slot table; the
+// generation is bumped when the id is freed, so a handle kept past a despawn
+// names a generation the slot no longer has and every lookup refuses it. This
+// is the same rule `Handle<T>` follows for a pool, written out here because an
+// entity is not stored in one place.
+// ---------------------------------------------------------------------------
+
+Entity :: struct {
+    id: i64,
+    generation: i64,
+}
+
+// Where an entity is and whether it is anywhere. `table` and `row` are its
+// storage; a live entity with no components at all sits in the empty table, so
+// there is always a row to name.
+EntitySlot :: struct {
+    generation: i64,
+    alive: bool,
+    table: i64,
+    row: i64,
+}
+
+// ---------------------------------------------------------------------------
+// Columns
+//
+// One component's storage for one table: `count` elements of `item_size` bytes,
+// end to end. The type is not held anywhere, because nothing here needs it: a
+// row moves as bytes and only `column_of` ever says what those bytes are.
+// ---------------------------------------------------------------------------
+
+Column :: struct {
+    data: ^u8,
+    count: i64,
+    capacity: i64,
+    item_size: i64,
+}
+
+column_new :: fn(item_size: i64) -> Column {
+    Column { data = unsafe { frost_rt_heap_alloc(item_size) }, count = 0,
+        capacity = 1, item_size = item_size }
+}
+
+column_free :: fn(mut c: Column) {
+    unsafe { frost_rt_heap_free(c.data) }
+    c.data = unsafe { frost_rt_heap_alloc(1) }
+    c.count = 0
+    c.capacity = 0
+}
+
+// Room for one more element, doubling when full. The pointer is written back
+// here rather than in a helper, since a `mut` parameter carries the header and
+// a helper would grow a copy of it.
+column_reserve :: fn(mut c: Column) {
+    if (c.count < c.capacity) {
+        return
+    }
+    mut room := c.capacity * 2
+    if (room < 1) {
+        room = 1
+    }
+    c.data = unsafe { frost_rt_heap_realloc(c.data, room * c.item_size) }
+    c.capacity = room
+}
+
+// The address of one element. The one place that turns an index into a pointer,
+// so the arithmetic is written once.
+column_at :: fn(c: Column, index: i64) -> ^u8 {
+    unsafe { ptr_to(c.data[index * c.item_size]) }
+}
+
+// A row of zeroes, which is what a component the caller has not written yet
+// holds. Plain data has no other sensible default and no constructor to run.
+column_push_zero :: fn(mut c: Column) {
+    column_reserve(c)
+    unsafe { frost_rt_mem_set(column_at(c, c.count), 0, c.item_size) }
+    c.count = c.count + 1
+}
+
+// Remove a row by moving the last one into its place, which is what keeps a
+// column contiguous without moving everything after it. The caller is what
+// knows which entity moved, so patching its slot is the caller's.
+column_swap_remove :: fn(mut c: Column, index: i64) {
+    last := c.count - 1
+    if (index != last) {
+        unsafe {
+            frost_rt_mem_copy(column_at(c, index), column_at(c, last),
+                c.item_size)
+        }
+    }
+    c.count = last
+}
+
+// Carry one row to another column, which is a table migration's whole job.
+column_move_row :: fn(mut to: Column, from: Column, index: i64) {
+    column_reserve(to)
+    unsafe {
+        frost_rt_mem_copy(column_at(to, to.count), column_at(from, index),
+            from.item_size)
+    }
+    to.count = to.count + 1
+}
+
+// The typed view of a column, and the end of the erasure. Everything above this
+// reads and writes through a bounds-checked slice.
+column_of :: fn($T: Type, c: Column) -> []T {
+    unsafe { slice_from($T, ptr_cast($T, c.data), c.count) }
+}
+
+// ---------------------------------------------------------------------------
+// The registry
+//
+// A component is a bit and a width. Bits are handed out in registration order,
+// so a program that registers in one place, once, has a stable schema, which is
+// what a save file needs.
+// ---------------------------------------------------------------------------
+
+Registry :: struct {
+    count: i64,
+    sizes: [MAX_COMPONENTS]i64,
+}
+
+// The bit for the nth registered component.
+mask_of :: fn(index: i64) -> i64 {
+    1 << index
+}
+
+// How many bits are set below this one, which is a column's position in a
+// table whose columns are in ascending bit order.
+bits_below :: fn(mask: i64, bit: i64) -> i64 {
+    mut held := mask & (bit - 1)
+    mut counted : i64 = 0
+    while (held != 0) {
+        held = held & (held - 1)
+        counted = counted + 1
+    }
+    counted
+}
+
+column_position :: fn(table_mask: i64, component_mask: i64) -> i64 {
+    bits_below(table_mask, component_mask)
+}
+
+// ---------------------------------------------------------------------------
+// Tables
+//
+// One archetype: the entities holding exactly this set of components, and one
+// column per bit of the mask in ascending order.
+// ---------------------------------------------------------------------------
+
+Table :: struct {
+    mask: i64,
+    entities: Vec<Entity>,
+    columns: Vec<Column>,
+}
+
+// ---------------------------------------------------------------------------
+// The world
+// ---------------------------------------------------------------------------
+
+World :: struct {
+    registry: Registry,
+    slots: Vec<EntitySlot>,
+    free_ids: Vec<i64>,
+    next_id: i64,
+    tables: Vec<Table>,
+    // Mask to table index, so a migration finds its destination without a scan.
+    lookup: Map<i64>,
+    live: i64,
+}
+
+ecs_new :: fn() -> World {
+    mut world := World {
+        registry = Registry { count = 0, sizes = [0; MAX_COMPONENTS] },
+        slots = vec_new($EntitySlot, 64),
+        free_ids = vec_new($i64, 64),
+        next_id = 0,
+        tables = vec_new($Table, 16),
+        lookup = map_new($i64, 32),
+        live = 0,
+    }
+    // Table zero is the empty archetype, where an entity with no components
+    // lives. Having it always exist means a spawn never has to make a table.
+    vec_push(
+        $Table,
+        world.tables,
+        Table { mask = 0, entities = vec_new($Entity, 16),
+            columns = vec_new($Column, 1) },
+    )
+    map_put($i64, world.lookup, 0, 0)
+    world
+}
+
+ecs_free :: fn(move world: World) {
+    mut t : i64 = 0
+    while (t < vec_len($Table, world.tables)) {
+        ref table := vec_slice($Table, world.tables)[t]
+        mut c : i64 = 0
+        while (c < vec_len($Column, table.columns)) {
+            ref column := vec_slice($Column, table.columns)[c]
+            column_free(column)
+            c = c + 1
+        }
+        vec_free($Column, table.columns)
+        vec_free($Entity, table.entities)
+        t = t + 1
+    }
+    vec_free($Table, world.tables)
+    vec_free($EntitySlot, world.slots)
+    vec_free($i64, world.free_ids)
+    map_free($i64, world.lookup)
+}
+
+// Register a component and answer its mask bit. The width comes from the type,
+// which is the only thing about it this has to know.
+ecs_register :: fn($T: Type, mut world: World) -> i64 {
+    index := world.registry.count
+    // Past the ceiling there is no bit to give, and zero is the mask that names
+    // nothing, so a program that registers too many finds out at its next call
+    // rather than corrupting a mask. Splitting the components across two worlds
+    // is what a program this large does.
+    if (index >= MAX_COMPONENTS) {
+        return 0
+    }
+    world.registry.sizes[index] = sizeof(T)
+    world.registry.count = index + 1
+    mask_of(index)
+}
+
+// The width a mask bit was registered with.
+ecs_component_size :: fn(world: World, mask: i64) -> i64 {
+    mut index : i64 = 0
+    while (index < world.registry.count) {
+        if (mask_of(index) == mask) {
+            return world.registry.sizes[index]
+        }
+        index = index + 1
+    }
+    0
+}
+
+// The table for a mask, made if this is the first entity to want it. Its
+// columns are created in ascending bit order, which is the order every lookup
+// assumes.
+table_for :: fn(mut world: World, mask: i64) -> i64 {
+    held := map_get($i64, world.lookup, mask, 0 - 1)
+    if (held >= 0) {
+        return held
+    }
+    mut table := Table { mask = mask, entities = vec_new($Entity, 8),
+        columns = vec_new($Column, 4) }
+    mut index : i64 = 0
+    while (index < world.registry.count) {
+        bit := mask_of(index)
+        if ((mask & bit) != 0) {
+            vec_push($Column, table.columns,
+                column_new(world.registry.sizes[index]))
+        }
+        index = index + 1
+    }
+    made := vec_len($Table, world.tables)
+    vec_push($Table, world.tables, table)
+    map_put($i64, world.lookup, mask, made)
+    made
+}
+
+// ---------------------------------------------------------------------------
+// Spawning and despawning
+// ---------------------------------------------------------------------------
+
+ecs_spawn :: fn(mut world: World) -> Entity {
+    mut id : i64 = 0
+    mut generation : i64 = 0
+    free_count := vec_len($i64, world.free_ids)
+    if (free_count > 0) {
+        id = vec_get($i64, world.free_ids, free_count - 1)
+        world.free_ids.len = free_count - 1
+        generation = vec_slice($EntitySlot, world.slots)[id].generation
+    } else {
+        id = world.next_id
+        world.next_id = id + 1
+        vec_push($EntitySlot, world.slots,
+            EntitySlot { generation = 0, alive = false, table = 0, row = 0 })
+    }
+    // Every live entity has a row, so an entity with no components sits in the
+    // empty table and a component added later is a migration like any other.
+    ref empty := vec_slice($Table, world.tables)[0]
+    row := vec_len($Entity, empty.entities)
+    vec_push($Entity, empty.entities,
+        Entity { id = id, generation = generation })
+    ref slot := vec_slice($EntitySlot, world.slots)[id]
+    slot.generation = generation
+    slot.alive = true
+    slot.table = 0
+    slot.row = row
+    world.live = world.live + 1
+    Entity { id = id, generation = generation }
+}
+
+// Whether a handle names the entity that holds its id now, rather than one that
+// held it before.
+ecs_alive :: fn(world: World, entity: Entity) -> bool {
+    if (entity.id < 0 || entity.id >= vec_len($EntitySlot, world.slots)) {
+        return false
+    }
+    slot := vec_slice($EntitySlot, world.slots)[entity.id]
+    slot.alive && slot.generation == entity.generation
+}
+
+ecs_count :: fn(world: World) -> i64 {
+    world.live
+}
+
+// Take a row out of a table, moving the last row into its place and telling
+// whichever entity was moved where it went.
+table_swap_remove :: fn(mut world: World, table_index: i64, row: i64) {
+    ref table := vec_slice($Table, world.tables)[table_index]
+    last := vec_len($Entity, table.entities) - 1
+    // Which entity moves is read before the move, since handing the value to
+    // the write is what gives it away.
+    moved_id := vec_slice($Entity, table.entities)[last].id
+    if (row != last) {
+        vec_slice($Entity, table.entities)[row] =
+            vec_slice($Entity, table.entities)[last]
+    }
+    table.entities.len = last
+    mut c : i64 = 0
+    while (c < vec_len($Column, table.columns)) {
+        ref column := vec_slice($Column, table.columns)[c]
+        column_swap_remove(column, row)
+        c = c + 1
+    }
+    if (row != last) {
+        ref slot := vec_slice($EntitySlot, world.slots)[moved_id]
+        slot.row = row
+    }
+}
+
+ecs_despawn :: fn(mut world: World, entity: Entity) {
+    if (ecs_alive(world, entity) == false) {
+        return
+    }
+    slot := vec_slice($EntitySlot, world.slots)[entity.id]
+    table_index := slot.table
+    row := slot.row
+    table_swap_remove(world, table_index, row)
+    ref held := vec_slice($EntitySlot, world.slots)[entity.id]
+    held.alive = false
+    // The next handle for this id is a different one, which is what makes the
+    // one just freed refuse every lookup from here on.
+    held.generation = held.generation + 1
+    vec_push($i64, world.free_ids, entity.id)
+    world.live = world.live - 1
+}
+
+// ---------------------------------------------------------------------------
+// Components
+//
+// Adding or removing one moves the entity to the table for its new set, which
+// is one row of bytes per shared column and nothing else.
+// ---------------------------------------------------------------------------
+
+// Move an entity to the table for `target_mask`, carrying every column the two
+// tables share. Answers the row it landed on.
+migrate :: fn(mut world: World, entity: Entity, target_mask: i64) -> i64 {
+    slot := vec_slice($EntitySlot, world.slots)[entity.id]
+    from_index := slot.table
+    row := slot.row
+    to_index := table_for(world, target_mask)
+    if (from_index == to_index) {
+        return row
+    }
+    from_mask := vec_slice($Table, world.tables)[from_index].mask
+    shared := from_mask & target_mask
+    // The destination row is the same for every column, since a table's columns
+    // are the same length.
+    landed := vec_len($Entity, vec_slice($Table, world.tables)[to_index].entities)
+    mut index : i64 = 0
+    while (index < world.registry.count) {
+        bit := mask_of(index)
+        if ((target_mask & bit) != 0) {
+            to_position := column_position(target_mask, bit)
+            if ((shared & bit) != 0) {
+                from_position := column_position(from_mask, bit)
+                held := vec_slice($Column,
+                    vec_slice($Table, world.tables)[from_index].columns)[from_position]
+                ref to_column := vec_slice($Column,
+                    vec_slice($Table, world.tables)[to_index].columns)[to_position]
+                column_move_row(to_column, held, row)
+            } else {
+                ref to_column := vec_slice($Column,
+                    vec_slice($Table, world.tables)[to_index].columns)[to_position]
+                column_push_zero(to_column)
+            }
+        }
+        index = index + 1
+    }
+    ref to_table := vec_slice($Table, world.tables)[to_index]
+    // A fresh handle rather than the parameter: the push takes what it is given,
+    // and the slot still has to be told where the entity landed.
+    vec_push($Entity, to_table.entities,
+        Entity { id = entity.id, generation = entity.generation })
+    table_swap_remove(world, from_index, row)
+    ref slot_again := vec_slice($EntitySlot, world.slots)[entity.id]
+    slot_again.table = to_index
+    slot_again.row = landed
+    landed
+}
+
+ecs_has :: fn(world: World, entity: Entity, mask: i64) -> bool {
+    if (ecs_alive(world, entity) == false) {
+        return false
+    }
+    slot := vec_slice($EntitySlot, world.slots)[entity.id]
+    table := vec_slice($Table, world.tables)[slot.table]
+    (table.mask & mask) != 0
+}
+
+// Give an entity a component, or overwrite the one it has.
+ecs_add :: fn($T: Type, mut world: World, entity: Entity, mask: i64,
+    value: $T) {
+    if (ecs_alive(world, entity) == false) {
+        return
+    }
+    slot := vec_slice($EntitySlot, world.slots)[entity.id]
+    current := vec_slice($Table, world.tables)[slot.table].mask
+    if ((current & mask) == 0) {
+        migrate(world, entity, current | mask)
+    }
+    ecs_set($T, world, entity, mask, value)
+}
+
+ecs_remove :: fn(mut world: World, entity: Entity, mask: i64) {
+    if (ecs_alive(world, entity) == false) {
+        return
+    }
+    slot := vec_slice($EntitySlot, world.slots)[entity.id]
+    current := vec_slice($Table, world.tables)[slot.table].mask
+    if ((current & mask) == 0) {
+        return
+    }
+    migrate(world, entity, current & (0 - 1 - mask))
+}
+
+// The component an entity holds, by value. A component is plain data, so a copy
+// is the whole of it; `ecs_slice` is how a system reaches one to write.
+ecs_get :: fn($T: Type, world: World, entity: Entity, mask: i64) -> $T {
+    slot := vec_slice($EntitySlot, world.slots)[entity.id]
+    table := vec_slice($Table, world.tables)[slot.table]
+    position := column_position(table.mask, mask)
+    column := vec_slice($Column, table.columns)[position]
+    column_of($T, column)[slot.row]
+}
+
+ecs_set :: fn($T: Type, mut world: World, entity: Entity, mask: i64,
+    value: $T) {
+    slot := vec_slice($EntitySlot, world.slots)[entity.id]
+    ref table := vec_slice($Table, world.tables)[slot.table]
+    position := column_position(table.mask, mask)
+    ref column := vec_slice($Column, table.columns)[position]
+    mut items := column_of($T, column)
+    items[slot.row] = value
+}
+
+// One table's column as a slice, which is what a system writes through.
+ecs_slice :: fn($T: Type, world: World, table_index: i64, mask: i64) -> []T {
+    table := vec_slice($Table, world.tables)[table_index]
+    position := column_position(table.mask, mask)
+    column := vec_slice($Column, table.columns)[position]
+    column_of($T, column)
+}
+
+// ---------------------------------------------------------------------------
+// Queries
+//
+// A query is a cursor over the tables holding a set of components. The body
+// runs per table with the columns as slices, so the inner loop is over
+// contiguous memory and the language checks every index.
+//
+//     mut q := query_begin(world, POSITION | VELOCITY)
+//     while (query_next(world, q)) {
+//         mut p := query_column($Position, world, q, POSITION)
+//         v := query_column($Velocity, world, q, VELOCITY)
+//         mut i : i64 = 0
+//         while (i < q.count) {
+//             p[i].x = p[i].x + v[i].x
+//             i = i + 1
+//         }
+//     }
+//
+// Written this way a query has no arity limit and needs nothing captured: the
+// body is where it is written, so the resources it reads are the enclosing
+// function's locals. `for_each1` and its siblings are the same walk with the
+// body handed in, for a system short enough that the cursor is the longer half.
+// ---------------------------------------------------------------------------
+
+Query :: struct {
+    // The components a table must hold to be visited.
+    mask: i64,
+    // Where the walk is, and where it stopped.
+    next_table: i64,
+    table: i64,
+    count: i64,
+}
+
+query_begin :: fn(world: World, mask: i64) -> Query {
+    Query { mask = mask, next_table = 0, table = 0 - 1, count = 0 }
+}
+
+// Step to the next table holding every component the query asks for, answering
+// false when there are none left. A table with no rows is skipped rather than
+// handed over, so a body never runs on nothing.
+query_next :: fn(world: World, mut q: Query) -> bool {
+    mut index := q.next_table
+    total := vec_len($Table, world.tables)
+    while (index < total) {
+        table := vec_slice($Table, world.tables)[index]
+        rows := vec_len($Entity, table.entities)
+        if ((table.mask & q.mask) == q.mask && rows > 0) {
+            q.table = index
+            q.count = rows
+            q.next_table = index + 1
+            return true
+        }
+        index = index + 1
+    }
+    q.next_table = total
+    q.table = 0 - 1
+    q.count = 0
+    false
+}
+
+query_column :: fn($T: Type, world: World, q: Query, mask: i64) -> []T {
+    ecs_slice($T, world, q.table, mask)
+}
+
+// The entities of the table the cursor is on, for a body that needs the handle
+// beside the components.
+query_entities :: fn(world: World, q: Query) -> []Entity {
+    table := vec_slice($Table, world.tables)[q.table]
+    vec_slice($Entity, table.entities)
+}
+
+// The same walk with the body handed in as a compile-time argument, so the call
+// inside folds to a direct one and nothing is reached through a pointer. One of
+// these per number of components, which is what a language without variadic
+// generics costs here: three short functions instead of a macro.
+for_each1 :: fn($A: Type, $body: fn(mut []A, i64), mut world: World,
+    a_mask: i64) {
+    mut q := query_begin(world, a_mask)
+    while (query_next(world, q)) {
+        mut a := query_column($A, world, q, a_mask)
+        body(a, q.count)
+    }
+}
+
+for_each2 :: fn($A: Type, $B: Type, $body: fn(mut []A, mut []B, i64),
+    mut world: World, a_mask: i64, b_mask: i64) {
+    mut q := query_begin(world, a_mask | b_mask)
+    while (query_next(world, q)) {
+        mut a := query_column($A, world, q, a_mask)
+        mut b := query_column($B, world, q, b_mask)
+        body(a, b, q.count)
+    }
+}
+
+for_each3 :: fn($A: Type, $B: Type, $C: Type,
+    $body: fn(mut []A, mut []B, mut []C, i64), mut world: World,
+    a_mask: i64, b_mask: i64, c_mask: i64) {
+    mut q := query_begin(world, a_mask | b_mask | c_mask)
+    while (query_next(world, q)) {
+        mut a := query_column($A, world, q, a_mask)
+        mut b := query_column($B, world, q, b_mask)
+        mut c := query_column($C, world, q, c_mask)
+        body(a, b, c, q.count)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tags
+//
+// A marker that costs no mask bit and moves no rows. Adding one to an entity
+// does not change which table it is in, so a tag can be flipped in a loop
+// without the migration a component would cost. The generation is stored beside
+// the mark, so a tag left on a despawned id is not read as a mark on the entity
+// that gets the id next.
+// ---------------------------------------------------------------------------
+
+Tag :: struct {
+    marks: Vec<i64>,
+}
+
+tag_new :: fn() -> Tag {
+    Tag { marks = vec_new($i64, 64) }
+}
+
+tag_free :: fn(move t: Tag) {
+    vec_free($i64, t.marks)
+}
+
+// Marks are held as the generation plus one, so zero means unmarked and no
+// generation can be confused with it.
+tag_add :: fn(mut t: Tag, entity: Entity) {
+    while (vec_len($i64, t.marks) <= entity.id) {
+        vec_push($i64, t.marks, 0)
+    }
+    vec_set($i64, t.marks, entity.id, entity.generation + 1)
+}
+
+tag_remove :: fn(mut t: Tag, entity: Entity) {
+    if (entity.id < vec_len($i64, t.marks)) {
+        vec_set($i64, t.marks, entity.id, 0)
+    }
+}
+
+tag_has :: fn(t: Tag, entity: Entity) -> bool {
+    if (entity.id >= vec_len($i64, t.marks)) {
+        return false
+    }
+    vec_get($i64, t.marks, entity.id) == entity.generation + 1
+}
+
+// ---------------------------------------------------------------------------
+// Commands
+//
+// A structural change made while a query is walking would move the rows the
+// walk is holding, so it is queued instead and applied when the walk is done.
+// ---------------------------------------------------------------------------
+
+COMMAND_SPAWN   :: 0
+COMMAND_DESPAWN :: 1
+
+Command :: struct {
+    kind: i64,
+    entity: Entity,
+}
+
+Commands :: struct {
+    queued: Vec<Command>,
+}
+
+commands_new :: fn() -> Commands {
+    Commands { queued = vec_new($Command, 16) }
+}
+
+commands_free :: fn(move c: Commands) {
+    vec_free($Command, c.queued)
+}
+
+// A queued spawn has no handle to answer with yet, since the entity does not
+// exist until the queue is applied.
+commands_spawn :: fn(mut c: Commands) {
+    vec_push($Command, c.queued,
+        Command { kind = COMMAND_SPAWN,
+            entity = Entity { id = 0, generation = 0 } })
+}
+
+commands_despawn :: fn(mut c: Commands, entity: Entity) {
+    vec_push($Command, c.queued,
+        Command { kind = COMMAND_DESPAWN, entity = entity })
+}
+
+// Run the queue in the order it was written and empty it.
+commands_apply :: fn(mut c: Commands, mut world: World) {
+    mut i : i64 = 0
+    while (i < vec_len($Command, c.queued)) {
+        held := vec_get($Command, c.queued, i)
+        kind := held.kind
+        target := held.entity
+        if (kind == COMMAND_SPAWN) {
+            ecs_spawn(world)
+        } else {
+            ecs_despawn(world, target)
+        }
+        i = i + 1
+    }
+    vec_clear($Command, c.queued)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+//
+// The types here are the ones a test needs and nothing else names, so the
+// module carries no component of its own into a program that imports it.
+// ---------------------------------------------------------------------------
+
+TestPosition :: struct { x: f32, y: f32 }
+TestVelocity :: struct { x: f32, y: f32 }
+TestHealth :: struct { points: i64 }
+
+test_integrate :: fn(mut p: []TestPosition, mut v: []TestVelocity,
+    count: i64) {
+    mut i : i64 = 0
+    while (i < count) {
+        p[i].x = p[i].x + v[i].x
+        p[i].y = p[i].y + v[i].y
+        i = i + 1
+    }
+}
+
+test "a handle is refused once the entity it named is gone" {
+    mut world := ecs_new()
+    a := ecs_spawn(world)
+    assert(ecs_alive(world, a))
+    assert(ecs_count(world) == 1)
+    ecs_despawn(world, a)
+    assert(ecs_alive(world, a) == false)
+    assert(ecs_count(world) == 0)
+    // The next entity takes the same id under a later generation, and the
+    // handle to the one before it is still refused.
+    b := ecs_spawn(world)
+    assert(b.id == a.id)
+    assert(b.generation != a.generation)
+    assert(ecs_alive(world, a) == false)
+    assert(ecs_alive(world, b))
+    ecs_free(world)
+}
+
+test "a component is written and read back" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    a := ecs_spawn(world)
+    assert(ecs_has(world, a, position) == false)
+    ecs_add($TestPosition, world, a, position,
+        TestPosition { x = 1.0, y = 2.0 })
+    assert(ecs_has(world, a, position))
+    held := ecs_get($TestPosition, world, a, position)
+    assert(held.x == 1.0)
+    assert(held.y == 2.0)
+    ecs_set($TestPosition, world, a, position,
+        TestPosition { x = 5.0, y = 6.0 })
+    again := ecs_get($TestPosition, world, a, position)
+    assert(again.x == 5.0)
+    ecs_free(world)
+}
+
+test "adding a component carries the ones already there" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    velocity := ecs_register($TestVelocity, world)
+    health := ecs_register($TestHealth, world)
+    a := ecs_spawn(world)
+    ecs_add($TestPosition, world, a, position,
+        TestPosition { x = 3.0, y = 4.0 })
+    ecs_add($TestVelocity, world, a, velocity,
+        TestVelocity { x = 0.5, y = 0.0 })
+    ecs_add($TestHealth, world, a, health, TestHealth { points = 12 })
+    // Two migrations later, the first component is still what it was.
+    held := ecs_get($TestPosition, world, a, position)
+    assert(held.x == 3.0)
+    assert(held.y == 4.0)
+    speed := ecs_get($TestVelocity, world, a, velocity)
+    assert(speed.x == 0.5)
+    life := ecs_get($TestHealth, world, a, health)
+    assert(life.points == 12)
+    // And removing the middle one leaves the others where they were.
+    ecs_remove(world, a, velocity)
+    assert(ecs_has(world, a, velocity) == false)
+    assert(ecs_has(world, a, position))
+    after := ecs_get($TestPosition, world, a, position)
+    assert(after.x == 3.0)
+    still := ecs_get($TestHealth, world, a, health)
+    assert(still.points == 12)
+    ecs_free(world)
+}
+
+test "a despawn moves the last row into the hole it left" {
+    mut world := ecs_new()
+    health := ecs_register($TestHealth, world)
+    a := ecs_spawn(world)
+    b := ecs_spawn(world)
+    c := ecs_spawn(world)
+    ecs_add($TestHealth, world, a, health, TestHealth { points = 1 })
+    ecs_add($TestHealth, world, b, health, TestHealth { points = 2 })
+    ecs_add($TestHealth, world, c, health, TestHealth { points = 3 })
+    ecs_despawn(world, a)
+    // `c` moved into the row `a` left, and its component came with it.
+    assert(ecs_alive(world, c))
+    held := ecs_get($TestHealth, world, c, health)
+    assert(held.points == 3)
+    other := ecs_get($TestHealth, world, b, health)
+    assert(other.points == 2)
+    assert(ecs_count(world) == 2)
+    ecs_free(world)
+}
+
+test "a query visits the tables holding every component it asks for" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    velocity := ecs_register($TestVelocity, world)
+    // One entity with both, one with only a position.
+    a := ecs_spawn(world)
+    ecs_add($TestPosition, world, a, position,
+        TestPosition { x = 0.0, y = 0.0 })
+    ecs_add($TestVelocity, world, a, velocity,
+        TestVelocity { x = 1.0, y = 2.0 })
+    b := ecs_spawn(world)
+    ecs_add($TestPosition, world, b, position,
+        TestPosition { x = 100.0, y = 100.0 })
+
+    mut seen : i64 = 0
+    mut q := query_begin(world, position | velocity)
+    while (query_next(world, q)) {
+        seen = seen + q.count
+    }
+    assert(seen == 1)
+
+    // And a query over the position alone finds both, in two tables.
+    mut tables : i64 = 0
+    mut total : i64 = 0
+    mut all := query_begin(world, position)
+    while (query_next(world, all)) {
+        tables = tables + 1
+        total = total + all.count
+    }
+    assert(tables == 2)
+    assert(total == 2)
+    ecs_free(world)
+}
+
+test "a system writes through the columns a query hands it" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    velocity := ecs_register($TestVelocity, world)
+    a := ecs_spawn(world)
+    ecs_add($TestPosition, world, a, position,
+        TestPosition { x = 1.0, y = 1.0 })
+    ecs_add($TestVelocity, world, a, velocity,
+        TestVelocity { x = 0.25, y = 0.5 })
+    b := ecs_spawn(world)
+    ecs_add($TestPosition, world, b, position,
+        TestPosition { x = 10.0, y = 10.0 })
+    ecs_add($TestVelocity, world, b, velocity,
+        TestVelocity { x = 1.0, y = 1.0 })
+
+    for_each2($TestPosition, $TestVelocity, $test_integrate, world, position,
+        velocity)
+
+    first := ecs_get($TestPosition, world, a, position)
+    assert(first.x == 1.25)
+    assert(first.y == 1.5)
+    second := ecs_get($TestPosition, world, b, position)
+    assert(second.x == 11.0)
+    ecs_free(world)
+}
+
+test "the cursor form reaches the entity beside its components" {
+    mut world := ecs_new()
+    health := ecs_register($TestHealth, world)
+    a := ecs_spawn(world)
+    ecs_add($TestHealth, world, a, health, TestHealth { points = 7 })
+    mut found : i64 = 0
+    mut q := query_begin(world, health)
+    while (query_next(world, q)) {
+        entities := query_entities(world, q)
+        mut points := query_column($TestHealth, world, q, health)
+        mut i : i64 = 0
+        while (i < q.count) {
+            if (entities[i].id == a.id) {
+                found = points[i].points
+            }
+            i = i + 1
+        }
+    }
+    assert(found == 7)
+    ecs_free(world)
+}
+
+test "a tag marks an entity without moving it" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    mut selected := tag_new()
+    a := ecs_spawn(world)
+    ecs_add($TestPosition, world, a, position,
+        TestPosition { x = 0.0, y = 0.0 })
+    b := ecs_spawn(world)
+    ecs_add($TestPosition, world, b, position,
+        TestPosition { x = 0.0, y = 0.0 })
+    tag_add(selected, a)
+    assert(tag_has(selected, a))
+    assert(tag_has(selected, b) == false)
+    // Both are still in the one table, which is the whole point of a tag.
+    mut tables : i64 = 0
+    mut q := query_begin(world, position)
+    while (query_next(world, q)) {
+        tables = tables + 1
+    }
+    assert(tables == 1)
+    tag_remove(selected, a)
+    assert(tag_has(selected, a) == false)
+    tag_free(selected)
+    ecs_free(world)
+}
+
+test "a tag left on a freed id is not a mark on the next entity" {
+    mut world := ecs_new()
+    mut selected := tag_new()
+    a := ecs_spawn(world)
+    tag_add(selected, a)
+    ecs_despawn(world, a)
+    b := ecs_spawn(world)
+    assert(b.id == a.id)
+    assert(tag_has(selected, b) == false)
+    tag_free(selected)
+    ecs_free(world)
+}
+
+test "a change made during a walk is queued and applied after it" {
+    mut world := ecs_new()
+    health := ecs_register($TestHealth, world)
+    a := ecs_spawn(world)
+    ecs_add($TestHealth, world, a, health, TestHealth { points = 1 })
+    b := ecs_spawn(world)
+    ecs_add($TestHealth, world, b, health, TestHealth { points = 0 })
+
+    mut queued := commands_new()
+    mut q := query_begin(world, health)
+    while (query_next(world, q)) {
+        entities := query_entities(world, q)
+        points := query_column($TestHealth, world, q, health)
+        mut i : i64 = 0
+        while (i < q.count) {
+            if (points[i].points == 0) {
+                commands_despawn(queued, entities[i])
+            }
+            i = i + 1
+        }
+    }
+    assert(ecs_count(world) == 2)
+    commands_apply(queued, world)
+    assert(ecs_count(world) == 1)
+    assert(ecs_alive(world, b) == false)
+    assert(ecs_alive(world, a))
+    commands_free(queued)
+    ecs_free(world)
+}

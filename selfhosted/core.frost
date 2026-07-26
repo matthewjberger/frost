@@ -717,7 +717,12 @@ arena_push :: fn(mut a: Arena<$T>, move value: $T) -> i64 {
     // whatever the allocator put next and the damage surfaces somewhere else
     // entirely. Say so here instead.
     if (a.count >= a.cap) {
-        report("frost: an arena ran out of room")
+        // The capacity says which arena this is, since they are made at one
+        // place with the sizes written there and nothing else distinguishes
+        // one from another here.
+        report("frost: an arena of ")
+        frost_rt_error_int(a.cap)
+        report(" ran out of room")
         frost_rt_die()
     }
     id := a.count

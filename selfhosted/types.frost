@@ -235,6 +235,13 @@ types_compatible :: fn(mut p: Parser, from: i64, to: i64) -> bool {
     if (is_pointer(from) && is_pointer(to)) {
         return true
     }
+    // An aggregate is held by address, so an expression that answers with the
+    // address of one is that value: `slice[index]` of a struct answers with a
+    // pointer, and handing it to a place of the struct's own type is a copy of
+    // the element, not a type error.
+    if (is_pointer(from) && is_aggregate(to) && pointee(from) == to) {
+        return true
+    }
     // An array reaches a slice of its own element type and nothing else. Two
     // arrays that are not the same type were caught above.
     if (is_array_ty(from) || is_array_ty(to)) {

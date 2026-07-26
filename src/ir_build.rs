@@ -4651,21 +4651,21 @@ impl<'a> FunctionLowering<'a> {
             None
         };
 
+        // A branch that ends in a statement answers with nothing, and an `if`
+        // answers with a value only when both of its branches do. The
+        // assignment is skipped for a branch that answered with nothing rather
+        // than coercing a unit into the other branch's type, which for a struct
+        // is not a value at all: `if (c) { spawn(w) } else { g() }` is written
+        // for what it does, and what it would have yielded is read by nothing.
+        //
+        // An assignment goes in before the branch is terminated, since a
+        // statement emitted after a terminator starts a block nothing jumps to.
+        let mut then_answered = true;
         if let Some(result_local) = result {
-            let coerced = self.coerce(then_value, &then_type, &result_type);
-            self.emit(IrStatement::Assign(
-                result_local,
-                IrRvalue::Use(coerced),
-            ));
-        }
-        self.set_terminator(IrTerminator::Jump(merge));
-
-        self.switch_to(else_block);
-        if let Some(alternative) = alternative {
-            let (else_value, else_type) =
-                self.lower_block(alternative, expected)?;
-            if let Some(result_local) = result {
-                let coerced = self.coerce(else_value, &else_type, &result_type);
+            if matches!(then_type, Type::Void) {
+                then_answered = false;
+            } else {
+                let coerced = self.coerce(then_value, &then_type, &result_type);
                 self.emit(IrStatement::Assign(
                     result_local,
                     IrRvalue::Use(coerced),
@@ -4674,12 +4674,32 @@ impl<'a> FunctionLowering<'a> {
         }
         self.set_terminator(IrTerminator::Jump(merge));
 
+        self.switch_to(else_block);
+        let mut else_answered = true;
+        if let Some(alternative) = alternative {
+            let (else_value, else_type) =
+                self.lower_block(alternative, expected)?;
+            if let Some(result_local) = result {
+                if matches!(else_type, Type::Void) {
+                    else_answered = false;
+                } else {
+                    let coerced =
+                        self.coerce(else_value, &else_type, &result_type);
+                    self.emit(IrStatement::Assign(
+                        result_local,
+                        IrRvalue::Use(coerced),
+                    ));
+                }
+            }
+        }
+        self.set_terminator(IrTerminator::Jump(merge));
+
         self.switch_to(merge);
         match result {
-            Some(result_local) => {
+            Some(result_local) if then_answered && else_answered => {
                 Ok((IrOperand::Local(result_local), result_type))
             }
-            None => Ok((unit_operand(), Type::Void)),
+            _ => Ok((unit_operand(), Type::Void)),
         }
     }
 
@@ -5183,7 +5203,19 @@ impl<'a> FunctionLowering<'a> {
                                 "native backend: aggregate argument to generic call is not a place"
                             );
                         };
-                        lowered.push(self.address_of_local(local, target));
+                        // A local already holding the address of the aggregate
+                        // is that address. A read parameter of struct type is
+                        // one, so handing it on by value passes what it holds
+                        // rather than where it is held.
+                        if let Type::Ref(inner)
+                        | Type::RefMut(inner)
+                        | Type::Ptr(inner) = self.type_of_local(local)
+                            && *inner == *target
+                        {
+                            lowered.push(IrOperand::Local(local));
+                        } else {
+                            lowered.push(self.address_of_local(local, target));
+                        }
                     } else {
                         lowered.push(self.coerce(operand, &value_type, target));
                     }
@@ -5425,6 +5457,20 @@ impl<'a> FunctionLowering<'a> {
                 {
                     self.emit(IrStatement::Consume(local));
                 }
+                // A name already holding the address of the aggregate is that
+                // address. A read parameter of struct type is one: it arrived
+                // as a borrow, so what it holds is where the value is, and
+                // taking its address again would hand over the address of the
+                // pointer.
+                if let Some(local) = self.resolve_variable(name)
+                    && let Type::Ref(inner)
+                    | Type::RefMut(inner)
+                    | Type::Ptr(inner) = self.type_of_local(local)
+                    && needs_memory(&inner)
+                    && *inner == *target
+                {
+                    return Ok(IrOperand::Local(local));
+                }
                 let (address, _) = self.place_address(argument)?;
                 Ok(address)
             }
@@ -5559,7 +5605,17 @@ impl<'a> FunctionLowering<'a> {
                     "native backend: aggregate assignment from a non-place value"
                 );
             };
-            let source = self.address_of_local(source_local, &pointee);
+            // A local already holding the address of the value is where to copy
+            // from. A read parameter of struct type is one, so storing it copies
+            // what it points at rather than the pointer.
+            let source = match self.type_of_local(source_local) {
+                Type::Ref(inner) | Type::RefMut(inner) | Type::Ptr(inner)
+                    if *inner == pointee =>
+                {
+                    IrOperand::Local(source_local)
+                }
+                _ => self.address_of_local(source_local, &pointee),
+            };
             let size = self.builder.byte_size(&pointee);
             self.emit(IrStatement::Copy {
                 destination: address,
