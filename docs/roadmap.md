@@ -40,14 +40,16 @@ build work rather than language work. See
 
 Where it stands on its own source, 14,273 lines, from `just bench-selfhost`:
 
-| compiler and backend | rate |
+| compiler and backend | full build |
 | --- | --- |
 | bootstrap front end (`--emit-c`) | ~72,000 lines/sec |
 | self-hosted, C backend | ~145,000 lines/sec |
-| self-hosted, assembly backend | ~120,000 lines/sec |
+| self-hosted, assembly backend | ~130,000 lines/sec |
 
-Both clear the bar for a full build, which is what says the work left is about
-not rebuilding what did not change rather than about raw throughput. Measure
+Both self-hosted backends clear the 100,000 lines per second bar on a full
+build, so what is left of this item is about not rebuilding what did not change,
+and about using more than one core, rather than about raw throughput. Warm runs
+only: the first run after a build measures the file cache. Measure
 before optimizing anything here: the assembly backend read as eight times slower
 than that until the measurement stopped going through a pipe, and the one real
 find under it was a slot lookup that added up every local's size at each mention
