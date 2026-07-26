@@ -23,7 +23,6 @@
 // `[]T`, and through generational handles that refuse a stale entity.
 
 import "vec.frost"
-import "map.frost"
 
 export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     Commands, Change, Events, EventReader,
@@ -271,6 +270,99 @@ Table :: struct {
 }
 
 // ---------------------------------------------------------------------------
+// The mask table
+//
+// Mask to table index, by open addressing with linear probing. A world's own
+// rather than the standard library's map because the key is a mask and the
+// value is a row: two runs of i64 and nothing generic, which is the whole of
+// what a lookup by archetype needs.
+// ---------------------------------------------------------------------------
+
+Lookup :: struct {
+    masks: Vec<i64>,
+    rows: Vec<i64>,
+    cap: i64,
+    count: i64,
+}
+
+// A mask of zero is the empty archetype, which is a real key, so the empty slot
+// is marked by a row of -1 rather than by a mask of zero.
+lookup_new :: fn(capacity: i64) -> Lookup {
+    mut cap : i64 = 8
+    while (cap < capacity) { cap = cap * 2 }
+    mut made := Lookup { masks = vec_new($i64, cap), rows = vec_new($i64, cap),
+        cap = cap, count = 0 }
+    mut i : i64 = 0
+    while (i < cap) {
+        vec_push($i64, made.masks, 0)
+        vec_push($i64, made.rows, 0 - 1)
+        i = i + 1
+    }
+    made
+}
+
+lookup_free :: fn(move l: Lookup) {
+    vec_free($i64, l.masks)
+    vec_free($i64, l.rows)
+}
+
+// The slot a mask sits in, or the first empty one on its probe run. The table
+// is never full, since it grows at half.
+lookup_slot :: fn(l: Lookup, mask: i64) -> i64 {
+    mut h := mask * 2654435761
+    h = h + (h / 4096)
+    mut i := h % l.cap
+    if (i < 0) {
+        i = 0 - i
+    }
+    masks := vec_slice($i64, l.masks)
+    rows := vec_slice($i64, l.rows)
+    while (rows[i] >= 0 && masks[i] != mask) {
+        i = i + 1
+        if (i >= l.cap) { i = 0 }
+    }
+    i
+}
+
+lookup_get :: fn(l: Lookup, mask: i64) -> i64 {
+    slot := lookup_slot(l, mask)
+    vec_slice($i64, l.rows)[slot]
+}
+
+lookup_put :: fn(mut l: Lookup, mask: i64, row: i64) {
+    if (l.count * 2 >= l.cap) {
+        lookup_grow(l)
+    }
+    slot := lookup_slot(l, mask)
+    mut rows := vec_slice($i64, l.rows)
+    if (rows[slot] < 0) {
+        l.count = l.count + 1
+    }
+    vec_slice($i64, l.masks)[slot] = mask
+    vec_slice($i64, l.rows)[slot] = row
+}
+
+lookup_grow :: fn(mut l: Lookup) {
+    old_cap := l.cap
+    mut fresh := lookup_new(old_cap * 2)
+    mut i : i64 = 0
+    while (i < old_cap) {
+        held_mask := vec_slice($i64, l.masks)[i]
+        held_row := vec_slice($i64, l.rows)[i]
+        if (held_row >= 0) {
+            lookup_put(fresh, held_mask, held_row)
+        }
+        i = i + 1
+    }
+    vec_free($i64, l.masks)
+    vec_free($i64, l.rows)
+    l.masks = fresh.masks
+    l.rows = fresh.rows
+    l.cap = fresh.cap
+    l.count = fresh.count
+}
+
+// ---------------------------------------------------------------------------
 // The world
 // ---------------------------------------------------------------------------
 
@@ -296,7 +388,7 @@ World :: struct {
     next_id: i64,
     tables: Vec<Table>,
     // Mask to table index, so a migration finds its destination without a scan.
-    lookup: Map<i64>,
+    lookup: Lookup,
     live: i64,
     // The clock every write is stamped with. It starts at one so that zero,
     // which is what a freshly allocated row holds, is a time before anything.
@@ -317,7 +409,7 @@ ecs_new :: fn() -> World {
         free_ids = vec_new($i64, 64),
         next_id = 0,
         tables = vec_new($Table, 16),
-        lookup = map_new($i64, 32),
+        lookup = lookup_new(32),
         live = 0,
         tick = 1,
         resources = vec_new($Column, 4),
@@ -332,7 +424,7 @@ ecs_new :: fn() -> World {
         Table { mask = 0, entities = vec_new($Entity, 16),
             columns = vec_new($Column, 1) },
     )
-    map_put($i64, world.lookup, 0, 0)
+    lookup_put(world.lookup, 0, 0)
     world
 }
 
@@ -361,7 +453,7 @@ ecs_free :: fn(move world: World) {
     vec_free($Table, world.tables)
     vec_free($EntitySlot, world.slots)
     vec_free($i64, world.free_ids)
-    map_free($i64, world.lookup)
+    lookup_free(world.lookup)
 }
 
 // ---------------------------------------------------------------------------
@@ -435,7 +527,7 @@ ecs_component_size :: fn(world: World, mask: i64) -> i64 {
 // columns are created in ascending bit order, which is the order every lookup
 // assumes.
 table_for :: fn(mut world: World, mask: i64) -> i64 {
-    held := map_get($i64, world.lookup, mask, 0 - 1)
+    held := lookup_get(world.lookup, mask)
     if (held >= 0) {
         return held
     }
@@ -452,7 +544,7 @@ table_for :: fn(mut world: World, mask: i64) -> i64 {
     }
     made := vec_len($Table, world.tables)
     vec_push($Table, world.tables, table)
-    map_put($i64, world.lookup, mask, made)
+    lookup_put(world.lookup, mask, made)
     made
 }
 

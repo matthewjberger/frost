@@ -554,7 +554,13 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         // index is bounds-checked against the length, a constant for a fixed
         // array and the slice's own field for a slice, so an out-of-range
         // access aborts rather than reading past the run.
-        if (is_array_ty(through)) {
+        //
+        // A borrow of a slice is the slice, since that is what a `mut []T`
+        // parameter is. A raw pointer to one is not: `^str` is a run of strings
+        // and indexing it is the arithmetic below, which is what a container
+        // holding slices as its elements needs.
+        if (is_array_ty(through)
+            && (is_raw_pointer(base_ty) == false || is_array_ty(base_ty))) {
             emit_text("(")
             emit_expr(p, base)
             if (is_pointer(base_ty)) {
@@ -830,11 +836,23 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                 // auto-borrowed argument is a value whose address is taken
                 // here, so it answers to the pointee rather than the pointer.
             }
-            // A `value` parameter is declared as the struct, so it is handed
-            // the struct. The C compiler applies the target's rule for passing
-            // one, which is the whole reason this goes through C's own types
-            // rather than being placed here.
-            if (borrow == 1 && have_param == 1
+            // A string literal reaching a parameter of slice type, where the
+            // parameter belongs to a generic: the literal is a pointer to
+            // bytes, the parameter wants the slice built from it, and an
+            // aggregate travels by address. `map_put($str, ..., "ada", 36)` is
+            // this, and without it C is handed the bytes where a slice belongs.
+            mut want_ty := param_ty
+            if (is_pointer(want_ty)) {
+                want_ty = pointee(want_ty)
+            }
+            literal_slice := have_param == 1
+                && arena_at(p.arena, value).kind == NodeKind::StrLit
+                && is_array_ty(want_ty) && is_slice_ty(p, want_ty)
+            if (literal_slice) {
+                emit_text("(&")
+                emit_coerced(p, value, want_ty)
+                emit_text(")")
+            } else if (borrow == 1 && have_param == 1
                 && param_node_by_value(p, param)) {
                 borrow = 0
                 emit_expr(p, value)

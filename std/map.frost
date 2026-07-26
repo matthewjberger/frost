@@ -1,15 +1,29 @@
-// A hash map from i64 keys to values of any type, by open addressing with
-// linear probing. Integer keys cover the common cases a data-oriented program
-// has, which is a lookup by id, a handle, or an interned name, so the key is
-// concrete and only the value is generic.
+// A hash map by open addressing with linear probing, from keys of any type to
+// values of any type.
+//
+// What it means to hash a key and to compare two of them is a value: a
+// `Hashing<K>` is an ordinary struct whose two fields happen to be functions,
+// and an implementation is an ordinary constant of it. A call passes the one it
+// wants as a compile-time argument, so the hash and the comparison fold to
+// direct calls and the map holds no function pointer. This is the shape
+// `Ordering<T>` gives a sort: no registry, no lookup, no coherence rule.
+//
+//     mut ages := map_new($str, $i64, 16)
+//     map_put($Text, $i64, $text_keys, ages, text("ada"), 36)
+//     held := map_get($Text, $i64, $text_keys, ages, text("ada"), 0)
+//
+// `i64_keys` and `str_keys` cover the two common cases. A key of any other type
+// needs a hash and an equality over it, written once and named at each call.
 //
 // Three parallel heap arrays: the keys, the values, and a state byte per slot
 // saying empty, used, or tombstone. The table doubles when it is half full,
 // which keeps probe runs short. The raw pointers and the allocation are the
 // unsafe floor, wrapped here.
 
-export Map, map_new, map_free, map_len, map_put, map_get, map_has, map_remove,
-    map_clear
+export Map, Hashing, map_new, map_free, map_len, map_put, map_get, map_has,
+    map_remove, map_clear,
+    i64_hash, i64_same, str_hash, str_same, i64_keys,
+    Text, text, text_hash, text_same, text_keys
 
 frost_rt_heap_alloc :: extern fn(size: i64) -> ^u8
 frost_rt_heap_free  :: extern fn(block: ^u8)
@@ -18,22 +32,92 @@ SLOT_EMPTY :: 0
 SLOT_USED  :: 1
 SLOT_GONE  :: 2
 
-Map :: struct($V: Type) {
-    keys: ^i64,
-    values: ^V,
+// The three runs are bytes with a width rather than typed pointers, and the
+// typed view is taken where they are read. A key type that is itself a slice,
+// `str` above all, is then an element of a run like any other rather than a
+// pointer to a pointer.
+Map :: struct($K: Type, $V: Type) {
+    keys: ^u8,
+    values: ^u8,
     state: ^u8,
     cap: i64,
     count: i64,
 }
 
+// What a key type has to answer: a number, and whether two of them are the same
+// key. Nothing else about the type is needed, and nothing is implicit.
+Hashing :: struct($K: Type) {
+    hash: fn(K) -> i64,
+    equal: fn(K, K) -> bool,
+}
+
+// A scramble of the number, so keys that differ in low bits alone do not all
+// land in one run of slots.
+i64_hash :: fn(key: i64) -> i64 {
+    mut h := key * 2654435761
+    h = h + (h / 4096)
+    h
+}
+
+i64_same :: fn(a: i64, b: i64) -> bool {
+    a == b
+}
+
+// A multiply-and-add over the bytes. A string's hash is its contents, so two
+// strings that read the same are one key however each was built. The mask keeps
+// the running value positive, since the slot is a remainder of it.
+str_hash :: fn(key: str) -> i64 {
+    mut h : i64 = 2166136261
+    for index, byte in key {
+        h = ((h * 33) + byte) & 4611686018427387903
+    }
+    h
+}
+
+// A string as a key. The bytes are wrapped in a struct rather than used bare
+// because a key is an element of a run, and a run of slices is a shape the
+// self-hosted compiler does not yet hold (docs/roadmap.md).
+Text :: struct {
+    bytes: str,
+}
+
+text :: fn(bytes: str) -> Text {
+    Text { bytes = bytes }
+}
+
+text_hash :: fn(key: Text) -> i64 {
+    str_hash(key.bytes)
+}
+
+text_same :: fn(a: Text, b: Text) -> bool {
+    str_same(a.bytes, b.bytes)
+}
+
+str_same :: fn(a: str, b: str) -> bool {
+    if (str_len(a) != str_len(b)) {
+        return false
+    }
+    mut i : i64 = 0
+    while (i < str_len(a)) {
+        if (a[i] != b[i]) {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+i64_keys :: Hashing<i64> { hash = i64_hash, equal = i64_same }
+text_keys :: Hashing<Text> { hash = text_hash, equal = text_same }
+
 // A power-of-two capacity, so the slot index is a mask rather than a modulo,
 // and a fresh block with every slot empty.
-map_new :: fn($V: Type, capacity: i64) -> Map<V> {
+map_new :: fn($K: Type, $V: Type, capacity: i64) -> Map<K, V> {
     mut cap : i64 = 8
     while (cap < capacity) { cap = cap * 2 }
-    keys := unsafe { ptr_cast($i64, frost_rt_heap_alloc(cap * 8)) }
-    values := unsafe { ptr_cast($V, frost_rt_heap_alloc(cap * sizeof(V))) }
-    state := unsafe { ptr_cast($u8, frost_rt_heap_alloc(cap)) }
+    keys := unsafe { frost_rt_heap_alloc(cap * sizeof(K)) }
+    values := unsafe { frost_rt_heap_alloc(cap * sizeof(V)) }
+    state := unsafe { frost_rt_heap_alloc(cap) }
     mut i : i64 = 0
     while (i < cap) {
         unsafe { state[i] = SLOT_EMPTY }
@@ -42,35 +126,44 @@ map_new :: fn($V: Type, capacity: i64) -> Map<V> {
     Map { keys = keys, values = values, state = state, cap = cap, count = 0 }
 }
 
-map_free :: fn($V: Type, move m: Map<V>) {
+map_free :: fn($K: Type, $V: Type, move m: Map<K, V>) {
     unsafe {
-        frost_rt_heap_free(ptr_cast($u8, m.keys))
-        frost_rt_heap_free(ptr_cast($u8, m.values))
+        frost_rt_heap_free(m.keys)
+        frost_rt_heap_free(m.values)
         frost_rt_heap_free(m.state)
     }
 }
 
-map_len :: fn($V: Type, m: Map<V>) -> i64 {
-    m.count
+// The typed views of the two runs. Everything above this reads and writes
+// through a slice, which is the end of the erasure.
+map_keys :: fn($K: Type, $V: Type, m: Map<K, V>) -> []K {
+    unsafe { slice_from($K, ptr_cast($K, m.keys), m.cap) }
 }
 
-// A scramble of the key, so keys that differ in low bits alone do not all land
-// in one run of slots. The mask keeps it in range for a power-of-two capacity.
-map_slot :: fn($V: Type, m: Map<V>, key: i64) -> i64 {
-    mut h := key * 2654435761
-    h = h + (h / 4096)
-    h % m.cap
+map_values :: fn($K: Type, $V: Type, m: Map<K, V>) -> []V {
+    unsafe { slice_from($V, ptr_cast($V, m.values), m.cap) }
+}
+
+map_len :: fn($K: Type, $V: Type, m: Map<K, V>) -> i64 {
+    m.count
 }
 
 // The slot a key sits in, or the first empty slot on its probe run, whichever
 // comes first. A tombstone is probed past rather than stopped at, so a key put
 // after a removal is still found.
-map_find :: fn($V: Type, m: Map<V>, key: i64) -> i64 {
-    mut i := map_slot($V, m, key)
+map_find :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>,
+    key: $K) -> i64 {
+    mut i := ops.hash(key) % m.cap
+    if (i < 0) {
+        i = 0 - i
+    }
+    held := map_keys($K, $V, m)
     while (true) {
         s := unsafe { m.state[i] }
         if (s == SLOT_EMPTY) { return i }
-        if (s == SLOT_USED && unsafe { m.keys[i] } == key) { return i }
+        if (s == SLOT_USED && ops.equal(held[i], key)) {
+            return i
+        }
         i = i + 1
         if (i >= m.cap) { i = 0 }
     }
@@ -80,22 +173,27 @@ map_find :: fn($V: Type, m: Map<V>, key: i64) -> i64 {
 // Place a key and value into a table that is known to have room, without the
 // load-factor check or the growth. Both `map_put` and the rehash in `map_grow`
 // insert through this, which keeps the two out of a mutual recursion.
-map_insert :: fn($V: Type, mut m: Map<V>, key: i64, move value: $V) {
-    slot := map_find($V, m, key)
+map_insert :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>,
+    key: $K, move value: $V) {
+    slot := map_find($K, $V, $ops, m, key)
     if (unsafe { m.state[slot] } != SLOT_USED) {
         m.count = m.count + 1
     }
-    m.keys[slot] = key
-    m.values[slot] = value
+    mut keys := map_keys($K, $V, m)
+    mut values := map_values($K, $V, m)
+    keys[slot] = key
+    values[slot] = value
     m.state[slot] = SLOT_USED
 }
 
-map_grow :: fn($V: Type, mut m: Map<V>) {
-    old_keys := m.keys
-    old_values := m.values
+map_grow :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>) {
+    old_keys := map_keys($K, $V, m)
+    old_values := map_values($K, $V, m)
+    old_block_keys := m.keys
+    old_block_values := m.values
     old_state := m.state
     old_cap := m.cap
-    fresh := map_new($V, m.cap * 2)
+    fresh := map_new($K, $V, m.cap * 2)
     m.keys = fresh.keys
     m.values = fresh.values
     m.state = fresh.state
@@ -104,43 +202,47 @@ map_grow :: fn($V: Type, mut m: Map<V>) {
     mut i : i64 = 0
     while (i < old_cap) {
         if (unsafe { old_state[i] } == SLOT_USED) {
-            map_insert($V, m, unsafe { old_keys[i] }, unsafe { old_values[i] })
+            map_insert($K, $V, $ops, m, old_keys[i], old_values[i])
         }
         i = i + 1
     }
     unsafe {
-        frost_rt_heap_free(ptr_cast($u8, old_keys))
-        frost_rt_heap_free(ptr_cast($u8, old_values))
+        frost_rt_heap_free(old_block_keys)
+        frost_rt_heap_free(old_block_values)
         frost_rt_heap_free(old_state)
     }
 }
 
-map_put :: fn($V: Type, mut m: Map<V>, key: i64, move value: $V) {
+map_put :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>,
+    key: $K, move value: $V) {
     if (m.count * 2 >= m.cap) {
-        map_grow($V, m)
+        map_grow($K, $V, $ops, m)
     }
-    map_insert($V, m, key, value)
+    map_insert($K, $V, $ops, m, key, value)
 }
 
-map_has :: fn($V: Type, m: Map<V>, key: i64) -> bool {
-    slot := map_find($V, m, key)
+map_has :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>,
+    key: $K) -> bool {
+    slot := map_find($K, $V, $ops, m, key)
     unsafe { m.state[slot] } == SLOT_USED
 }
 
 // The value for a key, or the supplied default when the key is absent, so a
 // caller reads without a separate presence check when a default will do.
-map_get :: fn($V: Type, m: Map<V>, key: i64, move fallback: $V) -> $V {
-    slot := map_find($V, m, key)
+map_get :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>, key: $K,
+    move fallback: $V) -> $V {
+    slot := map_find($K, $V, $ops, m, key)
     if (unsafe { m.state[slot] } == SLOT_USED) {
-        return unsafe { m.values[slot] }
+        return map_values($K, $V, m)[slot]
     }
     fallback
 }
 
 // Remove a key, leaving a tombstone so a probe run through the slot still
 // reaches keys placed after it. Answers whether the key was there.
-map_remove :: fn($V: Type, mut m: Map<V>, key: i64) -> bool {
-    slot := map_find($V, m, key)
+map_remove :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>,
+    key: $K) -> bool {
+    slot := map_find($K, $V, $ops, m, key)
     found := unsafe { m.state[slot] } == SLOT_USED
     if (found) {
         unsafe { m.state[slot] = SLOT_GONE }
@@ -151,11 +253,128 @@ map_remove :: fn($V: Type, mut m: Map<V>, key: i64) -> bool {
 
 // Empty every slot without freeing the table, so it is reused rather than
 // reallocated.
-map_clear :: fn($V: Type, mut m: Map<V>) {
+map_clear :: fn($K: Type, $V: Type, mut m: Map<K, V>) {
     mut i : i64 = 0
     while (i < m.cap) {
         unsafe { m.state[i] = SLOT_EMPTY }
         i = i + 1
     }
     m.count = 0
+}
+
+Cell :: struct { x: i64, y: i64 }
+
+cell_hash :: fn(c: Cell) -> i64 {
+    (i64_hash(c.x) + (i64_hash(c.y) * 31)) & 4611686018427387903
+}
+
+cell_same :: fn(a: Cell, b: Cell) -> bool {
+    a.x == b.x && a.y == b.y
+}
+
+cell_keys :: Hashing<Cell> { hash = cell_hash, equal = cell_same }
+
+test "a value is put and read back" {
+    mut m := map_new($i64, $i64, 8)
+    map_put($i64, $i64, $i64_keys, m, 1, 10)
+    map_put($i64, $i64, $i64_keys, m, 2, 20)
+    assert(map_len($i64, $i64, m) == 2)
+    assert(map_get($i64, $i64, $i64_keys, m, 1, 0) == 10)
+    assert(map_get($i64, $i64, $i64_keys, m, 2, 0) == 20)
+    assert(map_get($i64, $i64, $i64_keys, m, 3, 0 - 1) == 0 - 1)
+    assert(map_has($i64, $i64, $i64_keys, m, 2))
+    map_free($i64, $i64, m)
+}
+
+test "a key put twice holds the second value" {
+    mut m := map_new($i64, $i64, 8)
+    map_put($i64, $i64, $i64_keys, m, 7, 1)
+    map_put($i64, $i64, $i64_keys, m, 7, 2)
+    assert(map_len($i64, $i64, m) == 1)
+    assert(map_get($i64, $i64, $i64_keys, m, 7, 0) == 2)
+    map_free($i64, $i64, m)
+}
+
+test "a removed key is gone and the ones after it are still found" {
+    mut m := map_new($i64, $i64, 8)
+    mut i : i64 = 0
+    while (i < 6) {
+        map_put($i64, $i64, $i64_keys, m, i, i * 100)
+        i = i + 1
+    }
+    assert(map_remove($i64, $i64, $i64_keys, m, 3))
+    assert(map_remove($i64, $i64, $i64_keys, m, 3) == false)
+    assert(map_has($i64, $i64, $i64_keys, m, 3) == false)
+    assert(map_get($i64, $i64, $i64_keys, m, 4, 0) == 400)
+    assert(map_len($i64, $i64, m) == 5)
+    map_free($i64, $i64, m)
+}
+
+test "the table grows and keeps everything it held" {
+    mut m := map_new($i64, $i64, 8)
+    mut i : i64 = 0
+    while (i < 200) {
+        map_put($i64, $i64, $i64_keys, m, i, i + 1)
+        i = i + 1
+    }
+    assert(map_len($i64, $i64, m) == 200)
+    mut k : i64 = 0
+    while (k < 200) {
+        assert(map_get($i64, $i64, $i64_keys, m, k, 0) == k + 1)
+        k = k + 1
+    }
+    map_free($i64, $i64, m)
+}
+
+test "a string is a key by what it holds rather than where it is" {
+    mut ages := map_new($Text, $i64, 8)
+    map_put($Text, $i64, $text_keys, ages, text("ada"), 36)
+    map_put($Text, $i64, $text_keys, ages, text("grace"), 45)
+    assert(map_get($Text, $i64, $text_keys, ages, text("ada"), 0) == 36)
+    assert(map_get($Text, $i64, $text_keys, ages, text("grace"), 0) == 45)
+    assert(map_get($Text, $i64, $text_keys, ages, text("alan"), 0) == 0)
+    assert(map_has($Text, $i64, $text_keys, ages, text("ad")) == false)
+    map_put($Text, $i64, $text_keys, ages, text("ada"), 37)
+    assert(map_len($Text, $i64, ages) == 2)
+    assert(map_get($Text, $i64, $text_keys, ages, text("ada"), 0) == 37)
+    map_free($Text, $i64, ages)
+}
+
+test "a string key survives the table growing" {
+    mut seen := map_new($Text, $i64, 8)
+    map_put($Text, $i64, $text_keys, seen, text("alpha"), 1)
+    map_put($Text, $i64, $text_keys, seen, text("beta"), 2)
+    map_put($Text, $i64, $text_keys, seen, text("gamma"), 3)
+    map_put($Text, $i64, $text_keys, seen, text("delta"), 4)
+    map_put($Text, $i64, $text_keys, seen, text("epsilon"), 5)
+    map_put($Text, $i64, $text_keys, seen, text("zeta"), 6)
+    assert(map_len($Text, $i64, seen) == 6)
+    assert(map_get($Text, $i64, $text_keys, seen, text("alpha"), 0) == 1)
+    assert(map_get($Text, $i64, $text_keys, seen, text("zeta"), 0) == 6)
+    assert(map_remove($Text, $i64, $text_keys, seen, text("gamma")))
+    assert(map_has($Text, $i64, $text_keys, seen, text("gamma")) == false)
+    assert(map_get($Text, $i64, $text_keys, seen, text("delta"), 0) == 4)
+    map_free($Text, $i64, seen)
+}
+
+test "a struct is a key when it says how it hashes" {
+    mut grid := map_new($Cell, $i64, 8)
+    map_put($Cell, $i64, $cell_keys, grid, Cell { x = 1, y = 2 }, 12)
+    map_put($Cell, $i64, $cell_keys, grid, Cell { x = 3, y = 4 }, 34)
+    assert(map_get($Cell, $i64, $cell_keys, grid, Cell { x = 1, y = 2 }, 0)
+        == 12)
+    assert(map_get($Cell, $i64, $cell_keys, grid, Cell { x = 3, y = 4 }, 0)
+        == 34)
+    assert(map_get($Cell, $i64, $cell_keys, grid, Cell { x = 9, y = 9 }, 0)
+        == 0)
+    map_free($Cell, $i64, grid)
+}
+
+test "a map holds a struct value" {
+    mut places := map_new($i64, $Cell, 8)
+    map_put($i64, $Cell, $i64_keys, places, 1, Cell { x = 5, y = 6 })
+    held := map_get($i64, $Cell, $i64_keys, places, 1, Cell { x = 0, y = 0 })
+    assert(held.x == 5)
+    assert(held.y == 6)
+    map_free($i64, $Cell, places)
 }
