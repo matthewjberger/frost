@@ -204,7 +204,8 @@ fn walk_expression(
         Expression::Sizeof(ty) | Expression::TypeValue(ty) => {
             substitute(ty, declared)
         }
-        Expression::Prefix(_, inner)
+        Expression::PackMap(inner, _, _)
+        | Expression::Prefix(_, inner)
         | Expression::AddressOf(inner)
         | Expression::Borrow(inner)
         | Expression::BorrowMut(inner)

@@ -146,7 +146,8 @@ fn statement_has_try(statement: &Statement) -> bool {
 fn expression_has_try(expression: &Expression) -> bool {
     match expression {
         Expression::Try(_) => true,
-        Expression::Prefix(_, inner)
+        Expression::PackMap(inner, _, _)
+        | Expression::Prefix(_, inner)
         | Expression::AddressOf(inner)
         | Expression::Borrow(inner)
         | Expression::BorrowMut(inner)
@@ -383,7 +384,8 @@ impl Lowerer {
                     self.rewrite_expression(argument, result, error);
                 }
             }
-            Expression::Prefix(_, inner)
+            Expression::PackMap(inner, _, _)
+            | Expression::Prefix(_, inner)
             | Expression::AddressOf(inner)
             | Expression::Borrow(inner)
             | Expression::BorrowMut(inner)

@@ -223,7 +223,8 @@ fn read_through_expression(
         return;
     }
     match expression {
-        Expression::Prefix(_, inner)
+        Expression::PackMap(inner, _, _)
+        | Expression::Prefix(_, inner)
         | Expression::AddressOf(inner)
         | Expression::Borrow(inner)
         | Expression::BorrowMut(inner)
@@ -330,7 +331,8 @@ fn rewrite_expression(
             // exists during lowering. Done in ir_build, not here.
             let _ = auto_borrow_call;
         }
-        Expression::Prefix(_, inner)
+        Expression::PackMap(inner, _, _)
+        | Expression::Prefix(_, inner)
         | Expression::AddressOf(inner)
         | Expression::Borrow(inner)
         | Expression::BorrowMut(inner)

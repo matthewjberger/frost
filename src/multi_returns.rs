@@ -348,7 +348,8 @@ impl Lowering {
                 }
                 self.rewrite_statements(body, None)
             }
-            Expression::Prefix(_, inner)
+            Expression::PackMap(inner, _, _)
+            | Expression::Prefix(_, inner)
             | Expression::AddressOf(inner)
             | Expression::Borrow(inner)
             | Expression::BorrowMut(inner)

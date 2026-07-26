@@ -1487,6 +1487,61 @@ fn self_hosted_a_function_wider_than_a_page_of_frame() {
     );
 }
 
+// A compile-time list holds types as well as values, is handed on to another
+// list by naming it, and expands into a call's argument list once per element.
+// The three together are what lets one function serve a query over any number
+// of components: the list decides the arity, so there is no `for_each3`.
+const PACK_FEATURES: &str = "widths :: fn($body: fn(i64, i64), types: $...) {
+         body(sizeof(T) for T in types)
+     }
+     Big :: struct { a: i64, b: i64, c: i64 }
+     show2 :: fn(a: i64, b: i64) {
+         print a
+         print b
+     }
+     doubled :: fn(v: i64) -> i64 { v * 2 }
+     show3 :: fn(a: i64, b: i64, c: i64) {
+         print a
+         print b
+         print c
+     }
+     apply :: fn($body: fn(i64, i64, i64), values: $...) {
+         body(doubled(v) for v in values)
+     }
+     total :: fn(values: $...) -> i64 {
+         mut sum : i64 = 0
+         for v in values {
+             sum = sum + v
+         }
+         sum
+     }
+     passed_on :: fn(values: $...) -> i64 {
+         total(values)
+     }
+     main :: fn() -> i64 {
+         widths($show2, $i64, $Big)
+         apply($show3, 1, 2, 3)
+         print passed_on(4, 5, 6)
+         0
+     }
+";
+
+const PACK_OUTPUT: &str = "8
+24
+2
+4
+6
+15
+";
+
+#[test]
+fn a_compile_time_list_holds_types_and_expands_into_a_call() {
+    let Some(output) = compile_and_run("packfeat", PACK_FEATURES) else {
+        return;
+    };
+    assert_eq!(output, PACK_OUTPUT);
+}
+
 // A call through a function pointer that answers with a struct. A Frost
 // function hands an aggregate back through a trailing out-pointer, and a call
 // through a pointer is the same call, so the signature the call site builds is

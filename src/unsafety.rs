@@ -174,7 +174,8 @@ fn strip_expression(expression: &mut Expression) {
                 strip_expression(argument);
             }
         }
-        Expression::Prefix(_, inner)
+        Expression::PackMap(inner, _, _)
+        | Expression::Prefix(_, inner)
         | Expression::AddressOf(inner)
         | Expression::Borrow(inner)
         | Expression::BorrowMut(inner)
@@ -449,7 +450,8 @@ impl Checker {
                     self.block(&case.body);
                 }
             }
-            Expression::Prefix(_, inner)
+            Expression::PackMap(inner, _, _)
+            | Expression::Prefix(_, inner)
             | Expression::AddressOf(inner)
             | Expression::Borrow(inner)
             | Expression::BorrowMut(inner)
