@@ -44,12 +44,16 @@ not the second.
 And one piece of the unsafe audit is a perimeter rather than a proof. The
 compiler reads its source buffer through `byte_at`, `byte_set` and `cstr_len`
 in core.frost, which is the whole of what it names of the three unchecked
-operations, but they take a pointer with no length beside it. Making the read
-checked means carrying the buffer as a slice, which is the length threaded
-through the forty-odd functions that take a `^i8` there. The buffer is one the
-compiler built and every offset into it came from the lexer walking the same
-buffer, so what this would catch is a bug in the compiler rather than anything
-a program can cause, which is why it is written down here rather than done.
+operations, but they take a pointer with no length beside it.
+
+Carrying the buffer as a `str` instead makes every read and write a checked
+index. That conversion was written and is mechanical: twenty-three signatures
+change from `^i8` to `str`, the reads become `src[i]`, the writes become
+`buffer[i] = byte`, and `buffer_of` builds the one slice the whole compiler
+indexes. What stopped it is the bootstrap, not the design: a `str` local in the
+driver's `main` reaches the backend without a stack slot and fails with "type
+not supported in codegen: str", while the same shape in a small program is
+fine. The next step is that one local, not the other three hundred sites.
 
 ## What is done, and what it cost
 
