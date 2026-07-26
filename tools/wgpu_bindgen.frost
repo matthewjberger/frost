@@ -344,15 +344,15 @@ append_default :: fn(mut out: Builder, mut document: Json, held: i64) {
     given := json_member(document, held, "default")
 
     if (given >= 0) {
-        if (json_kind(document, given) == JSON_NUMBER) {
+        if (json_kind(document, given) == JsonKind::Number) {
             builder_int(out, json_number(document, given))
             return
         }
-        if (json_kind(document, given) == JSON_TRUE) {
+        if (json_kind(document, given) == JsonKind::True) {
             builder_int(out, 1)
             return
         }
-        if (json_kind(document, given) == JSON_FALSE) {
+        if (json_kind(document, given) == JsonKind::False) {
             builder_int(out, 0)
             return
         }

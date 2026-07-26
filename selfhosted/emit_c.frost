@@ -1697,11 +1697,18 @@ emit_test_main :: fn(mut p: Parser) {
     mut i : i64 = 0
     while (i < p.tests.count) {
         entry := arena_at(p.tests, i)
-        emit_text("frost_rt_test_run(\"")
-        emit_string_content(p.src, entry.name_off, entry.name_len)
-        emit_text("\", (void(*)(void))mf_")
-        frost_rt_emit_int(entry.fn_index)
-        emit_text(");\n")
+        // Only the tests of the file that was named. A module's own tests are
+        // its to run, so importing one does not drag its test blocks into the
+        // run of whatever imported it. The root is module zero, since it is
+        // recorded before the files it imports even though its text is laid
+        // down after them.
+        if (module_at(p.modules, entry.name_off) == 0) {
+            emit_text("frost_rt_test_run(\"")
+            emit_string_content(p.src, entry.name_off, entry.name_len)
+            emit_text("\", (void(*)(void))mf_")
+            frost_rt_emit_int(entry.fn_index)
+            emit_text(");\n")
+        }
         i = i + 1
     }
     // The summary answers with how many failed, which is what the process

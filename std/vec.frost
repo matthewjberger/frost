@@ -3,19 +3,20 @@
 // caller reads, writes and borrows them through the bounds-checked slice path
 // rather than through the raw pointer inside.
 //
-// The raw pointer and the allocation calls are the unsafe floor, wrapped here so
-// nothing above this file names them. `vec_slice` is the safe face. From it a
-// caller does `vec_slice(v)[i]`, `ref e := vec_slice(v)[i]`, and `slice_len`.
+// The storage is a slice of the whole block rather than a raw pointer, so every
+// access here is bounds-checked too and this file has no `unsafe` of its own.
+// What is unchecked is the allocation, and that lives in mem.frost. `vec_slice`
+// is the safe face: a caller does `vec_slice(v)[i]`, `ref e := vec_slice(v)[i]`,
+// and `slice_len`.
+
+import "mem.frost"
 
 export Vec, vec_new, vec_free, vec_len, vec_slice, vec_push, vec_get, vec_set,
     vec_clear
 
-frost_rt_heap_alloc   :: extern fn(size: i64) -> ^u8
-frost_rt_heap_realloc :: extern fn(block: ^u8, size: i64) -> ^u8
-frost_rt_heap_free    :: extern fn(block: ^u8)
-
 Vec :: struct($T: Type) {
-    data: ^T,
+    // The whole block, whose length is the capacity. The live prefix is `len`.
+    storage: []T,
     len: i64,
     cap: i64,
 }
@@ -25,12 +26,11 @@ Vec :: struct($T: Type) {
 vec_new :: fn($T: Type, capacity: i64) -> Vec<T> {
     mut room := capacity
     if (room < 1) { room = 1 }
-    block := unsafe { frost_rt_heap_alloc(room * sizeof(T)) }
-    Vec { data = unsafe { ptr_cast($T, block) }, len = 0, cap = room }
+    Vec { storage = heap_slice($T, room), len = 0, cap = room }
 }
 
 vec_free :: fn($T: Type, move v: Vec<T>) {
-    unsafe { frost_rt_heap_free(ptr_cast($u8, v.data)) }
+    heap_release_slice($T, v.storage)
 }
 
 vec_len :: fn($T: Type, v: Vec<T>) -> i64 {
@@ -40,35 +40,32 @@ vec_len :: fn($T: Type, v: Vec<T>) -> i64 {
 // The live elements as a bounds-checked slice. This is how everything above the
 // container reaches an element: read it, assign it, or bind `ref` to it.
 vec_slice :: fn($T: Type, v: Vec<T>) -> []T {
-    unsafe { slice_from($T, v.data, v.len) }
+    slice_prefix($T, v.storage, v.len)
 }
 
 vec_push :: fn($T: Type, mut v: Vec<T>, move value: $T) {
     // Grow when full, doubling the storage. The reallocation is done here
     // rather than in a helper because passing this borrow on to another `mut`
-    // parameter copies the header, so the new pointer would be written to the
+    // parameter copies the header, so the new storage would be written to the
     // copy and lost.
     if (v.len >= v.cap) {
         mut room := v.cap * 2
         if (room < 1) { room = 1 }
-        v.data = unsafe {
-            ptr_cast($T, frost_rt_heap_realloc(ptr_cast($u8, v.data), room * sizeof(T)))
-        }
+        v.storage = heap_grow_slice($T, v.storage, room)
         v.cap = room
     }
-    // Written straight through the storage pointer. This is the allocator
-    // layer, where the raw pointer is the point. A caller reaches elements
-    // through the bounds-checked `vec_slice` instead.
-    unsafe { v.data[v.len] = value }
+    mut held := v.storage
+    held[v.len] = value
     v.len = v.len + 1
 }
 
 vec_get :: fn($T: Type, v: Vec<T>, index: i64) -> $T {
-    unsafe { v.data[index] }
+    v.storage[index]
 }
 
 vec_set :: fn($T: Type, mut v: Vec<T>, index: i64, move value: $T) {
-    unsafe { v.data[index] = value }
+    mut held := v.storage
+    held[index] = value
 }
 
 // Drop every element without freeing the storage, so the vector is reused

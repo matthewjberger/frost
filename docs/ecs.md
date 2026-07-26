@@ -230,10 +230,10 @@ of declared dependencies:
 
 ```frost
 mut frame := schedule_new()
-schedule_add(frame, STAGE_FIRST, read_input)
-schedule_add(frame, STAGE_UPDATE, integrate)
-schedule_add_in_state(frame, STAGE_UPDATE, PAUSED, draw_menu)
-schedule_add(frame, STAGE_LAST, upload)
+schedule_add(frame, Stage::First, read_input)
+schedule_add(frame, Stage::Update, integrate)
+schedule_add_in_state(frame, Stage::Update, PAUSED, draw_menu)
+schedule_add(frame, Stage::Last, upload)
 
 schedule_run(frame, world, states_current(states))
 ```
@@ -250,8 +250,9 @@ elapsed.
 ## The structural log
 
 Off until a program asks for it. With `ecs_log_enable(world, true)` the world
-records each spawn, despawn, add and remove with the tick it happened at, which
-is what a save file writing a delta or an editor keeping a list in step reads.
+records each spawn, despawn, add and remove with the tick it happened at, as a
+`ChangeKind` beside the entity and the component's mask, which is what a save
+file writing a delta or an editor keeping a list in step reads.
 
 ## What is unsafe, and what is not
 

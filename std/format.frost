@@ -36,7 +36,7 @@ builder_clear :: fn(mut b: Builder) {
 // is valid only until the next append, which is the usual rule for a view into
 // a growable thing.
 builder_str :: fn(b: Builder) -> str {
-    unsafe { slice_from($u8, b.bytes.data, vec_len($u8, b.bytes)) }
+    vec_slice($u8, b.bytes)
 }
 
 builder_byte :: fn(mut b: Builder, byte: i64) {

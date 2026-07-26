@@ -23,6 +23,7 @@
 // `[]T`, and through generational handles that refuse a stale entity.
 
 import "vec.frost"
+import "mem.frost"
 
 export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     Commands, Change, Events, EventReader,
@@ -39,7 +40,7 @@ export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     ecs_resource_register, ecs_resource, ecs_resource_set,
     ecs_resource_slice,
     ecs_log_enable, ecs_log, ecs_log_clear,
-    CHANGE_SPAWN, CHANGE_DESPAWN, CHANGE_ADD, CHANGE_REMOVE,
+    ChangeKind,
     events_new, events_free, events_send, events_sent, events_slice,
     events_clear, reader_new, events_read,
     Hierarchy, hierarchy_new, hierarchy_free, hierarchy_attach,
@@ -48,16 +49,11 @@ export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     no_entity, is_no_entity,
     System, Schedule, schedule_new, schedule_free, schedule_add,
     schedule_add_in_state, schedule_run, schedule_count,
-    STAGE_FIRST, STAGE_UPDATE, STAGE_LAST, ANY_STATE,
+    Stage, stage_order, ANY_STATE,
     States, states_new, states_request, states_apply, states_current,
     Time, time_new, time_advance,
     column_of, column_position, bits_below, mask_of
 
-frost_rt_heap_alloc   :: extern fn(size: i64) -> ^u8
-frost_rt_heap_realloc :: extern fn(block: ^u8, size: i64) -> ^u8
-frost_rt_heap_free    :: extern fn(block: ^u8)
-frost_rt_mem_copy     :: extern fn(destination: ^u8, source: ^u8, size: i64)
-frost_rt_mem_set      :: extern fn(destination: ^u8, value: i64, size: i64)
 
 // A mask is one i64, so a world holds this many component types.
 MAX_COMPONENTS :: 62
@@ -115,9 +111,9 @@ TICK_SIZE :: 8
 
 column_new :: fn(item_size: i64) -> Column {
     Column {
-        data = unsafe { frost_rt_heap_alloc(item_size) },
-        changed = unsafe { frost_rt_heap_alloc(TICK_SIZE) },
-        added = unsafe { frost_rt_heap_alloc(TICK_SIZE) },
+        data = heap_bytes(item_size),
+        changed = heap_bytes(TICK_SIZE),
+        added = heap_bytes(TICK_SIZE),
         count = 0,
         capacity = 1,
         item_size = item_size,
@@ -125,12 +121,12 @@ column_new :: fn(item_size: i64) -> Column {
 }
 
 column_free :: fn(mut c: Column) {
-    unsafe { frost_rt_heap_free(c.data) }
-    unsafe { frost_rt_heap_free(c.changed) }
-    unsafe { frost_rt_heap_free(c.added) }
-    c.data = unsafe { frost_rt_heap_alloc(1) }
-    c.changed = unsafe { frost_rt_heap_alloc(TICK_SIZE) }
-    c.added = unsafe { frost_rt_heap_alloc(TICK_SIZE) }
+    heap_release($u8, c.data)
+    heap_release($u8, c.changed)
+    heap_release($u8, c.added)
+    c.data = heap_bytes(1)
+    c.changed = heap_bytes(TICK_SIZE)
+    c.added = heap_bytes(TICK_SIZE)
     c.count = 0
     c.capacity = 0
 }
@@ -146,32 +142,34 @@ column_reserve :: fn(mut c: Column) {
     if (room < 1) {
         room = 1
     }
-    c.data = unsafe { frost_rt_heap_realloc(c.data, room * c.item_size) }
-    c.changed = unsafe { frost_rt_heap_realloc(c.changed, room * TICK_SIZE) }
-    c.added = unsafe { frost_rt_heap_realloc(c.added, room * TICK_SIZE) }
+    // The three blocks are bytes with a width decided while the program runs,
+    // so they are counted in bytes rather than in elements of a type.
+    c.data = heap_grow_bytes(c.data, room * c.item_size)
+    c.changed = heap_grow_bytes(c.changed, room * TICK_SIZE)
+    c.added = heap_grow_bytes(c.added, room * TICK_SIZE)
     c.capacity = room
 }
 
 // The two tick arrays as slices, which is how everything above reads them.
 column_changed :: fn(c: Column) -> []i64 {
-    unsafe { slice_from($i64, ptr_cast($i64, c.changed), c.count) }
+    bytes_as($i64, c.changed, c.count)
 }
 
 column_added :: fn(c: Column) -> []i64 {
-    unsafe { slice_from($i64, ptr_cast($i64, c.added), c.count) }
+    bytes_as($i64, c.added, c.count)
 }
 
 // The address of one element. The one place that turns an index into a pointer,
 // so the arithmetic is written once.
 column_at :: fn(c: Column, index: i64) -> ^u8 {
-    unsafe { ptr_to(c.data[index * c.item_size]) }
+    bytes_at(c.data, index * c.item_size)
 }
 
 // A row of zeroes, which is what a component the caller has not written yet
 // holds. Plain data has no other sensible default and no constructor to run.
 column_push_zero :: fn(mut c: Column, tick: i64) {
     column_reserve(c)
-    unsafe { frost_rt_mem_set(column_at(c, c.count), 0, c.item_size) }
+    heap_zero(column_at(c, c.count), c.item_size)
     c.count = c.count + 1
     mut changed := column_changed(c)
     mut added := column_added(c)
@@ -185,10 +183,7 @@ column_push_zero :: fn(mut c: Column, tick: i64) {
 column_swap_remove :: fn(mut c: Column, index: i64) {
     last := c.count - 1
     if (index != last) {
-        unsafe {
-            frost_rt_mem_copy(column_at(c, index), column_at(c, last),
-                c.item_size)
-        }
+        heap_copy(column_at(c, index), column_at(c, last), c.item_size)
         mut changed := column_changed(c)
         mut added := column_added(c)
         changed[index] = changed[last]
@@ -200,10 +195,7 @@ column_swap_remove :: fn(mut c: Column, index: i64) {
 // Carry one row to another column, which is a table migration's whole job.
 column_move_row :: fn(mut to: Column, from: Column, index: i64) {
     column_reserve(to)
-    unsafe {
-        frost_rt_mem_copy(column_at(to, to.count), column_at(from, index),
-            from.item_size)
-    }
+    heap_copy(column_at(to, to.count), column_at(from, index), from.item_size)
     to.count = to.count + 1
     // A row carries its history to the table it moves to. A migration is not a
     // write to the component, so a system watching for changes does not see one
@@ -219,7 +211,7 @@ column_move_row :: fn(mut to: Column, from: Column, index: i64) {
 // The typed view of a column, and the end of the erasure. Everything above this
 // reads and writes through a bounds-checked slice.
 column_of :: fn($T: Type, c: Column) -> []T {
-    unsafe { slice_from($T, ptr_cast($T, c.data), c.count) }
+    bytes_as($T, c.data, c.count)
 }
 
 // ---------------------------------------------------------------------------
@@ -368,13 +360,10 @@ lookup_grow :: fn(mut l: Lookup) {
 
 // The four structural changes a world records. A component write is not one:
 // that is what the per-row ticks are for.
-CHANGE_SPAWN   :: 0
-CHANGE_DESPAWN :: 1
-CHANGE_ADD     :: 2
-CHANGE_REMOVE  :: 3
+ChangeKind :: enum { Spawn, Despawn, Add, Remove }
 
 Change :: struct {
-    kind: i64,
+    kind: ChangeKind,
     entity: Entity,
     // The component the change was about, or zero for a spawn or a despawn.
     mask: i64,
@@ -475,7 +464,8 @@ ecs_now :: fn(world: World) -> i64 {
 }
 
 // Record a structural change, when the world was asked to keep them.
-note_change :: fn(mut world: World, kind: i64, entity: Entity, mask: i64) {
+note_change :: fn(mut world: World, kind: ChangeKind, entity: Entity,
+    mask: i64) {
     if (world.logging == false) {
         return
     }
@@ -579,7 +569,7 @@ ecs_spawn :: fn(mut world: World) -> Entity {
     slot.row = row
     world.live = world.live + 1
     made := Entity { id = id, generation = generation }
-    note_change(world, CHANGE_SPAWN, made, 0)
+    note_change(world, ChangeKind::Spawn, made, 0)
     made
 }
 
@@ -637,7 +627,7 @@ ecs_despawn :: fn(mut world: World, entity: Entity) {
     held.generation = held.generation + 1
     vec_push($i64, world.free_ids, entity.id)
     world.live = world.live - 1
-    note_change(world, CHANGE_DESPAWN, entity, 0)
+    note_change(world, ChangeKind::Despawn, entity, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -713,7 +703,7 @@ ecs_add :: fn($T: Type, mut world: World, entity: Entity, mask: i64,
     current := vec_slice($Table, world.tables)[slot.table].mask
     if ((current & mask) == 0) {
         migrate(world, entity, current | mask)
-        note_change(world, CHANGE_ADD, entity, mask)
+        note_change(world, ChangeKind::Add, entity, mask)
     }
     ecs_set($T, world, entity, mask, value)
     // A component the entity has just been given was added now, whatever the
@@ -736,7 +726,7 @@ ecs_remove :: fn(mut world: World, entity: Entity, mask: i64) {
         return
     }
     migrate(world, entity, current & (0 - 1 - mask))
-    note_change(world, CHANGE_REMOVE, entity, mask)
+    note_change(world, ChangeKind::Remove, entity, mask)
 }
 
 // The component an entity holds, by value. A component is plain data, so a copy
@@ -1002,11 +992,9 @@ events_read :: fn($T: Type, e: Events, mut r: EventReader) -> []T {
     count := e.items.count - start
     r.seen = e.first + e.items.count
     if (count <= 0) {
-        return unsafe { slice_from($T, ptr_cast($T, e.items.data), 0) }
+        return bytes_as($T, e.items.data, 0)
     }
-    unsafe {
-        slice_from($T, ptr_cast($T, column_at(e.items, start)), count)
-    }
+    bytes_as($T, column_at(e.items, start), count)
 }
 
 // The same walk with the body handed in as a compile-time argument, so the call
@@ -1094,11 +1082,10 @@ tag_has :: fn(t: Tag, entity: Entity) -> bool {
 // walk is holding, so it is queued instead and applied when the walk is done.
 // ---------------------------------------------------------------------------
 
-COMMAND_SPAWN   :: 0
-COMMAND_DESPAWN :: 1
+CommandKind :: enum { Spawn, Despawn }
 
 Command :: struct {
-    kind: i64,
+    kind: CommandKind,
     entity: Entity,
 }
 
@@ -1118,13 +1105,13 @@ commands_free :: fn(move c: Commands) {
 // exist until the queue is applied.
 commands_spawn :: fn(mut c: Commands) {
     vec_push($Command, c.queued,
-        Command { kind = COMMAND_SPAWN,
+        Command { kind = CommandKind::Spawn,
             entity = Entity { id = 0, generation = 0 } })
 }
 
 commands_despawn :: fn(mut c: Commands, entity: Entity) {
     vec_push($Command, c.queued,
-        Command { kind = COMMAND_DESPAWN, entity = entity })
+        Command { kind = CommandKind::Despawn, entity = entity })
 }
 
 // Run the queue in the order it was written and empty it.
@@ -1134,7 +1121,7 @@ commands_apply :: fn(mut c: Commands, mut world: World) {
         held := vec_get($Command, c.queued, i)
         kind := held.kind
         target := held.entity
-        if (kind == COMMAND_SPAWN) {
+        if (kind == CommandKind::Spawn) {
             ecs_spawn(world)
         } else {
             ecs_despawn(world, target)
@@ -1302,8 +1289,8 @@ hierarchy_despawn_tree :: fn(mut h: Hierarchy, mut world: World, root: Entity) {
 // a graph of declared dependencies: what a frame does is read top to bottom.
 //
 //     mut frame := schedule_new()
-//     schedule_add(frame, STAGE_UPDATE, integrate)
-//     schedule_add(frame, STAGE_LAST, upload)
+//     schedule_add(frame, Stage::Update, integrate)
+//     schedule_add(frame, Stage::Last, upload)
 //     schedule_run(frame, world, ANY_STATE)
 //
 // The system is a function pointer, not a compile-time argument, because a
@@ -1312,16 +1299,28 @@ hierarchy_despawn_tree :: fn(mut h: Hierarchy, mut world: World, root: Entity) {
 // away.
 // ---------------------------------------------------------------------------
 
-STAGE_FIRST  :: 0
-STAGE_UPDATE :: 1
-STAGE_LAST   :: 2
+// When in a frame a system runs. A schedule walks these in order, so the order
+// they are written in is the order a frame happens in.
+Stage :: enum { First, Update, Last }
+
+STAGE_COUNT :: 3
+
+stage_order :: fn(s: Stage) -> i64 {
+    if (s == Stage::First) {
+        return 0
+    }
+    if (s == Stage::Update) {
+        return 1
+    }
+    2
+}
 
 // A system with this state runs whatever the state is.
 ANY_STATE :: 0 - 1
 
 System :: struct {
     run: fn(mut World),
-    stage: i64,
+    stage: Stage,
     state: i64,
 }
 
@@ -1337,14 +1336,14 @@ schedule_free :: fn(move s: Schedule) {
     vec_free($System, s.systems)
 }
 
-schedule_add :: fn(mut s: Schedule, stage: i64, run: fn(mut World)) {
+schedule_add :: fn(mut s: Schedule, stage: Stage, run: fn(mut World)) {
     vec_push($System, s.systems,
         System { run = run, stage = stage, state = ANY_STATE })
 }
 
 // A system that runs only while the world is in one state: the pause menu's
 // systems, the loading screen's.
-schedule_add_in_state :: fn(mut s: Schedule, stage: i64, state: i64,
+schedule_add_in_state :: fn(mut s: Schedule, stage: Stage, state: i64,
     run: fn(mut World)) {
     vec_push($System, s.systems,
         System { run = run, stage = stage, state = state })
@@ -1354,26 +1353,16 @@ schedule_count :: fn(s: Schedule) -> i64 {
     vec_len($System, s.systems)
 }
 
-// Run every system whose state matches, stage by stage. Stages are walked from
-// zero to the highest one registered rather than sorted, since a stage is a
-// small number and a sort would move the systems out of the order they were
-// added in, which is the order a stage runs them.
+// Run every system whose state matches, stage by stage. The systems are walked
+// once per stage rather than sorted, since a sort would move them out of the
+// order they were added in, which is the order a stage runs them.
 schedule_run :: fn(mut s: Schedule, mut world: World, state: i64) {
-    mut highest : i64 = 0
-    mut i : i64 = 0
-    while (i < vec_len($System, s.systems)) {
-        held := vec_get($System, s.systems, i)
-        if (held.stage > highest) {
-            highest = held.stage
-        }
-        i = i + 1
-    }
     mut stage : i64 = 0
-    while (stage <= highest) {
+    while (stage < STAGE_COUNT) {
         mut k : i64 = 0
         while (k < vec_len($System, s.systems)) {
             system := vec_get($System, s.systems, k)
-            if (system.stage == stage
+            if (stage_order(system.stage) == stage
                 && (system.state == ANY_STATE || system.state == state)) {
                 system.run(world)
             }
@@ -1849,8 +1838,8 @@ test "a schedule runs its systems in stage order" {
     ecs_resource_register($TestOrder, world)
     mut frame := schedule_new()
     // Added last, run first: the stage decides, not the order they were added.
-    schedule_add(frame, STAGE_LAST, second_system)
-    schedule_add(frame, STAGE_FIRST, first_system)
+    schedule_add(frame, Stage::Last, second_system)
+    schedule_add(frame, Stage::First, first_system)
     assert(schedule_count(frame) == 2)
     schedule_run(frame, world, ANY_STATE)
     // first_system then second_system: (0 * 2 + 1) * 2.
@@ -1862,7 +1851,7 @@ test "a schedule runs its systems in stage order" {
 test "a system bound to a state runs only in that state" {
     mut world := ecs_new()
     mut frame := schedule_new()
-    schedule_add_in_state(frame, STAGE_UPDATE, 1, spawning_system)
+    schedule_add_in_state(frame, Stage::Update, 1, spawning_system)
     schedule_run(frame, world, 0)
     assert(ecs_count(world) == 0)
     schedule_run(frame, world, 1)
@@ -1905,11 +1894,11 @@ test "a world asked to keep a log says what changed structurally" {
     ecs_despawn(world, a)
     held := ecs_log(world)
     assert(slice_len(held) == 4)
-    assert(held[0].kind == CHANGE_SPAWN)
-    assert(held[1].kind == CHANGE_ADD)
+    assert(held[0].kind == ChangeKind::Spawn)
+    assert(held[1].kind == ChangeKind::Add)
     assert(held[1].mask == health)
-    assert(held[2].kind == CHANGE_REMOVE)
-    assert(held[3].kind == CHANGE_DESPAWN)
+    assert(held[2].kind == ChangeKind::Remove)
+    assert(held[3].kind == ChangeKind::Despawn)
     assert(held[3].entity.id == a.id)
     ecs_log_clear(world)
     assert(slice_len(ecs_log(world)) == 0)
