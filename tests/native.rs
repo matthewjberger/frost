@@ -9101,6 +9101,8 @@ fn cranelift_and_c_backends_agree() {
         ("diff_fieldcall", FIELD_CALLS),
         ("diff_enumvalues", ENUM_VALUES),
         ("diff_bundle", CAPABILITY_BUNDLE),
+        ("diff_failure", FAILURE_SET_PARSE),
+        ("diff_bracedarm", BRACED_ARMS),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
@@ -10117,6 +10119,196 @@ fn a_program_declares_its_own_ordering_for_its_own_type() {
     let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
     assert_eq!(output, "1\n3\n");
     let _ = std::fs::remove_file(&exe);
+}
+
+// A failure set end to end: a function that answers with a value or a failure,
+// `?` handing one up, and a caller reading which it got. The failure type is a
+// type the program declares, so `error.at` is a field of it, and `error` is the
+// name the `.Err` case binds.
+const FAILURE_SET_PARSE: &str = r#"
+Parse :: struct { at: i64, code: i64 }
+
+digit :: fn(text: str, index: i64) -> i64 ! Parse {
+    byte := text[index]
+    if (byte < 48 || byte > 57) {
+        return { at = index, code = byte }
+    }
+    byte - 48
+}
+
+number :: fn(text: str) -> i64 ! Parse {
+    mut total : i64 = 0
+    mut index : i64 = 0
+    while (index < str_len(text)) {
+        d := digit(text, index)?
+        total = total * 10 + d
+        index = index + 1
+    }
+    total
+}
+
+report :: fn(text: str) {
+    match number(text) {
+        case .Ok { value }: { print value }
+        case .Err { error }: { print 0 - error.at }
+    }
+}
+
+main :: fn() -> i64 {
+    report("407")
+    report("4x7")
+    report("40x")
+    0
+}
+"#;
+
+#[test]
+fn a_failure_set_carries_a_value_or_a_failure() {
+    let Some(output) = compile_and_run("failureset", FAILURE_SET_PARSE) else {
+        return;
+    };
+    assert_eq!(output, "407\n-1\n-2\n");
+}
+
+#[test]
+fn self_hosted_carries_a_value_or_a_failure() {
+    let Some(output) =
+        selfhosted_native_output("shfailureset", FAILURE_SET_PARSE)
+    else {
+        return;
+    };
+    assert_eq!(output, "407\n-1\n-2\n");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shfailureset_input.frost");
+    std::fs::write(&input, FAILURE_SET_PARSE).unwrap();
+    let Some(c_source) = self_hosted_emits("shfailureset", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shfailureset", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
+// A resource handed back through a failure set is still a resource: the result
+// carrying one has to be consumed, and matching it is what consumes it.
+const LINEAR_THROUGH_FAILURE: &str = r#"
+Denied :: struct { code: i64 }
+
+File :: linear struct { fd: i64 }
+
+open :: fn(n: i64) -> File ! Denied {
+    if (n < 0) { return Denied { code = n } }
+    File { fd = n }
+}
+
+close :: fn(move f: File) -> i64 { f.fd }
+
+use_it :: fn(n: i64) -> i64 {
+    match open(n) {
+        case .Ok { value }: close(value)
+        case .Err { error }: error.code
+    }
+}
+
+held :: fn(n: i64) -> i64 {
+    result := open(n)
+    match result {
+        case .Ok { value }: close(value)
+        case .Err { error }: error.code
+    }
+}
+
+main :: fn() -> i64 {
+    print use_it(3)
+    print use_it(0 - 2)
+    print held(5)
+    0
+}
+"#;
+
+#[test]
+fn a_linear_value_survives_a_failure_set() {
+    let Some(output) = compile_and_run("linfail", LINEAR_THROUGH_FAILURE)
+    else {
+        return;
+    };
+    assert_eq!(output, "3\n-2\n5\n");
+}
+
+#[test]
+fn self_hosted_carries_a_linear_value_through_a_failure_set() {
+    let Some(output) =
+        selfhosted_native_output("shlinfail", LINEAR_THROUGH_FAILURE)
+    else {
+        return;
+    };
+    assert_eq!(output, "3\n-2\n5\n");
+}
+
+// And the reason it is linear: ignoring the call would drop the resource, so
+// the call that answers with one has to be answered for.
+#[test]
+fn an_ignored_fallible_call_that_holds_a_resource_is_refused() {
+    let source = "Denied :: struct { code: i64 }\n\
+                  File :: linear struct { fd: i64 }\n\
+                  open :: fn(n: i64) -> File ! Denied {\n\
+                  \x20   if (n < 0) { return Denied { code = n } }\n\
+                  \x20   File { fd = n }\n}\n\
+                  close :: fn(move f: File) -> i64 { f.fd }\n\
+                  main :: fn() -> i64 { open(3)  0 }\n";
+    let message = compile_error("linfaildrop", source);
+    assert!(
+        message.contains("linear"),
+        "expected the dropped resource to be named, got: {message}"
+    );
+}
+
+// A `{` after a case opens a block. An arm runs statements far more often than
+// it answers with an unnamed value, and both compilers have to read it the same
+// way or a program means two things.
+const BRACED_ARMS: &str = r#"
+Kind :: enum { One, Two { n: i64 } }
+
+main :: fn() -> i64 {
+    held := Kind::Two { n = 7 }
+    match held {
+        case .One: { print 1 }
+        case .Two { n }: { print n  print n + 1 }
+    }
+    0
+}
+"#;
+
+#[test]
+fn a_braced_match_arm_is_a_block() {
+    let Some(output) = compile_and_run("bracedarm", BRACED_ARMS) else {
+        return;
+    };
+    assert_eq!(output, "7\n8\n");
+}
+
+#[test]
+fn self_hosted_reads_a_braced_match_arm_as_a_block() {
+    let Some(output) = selfhosted_native_output("shbracedarm", BRACED_ARMS)
+    else {
+        return;
+    };
+    assert_eq!(output, "7\n8\n");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shbracedarm_input.frost");
+    std::fs::write(&input, BRACED_ARMS).unwrap();
+    let Some(c_source) = self_hosted_emits("shbracedarm", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shbracedarm", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
 }
 
 // A capability bundle: a generic struct whose fields are functions, a constant

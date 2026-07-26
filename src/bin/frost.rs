@@ -330,7 +330,7 @@ fn main() -> Result<()> {
     )
     .context("Import error")?;
     let mut statements = resolved.statements;
-    let linear_types = resolved.linear_types;
+    let mut linear_types = resolved.linear_types;
     let tests = resolved.tests;
     let mut modules = resolved.modules;
     check_callback_declarations(&statements).context("Callback error")?;
@@ -349,7 +349,11 @@ fn main() -> Result<()> {
     check_frame_escapes(&statements).context("Region error")?;
     lower_allocation_sources(&mut statements)
         .context("Allocation source error")?;
-    lower_failure_sets(&mut statements).context("Failure set error")?;
+    // A failure set's result is linear when what it carries is, so the set of
+    // linear types grows here and the ownership check below sees the whole of
+    // it.
+    lower_failure_sets(&mut statements, &mut linear_types)
+        .context("Failure set error")?;
     lower_param_modes(&mut statements);
     check_ownership(&statements, &linear_types).context("Ownership error")?;
 

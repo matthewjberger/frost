@@ -260,7 +260,14 @@ is_linear_type :: fn(mut p: Parser, ty: i64) -> bool {
     if (is_struct_ty(ty) == false) {
         return false
     }
-    def := arena_at(p.structs, struct_index_of(ty))
+    // A struct code that names no struct is a type still being worked out, such
+    // as a generic's declared return before it is instantiated. It is not a
+    // resource, and reading past the table to decide would be a crash.
+    index := struct_index_of(ty)
+    if (index < 0 || index >= p.structs.count) {
+        return false
+    }
+    def := arena_at(p.structs, index)
     if (def.is_linear == 1) {
         return true
     }

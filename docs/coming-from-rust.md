@@ -392,9 +392,10 @@ Two consequences a Rust programmer will appreciate:
 - Cleanup is a checked obligation you can see in the code, not an implicit call
   that runs at a brace you have to imagine. There is no drop order to reason
   about and no `mem::forget` footgun. Forgetting is a compile error.
-- A `linear enum` returned from a fallible function cannot be ignored. Where
-  Rust leans on `#[must_use]` as a lint, Frost makes must-use a type rule.
-  The result has to be consumed, so a failure cannot be silently dropped.
+- A fallible function that answers with a `linear` value cannot be ignored.
+  Where Rust leans on `#[must_use]` as a lint, Frost makes must-use a type
+  rule: the result carrying a resource is itself linear, so dropping the call
+  drops the resource, and that is a compile error.
 
 ### `defer` for scope-exit actions
 
@@ -411,6 +412,64 @@ work :: fn() {
 Think of it as Go's `defer` rather than a Rust guard object. For resources with
 real ownership, prefer a `linear` type. Use `defer` for local, best-effort
 scope-exit actions.
+
+## Errors, without `Result<T, E>` being a library type
+
+Rust's `Result` is a type in the library and everything around it is machinery
+you compose: `?` plus `From` for conversion, `Box<dyn Error>` to erase the type,
+`#[must_use]` to nag about ignoring one. Frost puts the same idea in the
+signature and leaves the machinery out.
+
+```frost
+Parse :: struct { at: i64, code: i64 }
+
+digit :: fn(text: str, index: i64) -> i64 ! Parse {
+    byte := text[index]
+    if (byte < 48 || byte > 57) {
+        return { at = index, code = byte }
+    }
+    byte - 48
+}
+```
+
+`-> i64 ! Parse` is "answers with an i64, or fails with a Parse". `Parse` is a
+struct this program declared. There is no `Error` trait to implement, no
+`source()`, no backtrace, no allocation, and no boxing.
+
+The compiler makes the signature into one enum, `Ok { value: T }` and
+`Err { error: E }`, which is where the names come from when you read it:
+
+```frost
+match number(text) {
+    case .Ok { value }: { print value }
+    case .Err { error }: { print error.at }
+}
+```
+
+`error.at` is a field of `Parse`. The match covers every variant, the same rule
+as any other enum, so there is no `unwrap` to reach for and no warning to
+ignore.
+
+`?` works the way it does in Rust, with one difference: there is no conversion.
+
+```frost
+d := digit(text, index)?
+```
+
+The failure type of the call and the failure type of the function it is written
+in have to be the same one. Rust would insert a `From` impl here; Frost makes
+you `match` and return the failure you declared, so what a function fails with
+is what its signature says and nothing arrived through a conversion you did not
+read.
+
+`#[must_use]` has no equivalent because it is not needed for the case that
+matters: a result carrying a `linear` value is itself linear, so ignoring the
+call is a compile error rather than a lint. A result carrying an ordinary value
+may be ignored, exactly as in Rust with the lint off.
+
+There is no `panic!` to catch, no `unwind`, and no `catch_unwind`. A failure
+that is a bug rather than a condition in the world is an assertion, and an
+assertion aborts.
 
 ## Handles and pools, the replacement for `Rc`, `Arc`, and back-references
 
@@ -758,7 +817,7 @@ files pulled in by `import`, not as a module tree with visibility rules.
 | `Box`, `Rc`, `Arc`, `RefCell` | Pools and `Handle<T>` (generational indices) |
 | `Vec`, `HashMap`, `String` | `std/vec.frost`, `std/map.frost`, `str` and `std/strings.frost` |
 | `#[derive(..)]`, macros, attributes | None; write what you need explicitly |
-| `?`, `Result`, `#[must_use]` | `-> T ! E` failure sets and `?`, over `linear enum` returns |
+| `?`, `Result`, `#[must_use]` | `-> T ! E` failure sets and `?`; a result carrying a `linear` value must be consumed |
 | Overflow checks in debug | None; arithmetic always wraps at width |
 | `unsafe` blocks and raw pointers | `^T` raw pointers as the explicit escape hatch |
 | `pub`, `pub(crate)`, field privacy | None; every struct field is public |

@@ -2318,6 +2318,12 @@ set_while_preamble :: fn(mut p: Parser, loop: i64, preamble: i64) {
 // The statement a match arm runs, with anything its own parse queued placed
 // ahead of it rather than hoisted out of the arm.
 parse_arm :: fn(mut p: Parser) -> i64 {
+    // A brace after the colon opens a block, not a struct literal. An arm runs
+    // statements far more often than it answers with an unnamed value, and an
+    // arm that wants one names its type.
+    if (cur(p) == TokenKind::Lbrace) {
+        return parse_block(p)
+    }
     mark := p.pending.count
     statement := parse_stmt(p)
     flush_pending(p, mark, statement)
@@ -3085,6 +3091,16 @@ result_field_names :: fn(mut p: Parser) {
 
 // The struct standing for `T ! E`, made fresh per function so its payload types
 // are the ones that function declared.
+// Whether the result of a fallible function has to be consumed, which it does
+// when either half of it does. Without this a resource handed back through a
+// failure set could be dropped by ignoring the call.
+result_is_linear :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
+    if (is_linear_type(p, ok) || is_linear_type(p, bad)) {
+        return 1
+    }
+    0
+}
+
 synth_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
     result_field_names(p)
     tag := arena_push(
@@ -3109,7 +3125,9 @@ synth_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
         p.structs,
         StructDef { name_off = name, name_len = 8 + digits_in(p.structs.count),
             field_head = tag, is_generic = 0, tparam_off = 0, tparam_len = 0,
-            field_token = 0, instance_id = 0 - 1, is_linear = 0, emitted = 0, xparam_start = 0, xparam_count = 0, is_enum = 1 },
+            field_token = 0, instance_id = 0 - 1,
+            is_linear = result_is_linear(p, ok, bad), emitted = 0,
+            xparam_start = 0, xparam_count = 0, is_enum = 1 },
     )
     result_ty := STRUCT_BASE + index
     arena_push(

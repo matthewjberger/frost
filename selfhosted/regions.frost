@@ -633,6 +633,11 @@ stmt_consumes :: fn(mut p: Parser, id: i64, off: i64, len: i64) -> bool {
     if (kind == NodeKind::Return && is_var_named(p, node.a, off, len)) {
         return true
     }
+    // `held := value` moves what `value` held, so the obligation to consume it
+    // is the new name's from here on, and that name is checked in its turn.
+    if (kind == NodeKind::Let && is_var_named(p, node.a, off, len)) {
+        return true
+    }
     mut value : i64 = 0 - 1
     if (kind == NodeKind::ExprStmt || kind == NodeKind::Let || kind == NodeKind::Return) {
         value = node.a
@@ -648,6 +653,25 @@ stmt_consumes :: fn(mut p: Parser, id: i64, off: i64, len: i64) -> bool {
         return call_consumes(p, vnode.a, vnode.val, off, len)
     }
     false
+}
+
+// Whether a match takes apart the value named (off, len). A match on a variant
+// switches on the tag of the value it bound first, so what it names is reached
+// through that field read rather than written at the `match`.
+match_subject_is :: fn(mut p: Parser, id: i64, off: i64, len: i64) -> bool {
+    node := arena_at(p.arena, id)
+    subject := node.a
+    if (is_var_named(p, subject, off, len)) {
+        return true
+    }
+    if (subject == (0 - 1)) {
+        return false
+    }
+    held := arena_at(p.arena, subject)
+    if (held.kind != NodeKind::Field) {
+        return false
+    }
+    is_var_named(p, held.a, off, len)
 }
 
 // Whether every arm of a match consumes the value. A match with no default arm
@@ -668,6 +692,27 @@ match_arms_consume :: fn(mut p: Parser, cases: i64, off: i64, len: i64) -> bool 
     has_default
 }
 
+// The match a statement is, or -1. A match written as a statement is one, and
+// so is a match a body answers with, which is an expression statement holding
+// one.
+match_in :: fn(mut p: Parser, id: i64) -> i64 {
+    node := arena_at(p.arena, id)
+    if (node.kind == NodeKind::Match) {
+        return id
+    }
+    if (node.kind == NodeKind::ExprStmt || node.kind == NodeKind::Return) {
+        inner := node.a
+        if (inner == (0 - 1)) {
+            return 0 - 1
+        }
+        held := arena_at(p.arena, inner)
+        if (held.kind == NodeKind::Match) {
+            return inner
+        }
+    }
+    0 - 1
+}
+
 // Whether a block consumes the value on every path through it: a statement that
 // consumes it, an `if` whose branches both do, or a `match` whose arms all do.
 consumes_value :: fn(mut p: Parser, head: i64, off: i64, len: i64) -> bool {
@@ -682,9 +727,20 @@ consumes_value :: fn(mut p: Parser, head: i64, off: i64, len: i64) -> bool {
             && consumes_value(p, node.val, off, len)) {
             return true
         }
-        if (node.kind == NodeKind::Match
-            && match_arms_consume(p, node.b, off, len)) {
-            return true
+        // Taking a value apart is consuming it: every arm names what it held,
+        // and what an arm does with those is the arm's own obligation. The
+        // match is reached through the statement holding it, which is an
+        // expression statement when it is what the body answers with.
+        held := match_in(p, id)
+        if (held != (0 - 1)) {
+            mnode := arena_at(p.arena, held)
+            cases := mnode.b
+            if (match_subject_is(p, held, off, len)) {
+                return true
+            }
+            if (match_arms_consume(p, cases, off, len)) {
+                return true
+            }
         }
         id = node.next
     }
@@ -696,6 +752,24 @@ check_linear_locals :: fn(mut p: Parser, head: i64) {
     while (id != (0 - 1)) {
         node := arena_at(p.arena, id)
         kind := node.kind
+        // A call whose answer holds a resource, made as a statement, drops what
+        // it answered with. Naming the value is what gives anything the chance
+        // to consume it.
+        if (kind == NodeKind::ExprStmt && node.a != (0 - 1)) {
+            value := arena_at(p.arena, node.a)
+            value_kind := value.kind
+            callee := value.val
+            named_at := value.c
+            if (value_kind == NodeKind::Call && callee >= 0
+                && callee < p.fns.count) {
+                sym := arena_at(p.fns, callee)
+                if (is_linear_type(p, sym.ret_type)) {
+                    report_where(p.modules, p.src, named_at)
+                    report("this call answers with a value that has to be consumed, and nothing here consumes it")
+                    frost_rt_die()
+                }
+            }
+        }
         if (kind == NodeKind::Let) {
             mut ty := node.b
             if (ty == (0 - 1)) {

@@ -185,8 +185,84 @@ run :: fn() {
 }                 // dropping f without consuming would also be an error
 ```
 
-A `linear enum` returned from a fallible function therefore cannot be ignored,
-errors are non-ignorable by construction.
+## Errors are values, in the signature
+
+A function that can fail says what it fails with:
+
+```frost
+Parse :: struct { at: i64, code: i64 }
+
+digit :: fn(text: str, index: i64) -> i64 ! Parse {
+    byte := text[index]
+    if (byte < 48 || byte > 57) {
+        return { at = index, code = byte }
+    }
+    byte - 48
+}
+```
+
+`-> i64 ! Parse` reads "answers with an i64, or fails with a Parse". `Parse` is
+an ordinary struct this program declared. There is no error interface to
+implement, no backtrace, no allocation, and no boxing: a failure carries what
+you put in it and nothing else.
+
+The compiler turns that signature into one enum with two variants, `Ok { value }`
+and `Err { error }`, and that is where the names come from when you read the
+answer:
+
+```frost
+match number(text) {
+    case .Ok { value }: { print value }
+    case .Err { error }: { print error.at }
+}
+```
+
+`value` and `error` are the fields those two variants carry. `error.at` is a
+field of `Parse`, so what you can ask a failure is whatever you declared it to
+hold. A match on an enum covers every variant, so there is no way to read the
+value without having said what happens when there is not one.
+
+Inside a fallible function, `?` hands a failure up:
+
+```frost
+number :: fn(text: str) -> i64 ! Parse {
+    mut total : i64 = 0
+    mut index : i64 = 0
+    while (index < str_len(text)) {
+        d := digit(text, index)?
+        total = total * 10 + d
+        index = index + 1
+    }
+    total
+}
+```
+
+`digit(text, index)?` is the i64 it answered with, or an immediate return of its
+failure. `?` is only allowed where there is a failure set to return to, and the
+two failure types have to be the same one: there is no conversion and no `From`
+to write. A function that calls something failing differently matches it and
+returns the failure it declares.
+
+A resource survives a failure. A result carrying a `linear` value is itself
+linear, so it cannot be dropped, and matching it is what consumes it:
+
+```frost
+open :: fn(n: i64) -> File ! Denied { ... }
+
+use_it :: fn(n: i64) -> i64 {
+    match open(n) {
+        case .Ok { value }: close(value)     // consumes the File
+        case .Err { error }: error.code
+    }
+}
+```
+
+Writing `open(n)` as a statement and going on is a compile error, because the
+File it may have answered with would be dropped where nothing named it.
+
+That is the whole error story. No exceptions, no panics to catch, no error
+codes checked by convention. A failure that is a bug rather than a condition in
+the world is an assertion, and an assertion aborts.
 
 ## Generational handles and pools
 
@@ -311,8 +387,41 @@ main :: fn() -> i64 {
 }
 ```
 
-When the function genuinely varies at runtime, it is an ordinary value. A
-`fn(...) -> T` parameter holds a pointer. There are no capturing closures.
+When several operations travel together, they go in a struct whose fields are
+functions. That is a capability bundle, and it is what stands in for a trait:
+
+```frost
+Ordering :: struct($T: Type) {
+    less: fn(T, T) -> bool,
+    equal: fn(T, T) -> bool,
+}
+
+i64_less  :: fn(a: i64, b: i64) -> bool { a < b }
+i64_equal :: fn(a: i64, b: i64) -> bool { a == b }
+
+i64_ascending :: Ordering<i64> { less = i64_less, equal = i64_equal }
+
+sort :: fn($T: Type, $ops: Ordering<T>, mut items: []T) {
+    ...
+    if (ops.less(items[j], items[j - 1])) { ... }
+}
+
+sort($i64, $i64_ascending, view)
+```
+
+The bundle is a type, an implementation is a constant of it, and the call names
+which one it means. Nothing registers, nothing is searched for, and there is no
+coherence rule to learn, because the answer is written at the call. Since `$ops`
+is a compile-time argument, `ops.less(a, b)` folds to a direct call to
+`i64_less`: the specialization holds no function pointer at all. Two orderings
+for one type are two constants, so sorting downward is `$i64_descending` rather
+than a wrapper type. `std/ordering.frost` and `std/sort.frost` are this written
+out.
+
+When the operation genuinely varies at runtime, drop the `$` and the same
+declaration gives an ordinary value. A `fn(...) -> T` parameter holds a
+pointer, and a bundle without the `$` is a struct holding several. There are no
+capturing closures.
 
 ```frost
 apply :: fn(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
@@ -365,7 +474,8 @@ examples reach `printf`, `malloc`, and the pool runtime. See
 
 The library under `std/` is ordinary Frost, imported by name (`import
 "math.frost"`). It carries `str` helpers, a growable `Vec<T>` and a hash map,
-file and formatted IO, a sorting routine, the `slab` and `columns` containers,
+file and formatted IO, an `Ordering<T>` bundle with a sort that takes one, the
+`slab` and `columns` containers,
 and a single-precision graphics-math library of vectors, matrices, and
 quaternions. The math library is described in [math.md](math.md), and
 `examples/native/math_transform.frost` puts it through a model-view-projection.

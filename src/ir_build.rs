@@ -6472,6 +6472,12 @@ impl<'a> FunctionLowering<'a> {
             self.check_exhaustive(name, cases)?;
         }
 
+        // Taking a linear value apart is consuming it: every arm names what it
+        // held, and what the arm does with those is the arm's obligation. This
+        // is what lets a fallible function hand back a resource, since the
+        // result carrying one is linear too.
+        let consumed = self.linear_scrutinee(scrutinee, &scalar);
+
         let merge = self.new_block();
         let mut result_local: Option<LocalId> = None;
         let mut result_type = Type::Void;
@@ -6562,6 +6568,9 @@ impl<'a> FunctionLowering<'a> {
             }
 
             self.switch_to(case_block);
+            if let Some(local) = consumed {
+                self.emit(IrStatement::Consume(local));
+            }
             self.push_scope();
             self.bind_pattern(
                 &case.pattern,
@@ -6594,6 +6603,12 @@ impl<'a> FunctionLowering<'a> {
             self.switch_to(next_block);
         }
 
+        // The block reached when no arm matched. A match on an enum covers
+        // every variant so nothing arrives here, but it is a path the linear
+        // check walks, and the value is taken apart on it too.
+        if let Some(local) = consumed {
+            self.emit(IrStatement::Consume(local));
+        }
         let target = result_local
             .unwrap_or_else(|| self.fresh_local(result_type.clone(), None));
         if !needs_memory(&result_type) {
@@ -6784,6 +6799,28 @@ impl<'a> FunctionLowering<'a> {
         Ok((IrOperand::Local(target), result_type))
     }
 
+    // The linear local a match takes apart, if it takes one apart. A named
+    // value is found by its name, and a value the match itself produced (the
+    // answer of a call) is the local it landed in.
+    fn linear_scrutinee(
+        &self,
+        scrutinee: &Expression,
+        scalar: &Option<(IrOperand, Type)>,
+    ) -> Option<LocalId> {
+        if let Expression::Identifier(name) = scrutinee
+            && let Some(local) = self.resolve_variable(name)
+            && self.locals[local].linear
+        {
+            return Some(local);
+        }
+        if let Some((IrOperand::Local(local), _)) = scalar
+            && self.locals[*local].linear
+        {
+            return Some(*local);
+        }
+        None
+    }
+
     fn bind_pattern(
         &mut self,
         pattern: &Pattern,
@@ -6863,6 +6900,11 @@ impl<'a> FunctionLowering<'a> {
                         ));
                     }
                     self.define_variable(bound_name, bound);
+                    // A binding takes the field out of the value being
+                    // matched, so it holds whatever that field held. Without
+                    // this a linear field could not be consumed by the arm
+                    // that named it, which is the only way to consume one.
+                    self.mark_owned(bound);
                 }
                 Ok(())
             }
