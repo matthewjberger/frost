@@ -168,6 +168,17 @@ fn build_module_inner(
                 if name == "main" {
                     has_main = true;
                 }
+                // Expansion time runs over every body, not only a
+                // specialization's: a walk over a type's fields is decided by
+                // a declaration rather than by a call, so an ordinary function
+                // may write one.
+                let body = &expand_compile_time(
+                    body.clone(),
+                    None,
+                    parameters,
+                    &builder.structs,
+                    &HashMap::new(),
+                )?;
                 let (function, requests, anon) = locate(
                     builder.lower_function(name, parameters, return_sig, body),
                     position,
@@ -345,6 +356,8 @@ fn build_module_inner(
                 body,
                 specialization.pack.as_ref(),
                 &parameters,
+                &builder.structs,
+                &specialization.subst,
             )?;
             let (function, requests, anon) = locate_instantiation(
                 builder.lower_function(
@@ -1475,12 +1488,25 @@ struct Expansion<'a> {
     // What each parameter of the specialization is, so a predicate over one
     // has an answer.
     types: HashMap<String, Type>,
+    // Every struct's layout, which is what a walk over a type's fields reads.
+    // The compiler laid these out to emit the program; a layout table is the
+    // same numbers, written where the reader can use them.
+    structs: &'a HashMap<String, StructLayout>,
+    // The type arguments this specialization was made for, so `fields(T)` in a
+    // generic body names the type the call chose.
+    subst: &'a HashMap<String, Type>,
+    // The fields in force: a `for` over `fields(T)` binds its name to one of
+    // them per copy of the body. A field is not a value, so the only things
+    // that read this are `offset_of`, `sizeof` and the type predicates.
+    fields: HashMap<String, (usize, Type)>,
 }
 
 fn expand_compile_time(
     body: Block,
     pack: Option<&(String, Vec<(String, Type)>)>,
     parameters: &[Parameter],
+    structs: &HashMap<String, StructLayout>,
+    subst: &HashMap<String, Type>,
 ) -> Result<Block> {
     let mut types = HashMap::new();
     for parameter in parameters {
@@ -1488,7 +1514,13 @@ fn expand_compile_time(
             types.insert(parameter.name.clone(), ty.clone());
         }
     }
-    let expansion = Expansion { pack, types };
+    let expansion = Expansion {
+        pack,
+        types,
+        structs,
+        subst,
+        fields: HashMap::new(),
+    };
     expansion.block(body)
 }
 
@@ -1500,6 +1532,25 @@ impl Expansion<'_> {
             // A `for` over the pack, and an `if` whose condition is answered
             // here, both stand for several statements or none, so they are
             // spliced rather than replaced.
+            // A `for` over a type's fields: the body is written once and
+            // compiled once per field, with the loop's name standing for that
+            // field. The list is the struct's own field list, so its length is
+            // fixed by a declaration rather than by anything this walks.
+            if let Statement::For(variable, None, iterable, body) =
+                &statement.node
+                && let Some(layout) = self.fields_named(iterable)
+            {
+                let fields: Vec<(usize, Type)> = layout
+                    .fields
+                    .iter()
+                    .map(|field| (field.offset, field.ty.clone()))
+                    .collect();
+                for field in fields {
+                    let bound = self.with_field(variable, field);
+                    expanded.extend(bound.block(body.clone())?);
+                }
+                continue;
+            }
             if let Statement::For(variable, None, iterable, body) =
                 &statement.node
                 && let Some(elements) = self.pack_named(iterable)
@@ -1537,6 +1588,88 @@ impl Expansion<'_> {
         Ok(expanded)
     }
 
+    // The struct a `fields(...)` names, when this expression is one. The
+    // argument is a type: a type parameter this specialization bound, or a
+    // struct named outright.
+    fn fields_named(&self, expression: &Expression) -> Option<&StructLayout> {
+        let Expression::Call(callee, arguments) = expression else {
+            return None;
+        };
+        let Expression::Identifier(named) = callee.as_ref() else {
+            return None;
+        };
+        if named != "fields" || arguments.len() != 1 {
+            return None;
+        }
+        self.structs.get(&self.named_type(&arguments[0])?)
+    }
+
+    // The name of the type an expression names, following the type arguments
+    // this specialization was made for.
+    fn named_type(&self, expression: &Expression) -> Option<String> {
+        let named = match expression {
+            Expression::Identifier(named) => named.clone(),
+            Expression::TypeValue(Type::Struct(named)) => named.clone(),
+            _ => return None,
+        };
+        match self.subst.get(&named) {
+            Some(Type::Struct(concrete)) => Some(concrete.clone()),
+            Some(_) => None,
+            None => Some(named),
+        }
+    }
+
+    // The field a name is bound to, for a name a `for` over `fields(T)` bound.
+    fn field_named(&self, expression: &Expression) -> Option<&(usize, Type)> {
+        match expression {
+            Expression::Identifier(named) => self.fields.get(named),
+            _ => None,
+        }
+    }
+
+    // This expansion with one more field in force.
+    fn with_field(&self, name: &str, field: (usize, Type)) -> Expansion<'_> {
+        let mut fields = self.fields.clone();
+        fields.insert(name.to_string(), field);
+        Expansion {
+            pack: self.pack,
+            types: self.types.clone(),
+            structs: self.structs,
+            subst: self.subst,
+            fields,
+        }
+    }
+
+    // A call this answers at expansion time: how many fields a type has, where
+    // a field sits, and how wide it is. Every one of them is a number the
+    // compiler worked out to lay the type out.
+    fn constant_call(&self, expression: &Expression) -> Result<Option<i64>> {
+        let Expression::Call(callee, arguments) = expression else {
+            return Ok(None);
+        };
+        let Expression::Identifier(named) = callee.as_ref() else {
+            return Ok(None);
+        };
+        if arguments.len() != 1 {
+            return Ok(None);
+        }
+        if named == "field_count"
+            && let Some(name) = self.named_type(&arguments[0])
+            && let Some(layout) = self.structs.get(&name)
+        {
+            return Ok(Some(layout.fields.len() as i64));
+        }
+        if named == "offset_of" {
+            let Some((offset, _)) = self.field_named(&arguments[0]) else {
+                bail!(
+                    "offset_of names a field of a type, which is what a `for` over `fields(T)` binds"
+                )
+            };
+            return Ok(Some(*offset as i64));
+        }
+        Ok(None)
+    }
+
     // The elements of the pack, when this expression names it.
     fn pack_named(
         &self,
@@ -1566,8 +1699,14 @@ impl Expansion<'_> {
                 let Expression::Identifier(subject) = &arguments[0] else {
                     return Ok(None);
                 };
-                let Some(ty) = self.types.get(subject) else {
-                    return Ok(None);
+                // A parameter of the specialization, or a field the `for`
+                // around this bound. Both are types known here.
+                let ty = match self.fields.get(subject) {
+                    Some((_, ty)) => ty,
+                    None => match self.types.get(subject) {
+                        Some(ty) => ty,
+                        None => return Ok(None),
+                    },
                 };
                 Ok(type_predicate(predicate, ty))
             }
@@ -1629,6 +1768,34 @@ impl Expansion<'_> {
     }
 
     fn expression(&self, expression: Expression) -> Result<Expression> {
+        // `offset_of(field)` and `field_count(T)` are numbers this works out
+        // here, where the layout is known and nothing has been emitted yet.
+        if let Some(value) = self.constant_call(&expression)? {
+            return Ok(Expression::Literal(Literal::Integer(value)));
+        }
+        // `sizeof(field)` is the width of what that field holds. A field reads
+        // as a named type to the parser, which is what makes this the place
+        // that tells the two apart.
+        if let Expression::Sizeof(Type::Struct(named)) = &expression
+            && let Some((_, ty)) = self.fields.get(named)
+        {
+            return Ok(Expression::Sizeof(ty.clone()));
+        }
+        // A type predicate is a question this answers wherever it is asked, not
+        // only in the condition of an `if`, so a table may carry the answer as
+        // an ordinary field.
+        if let Some(held) = self.answer(&expression)? {
+            return Ok(Expression::Boolean(held));
+        }
+        // A field is not a value. Naming one anywhere else is a mistake worth
+        // catching here rather than as an unknown variable later.
+        if let Expression::Identifier(named) = &expression
+            && self.fields.contains_key(named)
+        {
+            bail!(
+                "'{named}' is a field of a type, so it is asked about with `offset_of`, `sizeof` and the type predicates, and is not a value"
+            )
+        }
         // `pack[K]` is the Kth element, which is a parameter of this
         // specialization. Anything else that names the pack is an error: a
         // compile-time list is not a value.

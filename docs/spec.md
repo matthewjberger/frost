@@ -1188,6 +1188,58 @@ here iterates a list whose length is known once the generic is instantiated, so
 what expansion costs is bounded by the program's own text. That is the whole
 difference between this and a compile-time interpreter.
 
+### 11.1d Walking a type's fields
+
+A `for` over `fields(T)` is decided at expansion time, the same as a `for` over
+a compile-time list. The body is written once and compiled once per field of
+`T`, with the loop's name standing for that field:
+
+```frost
+Vertex :: struct { position: Vec3, normal: Vec3, uv: Vec2, id: i64 }
+
+describe :: fn($T: Type, mut out: []Attribute) -> i64 {
+    mut index : i64 = 0
+    for field in fields(T) {
+        out[index] = Attribute {
+            offset = offset_of(field),
+            size = sizeof(field),
+            floating = is_float(field),
+        }
+        index = index + 1
+    }
+    index
+}
+```
+
+A field is not a value. It is asked about, and this is the whole of what may be
+asked:
+
+| | |
+| --- | --- |
+| `offset_of(field)` | where it sits in the type that declares it |
+| `sizeof(field)` | how wide what it holds is |
+| the 11.4a predicates | what kind of type it holds |
+| `field_count(T)` | how many fields a type has, which is what sizes a table |
+
+Every one of those is a number the compiler worked out to lay the type out.
+Naming a field anywhere else is an error, since there is nothing else it could
+mean.
+
+A vertex format, a uniform layout and a descriptor table are the same shape: a
+table of offsets and sizes over a struct the program already declared. Written
+this way the table cannot drift from the struct, because it is not written
+twice.
+
+**There is no reflection by name.** `has_field(T, "position")` is the
+string-keyed predicate 11.4a rules out, and a table built by walking every field
+needs no name written as a literal anywhere. A field's name is not readable at
+all, which is what keeps this a layout question rather than a small language for
+querying types.
+
+The bound is the same one 11.1c holds: the list a `for` walks is the struct's
+own field list, so its length is fixed by a declaration. No recursion, no
+unbounded loop, and nothing that reads the world.
+
 ### 11.2 Monomorphization
 
 Generics specialize at compile time. Each concrete instantiation compiles to its
