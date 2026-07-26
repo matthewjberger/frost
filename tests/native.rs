@@ -12554,12 +12554,12 @@ fn the_standard_json_reader_walks_a_nested_document() {
                   \x20   text := \"{\\\"name\\\":\\\"color\\\",\\\"members\\\":[{\\\"n\\\":1},{\\\"n\\\":22}],\\\"ok\\\":true}\"\n\
                   \x20   mut document := json_parse(text)\n\
                   \x20   root := json_root(document)\n\
-                  \x20   print json_kind(document, root)\n\
+                  \x20   if (json_kind(document, root) == JsonKind::Object) { print 6 } else { print 0 }\n\
                   \x20   if (json_text_eq(document, json_member(document, root, \"name\"), \"color\")) { print 1 } else { print 0 }\n\
                   \x20   members := json_member(document, root, \"members\")\n\
                   \x20   print json_count(document, members)\n\
                   \x20   print json_number(document, json_member(document, json_at(document, members, 1), \"n\"))\n\
-                  \x20   print json_kind(document, json_member(document, root, \"ok\"))\n\
+                  \x20   if (json_kind(document, json_member(document, root, \"ok\")) == JsonKind::True) { print 1 } else { print 0 }\n\
                   \x20   json_free(document)\n\
                   \x20   0\n}\n";
     let Some(output) = compile_and_run("stdjson", source) else {

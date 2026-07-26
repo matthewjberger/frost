@@ -20,26 +20,25 @@
 // which keeps probe runs short. The raw pointers and the allocation are the
 // unsafe floor, wrapped here.
 
-export Map, Hashing, map_new, map_free, map_len, map_put, map_get, map_has,
+import "mem.frost"
+
+export Map, Hashing, Slot, map_new, map_free, map_len, map_put, map_get, map_has,
     map_remove, map_clear,
     i64_hash, i64_same, str_hash, str_same, i64_keys,
     Text, text, text_hash, text_same, text_keys
 
-frost_rt_heap_alloc :: extern fn(size: i64) -> ^u8
-frost_rt_heap_free  :: extern fn(block: ^u8)
+// What a slot holds. A tombstone is a slot a key was removed from: a probe run
+// passes through one rather than stopping, so the keys placed after it are
+// still reached.
+Slot :: enum { Empty, Used, Gone }
 
-SLOT_EMPTY :: 0
-SLOT_USED  :: 1
-SLOT_GONE  :: 2
-
-// The three runs are bytes with a width rather than typed pointers, and the
-// typed view is taken where they are read. A key type that is itself a slice,
-// `str` above all, is then an element of a run like any other rather than a
-// pointer to a pointer.
+// The three runs are slices of the whole table, so every read and write here is
+// bounds-checked and this file has no `unsafe` of its own. What is unchecked is
+// the allocation, and that lives in mem.frost.
 Map :: struct($K: Type, $V: Type) {
-    keys: ^u8,
-    values: ^u8,
-    state: ^u8,
+    keys: []K,
+    values: []V,
+    state: []Slot,
     cap: i64,
     count: i64,
 }
@@ -115,33 +114,21 @@ text_keys :: Hashing<Text> { hash = text_hash, equal = text_same }
 map_new :: fn($K: Type, $V: Type, capacity: i64) -> Map<K, V> {
     mut cap : i64 = 8
     while (cap < capacity) { cap = cap * 2 }
-    keys := unsafe { frost_rt_heap_alloc(cap * sizeof(K)) }
-    values := unsafe { frost_rt_heap_alloc(cap * sizeof(V)) }
-    state := unsafe { frost_rt_heap_alloc(cap) }
+    keys := heap_slice($K, cap)
+    values := heap_slice($V, cap)
+    mut state := heap_slice($Slot, cap)
     mut i : i64 = 0
     while (i < cap) {
-        unsafe { state[i] = SLOT_EMPTY }
+        state[i] = Slot::Empty
         i = i + 1
     }
     Map { keys = keys, values = values, state = state, cap = cap, count = 0 }
 }
 
 map_free :: fn($K: Type, $V: Type, move m: Map<K, V>) {
-    unsafe {
-        frost_rt_heap_free(m.keys)
-        frost_rt_heap_free(m.values)
-        frost_rt_heap_free(m.state)
-    }
-}
-
-// The typed views of the two runs. Everything above this reads and writes
-// through a slice, which is the end of the erasure.
-map_keys :: fn($K: Type, $V: Type, m: Map<K, V>) -> []K {
-    unsafe { slice_from($K, ptr_cast($K, m.keys), m.cap) }
-}
-
-map_values :: fn($K: Type, $V: Type, m: Map<K, V>) -> []V {
-    unsafe { slice_from($V, ptr_cast($V, m.values), m.cap) }
+    heap_release_slice($K, m.keys)
+    heap_release_slice($V, m.values)
+    heap_release_slice($Slot, m.state)
 }
 
 map_len :: fn($K: Type, $V: Type, m: Map<K, V>) -> i64 {
@@ -157,11 +144,11 @@ map_find :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>,
     if (i < 0) {
         i = 0 - i
     }
-    held := map_keys($K, $V, m)
+    held := m.keys
     while (true) {
-        s := unsafe { m.state[i] }
-        if (s == SLOT_EMPTY) { return i }
-        if (s == SLOT_USED && ops.equal(held[i], key)) {
+        s := m.state[i]
+        if (s == Slot::Empty) { return i }
+        if (s == Slot::Used && ops.equal(held[i], key)) {
             return i
         }
         i = i + 1
@@ -176,21 +163,20 @@ map_find :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>,
 map_insert :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>,
     key: $K, move value: $V) {
     slot := map_find($K, $V, $ops, m, key)
-    if (unsafe { m.state[slot] } != SLOT_USED) {
+    if (m.state[slot] != Slot::Used) {
         m.count = m.count + 1
     }
-    mut keys := map_keys($K, $V, m)
-    mut values := map_values($K, $V, m)
+    mut keys := m.keys
+    mut values := m.values
+    mut state := m.state
     keys[slot] = key
     values[slot] = value
-    m.state[slot] = SLOT_USED
+    state[slot] = Slot::Used
 }
 
 map_grow :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>) {
-    old_keys := map_keys($K, $V, m)
-    old_values := map_values($K, $V, m)
-    old_block_keys := m.keys
-    old_block_values := m.values
+    old_keys := m.keys
+    old_values := m.values
     old_state := m.state
     old_cap := m.cap
     fresh := map_new($K, $V, m.cap * 2)
@@ -201,16 +187,14 @@ map_grow :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>) {
     m.count = 0
     mut i : i64 = 0
     while (i < old_cap) {
-        if (unsafe { old_state[i] } == SLOT_USED) {
+        if (old_state[i] == Slot::Used) {
             map_insert($K, $V, $ops, m, old_keys[i], old_values[i])
         }
         i = i + 1
     }
-    unsafe {
-        frost_rt_heap_free(old_block_keys)
-        frost_rt_heap_free(old_block_values)
-        frost_rt_heap_free(old_state)
-    }
+    heap_release_slice($K, old_keys)
+    heap_release_slice($V, old_values)
+    heap_release_slice($Slot, old_state)
 }
 
 map_put :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>,
@@ -224,7 +208,7 @@ map_put :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>,
 map_has :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>,
     key: $K) -> bool {
     slot := map_find($K, $V, $ops, m, key)
-    unsafe { m.state[slot] } == SLOT_USED
+    m.state[slot] == Slot::Used
 }
 
 // The value for a key, or the supplied default when the key is absent, so a
@@ -232,8 +216,8 @@ map_has :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>,
 map_get :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>, key: $K,
     move fallback: $V) -> $V {
     slot := map_find($K, $V, $ops, m, key)
-    if (unsafe { m.state[slot] } == SLOT_USED) {
-        return map_values($K, $V, m)[slot]
+    if (m.state[slot] == Slot::Used) {
+        return m.values[slot]
     }
     fallback
 }
@@ -243,9 +227,10 @@ map_get :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>, key: $K,
 map_remove :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>,
     key: $K) -> bool {
     slot := map_find($K, $V, $ops, m, key)
-    found := unsafe { m.state[slot] } == SLOT_USED
+    found := m.state[slot] == Slot::Used
     if (found) {
-        unsafe { m.state[slot] = SLOT_GONE }
+        mut state := m.state
+        state[slot] = Slot::Gone
         m.count = m.count - 1
     }
     found
@@ -254,9 +239,10 @@ map_remove :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>,
 // Empty every slot without freeing the table, so it is reused rather than
 // reallocated.
 map_clear :: fn($K: Type, $V: Type, mut m: Map<K, V>) {
+    mut state := m.state
     mut i : i64 = 0
     while (i < m.cap) {
-        unsafe { m.state[i] = SLOT_EMPTY }
+        state[i] = Slot::Empty
         i = i + 1
     }
     m.count = 0

@@ -1,0 +1,207 @@
+// Typed heap allocation. One block of `count` elements of `T`, given back as a
+// pointer or as a slice.
+//
+// Everything a container does with the heap needs two unsafe operations at
+// once: calling C to get the bytes, and reinterpreting them as a typed pointer.
+// Written at each site that is three `unsafe` blocks per container and the
+// element-count-times-size arithmetic repeated everywhere it is easy to get
+// wrong. Written here it is one block per function, and a caller reads
+// `keys := heap_array($i64, cap)` with no `unsafe` of its own, because an
+// unsafe block is a perimeter: calling a function that contains one does not
+// require one.
+//
+// `heap_slice` is the stronger form and the one to reach for. A slice carries
+// its length, so every later access through it is bounds-checked and the
+// container's body is ordinary safe code; only the allocation and the release
+// are unchecked, and both are here.
+
+export heap_array, heap_slice, heap_grow, heap_grow_slice, heap_release,
+    heap_release_slice, heap_bytes, heap_grow_bytes, heap_zero, heap_copy,
+    bytes_at, bytes_as, slice_prefix
+
+frost_rt_heap_alloc   :: extern fn(size: i64) -> ^u8
+frost_rt_heap_realloc :: extern fn(block: ^u8, size: i64) -> ^u8
+frost_rt_heap_free    :: extern fn(block: ^u8)
+frost_rt_mem_set      :: extern fn(destination: ^u8, value: i64, size: i64)
+frost_rt_mem_copy     :: extern fn(destination: ^u8, source: ^u8, size: i64)
+
+// Room for `count` elements of `T`. A count of zero still allocates one, so a
+// container never holds a pointer to nothing.
+heap_array :: fn($T: Type, count: i64) -> ^T {
+    mut room := count
+    if (room < 1) {
+        room = 1
+    }
+    unsafe { ptr_cast($T, frost_rt_heap_alloc(room * sizeof(T))) }
+}
+
+// The same block as a slice of that length, which is what makes the code above
+// it bounds-checked.
+heap_slice :: fn($T: Type, count: i64) -> []T {
+    mut room := count
+    if (room < 1) {
+        room = 1
+    }
+    unsafe { slice_from($T, heap_array($T, room), room) }
+}
+
+// Resize a block, answering where it now is. The old pointer is not valid after
+// this, which is why it is taken by `move`.
+heap_grow :: fn($T: Type, move block: ^T, count: i64) -> ^T {
+    mut room := count
+    if (room < 1) {
+        room = 1
+    }
+    unsafe {
+        ptr_cast($T,
+            frost_rt_heap_realloc(ptr_cast($u8, block), room * sizeof(T)))
+    }
+}
+
+// The same for a slice, answering one of the new length.
+heap_grow_slice :: fn($T: Type, move held: []T, count: i64) -> []T {
+    mut room := count
+    if (room < 1) {
+        room = 1
+    }
+    grown := unsafe {
+        ptr_cast($T,
+            frost_rt_heap_realloc(ptr_cast($u8, ptr_to(held[0])),
+                room * sizeof(T)))
+    }
+    unsafe { slice_from($T, grown, room) }
+}
+
+// The first `count` elements of a slice. A container whose storage is the whole
+// block hands out its live prefix with this, so the length a caller sees is the
+// number of elements there are rather than the room there is.
+slice_prefix :: fn($T: Type, held: []T, count: i64) -> []T {
+    unsafe { slice_from($T, ptr_to(held[0]), count) }
+}
+
+heap_release :: fn($T: Type, move block: ^T) {
+    unsafe { frost_rt_heap_free(ptr_cast($u8, block)) }
+}
+
+heap_release_slice :: fn($T: Type, move held: []T) {
+    unsafe { frost_rt_heap_free(ptr_cast($u8, ptr_to(held[0]))) }
+}
+
+// A run of bytes with a width decided while the program runs, for a container
+// whose element type is not in the type system: the ECS's columns are this.
+heap_bytes :: fn(size: i64) -> ^u8 {
+    mut room := size
+    if (room < 1) {
+        room = 1
+    }
+    unsafe { frost_rt_heap_alloc(room) }
+}
+
+heap_grow_bytes :: fn(move block: ^u8, size: i64) -> ^u8 {
+    mut room := size
+    if (room < 1) {
+        room = 1
+    }
+    unsafe { frost_rt_heap_realloc(block, room) }
+}
+
+// One position in a run of bytes, for a container whose element width is
+// decided while the program runs. The arithmetic is written here rather than at
+// each site, so a byte offset and an element index cannot be confused.
+bytes_at :: fn(block: ^u8, offset: i64) -> ^u8 {
+    unsafe { ptr_to(block[offset]) }
+}
+
+// A run of bytes read as a run of `T`, which is the end of an erasure: what
+// comes back is bounds-checked, and how many elements there are is the caller's
+// to say because the bytes do not know.
+bytes_as :: fn($T: Type, block: ^u8, count: i64) -> []T {
+    unsafe { slice_from($T, ptr_cast($T, block), count) }
+}
+
+heap_zero :: fn(destination: ^u8, size: i64) {
+    unsafe { frost_rt_mem_set(destination, 0, size) }
+}
+
+heap_copy :: fn(destination: ^u8, source: ^u8, size: i64) {
+    unsafe { frost_rt_mem_copy(destination, source, size) }
+}
+
+test "a prefix is as long as it was asked for" {
+    mut held := heap_slice($i64, 8)
+    held[0] = 1
+    held[1] = 2
+    front := slice_prefix($i64, held, 2)
+    assert(slice_len(front) == 2)
+    assert(front[1] == 2)
+    heap_release_slice($i64, held)
+}
+
+test "a typed block holds what is written into it" {
+    mut held := heap_slice($i64, 4)
+    held[0] = 10
+    held[3] = 40
+    assert(slice_len(held) == 4)
+    assert(held[0] == 10)
+    assert(held[3] == 40)
+    heap_release_slice($i64, held)
+}
+
+test "a block keeps its contents across a grow" {
+    mut held := heap_slice($i64, 2)
+    held[0] = 1
+    held[1] = 2
+    mut bigger := heap_grow_slice($i64, held, 8)
+    assert(slice_len(bigger) == 8)
+    assert(bigger[0] == 1)
+    assert(bigger[1] == 2)
+    bigger[7] = 7
+    assert(bigger[7] == 7)
+    heap_release_slice($i64, bigger)
+}
+
+test "a zero count still gives a block to write into" {
+    mut held := heap_slice($i64, 0)
+    held[0] = 5
+    assert(held[0] == 5)
+    heap_release_slice($i64, held)
+}
+
+MemPoint :: struct { x: i64, y: i64 }
+
+test "a struct element is one element rather than one byte" {
+    mut held := heap_slice($MemPoint, 3)
+    held[2] = MemPoint { x = 7, y = 8 }
+    held[0] = MemPoint { x = 1, y = 2 }
+    assert(held[2].x == 7)
+    assert(held[2].y == 8)
+    assert(held[0].x == 1)
+    heap_release_slice($MemPoint, held)
+}
+
+test "bytes with a width are zeroed and copied" {
+    source := heap_bytes(16)
+    destination := heap_bytes(16)
+    heap_zero(source, 16)
+    mut written := bytes_as($i64, source, 2)
+    written[1] = 42
+    heap_copy(destination, source, 16)
+    view := bytes_as($i64, destination, 2)
+    assert(view[0] == 0)
+    assert(view[1] == 42)
+    // And one element in, which is where a column's second row starts.
+    second := bytes_as($i64, bytes_at(destination, 8), 1)
+    assert(second[0] == 42)
+    heap_release($u8, source)
+    heap_release($u8, destination)
+}
+
+test "a byte run keeps what it held when it grows" {
+    mut block := heap_bytes(8)
+    mut written := bytes_as($i64, block, 1)
+    written[0] = 9
+    block = heap_grow_bytes(block, 64)
+    view := bytes_as($i64, block, 1)
+    assert(view[0] == 9)
+    heap_release($u8, block)
+}

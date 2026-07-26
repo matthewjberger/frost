@@ -37,6 +37,10 @@ worked around in the library rather than fixed:
 Both are the same shape: compile-time parameter state that belongs to one
 template being read while another is checked. The reproductions are small.
 
+One more, found the same way: the self-hosted compiler has no `continue`. The
+bootstrap does, so a loop written with one compiles under the first compiler and
+not the second.
+
 ## What is done, and what it cost
 
 Both compilers clear the target on a full build, and the self-hosted one

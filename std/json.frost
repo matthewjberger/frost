@@ -15,23 +15,18 @@
 import "vec.frost"
 import "strings.frost"
 
-export JSON_NULL, JSON_TRUE, JSON_FALSE, JSON_NUMBER, JSON_STRING, JSON_ARRAY,
-    JSON_OBJECT, Json, JsonNode, json_parse, json_free, json_root, json_kind,
+export JsonKind, Json, JsonNode, json_parse, json_free, json_root, json_kind,
     json_number, json_text_eq, json_member, json_at, json_count, json_is_null,
     json_text_off, json_text_len
 
-JSON_NULL   :: 0
-JSON_TRUE   :: 1
-JSON_FALSE  :: 2
-JSON_NUMBER :: 3
-JSON_STRING :: 4
-JSON_ARRAY  :: 5
-JSON_OBJECT :: 6
+// What a node is. A parsed document is a run of these, and the kind is what a
+// reader asks about first.
+JsonKind :: enum { Null, True, False, Number, String, Array, Object }
 
 // `first` and `next` chain children the way a linked list does, so an array of
 // a thousand elements costs a thousand nodes and no reallocation of the parent.
 JsonNode :: struct {
-    kind: i64,
+    kind: JsonKind,
     number: i64,
     text_off: i64,
     text_len: i64,
@@ -62,9 +57,9 @@ json_root :: fn(document: Json) -> i64 {
     0
 }
 
-json_kind :: fn(mut document: Json, node: i64) -> i64 {
+json_kind :: fn(mut document: Json, node: i64) -> JsonKind {
     if (node < 0) {
-        return JSON_NULL
+        return JsonKind::Null
     }
     vec_slice($JsonNode, document.nodes)[node].kind
 }
@@ -77,7 +72,7 @@ json_number :: fn(mut document: Json, node: i64) -> i64 {
 }
 
 json_is_null :: fn(mut document: Json, node: i64) -> bool {
-    json_kind(document, node) == JSON_NULL
+    json_kind(document, node) == JsonKind::Null
 }
 
 json_text_off :: fn(mut document: Json, node: i64) -> i64 {
@@ -191,7 +186,7 @@ json_parse :: fn(source: str) -> Json {
     document
 }
 
-new_node :: fn(mut document: Json, kind: i64) -> i64 {
+new_node :: fn(mut document: Json, kind: JsonKind) -> i64 {
     index := vec_len($JsonNode, document.nodes)
     vec_push($JsonNode, document.nodes, JsonNode {
         kind = kind, number = 0, text_off = 0, text_len = 0,
@@ -230,15 +225,15 @@ parse_value :: fn(mut document: Json) -> i64 {
     }
     if (byte == 116) {
         document.at = document.at + 4
-        return new_node(document, JSON_TRUE)
+        return new_node(document, JsonKind::True)
     }
     if (byte == 102) {
         document.at = document.at + 5
-        return new_node(document, JSON_FALSE)
+        return new_node(document, JsonKind::False)
     }
     if (byte == 110) {
         document.at = document.at + 4
-        return new_node(document, JSON_NULL)
+        return new_node(document, JsonKind::Null)
     }
     if (byte == 45 || str_byte_is_digit(byte)) {
         return parse_number(document)
@@ -258,7 +253,7 @@ parse_string :: fn(mut document: Json) -> i64 {
         }
         document.at = document.at + 1
     }
-    node := new_node(document, JSON_STRING)
+    node := new_node(document, JsonKind::String)
     slot := vec_slice($JsonNode, document.nodes)
     ref held := slot[node]
     held.text_off = start
@@ -291,7 +286,7 @@ parse_number :: fn(mut document: Json) -> i64 {
             || source[document.at] == 45)) {
         document.at = document.at + 1
     }
-    node := new_node(document, JSON_NUMBER)
+    node := new_node(document, JsonKind::Number)
     slot := vec_slice($JsonNode, document.nodes)
     ref held := slot[node]
     if (negative == 1) {
@@ -304,7 +299,7 @@ parse_number :: fn(mut document: Json) -> i64 {
 
 parse_array :: fn(mut document: Json) -> i64 {
     document.at = document.at + 1
-    node := new_node(document, JSON_ARRAY)
+    node := new_node(document, JsonKind::Array)
     mut tail : i64 = 0 - 1
     skip_space(document)
     while (document.at < str_len(document.source) && peek(document) != 93) {
@@ -325,7 +320,7 @@ parse_array :: fn(mut document: Json) -> i64 {
 
 parse_object :: fn(mut document: Json) -> i64 {
     document.at = document.at + 1
-    node := new_node(document, JSON_OBJECT)
+    node := new_node(document, JsonKind::Object)
     mut tail : i64 = 0 - 1
     skip_space(document)
     while (document.at < str_len(document.source) && peek(document) != 125) {

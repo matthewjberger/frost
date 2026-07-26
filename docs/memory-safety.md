@@ -256,6 +256,33 @@ None of these requires lifetime variables, region inference, or a runtime GC.
 The analysis is a single AST pass. The only per-value runtime cost is one integer
 compare per handle access and one per array index.
 
+## Where the unchecked work lives
+
+A container has to allocate, and allocating needs two things the compiler cannot
+check: a call into C for the bytes, and a reinterpretation of those bytes as a
+typed pointer. Written at each site that is three `unsafe` blocks per container
+and the count-times-size arithmetic repeated wherever it is easy to get wrong.
+
+`std/mem.frost` is that floor, and it is the only file in the standard library's
+containers that contains an `unsafe` block. It hands back a slice rather than a
+pointer:
+
+```frost
+keys := heap_slice($i64, capacity)     // []i64, not ^i64
+```
+
+A slice carries its length, so every later access through it is bounds-checked,
+which is what leaves `std/vec.frost` and `std/map.frost` with no `unsafe` of
+their own: the whole body of a hash map is ordinary safe code, and the only
+unchecked operations are the allocation and the release. For a container whose
+element width is decided while the program runs, `heap_bytes`, `bytes_at` and
+`bytes_as` are the same move: the byte arithmetic is written once, and what
+comes back is a bounds-checked `[]T`. `std/ecs.frost` is written entirely on
+those, so it too has no `unsafe` block.
+
+This is the same shape `arena_at` has: push the unchecked operation down into
+one audited function and hand back something the language can check.
+
 ## What is not yet guarded
 
 A few honest gaps in the current implementation:

@@ -71,6 +71,7 @@ For long-lived data, an `Entity` lives in a pool and is named by a `Handle`, a s
 | [syntax-design](docs/syntax-design.md) | Why the syntax reads the way it does |
 | [memory-safety](docs/memory-safety.md) | What the safety guarantee covers, and what it does not |
 | [allocators](docs/allocators.md) | Arenas, regions, and where memory comes from |
+| [mem](std/mem.frost) | The typed allocation floor every container is built on |
 | [native-pools](docs/native-pools.md) | Generational handles, and why the pool is Frost rather than C |
 
 **The compiler**

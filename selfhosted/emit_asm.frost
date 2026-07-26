@@ -2154,19 +2154,25 @@ emit_asm_test_main :: fn(mut p: Parser) {
     mut i : i64 = 0
     while (i < p.tests.count) {
         entry := arena_at(p.tests, i)
-        emit_text("    leaq .Ltest")
-        frost_rt_emit_int(i)
-        emit_text("(%rip), ")
-        emit_asm_arg_reg(p, 0)
-        emit_text("\n")
-        emit_text("    leaq mf_")
-        frost_rt_emit_int(entry.fn_index)
-        emit_text("(%rip), ")
-        emit_asm_arg_reg(p, 1)
-        emit_text("\n")
-        asm_i("subq $", shadow, ", %rsp")
-        asm("call frost_rt_test_run")
-        asm_i("addq $", shadow, ", %rsp")
+        // Only the tests of the file that was named, the same rule the C
+        // backend follows. The root is module zero, since it is recorded
+        // before the files it imports even though its text is laid down
+        // after them.
+        if (module_at(p.modules, entry.name_off) == 0) {
+            emit_text("    leaq .Ltest")
+            frost_rt_emit_int(i)
+            emit_text("(%rip), ")
+            emit_asm_arg_reg(p, 0)
+            emit_text("\n")
+            emit_text("    leaq mf_")
+            frost_rt_emit_int(entry.fn_index)
+            emit_text("(%rip), ")
+            emit_asm_arg_reg(p, 1)
+            emit_text("\n")
+            asm_i("subq $", shadow, ", %rsp")
+            asm("call frost_rt_test_run")
+            asm_i("addq $", shadow, ", %rsp")
+        }
         i = i + 1
     }
     asm_i("subq $", shadow, ", %rsp")
