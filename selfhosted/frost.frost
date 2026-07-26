@@ -81,7 +81,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     mut index : i64 = 0
     while (index < p.modules.count) {
         mut suffix : ^i8 = ".s"
-        if (options.backend == BACKEND_C) {
+        if (options.backend == Backend::C) {
             suffix = ".c"
         }
         unit := join_number(prefix, index, suffix)
@@ -94,7 +94,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
             frost_rt_die()
         }
         p.emit_module = index
-        if (options.backend == BACKEND_C) {
+        if (options.backend == Backend::C) {
             // Every unit carries the declarations, since a C unit cannot call
             // what it has not seen: the runtime's prototypes, every type, every
             // extern, and a prototype for every function and specialization in
@@ -531,7 +531,7 @@ main :: fn() -> i64 {
                 executable = "a.exe"
             }
         }
-        if (options.backend == BACKEND_ASM) {
+        if (options.backend == Backend::Asm) {
             emit_path = join_two(executable, ".s")
         } else {
             emit_path = join_two(executable, ".c")
@@ -546,7 +546,7 @@ main :: fn() -> i64 {
         }
     }
 
-    if (options.backend == BACKEND_ASM) {
+    if (options.backend == Backend::Asm) {
         emit_asm_program(parser, program)
     } else {
         emit_text("#include <stdio.h>\n")
