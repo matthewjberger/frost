@@ -9102,6 +9102,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_enumvalues", ENUM_VALUES),
         ("diff_bundle", CAPABILITY_BUNDLE),
         ("diff_composed", COMPOSED_BUNDLES),
+        ("diff_linenum", LINEAR_ENUM),
         ("diff_failure", FAILURE_SET_PARSE),
         ("diff_bracedarm", BRACED_ARMS),
     ];
@@ -10359,6 +10360,63 @@ fn self_hosted_composes_bundles() {
         return;
     };
     assert_eq!(output, "3\n62\n");
+}
+
+// A `linear enum` is a resource with alternatives: it has to be consumed
+// exactly once, and matching it is what consumes it. The arm that names a
+// linear field takes that field out, so consuming it is the arm's own
+// obligation.
+const LINEAR_ENUM: &str = r#"
+File :: linear struct { fd: i64 }
+
+Answer :: linear enum { None, Some { file: File } }
+
+close :: fn(move f: File) -> i64 { f.fd }
+
+take :: fn(a: Answer) -> i64 {
+    match a {
+        case .None: 0
+        case .Some { file }: close(file)
+    }
+}
+
+main :: fn() -> i64 {
+    print take(Answer::Some { file = File { fd = 4 } })
+    print take(Answer::None)
+    0
+}
+"#;
+
+#[test]
+fn a_linear_enum_is_consumed_by_matching_it() {
+    let Some(output) = compile_and_run("linenum", LINEAR_ENUM) else {
+        return;
+    };
+    assert_eq!(output, "4\n0\n");
+}
+
+#[test]
+fn self_hosted_consumes_a_linear_enum_by_matching_it() {
+    let Some(output) = selfhosted_native_output("shlinenum", LINEAR_ENUM)
+    else {
+        return;
+    };
+    assert_eq!(output, "4\n0\n");
+}
+
+#[test]
+fn a_dropped_linear_enum_is_refused() {
+    let source = "File :: linear struct { fd: i64 }\n\
+                  Answer :: linear enum { None, Some { file: File } }\n\
+                  close :: fn(move f: File) -> i64 { f.fd }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   held := Answer::Some { file = File { fd = 9 } }\n\
+                  \x20   0\n}\n";
+    let message = compile_error("linenumdrop", source);
+    assert!(
+        message.contains("linear"),
+        "expected the dropped resource to be named, got: {message}"
+    );
 }
 
 // A capability bundle: a generic struct whose fields are functions, a constant
