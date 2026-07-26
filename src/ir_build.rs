@@ -1215,7 +1215,9 @@ fn mangle_type(ty: &Type) -> String {
         Type::Array(inner, size) => format!("a{}_{}", size, mangle_type(inner)),
         Type::Handle(inner) => format!("h_{}", mangle_type(inner)),
         Type::Proc(_, _) => "proc".to_string(),
-        Type::ConstFn(name) => sanitize_identifier(name),
+        Type::ConstFn(name) | Type::ConstValue(name) => {
+            sanitize_identifier(name)
+        }
         other => format!("{other}"),
     }
 }
@@ -1496,6 +1498,17 @@ fn collect_instances_in_statement(
         }
         Statement::Defer(inner) => {
             collect_instances_in_statement(inner, out);
+        }
+        // A constant whose value is not a function is that value wherever it is
+        // named, so an instance it builds is asked for here. A function
+        // constant's body is walked with its parameter types in scope instead.
+        Statement::Constant(_, value)
+            if !matches!(
+                value,
+                Expression::Function(..) | Expression::Proc(..)
+            ) =>
+        {
+            collect_instances_in_expression(value, out);
         }
         _ => {}
     }
@@ -2238,6 +2251,11 @@ fn substitute_expression(
         return Expression::Literal(crate::parser::Literal::Integer(
             *value as i64,
         ));
+    }
+    if let Expression::Identifier(name) = expression
+        && let Some(Type::ConstValue(target)) = subst.get(name)
+    {
+        return Expression::Identifier(target.clone());
     }
     if let Expression::Call(callee, arguments) = expression
         && let Expression::Identifier(name) = callee.as_ref()
@@ -4060,7 +4078,41 @@ impl<'a> FunctionLowering<'a> {
                 return self.lower_direct_call(name, arguments);
             }
         }
+        if let Some(target) = self.bundle_field_function(callee) {
+            return self.lower_direct_call(&target, arguments);
+        }
         self.lower_indirect_call(callee, arguments)
+    }
+
+    // The function a bundle's field names, for a bundle that is a constant.
+    // `ops.less(a, b)` where `ops` is a constant whose `less` field names a
+    // function is a call to that function: there is one value the field can
+    // hold and it is known here, so nothing is loaded and nothing is called
+    // through a pointer.
+    fn bundle_field_function(&self, callee: &Expression) -> Option<String> {
+        let Expression::FieldAccess(base, field) = callee else {
+            return None;
+        };
+        let Expression::Identifier(name) = base.as_ref() else {
+            return None;
+        };
+        if self.resolve_variable(name).is_some() {
+            return None;
+        }
+        let Some(Expression::StructInit(_, fields)) =
+            self.builder.constants.get(name)
+        else {
+            return None;
+        };
+        let (_, value) =
+            fields.iter().find(|(field_name, _)| field_name == field)?;
+        let Expression::Identifier(target) = value else {
+            return None;
+        };
+        self.builder
+            .signature(target)
+            .is_some()
+            .then(|| target.clone())
     }
 
     fn lower_generic_call(
@@ -4095,6 +4147,9 @@ impl<'a> FunctionLowering<'a> {
         // arguments are what bind most of them, so `subst` is not complete
         // until every argument has been walked.
         let mut signature_checks: Vec<(&Parameter, String)> = Vec::new();
+        // The same, for a parameter declared with a bundle type: the constant
+        // the argument names has to be of that type.
+        let mut bundle_checks: Vec<(&Parameter, String)> = Vec::new();
         for (index, (parameter, argument)) in
             generic.parameters.iter().zip(arguments).enumerate()
         {
@@ -4116,6 +4171,14 @@ impl<'a> FunctionLowering<'a> {
                     {
                         Type::ConstFn(named.clone())
                     }
+                    // A name that is a constant is that constant. This is how a
+                    // capability bundle travels: the body names the constant
+                    // wherever it named the parameter.
+                    Type::Struct(named)
+                        if self.builder.constants.contains_key(named) =>
+                    {
+                        Type::ConstValue(named.clone())
+                    }
                     // A name that is neither a declared type nor a declared
                     // function is caught here rather than deep inside the
                     // specialized body, where the reader would be looking at
@@ -4133,15 +4196,28 @@ impl<'a> FunctionLowering<'a> {
                     }
                     other => other.clone(),
                 };
-                if parameter.compile_time_signature.is_some() {
-                    let Type::ConstFn(target) = &bound else {
-                        bail!(
-                            "native backend: '{}' of '{name}' is declared as a function, so it needs a function as its argument, not the type '{}'",
-                            parameter.name,
-                            bound
-                        );
-                    };
-                    signature_checks.push((parameter, target.clone()));
+                match parameter.compile_time_signature.as_ref() {
+                    Some(Type::Proc(..)) => {
+                        let Type::ConstFn(target) = &bound else {
+                            bail!(
+                                "native backend: '{}' of '{name}' is declared as a function, so it needs a function as its argument, not the type '{}'",
+                                parameter.name,
+                                bound
+                            );
+                        };
+                        signature_checks.push((parameter, target.clone()));
+                    }
+                    Some(_) => {
+                        let Type::ConstValue(target) = &bound else {
+                            bail!(
+                                "native backend: '{}' of '{name}' is declared as a bundle, so it needs a constant of that type as its argument, not '{}'",
+                                parameter.name,
+                                bound
+                            );
+                        };
+                        bundle_checks.push((parameter, target.clone()));
+                    }
+                    None => {}
                 }
                 subst.insert(parameter.name.clone(), bound);
                 continue;
@@ -4233,6 +4309,30 @@ impl<'a> FunctionLowering<'a> {
         // work is refused here rather than inside code the reader never wrote.
         if let Some(bound) = &generic.return_sig.bound {
             check_bound(bound, &subst, name)?;
+        }
+
+        for (parameter, target) in bundle_checks {
+            let Some(declared) = parameter.compile_time_signature.as_ref()
+            else {
+                continue;
+            };
+            let expected = substitute_type(declared, &subst);
+            let Some(Expression::StructInit(actual, _)) =
+                self.builder.constants.get(&target)
+            else {
+                bail!(
+                    "native backend: '{target}' given to '{name}' as '{}' is not a struct constant, and '{}' is declared as '{expected}'",
+                    parameter.name,
+                    parameter.name
+                );
+            };
+            if Type::Struct(actual.clone()) != expected {
+                bail!(
+                    "native backend: '{target}' given to '{name}' as '{}' is a '{actual}', but '{}' is declared as '{expected}'",
+                    parameter.name,
+                    parameter.name
+                );
+            }
         }
 
         for (parameter, target) in signature_checks {
@@ -5192,6 +5292,15 @@ impl<'a> FunctionLowering<'a> {
         match place {
             Expression::Identifier(name) => {
                 let Some(local) = self.resolve_variable(name) else {
+                    // A constant has no storage of its own, so the address of
+                    // one is the address of the copy built here. This is what a
+                    // bundle passed at runtime, rather than as a compile-time
+                    // argument, travels as.
+                    if let Some(value) =
+                        self.builder.constants.get(name).cloned()
+                    {
+                        return self.place_address(&value);
+                    }
                     bail!(
                         "native backend: address of unknown variable '{name}'"
                     );
@@ -5915,6 +6024,13 @@ impl<'a> FunctionLowering<'a> {
         match base {
             Expression::Identifier(name) => {
                 let Some(local) = self.resolve_variable(name) else {
+                    // A top-level constant is its value wherever it is named,
+                    // so a field of one is a field of that value.
+                    if let Some(value) =
+                        self.builder.constants.get(name).cloned()
+                    {
+                        return self.struct_place(&value);
+                    }
                     bail!("native backend: unknown variable '{name}'");
                 };
                 match self.type_of_local(local) {
@@ -5986,6 +6102,22 @@ impl<'a> FunctionLowering<'a> {
                             unreachable!()
                         };
                         Ok((operand, struct_name))
+                    }
+                    // A struct value that is not already a place, such as a
+                    // literal or what a call answered, is read out of where it
+                    // was built.
+                    Type::Struct(struct_name) => {
+                        let IrOperand::Local(local) = operand else {
+                            bail!(
+                                "native backend: not a struct place: {other}"
+                            );
+                        };
+                        self.mark_in_memory(local);
+                        let address = self.address_of_local(
+                            local,
+                            &Type::Struct(struct_name.clone()),
+                        );
+                        Ok((address, struct_name))
                     }
                     _ => bail!("native backend: not a struct place: {other}"),
                 }

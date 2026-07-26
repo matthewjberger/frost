@@ -724,6 +724,9 @@ Parser :: struct {
     fields: Arena<StructField>,
     locals: Arena<LocalVar>,
     consts: Arena<ConstDef>,
+    // A constant whose value is a struct rather than an integer. `value` is the
+    // node the literal parsed to, written out again at each use.
+    value_consts: Arena<ConstDef>,
     instances: Arena<Instance>,
     generic_fns: Arena<GenericFn>,
     // Every allocation capability every `uses` function draws, as runs one per

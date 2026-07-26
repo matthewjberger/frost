@@ -8,7 +8,8 @@ import "imports.frost"
 
 export append_node, array_element, array_index_of, array_length, array_of,
     mark_safe, place_renames,
-    bytes_equal, const_value, digits_in, gargs_equal, generic_index_for,
+    bytes_equal, const_value, value_const_node, digits_in, gargs_equal,
+    generic_index_for,
     value_binding_of, fn_binding_of, binding_of, is_type_name,
     is_distinct, distinct_repr, distinct_id, distinct_type,
     report_type_name, report_distinct_note,
@@ -415,6 +416,23 @@ const_value :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     mut i : i64 = 0
     while (i < p.consts.count) {
         entry := arena_at(p.consts, i)
+        if (entry.name_len == length
+            && bytes_equal(p.src, entry.name_off, offset, length)
+            && name_visible(p, entry.name_off, entry.name_len, offset)) {
+            return entry.value
+        }
+        i = i + 1
+    }
+    0 - 1
+}
+
+// The node a struct constant's literal parsed to, or -1 for a name that is not
+// one. A struct constant is its value wherever it is named, so every use writes
+// that node out again rather than referring to storage somewhere.
+value_const_node :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < p.value_consts.count) {
+        entry := arena_at(p.value_consts, i)
         if (entry.name_len == length
             && bytes_equal(p.src, entry.name_off, offset, length)
             && name_visible(p, entry.name_off, entry.name_len, offset)) {

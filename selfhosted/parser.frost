@@ -483,7 +483,27 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     // of that parse is emitted, and the body is read again with a number bound
     // for each instance, so this stands in until then.
     if (names_gparam(p, offset, length)) {
+        // Reading a field of one is a use of the name it will be given, the
+        // same as calling one: `$ops` binds to a constant whose fields are
+        // functions, not to a number. The placeholder below is for a value
+        // parameter, whose name stands for a number.
+        if (cur(p) == TokenKind::Dot) {
+            note_called_name(p, offset, length)
+            return new_named_node(p, NodeKind::Var, 0, offset, length)
+        }
         return new_node(p, NodeKind::Num, 0, 0, 0)
+    }
+    // A compile-time parameter bound to a name stands for that name, so what is
+    // recorded here is the name the call site passed. The binding is in force
+    // only while the instance is parsed, and every pass after the parse reads
+    // the node, so the substitution happens now rather than being looked up
+    // later.
+    supplied := fn_binding_of(p, offset, length)
+    if (supplied >= 0) {
+        sym := arena_at(p.fns, supplied)
+        sym_off := sym.off
+        sym_len := sym.len
+        return new_named_node(p, NodeKind::Var, 0, sym_off, sym_len)
     }
     new_named_node(p, NodeKind::Var, 0, offset, length)
 }
@@ -1191,14 +1211,16 @@ parse_struct_fields :: fn(mut p: Parser) -> i64 {
 // `gparams` run this declaration owns. The kind is not kept. A parameter is a
 // type or a value by what binds to it.
 // What kind a compile-time parameter was declared with, read off the word after
-// the colon the cursor is sitting on. `$N: usize` takes a number. `$T: Type`
-// takes a type and `$less: fn(T, T) -> bool` takes a function, and neither of
-// those is a number, which is the distinction that decides what may be bound.
+// the colon the cursor is sitting on. `$N: usize` takes a number, and it is the
+// only kind that does. `$T: Type` takes a type, `$less: fn(T, T) -> bool` takes
+// a function, and `$ops: Ordering<T>` takes a constant of that type; all three
+// bind to a name rather than to a number, which is the distinction that decides
+// what may be bound.
 kind_is_value :: fn(mut p: Parser) -> i64 {
-    if (peek_is_word(p, 1, "Type") || peek_kind(p, 1) == TokenKind::KwFn) {
-        return 0
+    if (peek_is_word(p, 1, "usize")) {
+        return 1
     }
-    1
+    0
 }
 
 record_gparam :: fn(mut p: Parser, off: i64, len: i64, is_value: i64) {
@@ -3375,6 +3397,23 @@ parse_distinct :: fn(mut p: Parser) {
     )
 }
 
+// `name :: Type { field = value }`, a constant whose value is a struct. The
+// literal is parsed here and kept as a node; naming the constant anywhere
+// writes that node out again, so the value exists wherever it is used and
+// nowhere else. This is what a capability bundle is declared as.
+parse_value_const :: fn(mut p: Parser) {
+    name_offset := cur_off(p)
+    name_length := cur_len(p)
+    advance(p)
+    advance(p)
+    value := parse_expr(p)
+    arena_push(
+        p.value_consts,
+        ConstDef { name_off = name_offset, name_len = name_length,
+            value = value },
+    )
+}
+
 parse_const :: fn(mut p: Parser) {
     name_offset := cur_off(p)
     name_length := cur_len(p)
@@ -3446,6 +3485,13 @@ parse_program :: fn(mut p: Parser) -> i64 {
             // another by an operator. A bare `Name :: OtherName` is left alone,
             // so `Enum::Variant` is not read as a constant.
             parse_const(p)
+        } else if (third == TokenKind::Ident
+            && (peek_kind(p, 3) == TokenKind::Lbrace
+                || peek_kind(p, 3) == TokenKind::Lt)) {
+            // A constant whose value is a struct. The brace, or the generic
+            // arguments before it, is what tells this from a bare
+            // `Name :: OtherName`.
+            parse_value_const(p)
         } else if (third != TokenKind::KwFn && third != TokenKind::KwInline) {
             // Everything above is a form this compiler knows. Anything else
             // would be read as a function and misparse into a crash far from

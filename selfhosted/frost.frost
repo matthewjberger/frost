@@ -162,6 +162,7 @@ main :: fn() -> i64 {
         fields = arena_make($StructField, 8192),
         locals = arena_make($LocalVar, 4096),
         consts = arena_make($ConstDef, 4096),
+        value_consts = arena_make($ConstDef, 256),
         instances = arena_make($Instance, 4096),
         generic_fns = arena_make($GenericFn, 256),
         caps = arena_make($Cap, 1024),

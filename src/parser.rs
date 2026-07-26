@@ -1044,6 +1044,11 @@ pub struct Parser<'a> {
     // from the comparison `a < b` is a question of whether the name is one of
     // these.
     generic_types: std::collections::HashSet<String>,
+    // How many blocks deep the parse is. `name :: Type { .. }` is a declaration
+    // at the top level and `Enum::Variant { .. }` inside a body, and the two
+    // read the same token for token, so where it is written is what tells them
+    // apart.
+    block_depth: usize,
 }
 
 // Where a top-level declaration's value ends: at the head of the next one, or
@@ -1221,6 +1226,7 @@ fn scan_integer_constants(tokens: &[Token]) -> HashMap<String, usize> {
             no_struct_literal: false,
             integer_constants: HashMap::new(),
             generic_types: std::collections::HashSet::new(),
+            block_depth: 0,
         };
         let Ok(expression) = sub.parse_expression(Precedence::Lowest) else {
             continue;
@@ -1251,6 +1257,7 @@ impl<'a> Parser<'a> {
             no_struct_literal: false,
             integer_constants: scan_integer_constants(tokens),
             generic_types: scan_generic_types(tokens),
+            block_depth: 0,
         }
     }
 
@@ -1271,6 +1278,7 @@ impl<'a> Parser<'a> {
             no_struct_literal: false,
             integer_constants: scan_integer_constants(tokens),
             generic_types: scan_generic_types(tokens),
+            block_depth: 0,
         }
     }
 
@@ -1578,6 +1586,22 @@ impl<'a> Parser<'a> {
                 if matches!(self.peek_nth(1), Token::DoubleColon)
                     && matches!(self.peek_nth(2), Token::Identifier(_))
                     && is_constant_operator(self.peek_nth(3)) =>
+            {
+                Some(self.parse_constant_or_struct_statement()?)
+            }
+            // A constant that is a struct value, such as
+            // `i64_ordering :: Ordering<i64> { less = i64_less }`. The brace,
+            // or the generic arguments before it, is what tells this from
+            // `Name :: OtherName`, which names a type. Only at the top level:
+            // inside a body the same tokens are `Enum::Variant { .. }`.
+            Token::Identifier(_)
+                if self.block_depth == 0
+                    && matches!(self.peek_nth(1), Token::DoubleColon)
+                    && matches!(self.peek_nth(2), Token::Identifier(_))
+                    && matches!(
+                        self.peek_nth(3),
+                        Token::LeftBrace | Token::LessThan
+                    ) =>
             {
                 Some(self.parse_constant_or_struct_statement()?)
             }
@@ -3303,8 +3327,13 @@ impl<'a> Parser<'a> {
                 self.read_token();
                 None
             }
+            // `$ops: Ordering<T>` is a capability bundle: a struct whose fields
+            // are functions, named at the call by a constant. The declared type
+            // is what the argument has to be, the same way a signature is for a
+            // function parameter.
+            Token::Identifier(_) => Some(self.parse_type()?),
             _ => bail!(
-                "Expected 'Type', 'usize' or a function signature after ':' in the compile-time parameter '${name}'"
+                "Expected 'Type', 'usize', a struct type or a function signature after ':' in the compile-time parameter '${name}'"
             ),
         };
         Ok(Parameter {
@@ -3595,6 +3624,7 @@ impl<'a> Parser<'a> {
             bail!("Expected a left brace in block!");
         }
         self.read_token();
+        self.block_depth += 1;
 
         let mut statements = Vec::new();
 
@@ -3614,6 +3644,7 @@ impl<'a> Parser<'a> {
             }
         }
 
+        self.block_depth -= 1;
         if !matches!(self.peek_nth(0), Token::RightBrace) {
             bail!("Expected a right brace in block!");
         }

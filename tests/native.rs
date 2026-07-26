@@ -9098,6 +9098,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_format", FORMAT_PRINT),
         ("diff_fieldcall", FIELD_CALLS),
         ("diff_enumvalues", ENUM_VALUES),
+        ("diff_bundle", CAPABILITY_BUNDLE),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
@@ -10057,6 +10058,115 @@ fn self_hosted_calls_through_a_function_pointer_field() {
     };
     let _ = std::fs::remove_file(&input);
     let Some(via_c) = compile_c_and_run("shfieldcall", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
+// A capability bundle: a generic struct whose fields are functions, a constant
+// of it, and a generic that takes that constant as a compile-time argument. The
+// bundle says what can be done with a type, the constant says how it is done for
+// one type, and the specialization calls the functions it names directly. This
+// is what stands in for a trait: an ordinary value with an ordinary type,
+// chosen at the call rather than resolved by a search.
+const CAPABILITY_BUNDLE: &str = r#"
+Ordering :: struct($T: Type) {
+    less: fn(T, T) -> bool,
+}
+
+i64_less :: fn(a: i64, b: i64) -> bool { a < b }
+i64_greater :: fn(a: i64, b: i64) -> bool { a > b }
+
+ascending :: Ordering<i64> { less = i64_less }
+descending :: Ordering<i64> { less = i64_greater }
+
+smaller :: fn($T: Type, $ops: Ordering<T>, a: $T, b: $T) -> $T {
+    if (ops.less(a, b)) { return a }
+    b
+}
+
+chosen :: fn(ops: Ordering<i64>, a: i64, b: i64) -> i64 {
+    if (ops.less(a, b)) { return a }
+    b
+}
+
+main :: fn() -> i64 {
+    print smaller($i64, $ascending, 7, 3)
+    print smaller($i64, $descending, 7, 3)
+    print ascending.less(1, 2)
+    print chosen(ascending, 2, 9)
+    print chosen(descending, 2, 9)
+    held := descending
+    print chosen(held, 4, 5)
+    0
+}
+"#;
+
+#[test]
+fn a_capability_bundle_is_a_constant_of_function_fields() {
+    let Some(output) = compile_and_run("bundle", CAPABILITY_BUNDLE) else {
+        return;
+    };
+    assert_eq!(output, "3\n7\n1\n2\n9\n5\n");
+}
+
+// The compile-time form leaves no function pointer behind: the specialization
+// calls the function the bundle's field names, so there is nothing to load and
+// nothing to dispatch on.
+#[test]
+fn a_compile_time_bundle_folds_to_a_direct_call() {
+    let source = "Ordering :: struct($T: Type) { less: fn(T, T) -> bool }\n\
+                  i64_less :: fn(a: i64, b: i64) -> bool { a < b }\n\
+                  ascending :: Ordering<i64> { less = i64_less }\n\
+                  smaller :: fn($T: Type, $ops: Ordering<T>, a: $T, b: $T) -> $T {\n\
+                  \x20   if (ops.less(a, b)) { return a }\n    b\n}\n\
+                  main :: fn() -> i64 { smaller($i64, $ascending, 7, 3) }\n";
+    let Some(c_source) = emit_c_source("bundledirect", source) else {
+        return;
+    };
+    assert!(
+        !c_source.contains("(*)("),
+        "expected no call through a pointer:\n{c_source}"
+    );
+    assert!(
+        c_source.contains("frost_u_i64_less("),
+        "expected a direct call to the function the field names:\n{c_source}"
+    );
+}
+
+// A bundle a generic is not given at all is an error the call site names, since
+// the argument is what says which functions the body ends up calling.
+#[test]
+fn a_bundle_argument_of_the_wrong_type_is_refused() {
+    let source = "Ordering :: struct($T: Type) { less: fn(T, T) -> bool }\n\
+                  Pair :: struct($T: Type) { first: T, second: T }\n\
+                  pair :: Pair<i64> { first = 1, second = 2 }\n\
+                  smaller :: fn($T: Type, $ops: Ordering<T>, a: $T, b: $T) -> $T {\n\
+                  \x20   if (ops.less(a, b)) { return a }\n    b\n}\n\
+                  main :: fn() -> i64 { smaller($i64, $pair, 7, 3) }\n";
+    let message = compile_error("bundlewrong", source);
+    assert!(
+        message.contains("Pair<i64>") && message.contains("Ordering<i64>"),
+        "expected the message to name both types, got: {message}"
+    );
+}
+
+#[test]
+fn self_hosted_takes_a_capability_bundle() {
+    let Some(output) = selfhosted_native_output("shbundle", CAPABILITY_BUNDLE)
+    else {
+        return;
+    };
+    assert_eq!(output, "3\n7\n1\n2\n9\n5\n");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shbundle_input.frost");
+    std::fs::write(&input, CAPABILITY_BUNDLE).unwrap();
+    let Some(c_source) = self_hosted_emits("shbundle", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shbundle", &c_source) else {
         return;
     };
     assert_eq!(via_c, output, "the self-hosted C backend disagrees");
