@@ -692,6 +692,9 @@ LocalVar :: struct {
 UnsafeSpan :: struct {
     start: i64,
     end: i64,
+    // Whether anything inside it needed one. Only `--audit-unsafe` fills this
+    // in, so an ordinary build never looks.
+    used: i64,
 }
 
 // A growable, index-addressed arena over a single heap allocation. This is the
@@ -706,10 +709,11 @@ Arena :: struct($T: Type) {
 }
 
 arena_make :: fn($T: Type, cap: i64) -> Arena<T> {
-    unsafe {
-        bytes := malloc(cap * sizeof(T))
-        Arena { data = unsafe { ptr_cast($T, bytes) }, cap = cap, count = 0 }
-    }
+    // `malloc` is a `safe extern`: it hands back memory and cannot corrupt any.
+    // Reading those bytes as a `T` is the unchecked part, and that is all this
+    // block vouches for.
+    bytes := malloc(cap * sizeof(T))
+    Arena { data = unsafe { ptr_cast($T, bytes) }, cap = cap, count = 0 }
 }
 
 arena_push :: fn(mut a: Arena<$T>, move value: $T) -> i64 {
@@ -959,6 +963,9 @@ Parser :: struct {
     arrays: Arena<ArrayDef>,
     tests: Arena<TestCase>,
     testing: i64,
+    // Whether to report an `unsafe` block that vouches for nothing. Off unless
+    // asked for, so an ordinary build never walks the spans.
+    audit_unsafe: i64,
     // A memo of each node's derived type, read by type_of. It is filled only
     // while emitting, where a node's type is fixed and asked for repeatedly.
     // type_cache_on gates it so the checks, which ask under generic bindings

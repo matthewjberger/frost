@@ -62,6 +62,12 @@ struct Cli {
 
     #[arg(
         long,
+        help = "Also report every `unsafe` block that vouches for nothing. Off by default: a build pays for the checks that keep a program correct, not for the ones that keep it tidy"
+    )]
+    audit_unsafe: bool,
+
+    #[arg(
+        long,
         default_value = ".frost-build",
         help = "Where --incremental keeps interfaces and objects"
     )]
@@ -340,6 +346,24 @@ fn main() -> Result<()> {
     // code that has not marked its unchecked operations yet.
     if std::env::var("FROST_CHECK_UNSAFE").as_deref() != Ok("0") {
         check_unsafety(&statements).context("Unsafe operation error")?;
+    }
+    if cli.audit_unsafe {
+        let held = frost::audit_unsafe_blocks(&statements);
+        if !held.is_empty() {
+            let listed: Vec<String> = held
+                .iter()
+                .map(|d| format!("at {}: {}", d.position.describe(), d.message))
+                .collect();
+            anyhow::bail!(
+                "Unsafe audit
+
+{}",
+                listed.join(
+                    "
+"
+                )
+            );
+        }
     }
     // `unsafe fn` is only meaningful to the unsafety check. Strip it to the
     // plain function it wraps before any later pass or backend sees one.

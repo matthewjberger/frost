@@ -1511,6 +1511,14 @@ asymmetry is deliberate.
   it does not. A return could not have been a convention, because `-> Ctx` has
   to mean what C means by it and `-> ^Ctx` is how a returned pointer is written.
 
+### 11.6 Auditing the blocks
+
+`--audit-unsafe` also reports every `unsafe` block that vouches for nothing: one
+holding no unchecked operation, and one written inside another, which already
+covers what is in it. It is off by default. A build pays for the checks that
+keep a program correct; this one keeps it tidy, and tidiness is not worth a pass
+over the source on every compile.
+
 ### 12.1 Callbacks
 
 An `extern` whose parameter list has a `$` parameter bound to a function

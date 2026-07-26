@@ -437,6 +437,14 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
     }
     if (kind == NodeKind::Bin || kind == NodeKind::Index
         || kind == NodeKind::SliceFrom) {
+        // Whether this indexes a raw pointer is a question about the base's
+        // type, and the locals that answer it exist only here. The unsafety
+        // gate runs before this pass and has no local table, so what it needs
+        // is written onto the node while it can be known.
+        if (kind == NodeKind::Index && is_raw_pointer(type_of(p, node.a))) {
+            mut held := arena_at(p.arena, id)
+            held.c = 1
+        }
         check_types_expr(p, node.a)
         check_types_expr(p, node.b)
         return
@@ -1902,7 +1910,7 @@ check_unsafety :: fn(mut p: Parser) {
         // checked. A borrow was proven safe where it formed. Only a raw
         // pointer is unchecked.
         if (kind == NodeKind::Index) {
-            if (is_raw_pointer(type_of(p, node.a))) {
+            if (node.c == 1 || is_raw_pointer(type_of(p, node.a))) {
                 gated = 1
                 what = "indexing a raw pointer"
             }
@@ -1929,7 +1937,85 @@ check_unsafety :: fn(mut p: Parser) {
             report(" is unchecked, so it belongs in an `unsafe` block")
             frost_rt_die()
         }
+        if (gated == 1 && p.audit_unsafe == 1) {
+            mark_span_used(p, node.pos)
+        }
         i = i + 1
+    }
+    if (p.audit_unsafe == 1) {
+        report_idle_unsafe(p)
+    }
+}
+
+// Mark the innermost `unsafe` holding this position as having earned itself.
+// The innermost is the narrowest span containing it, and it is the one that
+// vouches: an operation inside a nested block is that block's to answer for.
+mark_span_used :: fn(mut p: Parser, pos: i64) {
+    mut best : i64 = 0 - 1
+    mut width : i64 = 0
+    mut i : i64 = 0
+    while (i < p.unsafe_spans.count) {
+        span := arena_at(p.unsafe_spans, i)
+        if (pos >= span.start && pos < span.end) {
+            held := span.end - span.start
+            if (best < 0 || held < width) {
+                best = i
+                width = held
+            }
+        }
+        i = i + 1
+    }
+    if (best >= 0) {
+        mut chosen := arena_at(p.unsafe_spans, best)
+        chosen.used = 1
+    }
+}
+
+// Every block that vouches for nothing: one holding no unchecked operation, and
+// one written inside another, which already covers what is in it. Reported only
+// when asked for, since a build should pay for the checks that keep a program
+// correct rather than the ones that keep it tidy.
+report_idle_unsafe :: fn(mut p: Parser) {
+    mut found : i64 = 0
+    mut i : i64 = 0
+    while (i < p.unsafe_spans.count) {
+        span := arena_at(p.unsafe_spans, i)
+        // A generic's body is read again for each instantiation, so one block
+        // written once is recorded once per instance. They are the same block:
+        // the first is reported for, and any of them earning itself earns it.
+        mut first : i64 = 1
+        mut used : i64 = span.used
+        mut nested : i64 = 0
+        mut k : i64 = 0
+        while (k < p.unsafe_spans.count) {
+            other := arena_at(p.unsafe_spans, k)
+            if (other.start == span.start && other.end == span.end) {
+                if (k < i) {
+                    first = 0
+                }
+                if (other.used == 1) {
+                    used = 1
+                }
+            } else if (span.start >= other.start && span.end <= other.end) {
+                nested = 1
+            }
+            k = k + 1
+        }
+        if (first == 1 && nested == 1) {
+            report_where(p.modules, p.src, span.start)
+            report("this `unsafe` block is inside another one, which already vouches for what is in it
+")
+            found = 1
+        } else if (first == 1 && used == 0) {
+            report_where(p.modules, p.src, span.start)
+            report("this `unsafe` block holds no unchecked operation, so it vouches for nothing
+")
+            found = 1
+        }
+        i = i + 1
+    }
+    if (found == 1) {
+        frost_rt_die()
     }
 }
 

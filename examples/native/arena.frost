@@ -29,13 +29,13 @@ arena_reset :: fn(mut a: Arena<256>, mark: i64) {
 }
 
 alloc_point :: fn(mut a: Arena<256>) -> ^Point {
-    slot := unsafe { ptr_to(a.data[a.offset]) }
+    slot := ptr_to(a.data[a.offset])
     a.offset = a.offset + sizeof(Point)
     unsafe { ptr_cast($Point, slot) }
 }
 
 alloc_int :: fn(mut a: Arena<256>) -> ^i64 {
-    slot := unsafe { ptr_to(a.data[a.offset]) }
+    slot := ptr_to(a.data[a.offset])
     a.offset = a.offset + sizeof(i64)
     unsafe { ptr_cast($i64, slot) }
 }
