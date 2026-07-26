@@ -1,0 +1,30 @@
+// What it means for one value of a type to come before another, as a value you
+// can name. `Ordering<T>` is an ordinary generic struct whose fields happen to
+// be functions, and an implementation is an ordinary constant of it. There is
+// no registry, no lookup and no coherence rule: a generic that needs an
+// ordering takes one as an argument, and the call site says which.
+//
+// Two orderings over the same type are two constants. Nothing conflicts,
+// because nothing was ever implicit.
+
+export Ordering, i64_less, i64_greater, i64_equal, f64_less, f64_greater,
+    f64_equal, i64_ascending, i64_descending, f64_ascending, f64_descending
+
+Ordering :: struct($T: Type) {
+    less: fn(T, T) -> bool,
+    equal: fn(T, T) -> bool,
+}
+
+i64_less :: fn(a: i64, b: i64) -> bool { a < b }
+i64_greater :: fn(a: i64, b: i64) -> bool { a > b }
+i64_equal :: fn(a: i64, b: i64) -> bool { a == b }
+
+f64_less :: fn(a: f64, b: f64) -> bool { a < b }
+f64_greater :: fn(a: f64, b: f64) -> bool { a > b }
+f64_equal :: fn(a: f64, b: f64) -> bool { a == b }
+
+i64_ascending :: Ordering<i64> { less = i64_less, equal = i64_equal }
+i64_descending :: Ordering<i64> { less = i64_greater, equal = i64_equal }
+
+f64_ascending :: Ordering<f64> { less = f64_less, equal = f64_equal }
+f64_descending :: Ordering<f64> { less = f64_greater, equal = f64_equal }

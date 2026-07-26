@@ -1223,6 +1223,21 @@ kind_is_value :: fn(mut p: Parser) -> i64 {
     0
 }
 
+// Whether a compile-time parameter is declared with a struct type, which is
+// what a capability bundle is: `$ops: Ordering<T>`. Such a parameter binds to a
+// name and never to a type or a number, so it is marked as one where it is
+// declared. Waiting for the body to use it would miss a body that only passes
+// it on to another generic, which never names it as anything.
+kind_is_bundle :: fn(mut p: Parser) -> i64 {
+    if (peek_kind(p, 1) != TokenKind::Ident) {
+        return 0
+    }
+    if (peek_is_word(p, 1, "Type") || peek_is_word(p, 1, "usize")) {
+        return 0
+    }
+    1
+}
+
 record_gparam :: fn(mut p: Parser, off: i64, len: i64, is_value: i64) {
     if (p.type_param_len == 0) {
         p.type_param_off = off
@@ -2375,6 +2390,11 @@ parse_params :: fn(mut p: Parser) -> i64 {
             plen := cur_len(p)
             advance(p)
             record_gparam(p, poff, plen, kind_is_value(p))
+            // A bundle parameter binds to a name whether or not the body ever
+            // names it, so it is marked here rather than by being used.
+            if (kind_is_bundle(p) == 1) {
+                note_called_name(p, poff, plen)
+            }
             parse_type_annotation(p)
             // A compile-time parameter given a function is called by name in
             // the body, and nothing declares that name. Every one of them is
