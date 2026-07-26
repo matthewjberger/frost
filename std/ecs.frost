@@ -26,7 +26,7 @@ import "vec.frost"
 import "map.frost"
 
 export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
-    Commands,
+    Commands, Change, Events, EventReader,
     ecs_new, ecs_free, ecs_register, ecs_component_size,
     ecs_spawn, ecs_despawn, ecs_alive, ecs_count,
     ecs_add, ecs_remove, ecs_has, ecs_get, ecs_set, ecs_slice,
@@ -35,6 +35,23 @@ export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     tag_new, tag_free, tag_add, tag_remove, tag_has,
     commands_new, commands_free, commands_spawn, commands_despawn,
     commands_apply,
+    ecs_tick, ecs_now, ecs_changed_since, ecs_added_since,
+    query_changed, query_added,
+    ecs_resource_register, ecs_resource, ecs_resource_set,
+    ecs_resource_slice,
+    ecs_log_enable, ecs_log, ecs_log_clear,
+    CHANGE_SPAWN, CHANGE_DESPAWN, CHANGE_ADD, CHANGE_REMOVE,
+    events_new, events_free, events_send, events_sent, events_slice,
+    events_clear, reader_new, events_read,
+    Hierarchy, hierarchy_new, hierarchy_free, hierarchy_attach,
+    hierarchy_detach, hierarchy_parent, hierarchy_first_child,
+    hierarchy_next_sibling, hierarchy_child_count, hierarchy_despawn_tree,
+    no_entity, is_no_entity,
+    System, Schedule, schedule_new, schedule_free, schedule_add,
+    schedule_add_in_state, schedule_run, schedule_count,
+    STAGE_FIRST, STAGE_UPDATE, STAGE_LAST, ANY_STATE,
+    States, states_new, states_request, states_apply, states_current,
+    Time, time_new, time_advance,
     column_of, column_position, bits_below, mask_of
 
 frost_rt_heap_alloc   :: extern fn(size: i64) -> ^u8
@@ -43,9 +60,7 @@ frost_rt_heap_free    :: extern fn(block: ^u8)
 frost_rt_mem_copy     :: extern fn(destination: ^u8, source: ^u8, size: i64)
 frost_rt_mem_set      :: extern fn(destination: ^u8, value: i64, size: i64)
 
-// A mask is one i64, so a world holds this many component types. A program that
-// wants more splits its components across two worlds, which is what the mask
-// being a plain integer makes cheap.
+// A mask is one i64, so a world holds this many component types.
 MAX_COMPONENTS :: 62
 
 // ---------------------------------------------------------------------------
@@ -83,19 +98,40 @@ EntitySlot :: struct {
 
 Column :: struct {
     data: ^u8,
+    // One tick per row, in step with the data: when the row was last written to,
+    // and when the entity holding it was first given the component. These are
+    // what a system asking "what moved since I last ran" reads, and they are
+    // kept here rather than beside the table because they move exactly when the
+    // rows do, which is the one thing a column already knows how to do.
+    changed: ^u8,
+    added: ^u8,
     count: i64,
     capacity: i64,
     item_size: i64,
 }
 
+// A tick is an i64. The columns holding them are the same bytes-with-a-width
+// the data is, so growing and moving rows is the same code.
+TICK_SIZE :: 8
+
 column_new :: fn(item_size: i64) -> Column {
-    Column { data = unsafe { frost_rt_heap_alloc(item_size) }, count = 0,
-        capacity = 1, item_size = item_size }
+    Column {
+        data = unsafe { frost_rt_heap_alloc(item_size) },
+        changed = unsafe { frost_rt_heap_alloc(TICK_SIZE) },
+        added = unsafe { frost_rt_heap_alloc(TICK_SIZE) },
+        count = 0,
+        capacity = 1,
+        item_size = item_size,
+    }
 }
 
 column_free :: fn(mut c: Column) {
     unsafe { frost_rt_heap_free(c.data) }
+    unsafe { frost_rt_heap_free(c.changed) }
+    unsafe { frost_rt_heap_free(c.added) }
     c.data = unsafe { frost_rt_heap_alloc(1) }
+    c.changed = unsafe { frost_rt_heap_alloc(TICK_SIZE) }
+    c.added = unsafe { frost_rt_heap_alloc(TICK_SIZE) }
     c.count = 0
     c.capacity = 0
 }
@@ -112,7 +148,18 @@ column_reserve :: fn(mut c: Column) {
         room = 1
     }
     c.data = unsafe { frost_rt_heap_realloc(c.data, room * c.item_size) }
+    c.changed = unsafe { frost_rt_heap_realloc(c.changed, room * TICK_SIZE) }
+    c.added = unsafe { frost_rt_heap_realloc(c.added, room * TICK_SIZE) }
     c.capacity = room
+}
+
+// The two tick arrays as slices, which is how everything above reads them.
+column_changed :: fn(c: Column) -> []i64 {
+    unsafe { slice_from($i64, ptr_cast($i64, c.changed), c.count) }
+}
+
+column_added :: fn(c: Column) -> []i64 {
+    unsafe { slice_from($i64, ptr_cast($i64, c.added), c.count) }
 }
 
 // The address of one element. The one place that turns an index into a pointer,
@@ -123,10 +170,14 @@ column_at :: fn(c: Column, index: i64) -> ^u8 {
 
 // A row of zeroes, which is what a component the caller has not written yet
 // holds. Plain data has no other sensible default and no constructor to run.
-column_push_zero :: fn(mut c: Column) {
+column_push_zero :: fn(mut c: Column, tick: i64) {
     column_reserve(c)
     unsafe { frost_rt_mem_set(column_at(c, c.count), 0, c.item_size) }
     c.count = c.count + 1
+    mut changed := column_changed(c)
+    mut added := column_added(c)
+    changed[c.count - 1] = tick
+    added[c.count - 1] = tick
 }
 
 // Remove a row by moving the last one into its place, which is what keeps a
@@ -139,6 +190,10 @@ column_swap_remove :: fn(mut c: Column, index: i64) {
             frost_rt_mem_copy(column_at(c, index), column_at(c, last),
                 c.item_size)
         }
+        mut changed := column_changed(c)
+        mut added := column_added(c)
+        changed[index] = changed[last]
+        added[index] = added[last]
     }
     c.count = last
 }
@@ -151,6 +206,15 @@ column_move_row :: fn(mut to: Column, from: Column, index: i64) {
             from.item_size)
     }
     to.count = to.count + 1
+    // A row carries its history to the table it moves to. A migration is not a
+    // write to the component, so a system watching for changes does not see one
+    // where an entity merely gained a different component.
+    mut to_changed := column_changed(to)
+    mut to_added := column_added(to)
+    from_changed := column_changed(from)
+    from_added := column_added(from)
+    to_changed[to.count - 1] = from_changed[index]
+    to_added[to.count - 1] = from_added[index]
 }
 
 // The typed view of a column, and the end of the erasure. Everything above this
@@ -210,6 +274,21 @@ Table :: struct {
 // The world
 // ---------------------------------------------------------------------------
 
+// The four structural changes a world records. A component write is not one:
+// that is what the per-row ticks are for.
+CHANGE_SPAWN   :: 0
+CHANGE_DESPAWN :: 1
+CHANGE_ADD     :: 2
+CHANGE_REMOVE  :: 3
+
+Change :: struct {
+    kind: i64,
+    entity: Entity,
+    // The component the change was about, or zero for a spawn or a despawn.
+    mask: i64,
+    tick: i64,
+}
+
 World :: struct {
     registry: Registry,
     slots: Vec<EntitySlot>,
@@ -219,6 +298,16 @@ World :: struct {
     // Mask to table index, so a migration finds its destination without a scan.
     lookup: Map<i64>,
     live: i64,
+    // The clock every write is stamped with. It starts at one so that zero,
+    // which is what a freshly allocated row holds, is a time before anything.
+    tick: i64,
+    // A resource is a component with one row and no entity: a column of one.
+    resources: Vec<Column>,
+    // What changed structurally, for a program that has to hear about it: a
+    // save file writing a delta, an editor keeping a list in step. Off by
+    // default, since a world nobody asks pays nothing for it.
+    log: Vec<Change>,
+    logging: bool,
 }
 
 ecs_new :: fn() -> World {
@@ -230,6 +319,10 @@ ecs_new :: fn() -> World {
         tables = vec_new($Table, 16),
         lookup = map_new($i64, 32),
         live = 0,
+        tick = 1,
+        resources = vec_new($Column, 4),
+        log = vec_new($Change, 16),
+        logging = false,
     }
     // Table zero is the empty archetype, where an entity with no components
     // lives. Having it always exist means a spawn never has to make a table.
@@ -257,10 +350,58 @@ ecs_free :: fn(move world: World) {
         vec_free($Entity, table.entities)
         t = t + 1
     }
+    mut r : i64 = 0
+    while (r < vec_len($Column, world.resources)) {
+        ref resource := vec_slice($Column, world.resources)[r]
+        column_free(resource)
+        r = r + 1
+    }
+    vec_free($Column, world.resources)
+    vec_free($Change, world.log)
     vec_free($Table, world.tables)
     vec_free($EntitySlot, world.slots)
     vec_free($i64, world.free_ids)
     map_free($i64, world.lookup)
+}
+
+// ---------------------------------------------------------------------------
+// The clock
+//
+// Every component write is stamped with the world's tick, and a system that
+// wants to see only what moved compares against the tick it last ran at. The
+// world does not advance the clock on its own: a frame does, once, so that
+// everything written during it shares one time.
+// ---------------------------------------------------------------------------
+
+ecs_tick :: fn(mut world: World) -> i64 {
+    world.tick = world.tick + 1
+    world.tick
+}
+
+ecs_now :: fn(world: World) -> i64 {
+    world.tick
+}
+
+// Record a structural change, when the world was asked to keep them.
+note_change :: fn(mut world: World, kind: i64, entity: Entity, mask: i64) {
+    if (world.logging == false) {
+        return
+    }
+    vec_push($Change, world.log,
+        Change { kind = kind, entity = Entity { id = entity.id,
+            generation = entity.generation }, mask = mask, tick = world.tick })
+}
+
+ecs_log_enable :: fn(mut world: World, on: bool) {
+    world.logging = on
+}
+
+ecs_log :: fn(world: World) -> []Change {
+    vec_slice($Change, world.log)
+}
+
+ecs_log_clear :: fn(mut world: World) {
+    vec_clear($Change, world.log)
 }
 
 // Register a component and answer its mask bit. The width comes from the type,
@@ -269,8 +410,7 @@ ecs_register :: fn($T: Type, mut world: World) -> i64 {
     index := world.registry.count
     // Past the ceiling there is no bit to give, and zero is the mask that names
     // nothing, so a program that registers too many finds out at its next call
-    // rather than corrupting a mask. Splitting the components across two worlds
-    // is what a program this large does.
+    // rather than corrupting a mask.
     if (index >= MAX_COMPONENTS) {
         return 0
     }
@@ -346,7 +486,9 @@ ecs_spawn :: fn(mut world: World) -> Entity {
     slot.table = 0
     slot.row = row
     world.live = world.live + 1
-    Entity { id = id, generation = generation }
+    made := Entity { id = id, generation = generation }
+    note_change(world, CHANGE_SPAWN, made, 0)
+    made
 }
 
 // Whether a handle names the entity that holds its id now, rather than one that
@@ -403,6 +545,7 @@ ecs_despawn :: fn(mut world: World, entity: Entity) {
     held.generation = held.generation + 1
     vec_push($i64, world.free_ids, entity.id)
     world.live = world.live - 1
+    note_change(world, CHANGE_DESPAWN, entity, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -442,7 +585,7 @@ migrate :: fn(mut world: World, entity: Entity, target_mask: i64) -> i64 {
             } else {
                 ref to_column := vec_slice($Column,
                     vec_slice($Table, world.tables)[to_index].columns)[to_position]
-                column_push_zero(to_column)
+                column_push_zero(to_column, world.tick)
             }
         }
         index = index + 1
@@ -478,8 +621,17 @@ ecs_add :: fn($T: Type, mut world: World, entity: Entity, mask: i64,
     current := vec_slice($Table, world.tables)[slot.table].mask
     if ((current & mask) == 0) {
         migrate(world, entity, current | mask)
+        note_change(world, CHANGE_ADD, entity, mask)
     }
     ecs_set($T, world, entity, mask, value)
+    // A component the entity has just been given was added now, whatever the
+    // row it landed on held before.
+    ref placed := vec_slice($EntitySlot, world.slots)[entity.id]
+    ref table := vec_slice($Table, world.tables)[placed.table]
+    position := column_position(table.mask, mask)
+    ref column := vec_slice($Column, table.columns)[position]
+    mut added := column_added(column)
+    added[placed.row] = world.tick
 }
 
 ecs_remove :: fn(mut world: World, entity: Entity, mask: i64) {
@@ -492,6 +644,7 @@ ecs_remove :: fn(mut world: World, entity: Entity, mask: i64) {
         return
     }
     migrate(world, entity, current & (0 - 1 - mask))
+    note_change(world, CHANGE_REMOVE, entity, mask)
 }
 
 // The component an entity holds, by value. A component is plain data, so a copy
@@ -512,6 +665,8 @@ ecs_set :: fn($T: Type, mut world: World, entity: Entity, mask: i64,
     ref column := vec_slice($Column, table.columns)[position]
     mut items := column_of($T, column)
     items[slot.row] = value
+    mut changed := column_changed(column)
+    changed[slot.row] = world.tick
 }
 
 // One table's column as a slice, which is what a system writes through.
@@ -593,10 +748,178 @@ query_entities :: fn(world: World, q: Query) -> []Entity {
     vec_slice($Entity, table.entities)
 }
 
+// The write times of the table's rows for one component, beside the components
+// themselves, so a body can skip the rows nothing touched:
+//
+//     mut q := query_begin(world, TRANSFORM)
+//     while (query_next(world, q)) {
+//         t := query_column($Transform, world, q, TRANSFORM)
+//         stamps := query_changed(world, q, TRANSFORM)
+//         mut i : i64 = 0
+//         while (i < q.count) {
+//             if (stamps[i] > last_run) { upload(t[i]) }
+//             i = i + 1
+//         }
+//     }
+//
+// This is change detection without a filter type: the ticks are data, so the
+// test is written where the decision is, and a body that wants both the changed
+// and the unchanged rows has them.
+query_changed :: fn(world: World, q: Query, mask: i64) -> []i64 {
+    table := vec_slice($Table, world.tables)[q.table]
+    position := column_position(table.mask, mask)
+    column := vec_slice($Column, table.columns)[position]
+    column_changed(column)
+}
+
+query_added :: fn(world: World, q: Query, mask: i64) -> []i64 {
+    table := vec_slice($Table, world.tables)[q.table]
+    position := column_position(table.mask, mask)
+    column := vec_slice($Column, table.columns)[position]
+    column_added(column)
+}
+
+// The same question about one entity, for code holding a handle rather than
+// walking a table.
+ecs_changed_since :: fn(world: World, entity: Entity, mask: i64,
+    since: i64) -> bool {
+    if (ecs_has(world, entity, mask) == false) {
+        return false
+    }
+    slot := vec_slice($EntitySlot, world.slots)[entity.id]
+    table := vec_slice($Table, world.tables)[slot.table]
+    position := column_position(table.mask, mask)
+    column := vec_slice($Column, table.columns)[position]
+    column_changed(column)[slot.row] > since
+}
+
+ecs_added_since :: fn(world: World, entity: Entity, mask: i64,
+    since: i64) -> bool {
+    if (ecs_has(world, entity, mask) == false) {
+        return false
+    }
+    slot := vec_slice($EntitySlot, world.slots)[entity.id]
+    table := vec_slice($Table, world.tables)[slot.table]
+    position := column_position(table.mask, mask)
+    column := vec_slice($Column, table.columns)[position]
+    column_added(column)[slot.row] > since
+}
+
+// ---------------------------------------------------------------------------
+// Resources
+//
+// A resource is a value the whole world shares: the renderer's device, the
+// input state, the frame's time. It is a component with one row and no entity,
+// which is exactly a column of one, so it is stored the way everything else is
+// and reached through the same typed slice.
+// ---------------------------------------------------------------------------
+
+ecs_resource_register :: fn($T: Type, mut world: World) -> i64 {
+    slot := vec_len($Column, world.resources)
+    mut column := column_new(sizeof(T))
+    column_push_zero(column, world.tick)
+    vec_push($Column, world.resources, column)
+    slot
+}
+
+// The one row, as a slice, which is how a resource is written in place.
+ecs_resource_slice :: fn($T: Type, world: World, slot: i64) -> []T {
+    column := vec_slice($Column, world.resources)[slot]
+    column_of($T, column)
+}
+
+ecs_resource :: fn($T: Type, world: World, slot: i64) -> $T {
+    ecs_resource_slice($T, world, slot)[0]
+}
+
+ecs_resource_set :: fn($T: Type, mut world: World, slot: i64, value: $T) {
+    mut held := ecs_resource_slice($T, world, slot)
+    held[0] = value
+    ref column := vec_slice($Column, world.resources)[slot]
+    mut changed := column_changed(column)
+    changed[0] = world.tick
+}
+
+// ---------------------------------------------------------------------------
+// Events
+//
+// A channel of values one system writes and another reads. Events are held in
+// a column, so sending one is a push of bytes and reading them is a slice. A
+// reader keeps its own place in the stream by sequence number rather than by
+// index, so clearing the channel does not make a reader re-read what it saw or
+// skip what it did not.
+// ---------------------------------------------------------------------------
+
+Events :: struct {
+    items: Column,
+    // The sequence number of the first item still held. Everything before it
+    // has been cleared.
+    first: i64,
+}
+
+// Where one reader has got to. Two systems reading the same channel keep two of
+// these, which is what makes a channel one-to-many.
+EventReader :: struct {
+    seen: i64,
+}
+
+events_new :: fn($T: Type) -> Events {
+    Events { items = column_new(sizeof(T)), first = 0 }
+}
+
+events_free :: fn(move e: Events) {
+    column_free(e.items)
+}
+
+events_send :: fn($T: Type, mut e: Events, value: $T) {
+    column_push_zero(e.items, 0)
+    mut held := column_of($T, e.items)
+    held[e.items.count - 1] = value
+}
+
+// How many have ever been sent, which is the sequence number the next one gets.
+events_sent :: fn(e: Events) -> i64 {
+    e.first + e.items.count
+}
+
+// Everything the channel still holds.
+events_slice :: fn($T: Type, e: Events) -> []T {
+    column_of($T, e.items)
+}
+
+// Drop what has been sent. The sequence numbers carry on, so a reader that has
+// not caught up finds itself past the start and reads nothing rather than
+// reading the next thing sent as though it were the one it missed.
+events_clear :: fn(mut e: Events) {
+    e.first = e.first + e.items.count
+    e.items.count = 0
+}
+
+reader_new :: fn() -> EventReader {
+    EventReader { seen = 0 }
+}
+
+// What this reader has not seen, and it has seen it now. A reader behind the
+// start of the channel is caught up to the start: those events are gone, and
+// pretending otherwise would hand it the wrong ones.
+events_read :: fn($T: Type, e: Events, mut r: EventReader) -> []T {
+    if (r.seen < e.first) {
+        r.seen = e.first
+    }
+    start := r.seen - e.first
+    count := e.items.count - start
+    r.seen = e.first + e.items.count
+    if (count <= 0) {
+        return unsafe { slice_from($T, ptr_cast($T, e.items.data), 0) }
+    }
+    unsafe {
+        slice_from($T, ptr_cast($T, column_at(e.items, start)), count)
+    }
+}
+
 // The same walk with the body handed in as a compile-time argument, so the call
-// inside folds to a direct one and nothing is reached through a pointer. One of
-// these per number of components, which is what a language without variadic
-// generics costs here: three short functions instead of a macro.
+// inside folds to a direct one and nothing is reached through a pointer. There
+// is one of these per number of components a body takes.
 for_each1 :: fn($A: Type, $body: fn(mut []A, i64), mut world: World,
     a_mask: i64) {
     mut q := query_begin(world, a_mask)
@@ -727,6 +1050,295 @@ commands_apply :: fn(mut c: Commands, mut world: World) {
         i = i + 1
     }
     vec_clear($Command, c.queued)
+}
+
+
+// ---------------------------------------------------------------------------
+// Hierarchy
+//
+// A parent-child relation held beside the world rather than as a component,
+// because it is a relation between entities and a component is a value an
+// entity holds. Three arrays indexed by entity id give a tree that is walked
+// without allocating per node: the parent, the first child, and the next
+// sibling. A tree walk is a loop over siblings and a recursion into children.
+//
+// The relation stores handles, so a child whose entity was despawned is a stale
+// handle and reads as no child at all, the same rule everything else follows.
+// ---------------------------------------------------------------------------
+
+Hierarchy :: struct {
+    parent: Vec<Entity>,
+    first_child: Vec<Entity>,
+    next_sibling: Vec<Entity>,
+}
+
+// The handle that names nobody. An id of -1 is one no slot has, so nothing can
+// be confused with it and no generation makes it live.
+no_entity :: fn() -> Entity {
+    Entity { id = 0 - 1, generation = 0 }
+}
+
+is_no_entity :: fn(entity: Entity) -> bool {
+    entity.id < 0
+}
+
+hierarchy_new :: fn() -> Hierarchy {
+    Hierarchy {
+        parent = vec_new($Entity, 64),
+        first_child = vec_new($Entity, 64),
+        next_sibling = vec_new($Entity, 64),
+    }
+}
+
+hierarchy_free :: fn(move h: Hierarchy) {
+    vec_free($Entity, h.parent)
+    vec_free($Entity, h.first_child)
+    vec_free($Entity, h.next_sibling)
+}
+
+// Room for an id, since an entity is attached long after the arrays were made.
+hierarchy_reserve :: fn(mut h: Hierarchy, id: i64) {
+    while (vec_len($Entity, h.parent) <= id) {
+        vec_push($Entity, h.parent, no_entity())
+        vec_push($Entity, h.first_child, no_entity())
+        vec_push($Entity, h.next_sibling, no_entity())
+    }
+}
+
+hierarchy_parent :: fn(h: Hierarchy, child: Entity) -> Entity {
+    if (child.id < 0 || child.id >= vec_len($Entity, h.parent)) {
+        return no_entity()
+    }
+    vec_get($Entity, h.parent, child.id)
+}
+
+hierarchy_first_child :: fn(h: Hierarchy, parent: Entity) -> Entity {
+    if (parent.id < 0 || parent.id >= vec_len($Entity, h.first_child)) {
+        return no_entity()
+    }
+    vec_get($Entity, h.first_child, parent.id)
+}
+
+hierarchy_next_sibling :: fn(h: Hierarchy, child: Entity) -> Entity {
+    if (child.id < 0 || child.id >= vec_len($Entity, h.next_sibling)) {
+        return no_entity()
+    }
+    vec_get($Entity, h.next_sibling, child.id)
+}
+
+// Attach a child to a parent, taking it off whatever it was under first. A
+// child goes at the head of its parent's list, which is what makes attaching
+// one a constant-time write rather than a walk to the end.
+hierarchy_attach :: fn(mut h: Hierarchy, child: Entity, parent: Entity) {
+    if (child.id < 0 || parent.id < 0) {
+        return
+    }
+    hierarchy_reserve(h, child.id)
+    hierarchy_reserve(h, parent.id)
+    hierarchy_detach(h, child)
+    held := vec_get($Entity, h.first_child, parent.id)
+    vec_set($Entity, h.next_sibling, child.id, held)
+    vec_set($Entity, h.first_child, parent.id,
+        Entity { id = child.id, generation = child.generation })
+    vec_set($Entity, h.parent, child.id,
+        Entity { id = parent.id, generation = parent.generation })
+}
+
+// Take a child out of its parent's list. Finding it is a walk of the siblings,
+// which is the cost of a singly linked list and is what keeps every other
+// operation a single write.
+hierarchy_detach :: fn(mut h: Hierarchy, child: Entity) {
+    if (child.id < 0 || child.id >= vec_len($Entity, h.parent)) {
+        return
+    }
+    parent := vec_get($Entity, h.parent, child.id)
+    if (is_no_entity(parent)) {
+        return
+    }
+    head := vec_get($Entity, h.first_child, parent.id)
+    if (head.id == child.id) {
+        vec_set($Entity, h.first_child, parent.id,
+            vec_get($Entity, h.next_sibling, child.id))
+    } else {
+        mut walk := head
+        while (is_no_entity(walk) == false) {
+            next := vec_get($Entity, h.next_sibling, walk.id)
+            if (next.id == child.id) {
+                vec_set($Entity, h.next_sibling, walk.id,
+                    vec_get($Entity, h.next_sibling, child.id))
+                walk = no_entity()
+            } else {
+                walk = next
+            }
+        }
+    }
+    vec_set($Entity, h.next_sibling, child.id, no_entity())
+    vec_set($Entity, h.parent, child.id, no_entity())
+}
+
+hierarchy_child_count :: fn(h: Hierarchy, parent: Entity) -> i64 {
+    mut walk := hierarchy_first_child(h, parent)
+    mut counted : i64 = 0
+    while (is_no_entity(walk) == false) {
+        counted = counted + 1
+        walk = hierarchy_next_sibling(h, walk)
+    }
+    counted
+}
+
+// Despawn an entity and everything under it. The children are read before the
+// entity goes, since despawning it is what makes its handle stale.
+hierarchy_despawn_tree :: fn(mut h: Hierarchy, mut world: World, root: Entity) {
+    mut walk := hierarchy_first_child(h, root)
+    while (is_no_entity(walk) == false) {
+        next := hierarchy_next_sibling(h, walk)
+        hierarchy_despawn_tree(h, world, walk)
+        walk = next
+    }
+    hierarchy_detach(h, root)
+    if (root.id >= 0 && root.id < vec_len($Entity, h.first_child)) {
+        vec_set($Entity, h.first_child, root.id, no_entity())
+    }
+    ecs_despawn(world, root)
+}
+
+// ---------------------------------------------------------------------------
+// Schedules
+//
+// A system is a function of the world. A schedule is a list of them with a
+// stage each, run in ascending stage order, so ordering is a number rather than
+// a graph of declared dependencies: what a frame does is read top to bottom.
+//
+//     mut frame := schedule_new()
+//     schedule_add(frame, STAGE_UPDATE, integrate)
+//     schedule_add(frame, STAGE_LAST, upload)
+//     schedule_run(frame, world, ANY_STATE)
+//
+// The system is a function pointer, not a compile-time argument, because a
+// schedule is built while the program runs. `for_each1` and its siblings are
+// the other half of this pair, for the inner loop where the call has to fold
+// away.
+// ---------------------------------------------------------------------------
+
+STAGE_FIRST  :: 0
+STAGE_UPDATE :: 1
+STAGE_LAST   :: 2
+
+// A system with this state runs whatever the state is.
+ANY_STATE :: 0 - 1
+
+System :: struct {
+    run: fn(mut World),
+    stage: i64,
+    state: i64,
+}
+
+Schedule :: struct {
+    systems: Vec<System>,
+}
+
+schedule_new :: fn() -> Schedule {
+    Schedule { systems = vec_new($System, 16) }
+}
+
+schedule_free :: fn(move s: Schedule) {
+    vec_free($System, s.systems)
+}
+
+schedule_add :: fn(mut s: Schedule, stage: i64, run: fn(mut World)) {
+    vec_push($System, s.systems,
+        System { run = run, stage = stage, state = ANY_STATE })
+}
+
+// A system that runs only while the world is in one state: the pause menu's
+// systems, the loading screen's.
+schedule_add_in_state :: fn(mut s: Schedule, stage: i64, state: i64,
+    run: fn(mut World)) {
+    vec_push($System, s.systems,
+        System { run = run, stage = stage, state = state })
+}
+
+schedule_count :: fn(s: Schedule) -> i64 {
+    vec_len($System, s.systems)
+}
+
+// Run every system whose state matches, stage by stage. Stages are walked from
+// zero to the highest one registered rather than sorted, since a stage is a
+// small number and a sort would move the systems out of the order they were
+// added in, which is the order a stage runs them.
+schedule_run :: fn(mut s: Schedule, mut world: World, state: i64) {
+    mut highest : i64 = 0
+    mut i : i64 = 0
+    while (i < vec_len($System, s.systems)) {
+        held := vec_get($System, s.systems, i)
+        if (held.stage > highest) {
+            highest = held.stage
+        }
+        i = i + 1
+    }
+    mut stage : i64 = 0
+    while (stage <= highest) {
+        mut k : i64 = 0
+        while (k < vec_len($System, s.systems)) {
+            system := vec_get($System, s.systems, k)
+            if (system.stage == stage
+                && (system.state == ANY_STATE || system.state == state)) {
+                system.run(world)
+            }
+            k = k + 1
+        }
+        stage = stage + 1
+    }
+}
+
+// ---------------------------------------------------------------------------
+// States and time
+//
+// A state change takes effect between frames rather than in the middle of one,
+// so a system that asks to leave a state does not have the schedule change
+// under it while it is still running.
+// ---------------------------------------------------------------------------
+
+States :: struct {
+    current: i64,
+    next: i64,
+}
+
+states_new :: fn(initial: i64) -> States {
+    States { current = initial, next = initial }
+}
+
+states_request :: fn(mut s: States, value: i64) {
+    s.next = value
+}
+
+// Take the requested state, answering whether it was a change.
+states_apply :: fn(mut s: States) -> bool {
+    if (s.next == s.current) {
+        return false
+    }
+    s.current = s.next
+    true
+}
+
+states_current :: fn(s: States) -> i64 {
+    s.current
+}
+
+Time :: struct {
+    elapsed: f64,
+    delta: f64,
+    frame: i64,
+}
+
+time_new :: fn() -> Time {
+    Time { elapsed = 0.0, delta = 0.0, frame = 0 }
+}
+
+time_advance :: fn(mut t: Time, delta: f64) {
+    t.delta = delta
+    t.elapsed = t.elapsed + delta
+    t.frame = t.frame + 1
 }
 
 // ---------------------------------------------------------------------------
@@ -931,7 +1543,7 @@ test "a tag marks an entity without moving it" {
     tag_add(selected, a)
     assert(tag_has(selected, a))
     assert(tag_has(selected, b) == false)
-    // Both are still in the one table, which is the whole point of a tag.
+    // Both are still in the one table.
     mut tables : i64 = 0
     mut q := query_begin(world, position)
     while (query_next(world, q)) {
@@ -954,6 +1566,261 @@ test "a tag left on a freed id is not a mark on the next entity" {
     assert(b.id == a.id)
     assert(tag_has(selected, b) == false)
     tag_free(selected)
+    ecs_free(world)
+}
+
+TestOrder :: struct { steps: i64 }
+TestDamage :: struct { amount: i64 }
+
+// The systems a schedule test runs. A system is a function of the world and
+// nothing else, so what it reads it reads from a resource, which is what one in
+// a program does too.
+first_system :: fn(mut world: World) {
+    held := ecs_resource($TestOrder, world, 0)
+    ecs_resource_set($TestOrder, world, 0,
+        TestOrder { steps = held.steps * 2 + 1 })
+}
+
+second_system :: fn(mut world: World) {
+    held := ecs_resource($TestOrder, world, 0)
+    ecs_resource_set($TestOrder, world, 0, TestOrder { steps = held.steps * 2 })
+}
+
+spawning_system :: fn(mut world: World) {
+    ecs_spawn(world)
+}
+
+test "a write is stamped with the tick it was made at" {
+    mut world := ecs_new()
+    health := ecs_register($TestHealth, world)
+    a := ecs_spawn(world)
+    ecs_add($TestHealth, world, a, health, TestHealth { points = 1 })
+    made_at := ecs_now(world)
+    assert(ecs_changed_since(world, a, health, made_at - 1))
+    assert(ecs_added_since(world, a, health, made_at - 1))
+
+    later := ecs_tick(world)
+    // Nothing was written this tick, so nothing changed since the last one.
+    assert(ecs_changed_since(world, a, health, later - 1) == false)
+    ecs_set($TestHealth, world, a, health, TestHealth { points = 2 })
+    assert(ecs_changed_since(world, a, health, later - 1))
+    // The write is not an add: the component was already there.
+    assert(ecs_added_since(world, a, health, later - 1) == false)
+    ecs_free(world)
+}
+
+test "a query hands over the write times beside the components" {
+    mut world := ecs_new()
+    health := ecs_register($TestHealth, world)
+    a := ecs_spawn(world)
+    b := ecs_spawn(world)
+    ecs_add($TestHealth, world, a, health, TestHealth { points = 1 })
+    ecs_add($TestHealth, world, b, health, TestHealth { points = 2 })
+    watermark := ecs_tick(world)
+    ecs_set($TestHealth, world, b, health, TestHealth { points = 20 })
+
+    mut touched : i64 = 0
+    mut q := query_begin(world, health)
+    while (query_next(world, q)) {
+        stamps := query_changed(world, q, health)
+        points := query_column($TestHealth, world, q, health)
+        mut i : i64 = 0
+        while (i < q.count) {
+            if (stamps[i] >= watermark) {
+                touched = touched + points[i].points
+            }
+            i = i + 1
+        }
+    }
+    assert(touched == 20)
+    ecs_free(world)
+}
+
+test "a migration carries a row's history with it" {
+    mut world := ecs_new()
+    health := ecs_register($TestHealth, world)
+    position := ecs_register($TestPosition, world)
+    a := ecs_spawn(world)
+    ecs_add($TestHealth, world, a, health, TestHealth { points = 5 })
+    written_at := ecs_now(world)
+    ecs_tick(world)
+    // Gaining a second component moves the entity to another table. The health
+    // was not written by that, so its stamp is still the one it had.
+    ecs_add($TestPosition, world, a, position,
+        TestPosition { x = 0.0, y = 0.0 })
+    assert(ecs_changed_since(world, a, health, written_at) == false)
+    assert(ecs_added_since(world, a, position, written_at))
+    ecs_free(world)
+}
+
+test "a resource is one value the whole world shares" {
+    mut world := ecs_new()
+    order := ecs_resource_register($TestOrder, world)
+    damage := ecs_resource_register($TestDamage, world)
+    assert(ecs_resource($TestOrder, world, order).steps == 0)
+    ecs_resource_set($TestOrder, world, order, TestOrder { steps = 7 })
+    ecs_resource_set($TestDamage, world, damage, TestDamage { amount = 3 })
+    assert(ecs_resource($TestOrder, world, order).steps == 7)
+    assert(ecs_resource($TestDamage, world, damage).amount == 3)
+    // And it is written in place through the slice, the way a system does.
+    mut held := ecs_resource_slice($TestOrder, world, order)
+    held[0].steps = held[0].steps + 1
+    assert(ecs_resource($TestOrder, world, order).steps == 8)
+    ecs_free(world)
+}
+
+test "two readers of one channel each see every event once" {
+    mut channel := events_new($TestDamage)
+    mut renderer := reader_new()
+    mut audio := reader_new()
+    events_send($TestDamage, channel, TestDamage { amount = 2 })
+    events_send($TestDamage, channel, TestDamage { amount = 3 })
+    assert(events_sent(channel) == 2)
+
+    first := events_read($TestDamage, channel, renderer)
+    mut total : i64 = 0
+    mut i : i64 = 0
+    while (i < slice_len(first)) {
+        total = total + first[i].amount
+        i = i + 1
+    }
+    assert(total == 5)
+    // The same reader again sees nothing; the other reader sees both.
+    assert(slice_len(events_read($TestDamage, channel, renderer)) == 0)
+    assert(slice_len(events_read($TestDamage, channel, audio)) == 2)
+
+    events_send($TestDamage, channel, TestDamage { amount = 4 })
+    assert(slice_len(events_read($TestDamage, channel, renderer)) == 1)
+    events_free(channel)
+}
+
+test "a reader that missed a clear is caught up rather than misled" {
+    mut channel := events_new($TestDamage)
+    mut late := reader_new()
+    events_send($TestDamage, channel, TestDamage { amount = 1 })
+    events_clear(channel)
+    events_send($TestDamage, channel, TestDamage { amount = 9 })
+    held := events_read($TestDamage, channel, late)
+    // The one it missed is gone, and the one it did not is the one it gets.
+    assert(slice_len(held) == 1)
+    assert(held[0].amount == 9)
+    events_free(channel)
+}
+
+test "a tree is walked from a parent to its children" {
+    mut world := ecs_new()
+    mut tree := hierarchy_new()
+    root := ecs_spawn(world)
+    a := ecs_spawn(world)
+    b := ecs_spawn(world)
+    grandchild := ecs_spawn(world)
+    hierarchy_attach(tree, a, root)
+    hierarchy_attach(tree, b, root)
+    hierarchy_attach(tree, grandchild, a)
+    assert(hierarchy_child_count(tree, root) == 2)
+    assert(hierarchy_child_count(tree, a) == 1)
+    assert(hierarchy_parent(tree, grandchild).id == a.id)
+    assert(is_no_entity(hierarchy_parent(tree, root)))
+
+    // Reattaching moves it rather than listing it twice.
+    hierarchy_attach(tree, grandchild, root)
+    assert(hierarchy_child_count(tree, root) == 3)
+    assert(hierarchy_child_count(tree, a) == 0)
+    hierarchy_detach(tree, grandchild)
+    assert(hierarchy_child_count(tree, root) == 2)
+    hierarchy_free(tree)
+    ecs_free(world)
+}
+
+test "despawning a parent despawns what was under it" {
+    mut world := ecs_new()
+    mut tree := hierarchy_new()
+    root := ecs_spawn(world)
+    child := ecs_spawn(world)
+    grandchild := ecs_spawn(world)
+    other := ecs_spawn(world)
+    hierarchy_attach(tree, child, root)
+    hierarchy_attach(tree, grandchild, child)
+    assert(ecs_count(world) == 4)
+    hierarchy_despawn_tree(tree, world, root)
+    assert(ecs_alive(world, root) == false)
+    assert(ecs_alive(world, child) == false)
+    assert(ecs_alive(world, grandchild) == false)
+    assert(ecs_alive(world, other))
+    assert(ecs_count(world) == 1)
+    hierarchy_free(tree)
+    ecs_free(world)
+}
+
+test "a schedule runs its systems in stage order" {
+    mut world := ecs_new()
+    ecs_resource_register($TestOrder, world)
+    mut frame := schedule_new()
+    // Added last, run first: the stage decides, not the order they were added.
+    schedule_add(frame, STAGE_LAST, second_system)
+    schedule_add(frame, STAGE_FIRST, first_system)
+    assert(schedule_count(frame) == 2)
+    schedule_run(frame, world, ANY_STATE)
+    // first_system then second_system: (0 * 2 + 1) * 2.
+    assert(ecs_resource($TestOrder, world, 0).steps == 2)
+    schedule_free(frame)
+    ecs_free(world)
+}
+
+test "a system bound to a state runs only in that state" {
+    mut world := ecs_new()
+    mut frame := schedule_new()
+    schedule_add_in_state(frame, STAGE_UPDATE, 1, spawning_system)
+    schedule_run(frame, world, 0)
+    assert(ecs_count(world) == 0)
+    schedule_run(frame, world, 1)
+    assert(ecs_count(world) == 1)
+    schedule_free(frame)
+    ecs_free(world)
+}
+
+test "a state change is taken between frames rather than during one" {
+    mut states := states_new(0)
+    states_request(states, 2)
+    // The request is not the change: the state is what it was until it is
+    // applied, which is what keeps a frame running in one state throughout.
+    assert(states_current(states) == 0)
+    assert(states_apply(states))
+    assert(states_current(states) == 2)
+    // Applying again is not a change.
+    assert(states_apply(states) == false)
+}
+
+test "time carries the frame and what it took" {
+    mut clock := time_new()
+    time_advance(clock, 0.5)
+    time_advance(clock, 0.25)
+    assert(clock.frame == 2)
+    assert(clock.delta == 0.25)
+    assert(clock.elapsed == 0.75)
+}
+
+test "a world asked to keep a log says what changed structurally" {
+    mut world := ecs_new()
+    health := ecs_register($TestHealth, world)
+    // Nothing is recorded until it is asked for.
+    ignored := ecs_spawn(world)
+    assert(slice_len(ecs_log(world)) == 0)
+    ecs_log_enable(world, true)
+    a := ecs_spawn(world)
+    ecs_add($TestHealth, world, a, health, TestHealth { points = 1 })
+    ecs_remove(world, a, health)
+    ecs_despawn(world, a)
+    held := ecs_log(world)
+    assert(slice_len(held) == 4)
+    assert(held[0].kind == CHANGE_SPAWN)
+    assert(held[1].kind == CHANGE_ADD)
+    assert(held[1].mask == health)
+    assert(held[2].kind == CHANGE_REMOVE)
+    assert(held[3].kind == CHANGE_DESPAWN)
+    assert(held[3].entity.id == a.id)
+    ecs_log_clear(world)
+    assert(slice_len(ecs_log(world)) == 0)
     ecs_free(world)
 }
 
