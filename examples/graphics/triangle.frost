@@ -352,7 +352,7 @@ main :: fn() -> i64 {
     pipeline_descriptor.primitive.topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
     pipeline_descriptor.multisample.count = 1
     pipeline_descriptor.multisample.mask = 4294967295
-    pipeline_descriptor.fragment = unsafe { ptr_to(fragment) }
+    pipeline_descriptor.fragment = ptr_to(fragment)
 
     pipeline := unsafe {
         wgpuDeviceCreateRenderPipeline(device, ptr_to(pipeline_descriptor))

@@ -44,11 +44,33 @@ pub fn check_unsafety(statements: &[Spanned<Statement>]) -> Result<()> {
 pub fn check_unsafety_recovering(
     statements: &[Spanned<Statement>],
 ) -> Vec<Diagnostic> {
+    walk_unsafety(statements, false)
+}
+
+/// The same walk, also reporting a block that vouches for nothing: one holding
+/// no unchecked operation, and one written inside another, which already
+/// covers it. This is off unless asked for, because a build should pay for the
+/// checks that keep a program correct and not for the ones that keep it tidy.
+pub fn audit_unsafe_blocks(
+    statements: &[Spanned<Statement>],
+) -> Vec<Diagnostic> {
+    walk_unsafety(statements, true)
+        .into_iter()
+        .filter(|d| d.message.starts_with("this `unsafe`"))
+        .collect()
+}
+
+fn walk_unsafety(
+    statements: &[Spanned<Statement>],
+    audit: bool,
+) -> Vec<Diagnostic> {
     let mut checker = Checker {
         externs: HashSet::new(),
         unsafe_fns: HashSet::new(),
         fields: HashMap::new(),
         depth: 0,
+        audit,
+        vouched: Vec::new(),
         scope: Vec::new(),
         diagnostics: Vec::new(),
     };
@@ -187,6 +209,11 @@ struct Checker {
     // How many `unsafe` blocks enclose what is being walked. Nesting one inside
     // another is allowed and means nothing extra, the same as in Rust.
     depth: usize,
+    // Whether to report a block that vouches for nothing. Off for an ordinary
+    // build, so nothing below costs anything there.
+    audit: bool,
+    // One entry per open `unsafe` block: whether anything inside it needed one.
+    vouched: Vec<bool>,
     scope: Vec<HashMap<String, Type>>,
     diagnostics: Vec<Diagnostic>,
 }
@@ -194,6 +221,11 @@ struct Checker {
 impl Checker {
     fn refuse(&mut self, what: &str, position: Position) {
         if self.depth > 0 {
+            if self.audit
+                && let Some(top) = self.vouched.last_mut()
+            {
+                *top = true;
+            }
             return;
         }
         self.diagnostics.push(Diagnostic {
@@ -333,9 +365,27 @@ impl Checker {
     fn expression(&mut self, value: &Expression, at: Position) {
         match value {
             Expression::Unsafe(body) => {
+                if self.audit {
+                    if self.depth > 0 {
+                        self.diagnostics.push(Diagnostic {
+                            position: at,
+                            message: "this `unsafe` block is inside another one, which already vouches for what is in it".to_string(),
+                        });
+                    }
+                    self.vouched.push(false);
+                }
                 self.depth += 1;
                 self.block(body);
                 self.depth -= 1;
+                if self.audit
+                    && let Some(used) = self.vouched.pop()
+                    && !used
+                {
+                    self.diagnostics.push(Diagnostic {
+                        position: at,
+                        message: "this `unsafe` block holds no unchecked operation, so it vouches for nothing".to_string(),
+                    });
+                }
             }
             // An `unsafe fn`'s body is an implicit unsafe block. The whole
             // function is the dangerous region, so the gated operations are

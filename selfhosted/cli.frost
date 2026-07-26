@@ -19,6 +19,7 @@ Options :: struct {
     backend: i64,
     link: i64,
     testing: i64,
+    audit_unsafe: i64,
     roots: Arena<SearchRoot>,
     // Compile each module to its own object and assemble only the ones whose
     // emitted code changed. `build_dir` is where those objects are kept.
@@ -215,6 +216,7 @@ options_from_command_line :: fn() -> Options {
         backend = 0 - 1,
         link = 0,
         testing = 0,
+        audit_unsafe = 0,
         roots = arena_make($SearchRoot, 64),
         incremental = 0,
         build_dir = ".frost-build",
@@ -250,6 +252,8 @@ options_from_command_line :: fn() -> Options {
                 return options
             }
             options.build_dir = frost_rt_arg_at(index)
+        } else if (cstr_eq(argument, "--audit-unsafe")) {
+            options.audit_unsafe = 1
         } else if (cstr_eq(argument, "--test")) {
             // Running the tests means building an executable and running it,
             // so a --test build always links as well.

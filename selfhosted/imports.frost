@@ -35,12 +35,12 @@ join_path :: fn(parent: ^i8, src: ^i8, off: i64, len: i64) -> ^i8 {
     out := unsafe { ptr_cast($i8, malloc(cut + len + 1)) }
     k = 0
     while (k < cut) {
-        unsafe { frost_rt_byte_set(out, k, unsafe { frost_rt_byte_at(parent, k) }) }
+        unsafe { frost_rt_byte_set(out, k, frost_rt_byte_at(parent, k)) }
         k = k + 1
     }
     k = 0
     while (k < len) {
-        unsafe { frost_rt_byte_set(out, cut + k, unsafe { frost_rt_byte_at(src, off + k) }) }
+        unsafe { frost_rt_byte_set(out, cut + k, frost_rt_byte_at(src, off + k)) }
         k = k + 1
     }
     unsafe { frost_rt_byte_set(out, cut + len, 0) }
@@ -61,7 +61,7 @@ join_under :: fn(directory: ^i8, src: ^i8, off: i64, len: i64) -> ^i8 {
     out := unsafe { ptr_cast($i8, malloc(directory_len + separator + len + 1)) }
     mut k : i64 = 0
     while (k < directory_len) {
-        unsafe { frost_rt_byte_set(out, k, unsafe { frost_rt_byte_at(directory, k) }) }
+        unsafe { frost_rt_byte_set(out, k, frost_rt_byte_at(directory, k)) }
         k = k + 1
     }
     if (separator == 1) {
@@ -111,7 +111,7 @@ append_text :: fn(buffer: ^i8, at: i64, text: ^i8) -> i64 {
     length := unsafe { frost_rt_str_len(text) }
     mut k : i64 = 0
     while (k < length) {
-        unsafe { frost_rt_byte_set(buffer, at + k, unsafe { frost_rt_byte_at(text, k) }) }
+        unsafe { frost_rt_byte_set(buffer, at + k, frost_rt_byte_at(text, k)) }
         k = k + 1
     }
     unsafe {
@@ -468,7 +468,7 @@ source_with_room :: fn(text: ^i8) -> ^i8 {
     buffer := unsafe { ptr_cast($i8, malloc(length + SYNTH_ROOM + 1)) }
     mut k : i64 = 0
     while (k < length) {
-        unsafe { frost_rt_byte_set(buffer, k, unsafe { frost_rt_byte_at(text, k) }) }
+        unsafe { frost_rt_byte_set(buffer, k, frost_rt_byte_at(text, k)) }
         k = k + 1
     }
     unsafe { frost_rt_byte_set(buffer, length, 0) }

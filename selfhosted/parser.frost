@@ -308,7 +308,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         span_end := cur_off(p)
         p.unsafe_depth = p.unsafe_depth - 1
         arena_push(p.unsafe_spans,
-            UnsafeSpan { start = start, end = span_end })
+            UnsafeSpan { start = start, end = span_end, used = 0 })
         return inner
     }
     // An `if` used where a value is wanted takes the same road a `match` does:
@@ -2096,7 +2096,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         body := parse_block(p)
         p.unsafe_depth = p.unsafe_depth - 1
         arena_push(p.unsafe_spans,
-            UnsafeSpan { start = start, end = cur_off(p) })
+            UnsafeSpan { start = start, end = cur_off(p), used = 0 })
         return body
     }
 

@@ -37,7 +37,7 @@ synth_literal :: fn(mut p: Parser, word: ^i8) -> i64 {
     length := unsafe { frost_rt_str_len(word) }
     mut k : i64 = 0
     while (k < length) {
-        unsafe { frost_rt_byte_set(p.src, start + k, unsafe { frost_rt_byte_at(word, k) }) }
+        unsafe { frost_rt_byte_set(p.src, start + k, frost_rt_byte_at(word, k)) }
         k = k + 1
     }
     unsafe { frost_rt_byte_set(p.src, start + length, 0) }
@@ -88,7 +88,7 @@ synth_join :: fn(mut p: Parser, first_off: i64, first_len: i64, second_off: i64,
     start := p.synth_next
     mut k : i64 = 0
     while (k < first_len) {
-        unsafe { frost_rt_byte_set(p.src, start + k, unsafe { frost_rt_byte_at(p.src, first_off + k) }) }
+        unsafe { frost_rt_byte_set(p.src, start + k, frost_rt_byte_at(p.src, first_off + k)) }
         k = k + 1
     }
     unsafe { frost_rt_byte_set(p.src, start + first_len, CH_UNDERSCORE) }
