@@ -83,8 +83,9 @@ pub fn check_ownership_recovering(
     let signatures = collect_signatures(statements);
     let param_types = collect_param_types(statements);
     let field_types = collect_field_types(statements);
+    let held = linear_closure(linear, &field_types);
     let program = Program {
-        linear,
+        linear: &held,
         signatures: &signatures,
         param_types: &param_types,
         field_types: &field_types,
@@ -872,8 +873,48 @@ fn builtin_borrows_first_argument(name: &str) -> Option<bool> {
 
 fn is_linear_type(ty: &Type, linear: &HashSet<String>) -> bool {
     match ty {
-        Type::Struct(name) | Type::Enum(name) => linear.contains(name),
+        Type::Struct(name) | Type::Enum(name) => {
+            linear.contains(template_of(name))
+        }
+        Type::Distinct(_, inner) => is_linear_type(inner, linear),
         _ => false,
+    }
+}
+
+/// The name a generic instance was stamped from. `Vec<i64>` is `Vec`, and the
+/// `linear` on the declaration is written once, on the template, so that is
+/// where the answer lives. Without this a linear generic was silently ordinary,
+/// which is what let a container that owns a heap block be dropped unconsumed.
+fn template_of(name: &str) -> &str {
+    match name.find('<') {
+        Some(at) => &name[..at],
+        None => name,
+    }
+}
+
+/// Every type that must be consumed: the ones declared `linear`, and the ones
+/// that hold such a value in a field. A struct holding a resource is a resource,
+/// otherwise wrapping one in an ordinary struct would launder the obligation
+/// away. This runs to a fixpoint, since the holder of a holder is one too.
+fn linear_closure(
+    declared: &HashSet<String>,
+    fields: &FieldTypes,
+) -> HashSet<String> {
+    let mut held = declared.clone();
+    loop {
+        let mut grew = false;
+        for ((owner, _), ty) in fields {
+            if held.contains(template_of(owner)) {
+                continue;
+            }
+            if is_linear_type(ty, &held) {
+                held.insert(owner.clone());
+                grew = true;
+            }
+        }
+        if !grew {
+            return held;
+        }
     }
 }
 

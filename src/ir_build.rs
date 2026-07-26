@@ -140,7 +140,7 @@ fn build_module_inner(
         constants,
         generic_functions,
         generic_struct_defs,
-        linear: linear.clone(),
+        linear: linear_with_holders(linear, statements),
         registrations: crate::callbacks::callback_registrations(statements),
         anon_counter: std::cell::Cell::new(0),
     };
@@ -884,8 +884,59 @@ impl IrBuilder {
 
     fn type_is_linear(&self, ty: &Type) -> bool {
         match ty {
-            Type::Struct(name) | Type::Enum(name) => self.linear.contains(name),
+            Type::Struct(name) | Type::Enum(name) => {
+                self.linear.contains(linear_template_of(name))
+            }
+            Type::Distinct(_, inner) => self.type_is_linear(inner),
             _ => false,
+        }
+    }
+}
+
+/// The name a generic instance was stamped from: `Vec<i64>` is `Vec`. A
+/// `linear` is written once, on the template, so that is where the answer is.
+fn linear_template_of(name: &str) -> &str {
+    match name.find('<') {
+        Some(at) => &name[..at],
+        None => name,
+    }
+}
+
+/// Every type that has to be consumed: the ones declared `linear`, and the ones
+/// holding such a value in a field, since a struct holding a resource is a
+/// resource. Run once per module, and only when something is declared linear at
+/// all, so a program with no resources pays nothing for it.
+fn linear_with_holders(
+    declared: &HashSet<String>,
+    statements: &[Spanned<Statement>],
+) -> HashSet<String> {
+    let mut held = declared.clone();
+    if held.is_empty() {
+        return held;
+    }
+    loop {
+        let mut grew = false;
+        for statement in statements {
+            let Statement::Struct(name, _, fields) = &statement.node else {
+                continue;
+            };
+            if held.contains(linear_template_of(name)) {
+                continue;
+            }
+            let holds = fields.iter().any(|field| {
+                matches!(
+                    &field.field_type,
+                    Type::Struct(inner) | Type::Enum(inner)
+                        if held.contains(linear_template_of(inner))
+                )
+            });
+            if holds {
+                held.insert(name.clone());
+                grew = true;
+            }
+        }
+        if !grew {
+            return held;
         }
     }
 }

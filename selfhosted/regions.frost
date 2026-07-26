@@ -607,9 +607,23 @@ stmt_consumes :: fn(mut p: Parser, id: i64, off: i64, len: i64) -> bool {
     if (kind == NodeKind::Return && is_var_named(p, node.a, off, len)) {
         return true
     }
+    // A body's trailing expression is what the function answers with, so naming
+    // a resource there hands it to the caller exactly as a `return` does. It is
+    // still an expression statement at this point: the emitters are what turn
+    // the last one into a return.
+    if (kind == NodeKind::ExprStmt && node.next == (0 - 1)
+        && is_var_named(p, node.a, off, len)) {
+        return true
+    }
     // `held := value` moves what `value` held, so the obligation to consume it
     // is the new name's from here on, and that name is checked in its turn.
     if (kind == NodeKind::Let && is_var_named(p, node.a, off, len)) {
+        return true
+    }
+    // `place = value` is the same move into somewhere that outlives the name:
+    // a vector written into a field of a struct the caller owns is the struct's
+    // from there on.
+    if (kind == NodeKind::Assign && is_var_named(p, node.b, off, len)) {
         return true
     }
     mut value : i64 = 0 - 1
