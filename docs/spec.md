@@ -84,8 +84,21 @@ lexer takes the longest token that matches. Identifiers are ASCII,
 
 Whitespace (space, tab, carriage return, newline) separates tokens and is
 otherwise insignificant. Frost is not whitespace-sensitive and has no automatic
-semicolon insertion. Statement terminators (`;`) are always optional. There are
-two comment forms:
+semicolon insertion. Statement terminators (`;`) are always optional.
+
+A line break does decide one thing. A `(` or a `[` that opens a line begins a
+statement rather than continuing the one before it, so
+
+```frost
+table := tables[slot.table]
+(table.mask & mask) != 0
+```
+
+is two statements, not a call of the first line's value. This is the only rule
+whitespace has, and it exists because a statement beginning with a parenthesis
+is otherwise indistinguishable from a call written across two lines.
+
+There are two comment forms:
 
 - Line comment, `//` to end of line.
 - Block comment, `/* ... */`. Block comments do not nest, and an unterminated
@@ -196,13 +209,33 @@ field is public and reachable, and there is nothing to specify.
 
 ### 3.3 Borrows and pointer types
 
-A borrow is not a type a program writes. It is what a parameter mode means:
-an unmarked parameter of a non-copy type is read-borrowed, `mut` is
+A borrow is mostly not a type a program writes. It is what a parameter mode
+means: an unmarked parameter of a non-copy type is read-borrowed, `mut` is
 write-borrowed, and `move` takes the value (chapter 8). There is no `&` or `&mut`
-in the surface, so a borrow has nowhere to be written down and nowhere to be
-stored, which is what makes it second-class by construction rather than by rule.
+in the surface, so a borrow has nowhere to be stored in a struct and nowhere to
+be written in a field, which is what makes it second-class by construction
+rather than by rule.
 
+- `ref T` a borrow of a place, the one borrow a program writes down. It appears
+  as a return type, and `ref name := place` binds one (5.1). It is a checked
+  address: reading and writing through it needs no `unsafe`, unlike `^T`, and
+  the region and frame checks of chapter 8 govern where it may go. What it may
+  not do is be stored: no struct field, no array element, no container.
 - `^T` raw pointer, unchecked, for FFI and low-level libraries.
+
+`ref T` is what lets an accessor hand back a place rather than a copy:
+
+```frost
+arena_at :: fn($T: Type, a: Arena<T>, index: i64) -> ref T { ... }
+
+ref entry := arena_at(p.tokens, index)
+entry.kind = TokenKind::Ident
+```
+
+Without it a container's element could only be read out and written back, and
+every accessor over one would be a pair of functions or an `unsafe` block over a
+raw pointer. The borrow it answers with is the caller's to read and write and
+nobody's to keep.
 
 `ptr_to(place)` yields a `^T` to a place. `ptr_cast($T, p)` reinterprets a
 pointer as `^T` at no runtime cost. These are the low-level tools an allocator
@@ -344,9 +377,17 @@ externs, and imports.
 | `name : Type = expr` | bind a local, type explicit |
 | `mut name := expr` / `mut name : Type = expr` | bind a mutable local |
 | `a, b := call()` | bind the several values of one call (5.2a) |
+| `ref name := place` | bind a borrow of a place, not a copy of it |
 | `NAME :: expr` | declare a constant, evaluated once |
 
 Bindings are immutable unless `mut`. A `mut` local is reassigned with `=`.
+
+`ref name := place` binds a borrow rather than a copy, so writing through the
+name writes the place: `ref entry := table[index]` then `entry.count = 0` is a
+write to the element. The right-hand side has to be a place (a name, a field, an
+index, a dereference, or a call answering with a `ref T`), since there is nothing
+to borrow otherwise. A `ref` binding is a borrow like any other: it may not be
+stored, and it may not outlive what it names (chapter 8).
 
 The parser distinguishes `name : Type = ...` (a typed binding) from
 `name :: ...` (a constant) by one token of lookahead after the first `:`. A
@@ -678,6 +719,22 @@ listed form `[ e, ... ]` or the repeat form `[ e ; N ]` for `N` copies of `e`
 count is an integer, a constant, or a value parameter of the generic the literal
 is written in (11.1a).
 
+A call may go through a value rather than a name. A parameter, a binding, or a
+struct field of function-pointer type is called by writing the call on it:
+
+```frost
+System :: struct { run: fn(mut World), stage: i64 }
+
+systems[index].run(world)
+held := systems[index].run
+held(world)
+```
+
+The parameters of an indirect call travel exactly as the signature writes them:
+`fn(mut World)` borrows, so the world is not consumed by being handed to one.
+This is what a schedule of systems is built from, where which functions run is
+decided while the program runs rather than where each call is written.
+
 ### 6.2 Operators
 
 Prefix `-` (negate) and `!` (logical not). Binary operators, grouped by the
@@ -783,6 +840,18 @@ if ( Cond ) Block else Block
 
 The condition is parenthesized. `if` is an expression. Both arms are blocks and
 their trailing expressions are the value.
+
+An `if` answers with a value when both of its arms do. An arm whose block ends
+in a statement answers with nothing, and then the whole `if` answers with
+nothing however the other arm ended, which is what makes
+
+```frost
+if (queued) { spawn(world) } else { report(world) }
+```
+
+an ordinary statement rather than an expression whose two arms disagree. An `if`
+with no `else` never answers with a value, since the path where the condition
+was false has none to give.
 
 ### 6.7 `match` expression
 

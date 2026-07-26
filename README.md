@@ -61,6 +61,7 @@ For long-lived data, an `Entity` lives in a pool and is named by a `Handle`, a s
 | [coming-from-rust](docs/coming-from-rust.md) | Each Rust reflex and what it becomes here |
 | [spec](docs/spec.md) | The reference: types, semantics, and the grammar |
 | [math](docs/math.md) | The standard-library math, `f32` and `f64` |
+| [ecs](docs/ecs.md) | The archetype entity-component system in `std/` |
 
 **Why it is the way it is**
 
@@ -95,7 +96,7 @@ One typed intermediate representation feeds three backends, a Cranelift native p
 
 The compiler is written in Frost. `selfhosted/frost.frost` reproduces itself byte for byte through its own C backend and its own x86-64 assembly backend, so a build can go from source to a running compiler with no C compiler in the loop. A full native build of 58k lines runs at about 166,000 lines per second with code generation spread across cores, and `--incremental` rebuilds only the modules an edit can reach.
 
-The standard library is ordinary Frost. It has length-carrying strings, a growable `Vec` and a hash map, file and formatted output, a sort, the slab and structure-of-arrays `columns` containers, and vector, matrix, and quaternion math at both single and double precision. See [`std/`](std) and [docs/math.md](docs/math.md).
+The standard library is ordinary Frost. It has length-carrying strings, a growable `Vec` and a hash map, file and formatted output, a sort, the slab and structure-of-arrays `columns` containers, an archetype entity-component system, and vector, matrix, and quaternion math at both single and double precision. See [`std/`](std), [docs/ecs.md](docs/ecs.md) and [docs/math.md](docs/math.md).
 
 ## Getting started
 
