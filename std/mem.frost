@@ -17,8 +17,12 @@
 
 export heap_array, heap_slice, heap_grow, heap_grow_slice, heap_release,
     heap_release_slice, heap_bytes, heap_grow_bytes, heap_zero, heap_copy,
-    bytes_at, bytes_as, slice_prefix
+    bytes_at, bytes_as, slice_prefix, heap_live
 
+// How many blocks are out. A container that frees what it took leaves this
+// where it found it, so a test can say a leak happened rather than waiting for
+// a long-running program to notice.
+frost_rt_heap_live    :: safe extern fn() -> i64
 frost_rt_heap_alloc   :: extern fn(size: i64) -> ^u8
 frost_rt_heap_realloc :: extern fn(block: ^u8, size: i64) -> ^u8
 frost_rt_heap_free    :: extern fn(block: ^u8)
@@ -119,6 +123,10 @@ bytes_as :: fn($T: Type, block: ^u8, count: i64) -> []T {
     unsafe { slice_from($T, ptr_cast($T, block), count) }
 }
 
+heap_live :: fn() -> i64 {
+    frost_rt_heap_live()
+}
+
 heap_zero :: fn(destination: ^u8, size: i64) {
     unsafe { frost_rt_mem_set(destination, 0, size) }
 }
@@ -204,4 +212,25 @@ test "a byte run keeps what it held when it grows" {
     view := bytes_as($i64, block, 1)
     assert(view[0] == 9)
     heap_release($u8, block)
+}
+
+test "what a block took is what releasing it gives back" {
+    before := heap_live()
+    mut held := heap_slice($i64, 16)
+    assert(heap_live() == before + 1)
+    held[0] = 1
+    mut bigger := heap_grow_slice($i64, held, 64)
+    assert(heap_live() == before + 1)
+    heap_release_slice($i64, bigger)
+    assert(heap_live() == before)
+}
+
+test "bytes with a width are counted the same way" {
+    before := heap_live()
+    block := heap_bytes(32)
+    assert(heap_live() == before + 1)
+    grown := heap_grow_bytes(block, 128)
+    assert(heap_live() == before + 1)
+    heap_release($u8, grown)
+    assert(heap_live() == before)
 }

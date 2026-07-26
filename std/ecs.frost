@@ -120,13 +120,15 @@ column_new :: fn(item_size: i64) -> Column {
     }
 }
 
+// A freed column keeps its pointers, which are no longer anyone's to read, and
+// says so with a capacity of nothing: `column_of` hands out an empty slice, and
+// `column_reserve` allocates fresh rather than growing a block that is gone.
+// It used to allocate three replacement blocks here so a freed column could be
+// reused, and every caller throws the column away, so those were leaked.
 column_free :: fn(mut c: Column) {
     heap_release($u8, c.data)
     heap_release($u8, c.changed)
     heap_release($u8, c.added)
-    c.data = heap_bytes(1)
-    c.changed = heap_bytes(TICK_SIZE)
-    c.added = heap_bytes(TICK_SIZE)
     c.count = 0
     c.capacity = 0
 }
@@ -143,10 +145,18 @@ column_reserve :: fn(mut c: Column) {
         room = 1
     }
     // The three blocks are bytes with a width decided while the program runs,
-    // so they are counted in bytes rather than in elements of a type.
-    c.data = heap_grow_bytes(c.data, room * c.item_size)
-    c.changed = heap_grow_bytes(c.changed, room * TICK_SIZE)
-    c.added = heap_grow_bytes(c.added, room * TICK_SIZE)
+    // so they are counted in bytes rather than in elements of a type. A column
+    // with no capacity has no block to grow: either it was never given one or
+    // it was freed, and growing what was freed is not a thing to attempt.
+    if (c.capacity == 0) {
+        c.data = heap_bytes(room * c.item_size)
+        c.changed = heap_bytes(room * TICK_SIZE)
+        c.added = heap_bytes(room * TICK_SIZE)
+    } else {
+        c.data = heap_grow_bytes(c.data, room * c.item_size)
+        c.changed = heap_grow_bytes(c.changed, room * TICK_SIZE)
+        c.added = heap_grow_bytes(c.added, room * TICK_SIZE)
+    }
     c.capacity = room
 }
 
@@ -947,7 +957,13 @@ ecs_resource_set :: fn($T: Type, mut world: World, slot: i64, value: $T) {
 // ---------------------------------------------------------------------------
 
 Events :: linear struct {
-    items: Column,
+    // A run of bytes with a width, like a column, but without the two ticks a
+    // column carries per row: nothing asks when an event changed, so a channel
+    // that stored that would be writing sixteen bytes per send for nobody.
+    data: ^u8,
+    count: i64,
+    capacity: i64,
+    item_size: i64,
     // The sequence number of the first item still held. Everything before it
     // has been cleared.
     first: i64,
@@ -960,35 +976,44 @@ EventReader :: struct {
 }
 
 events_new :: fn($T: Type) -> Events {
-    Events { items = column_new(sizeof(T)), first = 0 }
+    Events { data = heap_bytes(sizeof(T)), count = 0, capacity = 1,
+        item_size = sizeof(T), first = 0 }
 }
 
 events_free :: fn(move e: Events) {
-    column_free(e.items)
+    heap_release($u8, e.data)
 }
 
 events_send :: fn($T: Type, mut e: Events, value: $T) {
-    column_push_zero(e.items, 0)
-    mut held := column_of($T, e.items)
-    held[e.items.count - 1] = value
+    if (e.count >= e.capacity) {
+        mut room := e.capacity * 2
+        if (room < 1) {
+            room = 1
+        }
+        e.data = heap_grow_bytes(e.data, room * e.item_size)
+        e.capacity = room
+    }
+    e.count = e.count + 1
+    mut held := bytes_as($T, e.data, e.count)
+    held[e.count - 1] = value
 }
 
 // How many have ever been sent, which is the sequence number the next one gets.
 events_sent :: fn(e: Events) -> i64 {
-    e.first + e.items.count
+    e.first + e.count
 }
 
 // Everything the channel still holds.
 events_slice :: fn($T: Type, e: Events) -> []T {
-    column_of($T, e.items)
+    bytes_as($T, e.data, e.count)
 }
 
 // Drop what has been sent. The sequence numbers carry on, so a reader that has
 // not caught up finds itself past the start and reads nothing rather than
 // reading the next thing sent as though it were the one it missed.
 events_clear :: fn(mut e: Events) {
-    e.first = e.first + e.items.count
-    e.items.count = 0
+    e.first = e.first + e.count
+    e.count = 0
 }
 
 reader_new :: fn() -> EventReader {
@@ -1003,12 +1028,12 @@ events_read :: fn($T: Type, e: Events, mut r: EventReader) -> []T {
         r.seen = e.first
     }
     start := r.seen - e.first
-    count := e.items.count - start
-    r.seen = e.first + e.items.count
+    count := e.count - start
+    r.seen = e.first + e.count
     if (count <= 0) {
-        return bytes_as($T, e.items.data, 0)
+        return bytes_as($T, e.data, 0)
     }
-    bytes_as($T, column_at(e.items, start), count)
+    bytes_as($T, bytes_at(e.data, start * e.item_size), count)
 }
 
 // The same walk with the body handed in as a compile-time argument, so the call
@@ -1317,16 +1342,18 @@ hierarchy_despawn_tree :: fn(mut h: Hierarchy, mut world: World, root: Entity) {
 // they are written in is the order a frame happens in.
 Stage :: enum { First, Update, Last }
 
-STAGE_COUNT :: 3
-
+// Where a stage falls in a frame. A stage the match does not name aborts rather
+// than sorting as one of the others: a schedule that silently ran a system in
+// the wrong stage would be a bug nobody could see.
 stage_order :: fn(s: Stage) -> i64 {
-    if (s == Stage::First) {
-        return 0
+    // A match over an enum covers every variant or it does not compile, which
+    // is what makes adding a stage a compile error here rather than a system
+    // that quietly runs in the wrong one.
+    match s {
+        case .First: 0
+        case .Update: 1
+        case .Last: 2
     }
-    if (s == Stage::Update) {
-        return 1
-    }
-    2
 }
 
 // A system with this state runs whatever the state is.
@@ -1371,8 +1398,21 @@ schedule_count :: fn(s: Schedule) -> i64 {
 // once per stage rather than sorted, since a sort would move them out of the
 // order they were added in, which is the order a stage runs them.
 schedule_run :: fn(mut s: Schedule, mut world: World, state: i64) {
+    // How many passes to make is read off the systems rather than kept as a
+    // count beside the enum, which would be a third thing to remember when a
+    // stage is added.
+    mut highest : i64 = 0
+    mut i : i64 = 0
+    while (i < vec_len($System, s.systems)) {
+        held := vec_get($System, s.systems, i)
+        order := stage_order(held.stage)
+        if (order > highest) {
+            highest = order
+        }
+        i = i + 1
+    }
     mut stage : i64 = 0
-    while (stage < STAGE_COUNT) {
+    while (stage <= highest) {
         mut k : i64 = 0
         while (k < vec_len($System, s.systems)) {
             system := vec_get($System, s.systems, k)
@@ -1947,4 +1987,684 @@ test "a change made during a walk is queued and applied after it" {
     assert(ecs_alive(world, a))
     commands_free(queued)
     ecs_free(world)
+}
+
+// ---------------------------------------------------------------------------
+// What a world costs
+//
+// Every container here takes heap blocks and hands them back, and nothing in
+// the language checks that it does. `heap_live` counts the blocks that are out,
+// so a test can say the count came back to where it started. A leak is
+// otherwise invisible until a program runs long enough to notice, which is how
+// `column_free` came to allocate three replacement blocks nobody read.
+// ---------------------------------------------------------------------------
+
+test "a world gives back every block it took" {
+    before := heap_live()
+    mut world := ecs_new()
+    ecs_free(world)
+    assert(heap_live() == before)
+}
+
+test "a world full of components gives back every block it took" {
+    before := heap_live()
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    velocity := ecs_register($TestVelocity, world)
+    health := ecs_register($TestHealth, world)
+    mut made : i64 = 0
+    while (made < 64) {
+        e := ecs_spawn(world)
+        ecs_add($TestPosition, world, e, position,
+            TestPosition { x = 1.0, y = 2.0 })
+        if (made % 2 == 0) {
+            ecs_add($TestVelocity, world, e, velocity,
+                TestVelocity { x = 0.5, y = 0.5 })
+        }
+        if (made % 3 == 0) {
+            ecs_add($TestHealth, world, e, health, TestHealth { points = made })
+        }
+        made = made + 1
+    }
+    ecs_free(world)
+    assert(heap_live() == before)
+}
+
+test "spawning and despawning in a loop leaks nothing" {
+    mut world := ecs_new()
+    health := ecs_register($TestHealth, world)
+    // One round first, so the table for this component set exists: making it is
+    // what the first spawn pays for, and it is reused from then on. The count is
+    // taken after that, so what the test measures is the rounds rather than the
+    // table.
+    first := ecs_spawn(world)
+    ecs_add($TestHealth, world, first, health, TestHealth { points = 0 })
+    ecs_despawn(world, first)
+    settled := heap_live()
+    mut round : i64 = 0
+    while (round < 50) {
+        e := ecs_spawn(world)
+        ecs_add($TestHealth, world, e, health, TestHealth { points = round })
+        ecs_despawn(world, e)
+        round = round + 1
+    }
+    assert(heap_live() == settled)
+    ecs_free(world)
+}
+
+test "resources give back what they took" {
+    before := heap_live()
+    mut world := ecs_new()
+    ecs_resource_register($TestOrder, world)
+    ecs_resource_register($TestDamage, world)
+    ecs_free(world)
+    assert(heap_live() == before)
+}
+
+test "a channel gives back what it took" {
+    before := heap_live()
+    mut channel := events_new($TestDamage)
+    mut sent : i64 = 0
+    while (sent < 100) {
+        events_send($TestDamage, channel, TestDamage { amount = sent })
+        sent = sent + 1
+    }
+    events_free(channel)
+    assert(heap_live() == before)
+}
+
+test "a tree gives back what it took" {
+    before := heap_live()
+    mut world := ecs_new()
+    mut tree := hierarchy_new()
+    root := ecs_spawn(world)
+    mut made : i64 = 0
+    while (made < 32) {
+        child := ecs_spawn(world)
+        hierarchy_attach(tree, child, root)
+        made = made + 1
+    }
+    hierarchy_free(tree)
+    ecs_free(world)
+    assert(heap_live() == before)
+}
+
+test "a schedule, a tag and a command buffer give back what they took" {
+    before := heap_live()
+    mut frame := schedule_new()
+    schedule_add(frame, Stage::Update, spawning_system)
+    schedule_free(frame)
+    mut marks := tag_new()
+    mut world := ecs_new()
+    a := ecs_spawn(world)
+    tag_add(marks, a)
+    tag_free(marks)
+    mut queued := commands_new()
+    commands_despawn(queued, a)
+    commands_free(queued)
+    ecs_free(world)
+    assert(heap_live() == before)
+}
+
+test "a column freed and used again holds what is put in it" {
+    before := heap_live()
+    mut c := column_new(8)
+    column_push_zero(c, 1)
+    mut held := column_of($i64, c)
+    held[0] = 42
+    assert(column_of($i64, c)[0] == 42)
+    column_free(c)
+    // Freed is empty rather than gone: nothing is read from it, and the next
+    // row it is asked for allocates fresh.
+    assert(c.count == 0)
+    assert(c.capacity == 0)
+    assert(slice_len(column_of($i64, c)) == 0)
+    column_push_zero(c, 2)
+    mut again := column_of($i64, c)
+    again[0] = 7
+    assert(column_of($i64, c)[0] == 7)
+    column_free(c)
+    assert(heap_live() == before)
+}
+
+// ---------------------------------------------------------------------------
+// Entities, and the edges of them
+// ---------------------------------------------------------------------------
+
+test "a handle from nowhere is refused" {
+    mut world := ecs_new()
+    assert(ecs_alive(world, Entity { id = 0, generation = 0 }) == false)
+    assert(ecs_alive(world, Entity { id = 0 - 1, generation = 0 }) == false)
+    assert(ecs_alive(world, Entity { id = 4096, generation = 0 }) == false)
+    assert(ecs_has(world, Entity { id = 9, generation = 0 }, 1) == false)
+    ecs_free(world)
+}
+
+test "despawning twice is despawning once" {
+    mut world := ecs_new()
+    a := ecs_spawn(world)
+    ecs_despawn(world, a)
+    assert(ecs_count(world) == 0)
+    ecs_despawn(world, a)
+    assert(ecs_count(world) == 0)
+    // The id is free once, not twice: the next two spawns are two entities.
+    b := ecs_spawn(world)
+    c := ecs_spawn(world)
+    assert(b.id != c.id)
+    assert(ecs_count(world) == 2)
+    ecs_free(world)
+}
+
+test "ids come back in the order they were freed" {
+    mut world := ecs_new()
+    a := ecs_spawn(world)
+    b := ecs_spawn(world)
+    ecs_despawn(world, a)
+    ecs_despawn(world, b)
+    // The free list is a stack, so the last one freed is the next one handed
+    // out, which keeps a spawn from walking memory.
+    next := ecs_spawn(world)
+    assert(next.id == b.id)
+    assert(next.generation == b.generation + 1)
+    ecs_free(world)
+}
+
+test "many entities live at once" {
+    mut world := ecs_new()
+    health := ecs_register($TestHealth, world)
+    mut made : i64 = 0
+    while (made < 200) {
+        e := ecs_spawn(world)
+        ecs_add($TestHealth, world, e, health, TestHealth { points = made })
+        made = made + 1
+    }
+    assert(ecs_count(world) == 200)
+    mut seen : i64 = 0
+    mut q := query_begin(world, health)
+    while (query_next(world, q)) {
+        seen = seen + q.count
+    }
+    assert(seen == 200)
+    ecs_free(world)
+}
+
+// ---------------------------------------------------------------------------
+// The registry
+// ---------------------------------------------------------------------------
+
+test "components are given the bits in the order they registered" {
+    mut world := ecs_new()
+    first := ecs_register($TestPosition, world)
+    second := ecs_register($TestVelocity, world)
+    third := ecs_register($TestHealth, world)
+    assert(first == 1)
+    assert(second == 2)
+    assert(third == 4)
+    assert(ecs_component_size(world, first) == sizeof(TestPosition))
+    assert(ecs_component_size(world, third) == sizeof(TestHealth))
+    // A mask nothing registered has no width.
+    assert(ecs_component_size(world, 1 << 40) == 0)
+    ecs_free(world)
+}
+
+test "a component past the ceiling is refused rather than given a bit" {
+    mut world := ecs_new()
+    mut registered : i64 = 0
+    while (registered < MAX_COMPONENTS) {
+        assert(ecs_register($TestHealth, world) != 0)
+        registered = registered + 1
+    }
+    // Zero is the mask that names nothing, which is what says there was no bit
+    // left to give.
+    assert(ecs_register($TestHealth, world) == 0)
+    ecs_free(world)
+}
+
+// ---------------------------------------------------------------------------
+// Components and the tables they move between
+// ---------------------------------------------------------------------------
+
+test "adding a component twice overwrites rather than moves" {
+    mut world := ecs_new()
+    health := ecs_register($TestHealth, world)
+    a := ecs_spawn(world)
+    ecs_add($TestHealth, world, a, health, TestHealth { points = 1 })
+    before := vec_len($Table, world.tables)
+    ecs_add($TestHealth, world, a, health, TestHealth { points = 2 })
+    assert(ecs_get($TestHealth, world, a, health).points == 2)
+    assert(vec_len($Table, world.tables) == before)
+    ecs_free(world)
+}
+
+test "a component given to a despawned entity is not given" {
+    mut world := ecs_new()
+    health := ecs_register($TestHealth, world)
+    a := ecs_spawn(world)
+    ecs_despawn(world, a)
+    ecs_add($TestHealth, world, a, health, TestHealth { points = 5 })
+    assert(ecs_has(world, a, health) == false)
+    ecs_remove(world, a, health)
+    assert(ecs_alive(world, a) == false)
+    ecs_free(world)
+}
+
+test "removing a component an entity does not hold changes nothing" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    health := ecs_register($TestHealth, world)
+    a := ecs_spawn(world)
+    ecs_add($TestPosition, world, a, position,
+        TestPosition { x = 3.0, y = 4.0 })
+    ecs_remove(world, a, health)
+    assert(ecs_has(world, a, position))
+    assert(ecs_get($TestPosition, world, a, position).x == 3.0)
+    ecs_free(world)
+}
+
+test "an entity walks back to the empty table when its last component goes" {
+    mut world := ecs_new()
+    health := ecs_register($TestHealth, world)
+    a := ecs_spawn(world)
+    ecs_add($TestHealth, world, a, health, TestHealth { points = 9 })
+    ecs_remove(world, a, health)
+    assert(ecs_has(world, a, health) == false)
+    assert(ecs_alive(world, a))
+    assert(ecs_count(world) == 1)
+    // And it can be given the component again.
+    ecs_add($TestHealth, world, a, health, TestHealth { points = 10 })
+    assert(ecs_get($TestHealth, world, a, health).points == 10)
+    ecs_free(world)
+}
+
+test "a table is made once for a set of components however many hold it" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    velocity := ecs_register($TestVelocity, world)
+    a := ecs_spawn(world)
+    ecs_add($TestPosition, world, a, position,
+        TestPosition { x = 0.0, y = 0.0 })
+    ecs_add($TestVelocity, world, a, velocity,
+        TestVelocity { x = 0.0, y = 0.0 })
+    settled := vec_len($Table, world.tables)
+    b := ecs_spawn(world)
+    ecs_add($TestPosition, world, b, position,
+        TestPosition { x = 1.0, y = 1.0 })
+    ecs_add($TestVelocity, world, b, velocity,
+        TestVelocity { x = 1.0, y = 1.0 })
+    assert(vec_len($Table, world.tables) == settled)
+    ecs_free(world)
+}
+
+test "the row a despawn moves keeps every one of its components" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    health := ecs_register($TestHealth, world)
+    a := ecs_spawn(world)
+    b := ecs_spawn(world)
+    c := ecs_spawn(world)
+    mut which : i64 = 0
+    ecs_add($TestPosition, world, a, position,
+        TestPosition { x = 1.0, y = 1.0 })
+    ecs_add($TestHealth, world, a, health, TestHealth { points = 1 })
+    ecs_add($TestPosition, world, b, position,
+        TestPosition { x = 2.0, y = 2.0 })
+    ecs_add($TestHealth, world, b, health, TestHealth { points = 2 })
+    ecs_add($TestPosition, world, c, position,
+        TestPosition { x = 3.0, y = 3.0 })
+    ecs_add($TestHealth, world, c, health, TestHealth { points = 3 })
+    ecs_despawn(world, a)
+    // `c` filled the hole, and both of its columns came with it.
+    assert(ecs_get($TestPosition, world, c, position).x == 3.0)
+    assert(ecs_get($TestHealth, world, c, health).points == 3)
+    assert(ecs_get($TestPosition, world, b, position).x == 2.0)
+    assert(ecs_get($TestHealth, world, b, health).points == 2)
+    ecs_free(world)
+}
+
+// ---------------------------------------------------------------------------
+// Queries, ticks, resources
+// ---------------------------------------------------------------------------
+
+test "a query over a world with nothing in it visits nothing" {
+    mut world := ecs_new()
+    health := ecs_register($TestHealth, world)
+    mut visits : i64 = 0
+    mut q := query_begin(world, health)
+    while (query_next(world, q)) {
+        visits = visits + 1
+    }
+    assert(visits == 0)
+    // And once the last holder is gone, it visits nothing again: an empty table
+    // is skipped rather than handed over.
+    a := ecs_spawn(world)
+    ecs_add($TestHealth, world, a, health, TestHealth { points = 1 })
+    ecs_despawn(world, a)
+    mut again : i64 = 0
+    mut second := query_begin(world, health)
+    while (query_next(world, second)) {
+        again = again + 1
+    }
+    assert(again == 0)
+    ecs_free(world)
+}
+
+test "the entities a query hands over line up with its columns" {
+    mut world := ecs_new()
+    health := ecs_register($TestHealth, world)
+    mut made : i64 = 0
+    while (made < 8) {
+        e := ecs_spawn(world)
+        ecs_add($TestHealth, world, e, health, TestHealth { points = e.id })
+        made = made + 1
+    }
+    mut checked : i64 = 0
+    mut q := query_begin(world, health)
+    while (query_next(world, q)) {
+        entities := query_entities(world, q)
+        points := query_column($TestHealth, world, q, health)
+        stamps := query_changed(world, q, health)
+        assert(slice_len(entities) == q.count)
+        assert(slice_len(points) == q.count)
+        assert(slice_len(stamps) == q.count)
+        mut i : i64 = 0
+        while (i < q.count) {
+            // The component holds the id of the entity beside it, so a walk
+            // that lost its place would show here.
+            assert(points[i].points == entities[i].id)
+            i = i + 1
+        }
+        checked = checked + q.count
+    }
+    assert(checked == 8)
+    ecs_free(world)
+}
+
+test "a component nothing asked about has no change to report" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    health := ecs_register($TestHealth, world)
+    a := ecs_spawn(world)
+    ecs_add($TestPosition, world, a, position,
+        TestPosition { x = 0.0, y = 0.0 })
+    // The entity does not hold this one, so nothing about it changed.
+    assert(ecs_changed_since(world, a, health, 0) == false)
+    assert(ecs_added_since(world, a, health, 0) == false)
+    ecs_free(world)
+}
+
+test "removing a component and giving it back marks it added again" {
+    mut world := ecs_new()
+    health := ecs_register($TestHealth, world)
+    a := ecs_spawn(world)
+    ecs_add($TestHealth, world, a, health, TestHealth { points = 1 })
+    ecs_remove(world, a, health)
+    watermark := ecs_tick(world)
+    ecs_add($TestHealth, world, a, health, TestHealth { points = 2 })
+    assert(ecs_added_since(world, a, health, watermark - 1))
+    assert(ecs_changed_since(world, a, health, watermark - 1))
+    assert(ecs_get($TestHealth, world, a, health).points == 2)
+    ecs_free(world)
+}
+
+test "the clock only moves when it is told to" {
+    mut world := ecs_new()
+    health := ecs_register($TestHealth, world)
+    a := ecs_spawn(world)
+    at := ecs_now(world)
+    ecs_add($TestHealth, world, a, health, TestHealth { points = 1 })
+    ecs_set($TestHealth, world, a, health, TestHealth { points = 2 })
+    assert(ecs_now(world) == at)
+    assert(ecs_tick(world) == at + 1)
+    assert(ecs_now(world) == at + 1)
+    ecs_free(world)
+}
+
+test "a resource is written through its slice and read back whole" {
+    mut world := ecs_new()
+    order := ecs_resource_register($TestOrder, world)
+    damage := ecs_resource_register($TestDamage, world)
+    // The slots are handed out in order and stay apart.
+    assert(order == 0)
+    assert(damage == 1)
+    mut held := ecs_resource_slice($TestOrder, world, order)
+    held[0].steps = 11
+    assert(ecs_resource($TestOrder, world, order).steps == 11)
+    ecs_resource_set($TestDamage, world, damage, TestDamage { amount = 3 })
+    assert(ecs_resource($TestOrder, world, order).steps == 11)
+    assert(ecs_resource($TestDamage, world, damage).amount == 3)
+    ecs_free(world)
+}
+
+// ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+
+test "a channel grows past what it was made with" {
+    mut channel := events_new($TestDamage)
+    mut sent : i64 = 0
+    while (sent < 300) {
+        events_send($TestDamage, channel, TestDamage { amount = sent })
+        sent = sent + 1
+    }
+    assert(events_sent(channel) == 300)
+    held := events_slice($TestDamage, channel)
+    assert(slice_len(held) == 300)
+    assert(held[0].amount == 0)
+    assert(held[299].amount == 299)
+    events_free(channel)
+}
+
+test "a reader that has caught up sees the next one sent" {
+    mut channel := events_new($TestDamage)
+    mut reader := reader_new()
+    assert(slice_len(events_read($TestDamage, channel, reader)) == 0)
+    events_send($TestDamage, channel, TestDamage { amount = 1 })
+    first := events_read($TestDamage, channel, reader)
+    assert(slice_len(first) == 1)
+    assert(slice_len(events_read($TestDamage, channel, reader)) == 0)
+    events_send($TestDamage, channel, TestDamage { amount = 2 })
+    second := events_read($TestDamage, channel, reader)
+    assert(slice_len(second) == 1)
+    assert(second[0].amount == 2)
+    events_free(channel)
+}
+
+test "clearing an empty channel leaves the sequence where it was" {
+    mut channel := events_new($TestDamage)
+    events_clear(channel)
+    assert(events_sent(channel) == 0)
+    events_send($TestDamage, channel, TestDamage { amount = 4 })
+    events_clear(channel)
+    assert(events_sent(channel) == 1)
+    assert(slice_len(events_slice($TestDamage, channel)) == 0)
+    events_free(channel)
+}
+
+// ---------------------------------------------------------------------------
+// Tags, commands, hierarchy, schedules
+// ---------------------------------------------------------------------------
+
+test "a tag on a high id grows the marks to reach it" {
+    mut world := ecs_new()
+    mut marks := tag_new()
+    mut made : i64 = 0
+    mut last := ecs_spawn(world)
+    while (made < 100) {
+        last = ecs_spawn(world)
+        made = made + 1
+    }
+    tag_add(marks, last)
+    assert(tag_has(marks, last))
+    // And an id the marks never reached is unmarked rather than out of range.
+    assert(tag_has(marks, Entity { id = 5000, generation = 0 }) == false)
+    tag_remove(marks, Entity { id = 5000, generation = 0 })
+    tag_free(marks)
+    ecs_free(world)
+}
+
+test "a command buffer applied twice does nothing the second time" {
+    mut world := ecs_new()
+    a := ecs_spawn(world)
+    mut queued := commands_new()
+    commands_spawn(queued)
+    commands_despawn(queued, a)
+    commands_apply(queued, world)
+    after := ecs_count(world)
+    assert(after == 1)
+    commands_apply(queued, world)
+    assert(ecs_count(world) == after)
+    commands_free(queued)
+    ecs_free(world)
+}
+
+test "a child taken off its parent is a child of nobody" {
+    mut world := ecs_new()
+    mut tree := hierarchy_new()
+    parent := ecs_spawn(world)
+    child := ecs_spawn(world)
+    hierarchy_attach(tree, child, parent)
+    hierarchy_detach(tree, child)
+    assert(is_no_entity(hierarchy_parent(tree, child)))
+    assert(hierarchy_child_count(tree, parent) == 0)
+    assert(is_no_entity(hierarchy_first_child(tree, parent)))
+    // Detaching one that is attached to nothing is not an error.
+    hierarchy_detach(tree, child)
+    assert(hierarchy_child_count(tree, parent) == 0)
+    hierarchy_free(tree)
+    ecs_free(world)
+}
+
+test "a child in the middle of a parent's list comes out of it" {
+    mut world := ecs_new()
+    mut tree := hierarchy_new()
+    parent := ecs_spawn(world)
+    first := ecs_spawn(world)
+    middle := ecs_spawn(world)
+    last := ecs_spawn(world)
+    hierarchy_attach(tree, first, parent)
+    hierarchy_attach(tree, middle, parent)
+    hierarchy_attach(tree, last, parent)
+    assert(hierarchy_child_count(tree, parent) == 3)
+    hierarchy_detach(tree, middle)
+    assert(hierarchy_child_count(tree, parent) == 2)
+    // The two that are left are still reachable from the head.
+    mut walk := hierarchy_first_child(tree, parent)
+    mut found_first : bool = false
+    mut found_last : bool = false
+    while (is_no_entity(walk) == false) {
+        if (walk.id == first.id) { found_first = true }
+        if (walk.id == last.id) { found_last = true }
+        walk = hierarchy_next_sibling(tree, walk)
+    }
+    assert(found_first)
+    assert(found_last)
+    hierarchy_free(tree)
+    ecs_free(world)
+}
+
+test "a tree several deep is despawned to the root" {
+    mut world := ecs_new()
+    mut tree := hierarchy_new()
+    root := ecs_spawn(world)
+    // A fresh handle rather than the name: binding a struct to a second name
+    // moves it, and the root is wanted again at the end.
+    mut parent := Entity { id = root.id, generation = root.generation }
+    mut depth : i64 = 0
+    while (depth < 8) {
+        child := ecs_spawn(world)
+        hierarchy_attach(tree, child, parent)
+        parent = child
+        depth = depth + 1
+    }
+    assert(ecs_count(world) == 9)
+    hierarchy_despawn_tree(tree, world, root)
+    assert(ecs_count(world) == 0)
+    hierarchy_free(tree)
+    ecs_free(world)
+}
+
+test "despawning a leaf leaves the rest of the tree standing" {
+    mut world := ecs_new()
+    mut tree := hierarchy_new()
+    root := ecs_spawn(world)
+    keep := ecs_spawn(world)
+    drop := ecs_spawn(world)
+    hierarchy_attach(tree, keep, root)
+    hierarchy_attach(tree, drop, root)
+    hierarchy_despawn_tree(tree, world, drop)
+    assert(ecs_alive(world, drop) == false)
+    assert(ecs_alive(world, keep))
+    assert(ecs_alive(world, root))
+    assert(hierarchy_child_count(tree, root) == 1)
+    hierarchy_free(tree)
+    ecs_free(world)
+}
+
+test "an empty schedule runs nothing and says so" {
+    mut world := ecs_new()
+    mut frame := schedule_new()
+    assert(schedule_count(frame) == 0)
+    schedule_run(frame, world, ANY_STATE)
+    assert(ecs_count(world) == 0)
+    schedule_free(frame)
+    ecs_free(world)
+}
+
+test "every stage runs, in the order the stages are written" {
+    mut world := ecs_new()
+    ecs_resource_register($TestOrder, world)
+    mut frame := schedule_new()
+    // Added back to front, so only the stage can put them right.
+    schedule_add(frame, Stage::Last, third_system)
+    schedule_add(frame, Stage::Update, second_system)
+    schedule_add(frame, Stage::First, first_system)
+    assert(schedule_count(frame) == 3)
+    schedule_run(frame, world, ANY_STATE)
+    // first: 0 * 2 + 1 = 1, second: 1 * 2 = 2, third: 2 * 3 = 6.
+    assert(ecs_resource($TestOrder, world, 0).steps == 6)
+    schedule_free(frame)
+    ecs_free(world)
+}
+
+test "a system runs once per pass over its stage" {
+    mut world := ecs_new()
+    mut frame := schedule_new()
+    schedule_add(frame, Stage::Update, spawning_system)
+    schedule_run(frame, world, ANY_STATE)
+    assert(ecs_count(world) == 1)
+    schedule_run(frame, world, ANY_STATE)
+    assert(ecs_count(world) == 2)
+    schedule_free(frame)
+    ecs_free(world)
+}
+
+test "a state that was asked for and not applied changes nothing" {
+    mut states := states_new(3)
+    assert(states_current(states) == 3)
+    states_request(states, 3)
+    assert(states_apply(states) == false)
+    assert(states_current(states) == 3)
+    states_request(states, 4)
+    states_request(states, 5)
+    // The last word wins, and one apply is what takes it.
+    assert(states_apply(states))
+    assert(states_current(states) == 5)
+    assert(states_apply(states) == false)
+}
+
+test "time accumulates rather than replacing" {
+    mut clock := time_new()
+    assert(clock.frame == 0)
+    assert(clock.elapsed == 0.0)
+    time_advance(clock, 0.5)
+    time_advance(clock, 0.5)
+    time_advance(clock, 1.0)
+    assert(clock.frame == 3)
+    assert(clock.delta == 1.0)
+    assert(clock.elapsed == 2.0)
+}
+
+third_system :: fn(mut world: World) {
+    held := ecs_resource($TestOrder, world, 0)
+    ecs_resource_set($TestOrder, world, 0, TestOrder { steps = held.steps * 3 })
 }

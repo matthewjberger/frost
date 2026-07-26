@@ -883,22 +883,7 @@ impl IrBuilder {
     }
 
     fn type_is_linear(&self, ty: &Type) -> bool {
-        match ty {
-            Type::Struct(name) | Type::Enum(name) => {
-                self.linear.contains(linear_template_of(name))
-            }
-            Type::Distinct(_, inner) => self.type_is_linear(inner),
-            _ => false,
-        }
-    }
-}
-
-/// The name a generic instance was stamped from: `Vec<i64>` is `Vec`. A
-/// `linear` is written once, on the template, so that is where the answer is.
-fn linear_template_of(name: &str) -> &str {
-    match name.find('<') {
-        Some(at) => &name[..at],
-        None => name,
+        ty.is_linear_with(&self.linear)
     }
 }
 
@@ -920,16 +905,12 @@ fn linear_with_holders(
             let Statement::Struct(name, _, fields) = &statement.node else {
                 continue;
             };
-            if held.contains(linear_template_of(name)) {
+            if held.contains(Type::template_of(name)) {
                 continue;
             }
-            let holds = fields.iter().any(|field| {
-                matches!(
-                    &field.field_type,
-                    Type::Struct(inner) | Type::Enum(inner)
-                        if held.contains(linear_template_of(inner))
-                )
-            });
+            let holds = fields
+                .iter()
+                .any(|field| field.field_type.is_linear_with(&held));
             if holds {
                 held.insert(name.clone());
                 grew = true;
@@ -5261,10 +5242,13 @@ impl<'a> FunctionLowering<'a> {
                             lowered.push(coerced);
                             continue;
                         }
-                        if let IrOperand::Local(local) = operand {
-                            lowered.push(self.address_of_local(local, inner));
-                            continue;
-                        }
+                        let IrOperand::Local(local) = operand else {
+                            bail!(
+                                "native backend: this argument is a '{value_type}' with no storage, and '{name}' borrows it here"
+                            );
+                        };
+                        lowered.push(self.address_of_local(local, inner));
+                        continue;
                     }
                     // An array reaching a `[]T` parameter becomes a slice of
                     // the whole of itself first. Without this the callee is
@@ -5636,12 +5620,12 @@ impl<'a> FunctionLowering<'a> {
                         "native backend: cannot pass this value as an aggregate argument"
                     );
                 };
-                // A borrowed parameter is handed an address, so a value that
-                // is not already in memory is put there first. A read
-                // parameter of a generic is a borrow whatever the type turns
-                // out to be, so a scalar reaching one arrives as a register
-                // and has nowhere to point at: `map_insert(m, old_keys[i])`
-                // with an i64 key is this.
+                // A borrowed parameter is handed an address, so an aggregate
+                // that is not already in memory is put there first: the value
+                // an expression answered with lives in a register until
+                // something needs to point at it. A scalar reaching a borrow is
+                // not this; that one is passed as the value it is, where the
+                // plan is read.
                 if needs_memory(target) && !self.locals[local].in_memory {
                     let held = self.fresh_local(target.clone(), None);
                     self.mark_in_memory(held);
