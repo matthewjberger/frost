@@ -1135,7 +1135,9 @@ fn evaluate_constant(
 // where `Pair<i64, bool> {` would otherwise read as two comparisons, so which
 // names can start one is settled before the parse rather than guessed at during
 // it.
-fn scan_generic_types(tokens: &[Token]) -> std::collections::HashSet<String> {
+pub fn scan_generic_types(
+    tokens: &[Token],
+) -> std::collections::HashSet<String> {
     let mut names = std::collections::HashSet::new();
     for index in 0..tokens.len() {
         let Token::Identifier(name) = &tokens[index] else {
@@ -1280,6 +1282,18 @@ impl<'a> Parser<'a> {
             generic_types: scan_generic_types(tokens),
             block_depth: 0,
         }
+    }
+
+    // Generic types this file did not declare but may name, which is every one
+    // declared by a file it imports. Which names can start a literal is settled
+    // before the parse, and a file that imports `Ordering` writes
+    // `Ordering<Point> { .. }` exactly as the file declaring it does.
+    pub fn also_generic(
+        &mut self,
+        names: std::collections::HashSet<String>,
+    ) -> &mut Self {
+        self.generic_types.extend(names);
+        self
     }
 
     pub fn tests(&self) -> &[(String, String)] {

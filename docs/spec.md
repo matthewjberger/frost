@@ -1086,7 +1086,74 @@ itself, and nothing else.
 
 There is no bound keyed by a name, such as asking whether a type has a field
 called `position`. A string literal does not grep back to the declaration it
-names, which is the one thing the flat namespace (11.5) is for.
+names, which is the one thing the flat namespace (11.6) is for.
+
+A bound answers what a type *is*. What can be *done* with it is a different
+question, and 11.4b is its answer.
+
+### 11.4b Capability bundles
+
+A capability bundle is a generic struct whose fields are functions. It says what
+can be done with a type:
+
+```frost
+Ordering :: struct($T: Type) {
+    less: fn(T, T) -> bool,
+    equal: fn(T, T) -> bool,
+}
+```
+
+An implementation is a constant of it, and a constant is its value wherever it
+is named:
+
+```frost
+i64_less  :: fn(a: i64, b: i64) -> bool { a < b }
+i64_equal :: fn(a: i64, b: i64) -> bool { a == b }
+
+i64_ascending :: Ordering<i64> { less = i64_less, equal = i64_equal }
+```
+
+A generic that needs the operations takes the bundle as a compile-time
+argument, and the call names which one it means:
+
+```frost
+sort :: fn($T: Type, $ops: Ordering<T>, mut items: []T) {
+    ...
+    if (ops.less(items[j], items[j - 1])) { ... }
+}
+
+sort($i64, $i64_ascending, view)
+```
+
+Because `$ops` is a compile-time argument, `ops.less(a, b)` folds to a direct
+call to `i64_less`. The specialization holds no function pointer, loads nothing,
+and dispatches on nothing.
+
+Dropping the `$` gives the runtime form from the same declaration:
+
+```frost
+sort_at_runtime :: fn(ops: Ordering<i64>, mut items: []i64) { ... }
+```
+
+Now `ops` is an ordinary value: it can be chosen while the program runs, stored
+in an array, or swapped, and the calls go through the pointers it holds. There
+is no separate feature and no second spelling of the bundle type.
+
+Two orderings over one type are two constants:
+
+```frost
+i64_descending :: Ordering<i64> { less = i64_greater, equal = i64_equal }
+```
+
+Nothing conflicts, because nothing was ever implicit. Composition is a struct
+with struct fields rather than `T: A + B`, and the body reads
+`ops.ordering.less(a, b)`.
+
+`std/ordering.frost` and `std/sort.frost` are this written out.
+
+The declared type is checked at the call: an argument that is a constant of
+another type, or a name that is not a constant at all, is refused against the
+line the caller wrote.
 
 ### 11.5 No traits
 
@@ -1096,16 +1163,23 @@ rule, no orphan rule, and no method lookup. There are no associated types, no
 trait objects, and no dynamic dispatch. A generic body type-checks once
 specialized.
 
-To abstract over an *operation* rather than over a kind of type, pass it: a
-compile-time function parameter (11.1b) keeps the call direct, and what other
-languages call an interface is a struct whose fields are function pointers,
-which is an ordinary value with an ordinary type
-(`examples/native/allocator.frost`). Neither needs machinery the language does
-not already have.
+A capability bundle (11.4b) is what stands in its place, and the difference is
+where the answer comes from. A trait's implementation is attached to a type,
+found by a search, and unnamed at the call. A bundle's implementation is a
+constant, named at the call, and found by reading the line in front of you. That
+is the whole of it: `i64_ascending` greps to one definition, and a program that
+wants a second ordering writes a second constant rather than a wrapper type.
+
+The cost is visible. `sort($i64, $i64_ascending, view)` says more than
+`sort(&mut items)` does. That verbosity is the feature, and it is the same
+trade the rest of the language makes: the call site says what it did.
+
+For a single operation there is no need for a bundle at all. A compile-time
+function parameter (11.1b) passes one function and keeps the call direct.
 
 ---
 
-### 11.5 Modules and imports
+### 11.6 Modules and imports
 
 A module is a file. `import "x.frost"` splices that file's declarations into the
 program, and a file's `export` line is the complete set of names another file

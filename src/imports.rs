@@ -11,6 +11,7 @@ use crate::build_cache::{
 use crate::import_visibility::{FileNames, unimported_names};
 use crate::interface::ModuleInterface;
 use crate::lexer::Lexer;
+use crate::lexer::Token;
 use crate::parser::Parser;
 use crate::parser::{
     Block, Expression, Parameter, Pattern, ReturnKind, ReturnSignature,
@@ -322,6 +323,7 @@ fn parse_module(
     source: &str,
     file: u32,
     path: &Path,
+    generics: HashSet<String>,
 ) -> Result<Box<ParsedModule>> {
     let mut lexer = Lexer::new(source);
     let tokens = lexer
@@ -335,6 +337,7 @@ fn parse_module(
         .map(|position| crate::lexer::Position { file, ..*position })
         .collect();
     let mut parser = Parser::with_positions(&tokens, &positions);
+    parser.also_generic(generics);
     let statements = parser
         .parse()
         .with_context(|| format!("parsing {}", path.display()))?;
@@ -384,7 +387,17 @@ fn plan_module(
             interface
         }
         None => {
-            let fresh = parse_module(&source, file, full)?;
+            let fresh = parse_module(
+                &source,
+                file,
+                full,
+                imported_generic_types(
+                    &source,
+                    &directory_of(full),
+                    roots,
+                    root,
+                ),
+            )?;
             let interface = ModuleInterface::of(
                 &module,
                 &fresh.statements,
@@ -428,7 +441,12 @@ fn plan_module(
         .as_ref()
         .is_some_and(|record| !record.emits_object || object.exists());
     if !reused && parsed.is_none() {
-        let fresh = parse_module(&source, file, full)?;
+        let fresh = parse_module(
+            &source,
+            file,
+            full,
+            imported_generic_types(&source, &directory, roots, root),
+        )?;
         interface = ModuleInterface::of(
             &module,
             &fresh.statements,
@@ -763,7 +781,17 @@ impl Walk<'_> {
             format!("failed to read imported file: {}", full.display())
         })?;
         let file = crate::source_map::register(module_name);
-        let parsed = parse_module(&source, file, full)?;
+        let parsed = parse_module(
+            &source,
+            file,
+            full,
+            imported_generic_types(
+                &source,
+                &directory_of(full),
+                self.roots,
+                self.root,
+            ),
+        )?;
         self.resolved
             .linear_types
             .extend(parsed.linear_types.iter().cloned());
@@ -834,6 +862,94 @@ fn check_and_reduce(
     }
     interfaces.push(interface.clone());
     Ok(())
+}
+
+// Every generic type declared by a file this one imports, transitively. Which
+// names can start a literal is settled before the parse (a `Pair<i64, bool> {`
+// would otherwise read as two comparisons), and a file that imports a generic
+// type writes a literal of it exactly as the file declaring it does. Only the
+// declarations are read, by lexing each file and looking for the shape, since
+// this runs before anything is parsed.
+// The directory a file is in, which is where an import written in it is looked
+// for first.
+fn directory_of(file: &Path) -> PathBuf {
+    file.parent().map(Path::to_path_buf).unwrap_or_default()
+}
+
+pub fn imported_generic_types(
+    source: &str,
+    base_dir: &Path,
+    roots: &[SearchRoot],
+    project_root: &Path,
+) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let mut seen = HashSet::new();
+    let scan = Scan {
+        roots,
+        project_root,
+    };
+    for path in import_paths_in_source(source) {
+        collect_generic_types(base_dir, &path, &scan, &mut names, &mut seen);
+    }
+    names
+}
+
+// What the walk above needs everywhere and reads nowhere, so the recursion
+// carries one reference rather than two positional arguments.
+struct Scan<'a> {
+    roots: &'a [SearchRoot],
+    project_root: &'a Path,
+}
+
+fn collect_generic_types(
+    importing_dir: &Path,
+    path: &str,
+    scan: &Scan<'_>,
+    names: &mut HashSet<String>,
+    seen: &mut HashSet<PathBuf>,
+) {
+    let Some(found) =
+        find_import(importing_dir, path, scan.roots, scan.project_root)
+    else {
+        return;
+    };
+    let key = found
+        .path
+        .canonicalize()
+        .unwrap_or_else(|_| found.path.clone());
+    if !seen.insert(key.clone()) {
+        return;
+    }
+    let Ok(source) = fs::read_to_string(&found.path) else {
+        return;
+    };
+    let mut lexer = Lexer::new(&source);
+    if let Ok(tokens) = lexer.tokenize() {
+        names.extend(crate::parser::scan_generic_types(&tokens));
+    }
+    let directory = directory_of(&found.path);
+    for next in import_paths_in_source(&source) {
+        collect_generic_types(&directory, &next, scan, names, seen);
+    }
+}
+
+// The paths a file imports, read off its tokens rather than its parse, because
+// this is what runs before the parse.
+fn import_paths_in_source(source: &str) -> Vec<String> {
+    let mut lexer = Lexer::new(source);
+    let Ok(tokens) = lexer.tokenize() else {
+        return Vec::new();
+    };
+    let mut paths = Vec::new();
+    for index in 0..tokens.len() {
+        if !matches!(tokens[index], Token::Import) {
+            continue;
+        }
+        if let Some(Token::StringLiteral(path)) = tokens.get(index + 1) {
+            paths.push(path.clone());
+        }
+    }
+    paths
 }
 
 fn top_level_name(statement: &Statement) -> Option<&str> {
@@ -978,6 +1094,9 @@ impl Renamer {
                 }
                 for param in params.iter_mut() {
                     if let Some(ty) = &mut param.type_annotation {
+                        self.ty(ty);
+                    }
+                    if let Some(ty) = &mut param.compile_time_signature {
                         self.ty(ty);
                     }
                 }
@@ -1134,6 +1253,11 @@ impl Renamer {
             if let Some(ty) = &mut param.type_annotation {
                 self.ty(ty);
             }
+            // What a compile-time parameter is declared to take is a type like
+            // any other, and a bundle parameter names one this module imported.
+            if let Some(ty) = &mut param.compile_time_signature {
+                self.ty(ty);
+            }
             self.bind(scope, &param.name);
         }
     }
@@ -1191,6 +1315,12 @@ impl Renamer {
             Expression::StructInit(name, fields) => {
                 if let Some(mangled) = self.renames.get(name.as_str()) {
                     *name = mangled.clone();
+                } else if let Some(renamed) = self.generic_instance(name) {
+                    // A literal that says which instance it is names it as one
+                    // string, `Ordering<i64>`, so looking the whole thing up
+                    // finds nothing. Both halves are renamed the way a type
+                    // annotation naming the same instance is.
+                    *name = renamed;
                 }
                 for (_, value) in fields.iter_mut() {
                     self.expression(value, scope);

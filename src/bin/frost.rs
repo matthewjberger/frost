@@ -283,7 +283,20 @@ fn main() -> Result<()> {
         })
         .collect();
 
+    let project_root =
+        base_dir.canonicalize().unwrap_or_else(|_| base_dir.clone());
+    let roots = search_roots(&cli, &project_root)?;
+
     let mut parser = FrostParser::with_positions(&tokens, &positions);
+    // A generic type this file imports may be named in a literal here, so which
+    // names can start one is settled from the files it imports as well as from
+    // this one.
+    parser.also_generic(frost::imported_generic_types(
+        &source,
+        &base_dir,
+        &roots,
+        &project_root,
+    ));
     let parsed = parser.parse().context("Parser error")?;
     // A module's object is only its own on the link path, so that is the only
     // place a cached one can be linked instead of built. `--test` needs every
@@ -304,10 +317,6 @@ fn main() -> Result<()> {
     } else {
         None
     };
-
-    let project_root =
-        base_dir.canonicalize().unwrap_or_else(|_| base_dir.clone());
-    let roots = search_roots(&cli, &project_root)?;
 
     let resolved = resolve_imports_cached(
         parsed,

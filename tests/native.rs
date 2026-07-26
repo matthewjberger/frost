@@ -10065,6 +10065,60 @@ fn self_hosted_calls_through_a_function_pointer_field() {
     assert_eq!(via_c, output, "the self-hosted C backend disagrees");
 }
 
+// A bundle declared in one file, an ordering for a type declared in another,
+// and a sort over both. Writing `Ordering<Point> { .. }` in a file that imports
+// `Ordering` is the whole point of a bundle being an ordinary type: which names
+// can begin a literal comes from what a file imports as well as what it
+// declares.
+#[test]
+fn a_program_declares_its_own_ordering_for_its_own_type() {
+    if !linker_available() {
+        return;
+    }
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let directory = std::env::temp_dir().join("frost_own_ordering");
+    let _ = std::fs::create_dir_all(&directory);
+    let source = directory.join("own_ordering.frost");
+    std::fs::write(
+        &source,
+        "import \"ordering.frost\"\n\
+         import \"sort.frost\"\n\
+         Point :: struct { x: i64, y: i64 }\n\
+         point_less :: fn(a: Point, b: Point) -> bool { a.x < b.x }\n\
+         point_equal :: fn(a: Point, b: Point) -> bool { a.x == b.x }\n\
+         point_order :: Ordering<Point> { less = point_less, equal = point_equal }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut points := [Point { x = 3, y = 0 }, Point { x = 1, y = 0 }]\n\
+         \x20   sort($Point, $point_order, points)\n\
+         \x20   print points[0].x\n\
+         \x20   print points[1].x\n    0\n}\n",
+    )
+    .unwrap();
+    let exe = directory.join(format!(
+        "{}{}",
+        unique("own_ordering"),
+        std::env::consts::EXE_SUFFIX
+    ));
+    let build = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("-L")
+        .arg(root.join("std"))
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe)
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "the program did not compile:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&exe).output().unwrap();
+    let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+    assert_eq!(output, "1\n3\n");
+    let _ = std::fs::remove_file(&exe);
+}
+
 // A capability bundle: a generic struct whose fields are functions, a constant
 // of it, and a generic that takes that constant as a compile-time argument. The
 // bundle says what can be done with a type, the constant says how it is done for
