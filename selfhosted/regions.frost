@@ -436,6 +436,11 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
         check_call_arguments(p, node.a, node.val, node.c)
         return
     }
+    if (kind == NodeKind::CallPtr) {
+        check_types_expr(p, node.a)
+        check_argument_expressions(p, node.b)
+        return
+    }
     if (kind == NodeKind::StructLit) {
         mut fid := node.a
         while (fid != (0 - 1)) {

@@ -450,6 +450,14 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
     // being computed at eight bits. Floats are the exception, since an integer
     // result there would be the wrong kind of number rather than the wrong
     // width, and a comparison answers a truth value either way.
+    // A call through a value answers with what that signature answers with.
+    if (kind == NodeKind::CallPtr) {
+        callee_ty := type_of(p, node.a)
+        if (is_proc(callee_ty)) {
+            return proc_ret(p, callee_ty)
+        }
+        return TY_I64
+    }
     if (kind == NodeKind::Bin) {
         if (node.val >= OP_LT) {
             return TY_I64

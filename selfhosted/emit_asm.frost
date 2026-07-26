@@ -993,6 +993,10 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         emit_asm_call(p, node.a, node.val)
         return
     }
+    if (kind == NodeKind::CallPtr) {
+        emit_asm_call_through(p, node.a, node.b)
+        return
+    }
     if (kind == NodeKind::StrLit) {
         asm_i("leaq .Lstr", id, "(%rip), %rax")
         return
@@ -1121,6 +1125,93 @@ emit_asm_capability :: fn(mut p: Parser, fn_index: i64, index: i64) {
         return
     }
     asm_i("movq ", slot, "(%rbp), %rax")
+}
+
+// A call through a value: `ops.less(a, b)`. The callee is worked out first and
+// kept in a slot of its own, because the arguments are evaluated after it and
+// would otherwise clobber whatever register held it. What the signature says
+// decides how the arguments travel, the same as any other call.
+emit_asm_call_through :: fn(mut p: Parser, callee: i64, args: i64) {
+    callee_ty := type_of(p, callee)
+    if (is_proc(callee_ty) == false) {
+        report_where(p.modules, p.src, arena_at(p.arena, callee).pos)
+        report("this is called, so it has to be a function, and it is a ")
+        report_type_name(p, callee_ty)
+        frost_rt_die()
+    }
+    held := alloc_temp(p, 8)
+    emit_asm_expr(p, callee)
+    asm_i("movq %rax, ", held, "(%rbp)")
+
+    count := count_args(p, args)
+    ret := proc_ret(p, callee_ty)
+    mut sret : i64 = 0
+    mut result_slot : i64 = 0
+    if (is_aggregate(ret)) {
+        sret = 1
+        result_slot = alloc_temp(p, type_size(p, ret))
+    }
+    // Arguments are pushed last to first, so an argument that is itself a call
+    // cannot disturb one already worked out.
+    mut i : i64 = count - 1
+    while (i >= 0) {
+        argument := nth_value_arg(p, args, i)
+        emit_asm_expr(p, argument)
+        want := proc_param_at(p, callee_ty, i)
+        if (want >= 0) {
+            emit_asm_coerce(p, argument, want)
+        }
+        emit_asm_push()
+        i = i - 1
+    }
+    regs := abi_arg_regs(p)
+    shadow := abi_shadow(p)
+    total := count + sret
+    spill := (total * 8 + 15) / 16 * 16
+    frame := shadow + spill
+    asm_i("subq $", frame, ", %rsp")
+    if (sret == 1) {
+        emit_text("    leaq ")
+        frost_rt_emit_int(result_slot)
+        emit_text("(%rbp), ")
+        emit_asm_arg_reg(p, 0)
+        emit_text("\n")
+    }
+    mut r : i64 = 0
+    while (r < count) {
+        asm_i("movq ", frame + 16 * r, "(%rsp), %r10")
+        position := r + sret
+        want := proc_param_at(p, callee_ty, r)
+        wants_sse := is_float(want)
+        if (wants_sse && position < regs) {
+            emit_text("    movq %r10, ")
+            emit_asm_sse_reg(position)
+            emit_text("\n")
+        } else if (position < regs) {
+            emit_text("    movq %r10, ")
+            emit_asm_arg_reg(p, position)
+            emit_text("\n")
+        } else {
+            asm_i("movq %r10, ", shadow + 8 * (position - regs), "(%rsp)")
+        }
+        r = r + 1
+    }
+    asm_i("movq ", held, "(%rbp), %r11")
+    if (p.abi_windows == 0) {
+        asm("movb $0, %al")
+    }
+    asm("call *%r11")
+    asm_i("addq $", frame + 16 * count, ", %rsp")
+    if (is_float(ret)) {
+        if (distinct_repr(ret) == TY_F32) {
+            emit_asm_move("movd", "%xmm0", "%eax")
+        } else {
+            emit_asm_move("movq", "%xmm0", "%rax")
+        }
+    }
+    if (sret == 1) {
+        asm_i("leaq ", result_slot, "(%rbp), %rax")
+    }
 }
 
 emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {

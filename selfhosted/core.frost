@@ -135,6 +135,10 @@ NodeKind :: enum {
     Arg, StructLit, Field, FieldInit, Deref, Index, AddrOf, PtrCast, Sizeof,
     ExprStmt, Match, Case, Extern, StrLit, TypeVal, With, Float, ArrayLit,
     SliceLen, Assert, Ref, SliceFrom,
+    // A call through a value rather than through a name: `ops.less(a, b)`,
+    // where the callee is any expression of function-pointer type. `a` is that
+    // expression and `b` is the argument list.
+    CallPtr,
 }
 
 // Type codes. A type is one i64. The primitives are small constants. A struct is
