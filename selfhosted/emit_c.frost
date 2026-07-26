@@ -119,6 +119,17 @@ emit_coerced :: fn(mut p: Parser, value: i64, want: i64) {
             return
         }
     }
+    // A read parameter of struct type arrives as a borrow, so the name holds
+    // the address of the value rather than the value. Writing it into a place
+    // of the struct's own type is a copy of what it points at: `items[row] =
+    // value` in a setter whose component is a struct is this, and without the
+    // dereference C is handed a pointer where a struct belongs.
+    if (is_aggregate(want) && is_pointer(have) && pointee(have) == want) {
+        emit_text("(*")
+        emit_expr(p, value)
+        emit_text(")")
+        return
+    }
     if (is_array_ty(want) && is_array_ty(have) && is_slice_ty(p, want)
         && is_slice_ty(p, have) == false) {
         emit_text("(")

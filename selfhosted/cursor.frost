@@ -3,8 +3,8 @@
 import "core.frost"
 import "lexer.frost"
 
-export advance, cur, cur_len, cur_off, cur_val, peek_kind, peek_is_word,
-    peek_off, peek_len
+export advance, cur, cur_len, cur_off, cur_val, on_same_line, peek_kind,
+    peek_is_word, peek_off, peek_len
 
 // Whether the token `offset` ahead is written as the given word. Reading a
 // token's spelling rather than its kind is how a word that is not a keyword,
@@ -62,6 +62,31 @@ cur_val :: fn(mut p: Parser) -> i64 {
 
 advance :: fn(mut p: Parser) {
     p.ti = p.ti + 1
+}
+
+// Whether the token here began on the line the one before it ended on. A `(` or
+// a `[` that opens a line is the start of a statement rather than a call or an
+// index of what came before it, so
+//
+//     table := vec_slice($Table, world.tables)[slot.table]
+//     (table.mask & mask) != 0
+//
+// is two statements. Without this the second line reads as calling the first,
+// which fails with the parenthesis blamed on a struct.
+on_same_line :: fn(mut p: Parser) -> bool {
+    if (p.ti == 0) {
+        return true
+    }
+    before := arena_at(p.tokens, p.ti - 1)
+    here := arena_at(p.tokens, p.ti)
+    mut at := before.off + before.len
+    while (at < here.off) {
+        if (unsafe { frost_rt_byte_at(p.src, at) } == 10) {
+            return false
+        }
+        at = at + 1
+    }
+    true
 }
 
 // ---------------------------------------------------------------------------

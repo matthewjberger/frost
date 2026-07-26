@@ -733,6 +733,11 @@ parse_postfix :: fn(mut p: Parser, start: i64) -> i64 {
     while (cur(p) == TokenKind::Dot || cur(p) == TokenKind::Caret
         || cur(p) == TokenKind::Question || cur(p) == TokenKind::Lbracket
         || cur(p) == TokenKind::Lparen) {
+        // A `(` or a `[` that opens a line starts a statement of its own.
+        if ((cur(p) == TokenKind::Lparen || cur(p) == TokenKind::Lbracket)
+            && on_same_line(p) == false) {
+            return node
+        }
         // `ops.less(a, b)`: what is called is a value rather than a name, so
         // the call is through whatever the expression so far answered with.
         if (cur(p) == TokenKind::Lparen) {
