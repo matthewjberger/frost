@@ -1355,6 +1355,138 @@ fn a_flags_type_refuses_what_is_not_one_of_its_bits() {
     }
 }
 
+// Naming a borrowed aggregate binds a copy of the caller's value, not a second
+// name for the caller's storage, so writing through the binding does not reach
+// back. `ref` is how a second name is asked for, and a call answering with a
+// `ref T` handed one out on purpose, so both keep the borrow they were given.
+const BINDING_COPIES: &str = "Pair :: struct { a: i64, b: i64 }
+     Held :: struct { items: [4]i64 }
+     bump :: fn(p: Pair) -> Pair {
+         mut out := p
+         out.a = 7
+         out
+     }
+     first :: fn(h: Held) -> Held {
+         mut out := h
+         out.items[0] = 9
+         out
+     }
+     main :: fn() -> i64 {
+         q := Pair { a = 1, b = 2 }
+         r := bump(q)
+         print r.a
+         print q.a
+         h := Held { items = [0, 0, 0, 0] }
+         k := first(h)
+         print k.items[0]
+         print h.items[0]
+         0
+     }
+";
+
+#[test]
+fn naming_a_borrowed_aggregate_binds_a_copy() {
+    let Some(output) = compile_and_run("bindcopy", BINDING_COPIES) else {
+        return;
+    };
+    assert_eq!(
+        output,
+        "7
+1
+9
+0
+"
+    );
+}
+
+#[test]
+fn self_hosted_naming_a_borrowed_aggregate_binds_a_copy() {
+    let Some(output) = selfhosted_native_output("shbindcopy", BINDING_COPIES)
+    else {
+        return;
+    };
+    assert_eq!(
+        output,
+        "7
+1
+9
+0
+"
+    );
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shbindcopy_input.frost");
+    std::fs::write(&input, BINDING_COPIES).unwrap();
+    let Some(c_source) = self_hosted_emits("shbindcopy", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shbindcopy", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
+// A frame wider than the page the native backend used to give every function.
+// Two kilobytes of locals in one function used to run past the frame and write
+// over whatever was below it, silently: the answer came back wrong rather than
+// the program crashing. The frame is now sized per function, so this is an
+// ordinary program.
+const WIDE_FRAME: &str = "Table :: struct { rows: [900]i64 }
+     fill :: fn(seed: i64) -> Table {
+         mut t := Table { rows = [0; 900] }
+         mut i : i64 = 0
+         while (i < 900) {
+             t.rows[i] = seed + i
+             i = i + 1
+         }
+         t
+     }
+     main :: fn() -> i64 {
+         mut total : i64 = 0
+         held := fill(1)
+         other := fill(1000)
+         mut i : i64 = 0
+         while (i < 900) {
+             total = total + held.rows[i] + other.rows[i]
+             i = i + 1
+         }
+         print total
+         print held.rows[899]
+         print other.rows[0]
+         0
+     }
+";
+
+#[test]
+fn a_function_wider_than_a_page_of_frame() {
+    let Some(output) = compile_and_run("wideframe", WIDE_FRAME) else {
+        return;
+    };
+    assert_eq!(
+        output,
+        "1710000
+900
+1000
+"
+    );
+}
+
+#[test]
+fn self_hosted_a_function_wider_than_a_page_of_frame() {
+    let Some(output) = selfhosted_native_output("shwideframe", WIDE_FRAME)
+    else {
+        return;
+    };
+    assert_eq!(
+        output,
+        "1710000
+900
+1000
+"
+    );
+}
+
 // A call through a function pointer that answers with a struct. A Frost
 // function hands an aggregate back through a trailing out-pointer, and a call
 // through a pointer is the same call, so the signature the call site builds is

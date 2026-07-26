@@ -3809,9 +3809,33 @@ impl<'a> FunctionLowering<'a> {
                         "native backend: cannot bind '{name}' to a void value; this expression produces no value"
                     );
                 }
-                let declared = type_annotation
-                    .clone()
-                    .unwrap_or_else(|| value_type.clone());
+                // Binding a borrowed aggregate *by name* is a copy of the
+                // value rather than a second name for the caller's storage.
+                // Naming a parameter always means the caller's value, so the
+                // binding takes what it holds. Only a name: a call that answers
+                // with a `ref T` handed out a borrow on purpose, and `ref x :=
+                // place` asks for one, so both keep what they were given.
+                let borrowed_aggregate = match &value_type {
+                    Type::Ref(inner) | Type::RefMut(inner)
+                        if needs_memory(inner)
+                            && matches!(value, Expression::Identifier(_)) =>
+                    {
+                        Some(inner.as_ref().clone())
+                    }
+                    _ => None,
+                };
+                if let Some(inner) = &borrowed_aggregate
+                    && self.builder.type_is_linear(inner)
+                {
+                    bail!(
+                        "'{name}' would be a second owner of a '{inner}', which is consumed exactly once; bind a `ref` to read it in place"
+                    );
+                }
+                let declared = match (type_annotation, &borrowed_aggregate) {
+                    (Some(annotated), _) => annotated.clone(),
+                    (None, Some(inner)) => inner.clone(),
+                    (None, None) => value_type.clone(),
+                };
                 let coerced = self.coerce(operand, &value_type, &declared);
                 let local =
                     self.fresh_local(declared.clone(), Some(name.clone()));

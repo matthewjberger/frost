@@ -294,12 +294,24 @@ ref table := vec_slice($Table, world.tables)[slot.table]
 containers were linear the compiler started refusing the first form, which is
 how the sixteen of them in the ECS were found.
 
-Related: binding a struct to a second name moves it.
+Related: binding a *local* struct to a second name moves it.
 
 ```frost
 root := ecs_spawn(world)
 mut parent := root          // root is gone from here on
 mut parent := Entity { id = root.id, generation = root.generation }   // instead
+```
+
+Binding a *parameter* to a name is the other way round: it copies, so writing
+through the binding does not reach the caller. That is what makes a function
+like `mask_with` read the way it should.
+
+```frost
+mask_with :: fn(m: Mask, index: i64) -> Mask {
+    mut out := m                  // a copy of the caller's mask
+    out.words[index / 64] = ...
+    out
+}
 ```
 
 ---

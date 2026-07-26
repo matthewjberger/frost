@@ -27,6 +27,12 @@ fn make_isa() -> Result<std::sync::Arc<dyn cranelift::codegen::isa::TargetIsa>>
     let mut flag_builder = settings::builder();
     flag_builder.set("opt_level", "speed")?;
     flag_builder.set("is_pic", "true")?;
+    // Windows grows a thread's stack through a guard page, so a frame wider
+    // than one page has to touch each page on the way down or the guard is
+    // stepped over and the write faults. Without this a function holding a
+    // couple of kilobytes of locals crashes on the first write.
+    flag_builder.set("enable_probestack", "true")?;
+    flag_builder.set("probestack_strategy", "inline")?;
     let isa_builder = cranelift_native::builder()
         .map_err(|message| anyhow::anyhow!("ISA builder: {message}"))?;
     Ok(isa_builder.finish(settings::Flags::new(flag_builder))?)
@@ -300,6 +306,8 @@ impl Generator {
         let mut flag_builder = settings::builder();
         flag_builder.set("opt_level", "speed")?;
         flag_builder.set("is_pic", "true")?;
+        flag_builder.set("enable_probestack", "true")?;
+        flag_builder.set("probestack_strategy", "inline")?;
         let isa_builder = cranelift_native::builder()
             .map_err(|message| anyhow::anyhow!("ISA builder: {message}"))?;
         let isa = isa_builder.finish(settings::Flags::new(flag_builder))?;

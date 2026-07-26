@@ -941,7 +941,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         len := node.c
         mut ty := annotation
         if (annotation == (0 - 1)) {
-            ty = type_of(p, value)
+            ty = binding_type(p, value)
         }
         emit_ctype(p, ty)
         emit_text(" ")

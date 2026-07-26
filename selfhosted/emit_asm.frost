@@ -58,7 +58,19 @@ abi_shadow :: fn(mut p: Parser) -> i64 {
     0
 }
 
-ASM_FRAME :: 4096
+// The bytes reserved below the locals, for the outgoing-argument shadow area a
+// call needs and for the alignment the ABI asks of the stack pointer.
+ASM_FRAME_PAD :: 64
+
+// The name a function's frame size is written down under. The size is not known
+// until the body has been emitted, since a local is recorded as it is reached,
+// so the prologue names a symbol and the body is followed by its `.set`. The
+// assembler resolves an absolute symbol defined later in the same file, which
+// is what lets one streaming pass emit both.
+emit_frame_symbol :: fn(mut p: Parser) {
+    emit_text("__frost_frame_")
+    frost_rt_emit_int(p.frame_id)
+}
 
 
 // Copy a struct, a word at a time. Both addresses arrive in registers.
@@ -1592,7 +1604,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         len := node.c
         mut ty := annotation
         if (annotation == (0 - 1)) {
-            ty = type_of(p, value)
+            ty = binding_type(p, value)
         }
         // `columns_new()` is a zeroed container. There is no call to make, only
         // the local's slot to clear.
@@ -1895,20 +1907,43 @@ emit_asm_block :: fn(mut p: Parser, head: i64) {
 emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
     p.locals.count = 0
     p.frame_used = 0
-    p.asm_temp = 32 - ASM_FRAME
     p.asm_ret = ret
+    p.frame_id = p.frame_id + 1
+    mine := p.frame_id
     asm("pushq %rbp")
     asm("movq %rsp, %rbp")
+    emit_text("    subq $")
+    emit_frame_symbol(p)
+    emit_text(", %rsp
+")
     // Windows grows the stack through a guard page, so a frame wider than one
     // page has to touch each page on the way down or the guard is stepped over
-    // and the access faults.
-    mut left : i64 = ASM_FRAME
-    while (left > 4096) {
-        asm("subq $4096, %rsp")
-        asm("movq $0, (%rsp)")
-        left = left - 4096
+    // and the access faults. The size is a symbol here rather than a number, so
+    // which pages to touch is decided while the program runs: one pass down
+    // from the frame pointer, one write per page. A frame of one page, which is
+    // almost all of them, leaves the loop after a single turn.
+    if (p.abi_windows == 1) {
+        asm("movq %rbp, %r11")
+        emit_text(".Lprobe")
+        frost_rt_emit_int(mine)
+        emit_text(":
+")
+        asm("subq $4096, %r11")
+        asm("cmpq %rsp, %r11")
+        emit_text("    jbe .Lprobed")
+        frost_rt_emit_int(mine)
+        emit_text("
+")
+        asm("movq $0, (%r11)")
+        emit_text("    jmp .Lprobe")
+        frost_rt_emit_int(mine)
+        emit_text("
+")
+        emit_text(".Lprobed")
+        frost_rt_emit_int(mine)
+        emit_text(":
+")
     }
-    asm_i("subq $", left, ", %rsp")
 
     // A struct result arrives as a hidden pointer ahead of the real arguments.
     regs := abi_arg_regs(p)
@@ -2072,6 +2107,15 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
     asm("movq $0, %rax")
     asm("leave")
     asm("ret")
+    // Now that every local and temporary has been reached, say how wide the
+    // frame the prologue asked for is. The pad is the outgoing shadow area a
+    // call writes into, below everything this function named.
+    emit_text("    .set __frost_frame_")
+    frost_rt_emit_int(mine)
+    emit_text(", ")
+    frost_rt_emit_int(align_up(p.frame_used + ASM_FRAME_PAD, 16))
+    emit_text("
+")
 }
 
 emit_asm_function :: fn(mut p: Parser, id: i64) {
