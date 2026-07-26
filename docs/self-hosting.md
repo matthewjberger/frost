@@ -142,6 +142,16 @@ little it reaches. `just bench-incremental` is the measurement that does show it
 9,484 lines across 65 files, one changed, about 580 ms full against about 200 ms
 with `--incremental`. See [separate-compilation.md](separate-compilation.md).
 
+The Frost compiler has its own answer to the same shape problem, and a smaller
+one, because it emits assembly rather than an IR. `--incremental` writes one
+assembly unit per module and assembles each to its own object, and a module
+whose emitted assembly is byte for byte last build's is not assembled again.
+The cache key is that assembly: the compiler has just written what the module
+compiles to, so nothing else has to be hashed or walked. On its own source,
+`just bench-selfhost-incremental` measures about 1,500 ms whole-program against
+about 330 ms once the objects are there, and the compiler that comes out is byte
+for byte the one the whole-program build produces.
+
 What keeps the backend off the curve:
 
 1. Functions compile in parallel. The type system is local and

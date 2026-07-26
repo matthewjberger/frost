@@ -4,7 +4,8 @@
 
 import "core.frost"
 
-export BACKEND_ASM, BACKEND_C, Options, c_compiler, join_two,
+export BACKEND_ASM, BACKEND_C, Options, c_compiler, join_two, join_number,
+    file_checksum, stored_checksum, write_checksum, make_directory,
     options_from_command_line, usage
 
 BACKEND_C   :: 0
@@ -19,6 +20,10 @@ Options :: struct {
     link: i64,
     testing: i64,
     roots: Arena<SearchRoot>,
+    // Compile each module to its own object and assemble only the ones whose
+    // emitted code changed. `build_dir` is where those objects are kept.
+    incremental: i64,
+    build_dir: ^i8,
     help: i64,
     ok: i64,
 }
@@ -32,6 +37,8 @@ usage :: fn() {
     report("    --emit-asm    emit x86-64 assembly\n")
     report("    --native      the same as --emit-asm\n")
     report("    --link        assemble and link an executable\n")
+    report("    --incremental one object per module, assembling only what changed\n")
+    report("    --build-dir <dir>  where those objects are kept\n")
     report("    --test        build and run the file's `test` blocks\n")
     report("    -h, --help    this\n\n")
     report("Without -o the output goes to standard output. FROST_INPUT ")
@@ -77,6 +84,122 @@ join_two :: fn(first: ^i8, second: ^i8) -> ^i8 {
     out
 }
 
+// A string with a number after it, for the per-module file names an
+// incremental build works with: `<build>/m3.s` and `<build>/m3.o`.
+join_number :: fn(first: ^i8, number: i64, last: ^i8) -> ^i8 {
+    mut digits : i64 = 1
+    mut scale : i64 = 1
+    mut counted := number
+    while (counted >= 10) {
+        counted = counted / 10
+        digits = digits + 1
+        scale = scale * 10
+    }
+    first_len := unsafe { frost_rt_str_len(first) }
+    last_len := unsafe { frost_rt_str_len(last) }
+    out := unsafe {
+        ptr_cast($i8, malloc(first_len + digits + last_len + 1))
+    }
+    mut k : i64 = 0
+    while (k < first_len) {
+        unsafe { frost_rt_byte_set(out, k, frost_rt_byte_at(first, k)) }
+        k = k + 1
+    }
+    mut value := number
+    mut written : i64 = 0
+    while (written < digits) {
+        digit := value / scale
+        unsafe {
+            frost_rt_byte_set(out, first_len + written, CH_0 + digit)
+        }
+        value = value - digit * scale
+        scale = scale / 10
+        written = written + 1
+    }
+    k = 0
+    while (k < last_len) {
+        unsafe {
+            frost_rt_byte_set(out, first_len + digits + k,
+                frost_rt_byte_at(last, k))
+        }
+        k = k + 1
+    }
+    unsafe { frost_rt_byte_set(out, first_len + digits + last_len, 0) }
+    out
+}
+
+// What a file holds, as one number. This is the whole of the cache: the
+// compiler has just written what a module compiles to, so whether that module's
+// object is stale is a question about those bytes and nothing else. No hash of
+// the source, no interface fingerprint, no dependency graph, because the answer
+// is already in hand. A file that is not there answers 0, which no emitted unit
+// does, so the first build of a module builds it.
+file_checksum :: fn(path: ^i8) -> i64 {
+    if (unsafe { frost_rt_file_exists(path) } == 0) {
+        return 0
+    }
+    text := unsafe { frost_rt_read_file(path) }
+    length := unsafe { frost_rt_str_len(text) }
+    mut sum : i64 = length + 1
+    mut k : i64 = 0
+    while (k < length) {
+        sum = sum * 131 + unsafe { frost_rt_byte_at(text, k) }
+        k = k + 1
+    }
+    sum
+}
+
+// The number a previous build left beside a module's object, or 0 for a module
+// nothing has built yet.
+stored_checksum :: fn(path: ^i8) -> i64 {
+    if (unsafe { frost_rt_file_exists(path) } == 0) {
+        return 0
+    }
+    text := unsafe { frost_rt_read_file(path) }
+    length := unsafe { frost_rt_str_len(text) }
+    mut value : i64 = 0
+    mut negative : bool = false
+    mut k : i64 = 0
+    while (k < length) {
+        byte := unsafe { frost_rt_byte_at(text, k) }
+        if (byte == CH_MINUS) {
+            negative = true
+        }
+        if (byte >= CH_0 && byte <= CH_9) {
+            value = value * 10 + (byte - CH_0)
+        }
+        k = k + 1
+    }
+    if (negative) {
+        return 0 - value
+    }
+    value
+}
+
+write_checksum :: fn(path: ^i8, value: i64) {
+    if (unsafe { frost_rt_emit_open(path) } == 0) {
+        report("frost: cannot write '")
+        report_cstr(path)
+        report("'")
+        frost_rt_die()
+    }
+    frost_rt_emit_int(value)
+    frost_rt_emit_close()
+}
+
+// The directory the objects go in, made if it is not there. The shell is what
+// makes a directory on either platform, and the command differs, so this is one
+// of the two places that knows which one it is running on.
+make_directory :: fn(path: ^i8) {
+    mut command := join_two("mkdir -p ", path)
+    if (frost_rt_is_windows() == 1) {
+        command = join_two(join_two("if not exist \"", path),
+            "\" mkdir \"" )
+        command = join_two(join_two(command, path), "\"")
+    }
+    unsafe { frost_rt_run_command(command) }
+}
+
 // An argument beginning with `-` that nothing above claimed is a mistake worth
 // naming rather than a file name, since taking it as one produces a confusing
 // error about an unreadable file much later.
@@ -93,6 +216,8 @@ options_from_command_line :: fn() -> Options {
         link = 0,
         testing = 0,
         roots = arena_make($SearchRoot, 64),
+        incremental = 0,
+        build_dir = ".frost-build",
         help = 0,
         ok = 1,
     }
@@ -111,6 +236,20 @@ options_from_command_line :: fn() -> Options {
             options.backend = BACKEND_ASM
         } else if (cstr_eq(argument, "--link")) {
             options.link = 1
+        } else if (cstr_eq(argument, "--incremental")) {
+            // One object per module, and only the modules whose emitted code
+            // changed are assembled again. A build that keeps objects is a
+            // build that links them, so this links.
+            options.incremental = 1
+            options.link = 1
+        } else if (cstr_eq(argument, "--build-dir")) {
+            index = index + 1
+            if (index >= count) {
+                report("frost: --build-dir needs a directory")
+                options.ok = 0
+                return options
+            }
+            options.build_dir = frost_rt_arg_at(index)
         } else if (cstr_eq(argument, "--test")) {
             // Running the tests means building an executable and running it,
             // so a --test build always links as well.

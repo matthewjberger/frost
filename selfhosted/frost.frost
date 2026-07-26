@@ -37,6 +37,112 @@ import "emit_c.frost"
 import "emit_asm.frost"
 import "regions.frost"
 
+// A build that compiles each module to its own object. Every module is emitted
+// to `<build>/m<n>.s`; a module whose assembly is byte for byte last build's is
+// left alone, and the rest are assembled again. Then the objects are linked.
+//
+// This is where the time goes on a full build: emitting the compiler's own
+// 14,000 lines takes about 120 ms and assembling and linking them takes about
+// 750 ms, so what pays is not assembling what did not change.
+build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
+    make_directory(options.build_dir)
+    prefix := join_two(options.build_dir, "/m")
+    mut executable : ^i8 = options.output
+    if (unsafe { frost_rt_str_len(executable) } == 0) {
+        executable = "a.out"
+        if (frost_rt_is_windows() == 1) {
+            executable = "a.exe"
+        }
+    }
+
+    mut objects : ^i8 = ""
+    mut rebuilt : i64 = 0
+    mut index : i64 = 0
+    while (index < p.modules.count) {
+        unit := join_number(prefix, index, ".s")
+        record := join_number(prefix, index, ".sum")
+        object := join_number(prefix, index, ".o")
+        if (unsafe { frost_rt_emit_open(unit) } == 0) {
+            report("frost: cannot write '")
+            report_cstr(unit)
+            report("'")
+            frost_rt_die()
+        }
+        p.emit_module = index
+        emit_asm_program(p, program)
+        frost_rt_emit_close()
+        p.emit_module = 0 - 1
+
+        sum := file_checksum(unit)
+        mut stale : bool = sum != stored_checksum(record)
+        if (unsafe { frost_rt_file_exists(object) } == 0) {
+            stale = true
+        }
+        if (stale) {
+            command := join_two(
+                join_two(
+                    join_two(join_two(c_compiler(), " -c "), unit),
+                    " -o "),
+                object)
+            if (unsafe { frost_rt_run_command(command) } != 0) {
+                report("frost: the assembler failed: ")
+                report_cstr(command)
+                report("\n")
+                frost_rt_die()
+            }
+            rebuilt = rebuilt + 1
+            write_checksum(record, sum)
+        }
+        objects = join_two(join_two(objects, " "), object)
+        index = index + 1
+    }
+
+    mut runtime := unsafe { frost_rt_getenv("FROST_RUNTIME") }
+    if (unsafe { frost_rt_str_len(runtime) } == 0) {
+        runtime = "runtime/frost_runtime.c"
+    }
+    // The C runtime is a compilation unit like any other, and it changes about
+    // as often as the C compiler does, so it is compiled once and linked
+    // thereafter. Without this every build pays for it again, which on a build
+    // that assembled nothing is most of what is left.
+    runtime_object := join_two(options.build_dir, "/runtime.o")
+    runtime_sum := join_two(options.build_dir, "/runtime.sum")
+    held := file_checksum(runtime)
+    if (held != stored_checksum(runtime_sum)
+        || unsafe { frost_rt_file_exists(runtime_object) } == 0) {
+        build := join_two(
+            join_two(join_two(join_two(c_compiler(), " -c "), runtime), " -o "),
+            runtime_object)
+        if (unsafe { frost_rt_run_command(build) } != 0) {
+            report("frost: the runtime did not compile: ")
+            report_cstr(build)
+            report("
+")
+            frost_rt_die()
+        }
+        write_checksum(runtime_sum, held)
+    }
+    mut command := join_two(
+        join_two(
+            join_two(join_two(join_two(c_compiler(), objects), " "),
+                runtime_object),
+            " -o "),
+        executable)
+    if (frost_rt_is_windows() == 0) {
+        command = join_two(command, " -lm")
+    }
+    if (unsafe { frost_rt_run_command(command) } != 0) {
+        report("frost: the linker failed: ")
+        report_cstr(command)
+        report("\n")
+        frost_rt_die()
+    }
+    if (options.testing == 1) {
+        return unsafe { frost_rt_run_command(executable) }
+    }
+    0
+}
+
 main :: fn() -> i64 {
     options := options_from_command_line()
     if (options.help == 1) {
@@ -169,6 +275,7 @@ main :: fn() -> i64 {
         providers = arena_make($Provider, 256),
         aliases = arena_make($Alias, 64),
         frame_used = 0,
+        emit_module = 0 - 1,
         parse_locals = arena_make($LocalVar, 4096),
         parse_param_start = 0,
         parse_param_end = 0,
@@ -320,6 +427,21 @@ main :: fn() -> i64 {
     // parse left behind.
     check_types(parser, program)
 
+    // The checks are done, so a node's type is settled. The memo is what makes
+    // emit stop re-deriving the same ones, and a per-module build emits as many
+    // times as there are modules, so it is turned on before either path.
+    type_cache_prepare(parser)
+    parser.type_cache_on = 1
+
+    // One object per module, assembling only the ones whose emitted code
+    // changed. The cache is the emitted assembly itself: the compiler has just
+    // written what this module compiles to, so whether its object is stale is a
+    // comparison of those bytes against last time's, and nothing else has to be
+    // hashed, fingerprinted or walked.
+    if (options.incremental == 1) {
+        return build_per_module(parser, program, options)
+    }
+
     // Where the emitted text goes. A link needs it in a file whatever the
     // caller asked for, so it writes one beside the executable and removes it
     // afterwards. Without -o and without --link it goes to standard output.
@@ -346,12 +468,6 @@ main :: fn() -> i64 {
             frost_rt_die()
         }
     }
-
-    // The checks are done, so a node's type is now settled. Turn on the
-    // memo and give it a slot per node before emit, which asks for the same
-    // types repeatedly, re-derives each one.
-    type_cache_prepare(parser)
-    parser.type_cache_on = 1
 
     if (options.backend == BACKEND_ASM) {
         emit_asm_program(parser, program)
