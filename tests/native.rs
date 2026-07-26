@@ -12649,3 +12649,157 @@ main :: fn() -> i64 {
     // 250 + 10 wrapping at eight bits because both sides really are u8.
     assert_eq!(output, "1234567\n12347\n4\n");
 }
+
+// A `linear` container is a resource whatever it holds, and so is a struct
+// holding one. Both were silently ordinary until the word was read off the
+// template rather than off the instance's name, which is why the standard
+// library's containers could leak without a word from the compiler.
+#[test]
+fn a_leaked_generic_linear_is_refused() {
+    let source = "Box :: linear struct($T: Type) { value: T }\n\
+                  make :: fn($T: Type, value: $T) -> Box<T> { Box { value = value } }\n\
+                  take :: fn($T: Type, move b: Box<T>) -> i64 { 1 }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   held := make($i64, 5)\n\
+                  \x20   0\n}\n";
+    let message = compile_error("genericlinear", source);
+    assert!(
+        message.contains("not consumed"),
+        "expected a linearity error, got:\n{message}"
+    );
+}
+
+#[test]
+fn a_consumed_generic_linear_is_accepted() {
+    let source = "Box :: linear struct($T: Type) { value: T }\n\
+                  make :: fn($T: Type, value: $T) -> Box<T> { Box { value = value } }\n\
+                  take :: fn($T: Type, move b: Box<T>) -> i64 { b.value }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   held := make($i64, 5)\n\
+                  \x20   print take($i64, held)\n\
+                  \x20   0\n}\n";
+    let Some(output) = compile_and_run("genericlinearok", source) else {
+        return;
+    };
+    assert_eq!(output, "5\n");
+}
+
+#[test]
+fn a_struct_holding_a_resource_is_one() {
+    let source = "Resource :: linear struct { id: i64 }\n\
+                  Holder :: struct { held: Resource }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   h := Holder { held = Resource { id = 1 } }\n\
+                  \x20   print h.held.id\n\
+                  \x20   0\n}\n";
+    let message = compile_error("linearheld", source);
+    assert!(
+        message.contains("not consumed"),
+        "expected a linearity error, got:\n{message}"
+    );
+}
+
+#[test]
+fn the_self_hosted_compiler_refuses_a_leaked_generic_linear() {
+    let source = "Box :: linear struct($T: Type) { value: T }\n\
+                  make :: fn($T: Type, value: $T) -> Box<T> { Box { value = value } }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   held := make($i64, 5)\n\
+                  \x20   0\n}\n";
+    let Some(message) = self_hosted_rejects("shlinear", source) else {
+        return;
+    };
+    assert!(
+        message.contains("never consumed"),
+        "expected a linearity error, got:\n{message}"
+    );
+}
+
+// `--audit-unsafe` is the opt-in pass that reports a block vouching for
+// nothing. It is off by default, so a build pays for the checks that keep a
+// program correct rather than the ones that keep it tidy.
+fn audit_unsafe(name: &str, source: &str) -> String {
+    let directory = std::env::temp_dir();
+    let source_path = directory.join(format!("frost_audit_{name}.frost"));
+    std::fs::write(&source_path, source).unwrap();
+    let frost = env!("CARGO_BIN_EXE_frost");
+    let output = Command::new(frost)
+        .arg("--audit-unsafe")
+        .arg("-o")
+        .arg(directory.join(format!("frost_audit_{name}.o")))
+        .arg(&source_path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&source_path);
+    String::from_utf8_lossy(&output.stderr).to_string()
+}
+
+#[test]
+fn the_audit_reports_a_block_that_vouches_for_nothing() {
+    let source = "main :: fn() -> i64 {\n\
+                  \x20   x := unsafe { 1 + 1 }\n\
+                  \x20   print x\n\
+                  \x20   0\n}\n";
+    let message = audit_unsafe("idle", source);
+    assert!(
+        message.contains("vouches for nothing"),
+        "expected an audit finding, got:\n{message}"
+    );
+}
+
+#[test]
+fn the_audit_reports_a_block_inside_another() {
+    let source = "held :: extern fn(x: i64) -> i64\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   x := unsafe { unsafe { held(1) } }\n\
+                  \x20   print x\n\
+                  \x20   0\n}\n";
+    let message = audit_unsafe("nested", source);
+    assert!(
+        message.contains("inside another one"),
+        "expected an audit finding, got:\n{message}"
+    );
+}
+
+#[test]
+fn the_audit_is_quiet_when_every_block_earns_itself() {
+    let source = "held :: extern fn(x: i64) -> i64\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   x := unsafe { held(1) }\n\
+                  \x20   print x\n\
+                  \x20   0\n}\n";
+    let message = audit_unsafe("clean", source);
+    assert!(
+        !message.contains("vouches") && !message.contains("inside another"),
+        "expected no audit findings, got:\n{message}"
+    );
+}
+
+// Indexing a raw pointer is unchecked wherever it is written, including inside
+// `ptr_to`. The self-hosted compiler asked the question where no local's type
+// was known and let it through.
+#[test]
+fn the_self_hosted_compiler_gates_an_index_through_a_raw_pointer() {
+    let source = "hold :: extern fn(size: i64) -> ^u8\n\
+                  at :: fn(block: ^u8, offset: i64) -> ^u8 { ptr_to(block[offset]) }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   print 0\n\
+                  \x20   0\n}\n";
+    let Some(compiler) = build_self_hosted_compiler("ckrawindex") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_rawindex.frost");
+    std::fs::write(&input, source).unwrap();
+    let run = Command::new(&compiler)
+        .env("FROST_INPUT", &input)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&compiler);
+    let message = String::from_utf8_lossy(&run.stderr).to_string();
+    assert!(
+        !run.status.success() && message.contains("indexing a raw pointer"),
+        "expected the gate to refuse it, got:\n{message}"
+    );
+}
