@@ -2772,6 +2772,14 @@ parse_enum :: fn(mut p: Parser) {
     name_length := cur_len(p)
     advance(p)
     advance(p)
+    // `Name :: linear enum { ... }` marks a resource that must be consumed
+    // exactly once, the same as a linear struct does, so the keyword sits
+    // between `::` and `enum`.
+    mut linear_flag : i64 = 0
+    if (cur(p) == TokenKind::KwLinear) {
+        linear_flag = 1
+        advance(p)
+    }
     advance(p)
     // `Name :: enum($T: Type) { ... }` is a generic enum. Like a generic struct
     // it records its parameters and the token of its `{`, skips the body, and is
@@ -2815,7 +2823,7 @@ parse_enum :: fn(mut p: Parser) {
             StructDef { name_off = name_offset, name_len = name_length,
                 field_head = 0 - 1, is_generic = 1, tparam_off = tparam_off,
                 tparam_len = tparam_len, field_token = field_token,
-                instance_id = 0 - 1, is_linear = 0, emitted = 0,
+                instance_id = 0 - 1, is_linear = linear_flag, emitted = 0,
                 xparam_start = xparam_start, xparam_count = xparam_count,
                 is_enum = 1 },
         )
@@ -2831,8 +2839,8 @@ parse_enum :: fn(mut p: Parser) {
         StructDef { name_off = name_offset, name_len = name_length,
             field_head = field_head, is_generic = 0, tparam_off = 0,
             tparam_len = 0, field_token = 0, instance_id = 0 - 1,
-            is_linear = 0, emitted = 0, xparam_start = 0, xparam_count = 0,
-            is_enum = 1 },
+            is_linear = linear_flag, emitted = 0, xparam_start = 0,
+            xparam_count = 0, is_enum = 1 },
     )
 }
 
@@ -3501,7 +3509,9 @@ parse_program :: fn(mut p: Parser) -> i64 {
                 set_next(p, tail, item)
                 tail = item
             }
-        } else if (third == TokenKind::KwEnum) {
+        } else if (third == TokenKind::KwEnum
+            || (third == TokenKind::KwLinear
+                && peek_kind(p, 3) == TokenKind::KwEnum)) {
             parse_enum(p)
         } else if (third == TokenKind::KwStruct || third == TokenKind::KwLinear) {
             parse_struct(p)
