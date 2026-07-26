@@ -5173,8 +5173,48 @@ impl<'a> FunctionLowering<'a> {
 
         let mut lowered = Vec::with_capacity(plans.len());
         for (plan, target) in plans.into_iter().zip(&value_parameter_types) {
+            // A parameter whose type is still the template's own name is one
+            // this call did not pin down, and the argument is what says how it
+            // travels. A `str` handed to such a parameter is an aggregate and
+            // goes by address; passing it in a register is what the backend
+            // then refuses.
+            let held;
+            let target = match (target, &plan) {
+                (Type::TypeParam(_), ArgPlan::Value(_, value_type)) => {
+                    held = value_type.clone();
+                    &held
+                }
+                _ => target,
+            };
             match plan {
                 ArgPlan::Value(operand, value_type) => {
+                    // A value reaching a borrow parameter goes by address. The
+                    // plan reads the template's parameter, where a read of a
+                    // generic is a borrow whatever the type turns out to be, so
+                    // an argument that is already a borrow in the caller is
+                    // planned as a value and arrives here as the aggregate
+                    // itself. Passing it in a register is what the backend then
+                    // refuses: a `str` forwarded from one generic to another is
+                    // this.
+                    if let Type::Ref(inner) | Type::RefMut(inner) = target
+                        && !matches!(
+                            value_type,
+                            Type::Ref(_) | Type::RefMut(_) | Type::Ptr(_)
+                        )
+                    {
+                        if matches!(target, Type::Ref(_))
+                            && !needs_memory(inner)
+                        {
+                            let coerced =
+                                self.coerce(operand, &value_type, inner);
+                            lowered.push(coerced);
+                            continue;
+                        }
+                        if let IrOperand::Local(local) = operand {
+                            lowered.push(self.address_of_local(local, inner));
+                            continue;
+                        }
+                    }
                     // An array reaching a `[]T` parameter becomes a slice of
                     // the whole of itself first. Without this the callee is
                     // handed the array's own address and reads its first two
@@ -5227,6 +5267,24 @@ impl<'a> FunctionLowering<'a> {
                         }
                         _ => target.clone(),
                     };
+                    // A read of a generic is a borrow in the template, since
+                    // nothing there knows whether the type is copied. Once it
+                    // is known, a scalar travels in a register and has no
+                    // address to hand over, so the value goes instead: this is
+                    // `map_insert(m, old_keys[i])` with an i64 key. A `mut`
+                    // parameter is not this: it writes back through the address
+                    // whatever the width.
+                    if matches!(target, Type::Ref(_)) && !needs_memory(&pointee)
+                    {
+                        let (operand, value_type) = self.lower_expression(
+                            &arguments[index],
+                            Some(&pointee),
+                        )?;
+                        let coerced =
+                            self.coerce(operand, &value_type, &pointee);
+                        lowered.push(coerced);
+                        continue;
+                    }
                     let address = self.aggregate_argument_address(
                         &arguments[index],
                         &pointee,
@@ -5270,6 +5328,7 @@ impl<'a> FunctionLowering<'a> {
 
         let mut lowered = Vec::with_capacity(arguments.len());
         for (index, argument) in arguments.iter().enumerate() {
+            let held_target;
             let expected = parameter_types.get(index);
             // Auto-borrow. A `read`/`mut` parameter is a reference, and a plain
             // value place passed to it takes its address here. An argument that
@@ -5294,6 +5353,21 @@ impl<'a> FunctionLowering<'a> {
                     continue;
                 }
             }
+            // A parameter whose type is still the template's own name is one
+            // this call did not pin down, and then the argument says how it
+            // travels: an aggregate goes by address whatever the parameter was
+            // written as. A `str` passed on from one generic to another is
+            // this, and passing it in a register is what the backend refuses.
+            let expected = match expected {
+                Some(Type::TypeParam(_)) => match self.probe_type(argument) {
+                    Some(ty) if needs_memory(&ty) => {
+                        held_target = ty;
+                        Some(&held_target)
+                    }
+                    _ => expected,
+                },
+                _ => expected,
+            };
             if let Some(target) = expected
                 && needs_memory(target)
             {
@@ -5360,6 +5434,7 @@ impl<'a> FunctionLowering<'a> {
 
         let mut lowered = Vec::with_capacity(arguments.len());
         for (index, argument) in arguments.iter().enumerate() {
+            let held_target;
             let expected = parameter_types.get(index);
             // Auto-borrow. A `read`/`mut` parameter is a reference, and a plain
             // value place passed to it takes its address here. An argument that
@@ -5384,6 +5459,21 @@ impl<'a> FunctionLowering<'a> {
                     continue;
                 }
             }
+            // A parameter whose type is still the template's own name is one
+            // this call did not pin down, and then the argument says how it
+            // travels: an aggregate goes by address whatever the parameter was
+            // written as. A `str` passed on from one generic to another is
+            // this, and passing it in a register is what the backend refuses.
+            let expected = match expected {
+                Some(Type::TypeParam(_)) => match self.probe_type(argument) {
+                    Some(ty) if needs_memory(&ty) => {
+                        held_target = ty;
+                        Some(&held_target)
+                    }
+                    _ => expected,
+                },
+                _ => expected,
+            };
             if let Some(target) = expected
                 && needs_memory(target)
             {
@@ -5495,6 +5585,21 @@ impl<'a> FunctionLowering<'a> {
                         "native backend: cannot pass this value as an aggregate argument"
                     );
                 };
+                // A borrowed parameter is handed an address, so a value that
+                // is not already in memory is put there first. A read
+                // parameter of a generic is a borrow whatever the type turns
+                // out to be, so a scalar reaching one arrives as a register
+                // and has nowhere to point at: `map_insert(m, old_keys[i])`
+                // with an i64 key is this.
+                if needs_memory(target) && !self.locals[local].in_memory {
+                    let held = self.fresh_local(target.clone(), None);
+                    self.mark_in_memory(held);
+                    self.emit(IrStatement::Assign(
+                        held,
+                        IrRvalue::Use(IrOperand::Local(local)),
+                    ));
+                    return Ok(self.address_of_local(held, target));
+                }
                 Ok(self.address_of_local(local, target))
             }
         }

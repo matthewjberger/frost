@@ -20,6 +20,23 @@ Everything the two compilers are held to is done: they accept the same language,
 and what says so is a suite of programs run through both rather than a claim.
 See [../selfhosted/README.md](../selfhosted/README.md).
 
+## What is left
+
+Two faults in the self-hosted compiler, both found by writing `Map<K, V>`, both
+worked around in the library rather than fixed:
+
+- A generic instantiated with a slice type (`Hashing<str>`) leaves a binding
+  behind that the next template checked reads as its own, so an unrelated
+  `vec_push` fails with "the place is a 'u8' and the value is a '[]u8'". A key
+  that is a slice is wrapped in a struct (`Text`) until this is fixed.
+- A module that both takes a bundle argument (`map_put($i64, $i64, $i64_keys,
+  ...)`) and declares a generic with two type parameters and a `$body` (the
+  ECS's `for_each2`) reports the bundle constant as an undefined function. The
+  ECS keeps its own mask table rather than the standard library's map.
+
+Both are the same shape: compile-time parameter state that belongs to one
+template being read while another is checked. The reproductions are small.
+
 ## What is done, and what it cost
 
 Both compilers clear the target on a full build, and the self-hosted one

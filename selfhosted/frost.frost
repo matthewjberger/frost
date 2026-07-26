@@ -73,8 +73,8 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     // started so they can all be handed to the machine at once. The work is one
     // process per module and they share nothing, which is the whole reason this
     // is worth threading and the rest of the compiler is not.
-    mut jobs : Arena<Assembling> = arena_make($Assembling, 1024)
-    mut records : Arena<Assembling> = arena_make($Assembling, 1024)
+    mut jobs : Arena<Assembling> = arena_make($Assembling, 4096)
+    mut records : Arena<Assembling> = arena_make($Assembling, 4096)
 
     mut objects : ^i8 = ""
     mut rebuilt : i64 = 0
@@ -134,7 +134,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
 
     // All of them at once. One thread per run, since each is a process this one
     // only waits on.
-    mut handles : Arena<Assembling> = arena_make($Assembling, 1024)
+    mut handles : Arena<Assembling> = arena_make($Assembling, 4096)
     mut started : i64 = 0
     while (started < jobs.count) {
         // The address of the element itself, not of a copy of it: the thread
@@ -228,10 +228,10 @@ main :: fn() -> i64 {
     // arguments at all.
     input_path := options.input
     mut source : ^i8 = ""
-    mut modules : Arena<Module> = arena_make($Module, 1024)
+    mut modules : Arena<Module> = arena_make($Module, 4096)
     mut exports : Arena<Export> = arena_make($Export, 4096)
     mut import_edges : Arena<ImportEdge> = arena_make($ImportEdge, 4096)
-    mut renames : Arena<Rename> = arena_make($Rename, 1024)
+    mut renames : Arena<Rename> = arena_make($Rename, 4096)
     export_names := unsafe { ptr_cast($i8, malloc(SYNTH_ROOM)) }
     if (unsafe { frost_rt_str_len(input_path) } != 0) {
         // One buffer holds the root file and everything it imports, so a name
@@ -338,11 +338,11 @@ main :: fn() -> i64 {
         fields = arena_make($StructField, 8192),
         locals = arena_make($LocalVar, 4096),
         consts = arena_make($ConstDef, 4096),
-        value_consts = arena_make($ConstDef, 1024),
+        value_consts = arena_make($ConstDef, 4096),
         instances = arena_make($Instance, 4096),
-        generic_fns = arena_make($GenericFn, 1024),
-        caps = arena_make($Cap, 1024),
-        providers = arena_make($Provider, 1024),
+        generic_fns = arena_make($GenericFn, 4096),
+        caps = arena_make($Cap, 4096),
+        providers = arena_make($Provider, 4096),
         aliases = arena_make($Alias, 64),
         frame_used = 0,
         emit_module = 0 - 1,
@@ -354,13 +354,13 @@ main :: fn() -> i64 {
         pack_len = 0,
         pack_start = 0,
         pack_count = 0,
-        gparams = arena_make($GParam, 1024),
-        cfn_params = arena_make($GParam, 1024),
-        gargs = arena_make($GArg, 1024),
-        procs = arena_make($ProcSig, 1024),
-        proc_params = arena_make($GArg, 1024),
-        argbuf = arena_make($GArg, 1024),
-        gbindings = arena_make($GBinding, 1024),
+        gparams = arena_make($GParam, 4096),
+        cfn_params = arena_make($GParam, 4096),
+        gargs = arena_make($GArg, 4096),
+        procs = arena_make($ProcSig, 4096),
+        proc_params = arena_make($GArg, 4096),
+        argbuf = arena_make($GArg, 4096),
+        gbindings = arena_make($GBinding, 4096),
         type_param_off = 0,
         type_param_len = 0,
         xparam_start = 0,
@@ -373,7 +373,7 @@ main :: fn() -> i64 {
         expected_type = 0,
         expected_alt = 0 - 1,
         ok_ty = 0 - 1,
-        variant_fixups = arena_make($VariantFixup, 1024),
+        variant_fixups = arena_make($VariantFixup, 4096),
         saw_type_param = 0,
         tparam_called = 0,
         bound_token = 0 - 1,
@@ -384,7 +384,7 @@ main :: fn() -> i64 {
         last_return_type = 0,
         no_struct_lit = false,
         last_type_was_generic = 0,
-        unsafe_spans = arena_make($UnsafeSpan, 1024),
+        unsafe_spans = arena_make($UnsafeSpan, 4096),
         unsafe_depth = 0,
         moved = arena_make($LocalVar, 4096),
         label_id = 0,
@@ -392,8 +392,8 @@ main :: fn() -> i64 {
         asm_temp = 0,
         asm_ret = 0,
         sret_slot = 0,
-        mono_rets = arena_make($MonoRet, 1024),
-        mono_nodes = arena_make($MonoNode, 1024),
+        mono_rets = arena_make($MonoRet, 4096),
+        mono_nodes = arena_make($MonoNode, 4096),
         current_ret = 0,
         current_fn_off = 0,
         current_fn_len = 0,
@@ -409,7 +409,7 @@ main :: fn() -> i64 {
         frame_materialized = arena_make($LocalVar, 4096),
         frame_answers = 0,
         mut_params = arena_make($LocalVar, 8192),
-        value_params = arena_make($LocalVar, 1024),
+        value_params = arena_make($LocalVar, 4096),
         move_scratch = arena_make($LocalVar, 4096),
         modules = modules,
         exports = exports,
@@ -424,7 +424,7 @@ main :: fn() -> i64 {
         variants = arena_make($Variant, 4096),
         match_count = 0,
         case_variant = 0 - 1,
-        type_args = arena_make($TypeArg, 1024),
+        type_args = arena_make($TypeArg, 4096),
         pending = arena_make($LocalVar, 4096),
         try_count = 0,
         name_tag = 0,
@@ -438,9 +438,9 @@ main :: fn() -> i64 {
         prov_kind = 0,
         prov_off = 0,
         prov_len = 0,
-        type_aliases = arena_make($ConstDef, 1024),
-        arrays = arena_make($ArrayDef, 1024),
-        tests = arena_make($TestCase, 1024),
+        type_aliases = arena_make($ConstDef, 4096),
+        arrays = arena_make($ArrayDef, 4096),
+        tests = arena_make($TestCase, 4096),
         testing = options.testing,
         type_cache = arena_make($TypeCacheEntry, 262144),
         type_cache_on = 0,
