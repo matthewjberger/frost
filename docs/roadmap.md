@@ -108,12 +108,23 @@ serial part and only the defining step touches it.
 
 ## What is deliberately not on this list
 
-**A bound on a type parameter.** `$T: Type` has no bound of its own, so
-`double :: fn(v: $T) -> T` requires `T` to be numeric silently and finds out in
-the specialized body. A compile-time *function* parameter does carry a signature
-bound (spec 11.1b), which is a comparison of one signature against another
-rather than a solver. Bounding a type is what turns into a trait system if it is
-approached carelessly, and nothing needs it yet.
+**A trait system.** Two things that a trait bound expresses are in the language
+already, and neither is a solver. What a type *is* is a `where` clause over a
+closed vocabulary of questions the compiler answers for itself, checked at the
+call (spec 11.4a). What can be *done* with a type is a capability bundle, a
+struct whose fields are functions, passed as a compile-time argument and folded
+to direct calls (spec 11.4b). Both are named at the call site. Nothing registers
+into either, so there is nothing to be coherent about, no orphan rule, and no
+method lookup. What is deliberately missing is inference: a bundle is never
+found for you.
 
 **Folding duplicate specializations across objects.** See the Cranelift note
 above. It is measurable, and it is not measured to matter.
+
+**Compile-time argument packs.** `args: $...` with an expansion-time `for` and
+`if`, on top of the format expansion the compiler already does at a call. It is
+built in the bootstrap and not shipped, because a language feature that only one
+of the two compilers has is not a language feature. What blocks the other one is
+that the self-hosted compiler discovers instantiations without local types in
+scope, so a pack's shape at a call cannot be read there yet; the fix is a
+discovery walk that maintains locals the way `check_types` does.

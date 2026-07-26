@@ -9101,6 +9101,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_fieldcall", FIELD_CALLS),
         ("diff_enumvalues", ENUM_VALUES),
         ("diff_bundle", CAPABILITY_BUNDLE),
+        ("diff_composed", COMPOSED_BUNDLES),
         ("diff_failure", FAILURE_SET_PARSE),
         ("diff_bracedarm", BRACED_ARMS),
     ];
@@ -10309,6 +10310,55 @@ fn self_hosted_reads_a_braced_match_arm_as_a_block() {
         return;
     };
     assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
+// Composing bundles is a struct with struct fields rather than a list of
+// bounds, and the body reads through both names. The outer bundle is a
+// compile-time argument, so the inner one is known too.
+const COMPOSED_BUNDLES: &str = r#"
+Ordering :: struct($T: Type) { less: fn(T, T) -> bool }
+Hashing :: struct($T: Type) { hash: fn(T) -> i64 }
+
+Element :: struct($T: Type) {
+    ordering: Ordering<T>,
+    hashing: Hashing<T>,
+}
+
+i64_less :: fn(a: i64, b: i64) -> bool { a < b }
+i64_hash :: fn(a: i64) -> i64 { a * 31 }
+
+i64_ordering :: Ordering<i64> { less = i64_less }
+i64_hashing :: Hashing<i64> { hash = i64_hash }
+
+i64_element :: Element<i64> { ordering = i64_ordering, hashing = i64_hashing }
+
+pick :: fn($T: Type, $ops: Element<T>, a: $T, b: $T) -> $T {
+    if (ops.ordering.less(a, b)) { return a }
+    b
+}
+
+main :: fn() -> i64 {
+    print pick($i64, $i64_element, 7, 3)
+    print i64_element.hashing.hash(2)
+    0
+}
+"#;
+
+#[test]
+fn a_bundle_may_hold_other_bundles() {
+    let Some(output) = compile_and_run("composed", COMPOSED_BUNDLES) else {
+        return;
+    };
+    assert_eq!(output, "3\n62\n");
+}
+
+#[test]
+fn self_hosted_composes_bundles() {
+    let Some(output) = selfhosted_native_output("shcomposed", COMPOSED_BUNDLES)
+    else {
+        return;
+    };
+    assert_eq!(output, "3\n62\n");
 }
 
 // A capability bundle: a generic struct whose fields are functions, a constant
