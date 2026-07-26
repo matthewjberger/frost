@@ -12833,3 +12833,37 @@ fn an_imported_call_inside_an_array_literal_resolves() {
     let _ = std::fs::remove_file(&helper);
     assert_eq!(output, "2\n3\n");
 }
+
+// The graphics examples cannot be linked without SDL3 and wgpu-native, but they
+// can be compiled, which is what says the bindings still typecheck: the handle
+// types, the checked constructors, and the wrappers that stand between a
+// program and the C calls.
+#[test]
+fn the_graphics_examples_compile_against_their_bindings() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let frost = env!("CARGO_BIN_EXE_frost");
+    for example in ["window.frost", "triangle.frost"] {
+        let source = root.join("examples").join("graphics").join(example);
+        let object =
+            std::env::temp_dir().join(format!("frost_gfx_{example}.o"));
+        let output = Command::new(frost)
+            .arg("--audit-unsafe")
+            .arg("--native")
+            .arg("-o")
+            .arg(&object)
+            .arg(&source)
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        let message = String::from_utf8_lossy(&output.stderr).to_string();
+        assert!(
+            output.status.success(),
+            "{example} did not compile:\n{message}"
+        );
+        assert!(
+            !message.contains("vouches") && !message.contains("inside another"),
+            "{example} has an idle unsafe block:\n{message}"
+        );
+        let _ = std::fs::remove_file(&object);
+    }
+}

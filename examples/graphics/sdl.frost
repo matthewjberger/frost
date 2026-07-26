@@ -1,0 +1,176 @@
+// SDL3: a window, its events, and the clock that paces them.
+//
+// Hand-written rather than generated, because SDL ships a C header rather than
+// a schema. It follows the shape the wgpu binding is generated in: the externs
+// are private to this file, a window is a type of its own rather than a bare
+// pointer, and a title is a `str` rather than a promise that the bytes end in a
+// NUL. A program that opens a window writes no `unsafe` of its own.
+//
+// What is not covered is most of SDL. This is what the graphics examples need,
+// and a call added here is one line beside its extern.
+
+import "mem.frost"
+
+export Window, no_window, is_no_window, Event, event_new, event_kind,
+    INIT_VIDEO, INIT_AUDIO, INIT_EVENTS, INIT_GAMEPAD,
+    WINDOW_FULLSCREEN, WINDOW_HIDDEN, WINDOW_BORDERLESS, WINDOW_RESIZABLE,
+    WINDOW_HIGH_PIXEL_DENSITY,
+    EVENT_QUIT, EVENT_WINDOW_RESIZED, EVENT_KEY_DOWN, EVENT_KEY_UP,
+    EVENT_MOUSE_MOTION, EVENT_MOUSE_BUTTON_DOWN, EVENT_MOUSE_BUTTON_UP,
+    PROP_WIN32_HWND, PROP_X11_DISPLAY, PROP_X11_WINDOW, PROP_COCOA_WINDOW,
+    sdl_init, sdl_quit, sdl_ticks, sdl_delay, sdl_error,
+    window_create, window_destroy, window_properties, window_pointer_property,
+    poll_event
+
+SDL_Init                :: extern fn(flags: u32) -> bool
+SDL_Quit                :: safe extern fn()
+SDL_CreateWindow        :: extern fn(title: ^i8, width: i32, height: i32,
+    flags: u64) -> ^u8
+SDL_DestroyWindow       :: extern fn(window: ^u8)
+SDL_PollEvent           :: extern fn(event: ^u8) -> bool
+SDL_GetWindowProperties :: extern fn(window: ^u8) -> u32
+SDL_GetPointerProperty  :: extern fn(properties: u32, name: ^i8,
+    fallback: ^u8) -> ^u8
+SDL_GetTicks            :: safe extern fn() -> u64
+SDL_Delay               :: safe extern fn(milliseconds: u32)
+SDL_GetError            :: extern fn() -> ^i8
+
+// A window is a pointer SDL owns, under a name of its own, so it cannot be
+// handed to a call that wants some other pointer and no pointer from elsewhere
+// can be handed to one that wants a window.
+Window :: distinct ^u8
+
+// The subsystems `sdl_init` can start, and the window flags, as SDL numbers
+// them. They are bit masks, so they are added together.
+INIT_AUDIO   :: 16
+INIT_VIDEO   :: 32
+INIT_EVENTS  :: 16384
+INIT_GAMEPAD :: 8192
+
+WINDOW_FULLSCREEN         :: 1
+WINDOW_HIDDEN             :: 8
+WINDOW_BORDERLESS         :: 16
+WINDOW_RESIZABLE          :: 32
+WINDOW_HIGH_PIXEL_DENSITY :: 8192
+
+// SDL_Event is a union of every event kind. Frost has no unions and does not
+// need one to carry this: the union is 128 bytes with the kind in the first
+// four, so the bytes are the value and the kind is read out of them.
+EVENT_SIZE :: 128
+
+EVENT_QUIT              :: 256
+EVENT_WINDOW_RESIZED    :: 519
+EVENT_KEY_DOWN          :: 768
+EVENT_KEY_UP            :: 769
+EVENT_MOUSE_MOTION      :: 1024
+EVENT_MOUSE_BUTTON_DOWN :: 1025
+EVENT_MOUSE_BUTTON_UP   :: 1026
+
+// The properties a window carries the platform's own handle under. Which one a
+// program wants is decided by the platform it is drawing on.
+PROP_WIN32_HWND   :: "SDL.window.win32.hwnd"
+PROP_X11_DISPLAY  :: "SDL.window.x11.display"
+PROP_X11_WINDOW   :: "SDL.window.x11.window"
+PROP_COCOA_WINDOW :: "SDL.window.cocoa.window"
+
+Event :: struct {
+    bytes: [EVENT_SIZE]u8,
+}
+
+event_new :: fn() -> Event {
+    Event { bytes = [0; EVENT_SIZE] }
+}
+
+event_kind :: fn(e: Event) -> u32 {
+    unsafe { ptr_cast($u32, ptr_to(e.bytes[0]))^ }
+}
+
+// The window that names nothing, which is what a failed creation answers with.
+// SDL says why in `sdl_error`.
+no_window :: fn() -> Window {
+    zero := 0
+    unsafe { ptr_cast($u8, zero) }
+}
+
+is_no_window :: fn(w: Window) -> bool {
+    w == no_window()
+}
+
+// A NUL-terminated copy of a string, for the calls below. C reads one until a
+// NUL and a `str` has none, so the terminator is added here rather than
+// promised by every caller. The caller of this frees it.
+c_string :: fn(text: str) -> ^u8 {
+    length := str_len(text)
+    block := heap_bytes(length + 1)
+    mut view := bytes_as($u8, block, length + 1)
+    mut i : i64 = 0
+    while (i < length) {
+        view[i] = text[i]
+        i = i + 1
+    }
+    view[length] = 0
+    block
+}
+
+sdl_init :: fn(flags: u32) -> bool {
+    unsafe { SDL_Init(flags) }
+}
+
+sdl_quit :: fn() {
+    SDL_Quit()
+}
+
+// Milliseconds since SDL started, which is what paces an animation without
+// following the frame rate.
+sdl_ticks :: fn() -> u64 {
+    SDL_GetTicks()
+}
+
+sdl_delay :: fn(milliseconds: u32) {
+    SDL_Delay(milliseconds)
+}
+
+// What SDL says went wrong, as a C string it owns.
+sdl_error :: fn() -> ^i8 {
+    unsafe { SDL_GetError() }
+}
+
+// Answers `no_window()` when SDL could not make one, which a program is
+// expected to check: a display that is not there is an ordinary thing to find
+// out about rather than a reason to stop.
+window_create :: fn(title: str, width: i32, height: i32,
+    flags: u64) -> Window {
+    held := c_string(title)
+    made := unsafe { SDL_CreateWindow(ptr_cast($i8, held), width, height,
+        flags) }
+    heap_release($u8, held)
+    made
+}
+
+window_destroy :: fn(w: Window) {
+    unsafe { SDL_DestroyWindow(w) }
+}
+
+window_properties :: fn(w: Window) -> u32 {
+    unsafe { SDL_GetWindowProperties(w) }
+}
+
+// The platform's own handle for a window: an HWND on Windows, an X11 window id,
+// an NSWindow. It is a bare pointer because the API it is handed to next is
+// another C one, which is where it means something.
+window_pointer_property :: fn(properties: u32, name: str) -> ^u8 {
+    held := c_string(name)
+    zero := 0
+    found := unsafe {
+        SDL_GetPointerProperty(properties, ptr_cast($i8, held),
+            ptr_cast($u8, zero))
+    }
+    heap_release($u8, held)
+    found
+}
+
+// The next event, written into the caller's own buffer, which is the right size
+// by construction rather than by promise. False when there are none left.
+poll_event :: fn(mut e: Event) -> bool {
+    unsafe { SDL_PollEvent(ptr_to(e.bytes[0])) }
+}
