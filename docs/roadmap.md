@@ -13,7 +13,7 @@ measurements are below.
 
 ## What is left
 
-Two things, both contained, neither on the critical path of anything else.
+One thing, contained, and not on the critical path of anything else.
 
 **Extended const-eval, for layout tables.** A vertex format, a shader's uniform
 layout and a descriptor table are all the same shape: a table of offsets and
@@ -35,22 +35,6 @@ the rule rather than reopening it. Field reflection by name is the thing to
 refuse: `has_field(T, "position")` is the string-keyed predicate 11.4a already
 ruled out, and a table built by walking every field needs no name to be written
 as a literal anywhere.
-
-**`--incremental` for the self-hosted C backend.** The assembly backend splits a
-program into one unit per module and assembles only what changed. The C backend
-still emits one translation unit, so a build through it pays for the whole
-program every time, and that is the slower of the two paths to begin with: a C
-compile of the emitted 13,000 lines is about 1,200 ms against about 750 ms to
-assemble.
-
-The design is already proven, and the split is the same one: a function goes to
-the module that declared it, a specialization to the module that declared its
-template. Two things differ from the assembly case and are the whole of the
-work. A C unit needs the type definitions and the prototypes of everything it
-calls, where an assembly unit needs neither, so each unit carries the shared
-declarations and its own bodies. And a string literal is emitted inside the
-function that holds it rather than in a data section, which removes the question
-of where the data goes.
 
 Everything the two compilers are held to is done: they accept the same language,
 and what says so is a suite of programs run through both rather than a claim.
@@ -104,7 +88,16 @@ The four pieces that took it there:
    same way, being a compilation unit like any other.
 3. **`--incremental`**, which produces byte for byte the compiler the
    whole-program build produces. A test checks that rather than a claim.
-4. **Parallel work**, the part of it that pays. The assembler runs go out
+4. **Both backends split.** The C backend emits one unit per module too. It
+   differs from the assembly case in exactly two ways, and they were the whole
+   of the work: a C unit cannot call what it has not seen, so every unit carries
+   the runtime prototypes, the type definitions and a prototype for every
+   function and specialization in the program, with only the bodies differing;
+   and the mark that says a type is already written has to be cleared per unit,
+   since a per-module build writes the definitions several times. On the
+   compiler's own source that is about 1,220 ms whole-program against about
+   310 ms once the objects are there.
+5. **Parallel work**, the part of it that pays. The assembler runs go out
    together, one OS thread each, which is why even a first build beats the
    whole-program one: the machine-code step is where a build's time is, not the
    compiler. Emitting could be parallel too, since the type system is local and

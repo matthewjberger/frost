@@ -26,6 +26,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     new_struct_lit, new_type_node, new_unary, node_next, pointee,
     record_generic_fn, register_const, set_field_next, set_next, set_params,
     cap_at, cap_count_of, pack_element_name, alias_for, push_alias,
+    unit_holds,
     set_ret_type, set_uses, struct_index_of, synth_capability_name,
     synth_join, synth_literal, synth_numbered, type_code_for
 
@@ -791,6 +792,19 @@ gargs_run_equal :: fn(mut p: Parser, a_start: i64, b_start: i64, count: i64)
         i = i + 1
     }
     true
+}
+
+// Whether a name written at `off` belongs to the unit being emitted. Everything
+// belongs to a whole-program unit; a per-module unit takes what the module it is
+// for wrote, which is a run of the one source buffer, so this is a comparison
+// rather than a search. Both backends split a program the same way and ask this
+// the same way.
+unit_holds :: fn(mut p: Parser, off: i64) -> bool {
+    if (p.emit_module < 0) {
+        return true
+    }
+    entry := arena_at(p.modules, p.emit_module)
+    off >= entry.start && off < entry.finish
 }
 
 pointee :: fn(ty: i64) -> i64 {
