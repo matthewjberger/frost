@@ -1281,7 +1281,8 @@ impl Renamer {
                 }
             }
             Expression::Literal(_) | Expression::Boolean(_) => {}
-            Expression::Prefix(_, operand)
+            Expression::PackMap(operand, _, _)
+            | Expression::Prefix(_, operand)
             | Expression::AddressOf(operand)
             | Expression::Borrow(operand)
             | Expression::BorrowMut(operand)

@@ -730,6 +730,11 @@ pub enum Expression {
     Dereference(Box<Expression>),
     StructInit(Identifier, Vec<(Identifier, Expression)>),
     Sizeof(Type),
+    // `g(T) for T in list`, an argument that stands for one argument per
+    // element of a compile-time list, with the element's name standing for it.
+    // The template, the name it binds, and the list. Expanded where the
+    // specialization is made; nothing downstream sees one.
+    PackMap(Box<Expression>, Identifier, Identifier),
     Range(Box<Expression>, Box<Expression>, bool),
     Switch(Box<Expression>, Vec<SwitchCase>),
     Tuple(Vec<Expression>),
@@ -755,6 +760,9 @@ impl Display for Expression {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         let expression = match self {
             Self::Try(inner) => format!("{}?", inner),
+            Self::PackMap(body, variable, list) => {
+                format!("{body} for {variable} in {list}")
+            }
             Self::ArrayRepeat(value, count) => format!("[{value}; {count}]"),
             Self::Identifier(identifier) => identifier.to_string(),
             Self::Literal(literal) => literal.to_string(),
@@ -2732,7 +2740,38 @@ impl<'a> Parser<'a> {
         self.read_token();
         let mut elements = Vec::new();
         while self.peek_nth(0) != end_token {
-            elements.push(self.parse_expression(Precedence::Lowest)?);
+            let held = self.parse_expression(Precedence::Lowest)?;
+            // `f(g(T) for T in list, n)`: one argument per element of a
+            // compile-time list, written once with the element's name standing
+            // for it. This is how a call gets an arity the list decides. Only
+            // an argument can be written this way, since it is the argument
+            // count that is being produced.
+            if matches!(self.peek_nth(0), Token::For) {
+                self.read_token();
+                let Token::Identifier(variable) = self.read_token() else {
+                    bail!(
+                        "`for` in an argument list names the element, as in `f(g(T) for T in list)`"
+                    );
+                };
+                let variable = variable.to_string();
+                if !matches!(self.read_token(), Token::In) {
+                    bail!(
+                        "`for` in an argument list is written `for {variable} in <list>`"
+                    );
+                }
+                let Token::Identifier(list) = self.read_token() else {
+                    bail!(
+                        "`for {variable} in` names the compile-time list to walk"
+                    );
+                };
+                elements.push(Expression::PackMap(
+                    Box::new(held),
+                    variable,
+                    list.to_string(),
+                ));
+            } else {
+                elements.push(held);
+            }
 
             if matches!(self.peek_nth(0), Token::Comma) {
                 self.read_token();

@@ -251,7 +251,8 @@ fn stamp_statement(statement: &mut Statement, file: u32) {
 
 fn stamp_expression(expression: &mut Expression, file: u32) {
     match expression {
-        Expression::Prefix(_, operand)
+        Expression::PackMap(operand, _, _)
+        | Expression::Prefix(_, operand)
         | Expression::AddressOf(operand)
         | Expression::Borrow(operand)
         | Expression::BorrowMut(operand)

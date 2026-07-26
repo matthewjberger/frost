@@ -625,7 +625,8 @@ impl MoveChecker<'_> {
                 self.visit(base, false)?;
                 self.visit(index, false)
             }
-            Expression::Prefix(_, operand) => self.visit(operand, false),
+            Expression::PackMap(operand, _, _)
+            | Expression::Prefix(_, operand) => self.visit(operand, false),
             Expression::Infix(left, _, right) => {
                 self.visit(left, false)?;
                 self.visit(right, false)

@@ -366,10 +366,13 @@ fn build_module_inner(
             // That is what makes an element a value evaluated once and a name
             // the unrolled body can use.
             if let Some((_, elements)) = &specialization.pack {
-                for (name, element) in elements {
+                for element in elements {
+                    let PackElement::Value(name, ty) = element else {
+                        continue;
+                    };
                     parameters.push(Parameter {
                         name: name.clone(),
-                        type_annotation: Some(element.clone()),
+                        type_annotation: Some(ty.clone()),
                         mutable: false,
                         mode: crate::parser::ParamMode::Read,
                         compile_time_signature: None,
@@ -984,10 +987,37 @@ struct Specialization {
     // template. This is the line the reader actually wrote.
     requested_at: Position,
     display: String,
-    // The compile-time list this call bound, as the parameters the
-    // specialization took for it, in order. None for a function that has no
-    // list.
-    pack: Option<(String, Vec<(String, Type)>)>,
+    // The compile-time list this call bound, in order. None for a function
+    // that has no list.
+    pack: Option<(String, Vec<PackElement>)>,
+}
+
+// One element of a compile-time list. A call may hand it a value or a type, and
+// the two are not the same thing afterwards: a value becomes an ordinary
+// parameter of the specialization, evaluated once at the call, and a type
+// becomes a name the body writes where a type belongs and nothing at run time.
+#[derive(Clone)]
+enum PackElement {
+    Value(String, Type),
+    Type(Type),
+}
+
+impl PackElement {
+    // The element as an argument, for a call that hands a whole list on.
+    fn as_argument(&self) -> Expression {
+        match self {
+            PackElement::Value(name, _) => Expression::Identifier(name.clone()),
+            PackElement::Type(ty) => Expression::TypeValue(ty.clone()),
+        }
+    }
+
+    // How the element reads in a specialization's name and in a diagnostic.
+    fn written(&self) -> String {
+        match self {
+            PackElement::Value(_, ty) => ty.to_string(),
+            PackElement::Type(ty) => format!("${ty}"),
+        }
+    }
 }
 
 fn function_type_params(parameters: &[Parameter]) -> Vec<String> {
@@ -1611,7 +1641,7 @@ fn split_format(text: &str) -> Result<Vec<Option<String>>> {
 struct Expansion<'a> {
     // The pack this specialization bound: its name, and the parameters that
     // took its elements.
-    pack: Option<&'a (String, Vec<(String, Type)>)>,
+    pack: Option<&'a (String, Vec<PackElement>)>,
     // What each parameter of the specialization is, so a predicate over one
     // has an answer.
     types: HashMap<String, Type>,
@@ -1630,7 +1660,7 @@ struct Expansion<'a> {
 
 fn expand_compile_time(
     body: Block,
-    pack: Option<&(String, Vec<(String, Type)>)>,
+    pack: Option<&(String, Vec<PackElement>)>,
     parameters: &[Parameter],
     structs: &HashMap<String, StructLayout>,
     subst: &HashMap<String, Type>,
@@ -1682,13 +1712,28 @@ impl Expansion<'_> {
                 &statement.node
                 && let Some(elements) = self.pack_named(iterable)
             {
-                for (name, _) in elements {
-                    let bound = substitute_identifier(
-                        Block::from(body.clone()),
-                        variable,
-                        name,
-                    );
-                    expanded.extend(self.block(bound)?);
+                for element in elements {
+                    // A value element is a parameter of this specialization, so
+                    // the loop's name stands for that parameter. A type element
+                    // is not a value at all: the loop's name is a type, and
+                    // what the body wrote it in are type positions.
+                    match element {
+                        PackElement::Value(name, _) => {
+                            let bound = substitute_identifier(
+                                Block::from(body.clone()),
+                                variable,
+                                name,
+                            );
+                            expanded.extend(self.block(bound)?);
+                        }
+                        PackElement::Type(ty) => {
+                            let one =
+                                HashMap::from([(variable.clone(), ty.clone())]);
+                            let bound = substitute_block(&body.clone(), &one);
+                            let inner = self.with_type(variable, ty.clone());
+                            expanded.extend(inner.block(bound)?);
+                        }
+                    }
                 }
                 continue;
             }
@@ -1755,6 +1800,47 @@ impl Expansion<'_> {
     }
 
     // This expansion with one more field in force.
+    // One argument of a `g(T) for T in list`: the template with the element's
+    // name standing for that element, expanded as an ordinary expression.
+    fn mapped(
+        &self,
+        element: &PackElement,
+        variable: &str,
+        body: &Expression,
+    ) -> Result<Expression> {
+        match element {
+            PackElement::Value(name, _) => {
+                let bound = substitute_identifier_in_expression(
+                    body.clone(),
+                    variable,
+                    name,
+                );
+                self.expression(bound)
+            }
+            PackElement::Type(ty) => {
+                let one = HashMap::from([(variable.to_string(), ty.clone())]);
+                let bound = substitute_expression(body, &one);
+                let inner = self.with_type(variable, ty.clone());
+                inner.expression(bound)
+            }
+        }
+    }
+
+    // A `for` over a list of types binds its name to one of them per copy of
+    // the body. The name is a type there, so what reads it is a type predicate,
+    // `sizeof`, and every position that names a type.
+    fn with_type(&self, name: &str, ty: Type) -> Expansion<'_> {
+        let mut types = self.types.clone();
+        types.insert(name.to_string(), ty);
+        Expansion {
+            pack: self.pack,
+            types,
+            structs: self.structs,
+            subst: self.subst,
+            fields: self.fields.clone(),
+        }
+    }
+
     fn with_field(&self, name: &str, field: (usize, Type)) -> Expansion<'_> {
         let mut fields = self.fields.clone();
         fields.insert(name.to_string(), field);
@@ -1798,10 +1884,7 @@ impl Expansion<'_> {
     }
 
     // The elements of the pack, when this expression names it.
-    fn pack_named(
-        &self,
-        expression: &Expression,
-    ) -> Option<&Vec<(String, Type)>> {
+    fn pack_named(&self, expression: &Expression) -> Option<&Vec<PackElement>> {
         let (name, elements) = self.pack?;
         match expression {
             Expression::Identifier(named) if named == name => Some(elements),
@@ -1935,15 +2018,20 @@ impl Expansion<'_> {
                     "a compile-time list is indexed by a literal, since which element it is has to be known here"
                 )
             };
-            let Some((name, _)) =
+            let Some(element) =
                 usize::try_from(*at).ok().and_then(|at| elements.get(at))
             else {
                 bail!(
-                    "this call gave {} value(s) to the list, so there is no element {at}",
+                    "this call gave {} element(s) to the list, so there is no element {at}",
                     elements.len()
                 )
             };
-            return Ok(Expression::Identifier(name.clone()));
+            return Ok(match element {
+                PackElement::Value(name, _) => {
+                    Expression::Identifier(name.clone())
+                }
+                PackElement::Type(ty) => Expression::TypeValue(ty.clone()),
+            });
         }
         if self.pack_named(&expression).is_some() {
             bail!(
@@ -1972,6 +2060,32 @@ impl Expansion<'_> {
             Expression::Call(callee, arguments) => {
                 let mut expanded = Vec::with_capacity(arguments.len());
                 for argument in arguments {
+                    // An argument list is the one place a compile-time list
+                    // stands for several things at once. Naming it hands over
+                    // its elements, which is how one list is passed on to
+                    // another; `g(T) for T in list` hands over the template
+                    // once per element, which is how a call gets an arity the
+                    // list decides.
+                    if let Some(elements) = self.pack_named(&argument) {
+                        for element in elements {
+                            expanded.push(element.as_argument());
+                        }
+                        continue;
+                    }
+                    if let Expression::PackMap(body, variable, list) = &argument
+                    {
+                        let named = Expression::Identifier(list.clone());
+                        let Some(elements) = self.pack_named(&named) else {
+                            bail!(
+                                "`for {variable} in {list}` walks a compile-time list, and '{list}' is not one here"
+                            );
+                        };
+                        for element in elements.clone() {
+                            expanded
+                                .push(self.mapped(&element, variable, body)?);
+                        }
+                        continue;
+                    }
                     expanded.push(self.expression(argument)?);
                 }
                 Expression::Call(Box::new(self.expression(*callee)?), expanded)
@@ -2065,6 +2179,16 @@ fn substitute_identifier(block: Block, from: &str, to: &str) -> Block {
     let mut subst = HashMap::new();
     subst.insert(from.to_string(), to.to_string());
     rename_block(block, &subst)
+}
+
+fn substitute_identifier_in_expression(
+    expression: Expression,
+    from: &str,
+    to: &str,
+) -> Expression {
+    let mut subst = HashMap::new();
+    subst.insert(from.to_string(), to.to_string());
+    rename_expression(expression, &subst)
 }
 
 fn rename_block(block: Block, subst: &HashMap<String, String>) -> Block {
@@ -3071,6 +3195,24 @@ fn substitute_statement(
         ),
         Statement::Defer(inner) => {
             Statement::Defer(Box::new(substitute_statement(inner, subst)))
+        }
+        Statement::Print(value, arguments) => Statement::Print(
+            substitute_expression(value, subst),
+            arguments
+                .iter()
+                .map(|argument| substitute_expression(argument, subst))
+                .collect(),
+        ),
+        Statement::Constant(name, value) => Statement::Constant(
+            name.clone(),
+            substitute_expression(value, subst),
+        ),
+        Statement::LetMultiple(bindings, value) => Statement::LetMultiple(
+            bindings.clone(),
+            substitute_expression(value, subst),
+        ),
+        Statement::With(name, body) => {
+            Statement::With(name.clone(), substitute_block(body, subst))
         }
         other => other.clone(),
     }
@@ -5387,12 +5529,20 @@ impl<'a> FunctionLowering<'a> {
         // Every argument the list took, lowered as a value. The specialization
         // takes one ordinary parameter for each, so each is evaluated once
         // however many times the unrolled body names it.
-        let mut pack_elements: Vec<(String, Type)> = Vec::new();
+        let mut pack_elements: Vec<PackElement> = Vec::new();
         if let Some(parameter) = pack_parameter(&generic.parameters) {
             for (index, argument) in arguments[fixed..].iter().enumerate() {
+                // `$Position` in the list is a type rather than a value. It
+                // takes no parameter and is evaluated nowhere: what it leaves
+                // behind is a name the body writes where a type belongs.
+                if let Expression::TypeValue(ty) = argument {
+                    pack_elements
+                        .push(PackElement::Type(substitute_type(ty, &subst)));
+                    continue;
+                }
                 let (operand, value_type) =
                     self.lower_expression(argument, None)?;
-                pack_elements.push((
+                pack_elements.push(PackElement::Value(
                     pack_element_name(&parameter.name, index),
                     value_type.clone(),
                 ));
@@ -5410,8 +5560,10 @@ impl<'a> FunctionLowering<'a> {
                 substitute_type(&parameter_type(parameter), &subst)
             })
             .collect();
-        for (_, element) in &pack_elements {
-            value_parameter_types.push(element.clone());
+        for element in &pack_elements {
+            if let PackElement::Value(_, ty) = element {
+                value_parameter_types.push(ty.clone());
+            }
         }
         let return_type = generic
             .return_sig
@@ -5422,17 +5574,15 @@ impl<'a> FunctionLowering<'a> {
             mangle_specialization(name, &generic.type_params, &subst);
         // What the list was given is part of what makes this specialization the
         // one it is, so its element types are part of the name.
-        for (_, element) in &pack_elements {
+        for element in &pack_elements {
             mangled_name.push('_');
-            mangled_name.push_str(&sanitize_identifier(&element.to_string()));
+            mangled_name.push_str(&sanitize_identifier(&element.written()));
         }
         let mut display =
             describe_specialization(name, &generic.type_params, &subst);
         if !pack_elements.is_empty() {
-            let written: Vec<String> = pack_elements
-                .iter()
-                .map(|(_, element)| element.to_string())
-                .collect();
+            let written: Vec<String> =
+                pack_elements.iter().map(PackElement::written).collect();
             display.push_str(&format!("({})", written.join(", ")));
         }
 

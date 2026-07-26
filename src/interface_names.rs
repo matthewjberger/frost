@@ -152,7 +152,8 @@ fn names_in_expression(expression: &Expression, out: &mut Vec<String>) {
                 names_in_expression(argument, out);
             }
         }
-        Expression::Prefix(_, inner)
+        Expression::PackMap(inner, _, _)
+        | Expression::Prefix(_, inner)
         | Expression::AddressOf(inner)
         | Expression::Borrow(inner)
         | Expression::BorrowMut(inner)
