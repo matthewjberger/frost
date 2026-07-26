@@ -148,7 +148,7 @@ place_module :: fn(buffer: ^i8, at: i64, path: ^i8,
     while (i + 1 < scratch.count) {
         entry := arena_at(scratch, i)
         named := arena_at(scratch, i + 1)
-        if (entry.kind == TOK_KW_IMPORT && named.kind == TOK_STR) {
+        if (entry.kind == TokenKind::KwImport && named.kind == TokenKind::Str) {
             arena_push(
                 children,
                 Module {
@@ -342,7 +342,7 @@ resolve_imports :: fn(buffer: ^i8, root: ^i8, names: ^i8,
     while (j + 1 < scratch.count) {
         entry := arena_at(scratch, j)
         named := arena_at(scratch, j + 1)
-        if (entry.kind == TOK_KW_IMPORT && named.kind == TOK_STR) {
+        if (entry.kind == TokenKind::KwImport && named.kind == TokenKind::Str) {
             // The line is about to be blanked, so the edge it stands for is
             // recorded first. The importer is whoever wrote the line; the
             // module it names is resolved against that file's own directory,
@@ -366,7 +366,7 @@ resolve_imports :: fn(buffer: ^i8, root: ^i8, names: ^i8,
             mut r := j + 2
             if (r < scratch.count) {
                 opened := arena_at(scratch, r)
-                if (opened.kind == TOK_LPAREN) {
+                if (opened.kind == TokenKind::Lparen) {
                     through = opened.off
                     r = r + 1
                     mut reading : bool = true
@@ -374,9 +374,9 @@ resolve_imports :: fn(buffer: ^i8, root: ^i8, names: ^i8,
                         exported := arena_at(scratch, r)
                         word := arena_at(scratch, r + 1)
                         local := arena_at(scratch, r + 2)
-                        if (exported.kind != TOK_IDENT
-                            || word.kind != TOK_IDENT
-                            || local.kind != TOK_IDENT) {
+                        if (exported.kind != TokenKind::Ident
+                            || word.kind != TokenKind::Ident
+                            || local.kind != TokenKind::Ident) {
                             reading = false
                         } else {
                             exported_at := named_at
@@ -396,7 +396,7 @@ resolve_imports :: fn(buffer: ^i8, root: ^i8, names: ^i8,
                             r = r + 3
                             if (r < scratch.count) {
                                 following := arena_at(scratch, r)
-                                if (following.kind == TOK_COMMA) {
+                                if (following.kind == TokenKind::Comma) {
                                     r = r + 1
                                 } else {
                                     reading = false
@@ -409,14 +409,14 @@ resolve_imports :: fn(buffer: ^i8, root: ^i8, names: ^i8,
             }
             blank_range(buffer, entry.off, through)
         }
-        if (entry.kind == TOK_KW_EXPORT) {
+        if (entry.kind == TokenKind::KwExport) {
             owner := module_at(modules, entry.off)
             mut k := j + 1
             mut through := entry.off + entry.len - 1
             mut listing : bool = true
             while (listing) {
                 listed := arena_at(scratch, k)
-                if (listed.kind != TOK_IDENT) {
+                if (listed.kind != TokenKind::Ident) {
                     listing = false
                 } else {
                     // The name is copied out because the line it is written
@@ -438,7 +438,7 @@ resolve_imports :: fn(buffer: ^i8, root: ^i8, names: ^i8,
                     through = listed.off + listed.len - 1
                     k = k + 1
                     following := arena_at(scratch, k)
-                    if (following.kind == TOK_COMMA) {
+                    if (following.kind == TokenKind::Comma) {
                         through = following.off
                         k = k + 1
                     } else {

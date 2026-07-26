@@ -21,7 +21,7 @@ parse_number :: fn(mut p: Parser) -> i64 {
 // does: a literal, a value bound for the generic being instantiated, or a
 // module constant.
 array_repeat_count :: fn(mut p: Parser) -> i64 {
-    if (cur(p) == TOK_INT) {
+    if (cur(p) == TokenKind::Int) {
         total := cur_val(p)
         advance(p)
         return total
@@ -180,12 +180,12 @@ split_format :: fn(mut p: Parser, literal: i64, arguments: i64) -> i64 {
 
 parse_primary :: fn(mut p: Parser) -> i64 {
     kind := cur(p)
-    if (kind == TOK_INT) {
+    if (kind == TokenKind::Int) {
         return parse_number(p)
     }
     // A float literal is its byte range, the way a string literal is, since
     // nothing here has to know what number the digits spell.
-    if (kind == TOK_FLOAT) {
+    if (kind == TokenKind::Float) {
         offset := cur_off(p)
         length := cur_len(p)
         advance(p)
@@ -193,7 +193,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     }
     // `[a, b, c]`. The element type and the length both come from what is
     // written, so an array literal needs no annotation to have a type.
-    if (kind == TOK_LBRACKET) {
+    if (kind == TokenKind::Lbracket) {
         advance(p)
         mut head : i64 = 0 - 1
         mut tail : i64 = 0 - 1
@@ -210,7 +210,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         }
         saved_expected := p.expected_type
         p.expected_type = elem_expected
-        while (cur(p) != TOK_RBRACKET) {
+        while (cur(p) != TokenKind::Rbracket) {
             element := new_node(p, NodeKind::Arg, parse_expr(p), 0, 0)
             if (head == (0 - 1)) {
                 head = element
@@ -222,7 +222,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             // `[value; n]` is the same value n times. The count is a literal or
             // a constant, since the elements are laid out here rather than at
             // run time, and it follows the one element the form allows.
-            if (cur(p) == TOK_SEMI) {
+            if (cur(p) == TokenKind::Semi) {
                 advance(p)
                 held := arena_at(p.arena, element)
                 value := held.a
@@ -234,7 +234,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
                     count = count + 1
                 }
             }
-            if (cur(p) == TOK_COMMA) {
+            if (cur(p) == TokenKind::Comma) {
                 advance(p)
             }
         }
@@ -250,25 +250,25 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         }
         return made
     }
-    if (kind == TOK_KW_TRUE) {
+    if (kind == TokenKind::KwTrue) {
         advance(p)
         return new_node(p, NodeKind::Num, 0, 0, 1)
     }
-    if (kind == TOK_KW_FALSE) {
+    if (kind == TokenKind::KwFalse) {
         advance(p)
         return new_node(p, NodeKind::Num, 0, 0, 0)
     }
-    if (kind == TOK_STR) {
+    if (kind == TokenKind::Str) {
         offset := cur_off(p)
         length := cur_len(p)
         advance(p)
         return new_named_node(p, NodeKind::StrLit, 0, offset, length)
     }
-    if (kind == TOK_DOLLAR) {
+    if (kind == TokenKind::Dollar) {
         advance(p)
         // `$8` is a compile-time value argument, carried like a type argument
         // but holding CONST_BASE plus the number. `$Entity` is a type argument.
-        if (cur(p) == TOK_INT) {
+        if (cur(p) == TokenKind::Int) {
             value := CONST_BASE + cur_val(p)
             advance(p)
             return new_type_node(p, NodeKind::TypeVal, 0, value)
@@ -277,7 +277,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         // FN_BASE plus its index the way a type argument carries a type code.
         // The name is interned rather than looked up, since the function it
         // names may be declared further down the file.
-        if (cur(p) == TOK_IDENT
+        if (cur(p) == TokenKind::Ident
             && is_type_name(p, cur_off(p), cur_len(p)) == false) {
             off := cur_off(p)
             len := cur_len(p)
@@ -293,7 +293,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     // field are how a wrapper hands an unsafe result up without a bare block.
     // Its span is recorded the same way the statement form's is, so the gate
     // sees the expression as written inside one.
-    if (kind == TOK_KW_UNSAFE) {
+    if (kind == TokenKind::KwUnsafe) {
         advance(p)
         start := cur_off(p)
         p.unsafe_depth = p.unsafe_depth + 1
@@ -312,7 +312,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     // An `if` used where a value is wanted takes the same road a `match` does:
     // bind a name, let each branch assign to it, queue the branch for the block
     // being parsed, and stand for the name.
-    if (kind == TOK_KW_IF) {
+    if (kind == TokenKind::KwIf) {
         name_off := synth_numbered(p, "__value", p.match_count)
         name_len := 7 + digits_in(p.match_count)
         p.match_count = p.match_count + 1
@@ -329,7 +329,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     // A match used where a value is wanted: bind a name, let each arm assign to
     // it, and stand for the name. The match itself is queued for the block,
     // which is the same road a `?` takes.
-    if (kind == TOK_KW_MATCH) {
+    if (kind == TokenKind::KwMatch) {
         name_off := synth_numbered(p, "__value", p.match_count)
         name_len := 7 + digits_in(p.match_count)
         p.match_count = p.match_count + 1
@@ -342,13 +342,13 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         return new_named_node(p, NodeKind::Var, 0, name_off, name_len)
     }
     // `.Circle { radius = 5 }`, whose enum comes from what the context expects.
-    if (kind == TOK_DOT) {
+    if (kind == TokenKind::Dot) {
         return parse_inferred_variant(p)
     }
     // `{ x = 1, y = 2 }`, a struct literal that leaves out a type name the
     // context already carries. Every field is still named. An unresolved one is
     // an argument whose callee is written later, patched by the fixup pass.
-    if (kind == TOK_LBRACE) {
+    if (kind == TokenKind::Lbrace) {
         advance(p)
         // The second place to look is what a `return` in a fallible function
         // sets: the value it answers with is not a struct there, so a literal
@@ -363,7 +363,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         head := parse_field_inits(p, struct_ty)
         return new_struct_lit(p, struct_ty, head)
     }
-    if (kind == TOK_LPAREN) {
+    if (kind == TokenKind::Lparen) {
         advance(p)
         inner := parse_expr(p)
         advance(p)
@@ -373,11 +373,11 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     length := cur_len(p)
     advance(p)
     // `Kind::Enemy { ... }` names a variant of an enum.
-    if (cur(p) == TOK_COLONCOLON) {
+    if (cur(p) == TokenKind::Coloncolon) {
         advance(p)
         return parse_variant_value(p, offset, length)
     }
-    if (cur(p) == TOK_LPAREN) {
+    if (cur(p) == TokenKind::Lparen) {
         if (str_range_eq(p.src, offset, length, "ptr_to")) {
             advance(p)
             inner := parse_expr(p)
@@ -414,7 +414,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         }
         if (str_range_eq(p.src, offset, length, "ptr_cast")) {
             advance(p)
-            if (cur(p) == TOK_DOLLAR) {
+            if (cur(p) == TokenKind::Dollar) {
                 advance(p)
             }
             ty := parse_type(p)
@@ -425,7 +425,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         }
         if (str_range_eq(p.src, offset, length, "slice_from")) {
             advance(p)
-            if (cur(p) == TOK_DOLLAR) {
+            if (cur(p) == TokenKind::Dollar) {
                 advance(p)
             }
             element := parse_type(p)
@@ -453,11 +453,11 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     // literal is of instead of leaving it to the context. The type is read the
     // way every other generic instance is: rewind to the name and let the type
     // parser instantiate it.
-    if (cur(p) == TOK_LT && p.no_struct_lit == false
+    if (cur(p) == TokenKind::Lt && p.no_struct_lit == false
         && generic_index_for(p, offset, length) >= 0) {
         p.ti = p.ti - 1
         struct_ty := parse_type(p)
-        if (cur(p) != TOK_LBRACE) {
+        if (cur(p) != TokenKind::Lbrace) {
             report_where(p.modules, p.src, offset)
             report("a generic type named here is the type of a literal, so it is followed by its fields in braces")
             frost_rt_die()
@@ -466,7 +466,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         inits := parse_field_inits(p, struct_ty)
         return new_struct_lit(p, struct_ty, inits)
     }
-    if (cur(p) == TOK_LBRACE && p.no_struct_lit == false) {
+    if (cur(p) == TokenKind::Lbrace && p.no_struct_lit == false) {
         struct_ty := resolve_lit_type(p, offset, length)
         advance(p)
         inits := parse_field_inits(p, struct_ty)
@@ -610,16 +610,16 @@ wrap_trailing_ok :: fn(mut p: Parser, body: i64) {
 
 parse_postfix :: fn(mut p: Parser, start: i64) -> i64 {
     mut node := start
-    while (cur(p) == TOK_DOT || cur(p) == TOK_CARET
-        || cur(p) == TOK_QUESTION || cur(p) == TOK_LBRACKET
-        || cur(p) == TOK_LPAREN) {
+    while (cur(p) == TokenKind::Dot || cur(p) == TokenKind::Caret
+        || cur(p) == TokenKind::Question || cur(p) == TokenKind::Lbracket
+        || cur(p) == TokenKind::Lparen) {
         // `ops.less(a, b)`: what is called is a value rather than a name, so
         // the call is through whatever the expression so far answered with.
-        if (cur(p) == TOK_LPAREN) {
+        if (cur(p) == TokenKind::Lparen) {
             advance(p)
             mut head : i64 = 0 - 1
             mut tail : i64 = 0 - 1
-            while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
+            while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
                 argument := parse_expr(p)
                 held := new_node(p, NodeKind::Arg, argument, 0, 0)
                 if (head == (0 - 1)) {
@@ -629,22 +629,22 @@ parse_postfix :: fn(mut p: Parser, start: i64) -> i64 {
                     set_next(p, tail, held)
                     tail = held
                 }
-                if (cur(p) == TOK_COMMA) {
+                if (cur(p) == TokenKind::Comma) {
                     advance(p)
                 }
             }
             advance(p)
             node = new_node(p, NodeKind::CallPtr, node, head, 0)
-        } else if (cur(p) == TOK_QUESTION) {
+        } else if (cur(p) == TokenKind::Question) {
             advance(p)
             node = lower_try(p, node)
-        } else if (cur(p) == TOK_DOT) {
+        } else if (cur(p) == TokenKind::Dot) {
             advance(p)
             offset := cur_off(p)
             length := cur_len(p)
             advance(p)
             node = new_field_node(p, node, offset, length)
-        } else if (cur(p) == TOK_CARET) {
+        } else if (cur(p) == TokenKind::Caret) {
             advance(p)
             node = new_unary(p, NodeKind::Deref, node)
         } else {
@@ -664,7 +664,7 @@ parse_factor :: fn(mut p: Parser) -> i64 {
 parse_field_inits :: fn(mut p: Parser, struct_ty: i64) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
-    while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
+    while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
         offset := cur_off(p)
         length := cur_len(p)
         advance(p)
@@ -684,7 +684,7 @@ parse_field_inits :: fn(mut p: Parser, struct_ty: i64) -> i64 {
             set_next(p, tail, init)
             tail = init
         }
-        if (cur(p) == TOK_COMMA) {
+        if (cur(p) == TokenKind::Comma) {
             advance(p)
         }
     }
@@ -725,7 +725,7 @@ parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     mut index : i64 = 0
-    while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
+    while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
         saved_expected := p.expected_type
         saved_alt := p.expected_alt
         if (callee >= 0) {
@@ -758,7 +758,7 @@ parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
             tail = arg
         }
         index = index + 1
-        if (cur(p) == TOK_COMMA) {
+        if (cur(p) == TokenKind::Comma) {
             advance(p)
         }
     }
@@ -769,12 +769,12 @@ parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
 parse_mul :: fn(mut p: Parser) -> i64 {
     mut left := parse_factor(p)
     mut kind := cur(p)
-    while (kind == TOK_STAR || kind == TOK_SLASH || kind == TOK_PERCENT) {
+    while (kind == TokenKind::Star || kind == TokenKind::Slash || kind == TokenKind::Percent) {
         mut op : i64 = OP_MUL
-        if (kind == TOK_SLASH) {
+        if (kind == TokenKind::Slash) {
             op = OP_DIV
         }
-        if (kind == TOK_PERCENT) {
+        if (kind == TokenKind::Percent) {
             op = OP_MOD
         }
         advance(p)
@@ -788,9 +788,9 @@ parse_mul :: fn(mut p: Parser) -> i64 {
 parse_add :: fn(mut p: Parser) -> i64 {
     mut left := parse_mul(p)
     mut kind := cur(p)
-    while (kind == TOK_PLUS || kind == TOK_MINUS) {
+    while (kind == TokenKind::Plus || kind == TokenKind::Minus) {
         mut op : i64 = OP_ADD
-        if (kind == TOK_MINUS) {
+        if (kind == TokenKind::Minus) {
             op = OP_SUB
         }
         advance(p)
@@ -810,9 +810,9 @@ parse_add :: fn(mut p: Parser) -> i64 {
 parse_shift :: fn(mut p: Parser) -> i64 {
     mut left := parse_add(p)
     mut kind := cur(p)
-    while (kind == TOK_SHL || kind == TOK_SHR) {
+    while (kind == TokenKind::Shl || kind == TokenKind::Shr) {
         mut op : i64 = OP_SHL
-        if (kind == TOK_SHR) {
+        if (kind == TokenKind::Shr) {
             op = OP_SHR
         }
         advance(p)
@@ -825,7 +825,7 @@ parse_shift :: fn(mut p: Parser) -> i64 {
 
 parse_bitand :: fn(mut p: Parser) -> i64 {
     mut left := parse_shift(p)
-    while (cur(p) == TOK_AMP) {
+    while (cur(p) == TokenKind::Amp) {
         advance(p)
         right := parse_shift(p)
         left = new_node(p, NodeKind::Bin, left, right, OP_BITAND)
@@ -835,7 +835,7 @@ parse_bitand :: fn(mut p: Parser) -> i64 {
 
 parse_bitor :: fn(mut p: Parser) -> i64 {
     mut left := parse_bitand(p)
-    while (cur(p) == TOK_PIPE) {
+    while (cur(p) == TokenKind::Pipe) {
         advance(p)
         right := parse_bitand(p)
         left = new_node(p, NodeKind::Bin, left, right, OP_BITOR)
@@ -846,32 +846,32 @@ parse_bitor :: fn(mut p: Parser) -> i64 {
 parse_cmp :: fn(mut p: Parser) -> i64 {
     left := parse_bitor(p)
     kind := cur(p)
-    if (kind == TOK_LT) {
+    if (kind == TokenKind::Lt) {
         advance(p)
         right := parse_bitor(p)
         return new_node(p, NodeKind::Bin, left, right, OP_LT)
     }
-    if (kind == TOK_LE) {
+    if (kind == TokenKind::Le) {
         advance(p)
         right := parse_bitor(p)
         return new_node(p, NodeKind::Bin, left, right, OP_LE)
     }
-    if (kind == TOK_GT) {
+    if (kind == TokenKind::Gt) {
         advance(p)
         right := parse_bitor(p)
         return new_node(p, NodeKind::Bin, left, right, OP_GT)
     }
-    if (kind == TOK_GE) {
+    if (kind == TokenKind::Ge) {
         advance(p)
         right := parse_bitor(p)
         return new_node(p, NodeKind::Bin, left, right, OP_GE)
     }
-    if (kind == TOK_EQEQ) {
+    if (kind == TokenKind::Eqeq) {
         advance(p)
         right := parse_bitor(p)
         return new_node(p, NodeKind::Bin, left, right, OP_EQ)
     }
-    if (kind == TOK_NE) {
+    if (kind == TokenKind::Ne) {
         advance(p)
         right := parse_bitor(p)
         return new_node(p, NodeKind::Bin, left, right, OP_NE)
@@ -881,7 +881,7 @@ parse_cmp :: fn(mut p: Parser) -> i64 {
 
 parse_and :: fn(mut p: Parser) -> i64 {
     mut left := parse_cmp(p)
-    while (cur(p) == TOK_ANDAND) {
+    while (cur(p) == TokenKind::Andand) {
         advance(p)
         right := parse_cmp(p)
         left = new_node(p, NodeKind::Bin, left, right, OP_AND)
@@ -891,7 +891,7 @@ parse_and :: fn(mut p: Parser) -> i64 {
 
 parse_expr :: fn(mut p: Parser) -> i64 {
     mut left := parse_and(p)
-    while (cur(p) == TOK_OROR) {
+    while (cur(p) == TokenKind::Oror) {
         advance(p)
         right := parse_and(p)
         left = new_node(p, NodeKind::Bin, left, right, OP_OR)
@@ -901,7 +901,7 @@ parse_expr :: fn(mut p: Parser) -> i64 {
 
 parse_block :: fn(mut p: Parser) -> i64 {
     advance(p)
-    head := parse_stmt_list(p, TOK_RBRACE)
+    head := parse_stmt_list(p, TokenKind::Rbrace)
     advance(p)
     head
 }
@@ -912,7 +912,7 @@ parse_block :: fn(mut p: Parser) -> i64 {
 consume_generic_close :: fn(mut p: Parser) {
     if (p.pending_gt == 1) {
         p.pending_gt = 0
-    } else if (cur(p) == TOK_SHR) {
+    } else if (cur(p) == TokenKind::Shr) {
         advance(p)
         p.pending_gt = 1
     } else {
@@ -929,7 +929,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
     // `ref T` is a borrow of T: the same address a `^T` is, but one the
     // checker has proven points at a live value, so reaching through it is
     // not gated the way a raw pointer is.
-    if (cur(p) == TOK_KW_REF) {
+    if (cur(p) == TokenKind::KwRef) {
         advance(p)
         return BORROW_FLAG + parse_type(p)
     }
@@ -937,18 +937,18 @@ parse_type :: fn(mut p: Parser) -> i64 {
     // signature, a callable value. A `mut` parameter is a borrow, the same as a
     // `mut` parameter of a real function is. A `move` or plain one is the type
     // as written. With no `-> R` the function answers with nothing.
-    if (cur(p) == TOK_KW_FN) {
+    if (cur(p) == TokenKind::KwFn) {
         advance(p)
         advance(p)
         param_start := p.proc_params.count
         mut param_count : i64 = 0
-        while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
+        while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
             mut is_mut : i64 = 0
-            if (cur(p) == TOK_KW_MUT) {
+            if (cur(p) == TokenKind::KwMut) {
                 is_mut = 1
                 advance(p)
             }
-            if (cur(p) == TOK_KW_MOVE) {
+            if (cur(p) == TokenKind::KwMove) {
                 advance(p)
             }
             // `value T` says C passes that parameter as the struct itself,
@@ -958,8 +958,8 @@ parse_type :: fn(mut p: Parser) -> i64 {
             // rule of their own. As a mode it is followed by the type it marks,
             // which is what tells it from a type named `value`.
             mut is_value : i64 = 0
-            if (cur(p) == TOK_IDENT && peek_kind(p, 1) != TOK_COMMA
-                && peek_kind(p, 1) != TOK_RPAREN
+            if (cur(p) == TokenKind::Ident && peek_kind(p, 1) != TokenKind::Comma
+                && peek_kind(p, 1) != TokenKind::Rparen
                 && str_range_eq(p.src, cur_off(p), cur_len(p), "value")) {
                 is_value = 1
                 advance(p)
@@ -973,30 +973,30 @@ parse_type :: fn(mut p: Parser) -> i64 {
             }
             arena_push(p.proc_params, GArg { value = param_ty })
             param_count = param_count + 1
-            if (cur(p) == TOK_COMMA) {
+            if (cur(p) == TokenKind::Comma) {
                 advance(p)
             }
         }
         advance(p)
         mut ret : i64 = TY_VOID
-        if (cur(p) == TOK_ARROW) {
+        if (cur(p) == TokenKind::Arrow) {
             advance(p)
             ret = parse_type(p)
         }
         return proc_of(p, ret, param_start, param_count)
     }
     mut pointer_levels : i64 = 0
-    while (cur(p) == TOK_CARET) {
+    while (cur(p) == TokenKind::Caret) {
         advance(p)
         pointer_levels = pointer_levels + 1
     }
     // `[]T` is a slice and `[N]T` is a fixed array, and both are read before
     // the pointer levels above them so `^[]T` means what it looks like.
-    if (cur(p) == TOK_LBRACKET) {
+    if (cur(p) == TokenKind::Lbracket) {
         advance(p)
         mut length : i64 = 0 - 1
-        if (cur(p) != TOK_RBRACKET) {
-            if (cur(p) == TOK_INT) {
+        if (cur(p) != TokenKind::Rbracket) {
+            if (cur(p) == TokenKind::Int) {
                 length = cur_val(p)
             } else {
                 // A `[N]T` inside a generic body, where N is a value parameter,
@@ -1022,7 +1022,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
         return made
     }
     mut dollar : i64 = 0
-    if (cur(p) == TOK_DOLLAR) {
+    if (cur(p) == TokenKind::Dollar) {
         advance(p)
         dollar = 1
     }
@@ -1036,7 +1036,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
     }
     mut base : i64 = TY_I64
     mut was_generic : i64 = 0
-    if (cur(p) == TOK_LT) {
+    if (cur(p) == TokenKind::Lt) {
         // `columns<T, N>` is the SoA sibling of `Slab<T, N>`: a container that
         // stores one array per field of T, addressed by the same handle, rather
         // than one array of whole T. The compiler synthesizes the layout by
@@ -1045,11 +1045,11 @@ parse_type :: fn(mut p: Parser) -> i64 {
         if (str_range_eq(p.src, offset, length, "columns")) {
             advance(p)
             element := parse_type(p)
-            if (cur(p) == TOK_COMMA) {
+            if (cur(p) == TokenKind::Comma) {
                 advance(p)
             }
             mut n : i64 = 0
-            if (cur(p) == TOK_INT) {
+            if (cur(p) == TokenKind::Int) {
                 n = cur_val(p)
                 advance(p)
             } else {
@@ -1086,10 +1086,10 @@ parse_type :: fn(mut p: Parser) -> i64 {
             buf_start := p.argbuf.count
             mut count : i64 = 0
             mut all_concrete : i64 = 1
-            while (cur(p) != TOK_GT && cur(p) != TOK_SHR
-                && p.pending_gt == 0 && cur(p) != TOK_EOF) {
+            while (cur(p) != TokenKind::Gt && cur(p) != TokenKind::Shr
+                && p.pending_gt == 0 && cur(p) != TokenKind::Eof) {
                 mut a : i64 = TY_I64
-                if (cur(p) == TOK_INT) {
+                if (cur(p) == TokenKind::Int) {
                     a = CONST_BASE + cur_val(p)
                     advance(p)
                 } else {
@@ -1100,7 +1100,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
                 }
                 arena_push(p.argbuf, GArg { value = a })
                 count = count + 1
-                if (cur(p) == TOK_COMMA) {
+                if (cur(p) == TokenKind::Comma) {
                     advance(p)
                 }
             }
@@ -1157,7 +1157,7 @@ parse_struct_fields :: fn(mut p: Parser) -> i64 {
     advance(p)
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
-    while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
+    while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
         field_offset := cur_off(p)
         field_length := cur_len(p)
         advance(p)
@@ -1174,7 +1174,7 @@ parse_struct_fields :: fn(mut p: Parser) -> i64 {
             set_field_next(p, tail, field)
             tail = field
         }
-        if (cur(p) == TOK_COMMA) {
+        if (cur(p) == TokenKind::Comma) {
             advance(p)
         }
     }
@@ -1195,7 +1195,7 @@ parse_struct_fields :: fn(mut p: Parser) -> i64 {
 // takes a type and `$less: fn(T, T) -> bool` takes a function, and neither of
 // those is a number, which is the distinction that decides what may be bound.
 kind_is_value :: fn(mut p: Parser) -> i64 {
-    if (peek_is_word(p, 1, "Type") || peek_kind(p, 1) == TOK_KW_FN) {
+    if (peek_is_word(p, 1, "Type") || peek_kind(p, 1) == TokenKind::KwFn) {
         return 0
     }
     1
@@ -1429,9 +1429,9 @@ parse_variant_case :: fn(mut p: Parser, subject: i64) -> i64 {
     }
     mut bindings : i64 = 0 - 1
     mut tail : i64 = 0 - 1
-    if (cur(p) == TOK_LBRACE) {
+    if (cur(p) == TokenKind::Lbrace) {
         advance(p)
-        while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
+        while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
             field_off := cur_off(p)
             field_len := cur_len(p)
             advance(p)
@@ -1446,7 +1446,7 @@ parse_variant_case :: fn(mut p: Parser, subject: i64) -> i64 {
                 set_next(p, tail, bind)
             }
             tail = bind
-            if (cur(p) == TOK_COMMA) {
+            if (cur(p) == TokenKind::Comma) {
                 advance(p)
             }
         }
@@ -1594,23 +1594,23 @@ assign_case_values :: fn(mut p: Parser, match_node: i64, name_off: i64,
 // Whether what follows `match` is several values rather than one: a `(` with a
 // comma at its own depth before the `)` that closes it.
 match_is_tuple :: fn(mut p: Parser) -> bool {
-    if (cur(p) != TOK_LPAREN) {
+    if (cur(p) != TokenKind::Lparen) {
         return false
     }
     mut offset : i64 = 1
     mut depth : i64 = 0
-    while (peek_kind(p, offset) != TOK_EOF) {
+    while (peek_kind(p, offset) != TokenKind::Eof) {
         k := peek_kind(p, offset)
-        if (k == TOK_LPAREN) {
+        if (k == TokenKind::Lparen) {
             depth = depth + 1
         }
-        if (k == TOK_RPAREN) {
+        if (k == TokenKind::Rparen) {
             if (depth == 0) {
                 return false
             }
             depth = depth - 1
         }
-        if (k == TOK_COMMA && depth == 0) {
+        if (k == TokenKind::Comma && depth == 0) {
             return true
         }
         offset = offset + 1
@@ -1635,7 +1635,7 @@ parse_tuple_match :: fn(mut p: Parser) -> i64 {
     advance(p)
     unique := p.arena.count
     mut count : i64 = 0
-    while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
+    while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
         value := parse_expr(p)
         name_off := synth_numbered(p, "__tup", unique + count)
         name_len := 5 + digits_in(unique + count)
@@ -1643,7 +1643,7 @@ parse_tuple_match :: fn(mut p: Parser) -> i64 {
         arena_push(p.pending,
             LocalVar { name_off = bind, name_len = bind, ty = 0 })
         count = count + 1
-        if (cur(p) == TOK_COMMA) {
+        if (cur(p) == TokenKind::Comma) {
             advance(p)
         }
     }
@@ -1653,14 +1653,14 @@ parse_tuple_match :: fn(mut p: Parser) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     mut closed : i64 = 0
-    while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
+    while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
         advance(p)
         mut condition : i64 = 0 - 1
-        if (cur(p) == TOK_LPAREN) {
+        if (cur(p) == TokenKind::Lparen) {
             advance(p)
             mut index : i64 = 0
-            while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
-                if (cur(p) == TOK_INT) {
+            while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
+                if (cur(p) == TokenKind::Int) {
                     wanted := cur_val(p)
                     advance(p)
                     name_off := synth_numbered(p, "__tup", unique + index)
@@ -1679,7 +1679,7 @@ parse_tuple_match :: fn(mut p: Parser) -> i64 {
                     advance(p)
                 }
                 index = index + 1
-                if (cur(p) == TOK_COMMA) {
+                if (cur(p) == TokenKind::Comma) {
                     advance(p)
                 }
             }
@@ -1730,7 +1730,7 @@ parse_match :: fn(mut p: Parser) -> i64 {
     // switched on is the tag rather than the value itself. The value is bound
     // first, since the arms read fields out of it too.
     mut subject : i64 = 0 - 1
-    if (peek_kind(p, 1) == TOK_DOT) {
+    if (peek_kind(p, 1) == TokenKind::Dot) {
         name_off := synth_numbered(p, "__match", p.match_count)
         name_len := 7 + digits_in(p.match_count)
         p.match_count = p.match_count + 1
@@ -1749,12 +1749,12 @@ parse_match :: fn(mut p: Parser) -> i64 {
     mut covered : i64 = 0
     mut checkable : i64 = 1
     mut saw_default : i64 = 0
-    while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
+    while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
         advance(p)
         mut is_default : i64 = 0
         mut value : i64 = 0
         mut case_node : i64 = 0 - 1
-        if (cur(p) == TOK_DOT) {
+        if (cur(p) == TokenKind::Dot) {
             advance(p)
             case_node = parse_variant_case(p, subject)
             index := p.case_variant
@@ -1770,7 +1770,7 @@ parse_match :: fn(mut p: Parser) -> i64 {
                 }
             }
         } else {
-            if (cur(p) == TOK_INT) {
+            if (cur(p) == TokenKind::Int) {
                 value = cur_val(p)
                 advance(p)
             } else {
@@ -1840,24 +1840,24 @@ unsafe_block_is_value :: fn(mut p: Parser) -> bool {
     mut offset : i64 = 1
     mut depth : i64 = 0
     mut started : i64 = 0
-    while (peek_kind(p, offset) != TOK_EOF) {
+    while (peek_kind(p, offset) != TokenKind::Eof) {
         k := peek_kind(p, offset)
-        if (k == TOK_LBRACE) {
+        if (k == TokenKind::Lbrace) {
             depth = depth + 1
             started = 1
         }
-        if (k == TOK_RBRACE) {
+        if (k == TokenKind::Rbrace) {
             depth = depth - 1
             if (started == 1 && depth == 0) {
                 next := peek_kind(p, offset + 1)
-                return next == TOK_EQEQ || next == TOK_NE || next == TOK_LT
-                    || next == TOK_LE || next == TOK_GT || next == TOK_GE
-                    || next == TOK_PLUS || next == TOK_MINUS || next == TOK_STAR
-                    || next == TOK_SLASH || next == TOK_PERCENT
-                    || next == TOK_ANDAND || next == TOK_OROR || next == TOK_SHL
-                    || next == TOK_SHR || next == TOK_AMP || next == TOK_PIPE
-                    || next == TOK_DOT || next == TOK_LBRACKET
-                    || next == TOK_QUESTION || next == TOK_COLONCOLON
+                return next == TokenKind::Eqeq || next == TokenKind::Ne || next == TokenKind::Lt
+                    || next == TokenKind::Le || next == TokenKind::Gt || next == TokenKind::Ge
+                    || next == TokenKind::Plus || next == TokenKind::Minus || next == TokenKind::Star
+                    || next == TokenKind::Slash || next == TokenKind::Percent
+                    || next == TokenKind::Andand || next == TokenKind::Oror || next == TokenKind::Shl
+                    || next == TokenKind::Shr || next == TokenKind::Amp || next == TokenKind::Pipe
+                    || next == TokenKind::Dot || next == TokenKind::Lbracket
+                    || next == TokenKind::Question || next == TokenKind::Coloncolon
             }
         }
         offset = offset + 1
@@ -1868,11 +1868,11 @@ unsafe_block_is_value :: fn(mut p: Parser) -> bool {
 // A statement that binds several names to the values of one call. A name
 // followed by a comma is nothing else at statement position.
 starts_multi_binding :: fn(mut p: Parser) -> bool {
-    if (cur(p) == TOK_IDENT && peek_kind(p, 1) == TOK_COMMA) {
+    if (cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Comma) {
         return true
     }
-    cur(p) == TOK_KW_MUT && peek_kind(p, 1) == TOK_IDENT
-        && peek_kind(p, 2) == TOK_COMMA
+    cur(p) == TokenKind::KwMut && peek_kind(p, 1) == TokenKind::Ident
+        && peek_kind(p, 2) == TokenKind::Comma
 }
 
 parse_stmt :: fn(mut p: Parser) -> i64 {
@@ -1881,7 +1881,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     // `ref x := place` binds a borrow of a place: an address that types as a
     // borrow, so reading a field through it needs no `unsafe` block, unlike a
     // raw pointer. It is how an arena element is reached without ptr_to.
-    if (kind == TOK_KW_REF) {
+    if (kind == TokenKind::KwRef) {
         advance(p)
         name_off := cur_off(p)
         name_len := cur_len(p)
@@ -1896,14 +1896,14 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     // The block is inlined, so what is emitted is identical to the same
     // statements written bare. Only its span is remembered, so the gate can
     // ask whether a node was written inside one.
-    if (kind == TOK_KW_UNSAFE) {
+    if (kind == TokenKind::KwUnsafe) {
         // An `unsafe { expr }` followed by an operator, as in
         // `unsafe { m.state[s] } == USED`, is one expression, not a block of
         // statements, so it goes through the expression path where the operator
         // is applied to the value the block stands for.
         if (unsafe_block_is_value(p)) {
             expr := parse_expr(p)
-            if (cur(p) == TOK_ASSIGN) {
+            if (cur(p) == TokenKind::Assign) {
                 advance(p)
                 value := parse_expr(p)
                 return new_node(p, NodeKind::Assign, expr, value, 0)
@@ -1926,7 +1926,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     // name to its field of that temporary.
     if (starts_multi_binding(p)) {
         names_at := p.ti
-        while (cur(p) != TOK_COLONEQ && cur(p) != TOK_EOF) {
+        while (cur(p) != TokenKind::Coloneq && cur(p) != TokenKind::Eof) {
             advance(p)
         }
         advance(p)
@@ -1940,8 +1940,8 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         mut index : i64 = 0
         callee := call_target(p, value)
         p.ti = names_at
-        while (cur(p) != TOK_COLONEQ && cur(p) != TOK_EOF) {
-            if (cur(p) == TOK_KW_MUT) {
+        while (cur(p) != TokenKind::Coloneq && cur(p) != TokenKind::Eof) {
+            if (cur(p) == TokenKind::KwMut) {
                 advance(p)
             }
             name_off := cur_off(p)
@@ -1962,7 +1962,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             set_next(p, tail, bind)
             tail = bind
             index = index + 1
-            if (cur(p) == TOK_COMMA) {
+            if (cur(p) == TokenKind::Comma) {
                 advance(p)
             }
         }
@@ -1970,13 +1970,13 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         return head
     }
 
-    if (kind == TOK_KW_MUT) {
+    if (kind == TokenKind::KwMut) {
         advance(p)
         offset := cur_off(p)
         length := cur_len(p)
         advance(p)
         mut ann : i64 = 0 - 1
-        if (cur(p) == TOK_COLON) {
+        if (cur(p) == TokenKind::Colon) {
             ann = parse_type_annotation(p)
             advance(p)
         } else {
@@ -1988,7 +1988,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         p.expected_type = saved_expected
         return new_let_node(p, value, offset, length, ann)
     }
-    if (kind == TOK_KW_PRINT) {
+    if (kind == TokenKind::KwPrint) {
         advance(p)
         value := parse_expr(p)
         made := new_node(p, NodeKind::Print, value, 0, 0)
@@ -1998,7 +1998,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         // reads a format, and no format exists at run time.
         mut head : i64 = 0 - 1
         mut tail : i64 = 0 - 1
-        while (cur(p) == TOK_COMMA) {
+        while (cur(p) == TokenKind::Comma) {
             advance(p)
             argument := parse_expr(p)
             held := new_node(p, NodeKind::Arg, argument, 0, 0)
@@ -2025,9 +2025,9 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         }
         return made
     }
-    if (kind == TOK_KW_RETURN) {
+    if (kind == TokenKind::KwReturn) {
         advance(p)
-        if (cur(p) == TOK_RBRACE) {
+        if (cur(p) == TokenKind::Rbrace) {
             return new_node(p, NodeKind::Return, 0 - 1, 0, 0)
         }
         saved_expected := p.expected_type
@@ -2037,7 +2037,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         mut value := parse_expr(p)
         p.expected_type = saved_expected
         p.expected_alt = saved_alt
-        if (cur(p) == TOK_COMMA) {
+        if (cur(p) == TokenKind::Comma) {
             value = multi_return_value(p, value)
         }
         if (p.result_ty != (0 - 1)) {
@@ -2045,16 +2045,16 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         }
         return new_node(p, NodeKind::Return, value, 0, 0)
     }
-    if (kind == TOK_KW_IF) {
+    if (kind == TokenKind::KwIf) {
         advance(p)
         advance(p)
         condition := parse_expr(p)
         advance(p)
         then_head := parse_block(p)
         mut else_head : i64 = 0 - 1
-        if (cur(p) == TOK_KW_ELSE) {
+        if (cur(p) == TokenKind::KwElse) {
             advance(p)
-            if (cur(p) == TOK_KW_IF) {
+            if (cur(p) == TokenKind::KwIf) {
                 else_head = parse_stmt(p)
             } else {
                 else_head = parse_block(p)
@@ -2070,7 +2070,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     // its length are bound once before the loop, so a call in that position
     // happens once and a body that grows the same container does not walk what
     // it just added.
-    if (kind == TOK_KW_FOR) {
+    if (kind == TokenKind::KwFor) {
         advance(p)
         first_off := cur_off(p)
         first_len := cur_len(p)
@@ -2078,14 +2078,14 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         mut item_off := first_off
         mut item_len := first_len
         mut has_index : i64 = 0
-        if (cur(p) == TOK_COMMA) {
+        if (cur(p) == TokenKind::Comma) {
             advance(p)
             item_off = cur_off(p)
             item_len = cur_len(p)
             advance(p)
             has_index = 1
         }
-        if (cur(p) != TOK_KW_IN) {
+        if (cur(p) != TokenKind::KwIn) {
             report_where(p.modules, p.src, cur_off(p))
             report("a `for` needs `in` between the name and what it walks")
             frost_rt_die()
@@ -2179,7 +2179,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         set_next(p, bind_seq, bind_len)
         return bind_seq
     }
-    if (kind == TOK_KW_WHILE) {
+    if (kind == TokenKind::KwWhile) {
         advance(p)
         advance(p)
         // Anything the condition needs set up, a `?` or a match used as a
@@ -2197,7 +2197,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     // `with arena { ... }` supplies an allocation capability to everything the
     // block calls. The block is the region. It is a plain scope once the calls
     // inside it have been handed the arena.
-    if (kind == TOK_KW_WITH) {
+    if (kind == TokenKind::KwWith) {
         advance(p)
         name_offset := cur_off(p)
         name_length := cur_len(p)
@@ -2208,7 +2208,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
 
     // A local binding `x := e` or `x : T = e` is recognised by the token after
     // the name, so the name is not consumed early for the other cases.
-    if (cur(p) == TOK_IDENT && peek_kind(p, 1) == TOK_COLONEQ) {
+    if (cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Coloneq) {
         offset := cur_off(p)
         length := cur_len(p)
         advance(p)
@@ -2216,7 +2216,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         value := parse_expr(p)
         return new_let_node(p, value, offset, length, 0 - 1)
     }
-    if (cur(p) == TOK_IDENT && peek_kind(p, 1) == TOK_COLON) {
+    if (cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Colon) {
         offset := cur_off(p)
         length := cur_len(p)
         advance(p)
@@ -2233,7 +2233,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
     // an assignment to that place. Otherwise it is an expression statement (a
     // call). This is how `p.x = e`, `node^.next = e`, and `close(f)` are handled.
     expr := parse_expr(p)
-    if (cur(p) == TOK_ASSIGN) {
+    if (cur(p) == TokenKind::Assign) {
         advance(p)
         value := parse_expr(p)
         return new_node(p, NodeKind::Assign, expr, value, 0)
@@ -2286,16 +2286,16 @@ parse_arm :: fn(mut p: Parser) -> i64 {
     flush_pending(p, mark, statement)
 }
 
-parse_stmt_list :: fn(mut p: Parser, terminator: i64) -> i64 {
+parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     // A statement may end with a semicolon, which says nothing the line break
     // has not already said. It is a token rather than whitespace so that an
     // array repeat count can be told from an element.
-    while (cur(p) == TOK_SEMI) {
+    while (cur(p) == TokenKind::Semi) {
         advance(p)
     }
-    while (cur(p) != terminator && cur(p) != TOK_EOF) {
+    while (cur(p) != terminator && cur(p) != TokenKind::Eof) {
         mark := p.pending.count
         parsed := parse_stmt(p)
         statement := flush_pending(p, mark, parsed)
@@ -2311,7 +2311,7 @@ parse_stmt_list :: fn(mut p: Parser, terminator: i64) -> i64 {
             set_next(p, tail, statement)
         }
         tail = last
-        while (cur(p) == TOK_SEMI) {
+        while (cur(p) == TokenKind::Semi) {
             advance(p)
         }
     }
@@ -2321,15 +2321,15 @@ parse_stmt_list :: fn(mut p: Parser, terminator: i64) -> i64 {
 parse_params :: fn(mut p: Parser) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
-    while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
+    while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
         // Capture the parameter mode. `mut` (write) is 1, `move` is 2, and an
         // unmarked read is 0.
         mut mode : i64 = 0
-        if (cur(p) == TOK_KW_MUT) {
+        if (cur(p) == TokenKind::KwMut) {
             mode = 1
             advance(p)
         }
-        if (cur(p) == TOK_KW_MOVE) {
+        if (cur(p) == TokenKind::KwMove) {
             mode = 2
             advance(p)
         }
@@ -2340,14 +2340,14 @@ parse_params :: fn(mut p: Parser) -> i64 {
         // what tells them apart is that a mode is followed by the name and a
         // name is followed by its type.
         mut by_value : i64 = 0
-        if (cur(p) == TOK_IDENT && peek_kind(p, 1) == TOK_IDENT
+        if (cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Ident
             && str_range_eq(p.src, cur_off(p), cur_len(p), "value")) {
             by_value = 1
             advance(p)
         }
         // A `$T: Type` parameter declares the type parameter and is erased from
         // the runtime signature, so no PARAM node is created for it.
-        if (cur(p) == TOK_DOLLAR) {
+        if (cur(p) == TokenKind::Dollar) {
             advance(p)
             poff := cur_off(p)
             plen := cur_len(p)
@@ -2363,7 +2363,7 @@ parse_params :: fn(mut p: Parser) -> i64 {
             arena_push(p.cfn_params,
                 GParam { name_off = poff, name_len = plen, is_value = 0,
                     is_fn = 1 })
-            if (cur(p) == TOK_COMMA) {
+            if (cur(p) == TokenKind::Comma) {
                 advance(p)
             }
         } else {
@@ -2431,7 +2431,7 @@ parse_params :: fn(mut p: Parser) -> i64 {
                 set_next(p, tail, param)
                 tail = param
             }
-            if (cur(p) == TOK_COMMA) {
+            if (cur(p) == TokenKind::Comma) {
                 advance(p)
             }
         }
@@ -2452,7 +2452,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
     // keyword sits between the `::` and the `fn`, so it is consumed here before
     // the `fn` is stepped over like any other declaration.
     mut wants_inline : i64 = 0
-    if (cur(p) == TOK_KW_INLINE) {
+    if (cur(p) == TokenKind::KwInline) {
         wants_inline = 1
         advance(p)
     }
@@ -2474,9 +2474,9 @@ parse_function :: fn(mut p: Parser) -> i64 {
     p.multi_count = 0
     // `-> (i64, i64)` is a return type list: several values from one call,
     // standing for the struct `synth_multi_struct` makes for it.
-    if (cur(p) == TOK_ARROW) {
+    if (cur(p) == TokenKind::Arrow) {
         advance(p)
-        if (cur(p) == TOK_LPAREN) {
+        if (cur(p) == TokenKind::Lparen) {
             advance(p)
             ret = synth_multi_struct(p)
             p.multi_ty = ret
@@ -2492,7 +2492,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
     // is parsed under this, so a `.Variant` there names a variant of it or of
     // the failure set beside it.
     p.ok_ty = ret
-    if (cur(p) == TOK_BANG) {
+    if (cur(p) == TokenKind::Bang) {
         advance(p)
         failure = parse_type(p)
         ret = synth_result_struct(p, ret, failure)
@@ -2510,7 +2510,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
     // `uses A, B` draws more than one source. Each becomes an implicit
     // parameter its body reaches by the type's own name lowercased, in the
     // order they were written, and a call supplies one argument for each.
-    if (cur(p) == TOK_KW_USES) {
+    if (cur(p) == TokenKind::KwUses) {
         advance(p)
         mut reading : i64 = 1
         while (reading == 1) {
@@ -2528,7 +2528,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
             set_params(p, fn_index, params)
             set_uses(p, fn_index, cap_ty, binding, cap_name_len)
             reading = 0
-            if (cur(p) == TOK_COMMA) {
+            if (cur(p) == TokenKind::Comma) {
                 advance(p)
                 reading = 1
             }
@@ -2538,10 +2538,10 @@ parse_function :: fn(mut p: Parser) -> i64 {
     // skipped here and read again at each call with that call's arguments
     // bound, since what it asks about is the arguments rather than the body.
     p.bound_token = 0 - 1
-    if (cur(p) == TOK_KW_WHERE) {
+    if (cur(p) == TokenKind::KwWhere) {
         advance(p)
         p.bound_token = p.ti
-        while (cur(p) != TOK_LBRACE && cur(p) != TOK_EOF) {
+        while (cur(p) != TokenKind::Lbrace && cur(p) != TokenKind::Eof) {
             advance(p)
         }
     }
@@ -2565,12 +2565,12 @@ parse_struct :: fn(mut p: Parser) {
     // `Name :: linear struct { ... }` marks a resource that must be consumed
     // exactly once, so the keyword sits between `::` and `struct`.
     mut linear_flag : i64 = 0
-    if (cur(p) == TOK_KW_LINEAR) {
+    if (cur(p) == TokenKind::KwLinear) {
         linear_flag = 1
         advance(p)
     }
     advance(p)
-    if (cur(p) == TOK_LPAREN) {
+    if (cur(p) == TokenKind::Lparen) {
         advance(p)
         // Collect every parameter. A parameter is a type parameter or a value
         // one by what binds to it, not by how it is declared, so the kind after
@@ -2580,14 +2580,14 @@ parse_struct :: fn(mut p: Parser) {
         p.type_param_len = 0
         p.xparam_count = 0
         p.xparam_start = p.gparams.count
-        while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
+        while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
             advance(p)
             poff := cur_off(p)
             plen := cur_len(p)
             advance(p)
             record_gparam(p, poff, plen, kind_is_value(p))
             parse_type_annotation(p)
-            if (cur(p) == TOK_COMMA) {
+            if (cur(p) == TokenKind::Comma) {
                 advance(p)
             }
         }
@@ -2600,11 +2600,11 @@ parse_struct :: fn(mut p: Parser) {
         mut brace_depth : i64 = 0
         mut started : i64 = 0
         while (started == 0 || brace_depth > 0) {
-            if (cur(p) == TOK_LBRACE) {
+            if (cur(p) == TokenKind::Lbrace) {
                 brace_depth = brace_depth + 1
                 started = 1
             }
-            if (cur(p) == TOK_RBRACE) {
+            if (cur(p) == TokenKind::Rbrace) {
                 brace_depth = brace_depth - 1
             }
             advance(p)
@@ -2678,7 +2678,7 @@ parse_enum_body :: fn(mut p: Parser, enum_ty: i64) -> i64 {
     )
     mut tail := tag_field
     mut tag : i64 = 0
-    while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
+    while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
         variant_off := cur_off(p)
         variant_len := cur_len(p)
         advance(p)
@@ -2687,9 +2687,9 @@ parse_enum_body :: fn(mut p: Parser, enum_ty: i64) -> i64 {
             Variant { enum_ty = enum_ty, name_off = variant_off,
                 name_len = variant_len, tag = tag },
         )
-        if (cur(p) == TOK_LBRACE) {
+        if (cur(p) == TokenKind::Lbrace) {
             advance(p)
-            while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
+            while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
                 field_off := cur_off(p)
                 field_len := cur_len(p)
                 advance(p)
@@ -2704,13 +2704,13 @@ parse_enum_body :: fn(mut p: Parser, enum_ty: i64) -> i64 {
                 )
                 set_next_field(p, tail, field)
                 tail = field
-                if (cur(p) == TOK_COMMA) {
+                if (cur(p) == TokenKind::Comma) {
                     advance(p)
                 }
             }
             advance(p)
         }
-        if (cur(p) == TOK_COMMA) {
+        if (cur(p) == TokenKind::Comma) {
             advance(p)
         }
         tag = tag + 1
@@ -2728,19 +2728,19 @@ parse_enum :: fn(mut p: Parser) {
     // `Name :: enum($T: Type) { ... }` is a generic enum. Like a generic struct
     // it records its parameters and the token of its `{`, skips the body, and is
     // re-parsed once per argument tuple with the parameters bound.
-    if (cur(p) == TOK_LPAREN) {
+    if (cur(p) == TokenKind::Lparen) {
         advance(p)
         p.type_param_len = 0
         p.xparam_count = 0
         p.xparam_start = p.gparams.count
-        while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
+        while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
             advance(p)
             poff := cur_off(p)
             plen := cur_len(p)
             advance(p)
             record_gparam(p, poff, plen, kind_is_value(p))
             parse_type_annotation(p)
-            if (cur(p) == TOK_COMMA) {
+            if (cur(p) == TokenKind::Comma) {
                 advance(p)
             }
         }
@@ -2753,11 +2753,11 @@ parse_enum :: fn(mut p: Parser) {
         mut brace_depth : i64 = 0
         mut started : i64 = 0
         while (started == 0 || brace_depth > 0) {
-            if (cur(p) == TOK_LBRACE) {
+            if (cur(p) == TokenKind::Lbrace) {
                 brace_depth = brace_depth + 1
                 started = 1
             }
-            if (cur(p) == TOK_RBRACE) {
+            if (cur(p) == TokenKind::Rbrace) {
                 brace_depth = brace_depth - 1
             }
             advance(p)
@@ -2835,9 +2835,9 @@ parse_variant_body :: fn(mut p: Parser, enum_ty: i64, enum_off: i64,
     tag_value := new_node(p, NodeKind::Num, 0, 0, variant_tag)
     head := new_field_init(p, tag_value, p.name_tag, 3)
     mut tail := head
-    if (cur(p) == TOK_LBRACE && p.no_struct_lit == false) {
+    if (cur(p) == TokenKind::Lbrace && p.no_struct_lit == false) {
         advance(p)
-        while (cur(p) != TOK_RBRACE && cur(p) != TOK_EOF) {
+        while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
             field_off := cur_off(p)
             field_len := cur_len(p)
             advance(p)
@@ -2856,7 +2856,7 @@ parse_variant_body :: fn(mut p: Parser, enum_ty: i64, enum_off: i64,
                 variant_len + field_len + 1)
             set_next(p, tail, init)
             tail = init
-            if (cur(p) == TOK_COMMA) {
+            if (cur(p) == TokenKind::Comma) {
                 advance(p)
             }
         }
@@ -3120,10 +3120,10 @@ synth_multi_struct :: fn(mut p: Parser) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     mut count : i64 = 0
-    while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
+    while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
         mut name_off : i64 = 0 - 1
         mut name_len : i64 = 0
-        if (cur(p) == TOK_IDENT && peek_kind(p, 1) == TOK_COLON) {
+        if (cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Colon) {
             name_off = cur_off(p)
             name_len = cur_len(p)
             advance(p)
@@ -3148,7 +3148,7 @@ synth_multi_struct :: fn(mut p: Parser) -> i64 {
         }
         tail = field
         count = count + 1
-        if (cur(p) == TOK_COMMA) {
+        if (cur(p) == TokenKind::Comma) {
             advance(p)
         }
     }
@@ -3198,7 +3198,7 @@ multi_return_value :: fn(mut p: Parser, first: i64) -> i64 {
         multi_field_name_len(p, 0))
     mut tail := init
     mut count : i64 = 1
-    while (cur(p) == TOK_COMMA) {
+    while (cur(p) == TokenKind::Comma) {
         advance(p)
         value := parse_expr(p)
         following := new_field_init(p, value, multi_field_name_off(p, count),
@@ -3268,7 +3268,7 @@ parse_extern :: fn(mut p: Parser) -> i64 {
     // `safe extern fn` says this one was audited, so the gate lets its calls
     // stand outside a block.
     mut audited : i64 = 0
-    if (cur(p) == TOK_KW_SAFE) {
+    if (cur(p) == TokenKind::KwSafe) {
         audited = 1
         advance(p)
     }
@@ -3284,7 +3284,7 @@ parse_extern :: fn(mut p: Parser) -> i64 {
     set_params(p, fn_index, params)
     mark_defined(p, fn_index)
     mut ret : i64 = TY_VOID
-    if (cur(p) == TOK_ARROW) {
+    if (cur(p) == TokenKind::Arrow) {
         advance(p)
         ret = parse_type(p)
     }
@@ -3301,16 +3301,16 @@ parse_extern :: fn(mut p: Parser) -> i64 {
 // `NAME :: OtherName` is what marks the whole line a constant rather than an
 // `Enum::Variant` access, which never carries a trailing operator, keeping the
 // two apart the same way the bootstrap does.
-is_arith_op :: fn(kind: i64) -> bool {
-    if (kind == TOK_PLUS) { return true }
-    if (kind == TOK_MINUS) { return true }
-    if (kind == TOK_STAR) { return true }
-    if (kind == TOK_SLASH) { return true }
-    if (kind == TOK_PERCENT) { return true }
-    if (kind == TOK_SHL) { return true }
-    if (kind == TOK_SHR) { return true }
-    if (kind == TOK_AMP) { return true }
-    if (kind == TOK_PIPE) { return true }
+is_arith_op :: fn(kind: TokenKind) -> bool {
+    if (kind == TokenKind::Plus) { return true }
+    if (kind == TokenKind::Minus) { return true }
+    if (kind == TokenKind::Star) { return true }
+    if (kind == TokenKind::Slash) { return true }
+    if (kind == TokenKind::Percent) { return true }
+    if (kind == TokenKind::Shl) { return true }
+    if (kind == TokenKind::Shr) { return true }
+    if (kind == TokenKind::Amp) { return true }
+    if (kind == TokenKind::Pipe) { return true }
     false
 }
 
@@ -3413,9 +3413,9 @@ parse_test :: fn(mut p: Parser) -> i64 {
 parse_program :: fn(mut p: Parser) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
-    while (cur(p) == TOK_IDENT || cur(p) == TOK_KW_TEST) {
+    while (cur(p) == TokenKind::Ident || cur(p) == TokenKind::KwTest) {
         third := peek_kind(p, 2)
-        if (cur(p) == TOK_KW_TEST) {
+        if (cur(p) == TokenKind::KwTest) {
             item := parse_test(p)
             if (head == (0 - 1)) {
                 head = item
@@ -3424,13 +3424,13 @@ parse_program :: fn(mut p: Parser) -> i64 {
                 set_next(p, tail, item)
                 tail = item
             }
-        } else if (third == TOK_KW_ENUM) {
+        } else if (third == TokenKind::KwEnum) {
             parse_enum(p)
-        } else if (third == TOK_KW_STRUCT || third == TOK_KW_LINEAR) {
+        } else if (third == TokenKind::KwStruct || third == TokenKind::KwLinear) {
             parse_struct(p)
-        } else if (third == TOK_KW_DISTINCT) {
+        } else if (third == TokenKind::KwDistinct) {
             parse_distinct(p)
-        } else if (third == TOK_KW_EXTERN || third == TOK_KW_SAFE) {
+        } else if (third == TokenKind::KwExtern || third == TokenKind::KwSafe) {
             item := parse_extern(p)
             if (head == (0 - 1)) {
                 head = item
@@ -3439,14 +3439,14 @@ parse_program :: fn(mut p: Parser) -> i64 {
                 set_next(p, tail, item)
                 tail = item
             }
-        } else if (third == TOK_INT || third == TOK_LPAREN
-            || (third == TOK_IDENT && is_arith_op(peek_kind(p, 3)))) {
+        } else if (third == TokenKind::Int || third == TokenKind::Lparen
+            || (third == TokenKind::Ident && is_arith_op(peek_kind(p, 3)))) {
             // A constant, whose value is an integer expression: a literal, a
             // parenthesized combination, or an earlier constant combined with
             // another by an operator. A bare `Name :: OtherName` is left alone,
             // so `Enum::Variant` is not read as a constant.
             parse_const(p)
-        } else if (third != TOK_KW_FN && third != TOK_KW_INLINE) {
+        } else if (third != TokenKind::KwFn && third != TokenKind::KwInline) {
             // Everything above is a form this compiler knows. Anything else
             // would be read as a function and misparse into a crash far from
             // here, so name it where it is written instead. A declaration the
@@ -3490,7 +3490,7 @@ parse_program :: fn(mut p: Parser) -> i64 {
     // file whose second declaration is named after a keyword compiles to an
     // empty program and the mistake surfaces as a missing symbol at link
     // time, or as nothing at all. Say where it stopped instead.
-    if (cur(p) != TOK_EOF) {
+    if (cur(p) != TokenKind::Eof) {
         report_where(p.modules, p.src, cur_off(p))
         report("this is not the start of a declaration")
         frost_rt_die()

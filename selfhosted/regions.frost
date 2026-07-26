@@ -95,11 +95,11 @@ bound_argument :: fn(mut p: Parser, gfn_index: i64, off: i64, len: i64,
 // what was read.
 bound_term :: fn(mut p: Parser, gfn_index: i64, arg: i64, xarg_start: i64,
     xarg_count: i64) -> bool {
-    if (cur(p) == TOK_BANG) {
+    if (cur(p) == TokenKind::Bang) {
         advance(p)
         return bound_term(p, gfn_index, arg, xarg_start, xarg_count) == false
     }
-    if (cur(p) == TOK_LPAREN) {
+    if (cur(p) == TokenKind::Lparen) {
         advance(p)
         held := bound_expr(p, gfn_index, arg, xarg_start, xarg_count)
         advance(p)
@@ -108,7 +108,7 @@ bound_term :: fn(mut p: Parser, gfn_index: i64, arg: i64, xarg_start: i64,
     pred_off := cur_off(p)
     pred_len := cur_len(p)
     advance(p)
-    if (cur(p) != TOK_LPAREN) {
+    if (cur(p) != TokenKind::Lparen) {
         report_where(p.modules, p.src, pred_off)
         report("a `where` bound is a predicate applied to a compile-time parameter")
         frost_rt_die()
@@ -142,7 +142,7 @@ bound_term :: fn(mut p: Parser, gfn_index: i64, arg: i64, xarg_start: i64,
 bound_conjunction :: fn(mut p: Parser, gfn_index: i64, arg: i64,
     xarg_start: i64, xarg_count: i64) -> bool {
     mut held := bound_term(p, gfn_index, arg, xarg_start, xarg_count)
-    while (cur(p) == TOK_ANDAND) {
+    while (cur(p) == TokenKind::Andand) {
         advance(p)
         right := bound_term(p, gfn_index, arg, xarg_start, xarg_count)
         held = held && right
@@ -153,7 +153,7 @@ bound_conjunction :: fn(mut p: Parser, gfn_index: i64, arg: i64,
 bound_expr :: fn(mut p: Parser, gfn_index: i64, arg: i64, xarg_start: i64,
     xarg_count: i64) -> bool {
     mut held := bound_conjunction(p, gfn_index, arg, xarg_start, xarg_count)
-    while (cur(p) == TOK_OROR) {
+    while (cur(p) == TokenKind::Oror) {
         advance(p)
         right := bound_conjunction(p, gfn_index, arg, xarg_start, xarg_count)
         held = held || right
@@ -192,7 +192,7 @@ check_bound_at_call :: fn(mut p: Parser, gfn_index: i64, fn_index: i64,
     mut i : i64 = gfn.bound_token
     while (i < p.tokens.count) {
         token := arena_at(p.tokens, i)
-        if (token.kind == TOK_LBRACE) {
+        if (token.kind == TokenKind::Lbrace) {
             i = p.tokens.count
         } else {
             report_src(p.src, token.off, token.len)

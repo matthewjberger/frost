@@ -3714,6 +3714,19 @@ impl<'a> FunctionLowering<'a> {
         operand: IrOperand,
         ty: &Type,
     ) -> Result<IrOperand> {
+        // A borrow already is the address, which is what a parameter of enum
+        // type holds.
+        if matches!(ty, Type::Ref(_) | Type::RefMut(_) | Type::Ptr(_)) {
+            let tag = self.fresh_local(Type::I32, None);
+            self.emit(IrStatement::Assign(
+                tag,
+                IrRvalue::Load {
+                    address: operand,
+                    ty: Type::I32,
+                },
+            ));
+            return Ok(IrOperand::Local(tag));
+        }
         let IrOperand::Local(local) = operand else {
             bail!("native backend: enum value is not addressable");
         };
@@ -3755,7 +3768,17 @@ impl<'a> FunctionLowering<'a> {
             // was meant.
             // A name reaches here as a struct until something resolves it, so
             // the enum is asked for by name rather than read off the type.
-            if let Some(name) = self.enum_name_of(&left_type)
+            // A parameter of enum type is a borrow, and a borrow of an enum
+            // is still that enum. Without looking through it a comparison
+            // against a variant fell through to the ordinary path, which has
+            // two aggregates and nothing to compare.
+            let compared = match &left_type {
+                Type::Ref(inner) | Type::RefMut(inner) => {
+                    self.enum_name_of(inner)
+                }
+                other => self.enum_name_of(other),
+            };
+            if let Some(name) = compared
                 && matches!(binop, IrBinOp::Equal | IrBinOp::NotEqual)
             {
                 let Some(layout) = self.builder.enum_layout(&name) else {

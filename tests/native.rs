@@ -9097,6 +9097,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_wherebound", WHERE_BOUNDS),
         ("diff_format", FORMAT_PRINT),
         ("diff_fieldcall", FIELD_CALLS),
+        ("diff_enumvalues", ENUM_VALUES),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
@@ -9943,6 +9944,60 @@ fn self_hosted_holds_a_generic_to_its_bound() {
     };
     let _ = std::fs::remove_file(&input);
     let Some(via_c) = compile_c_and_run("shwhere", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
+// An enum used as a value, in the three places that were holes: a parameter,
+// compared against a variant; a variant written at a call, where the argument
+// wants an address; and the answer of a call, whose tag is read out of what came
+// back.
+const ENUM_VALUES: &str = r#"
+Kind :: enum { One, Two }
+
+is_one :: fn(k: Kind) -> bool { k == Kind::One }
+
+pick :: fn(n: i64) -> Kind {
+    if (n > 0) { return Kind::One }
+    Kind::Two
+}
+
+main :: fn() -> i64 {
+    if (is_one(Kind::One)) { print 1 } else { print 0 }
+    if (is_one(Kind::Two)) { print 1 } else { print 0 }
+    if (pick(5) == Kind::One) { print 1 } else { print 0 }
+    if (pick(0) == Kind::One) { print 1 } else { print 0 }
+    k := pick(1)
+    if (is_one(k)) { print 1 } else { print 0 }
+    0
+}
+"#;
+
+#[test]
+fn an_enum_is_a_value_like_any_other() {
+    let Some(output) = compile_and_run("enumvalues", ENUM_VALUES) else {
+        return;
+    };
+    assert_eq!(output, "1\n0\n1\n0\n1\n");
+}
+
+#[test]
+fn self_hosted_uses_an_enum_as_a_value() {
+    let Some(output) = selfhosted_native_output("shenumvalues", ENUM_VALUES)
+    else {
+        return;
+    };
+    assert_eq!(output, "1\n0\n1\n0\n1\n");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shenumvalues_input.frost");
+    std::fs::write(&input, ENUM_VALUES).unwrap();
+    let Some(c_source) = self_hosted_emits("shenumvalues", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shenumvalues", &c_source) else {
         return;
     };
     assert_eq!(via_c, output, "the self-hosted C backend disagrees");

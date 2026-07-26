@@ -17,15 +17,15 @@ peek_is_word :: fn(mut p: Parser, offset: i64, word: ^i8) -> bool {
     str_range_eq(p.src, token.off, token.len, word)
 }
 
-peek_kind :: fn(mut p: Parser, offset: i64) -> i64 {
+peek_kind :: fn(mut p: Parser, offset: i64) -> TokenKind {
     index := p.ti + offset
     if (index >= p.tokens.count) {
-        return TOK_EOF
+        return TokenKind::Eof
     }
     arena_at(p.tokens, index).kind
 }
 
-cur :: fn(mut p: Parser) -> i64 {
+cur :: fn(mut p: Parser) -> TokenKind {
     peek_kind(p, 0)
 }
 
