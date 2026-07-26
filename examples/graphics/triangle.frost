@@ -20,8 +20,8 @@
 // SDL3
 // ---------------------------------------------------------------------------
 
-SDL_Init                :: extern fn(flags: u32) -> bool
-SDL_Quit                :: extern fn()
+SDL_Init                :: safe extern fn(flags: u32) -> bool
+SDL_Quit                :: safe extern fn()
 SDL_CreateWindow        :: extern fn(title: ^i8, width: i32, height: i32,
     flags: u64) -> ^u8
 SDL_DestroyWindow       :: extern fn(window: ^u8)
@@ -30,7 +30,7 @@ SDL_GetWindowProperties :: extern fn(window: ^u8) -> u32
 SDL_GetPointerProperty  :: extern fn(properties: u32, name: ^i8,
     fallback: ^u8) -> ^u8
 // Milliseconds since SDL started, which is what drives the rotation.
-SDL_GetTicks            :: extern fn() -> u64
+SDL_GetTicks            :: safe extern fn() -> u64
 
 INIT_VIDEO :: 32
 EVENT_QUIT :: 256
@@ -128,7 +128,7 @@ WIDTH  :: 960
 HEIGHT :: 540
 
 main :: fn() -> i64 {
-    if (unsafe { SDL_Init(INIT_VIDEO) } == false) {
+    if (SDL_Init(INIT_VIDEO) == false) {
         print 0
         return 1
     }
@@ -140,7 +140,7 @@ main :: fn() -> i64 {
             null())
     }
 
-    instance := unsafe { wgpuCreateInstance(null()) }
+    instance := create_instance(null())
     if (instance == null()) { return 21 }
 
     // The surface, chained off the platform window handle.
@@ -150,9 +150,7 @@ main :: fn() -> i64 {
 
     mut surface_descriptor := surface_descriptor_init()
     surface_descriptor.next_in_chain = unsafe { ptr_cast($u8, ptr_to(source)) }
-    surface := unsafe {
-        wgpuInstanceCreateSurface(instance, ptr_to(surface_descriptor))
-    }
+    surface := instance_create_surface(instance, ptr_to(surface_descriptor))
     if (surface == null()) { return 22 }
     if (hwnd == null()) { return 23 }
 
@@ -171,13 +169,11 @@ main :: fn() -> i64 {
     mut adapter_options := request_adapter_options_init()
     adapter_options.feature_level = FEATURE_LEVEL_CORE
     adapter_options.compatible_surface = surface
-    unsafe {
-        wgpuInstanceRequestAdapter(instance, ptr_to(adapter_options),
+    instance_request_adapter(instance, ptr_to(adapter_options),
             ptr_to(adapter_info))
-    }
     mut adapter_spins : i64 = 0
     while (adapter_slot.ready == 0 && adapter_spins < 2000000) {
-        unsafe { wgpuInstanceProcessEvents(instance) }
+        instance_process_events(instance)
         adapter_spins = adapter_spins + 1
     }
     if (adapter_slot.ready == 0) { return 11 }
@@ -193,27 +189,23 @@ main :: fn() -> i64 {
         userdata1 = unsafe { ptr_cast($u8, ptr_to(device_slot)) },
         userdata2 = null(),
     }
-    unsafe {
-        wgpuAdapterRequestDevice(adapter,
+    adapter_request_device(adapter,
             null(), ptr_to(device_info))
-    }
     mut device_spins : i64 = 0
     while (device_slot.ready == 0 && device_spins < 2000000) {
-        unsafe { wgpuInstanceProcessEvents(instance) }
+        instance_process_events(instance)
         device_spins = device_spins + 1
     }
     if (device_slot.ready == 0) { return 12 }
     device := device_slot.handle
     if (device == null()) { return 25 }
-    queue := unsafe { wgpuDeviceGetQueue(device) }
+    queue := device_get_queue(device)
 
     // The swapchain. The format comes from the surface rather than from a
     // guess, because which formats a surface accepts is a property of the
     // driver and the window, not of the API.
     mut capabilities := surface_capabilities_init()
-    capability_status := unsafe {
-        wgpuSurfaceGetCapabilities(surface, adapter, ptr_to(capabilities))
-    }
+    capability_status := surface_get_capabilities(surface, adapter, ptr_to(capabilities))
     if (capability_status != 1) { return 30 }
     if (capabilities.formats_count == 0) { return 31 }
     surface_format := unsafe { ptr_cast($u32, capabilities.formats)^ }
@@ -225,7 +217,7 @@ main :: fn() -> i64 {
     configuration.width = WIDTH
     configuration.height = HEIGHT
     configuration.present_mode = PRESENT_MODE_FIFO
-    unsafe { wgpuSurfaceConfigure(surface, ptr_to(configuration)) }
+    surface_configure(surface, ptr_to(configuration))
 
     // The shader, chained off the module descriptor as WGSL source.
     mut wgsl := shader_source_WGSL_init()
@@ -234,9 +226,7 @@ main :: fn() -> i64 {
 
     mut module_descriptor := shader_module_descriptor_init()
     module_descriptor.next_in_chain = unsafe { ptr_cast($u8, ptr_to(wgsl)) }
-    shader := unsafe {
-        wgpuDeviceCreateShaderModule(device, ptr_to(module_descriptor))
-    }
+    shader := device_create_shader_module(device, ptr_to(module_descriptor))
 
     // The three vertices, written once into a buffer the GPU reads. The
     // positions are what a Vec4 holds, so the bytes handed over are the bytes
@@ -259,22 +249,16 @@ main :: fn() -> i64 {
     mut vertex_buffer_descriptor := buffer_descriptor_init()
     vertex_buffer_descriptor.usage = BUFFER_USAGE_VERTEX | BUFFER_USAGE_COPY_DST
     vertex_buffer_descriptor.size = VERTEX_BYTES
-    vertex_buffer := unsafe {
-        wgpuDeviceCreateBuffer(device, ptr_to(vertex_buffer_descriptor))
-    }
-    unsafe {
-        wgpuQueueWriteBuffer(queue, vertex_buffer, 0,
-            ptr_cast($u8, ptr_to(vertices[0])), VERTEX_BYTES)
-    }
+    vertex_buffer := device_create_buffer(device, ptr_to(vertex_buffer_descriptor))
+    queue_write_buffer(queue, vertex_buffer, 0,
+            unsafe { ptr_cast($u8, ptr_to(vertices[0])) }, VERTEX_BYTES)
 
     // The uniform holding the matrix, rewritten every frame.
     mut uniform_buffer_descriptor := buffer_descriptor_init()
     uniform_buffer_descriptor.usage =
         BUFFER_USAGE_UNIFORM | BUFFER_USAGE_COPY_DST
     uniform_buffer_descriptor.size = UNIFORM_BYTES
-    uniform_buffer := unsafe {
-        wgpuDeviceCreateBuffer(device, ptr_to(uniform_buffer_descriptor))
-    }
+    uniform_buffer := device_create_buffer(device, ptr_to(uniform_buffer_descriptor))
 
     // What the shader may reach, and what it reaches there. The layout is the
     // promise, the group is the binding that keeps it.
@@ -286,12 +270,8 @@ main :: fn() -> i64 {
 
     mut group_layout_descriptor := bind_group_layout_descriptor_init()
     group_layout_descriptor.entries_count = 1
-    group_layout_descriptor.entries = unsafe {
-        ptr_cast($u8, ptr_to(layout_entry))
-    }
-    group_layout := unsafe {
-        wgpuDeviceCreateBindGroupLayout(device, ptr_to(group_layout_descriptor))
-    }
+    group_layout_descriptor.entries = unsafe { ptr_cast($u8, ptr_to(layout_entry)) }
+    group_layout := device_create_bind_group_layout(device, ptr_to(group_layout_descriptor))
 
     mut group_entry := bind_group_entry_init()
     group_entry.binding = 0
@@ -302,19 +282,13 @@ main :: fn() -> i64 {
     group_descriptor.layout = group_layout
     group_descriptor.entries_count = 1
     group_descriptor.entries = unsafe { ptr_cast($u8, ptr_to(group_entry)) }
-    bind_group := unsafe {
-        wgpuDeviceCreateBindGroup(device, ptr_to(group_descriptor))
-    }
+    bind_group := device_create_bind_group(device, ptr_to(group_descriptor))
 
     mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 1
-    pipeline_layout_descriptor.bind_group_layouts = unsafe {
-        ptr_cast($u8, ptr_to(group_layout))
-    }
-    pipeline_layout := unsafe {
-        wgpuDeviceCreatePipelineLayout(device,
+    pipeline_layout_descriptor.bind_group_layouts = unsafe { ptr_cast($u8, ptr_to(group_layout)) }
+    pipeline_layout := device_create_pipeline_layout(device,
             ptr_to(pipeline_layout_descriptor))
-    }
 
     // How the vertex buffer's bytes reach the shader's two inputs.
     mut attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
@@ -346,17 +320,14 @@ main :: fn() -> i64 {
     pipeline_descriptor.vertex.entry_point =
         StringView { data = "vs_main", length = 7 }
     pipeline_descriptor.vertex.buffers_count = 1
-    pipeline_descriptor.vertex.buffers = unsafe {
-        ptr_cast($u8, ptr_to(buffer_layout))
-    }
+    pipeline_descriptor.vertex.buffers =
+        unsafe { ptr_cast($u8, ptr_to(buffer_layout)) }
     pipeline_descriptor.primitive.topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
     pipeline_descriptor.multisample.count = 1
     pipeline_descriptor.multisample.mask = 4294967295
     pipeline_descriptor.fragment = ptr_to(fragment)
 
-    pipeline := unsafe {
-        wgpuDeviceCreateRenderPipeline(device, ptr_to(pipeline_descriptor))
-    }
+    pipeline := device_create_render_pipeline(device, ptr_to(pipeline_descriptor))
 
     // The camera does not move, so the two matrices in front of the model are
     // built once. WebGPU's clip space runs z from 0 to 1, not from -1 to 1, so
@@ -367,7 +338,7 @@ main :: fn() -> i64 {
     view := mat4_look_at(vec3(0.0, 0.0, 3.0), vec3(0.0, 0.0, 0.0),
         vec3(0.0, 1.0, 0.0))
     view_projection := mat4_mul(projection, view)
-    started := unsafe { SDL_GetTicks() }
+    started := SDL_GetTicks()
 
     mut running : bool = true
     while (running) {
@@ -379,14 +350,14 @@ main :: fn() -> i64 {
         }
 
         mut frame := surface_texture_init()
-        unsafe { wgpuSurfaceGetCurrentTexture(surface, ptr_to(frame)) }
+        surface_get_current_texture(surface, ptr_to(frame))
         // A surface goes stale when the window changes under it. Skipping the
         // frame is not enough, because nothing would ever make it fresh again
         // and the window would stay black for good, so it is reconfigured
         // before the frame is dropped.
         if (frame.status != SURFACE_GET_CURRENT_TEXTURE_STATUS_SUCCESS_OPTIMAL
             && frame.status != SURFACE_GET_CURRENT_TEXTURE_STATUS_SUCCESS_SUBOPTIMAL) {
-            unsafe { wgpuSurfaceConfigure(surface, ptr_to(configuration)) }
+            surface_configure(surface, ptr_to(configuration))
         }
         if (frame.status == SURFACE_GET_CURRENT_TEXTURE_STATUS_SUCCESS_OPTIMAL
             || frame.status == SURFACE_GET_CURRENT_TEXTURE_STATUS_SUCCESS_SUBOPTIMAL) {
@@ -394,23 +365,15 @@ main :: fn() -> i64 {
             // frame count, so the speed does not follow the frame rate.
             // Wrapped before it becomes a float, so the value stays small
             // enough that single precision keeps every millisecond.
-            elapsed := (unsafe { SDL_GetTicks() } - started) % 100000
+            elapsed := (SDL_GetTicks() - started) % 100000
             milliseconds : f32 = elapsed
             model := mat4_rotation_y(radians(120.0) * milliseconds / 1000.0)
             mut mvp := mat4_mul(view_projection, model)
-            unsafe {
-                wgpuQueueWriteBuffer(queue, uniform_buffer, 0,
-                    ptr_cast($u8, ptr_to(mvp.m[0])), UNIFORM_BYTES)
-            }
+            queue_write_buffer(queue, uniform_buffer, 0,
+                unsafe { ptr_cast($u8, ptr_to(mvp.m[0])) }, UNIFORM_BYTES)
 
-            texture_view := unsafe {
-                wgpuTextureCreateView(frame.texture,
-                    null())
-            }
-            encoder := unsafe {
-                wgpuDeviceCreateCommandEncoder(device,
-                    null())
-            }
+            texture_view := texture_create_view(frame.texture, null())
+            encoder := device_create_command_encoder(device, null())
 
             mut attachment := render_pass_color_attachment_init()
             attachment.view = texture_view
@@ -424,34 +387,22 @@ main :: fn() -> i64 {
             pass_descriptor.color_attachments =
                 unsafe { ptr_cast($u8, ptr_to(attachment)) }
 
-            pass := unsafe {
-                wgpuCommandEncoderBeginRenderPass(encoder,
-                    ptr_to(pass_descriptor))
-            }
-            unsafe {
-                wgpuRenderPassEncoderSetPipeline(pass, pipeline)
-                wgpuRenderPassEncoderSetBindGroup(pass, 0, bind_group, 0,
-                    null())
-                wgpuRenderPassEncoderSetVertexBuffer(pass, 0, vertex_buffer, 0,
-                    VERTEX_BYTES)
-                wgpuRenderPassEncoderDraw(pass, VERTEX_COUNT, 1, 0, 0)
-                wgpuRenderPassEncoderEnd(pass)
-            }
+            pass := command_encoder_begin_render_pass(encoder,
+                ptr_to(pass_descriptor))
+            render_pass_encoder_set_pipeline(pass, pipeline)
+            render_pass_encoder_set_bind_group(pass, 0, bind_group, 0, null())
+            render_pass_encoder_set_vertex_buffer(pass, 0, vertex_buffer, 0,
+                VERTEX_BYTES)
+            render_pass_encoder_draw(pass, VERTEX_COUNT, 1, 0, 0)
+            render_pass_encoder_end(pass)
 
-            mut command := unsafe {
-                wgpuCommandEncoderFinish(encoder,
-                    null())
-            }
-            unsafe {
-                wgpuQueueSubmit(queue, 1, ptr_to(command))
-                wgpuSurfacePresent(surface)
-            }
+            mut command := command_encoder_finish(encoder, null())
+            queue_submit(queue, 1, ptr_to(command))
+            surface_present(surface)
         }
     }
 
-    unsafe {
-        SDL_DestroyWindow(window)
-        SDL_Quit()
-    }
+    unsafe { SDL_DestroyWindow(window) }
+    SDL_Quit()
     0
 }

@@ -769,6 +769,48 @@ emit_callback_infos :: fn(mut out: Builder, mut names: Builder,
 
 // The handful of functions that belong to no object, `wgpuCreateInstance`
 // among them.
+// The parameters of a method or a function, written as a signature. An array
+// argument is a pointer and a count, so it takes two.
+append_args_declared :: fn(mut out: Builder, mut document: Json, args: i64) {
+    count := json_count(document, args)
+    mut arg : i64 = 0
+    while (arg < count) {
+        each := json_at(document, args, arg)
+        arg_name := json_member(document, each, "name")
+        arg_type := json_member(document, each, "type")
+        if (type_starts(document, arg_type, "array<")) {
+            builder_str_value(out, ", ")
+            append_param_name(out, document, arg_name)
+            builder_str_value(out, "_count: u64")
+        }
+        builder_str_value(out, ", ")
+        append_value_mode(out, document, each)
+        append_param_name(out, document, arg_name)
+        builder_str_value(out, ": ")
+        append_type(out, document, each)
+        arg = arg + 1
+    }
+}
+
+// The same parameters as the arguments of a call, which is the names alone.
+append_args_forwarded :: fn(mut out: Builder, mut document: Json, args: i64) {
+    count := json_count(document, args)
+    mut arg : i64 = 0
+    while (arg < count) {
+        each := json_at(document, args, arg)
+        arg_name := json_member(document, each, "name")
+        arg_type := json_member(document, each, "type")
+        if (type_starts(document, arg_type, "array<")) {
+            builder_str_value(out, ", ")
+            append_param_name(out, document, arg_name)
+            builder_str_value(out, "_count")
+        }
+        builder_str_value(out, ", ")
+        append_param_name(out, document, arg_name)
+        arg = arg + 1
+    }
+}
+
 emit_free_functions :: fn(mut out: Builder, mut names: Builder,
     mut document: Json, root: i64) -> i64 {
     functions := json_member(document, root, "functions")
@@ -778,15 +820,14 @@ emit_free_functions :: fn(mut out: Builder, mut names: Builder,
         each := json_at(document, functions, index)
         name := json_member(document, each, "name")
 
-        builder_str_value(out, "wgpu")
-        append_pascal(out, document, name)
-        builder_str_value(names, "wgpu")
-        append_pascal(names, document, name)
-        builder_str_value(names, ", ")
-        builder_str_value(out, " :: extern fn(")
-
         args := json_member(document, each, "args")
         count := json_count(document, args)
+        returns := json_member(document, each, "returns")
+
+        // The declaration, private to this file.
+        builder_str_value(out, "wgpu")
+        append_pascal(out, document, name)
+        builder_str_value(out, " :: extern fn(")
         mut arg : i64 = 0
         while (arg < count) {
             held := json_at(document, args, arg)
@@ -800,13 +841,51 @@ emit_free_functions :: fn(mut out: Builder, mut names: Builder,
             arg = arg + 1
         }
         builder_byte(out, 41)
-
-        returns := json_member(document, each, "returns")
         if (returns >= 0) {
             builder_str_value(out, " -> ")
             append_type(out, document, returns)
         }
         builder_byte(out, 10)
+
+        // The wrapper a program calls, which is where the call into C is
+        // vouched for.
+        append_snake(out, document, name)
+        append_snake(names, document, name)
+        builder_str_value(names, ", ")
+        builder_str_value(out, " :: fn(")
+        mut declared : i64 = 0
+        while (declared < count) {
+            held := json_at(document, args, declared)
+            if (declared > 0) {
+                builder_str_value(out, ", ")
+            }
+            append_value_mode(out, document, held)
+            append_param_name(out, document, json_member(document, held, "name"))
+            builder_str_value(out, ": ")
+            append_type(out, document, held)
+            declared = declared + 1
+        }
+        builder_byte(out, 41)
+        if (returns >= 0) {
+            builder_str_value(out, " -> ")
+            append_type(out, document, returns)
+        }
+        builder_str_value(out, " {
+    unsafe { wgpu")
+        append_pascal(out, document, name)
+        builder_byte(out, 40)
+        mut forwarded : i64 = 0
+        while (forwarded < count) {
+            held := json_at(document, args, forwarded)
+            if (forwarded > 0) {
+                builder_str_value(out, ", ")
+            }
+            append_param_name(out, document, json_member(document, held, "name"))
+            forwarded = forwarded + 1
+        }
+        builder_str_value(out, ") }
+}
+")
         index = index + 1
     }
     total
@@ -828,48 +907,64 @@ emit_functions :: fn(mut out: Builder, mut names: Builder,
             held := json_at(document, methods, method)
             method_name := json_member(document, held, "name")
 
-            builder_str_value(out, "wgpu")
-            append_pascal(out, document, object_name)
-            append_pascal(out, document, method_name)
-            builder_str_value(names, "wgpu")
-            append_pascal(names, document, object_name)
-            append_pascal(names, document, method_name)
-            builder_str_value(names, ", ")
-            builder_str_value(out, " :: extern fn(handle: ^u8")
-
             args := json_member(document, held, "args")
-            arg_count := json_count(document, args)
-            mut arg : i64 = 0
-            while (arg < arg_count) {
-                each := json_at(document, args, arg)
-                arg_name := json_member(document, each, "name")
-                arg_type := json_member(document, each, "type")
-                if (type_starts(document, arg_type, "array<")) {
-                    builder_str_value(out, ", ")
-                    append_param_name(out, document, arg_name)
-                    builder_str_value(out, "_count: u64")
-                }
-                builder_str_value(out, ", ")
-                append_value_mode(out, document, each)
-                append_param_name(out, document, arg_name)
-                builder_str_value(out, ": ")
-                append_type(out, document, each)
-                arg = arg + 1
-            }
             // A method taking a callback takes its info struct by value, which
             // reaches a Windows callee as a pointer.
             callback := json_member(document, held, "callback")
+            returns := json_member(document, held, "returns")
+
+            // The declaration. It is not exported: calling C is unchecked, and
+            // the wrapper below is the one place in a program that does it.
+            builder_str_value(out, "wgpu")
+            append_pascal(out, document, object_name)
+            append_pascal(out, document, method_name)
+            builder_str_value(out, " :: extern fn(handle: ^u8")
+            append_args_declared(out, document, args)
             if (callback >= 0) {
                 builder_str_value(out, ", callback_info: ^u8")
             }
             builder_byte(out, 41)
-
-            returns := json_member(document, held, "returns")
             if (returns >= 0) {
                 builder_str_value(out, " -> ")
                 append_type(out, document, returns)
             }
             builder_byte(out, 10)
+
+            // The wrapper, under the name a Frost program reads: the object and
+            // the method, as they are spelled in the schema. This is what makes
+            // the binding safe to call. What it vouches for is the pointers,
+            // which C reads without checking and nothing here can check either,
+            // so the perimeter is one generated file rather than every line of
+            // every program that draws a triangle.
+            append_snake(out, document, object_name)
+            builder_byte(out, 95)
+            append_snake(out, document, method_name)
+            append_snake(names, document, object_name)
+            builder_byte(names, 95)
+            append_snake(names, document, method_name)
+            builder_str_value(names, ", ")
+            builder_str_value(out, " :: fn(handle: ^u8")
+            append_args_declared(out, document, args)
+            if (callback >= 0) {
+                builder_str_value(out, ", callback_info: ^u8")
+            }
+            builder_byte(out, 41)
+            if (returns >= 0) {
+                builder_str_value(out, " -> ")
+                append_type(out, document, returns)
+            }
+            builder_str_value(out, " {
+    unsafe { wgpu")
+            append_pascal(out, document, object_name)
+            append_pascal(out, document, method_name)
+            builder_str_value(out, "(handle")
+            append_args_forwarded(out, document, args)
+            if (callback >= 0) {
+                builder_str_value(out, ", callback_info")
+            }
+            builder_str_value(out, ") }
+}
+")
             emitted = emitted + 1
             method = method + 1
         }
