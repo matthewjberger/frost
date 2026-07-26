@@ -1000,6 +1000,21 @@ impl Translator<'_, '_> {
         Ok(self.builder.ins().stack_addr(self.pointer_type, *slot, 0))
     }
 
+    // Where an aggregate a local names lives. A local of aggregate type is its
+    // own storage. A local of reference type holds the address of someone
+    // else's, which is what a borrowed parameter is, so its value is already
+    // the address and taking its slot address would be taking the address of
+    // the pointer.
+    fn aggregate_address(&mut self, local: usize) -> Result<Value> {
+        if matches!(
+            self.function.local_type(local),
+            Type::Ref(_) | Type::RefMut(_)
+        ) {
+            return self.operand(&IrOperand::Local(local));
+        }
+        self.slot_address(local)
+    }
+
     fn emit_memcpy(&mut self, destination: Value, source: Value, size: usize) {
         let size_value =
             self.builder.ins().iconst(self.pointer_type, size as i64);
@@ -1047,7 +1062,8 @@ impl Translator<'_, '_> {
                     match rvalue {
                         IrRvalue::Use(IrOperand::Local(source)) => {
                             let destination = self.slot_address(*local)?;
-                            let source_address = self.slot_address(*source)?;
+                            let source_address =
+                                self.aggregate_address(*source)?;
                             let size = self.function.locals[*local].size;
                             self.emit_memcpy(destination, source_address, size);
                         }
