@@ -169,17 +169,16 @@ nth_param_by_value :: fn(mut p: Parser, params: i64, n: i64) -> bool {
 // the first: `emit_program` binds `node` to an i64 and later to a `^Node`, and
 // answering with the i64 types `node^.next` as a scalar and reads offset zero.
 lookup_local :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
-    mut i : i64 = 0
-    mut found : i64 = TY_I64
-    while (i < p.locals.count) {
+    mut i : i64 = p.locals.count
+    while (i > 0) {
+        i = i - 1
         entry := arena_at(p.locals, i)
         if (entry.name_len == len
             && bytes_equal(p.src, entry.name_off, off, len)) {
-            found = entry.ty
+            return entry.ty
         }
-        i = i + 1
     }
-    found
+    TY_I64
 }
 
 // Whether a name is in scope as a parameter or local. lookup_local answers with
@@ -254,14 +253,14 @@ types_compatible :: fn(mut p: Parser, from: i64, to: i64) -> bool {
 }
 
 local_exists :: fn(mut p: Parser, off: i64, len: i64) -> bool {
-    mut i : i64 = 0
-    while (i < p.locals.count) {
+    mut i : i64 = p.locals.count
+    while (i > 0) {
+        i = i - 1
         entry := arena_at(p.locals, i)
         if (entry.name_len == len
             && bytes_equal(p.src, entry.name_off, off, len)) {
             return true
         }
-        i = i + 1
     }
     false
 }
