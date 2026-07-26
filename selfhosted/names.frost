@@ -26,7 +26,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     new_struct_lit, new_type_node, new_unary, node_next, pointee,
     record_generic_fn, register_const, set_field_next, set_next, set_params,
     cap_at, cap_count_of, pack_element_name, alias_for, push_alias,
-    unit_holds,
+    unit_holds, in_any_module,
     set_ret_type, set_uses, struct_index_of, synth_capability_name,
     synth_join, synth_literal, synth_numbered, type_code_for
 
@@ -799,6 +799,22 @@ gargs_run_equal :: fn(mut p: Parser, a_start: i64, b_start: i64, count: i64)
 // for wrote, which is a run of the one source buffer, so this is a comparison
 // rather than a search. Both backends split a program the same way and ask this
 // the same way.
+// Whether an offset is inside any module's text at all. A name the compiler
+// made up, such as the one a `test` block's body is given, sits past every
+// module in the room after the source, so it belongs to no module by this
+// question and its body's position is what answers instead.
+in_any_module :: fn(mut p: Parser, off: i64) -> bool {
+    mut i : i64 = 0
+    while (i < p.modules.count) {
+        entry := arena_at(p.modules, i)
+        if (off >= entry.start && off < entry.finish) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
 unit_holds :: fn(mut p: Parser, off: i64) -> bool {
     if (p.emit_module < 0) {
         return true

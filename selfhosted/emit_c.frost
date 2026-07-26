@@ -1627,7 +1627,9 @@ emit_program :: fn(mut p: Parser, head: i64) {
         id = next_id
     }
 
-    if (p.testing == 1) {
+    // One entry point however many units there are, in the first, which is the
+    // file the build was pointed at.
+    if (p.testing == 1 && p.emit_module <= 0) {
         emit_test_main(p)
     }
 }

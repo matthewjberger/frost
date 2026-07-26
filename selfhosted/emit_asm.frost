@@ -2179,8 +2179,16 @@ emit_asm_test_main :: fn(mut p: Parser) {
 // Whether the function at `id` belongs to the unit being emitted.
 unit_owns :: fn(mut p: Parser, id: i64) -> bool {
     node := arena_at(p.arena, id)
+    position := node.pos
     sym := arena_at(p.fns, node.val)
-    unit_holds(p, sym.off)
+    mut off := sym.off
+    // A `test` block's function is given a name the compiler made up, which
+    // sits past every module, so where its body was written is what says which
+    // unit it belongs in.
+    if (in_any_module(p, off) == false) {
+        off = position
+    }
+    unit_holds(p, off)
 }
 
 // Whether a generic's specializations belong to the unit being emitted. They go
@@ -2227,7 +2235,9 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
         gi = gi + 1
     }
 
-    if (p.testing == 1) {
+    // One entry point however many units there are, in the first, which is the
+    // file the build was pointed at.
+    if (p.testing == 1 && p.emit_module <= 0) {
         emit_asm_test_main(p)
     }
 

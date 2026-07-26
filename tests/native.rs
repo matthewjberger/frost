@@ -10607,6 +10607,37 @@ fn the_self_hosted_incremental_build_is_the_same_program() {
         assert_eq!(printed, expected);
     }
 
+    // A `--test` build splits too. Its bodies are given names the compiler made
+    // up, which sit past every module, so what says which unit one belongs in
+    // is where the test was written.
+    let test_build = directory.join("build_test");
+    let test_exe =
+        directory.join(format!("tests{}", std::env::consts::EXE_SUFFIX));
+    std::fs::write(
+        &source,
+        "double :: fn(n: i64) -> i64 { n * 2 }\n\
+         test \"doubling\" { assert(double(4) == 8) }\n",
+    )
+    .unwrap();
+    let built = Command::new(&compiler)
+        .arg("--test")
+        .arg("--incremental")
+        .arg("--build-dir")
+        .arg(&test_build)
+        .arg("-o")
+        .arg(&test_exe)
+        .arg(&source)
+        .env("FROST_RUNTIME", &runtime)
+        .env("FROST_CHECK_UNSAFE", "0")
+        .output()
+        .unwrap();
+    let printed = String::from_utf8_lossy(&built.stdout).replace("\r\n", "\n");
+    assert!(
+        printed.contains("1 passed") && printed.contains("0 failed"),
+        "the incremental test build did not run the tests:\n{printed}{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+
     let _ = std::fs::remove_dir_all(&directory);
 }
 

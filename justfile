@@ -321,7 +321,7 @@ bench-selfhost: selfhost-build
 # Measures what the self-hosted compiler's --incremental saves (Windows)
 [windows]
 bench-selfhost-incremental: selfhost-build
-    Remove-Item -Recurse -Force "$env:TEMP/frost-sh-build" -ErrorAction Ignore; $whole = (Measure-Command { ./selfhosted/frost.exe --link -o "$env:TEMP/whole.exe" selfhosted/frost.frost }).TotalMilliseconds; $first = (Measure-Command { ./selfhosted/frost.exe --incremental --build-dir "$env:TEMP/frost-sh-build" -o "$env:TEMP/inc.exe" selfhosted/frost.frost }).TotalMilliseconds; $again = (Measure-Command { ./selfhosted/frost.exe --incremental --build-dir "$env:TEMP/frost-sh-build" -o "$env:TEMP/inc.exe" selfhosted/frost.frost }).TotalMilliseconds; "{0,-28} {1,7:N0} ms" -f "whole program", $whole; "{0,-28} {1,7:N0} ms" -f "incremental, first build", $first; "{0,-28} {1,7:N0} ms" -f "incremental, nothing changed", $again
+    Remove-Item -Recurse -Force "$env:TEMP/frost-sh-build" -ErrorAction Ignore; $whole = (Measure-Command { ./selfhosted/frost.exe --link -o "$env:TEMP/whole.exe" selfhosted/frost.frost }).TotalMilliseconds; $first = (Measure-Command { ./selfhosted/frost.exe --incremental --build-dir "$env:TEMP/frost-sh-build" -o "$env:TEMP/inc.exe" selfhosted/frost.frost }).TotalMilliseconds; $again = (Measure-Command { ./selfhosted/frost.exe --incremental --build-dir "$env:TEMP/frost-sh-build" -o "$env:TEMP/inc.exe" selfhosted/frost.frost }).TotalMilliseconds; Remove-Item -Recurse -Force "$env:TEMP/frost-sh-build-c" -ErrorAction Ignore; $cwhole = (Measure-Command { ./selfhosted/frost.exe --emit-c --link -o "$env:TEMP/cwhole.exe" selfhosted/frost.frost }).TotalMilliseconds; $cfirst = (Measure-Command { ./selfhosted/frost.exe --emit-c --incremental --build-dir "$env:TEMP/frost-sh-build-c" -o "$env:TEMP/cinc.exe" selfhosted/frost.frost }).TotalMilliseconds; $cagain = (Measure-Command { ./selfhosted/frost.exe --emit-c --incremental --build-dir "$env:TEMP/frost-sh-build-c" -o "$env:TEMP/cinc.exe" selfhosted/frost.frost }).TotalMilliseconds; "{0,-34} {1,7:N0} ms" -f "assembly, whole program", $whole; "{0,-34} {1,7:N0} ms" -f "assembly, incremental first", $first; "{0,-34} {1,7:N0} ms" -f "assembly, incremental unchanged", $again; "{0,-34} {1,7:N0} ms" -f "C, whole program", $cwhole; "{0,-34} {1,7:N0} ms" -f "C, incremental first", $cfirst; "{0,-34} {1,7:N0} ms" -f "C, incremental unchanged", $cagain
 
 # Measures what the self-hosted compiler's --incremental saves (Unix)
 [unix]
@@ -329,9 +329,13 @@ bench-selfhost-incremental: selfhost-build
     #!/usr/bin/env bash
     set -euo pipefail
     rm -rf /tmp/frost-sh-build
-    echo "whole program:"; time ./selfhosted/frost --link -o /tmp/whole selfhosted/frost.frost
-    echo "incremental, first build:"; time ./selfhosted/frost --incremental --build-dir /tmp/frost-sh-build -o /tmp/inc selfhosted/frost.frost
-    echo "incremental, nothing changed:"; time ./selfhosted/frost --incremental --build-dir /tmp/frost-sh-build -o /tmp/inc selfhosted/frost.frost
+    rm -rf /tmp/frost-sh-build-c
+    echo "assembly, whole program:"; time ./selfhosted/frost --link -o /tmp/whole selfhosted/frost.frost
+    echo "assembly, incremental first:"; time ./selfhosted/frost --incremental --build-dir /tmp/frost-sh-build -o /tmp/inc selfhosted/frost.frost
+    echo "assembly, incremental unchanged:"; time ./selfhosted/frost --incremental --build-dir /tmp/frost-sh-build -o /tmp/inc selfhosted/frost.frost
+    echo "C, whole program:"; time ./selfhosted/frost --emit-c --link -o /tmp/cwhole selfhosted/frost.frost
+    echo "C, incremental first:"; time ./selfhosted/frost --emit-c --incremental --build-dir /tmp/frost-sh-build-c -o /tmp/cinc selfhosted/frost.frost
+    echo "C, incremental unchanged:"; time ./selfhosted/frost --emit-c --incremental --build-dir /tmp/frost-sh-build-c -o /tmp/cinc selfhosted/frost.frost
 
 # Runs all tests
 test:
