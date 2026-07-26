@@ -23,6 +23,36 @@ fn locate<T>(result: Result<T>, position: Position) -> Result<T> {
 
 type ParamTypes = HashMap<String, Vec<Option<Type>>>;
 
+/// The declared type of every field of every struct, by the struct's name and
+/// the field's. A call through a function held in a field reads its parameter
+/// modes from here, since the field is where that signature is written.
+type FieldTypes = HashMap<(String, String), Type>;
+
+/// What every check needs to know about the program around the item it is
+/// looking at: which types are linear, what each function answers with, and how
+/// each function and each field-held signature takes its arguments.
+struct Program<'a> {
+    linear: &'a HashSet<String>,
+    signatures: &'a Signatures,
+    param_types: &'a ParamTypes,
+    field_types: &'a FieldTypes,
+}
+
+fn collect_field_types(statements: &[Spanned<Statement>]) -> FieldTypes {
+    let mut fields = HashMap::new();
+    for statement in statements {
+        if let Statement::Struct(name, _, declared) = &statement.node {
+            for field in declared {
+                fields.insert(
+                    (name.clone(), field.name.clone()),
+                    field.field_type.clone(),
+                );
+            }
+        }
+    }
+    fields
+}
+
 pub fn check_ownership(
     statements: &[Spanned<Statement>],
     linear: &HashSet<String>,
@@ -52,15 +82,16 @@ pub fn check_ownership_recovering(
 ) -> Vec<String> {
     let signatures = collect_signatures(statements);
     let param_types = collect_param_types(statements);
+    let field_types = collect_field_types(statements);
+    let program = Program {
+        linear,
+        signatures: &signatures,
+        param_types: &param_types,
+        field_types: &field_types,
+    };
     let mut reports = Vec::new();
     for statement in statements {
-        let outcome = check_statement(
-            &statement.node,
-            linear,
-            &signatures,
-            &param_types,
-            &mut reports,
-        );
+        let outcome = check_statement(&statement.node, &program, &mut reports);
         if let Err(error) = locate(outcome, statement.position) {
             reports.push(error.to_string());
         }
@@ -144,9 +175,7 @@ fn collect_signatures(statements: &[Spanned<Statement>]) -> Signatures {
 
 fn check_statement(
     statement: &Statement,
-    linear: &HashSet<String>,
-    signatures: &Signatures,
-    param_types: &ParamTypes,
+    program: &Program,
     reports: &mut Vec<String>,
 ) -> Result<()> {
     match statement {
@@ -189,21 +218,9 @@ fn check_statement(
             // holds an arena borrow to its region, so returning one is only ever
             // a borrow the caller may keep. `arena_at` is the reason it exists.
             for inner in body {
-                check_statement(
-                    inner,
-                    linear,
-                    signatures,
-                    param_types,
-                    reports,
-                )?;
+                check_statement(inner, program, reports)?;
             }
-            reports.extend(check_function_moves(
-                params,
-                body,
-                linear,
-                signatures,
-                param_types,
-            ));
+            reports.extend(check_function_moves(params, body, program));
         }
         Statement::Extern {
             name, return_type, ..
@@ -224,16 +241,15 @@ fn check_statement(
 fn check_function_moves(
     params: &[Parameter],
     body: &Block,
-    linear: &HashSet<String>,
-    signatures: &Signatures,
-    param_types: &ParamTypes,
+    program: &Program,
 ) -> Vec<String> {
     let mut checker = MoveChecker {
         types: HashMap::new(),
         states: HashMap::new(),
-        linear,
-        signatures,
-        param_types,
+        linear: program.linear,
+        signatures: program.signatures,
+        param_types: program.param_types,
+        field_types: program.field_types,
         compile_time: params
             .iter()
             .filter(|parameter| {
@@ -279,6 +295,7 @@ struct MoveChecker<'a> {
     linear: &'a HashSet<String>,
     signatures: &'a Signatures,
     param_types: &'a ParamTypes,
+    field_types: &'a FieldTypes,
     // The enclosing function's compile-time parameters. A call to one of these
     // names a function only once the generic is specialized, so nothing is
     // known about what it does with its arguments until then.
@@ -379,7 +396,11 @@ impl MoveChecker<'_> {
                     value,
                     &self.types,
                     self.signatures,
-                );
+                )
+                // A binding whose value is a place takes that place's type,
+                // which is how a function read out of a table is known to be
+                // one: `run := systems[i].run` then `run(world)`.
+                .or_else(|| self.value_type(value));
                 self.note_binding(name, inferred);
                 Ok(false)
             }
@@ -618,9 +639,19 @@ impl MoveChecker<'_> {
                     }
                     return Ok(());
                 }
+                // What the callee does with each argument. A name that is a
+                // declared function says so directly; anything else is called
+                // through a value, and the signature that value holds is what
+                // says which of its parameters borrow. Without this every
+                // argument of an indirect call read as consumed, so a table of
+                // systems could not be walked: `systems[i].run(world)` took the
+                // world away on the first one.
+                let held = self.callee_signature(callee);
                 let param_types = match callee.as_ref() {
-                    Expression::Identifier(name) => self.param_types.get(name),
-                    _ => None,
+                    Expression::Identifier(name) => {
+                        self.param_types.get(name).or(held.as_ref())
+                    }
+                    _ => held.as_ref(),
                 };
                 check_borrow_exclusivity(arguments, param_types)?;
                 // A call to a compile-time parameter names a function only
@@ -696,6 +727,38 @@ impl MoveChecker<'_> {
             .get(name)
             .map(|ty| is_linear_type(ty, self.linear))
             .unwrap_or(false)
+    }
+
+    /// The parameter types of what this expression calls, for a callee that is
+    /// a value of function-pointer type rather than a declared name.
+    fn callee_signature(
+        &self,
+        callee: &Expression,
+    ) -> Option<Vec<Option<Type>>> {
+        let Type::Proc(params, _) = self.value_type(callee)? else {
+            return None;
+        };
+        Some(params.into_iter().map(Some).collect())
+    }
+
+    /// The type of a place, as far as the names and the struct declarations
+    /// give it: a name, an element of one, a field of one, or a field of an
+    /// element. This is what a function pointer held in a table is written as.
+    fn value_type(&self, expression: &Expression) -> Option<Type> {
+        match expression {
+            Expression::Identifier(name) => self.types.get(name).cloned(),
+            Expression::Index(base, _) => match self.value_type(base)? {
+                Type::Array(inner, _) | Type::Slice(inner) => Some(*inner),
+                _ => None,
+            },
+            Expression::FieldAccess(base, field) => {
+                let Type::Struct(name) = self.value_type(base)? else {
+                    return None;
+                };
+                self.field_types.get(&(name, field.clone())).cloned()
+            }
+            _ => None,
+        }
     }
 
     fn is_move_variable(&self, name: &str) -> bool {

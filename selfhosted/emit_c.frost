@@ -735,13 +735,31 @@ emit_indirect_call :: fn(mut p: Parser, off: i64, len: i64, callee_node: i64,
     emit_text("))(")
     mut id := args
     mut first : bool = true
+    mut at : i64 = 0
     while (id != (0 - 1)) {
         node := arena_at(p.arena, id)
         if (first == false) {
             emit_text(", ")
         }
-        emit_expr(p, node.a)
+        // The signature says how each argument travels, the same as a direct
+        // call's parameter list does: a mode borrow is a pointer there, so a
+        // value handed to one has its address taken. Without this a `mut`
+        // parameter of a function pointer was handed the struct itself.
+        mut param_ty : i64 = 0 - 1
+        if (at < count) {
+            param_ty = proc_param_at(p, callee_ty, at)
+        }
+        arg_ty := type_of(p, node.a)
+        if (param_ty >= 0 && is_pointer(param_ty)
+            && is_aggregate(pointee(param_ty)) && is_pointer(arg_ty) == false) {
+            emit_text("(&(")
+            emit_expr(p, node.a)
+            emit_text("))")
+        } else {
+            emit_expr(p, node.a)
+        }
         first = false
+        at = at + 1
         id = node.next
     }
     emit_text(")")
@@ -1386,7 +1404,12 @@ emit_function_body :: fn(mut p: Parser, body: i64) {
         kind := node.kind
         next_id := node.next
         if (next_id == (0 - 1)) {
-            if (kind == NodeKind::ExprStmt && type_of(p, node.a) != TY_VOID) {
+            // A body ending in a call answers with what that call answered
+            // with, unless the function answers with nothing, where the value
+            // is simply dropped. `spawning_system` ends in `ecs_spawn(world)`
+            // and hands back no entity.
+            if (kind == NodeKind::ExprStmt && type_of(p, node.a) != TY_VOID
+                && p.current_ret != TY_VOID) {
                 emit_text("return (")
                 emit_expr(p, node.a)
                 emit_text(");\n")
