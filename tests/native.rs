@@ -9096,6 +9096,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_genwritten", GENERIC_WRITTEN_OUT),
         ("diff_wherebound", WHERE_BOUNDS),
         ("diff_format", FORMAT_PRINT),
+        ("diff_fieldcall", FIELD_CALLS),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
@@ -9942,6 +9943,65 @@ fn self_hosted_holds_a_generic_to_its_bound() {
     };
     let _ = std::fs::remove_file(&input);
     let Some(via_c) = compile_c_and_run("shwhere", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
+// A struct whose fields are function pointers, called through. This is what an
+// interface is here: an ordinary value with an ordinary type, so the field is
+// reached the way any field is and the call goes through what it holds.
+const FIELD_CALLS: &str = r#"
+Point :: struct { x: i64, y: i64 }
+
+Ops :: struct {
+    less: fn(i64, i64) -> bool,
+    combine: fn(i64, i64) -> i64,
+    scale: fn(f64, i64) -> f64,
+    origin: fn(i64) -> Point,
+}
+
+i64_less :: fn(a: i64, b: i64) -> bool { a < b }
+i64_add :: fn(a: i64, b: i64) -> i64 { a + b }
+f64_double :: fn(v: f64, by: i64) -> f64 { v * 2.0 }
+make_point :: fn(n: i64) -> Point { Point { x = n, y = n * 2 } }
+
+main :: fn() -> i64 {
+    ops := Ops { less = i64_less, combine = i64_add, scale = f64_double,
+        origin = make_point }
+    if (ops.less(1, 2)) { print 1 } else { print 0 }
+    print ops.combine(20, 22)
+    print ops.scale(1.5, 3)
+    p := ops.origin(7)
+    print p.x + p.y
+    0
+}
+"#;
+
+#[test]
+fn a_function_pointer_field_is_called_through() {
+    let Some(output) = compile_and_run("fieldcall", FIELD_CALLS) else {
+        return;
+    };
+    assert_eq!(output, "1\n42\n3\n21\n");
+}
+
+#[test]
+fn self_hosted_calls_through_a_function_pointer_field() {
+    let Some(output) = selfhosted_native_output("shfieldcall", FIELD_CALLS)
+    else {
+        return;
+    };
+    assert_eq!(output, "1\n42\n3\n21\n");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shfieldcall_input.frost");
+    std::fs::write(&input, FIELD_CALLS).unwrap();
+    let Some(c_source) = self_hosted_emits("shfieldcall", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shfieldcall", &c_source) else {
         return;
     };
     assert_eq!(via_c, output, "the self-hosted C backend disagrees");

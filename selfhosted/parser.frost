@@ -611,8 +611,31 @@ wrap_trailing_ok :: fn(mut p: Parser, body: i64) {
 parse_postfix :: fn(mut p: Parser, start: i64) -> i64 {
     mut node := start
     while (cur(p) == TOK_DOT || cur(p) == TOK_CARET
-        || cur(p) == TOK_QUESTION || cur(p) == TOK_LBRACKET) {
-        if (cur(p) == TOK_QUESTION) {
+        || cur(p) == TOK_QUESTION || cur(p) == TOK_LBRACKET
+        || cur(p) == TOK_LPAREN) {
+        // `ops.less(a, b)`: what is called is a value rather than a name, so
+        // the call is through whatever the expression so far answered with.
+        if (cur(p) == TOK_LPAREN) {
+            advance(p)
+            mut head : i64 = 0 - 1
+            mut tail : i64 = 0 - 1
+            while (cur(p) != TOK_RPAREN && cur(p) != TOK_EOF) {
+                argument := parse_expr(p)
+                held := new_node(p, NodeKind::Arg, argument, 0, 0)
+                if (head == (0 - 1)) {
+                    head = held
+                    tail = held
+                } else {
+                    set_next(p, tail, held)
+                    tail = held
+                }
+                if (cur(p) == TOK_COMMA) {
+                    advance(p)
+                }
+            }
+            advance(p)
+            node = new_node(p, NodeKind::CallPtr, node, head, 0)
+        } else if (cur(p) == TOK_QUESTION) {
             advance(p)
             node = lower_try(p, node)
         } else if (cur(p) == TOK_DOT) {

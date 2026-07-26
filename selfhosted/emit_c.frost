@@ -362,6 +362,17 @@ emit_expr :: fn(mut p: Parser, id: i64) {
     if (kind == NodeKind::TypeVal) {
         return
     }
+    if (kind == NodeKind::CallPtr) {
+        callee_ty := type_of(p, node.a)
+        if (is_proc(callee_ty) == false) {
+            report_where(p.modules, p.src, node.pos)
+            report("this is called, so it has to be a function, and it is a ")
+            report_type_name(p, callee_ty)
+            frost_rt_die()
+        }
+        emit_indirect_call(p, 0, 0, node.a, callee_ty, node.b)
+        return
+    }
     if (kind == NodeKind::Call) {
         fn_index := node.val
         args := node.a
@@ -371,7 +382,8 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         if (local_exists(p, csym.off, csym.len)) {
             callee_ty := lookup_local(p, csym.off, csym.len)
             if (is_proc(callee_ty)) {
-                emit_indirect_call(p, csym.off, csym.len, callee_ty, args)
+                emit_indirect_call(p, csym.off, csym.len, 0 - 1, callee_ty,
+                    args)
                 return
             }
         }
@@ -645,16 +657,17 @@ emit_expr :: fn(mut p: Parser, id: i64) {
 // cast back to the real signature, `ret(*)(params)`, and called. Aggregate
 // parameter and return types are `char*`, since aggregates travel by address,
 // matching how the callee was compiled.
-emit_indirect_call :: fn(mut p: Parser, off: i64, len: i64, callee_ty: i64,
-    args: i64) {
+// The callee is written either as a name, when a local holds the pointer, or
+// as an expression, when it is a field or anything else that answers with one.
+emit_indirect_call :: fn(mut p: Parser, off: i64, len: i64, callee_node: i64,
+    callee_ty: i64, args: i64) {
     ret := proc_ret(p, callee_ty)
     count := proc_param_count(p, callee_ty)
     emit_text("((")
-    if (is_aggregate(ret)) {
-        emit_text("char*")
-    } else {
-        emit_ctype(p, ret)
-    }
+    // The return type as the callee was compiled with it. A Frost function
+    // answers with a struct by value in C, so a cast saying otherwise would
+    // not match the definition it is calling.
+    emit_ctype(p, ret)
     emit_text("(*)(")
     mut i : i64 = 0
     while (i < count) {
@@ -670,7 +683,13 @@ emit_indirect_call :: fn(mut p: Parser, off: i64, len: i64, callee_ty: i64,
         i = i + 1
     }
     emit_text("))(")
-    emit_source(p.src, off, len)
+    if (callee_node >= 0) {
+        emit_text("(")
+        emit_expr(p, callee_node)
+        emit_text(")")
+    } else {
+        emit_source(p.src, off, len)
+    }
     emit_text("))(")
     mut id := args
     mut first : bool = true
