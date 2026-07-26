@@ -50,10 +50,23 @@ Carrying the buffer as a `str` instead makes every read and write a checked
 index. That conversion was written and is mechanical: twenty-three signatures
 change from `^i8` to `str`, the reads become `src[i]`, the writes become
 `buffer[i] = byte`, and `buffer_of` builds the one slice the whole compiler
-indexes. What stopped it is the bootstrap, not the design: a `str` local in the
-driver's `main` reaches the backend without a stack slot and fails with "type
-not supported in codegen: str", while the same shape in a small program is
-fine. The next step is that one local, not the other three hundred sites.
+indexes. What stopped it is the bootstrap, not the design. Handing a `str` local to a
+`str` parameter, or writing through one that is a read parameter, reaches the
+Cranelift backend as a 16-byte value where an address belongs, and fails with
+"type not supported in codegen: str". The same shapes in a small program are
+fine, so it is something about how the compiler's own `main` and its imported
+modules lower, and it is three call sites rather than the three hundred the
+conversion touches:
+
+- `copy_name(into: str, ...)` writing `into[at + b] = ...` through a read
+  parameter. Binding `mut destination := into` first is enough, and that is
+  probably the honest way to write it anyway.
+- `main`'s `source` handed to `tokenize(source, ...)` and to the `Parser`
+  literal. This is the one still open.
+
+Both are argument lowering, not the buffer. Whoever picks this up should fix
+those two shapes in `src/ir_build.rs` first, with a small reproduction, and only
+then re-run the conversion, which is a script.
 
 ## What is done, and what it cost
 
