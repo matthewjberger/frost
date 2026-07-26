@@ -10522,6 +10522,22 @@ fn the_self_hosted_incremental_build_is_the_same_program() {
             .output()
             .unwrap()
     };
+    // The same through the C backend, which splits into units the same way and
+    // carries the declarations in each.
+    let run_c = |exe: &std::path::Path, build: &std::path::Path| {
+        Command::new(&compiler)
+            .arg("--emit-c")
+            .arg("--incremental")
+            .arg("--build-dir")
+            .arg(build)
+            .arg("-o")
+            .arg(exe)
+            .arg(&source)
+            .env("FROST_RUNTIME", &runtime)
+            .env("FROST_CHECK_UNSAFE", "0")
+            .output()
+            .unwrap()
+    };
 
     let first = run(&exe, &build);
     assert!(
@@ -10530,8 +10546,7 @@ fn the_self_hosted_incremental_build_is_the_same_program() {
         String::from_utf8_lossy(&first.stderr)
     );
     let output = Command::new(&exe).output().unwrap();
-    let printed =
-        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    let printed = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
     assert_eq!(printed, "21\n");
 
     // Again with nothing changed: every object is reused, and the program it
@@ -10543,8 +10558,7 @@ fn the_self_hosted_incremental_build_is_the_same_program() {
         String::from_utf8_lossy(&again.stderr)
     );
     let output = Command::new(&exe).output().unwrap();
-    let printed =
-        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    let printed = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
     assert_eq!(printed, "21\n");
 
     // And after an edit, which has to reach the executable.
@@ -10561,9 +10575,35 @@ fn the_self_hosted_incremental_build_is_the_same_program() {
         String::from_utf8_lossy(&edited.stderr)
     );
     let output = Command::new(&exe).output().unwrap();
-    let printed =
-        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    let printed = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
     assert_eq!(printed, "28\n");
+
+    // Through the C backend, from nothing, twice, and after an edit. It splits
+    // into units the same way, and each carries the declarations a C unit needs
+    // to call what the others define.
+    let c_build = directory.join("build_c");
+    let c_exe =
+        directory.join(format!("out_c{}", std::env::consts::EXE_SUFFIX));
+    for (expected, body) in [("28\n", "n * 4"), ("35\n", "n * 5")] {
+        std::fs::write(
+            &source,
+            format!(
+                "helper :: fn(n: i64) -> i64 {{ {body} }}\n\
+                 main :: fn() -> i64 {{ print helper(7)  0 }}\n"
+            ),
+        )
+        .unwrap();
+        let built = run_c(&c_exe, &c_build);
+        assert!(
+            built.status.success(),
+            "the C incremental build failed:\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let output = Command::new(&c_exe).output().unwrap();
+        let printed =
+            String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+        assert_eq!(printed, expected);
+    }
 
     let _ = std::fs::remove_dir_all(&directory);
 }

@@ -80,7 +80,11 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     mut rebuilt : i64 = 0
     mut index : i64 = 0
     while (index < p.modules.count) {
-        unit := join_number(prefix, index, ".s")
+        mut suffix : ^i8 = ".s"
+        if (options.backend == BACKEND_C) {
+            suffix = ".c"
+        }
+        unit := join_number(prefix, index, suffix)
         record := join_number(prefix, index, ".sum")
         object := join_number(prefix, index, ".o")
         if (unsafe { frost_rt_emit_open(unit) } == 0) {
@@ -90,7 +94,19 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
             frost_rt_die()
         }
         p.emit_module = index
-        emit_asm_program(p, program)
+        if (options.backend == BACKEND_C) {
+            // Every unit carries the declarations, since a C unit cannot call
+            // what it has not seen: the runtime's prototypes, every type, every
+            // extern, and a prototype for every function and specialization in
+            // the program. What differs between units is which bodies follow.
+            emit_text("#include <stdio.h>
+")
+            emit_text("#include <stdint.h>
+")
+            emit_program(p, program)
+        } else {
+            emit_asm_program(p, program)
+        }
         frost_rt_emit_close()
         p.emit_module = 0 - 1
 

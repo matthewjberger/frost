@@ -7,6 +7,7 @@ import "names.frost"
 import "types.frost"
 import "parser.frost"
 import "emit.frost"
+import "emit_asm.frost"
 
 export emit_program
 
@@ -1332,6 +1333,22 @@ emit_struct_ordered :: fn(mut p: Parser, i: i64) {
 // Emit every struct and array definition in dependency order. Structs are the
 // roots. An array reached by none of them is emitted by the trailing sweep.
 emit_type_defs :: fn(mut p: Parser) {
+    // Each type is emitted once per unit, and a per-module build emits several,
+    // so the mark that says "already written" is cleared at the start of each
+    // one. Every unit carries every definition, since a C unit cannot use a
+    // type it has not seen.
+    mut cleared : i64 = 0
+    while (cleared < p.structs.count) {
+        def := arena_at(p.structs, cleared)
+        def.emitted = 0
+        cleared = cleared + 1
+    }
+    cleared = 0
+    while (cleared < p.arrays.count) {
+        held := arena_at(p.arrays, cleared)
+        held.emitted = 0
+        cleared = cleared + 1
+    }
     mut i : i64 = 0
     while (i < p.structs.count) {
         emit_struct_ordered(p, i)
@@ -1574,22 +1591,26 @@ emit_program :: fn(mut p: Parser, head: i64) {
 
     emit_prototypes(p, head)
 
-    // Monomorphized function definitions.
+    // Monomorphized function definitions, in the unit that declared the
+    // template. Every unit carries the prototypes above, so a call from
+    // anywhere else links to this one.
     gi = 0
     while (gi < p.generic_fns.count) {
-        mut ii : i64 = 0
-        while (ii < p.type_args.count) {
-            used := arena_at(p.type_args, ii)
-            arg := used.arg
-            xstart := used.xarg_start
-            xcount := used.xarg_count
-            is_pack := used.is_pack
-            if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack)) {
-                node := parse_generic_instance(p, gi, arg, xstart, xcount)
-                ret := p.last_return_type
-                emit_mono_function(p, node, arg, xstart, xcount, ret)
+        if (unit_owns_generic(p, gi)) {
+            mut ii : i64 = 0
+            while (ii < p.type_args.count) {
+                used := arena_at(p.type_args, ii)
+                arg := used.arg
+                xstart := used.xarg_start
+                xcount := used.xarg_count
+                is_pack := used.is_pack
+                if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack)) {
+                    node := parse_generic_instance(p, gi, arg, xstart, xcount)
+                    ret := p.last_return_type
+                    emit_mono_function(p, node, arg, xstart, xcount, ret)
+                }
+                ii = ii + 1
             }
-            ii = ii + 1
         }
         gi = gi + 1
     }
@@ -1599,7 +1620,8 @@ emit_program :: fn(mut p: Parser, head: i64) {
         node := arena_at(p.arena, id)
         kind := node.kind
         next_id := node.next
-        if (kind == NodeKind::Func && (node.c != 2 || p.testing == 1)) {
+        if (kind == NodeKind::Func && (node.c != 2 || p.testing == 1)
+            && unit_owns(p, id)) {
             emit_function(p, id)
         }
         id = next_id
