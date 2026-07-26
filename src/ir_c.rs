@@ -73,6 +73,18 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
     externs.insert("frost_rt_mem_set");
     output.push_str("void frost_rt_print_i64(int64_t value);\n");
     externs.insert("frost_rt_print_i64");
+    output.push_str(
+        "void frost_rt_write_bytes(const char* data, int64_t length);\n",
+    );
+    externs.insert("frost_rt_write_bytes");
+    output.push_str("void frost_rt_write_i64(int64_t value);\n");
+    externs.insert("frost_rt_write_i64");
+    output.push_str("void frost_rt_write_f64(double value);\n");
+    externs.insert("frost_rt_write_f64");
+    output.push_str("void frost_rt_write_newline(void);\n");
+    externs.insert("frost_rt_write_newline");
+    output.push_str("void frost_rt_write_cstr(const char* text);\n");
+    externs.insert("frost_rt_write_cstr");
     output.push_str("void frost_rt_print_f64(double value);\n\n");
     externs.insert("frost_rt_print_f64");
 

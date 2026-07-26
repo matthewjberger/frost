@@ -151,7 +151,7 @@ fn bound_in_statement(statement: &Statement, out: &mut HashSet<String>) {
         Statement::Constant(_, value)
         | Statement::Return(value)
         | Statement::Expression(value)
-        | Statement::Print(value) => bound_in_expression(value, out),
+        | Statement::Print(value, _) => bound_in_expression(value, out),
         Statement::Assignment(place, value) => {
             bound_in_expression(place, out);
             bound_in_expression(value, out);

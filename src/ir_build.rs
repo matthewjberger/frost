@@ -1359,6 +1359,51 @@ fn check_bound(
     )
 }
 
+// A format literal, split into the text between its holes and the holes
+// themselves. `{}` is a hole, and `{{` and `}}` are one brace each. A lone `}`
+// is itself, since nothing else can be meant by it.
+//
+// `None` is a hole and `Some(text)` is text, so the count of holes is the count
+// of arguments that must follow.
+fn split_format(text: &str) -> Result<Vec<Option<String>>> {
+    let mut pieces = Vec::new();
+    let mut current = String::new();
+    let mut characters = text.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character == '}' {
+            if characters.peek() == Some(&'}') {
+                characters.next();
+            }
+            current.push('}');
+            continue;
+        }
+        if character != '{' {
+            current.push(character);
+            continue;
+        }
+        if characters.peek() == Some(&'{') {
+            characters.next();
+            current.push('{');
+            continue;
+        }
+        match characters.next() {
+            Some('}') => {
+                if !current.is_empty() {
+                    pieces.push(Some(std::mem::take(&mut current)));
+                }
+                pieces.push(None);
+            }
+            _ => bail!(
+                "a hole in a format is written `{{}}`, and `{{` on its own is written `{{{{`"
+            ),
+        }
+    }
+    if !current.is_empty() {
+        pieces.push(Some(current));
+    }
+    Ok(pieces)
+}
+
 fn is_generic_instance(name: &str) -> bool {
     name.contains('<')
 }
@@ -2937,27 +2982,8 @@ impl<'a> FunctionLowering<'a> {
                 self.lower_expression(expression, None)?;
                 Ok(())
             }
-            Statement::Print(expression) => {
-                let (operand, value_type) =
-                    self.lower_expression(expression, None)?;
-                // An integer prints through the %lld helper and a float through
-                // the %g one, so the value is widened to the width that helper
-                // takes: i64 for an integer of any width, f64 for either float.
-                let (function, target) = if value_type.is_float() {
-                    ("frost_rt_print_f64", Type::F64)
-                } else {
-                    ("frost_rt_print_i64", Type::I64)
-                };
-                let coerced = self.coerce(operand, &value_type, &target);
-                let sink = self.fresh_local(Type::Void, None);
-                self.emit(IrStatement::Assign(
-                    sink,
-                    IrRvalue::Call {
-                        function: function.to_string(),
-                        arguments: vec![coerced],
-                    },
-                ));
-                Ok(())
+            Statement::Print(expression, arguments) => {
+                self.lower_print(expression, arguments)
             }
             Statement::While(condition, body) => {
                 self.lower_while(condition, body)
@@ -3495,6 +3521,158 @@ impl<'a> FunctionLowering<'a> {
                 bail!("native backend: unsupported literal: {other}")
             }
         }
+    }
+
+    // `print`, in both of its forms. A string literal is a format: its holes
+    // are filled by the arguments that follow, in order, and the whole line is
+    // written as pieces with one newline at the end. Anything else is one
+    // value, written the same way a hole is.
+    //
+    // The literal is read here, by the compiler, and never exists at run time.
+    // There is no parser for it anywhere else and nothing walks it as data,
+    // which is what keeps this from needing an evaluator of its own.
+    fn lower_print(
+        &mut self,
+        first: &Expression,
+        arguments: &[Expression],
+    ) -> Result<()> {
+        if let Expression::Literal(Literal::String(text)) = first {
+            let pieces = split_format(text)?;
+            let holes = pieces.iter().filter(|piece| piece.is_none()).count();
+            if holes != arguments.len() {
+                bail!(
+                    "this format has {holes} hole(s) and {} argument(s)",
+                    arguments.len()
+                )
+            }
+            let mut next = arguments.iter();
+            for piece in &pieces {
+                match piece {
+                    Some(literal) => self.write_bytes(literal),
+                    None => {
+                        let argument = next.next().expect("hole counted above");
+                        self.write_value(argument)?;
+                    }
+                }
+            }
+            self.write_newline();
+            return Ok(());
+        }
+        if !arguments.is_empty() {
+            bail!(
+                "a `print` with arguments starts with a format string, and this one does not"
+            )
+        }
+        self.write_value(first)?;
+        self.write_newline();
+        Ok(())
+    }
+
+    fn write_bytes(&mut self, text: &str) {
+        let sink = self.fresh_local(Type::Void, None);
+        self.emit(IrStatement::Assign(
+            sink,
+            IrRvalue::Call {
+                function: "frost_rt_write_bytes".to_string(),
+                arguments: vec![
+                    IrOperand::Constant(IrConstant::CString(text.to_string())),
+                    IrOperand::Constant(IrConstant::Integer(
+                        text.len() as i64,
+                        Type::I64,
+                    )),
+                ],
+            },
+        ));
+    }
+
+    fn write_newline(&mut self) {
+        let sink = self.fresh_local(Type::Void, None);
+        self.emit(IrStatement::Assign(
+            sink,
+            IrRvalue::Call {
+                function: "frost_rt_write_newline".to_string(),
+                arguments: Vec::new(),
+            },
+        ));
+    }
+
+    // One value, written as what it is. An integer of any width widens to i64
+    // and a float to f64, since that is what the two helpers take. A `str` is
+    // its bytes, which is the one thing `print` could not do before.
+    fn write_value(&mut self, expression: &Expression) -> Result<()> {
+        if let Expression::Literal(Literal::String(text)) = expression {
+            self.write_bytes(text);
+            return Ok(());
+        }
+        let (operand, value_type) = self.lower_expression(expression, None)?;
+        if matches!(value_type, Type::Str) {
+            let base = self.str_operand_address(operand, &value_type)?;
+            let data = self.str_field(
+                base.clone(),
+                STR_PTR_OFFSET,
+                str_byte_ptr_type(),
+            );
+            let length = self.str_field(base, STR_LEN_OFFSET, Type::Usize);
+            let length = self.coerce(length, &Type::Usize, &Type::I64);
+            let sink = self.fresh_local(Type::Void, None);
+            self.emit(IrStatement::Assign(
+                sink,
+                IrRvalue::Call {
+                    function: "frost_rt_write_bytes".to_string(),
+                    arguments: vec![data, length],
+                },
+            ));
+            return Ok(());
+        }
+        // A `^i8` is a C string, whose length is where its NUL is. That is
+        // what a string literal is when it reaches C, and what the self-hosted
+        // compiler's own string literals are.
+        if matches!(&value_type, Type::Ptr(inner) if **inner == Type::I8) {
+            let sink = self.fresh_local(Type::Void, None);
+            self.emit(IrStatement::Assign(
+                sink,
+                IrRvalue::Call {
+                    function: "frost_rt_write_cstr".to_string(),
+                    arguments: vec![operand],
+                },
+            ));
+            return Ok(());
+        }
+        let (function, target) = if value_type.is_float() {
+            ("frost_rt_write_f64", Type::F64)
+        } else if is_integer(&value_type)
+            || matches!(value_type, Type::Bool | Type::Handle(_))
+        {
+            ("frost_rt_write_i64", Type::I64)
+        } else {
+            bail!(
+                "there is no way to write a '{value_type}', so print what it holds instead"
+            )
+        };
+        let coerced = self.coerce(operand, &value_type, &target);
+        let sink = self.fresh_local(Type::Void, None);
+        self.emit(IrStatement::Assign(
+            sink,
+            IrRvalue::Call {
+                function: function.to_string(),
+                arguments: vec![coerced],
+            },
+        ));
+        Ok(())
+    }
+
+    // The address of a `str` value that has already been lowered. A local is
+    // one; anything else is spilled to one, since a str is read through its
+    // address.
+    fn str_operand_address(
+        &mut self,
+        operand: IrOperand,
+        value_type: &Type,
+    ) -> Result<IrOperand> {
+        if let IrOperand::Local(local) = operand {
+            return Ok(self.address_of_local(local, value_type));
+        }
+        bail!("native backend: a str to write is not a place")
     }
 
     fn lower_prefix(

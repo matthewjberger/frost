@@ -9095,6 +9095,7 @@ fn cranelift_and_c_backends_agree() {
         ("diff_genbool", GENERIC_BOOL_ARGUMENT),
         ("diff_genwritten", GENERIC_WRITTEN_OUT),
         ("diff_wherebound", WHERE_BOUNDS),
+        ("diff_format", FORMAT_PRINT),
     ];
     for (name, source) in programs {
         let native = run_backend(name, source, false);
@@ -9717,6 +9718,106 @@ main :: fn() -> i64 {
         return;
     };
     assert_eq!(output, "7\n");
+}
+
+// `print` takes a format literal and the values that fill its holes. The
+// literal is read by the compiler and split into pieces where it is written, so
+// no format exists at run time and nothing parses one. A `str` and a `^i8` are
+// written as their bytes, which `print` could not do at all before.
+const FORMAT_PRINT: &str = r#"
+Point :: struct { x: i64, y: i64 }
+
+main :: fn() -> i64 {
+    print "hello"
+    name := "world"
+    print name
+    print "hp {} of {}", 7, 20
+    print "{} then {} then {}", "a", 2, 3.5
+    print "braces {{ and }} stay"
+    p := Point { x = 3, y = 4 }
+    print "point {} {}", p.x, p.y
+    0
+}
+"#;
+
+#[test]
+fn print_takes_a_format_and_its_values() {
+    let Some(output) = compile_and_run("formatprint", FORMAT_PRINT) else {
+        return;
+    };
+    assert_eq!(
+        output,
+        "hello\nworld\nhp 7 of 20\na then 2 then 3.5\nbraces { and } stay\npoint 3 4\n"
+    );
+}
+
+// A hole with nothing to fill it, and a value with no hole to go in, are both
+// mistakes at the call rather than something to print. Both compilers say so.
+#[test]
+fn a_format_and_its_values_have_to_agree() {
+    let cases = [
+        "main :: fn() -> i64 { print \"{} and {}\", 1  0 }\n",
+        "main :: fn() -> i64 { print \"{}\", 1, 2  0 }\n",
+    ];
+    for (index, source) in cases.iter().enumerate() {
+        let message = compile_error(&format!("formatbad{index}"), source);
+        assert!(message.contains("hole"), "the bootstrap said:\n{message}");
+        let Some(compiler) = build_self_hosted_compiler("formatbad") else {
+            continue;
+        };
+        let directory = std::env::temp_dir();
+        let input = directory.join(format!("frost_formatbad{index}.frost"));
+        std::fs::write(&input, source).unwrap();
+        let refused = Command::new(&compiler)
+            .env("FROST_CHECK_UNSAFE", "0")
+            .env("FROST_INPUT", &input)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&input);
+        let _ = std::fs::remove_file(&compiler);
+        assert!(
+            !refused.status.success(),
+            "the self-hosted compiler accepted case {index}"
+        );
+        assert!(
+            String::from_utf8_lossy(&refused.stderr).contains("hole"),
+            "the self-hosted compiler said something else"
+        );
+    }
+}
+
+// The same program through the self-hosted compiler, on both of its backends.
+const SELF_HOSTED_FORMAT: &str = "main :: fn() -> i64 {\n\
+     \x20   print \"hello\"\n\
+     \x20   name := \"world\"\n\
+     \x20   print name\n\
+     \x20   print \"hp {} of {}\", 7, 20\n\
+     \x20   print \"{} then {} then {}\", \"a\", 2, 3.5\n\
+     \x20   print \"braces {{ and }} stay\"\n\
+     \x20   0\n\
+     }\n";
+
+#[test]
+fn self_hosted_print_takes_a_format() {
+    let expected =
+        "hello\nworld\nhp 7 of 20\na then 2 then 3.5\nbraces { and } stay\n";
+    let Some(output) = selfhosted_native_output("shformat", SELF_HOSTED_FORMAT)
+    else {
+        return;
+    };
+    assert_eq!(output, expected);
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shformat_input.frost");
+    std::fs::write(&input, SELF_HOSTED_FORMAT).unwrap();
+    let Some(c_source) = self_hosted_emits("shformat", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shformat", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, expected, "the self-hosted C backend disagrees");
 }
 
 // A `where` bound holds a generic to what its body needs, over a fixed

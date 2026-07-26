@@ -229,6 +229,33 @@ impl<'a> Interpreter<'a> {
         if callee == "printf" {
             return self.printf(arguments, locals);
         }
+        // The pieces a `print` is written as. The interpreter is one of the
+        // three backends a program is checked against, so it has to write the
+        // same bytes the other two do.
+        if callee == "frost_rt_write_bytes" {
+            return self.write_bytes(arguments);
+        }
+        if callee == "frost_rt_write_i64" || callee == "frost_rt_print_i64" {
+            let value = operand_value(&arguments[0], locals);
+            let Value::Int(number) = value else {
+                return unsupported("writing a value that is not an integer");
+            };
+            self.output.push_str(&number.to_string());
+            if callee == "frost_rt_print_i64" {
+                self.output.push('\n');
+            }
+            return Ok(Value::Int(0));
+        }
+        // A float is written the way C writes `%g`, which this does not
+        // reproduce, so a program printing one is left to the two backends that
+        // link the runtime rather than answered differently here.
+        if callee == "frost_rt_write_f64" || callee == "frost_rt_print_f64" {
+            return unsupported("writing a float");
+        }
+        if callee == "frost_rt_write_newline" {
+            self.output.push('\n');
+            return Ok(Value::Int(0));
+        }
         if let Some(target) =
             self.module.functions.iter().find(|f| f.name == callee)
         {
@@ -252,6 +279,22 @@ impl<'a> Interpreter<'a> {
         let length = rendered.len();
         self.output.push_str(&rendered);
         Ok(Value::Int(length as i64))
+    }
+}
+
+impl Interpreter<'_> {
+    // A run of bytes, either a literal the compiler placed or a `str` the
+    // program holds. A literal arrives as the constant itself, which is the
+    // only form the interpreter can read: it has no addressable data segment
+    // to point into.
+    fn write_bytes(&mut self, arguments: &[IrOperand]) -> Eval<Value> {
+        let Some(IrOperand::Constant(IrConstant::CString(text))) =
+            arguments.first()
+        else {
+            return unsupported("writing bytes that are not a literal");
+        };
+        self.output.push_str(text);
+        Ok(Value::Int(0))
     }
 }
 

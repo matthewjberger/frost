@@ -220,9 +220,16 @@ impl Lowering {
                 }
                 self.check_expression(value, returns)
             }
-            Statement::Let { value, .. }
-            | Statement::Expression(value)
-            | Statement::Print(value) => self.check_expression(value, returns),
+            Statement::Let { value, .. } | Statement::Expression(value) => {
+                self.check_expression(value, returns)
+            }
+            Statement::Print(value, arguments) => {
+                self.check_expression(value, returns)?;
+                for argument in arguments {
+                    self.check_expression(argument, returns)?;
+                }
+                Ok(())
+            }
             Statement::Assignment(place, value) => {
                 self.check_expression(place, returns)?;
                 self.check_expression(value, returns)

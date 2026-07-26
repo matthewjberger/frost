@@ -18,6 +18,11 @@ const RUNTIME_INTRINSICS: &[&str] = &[
     "frost_rt_mem_set",
     "frost_rt_print_i64",
     "frost_rt_print_f64",
+    "frost_rt_write_bytes",
+    "frost_rt_write_i64",
+    "frost_rt_write_f64",
+    "frost_rt_write_newline",
+    "frost_rt_write_cstr",
 ];
 
 fn is_runtime_intrinsic(name: &str) -> bool {

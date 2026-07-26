@@ -466,7 +466,7 @@ pub enum Statement {
     // as `%lld` and a float as `%g`, the way the self-hosted compiler's `print`
     // statement does. A convenience for small programs and the standard library's
     // examples, lowered to a runtime call rather than a synthesized `printf`.
-    Print(Expression),
+    Print(Expression, Vec<Expression>),
     Struct(Identifier, Vec<String>, Vec<StructField>),
     Enum(Identifier, Vec<String>, Vec<EnumVariant>),
     TypeAlias(Identifier, Type),
@@ -541,7 +541,14 @@ impl Display for Statement {
                 format!("{} :: {};", identifier, expression)
             }
             Self::Return(expression) => format!("return {};", expression),
-            Self::Print(expression) => format!("print {};", expression),
+            Self::Print(expression, arguments) => {
+                let mut written = format!("print {expression}");
+                for argument in arguments {
+                    written.push_str(&format!(", {argument}"));
+                }
+                written.push(char::from(59));
+                written
+            }
             Self::Expression(expression) => expression.to_string(),
             Self::Struct(name, type_params, fields) => {
                 let field_strs: Vec<String> = fields
@@ -2092,7 +2099,16 @@ impl<'a> Parser<'a> {
         if matches!(self.peek_nth(0), Token::Semicolon) {
             self.read_token();
         }
-        Ok(Statement::Print(expression))
+        // `print "x is {}", x` fills the holes of a format literal. The
+        // arguments are ordinary expressions; what makes this compile-time is
+        // that the literal is read by the compiler and never exists at run
+        // time.
+        let mut arguments = Vec::new();
+        while matches!(self.peek_nth(0), Token::Comma) {
+            self.read_token();
+            arguments.push(self.parse_expression(Precedence::Lowest)?);
+        }
+        Ok(Statement::Print(expression, arguments))
     }
 
     fn parse_return_statement(&mut self) -> Result<Statement> {
