@@ -1534,6 +1534,74 @@ const PACK_OUTPUT: &str = "8
 15
 ";
 
+// A number per type, the same wherever the type is written and different for
+// every other type, so a table decided at run time can be keyed by one.
+const TYPE_IDS: &str = "A :: struct { x: i64 }
+     B :: struct { y: i64 }
+     ident :: fn($T: Type) -> i64 { type_id(T) }
+     main :: fn() -> i64 {
+         print type_id($A) == type_id($A)
+         print type_id($A) == type_id($B)
+         print ident($A) == type_id($A)
+         print ident($B) == type_id($A)
+         print type_id($i64) == type_id($u8)
+         0
+     }
+";
+
+#[test]
+fn a_type_has_a_number_of_its_own() {
+    let Some(output) = compile_and_run("typeids", TYPE_IDS) else {
+        return;
+    };
+    assert_eq!(
+        output,
+        "1
+0
+1
+0
+0
+"
+    );
+}
+
+#[test]
+fn self_hosted_a_type_has_a_number_of_its_own() {
+    let Some(output) = selfhosted_native_output("shtypeids", TYPE_IDS) else {
+        return;
+    };
+    assert_eq!(
+        output,
+        "1
+0
+1
+0
+0
+"
+    );
+}
+
+#[test]
+fn self_hosted_a_compile_time_list_holds_types_and_expands_into_a_call() {
+    let Some(output) = selfhosted_native_output("shpackfeat", PACK_FEATURES)
+    else {
+        return;
+    };
+    assert_eq!(output, PACK_OUTPUT);
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shpackfeat_input.frost");
+    std::fs::write(&input, PACK_FEATURES).unwrap();
+    let Some(c_source) = self_hosted_emits("shpackfeat", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shpackfeat", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
 #[test]
 fn a_compile_time_list_holds_types_and_expands_into_a_call() {
     let Some(output) = compile_and_run("packfeat", PACK_FEATURES) else {

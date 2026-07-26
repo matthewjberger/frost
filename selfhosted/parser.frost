@@ -386,6 +386,32 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             advance(p)
             return new_unary(p, NodeKind::AddrOf, inner)
         }
+        // `type_id(T)`: the number this compiler goes by for that type, which
+        // it already has, since a type is a code here. What it is for is a
+        // table keyed by type in a program whose contents are decided while it
+        // runs.
+        if (str_range_eq(p.src, offset, length, "type_id")) {
+            advance(p)
+            if (cur(p) == TokenKind::Dollar) {
+                advance(p)
+            }
+            held := field_binding_of(p, cur_off(p), cur_len(p))
+            if (held >= 0) {
+                entry := arena_at(p.field_bindings, held)
+                field_ty := entry.ty
+                advance(p)
+                advance(p)
+                return new_node(p, NodeKind::Num, 0, 0, field_ty)
+            }
+            if (unbound_template(p)) {
+                advance(p)
+                advance(p)
+                return new_node(p, NodeKind::Num, 0, 0, 0)
+            }
+            ty := parse_type(p)
+            advance(p)
+            return new_node(p, NodeKind::Num, 0, 0, ty)
+        }
         if (str_range_eq(p.src, offset, length, "sizeof")) {
             advance(p)
             // `sizeof(field)` is the width of what that field holds. A field
@@ -524,8 +550,8 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         // the ordinary parameters, and only here are the names in scope to say
         // what those types are. Every later pass reads the tuple this noted.
         if (pack_call_args(p, args, fn_index)) {
-            note_type_args(p, TY_I64, p.call_xarg_start, p.call_xarg_count,
-                generic_fn_of(p, fn_index) + 1)
+            note_type_args(p, p.call_pack_primary, p.call_xarg_start,
+                p.call_xarg_count, generic_fn_of(p, fn_index) + 1)
         }
         // Where the name was written, which is where a reader looks when the
         // call is what is wrong. The node position is past the arguments by
@@ -629,7 +655,7 @@ instantiate_current :: fn(mut p: Parser, gi: i64) -> i64 {
     while (j < xparam_count) {
         param := arena_at(p.gparams, xparam_start + j)
         bound := type_code_for(p, param.name_off, param.name_len)
-        arena_push(p.gargs, GArg { value = bound })
+        arena_push(p.gargs, GArg { value = bound, is_type = 0 })
         j = j + 1
     }
     instantiate(p, gi, p.type_binding, run_start, xparam_count)
@@ -922,6 +948,132 @@ parse_arg_list :: fn(mut p: Parser) -> i64 {
 // `.Variant` written there takes its enum from. A callee defined later in the
 // program has no parameters yet, so the literal is recorded and patched once
 // every signature is known.
+// Whether the argument about to be read is the compile-time list itself,
+// written as its own name and nothing else.
+names_the_pack :: fn(mut p: Parser) -> bool {
+    if (p.pack_len == 0) {
+        return false
+    }
+    if (cur(p) != TokenKind::Ident) {
+        return false
+    }
+    if (cur_len(p) != p.pack_len) {
+        return false
+    }
+    if (bytes_equal(p.src, cur_off(p), p.pack_off, p.pack_len) == false) {
+        return false
+    }
+    peek_kind(p, 1) == TokenKind::Comma || peek_kind(p, 1) == TokenKind::Rparen
+}
+
+// One argument per element of the list, in order: a value element is the
+// parameter this instance took it under, a type element is the type itself.
+splice_pack_arguments :: fn(mut p: Parser, head_in: i64, tail_in: i64,
+    index_in: i64) -> (head: i64, tail: i64, index: i64) {
+    mut head := head_in
+    mut tail := tail_in
+    mut index := index_in
+    mut k : i64 = 0
+    while (k < p.pack_count) {
+        element := arena_at(p.gargs, p.pack_start + k)
+        mut value : i64 = 0 - 1
+        if (element.is_type == 1) {
+            value = new_type_node(p, NodeKind::TypeVal, 0, element.value)
+        } else {
+            name_off, name_len := pack_element_name(p, p.pack_off, p.pack_len,
+                k)
+            value = new_named_node(p, NodeKind::Var, 0, name_off, name_len)
+        }
+        arg := new_node(p, NodeKind::Arg, value, 0, 0)
+        if (head == (0 - 1)) {
+            head = arg
+            tail = arg
+        } else {
+            set_next(p, tail, arg)
+            tail = arg
+        }
+        index = index + 1
+        k = k + 1
+    }
+    return head, tail, index
+}
+
+// `g(T) for T in list`: the expression once per element, with the element's
+// name standing for it. The cursor is past the expression and on the `for`, so
+// the header is read once and then the expression is read again per element
+// from where it started.
+splice_pack_map :: fn(mut p: Parser, argument_start: i64, parsed: i64,
+    head_in: i64, tail_in: i64, index_in: i64)
+    -> (head: i64, tail: i64, index: i64) {
+    advance(p)
+    item_off := cur_off(p)
+    item_len := cur_len(p)
+    advance(p)
+    advance(p)
+    list_off := cur_off(p)
+    list_len := cur_len(p)
+    advance(p)
+    after := p.ti
+    // The template's own parse has no list bound, and everything it produces is
+    // thrown away and read again per instance. So the expression is kept once
+    // and the tokens are consumed, which is what a template parse is for.
+    if (p.pack_len == 0) {
+        arg := new_node(p, NodeKind::Arg, parsed, 0, 0)
+        mut only_tail := tail_in
+        mut only_head := head_in
+        if (only_head == (0 - 1)) {
+            only_head = arg
+        } else {
+            set_next(p, only_tail, arg)
+        }
+        only_tail = arg
+        return only_head, only_tail, index_in + 1
+    }
+    if (list_len != p.pack_len
+        || bytes_equal(p.src, list_off, p.pack_off, p.pack_len) == false) {
+        report_where(p.modules, p.src, list_off)
+        report("'")
+        report_src(p.src, list_off, list_len)
+        report("' is not the compile-time list this function takes, and `for` in an argument list walks one")
+        frost_rt_die()
+    }
+    mut head := head_in
+    mut tail := tail_in
+    mut index := index_in
+    mut k : i64 = 0
+    while (k < p.pack_count) {
+        p.ti = argument_start
+        element := arena_at(p.gargs, p.pack_start + k)
+        element_ty := element.value
+        mut mark : i64 = p.aliases.count
+        mut type_mark : i64 = p.type_aliases.count
+        if (element.is_type == 1) {
+            arena_push(p.type_aliases,
+                ConstDef { name_off = item_off, name_len = item_len,
+                    value = element_ty })
+        } else {
+            name_off, name_len := pack_element_name(p, p.pack_off, p.pack_len,
+                k)
+            mark = push_alias(p, item_off, item_len, name_off, name_len)
+        }
+        value := hold_struct_result(p, parse_expr(p))
+        p.aliases.count = mark
+        p.type_aliases.count = type_mark
+        arg := new_node(p, NodeKind::Arg, value, 0, 0)
+        if (head == (0 - 1)) {
+            head = arg
+            tail = arg
+        } else {
+            set_next(p, tail, arg)
+            tail = arg
+        }
+        index = index + 1
+        k = k + 1
+    }
+    p.ti = after
+    return head, tail, index
+}
+
 parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
@@ -939,26 +1091,58 @@ parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
             p.expected_type = declared
             p.expected_alt = 0 - 1
         }
-        value := hold_struct_result(p, parse_expr(p))
-        p.expected_type = saved_expected
-        p.expected_alt = saved_alt
-        if (callee >= 0) {
-            held := arena_at(p.arena, value)
-            if (held.kind == NodeKind::StructLit && held.val == (0 - 1)) {
-                arena_push(p.variant_fixups,
-                    VariantFixup { lit = value, callee = callee,
-                        argument = index, kind = FixupKind::Literal })
+        // An argument list is the one place a compile-time list stands for
+        // several things at once: naming it hands over its elements, and
+        // `g(T) for T in list` hands the expression over once per element.
+        // Both are what give a call an arity the list decides.
+        argument_start := p.ti
+        // Anything the argument queues for the block belongs to the argument.
+        // A `g(T) for T in list` is read once to find the `for` and then again
+        // per element, and that first read is thrown away, so what it queued
+        // has to go with it.
+        pending_mark := p.pending.count
+        if (names_the_pack(p)) {
+            advance(p)
+            spliced_head, spliced_tail, spliced_index :=
+                splice_pack_arguments(p, head, tail, index)
+            head = spliced_head
+            tail = spliced_tail
+            index = spliced_index
+            p.expected_type = saved_expected
+            p.expected_alt = saved_alt
+        } else {
+            value := hold_struct_result(p, parse_expr(p))
+            p.expected_type = saved_expected
+            p.expected_alt = saved_alt
+            if (cur(p) == TokenKind::KwFor) {
+                p.pending.count = pending_mark
+                mapped_head, mapped_tail, mapped_index :=
+                    splice_pack_map(p, argument_start, value, head, tail,
+                        index)
+                head = mapped_head
+                tail = mapped_tail
+                index = mapped_index
+            } else {
+                if (callee >= 0) {
+                    held := arena_at(p.arena, value)
+                    if (held.kind == NodeKind::StructLit
+                        && held.val == (0 - 1)) {
+                        arena_push(p.variant_fixups,
+                            VariantFixup { lit = value, callee = callee,
+                                argument = index, kind = FixupKind::Literal })
+                    }
+                }
+                arg := new_node(p, NodeKind::Arg, value, 0, 0)
+                if (head == (0 - 1)) {
+                    head = arg
+                    tail = arg
+                } else {
+                    set_next(p, tail, arg)
+                    tail = arg
+                }
+                index = index + 1
             }
         }
-        arg := new_node(p, NodeKind::Arg, value, 0, 0)
-        if (head == (0 - 1)) {
-            head = arg
-            tail = arg
-        } else {
-            set_next(p, tail, arg)
-            tail = arg
-        }
-        index = index + 1
         if (cur(p) == TokenKind::Comma) {
             advance(p)
         }
@@ -1172,7 +1356,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
             if (is_value == 1 && is_pointer(param_ty) == false) {
                 param_ty = BORROW_FLAG + param_ty
             }
-            arena_push(p.proc_params, GArg { value = param_ty })
+            arena_push(p.proc_params, GArg { value = param_ty, is_type = 0 })
             param_count = param_count + 1
             if (cur(p) == TokenKind::Comma) {
                 advance(p)
@@ -1299,7 +1483,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
                 if (a == TY_PARAM) {
                     all_concrete = 0
                 }
-                arena_push(p.argbuf, GArg { value = a })
+                arena_push(p.argbuf, GArg { value = a, is_type = 0 })
                 count = count + 1
                 if (cur(p) == TokenKind::Comma) {
                     advance(p)
@@ -1315,7 +1499,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
                 mut j : i64 = 1
                 while (j < count) {
                     entry := arena_at(p.argbuf, buf_start + j)
-                    arena_push(p.gargs, GArg { value = entry.value })
+                    arena_push(p.gargs, GArg { value = entry.value, is_type = 0 })
                     j = j + 1
                 }
                 xarg_count = count - 1
@@ -2726,10 +2910,26 @@ unroll_pack :: fn(mut p: Parser, item_off: i64, item_len: i64) -> i64 {
     while (k < p.pack_count) {
         p.ti = body_start
         element := arena_at(p.gargs, p.pack_start + k)
-        name_off, name_len := pack_element_name(p, p.pack_off, p.pack_len, k)
-        mark := push_alias(p, item_off, item_len, name_off, name_len)
+        element_ty := element.value
+        element_is_type := element.is_type
+        // A value element is a parameter of this instance, so the loop's name
+        // is read as that parameter's name. A type element is not a value at
+        // all: the loop's name is a type, so it goes in the type-alias table
+        // for this one copy of the body.
+        mut mark : i64 = p.aliases.count
+        mut type_mark : i64 = p.type_aliases.count
+        if (element_is_type == 1) {
+            arena_push(p.type_aliases,
+                ConstDef { name_off = item_off, name_len = item_len,
+                    value = element_ty })
+        } else {
+            name_off, name_len := pack_element_name(p, p.pack_off, p.pack_len,
+                k)
+            mark = push_alias(p, item_off, item_len, name_off, name_len)
+        }
         copy := parse_block(p)
         p.aliases.count = mark
+        p.type_aliases.count = type_mark
         mut id := copy
         while (id != (0 - 1)) {
             following := node_next(p, id)
@@ -2839,20 +3039,25 @@ parse_params :: fn(mut p: Parser) -> i64 {
             while (k < p.pack_count) {
                 element := arena_at(p.gargs, p.pack_start + k)
                 element_ty := element.value
-                name_off, name_len := pack_element_name(p, pack_off, pack_len, k)
-                held := arena_push(
-                    p.arena,
-                    Node { kind = NodeKind::Param, a = 0, b = element_ty,
-                        c = name_len, val = name_off, next = 0 - 1,
-                        pos = pack_off },
-                )
-                record_parse_local(p, name_off, name_len, element_ty)
-                if (head == (0 - 1)) {
-                    head = held
-                    tail = held
-                } else {
-                    set_next(p, tail, held)
-                    tail = held
+                // A type element takes no parameter. It is a name the body
+                // writes where a type belongs, and nothing arrives for it.
+                if (element.is_type == 0) {
+                    name_off, name_len := pack_element_name(p, pack_off,
+                        pack_len, k)
+                    held := arena_push(
+                        p.arena,
+                        Node { kind = NodeKind::Param, a = 0, b = element_ty,
+                            c = name_len, val = name_off, next = 0 - 1,
+                            pos = pack_off },
+                    )
+                    record_parse_local(p, name_off, name_len, element_ty)
+                    if (head == (0 - 1)) {
+                        head = held
+                        tail = held
+                    } else {
+                        set_next(p, tail, held)
+                        tail = held
+                    }
                 }
                 k = k + 1
             }
@@ -4327,10 +4532,13 @@ parse_generic_instance :: fn(mut p: Parser, gfn_index: i64, arg: i64,
     saved_pack_count := p.pack_count
     p.pack_off = pack_off
     p.pack_len = pack_len
-    p.pack_start = xarg_start
+    // The run a pack call left behind holds this generic's own compile-time
+    // arguments first and the list's elements after them, so the elements start
+    // past however many the declaration wrote.
+    p.pack_start = xarg_start + xparam_count
     p.pack_count = 0
     if (pack_len > 0) {
-        p.pack_count = xarg_count
+        p.pack_count = xarg_count - xparam_count
     }
     saved_off := p.type_param_off
     saved_len := p.type_param_len

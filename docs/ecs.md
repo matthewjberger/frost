@@ -61,15 +61,19 @@ stored in one place.
 
 ## Components
 
-A component is named by its mask bit, handed out by `ecs_register` in
-registration order. A table's mask is the bits it holds, its columns are in
-ascending bit order, and the column for a bit is found by counting the bits
-below it, so nothing maps a component to a column while the program runs. A
-world holds up to 62 component types, one per bit of an `i64`.
+A component is named by its index, handed out by `ecs_register` in registration
+order. A table's mask is the set of indices it holds, its columns are in
+ascending index order, and the column for a component is found by counting the
+bits below it, so nothing maps a component to a column while the program runs. A
+world holds up to 256 component types, one per bit of a four-word mask.
+
+`ecs_register` also records which type the component was registered under, so a
+query can name one by writing its type. That is what `component_of($T, world)`
+answers, and what lets `for_each` take a list of types.
 
 | Call | What it does |
 | --- | --- |
-| `ecs_register($T, world) -> i64` | Registers `T` and answers its mask bit |
+| `ecs_register($T, world) -> i64` | Registers `T` and answers its index |
 | `ecs_add($T, world, entity, mask, value)` | Gives it the component, migrating the entity if it is new |
 | `ecs_remove(world, entity, mask)` | Takes it away, migrating the entity |
 | `ecs_has(world, entity, mask) -> bool` | Whether it holds it |
@@ -98,9 +102,11 @@ while (query_next(world, q)) {
 
 Written this way a query has no arity limit and captures nothing: the body is
 where it is written, so what it reads is the enclosing function's own locals.
-`for_each1`, `for_each2` and `for_each3` are the same walk with the body handed
-in as a compile-time function argument, for a system short enough that the
-cursor is the longer half:
+`for_each` is the same walk with the body handed in as a compile-time argument,
+for a system short enough that the cursor is the longer half. The components are
+a compile-time list of types, so there is no arity to name and no limit: the
+list drives the mask a table is matched against and the column each element
+reads through, and a `for` over it unrolls both where the call is written.
 
 ```frost
 integrate :: fn(mut p: []Position, mut v: []Velocity, count: i64) {
@@ -111,8 +117,34 @@ integrate :: fn(mut p: []Position, mut v: []Velocity, count: i64) {
     }
 }
 
-for_each2($Position, $Velocity, $integrate, world, position, velocity)
+for_each($integrate, world, no_filters(), $Position, $Velocity)
 ```
+
+A body taking a fourth component is a fourth element and a fourth parameter.
+The types name the components: `ecs_register($Position, world)` records which
+type it was registered under, so a query is written with the types it reads
+rather than with the indices they were given.
+
+## Filters
+
+What a query asks for beyond the components its body reads:
+
+```frost
+mut f := no_filters()
+f = filter_without(f, frozen)             // table level
+f = filter_changed(f, velocity, last_run) // row level
+for_each_row($move, world, f, $Position, $Velocity)
+```
+
+`without` is matched against a table's mask, so a whole archetype is skipped
+before any of its rows is touched. `changed` and `added` read the per-row ticks
+a column already carries, so the table is still walked and what they save is the
+body. The distinction is the property that made archetype storage worth
+building, so it is visible in which function a filter goes through.
+
+`for_each` hands the body whole columns and a row count, which is the fast form
+and the one to reach for. `for_each_row` hands it one row at a time, which is
+what the row-level filters need, since `changed` is a question about a row.
 
 The `$body` argument folds to a direct call, so the sugar costs nothing over the
 cursor form.
@@ -239,7 +271,7 @@ schedule_run(frame, world, states_current(states))
 ```
 
 The system is a function pointer, not a compile-time argument, because a
-schedule is built while the program runs. `for_each1` and its siblings are the
+schedule is built while the program runs. `for_each` and `for_each_row` are the
 other half of the pair, for the inner loop where the call has to fold away.
 
 A state change is requested during a frame and taken between frames, so a system

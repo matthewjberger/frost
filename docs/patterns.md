@@ -342,6 +342,44 @@ untyped context.
 
 ---
 
+## An arity in a name is a missing language feature
+
+**Antipattern.**
+
+```frost
+for_each1 :: fn($A: Type, $body: fn(mut []A, i64), ...)
+for_each2 :: fn($A: Type, $B: Type, $body: fn(mut []A, mut []B, i64), ...)
+for_each3 :: fn($A: Type, $B: Type, $C: Type, ...)
+```
+
+The number in the name is there because each arity needed its own declaration,
+so a system reading four components had no call to make. Three functions, one
+idea, and a ceiling nobody chose.
+
+**Instead**, a compile-time list decides the arity:
+
+```frost
+for_each :: fn($body: Type, mut world: World, f: Filters, types: $...) {
+    for T in types {
+        query_with(q, component_of($T, world))
+    }
+    while (query_next(world, q)) {
+        body(query_column($T, world, q, component_of($T, world))
+            for T in types, q.count)
+    }
+}
+```
+
+`for_each($integrate, world, no_filters(), $Position, $Velocity)` emits exactly
+what `for_each2` emitted; a fourth component is a fourth element and a fourth
+parameter.
+
+What made this possible was three things the language did not have: a list may
+hold types, a list may be handed on by naming it, and `g(T) for T in list` in an
+argument list is one argument per element. The first version of this pattern was
+written as "the arity limit is fine, three is enough". It was not enough, and
+the fix was in the compiler rather than in the library.
+
 ## Generic code: what the compilers disagree about
 
 These are not style. They are shapes where the two compilers have differed, so

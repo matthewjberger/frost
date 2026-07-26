@@ -37,10 +37,6 @@ worked around in the library rather than fixed:
 Both are the same shape: compile-time parameter state that belongs to one
 template being read while another is checked. The reproductions are small.
 
-One more, found the same way: the self-hosted compiler has no `continue`. The
-bootstrap does, so a loop written with one compiles under the first compiler and
-not the second.
-
 The wgpu binding is generated with a safe wrapper per call now, so a program
 that draws a triangle writes no `unsafe` of its own for the graphics API: the
 perimeter is one generated file. What is left there is the same shape as the
@@ -52,14 +48,10 @@ accepted by the bootstrap and miscompiles rather than being refused. A string
 literal reaching a `str` parameter is why the rule exists; it should ask whether
 the argument is a literal rather than whether its type is a pointer.
 
-One more, and it is the one the ECS's `for_each1`/`for_each2`/`for_each3` are
-waiting on: **a compile-time argument list holds values, not types, and cannot
-be forwarded.** `f($Position, $Velocity)` into `args: $...` fails with
-"unsupported expression", and `inner(args)` fails with "a compile-time list is
-iterated with `for` or indexed by a literal, and is not a value of its own". A
-variadic query over a pack of component types needs both, plus a way to expand
-a list into a call's argument list, since nothing today writes `body(a, b, c)`
-with an arity the pack decides.
+One more, in the self-hosted compiler only: it has neither `break` nor
+`continue`. The bootstrap has both, so a loop written with one compiles under
+the first compiler and not the second. The compiler's own source has never
+needed either, which is why it went unnoticed.
 
 ## What is done, and what it cost
 
