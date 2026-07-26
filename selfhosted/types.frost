@@ -820,7 +820,7 @@ fn_proc_type :: fn(mut p: Parser, fn_index: i64) -> i64 {
 // question the compiler answers for itself to decide what to emit. Two things
 // ask it, a `where` clause at a call and an expansion-time `if` in an unrolled
 // body, and they ask the same one so the two cannot drift.
-is_type_predicate :: fn(src: ^i8, off: i64, len: i64) -> bool {
+is_type_predicate :: fn(src: str, off: i64, len: i64) -> bool {
     str_range_eq(src, off, len, "is_numeric")
         || str_range_eq(src, off, len, "is_integer")
         || str_range_eq(src, off, len, "is_float")

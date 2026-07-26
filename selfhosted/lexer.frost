@@ -25,20 +25,20 @@ is_ident_cont :: fn(c: i64) -> bool {
 // comments are dropped here so the parser never sees them.
 // ---------------------------------------------------------------------------
 
-byte_of :: fn(src: ^i8, index: i64, len: i64) -> i64 {
+byte_of :: fn(src: str, index: i64, len: i64) -> i64 {
     if (index >= len) {
         return 0 - 1
     }
-    byte_at(src, index)
+    src[index]
 }
 
-str_range_eq :: fn(src: ^i8, off: i64, len: i64, word: ^i8) -> bool {
+str_range_eq :: fn(src: str, off: i64, len: i64, word: ^i8) -> bool {
     if (cstr_len(word) != len) {
         return false
     }
     mut k : i64 = 0
     while (k < len) {
-        if (byte_at(src, off + k) != byte_at(word, k)) {
+        if (src[off + k] != byte_at(word, k)) {
             return false
         }
         k = k + 1
@@ -46,7 +46,7 @@ str_range_eq :: fn(src: ^i8, off: i64, len: i64, word: ^i8) -> bool {
     true
 }
 
-classify_ident :: fn(src: ^i8, off: i64, len: i64) -> TokenKind {
+classify_ident :: fn(src: str, off: i64, len: i64) -> TokenKind {
     if (str_range_eq(src, off, len, "fn")) { return TokenKind::KwFn }
     if (str_range_eq(src, off, len, "if")) { return TokenKind::KwIf }
     if (str_range_eq(src, off, len, "let")) { return TokenKind::KwLet }
@@ -87,7 +87,7 @@ push_token :: fn(mut tokens: Arena<Token>, kind: TokenKind, off: i64, len: i64,
     id
 }
 
-lex_operator :: fn(src: ^i8, i: i64, len: i64, mut tokens: Arena<Token>) -> i64 {
+lex_operator :: fn(src: str, i: i64, len: i64, mut tokens: Arena<Token>) -> i64 {
     c := byte_of(src, i, len)
     d := byte_of(src, i + 1, len)
     if (c == CH_COLON && d == CH_COLON) {
@@ -177,7 +177,7 @@ lex_operator :: fn(src: ^i8, i: i64, len: i64, mut tokens: Arena<Token>) -> i64 
     i + 1
 }
 
-tokenize :: fn(src: ^i8, len: i64, mut tokens: Arena<Token>) {
+tokenize :: fn(src: str, len: i64, mut tokens: Arena<Token>) {
     mut i : i64 = 0
     // A byte-order mark, which some editors write at the head of a UTF-8 file.
     // It carries no meaning here and is not an operator, so it is stepped over

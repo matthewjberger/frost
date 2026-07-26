@@ -41,32 +41,10 @@ One more, found the same way: the self-hosted compiler has no `continue`. The
 bootstrap does, so a loop written with one compiles under the first compiler and
 not the second.
 
-And one piece of the unsafe audit is a perimeter rather than a proof. The
-compiler reads its source buffer through `byte_at`, `byte_set` and `cstr_len`
-in core.frost, which is the whole of what it names of the three unchecked
-operations, but they take a pointer with no length beside it.
-
-Carrying the buffer as a `str` instead makes every read and write a checked
-index. That conversion was written and is mechanical: twenty-three signatures
-change from `^i8` to `str`, the reads become `src[i]`, the writes become
-`buffer[i] = byte`, and `buffer_of` builds the one slice the whole compiler
-indexes. What stopped it is the bootstrap, not the design. Handing a `str` local to a
-`str` parameter, or writing through one that is a read parameter, reaches the
-Cranelift backend as a 16-byte value where an address belongs, and fails with
-"type not supported in codegen: str". The same shapes in a small program are
-fine, so it is something about how the compiler's own `main` and its imported
-modules lower, and it is three call sites rather than the three hundred the
-conversion touches:
-
-- `copy_name(into: str, ...)` writing `into[at + b] = ...` through a read
-  parameter. Binding `mut destination := into` first is enough, and that is
-  probably the honest way to write it anyway.
-- `main`'s `source` handed to `tokenize(source, ...)` and to the `Parser`
-  literal. This is the one still open.
-
-Both are argument lowering, not the buffer. Whoever picks this up should fix
-those two shapes in `src/ir_build.rs` first, with a small reproduction, and only
-then re-run the conversion, which is a script.
+One more, found the same way: a `^i8` passed where a `str` is declared is
+accepted by the bootstrap and miscompiles rather than being refused. A string
+literal reaching a `str` parameter is why the rule exists; it should ask whether
+the argument is a literal rather than whether its type is a pointer.
 
 ## What is done, and what it cost
 

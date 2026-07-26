@@ -21,7 +21,7 @@ module_seen :: fn(mut modules: Arena<Module>, path: ^i8) -> bool {
 
 // A path named by an import, resolved against the directory of the file that
 // named it.
-join_path :: fn(parent: ^i8, src: ^i8, off: i64, len: i64) -> ^i8 {
+join_path :: fn(parent: ^i8, src: str, off: i64, len: i64) -> ^i8 {
     parent_len := cstr_len(parent)
     mut cut : i64 = 0
     mut k : i64 = 0
@@ -40,7 +40,7 @@ join_path :: fn(parent: ^i8, src: ^i8, off: i64, len: i64) -> ^i8 {
     }
     k = 0
     while (k < len) {
-        byte_set(out, cut + k, byte_at(src, off + k))
+        byte_set(out, cut + k, src[off + k])
         k = k + 1
     }
     byte_set(out, cut + len, 0)
@@ -49,7 +49,7 @@ join_path :: fn(parent: ^i8, src: ^i8, off: i64, len: i64) -> ^i8 {
 
 // A path under a directory, with a separator between them when the directory
 // needs one.
-join_under :: fn(directory: ^i8, src: ^i8, off: i64, len: i64) -> ^i8 {
+join_under :: fn(directory: ^i8, src: str, off: i64, len: i64) -> ^i8 {
     directory_len := cstr_len(directory)
     mut separator : i64 = 0
     if (directory_len > 0) {
@@ -71,7 +71,7 @@ join_under :: fn(directory: ^i8, src: ^i8, off: i64, len: i64) -> ^i8 {
     while (k < len) {
         unsafe {
             byte_set(out, directory_len + separator + k,
-                byte_at(src, off + k))
+                src[off + k])
         }
         k = k + 1
     }
@@ -87,7 +87,7 @@ join_under :: fn(directory: ^i8, src: ^i8, off: i64, len: i64) -> ^i8 {
 //
 // A path that matches nothing is answered with the beside-it form, so the error
 // names where the reader would have looked.
-find_import :: fn(parent: ^i8, src: ^i8, off: i64, len: i64,
+find_import :: fn(parent: ^i8, src: str, off: i64, len: i64,
     mut roots: Arena<SearchRoot>) -> ^i8 {
     beside := join_path(parent, src, off, len)
     if (unsafe { frost_rt_file_exists(beside) } == 1) {
@@ -107,17 +107,16 @@ find_import :: fn(parent: ^i8, src: ^i8, off: i64, len: i64,
 
 // Copy a file's text into the buffer at `at`, terminated, and answer where the
 // next one starts.
-append_text :: fn(buffer: ^i8, at: i64, text: ^i8) -> i64 {
-    length := cstr_len(text)
+append_text :: fn(buffer: str, at: i64, text: str) -> i64 {
+    length := str_len(text)
+    mut into := buffer
     mut k : i64 = 0
     while (k < length) {
-        byte_set(buffer, at + k, byte_at(text, k))
+        into[at + k] = text[k]
         k = k + 1
     }
-    unsafe {
-        byte_set(buffer, at + length, CH_LF)
-        byte_set(buffer, at + length + 1, 0)
-    }
+    into[at + length] = CH_LF
+    into[at + length + 1] = 0
     at + length + 1
 }
 
@@ -125,15 +124,18 @@ append_text :: fn(buffer: ^i8, at: i64, text: ^i8) -> i64 {
 // resolved where it is written rather than looked up later, so a file has to
 // reach the buffer after everything it depends on. A file already placed is
 // skipped, which is what makes a diamond one copy and a cycle terminate.
-place_module :: fn(buffer: ^i8, at: i64, path: ^i8,
+place_module :: fn(buffer: str, at: i64, path: ^i8,
     mut modules: Arena<Module>, mut roots: Arena<SearchRoot>,
     mut scratch: Arena<Token>) -> i64 {
     if (module_seen(modules, path)) {
         return at
     }
     mine := arena_push(modules, Module { path = path, start = 0, finish = 0 })
-    text := unsafe { frost_rt_read_file(path) }
-    if (cstr_len(text) == 0) {
+    raw := unsafe { frost_rt_read_file(path) }
+    // The file's bytes as a slice, once, so nothing below indexes a bare
+    // pointer.
+    text := cstr_slice(raw)
+    if (str_len(text) == 0) {
         report("frost: cannot read '")
         report_cstr(path)
         report("'")
@@ -143,7 +145,7 @@ place_module :: fn(buffer: ^i8, at: i64, path: ^i8,
     // the scratch tokens for the file it descends into.
     mut children := arena_make($Module, 256)
     scratch.count = 0
-    tokenize(text, cstr_len(text), scratch)
+    tokenize(text, str_len(text), scratch)
     mut i : i64 = 0
     while (i + 1 < scratch.count) {
         entry := arena_at(scratch, i)
@@ -185,7 +187,7 @@ place_module :: fn(buffer: ^i8, at: i64, path: ^i8,
 // This walks rather than keeping a table of line starts. It runs once, on the
 // way to reporting an error and ending the process, so what it costs is not on
 // any path a working build takes.
-report_where :: fn(mut modules: Arena<Module>, src: ^i8, offset: i64) {
+report_where :: fn(mut modules: Arena<Module>, src: str, offset: i64) {
     index := module_at(modules, offset)
     if (index < 0) {
         return
@@ -199,7 +201,7 @@ report_where :: fn(mut modules: Arena<Module>, src: ^i8, offset: i64) {
     mut line_end := offset
     mut at := entry.start
     while (at < offset) {
-        if (byte_at(src, at) == CH_LF) {
+        if (src[at] == CH_LF) {
             line = line + 1
             column = 1
             line_start = at + 1
@@ -209,7 +211,7 @@ report_where :: fn(mut modules: Arena<Module>, src: ^i8, offset: i64) {
         at = at + 1
     }
     while (line_end < entry.finish
-        && byte_at(src, line_end) != CH_LF) {
+        && src[line_end] != CH_LF) {
         line_end = line_end + 1
     }
     report_cstr(entry.path)
@@ -233,7 +235,7 @@ report_where :: fn(mut modules: Arena<Module>, src: ^i8, offset: i64) {
 // The same position, written into the emitted program rather than to stderr,
 // for an assertion that has to name where it was written when it fails at run
 // time. A path separator is escaped, since this lands inside a C string.
-emit_position :: fn(mut modules: Arena<Module>, src: ^i8, offset: i64) {
+emit_position :: fn(mut modules: Arena<Module>, src: str, offset: i64) {
     index := module_at(modules, offset)
     if (index < 0) {
         return
@@ -243,7 +245,7 @@ emit_position :: fn(mut modules: Arena<Module>, src: ^i8, offset: i64) {
     mut column : i64 = 1
     mut at := entry.start
     while (at < offset) {
-        if (byte_at(src, at) == CH_LF) {
+        if (src[at] == CH_LF) {
             line = line + 1
             column = 1
         } else {
@@ -279,10 +281,10 @@ module_at :: fn(mut modules: Arena<Module>, offset: i64) -> i64 {
     0
 }
 
-blank_range :: fn(buffer: ^i8, from: i64, through: i64) {
+blank_range :: fn(buffer: str, from: i64, through: i64) {
     mut b := from
     while (b <= through) {
-        byte_set(buffer, b, CH_SPACE)
+        buffer[b] = CH_SPACE
         b = b + 1
     }
 }
@@ -315,18 +317,20 @@ module_index_of :: fn(mut modules: Arena<Module>, path: ^i8) -> i64 {
 // Copy a name out of one buffer into another, answering with the length so the
 // caller can keep its own cursor. Used for names on lines that are about to be
 // blanked.
-copy_name :: fn(into: ^i8, at: i64, from: ^i8, off: i64, len: i64) -> i64 {
+// The copy that puts a name into the buffer's synth room. The destination is
+// bound mutable first: `into` is a read parameter, and writing through one is
+// not what it means.
+copy_name :: fn(into: str, at: i64, from: str, off: i64, len: i64) -> i64 {
+    mut destination := into
     mut b : i64 = 0
     while (b < len) {
-        unsafe {
-            byte_set(into, at + b, byte_at(from, off + b))
-        }
+        destination[at + b] = from[off + b]
         b = b + 1
     }
     len
 }
 
-resolve_imports :: fn(buffer: ^i8, root: ^i8, names: ^i8,
+resolve_imports :: fn(buffer: str, root: ^i8, names: str,
     mut modules: Arena<Module>, mut exports: Arena<Export>,
     mut edges: Arena<ImportEdge>, mut renames: Arena<Rename>,
     mut scratch: Arena<Token>, mut roots: Arena<SearchRoot>) -> i64 {
@@ -423,10 +427,7 @@ resolve_imports :: fn(buffer: ^i8, root: ^i8, names: ^i8,
                     // on is about to be blanked.
                     mut b : i64 = 0
                     while (b < listed.len) {
-                        unsafe {
-                            byte_set(names, named_at + b,
-                                byte_at(buffer, listed.off + b))
-                        }
+                                                    names[named_at + b] = buffer[listed.off + b]
                         b = b + 1
                     }
                     arena_push(
@@ -463,15 +464,18 @@ SYNTH_ROOM :: 65536
 // Room for the root file and everything it imports, laid end to end.
 SOURCE_ROOM :: 8388608
 
-source_with_room :: fn(text: ^i8) -> ^i8 {
-    length := cstr_len(text)
-    buffer := unsafe { ptr_cast($i8, malloc(length + SYNTH_ROOM + 1)) }
+// A text with room after it for the names the compiler makes up, as a slice:
+// the length is known here, so every read and write into it from now on is a
+// checked index.
+source_with_room :: fn(text: str) -> str {
+    length := str_len(text)
+    mut buffer := buffer_of(length + SYNTH_ROOM + 1)
     mut k : i64 = 0
     while (k < length) {
-        byte_set(buffer, k, byte_at(text, k))
+        buffer[k] = text[k]
         k = k + 1
     }
-    byte_set(buffer, length, 0)
+    buffer[length] = 0
     buffer
 }
 
