@@ -15,6 +15,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     DISTINCT_STRIDE, Node, NodeKind,
     OP_ADD, OP_AND, OP_DIV, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT, OP_MOD, OP_MUL,
     OP_NE, OP_OR, OP_SUB, OP_SHL, OP_SHR, OP_BITAND, OP_BITOR,
+    op_answers_truth,
     BORROW_FLAG, POINTER_BASE, Parser, STRUCT_BASE, StructDef,
     StructField, Sym, TokenKind, VariantFixup, FixupKind, TY_BOOL, TY_F32, TY_F64, TY_HANDLE, TY_I16, TY_I32, TY_I64, TY_I8, TY_ISIZE,
     TY_PARAM, TY_U16,
@@ -221,6 +222,15 @@ OP_SHL    :: 13
 OP_SHR    :: 14
 OP_BITAND :: 15
 OP_BITOR  :: 16
+
+// Whether an operator answers with a truth value rather than with a number.
+// The codes are not laid out so that one comparison separates the two groups:
+// the shifts and the bitwise operators were added after the comparisons and sit
+// above them, and they are arithmetic. Reading the boundary off the numbers is
+// what made `a | b` on a distinct type answer with i64.
+op_answers_truth :: fn(op: i64) -> bool {
+    op >= OP_LT && op <= OP_OR
+}
 
 // Token kinds. The lexer turns the source into a flat arena of these
 // before the parser runs, so the parser peeks a kind rather than raw

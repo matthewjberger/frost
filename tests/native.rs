@@ -1027,6 +1027,15 @@ fn a_distinct_type_is_not_its_representation() {
          \x20   m = f\n\
          \x20   0\n\
          }\n",
+        // Arithmetic on the representation is still the representation. Only a
+        // run of literals is exempt, so two i64 locals added together do not
+        // become a Meters by being added.
+        "main :: fn() -> i64 {\n\
+         \x20   n : i64 = 3\n\
+         \x20   o : i64 = 4\n\
+         \x20   add_meters(n + o, 1)\n\
+         \x20   0\n\
+         }\n",
     ];
     for (index, body) in cases.iter().enumerate() {
         let source = format!("{prelude}{body}");
@@ -1101,6 +1110,66 @@ fn self_hosted_compiles_a_distinct_type() {
     };
     let _ = std::fs::remove_file(&input);
     let Some(via_c) = compile_c_and_run("shdistinct", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
+// Arithmetic on a distinct type answers with that type, so a combination goes
+// back where either operand came from with nothing written down to say what it
+// is. The bitwise operators are the ones a bit set is combined with, and they
+// were the ones the self-hosted compiler dropped the type on, because its
+// operator codes put them above the comparisons and it read the boundary off
+// the numbers.
+const DISTINCT_ARITHMETIC: &str = "Mask :: distinct u32\n\
+     Count :: distinct i64\n\
+     bits :: fn(m: Mask) -> u32 { m }\n\
+     total :: fn(c: Count) -> i64 { c }\n\
+     main :: fn() -> i64 {\n\
+     \x20   a : Mask = 16\n\
+     \x20   b : Mask = 32\n\
+     \x20   print bits(a | b)\n\
+     \x20   print bits(a & a)\n\
+     \x20   print bits(a + b)\n\
+     \x20   n : Count = 3\n\
+     \x20   print total(n << 2)\n\
+     \x20   print total(n >> 1)\n\
+     \x20   print total(n * n)\n\
+     \x20   both : Mask = a | b\n\
+     \x20   print bits(both)\n\
+     \x20   if (a < b) {\n\
+     \x20       print 1\n\
+     \x20   }\n\
+     \x20   0\n\
+     }\n";
+
+#[test]
+fn arithmetic_on_a_distinct_type_answers_with_it() {
+    let Some(output) = compile_and_run("distinctops", DISTINCT_ARITHMETIC)
+    else {
+        return;
+    };
+    assert_eq!(output, "48\n16\n48\n12\n1\n9\n48\n1\n");
+}
+
+#[test]
+fn self_hosted_arithmetic_on_a_distinct_type_answers_with_it() {
+    let Some(output) =
+        selfhosted_native_output("shdistinctops", DISTINCT_ARITHMETIC)
+    else {
+        return;
+    };
+    assert_eq!(output, "48\n16\n48\n12\n1\n9\n48\n1\n");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shdistinctops_input.frost");
+    std::fs::write(&input, DISTINCT_ARITHMETIC).unwrap();
+    let Some(c_source) = self_hosted_emits("shdistinctops", &input, None)
+    else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shdistinctops", &c_source) else {
         return;
     };
     assert_eq!(via_c, output, "the self-hosted C backend disagrees");

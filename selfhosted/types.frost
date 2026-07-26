@@ -200,7 +200,7 @@ untyped_literal :: fn(mut p: Parser, id: i64) -> bool {
     if (node.kind == NodeKind::Num || node.kind == NodeKind::Float) {
         return true
     }
-    if (node.kind == NodeKind::Bin && node.val < OP_LT) {
+    if (node.kind == NodeKind::Bin && op_answers_truth(node.val) == false) {
         return untyped_literal(p, node.a) && untyped_literal(p, node.b)
     }
     false
@@ -514,7 +514,7 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
         return TY_I64
     }
     if (kind == NodeKind::Bin) {
-        if (node.val >= OP_LT) {
+        if (op_answers_truth(node.val)) {
             return TY_I64
         }
         left := type_of(p, node.a)
