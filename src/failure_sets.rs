@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{Result, bail};
 
@@ -16,6 +16,11 @@ use crate::types::Type;
 // that yields the Ok value or returns the enclosing function's Err. After this
 // pass nothing downstream knows failure sets exist.
 struct Lowerer {
+    // The linear types of the program, and the Result enums that turned out to
+    // hold one. A linear value handed back through a failure set is still a
+    // linear value: the obligation to consume it belongs to whatever the caller
+    // does with the result, so the result carries it.
+    linear: HashSet<String>,
     // Result enum name for each (value, error) pair, deduplicated.
     results: HashMap<String, String>,
     enums: Vec<Spanned<Statement>>,
@@ -40,8 +45,12 @@ fn spanned(statement: Statement) -> Spanned<Statement> {
     }
 }
 
-pub fn lower_failure_sets(program: &mut Program) -> Result<()> {
+pub fn lower_failure_sets(
+    program: &mut Program,
+    linear: &mut HashSet<String>,
+) -> Result<()> {
     let mut lowerer = Lowerer {
+        linear: linear.clone(),
         results: HashMap::new(),
         enums: Vec::new(),
         fallible: HashMap::new(),
@@ -101,6 +110,9 @@ pub fn lower_failure_sets(program: &mut Program) -> Result<()> {
     let mut synthesized = std::mem::take(&mut lowerer.enums);
     synthesized.append(program);
     *program = synthesized;
+    // The results that hold a linear value, so the check that follows knows
+    // them for what they are.
+    *linear = lowerer.linear;
     Ok(())
 }
 
@@ -206,8 +218,21 @@ impl Lowerer {
             Vec::new(),
             variants,
         )));
+        // A result holding a linear value, or a linear failure, is linear.
+        // Without this a fallible call whose value must be consumed could be
+        // ignored, and the resource it answered with would be leaked.
+        if self.names_linear(value) || self.names_linear(error) {
+            self.linear.insert(name.clone());
+        }
         self.results.insert(key, name.clone());
         name
+    }
+
+    fn names_linear(&self, ty: &Type) -> bool {
+        match ty {
+            Type::Struct(name) | Type::Enum(name) => self.linear.contains(name),
+            _ => false,
+        }
     }
 
     // Does this expression build the failure type? A failure set may be an enum
@@ -486,7 +511,7 @@ mod tests {
         let mut program = parse(source);
         let before = format!("{:?}", program);
         assert!(before.contains("Fallible"), "parsed sig: {before}");
-        lower_failure_sets(&mut program).unwrap();
+        lower_failure_sets(&mut program, &mut HashSet::new()).unwrap();
         let after = format!("{:?}", program);
         assert!(after.contains("__Result_0"), "after: {after}");
         assert!(!after.contains("Fallible"), "after still fallible: {after}");
@@ -496,7 +521,8 @@ mod tests {
     fn rejects_try_without_a_failure_set() {
         let source = "src :: fn() -> i64 ! E { return 1 }\nuse_it :: fn() -> i64 { src()? }\n";
         let mut program = parse(source);
-        let error = lower_failure_sets(&mut program).unwrap_err();
+        let error =
+            lower_failure_sets(&mut program, &mut HashSet::new()).unwrap_err();
         assert!(
             error.to_string().contains("failure set"),
             "unexpected error: {error}"

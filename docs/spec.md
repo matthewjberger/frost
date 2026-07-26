@@ -466,6 +466,114 @@ function that wants both returns a struct it names. A return type list on a
 function with a compile-time parameter is rejected for the same reason it is one
 struct rather than one per specialization.
 
+### 5.2b Failure sets
+
+A function that can fail says so in its signature, with the type it fails with:
+
+```frost
+Parse :: struct { at: i64, code: i64 }
+
+digit :: fn(text: str, index: i64) -> i64 ! Parse {
+    byte := text[index]
+    if (byte < 48 || byte > 57) {
+        return { at = index, code = byte }
+    }
+    byte - 48
+}
+```
+
+`-> T ! E` reads "answers with a T, or fails with an E". `E` is a type the
+program declares, a struct or an enum, and nothing about it is built in: there
+is no error interface to implement, no backtrace, no allocation, and no boxing.
+A failure is a value of a type you wrote, so what a failure carries is what you
+put in it.
+
+**What the compiler makes of it.** The signature becomes one enum with two
+variants:
+
+```frost
+Result :: enum { Ok { value: T }, Err { error: E } }
+```
+
+That enum is what the function returns, and it is where the names at a `match`
+come from: `value` is the field the `Ok` variant carries and `error` is the
+field `Err` carries. A field like `error.at` is a field of `Parse`, the type
+this program declared. Nothing downstream knows failure sets exist, which is
+why every backend and the C ABI handle a fallible function with no code of
+their own.
+
+**Returning one or the other.** A `return` whose expression builds the failure
+type is the failure, and anything else is the value:
+
+- `return Parse { at = 3, code = 0 }` names the failure type, and is the
+  failure.
+- `return .Denied` names no type, and is the failure when the failure type is
+  an enum with that variant.
+- `return { at = 3, code = 0 }` names no type either, and is the failure when
+  the value type is not itself a struct or an enum, since then only the failure
+  can be written that way. When both are aggregates, name the one you mean.
+- The body's trailing expression is the value, the same as in any other
+  function.
+
+**`?` hands a failure up.** A call followed by `?` is the value it answered
+with, or an immediate return of its failure from the function the `?` is
+written in:
+
+```frost
+number :: fn(text: str) -> i64 ! Parse {
+    mut total : i64 = 0
+    mut index : i64 = 0
+    while (index < str_len(text)) {
+        d := digit(text, index)?
+        total = total * 10 + d
+        index = index + 1
+    }
+    total
+}
+```
+
+`?` is only allowed in a function that declares a failure set, since it has
+nowhere to hand a failure to otherwise, and the two failure types have to be
+the same one. There is no conversion, and no `From` to write: a function that
+calls something failing differently `match`es it and returns the failure it
+declares.
+
+**Reading the answer.** The caller matches, and a match on an enum covers every
+variant (6.7):
+
+```frost
+match number(text) {
+    case .Ok { value }: { print value }
+    case .Err { error }: { print error.at }
+}
+```
+
+**A resource survives a failure.** A result carrying a `linear` value is itself
+linear, so it must be consumed, and matching it is what consumes it (chapter 9).
+Ignoring a call that answers with one is refused, since the resource would be
+dropped where nothing named it.
+
+```frost
+open :: fn(n: i64) -> File ! Denied { ... }
+
+use_it :: fn(n: i64) -> i64 {
+    match open(n) {
+        case .Ok { value }: close(value)     // consumes the File
+        case .Err { error }: error.code
+    }
+}
+```
+
+**There is no other error channel.** No exceptions, no panics to catch, no
+error return codes to check by convention, and no ignoring a failure by
+accident: what a function can fail with is in its signature, and the caller
+either matches it or hands it up with `?`. A failure that is not one, a bug in
+the program rather than a condition in the world, is an assertion, and an
+assertion aborts.
+
+`-> (A, B) ! E` is rejected: a fallible function answers with one value or one
+failure. A function that wants both returns a struct it names.
+
 ### 5.3 Externs and imports
 
 ```
@@ -686,9 +794,10 @@ match Scrutinee {
 }
 ```
 
-An arm is `case`, a pattern, `:`, then an expression or block. There is no
-separator between arms. An arm ends where the next `case` or the closing `}`
-begins. Patterns:
+An arm is `case`, a pattern, `:`, then an expression or block. A `{` after the
+colon opens a block, so an arm that answers with an unnamed struct literal names
+its type. There is no separator between arms. An arm ends where the next `case`
+or the closing `}` begins. Patterns:
 
 - Variant, shorthand, `.Variant` or `.Variant { field, field }`, binding each
   named field to a same-named local.
