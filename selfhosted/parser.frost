@@ -324,7 +324,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         assign_block_value(p, node.b, name_off, name_len)
         assign_block_value(p, node.val, name_off, name_len)
         arena_push(p.pending, LocalVar { name_off = bind, name_len = chosen,
-            ty = 0 })
+            ty = 0, slot = 0 })
         return new_named_node(p, NodeKind::Var, 0, name_off, name_len)
     }
     // A match used where a value is wanted: bind a name, let each arm assign to
@@ -339,7 +339,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         chosen := parse_match(p)
         assign_match_values(p, chosen, name_off, name_len)
         arena_push(p.pending, LocalVar { name_off = bind, name_len = chosen,
-            ty = 0 })
+            ty = 0, slot = 0 })
         return new_named_node(p, NodeKind::Var, 0, name_off, name_len)
     }
     // `.Circle { radius = 5 }`, whose enum comes from what the context expects.
@@ -632,7 +632,7 @@ lower_try :: fn(mut p: Parser, value: i64) -> i64 {
         0,
     )
     guard := new_node(p, NodeKind::If, failed, hand_on, 0 - 1)
-    arena_push(p.pending, LocalVar { name_off = bind, name_len = guard, ty = 0 })
+    arena_push(p.pending, LocalVar { name_off = bind, name_len = guard, ty = 0, slot = 0 })
     new_field_node(
         p,
         new_named_node(p, NodeKind::Var, 0, name_off, name_len),
@@ -795,7 +795,7 @@ hold_struct_result :: fn(mut p: Parser, value: i64) -> i64 {
     name_len := 5 + digits_in(p.match_count)
     p.match_count = p.match_count + 1
     bind := new_let_node(p, value, name_off, name_len, 0 - 1)
-    arena_push(p.pending, LocalVar { name_off = bind, name_len = bind, ty = 0 })
+    arena_push(p.pending, LocalVar { name_off = bind, name_len = bind, ty = 0, slot = 0 })
     new_named_node(p, NodeKind::Var, 0, name_off, name_len)
 }
 
@@ -1745,7 +1745,7 @@ parse_tuple_match :: fn(mut p: Parser) -> i64 {
         name_len := 5 + digits_in(unique + count)
         bind := new_let_node(p, value, name_off, name_len, 0 - 1)
         arena_push(p.pending,
-            LocalVar { name_off = bind, name_len = bind, ty = 0 })
+            LocalVar { name_off = bind, name_len = bind, ty = 0, slot = 0 })
         count = count + 1
         if (cur(p) == TokenKind::Comma) {
             advance(p)
@@ -1840,7 +1840,7 @@ parse_match :: fn(mut p: Parser) -> i64 {
         p.match_count = p.match_count + 1
         bind := new_let_node(p, scrutinee, name_off, name_len, 0 - 1)
         arena_push(p.pending, LocalVar { name_off = bind, name_len = bind,
-            ty = 0 })
+            ty = 0, slot = 0 })
         subject = new_named_node(p, NodeKind::Var, 0, name_off, name_len)
         scrutinee = new_field_node(p, subject, p.name_tag, 3)
     }
@@ -2720,11 +2720,11 @@ parse_params :: fn(mut p: Parser) -> i64 {
             // auto-borrow flag alone cannot.
             if (mode == 1) {
                 arena_push(p.mut_params,
-                    LocalVar { name_off = param, name_len = 0, ty = 0 })
+                    LocalVar { name_off = param, name_len = 0, ty = 0, slot = 0 })
             }
             if (by_value == 1) {
                 arena_push(p.value_params,
-                    LocalVar { name_off = param, name_len = 0, ty = 0 })
+                    LocalVar { name_off = param, name_len = 0, ty = 0, slot = 0 })
             }
             // What a name binds is recorded for the parse too, so an argument
             // at a call in this body can be typed where it is written.

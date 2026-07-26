@@ -298,6 +298,26 @@ bench-incremental:
     Remove-Item -Recurse -Force "$env:TEMP/frost-bench-build" -ErrorAction Ignore
     $full = (Measure-Command { ./target/release/frost.exe --link -o "$env:TEMP/bench.exe" bench/generated/modules.frost }).TotalMilliseconds; ./target/release/frost.exe --link --incremental --build-dir "$env:TEMP/frost-bench-build" -o "$env:TEMP/bench.exe" bench/generated/modules.frost | Out-Null; $again = (Measure-Command { ./target/release/frost.exe --link --incremental --build-dir "$env:TEMP/frost-bench-build" -o "$env:TEMP/bench.exe" bench/generated/modules.frost }).TotalMilliseconds; "{0,-14} {1,7:N0} ms" -f "full", $full; "{0,-14} {1,7:N0} ms" -f "incremental", $again
 
+# Measures the self-hosted compiler against the bootstrap on one source, so
+# "speed parity" is a number rather than a feeling (Unix)
+[unix]
+bench-selfhost: selfhost-build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -r -q -p frost --bin frost
+    file="${FROST_BENCH:-selfhosted/frost.frost}"
+    lines=$(cat $(dirname "$file")/*.frost | wc -l)
+    echo "$file, $lines lines"
+    printf "  bootstrap   front end  "; /usr/bin/time -f "%e s" ./target/release/frost --emit-c -o /tmp/bench.c "$file" 2>&1 >/dev/null | tail -1
+    printf "  self-hosted C          "; /usr/bin/time -f "%e s" env FROST_INPUT="$file" ./selfhosted/frost -o /tmp/bench.c 2>&1 >/dev/null | tail -1
+    printf "  self-hosted assembly   "; /usr/bin/time -f "%e s" env FROST_INPUT="$file" FROST_BACKEND=asm ./selfhosted/frost -o /tmp/bench.s 2>&1 >/dev/null | tail -1
+
+# Measures the self-hosted compiler against the bootstrap on one source (Windows)
+[windows]
+bench-selfhost: selfhost-build
+    cargo build -r -q -p frost --bin frost
+    $file = if ($env:FROST_BENCH) { $env:FROST_BENCH } else { "selfhosted/frost.frost" }; $dir = Split-Path -Parent $file; if (-not $dir) { $dir = "." }; $lines = (Get-Content (Join-Path $dir "*.frost") | Measure-Object -Line).Lines; "{0}, {1} lines" -f $file, $lines; $boot = (Measure-Command { ./target/release/frost.exe --emit-c -o "$env:TEMP/bench.c" $file }).TotalMilliseconds; $env:FROST_INPUT = $file; $env:FROST_BACKEND = $null; $shc = (Measure-Command { ./selfhosted/frost.exe -o "$env:TEMP/bench.c" }).TotalMilliseconds; $env:FROST_BACKEND = "asm"; $sha = (Measure-Command { ./selfhosted/frost.exe -o "$env:TEMP/bench.s" }).TotalMilliseconds; $env:FROST_BACKEND = $null; $env:FROST_INPUT = $null; "  {0,-22} {1,7:N0} ms  {2,8:N0} lines/sec" -f "bootstrap front end", $boot, ($lines / $boot * 1000); "  {0,-22} {1,7:N0} ms  {2,8:N0} lines/sec" -f "self-hosted C", $shc, ($lines / $shc * 1000); "  {0,-22} {1,7:N0} ms  {2,8:N0} lines/sec" -f "self-hosted assembly", $sha, ($lines / $sha * 1000)
+
 # Runs all tests
 test:
     cargo test -p frost -- --nocapture

@@ -248,6 +248,7 @@ check_types_in :: fn(mut p: Parser, body: i64, params: i64, fn_index: i64,
     p.current_fn_off = sym.off
     p.current_fn_len = sym.len
     p.locals.count = 0
+    p.frame_used = 0
     check_record_params(p, params)
     check_types_list(p, body)
 }
@@ -845,7 +846,7 @@ walk_moves_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
             if (pnode.a != 1 && anode.kind == NodeKind::Var
                 && is_aggregate(pnode.b)) {
                 arena_push(p.moved,
-                    LocalVar { name_off = anode.val, name_len = anode.c, ty = 0 })
+                    LocalVar { name_off = anode.val, name_len = anode.c, ty = 0, slot = 0 })
             }
         }
         i = i + 1
@@ -863,7 +864,7 @@ walk_moves_if :: fn(mut p: Parser, then_head: i64, else_head: i64) {
     while (k < p.moved.count) {
         e := arena_at(p.moved, k)
         arena_push(p.move_scratch,
-            LocalVar { name_off = e.name_off, name_len = e.name_len, ty = 0 })
+            LocalVar { name_off = e.name_off, name_len = e.name_len, ty = 0, slot = 0 })
         k = k + 1
     }
     scratch_top := p.move_scratch.count
@@ -874,7 +875,7 @@ walk_moves_if :: fn(mut p: Parser, then_head: i64, else_head: i64) {
         e := arena_at(p.move_scratch, s)
         if (is_moved(p, e.name_off, e.name_len) == false) {
             arena_push(p.moved,
-                LocalVar { name_off = e.name_off, name_len = e.name_len, ty = 0 })
+                LocalVar { name_off = e.name_off, name_len = e.name_len, ty = 0, slot = 0 })
         }
         s = s + 1
     }
@@ -936,7 +937,7 @@ walk_moves_match :: fn(mut p: Parser, cases: i64) {
             e := arena_at(p.moved, k)
             if (in_scratch(p, scratch_base, e.name_off, e.name_len) == false) {
                 arena_push(p.move_scratch,
-                    LocalVar { name_off = e.name_off, name_len = e.name_len, ty = 0 })
+                    LocalVar { name_off = e.name_off, name_len = e.name_len, ty = 0, slot = 0 })
             }
             k = k + 1
         }
@@ -947,7 +948,7 @@ walk_moves_match :: fn(mut p: Parser, cases: i64) {
     while (s < p.move_scratch.count) {
         e := arena_at(p.move_scratch, s)
         arena_push(p.moved,
-            LocalVar { name_off = e.name_off, name_len = e.name_len, ty = 0 })
+            LocalVar { name_off = e.name_off, name_len = e.name_len, ty = 0, slot = 0 })
         s = s + 1
     }
     p.move_scratch.count = scratch_base
@@ -1518,7 +1519,7 @@ name_listed :: fn(mut table: Arena<LocalVar>, src: ^i8, off: i64, len: i64)
 }
 
 list_name :: fn(mut table: Arena<LocalVar>, off: i64, len: i64) {
-    arena_push(table, LocalVar { name_off = off, name_len = len, ty = 0 })
+    arena_push(table, LocalVar { name_off = off, name_len = len, ty = 0, slot = 0 })
 }
 
 // The name a place is rooted at, walking down through fields, indexes and
