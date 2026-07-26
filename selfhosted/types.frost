@@ -197,7 +197,12 @@ untyped_literal :: fn(mut p: Parser, id: i64) -> bool {
         return false
     }
     node := arena_at(p.arena, id)
-    if (node.kind == NodeKind::Num || node.kind == NodeKind::Float) {
+    if (node.kind == NodeKind::Num) {
+        // A bit of a flags type is written as a name and carries that type, so
+        // it is not one of the numbers the context gets to type.
+        return node.b == 0
+    }
+    if (node.kind == NodeKind::Float) {
         return true
     }
     if (node.kind == NodeKind::Bin && op_answers_truth(node.val) == false) {
@@ -209,6 +214,11 @@ untyped_literal :: fn(mut p: Parser, id: i64) -> bool {
 // Whether a value of type `from` may be given to something of type `to`, with
 // the value in hand, so a literal can be exempt from the distinct-type rule.
 value_fits :: fn(mut p: Parser, value: i64, from: i64, to: i64) -> bool {
+    // A set of bits has no such exemption. Its whole content is the names, so a
+    // number written where one belongs is the thing the declaration replaces.
+    if (is_flags_type(p, to)) {
+        return from == to
+    }
     if (is_distinct(to) && untyped_literal(p, value)) {
         return types_compatible(p, from, distinct_repr(to))
     }
@@ -385,6 +395,11 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
     kind := node.kind
     if (kind == NodeKind::StrLit) {
         return POINTER_BASE + TY_I8
+    }
+    // A number written as a bit of a flags type carries that type; every other
+    // one takes its type from where it was written.
+    if (kind == NodeKind::Num && node.b != 0) {
+        return node.b - 1
     }
     if (kind == NodeKind::StructLit) {
         return node.val

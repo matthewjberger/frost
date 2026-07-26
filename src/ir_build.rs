@@ -17,6 +17,7 @@ use crate::{Literal, Operator};
 
 pub const BUILTIN_FUNCTIONS: &[&str] = &[
     "assert",
+    "flags_has",
     "ptr_cast",
     "ptr_to",
     "slice_from",
@@ -33,6 +34,11 @@ pub struct IrBuilder {
     signatures: HashMap<String, FunctionSignature>,
     structs: HashMap<String, StructLayout>,
     enums: HashMap<String, EnumLayout>,
+    // The bits each `flags` type names, by type name. A flags type is a
+    // distinct type over an integer, so nothing but this table tells one apart
+    // from any other distinct type, and only two questions need to: what
+    // `InitFlags::Video` is, and which operators a bit set answers to.
+    flags: HashMap<String, FlagsLayout>,
     constants: HashMap<String, Expression>,
     generic_functions: HashMap<String, GenericFunction>,
     generic_struct_defs: HashMap<String, (Vec<String>, Vec<StructField>)>,
@@ -40,6 +46,12 @@ pub struct IrBuilder {
     // Callback registrations, by name. See docs/callbacks.md.
     registrations: HashMap<String, crate::callbacks::CallbackShape>,
     anon_counter: std::cell::Cell<usize>,
+}
+
+// A flags declaration, as the two things the rest of the compiler asks it for.
+struct FlagsLayout {
+    repr: Type,
+    bits: HashMap<String, i64>,
 }
 
 struct AnonRequest {
@@ -133,10 +145,27 @@ fn build_module_inner(
         }
     }
 
+    let mut flags: HashMap<String, FlagsLayout> = HashMap::new();
+    for statement in statements {
+        if let Statement::Flags(name, repr, bits) = &statement.node {
+            flags.insert(
+                name.clone(),
+                FlagsLayout {
+                    repr: repr.clone(),
+                    bits: bits
+                        .iter()
+                        .map(|bit| (bit.name.clone(), bit.value))
+                        .collect(),
+                },
+            );
+        }
+    }
+
     let mut builder = IrBuilder {
         signatures: HashMap::new(),
         structs,
         enums,
+        flags,
         constants,
         generic_functions,
         generic_struct_defs,
@@ -236,6 +265,7 @@ fn build_module_inner(
             }
             Statement::Struct(..)
             | Statement::Enum(..)
+            | Statement::Flags(..)
             | Statement::TypeAlias(..)
             | Statement::Import(..) => {}
             _ => top_level.push(statement.clone()),
@@ -1276,14 +1306,79 @@ fn name_inferred_literal(
 //
 // A literal is exempt. It has no type of its own until the context gives it
 // one, which is what makes `m : Meters = 3` read the way it should.
-fn distinct_mismatch(value: &Expression, from: &Type, to: &Type) -> bool {
-    if from == to || !matches!(to, Type::Distinct(..)) {
+//
+// A flags type is not exempt. Its whole content is the names, so a number
+// written where one belongs is the thing the declaration exists to replace.
+fn distinct_mismatch(
+    value: &Expression,
+    from: &Type,
+    to: &Type,
+    flags: &HashMap<String, FlagsLayout>,
+) -> bool {
+    let Type::Distinct(name, _) = to else {
         return false;
-    }
-    !matches!(
+    };
+    let literal = matches!(
         value,
         Expression::Literal(Literal::Integer(_) | Literal::Float(_))
+    );
+    // A literal takes the type the context expects, so by the time the types
+    // are compared they agree. For a flags type the question is what was
+    // written rather than what it typed as.
+    if flags.contains_key(name) {
+        return literal || from != to;
+    }
+    if from == to {
+        return false;
+    }
+    !literal
+}
+
+// How to describe what was written, and which rule it broke. A number written
+// where a flags value belongs has taken the flags type by the time the types
+// are compared, so saying what it typed as would name the same type twice and
+// explain nothing. What the reader wrote is a number, and that is what this
+// says.
+fn nominal_reason(
+    value: &Expression,
+    to: &Type,
+    flags: &HashMap<String, FlagsLayout>,
+) -> (&'static str, &'static str) {
+    let flagged =
+        matches!(to, Type::Distinct(name, _) if flags.contains_key(name));
+    if !flagged {
+        return ("", "a distinct type is not its representation");
+    }
+    if matches!(
+        value,
+        Expression::Literal(Literal::Integer(_) | Literal::Float(_))
+    ) {
+        return (
+            "a number",
+            "a set of bits is built from the names declared under it, and a number is not one of them",
+        );
+    }
+    (
+        "",
+        "a set of bits is built only from the names declared under it",
     )
+}
+
+// The two halves as the message writes them: what the value is, and why it does
+// not fit.
+fn nominal_words(
+    value: &Expression,
+    value_type: &Type,
+    to: &Type,
+    flags: &HashMap<String, FlagsLayout>,
+) -> (String, String) {
+    let (described, note) = nominal_reason(value, to, flags);
+    let described = if described.is_empty() {
+        format!("a '{value_type}'")
+    } else {
+        described.to_string()
+    };
+    (described, note.to_string())
 }
 
 fn mangle_type(ty: &Type) -> String {
@@ -1365,8 +1460,8 @@ fn mangle_specialization(
 // namespace is for.
 fn type_predicate(name: &str, ty: &Type) -> Option<bool> {
     let answer = match name {
-        "is_numeric" => is_integer(ty) || ty.is_float(),
-        "is_integer" => is_integer(ty),
+        "is_numeric" => ty.is_integer() || ty.is_float(),
+        "is_integer" => ty.is_integer(),
         "is_float" => ty.is_float(),
         "is_struct" => matches!(ty, Type::Struct(_) | Type::Enum(_)),
         "is_array" => matches!(ty, Type::Array(..) | Type::ArrayGeneric(..)),
@@ -3692,10 +3787,21 @@ impl<'a> FunctionLowering<'a> {
                 let (operand, value_type) =
                     self.lower_expression(value, type_annotation.as_ref())?;
                 if let Some(annotated) = type_annotation
-                    && distinct_mismatch(value, &value_type, annotated)
+                    && distinct_mismatch(
+                        value,
+                        &value_type,
+                        annotated,
+                        &self.builder.flags,
+                    )
                 {
+                    let (described, note) = nominal_words(
+                        value,
+                        &value_type,
+                        annotated,
+                        &self.builder.flags,
+                    );
                     bail!(
-                        "this binding is a '{annotated}' and the value is a '{value_type}'; a distinct type is not its representation"
+                        "this binding is a '{annotated}' and the value is {described}; {note}"
                     );
                 }
                 if matches!(value_type, Type::Void) {
@@ -3731,10 +3837,20 @@ impl<'a> FunctionLowering<'a> {
                 } else {
                     let (operand, value_type) =
                         self.lower_expression(expression, Some(&return_type))?;
-                    if distinct_mismatch(expression, &value_type, &return_type)
-                    {
+                    if distinct_mismatch(
+                        expression,
+                        &value_type,
+                        &return_type,
+                        &self.builder.flags,
+                    ) {
+                        let (described, note) = nominal_words(
+                            expression,
+                            &value_type,
+                            &return_type,
+                            &self.builder.flags,
+                        );
                         bail!(
-                            "this returns a '{value_type}' and the function answers with a '{return_type}'; a distinct type is not its representation"
+                            "this returns {described} and the function answers with a '{return_type}'; {note}"
                         );
                     }
                     let coerced =
@@ -4200,6 +4316,29 @@ impl<'a> FunctionLowering<'a> {
                 self.materialize_aggregate(temp, expression)?;
                 Ok((IrOperand::Local(temp), ty))
             }
+            // `InitFlags::Video` reads as a variant and is one bit of a flags
+            // type: a constant of that type rather than a value carrying a tag.
+            Expression::EnumVariantInit(type_name, bit, fields)
+                if self.builder.flags.contains_key(type_name) =>
+            {
+                let layout = &self.builder.flags[type_name];
+                if !fields.is_empty() {
+                    bail!(
+                        "'{type_name}::{bit}' is a bit of a set, so it carries nothing"
+                    );
+                }
+                let Some(value) = layout.bits.get(bit).copied() else {
+                    bail!("'{type_name}' names no bit called '{bit}'");
+                };
+                let ty = Type::Distinct(
+                    type_name.clone(),
+                    Box::new(layout.repr.clone()),
+                );
+                Ok((
+                    IrOperand::Constant(IrConstant::Integer(value, ty.clone())),
+                    ty,
+                ))
+            }
             Expression::EnumVariantInit(enum_name, _, _) => {
                 // A generic enum is written `Option::Some { value = 3 }` with no
                 // arguments on it, so which instance it is comes from what the
@@ -4240,7 +4379,7 @@ impl<'a> FunctionLowering<'a> {
         match literal {
             Literal::Integer(value) => {
                 let ty = match expected {
-                    Some(ty) if is_integer(ty) => ty.clone(),
+                    Some(ty) if ty.is_integer() => ty.clone(),
                     _ => Type::I64,
                 };
                 Ok((
@@ -4405,7 +4544,7 @@ impl<'a> FunctionLowering<'a> {
         }
         let (function, target) = if value_type.is_float() {
             ("frost_rt_write_f64", Type::F64)
-        } else if is_integer(&value_type)
+        } else if value_type.is_integer()
             || matches!(value_type, Type::Bool | Type::Handle(_))
         {
             ("frost_rt_write_i64", Type::I64)
@@ -4525,6 +4664,11 @@ impl<'a> FunctionLowering<'a> {
                 self.lower_expression(left, None)?;
             let (right_operand, right_type) =
                 self.lower_expression(right, Some(&left_type))?;
+            self.check_flags_operator(
+                binop,
+                (left, &left_type),
+                (right, &right_type),
+            )?;
             // Two enum values are compared by their tags, which for an enum
             // whose variants carry nothing is the whole value. A variant with
             // fields makes the question ambiguous, since `.Some { value = 1 }`
@@ -4588,6 +4732,11 @@ impl<'a> FunctionLowering<'a> {
             self.lower_expression(left, expected)?;
         let (right_operand, right_type) =
             self.lower_expression(right, Some(&left_type))?;
+        self.check_flags_operator(
+            binop,
+            (left, &left_type),
+            (right, &right_type),
+        )?;
         let result_type = unify(&left_type, &right_type);
         let left_final = self.coerce(left_operand, &left_type, &result_type);
         let right_final = self.coerce(right_operand, &right_type, &result_type);
@@ -4597,6 +4746,72 @@ impl<'a> FunctionLowering<'a> {
             IrRvalue::Binary(binop, left_final, right_final),
         ));
         Ok((IrOperand::Local(result), result_type))
+    }
+
+    // The flags type either side of an operator names, looking through a
+    // borrow the way an enum comparison does.
+    fn flags_name_of<'t>(&self, ty: &'t Type) -> Option<&'t str> {
+        match ty {
+            Type::Distinct(name, _)
+                if self.builder.flags.contains_key(name) =>
+            {
+                Some(name)
+            }
+            Type::Ref(inner) | Type::RefMut(inner) => self.flags_name_of(inner),
+            _ => None,
+        }
+    }
+
+    // A set of bits answers to union, intersection and whether it is the same
+    // set. Adding two of them, or ordering them, or shifting one along, is a
+    // question about the number underneath rather than about the set, and the
+    // declaration exists to say that the number is not what this is. Reading
+    // one as its representation is still allowed, so a program that means the
+    // arithmetic writes the conversion and gets it.
+    fn check_flags_operator(
+        &self,
+        binop: IrBinOp,
+        left: (&Expression, &Type),
+        right: (&Expression, &Type),
+    ) -> Result<()> {
+        let (left, left_type) = left;
+        let (right, right_type) = right;
+        let named = self
+            .flags_name_of(left_type)
+            .or_else(|| self.flags_name_of(right_type));
+        let Some(name) = named else {
+            return Ok(());
+        };
+        let readable = crate::imports::demangle_private_names(name);
+        if !matches!(
+            binop,
+            IrBinOp::BitwiseOr
+                | IrBinOp::BitwiseAnd
+                | IrBinOp::Equal
+                | IrBinOp::NotEqual
+        ) {
+            bail!(
+                "'{readable}' is a set of bits, and '{}' is not something two sets answer; combine them with '|', narrow them with '&', and compare them with '==' or 'flags_has'",
+                operator_text(binop)
+            );
+        }
+        // A written number takes the other side's type, so by the time the two
+        // are compared they agree and what was written is the question.
+        if matches!(left, Expression::Literal(Literal::Integer(_)))
+            || matches!(right, Expression::Literal(Literal::Integer(_)))
+        {
+            bail!(
+                "'{readable}' is a set of bits, built from the names declared under it, and a number is not one of them"
+            );
+        }
+        // Two sets combine when they are the same set. Otherwise the answer
+        // would be a number wearing one of the two names.
+        if left_type != right_type {
+            bail!(
+                "'{readable}' combines only with itself, and this is a '{left_type}' against a '{right_type}'"
+            );
+        }
+        Ok(())
     }
 
     fn lower_logical(
@@ -4819,6 +5034,14 @@ impl<'a> FunctionLowering<'a> {
             && !self.builder.generic_functions.contains_key(name)
         {
             return self.lower_slice_len(arguments);
+        }
+        if let Expression::Identifier(name) = callee
+            && name == "flags_has"
+            && self.resolve_variable(name).is_none()
+            && self.builder.signature(name).is_none()
+            && !self.builder.generic_functions.contains_key(name)
+        {
+            return self.lower_flags_has(arguments);
         }
         if let Expression::Identifier(name) = callee
             && self.resolve_variable(name).is_none()
@@ -5422,10 +5645,21 @@ impl<'a> FunctionLowering<'a> {
                 );
             }
             if let Some(target) = expected
-                && distinct_mismatch(argument, &value_type, target)
+                && distinct_mismatch(
+                    argument,
+                    &value_type,
+                    target,
+                    &self.builder.flags,
+                )
             {
+                let (described, note) = nominal_words(
+                    argument,
+                    &value_type,
+                    target,
+                    &self.builder.flags,
+                );
                 bail!(
-                    "'{name}' takes a '{target}' here and this argument is a '{value_type}'; a distinct type is not its representation"
+                    "'{name}' takes a '{target}' here and this argument is {described}; {note}"
                 );
             }
             let coerced = match expected {
@@ -5708,9 +5942,20 @@ impl<'a> FunctionLowering<'a> {
             let target_type = self.type_of_local(local);
             let (operand, value_type) =
                 self.lower_expression(value, Some(&target_type))?;
-            if distinct_mismatch(value, &value_type, &target_type) {
+            if distinct_mismatch(
+                value,
+                &value_type,
+                &target_type,
+                &self.builder.flags,
+            ) {
+                let (described, note) = nominal_words(
+                    value,
+                    &value_type,
+                    &target_type,
+                    &self.builder.flags,
+                );
                 bail!(
-                    "'{name}' is a '{target_type}' and the value is a '{value_type}'; a distinct type is not its representation"
+                    "'{name}' is a '{target_type}' and the value is {described}; {note}"
                 );
             }
             let coerced = self.coerce(operand, &value_type, &target_type);
@@ -6148,6 +6393,74 @@ impl<'a> FunctionLowering<'a> {
         let base = self.slice_value_address(&arguments[0])?;
         let length = self.str_field(base, SLICE_LEN_OFFSET, Type::Usize);
         Ok((length, Type::Usize))
+    }
+
+    // `flags_has(chosen, InitFlags::Video)`: whether every bit on the right is
+    // on in the left. Written here rather than in a library because it is the
+    // one question a set of bits is asked, and a library function would have to
+    // be generic over a type that has no operations to be generic over.
+    //
+    // Both sides being the same flags type is the check that makes it a
+    // question about one set rather than about two numbers, so a window flag
+    // asked of an init flag is refused.
+    fn lower_flags_has(
+        &mut self,
+        arguments: &[Expression],
+    ) -> Result<(IrOperand, Type)> {
+        if arguments.len() != 2 {
+            bail!(
+                "flags_has takes the set and the bits to look for, as in 'flags_has(chosen, InitFlags::Video)'"
+            );
+        }
+        let (set, set_type) = self.lower_expression(&arguments[0], None)?;
+        let (wanted, wanted_type) =
+            self.lower_expression(&arguments[1], Some(&set_type))?;
+        if distinct_mismatch(
+            &arguments[1],
+            &wanted_type,
+            &set_type,
+            &self.builder.flags,
+        ) {
+            let (described, note) = nominal_words(
+                &arguments[1],
+                &wanted_type,
+                &set_type,
+                &self.builder.flags,
+            );
+            bail!(
+                "flags_has looks for a '{set_type}' and this is {described}; {note}"
+            );
+        }
+        let Some(name) = self.flags_name_of(&set_type) else {
+            bail!(
+                "flags_has asks a set of bits what it holds, and a '{set_type}' is not one"
+            );
+        };
+        if self.flags_name_of(&wanted_type) != Some(name) {
+            let readable = crate::imports::demangle_private_names(name);
+            bail!(
+                "flags_has looks for bits of the set it is given, and a '{wanted_type}' is not a '{readable}'"
+            );
+        }
+        let repr = match &set_type {
+            Type::Distinct(_, inner) => inner.as_ref().clone(),
+            other => other.clone(),
+        };
+        let narrowed = self.fresh_local(repr.clone(), None);
+        self.emit(IrStatement::Assign(
+            narrowed,
+            IrRvalue::Binary(IrBinOp::BitwiseAnd, set, wanted.clone()),
+        ));
+        let result = self.fresh_local(Type::Bool, None);
+        self.emit(IrStatement::Assign(
+            result,
+            IrRvalue::Binary(
+                IrBinOp::Equal,
+                IrOperand::Local(narrowed),
+                wanted,
+            ),
+        ));
+        Ok((IrOperand::Local(result), Type::Bool))
     }
 
     // A first-class raw pointer to a place. `&x` is a second-class reference.
@@ -7988,7 +8301,7 @@ impl<'a> FunctionLowering<'a> {
         }
         match &operand {
             IrOperand::Constant(IrConstant::Integer(value, _))
-                if is_integer(to) =>
+                if to.is_integer() =>
             {
                 IrOperand::Constant(IrConstant::Integer(*value, to.clone()))
             }
@@ -8038,29 +8351,10 @@ fn zero_operand(ty: &Type) -> IrOperand {
             IrOperand::Constant(IrConstant::Float(0.0, ty.clone()))
         }
         Type::Bool => IrOperand::Constant(IrConstant::Bool(false)),
-        _ if is_integer(ty) => {
+        _ if ty.is_integer() => {
             IrOperand::Constant(IrConstant::Integer(0, ty.clone()))
         }
         _ => IrOperand::Constant(IrConstant::Integer(0, Type::I64)),
-    }
-}
-
-// A distinct type is stored and computed as what it is represented by, so a
-// `distinct i32` widens and narrows exactly as an `i32` does.
-fn is_integer(ty: &Type) -> bool {
-    match ty {
-        Type::I8
-        | Type::I16
-        | Type::I32
-        | Type::I64
-        | Type::Isize
-        | Type::U8
-        | Type::U16
-        | Type::U32
-        | Type::U64
-        | Type::Usize => true,
-        Type::Distinct(_, inner) => is_integer(inner),
-        _ => false,
     }
 }
 
@@ -8071,14 +8365,14 @@ fn is_integer(ty: &Type) -> bool {
 // its width. C widened it for free, so only the native backend saw this, as a
 // verifier error rather than a wrong answer.
 fn is_castable_integer(ty: &Type) -> bool {
-    is_integer(ty) || matches!(ty, Type::Bool)
+    ty.is_integer() || matches!(ty, Type::Bool)
 }
 
 fn needs_cast(from: &Type, to: &Type) -> bool {
     (is_castable_integer(from) && is_castable_integer(to))
         || (from.is_float() && to.is_float())
         || (is_castable_integer(from) && to.is_float())
-        || (from.is_float() && is_integer(to))
+        || (from.is_float() && to.is_integer())
 }
 
 // The type a binary operation is computed at. Spec 3.1: the narrower operand
@@ -8098,8 +8392,8 @@ fn unify(left: &Type, right: &Type) -> Type {
     }
     match (left, right) {
         (wide, narrow) | (narrow, wide)
-            if is_integer(wide)
-                && is_integer(narrow)
+            if wide.is_integer()
+                && narrow.is_integer()
                 && wide.size_of() > narrow.size_of() =>
         {
             wide.clone()
@@ -8107,6 +8401,28 @@ fn unify(left: &Type, right: &Type) -> Type {
         (Type::F64, Type::F32) | (Type::F32, Type::F64) => Type::F64,
         (Type::Unknown, other) | (other, Type::Unknown) => other.clone(),
         _ => left.clone(),
+    }
+}
+
+// An operator as the source writes it, for a diagnostic that has the IR's name
+// for it and needs the reader's.
+fn operator_text(binop: IrBinOp) -> &'static str {
+    match binop {
+        IrBinOp::Add => "+",
+        IrBinOp::Subtract => "-",
+        IrBinOp::Multiply => "*",
+        IrBinOp::Divide => "/",
+        IrBinOp::Modulo => "%",
+        IrBinOp::BitwiseAnd => "&",
+        IrBinOp::BitwiseOr => "|",
+        IrBinOp::ShiftLeft => "<<",
+        IrBinOp::ShiftRight => ">>",
+        IrBinOp::Equal => "==",
+        IrBinOp::NotEqual => "!=",
+        IrBinOp::LessThan => "<",
+        IrBinOp::LessThanOrEqual => "<=",
+        IrBinOp::GreaterThan => ">",
+        IrBinOp::GreaterThanOrEqual => ">=",
     }
 }
 

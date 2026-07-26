@@ -177,6 +177,25 @@ impl Type {
         }
     }
 
+    // Which kind of number this is, looked at through any name it carries, for
+    // the same reason `is_float` looks through one.
+    pub fn is_integer(&self) -> bool {
+        match self {
+            Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64
+            | Type::Isize
+            | Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+            | Type::Usize => true,
+            Type::Distinct(_, inner) => inner.is_integer(),
+            _ => false,
+        }
+    }
+
     pub fn contains_reference(&self) -> bool {
         match self {
             Type::Ref(_) | Type::RefMut(_) => true,

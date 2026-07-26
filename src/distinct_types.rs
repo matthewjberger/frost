@@ -18,10 +18,23 @@ use std::collections::HashMap;
 pub fn resolve_distinct_types(statements: &mut [Spanned<Statement>]) {
     let mut declared: HashMap<String, Type> = HashMap::new();
     for statement in statements.iter() {
-        if let Statement::TypeAlias(name, ty) = &statement.node
-            && matches!(ty, Type::Distinct(..))
-        {
-            declared.insert(name.clone(), ty.clone());
+        match &statement.node {
+            Statement::TypeAlias(name, ty)
+                if matches!(ty, Type::Distinct(..)) =>
+            {
+                declared.insert(name.clone(), ty.clone());
+            }
+            // A flags declaration is a nominal type over an integer, which is
+            // what a distinct declaration is, so every use of the name resolves
+            // through the same table. What a flags type has on top of that is
+            // the bits, and they are named under it rather than being types.
+            Statement::Flags(name, repr, _) => {
+                declared.insert(
+                    name.clone(),
+                    Type::Distinct(name.clone(), Box::new(repr.clone())),
+                );
+            }
+            _ => {}
         }
     }
     if declared.is_empty() {
@@ -83,7 +96,9 @@ fn walk_parameters(
 
 fn walk_statement(statement: &mut Statement, declared: &HashMap<String, Type>) {
     match statement {
-        Statement::TypeAlias(_, ty) => substitute(ty, declared),
+        Statement::TypeAlias(_, ty) | Statement::Flags(_, ty, _) => {
+            substitute(ty, declared)
+        }
         Statement::Struct(_, _, fields) => {
             for field in fields.iter_mut() {
                 substitute(&mut field.field_type, declared);

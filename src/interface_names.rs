@@ -50,7 +50,9 @@ pub(crate) fn names_in_statement(statement: &Statement, out: &mut Vec<String>) {
                 }
             }
         }
-        Statement::TypeAlias(_, ty) => names_in_type(ty, out),
+        Statement::TypeAlias(_, ty) | Statement::Flags(_, ty, _) => {
+            names_in_type(ty, out)
+        }
         Statement::Extern {
             params,
             return_type,

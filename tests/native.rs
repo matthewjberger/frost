@@ -1175,6 +1175,186 @@ fn self_hosted_arithmetic_on_a_distinct_type_answers_with_it() {
     assert_eq!(via_c, output, "the self-hosted C backend disagrees");
 }
 
+// A named set of bits with a type of its own. The numbers are a C header's, the
+// names are the type's, and a combination of two of them is still that type, so
+// it goes into a call with nothing written down to say what it is.
+const FLAGS: &str = "InitFlags :: flags u32 {
+         Audio   = 16,
+         Video   = 32,
+         Events  = 16384,
+     }
+     WindowFlags :: flags u64 {
+         Fullscreen = 1,
+         Resizable  = 32,
+     }
+     started :: fn(f: InitFlags) -> u32 { f }
+     opened :: fn(f: WindowFlags) -> u64 { f }
+     main :: fn() -> i64 {
+         print started(InitFlags::Video)
+         print started(InitFlags::Video | InitFlags::Audio)
+         chosen := InitFlags::Video | InitFlags::Events
+         print started(chosen & InitFlags::Events)
+         if (flags_has(chosen, InitFlags::Video)) { print 1 }
+         if (flags_has(chosen, InitFlags::Audio) == false) { print 2 }
+         if (chosen == InitFlags::Video | InitFlags::Events) { print 3 }
+         if (chosen != InitFlags::Audio) { print 4 }
+         print opened(WindowFlags::Resizable | WindowFlags::Fullscreen)
+         0
+     }
+";
+
+const FLAGS_OUTPUT: &str = "32
+48
+16384
+1
+2
+3
+4
+33
+";
+
+#[test]
+fn a_flags_type_names_its_bits() {
+    let Some(output) = compile_and_run("flagsbits", FLAGS) else {
+        return;
+    };
+    assert_eq!(output, FLAGS_OUTPUT);
+}
+
+#[test]
+fn self_hosted_compiles_a_flags_type() {
+    let Some(output) = selfhosted_native_output("shflagsbits", FLAGS) else {
+        return;
+    };
+    assert_eq!(output, FLAGS_OUTPUT);
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shflagsbits_input.frost");
+    std::fs::write(&input, FLAGS).unwrap();
+    let Some(c_source) = self_hosted_emits("shflagsbits", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shflagsbits", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
+// `flags` is a word rather than a keyword, so a program that uses it as a name
+// still compiles. `window_create` takes a parameter called `flags`.
+#[test]
+fn flags_is_still_a_name() {
+    let source = "Mask :: flags u32 { One = 1, Two = 2 }
+         take :: fn(flags: Mask) -> u32 { flags }
+         Holder :: struct { flags: i64 }
+         main :: fn() -> i64 {
+             flags := Holder { flags = 7 }
+             print flags.flags
+             print take(Mask::One | Mask::Two)
+             0
+         }
+";
+    let Some(output) = compile_and_run("flagsname", source) else {
+        return;
+    };
+    assert_eq!(
+        output,
+        "7
+3
+"
+    );
+}
+
+// What the declaration is for is what it refuses. Both compilers refuse the
+// same programs, because the rules are the language's rather than one
+// compiler's.
+#[test]
+fn a_flags_type_refuses_what_is_not_one_of_its_bits() {
+    let prelude = "InitFlags :: flags u32 { Audio = 16, Video = 32 }
+         WindowFlags :: flags u64 { Resizable = 32 }
+         started :: fn(f: InitFlags) -> u32 { f }
+";
+    let cases = [
+        // Another flags type.
+        ("main :: fn() -> i64 { print started(WindowFlags::Resizable)  0 }
+",
+         "built only from the names declared under it"),
+        // A number, which a distinct type would have taken from the context.
+        ("main :: fn() -> i64 { print started(48)  0 }
+",
+         "a number is not one of them"),
+        ("main :: fn() -> i64 { f : InitFlags = 5  print started(f)  0 }
+",
+         "a number is not one of them"),
+        // The representation.
+        ("main :: fn() -> i64 { n : u32 = 48  print started(n)  0 }
+",
+         "built only from the names declared under it"),
+        // Operators a set of bits does not answer.
+        ("main :: fn() -> i64 { print started(InitFlags::Video + InitFlags::Audio)  0 }
+",
+         "is not something two sets answer"),
+        ("main :: fn() -> i64 { print started(InitFlags::Video << 1)  0 }
+",
+         "is not something two sets answer"),
+        ("main :: fn() -> i64 { if (InitFlags::Video < InitFlags::Audio) { print 1 }  0 }
+",
+         "is not something two sets answer"),
+        // Two different sets combined.
+        ("main :: fn() -> i64 { print started(InitFlags::Video | WindowFlags::Resizable)  0 }
+",
+         "combines only with itself"),
+        // A bit the type does not name.
+        ("main :: fn() -> i64 { print started(InitFlags::Gamepad)  0 }
+",
+         "no bit called"),
+        // And the same through flags_has.
+        ("main :: fn() -> i64 { if (flags_has(InitFlags::Video, 32)) { print 1 }  0 }
+",
+         "a number is not one of them"),
+        // And a number written straight into a combination.
+        ("main :: fn() -> i64 { print started(InitFlags::Video | 4)  0 }
+",
+         "a number is not one of them"),
+    ];
+    let compiler = build_self_hosted_compiler("flagsbad");
+    for (index, (body, expected)) in cases.iter().enumerate() {
+        let source = format!("{prelude}{body}");
+        let message = compile_error(&format!("flagsbad{index}"), &source);
+        assert!(
+            message.contains(expected),
+            "case {index} wanted '{expected}' in:
+{message}"
+        );
+        let Some(compiler) = &compiler else {
+            continue;
+        };
+        let directory = std::env::temp_dir();
+        let input = directory.join(format!("frost_flagsbad{index}.frost"));
+        std::fs::write(&input, &source).unwrap();
+        let refused = Command::new(compiler)
+            .env("FROST_CHECK_UNSAFE", "0")
+            .env("FROST_INPUT", &input)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&input);
+        assert!(
+            !refused.status.success(),
+            "the self-hosted compiler accepted case {index}"
+        );
+        let said = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            said.contains(expected),
+            "case {index} wanted '{expected}' from the self-hosted compiler in:
+{said}"
+        );
+    }
+    if let Some(compiler) = compiler {
+        let _ = std::fs::remove_file(&compiler);
+    }
+}
+
 // A call through a function pointer that answers with a struct. A Frost
 // function hands an aggregate back through a trailing out-pointer, and a call
 // through a pointer is the same call, so the signature the call site builds is

@@ -200,6 +200,7 @@ fn read_through_statement(
         // Declarations name types rather than values, so nothing to read.
         Statement::Struct(..)
         | Statement::Enum(..)
+        | Statement::Flags(..)
         | Statement::TypeAlias(..)
         | Statement::Extern { .. }
         | Statement::Declared { .. }

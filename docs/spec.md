@@ -279,8 +279,8 @@ one in the language. `Option :: enum($T: Type) { None, Some { value: T } }` is
 that type, with nothing special about it.
 
 - `distinct T` is a nominal type with `T`'s representation, built only from
-  itself (3.6a)
-  with `T`.
+  itself (3.6a).
+- `flags T { ... }` is a nominal set of named bits over an integer (3.6b).
 - `$T` is a type parameter (chapter 11).
 - `Name<T, ...>` is a generic instantiation (chapter 11).
 
@@ -318,6 +318,74 @@ Arithmetic answers with the distinct type, so adding two lengths gives a length
 and the sum goes back where either operand came from. Everything else about the
 value follows the representation: its size, its alignment, which register it
 travels in, and how it crosses to C.
+
+### 3.6b Flags
+
+`InitFlags :: flags u32 { Video = 32, Audio = 16 }` declares a named set of
+bits. It sits between an enum, which is a closed set of alternatives with
+exactly one of them held, and a `distinct` integer, which combines with `|` but
+has nothing tying loose constants to the type.
+
+```
+InitFlags :: flags u32 {
+    Audio   = 16,
+    Video   = 32,
+    Events  = 16384,
+    Gamepad = 8192,
+}
+
+WindowFlags :: flags u64 {
+    Resizable        = 32,
+    HighPixelDensity = 8192,
+}
+
+chosen := InitFlags::Video | InitFlags::Events
+sdl_init(chosen)
+window_create("Frost", 960, 540,
+    WindowFlags::Resizable | WindowFlags::HighPixelDensity)
+
+if (flags_has(chosen, InitFlags::Video)) { ... }
+```
+
+The representation is written, and is an integer type. These numbers mirror a C
+header's, so a compiler that chose them would be choosing different ones.
+
+Each bit is named under the type: `InitFlags::Video`. There is no prefix
+convention and no loose constants beside the declaration.
+
+A flags type is nominal exactly as a `distinct` type is. An `InitFlags` where a
+`WindowFlags` is wanted is a compile error, and so is a bare `u32`. It is
+*stricter* than a distinct type in one way: a number written where a flags value
+belongs is refused rather than taking the type from the context, because the
+names are the whole content of the declaration.
+
+```
+f : InitFlags = 48        // error, the names are what one is built from
+sdl_init(48)              // error, the same
+```
+
+Two values of the type combine with `|` and narrow with `&`, and both answer
+with the type, which is what lets a combination be passed with nothing written
+down to say what it is. They compare with `==` and `!=`. Everything else is
+refused: adding two sets, ordering them, or shifting one along is a question
+about the number underneath, and the declaration exists to say that the number
+is not what this is. Both operands have to be the same set, so
+`InitFlags::Video | WindowFlags::Resizable` is an error rather than a number
+wearing one of the two names.
+
+`flags_has(set, wanted)` answers whether every bit of `wanted` is on in `set`.
+Both are values of the same flags type.
+
+Reading one as its representation is allowed, and is what a call into C is, the
+same way it is for a distinct type.
+
+`print` of a flags value writes the number. The names are not available at run
+time, and a program that wants to show which bits are set writes that loop
+itself; `flags_has` makes each test one call.
+
+`flags` is not a keyword. It is recognized in a declaration by the shape that
+follows it (a scalar type and then a brace), so a parameter, a local or a field
+may still be called `flags`.
 
 ### 3.7 Strings
 
@@ -1602,6 +1670,9 @@ ConstBody =
       "linear"? "struct" GenericParams? "{" StructFields? "}"
     | "linear"? "enum" GenericParams? "{" EnumVariants? "}"
     | "distinct" Type
+    | "flags" IntegerType "{" FlagBits? "}"
+                                              // IntegerType is one of the
+                                              // i8..usize names of 13.7
     | "extern" "fn" "(" Params? ")" ( "->" Type )?
     | Expr                                    // function literal, or a value
 
@@ -1613,6 +1684,9 @@ StructField   = IDENT ":" Type
 
 EnumVariants  = EnumVariant ( "," EnumVariant )* ","?
 EnumVariant   = IDENT ( "{" ( IDENT ":" Type ( "," IDENT ":" Type )* )? "}" )?
+
+FlagBits      = FlagBit ( "," FlagBit )* ","?
+FlagBit       = IDENT "=" INTEGER
 
 Params        = Param ( "," Param )*
 Param         = ParamMode? "$" IDENT ":" ( "Type" | "type" | "usize" | ProcType )
@@ -1802,7 +1876,8 @@ defer extern import linear distinct type unsafe sizeof
 ```
 
 Primitive type names are `i8 i16 i32 i64 isize u8 u16 u32 u64 usize f32 f64 bool
-str void`. The wildcard is `_`. `test` and `export` are contextual, not reserved.
+str void`. The wildcard is `_`. `test`, `export` and `flags` are contextual, not
+reserved.
 
 ### 14.3 String escapes
 

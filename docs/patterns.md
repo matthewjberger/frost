@@ -76,29 +76,66 @@ stage_order :: fn(s: Stage) -> i64 {
 And do not keep a `STAGE_COUNT :: 3` beside the enum. It is a third thing to
 remember, and the loop that used it can read the bound off the systems it has.
 
+## A set of bits is a `flags` declaration, not a run of constants either
+
+**Antipattern.** The same run of constants, with `|` between them:
+
+```frost
+INIT_VIDEO   :: 32
+INIT_AUDIO   :: 16
+WINDOW_RESIZABLE :: 32
+
+sdl_init(INIT_VIDEO | INIT_AUDIO)
+```
+
+`INIT_VIDEO` and `WINDOW_RESIZABLE` are both 32, so handing one where the other
+belongs is a program that compiles and does the wrong thing. An enum is no help:
+an enum holds exactly one alternative, and this holds several.
+
+**Instead.**
+
+```frost
+InitFlags :: flags u32 {
+    Audio  = 16,
+    Video  = 32,
+    Events = 16384,
+}
+
+sdl_init(InitFlags::Video | InitFlags::Audio)
+if (flags_has(chosen, InitFlags::Video)) { ... }
+```
+
+The numbers are still C's, written down, because they have to be. What changed
+is that the bits are named under a type. Two flags types are not
+interchangeable, a bare number is refused, and `|` over two of one still answers
+with one, so a combination goes straight into a call with no annotation.
+
+The operators a set does not answer are refused: `+`, `<`, `<<` on a bit set are
+questions about the number underneath, and the declaration exists to say that
+the number is not what this is.
+
+This replaced two `distinct` types and nine loose constants in
+`examples/graphics/sdl.frost`, and five families of them in the generated wgpu
+binding.
+
 ## When constants are right
 
-Three cases, all in this repository:
+Two cases, both in this repository:
 
-- **Numbers a foreign header owns.** `examples/graphics/wgpu.frost` has several
-  hundred, because they must be exactly what C says they are. An enum's
-  discriminants are the compiler's to choose, so an enum here would be a
-  different number wearing the right name.
-- **Bit masks.** SDL's `INIT_VIDEO` and `WINDOW_RESIZABLE` are combined with
-  `|`, and an enum is a choice of one alternative rather than a set of several.
-  A `distinct` type is what gives these the safety an enum would have:
-
-  ```frost
-  InitFlags :: distinct u32
-  WindowFlags :: distinct u64
-
-  mut flags : WindowFlags = WINDOW_RESIZABLE | WINDOW_HIGH_PIXEL_DENSITY
-  ```
-
-  Neither can be handed where the other belongs, and `|` over one still answers
-  with one.
+- **Numbers a foreign header owns that are not a set.** The generated wgpu
+  binding has several hundred enum discriminants, because they must be exactly
+  what C says they are and Frost's enum picks its own.
 - **Arithmetic.** The compiler's `STRUCT_BASE`, `POINTER_BASE` and the rest are
   added to indices to make type codes. They are numbers being used as numbers.
+
+## Three forms, one sentence each
+
+- **`enum`** is a closed set of alternatives, exactly one of them held. Matching
+  on one is exhaustive.
+- **`flags`** is a named set of bits over an integer, several of them held at
+  once, combined with `|` and asked with `flags_has`.
+- **`distinct`** is one integer with a meaning: a `Meters`, an `EntityId`. It
+  answers to arithmetic, which the other two do not.
 
 ---
 

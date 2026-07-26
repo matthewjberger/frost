@@ -239,6 +239,7 @@ fn stamp_statement(statement: &mut Statement, file: u32) {
         Statement::With(_, body) => stamp_file(body, file),
         Statement::Struct(..)
         | Statement::Enum(..)
+        | Statement::Flags(..)
         | Statement::TypeAlias(..)
         | Statement::Extern { .. }
         | Statement::Declared { .. }

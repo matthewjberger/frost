@@ -475,6 +475,14 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         }
         // A slice carries its length, and a fixed array's is in its type, so
         // this reads one in constant time either way.
+        if (str_range_eq(p.src, offset, length, "flags_has")) {
+            advance(p)
+            set := parse_expr(p)
+            advance(p)
+            wanted := parse_expr(p)
+            advance(p)
+            return lower_flags_has(p, set, wanted)
+        }
         if (str_range_eq(p.src, offset, length, "slice_len")
             || str_range_eq(p.src, offset, length, "str_len")) {
             advance(p)
@@ -708,6 +716,38 @@ lower_try :: fn(mut p: Parser, value: i64) -> i64 {
         p.name_ok_value,
         8,
     )
+}
+
+// `flags_has(chosen, InitFlags::Video)`: whether every bit on the right is on
+// in the left, which is `(chosen & wanted) == wanted`. The bits looked for are
+// bound to a name first, so however they were written they are computed once
+// rather than twice.
+lower_flags_has :: fn(mut p: Parser, set: i64, wanted: i64) -> i64 {
+    node := arena_at(p.arena, wanted)
+    kind := node.kind
+    // A number or a name is read twice for free, so it is written twice rather
+    // than bound. Keeping what was written is also what lets a diagnostic say
+    // that a number was handed to a set of bits.
+    if (kind == NodeKind::Num) {
+        copy := new_node(p, NodeKind::Num, 0, node.b, node.val)
+        narrowed := new_node(p, NodeKind::Bin, set, wanted, OP_BITAND)
+        return new_node(p, NodeKind::Bin, narrowed, copy, OP_EQ)
+    }
+    if (kind == NodeKind::Var) {
+        copy := new_named_node(p, NodeKind::Var, 0, node.val, node.c)
+        narrowed := new_node(p, NodeKind::Bin, set, wanted, OP_BITAND)
+        return new_node(p, NodeKind::Bin, narrowed, copy, OP_EQ)
+    }
+    name_off := synth_numbered(p, "__bits", p.match_count)
+    name_len := 6 + digits_in(p.match_count)
+    p.match_count = p.match_count + 1
+    bind := new_let_node(p, wanted, name_off, name_len, 0 - 1)
+    arena_push(p.pending,
+        LocalVar { name_off = bind, name_len = bind, ty = 0, slot = 0 })
+    held := new_named_node(p, NodeKind::Var, 0, name_off, name_len)
+    narrowed := new_node(p, NodeKind::Bin, set, held, OP_BITAND)
+    again := new_named_node(p, NodeKind::Var, 0, name_off, name_len)
+    new_node(p, NodeKind::Bin, narrowed, again, OP_EQ)
 }
 
 // A body's last expression is its answer, so in a fallible function that value
@@ -3318,6 +3358,22 @@ parse_variant_value :: fn(mut p: Parser, enum_off: i64, enum_len: i64) -> i64 {
     variant_off := cur_off(p)
     variant_len := cur_len(p)
     advance(p)
+    // `InitFlags::Video` reads the same way and is one bit of a flags type: a
+    // number carrying that type rather than a value with a tag. The type rides
+    // on the node so that what it is does not depend on where it was written.
+    if (is_flags_type(p, enum_ty)) {
+        value := flag_bit_value(p, enum_ty, variant_off, variant_len)
+        if (value < 0) {
+            report_where(p.modules, p.src, variant_off)
+            report("'")
+            report_src(p.src, enum_off, enum_len)
+            report("' names no bit called '")
+            report_src(p.src, variant_off, variant_len)
+            report("'")
+            frost_rt_die()
+        }
+        return new_node(p, NodeKind::Num, 0, enum_ty + 1, value)
+    }
     parse_variant_body(p, enum_ty, enum_off, enum_len, variant_off, variant_len)
 }
 
@@ -3909,6 +3965,53 @@ parse_distinct :: fn(mut p: Parser) {
     )
 }
 
+// `InitFlags :: flags u32 { Video = 32, Audio = 16 }`, a named set of bits with
+// a type of its own. The type is a distinct one over the written integer, so
+// everything that already knows what a distinct type is needs no change, and
+// the names go in the bit table under it. The word is not a keyword, so what
+// says this is a declaration is the shape: the word, a scalar type, a brace.
+parse_flags :: fn(mut p: Parser) {
+    name_offset := cur_off(p)
+    name_length := cur_len(p)
+    advance(p)
+    advance(p)
+    advance(p)
+    repr := parse_type(p)
+    if (is_integer(repr) == false) {
+        report_where(p.modules, p.src, name_offset)
+        report("'")
+        report_src(p.src, name_offset, name_length)
+        report("' is a set of bits, so it is written over an integer type")
+        frost_rt_die()
+    }
+    ty := distinct_type(repr, p.type_aliases.count)
+    arena_push(
+        p.type_aliases,
+        ConstDef { name_off = name_offset, name_len = name_length,
+            value = ty },
+    )
+    advance(p)
+    while (cur(p) != TokenKind::Rbrace && cur(p) != TokenKind::Eof) {
+        bit_off := cur_off(p)
+        bit_len := cur_len(p)
+        advance(p)
+        advance(p)
+        if (cur(p) != TokenKind::Int) {
+            report_where(p.modules, p.src, cur_off(p))
+            report("a bit of '")
+            report_src(p.src, name_offset, name_length)
+            report("' is a number a C header wrote down, written as 'Video = 32'")
+            frost_rt_die()
+        }
+        record_flag_bit(p, ty, bit_off, bit_len, cur_val(p))
+        advance(p)
+        if (cur(p) == TokenKind::Comma) {
+            advance(p)
+        }
+    }
+    advance(p)
+}
+
 // `name :: Type { field = value }`, a constant whose value is a struct. The
 // literal is parsed here and kept as a node; naming the constant anywhere
 // writes that node out again, so the value exists wherever it is used and
@@ -3988,6 +4091,9 @@ parse_program :: fn(mut p: Parser) -> i64 {
             parse_struct(p)
         } else if (third == TokenKind::KwDistinct) {
             parse_distinct(p)
+        } else if (third == TokenKind::Ident && peek_is_word(p, 2, "flags")
+            && peek_kind(p, 4) == TokenKind::Lbrace) {
+            parse_flags(p)
         } else if (third == TokenKind::KwExtern || third == TokenKind::KwSafe) {
             item := parse_extern(p)
             if (head == (0 - 1)) {
