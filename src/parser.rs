@@ -88,6 +88,12 @@ pub struct Parameter {
     // parameter" asks whether the annotation *is* `TypeParam(name)`, so putting
     // the signature there would turn the parameter back into a runtime one.
     pub compile_time_signature: Option<Type>,
+    // `args: $...`, a compile-time list of values. It is not a runtime
+    // parameter: each call has its own count and its own types, and the
+    // specialization takes one ordinary parameter per element. A body iterates
+    // it with `for` and indexes it with a literal, both at expansion time, and
+    // nothing else.
+    pub pack: bool,
 }
 
 impl Display for Parameter {
@@ -2088,6 +2094,7 @@ impl<'a> Parser<'a> {
                     mutable: false,
                     mode,
                     compile_time_signature: None,
+                    pack: false,
                 });
                 if matches!(self.peek_nth(0), Token::Comma) {
                     self.read_token();
@@ -2843,10 +2850,23 @@ impl<'a> Parser<'a> {
                 let name = name.to_string();
                 self.read_token();
 
+                // `args: $...` is a compile-time list of values rather than
+                // a value of some type, so it has no type annotation of its
+                // own: its length and its types arrive with the call.
+                let mut pack = false;
                 let type_annotation =
                     if matches!(self.peek_nth(0), Token::Colon) {
                         self.read_token();
-                        Some(self.parse_type()?)
+                        if matches!(self.peek_nth(0), Token::Dollar)
+                            && matches!(self.peek_nth(1), Token::Ellipsis)
+                        {
+                            self.read_token();
+                            self.read_token();
+                            pack = true;
+                            None
+                        } else {
+                            Some(self.parse_type()?)
+                        }
                     } else {
                         None
                     };
@@ -2857,6 +2877,7 @@ impl<'a> Parser<'a> {
                     mutable: false,
                     mode,
                     compile_time_signature: None,
+                    pack,
                 });
             } else {
                 bail!(
@@ -3230,10 +3251,23 @@ impl<'a> Parser<'a> {
                 let name = name.to_string();
                 self.read_token();
 
+                // `args: $...` is a compile-time list of values rather than
+                // a value of some type, so it has no type annotation of its
+                // own: its length and its types arrive with the call.
+                let mut pack = false;
                 let type_annotation =
                     if matches!(self.peek_nth(0), Token::Colon) {
                         self.read_token();
-                        Some(self.parse_type()?)
+                        if matches!(self.peek_nth(0), Token::Dollar)
+                            && matches!(self.peek_nth(1), Token::Ellipsis)
+                        {
+                            self.read_token();
+                            self.read_token();
+                            pack = true;
+                            None
+                        } else {
+                            Some(self.parse_type()?)
+                        }
                     } else {
                         None
                     };
@@ -3244,6 +3278,7 @@ impl<'a> Parser<'a> {
                     mutable: false,
                     mode,
                     compile_time_signature: None,
+                    pack,
                 });
             } else {
                 bail!(
@@ -3356,6 +3391,7 @@ impl<'a> Parser<'a> {
             mutable: false,
             mode: ParamMode::Read,
             compile_time_signature,
+            pack: false,
         })
     }
 
@@ -4087,6 +4123,7 @@ mod tests {
                     mutable: false,
                     mode: ParamMode::Read,
                     compile_time_signature: None,
+                    pack: false,
                 },
                 Parameter {
                     name: "y".to_string(),
@@ -4094,6 +4131,7 @@ mod tests {
                     mutable: false,
                     mode: ParamMode::Read,
                     compile_time_signature: None,
+                    pack: false,
                 },
             ],
             ReturnSignature::plain(ReturnKind::None),
@@ -4121,6 +4159,7 @@ mod tests {
                     mutable: false,
                     mode: ParamMode::Read,
                     compile_time_signature: None,
+                    pack: false,
                 }],
             ),
             (
@@ -4132,6 +4171,7 @@ mod tests {
                         mutable: false,
                         mode: ParamMode::Read,
                         compile_time_signature: None,
+                        pack: false,
                     },
                     Parameter {
                         name: "y".to_string(),
@@ -4139,6 +4179,7 @@ mod tests {
                         mutable: false,
                         mode: ParamMode::Read,
                         compile_time_signature: None,
+                        pack: false,
                     },
                     Parameter {
                         name: "z".to_string(),
@@ -4146,6 +4187,7 @@ mod tests {
                         mutable: false,
                         mode: ParamMode::Read,
                         compile_time_signature: None,
+                        pack: false,
                     },
                 ],
             ),

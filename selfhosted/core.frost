@@ -6,7 +6,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     CH_LBRACKET, CH_LF, CH_LOWER_A, CH_LOWER_N, CH_LOWER_T, CH_LOWER_Z,
     CH_LPAREN, CH_LT, CH_MINUS, CH_PERCENT, CH_PIPE, CH_PLUS, CH_QUESTION,
     CH_RBRACE, CH_RBRACKET, CH_RPAREN, CH_SEMI, CH_SLASH, CH_SPACE, CH_STAR,
-    CH_TAB, CH_UNDERSCORE, CH_UPPER_A, CH_UPPER_Z, ConstDef, Export,
+    CH_TAB, CH_UNDERSCORE, CH_UPPER_A, CH_UPPER_Z, Alias, ConstDef, Export,
     Cap, Provider,
     GenericFn, GParam, GArg, GBinding, ImportEdge, Instance, LocalVar, Module,
     Rename,
@@ -483,6 +483,12 @@ GenericFn :: struct {
     // it, the same two questions `is_value` and `is_fn` ask of the rest.
     tparam_is_value: i64,
     tparam_is_fn: i64,
+    // The compile-time list this generic takes, by the name it is reached
+    // under, and how many ordinary parameters were written before it. A length
+    // of zero is a generic that takes no list.
+    pack_off: i64,
+    pack_len: i64,
+    pack_fixed: i64,
     xparam_start: i64,
     xparam_count: i64,
     token_start: i64,
@@ -561,6 +567,16 @@ Module :: struct {
     path: ^i8,
     start: i64,
     finish: i64,
+}
+
+// One name standing for another while a body is read again. A compile-time
+// `for` reads its body once per element of the list, and this is what binds the
+// loop's name to the element that copy is for.
+Alias :: struct {
+    from_off: i64,
+    from_len: i64,
+    to_off: i64,
+    to_len: i64,
 }
 
 // One `old as new` of an import. The file that wrote it reads `local` where
@@ -642,6 +658,11 @@ TypeArg :: struct {
     arg: i64,
     xarg_start: i64,
     xarg_count: i64,
+    // Zero for the type arguments written at a call. For what a compile-time
+    // list was given, the generic that took it, plus one. A list's tuple is a
+    // run of ordinary types with nothing to say which parameters they bind, so
+    // it belongs to the one generic whose call made it and to no other.
+    is_pack: i64,
 }
 
 // A local's type binding during code generation. The table is rebuilt per
@@ -733,6 +754,26 @@ Parser :: struct {
     // function, and the ones in scope where a call is being emitted.
     caps: Arena<Cap>,
     providers: Arena<Provider>,
+    // The names in force while a compile-time `for` reads its body again.
+    aliases: Arena<Alias>,
+    // What each name binds while the declaration around it is being parsed.
+    // Only what a compile-time list is given is read from here, and only at the
+    // call that gives it, since that is the one question whose answer has to be
+    // settled before anything else runs. Everything else types a name from the
+    // table the emitters build, which is what it has always done.
+    parse_locals: Arena<LocalVar>,
+    // The run of that table holding the parameters of the declaration being
+    // parsed. An expansion-time `if` asks about a parameter and nothing else,
+    // which is what keeps a body's own `is_float(x)` over a local its own call.
+    parse_param_start: i64,
+    parse_param_end: i64,
+    // The compile-time list this instantiation bound: the parameter's name, and
+    // the run of element types in `gargs`. A length of zero is a template being
+    // read with nothing bound.
+    pack_off: i64,
+    pack_len: i64,
+    pack_start: i64,
+    pack_count: i64,
     gparams: Arena<GParam>,
     // Every `$f: fn(..)` parameter name in the program. A template's body is
     // parsed once before any call to it is seen, so `f(x)` in there names no
@@ -785,6 +826,11 @@ Parser :: struct {
     // The first token of the `where` bound the declaration being parsed
     // carries, or -1.
     bound_token: i64,
+    // The compile-time list the declaration being parsed takes, by name, and
+    // how many ordinary parameters came before it.
+    decl_pack_off: i64,
+    decl_pack_len: i64,
+    decl_pack_fixed: i64,
     // Whether that first parameter was declared as taking a number.
     tparam_is_value: i64,
     last_return_type: i64,

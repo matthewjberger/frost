@@ -85,6 +85,7 @@ pub fn lower_allocation_sources(program: &mut Program) -> Result<()> {
                     mutable: true,
                     mode: ParamMode::Write,
                     compile_time_signature: None,
+                    pack: false,
                 });
             }
             signature.uses.clear();

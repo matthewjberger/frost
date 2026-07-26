@@ -1133,6 +1133,61 @@ This is the only form of bound in the language, and it bounds one parameter kind
 against one signature. It is not a trait, has no coherence or orphan rules, and
 involves no solving.
 
+### 11.1c Compile-time argument lists
+
+A parameter written `args: $...` takes every argument past the parameters
+written before it. It is not a runtime parameter: each call has its own count
+and its own types, and the specialization takes one ordinary parameter per
+element.
+
+```frost
+printall :: fn(args: $...) {
+    for value in args {
+        print value
+    }
+}
+
+printall(1, 2.5, "three")
+```
+
+The list is always last, since what followed it would have nothing to say which
+side of the list it belonged to.
+
+**A `for` over the list unrolls.** The body is written once and compiled once
+per element, with the loop's name standing for that element. There is no loop at
+run time and no index. What a `for` walks decides which of the two it is: a list
+unrolls, and everything else is the ordinary loop of chapter 7.
+
+**`list[K]` names the Kth element.** The index has to be a literal, since which
+element it is has to be known while the body is being expanded. An index past
+what the call gave is an error against the call.
+
+**An `if` over a type predicate is decided at expansion time.** Inside a
+specialization, a condition from the 11.4a vocabulary asked of a parameter is
+answered while the body is expanded, and the branch that cannot run is dropped
+before anything checks it:
+
+```frost
+show :: fn(args: $...) {
+    for value in args {
+        if (is_float(value)) { print_float(value) } else { print_int(value) }
+    }
+}
+```
+
+This is what lets one body serve elements of different types: the branch that
+would not compile for this element is gone rather than skipped.
+
+**Each element is evaluated once**, however many times the unrolled body names
+it, because the specialization takes it as an ordinary parameter and the call
+passes it once.
+
+**What this deliberately is not.** There is no compile-time string parsing, no
+recursion, no unbounded loop, and nothing that reads the world. Every construct
+here iterates a list whose length is known once the generic is instantiated, so
+what expansion costs is bounded by the program's own text. That is the whole
+difference between this and a compile-time interpreter.
+
 ### 11.2 Monomorphization
 
 Generics specialize at compile time. Each concrete instantiation compiles to its

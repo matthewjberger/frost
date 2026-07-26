@@ -119,6 +119,7 @@ fn test_harness(tests: &[(String, String)]) -> Vec<Spanned<Statement>> {
         mutable: false,
         mode: frost::ParamMode::Read,
         compile_time_signature: None,
+        pack: false,
     };
     let external =
         |name: &str, params: Vec<Parameter>, return_type: Option<Type>| {

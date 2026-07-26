@@ -279,10 +279,12 @@ fn build_module_inner(
                 .get(&specialization.generic_name)
                 .expect("specialization references a known generic function")
                 .clone();
-            let parameters: Vec<Parameter> = generic
+            let mut parameters: Vec<Parameter> = generic
                 .parameters
                 .iter()
-                .filter(|parameter| !is_type_parameter(parameter))
+                .filter(|parameter| {
+                    !is_type_parameter(parameter) && !parameter.pack
+                })
                 .map(|parameter| Parameter {
                     name: parameter.name.clone(),
                     type_annotation: parameter.type_annotation.as_ref().map(
@@ -297,6 +299,7 @@ fn build_module_inner(
                     mutable: parameter.mutable,
                     mode: parameter.mode,
                     compile_time_signature: None,
+                    pack: false,
                 })
                 .collect();
             // The bound was checked at the call that asked for this
@@ -317,7 +320,32 @@ fn build_module_inner(
                     .map(|ty| substitute_type(ty, &specialization.subst))
                     .collect(),
             };
+            // A compile-time list becomes ordinary parameters here, one per
+            // element the call gave it, each with the type that argument had.
+            // That is what makes an element a value evaluated once and a name
+            // the unrolled body can use.
+            if let Some((_, elements)) = &specialization.pack {
+                for (name, element) in elements {
+                    parameters.push(Parameter {
+                        name: name.clone(),
+                        type_annotation: Some(element.clone()),
+                        mutable: false,
+                        mode: crate::parser::ParamMode::Read,
+                        compile_time_signature: None,
+                        pack: false,
+                    });
+                }
+            }
             let body = substitute_block(&generic.body, &specialization.subst);
+            // Expansion time: a `for` over the list unrolls, `list[K]` becomes
+            // the Kth element, and an `if` over a type predicate keeps the one
+            // branch that survives. All three are decided here, where the types
+            // are known, and none of them exists afterwards.
+            let body = expand_compile_time(
+                body,
+                specialization.pack.as_ref(),
+                &parameters,
+            )?;
             let (function, requests, anon) = locate_instantiation(
                 builder.lower_function(
                     &specialization.mangled_name,
@@ -881,6 +909,10 @@ struct Specialization {
     // template. This is the line the reader actually wrote.
     requested_at: Position,
     display: String,
+    // The compile-time list this call bound, as the parameters the
+    // specialization took for it, in order. None for a function that has no
+    // list.
+    pack: Option<(String, Vec<(String, Type)>)>,
 }
 
 fn function_type_params(parameters: &[Parameter]) -> Vec<String> {
@@ -893,6 +925,22 @@ fn function_type_params(parameters: &[Parameter]) -> Vec<String> {
 
 fn function_is_generic(parameters: &[Parameter]) -> bool {
     !function_type_params(parameters).is_empty()
+        || parameters.iter().any(|parameter| parameter.pack)
+}
+
+// The compile-time list a function takes, if it takes one. It is the last
+// parameter, since what followed it at a call would have nothing to say which
+// side of the list it belonged to.
+fn pack_parameter(parameters: &[Parameter]) -> Option<&Parameter> {
+    let found = parameters.iter().position(|parameter| parameter.pack)?;
+    Some(&parameters[found])
+}
+
+// The name the nth element of a list takes in a specialization. A list becomes
+// ordinary parameters there, so each element is a name the unrolled body can
+// use and a value the call evaluates once.
+fn pack_element_name(pack: &str, index: usize) -> String {
+    format!("{pack}__{index}")
 }
 
 // Whether an argument bound to a read-mode `$T` parameter should be passed by
@@ -1404,6 +1452,506 @@ fn split_format(text: &str) -> Result<Vec<Option<String>>> {
         pieces.push(Some(current));
     }
     Ok(pieces)
+}
+
+// ---------------------------------------------------------------------------
+// Expansion time.
+//
+// Two constructs are decided while a specialization is being made rather than
+// when it runs: a `for` over a compile-time pack, which unrolls into one copy
+// of its body per element, and an `if` over a type predicate, which keeps the
+// branch that survives and drops the other before anything checks it.
+//
+// Both iterate a list whose length is known once the generic is instantiated.
+// There is no recursion, no unbounded loop, and nothing that reads the world,
+// so what this costs is bounded by the program's own text. That is the whole
+// difference between this and a compile-time interpreter.
+// ---------------------------------------------------------------------------
+
+struct Expansion<'a> {
+    // The pack this specialization bound: its name, and the parameters that
+    // took its elements.
+    pack: Option<&'a (String, Vec<(String, Type)>)>,
+    // What each parameter of the specialization is, so a predicate over one
+    // has an answer.
+    types: HashMap<String, Type>,
+}
+
+fn expand_compile_time(
+    body: Block,
+    pack: Option<&(String, Vec<(String, Type)>)>,
+    parameters: &[Parameter],
+) -> Result<Block> {
+    let mut types = HashMap::new();
+    for parameter in parameters {
+        if let Some(ty) = &parameter.type_annotation {
+            types.insert(parameter.name.clone(), ty.clone());
+        }
+    }
+    let expansion = Expansion { pack, types };
+    expansion.block(body)
+}
+
+impl Expansion<'_> {
+    fn block(&self, block: Block) -> Result<Block> {
+        let mut expanded = Vec::with_capacity(block.len());
+        for statement in block {
+            let position = statement.position;
+            // A `for` over the pack, and an `if` whose condition is answered
+            // here, both stand for several statements or none, so they are
+            // spliced rather than replaced.
+            if let Statement::For(variable, None, iterable, body) =
+                &statement.node
+                && let Some(elements) = self.pack_named(iterable)
+            {
+                for (name, _) in elements {
+                    let bound = substitute_identifier(
+                        Block::from(body.clone()),
+                        variable,
+                        name,
+                    );
+                    expanded.extend(self.block(bound)?);
+                }
+                continue;
+            }
+            if let Statement::Expression(Expression::If(
+                condition,
+                consequence,
+                alternative,
+            )) = &statement.node
+                && let Some(taken) = self.answer(condition)?
+            {
+                let kept = if taken {
+                    Some(consequence.clone())
+                } else {
+                    alternative.clone()
+                };
+                if let Some(kept) = kept {
+                    expanded.extend(self.block(kept)?);
+                }
+                continue;
+            }
+            let node = self.statement(statement.node)?;
+            expanded.push(Spanned { node, position });
+        }
+        Ok(expanded)
+    }
+
+    // The elements of the pack, when this expression names it.
+    fn pack_named(
+        &self,
+        expression: &Expression,
+    ) -> Option<&Vec<(String, Type)>> {
+        let (name, elements) = self.pack?;
+        match expression {
+            Expression::Identifier(named) if named == name => Some(elements),
+            _ => None,
+        }
+    }
+
+    // Whether a condition is one this can answer, and what it answers. `None`
+    // means it is an ordinary condition and stays one.
+    fn answer(&self, condition: &Expression) -> Result<Option<bool>> {
+        match condition {
+            Expression::Prefix(crate::parser::Operator::Not, inner) => {
+                Ok(self.answer(inner)?.map(|held| !held))
+            }
+            Expression::Call(callee, arguments) => {
+                let Expression::Identifier(predicate) = callee.as_ref() else {
+                    return Ok(None);
+                };
+                if arguments.len() != 1 {
+                    return Ok(None);
+                }
+                let Expression::Identifier(subject) = &arguments[0] else {
+                    return Ok(None);
+                };
+                let Some(ty) = self.types.get(subject) else {
+                    return Ok(None);
+                };
+                Ok(type_predicate(predicate, ty))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn statement(&self, statement: Statement) -> Result<Statement> {
+        let expanded = match statement {
+            Statement::Let {
+                name,
+                type_annotation,
+                value,
+                mutable,
+            } => Statement::Let {
+                name,
+                type_annotation,
+                value: self.expression(value)?,
+                mutable,
+            },
+            Statement::Constant(name, value) => {
+                Statement::Constant(name, self.expression(value)?)
+            }
+            Statement::Return(value) => {
+                Statement::Return(self.expression(value)?)
+            }
+            Statement::Expression(value) => {
+                Statement::Expression(self.expression(value)?)
+            }
+            Statement::Print(value, arguments) => {
+                let mut expanded = Vec::with_capacity(arguments.len());
+                for argument in arguments {
+                    expanded.push(self.expression(argument)?);
+                }
+                Statement::Print(self.expression(value)?, expanded)
+            }
+            Statement::Assignment(place, value) => Statement::Assignment(
+                self.expression(place)?,
+                self.expression(value)?,
+            ),
+            Statement::Defer(inner) => {
+                Statement::Defer(Box::new(self.statement(*inner)?))
+            }
+            Statement::For(variable, second, iterable, body) => Statement::For(
+                variable,
+                second,
+                self.expression(iterable)?,
+                self.block(body)?,
+            ),
+            Statement::While(condition, body) => {
+                Statement::While(self.expression(condition)?, self.block(body)?)
+            }
+            Statement::With(capability, body) => {
+                Statement::With(capability, self.block(body)?)
+            }
+            other => other,
+        };
+        Ok(expanded)
+    }
+
+    fn expression(&self, expression: Expression) -> Result<Expression> {
+        // `pack[K]` is the Kth element, which is a parameter of this
+        // specialization. Anything else that names the pack is an error: a
+        // compile-time list is not a value.
+        if let Expression::Index(base, index) = &expression
+            && let Some(elements) = self.pack_named(base)
+        {
+            let Expression::Literal(Literal::Integer(at)) = index.as_ref()
+            else {
+                bail!(
+                    "a compile-time list is indexed by a literal, since which element it is has to be known here"
+                )
+            };
+            let Some((name, _)) =
+                usize::try_from(*at).ok().and_then(|at| elements.get(at))
+            else {
+                bail!(
+                    "this call gave {} value(s) to the list, so there is no element {at}",
+                    elements.len()
+                )
+            };
+            return Ok(Expression::Identifier(name.clone()));
+        }
+        if self.pack_named(&expression).is_some() {
+            bail!(
+                "a compile-time list is iterated with `for` or indexed by a literal, and is not a value of its own"
+            )
+        }
+        let expanded = match expression {
+            Expression::Prefix(operator, inner) => {
+                Expression::Prefix(operator, Box::new(self.expression(*inner)?))
+            }
+            Expression::Infix(left, operator, right) => Expression::Infix(
+                Box::new(self.expression(*left)?),
+                operator,
+                Box::new(self.expression(*right)?),
+            ),
+            Expression::If(condition, consequence, alternative) => {
+                Expression::If(
+                    Box::new(self.expression(*condition)?),
+                    self.block(consequence)?,
+                    match alternative {
+                        Some(block) => Some(self.block(block)?),
+                        None => None,
+                    },
+                )
+            }
+            Expression::Call(callee, arguments) => {
+                let mut expanded = Vec::with_capacity(arguments.len());
+                for argument in arguments {
+                    expanded.push(self.expression(argument)?);
+                }
+                Expression::Call(Box::new(self.expression(*callee)?), expanded)
+            }
+            Expression::Index(base, index) => Expression::Index(
+                Box::new(self.expression(*base)?),
+                Box::new(self.expression(*index)?),
+            ),
+            Expression::FieldAccess(base, field) => Expression::FieldAccess(
+                Box::new(self.expression(*base)?),
+                field,
+            ),
+            Expression::AddressOf(inner) => {
+                Expression::AddressOf(Box::new(self.expression(*inner)?))
+            }
+            Expression::Borrow(inner) => {
+                Expression::Borrow(Box::new(self.expression(*inner)?))
+            }
+            Expression::BorrowMut(inner) => {
+                Expression::BorrowMut(Box::new(self.expression(*inner)?))
+            }
+            Expression::Dereference(inner) => {
+                Expression::Dereference(Box::new(self.expression(*inner)?))
+            }
+            Expression::Try(inner) => {
+                Expression::Try(Box::new(self.expression(*inner)?))
+            }
+            Expression::Unsafe(body) => Expression::Unsafe(self.block(body)?),
+            Expression::UnsafeFn(inner) => {
+                Expression::UnsafeFn(Box::new(self.expression(*inner)?))
+            }
+            Expression::StructInit(name, fields) => {
+                let mut expanded = Vec::with_capacity(fields.len());
+                for (field, value) in fields {
+                    expanded.push((field, self.expression(value)?));
+                }
+                Expression::StructInit(name, expanded)
+            }
+            Expression::EnumVariantInit(name, variant, fields) => {
+                let mut expanded = Vec::with_capacity(fields.len());
+                for (field, value) in fields {
+                    expanded.push((field, self.expression(value)?));
+                }
+                Expression::EnumVariantInit(name, variant, expanded)
+            }
+            Expression::Tuple(items) => {
+                let mut expanded = Vec::with_capacity(items.len());
+                for item in items {
+                    expanded.push(self.expression(item)?);
+                }
+                Expression::Tuple(expanded)
+            }
+            Expression::Range(start, end, inclusive) => Expression::Range(
+                Box::new(self.expression(*start)?),
+                Box::new(self.expression(*end)?),
+                inclusive,
+            ),
+            Expression::Switch(scrutinee, cases) => {
+                let mut expanded = Vec::with_capacity(cases.len());
+                for case in cases {
+                    expanded.push(crate::parser::SwitchCase {
+                        pattern: case.pattern,
+                        body: self.block(case.body)?,
+                    });
+                }
+                Expression::Switch(
+                    Box::new(self.expression(*scrutinee)?),
+                    expanded,
+                )
+            }
+            Expression::ArrayRepeat(value, count) => Expression::ArrayRepeat(
+                Box::new(self.expression(*value)?),
+                count,
+            ),
+            Expression::Literal(Literal::Array(elements)) => {
+                let mut expanded = Vec::with_capacity(elements.len());
+                for element in elements {
+                    expanded.push(self.expression(element)?);
+                }
+                Expression::Literal(Literal::Array(expanded))
+            }
+            other => other,
+        };
+        Ok(expanded)
+    }
+}
+
+// One name for another, through a block. This is what binds a `for` variable to
+// the element the copy is for.
+fn substitute_identifier(block: Block, from: &str, to: &str) -> Block {
+    let mut subst = HashMap::new();
+    subst.insert(from.to_string(), to.to_string());
+    rename_block(block, &subst)
+}
+
+fn rename_block(block: Block, subst: &HashMap<String, String>) -> Block {
+    block
+        .into_iter()
+        .map(|statement| Spanned {
+            node: rename_statement(statement.node, subst),
+            position: statement.position,
+        })
+        .collect()
+}
+
+fn rename_statement(
+    statement: Statement,
+    subst: &HashMap<String, String>,
+) -> Statement {
+    match statement {
+        Statement::Let {
+            name,
+            type_annotation,
+            value,
+            mutable,
+        } => Statement::Let {
+            name,
+            type_annotation,
+            value: rename_expression(value, subst),
+            mutable,
+        },
+        Statement::Constant(name, value) => {
+            Statement::Constant(name, rename_expression(value, subst))
+        }
+        Statement::Return(value) => {
+            Statement::Return(rename_expression(value, subst))
+        }
+        Statement::Expression(value) => {
+            Statement::Expression(rename_expression(value, subst))
+        }
+        Statement::Print(value, arguments) => Statement::Print(
+            rename_expression(value, subst),
+            arguments
+                .into_iter()
+                .map(|argument| rename_expression(argument, subst))
+                .collect(),
+        ),
+        Statement::Assignment(place, value) => Statement::Assignment(
+            rename_expression(place, subst),
+            rename_expression(value, subst),
+        ),
+        Statement::Defer(inner) => {
+            Statement::Defer(Box::new(rename_statement(*inner, subst)))
+        }
+        Statement::For(variable, second, iterable, body) => Statement::For(
+            variable,
+            second,
+            rename_expression(iterable, subst),
+            rename_block(body, subst),
+        ),
+        Statement::While(condition, body) => Statement::While(
+            rename_expression(condition, subst),
+            rename_block(body, subst),
+        ),
+        Statement::With(capability, body) => {
+            Statement::With(capability, rename_block(body, subst))
+        }
+        other => other,
+    }
+}
+
+fn rename_expression(
+    expression: Expression,
+    subst: &HashMap<String, String>,
+) -> Expression {
+    match expression {
+        Expression::Identifier(name) => match subst.get(&name) {
+            Some(renamed) => Expression::Identifier(renamed.clone()),
+            None => Expression::Identifier(name),
+        },
+        Expression::Prefix(operator, inner) => Expression::Prefix(
+            operator,
+            Box::new(rename_expression(*inner, subst)),
+        ),
+        Expression::Infix(left, operator, right) => Expression::Infix(
+            Box::new(rename_expression(*left, subst)),
+            operator,
+            Box::new(rename_expression(*right, subst)),
+        ),
+        Expression::If(condition, consequence, alternative) => Expression::If(
+            Box::new(rename_expression(*condition, subst)),
+            rename_block(consequence, subst),
+            alternative.map(|block| rename_block(block, subst)),
+        ),
+        Expression::Call(callee, arguments) => Expression::Call(
+            Box::new(rename_expression(*callee, subst)),
+            arguments
+                .into_iter()
+                .map(|argument| rename_expression(argument, subst))
+                .collect(),
+        ),
+        Expression::Index(base, index) => Expression::Index(
+            Box::new(rename_expression(*base, subst)),
+            Box::new(rename_expression(*index, subst)),
+        ),
+        Expression::FieldAccess(base, field) => Expression::FieldAccess(
+            Box::new(rename_expression(*base, subst)),
+            field,
+        ),
+        Expression::AddressOf(inner) => {
+            Expression::AddressOf(Box::new(rename_expression(*inner, subst)))
+        }
+        Expression::Borrow(inner) => {
+            Expression::Borrow(Box::new(rename_expression(*inner, subst)))
+        }
+        Expression::BorrowMut(inner) => {
+            Expression::BorrowMut(Box::new(rename_expression(*inner, subst)))
+        }
+        Expression::Dereference(inner) => {
+            Expression::Dereference(Box::new(rename_expression(*inner, subst)))
+        }
+        Expression::Try(inner) => {
+            Expression::Try(Box::new(rename_expression(*inner, subst)))
+        }
+        Expression::Unsafe(body) => {
+            Expression::Unsafe(rename_block(body, subst))
+        }
+        Expression::UnsafeFn(inner) => {
+            Expression::UnsafeFn(Box::new(rename_expression(*inner, subst)))
+        }
+        Expression::StructInit(name, fields) => Expression::StructInit(
+            name,
+            fields
+                .into_iter()
+                .map(|(field, value)| (field, rename_expression(value, subst)))
+                .collect(),
+        ),
+        Expression::EnumVariantInit(name, variant, fields) => {
+            Expression::EnumVariantInit(
+                name,
+                variant,
+                fields
+                    .into_iter()
+                    .map(|(field, value)| {
+                        (field, rename_expression(value, subst))
+                    })
+                    .collect(),
+            )
+        }
+        Expression::Tuple(items) => Expression::Tuple(
+            items
+                .into_iter()
+                .map(|item| rename_expression(item, subst))
+                .collect(),
+        ),
+        Expression::Range(start, end, inclusive) => Expression::Range(
+            Box::new(rename_expression(*start, subst)),
+            Box::new(rename_expression(*end, subst)),
+            inclusive,
+        ),
+        Expression::Switch(scrutinee, cases) => Expression::Switch(
+            Box::new(rename_expression(*scrutinee, subst)),
+            cases
+                .into_iter()
+                .map(|case| crate::parser::SwitchCase {
+                    pattern: case.pattern,
+                    body: rename_block(case.body, subst),
+                })
+                .collect(),
+        ),
+        Expression::ArrayRepeat(value, count) => Expression::ArrayRepeat(
+            Box::new(rename_expression(*value, subst)),
+            count,
+        ),
+        Expression::Literal(Literal::Array(elements)) => {
+            Expression::Literal(Literal::Array(
+                elements
+                    .into_iter()
+                    .map(|element| rename_expression(element, subst))
+                    .collect(),
+            ))
+        }
+        other => other,
+    }
 }
 
 fn is_generic_instance(name: &str) -> bool {
@@ -4127,7 +4675,14 @@ impl<'a> FunctionLowering<'a> {
             .expect("generic function exists")
             .clone();
 
-        if arguments.len() != generic.parameters.len() {
+        // A compile-time list takes every argument past the parameters written
+        // before it, so a call may give more arguments than there are
+        // parameters, and one fewer when the list is empty.
+        let packed = pack_parameter(&generic.parameters).is_some();
+        let fixed = generic.parameters.len() - usize::from(packed);
+        if (packed && arguments.len() < fixed)
+            || (!packed && arguments.len() != generic.parameters.len())
+        {
             bail!(
                 "native backend: generic function '{name}' expects {} argument(s) but {} were given",
                 generic.parameters.len(),
@@ -4153,6 +4708,11 @@ impl<'a> FunctionLowering<'a> {
         for (index, (parameter, argument)) in
             generic.parameters.iter().zip(arguments).enumerate()
         {
+            // The list is last, and what it took is lowered below. Nothing
+            // after it is a parameter of its own.
+            if parameter.pack {
+                break;
+            }
             if is_type_parameter(parameter) {
                 let Expression::TypeValue(ty) = argument else {
                     bail!(
@@ -4358,35 +4918,70 @@ impl<'a> FunctionLowering<'a> {
             }
         }
 
-        let value_parameter_types: Vec<Type> = generic
+        // Every argument the list took, lowered as a value. The specialization
+        // takes one ordinary parameter for each, so each is evaluated once
+        // however many times the unrolled body names it.
+        let mut pack_elements: Vec<(String, Type)> = Vec::new();
+        if let Some(parameter) = pack_parameter(&generic.parameters) {
+            for (index, argument) in arguments[fixed..].iter().enumerate() {
+                let (operand, value_type) =
+                    self.lower_expression(argument, None)?;
+                pack_elements.push((
+                    pack_element_name(&parameter.name, index),
+                    value_type.clone(),
+                ));
+                plans.push(ArgPlan::Value(operand, value_type));
+            }
+        }
+
+        let mut value_parameter_types: Vec<Type> = generic
             .parameters
             .iter()
-            .filter(|parameter| !is_type_parameter(parameter))
+            .filter(|parameter| {
+                !is_type_parameter(parameter) && !parameter.pack
+            })
             .map(|parameter| {
                 substitute_type(&parameter_type(parameter), &subst)
             })
             .collect();
+        for (_, element) in &pack_elements {
+            value_parameter_types.push(element.clone());
+        }
         let return_type = generic
             .return_sig
             .to_type()
             .map(|ty| substitute_type(&ty, &subst))
             .unwrap_or(Type::Void);
-        let mangled_name =
+        let mut mangled_name =
             mangle_specialization(name, &generic.type_params, &subst);
+        // What the list was given is part of what makes this specialization the
+        // one it is, so its element types are part of the name.
+        for (_, element) in &pack_elements {
+            mangled_name.push('_');
+            mangled_name.push_str(&sanitize_identifier(&element.to_string()));
+        }
+        let mut display =
+            describe_specialization(name, &generic.type_params, &subst);
+        if !pack_elements.is_empty() {
+            let written: Vec<String> = pack_elements
+                .iter()
+                .map(|(_, element)| element.to_string())
+                .collect();
+            display.push_str(&format!("({})", written.join(", ")));
+        }
 
         self.specializations.push(Specialization {
             generic_name: name.to_string(),
             mangled_name: mangled_name.clone(),
             requested_at: self.current_position,
-            display: describe_specialization(
-                name,
-                &generic.type_params,
-                &subst,
-            ),
+            display,
             subst,
             // Stamped by whoever drains these, which is the only place that
             // knows which module's lowering produced them.
             requested_by: 0,
+            pack: pack_parameter(&generic.parameters).map(|parameter| {
+                (parameter.name.clone(), pack_elements.clone())
+            }),
         });
 
         let mut lowered = Vec::with_capacity(plans.len());

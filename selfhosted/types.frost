@@ -2,14 +2,19 @@
 // expression types, and the concrete return type of a generic call.
 
 import "core.frost"
+import "lexer.frost"
 import "imports.frost"
 import "names.frost"
 
-export call_ret_type, call_type_args, collect_type_args, fn_index_of,
+export call_ret_type, call_type_args, call_args_for, collect_type_args,
+    fn_index_of, note_type_args, takes_pack, pack_call_args,
+    is_type_predicate, predicate_holds, record_parse_local,
+    parse_local_type, parse_param_type,
     fn_proc_type, bundle_field_fn,
     count_value_args, field_type, generic_fn_of, is_linear_type, is_moved,
     local_exists, lookup_local, lower_enum_compare, nth_param_by_value,
-    nth_param_type, nth_value_arg, param_node_by_value,
+    nth_param_type, nth_value_arg, nth_param_auto_borrows,
+    param_node_by_value,
     record_local, record_mono_ret, type_cache_prepare, type_of,
     types_compatible, value_fits, untyped_literal
 
@@ -119,6 +124,25 @@ param_node_by_value :: fn(mut p: Parser, param_node: i64) -> bool {
             return true
         }
         entry = entry + 1
+    }
+    false
+}
+
+// Whether the nth parameter borrows what it is given, so the call site is what
+// takes the address. An aggregate is already reached by address; a scalar is
+// not, and this is what says so.
+nth_param_auto_borrows :: fn(mut p: Parser, params: i64, n: i64) -> bool {
+    mut id := params
+    mut index : i64 = 0
+    while (id != (0 - 1)) {
+        node := arena_at(p.arena, id)
+        next_id := node.next
+        borrows := node.a
+        if (index == n) {
+            return borrows == 1
+        }
+        index = index + 1
+        id = next_id
     }
     false
 }
@@ -520,6 +544,16 @@ generic_fn_of :: fn(mut p: Parser, fn_index: i64) -> i64 {
 // argument inferred from the first runtime argument whose type is a generic
 // instance. The first argument is returned. Any beyond it are left in the
 // `gargs` arena at p.call_xarg_start for p.call_xarg_count entries.
+// The tuple a call names, whichever kind of generic the callee is. A callee
+// taking a compile-time list is keyed by what that list was given; every other
+// one by the type arguments written at the call.
+call_args_for :: fn(mut p: Parser, head: i64, fn_index: i64) -> i64 {
+    if (pack_call_args(p, head, fn_index)) {
+        return TY_I64
+    }
+    call_type_args(p, head)
+}
+
 call_type_args :: fn(mut p: Parser, head: i64) -> i64 {
     mut count : i64 = 0
     mut first : i64 = TY_I64
@@ -613,7 +647,8 @@ record_mono_ret :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
 // call is inferred from its arguments, and out here, away from the function the
 // call sits in, there is no local to infer from. A generic is tried against
 // every tuple and `instance_fits` says which pairings are real.
-note_type_args :: fn(mut p: Parser, arg: i64, xarg_start: i64, xarg_count: i64) {
+note_type_args :: fn(mut p: Parser, arg: i64, xarg_start: i64, xarg_count: i64,
+    is_pack: i64) {
     if (arg < 0 || arg == TY_PARAM) {
         return
     }
@@ -634,28 +669,35 @@ note_type_args :: fn(mut p: Parser, arg: i64, xarg_start: i64, xarg_count: i64) 
     while (i < p.type_args.count) {
         entry := arena_at(p.type_args, i)
         if (entry.arg == arg && entry.xarg_count == xarg_count
+            && entry.is_pack == is_pack
             && gargs_equal(p, entry.xarg_start, xarg_start, xarg_count)) {
             return
         }
         i = i + 1
     }
     arena_push(p.type_args, TypeArg { arg = arg, xarg_start = xarg_start,
-        xarg_count = xarg_count })
+        xarg_count = xarg_count, is_pack = is_pack })
 }
 
 collect_type_args :: fn(mut p: Parser) {
     mut i : i64 = 0
     while (i < p.instances.count) {
         entry := arena_at(p.instances, i)
-        note_type_args(p, entry.arg, entry.xarg_start, entry.xarg_count)
+        note_type_args(p, entry.arg, entry.xarg_start, entry.xarg_count, 0)
         i = i + 1
     }
     i = 0
     while (i < p.arena.count) {
         node := arena_at(p.arena, i)
         if (node.kind == NodeKind::Call && generic_fn_of(p, node.val) >= 0) {
-            arg := call_type_args(p, node.a)
-            note_type_args(p, arg, p.call_xarg_start, p.call_xarg_count)
+            // A call to a generic taking a compile-time list was noted where it
+            // was written, since what the list was given is the type of each
+            // argument and only the parse has the names in scope to say what
+            // those are.
+            if (takes_pack(p, node.val) == false) {
+                arg := call_type_args(p, node.a)
+                note_type_args(p, arg, p.call_xarg_start, p.call_xarg_count, 0)
+            }
         }
         i = i + 1
     }
@@ -760,6 +802,153 @@ fn_proc_type :: fn(mut p: Parser, fn_index: i64) -> i64 {
     proc_of(p, ret, param_start, count)
 }
 
+// Whether a name is one of the type predicates, and what it answers of a type.
+// The vocabulary is fixed and closed (spec 11.4a): every one of these is a
+// question the compiler answers for itself to decide what to emit. Two things
+// ask it, a `where` clause at a call and an expansion-time `if` in an unrolled
+// body, and they ask the same one so the two cannot drift.
+is_type_predicate :: fn(src: ^i8, off: i64, len: i64) -> bool {
+    str_range_eq(src, off, len, "is_numeric")
+        || str_range_eq(src, off, len, "is_integer")
+        || str_range_eq(src, off, len, "is_float")
+        || str_range_eq(src, off, len, "is_struct")
+        || str_range_eq(src, off, len, "is_array")
+        || str_range_eq(src, off, len, "is_slice")
+        || str_range_eq(src, off, len, "is_pointer")
+}
+
+predicate_holds :: fn(mut p: Parser, off: i64, len: i64, ty: i64) -> i64 {
+    if (str_range_eq(p.src, off, len, "is_numeric")) {
+        if (is_integer(ty) || is_float(ty)) { return 1 }
+        return 0
+    }
+    if (str_range_eq(p.src, off, len, "is_integer")) {
+        if (is_integer(ty)) { return 1 }
+        return 0
+    }
+    if (str_range_eq(p.src, off, len, "is_float")) {
+        if (is_float(ty)) { return 1 }
+        return 0
+    }
+    if (str_range_eq(p.src, off, len, "is_struct")) {
+        if (is_struct_ty(ty)) { return 1 }
+        return 0
+    }
+    if (str_range_eq(p.src, off, len, "is_array")) {
+        if (is_array_ty(ty) && is_slice_ty(p, ty) == false) { return 1 }
+        return 0
+    }
+    if (str_range_eq(p.src, off, len, "is_slice")) {
+        if (is_array_ty(ty) && is_slice_ty(p, ty)) { return 1 }
+        return 0
+    }
+    if (str_range_eq(p.src, off, len, "is_pointer")) {
+        if (is_pointer(ty)) { return 1 }
+        return 0
+    }
+    0 - 1
+}
+
+// Record what a name binds for the rest of this declaration's parse.
+record_parse_local :: fn(mut p: Parser, off: i64, len: i64, ty: i64) {
+    arena_push(p.parse_locals, LocalVar { name_off = off, name_len = len,
+        ty = ty })
+}
+
+// The type a name binds to in the declaration being parsed, or -1 when nothing
+// here names it. The last binding wins, the same rule the emitters' table has.
+parse_local_type :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    mut i : i64 = p.parse_locals.count
+    while (i > 0) {
+        i = i - 1
+        entry := arena_at(p.parse_locals, i)
+        if (entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)) {
+            return entry.ty
+        }
+    }
+    0 - 1
+}
+
+// The same, over the parameters of the declaration being parsed and nothing
+// else. What an expansion-time `if` may ask about is a parameter, since that is
+// what an instantiation decides and a local is not.
+parse_param_type :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    mut i : i64 = p.parse_param_end
+    while (i > p.parse_param_start) {
+        i = i - 1
+        entry := arena_at(p.parse_locals, i)
+        if (entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)) {
+            return entry.ty
+        }
+    }
+    0 - 1
+}
+
+// The type of one argument given to a compile-time list. A name is what the
+// declaration being parsed bound it to; anything else is derived the ordinary
+// way.
+pack_arg_type :: fn(mut p: Parser, value: i64) -> i64 {
+    node := arena_at(p.arena, value)
+    if (node.kind == NodeKind::Var) {
+        held := parse_local_type(p, node.val, node.c)
+        if (held >= 0) {
+            return held
+        }
+    }
+    type_of(p, value)
+}
+
+// Whether a callee takes a compile-time list.
+takes_pack :: fn(mut p: Parser, fn_index: i64) -> bool {
+    gi := generic_fn_of(p, fn_index)
+    if (gi < 0) {
+        return false
+    }
+    gfn := arena_at(p.generic_fns, gi)
+    gfn.pack_len > 0
+}
+
+// The argument tuple a call to a generic names, when the callee takes a
+// compile-time list. The tuple is the type of every argument past the ordinary
+// parameters, in order, which is what makes two calls giving different types
+// two specializations. Answers false when the callee takes no list, leaving the
+// ordinary path to work out the tuple.
+pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
+    gi := generic_fn_of(p, fn_index)
+    if (gi < 0) {
+        return false
+    }
+    gfn := arena_at(p.generic_fns, gi)
+    pack_len := gfn.pack_len
+    fixed := gfn.pack_fixed
+    if (pack_len == 0) {
+        return false
+    }
+    xstart := p.gargs.count
+    mut count : i64 = 0
+    mut index : i64 = 0
+    mut id := args
+    while (id != (0 - 1)) {
+        node := arena_at(p.arena, id)
+        value := node.a
+        next_id := node.next
+        vnode := arena_at(p.arena, value)
+        if (vnode.kind != NodeKind::TypeVal) {
+            if (index >= fixed) {
+                arena_push(p.gargs, GArg { value = pack_arg_type(p, value) })
+                count = count + 1
+            }
+            index = index + 1
+        }
+        id = next_id
+    }
+    p.call_xarg_start = xstart
+    p.call_xarg_count = count
+    true
+}
+
 call_ret_type :: fn(mut p: Parser, args: i64, fn_index: i64) -> i64 {
     sym := arena_at(p.fns, fn_index)
     // A call through a local of function-pointer type is indirect and answers
@@ -771,7 +960,7 @@ call_ret_type :: fn(mut p: Parser, args: i64, fn_index: i64) -> i64 {
         }
     }
     if (generic_fn_of(p, fn_index) >= 0) {
-        arg := call_type_args(p, args)
+        arg := call_args_for(p, args, fn_index)
         return mono_ret_type(p, fn_index, arg, p.call_xarg_start,
             p.call_xarg_count)
     }

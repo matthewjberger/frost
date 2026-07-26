@@ -9103,6 +9103,9 @@ fn cranelift_and_c_backends_agree() {
         ("diff_bundle", CAPABILITY_BUNDLE),
         ("diff_composed", COMPOSED_BUNDLES),
         ("diff_linenum", LINEAR_ENUM),
+        ("diff_packlist", COMPILE_TIME_LIST),
+        ("diff_packempty", EMPTY_LIST),
+        ("diff_mutscalar", MUT_SCALAR_PARAMETER),
         ("diff_failure", FAILURE_SET_PARSE),
         ("diff_bracedarm", BRACED_ARMS),
     ];
@@ -10416,6 +10419,228 @@ fn a_dropped_linear_enum_is_refused() {
     assert!(
         message.contains("linear"),
         "expected the dropped resource to be named, got: {message}"
+    );
+}
+
+// A `mut` parameter is the caller's value whatever its type: the signature
+// holds a pointer, the body reads and writes through it, and the call site
+// takes the address. An aggregate already travels as its address, so the rule
+// is only visible on a scalar, which is where it used to be missing.
+const MUT_SCALAR_PARAMETER: &str = r#"
+bump :: fn(mut n: i64) {
+    n = n + 1
+}
+
+double :: fn(mut n: i64) -> i64 {
+    n = n * 2
+    n
+}
+
+take :: fn(v: i64) { print v }
+
+main :: fn() -> i64 {
+    mut counter : i64 = 0
+    bump(counter)
+    print counter
+    bump(counter)
+    print counter
+    print double(counter)
+    print counter
+    take(double(counter))
+    print counter
+    0
+}
+"#;
+
+#[test]
+fn a_mut_scalar_parameter_writes_through_to_the_caller() {
+    let Some(output) = compile_and_run("mutscalarparam", MUT_SCALAR_PARAMETER)
+    else {
+        return;
+    };
+    assert_eq!(output, "1\n2\n4\n4\n8\n8\n");
+}
+
+#[test]
+fn self_hosted_writes_through_a_mut_scalar_parameter() {
+    let Some(output) =
+        selfhosted_native_output("shmutscalarparam", MUT_SCALAR_PARAMETER)
+    else {
+        return;
+    };
+    assert_eq!(output, "1\n2\n4\n4\n8\n8\n");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shmutscalar_input.frost");
+    std::fs::write(&input, MUT_SCALAR_PARAMETER).unwrap();
+    let Some(c_source) = self_hosted_emits("shmutscalar", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shmutscalar", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
+// A compile-time argument list. `args: $...` takes as many arguments as the
+// call gives it, of whatever types they are, and the specialization takes one
+// ordinary parameter per element. A `for` over the list unrolls into one copy
+// of its body per element, `list[K]` names the Kth, and an `if` over a type
+// predicate keeps the branch that survives for that element and drops the
+// other before anything checks it.
+const COMPILE_TIME_LIST: &str = r#"
+printall :: fn(args: $...) {
+    for value in args {
+        print value
+    }
+}
+
+show :: fn(args: $...) {
+    for value in args {
+        if (is_float(value)) { print 1 } else { print 0 }
+        print value
+    }
+}
+
+first :: fn(args: $...) -> i64 {
+    args[0]
+}
+
+count :: fn(label: i64, args: $...) -> i64 {
+    mut total := label
+    for value in args { total = total + 1 }
+    total
+}
+
+main :: fn() -> i64 {
+    printall(1, 2, 3)
+    printall(7)
+    show(4, 2.5, 9)
+    print first(11, 22)
+    print count(100, 1, 2, 3, 4)
+    print count(100)
+    0
+}
+"#;
+
+#[test]
+fn a_compile_time_list_unrolls_indexes_and_prunes() {
+    let Some(output) = compile_and_run("packlist", COMPILE_TIME_LIST) else {
+        return;
+    };
+    assert_eq!(output, "1\n2\n3\n7\n0\n4\n1\n2.5\n0\n9\n11\n104\n100\n");
+}
+
+#[test]
+fn self_hosted_unrolls_a_compile_time_list() {
+    let Some(output) =
+        selfhosted_native_output("shpacklist", COMPILE_TIME_LIST)
+    else {
+        return;
+    };
+    assert_eq!(output, "1\n2\n3\n7\n0\n4\n1\n2.5\n0\n9\n11\n104\n100\n");
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shpacklist_input.frost");
+    std::fs::write(&input, COMPILE_TIME_LIST).unwrap();
+    let Some(c_source) = self_hosted_emits("shpacklist", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shpacklist", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
+// Two calls giving different types are two specializations, and each element is
+// evaluated once however many times the unrolled body names it.
+const LIST_SPECIALIZES: &str = r#"
+bump :: fn(mut n: i64) -> i64 {
+    n = n + 1
+    n
+}
+
+twice :: fn(args: $...) {
+    for value in args {
+        print value
+        print value
+    }
+}
+
+main :: fn() -> i64 {
+    mut counter : i64 = 0
+    twice(bump(counter))
+    print counter
+    twice(1.5)
+    twice(3, 4)
+    0
+}
+"#;
+
+#[test]
+fn a_list_element_is_evaluated_once() {
+    let Some(output) = compile_and_run("packonce", LIST_SPECIALIZES) else {
+        return;
+    };
+    assert_eq!(output, "1\n1\n1\n1.5\n1.5\n3\n3\n4\n4\n");
+}
+
+#[test]
+fn self_hosted_evaluates_a_list_element_once() {
+    let Some(output) = selfhosted_native_output("shpackonce", LIST_SPECIALIZES)
+    else {
+        return;
+    };
+    assert_eq!(output, "1\n1\n1\n1.5\n1.5\n3\n3\n4\n4\n");
+}
+
+// An empty list is a list: the `for` over it keeps nothing, and the call gives
+// the parameters before it and stops.
+const EMPTY_LIST: &str = r#"
+tally :: fn(base: i64, args: $...) -> i64 {
+    mut total := base
+    for value in args { total = total + value }
+    total
+}
+
+main :: fn() -> i64 {
+    print tally(10)
+    print tally(10, 1, 2)
+    0
+}
+"#;
+
+#[test]
+fn an_empty_compile_time_list_keeps_nothing() {
+    let Some(output) = compile_and_run("packempty", EMPTY_LIST) else {
+        return;
+    };
+    assert_eq!(output, "10\n13\n");
+}
+
+#[test]
+fn self_hosted_keeps_nothing_for_an_empty_list() {
+    let Some(output) = selfhosted_native_output("shpackempty", EMPTY_LIST)
+    else {
+        return;
+    };
+    assert_eq!(output, "10\n13\n");
+}
+
+// Which element `list[K]` is has to be known where it is written, so an index
+// that is not a literal is refused rather than read at run time.
+#[test]
+fn a_list_indexed_by_a_variable_is_refused() {
+    let source = "pick :: fn(args: $...) -> i64 {\n\
+                  \x20   mut at : i64 = 0\n\
+                  \x20   args[at]\n}\n\
+                  main :: fn() -> i64 { pick(1, 2) }\n";
+    let message = compile_error("packindexvar", source);
+    assert!(
+        message.contains("literal"),
+        "expected the message to say the index has to be a literal, got: {message}"
     );
 }
 
