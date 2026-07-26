@@ -55,16 +55,28 @@ import "math.frost"
 // wgpu answers asynchronously even when the answer is already known, so the
 // callback writes what it was given into a slot this program owns and the
 // caller pumps until the slot fills. `userdata1` is that slot's address.
-Slot :: struct { handle: ^u8, ready: i64 }
+// One per kind of handle, because a handle has a type now: an adapter cannot
+// be written where a device belongs, and the slot says which it holds.
+AdapterSlot :: struct { handle: Adapter, ready: i64 }
+DeviceSlot :: struct { handle: Device, ready: i64 }
 
 // `value message: StringView` is what wgpu passes here: the struct itself, not
 // a pointer to it. Windows hands a sixteen-byte struct to a callee as a pointer
 // to a copy, so declaring it `^u8` worked there and would have read `userdata1`
 // out of the wrong register on System V, where the struct takes two.
-fill_slot :: fn(status: u32, handle: ^u8, value message: StringView,
+fill_adapter :: fn(status: u32, handle: Adapter, value message: StringView,
     userdata1: ^u8, userdata2: ^u8) {
-    slot := unsafe { ptr_cast($Slot, userdata1) }
+    slot := unsafe { ptr_cast($AdapterSlot, userdata1) }
     if (status == REQUEST_ADAPTER_STATUS_SUCCESS) {
+        unsafe { slot^.handle = handle }
+    }
+    unsafe { slot^.ready = 1 }
+}
+
+fill_device :: fn(status: u32, handle: Device, value message: StringView,
+    userdata1: ^u8, userdata2: ^u8) {
+    slot := unsafe { ptr_cast($DeviceSlot, userdata1) }
+    if (status == REQUEST_DEVICE_STATUS_SUCCESS) {
         unsafe { slot^.handle = handle }
     }
     unsafe { slot^.ready = 1 }
@@ -155,11 +167,12 @@ main :: fn() -> i64 {
     if (hwnd == null()) { return 23 }
 
     // The adapter.
-    mut adapter_slot : Slot = Slot { handle = null(), ready = 0 }
+    mut adapter_slot : AdapterSlot =
+        AdapterSlot { handle = no_adapter(), ready = 0 }
     mut adapter_info : RequestAdapterCallbackInfo = RequestAdapterCallbackInfo {
         next_in_chain = null(),
         mode = CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
-        callback = fill_slot,
+        callback = fill_adapter,
         userdata1 = unsafe { ptr_cast($u8, ptr_to(adapter_slot)) },
         userdata2 = null(),
     }
@@ -181,11 +194,12 @@ main :: fn() -> i64 {
     if (adapter == null()) { return 24 }
 
     // The device.
-    mut device_slot : Slot = Slot { handle = null(), ready = 0 }
+    mut device_slot : DeviceSlot =
+        DeviceSlot { handle = no_device(), ready = 0 }
     mut device_info : RequestDeviceCallbackInfo = RequestDeviceCallbackInfo {
         next_in_chain = null(),
         mode = CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
-        callback = fill_slot,
+        callback = fill_device,
         userdata1 = unsafe { ptr_cast($u8, ptr_to(device_slot)) },
         userdata2 = null(),
     }

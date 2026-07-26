@@ -1269,6 +1269,16 @@ impl Renamer {
                     *name = mangled;
                 }
             }
+            // An array literal holds expressions, so a name written inside one
+            // is a name this module may have imported. Treating every literal
+            // as a leaf left those unmapped, and a call to an imported function
+            // written inside an array literal reached the backend under a name
+            // nothing had defined.
+            Expression::Literal(crate::parser::Literal::Array(elements)) => {
+                for element in elements.iter_mut() {
+                    self.expression(element, scope);
+                }
+            }
             Expression::Literal(_) | Expression::Boolean(_) => {}
             Expression::Prefix(_, operand)
             | Expression::AddressOf(operand)

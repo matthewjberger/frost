@@ -12803,3 +12803,33 @@ fn the_self_hosted_compiler_gates_an_index_through_a_raw_pointer() {
         "expected the gate to refuse it, got:\n{message}"
     );
 }
+
+// A name written inside an array literal is a name the module may have
+// imported. The import rewrite treated every literal as a leaf, so a call to an
+// imported function inside one kept the name it had in the other module and
+// reached the backend as an unknown variable.
+#[test]
+fn an_imported_call_inside_an_array_literal_resolves() {
+    let directory = std::env::temp_dir();
+    let helper = directory.join("frost_arraylit_helper.frost");
+    std::fs::write(
+        &helper,
+        "export Point, point\n\
+         Point :: struct { x: i64 }\n\
+         point :: fn(x: i64) -> Point { Point { x = x } }\n",
+    )
+    .unwrap();
+    let source = "import \"frost_arraylit_helper.frost\"\n\
+                  Held :: struct { p: Point }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   listed : [2]Held = [ Held { p = point(1) }, Held { p = point(2) } ]\n\
+                  \x20   repeated : [2]Held = [ Held { p = point(3) }; 2 ]\n\
+                  \x20   print listed[1].p.x\n\
+                  \x20   print repeated[0].p.x\n\
+                  \x20   0\n}\n";
+    let Some(output) = compile_and_run("arraylit", source) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&helper);
+    assert_eq!(output, "2\n3\n");
+}
