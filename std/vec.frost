@@ -73,3 +73,71 @@ vec_set :: fn($T: Type, mut v: Vec<T>, index: i64, move value: $T) {
 vec_clear :: fn($T: Type, mut v: Vec<T>) {
     v.len = 0
 }
+
+VecPoint :: struct { x: i64, y: i64 }
+
+test "a vector holds what is pushed into it, in order" {
+    mut v := vec_new($i64, 2)
+    assert(vec_len($i64, v) == 0)
+    mut i : i64 = 0
+    while (i < 100) {
+        vec_push($i64, v, i * 3)
+        i = i + 1
+    }
+    assert(vec_len($i64, v) == 100)
+    assert(vec_get($i64, v, 0) == 0)
+    assert(vec_get($i64, v, 99) == 297)
+    assert(slice_len(vec_slice($i64, v)) == 100)
+    vec_set($i64, v, 50, 7)
+    assert(vec_get($i64, v, 50) == 7)
+    assert(vec_slice($i64, v)[50] == 7)
+    vec_free($i64, v)
+}
+
+test "the slice a vector hands out is as long as the vector, not the block" {
+    mut v := vec_new($i64, 64)
+    vec_push($i64, v, 1)
+    vec_push($i64, v, 2)
+    // The room is 64 and the elements are two, and a caller sees the two.
+    assert(slice_len(vec_slice($i64, v)) == 2)
+    vec_free($i64, v)
+}
+
+test "clearing keeps the storage and forgets the elements" {
+    mut v := vec_new($i64, 4)
+    vec_push($i64, v, 1)
+    vec_push($i64, v, 2)
+    settled := heap_live()
+    vec_clear($i64, v)
+    assert(vec_len($i64, v) == 0)
+    assert(slice_len(vec_slice($i64, v)) == 0)
+    vec_push($i64, v, 9)
+    assert(vec_get($i64, v, 0) == 9)
+    // Reusing rather than reallocating is the whole point of clearing.
+    assert(heap_live() == settled)
+    vec_free($i64, v)
+}
+
+test "a vector of structs is written through its slice" {
+    mut v := vec_new($VecPoint, 2)
+    vec_push($VecPoint, v, VecPoint { x = 1, y = 2 })
+    vec_push($VecPoint, v, VecPoint { x = 3, y = 4 })
+    mut held := vec_slice($VecPoint, v)
+    held[1].x = 30
+    assert(vec_get($VecPoint, v, 1).x == 30)
+    assert(vec_get($VecPoint, v, 0).y == 2)
+    vec_free($VecPoint, v)
+}
+
+test "a vector gives back every block it took, however far it grew" {
+    before := heap_live()
+    mut v := vec_new($i64, 1)
+    mut i : i64 = 0
+    while (i < 500) {
+        vec_push($i64, v, i)
+        i = i + 1
+    }
+    vec_free($i64, v)
+    assert(heap_live() == before)
+}
+

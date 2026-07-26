@@ -11,24 +11,28 @@
 
 import "mem.frost"
 
-export Window, no_window, is_no_window, Event, event_new, event_kind,
+export Window, is_no_window, Event, event_new, event_kind, event_number,
+    EventKind, InitFlags, WindowFlags,
     INIT_VIDEO, INIT_AUDIO, INIT_EVENTS, INIT_GAMEPAD,
     WINDOW_FULLSCREEN, WINDOW_HIDDEN, WINDOW_BORDERLESS, WINDOW_RESIZABLE,
     WINDOW_HIGH_PIXEL_DENSITY,
-    EVENT_QUIT, EVENT_WINDOW_RESIZED, EVENT_KEY_DOWN, EVENT_KEY_UP,
-    EVENT_MOUSE_MOTION, EVENT_MOUSE_BUTTON_DOWN, EVENT_MOUSE_BUTTON_UP,
     PROP_WIN32_HWND, PROP_X11_DISPLAY, PROP_X11_WINDOW, PROP_COCOA_WINDOW,
     sdl_init, sdl_quit, sdl_ticks, sdl_delay, sdl_error,
     window_create, window_destroy, window_properties, window_pointer_property,
     poll_event
 
-SDL_Init                :: extern fn(flags: u32) -> bool
+// The C entry points, declared with the types this binding hands out rather
+// than with the pointers C spells them in: a window arrives from
+// `SDL_CreateWindow` already a `Window`, so nothing below has to make one out
+// of an address. A call taking no pointer cannot corrupt memory whatever it is
+// given, and says so with `safe`.
+SDL_Init                :: safe extern fn(flags: u32) -> bool
 SDL_Quit                :: safe extern fn()
 SDL_CreateWindow        :: extern fn(title: ^i8, width: i32, height: i32,
-    flags: u64) -> ^u8
-SDL_DestroyWindow       :: extern fn(window: ^u8)
+    flags: u64) -> Window
+SDL_DestroyWindow       :: extern fn(window: Window)
 SDL_PollEvent           :: extern fn(event: ^u8) -> bool
-SDL_GetWindowProperties :: extern fn(window: ^u8) -> u32
+SDL_GetWindowProperties :: extern fn(window: Window) -> u32
 SDL_GetPointerProperty  :: extern fn(properties: u32, name: ^i8,
     fallback: ^u8) -> ^u8
 SDL_GetTicks            :: safe extern fn() -> u64
@@ -40,8 +44,19 @@ SDL_GetError            :: extern fn() -> ^i8
 // can be handed to one that wants a window.
 Window :: distinct ^u8
 
-// The subsystems `sdl_init` can start, and the window flags, as SDL numbers
-// them. They are bit masks, so they are added together.
+// What a subsystem and a window flag are. These are not enums, because they are
+// not a closed set of alternatives: SDL's flags are bits, and a call takes
+// several of them at once. A type of their own is what an enum would have given
+// and a bare `u32` would not, which is that neither can be handed where the
+// other belongs, and `|` over one still answers with one.
+//
+//     mut flags : WindowFlags = WINDOW_RESIZABLE | WINDOW_HIGH_PIXEL_DENSITY
+//
+// is how two are asked for, since a combination is an expression rather than a
+// number written down and needs to be told what it is.
+InitFlags :: distinct u32
+WindowFlags :: distinct u64
+
 INIT_AUDIO   :: 16
 INIT_VIDEO   :: 32
 INIT_EVENTS  :: 16384
@@ -58,13 +73,13 @@ WINDOW_HIGH_PIXEL_DENSITY :: 8192
 // four, so the bytes are the value and the kind is read out of them.
 EVENT_SIZE :: 128
 
-EVENT_QUIT              :: 256
-EVENT_WINDOW_RESIZED    :: 519
-EVENT_KEY_DOWN          :: 768
-EVENT_KEY_UP            :: 769
-EVENT_MOUSE_MOTION      :: 1024
-EVENT_MOUSE_BUTTON_DOWN :: 1025
-EVENT_MOUSE_BUTTON_UP   :: 1026
+// What an event is, as an alternative rather than a number. SDL numbers these
+// with gaps and a program handles a few of them, so the rest arrive as `Other`
+// and the kind a program did not ask about is still a kind it can see.
+EventKind :: enum {
+    Quit, WindowResized, KeyDown, KeyUp,
+    MouseMotion, MouseButtonDown, MouseButtonUp, Other,
+}
 
 // The properties a window carries the platform's own handle under. Which one a
 // program wants is decided by the platform it is drawing on.
@@ -81,19 +96,30 @@ event_new :: fn() -> Event {
     Event { bytes = [0; EVENT_SIZE] }
 }
 
-event_kind :: fn(e: Event) -> u32 {
+// SDL's own number for an event, read out of the first four bytes.
+event_number :: fn(e: Event) -> u32 {
     unsafe { ptr_cast($u32, ptr_to(e.bytes[0]))^ }
 }
 
-// The window that names nothing, which is what a failed creation answers with.
-// SDL says why in `sdl_error`.
-no_window :: fn() -> Window {
-    zero := 0
-    unsafe { ptr_cast($u8, zero) }
+event_kind :: fn(e: Event) -> EventKind {
+    held := event_number(e)
+    if (held == 256) { return EventKind::Quit }
+    if (held == 519) { return EventKind::WindowResized }
+    if (held == 768) { return EventKind::KeyDown }
+    if (held == 769) { return EventKind::KeyUp }
+    if (held == 1024) { return EventKind::MouseMotion }
+    if (held == 1025) { return EventKind::MouseButtonDown }
+    if (held == 1026) { return EventKind::MouseButtonUp }
+    EventKind::Other
 }
 
+// Whether a window is the one that names nothing, which is what a failed
+// creation answers with. SDL says why in `sdl_error`. This asks the question
+// rather than handing out such a window, so nothing here builds a `Window` out
+// of an address: the only ones a program holds are the ones SDL made.
 is_no_window :: fn(w: Window) -> bool {
-    w == no_window()
+    zero := 0
+    w == unsafe { ptr_cast($u8, zero) }
 }
 
 // A NUL-terminated copy of a string, for the calls below. C reads one until a
@@ -112,8 +138,8 @@ c_string :: fn(text: str) -> ^u8 {
     block
 }
 
-sdl_init :: fn(flags: u32) -> bool {
-    unsafe { SDL_Init(flags) }
+sdl_init :: fn(flags: InitFlags) -> bool {
+    SDL_Init(flags)
 }
 
 sdl_quit :: fn() {
@@ -130,19 +156,26 @@ sdl_delay :: fn(milliseconds: u32) {
     SDL_Delay(milliseconds)
 }
 
-// What SDL says went wrong, as a C string it owns.
-sdl_error :: fn() -> ^i8 {
-    unsafe { SDL_GetError() }
+// What SDL says went wrong, as text. SDL owns the bytes and they last until the
+// next call into it, so this is a view rather than a copy.
+sdl_error :: fn() -> str {
+    raw : ^i8 = unsafe { SDL_GetError() }
+    mut length : i64 = 0
+    while (unsafe { raw[length] } != 0) {
+        length = length + 1
+    }
+    unsafe { slice_from($u8, ptr_cast($u8, raw), length) }
 }
 
 // Answers `no_window()` when SDL could not make one, which a program is
 // expected to check: a display that is not there is an ordinary thing to find
 // out about rather than a reason to stop.
 window_create :: fn(title: str, width: i32, height: i32,
-    flags: u64) -> Window {
+    flags: WindowFlags) -> Window {
     held := c_string(title)
-    made := unsafe { SDL_CreateWindow(ptr_cast($i8, held), width, height,
-        flags) }
+    made := unsafe {
+        SDL_CreateWindow(ptr_cast($i8, held), width, height, flags)
+    }
     heap_release($u8, held)
     made
 }

@@ -320,15 +320,37 @@ const char *frost_rt_arg_at(int64_t index) {
 /* Heap allocation for the standard library's growable containers. Thin wrappers
    so a Frost program names one set of functions rather than the C library's,
    and so a freestanding build can point them at its own allocator. */
+/* How many blocks are out. A container that frees what it took brings this back
+   to where it found it, which is what lets a test say so: a leak is otherwise
+   invisible until a program runs long enough to notice. Counting is two
+   increments on a path that already calls malloc, so it costs nothing worth
+   measuring. */
+static int64_t frost_rt_heap_blocks = 0;
+
+int64_t frost_rt_heap_live(void) {
+    return frost_rt_heap_blocks;
+}
+
 void *frost_rt_heap_alloc(int64_t size) {
-    return malloc((size_t)size);
+    void *block = malloc((size_t)size);
+    if (block != NULL) {
+        frost_rt_heap_blocks += 1;
+    }
+    return block;
 }
 
 void *frost_rt_heap_realloc(void *block, int64_t size) {
-    return realloc(block, (size_t)size);
+    void *moved = realloc(block, (size_t)size);
+    if (block == NULL && moved != NULL) {
+        frost_rt_heap_blocks += 1;
+    }
+    return moved;
 }
 
 void frost_rt_heap_free(void *block) {
+    if (block != NULL) {
+        frost_rt_heap_blocks -= 1;
+    }
     free(block);
 }
 

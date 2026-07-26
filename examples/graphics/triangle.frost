@@ -336,7 +336,7 @@ main :: fn() -> i64 {
     while (running) {
         mut event := event_new()
         while (poll_event(event)) {
-            if (event_kind(event) == EVENT_QUIT) {
+            if (event_kind(event) == EventKind::Quit) {
                 running = false
             }
         }

@@ -872,24 +872,7 @@ fn builtin_borrows_first_argument(name: &str) -> Option<bool> {
 }
 
 fn is_linear_type(ty: &Type, linear: &HashSet<String>) -> bool {
-    match ty {
-        Type::Struct(name) | Type::Enum(name) => {
-            linear.contains(template_of(name))
-        }
-        Type::Distinct(_, inner) => is_linear_type(inner, linear),
-        _ => false,
-    }
-}
-
-/// The name a generic instance was stamped from. `Vec<i64>` is `Vec`, and the
-/// `linear` on the declaration is written once, on the template, so that is
-/// where the answer lives. Without this a linear generic was silently ordinary,
-/// which is what let a container that owns a heap block be dropped unconsumed.
-fn template_of(name: &str) -> &str {
-    match name.find('<') {
-        Some(at) => &name[..at],
-        None => name,
-    }
+    ty.is_linear_with(linear)
 }
 
 /// Every type that must be consumed: the ones declared `linear`, and the ones
@@ -904,7 +887,7 @@ fn linear_closure(
     loop {
         let mut grew = false;
         for ((owner, _), ty) in fields {
-            if held.contains(template_of(owner)) {
+            if held.contains(Type::template_of(owner)) {
                 continue;
             }
             if is_linear_type(ty, &held) {

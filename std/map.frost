@@ -373,3 +373,56 @@ test "a map holds a struct value" {
     assert(held.y == 6)
     map_free($i64, $Cell, places)
 }
+
+test "a map gives back every block it took, however far it grew" {
+    before := heap_live()
+    mut m := map_new($i64, $i64, 8)
+    mut i : i64 = 0
+    while (i < 500) {
+        map_put($i64, $i64, $i64_keys, m, i, i)
+        i = i + 1
+    }
+    map_free($i64, $i64, m)
+    assert(heap_live() == before)
+}
+
+test "a map of text gives back every block it took" {
+    before := heap_live()
+    mut m := map_new($Text, $i64, 8)
+    map_put($Text, $i64, $text_keys, m, text("one"), 1)
+    map_put($Text, $i64, $text_keys, m, text("two"), 2)
+    map_free($Text, $i64, m)
+    assert(heap_live() == before)
+}
+
+test "clearing a map keeps its storage and forgets its keys" {
+    mut m := map_new($i64, $i64, 8)
+    map_put($i64, $i64, $i64_keys, m, 1, 10)
+    map_put($i64, $i64, $i64_keys, m, 2, 20)
+    settled := heap_live()
+    map_clear($i64, $i64, m)
+    assert(map_len($i64, $i64, m) == 0)
+    assert(map_has($i64, $i64, $i64_keys, m, 1) == false)
+    map_put($i64, $i64, $i64_keys, m, 3, 30)
+    assert(map_get($i64, $i64, $i64_keys, m, 3, 0) == 30)
+    assert(heap_live() == settled)
+    map_free($i64, $i64, m)
+}
+
+test "a tombstone is stepped over rather than stopped at" {
+    mut m := map_new($i64, $i64, 8)
+    mut i : i64 = 0
+    while (i < 6) {
+        map_put($i64, $i64, $i64_keys, m, i * 8, i)
+        i = i + 1
+    }
+    // Every key lands on the same slot before probing, so removing the first
+    // one leaves a tombstone the rest are found through.
+    assert(map_remove($i64, $i64, $i64_keys, m, 0))
+    mut k : i64 = 1
+    while (k < 6) {
+        assert(map_get($i64, $i64, $i64_keys, m, k * 8, 0 - 1) == k)
+        k = k + 1
+    }
+    map_free($i64, $i64, m)
+}

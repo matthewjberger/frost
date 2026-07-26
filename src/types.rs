@@ -101,6 +101,36 @@ impl Type {
         }
     }
 
+    /// The name a generic instance was stamped from: `Vec<i64>` is `Vec`. A
+    /// `linear` is written once, on the template, so that is where the answer
+    /// lives.
+    pub fn template_of(name: &str) -> &str {
+        match name.find('<') {
+            Some(at) => &name[..at],
+            None => name,
+        }
+    }
+
+    /// Whether a value of this type has to be consumed exactly once, given the
+    /// set of types declared `linear` and the ones that hold such a value.
+    /// Both the AST-level ownership pass and the IR builder ask this, so they
+    /// cannot drift apart on what a resource is.
+    pub fn is_linear_with(
+        &self,
+        linear: &std::collections::HashSet<String>,
+    ) -> bool {
+        match self {
+            Type::Struct(name) | Type::Enum(name) => {
+                linear.contains(Type::template_of(name))
+            }
+            Type::Distinct(_, inner) => inner.is_linear_with(linear),
+            // A run of resources is a resource: freeing the run is not freeing
+            // what is in it, and a fixed array holds its elements by value.
+            Type::Array(inner, _) => inner.is_linear_with(linear),
+            _ => false,
+        }
+    }
+
     pub fn is_copy(&self) -> bool {
         match self {
             Type::I8 | Type::I16 | Type::I32 | Type::I64 | Type::Isize => true,

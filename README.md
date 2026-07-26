@@ -58,6 +58,7 @@ For long-lived data, an `Entity` lives in a pool and is named by a `Handle`, a s
 | --- | --- |
 | [tour](docs/tour.md) | The language by example, one feature at a time |
 | [authoring](docs/authoring.md) | Writing correct Frost quickly, and the mistakes to expect |
+| [patterns](docs/patterns.md) | What the language rewards, what it merely permits, and why |
 | [coming-from-rust](docs/coming-from-rust.md) | Each Rust reflex and what it becomes here |
 | [spec](docs/spec.md) | The reference: types, semantics, and the grammar |
 | [math](docs/math.md) | The standard-library math, `f32` and `f64` |
