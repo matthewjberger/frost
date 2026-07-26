@@ -17,8 +17,8 @@ milli :: fn(x: f32) -> i64 {
     scaled
 }
 
-show :: fn(label: ^i8, value: i64) {
-    print_cstr(label)
+show :: fn(label: str, value: i64) {
+    print_str(label)
     print_int_line(value)
 }
 

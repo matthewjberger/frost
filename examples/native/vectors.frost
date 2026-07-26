@@ -25,19 +25,19 @@ main :: fn() -> i64 {
     b := Vec3 { x = 4, y = 5, z = 6 }
 
     sum := add(a, b)
-    print_cstr("sum.x = ")
+    print_str("sum.x = ")
     print_int_line(sum.x)
-    print_cstr("sum.y = ")
+    print_str("sum.y = ")
     print_int_line(sum.y)
-    print_cstr("sum.z = ")
+    print_str("sum.z = ")
     print_int_line(sum.z)
 
-    print_cstr("dot = ")
+    print_str("dot = ")
     print_int_line(dot(a, b))
 
     mut c := a
     scale(c, 10)
-    print_cstr("scaled.x = ")
+    print_str("scaled.x = ")
     print_int_line(c.x)
     0
 }

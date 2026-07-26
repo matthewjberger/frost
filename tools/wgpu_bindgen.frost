@@ -882,6 +882,7 @@ main :: fn() -> i64 {
     read := fs_read(IDL)
     if (read.ok == false) {
         print 0
+        fs_free(read)
         return 1
     }
 
@@ -889,6 +890,8 @@ main :: fn() -> i64 {
     root := json_root(document)
     if (root < 0) {
         print 0
+        json_free(document)
+        fs_free(read)
         return 1
     }
 
@@ -927,6 +930,11 @@ main :: fn() -> i64 {
 
     if (fs_write(OUT, builder_str(out)) == false) {
         print 0
+        builder_free(out)
+        builder_free(body)
+        builder_free(names)
+        json_free(document)
+        fs_free(read)
         return 1
     }
 

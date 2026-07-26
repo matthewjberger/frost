@@ -9,7 +9,7 @@
 import "vec.frost"
 
 export Builder, builder_new, builder_free, builder_len, builder_str,
-    builder_byte, builder_bytes, builder_str_value, builder_int, builder_uint,
+    builder_byte, builder_str_value, builder_int, builder_uint,
     builder_clear
 
 Builder :: struct {
@@ -41,16 +41,6 @@ builder_str :: fn(b: Builder) -> str {
 
 builder_byte :: fn(mut b: Builder, byte: i64) {
     vec_push($u8, b.bytes, byte)
-}
-
-// Append a run of raw bytes, given a pointer and a length. Used by the string
-// and str appends below rather than by callers directly.
-builder_bytes :: fn(mut b: Builder, data: ^u8, length: i64) {
-    mut i : i64 = 0
-    while (i < length) {
-        vec_push($u8, b.bytes, unsafe { data[i] })
-        i = i + 1
-    }
 }
 
 // Append a `str`, byte for byte.

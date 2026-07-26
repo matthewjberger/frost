@@ -2363,7 +2363,7 @@ fn a_program_using_std_is_clean_under_the_unsafe_gate() {
          \x20       builder_int(b, vec_get($i64, v, j))  builder_byte(b, 32)  j = j + 1\n\
          \x20   }\n\
          \x20   print_str_line(builder_str(b))\n\
-         \x20   if (str_eq(\"frost\", \"frost\")) { print_line(\"ok\") }\n\
+         \x20   if (str_eq(\"frost\", \"frost\")) { print_str_line(\"ok\") }\n\
          \x20   builder_free(b)  vec_free($i64, v)  0\n}\n",
     )
     .unwrap();
@@ -6444,11 +6444,11 @@ fn self_hosted_standard_library_map() {
 
 // The standard-library output helpers, imported and compiled by the self-hosted
 // compiler. io.frost writes bytes through the runtime's emit helpers; its bare
-// C-string writer is `print_cstr`, since `print` is a statement keyword.
+// writers are named for what they write, since `print` is a statement keyword.
 const SELFHOSTED_STD_IO: &str = concat!(
     "import \"io.frost\"\n",
     "main :: fn() -> i64 {\n",
-    "    print_cstr(\"hi \")\n",
+    "    print_str(\"hi \")\n",
     "    print_int_line(42)\n",
     "    print_str_line(\"done\")\n",
     "    0\n",

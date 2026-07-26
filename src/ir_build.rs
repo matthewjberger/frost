@@ -6273,7 +6273,28 @@ impl<'a> FunctionLowering<'a> {
                     if let Some(value) =
                         self.builder.constants.get(name).cloned()
                     {
-                        return self.place_address(&value);
+                        // A constant naming a place is that place. One naming a
+                        // value has none, so the copy built here is what the
+                        // address is of: `fs_read(PATH)` with `PATH :: "x"` is
+                        // this, and a string constant is the common case.
+                        if is_place_expression(&value) {
+                            return self.place_address(&value);
+                        }
+                        let (operand, ty) =
+                            self.lower_expression(&value, None)?;
+                        if let IrOperand::Local(local) = operand {
+                            self.mark_in_memory(local);
+                            let address = self.address_of_local(local, &ty);
+                            return Ok((address, ty));
+                        }
+                        let held = self.fresh_local(ty.clone(), None);
+                        self.mark_in_memory(held);
+                        self.emit(IrStatement::Assign(
+                            held,
+                            IrRvalue::Use(operand),
+                        ));
+                        let address = self.address_of_local(held, &ty);
+                        return Ok((address, ty));
                     }
                     bail!(
                         "native backend: address of unknown variable '{name}'"
