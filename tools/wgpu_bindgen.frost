@@ -274,7 +274,7 @@ append_type :: fn(mut out: Builder, mut document: Json, holder: i64) {
         return
     }
     if (type_starts(document, kind, "object.")) {
-        builder_str_value(out, "^u8")
+        append_after_dot(out, document, kind)
         return
     }
     if (type_starts(document, kind, "enum.")) {
@@ -811,6 +811,45 @@ append_args_forwarded :: fn(mut out: Builder, mut document: Json, args: i64) {
     }
 }
 
+// One type per object the API has. Each is `distinct ^u8`: the same pointer C
+// passes, under a name of its own, so a `Buffer` cannot be handed to a call
+// that wants a `Device`. What it is not is unforgeable, since a distinct type
+// can be built from its representation, and the wrappers below have to do
+// exactly that to hand C's answer back. The guarantee is that the handles do
+// not mix, not that a pointer from nowhere cannot become one.
+emit_handles :: fn(mut out: Builder, mut names: Builder,
+    mut document: Json, root: i64) -> i64 {
+    objects := json_member(document, root, "objects")
+    total := json_count(document, objects)
+    mut index : i64 = 0
+    while (index < total) {
+        object := json_at(document, objects, index)
+        name := json_member(document, object, "name")
+        append_pascal(out, document, name)
+        append_pascal(names, document, name)
+        builder_str_value(names, ", ")
+        builder_str_value(out, " :: distinct ^u8
+")
+        // The handle that names nothing, for a place that has to hold one
+        // before there is anything to hold. A distinct type cannot be built
+        // from a raw pointer, so this is the only way to write one, and the
+        // checks above are what keep it from ever standing for a real handle.
+        builder_str_value(out, "no_")
+        append_snake(out, document, name)
+        builder_str_value(names, "no_")
+        append_snake(names, document, name)
+        builder_str_value(names, ", ")
+        builder_str_value(out, " :: fn() -> ")
+        append_pascal(out, document, name)
+        builder_str_value(out, " {
+    null_handle()
+}
+")
+        index = index + 1
+    }
+    total
+}
+
 emit_free_functions :: fn(mut out: Builder, mut names: Builder,
     mut document: Json, root: i64) -> i64 {
     functions := json_member(document, root, "functions")
@@ -918,7 +957,8 @@ emit_functions :: fn(mut out: Builder, mut names: Builder,
             builder_str_value(out, "wgpu")
             append_pascal(out, document, object_name)
             append_pascal(out, document, method_name)
-            builder_str_value(out, " :: extern fn(handle: ^u8")
+            builder_str_value(out, " :: extern fn(handle: ")
+            append_pascal(out, document, object_name)
             append_args_declared(out, document, args)
             if (callback >= 0) {
                 builder_str_value(out, ", callback_info: ^u8")
@@ -943,7 +983,8 @@ emit_functions :: fn(mut out: Builder, mut names: Builder,
             builder_byte(names, 95)
             append_snake(names, document, method_name)
             builder_str_value(names, ", ")
-            builder_str_value(out, " :: fn(handle: ^u8")
+            builder_str_value(out, " :: fn(handle: ")
+            append_pascal(out, document, object_name)
             append_args_declared(out, document, args)
             if (callback >= 0) {
                 builder_str_value(out, ", callback_info: ^u8")
@@ -953,18 +994,49 @@ emit_functions :: fn(mut out: Builder, mut names: Builder,
                 builder_str_value(out, " -> ")
                 append_type(out, document, returns)
             }
-            builder_str_value(out, " {
-    unsafe { wgpu")
-            append_pascal(out, document, object_name)
-            append_pascal(out, document, method_name)
-            builder_str_value(out, "(handle")
-            append_args_forwarded(out, document, args)
-            if (callback >= 0) {
-                builder_str_value(out, ", callback_info")
-            }
-            builder_str_value(out, ") }
+            // A call that answers with a handle is checked: C answers with
+            // nothing when it fails, and a handle of nothing is not a handle.
+            // Every later call would read through it, so the failure is said
+            // here rather than at whichever call happened to be next.
+            hands_back_handle := returns >= 0
+                && type_starts(document, json_member(document, returns, "type"),
+                    "object.")
+            if (hands_back_handle) {
+                builder_str_value(out, " {
+    held := unsafe { wgpu")
+                append_pascal(out, document, object_name)
+                append_pascal(out, document, method_name)
+                builder_str_value(out, "(handle")
+                append_args_forwarded(out, document, args)
+                if (callback >= 0) {
+                    builder_str_value(out, ", callback_info")
+                }
+                builder_str_value(out, ") }
+    if (held == null_handle()) {
+        unsafe { frost_rt_error(\"wgpu: ")
+                append_snake(out, document, object_name)
+                builder_byte(out, 95)
+                append_snake(out, document, method_name)
+                builder_str_value(out, " answered with nothing\\n\") }
+        frost_rt_die()
+    }
+    held
 }
 ")
+            } else {
+                builder_str_value(out, " {
+    unsafe { wgpu")
+                append_pascal(out, document, object_name)
+                append_pascal(out, document, method_name)
+                builder_str_value(out, "(handle")
+                append_args_forwarded(out, document, args)
+                if (callback >= 0) {
+                    builder_str_value(out, ", callback_info")
+                }
+                builder_str_value(out, ") }
+}
+")
+            }
             emitted = emitted + 1
             method = method + 1
         }
@@ -994,6 +1066,7 @@ main :: fn() -> i64 {
     mut names := builder_new(65536)
     builder_str_value(names, "Chained, StringView, ")
 
+    handles := emit_handles(body, names, document, root)
     constants := emit_constants(body, names, document, root)
     enums := emit_enums(body, names, document, root)
     flags := emit_bitflags(body, names, document, root)
@@ -1021,6 +1094,19 @@ main :: fn() -> i64 {
     builder_str_value(out, "StringView :: struct { data: ^i8, length: u64 }
 
 ")
+    // A handle of nothing is what C answers with when a call fails, and the
+    // wrappers below refuse to hand one back.
+    builder_str_value(out, "frost_rt_error :: extern fn(text: ^i8)
+")
+    builder_str_value(out, "frost_rt_die   :: safe extern fn()
+
+")
+    builder_str_value(out, "null_handle :: fn() -> ^u8 {
+    zero := 0
+    unsafe { ptr_cast($u8, zero) }
+}
+
+")
     builder_str_value(out, builder_str(body))
 
     if (fs_write(OUT, builder_str(out)) == false) {
@@ -1033,6 +1119,7 @@ main :: fn() -> i64 {
         return 1
     }
 
+    print handles
     print enums
     print flags
     print structs
