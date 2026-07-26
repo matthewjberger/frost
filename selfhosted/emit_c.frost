@@ -343,6 +343,12 @@ emit_expr :: fn(mut p: Parser, id: i64) {
                     frost_rt_emit_int(fi)
                     return
                 }
+                // A struct constant is written out where it is named.
+                value_node := value_const_node(p, off, len)
+                if (value_node >= 0) {
+                    emit_expr(p, value_node)
+                    return
+                }
                 report_where(p.modules, p.src, off)
                 report("undefined variable '")
                 report_src(p.src, off, len)
@@ -363,6 +369,17 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         return
     }
     if (kind == NodeKind::CallPtr) {
+        // A call through a constant bundle's field is a call to the function
+        // that field names, with nothing loaded and nothing dispatched.
+        direct := bundle_field_fn(p, node.a)
+        if (direct >= 0) {
+            emit_text("mf_")
+            frost_rt_emit_int(direct)
+            emit_text("(")
+            emit_args(p, node.b, direct)
+            emit_text(")")
+            return
+        }
         callee_ty := type_of(p, node.a)
         if (is_proc(callee_ty) == false) {
             report_where(p.modules, p.src, node.pos)

@@ -6,7 +6,7 @@ import "imports.frost"
 import "names.frost"
 
 export call_ret_type, call_type_args, collect_type_args, fn_index_of,
-    fn_proc_type,
+    fn_proc_type, bundle_field_fn,
     count_value_args, field_type, generic_fn_of, is_linear_type, is_moved,
     local_exists, lookup_local, lower_enum_compare, nth_param_by_value,
     nth_param_type, nth_value_arg, param_node_by_value,
@@ -354,6 +354,11 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
             if (fi >= 0) {
                 return fn_proc_type(p, fi)
             }
+            // A struct constant is its literal, so it has the literal's type.
+            value_node := value_const_node(p, node.val, node.c)
+            if (value_node >= 0) {
+                return type_of(p, value_node)
+            }
         }
         return lookup_local(p, node.val, node.c)
     }
@@ -676,6 +681,56 @@ fn_index_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
             return i
         }
         i = i + 1
+    }
+    0 - 1
+}
+
+// The function a bundle's field names, for a bundle that is a constant, or -1
+// when the callee is anything else. `ops.less(a, b)` where `ops` is a constant
+// whose `less` field names a function is a call to that function: the field can
+// hold one value and it is known here, so nothing is loaded and nothing is
+// called through a pointer.
+bundle_field_fn :: fn(mut p: Parser, callee: i64) -> i64 {
+    node := arena_at(p.arena, callee)
+    if (node.kind != NodeKind::Field) {
+        return 0 - 1
+    }
+    base := node.a
+    field_off := node.val
+    field_len := node.c
+    base_node := arena_at(p.arena, base)
+    if (base_node.kind != NodeKind::Var) {
+        return 0 - 1
+    }
+    name_off := base_node.val
+    name_len := base_node.c
+    if (local_exists(p, name_off, name_len)) {
+        return 0 - 1
+    }
+    literal := value_const_node(p, name_off, name_len)
+    if (literal < 0) {
+        return 0 - 1
+    }
+    literal_node := arena_at(p.arena, literal)
+    if (literal_node.kind != NodeKind::StructLit) {
+        return 0 - 1
+    }
+    mut id := literal_node.a
+    while (id != (0 - 1)) {
+        init := arena_at(p.arena, id)
+        init_off := init.val
+        init_len := init.c
+        value := init.a
+        next_id := init.next
+        if (init_len == field_len
+            && bytes_equal(p.src, init_off, field_off, field_len)) {
+            value_node := arena_at(p.arena, value)
+            if (value_node.kind != NodeKind::Var) {
+                return 0 - 1
+            }
+            return fn_index_of(p, value_node.val, value_node.c)
+        }
+        id = next_id
     }
     0 - 1
 }

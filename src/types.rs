@@ -26,6 +26,11 @@ pub enum Type {
     // A function named at a call as a compile-time argument, so the body it is
     // substituted into calls it directly rather than through a pointer.
     ConstFn(String),
+    // A constant named at a call as a compile-time argument. This is what a
+    // capability bundle is passed as: the body names the constant wherever it
+    // named the parameter, so a call through one of its fields is a call to
+    // the function that field was given.
+    ConstValue(String),
     Slice(Box<Type>),
     Proc(Vec<Type>, Box<Type>),
     Struct(String),
@@ -51,9 +56,10 @@ impl Type {
             Type::Str => 16,
             Type::Void => 0,
             Type::Array(inner, count) => inner.size_of() * count,
-            Type::ArrayGeneric(..) | Type::ConstUsize(_) | Type::ConstFn(_) => {
-                0
-            }
+            Type::ArrayGeneric(..)
+            | Type::ConstUsize(_)
+            | Type::ConstFn(_)
+            | Type::ConstValue(_) => 0,
             Type::Slice(_) => 16,
             Type::Proc(_, _) => 8,
             Type::Struct(_) => 0,
@@ -81,9 +87,10 @@ impl Type {
             Type::Str | Type::Slice(_) => 8,
             Type::Void => 1,
             Type::Array(inner, _) => inner.align_of(),
-            Type::ArrayGeneric(..) | Type::ConstUsize(_) | Type::ConstFn(_) => {
-                1
-            }
+            Type::ArrayGeneric(..)
+            | Type::ConstUsize(_)
+            | Type::ConstFn(_)
+            | Type::ConstValue(_) => 1,
             Type::Proc(_, _) => 8,
             Type::Struct(_) => 8,
             Type::Enum(_) => 4,
@@ -102,9 +109,10 @@ impl Type {
             Type::Ref(_) | Type::RefMut(_) | Type::Ptr(_) => true,
             Type::Proc(_, _) | Type::Void => true,
             Type::Array(_, _) => true,
-            Type::ArrayGeneric(..) | Type::ConstUsize(_) | Type::ConstFn(_) => {
-                false
-            }
+            Type::ArrayGeneric(..)
+            | Type::ConstUsize(_)
+            | Type::ConstFn(_)
+            | Type::ConstValue(_) => false,
             Type::Str | Type::Slice(_) => true,
             Type::Struct(_) | Type::Enum(_) => false,
             Type::Distinct(_, inner) => inner.is_copy(),
@@ -182,7 +190,9 @@ impl Display for Type {
                 write!(f, "[{}]{}", size, inner)
             }
             Type::ConstUsize(value) => write!(f, "{}", value),
-            Type::ConstFn(name) => write!(f, "{}", name),
+            Type::ConstFn(name) | Type::ConstValue(name) => {
+                write!(f, "{}", name)
+            }
             Type::Slice(inner) => write!(f, "[]{}", inner),
             Type::Proc(params, ret) => {
                 let param_strs: Vec<String> =

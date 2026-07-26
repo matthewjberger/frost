@@ -307,6 +307,15 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
     kind := node.kind
     if (kind == NodeKind::Var) {
+        if (local_exists(p, node.val, node.c) == false) {
+            // A struct constant has no storage of its own, so the address of
+            // one is the address of the copy built here.
+            value_node := value_const_node(p, node.val, node.c)
+            if (value_node >= 0) {
+                emit_asm_addr(p, value_node)
+                return
+            }
+        }
         asm_i("leaq ", local_slot(p, node.val, node.c), "(%rbp), %rax")
         return
     }
@@ -888,6 +897,12 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
                 emit_text("(%rip), %rax\n")
                 return
             }
+            // A struct constant is built where it is named.
+            value_node := value_const_node(p, off, len)
+            if (value_node >= 0) {
+                emit_asm_expr(p, value_node)
+                return
+            }
         }
         // A struct is handled by its address, so naming one yields where it
         // lives rather than the first word inside it.
@@ -1012,6 +1027,13 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         return
     }
     if (kind == NodeKind::CallPtr) {
+        // A call through a constant bundle's field is a call to the function
+        // that field names, with nothing loaded and nothing dispatched.
+        direct := bundle_field_fn(p, node.a)
+        if (direct >= 0) {
+            emit_asm_call(p, node.b, direct)
+            return
+        }
         emit_asm_call_through(p, node.a, node.b)
         return
     }
