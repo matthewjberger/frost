@@ -3930,6 +3930,11 @@ parse_test :: fn(mut p: Parser) -> i64 {
     // A test is marked here rather than looked up later, which is what lets a
     // build that is not running tests leave them out entirely.
     node.c = 2
+    // Where the test was written, rather than wherever the cursor ended up
+    // after its body. The name it was given is synthesized and sits past every
+    // module, so this is what says which module the test belongs to, and a
+    // per-module build emits it there.
+    node.pos = name_off
     made
 }
 

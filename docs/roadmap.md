@@ -47,11 +47,11 @@ the file cache:
 
 **And what a rebuild costs**, from `just bench-selfhost-incremental`:
 
-| build | |
-| --- | --- |
-| whole program | ~1,500 ms |
-| incremental, first build | ~1,060 ms |
-| incremental, nothing changed | ~330 ms |
+| build | assembly | C |
+| --- | --- | --- |
+| whole program | ~1,500 ms | ~1,440 ms |
+| incremental, first build | ~1,060 ms | ~1,280 ms |
+| incremental, nothing changed | ~330 ms | ~350 ms |
 
 The four pieces that took it there:
 
