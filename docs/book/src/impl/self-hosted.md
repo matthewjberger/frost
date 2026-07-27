@@ -166,13 +166,26 @@ already gone: the pool lives in `std/slab.frost` as ordinary Frost and
 `--freestanding` already links with no libc, so what is left in C is the aborts,
 the assertions and the IO.
 
-Going C-free is not the reason to write the ELF half of the object writer. An
+Going C-free was not the reason to write the ELF half of the object writer. An
 encoder does not remove the toolchain while a build still links through it, and
-the pieces between here and that are a writer, a linker and a libc-free runtime.
-The reason is narrower and better: the encoder writes COFF, so today a Windows
-build takes one path and every other platform takes another, with different
-speed and different failure modes, and only one of them is under anyone's
-fingers. An ELF writer makes the fast path the only path.
+the pieces between here and that are a linker and a libc-free runtime. The
+reason was narrower and better: the encoder wrote COFF, so a Windows build took
+one path and every other platform took another, with different speed and
+different failure modes, and only one of them was under anyone's fingers. The
+ELF half makes the fast path the only path.
+
+It is not COFF with a different header. Two differences reach back into the
+encoding rather than staying in the writer. A reference to a name the file both
+defines and offers is left for the linker there, because another object may take
+that name over at load time, where COFF has no such rule and `as` settles it in
+the assembler. And a fixup carries its own addend rather than reading one out of
+the bytes it fills in, so those are left empty. `assemble.frost` is told which
+format it is encoding for and both follow from the answer.
+
+Checked the same way: clang assembles the same text and the two objects are
+compared byte for byte, over the compiler's own 660 KB of code and 8,252 fixups.
+`FROST_OBJECT` names the format from either host, the way `FROST_ABI` names the
+calling convention, which is what lets the ELF half be checked from Windows.
 
 ## Scaling past one file
 
