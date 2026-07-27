@@ -476,7 +476,7 @@ imports_module :: fn(mut p: Parser, importer: i64, imported: i64) -> bool {
 }
 
 // If a name is a declared constant, return its value through `out` (as the
-// return) and true; otherwise false. Consts are looked up by byte comparison.
+// return) and true, otherwise false. Consts are looked up by byte comparison.
 const_value :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     mut i : i64 = 0
     while (i < p.consts.count) {
@@ -852,7 +852,7 @@ gargs_run_equal :: fn(mut p: Parser, a_start: i64, b_start: i64, count: i64)
 }
 
 // Whether a name written at `off` belongs to the unit being emitted. Everything
-// belongs to a whole-program unit; a per-module unit takes what the module it is
+// belongs to a whole-program unit. A per-module unit takes what the module it is
 // for wrote, which is a run of the one source buffer, so this is a comparison
 // rather than a search. Both backends split a program the same way and ask this
 // the same way.
@@ -1030,8 +1030,8 @@ field_type_by_range :: fn(mut p: Parser, struct_ty: i64, off: i64, len: i64)
 // generational bookkeeping (`generations` + `free_list`) but stores its
 // elements as one array per field of the element type rather than one
 // `storage` array of whole elements. Recognized structurally by that shape:
-// parallel `generations` and `free_list` arrays and NO `storage` array, which
-// is exactly what tells it apart from a slab.
+// parallel `generations` and `free_list` arrays and no `storage` array, which
+// is what tells it apart from a slab.
 is_columns_ty :: fn(mut p: Parser, struct_ty: i64) -> bool {
     generations := slab_field_type(p, struct_ty, "generations")
     free_list := slab_field_type(p, struct_ty, "free_list")

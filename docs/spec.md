@@ -9,8 +9,8 @@ describes.
 
 The specification has two halves. The prose chapters (1 through 12) describe the
 lexical structure, types, declarations, expressions, statements, and static
-semantics. The grammar chapter (13) gives the syntax in one place, in a
-disciplined EBNF that the hand-written recursive-descent parser is held against.
+semantics. The grammar chapter (13) gives the syntax in one place, in an EBNF
+that the hand-written recursive-descent parser is held against.
 
 ## Contents
 
@@ -381,7 +381,7 @@ same way it is for a distinct type.
 
 `print` of a flags value writes the number. The names are not available at run
 time, and a program that wants to show which bits are set writes that loop
-itself; `flags_has` makes each test one call.
+itself. `flags_has` makes each test one call.
 
 `flags` is not a keyword. It is recognized in a declaration by the shape that
 follows it (a scalar type and then a brace), so a parameter, a local or a field
@@ -504,7 +504,7 @@ divide :: fn(a: i64, b: i64) -> (quotient: i64, remainder: i64) {
 quotient, remainder := divide(17, 5)      // 3 and 2
 ```
 
-The list holds two or more values; `-> T` is how one value is returned and
+The list holds two or more values. `-> T` is how one value is returned and
 `-> (T)` is an error that says so.
 
 **Naming the values.** A value may be written `name: Type`, and a list names all
@@ -552,8 +552,8 @@ negative = false
 **There is no tuple type.** The list is not a value, cannot be named, stored in
 a field, passed as an argument, or returned from anything but the function that
 declares it, and `(A, B)` is not a type anywhere else in the grammar. A call
-that returns several values is bound by a list of names and used nowhere else;
-binding it to a single name is a compile error that says so. That restriction is
+that returns several values is bound by a list of names and used nowhere else.
+Binding it to a single name is a compile error that says so. That restriction is
 what keeps the layout of every value in a program something the reader named
 (goal 1 of [philosophy.md](philosophy.md)): a program that wants to pass a pair
 around declares a struct and gets a name for it.
@@ -566,7 +566,7 @@ call bound to a temporary and one field read per name. Nothing after the front
 end sees a return type list, which is why every backend and the C ABI handle one
 with no code of their own. In the bootstrap compiler two functions returning
 the same list under the same names share the struct, since its name is derived
-from both; the self-hosted compiler makes one per function. Neither is
+from both. The self-hosted compiler makes one per function. Neither is
 observable.
 
 A return type list does not combine with a failure set: `-> (A, B) ! E` is
@@ -740,12 +740,11 @@ is the only reason to have one. Without it a file could call a function from a
 module it never named, and an import line could be deleted with the build still
 passing.
 
-The two compilers reach it differently, which is worth knowing when reading
-them. The bootstrap splices every module into one program, so it compares what
-each file used against what that file imported. The self-hosted compiler
-resolves a name by scanning declarations with a visibility rule, so the import
-becomes an edge that rule has to cross, and an unimported name is simply never
-found.
+The two compilers reach it differently. The bootstrap splices every module into
+one program, so it compares what each file used against what that file imported.
+The self-hosted compiler resolves a name by scanning declarations with a
+visibility rule, so the import becomes an edge that rule has to cross, and an
+unimported name is never found.
 
 The exported namespace is flat, and a name carries its own prefix by convention
 (`vec3_add`, not a qualified `math.add`), which keeps it a single token to search
@@ -765,7 +764,7 @@ import "list.frost" (insert as list_insert)
 import "tree.frost" (insert as tree_insert)
 ```
 
-Everything else still arrives under its own name; only the names listed are
+Everything else still arrives under its own name. Only the names listed are
 renamed. A rename belongs to the file that wrote it, so another importer of
 `list.frost` still says `insert`. Renaming a name the module does not export is
 an error saying so.
@@ -880,24 +879,24 @@ literal written inside it, so
 `{ from = { x = 0, y = 0 }, to = { x = 3, y = 4 } }` and
 `{ at = { x = 7, y = 0 }, colour = .Green }` both resolve all the way down.
 
-Every field is still named. **There is no positional literal**, here or
-anywhere else in the language, and there is not going to be one. A field's name
-is what says where the value lands, and a positional form would make the meaning
-of a literal depend on the declaration order of a struct the reader is not
-looking at. Leaving out a type the compiler already knows costs nothing; leaving
-out the field names costs the reader the layout, which goal 1 of
+Every field is still named. There is no positional literal, here or anywhere
+else in the language, and there is not going to be one. A field's name is what
+says where the value lands, and a positional form would make the meaning of a
+literal depend on the declaration order of a struct the reader is not looking
+at. Leaving out a type the compiler already knows costs nothing. Leaving out the
+field names costs the reader the layout, which goal 1 of
 [philosophy.md](philosophy.md) says is the design itself.
 
 A literal with nothing to take its type from is an error, the same as a bare
 dot. `p := { x = 1, y = 2 }` is rejected and the fix is `p : Point = { .. }` or
 `p := Point { .. }`.
 
-The two compilers reach the same answer by different routes, which is worth
-knowing when reading them. The bootstrap resolves both forms while lowering,
-where every expression already carries the type its context expects. The
-self-hosted compiler resolves a variant's tag and a literal's layout at parse
-time, so either form written as an argument to a function defined later in the
-program is recorded and patched once every signature is parsed, fields and all.
+The two compilers reach the same answer by different routes. The bootstrap
+resolves both forms while lowering, where every expression already carries the
+type its context expects. The self-hosted compiler resolves a variant's tag and
+a literal's layout at parse time, so either form written as an argument to a
+function defined later in the program is recorded and patched once every
+signature is parsed, fields and all.
 
 A literal must write every field. There is no partial construction, no
 `..rest`, and no implicit zero. A field left out would name storage nothing
@@ -1321,12 +1320,12 @@ show :: fn(args: $...) {
 This is what lets one body serve elements of different types: the branch that
 would not compile for this element is gone rather than skipped.
 
-**Each element is evaluated once**, however many times the unrolled body names
-it, because the specialization takes it as an ordinary parameter and the call
-passes it once.
+Each element is evaluated once, however many times the unrolled body names it,
+because the specialization takes it as an ordinary parameter and the call passes
+it once.
 
 **An element may be a type.** `f($Position, $Velocity)` gives the list two
-types. A type element takes no parameter and is evaluated nowhere; what it
+types. A type element takes no parameter and is evaluated nowhere. What it
 leaves behind is a name the body writes where a type belongs, so a `for` over
 the list makes `sizeof(T)`, `[]T` and `T` as a generic argument mean what they
 say. A list may hold both kinds.
@@ -1340,8 +1339,8 @@ passed_on :: fn(values: $...) -> i64 {
 }
 ```
 
-**`g(T) for T in list` in an argument list is one argument per element**, with
-the element's name standing for it. This is what gives a call an arity the list
+`g(T) for T in list` in an argument list is one argument per element, with the
+element's name standing for it. This is what gives a call an arity the list
 decides, and it is the only place a list may be written this way, since it is
 the argument count that is being produced:
 
@@ -1361,7 +1360,7 @@ build, and nothing is promised about which number a type gets.
 
 What it is for is a table keyed by type in a program whose contents are decided
 while it runs. `std/ecs.frost` registers a component under a type and is given
-an index in return; `type_id` is what lets a query later name the component by
+an index in return. `type_id` is what lets a query later name the component by
 writing the type, since the index is not something a type can say.
 
 **What this deliberately is not.** There is no compile-time string parsing, no
@@ -1629,7 +1628,7 @@ asymmetry is deliberate.
 `--audit-unsafe` also reports every `unsafe` block that vouches for nothing: one
 holding no unchecked operation, and one written inside another, which already
 covers what is in it. It is off by default. A build pays for the checks that
-keep a program correct; this one keeps it tidy, and tidiness is not worth a pass
+keep a program correct. This one keeps it tidy, and tidiness is not worth a pass
 over the source on every compile.
 
 ### 12.1 Callbacks

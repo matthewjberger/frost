@@ -14,8 +14,8 @@ use crate::parser::{Spanned, Statement};
 // complete is the declaration itself, and a signature table would be a second
 // representation of the same facts that could drift from it.
 //
-// Non-generic bodies are not here. That is the whole point. They are what a
-// module can change without rebuilding its dependents.
+// Non-generic bodies are not here. They are what a module can change without
+// rebuilding its dependents.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct ModuleInterface {
     // The module's identity, its path relative to the project root. Also what
@@ -277,7 +277,7 @@ mod tests {
         assert!(interface.linear_types.contains(&"File".to_string()));
     }
 
-    // The closure check has to actually fail when the closure is broken, or it
+    // The closure check has to fail when the closure is broken, or it
     // is not evidence of anything.
     #[test]
     fn a_broken_closure_is_reported() {

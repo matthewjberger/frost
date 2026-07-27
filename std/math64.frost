@@ -71,7 +71,7 @@ vec2d_normalize :: fn(a: Vec2d) -> Vec2d {
 }
 
 // ---------------------------------------------------------------------------
-// Vec3d, the workhorse
+// Vec3d
 
 vec3d :: inline fn(x: f64, y: f64, z: f64) -> Vec3d { Vec3d { x = x, y = y, z = z } }
 
@@ -252,7 +252,7 @@ mat4d_perspective :: fn(fovy: f64, aspect: f64, near: f64, far: f64) -> Mat4d {
 }
 
 // The same projection with the depth range [0, 1] rather than [-1, 1]. OpenGL
-// takes the second; Direct3D, Metal, Vulkan and WebGPU take the first, and a
+// takes the second. Direct3D, Metal, Vulkan and WebGPU take the first, and a
 // matrix built for the wrong one puts half the scene behind the near plane.
 // The handedness is unchanged, looking down -z.
 mat4d_perspective_zo :: fn(fovy: f64, aspect: f64, near: f64, far: f64) -> Mat4d {
@@ -300,7 +300,7 @@ mat4d_look_at :: fn(eye: Vec3d, center: Vec3d, up: Vec3d) -> Mat4d {
 }
 
 // ---------------------------------------------------------------------------
-// Quatdernion, stored (x, y, z, w) with w the scalar part.
+// Quaternion, stored (x, y, z, w) with w the scalar part.
 
 quatd_identity :: fn() -> Quatd { Quatd { x = 0.0, y = 0.0, z = 0.0, w = 1.0 } }
 
@@ -567,7 +567,7 @@ test "the zero to one perspective maps the near plane to zero" {
     assert(near(at_near.z / at_near.w, 0.0))
     at_far := mat4d_mul_vec4d(projection, vec4d(0.0, 0.0, 0.0 - 101.0, 1.0))
     assert(near(at_far.z / at_far.w, 1.0))
-    // Across the view it is the same projection; only the depth range differs.
+    // Across the view it is the same projection. Only the depth range differs.
     edge := mat4d_mul_vec4d(projection, vec4d(2.0, 0.0, 0.0 - 2.0, 1.0))
     assert(near(edge.x / edge.w, 1.0))
     // Twice the aspect ratio is half the horizontal spread.

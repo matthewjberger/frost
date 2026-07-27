@@ -12,7 +12,7 @@
 //
 // `heap_slice` is the stronger form and the one to reach for. A slice carries
 // its length, so every later access through it is bounds-checked and the
-// container's body is ordinary safe code; only the allocation and the release
+// container's body is ordinary safe code. Only the allocation and the release
 // are unchecked, and both are here.
 
 export heap_array, heap_slice, heap_grow, heap_grow_slice, heap_release,

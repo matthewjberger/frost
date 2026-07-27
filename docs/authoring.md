@@ -17,8 +17,7 @@ through Cranelift or through portable C.
 ## Navigating a Frost codebase
 
 Every top-level thing is declared with the same shape, `name :: value`, so the
-name is always first and left-aligned. This makes the codebase trivially
-greppable.
+name is always first and left-aligned. This makes the codebase greppable.
 
 - Find any definition, of any kind, by grepping for the name followed by `::`.
   `rg "Entity ::"` finds the struct, function, enum, or constant named `Entity`,
@@ -172,7 +171,7 @@ Higher-order code uses function pointers, not closures. A `fn(...) -> T`
 parameter holds one. A function literal is an expression, so an anonymous
 function is just the declaration form without the name. Prefer a compile-time
 function parameter where the function is known at the call, since that one is
-called directly. Reach for a pointer when it genuinely varies at runtime.
+called directly. Reach for a pointer when it varies at runtime.
 
 ```frost
 apply :: fn(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }

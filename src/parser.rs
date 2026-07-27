@@ -106,7 +106,7 @@ impl Display for Parameter {
 }
 
 // One value of a return type list. `-> (quotient: i64, remainder: i64)` names
-// both; `-> (i64, i64)` names neither. A name is what the value is called at
+// both. `-> (i64, i64)` names neither. A name is what the value is called at
 // the return site and in the struct the list lowers to, so it is the field name
 // a `return { quotient = .. }` writes.
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
@@ -738,7 +738,7 @@ pub enum Expression {
     // `g(T) for T in list`, an argument that stands for one argument per
     // element of a compile-time list, with the element's name standing for it.
     // The template, the name it binds, and the list. Expanded where the
-    // specialization is made; nothing downstream sees one.
+    // specialization is made, and nothing downstream sees one.
     PackMap(Box<Expression>, Identifier, Identifier),
     Range(Box<Expression>, Box<Expression>, bool),
     Switch(Box<Expression>, Vec<SwitchCase>),
@@ -2233,7 +2233,7 @@ impl<'a> Parser<'a> {
             self.read_token();
         }
         // `print "x is {}", x` fills the holes of a format literal. The
-        // arguments are ordinary expressions; what makes this compile-time is
+        // arguments are ordinary expressions. What makes this compile-time is
         // that the literal is read by the compiler and never exists at run
         // time.
         let mut arguments = Vec::new();
@@ -2257,7 +2257,7 @@ impl<'a> Parser<'a> {
                 let first = self.parse_expression(Precedence::Lowest)?;
                 // `return quotient, remainder`, the several values a return type
                 // list declares. The multi-return lowering turns the list into
-                // the one struct the function actually returns.
+                // the one struct the function returns.
                 if matches!(self.peek_nth(0), Token::Comma) {
                     let mut values = vec![first];
                     while matches!(self.peek_nth(0), Token::Comma) {

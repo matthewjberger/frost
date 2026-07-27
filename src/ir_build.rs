@@ -93,7 +93,7 @@ pub fn build_module(
 // instantiates it rather than once per program. Only correct when the result is
 // about to be split into one object per module, since two definitions of a name
 // in a single object is a duplicate symbol. Split, they are module-local and a
-// module's object is self-contained, which is the point.
+// module's object is self-contained.
 pub fn build_module_per_module(
     statements: &[Spanned<Statement>],
     linear: &HashSet<String>,
@@ -261,8 +261,8 @@ fn build_module_inner(
                 });
             }
             // A function some other object defines. It contributes a
-            // declaration so calls can be typed and emitted, and no body,
-            // which is the point. The module it came from is not being rebuilt.
+            // declaration so calls can be typed and emitted, and no body. The
+            // module it came from is not being rebuilt.
             Statement::Declared {
                 name,
                 params,
@@ -478,7 +478,7 @@ fn declared_function(
         name: name.to_string(),
         param_count: locals.len(),
         // A declaration from another object contributes no body, so nothing
-        // here collects a parameter; only the object that defines it does.
+        // here collects a parameter. Only the object that defines it does.
         param_layouts: vec![None; locals.len()],
         return_type: return_sig.to_type().unwrap_or(Type::Void),
         locals,
@@ -999,7 +999,7 @@ struct Specialization {
     requested_by: u32,
     // Where the call that asked for this one was written, and how it reads
     // there. A diagnostic from inside the stamped-out body names a line in the
-    // template. This is the line the reader actually wrote.
+    // template. This is the line the reader wrote.
     requested_at: Position,
     display: String,
     // The compile-time list this call bound, in order. None for a function
@@ -1089,7 +1089,7 @@ fn argument_is_copy_value(
     )
 }
 
-// The type a specialized parameter has, which is not simply the substituted
+// The type a specialized parameter has, which is not the substituted
 // one. `lower_param_modes` turns a read-mode parameter into `Ref(T)` only when
 // `T` is not copy, and it has to guess for `$T` because the answer arrives with
 // the call. Guessing "reference" is the safe direction there, since it can be
@@ -1661,7 +1661,7 @@ struct Expansion<'a> {
     // has an answer.
     types: HashMap<String, Type>,
     // Every struct's layout, which is what a walk over a type's fields reads.
-    // The compiler laid these out to emit the program; a layout table is the
+    // The compiler laid these out to emit the program. A layout table is the
     // same numbers, written where the reader can use them.
     structs: &'a HashMap<String, StructLayout>,
     // The type arguments this specialization was made for, so `fields(T)` in a
@@ -2093,7 +2093,7 @@ impl Expansion<'_> {
                     // An argument list is the one place a compile-time list
                     // stands for several things at once. Naming it hands over
                     // its elements, which is how one list is passed on to
-                    // another; `g(T) for T in list` hands over the template
+                    // another. `g(T) for T in list` hands over the template
                     // once per element, which is how a call gets an arity the
                     // list decides.
                     if let Some(elements) = self.pack_named(&argument) {
@@ -3256,9 +3256,8 @@ fn substitute_expression(
 ) -> Expression {
     // A call through a compile-time function parameter is a call to the
     // function that parameter was given. There is nothing left to dispatch on
-    // by the time the specialized body is lowered, which is the whole point:
-    // the comparator ends up inlined into the loop rather than called through
-    // a pointer.
+    // by the time the specialized body is lowered: the comparator ends up
+    // inlined into the loop rather than called through a pointer.
     // A value parameter stands for its integer everywhere the body names it, not
     // only in a type. `while (i < N)` has to mean the capacity.
     if let Expression::Identifier(name) = expression
@@ -4238,7 +4237,7 @@ impl<'a> FunctionLowering<'a> {
     }
 
     // The element at the index, bound under `name`. An aggregate binds as a
-    // borrow of where it sits, so walking a run of structs copies nothing; a
+    // borrow of where it sits, so walking a run of structs copies nothing. A
     // scalar binds as the value, which is what a parameter of that type is.
     fn bind_sequence_element(
         &mut self,
@@ -4774,7 +4773,7 @@ impl<'a> FunctionLowering<'a> {
     }
 
     // The address of a `str` value that has already been lowered. A local is
-    // one; anything else is spilled to one, since a str is read through its
+    // one. Anything else is spilled to one, since a str is read through its
     // address.
     fn str_operand_address(
         &mut self,
@@ -5647,7 +5646,7 @@ impl<'a> FunctionLowering<'a> {
             // A parameter whose type is still the template's own name is one
             // this call did not pin down, and the argument is what says how it
             // travels. A `str` handed to such a parameter is an aggregate and
-            // goes by address; passing it in a register is what the backend
+            // goes by address. Passing it in a register is what the backend
             // then refuses.
             let held;
             let target = match (target, &plan) {
@@ -6074,7 +6073,7 @@ impl<'a> FunctionLowering<'a> {
                 // that is not already in memory is put there first: the value
                 // an expression answered with lives in a register until
                 // something needs to point at it. A scalar reaching a borrow is
-                // not this; that one is passed as the value it is, where the
+                // not this. That one is passed as the value it is, where the
                 // plan is read.
                 if needs_memory(target) && !self.locals[local].in_memory {
                     let held = self.fresh_local(target.clone(), None);

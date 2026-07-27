@@ -456,7 +456,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         len := node.c
         // A columns element field `c[h].field`: pick the field's own column
         // array, then index it by the handle's checked slot. SoA selects the
-        // field BEFORE indexing, so this is one recognized shape rather than a
+        // field before indexing, so this is one recognized shape rather than a
         // field offset added after a slab-style index. The handle is validated
         // by `frost_rt_slot` exactly as a slab's is.
         base_node := arena_at(p.arena, base)
@@ -1175,7 +1175,7 @@ emit_param_signature :: fn(mut p: Parser, head: i64) {
         // The C compiler is what knows how this target passes one, so it is
         // handed a real struct type and left to apply the rule. The name takes
         // a suffix so that a definition can bind the body's name to its
-        // address; see emit_value_param_bindings.
+        // address. See emit_value_param_bindings.
         by_value := param_node_by_value(p, id)
         if (by_value) {
             ty = pointee(ty)
@@ -1436,8 +1436,8 @@ emit_function_body :: fn(mut p: Parser, body: i64) {
         if (next_id == (0 - 1)) {
             // A body ending in a call answers with what that call answered
             // with, unless the function answers with nothing, where the value
-            // is simply dropped. `spawning_system` ends in `ecs_spawn(world)`
-            // and hands back no entity.
+            // is dropped. `spawning_system` ends in `ecs_spawn(world)` and
+            // hands back no entity.
             if (kind == NodeKind::ExprStmt && type_of(p, node.a) != TY_VOID
                 && p.current_ret != TY_VOID) {
                 emit_text("return (")

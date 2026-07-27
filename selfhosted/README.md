@@ -10,10 +10,10 @@ run is this one, which is why it is held to the full language and to the same
 speed promise rather than to a lower bar. Where it is behind, that is a port
 waiting rather than a divergence.
 
-**It self-hosts, twice over.** It compiles its own source; a compiler built from
-that output compiles the same source again; the two outputs are byte-identical.
-That three-stage fixpoint holds through both of its backends, and both are
-checked on every build by `self_hosting_is_a_fixpoint` and
+**It self-hosts, twice over.** It compiles its own source. A compiler built from
+that output compiles the same source again, and the two outputs are
+byte-identical. That three-stage fixpoint holds through both of its backends,
+and both are checked on every build by `self_hosting_is_a_fixpoint` and
 `native_self_hosting_is_a_fixpoint` in `tests/native.rs`. Through the assembly
 backend there is no C compiler anywhere in the loop. The fixpoint is how the
 compiler is checked, not what it is for.
@@ -67,11 +67,11 @@ Both backends emit from the same checked program: C through
 
 ## Where the two compilers still differ
 
-The two compilers accepting the same language is a pillar of this project, not
-a nice-to-have. It is what lets Frost be built from a Rust toolchain and nothing
-else: the bootstrap compiles this compiler, this compiler compiles itself, and
-no seed binary is needed anywhere. A divergence is a hole in that, whichever
-side it is on.
+The two compilers accepting the same language is a requirement of this project.
+It is what lets Frost be built from a Rust toolchain and nothing else: the
+bootstrap compiles this compiler, this compiler compiles itself, and no seed
+binary is needed anywhere. A divergence is a hole in that, whichever side it is
+on.
 
 They accept the same language. What is left is not a difference in what a
 program may say:
@@ -96,7 +96,7 @@ at, rather than misparsed into a crash somewhere else.
    range.
 2. **The AST is an arena of `Node` records.** `Arena<$T>` is a bump allocator
    over one `malloc`, written in the language itself. `arena_push` appends and
-   returns an index; `arena_at` turns an index back into a `ref Node`, a borrow
+   returns an index. `arena_at` turns an index back into a `ref Node`, a borrow
    the checker has proven names a live element, so reaching a field through it is
    not gated and the unsafe stays inside `arena_at`'s one bounds-checked body. A
    node names its children by index, which is the data-oriented replacement for
@@ -110,7 +110,7 @@ at, rather than misparsed into a crash somewhere else.
    the recursive-descent functions, which is how you carry mutable state where
    references are second-class.
 5. **Code generation** walks the arena dispatching on `node.kind`. The C backend
-   emits text through runtime helpers; the assembly backend emits x86-64
+   emits text through runtime helpers, and the assembly backend emits x86-64
    directly, with its own register allocation, stack frames and calling
    convention.
 

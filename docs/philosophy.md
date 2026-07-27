@@ -159,18 +159,10 @@ not an exercise whose lessons get carried somewhere else. The goal is a real,
 finished implementation of this design: ownership without lifetimes, linear
 resources replacing `Drop`, generational handles unified with a borrow
 discipline, a typed IR feeding multiple backends, and specialization-only
-generics. The bar for "done" is that those hold up against real code and a real
+generics. The bar for done is that those hold up against real code and a real
 code generator, and then that people can write real programs with them.
 
-That is why the differential oracle matters. The point is not just that Frost
-runs, but that its independent backends *agree*, which is strong evidence that
-the semantics are pinned down rather than accidental. Every proposition in the
-design has been driven to running, differential-tested code.
-
-## In brief
-
-Frost organizes programs around data and the functions that transform it, plain
-structs, free functions, enums with `match`, monomorphized generics, generational
-handles, and linearly-tracked resources. It is memory-safe without a garbage
-collector or lifetime annotations because references are second-class and
-therefore cannot escape.
+That is why the differential oracle matters. The point is that its independent
+backends *agree*, which is strong evidence that the semantics are pinned down
+rather than accidental. Every proposition in the design has been driven to
+running, differential-tested code.

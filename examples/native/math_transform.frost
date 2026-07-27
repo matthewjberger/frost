@@ -1,6 +1,6 @@
-// The standard-library math in action: build a camera and a model transform
-// out of std/math.frost and push a point through them, the way a renderer
-// would. Everything is `f32` free functions over plain structs, no operator
+// The standard-library math: build a camera and a model transform out of
+// std/math.frost and push a point through them, the way a renderer would.
+// Everything is `f32` free functions over plain structs, no operator
 // overloading and no methods.
 //
 // Floating-point results are printed as scaled integers (three fractional

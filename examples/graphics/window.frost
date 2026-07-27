@@ -3,9 +3,9 @@
 //   just window
 //
 // Every line is ordinary Frost. The C library is reached through
-// [sdl.frost](sdl.frost), which is what binding one looks like: the `extern`
-// declarations live in the binding, a window is a type of its own rather than a
-// bare pointer, and nothing here says `unsafe`.
+// [sdl.frost](sdl.frost): the `extern` declarations live in the binding, a
+// window is a type of its own rather than a bare pointer, and nothing here
+// says `unsafe`.
 //
 // The source is the same on every platform, because SDL's C API is. Only the
 // link flag differs, which is why the recipe is per-platform and this file is

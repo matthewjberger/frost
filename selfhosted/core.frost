@@ -713,7 +713,7 @@ LocalVar :: struct {
     ty: i64,
     // Where this local sits in the frame, decided once when it is recorded
     // rather than by adding up every local's size at each mention of it. The
-    // native backend is what reads it; every other table of these leaves it
+    // native backend is what reads it. Every other table of these leaves it
     // zero.
     slot: i64,
 }
@@ -793,7 +793,7 @@ buffer_of :: fn(size: i64) -> str {
 
 // A C string as a slice of the bytes it holds, for text the environment handed
 // over: a file's contents, an argument. Measuring it is the last thing done
-// through a bare pointer; everything after reads it as a slice.
+// through a bare pointer. Everything after reads it as a slice.
 cstr_slice :: fn(text: ^i8) -> str {
     unsafe { slice_from($u8, ptr_cast($u8, text), cstr_len(text)) }
 }
@@ -924,7 +924,7 @@ Parser :: struct {
     call_xarg_count: i64,
     // The first compile-time argument of a call to a generic that also takes a
     // compile-time list. Without a list this is what `call_type_args` answers
-    // with; with one the run holds both kinds and this is the primary.
+    // with. With one the run holds both kinds and this is the primary.
     call_pack_primary: i64,
     // A `>` left over from splitting a `>>` token that closed a nested generic,
     // so the enclosing generic sees its own close where the lexer ran the two

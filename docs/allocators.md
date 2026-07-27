@@ -8,10 +8,10 @@ at the edge.
 
 The design follows Ginger Bill's *Memory Allocation Strategies* (the Odin
 allocator model). Allocators are explicit, composable, and operate over plain
-bytes, and freeing in bulk beats freeing per object. Frost already carries the
-seeds of this. `Arena` is a parseable but inert type, `Context` is a dead type,
-and the removed `push_context` and `push_allocator` forms were an ambient
-allocator that was tried and dropped. That history points the way.
+bytes, and freeing in bulk beats freeing per object. Frost already has the
+beginnings of this. `Arena` is a parseable but inert type, `Context` is a dead
+type, and the removed `push_context` and `push_allocator` forms were an ambient
+allocator that was tried and dropped.
 
 ## The layers
 
@@ -28,7 +28,7 @@ in how they hand that memory out and take it back.
    A freestanding program skips it entirely and roots every allocator in a static
    buffer.
 
-3. The arena (linear or bump) allocator is the workhorse. An `Arena` holds a
+3. The arena (linear or bump) allocator is the default. An `Arena` holds a
    backing `[]u8` and a bump offset. Allocation is an aligned bump of the offset.
    There is no per-object free. You free everything at once by resetting the
    offset, or you save a marker and roll back to it (a stack discipline). This is

@@ -876,7 +876,7 @@ fn link_executable(
         }
         if freestanding {
             // The freestanding runtime supplies the platform's entry point. The
-            // linker just needs the matching entry symbol and, where the OS
+            // linker needs the matching entry symbol and, where the OS
             // requires it, the one library that exposes process exit. This is the
             // per-target floor, the same shape Rust's targets use.
             add_freestanding_link_args(&mut cmd);

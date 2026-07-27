@@ -30,7 +30,7 @@ behavior outside its
 own safety story.
 
 The distinction is that the dependency worth shedding was the *allocator*,
-not the *C*. Look at what the pool runtime actually used from C: `malloc`,
+not the *C*. Look at what the pool runtime used from C: `malloc`,
 `free`, `memcpy`, and pointer arithmetic. The generational free list is pure
 integer and pointer manipulation the language can already do.
 Only the allocation was irreducible, and pools are fixed-capacity by design (so

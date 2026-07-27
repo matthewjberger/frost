@@ -6,8 +6,8 @@ walks columns rather than chasing entities. It is the shape a game or an editor
 wants from its world, and it is written in ordinary Frost, so everything below
 is library code you can read, copy, or replace.
 
-The one design decision everything else follows from: **a component is plain
-data**. No destructor, no copy constructor, nothing a type knows that the
+The one design decision everything else follows from: a component is plain
+data. No destructor, no copy constructor, nothing a type knows that the
 compiler does not. That removes the table of per-type function pointers an ECS
 in another language carries, because every operation a column performs is a move
 of `item_size` bytes: growing it, removing a row, carrying a row to another
@@ -46,7 +46,7 @@ main :: fn() -> i64 {
 
 ## Entities
 
-An entity is an id and a generation. The id indexes the slot table; the
+An entity is an id and a generation. The id indexes the slot table. The
 generation is bumped when the id is freed, so a handle kept past a despawn names
 a generation the slot no longer has and every lookup refuses it. This is the
 rule `Handle<T>` follows for a pool, written out here because an entity is not

@@ -26,7 +26,7 @@ use crate::{Position, Spanned};
 //
 // What this cannot see: a raw pointer whose type this pass could not work out.
 // It resolves a name's type from a parameter's annotation, a `let` annotation,
-// a `ptr_cast`, and a struct field, which is how a raw pointer is actually
+// a `ptr_cast`, and a struct field, which is how a raw pointer is
 // held. A pointer arriving somewhere none of those describe is indexed without
 // complaint. Dereference, `ptr_cast` and extern calls are exact, since none of
 // them needs a type to be recognized.
@@ -81,7 +81,7 @@ fn walk_unsafety(
             // user's `unsafe fn` is. Unless it is declared `safe extern fn`,
             // which is the author saying this one was audited and cannot
             // corrupt memory. Putting that assertion on the declaration keeps
-            // `unsafe` blocks to what can actually go wrong. A call that only
+            // `unsafe` blocks to what can go wrong. A call that only
             // writes bytes and returns is not a place to look for corruption,
             // and listing it there makes the list worth less.
             Statement::Extern { name, safe, .. } => {

@@ -2374,7 +2374,7 @@ main :: fn() -> i64 { make() }
 }
 
 // A `mut` parameter is written and a value parameter read, both called with a
-// plain value and no `&`/`&mut` -- the compiler borrows for the mut parameter.
+// plain value and no `&`/`&mut`. The compiler borrows for the mut parameter.
 #[test]
 fn native_parameter_modes() {
     let Some(output) = compile_and_run("param_modes", PARAM_MODES) else {

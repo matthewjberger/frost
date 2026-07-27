@@ -1,7 +1,6 @@
 # C compatibility
 
-Frost has two distinct relationships with C, and it is important to keep them
-separate:
+Frost has two distinct relationships with C:
 
 1. Frost calls C (`extern fn`), a supported feature. This is
    how Frost reaches `printf`, `malloc`, the pool runtime, and any C library.
@@ -62,7 +61,7 @@ main :: fn() -> i64 {
   classifications side by side.
 
   `value` is a word rather than a keyword, so a parameter may still be called
-  `value`; what tells them apart is that a mode is followed by the name and a
+  `value`. What tells them apart is that a mode is followed by the name and a
   name is followed by its type. It says how the bytes cross, not what the caller
   gives up: C receives a copy, so the caller still holds its own value and the
   argument is borrowed exactly as an unmarked one is. That copy is real, and a
@@ -107,9 +106,8 @@ main :: fn() -> i64 {
   `cc`/`gcc`/`clang` (or `cl` on MSVC), so C symbols resolve normally and you can
   pass extra libraries with `--libs`.
 
-This is the interop that carries real weight. Frost programs get the entire C
-ecosystem (libc, OS syscalls, third-party libraries) through `extern fn`, with
-no FFI glue code.
+Frost programs get the entire C ecosystem (libc, OS syscalls, third-party
+libraries) through `extern fn`, with no FFI glue code.
 
 ### The pool runtime is itself just linked C
 

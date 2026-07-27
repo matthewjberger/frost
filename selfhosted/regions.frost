@@ -198,7 +198,7 @@ check_bound_at_call :: fn(mut p: Parser, gfn_index: i64, fn_index: i64,
 //
 // This is a pass rather than something an emitter does, because which backend
 // runs must not decide which programs compile. The rule belongs to the
-// language; a backend is a way of writing an accepted program down.
+// language. A backend is a way of writing an accepted program down.
 //
 // It walks what is emitted, the program list and one instance per
 // monomorphization, rather than every function node in the arena. A generic
