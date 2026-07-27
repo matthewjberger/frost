@@ -1070,8 +1070,14 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         if (value == (0 - 1)) {
             emit_text("return 0;\n")
         } else {
+            // Through the same coercion an assignment takes, since what is
+            // being returned reaches a place of the function's return type
+            // exactly as an assigned value reaches the type of what it is
+            // assigned to. A string literal answered as a `str` is the case
+            // that needs it: the literal is a pointer and the place carries a
+            // length beside it.
             emit_text("return (")
-            emit_expr(p, value)
+            emit_coerced(p, value, p.current_ret)
             emit_text(");\n")
         }
         return
@@ -1451,7 +1457,7 @@ emit_function_body :: fn(mut p: Parser, body: i64) {
             if (kind == NodeKind::ExprStmt && type_of(p, node.a) != TY_VOID
                 && p.current_ret != TY_VOID) {
                 emit_text("return (")
-                emit_expr(p, node.a)
+                emit_coerced(p, node.a, p.current_ret)
                 emit_text(");\n")
             } else {
                 emit_stmt(p, id)
