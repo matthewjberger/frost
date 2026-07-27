@@ -14035,9 +14035,15 @@ fn both_compilers_call_a_c_function_answering_with_a_struct() {
     for (label, frost) in
         [("bootstrap", &bootstrap), ("self-hosted", &self_hosted)]
     {
-        let exe =
-            directory.join(format!("{label}{}", std::env::consts::EXE_SUFFIX));
-        let build = Command::new(frost)
+        // Through an installed layout and from a working directory that is
+        // not the checkout, so nothing here resolves by accident of where the
+        // test runner happens to stand.
+        let (installed, work) =
+            installed_layout(&format!("cret_{label}"), frost)
+                .expect("could not lay out an installed compiler");
+        let exe = work.join(format!("{label}{}", std::env::consts::EXE_SUFFIX));
+        let build = Command::new(&installed)
+            .current_dir(&work)
             .arg("--link")
             .arg("--libs")
             .arg(&object)
@@ -14050,11 +14056,12 @@ fn both_compilers_call_a_c_function_answering_with_a_struct() {
             .unwrap();
         assert!(
             build.status.success() && exe.exists(),
-            "{label} could not build the program:\n{}{}",
+            "{label} could not build the program from {}:\n{}{}",
+            work.display(),
             String::from_utf8_lossy(&build.stdout),
             String::from_utf8_lossy(&build.stderr)
         );
-        let run = Command::new(&exe).output().unwrap();
+        let run = Command::new(&exe).current_dir(&work).output().unwrap();
         assert!(
             run.status.success(),
             "{label} built a program that did not run: {:?}",

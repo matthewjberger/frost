@@ -174,10 +174,10 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
                 runtime_object),
             " -o "),
         executable)
+    command = join_two(command, options.libs)
     if (frost_rt_is_windows() == 0) {
         command = join_two(command, " -lm")
     }
-    command = join_two(command, options.libs)
     if (unsafe { frost_rt_run_command(command) } != 0) {
         report("frost: the linker failed: ")
         report_cstr(command)
@@ -501,6 +501,15 @@ main :: fn() -> i64 {
         return build_per_module(parser, program, options)
     }
 
+    // An object needs somewhere to go, and assembly on standard output is what
+    // --emit-asm is for. Asked before anything is emitted, so the answer is not
+    // a program's worth of assembly followed by a complaint.
+    if (options.object == 1 && options.link == 0
+        && cstr_len(options.output) == 0) {
+        report("frost: --native writes an object, so it needs -o <path>\n")
+        frost_rt_die()
+    }
+
     // Where the emitted text goes. A link needs it in a file whatever the
     // caller asked for, so it writes one beside the executable and removes it
     // afterwards. Without -o and without --link it goes to standard output.
@@ -546,10 +555,6 @@ main :: fn() -> i64 {
     // nowhere for an object to go, and assembly on standard output is what
     // `--emit-asm` is for.
     if (options.object == 1 && options.link == 0) {
-        if (cstr_len(options.output) == 0) {
-            report("frost: --native writes an object, so it needs -o <path>")
-            frost_rt_die()
-        }
         build := join_two(
             join_two(join_two(join_two(c_compiler(), " -c "), emit_path),
                 " -o "),
@@ -578,17 +583,17 @@ main :: fn() -> i64 {
                     extra),
                 " -o "),
             executable)
+        // What `--libs` named goes after the objects and ahead of the
+        // platform's own libraries, which is the order a linker resolves in: a
+        // named library that reaches libm has to be seen before libm is.
+        mut command := join_two(base, options.libs)
         // A program that reaches the C math functions (std/math.frost's
         // sqrtf and the rest) needs libm where the platform keeps it out of
         // the C runtime, which is Linux and the BSDs. Windows keeps them in
         // the CRT, so the flag is only added off Windows.
-        mut command := base
         if (frost_rt_is_windows() == 0) {
-            command = join_two(base, " -lm")
+            command = join_two(command, " -lm")
         }
-        // What `--libs` named goes after the objects, which is the order a
-        // linker resolves in.
-        command = join_two(command, options.libs)
         status := unsafe { frost_rt_run_command(command) }
         unsafe { frost_rt_remove_file(emit_path) }
         if (status != 0) {

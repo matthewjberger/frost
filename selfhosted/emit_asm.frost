@@ -905,6 +905,18 @@ emit_asm_extend_ret :: fn(mut p: Parser, ty: i64) {
     }
 }
 
+// Whether the call goes through a local of function-pointer type rather than to
+// the name it shares. Such a local holds a Frost proc, which answers the way
+// Frost does however the global of that name was declared, so the C rules for
+// answering do not apply to it.
+call_is_indirect :: fn(mut p: Parser, fn_index: i64) -> bool {
+    sym := arena_at(p.fns, fn_index)
+    if (local_exists(p, sym.off, sym.len) == false) {
+        return false
+    }
+    is_proc(lookup_local(p, sym.off, sym.len))
+}
+
 // Whether an `extern` answering with an aggregate does so through a hidden
 // pointer. This is the target's rule rather than this compiler's: Microsoft x64
 // answers a struct of 1, 2, 4 or 8 bytes in %rax whatever it holds, and takes a
@@ -1415,7 +1427,8 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     mut register_ret : i64 = 0
     if (is_aggregate(ret)) {
         result_slot = alloc_temp(p, type_size(p, ret))
-        if (callee.is_extern == 1 && extern_ret_indirect(p, ret) == false) {
+        if (callee.is_extern == 1 && call_is_indirect(p, fn_index) == false
+            && extern_ret_indirect(p, ret) == false) {
             register_ret = 1
         } else {
             sret = 1
@@ -1602,11 +1615,8 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     // through. The load comes after the arguments are in place so it does not
     // disturb them.
     mut indirect : i64 = 0
-    if (local_exists(p, sym.off, sym.len)) {
-        callee_ty := lookup_local(p, sym.off, sym.len)
-        if (is_proc(callee_ty)) {
-            indirect = 1
-        }
+    if (call_is_indirect(p, fn_index)) {
+        indirect = 1
     }
     if (indirect == 1) {
         asm_i("movq ", local_slot(p, sym.off, sym.len), "(%rbp), %r11")
@@ -1647,8 +1657,9 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         asm_i("leaq ", result_slot, "(%rbp), %rax")
     }
     // Only a C function leaves the bits above a narrow answer undefined. A
-    // Frost function answers with the whole register.
-    if (sym.is_extern == 1) {
+    // Frost function answers with the whole register, and a call through a
+    // local is a Frost proc whatever the name it shares was declared as.
+    if (sym.is_extern == 1 && indirect == 0) {
         emit_asm_extend_ret(p, ret)
     }
 }
