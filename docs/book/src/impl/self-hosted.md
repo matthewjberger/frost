@@ -79,12 +79,39 @@ binary is needed anywhere. A divergence is a hole in that, whichever side it is
 on. What is left is not a difference in what a program may say.
 
 Parallelism. The bootstrap generates code on every core from a shared work
-queue. The self-hosted compiler runs its assembler invocations in parallel but
-emits one unit at a time, because it writes straight to a file rather than
-buffering a unit in memory.
+queue. The self-hosted compiler emits and assembles one unit at a time.
 
 Output. The bootstrap emits an object through Cranelift, portable C, or runs the
-IR directly. This one emits C or x86-64 assembly of its own.
+IR directly. This one emits C or x86-64 assembly of its own, and on Windows
+encodes that assembly to an object itself.
+
+## What the fixpoint cannot see
+
+Three stages agreeing byte for byte is the strongest check here, and it has one
+blind spot worth knowing: **any property every stage shares is invisible to it.**
+The stages are compared against each other, so anything common to all of them
+cancels.
+
+That is not a hypothetical. `core.autocrlf` is on for most Windows checkouts, so
+a file git writes has CRLF and a file an editor writes may not, and every string
+literal holding a *raw* newline captured whichever it was. The compiler emitted
+4,170 stray carriage returns on one checkout and none on another. All three
+stages read the same source, so all three did it, so the fixpoint held. It was
+found by comparing the output of two compilers built at different times, not by
+any test in the suite.
+
+The same reasoning covers everything a build reads that is not the program: the
+environment, the standard library on disk, and the runtime beside the compiler.
+A build resolves its C runtime by walking up from the binary, and the object it
+compiles is keyed on what that file holds, which cannot tell "the runtime
+changed" apart from "a different runtime is being read". Both present as a cache
+key that does not match, and only one of them is a stale cache. A failing link
+therefore names the runtime path it resolved, because the linker only names the
+symbol it could not find.
+
+So: a check that compares two things is blind to whatever they have in common.
+Reach outside the loop for anything that has to hold absolutely, which for the
+emitted assembly means a byte comparison against a build from a different tree.
 
 ## Compile speed
 
@@ -108,12 +135,23 @@ removing it from the loop is what the assembly backend is for. That is also why
 self type-checking had to come first: once there is no C compiler behind the
 compiler, nothing downstream catches a mistake.
 
-On the native path the C compiler is already out of the per-build loop. The
-runtime is compiled once into an object cached in the temp directory, keyed by a
-hash of its source and the tool that built it, and linked thereafter. What
-remains is the linker invocation, which on the bootstrap is about two thirds of
-a small build and is mostly fixed process and driver overhead rather than
-linking work, so it barely grows with program size.
+On the native path the C compiler is out of the per-build loop. The runtime is
+compiled once into an object cached in the temp directory, keyed by a hash of
+its source and the tool that built it, and linked thereafter. The assembler went
+the same way: `selfhosted/assemble.frost` encodes the emitted text and
+`coff.frost` writes the object, so on Windows a build reaches an object without
+running `as` and without the text ever becoming a file. That took `--native` on
+`std/ecs.frost` from 155 ms to 86 and on the compiler's own source from 327 to
+222, and a cold incremental build of the compiler from 675 ms to 366.
+
+What remains of the emitted text is what the direct path has still to remove: of
+the 86 ms, 64 is the front end and formatting the assembly, and 22 is encoding
+it and writing the object. Handing the backend's instructions to the encoder as
+records rather than as text is what reaches the rest.
+
+What remains outside the compiler is the linker invocation, which on the
+bootstrap is about two thirds of a small build and is mostly fixed process and
+driver overhead rather than linking work, so it barely grows with program size.
 
 Measured and rejected on the bootstrap: passing `-fuse-ld=lld` to the driver.
 lld is present on this machine and made no difference (0.113 s against 0.106 s,
@@ -123,10 +161,18 @@ not re-try this expecting a win.
 The only way to remove that last cost is to stop invoking an external tool at
 all, which means emitting the executable directly, PE on Windows and ELF on
 Linux. That is a mini-linker (symbol resolution, relocations, imports) and is
-what Jai does. Worth doing for self-containment more than for speed. The other
-half of going C-free is the runtime, and most of it is already gone: the pool
-lives in `std/slab.frost` as ordinary Frost and `--freestanding` already links
-with no libc, so what is left in C is the aborts, the assertions and the IO.
+what Jai does. The other half of going C-free is the runtime, and most of it is
+already gone: the pool lives in `std/slab.frost` as ordinary Frost and
+`--freestanding` already links with no libc, so what is left in C is the aborts,
+the assertions and the IO.
+
+Going C-free is not the reason to write the ELF half of the object writer. An
+encoder does not remove the toolchain while a build still links through it, and
+the pieces between here and that are a writer, a linker and a libc-free runtime.
+The reason is narrower and better: the encoder writes COFF, so today a Windows
+build takes one path and every other platform takes another, with different
+speed and different failure modes, and only one of them is under anyone's
+fingers. An ELF writer makes the fast path the only path.
 
 ## Scaling past one file
 
@@ -154,16 +200,17 @@ full against about 200 ms with `--incremental`. See
 [separate-compilation.md](separate-compilation.md).
 
 The Frost compiler has its own answer to the same shape problem, and a smaller
-one, because it emits assembly rather than an IR. `--incremental` writes one
-assembly unit per module and assembles each to its own object, and a module
-whose emitted assembly is byte for byte last build's is not assembled again.
-The cache key is that assembly: the compiler has just written what the module
-compiles to, so nothing else has to be hashed or walked. On its own source,
-`just bench-selfhost-incremental` measures about 1,500 ms whole-program against
-about 1,060 ms for a first incremental build and about 330 ms once the objects
-are there, and the compiler that comes out is byte for byte the one the
-whole-program build produces. The assembler runs go out together, one OS thread
-each, which is why even the first build is the faster one.
+one, because it emits assembly rather than an IR. `--incremental` emits one
+assembly unit per module and encodes each to its own object, and a module whose
+emitted assembly is byte for byte last build's is not encoded again. The cache
+key is that assembly: the compiler has just produced what the module compiles
+to, so nothing else has to be hashed or walked. Where the encoder runs, the unit
+stays in memory and no assembly file is written at all; where the toolchain does
+the encoding it is written to `<build>/m<n>.s` for that program to read.
+
+On its own source that is about 366 ms for a first incremental build and about
+271 ms once the objects are there, and the compiler that comes out is byte for
+byte the one the whole-program build produces.
 
 What keeps the backend off the curve, on the bootstrap:
 
@@ -199,7 +246,9 @@ further step, and it needs a substitution pass this compiler does not have,
 where binding happens during the parse.
 
 Parallel emission is the one not taken. Emitting could run on every core, since
-the type system is local and signature-based, but the compiler writes straight
-to one file at a time and emitting is a small part of a build next to the
-assembler runs, so buffering a unit in memory to parallelize it would be work
-spent where the time is not.
+the type system is local and signature-based, and now that a unit is buffered in
+memory rather than written straight out, the thing that stopped it is gone. What
+has replaced that reason is that emitting is most of what a build now spends,
+so the honest next step is to make it cost less rather than to spread it: it
+formats text that is immediately read back, and handing the encoder records
+instead removes the work rather than dividing it.

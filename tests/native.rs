@@ -14558,6 +14558,14 @@ fn the_assembler_rounds_a_float_literal_to_the_nearest_double() {
 // The compiler's own source is one of the inputs because it is the widest
 // coverage available: 134,000 instructions over every form the backend emits
 // for integer code. The rest reach the forms it does not use itself.
+//
+// One disagreement is sanctioned and is not a bug here. `as` rounds a float
+// literal that sits exactly between two doubles away from zero, where the
+// answer is the one whose last bit is zero, so it writes 9007199254740994 for
+// 9007199254740993. If `.data` ever differs by eight bytes and the two readings
+// are neighbouring doubles, this is why, and
+// `the_assembler_rounds_a_float_literal_to_the_nearest_double` is the test that
+// says which of them is right.
 #[test]
 fn the_assembler_encodes_what_the_system_assembler_does() {
     if !cfg!(windows) || !binutils_available() {
