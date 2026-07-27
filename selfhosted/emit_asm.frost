@@ -1466,6 +1466,41 @@ emit_asm_call_through :: fn(mut p: Parser, callee: i64, args: i64) {
     }
 }
 
+// Whether an argument can be put in its register without going through the
+// stack: it has to be produced by one instruction that writes only that
+// register, and be a whole register wide, so no narrower destination is needed.
+simple_arg_kind :: fn(mut p: Parser, id: i64) -> i64 {
+    kind := simple_operand_kind(p, id)
+    if (kind == SIMPLE_NONE) {
+        return SIMPLE_NONE
+    }
+    ty := type_of(p, id)
+    if (is_float(ty) || is_aggregate(ty) || scalar_size(ty) != 8) {
+        return SIMPLE_NONE
+    }
+    kind
+}
+
+// One argument straight into the register it travels in.
+emit_asm_simple_into_arg :: fn(mut p: Parser, id: i64, kind: i64, index: i64) {
+    node := arena_at(p.arena, id)
+    emit_text("    movq ")
+    if (kind == SIMPLE_LOCAL) {
+        frost_rt_emit_int(local_slot(p, node.val, node.c))
+        emit_text("(%rbp)")
+    } else {
+        emit_text("$")
+        if (kind == SIMPLE_NUMBER) {
+            frost_rt_emit_int(node.val)
+        } else {
+            frost_rt_emit_int(const_value(p, node.val, node.c))
+        }
+    }
+    emit_text(", ")
+    emit_asm_arg_reg(p, index)
+    emit_text("\n")
+}
+
 // Where a pushed argument is read from when it is placed. One going to a
 // register is still in the cell it was pushed to, so it needs no staging
 // register. One taken apart on the way is in %r10 by then.
@@ -1509,6 +1544,46 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         } else {
             sret = 1
         }
+    }
+
+    // A call whose arguments are each one instruction writing one register can
+    // put them where they belong directly. Nothing an argument does can disturb
+    // an argument already placed, because each writes only its own register, so
+    // the stack the other path pushes them through is not needed. Every other
+    // shape, and anything that has to be converted, borrowed, taken apart or
+    // spilled, takes the path below.
+    mut placed_directly : bool = capability == 0 && sret == 0
+        && register_ret == 0 && typed_params
+        && value_count == count && value_count <= abi_arg_regs(p)
+    mut kinds : Arena<LocalVar> = arena_make($LocalVar, 8)
+    mut probe : i64 = 0
+    while (probe < value_count && placed_directly) {
+        argument := nth_value_arg(p, args, probe)
+        kind := simple_arg_kind(p, argument)
+        declared := nth_param_type(p, params_of_call, probe)
+        if (kind == SIMPLE_NONE
+            || nth_param_auto_borrows(p, params_of_call, probe)
+            || value_param_type(p, params_of_call, probe) >= 0
+            || (declared >= 0 && declared != type_of(p, argument))) {
+            placed_directly = false
+        }
+        arena_push(kinds, LocalVar { name_off = kind, name_len = 0, ty = 0,
+            slot = 0 })
+        probe = probe + 1
+    }
+    if (placed_directly) {
+        shadow_only := abi_shadow(p)
+        asm_i("subq $", shadow_only, ", %rsp")
+        mut placing : i64 = 0
+        while (placing < value_count) {
+            held := arena_at(kinds, placing)
+            emit_asm_simple_into_arg(p, nth_value_arg(p, args, placing),
+                held.name_off, placing)
+            placing = placing + 1
+        }
+        emit_asm_call_tail(p, args, fn_index, shadow_only, ret, 0,
+            result_slot)
+        return
     }
 
     // Arguments are pushed last to first, so the capabilities, being last, go
@@ -1707,6 +1782,15 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         r = r + 1
     }
 
+    emit_asm_call_tail(p, args, fn_index, frame + 16 * count, ret,
+        register_ret, result_slot)
+}
+
+// The call itself, the stack given back, and whatever the answer needs doing to
+// it. Both ways of placing arguments end here, so how a call is made and how
+// its answer is read is written once.
+emit_asm_call_tail :: fn(mut p: Parser, args: i64, fn_index: i64, restore: i64,
+    ret: i64, register_ret: i64, result_slot: i64) {
     sym := arena_at(p.fns, fn_index)
     // A call through a local of function-pointer type is indirect. The value is
     // loaded into a scratch register the arguments do not use and called
@@ -1738,7 +1822,7 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         }
     }
     emit_text("\n")
-    asm_i("addq $", frame + 16 * count, ", %rsp")
+    asm_i("addq $", restore, ", %rsp")
     // A float answered in %xmm0, and every value here travels in %rax.
     if (is_float(ret)) {
         if (distinct_repr(ret) == TY_F32) {
