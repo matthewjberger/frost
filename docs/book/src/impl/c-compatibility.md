@@ -39,10 +39,11 @@ main :: fn() -> i64 {
 - Aggregate parameters are passed by pointer. A `struct`/`enum`/array
   parameter to an `extern fn` is passed as a pointer to the value, not
   by-value-in-registers. So `close :: extern fn(f: File)` links against a C
-  `void close(File* f)`. This matches the common C convention (most APIs take
-  structs by pointer) and is how a `linear` resource's terminal consumer works
-  natively. The `extern` takes ownership across the boundary, receiving a
-  pointer to the moved-in aggregate.
+  `void close(File* f)`. This is a convention rather than the C ABI, and it is
+  how a `linear` resource's terminal consumer works natively: the `extern` takes
+  ownership across the boundary, receiving a pointer to the moved-in aggregate.
+  It suits the older style of C API that takes a context struct by address, and
+  it is not the common case in a modern one. See the note under `value` below.
 - Aggregate returns from an `extern` follow the real C ABI. An
   `extern fn(...) -> Ctx` returns whatever the target's C compiler returns:
   in registers when the rule says so and through a hidden pointer when it does
@@ -54,12 +55,21 @@ main :: fn() -> i64 {
   is a pointer by convention, a struct return is by value with the real ABI.
   A return could not have been a convention, because `-> Ctx` has to mean what C
   means by it and `-> ^Ctx` is how a returned pointer is written. A parameter had
-  a choice, and passing by pointer is what most C APIs want.
+  a choice, and the pointer form is what a `linear` resource needs.
 - A parameter written `value` is passed to C the way C passes a struct.
   `set_label :: extern fn(handle: ^u8, value label: View)` links against
   `void set_label(void*, View)`, with the bytes split across registers or pushed
   on the stack by the same target rule the return uses. `src/c_abi.rs` has both
   classifications side by side.
+
+  How often `value` is wanted is worth stating, because the default reads as a
+  claim about C and is not one. In the largest binding measured against it, 356
+  declarations covering the whole surface of a game engine, 206 take at least
+  one aggregate parameter and none of them wanted the default: handles, vectors,
+  tagged unions and wire structs of 8 to 40 bytes, which is the range a modern C
+  ABI passes in registers. Omitting `value` where C takes a struct by value is
+  silent wrong code, and nothing in the program knows the C signature, so no
+  diagnostic is possible.
 
   `value` is a word rather than a keyword, so a parameter may still be called
   `value`. What tells them apart is that a mode is followed by the name and a
