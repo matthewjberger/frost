@@ -2,9 +2,10 @@
 // on Windows reads.
 
 import "core.frost"
+import "blob.frost"
 import "assemble.frost"
 
-export Blob, object_blob, write_coff_object
+export write_coff_object
 
 // The two sections this backend ever emits, in the order they are written.
 // Their numbers are one-based in the symbol table, which is what a symbol's
@@ -31,63 +32,6 @@ COFF_CLASS_STATIC :: 3
 // linker's map of code.
 COFF_TYPE_FUNCTION :: 32
 
-// A growable run of bytes, with the writing helpers the format needs.
-Blob :: struct {
-    bytes: str,
-    count: i64,
-}
-
-blob_byte :: fn(mut b: Blob, value: i64) {
-    if (b.count >= str_len(b.bytes)) {
-        report("frost: the object outgrew its buffer\n")
-        frost_rt_die()
-    }
-    b.bytes[b.count] = value & 255
-    b.count = b.count + 1
-}
-
-blob_word16 :: fn(mut b: Blob, value: i64) {
-    blob_byte(b, value)
-    blob_byte(b, value >> 8)
-}
-
-blob_word32 :: fn(mut b: Blob, value: i64) {
-    blob_byte(b, value)
-    blob_byte(b, value >> 8)
-    blob_byte(b, value >> 16)
-    blob_byte(b, value >> 24)
-}
-
-blob_zeros :: fn(mut b: Blob, count: i64) {
-    mut i : i64 = 0
-    while (i < count) {
-        blob_byte(b, 0)
-        i = i + 1
-    }
-}
-
-// A section's eight-byte name field, padded with zeros.
-blob_name :: fn(mut b: Blob, name: str) {
-    mut i : i64 = 0
-    while (i < 8) {
-        if (i < str_len(name)) {
-            blob_byte(b, name[i])
-        } else {
-            blob_byte(b, 0)
-        }
-        i = i + 1
-    }
-}
-
-// A run of the assembled bytes, copied across.
-blob_copy :: fn(mut b: Blob, source: str, count: i64) {
-    mut i : i64 = 0
-    while (i < count) {
-        blob_byte(b, source[i])
-        i = i + 1
-    }
-}
-
 // Whether a name goes in the object at all. Local names are resolved while
 // assembling, so only what another unit may call or refer to is carried.
 carried :: fn(mut unit: Assembly, index: i64) -> bool {
@@ -111,13 +55,6 @@ reloc_symbol_index :: fn(mut unit: Assembly, sym: i64, text_symbol: i64,
         return data_symbol
     }
     text_symbol
-}
-
-// Room for one object, which grows to what the object turns out to need. A
-// build writing several fills the same room again for each rather than asking
-// for another of its own.
-object_blob :: fn() -> Blob {
-    Blob { bytes = buffer_of(0), count = 0 }
 }
 
 // Everything the object holds, added up: the headers, both sections, a fixup of
@@ -144,14 +81,10 @@ object_room :: fn(mut unit: Assembly, text_count: i64, data_count: i64,
 // bytes of each section, the fixups, the symbol table and the names too long
 // to sit in a symbol entry.
 write_coff_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
-    object.count = 0
     text_count := asm_section_count(unit, SEC_TEXT)
     data_count := asm_section_count(unit, SEC_DATA)
     reloc_count := asm_reloc_count(unit)
-    room := object_room(unit, text_count, data_count, reloc_count)
-    if (str_len(object.bytes) < room) {
-        object.bytes = buffer_of(room)
-    }
+    blob_room(object, object_room(unit, text_count, data_count, reloc_count))
 
     // The section symbols come first, each followed by the record describing
     // the section it stands for, so a local fixup has something to name.
@@ -185,7 +118,7 @@ write_coff_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
     blob_word16(object, 0)
     blob_word16(object, 0)
 
-    blob_name(object, ".text")
+    blob_name(object, ".text", 8)
     blob_word32(object, 0)
     blob_word32(object, 0)
     blob_word32(object, text_count)
@@ -196,7 +129,7 @@ write_coff_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
     blob_word16(object, 0)
     blob_word32(object, COFF_TEXT_FLAGS)
 
-    blob_name(object, ".data")
+    blob_name(object, ".data", 8)
     blob_word32(object, 0)
     blob_word32(object, 0)
     blob_word32(object, data_count)
@@ -278,26 +211,14 @@ write_coff_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
         n = n + 1
     }
 
-    mut opened : i64 = 0
-    unsafe {
-        opened = frost_rt_emit_open(path)
-    }
-    if (opened == 0) {
-        report("frost: cannot write the object\n")
-        frost_rt_die()
-    }
-    written := unsafe {
-        slice_from($u8, ptr_to(object.bytes[0]), object.count)
-    }
-    emit_text(written)
-    frost_rt_emit_close()
+    blob_write(object, path)
 }
 
 // A symbol standing for a whole section, and the record after it that gives
 // the section's size and how many fixups it carries.
 write_section_symbol :: fn(mut object: Blob, name: str, size: i64,
     relocs: i64, number: i64) {
-    blob_name(object, name)
+    blob_name(object, name, 8)
     blob_word32(object, 0)
     blob_word16(object, number)
     blob_word16(object, 0)
