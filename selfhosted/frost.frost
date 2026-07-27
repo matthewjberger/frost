@@ -167,31 +167,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
         checked = checked + 1
     }
 
-    mut runtime := unsafe { frost_rt_getenv("FROST_RUNTIME") }
-    if (cstr_len(runtime) == 0) {
-        runtime = "runtime/frost_runtime.c"
-    }
-    // The C runtime is a compilation unit like any other, and it changes about
-    // as often as the C compiler does, so it is compiled once and linked
-    // thereafter. Without this every build pays for it again, which on a build
-    // that assembled nothing is most of what is left.
-    runtime_object := join_two(options.build_dir, "/runtime.o")
-    runtime_sum := join_two(options.build_dir, "/runtime.sum")
-    held := file_checksum(runtime)
-    if (held != stored_checksum(runtime_sum)
-        || unsafe { frost_rt_file_exists(runtime_object) } == 0) {
-        build := join_two(
-            join_two(join_two(join_two(c_compiler(), " -c "), runtime), " -o "),
-            runtime_object)
-        if (unsafe { frost_rt_run_command(build) } != 0) {
-            report("frost: the runtime did not compile: ")
-            report_cstr(build)
-            report("
-")
-            frost_rt_die()
-        }
-        write_checksum(runtime_sum, held)
-    }
+    runtime_object := cached_runtime_object()
     mut command := join_two(
         join_two(
             join_two(join_two(join_two(c_compiler(), objects), " "),
@@ -565,11 +541,7 @@ main :: fn() -> i64 {
         // index compiles to, the assertion, the string and error emitters,
         // and the test runner a `--test` build needs. FROST_RUNTIME says
         // where it is for a checkout that is not the working directory.
-        mut runtime := unsafe { frost_rt_getenv("FROST_RUNTIME") }
-        if (cstr_len(runtime) == 0) {
-            runtime = "runtime/frost_runtime.c"
-        }
-        extra := join_two(" ", runtime)
+        extra := join_two(" ", cached_runtime_object())
         base := join_two(
             join_two(
                 join_two(
