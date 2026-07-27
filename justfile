@@ -1,6 +1,12 @@
 set windows-shell := ["powershell.exe"]
 export RUST_BACKTRACE := "1"
 
+# Where `install` and `install-self` put the two compilers. `~/.cargo/bin` is
+# already on PATH for anyone who can build this repo, so the default needs no
+# setup. FROST_BIN overrides it. Windows sets USERPROFILE and not always HOME.
+homedir := env_var_or_default("HOME", env_var_or_default("USERPROFILE", "."))
+bindir := env_var_or_default("FROST_BIN", join(homedir, ".cargo", "bin"))
+
 # Displays the list of available commands
 @just:
     just --list
@@ -8,6 +14,50 @@ export RUST_BACKTRACE := "1"
 # Builds the project in release mode
 build:
     cargo build -r
+
+# Builds the bootstrap compiler and puts it on PATH as `frost` (Windows)
+[windows]
+install: build
+    New-Item -ItemType Directory -Force "{{bindir}}" | Out-Null
+    Copy-Item -Force target/release/frost.exe (Join-Path "{{bindir}}" frost.exe)
+    Write-Host "frost -> {{bindir}}"
+
+# Builds the bootstrap compiler and puts it on PATH as `frost` (Unix)
+[unix]
+install: build
+    mkdir -p "{{bindir}}"
+    cp target/release/frost "{{bindir}}/frost"
+    echo "frost -> {{bindir}}"
+
+# Builds the self-hosted compiler and puts it on PATH as `frostc` (Windows)
+[windows]
+install-self: selfhost-build
+    New-Item -ItemType Directory -Force "{{bindir}}" | Out-Null
+    Copy-Item -Force selfhosted/frost.exe (Join-Path "{{bindir}}" frostc.exe)
+    Write-Host "frostc -> {{bindir}}"
+
+# Builds the self-hosted compiler and puts it on PATH as `frostc` (Unix)
+#
+# The source really is `frost.exe` here. `-o` names the output verbatim on every
+# platform, and `selfhost-build` asks for that name, so a Unix build produces an
+# ELF binary called `frost.exe`.
+[unix]
+install-self: selfhost-build
+    mkdir -p "{{bindir}}"
+    cp selfhosted/frost.exe "{{bindir}}/frostc"
+    echo "frostc -> {{bindir}}"
+
+# Removes both compilers from PATH (Windows)
+[windows]
+uninstall:
+    Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path "{{bindir}}" frost.exe), (Join-Path "{{bindir}}" frostc.exe)
+    Write-Host "removed frost and frostc from {{bindir}}"
+
+# Removes both compilers from PATH (Unix)
+[unix]
+uninstall:
+    rm -f "{{bindir}}/frost" "{{bindir}}/frostc"
+    echo "removed frost and frostc from {{bindir}}"
 
 # Runs cargo check and format check
 check:
@@ -309,8 +359,8 @@ bench-selfhost: selfhost-build
     lines=$(cat $(dirname "$file")/*.frost | wc -l)
     echo "$file, $lines lines"
     printf "  bootstrap   front end  "; /usr/bin/time -f "%e s" ./target/release/frost --emit-c -o /tmp/bench.c "$file" 2>&1 >/dev/null | tail -1
-    printf "  self-hosted C          "; /usr/bin/time -f "%e s" env FROST_INPUT="$file" ./selfhosted/frost -o /tmp/bench.c 2>&1 >/dev/null | tail -1
-    printf "  self-hosted assembly   "; /usr/bin/time -f "%e s" env FROST_INPUT="$file" FROST_BACKEND=asm ./selfhosted/frost -o /tmp/bench.s 2>&1 >/dev/null | tail -1
+    printf "  self-hosted C          "; /usr/bin/time -f "%e s" env FROST_INPUT="$file" ./selfhosted/frost.exe -o /tmp/bench.c 2>&1 >/dev/null | tail -1
+    printf "  self-hosted assembly   "; /usr/bin/time -f "%e s" env FROST_INPUT="$file" FROST_BACKEND=asm ./selfhosted/frost.exe -o /tmp/bench.s 2>&1 >/dev/null | tail -1
 
 # Measures the self-hosted compiler against the bootstrap on one source (Windows)
 [windows]
@@ -330,12 +380,12 @@ bench-selfhost-incremental: selfhost-build
     set -euo pipefail
     rm -rf /tmp/frost-sh-build
     rm -rf /tmp/frost-sh-build-c
-    echo "assembly, whole program:"; time ./selfhosted/frost --link -o /tmp/whole selfhosted/frost.frost
-    echo "assembly, incremental first:"; time ./selfhosted/frost --incremental --build-dir /tmp/frost-sh-build -o /tmp/inc selfhosted/frost.frost
-    echo "assembly, incremental unchanged:"; time ./selfhosted/frost --incremental --build-dir /tmp/frost-sh-build -o /tmp/inc selfhosted/frost.frost
-    echo "C, whole program:"; time ./selfhosted/frost --emit-c --link -o /tmp/cwhole selfhosted/frost.frost
-    echo "C, incremental first:"; time ./selfhosted/frost --emit-c --incremental --build-dir /tmp/frost-sh-build-c -o /tmp/cinc selfhosted/frost.frost
-    echo "C, incremental unchanged:"; time ./selfhosted/frost --emit-c --incremental --build-dir /tmp/frost-sh-build-c -o /tmp/cinc selfhosted/frost.frost
+    echo "assembly, whole program:"; time ./selfhosted/frost.exe --link -o /tmp/whole selfhosted/frost.frost
+    echo "assembly, incremental first:"; time ./selfhosted/frost.exe --incremental --build-dir /tmp/frost-sh-build -o /tmp/inc selfhosted/frost.frost
+    echo "assembly, incremental unchanged:"; time ./selfhosted/frost.exe --incremental --build-dir /tmp/frost-sh-build -o /tmp/inc selfhosted/frost.frost
+    echo "C, whole program:"; time ./selfhosted/frost.exe --emit-c --link -o /tmp/cwhole selfhosted/frost.frost
+    echo "C, incremental first:"; time ./selfhosted/frost.exe --emit-c --incremental --build-dir /tmp/frost-sh-build-c -o /tmp/cinc selfhosted/frost.frost
+    echo "C, incremental unchanged:"; time ./selfhosted/frost.exe --emit-c --incremental --build-dir /tmp/frost-sh-build-c -o /tmp/cinc selfhosted/frost.frost
 
 # Runs all tests
 test:
