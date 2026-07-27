@@ -1,0 +1,1655 @@
+// An assembler for the subset of AT&T syntax the x86-64 backend emits, so a
+// build reaches an object file without running `as`.
+//
+// The subset is small and fixed: 49 mnemonics, and operands that are a
+// register, an immediate, `disp(%base)`, `symbol(%rip)`, or a bare symbol. This
+// reads the same text `--emit-asm` writes, which is what lets every encoding be
+// checked against the system assembler byte for byte.
+
+import "core.frost"
+
+export Assembly, assemble_text, asm_section_bytes, asm_section_count,
+    asm_reloc_count, asm_reloc_at, asm_symbol_count, asm_symbol_at,
+    AsmSym, AsmReloc, SEC_TEXT, SEC_DATA, SEC_ABS, SEC_UNDEF
+
+// Which section a symbol or a byte belongs to. `SEC_ABS` is a `.set` name,
+// which stands for a number rather than a place. `SEC_UNDEF` is a name this
+// a calls and does not define.
+SEC_TEXT  :: 0
+SEC_DATA  :: 1
+SEC_ABS   :: 2
+SEC_UNDEF :: 3
+
+// Operand shapes.
+OPND_NONE     :: 0
+OPND_REG      :: 1
+OPND_IMM      :: 2
+// `$name`, an immediate whose value a `.set` gives later in the file. The
+// width is fixed at four bytes because the value is not known when the
+// instruction is laid out, which is the same choice `as` makes.
+OPND_IMM_SYM  :: 3
+OPND_MEM      :: 4
+OPND_MEM_RIP  :: 5
+OPND_SYM      :: 6
+OPND_INDIRECT :: 7
+
+// Register banks. A register is packed as kind, width and number so one i64
+// carries everything an encoding asks about it.
+REG_GPR :: 0
+REG_XMM :: 1
+
+reg_pack :: fn(kind: i64, size: i64, code: i64) -> i64 {
+    kind * 65536 + size * 256 + code
+}
+
+reg_kind :: fn(r: i64) -> i64 { r / 65536 }
+reg_size :: fn(r: i64) -> i64 { (r / 256) % 256 }
+reg_code :: fn(r: i64) -> i64 { r % 256 }
+
+// Mnemonics, as codes. The order is the order they are looked up in, which is
+// by length first so a name is compared against only the names its own length.
+M_NONE :: 0
+M_MOVQ :: 1
+M_MOVL :: 2
+M_MOVW :: 3
+M_MOVB :: 4
+M_MOVD :: 5
+M_MOVZBQ :: 6
+M_MOVZWQ :: 7
+M_MOVSBQ :: 8
+M_MOVSWQ :: 9
+M_MOVSLQ :: 10
+M_LEAQ :: 11
+M_ADDQ :: 12
+M_SUBQ :: 13
+M_IMULQ :: 14
+M_IDIVQ :: 15
+M_CQTO :: 16
+M_CMPQ :: 17
+M_ANDQ :: 18
+M_ORQ :: 19
+M_XORQ :: 20
+M_SHLQ :: 21
+M_SARQ :: 22
+M_CALL :: 23
+M_RET :: 24
+M_LEAVE :: 25
+M_PUSHQ :: 26
+M_JMP :: 27
+M_JCC :: 28
+M_SETCC :: 29
+M_ADDSD :: 30
+M_SUBSD :: 31
+M_MULSD :: 32
+M_DIVSD :: 33
+M_UCOMISD :: 34
+M_MOVAPD :: 35
+M_CVTSI2SDQ :: 36
+M_CVTTSD2SIQ :: 37
+M_CVTSS2SD :: 38
+M_CVTSD2SS :: 39
+// Not an instruction: a label definition, which takes a place in the list so
+// its address is whatever the instructions before it add up to.
+M_LABEL :: 40
+
+// One instruction, or one label, as the layout pass sees it. Two passes are
+// needed because a jump to a label further down is shorter when the distance
+// fits in a byte, and the distance is not known until everything between has
+// been sized.
+Insn :: struct {
+    op: i64,
+    // For a jump or a set, which condition. For a label, nothing.
+    cc: i64,
+    a_kind: i64,
+    a_reg: i64,
+    a_disp: i64,
+    a_sym: i64,
+    b_kind: i64,
+    b_reg: i64,
+    b_disp: i64,
+    b_sym: i64,
+    offset: i64,
+    // How many bytes this encodes to, which placement adds up and which only
+    // a jump can change.
+    size: i64,
+    // Whether a jump needs the four-byte distance. It starts short and only
+    // ever grows, which is what makes laying the section out again terminate.
+    long: i64,
+}
+
+// A name the object file carries, or one only this file resolves. `.L` names
+// never reach the object: they are local to the unit and the reference to one
+// is worked out here.
+AsmSym :: struct {
+    off: i64,
+    len: i64,
+    section: i64,
+    value: i64,
+    global: i64,
+    // Where this name sits in the emitted symbol table, filled in when the
+    // object is written.
+    index: i64,
+}
+
+// One place the linker has to fill in: where in a section, which name, and
+// which arithmetic. Only the PC-relative kind occurs, since every reference
+// this backend emits is a call or a RIP-relative address.
+AsmReloc :: struct {
+    section: i64,
+    offset: i64,
+    sym: i64,
+}
+
+// What both sections are laid out to, and are padded up to the length of.
+SECTION_ALIGNMENT :: 16
+
+// One slot of the name table. -1 is empty.
+Bucket :: struct {
+    sym: i64,
+}
+
+// Everything one translation unit assembles to.
+Assembly :: struct {
+    src: str,
+    text: str,
+    text_count: i64,
+    data: str,
+    data_count: i64,
+    // Eight bytes a double is written into so its bits can be read back.
+    scratch: str,
+    insns: Arena<Insn>,
+    syms: Arena<AsmSym>,
+    relocs: Arena<AsmReloc>,
+    // Open addressing over the symbol names, so resolving a reference is a
+    // hash rather than a walk of every name defined so far.
+    buckets: Arena<Bucket>,
+    bucket_mask: i64,
+    section: i64,
+}
+
+// ---------------------------------------------------------------------------
+// Reading the text
+// ---------------------------------------------------------------------------
+
+is_space :: fn(b: i64) -> bool { b == CH_SPACE || b == CH_TAB || b == CH_CR }
+
+is_digit :: fn(b: i64) -> bool { b >= CH_0 && b <= CH_9 }
+
+// What may appear in a name: the letters, the digits, and the three punctuation
+// marks a generated label uses.
+is_name_byte :: fn(b: i64) -> bool {
+    (b >= CH_LOWER_A && b <= CH_LOWER_Z)
+        || (b >= CH_UPPER_A && b <= CH_UPPER_Z)
+        || is_digit(b)
+        || b == CH_UNDERSCORE || b == CH_DOT || b == CH_DOLLAR
+}
+
+skip_spaces :: fn(src: str, at: i64) -> i64 {
+    mut i := at
+    while (i < str_len(src) && is_space(src[i])) {
+        i = i + 1
+    }
+    i
+}
+
+// The end of the line starting at `at`, not counting the newline.
+line_end :: fn(src: str, at: i64) -> i64 {
+    mut i := at
+    while (i < str_len(src) && src[i] != CH_LF) {
+        i = i + 1
+    }
+    i
+}
+
+// A run of name bytes, as its length.
+name_length :: fn(src: str, at: i64) -> i64 {
+    mut i := at
+    while (i < str_len(src) && is_name_byte(src[i])) {
+        i = i + 1
+    }
+    i - at
+}
+
+// A signed decimal number, and where it ends. The caller has already decided a
+// number starts here.
+read_number :: fn(src: str, at: i64) -> (value: i64, next: i64) {
+    mut i := at
+    mut negative := false
+    if (i < str_len(src) && src[i] == CH_MINUS) {
+        negative = true
+        i = i + 1
+    }
+    mut value : i64 = 0
+    while (i < str_len(src) && is_digit(src[i])) {
+        value = value * 10 + (src[i] - CH_0)
+        i = i + 1
+    }
+    if (negative) {
+        value = 0 - value
+    }
+    return value, i
+}
+
+bytes_same :: fn(src: str, off: i64, len: i64, want: str) -> bool {
+    if (len != str_len(want)) {
+        return false
+    }
+    mut i : i64 = 0
+    while (i < len) {
+        if (src[off + i] != want[i]) {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+// ---------------------------------------------------------------------------
+// Names
+// ---------------------------------------------------------------------------
+
+name_hash :: fn(src: str, off: i64, len: i64) -> i64 {
+    mut h : i64 = 2166136261
+    mut i : i64 = 0
+    while (i < len) {
+        h = (h * 131 + src[off + i]) & 4611686018427387903
+        i = i + 1
+    }
+    h
+}
+
+// Two runs of the same buffer, byte for byte.
+ranges_equal :: fn(src: str, first: i64, second: i64, length: i64) -> bool {
+    mut i : i64 = 0
+    while (i < length) {
+        if (src[first + i] != src[second + i]) {
+            return false
+        }
+        i = i + 1
+    }
+    true
+}
+
+// The symbol this name stands for, making one that stands for nothing yet if
+// this is the first mention. Every reference and every definition goes through
+// here, so a name has exactly one entry however many times it appears.
+intern_symbol :: fn(mut unit: Assembly, off: i64, len: i64) -> i64 {
+    mut slot := name_hash(unit.src, off, len) & unit.bucket_mask
+    mut answer : i64 = 0 - 1
+    while (answer < 0) {
+        bucket := arena_at(unit.buckets, slot)
+        held := bucket.sym
+        if (held == (0 - 1)) {
+            index := arena_push(unit.syms, AsmSym {
+                off = off, len = len, section = SEC_UNDEF,
+                value = 0, global = 0, index = 0 - 1,
+            })
+            bucket := arena_at(unit.buckets, slot)
+            bucket.sym = index
+            answer = index
+        } else {
+            sym := arena_at(unit.syms, held)
+            if (sym.len == len && ranges_equal(unit.src, sym.off, off, len)) {
+                answer = held
+            } else {
+                slot = (slot + 1) & unit.bucket_mask
+            }
+        }
+    }
+    answer
+}
+
+// Whether a name is local to this unit, which is what a leading `.L` says. The
+// object never carries one: a reference to a local name is arithmetic done
+// here. 76 is `L`.
+is_local_name :: fn(src: str, off: i64, len: i64) -> bool {
+    len >= 2 && src[off] == CH_DOT && src[off + 1] == 76
+}
+
+// ---------------------------------------------------------------------------
+// Registers
+// ---------------------------------------------------------------------------
+
+CH_a :: 97
+CH_b :: 98
+CH_c :: 99
+CH_d :: 100
+CH_e :: 101
+CH_g :: 103
+CH_i :: 105
+CH_j :: 106
+CH_l :: 108
+CH_m :: 109
+CH_n :: 110
+CH_o :: 111
+CH_p :: 112
+CH_q :: 113
+CH_r :: 114
+CH_s :: 115
+CH_t :: 116
+CH_u :: 117
+CH_v :: 118
+CH_w :: 119
+CH_x :: 120
+CH_z :: 122
+
+// %rip, which is not one of the sixteen and appears only as the base of an
+// address. Encoding gives it a form of its own, so it takes a number above
+// them rather than one of theirs.
+REG_RIP :: 16
+
+// The eight original registers, by the two letters they share across widths:
+// ax cx dx bx sp bp si di, in the order the encoding numbers them.
+core_index :: fn(first: i64, second: i64) -> i64 {
+    if (second == CH_x) {
+        if (first == CH_a) { return 0 }
+        if (first == CH_c) { return 1 }
+        if (first == CH_d) { return 2 }
+        if (first == CH_b) { return 3 }
+        return 0 - 1
+    }
+    if (first == CH_s && second == CH_p) { return 4 }
+    if (first == CH_b && second == CH_p) { return 5 }
+    if (first == CH_s && second == CH_i) { return 6 }
+    if (first == CH_d && second == CH_i) { return 7 }
+    0 - 1
+}
+
+// The eight-bit name of one of the first four: al cl dl bl.
+byte_core_index :: fn(first: i64) -> i64 {
+    if (first == CH_a) { return 0 }
+    if (first == CH_c) { return 1 }
+    if (first == CH_d) { return 2 }
+    if (first == CH_b) { return 3 }
+    0 - 1
+}
+
+// A register name, without the `%`, as its packed form, or -1.
+parse_register :: fn(src: str, off: i64, len: i64) -> i64 {
+    if (len == 3 && src[off] == CH_r && src[off + 1] == CH_i
+        && src[off + 2] == CH_p) {
+        return reg_pack(REG_GPR, 8, REG_RIP)
+    }
+    // r8 through r15, with a width suffix for the narrow names.
+    if (len >= 2 && src[off] == CH_r && is_digit(src[off + 1])) {
+        mut number : i64 = src[off + 1] - CH_0
+        mut at := off + 2
+        if (at < off + len && is_digit(src[at])) {
+            number = number * 10 + (src[at] - CH_0)
+            at = at + 1
+        }
+        if (number < 8 || number > 15) {
+            return 0 - 1
+        }
+        if (at == off + len) {
+            return reg_pack(REG_GPR, 8, number)
+        }
+        if (at + 1 == off + len) {
+            suffix := src[at]
+            if (suffix == CH_d) { return reg_pack(REG_GPR, 4, number) }
+            if (suffix == CH_w) { return reg_pack(REG_GPR, 2, number) }
+            if (suffix == CH_b) { return reg_pack(REG_GPR, 1, number) }
+        }
+        return 0 - 1
+    }
+    if (len == 3 && src[off] == CH_r) {
+        code := core_index(src[off + 1], src[off + 2])
+        if (code >= 0) { return reg_pack(REG_GPR, 8, code) }
+        return 0 - 1
+    }
+    if (len == 3 && src[off] == CH_e) {
+        code := core_index(src[off + 1], src[off + 2])
+        if (code >= 0) { return reg_pack(REG_GPR, 4, code) }
+        return 0 - 1
+    }
+    // spl, bpl, sil, dil: the eight-bit names of the second four.
+    if (len == 3 && src[off + 2] == CH_l) {
+        code := core_index(src[off], src[off + 1])
+        if (code >= 4) { return reg_pack(REG_GPR, 1, code) }
+        return 0 - 1
+    }
+    if (len == 2 && src[off + 1] == CH_l) {
+        code := byte_core_index(src[off])
+        if (code >= 0) { return reg_pack(REG_GPR, 1, code) }
+        return 0 - 1
+    }
+    if (len == 2) {
+        code := core_index(src[off], src[off + 1])
+        if (code >= 0) { return reg_pack(REG_GPR, 2, code) }
+        return 0 - 1
+    }
+    if (len >= 4 && src[off] == CH_x && src[off + 1] == CH_m
+        && src[off + 2] == CH_m) {
+        mut number : i64 = src[off + 3] - CH_0
+        mut at := off + 4
+        if (at < off + len && is_digit(src[at])) {
+            number = number * 10 + (src[at] - CH_0)
+            at = at + 1
+        }
+        if (at != off + len || number > 15) {
+            return 0 - 1
+        }
+        return reg_pack(REG_XMM, 8, number)
+    }
+    0 - 1
+}
+
+// ---------------------------------------------------------------------------
+// Mnemonics
+// ---------------------------------------------------------------------------
+
+// The condition a `j` or a `set` carries, as the number the encoding adds to
+// its base opcode.
+condition_code :: fn(src: str, off: i64, len: i64) -> i64 {
+    if (len == 1) {
+        if (src[off] == CH_e) { return 4 }
+        if (src[off] == CH_l) { return 12 }
+        if (src[off] == CH_g) { return 15 }
+        if (src[off] == CH_b) { return 2 }
+        if (src[off] == CH_a) { return 7 }
+        if (src[off] == CH_s) { return 8 }
+        return 0 - 1
+    }
+    if (len == 2) {
+        first := src[off]
+        second := src[off + 1]
+        if (first == CH_n && second == CH_e) { return 5 }
+        if (first == CH_l && second == CH_e) { return 14 }
+        if (first == CH_g && second == CH_e) { return 13 }
+        if (first == CH_b && second == CH_e) { return 6 }
+        if (first == CH_a && second == CH_e) { return 3 }
+        if (first == CH_n && second == CH_s) { return 9 }
+        return 0 - 1
+    }
+    0 - 1
+}
+
+// The mnemonic a name stands for, and the condition it carries. An unknown
+// name answers M_NONE, which the caller reports against the line it came from.
+mnemonic_of :: fn(src: str, off: i64, len: i64) -> (op: i64, cc: i64) {
+    if (bytes_same(src, off, len, "movq")) { return M_MOVQ, 0 }
+    if (bytes_same(src, off, len, "movl")) { return M_MOVL, 0 }
+    if (bytes_same(src, off, len, "movb")) { return M_MOVB, 0 }
+    if (bytes_same(src, off, len, "movw")) { return M_MOVW, 0 }
+    if (bytes_same(src, off, len, "movd")) { return M_MOVD, 0 }
+    if (bytes_same(src, off, len, "leaq")) { return M_LEAQ, 0 }
+    if (bytes_same(src, off, len, "addq")) { return M_ADDQ, 0 }
+    if (bytes_same(src, off, len, "subq")) { return M_SUBQ, 0 }
+    if (bytes_same(src, off, len, "cmpq")) { return M_CMPQ, 0 }
+    if (bytes_same(src, off, len, "call")) { return M_CALL, 0 }
+    if (bytes_same(src, off, len, "ret")) { return M_RET, 0 }
+    if (bytes_same(src, off, len, "leave")) { return M_LEAVE, 0 }
+    if (bytes_same(src, off, len, "pushq")) { return M_PUSHQ, 0 }
+    if (bytes_same(src, off, len, "jmp")) { return M_JMP, 0 }
+    if (bytes_same(src, off, len, "imulq")) { return M_IMULQ, 0 }
+    if (bytes_same(src, off, len, "idivq")) { return M_IDIVQ, 0 }
+    if (bytes_same(src, off, len, "cqto")) { return M_CQTO, 0 }
+    if (bytes_same(src, off, len, "andq")) { return M_ANDQ, 0 }
+    if (bytes_same(src, off, len, "orq")) { return M_ORQ, 0 }
+    if (bytes_same(src, off, len, "xorq")) { return M_XORQ, 0 }
+    if (bytes_same(src, off, len, "shlq")) { return M_SHLQ, 0 }
+    if (bytes_same(src, off, len, "sarq")) { return M_SARQ, 0 }
+    if (bytes_same(src, off, len, "movzbq")) { return M_MOVZBQ, 0 }
+    if (bytes_same(src, off, len, "movzwq")) { return M_MOVZWQ, 0 }
+    if (bytes_same(src, off, len, "movsbq")) { return M_MOVSBQ, 0 }
+    if (bytes_same(src, off, len, "movswq")) { return M_MOVSWQ, 0 }
+    if (bytes_same(src, off, len, "movslq")) { return M_MOVSLQ, 0 }
+    if (bytes_same(src, off, len, "addsd")) { return M_ADDSD, 0 }
+    if (bytes_same(src, off, len, "subsd")) { return M_SUBSD, 0 }
+    if (bytes_same(src, off, len, "mulsd")) { return M_MULSD, 0 }
+    if (bytes_same(src, off, len, "divsd")) { return M_DIVSD, 0 }
+    if (bytes_same(src, off, len, "ucomisd")) { return M_UCOMISD, 0 }
+    if (bytes_same(src, off, len, "movapd")) { return M_MOVAPD, 0 }
+    if (bytes_same(src, off, len, "cvtsi2sdq")) { return M_CVTSI2SDQ, 0 }
+    if (bytes_same(src, off, len, "cvttsd2siq")) { return M_CVTTSD2SIQ, 0 }
+    if (bytes_same(src, off, len, "cvtss2sd")) { return M_CVTSS2SD, 0 }
+    if (bytes_same(src, off, len, "cvtsd2ss")) { return M_CVTSD2SS, 0 }
+    if (len >= 4 && bytes_same(src, off, 3, "set")) {
+        cc := condition_code(src, off + 3, len - 3)
+        if (cc >= 0) { return M_SETCC, cc }
+    }
+    if (len >= 2 && src[off] == CH_j) {
+        cc := condition_code(src, off + 1, len - 1)
+        if (cc >= 0) { return M_JCC, cc }
+    }
+    return M_NONE, 0
+}
+
+// ---------------------------------------------------------------------------
+// Operands
+// ---------------------------------------------------------------------------
+
+// One operand, and where reading it stopped.
+Operand :: struct {
+    kind: i64,
+    reg: i64,
+    disp: i64,
+    sym: i64,
+    next: i64,
+}
+
+// Read one operand starting at `at`, which the caller has moved past any
+// leading spaces.
+parse_operand :: fn(mut unit: Assembly, at: i64) -> Operand {
+    src := unit.src
+    mut i := at
+    if (src[i] == CH_PERCENT) {
+        len := name_length(src, i + 1)
+        register := parse_register(src, i + 1, len)
+        if (register < 0) {
+            assemble_fail(unit, "unknown register", i)
+        }
+        return Operand { kind = OPND_REG, reg = register, disp = 0,
+            sym = 0 - 1, next = i + 1 + len }
+    }
+    if (src[i] == CH_DOLLAR) {
+        if (is_digit(src[i + 1]) || src[i + 1] == CH_MINUS) {
+            value, after_number := read_number(src, i + 1)
+            return Operand { kind = OPND_IMM, reg = 0, disp = value,
+                sym = 0 - 1, next = after_number }
+        }
+        len := name_length(src, i + 1)
+        sym := intern_symbol(unit, i + 1, len)
+        return Operand { kind = OPND_IMM_SYM, reg = 0, disp = 0, sym = sym,
+            next = i + 1 + len }
+    }
+    if (src[i] == CH_STAR) {
+        inner := parse_operand(unit, i + 1)
+        return Operand { kind = OPND_INDIRECT, reg = inner.reg, disp = 0,
+            sym = 0 - 1, next = inner.next }
+    }
+    // A displacement, or nothing before the parenthesis.
+    mut displacement : i64 = 0
+    if (is_digit(src[i]) || src[i] == CH_MINUS) {
+        value, after_number := read_number(src, i)
+        displacement = value
+        i = after_number
+    }
+    if (src[i] == CH_LPAREN) {
+        len := name_length(src, i + 2)
+        register := parse_register(src, i + 2, len)
+        if (src[i + 1] != CH_PERCENT || register < 0) {
+            assemble_fail(unit, "unsupported address", i)
+        }
+        after := i + 2 + len + 1
+        if (reg_code(register) == REG_RIP) {
+            assemble_fail(unit, "unit bare displacement off %rip", i)
+        }
+        return Operand { kind = OPND_MEM, reg = register, disp = displacement,
+            sym = 0 - 1, next = after }
+    }
+    // A name: either `name(%rip)` or a branch target.
+    len := name_length(src, i)
+    if (len == 0) {
+        assemble_fail(unit, "an operand that is not one", i)
+    }
+    sym := intern_symbol(unit, i, len)
+    mut after := i + len
+    if (after < str_len(src) && src[after] == CH_LPAREN) {
+        rlen := name_length(src, after + 2)
+        register := parse_register(src, after + 2, rlen)
+        if (src[after + 1] != CH_PERCENT || reg_code(register) != REG_RIP) {
+            assemble_fail(unit, "unit name addressed off something other than %rip",
+                i)
+        }
+        return Operand { kind = OPND_MEM_RIP, reg = 0, disp = 0, sym = sym,
+            next = after + 2 + rlen + 1 }
+    }
+    Operand { kind = OPND_SYM, reg = 0, disp = 0, sym = sym, next = after }
+}
+
+// ---------------------------------------------------------------------------
+// Writing bytes
+// ---------------------------------------------------------------------------
+
+// Where a diagnostic points. The assembly is generated, so a fault here is a
+// fault in the backend or in this file, and the byte offset is what locates it
+// in the text that was handed over.
+assemble_fail :: fn(mut unit: Assembly, what: str, at: i64) {
+    report("frost: assembling: ")
+    report(what)
+    report(" at byte ")
+    frost_rt_error_int(at)
+    report("\n")
+    frost_rt_die()
+}
+
+text_byte :: fn(mut unit: Assembly, value: i64) {
+    if (unit.text_count >= str_len(unit.text)) {
+        report("frost: the assembled code outgrew its buffer\n")
+        frost_rt_die()
+    }
+    unit.text[unit.text_count] = value & 255
+    unit.text_count = unit.text_count + 1
+}
+
+data_byte :: fn(mut unit: Assembly, value: i64) {
+    if (unit.data_count >= str_len(unit.data)) {
+        report("frost: the assembled data outgrew its buffer\n")
+        frost_rt_die()
+    }
+    unit.data[unit.data_count] = value & 255
+    unit.data_count = unit.data_count + 1
+}
+
+// A negative value has to keep its sign bits, so these shift rather than
+// divide: division truncates towards zero and would write a -8 as three zero
+// bytes above its low one.
+text_word32 :: fn(mut unit: Assembly, value: i64) {
+    text_byte(unit, value)
+    text_byte(unit, value >> 8)
+    text_byte(unit, value >> 16)
+    text_byte(unit, value >> 24)
+}
+
+text_word64 :: fn(mut unit: Assembly, value: i64) {
+    text_word32(unit, value)
+    text_word32(unit, value >> 32)
+}
+
+fits_in_byte :: fn(value: i64) -> bool { value >= 0 - 128 && value <= 127 }
+
+fits_in_word32 :: fn(value: i64) -> bool {
+    value >= 0 - 2147483648 && value <= 2147483647
+}
+
+// REX, written only when one of its bits is needed. An eight-bit register
+// whose name exists only with the prefix forces it even when every bit is
+// zero, which is what makes `%sil` different from `%dh`.
+maybe_rex :: fn(mut unit: Assembly, w: i64, r: i64, x: i64, b: i64, force: i64) {
+    if (w == 1 || r == 1 || x == 1 || b == 1 || force == 1) {
+        text_byte(unit, 64 + w * 8 + r * 4 + x * 2 + b)
+    }
+}
+
+// The address part of an instruction: the ModRM byte, the SIB byte where the
+// base needs one, and the displacement in the shortest form that holds it.
+emit_address :: fn(mut unit: Assembly, field: i64, base: i64, disp: i64) {
+    if (base == REG_RIP) {
+        text_byte(unit, field * 8 + 5)
+        text_word32(unit, disp)
+        return
+    }
+    low := base % 8
+    mut mode : i64 = 0
+    if (disp != 0 || low == 5) {
+        if (fits_in_byte(disp)) { mode = 1 } else { mode = 2 }
+    }
+    text_byte(unit, mode * 64 + field * 8 + low)
+    // %rsp and %r12 share the number that says "a SIB byte follows", so an
+    // address off either spells out that it has no index.
+    if (low == 4) {
+        text_byte(unit, 36)
+    }
+    if (mode == 1) {
+        text_byte(unit, disp)
+    } else if (mode == 2) {
+        text_word32(unit, disp)
+    }
+}
+
+// The shape most of the set shares: an optional legacy prefix, REX, one or two
+// opcode bytes, then a register in the ModRM reg field and either a register or
+// an address in its rm field.
+emit_reg_rm :: fn(mut unit: Assembly, prefix: i64, w: i64, escape: i64,
+    opcode: i64, field: i64, rm_kind: i64, rm_reg: i64, rm_disp: i64,
+    force_rex: i64) {
+    if (prefix != 0) {
+        text_byte(unit, prefix)
+    }
+    mut b : i64 = 0
+    if (rm_reg >= 8 && rm_reg != REG_RIP) {
+        b = 1
+    }
+    mut r : i64 = 0
+    if (field >= 8) {
+        r = 1
+    }
+    maybe_rex(unit, w, r, 0, b, force_rex)
+    if (escape != 0) {
+        text_byte(unit, escape)
+    }
+    text_byte(unit, opcode)
+    if (rm_kind == OPND_REG) {
+        text_byte(unit, 192 + (field % 8) * 8 + (rm_reg % 8))
+    } else {
+        emit_address(unit, field % 8, rm_reg, rm_disp)
+    }
+}
+
+// Whether an eight-bit operand needs REX to be named at all, which is true of
+// the four registers that had no byte name before the prefix existed.
+byte_reg_forces_rex :: fn(register: i64) -> i64 {
+    if (reg_kind(register) == REG_GPR && reg_size(register) == 1
+        && reg_code(register) >= 4 && reg_code(register) < 8) {
+        return 1
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
+// Encoding
+// ---------------------------------------------------------------------------
+
+// The `/n` digit each arithmetic operation takes in the shared `81`/`83` form,
+// and the one-byte opcode it has against the accumulator.
+ARITH_ADD :: 0
+ARITH_OR  :: 1
+ARITH_AND :: 4
+ARITH_SUB :: 5
+ARITH_XOR :: 6
+ARITH_CMP :: 7
+
+arith_digit :: fn(op: i64) -> i64 {
+    if (op == M_ADDQ) { return ARITH_ADD }
+    if (op == M_SUBQ) { return ARITH_SUB }
+    if (op == M_CMPQ) { return ARITH_CMP }
+    if (op == M_ANDQ) { return ARITH_AND }
+    if (op == M_ORQ)  { return ARITH_OR }
+    if (op == M_XORQ) { return ARITH_XOR }
+    0 - 1
+}
+
+// The `op r/m, r` opcode, which is the digit's row of the one-byte table.
+arith_rm_opcode :: fn(digit: i64) -> i64 { digit * 8 + 1 }
+
+// The `op accumulator, imm32` opcode, one byte shorter than the general form.
+arith_acc_opcode :: fn(digit: i64) -> i64 { digit * 8 + 5 }
+
+// Record a place the linker fills in, at the four bytes about to be written.
+note_reloc :: fn(mut unit: Assembly, sym: i64) {
+    arena_push(unit.relocs, AsmReloc {
+        section = SEC_TEXT, offset = unit.text_count, sym = sym })
+}
+
+// A name used as an address: either this file works the distance out, or the
+// linker is told to. Being defined in the section doing the referring is the
+// whole test, since the distance between two places in one section is settled
+// however the object is later placed. Whether the name is offered to other
+// units does not come into it.
+resolved_here :: fn(mut unit: Assembly, sym: i64) -> bool {
+    held := arena_at(unit.syms, sym)
+    held.section == SEC_TEXT
+}
+
+// The four bytes of a RIP-relative address. `trailing` is how many bytes of
+// the instruction follow them, which the distance is measured past.
+emit_rip_target :: fn(mut unit: Assembly, sym: i64, trailing: i64) {
+    if (resolved_here(unit, sym)) {
+        named := arena_at(unit.syms, sym)
+        target := named.value
+        text_word32(unit, target - (unit.text_count + 4 + trailing))
+        return
+    }
+    mut addend : i64 = 0
+    held := arena_at(unit.syms, sym)
+    if (held.global == 0 && held.section != SEC_UNDEF) {
+        addend = held.value
+    }
+    note_reloc(unit, sym)
+    text_word32(unit, addend)
+}
+
+// The immediate an arithmetic instruction carries, where a name stands in for
+// a number a `.set` gives later in the file. The value is not known when the
+// width is chosen, so a name always takes the wide form.
+symbol_value :: fn(mut unit: Assembly, sym: i64) -> i64 {
+    named := arena_at(unit.syms, sym)
+    named.value
+}
+
+encode_insn :: fn(mut unit: Assembly, index: i64) {
+    held := arena_at(unit.insns, index)
+    op := held.op
+    cc := held.cc
+    a_kind := held.a_kind
+    a_reg := held.a_reg
+    a_disp := held.a_disp
+    a_sym := held.a_sym
+    b_kind := held.b_kind
+    b_reg := held.b_reg
+    b_disp := held.b_disp
+    b_sym := held.b_sym
+    long := held.long
+    here := held.offset
+
+    if (op == M_RET) {
+        text_byte(unit, 195)
+        return
+    }
+    if (op == M_LEAVE) {
+        text_byte(unit, 201)
+        return
+    }
+    if (op == M_CQTO) {
+        text_byte(unit, 72)
+        text_byte(unit, 153)
+        return
+    }
+    if (op == M_PUSHQ) {
+        if (reg_code(a_reg) >= 8) {
+            text_byte(unit, 65)
+        }
+        text_byte(unit, 80 + reg_code(a_reg) % 8)
+        return
+    }
+    if (op == M_CALL) {
+        if (a_kind == OPND_INDIRECT) {
+            code := reg_code(a_reg)
+            if (code >= 8) {
+                text_byte(unit, 65)
+            }
+            text_byte(unit, 255)
+            text_byte(unit, 208 + code % 8)
+            return
+        }
+        text_byte(unit, 232)
+        emit_rip_target(unit, a_sym, 0)
+        return
+    }
+    if (op == M_JMP || op == M_JCC) {
+        encode_branch(unit, index, op, cc, a_sym, long, here)
+        return
+    }
+    if (op == M_SETCC) {
+        emit_reg_rm(unit, 0, 0, 15, 144 + cc, 0, OPND_REG, reg_code(a_reg),
+            0, byte_reg_forces_rex(a_reg))
+        return
+    }
+    if (op == M_IDIVQ) {
+        emit_reg_rm(unit, 0, 1, 0, 247, 7, OPND_REG, reg_code(a_reg), 0, 0)
+        return
+    }
+    if (op == M_SHLQ || op == M_SARQ) {
+        digit := 4
+        if (op == M_SARQ) {
+            digit = 7
+        }
+        emit_reg_rm(unit, 0, 1, 0, 211, digit, OPND_REG, reg_code(b_reg), 0, 0)
+        return
+    }
+    if (op == M_LEAQ) {
+        if (b_kind != OPND_REG) {
+            assemble_fail(unit, "leaq answering somewhere other than unit register",
+                here)
+        }
+        if (a_kind == OPND_MEM_RIP) {
+            emit_reg_rm(unit, 0, 1, 0, 141, reg_code(b_reg), OPND_MEM, REG_RIP,
+                0, 0)
+            // emit_reg_rm wrote a zero displacement, so back over it and put
+            // the real distance there.
+            unit.text_count = unit.text_count - 4
+            emit_rip_target(unit, a_sym, 0)
+            return
+        }
+        emit_reg_rm(unit, 0, 1, 0, 141, reg_code(b_reg), OPND_MEM,
+            reg_code(a_reg), a_disp, 0)
+        return
+    }
+    if (op == M_MOVZBQ || op == M_MOVZWQ || op == M_MOVSBQ || op == M_MOVSWQ
+        || op == M_MOVSLQ) {
+        encode_extend(unit, op, a_kind, a_reg, a_disp, b_reg)
+        return
+    }
+    if (op == M_MOVQ || op == M_MOVL || op == M_MOVW || op == M_MOVB
+        || op == M_MOVD) {
+        encode_move(unit, op, a_kind, a_reg, a_disp, a_sym, b_kind, b_reg,
+            b_disp, b_sym, here)
+        return
+    }
+    if (op == M_IMULQ) {
+        if (a_kind == OPND_IMM) {
+            if (fits_in_byte(a_disp)) {
+                emit_reg_rm(unit, 0, 1, 0, 107, reg_code(b_reg), OPND_REG,
+                    reg_code(b_reg), 0, 0)
+                text_byte(unit, a_disp)
+            } else {
+                emit_reg_rm(unit, 0, 1, 0, 105, reg_code(b_reg), OPND_REG,
+                    reg_code(b_reg), 0, 0)
+                text_word32(unit, a_disp)
+            }
+            return
+        }
+        emit_reg_rm(unit, 0, 1, 15, 175, reg_code(b_reg), OPND_REG,
+            reg_code(a_reg), 0, 0)
+        return
+    }
+    digit := arith_digit(op)
+    if (digit >= 0) {
+        encode_arith(unit, digit, a_kind, a_reg, a_disp, a_sym, b_kind, b_reg,
+            b_disp, here)
+        return
+    }
+    encode_sse(unit, op, a_reg, b_reg, here)
+}
+
+// A jump, in the short form while the distance fits in one byte. The choice
+// only ever moves one way, from short to long, so re-laying the section out
+// after a jump grows terminates.
+encode_branch :: fn(mut unit: Assembly, index: i64, op: i64, cc: i64, sym: i64,
+    long: i64, here: i64) {
+    if (resolved_here(unit, sym) == false) {
+        // A call is the only thing that leaves the unit, so a branch to a name
+        // this file does not define is a fault in the backend.
+        assemble_fail(unit, "unit branch to unit name this unit does not define", here)
+    }
+    named := arena_at(unit.syms, sym)
+    target := named.value
+    if (long == 0) {
+        if (op == M_JMP) {
+            text_byte(unit, 235)
+        } else {
+            text_byte(unit, 112 + cc)
+        }
+        text_byte(unit, target - (here + 2))
+        return
+    }
+    if (op == M_JMP) {
+        text_byte(unit, 233)
+        text_word32(unit, target - (here + 5))
+        return
+    }
+    text_byte(unit, 15)
+    text_byte(unit, 128 + cc)
+    text_word32(unit, target - (here + 6))
+}
+
+// The widening moves, which all read a narrow place and write a whole
+// register.
+encode_extend :: fn(mut unit: Assembly, op: i64, a_kind: i64, a_reg: i64,
+    a_disp: i64, b_reg: i64) {
+    mut escape : i64 = 15
+    mut opcode : i64 = 182
+    if (op == M_MOVZWQ) { opcode = 183 }
+    if (op == M_MOVSBQ) { opcode = 190 }
+    if (op == M_MOVSWQ) { opcode = 191 }
+    if (op == M_MOVSLQ) {
+        escape = 0
+        opcode = 99
+    }
+    mut force : i64 = 0
+    mut rm : i64 = 0
+    if (a_kind == OPND_REG) {
+        rm = reg_code(a_reg)
+        force = byte_reg_forces_rex(a_reg)
+    } else {
+        rm = reg_code(a_reg)
+    }
+    emit_reg_rm(unit, 0, 1, escape, opcode, reg_code(b_reg), a_kind, rm, a_disp,
+        force)
+}
+
+// add, sub, cmp, and, or and xor, which share every form.
+encode_arith :: fn(mut unit: Assembly, digit: i64, a_kind: i64, a_reg: i64,
+    a_disp: i64, a_sym: i64, b_kind: i64, b_reg: i64, b_disp: i64,
+    here: i64) {
+    if (a_kind == OPND_IMM_SYM) {
+        // The value arrives from a `.set` further down the file, so the width
+        // is decided without it and the wide form is the only one that always
+        // holds.
+        emit_reg_rm(unit, 0, 1, 0, 129, digit, b_kind, reg_code(b_reg), b_disp, 0)
+        text_word32(unit, symbol_value(unit, a_sym))
+        return
+    }
+    if (a_kind == OPND_IMM) {
+        if (fits_in_byte(a_disp)) {
+            emit_reg_rm(unit, 0, 1, 0, 131, digit, b_kind, reg_code(b_reg),
+                b_disp, 0)
+            text_byte(unit, a_disp)
+            return
+        }
+        if (b_kind == OPND_REG && reg_code(b_reg) == 0) {
+            text_byte(unit, 72)
+            text_byte(unit, arith_acc_opcode(digit))
+            text_word32(unit, a_disp)
+            return
+        }
+        emit_reg_rm(unit, 0, 1, 0, 129, digit, b_kind, reg_code(b_reg), b_disp, 0)
+        text_word32(unit, a_disp)
+        return
+    }
+    if (a_kind != OPND_REG) {
+        assemble_fail(unit, "an arithmetic operand of an unsupported shape", here)
+    }
+    emit_reg_rm(unit, 0, 1, 0, arith_rm_opcode(digit), reg_code(a_reg), b_kind,
+        reg_code(b_reg), b_disp, 0)
+}
+
+// The double-precision arithmetic, and the conversions between a float and an
+// integer. Every one is `op source, destination` with both in SSE registers,
+// but for the two that cross banks.
+encode_sse :: fn(mut unit: Assembly, op: i64, a_reg: i64, b_reg: i64,
+    here: i64) {
+    if (op == M_ADDSD) {
+        emit_reg_rm(unit, 242, 0, 15, 88, reg_code(b_reg), OPND_REG,
+            reg_code(a_reg), 0, 0)
+        return
+    }
+    if (op == M_SUBSD) {
+        emit_reg_rm(unit, 242, 0, 15, 92, reg_code(b_reg), OPND_REG,
+            reg_code(a_reg), 0, 0)
+        return
+    }
+    if (op == M_MULSD) {
+        emit_reg_rm(unit, 242, 0, 15, 89, reg_code(b_reg), OPND_REG,
+            reg_code(a_reg), 0, 0)
+        return
+    }
+    if (op == M_DIVSD) {
+        emit_reg_rm(unit, 242, 0, 15, 94, reg_code(b_reg), OPND_REG,
+            reg_code(a_reg), 0, 0)
+        return
+    }
+    if (op == M_UCOMISD) {
+        emit_reg_rm(unit, 102, 0, 15, 46, reg_code(b_reg), OPND_REG,
+            reg_code(a_reg), 0, 0)
+        return
+    }
+    if (op == M_MOVAPD) {
+        emit_reg_rm(unit, 102, 0, 15, 40, reg_code(b_reg), OPND_REG,
+            reg_code(a_reg), 0, 0)
+        return
+    }
+    if (op == M_CVTSS2SD) {
+        emit_reg_rm(unit, 243, 0, 15, 90, reg_code(b_reg), OPND_REG,
+            reg_code(a_reg), 0, 0)
+        return
+    }
+    if (op == M_CVTSD2SS) {
+        emit_reg_rm(unit, 242, 0, 15, 90, reg_code(b_reg), OPND_REG,
+            reg_code(a_reg), 0, 0)
+        return
+    }
+    if (op == M_CVTSI2SDQ) {
+        emit_reg_rm(unit, 242, 1, 15, 42, reg_code(b_reg), OPND_REG,
+            reg_code(a_reg), 0, 0)
+        return
+    }
+    if (op == M_CVTTSD2SIQ) {
+        emit_reg_rm(unit, 242, 1, 15, 44, reg_code(b_reg), OPND_REG,
+            reg_code(a_reg), 0, 0)
+        return
+    }
+    assemble_fail(unit, "an instruction this assembler does not encode", here)
+}
+
+// The moves. Width comes from the mnemonic, and which bank each side is in
+// decides between the integer form and the one that crosses to SSE.
+encode_move :: fn(mut unit: Assembly, op: i64, a_kind: i64, a_reg: i64,
+    a_disp: i64, a_sym: i64, b_kind: i64, b_reg: i64, b_disp: i64,
+    b_sym: i64, here: i64) {
+    mut w : i64 = 0
+    mut prefix : i64 = 0
+    mut load : i64 = 139
+    mut store : i64 = 137
+    if (op == M_MOVQ) {
+        w = 1
+    } else if (op == M_MOVW) {
+        prefix = 102
+    } else if (op == M_MOVB) {
+        load = 138
+        store = 136
+    }
+    a_is_sse := a_kind == OPND_REG && reg_kind(a_reg) == REG_XMM
+    b_is_sse := b_kind == OPND_REG && reg_kind(b_reg) == REG_XMM
+    if (op == M_MOVD || a_is_sse || b_is_sse) {
+        encode_move_sse(unit, op, a_kind, a_reg, a_disp, b_kind, b_reg, b_disp,
+            a_is_sse, b_is_sse, here)
+        return
+    }
+    mut force : i64 = 0
+    if (op == M_MOVB) {
+        force = byte_reg_forces_rex(a_reg) | byte_reg_forces_rex(b_reg)
+    }
+    if (a_kind == OPND_IMM || a_kind == OPND_IMM_SYM) {
+        mut value := a_disp
+        if (a_kind == OPND_IMM_SYM) {
+            value = symbol_value(unit, a_sym)
+        }
+        if (op == M_MOVQ && a_kind == OPND_IMM && b_kind == OPND_REG
+            && fits_in_word32(value) == false) {
+            // Wider than the general form's immediate, so the register takes
+            // the whole thing through the form made for it.
+            code := reg_code(b_reg)
+            mut rex_b : i64 = 0
+            if (code >= 8) { rex_b = 1 }
+            maybe_rex(unit, 1, 0, 0, rex_b, 0)
+            text_byte(unit, 184 + code % 8)
+            text_word64(unit, value)
+            return
+        }
+        emit_reg_rm(unit, prefix, w, 0, 199, 0, b_kind, reg_code(b_reg), b_disp,
+            force)
+        if (op == M_MOVB) {
+            text_byte(unit, value)
+        } else if (op == M_MOVW) {
+            text_byte(unit, value)
+            text_byte(unit, value >> 8)
+        } else {
+            text_word32(unit, value)
+        }
+        return
+    }
+    if (a_kind == OPND_MEM_RIP) {
+        emit_reg_rm(unit, prefix, w, 0, load, reg_code(b_reg), OPND_MEM, REG_RIP,
+            0, force)
+        unit.text_count = unit.text_count - 4
+        emit_rip_target(unit, a_sym, 0)
+        return
+    }
+    if (b_kind == OPND_MEM_RIP) {
+        emit_reg_rm(unit, prefix, w, 0, store, reg_code(a_reg), OPND_MEM, REG_RIP,
+            0, force)
+        unit.text_count = unit.text_count - 4
+        emit_rip_target(unit, b_sym, 0)
+        return
+    }
+    if (a_kind == OPND_MEM) {
+        emit_reg_rm(unit, prefix, w, 0, load, reg_code(b_reg), OPND_MEM,
+            reg_code(a_reg), a_disp, force)
+        return
+    }
+    if (a_kind != OPND_REG) {
+        assemble_fail(unit, "unit move from an unsupported operand", here)
+    }
+    emit_reg_rm(unit, prefix, w, 0, store, reg_code(a_reg), b_kind,
+        reg_code(b_reg), b_disp, force)
+}
+
+// A move with one side in an SSE register. The direction decides the opcode,
+// since the two are not one instruction with its operands swapped.
+encode_move_sse :: fn(mut unit: Assembly, op: i64, a_kind: i64, a_reg: i64,
+    a_disp: i64, b_kind: i64, b_reg: i64, b_disp: i64, a_is_sse: bool,
+    b_is_sse: bool, here: i64) {
+    mut w : i64 = 0
+    if (op == M_MOVQ) {
+        w = 1
+    }
+    if (a_is_sse && b_is_sse) {
+        emit_reg_rm(unit, 243, 0, 15, 126, reg_code(b_reg), OPND_REG,
+            reg_code(a_reg), 0, 0)
+        return
+    }
+    if (b_is_sse) {
+        // Into an SSE register: from a general register through the same
+        // opcode either width, and from memory through the load form.
+        if (a_kind == OPND_REG) {
+            emit_reg_rm(unit, 102, w, 15, 110, reg_code(b_reg), OPND_REG,
+                reg_code(a_reg), 0, 0)
+            return
+        }
+        emit_reg_rm(unit, 243, 0, 15, 126, reg_code(b_reg), a_kind,
+            reg_code(a_reg), a_disp, 0)
+        return
+    }
+    if (a_is_sse) {
+        if (b_kind == OPND_REG) {
+            emit_reg_rm(unit, 102, w, 15, 126, reg_code(a_reg), OPND_REG,
+                reg_code(b_reg), 0, 0)
+            return
+        }
+        emit_reg_rm(unit, 102, 0, 15, 214, reg_code(a_reg), b_kind,
+            reg_code(b_reg), b_disp, 0)
+        return
+    }
+    assemble_fail(unit, "unit move between banks with neither side in one", here)
+}
+
+// ---------------------------------------------------------------------------
+// Reading the file
+// ---------------------------------------------------------------------------
+
+// Define a name here: which section it belongs to and where in it. A name
+// defined twice is a fault in the backend rather than anything a program can
+// cause, so it is reported rather than taking the later definition.
+define_symbol :: fn(mut unit: Assembly, sym: i64, section: i64, value: i64,
+    at: i64) {
+    held := arena_at(unit.syms, sym)
+    if (held.section != SEC_UNDEF) {
+        assemble_fail(unit, "unit name defined twice", at)
+    }
+    held.section = section
+    held.value = value
+}
+
+// The bytes of a `.asciz` string, with the escapes C and Frost share read back
+// to the byte each stands for.
+read_string_literal :: fn(mut unit: Assembly, at: i64) -> i64 {
+    src := unit.src
+    mut i := at + 1
+    while (i < str_len(src) && src[i] != CH_DQUOTE) {
+        if (src[i] == CH_BACKSLASH) {
+            i = i + 1
+            escaped := src[i]
+            if (escaped == CH_LOWER_N) {
+                data_byte(unit, CH_LF)
+            } else if (escaped == CH_LOWER_T) {
+                data_byte(unit, CH_TAB)
+            } else if (escaped == CH_r) {
+                data_byte(unit, CH_CR)
+            } else if (escaped == CH_0) {
+                data_byte(unit, 0)
+            } else {
+                data_byte(unit, escaped)
+            }
+        } else {
+            data_byte(unit, src[i])
+        }
+        i = i + 1
+    }
+    data_byte(unit, 0)
+    i + 1
+}
+
+// A decimal float, as the eight bytes the machine holds it in. The text is a
+// literal copied from the program being compiled, so this is where a number
+// written in the source becomes the bits that stand for it.
+//
+// The digits are read into an integer and a power of ten, and the two are
+// combined in one operation. Below 2^53 the integer is exact, and a power of
+// ten up to the twenty-second is exact, so a single multiply or divide rounds
+// once and lands on the same bits every other correctly rounding reader
+// produces. Outside that range one rounding is not enough, and a literal that
+// falls outside it is reported rather than written approximately.
+DOUBLE_EXACT_MANTISSA :: 9007199254740992
+DOUBLE_EXACT_POWER :: 22
+
+read_double :: fn(mut unit: Assembly, at: i64) -> i64 {
+    src := unit.src
+    mut i := at
+    mut negative := false
+    if (src[i] == CH_MINUS) {
+        negative = true
+        i = i + 1
+    }
+    mut mantissa : i64 = 0
+    mut exponent : i64 = 0
+    mut digits : i64 = 0
+    while (i < str_len(src) && is_digit(src[i])) {
+        // A zero ahead of the first significant digit contributes nothing but
+        // its place, which the exponent already accounts for.
+        if (mantissa != 0 || src[i] != CH_0) {
+            mantissa = mantissa * 10 + (src[i] - CH_0)
+            digits = digits + 1
+        }
+        i = i + 1
+    }
+    if (i < str_len(src) && src[i] == CH_DOT) {
+        i = i + 1
+        while (i < str_len(src) && is_digit(src[i])) {
+            if (mantissa != 0 || src[i] != CH_0) {
+                mantissa = mantissa * 10 + (src[i] - CH_0)
+                digits = digits + 1
+            }
+            exponent = exponent - 1
+            i = i + 1
+        }
+    }
+    // A trailing zero is a power of ten the mantissa is carrying, and moving
+    // it into the exponent is what brings `100.0` and `1.50` inside the range
+    // that rounds exactly.
+    while (mantissa != 0 && mantissa % 10 == 0 && exponent < 0) {
+        mantissa = mantissa / 10
+        exponent = exponent + 1
+        digits = digits - 1
+    }
+    if (digits > 18 || mantissa >= DOUBLE_EXACT_MANTISSA
+        || exponent > DOUBLE_EXACT_POWER
+        || exponent < 0 - DOUBLE_EXACT_POWER
+        || (i < str_len(src) && is_name_byte(src[i]))) {
+        report("frost: assembling: this float literal needs more precision ")
+        report("than the assembler rounds exactly: ")
+        report_src(src, at, i - at)
+        report("
+")
+        frost_rt_die()
+    }
+    mut scale : f64 = 1.0
+    mut steps := exponent
+    if (steps < 0) {
+        steps = 0 - steps
+    }
+    while (steps > 0) {
+        scale = scale * 10.0
+        steps = steps - 1
+    }
+    mut value : f64 = int_as_float(mantissa)
+    if (exponent < 0) {
+        value = value / scale
+    } else {
+        value = value * scale
+    }
+    if (negative) {
+        value = 0.0 - value
+    }
+    bits := float_bits(unit, value)
+    mut k : i64 = 0
+    while (k < 8) {
+        data_byte(unit, bits >> (k * 8))
+        k = k + 1
+    }
+    i
+}
+
+int_as_float :: fn(value: i64) -> f64 { value }
+
+// The bit pattern of a double, which is what the data section holds rather
+// than the number it stands for. The eight bytes are written as a double and
+// read back as an integer through the same address, which is the reinterpret
+// the language does not otherwise offer.
+float_bits :: fn(mut unit: Assembly, value: f64) -> i64 {
+    mut bits : i64 = 0
+    unsafe {
+        as_double := ptr_cast($f64, ptr_to(unit.scratch[0]))
+        as_double[0] = value
+        as_integer := ptr_cast($i64, ptr_to(unit.scratch[0]))
+        bits = as_integer[0]
+    }
+    bits
+}
+
+// Pad the data section out to a multiple of `alignment`.
+align_data :: fn(mut unit: Assembly, alignment: i64) {
+    while (unit.data_count % alignment != 0) {
+        data_byte(unit, 0)
+    }
+}
+
+// One line. Everything but an instruction takes effect as it is read; an
+// instruction and a label go on the list the layout pass walks.
+read_line :: fn(mut unit: Assembly, at: i64) -> i64 {
+    src := unit.src
+    stop := line_end(src, at)
+    mut i := skip_spaces(src, at)
+    if (i >= stop || src[i] == 35) {
+        return stop + 1
+    }
+    len := name_length(src, i)
+    if (len > 0 && i + len < str_len(src) && src[i + len] == CH_COLON) {
+        sym := intern_symbol(unit, i, len)
+        if (unit.section == SEC_DATA) {
+            define_symbol(unit, sym, SEC_DATA, unit.data_count, i)
+        } else {
+            arena_push(unit.insns, Insn {
+                op = M_LABEL, cc = 0,
+                a_kind = OPND_NONE, a_reg = 0, a_disp = 0, a_sym = sym,
+                b_kind = OPND_NONE, b_reg = 0, b_disp = 0, b_sym = 0 - 1,
+                offset = 0, size = 0, long = 0,
+            })
+        }
+        return read_line_rest(unit, i + len + 1, stop)
+    }
+    if (src[i] == CH_DOT) {
+        return read_directive(unit, i, len, stop)
+    }
+    read_instruction(unit, i, len, stop)
+}
+
+// Whatever follows a label on the same line, which the backend does not write
+// but which costs nothing to accept.
+read_line_rest :: fn(mut unit: Assembly, at: i64, stop: i64) -> i64 {
+    i := skip_spaces(unit.src, at)
+    if (i >= stop) {
+        return stop + 1
+    }
+    read_line(unit, i)
+}
+
+read_directive :: fn(mut unit: Assembly, at: i64, len: i64, stop: i64) -> i64 {
+    src := unit.src
+    if (bytes_same(src, at, len, ".text")) {
+        unit.section = SEC_TEXT
+        return stop + 1
+    }
+    if (bytes_same(src, at, len, ".data")) {
+        unit.section = SEC_DATA
+        return stop + 1
+    }
+    rest := skip_spaces(src, at + len)
+    if (bytes_same(src, at, len, ".globl")) {
+        name := name_length(src, rest)
+        sym := intern_symbol(unit, rest, name)
+        held := arena_at(unit.syms, sym)
+        held.global = 1
+        return stop + 1
+    }
+    if (bytes_same(src, at, len, ".set")) {
+        name := name_length(src, rest)
+        sym := intern_symbol(unit, rest, name)
+        after := skip_spaces(src, rest + name + 1)
+        value, unused := read_number(src, after)
+        define_symbol(unit, sym, SEC_ABS, value, at)
+        return stop + 1
+    }
+    if (bytes_same(src, at, len, ".asciz")) {
+        read_string_literal(unit, rest)
+        return stop + 1
+    }
+    if (bytes_same(src, at, len, ".align")) {
+        alignment, unused := read_number(src, rest)
+        align_data(unit, alignment)
+        return stop + 1
+    }
+    if (bytes_same(src, at, len, ".double")) {
+        read_double(unit, rest)
+        return stop + 1
+    }
+    assemble_fail(unit, "unit directive this assembler does not know", at)
+    stop + 1
+}
+
+read_instruction :: fn(mut unit: Assembly, at: i64, len: i64, stop: i64) -> i64 {
+    src := unit.src
+    op, cc := mnemonic_of(src, at, len)
+    if (op == M_NONE) {
+        assemble_fail(unit, "an instruction this assembler does not know", at)
+    }
+    mut first := Operand { kind = OPND_NONE, reg = 0, disp = 0, sym = 0 - 1,
+        next = at + len }
+    mut second := Operand { kind = OPND_NONE, reg = 0, disp = 0, sym = 0 - 1,
+        next = at + len }
+    mut i := skip_spaces(src, at + len)
+    if (i < stop) {
+        first = parse_operand(unit, i)
+        i = skip_spaces(src, first.next)
+        if (i < stop && src[i] == CH_COMMA) {
+            i = skip_spaces(src, i + 1)
+            second = parse_operand(unit, i)
+        }
+    }
+    arena_push(unit.insns, Insn {
+        op = op, cc = cc,
+        a_kind = first.kind, a_reg = first.reg, a_disp = first.disp,
+        a_sym = first.sym,
+        b_kind = second.kind, b_reg = second.reg, b_disp = second.disp,
+        b_sym = second.sym,
+        offset = 0, size = 0, long = 0,
+    })
+    stop + 1
+}
+
+// ---------------------------------------------------------------------------
+// Laying the section out
+// ---------------------------------------------------------------------------
+
+// Walk the list writing bytes, over and over until no jump grew. A jump only
+// ever moves from the short form to the long one, so the number of passes is
+// bounded by the number of jumps and in practice is two.
+lay_out :: fn(mut unit: Assembly) {
+    // Which section each label belongs to, before anything is encoded. A jump
+    // forward reaches a label the walk has not come to yet, and whether that
+    // name is one this file settles is the first thing the encoder asks.
+    mut i : i64 = 0
+    while (i < unit.insns.count) {
+        held := arena_at(unit.insns, i)
+        if (held.op == M_LABEL) {
+            named := arena_at(unit.syms, held.a_sym)
+            named.section = SEC_TEXT
+        }
+        i = i + 1
+    }
+    size_everything(unit)
+    settle_jump_widths(unit)
+    encode_everything(unit)
+    // Each section is as long as its alignment asks, so whatever the linker
+    // places after this object still starts on a boundary. Code is padded with
+    // the one-byte no-op and data with zeros.
+    while (unit.text_count % SECTION_ALIGNMENT != 0) {
+        text_byte(unit, 144)
+    }
+}
+
+// How long each instruction encodes to. Every jump is written short here: the
+// distances are meaningless this early, and a jump's width is the one thing
+// placement is allowed to change.
+size_everything :: fn(mut unit: Assembly) {
+    unit.text_count = 0
+    unit.relocs.count = 0
+    mut i : i64 = 0
+    while (i < unit.insns.count) {
+        before := unit.text_count
+        record := arena_at(unit.insns, i)
+        record.offset = before
+        if (record.op != M_LABEL) {
+            encode_insn(unit, i)
+        }
+        again := arena_at(unit.insns, i)
+        again.size = unit.text_count - before
+        i = i + 1
+    }
+}
+
+// Where everything lands, from the lengths in hand. A label takes the address
+// the instructions before it add up to, so this is what a jump measures
+// against.
+place_everything :: fn(mut unit: Assembly) {
+    mut at : i64 = 0
+    mut i : i64 = 0
+    while (i < unit.insns.count) {
+        record := arena_at(unit.insns, i)
+        record.offset = at
+        if (record.op == M_LABEL) {
+            named := arena_at(unit.syms, record.a_sym)
+            named.value = at
+        }
+        at = at + record.size
+        i = i + 1
+    }
+}
+
+// Place, then widen every jump whose target turned out to be too far, and go
+// round again. Widening moves the labels after it further away, which can
+// widen another, so this runs until a pass changes nothing. A jump only ever
+// moves from the short form to the long one, which is what makes it settle.
+settle_jump_widths :: fn(mut unit: Assembly) {
+    mut changed : i64 = 1
+    mut passes : i64 = 0
+    while (changed == 1) {
+        changed = 0
+        place_everything(unit)
+        mut i : i64 = 0
+        while (i < unit.insns.count) {
+            held := arena_at(unit.insns, i)
+            op := held.op
+            long := held.long
+            if ((op == M_JMP || op == M_JCC) && long == 0) {
+                here := held.offset
+                named := arena_at(unit.syms, held.a_sym)
+                target := named.value
+                if (fits_in_byte(target - (here + 2)) == false) {
+                    record := arena_at(unit.insns, i)
+                    record.long = 1
+                    record.size = 5
+                    if (op == M_JCC) {
+                        record.size = 6
+                    }
+                    changed = 1
+                }
+            }
+            i = i + 1
+        }
+        passes = passes + 1
+        if (passes > 200) {
+            report("frost: the assembler could not settle the jump widths
+")
+            frost_rt_die()
+        }
+    }
+}
+
+// Write the bytes, with every address settled. The fixups recorded here are
+// the ones the object carries, since the passes before this one threw theirs
+// away.
+encode_everything :: fn(mut unit: Assembly) {
+    unit.text_count = 0
+    unit.relocs.count = 0
+    mut i : i64 = 0
+    while (i < unit.insns.count) {
+        held := arena_at(unit.insns, i)
+        if (held.op != M_LABEL) {
+            encode_insn(unit, i)
+        }
+        i = i + 1
+    }
+}
+
+// Read a whole translation unit and answer with what it assembles to.
+assemble_text :: fn(text: str, code_room: i64, data_room: i64) -> Assembly {
+    mut buckets := arena_make($Bucket, 65536)
+    mut i : i64 = 0
+    while (i < 65536) {
+        arena_push(buckets, Bucket { sym = 0 - 1 })
+        i = i + 1
+    }
+    mut unit := Assembly {
+        src = text,
+        text = buffer_of(code_room),
+        text_count = 0,
+        data = buffer_of(data_room),
+        data_count = 0,
+        scratch = buffer_of(8),
+        insns = arena_make($Insn, 400000),
+        syms = arena_make($AsmSym, 30000),
+        relocs = arena_make($AsmReloc, 200000),
+        buckets = buckets,
+        bucket_mask = 65535,
+        section = SEC_TEXT,
+    }
+    mut at : i64 = 0
+    while (at < str_len(unit.src) && unit.src[at] != 0) {
+        at = read_line(unit, at)
+    }
+    lay_out(unit)
+    while (unit.data_count % SECTION_ALIGNMENT != 0) {
+        data_byte(unit, 0)
+    }
+    unit
+}
+
+asm_section_bytes :: fn(mut unit: Assembly, section: i64) -> str {
+    if (section == SEC_TEXT) {
+        return unit.text
+    }
+    unit.data
+}
+
+asm_section_count :: fn(mut unit: Assembly, section: i64) -> i64 {
+    if (section == SEC_TEXT) {
+        return unit.text_count
+    }
+    unit.data_count
+}
+
+asm_reloc_count :: fn(mut unit: Assembly) -> i64 { unit.relocs.count }
+
+asm_reloc_at :: fn(mut unit: Assembly, index: i64) -> ref AsmReloc {
+    arena_at(unit.relocs, index)
+}
+
+asm_symbol_count :: fn(mut unit: Assembly) -> i64 { unit.syms.count }
+
+// A borrow rather than a copy, so the object writer can record where each name
+// landed in the table it is building.
+asm_symbol_at :: fn(mut unit: Assembly, at: i64) -> ref AsmSym {
+    arena_at(unit.syms, at)
+}

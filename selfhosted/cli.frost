@@ -23,6 +23,9 @@ Options :: struct {
     // Assemble the emitted text into an object rather than leaving it as
     // assembly, which is what `--native` answers with in both compilers.
     object: i64,
+    // Turn an assembly file into an object with this compiler's own encoder,
+    // rather than compiling a Frost source at all.
+    assemble: i64,
     testing: i64,
     audit_unsafe: i64,
     // Object files and libraries the link is given, in the order written, as
@@ -336,6 +339,7 @@ options_from_command_line :: fn() -> Options {
         backend = Backend::Unset,
         link = 0,
         object = 0,
+        assemble = 0,
         testing = 0,
         audit_unsafe = 0,
         libs = "",
@@ -393,6 +397,8 @@ options_from_command_line :: fn() -> Options {
             report("' is a bootstrap option, and this compiler has no such path")
             options.ok = 0
             return options
+        } else if (cstr_eq(argument, "--assemble")) {
+            options.assemble = 1
         } else if (cstr_eq(argument, "--incremental")) {
             // One object per module, and only the modules whose emitted code
             // changed are assembled again. A build that keeps objects is a
