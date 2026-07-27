@@ -11,10 +11,10 @@ Competitive with Jai and Odin, which in practice means a full build in the
 a number to measure against, not a feeling. Both compilers clear it, and the
 measurements are below.
 
-## What is left
+## What the bill bought
 
-Nothing on this list. The speed bill it was opened for is paid, and the two
-items that followed it are built.
+Nothing is left on it. The speed bill this document was opened for is paid, and
+the two items that followed it are built.
 
 Everything the two compilers are held to is done: they accept the same language,
 and what says so is a suite of programs run through both rather than a claim.
@@ -30,9 +30,9 @@ worked around in the library rather than fixed:
   `vec_push` fails with "the place is a 'u8' and the value is a '[]u8'". A key
   that is a slice is wrapped in a struct (`Text`) until this is fixed.
 - A module that both takes a bundle argument (`map_put($i64, $i64, $i64_keys,
-  ...)`) and declares a generic with two type parameters and a `$body` (the
-  ECS's `for_each2`) reports the bundle constant as an undefined function. The
-  ECS keeps its own mask table rather than the standard library's map.
+  ...)`) and declares a generic with two type parameters and a `$body` reports
+  the bundle constant as an undefined function. The ECS keeps its own mask table
+  rather than the standard library's map.
 
 Both are the same shape: compile-time parameter state that belongs to one
 template being read while another is checked. The reproductions are small.
@@ -96,7 +96,7 @@ the file cache:
 | incremental, first build | ~1,060 ms | ~1,280 ms |
 | incremental, nothing changed | ~330 ms | ~350 ms |
 
-The four pieces that took it there:
+The six pieces that took it there:
 
 1. **Per-module objects.** `--incremental` emits one assembly unit per module
    and assembles each to its own object. A function goes to the module that

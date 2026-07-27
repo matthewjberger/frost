@@ -3,7 +3,8 @@
 Frost has two distinct relationships with C:
 
 1. Frost calls C (`extern fn`), a supported feature. This is
-   how Frost reaches `printf`, `malloc`, the pool runtime, and any C library.
+   how Frost reaches `printf`, `malloc`, the support runtime, and any C
+   library.
 2. Frost lowers *through* C (`--emit-c`), an internal implementation detail
    of one backend. The emitted C is a compilation target, not an interface
    for external C code to call into.
@@ -109,10 +110,12 @@ main :: fn() -> i64 {
 Frost programs get the entire C ecosystem (libc, OS syscalls, third-party
 libraries) through `extern fn`, with no FFI glue code.
 
-### The pool runtime is itself just linked C
+### The support runtime is itself just linked C
 
-The generational pool runtime (`runtime/frost_runtime.c`) is an ordinary C file
-that both backends link automatically. Programs reach it through the same
+The support runtime (`runtime/frost_runtime.c`) is an ordinary C file that both
+backends link automatically. It is about a hundred lines: the bounds and
+generation aborts, assertions, and IO. The pool itself is written in Frost, so
+nothing here allocates or owns one. See [native-pools.md](native-pools.md). Programs reach it through the same
 `extern fn` mechanism:
 
 ```frost
@@ -171,7 +174,7 @@ rather than a property the internal lowering has to preserve.
 | Direction        | Supported? | Mechanism                                            |
 | ---------------- | ---------- | ---------------------------------------------------- |
 | Frost calls C    | Yes        | `extern fn`, natural C ABI, real linker              |
-| Frost links C    | Yes        | pool runtime + `--libs`, compiled and linked by `cc` |
+| Frost links C    | Yes        | support runtime + `--libs`, compiled and linked by `cc` |
 | Frost emits C    | Yes        | `--emit-c`, an internal lowering / differential oracle |
 | C calls Frost    | No (non-goal) | emitted C is mangled internal detail, not an API   |
 

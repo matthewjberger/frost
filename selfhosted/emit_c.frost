@@ -1523,7 +1523,6 @@ emit_value_param_bindings :: fn(mut p: Parser, params: i64) {
     }
 }
 
-// Emit one monomorphization of a generic function: the concrete return type, the
 // One argument's contribution to a mangled name: a type argument is `_t<code>`,
 // a value argument `_c<number>`, and a function argument `_f<index>`. Both a
 // call and its definition mangle through here, so the two always agree.
@@ -1606,18 +1605,10 @@ emit_mono_prototype :: fn(mut p: Parser, id: i64, arg: i64, xarg_start: i64,
 }
 
 // ---------------------------------------------------------------------------
-// Native backend. Emits x64 assembly instead of C, so a build no longer pays for
-// a C compiler parsing and optimizing generated source. Selected with
-// FROST_BACKEND=asm. The C path stays the default until this covers the
-// whole language.
-//
-// Windows x64: integer arguments arrive in rcx, rdx, r8, r9, the caller reserves
-// a 32 byte shadow area, and rsp is 16 byte aligned at every call. Expressions
-// evaluate into rax with r11 as scratch, and temporaries move through the stack
-// 16 bytes at a time so that alignment never drifts.
-//
-// Scalar subset for now: integers, locals, arithmetic, comparisons, if, while,
-// calls and print. Anything else is refused rather than mis-emitted.
+// The translation unit. The runtime prototypes come first, then every type,
+// then a prototype per function and specialization, then the bodies. A C unit
+// cannot call what it has not seen, so a per-module build repeats everything
+// but the bodies in each unit.
 // ---------------------------------------------------------------------------
 
 emit_program :: fn(mut p: Parser, head: i64) {

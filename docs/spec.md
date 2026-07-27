@@ -957,6 +957,12 @@ consumes it (chapter 9).
 - `sizeof(T)` is a compile-time constant.
 - `unsafe { ... }` is a block whose body may use unchecked operations.
 
+`--audit-unsafe` reports every `unsafe` block that vouches for nothing: one
+holding no unchecked operation, and one written inside another, which already
+covers what is in it. It is off by default. A build pays for the checks that
+keep a program correct. This one keeps it tidy, and tidiness is not worth a pass
+over the source on every compile.
+
 ### 6.9 Ranges
 
 `a..b` is half-open, `a..=b` inclusive. Ranges appear in `for` and are the
@@ -1622,14 +1628,6 @@ asymmetry is deliberate.
   registers where that target's rule says so, and through a hidden pointer where
   it does not. A return could not have been a convention, because `-> Ctx` has
   to mean what C means by it and `-> ^Ctx` is how a returned pointer is written.
-
-### 11.6 Auditing the blocks
-
-`--audit-unsafe` also reports every `unsafe` block that vouches for nothing: one
-holding no unchecked operation, and one written inside another, which already
-covers what is in it. It is off by default. A build pays for the checks that
-keep a program correct. This one keeps it tidy, and tidiness is not worth a pass
-over the source on every compile.
 
 ### 12.1 Callbacks
 

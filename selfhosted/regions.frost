@@ -613,18 +613,16 @@ check_argument_expressions :: fn(mut p: Parser, args: i64) {
 }
 
 
-// Two imported modules that export the same name is a collision: a reference to
-// it in a third module resolves to whichever the name lookup reaches first,
-// silently. The flat namespace is the point (a name carries its own prefix,
-// `vec3_add` not `math.add`), so this is a loud error rather than a resolution
-// rule, and the fix is to prefix one of them. Only exported names collide. A
-// private name stays the module's own.
-// Two modules exporting the same name is not itself a problem now that an
-// import says what a file may name: a file that imports only one of them sees
-// only that one. What is a problem is a file that imports both and then writes
-// the name, which is caught where the name is looked up. This records that
-// there is such a pair at all, so the lookup pays for the careful answer only
-// in a program that has one.
+// Two modules exporting the same name is not itself a problem, since an import
+// says what a file may name and a file importing only one of them sees only
+// that one. What is a problem is a file that imports both and then writes the
+// name, which resolves to whichever the lookup reaches first. That is caught
+// where the name is looked up, and the fix is to prefix one of them, since the
+// flat namespace is the point (`vec3_add` rather than `math.add`).
+//
+// This records only that such a pair exists, so the lookup pays for the careful
+// answer in a program that has one and nowhere else. Only exported names
+// collide. A private name stays the module's own.
 check_export_collisions :: fn(mut p: Parser) {
     mut i : i64 = 0
     while (i < p.exports.count) {
