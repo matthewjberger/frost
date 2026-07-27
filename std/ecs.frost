@@ -25,6 +25,11 @@
 import "vec.frost"
 import "mem.frost"
 
+// Saying which mistake was made needs the runtime, since a component named by a
+// type nothing registered cannot be answered with a value.
+frost_rt_error :: extern fn(text: ^i8)
+frost_rt_die   :: safe extern fn()
+
 export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     Commands, Change, Events, EventReader,
     ecs_new, ecs_free, ecs_register, ecs_component_size,
@@ -695,7 +700,8 @@ component_of :: fn($T: Type, world: World) -> i64 {
     }
     // A type nothing registered would otherwise be a mask bit nothing sets, so
     // the query would match nothing and say nothing about why.
-    assert(false)
+    unsafe { frost_rt_error("frost: a query names an unregistered component\n") }
+    frost_rt_die()
     0 - 1
 }
 

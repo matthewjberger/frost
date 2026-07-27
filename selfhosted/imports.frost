@@ -289,13 +289,70 @@ blank_range :: fn(buffer: str, from: i64, through: i64) {
     }
 }
 
-// The directories an import may be found under, most deliberate first. What the
-// command line said, then what the environment did, and then the standard
-// library beside the compiler's own checkout.
+// A directory joined to a name, as a NUL-terminated string the search can keep.
+// The block is malloc and byte stores into what it just took, which is memory
+// nothing else has yet.
+joined_path :: fn(directory: ^i8, upto: i64, name: ^i8) -> ^i8 {
+    extra := cstr_len(name)
+    block := unsafe { ptr_cast($i8, malloc(upto + extra + 2)) }
+    mut i : i64 = 0
+    while (i < upto) {
+        unsafe { byte_set(block, i, byte_at(directory, i)) }
+        i = i + 1
+    }
+    unsafe { byte_set(block, upto, CH_SLASH) }
+    mut k : i64 = 0
+    while (k < extra) {
+        unsafe { byte_set(block, upto + 1 + k, byte_at(name, k)) }
+        k = k + 1
+    }
+    unsafe { byte_set(block, upto + 1 + extra, 0) }
+    block
+}
+
+// How much of a path is the directory holding it, which is everything up to the
+// last separator. Both separators count, since a Windows argv[0] uses one and a
+// shell may hand over the other.
+directory_part :: fn(path: ^i8, upto: i64) -> i64 {
+    mut at := upto
+    while (at > 0) {
+        at = at - 1
+        held := unsafe { byte_at(path, at) }
+        if (held == CH_SLASH || held == CH_BACKSLASH) {
+            return at
+        }
+    }
+    0
+}
+
+// The directories an import may be found under, most deliberate first: what the
+// command line said, then FROST_PATH, then FROST_STD, then the standard library
+// beside the compiler and one checkout layout up from it, then the working
+// directory. The two beside the compiler are what let it run from anywhere
+// rather than only from a checkout root.
 search_roots_from :: fn(mut roots: Arena<SearchRoot>) {
     named := unsafe { frost_rt_getenv("FROST_PATH") }
     if (cstr_len(named) != 0) {
         add_root(roots, named)
+    }
+    // Someone who says exactly where the standard library is means it.
+    standard := unsafe { frost_rt_getenv("FROST_STD") }
+    if (cstr_len(standard) != 0) {
+        add_root(roots, standard)
+    }
+    program := frost_rt_arg_at(0)
+    length := cstr_len(program)
+    if (length > 0) {
+        directory := directory_part(program, length)
+        // `std` beside the compiler, which is what an installed layout is.
+        add_root(roots, joined_path(program, directory, "std"))
+        // Then one up, which is where this compiler sits in a checkout, and two
+        // up, which is where the bootstrap sits: `target/release` and
+        // `selfhosted` are both under the root the library is at.
+        up_one := directory_part(program, directory)
+        add_root(roots, joined_path(program, up_one, "std"))
+        up_two := directory_part(program, up_one)
+        add_root(roots, joined_path(program, up_two, "std"))
     }
     add_root(roots, "std")
     add_root(roots, ".")

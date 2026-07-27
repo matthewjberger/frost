@@ -9,13 +9,13 @@ use clap::Parser;
 use frost::{
     BuildCache, Expression, Lexer, Literal, Manifest, Parameter,
     Parser as FrostParser, Position, Resolution, ReturnKind, ReturnSignature,
-    RunOutcome, SearchRoot, Spanned, Statement, Type, build_module,
-    build_module_per_module, check_callback_declarations, check_frame_escapes,
-    check_linearity, check_module, check_ownership, check_regions,
-    check_unsafety, compile_ir_to_object, emit_c, lower_allocation_sources,
-    lower_failure_sets, lower_multiple_returns, lower_param_modes,
-    register_entry_file, resolve_distinct_types, resolve_imports_cached,
-    run_module, strip_unsafe_fns,
+    RunOutcome, SearchRoot, Spanned, Statement, TEST_PREFIX, Type,
+    build_module, build_module_per_module, check_callback_declarations,
+    check_frame_escapes, check_linearity, check_module, check_ownership,
+    check_regions, check_unsafety, compile_ir_to_object, emit_c,
+    lower_allocation_sources, lower_failure_sets, lower_multiple_returns,
+    lower_param_modes, register_entry_file, resolve_distinct_types,
+    resolve_imports_cached, run_module, strip_unsafe_fns,
 };
 
 #[derive(Parser)]
@@ -340,6 +340,18 @@ fn main() -> Result<()> {
     let mut linear_types = resolved.linear_types;
     let tests = resolved.tests;
     let mut modules = resolved.modules;
+    // A `test` block is an ordinary function under a name the compiler made up,
+    // so a build that is not running tests has to drop it rather than lower it.
+    // `assert` is only declared for a test build, so leaving them in refused
+    // every file that carries one, which is most of the standard library.
+    if !cli.test {
+        statements.retain(|statement| {
+            !matches!(
+                &statement.node,
+                Statement::Constant(name, _) if name.contains(TEST_PREFIX)
+            )
+        });
+    }
     check_callback_declarations(&statements).context("Callback error")?;
     // On by default now that the standard library and the self-hosted compiler
     // are gate-clean. FROST_CHECK_UNSAFE=0 turns it off, for compiling older
