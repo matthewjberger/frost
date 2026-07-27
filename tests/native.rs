@@ -1679,6 +1679,33 @@ fn self_hosted_break_and_continue_answer_to_the_innermost_loop() {
     assert_eq!(via_c, output, "the self-hosted C backend disagrees");
 }
 
+// The gate is the complete list of places to look when memory is corrupted, so
+// a shape that slips past it is worth a test of its own. A generic's fields are
+// declared once on the template, and the gate looked them up under the instance
+// name, so `b.data[i]` where `data: ^T` was not seen as a raw pointer at all.
+// Every container in the standard library is a generic holding a pointer, so
+// the hole was as wide as the library.
+#[test]
+fn indexing_a_raw_pointer_held_by_a_generic_is_gated() {
+    let source = "Box :: struct($T: Type) { data: ^T, count: i64 }
+         put :: fn(mut b: Box<$T>, value: $T) {
+             b.data[b.count] = value
+         }
+         main :: fn() -> i64 {
+             mut b := Box<i64> { data = unsafe { ptr_cast($i64, 0) },
+                 count = 0 }
+             put(b, 7)
+             0
+         }
+";
+    let message = compile_error_checked("gategeneric", source);
+    assert!(
+        message.contains("indexing a raw pointer"),
+        "a raw pointer reached through a generic's field escaped the gate:
+{message}"
+    );
+}
+
 // A call through a function pointer that answers with a struct. A Frost
 // function hands an aggregate back through a trailing out-pointer, and a call
 // through a pointer is the same call, so the signature the call site builds is
