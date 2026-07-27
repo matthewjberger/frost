@@ -8,7 +8,7 @@
 
 import "core.frost"
 
-export Assembly, assemble_text, asm_section_bytes, asm_section_count,
+export Assembly, assembly_of, assemble_into, asm_section_bytes, asm_section_count,
     asm_reloc_count, asm_reloc_at, asm_symbol_count, asm_symbol_at,
     AsmSym, AsmReloc, SEC_TEXT, SEC_DATA, SEC_ABS, SEC_UNDEF
 
@@ -157,8 +157,6 @@ Assembly :: struct {
     text_count: i64,
     data: str,
     data_count: i64,
-    // Eight bytes a double is written into so its bits can be read back.
-    scratch: str,
     insns: Arena<Insn>,
     syms: Arena<AsmSym>,
     relocs: Arena<AsmReloc>,
@@ -272,10 +270,64 @@ ranges_equal :: fn(src: str, first: i64, second: i64, length: i64) -> bool {
     true
 }
 
+// Twice as many name slots, with every name already in hand put back where the
+// wider mask sends it. Open addressing degrades as a table fills and stops
+// answering at all once it is full, so this happens well before that: at half.
+widen_buckets :: fn(mut unit: Assembly) {
+    wider := unit.buckets.cap * 2
+    mut fresh := arena_make($Bucket, wider)
+    mut i : i64 = 0
+    while (i < wider) {
+        arena_push(fresh, Bucket { sym = 0 - 1 })
+        i = i + 1
+    }
+    unit.buckets = fresh
+    unit.bucket_mask = wider - 1
+    mut s : i64 = 0
+    while (s < unit.syms.count) {
+        named := arena_at(unit.syms, s)
+        mut slot := name_hash(unit.src, named.off, named.len) & unit.bucket_mask
+        mut placed := false
+        while (placed == false) {
+            bucket := arena_at(unit.buckets, slot)
+            if (bucket.sym == (0 - 1)) {
+                bucket.sym = s
+                placed = true
+            } else {
+                slot = (slot + 1) & unit.bucket_mask
+            }
+        }
+        s = s + 1
+    }
+}
+
+// Room for one more name, twice over when what there is runs out. How many a
+// unit holds is not known before it is read, and a fixed table is a ceiling on
+// how large a program this compiler will assemble.
+widen_symbols :: fn(mut unit: Assembly) {
+    mut wider := arena_make($AsmSym, unit.syms.cap * 2 + 1024)
+    mut i : i64 = 0
+    while (i < unit.syms.count) {
+        held := arena_at(unit.syms, i)
+        arena_push(wider, AsmSym {
+            off = held.off, len = held.len, section = held.section,
+            value = held.value, global = held.global, index = held.index,
+        })
+        i = i + 1
+    }
+    unit.syms = wider
+}
+
 // The symbol this name stands for, making one that stands for nothing yet if
 // this is the first mention. Every reference and every definition goes through
 // here, so a name has exactly one entry however many times it appears.
 intern_symbol :: fn(mut unit: Assembly, off: i64, len: i64) -> i64 {
+    if (unit.syms.count * 2 >= unit.buckets.cap) {
+        widen_buckets(unit)
+    }
+    if (unit.syms.count >= unit.syms.cap) {
+        widen_symbols(unit)
+    }
     mut slot := name_hash(unit.src, off, len) & unit.bucket_mask
     mut answer : i64 = 0 - 1
     while (answer < 0) {
@@ -761,6 +813,17 @@ arith_acc_opcode :: fn(digit: i64) -> i64 { digit * 8 + 5 }
 
 // Record a place the linker fills in, at the four bytes about to be written.
 note_reloc :: fn(mut unit: Assembly, sym: i64) {
+    if (unit.relocs.count >= unit.relocs.cap) {
+        mut wider := arena_make($AsmReloc, unit.relocs.cap * 2 + 1024)
+        mut i : i64 = 0
+        while (i < unit.relocs.count) {
+            held := arena_at(unit.relocs, i)
+            arena_push(wider, AsmReloc {
+                section = held.section, offset = held.offset, sym = held.sym })
+            i = i + 1
+        }
+        unit.relocs = wider
+    }
     arena_push(unit.relocs, AsmReloc {
         section = SEC_TEXT, offset = unit.text_count, sym = sym })
 }
@@ -1257,19 +1320,253 @@ read_string_literal :: fn(mut unit: Assembly, at: i64) -> i64 {
     i + 1
 }
 
+// ---------------------------------------------------------------------------
+// Decimal to double
+// ---------------------------------------------------------------------------
+//
+// A decimal literal names an exact number and a double holds only some numbers,
+// so writing one as the other is a rounding, and there is one right answer: the
+// double nearest the decimal, with a tie going to the even one. Reaching it
+// takes more room than a machine integer, since a literal like `0.1` stands for
+// a ratio whose exact binary form runs to hundreds of bits.
+//
+// The digits become an exact integer and a count of decimal places, so the
+// number is X / 10^k, which is X / 5^k over 2^k. The division by five is done k
+// times, which is what an integer of limbs can do without a general divide, and
+// every remainder along the way is remembered, because a rounding has to know
+// whether anything was thrown away. What is left is an integer and a power of
+// two, and rounding that to fifty-three bits is the last step.
+
+// How many limbs an integer here has room for, and how wide each is. Half a
+// machine word, so a limb times a small number plus a carry still fits in one.
+BIG_LIMBS :: 256
+BIG_LIMB_BITS :: 32
+BIG_LIMB_MASK :: 4294967295
+
+// An integer of as many limbs as it needs, least significant first, with no
+// limbs of leading zeros.
+Big :: struct {
+    limb: [256]i64,
+    count: i64,
+}
+
+big_zero :: fn() -> Big {
+    Big { limb = [0; 256], count = 0 }
+}
+
+// A limb on the top. Room runs out only for a literal thousands of digits long,
+// which is a number no program means and no reader can be asked to guess at.
+big_push :: fn(mut x: Big, value: i64) {
+    if (x.count >= BIG_LIMBS) {
+        report("frost: assembling: this float literal has more digits than ")
+        report("the assembler converts\n")
+        frost_rt_die()
+    }
+    x.limb[x.count] = value
+    x.count = x.count + 1
+}
+
+// x = x * factor + addend, which is how the digits are read in.
+big_mul_add :: fn(mut x: Big, factor: i64, addend: i64) {
+    mut carry := addend
+    mut i : i64 = 0
+    while (i < x.count) {
+        product := x.limb[i] * factor + carry
+        x.limb[i] = product & BIG_LIMB_MASK
+        carry = product >> BIG_LIMB_BITS
+        i = i + 1
+    }
+    while (carry != 0) {
+        big_push(x, carry & BIG_LIMB_MASK)
+        carry = carry >> BIG_LIMB_BITS
+    }
+}
+
+// x = x * 2^bits.
+big_shift_left :: fn(mut x: Big, bits: i64) {
+    if (x.count == 0) {
+        return
+    }
+    within := bits % BIG_LIMB_BITS
+    if (within != 0) {
+        mut carry : i64 = 0
+        mut i : i64 = 0
+        while (i < x.count) {
+            moved := (x.limb[i] << within) | carry
+            x.limb[i] = moved & BIG_LIMB_MASK
+            carry = moved >> BIG_LIMB_BITS
+            i = i + 1
+        }
+        if (carry != 0) {
+            big_push(x, carry)
+        }
+    }
+    whole := bits / BIG_LIMB_BITS
+    mut made : i64 = 0
+    while (made < whole) {
+        big_push(x, 0)
+        made = made + 1
+    }
+    mut at := x.count
+    while (at > whole) {
+        at = at - 1
+        x.limb[at] = x.limb[at - whole]
+    }
+    mut low : i64 = 0
+    while (low < whole) {
+        x.limb[low] = 0
+        low = low + 1
+    }
+}
+
+// x = x / divisor, answering with the remainder. The divisor is small enough
+// that a limb beside a remainder still fits in a machine integer.
+big_div_small :: fn(mut x: Big, divisor: i64) -> i64 {
+    mut rest : i64 = 0
+    mut i := x.count
+    while (i > 0) {
+        i = i - 1
+        current := (rest << BIG_LIMB_BITS) | x.limb[i]
+        x.limb[i] = current / divisor
+        rest = current % divisor
+    }
+    while (x.count > 0 && x.limb[x.count - 1] == 0) {
+        x.count = x.count - 1
+    }
+    rest
+}
+
+// How many bits x takes, which is where its top bit sits plus one.
+big_bits :: fn(mut x: Big) -> i64 {
+    if (x.count == 0) {
+        return 0
+    }
+    mut top := x.limb[x.count - 1]
+    mut bits := (x.count - 1) * BIG_LIMB_BITS
+    while (top != 0) {
+        bits = bits + 1
+        top = top >> 1
+    }
+    bits
+}
+
+big_bit :: fn(mut x: Big, at: i64) -> i64 {
+    limb := at / BIG_LIMB_BITS
+    if (limb >= x.count) {
+        return 0
+    }
+    (x.limb[limb] >> (at % BIG_LIMB_BITS)) & 1
+}
+
+// Whether anything below bit `at` is set, which is the rest of what a rounding
+// asks about once it has the bit either side of the cut.
+big_any_below :: fn(mut x: Big, at: i64) -> bool {
+    whole := at / BIG_LIMB_BITS
+    mut i : i64 = 0
+    while (i < whole && i < x.count) {
+        if (x.limb[i] != 0) {
+            return true
+        }
+        i = i + 1
+    }
+    within := at % BIG_LIMB_BITS
+    if (within > 0 && whole < x.count) {
+        if ((x.limb[whole] & ((1 << within) - 1)) != 0) {
+            return true
+        }
+    }
+    false
+}
+
+// A run of bits out of x as one machine integer, low bit first.
+big_window :: fn(mut x: Big, from: i64, width: i64) -> i64 {
+    mut value : i64 = 0
+    mut i := width
+    while (i > 0) {
+        i = i - 1
+        value = (value << 1) | big_bit(x, from + i)
+    }
+    value
+}
+
+// What a double carries: the leading bit and fifty-two more, an exponent from
+// -1022 to 1023 held with 1023 added to it, and 2^-1074 as the smallest step
+// anything below that range is written in.
+DOUBLE_SIGNIFICAND :: 53
+DOUBLE_LEADING_BIT :: 4503599627370496
+DOUBLE_MIN_STEP :: 0 - 1074
+DOUBLE_MAX_EXPONENT :: 1023
+DOUBLE_BIAS :: 1023
+DOUBLE_INFINITY :: 9218868437227405312
+
+// The double nearest `x * 2^scale`, as its bits. `sticky` says whether anything
+// below x's last bit was thrown away getting here, which decides a tie.
+double_from_big :: fn(mut x: Big, scale: i64, sticky: bool,
+    negative: bool) -> i64 {
+    mut sign : i64 = 0
+    if (negative) {
+        sign = 1 << 63
+    }
+    bits := big_bits(x)
+    if (bits == 0) {
+        return sign
+    }
+    // How many of the low bits do not fit. Fifty-three is all a double carries,
+    // and below the smallest normal it carries fewer, down to whatever lands on
+    // a multiple of 2^-1074.
+    mut drop := bits - DOUBLE_SIGNIFICAND
+    if (drop < DOUBLE_MIN_STEP - scale) {
+        drop = DOUBLE_MIN_STEP - scale
+    }
+    if (drop < 0) {
+        drop = 0
+    }
+    mut value := big_window(x, drop, DOUBLE_SIGNIFICAND)
+    mut exponent := scale + drop
+    if (drop > 0) {
+        // Nearest wins, and a value exactly between two doubles goes to the one
+        // whose last bit is zero.
+        half := big_bit(x, drop - 1)
+        rest := sticky || big_any_below(x, drop - 1)
+        if (half == 1 && (rest || (value & 1) == 1)) {
+            value = value + 1
+        }
+        if (value >= DOUBLE_LEADING_BIT * 2) {
+            value = value >> 1
+            exponent = exponent + 1
+        }
+    }
+    if (value == 0) {
+        return sign
+    }
+    // Nothing was thrown away, so the leading bit can be walked up to where a
+    // double keeps it. The exponent running out first is what a number too
+    // small to be normal looks like.
+    while (value < DOUBLE_LEADING_BIT && exponent > DOUBLE_MIN_STEP) {
+        value = value << 1
+        exponent = exponent - 1
+    }
+    if (value < DOUBLE_LEADING_BIT) {
+        // Below the smallest normal: no leading bit is implied and the exponent
+        // field is zero, so what is left is written out whole.
+        return sign | value
+    }
+    top := exponent + DOUBLE_SIGNIFICAND - 1
+    if (top > DOUBLE_MAX_EXPONENT) {
+        return sign | DOUBLE_INFINITY
+    }
+    sign | ((top + DOUBLE_BIAS) << 52) | (value - DOUBLE_LEADING_BIT)
+}
+
+// How many bits 5^k takes, near enough and never under: 5 is a little over
+// 2.3219 bits.
+five_bits :: fn(k: i64) -> i64 {
+    (k * 2322) / 1000 + 1
+}
+
 // A decimal float, as the eight bytes the machine holds it in. The text is a
 // literal copied from the program being compiled, so this is where a number
 // written in the source becomes the bits that stand for it.
-//
-// The digits are read into an integer and a power of ten, and the two are
-// combined in one operation. Below 2^53 the integer is exact, and a power of
-// ten up to the twenty-second is exact, so a single multiply or divide rounds
-// once and lands on the same bits every other correctly rounding reader
-// produces. Outside that range one rounding is not enough, and a literal that
-// falls outside it is reported rather than written approximately.
-DOUBLE_EXACT_MANTISSA :: 9007199254740992
-DOUBLE_EXACT_POWER :: 22
-
 read_double :: fn(mut unit: Assembly, at: i64) -> i64 {
     src := unit.src
     mut i := at
@@ -1278,90 +1575,76 @@ read_double :: fn(mut unit: Assembly, at: i64) -> i64 {
         negative = true
         i = i + 1
     }
-    mut mantissa : i64 = 0
-    mut exponent : i64 = 0
-    mut digits : i64 = 0
+    mut digits := big_zero()
+    // How many significant digits were read, and how many of them sit after the
+    // point. A zero ahead of the first significant digit adds nothing.
+    mut significant : i64 = 0
+    mut places : i64 = 0
     while (i < str_len(src) && is_digit(src[i])) {
-        // A zero ahead of the first significant digit contributes nothing but
-        // its place, which the exponent already accounts for.
-        if (mantissa != 0 || src[i] != CH_0) {
-            mantissa = mantissa * 10 + (src[i] - CH_0)
-            digits = digits + 1
+        if (digits.count != 0 || src[i] != CH_0) {
+            big_mul_add(digits, 10, src[i] - CH_0)
+            significant = significant + 1
         }
         i = i + 1
     }
     if (i < str_len(src) && src[i] == CH_DOT) {
         i = i + 1
         while (i < str_len(src) && is_digit(src[i])) {
-            if (mantissa != 0 || src[i] != CH_0) {
-                mantissa = mantissa * 10 + (src[i] - CH_0)
-                digits = digits + 1
+            if (digits.count != 0 || src[i] != CH_0) {
+                big_mul_add(digits, 10, src[i] - CH_0)
+                significant = significant + 1
             }
-            exponent = exponent - 1
+            places = places + 1
             i = i + 1
         }
     }
-    // A trailing zero is a power of ten the mantissa is carrying, and moving
-    // it into the exponent is what brings `100.0` and `1.50` inside the range
-    // that rounds exactly.
-    while (mantissa != 0 && mantissa % 10 == 0 && exponent < 0) {
-        mantissa = mantissa / 10
-        exponent = exponent + 1
-        digits = digits - 1
-    }
-    if (digits > 18 || mantissa >= DOUBLE_EXACT_MANTISSA
-        || exponent > DOUBLE_EXACT_POWER
-        || exponent < 0 - DOUBLE_EXACT_POWER
-        || (i < str_len(src) && is_name_byte(src[i]))) {
-        report("frost: assembling: this float literal needs more precision ")
-        report("than the assembler rounds exactly: ")
+    if (i < str_len(src) && is_name_byte(src[i])) {
+        // The language has no exponent form, so anything still attached to the
+        // number is a shape this reader was not written for rather than a
+        // literal it could work harder at.
+        report("frost: assembling: this is not a float literal this ")
+        report("assembler reads: ")
         report_src(src, at, i - at)
-        report("
-")
+        report("\n")
         frost_rt_die()
     }
-    mut scale : f64 = 1.0
-    mut steps := exponent
-    if (steps < 0) {
-        steps = 0 - steps
-    }
-    while (steps > 0) {
-        scale = scale * 10.0
-        steps = steps - 1
-    }
-    mut value : f64 = int_as_float(mantissa)
-    if (exponent < 0) {
-        value = value / scale
-    } else {
-        value = value * scale
-    }
+    mut bits : i64 = 0
     if (negative) {
-        value = 0.0 - value
+        bits = 1 << 63
     }
-    bits := float_bits(unit, value)
+    // Where the number sits, as the power of ten its leading digit stands for.
+    // This settles both ends of the range on the digits alone.
+    reach := significant - places
+    if (reach > 309) {
+        // Past the largest double there is, so infinity is what is nearest.
+        bits = bits | DOUBLE_INFINITY
+    } else if (reach > 0 - 324) {
+        // Inside the range a double reaches. Below it nothing is nearer than
+        // zero, which is the sign on its own and so what is already in hand.
+        mut scale : i64 = 0
+        if (places > 0) {
+            // Making the number bigger by a power of two before dividing it by
+            // five leaves more bits than a double keeps, which is what gives
+            // the rounding something to round.
+            scale = five_bits(places) + 66
+            big_shift_left(digits, scale)
+        }
+        mut sticky := false
+        mut step : i64 = 0
+        while (step < places) {
+            if (big_div_small(digits, 5) != 0) {
+                sticky = true
+            }
+            step = step + 1
+        }
+        bits = double_from_big(digits, 0 - (scale + places), sticky, negative)
+    }
     mut k : i64 = 0
     while (k < 8) {
         data_byte(unit, bits >> (k * 8))
         k = k + 1
     }
     i
-}
-
-int_as_float :: fn(value: i64) -> f64 { value }
-
-// The bit pattern of a double, which is what the data section holds rather
-// than the number it stands for. The eight bytes are written as a double and
-// read back as an integer through the same address, which is the reinterpret
-// the language does not otherwise offer.
-float_bits :: fn(mut unit: Assembly, value: f64) -> i64 {
-    mut bits : i64 = 0
-    unsafe {
-        as_double := ptr_cast($f64, ptr_to(unit.scratch[0]))
-        as_double[0] = value
-        as_integer := ptr_cast($i64, ptr_to(unit.scratch[0]))
-        bits = as_integer[0]
-    }
-    bits
 }
 
 // Pad the data section out to a multiple of `alignment`.
@@ -1386,7 +1669,7 @@ read_line :: fn(mut unit: Assembly, at: i64) -> i64 {
         if (unit.section == SEC_DATA) {
             define_symbol(unit, sym, SEC_DATA, unit.data_count, i)
         } else {
-            arena_push(unit.insns, Insn {
+            push_insn(unit, Insn {
                 op = M_LABEL, cc = 0,
                 a_kind = OPND_NONE, a_reg = 0, a_disp = 0, a_sym = sym,
                 b_kind = OPND_NONE, b_reg = 0, b_disp = 0, b_sym = 0 - 1,
@@ -1473,7 +1756,7 @@ read_instruction :: fn(mut unit: Assembly, at: i64, len: i64, stop: i64) -> i64 
             second = parse_operand(unit, i)
         }
     }
-    arena_push(unit.insns, Insn {
+    push_insn(unit, Insn {
         op = op, cc = cc,
         a_kind = first.kind, a_reg = first.reg, a_disp = first.disp,
         a_sym = first.sym,
@@ -1586,8 +1869,7 @@ settle_jump_widths :: fn(mut unit: Assembly) {
         }
         passes = passes + 1
         if (passes > 200) {
-            report("frost: the assembler could not settle the jump widths
-")
+            report("frost: the assembler could not settle the jump widths\n")
             frost_rt_die()
         }
     }
@@ -1609,27 +1891,88 @@ encode_everything :: fn(mut unit: Assembly) {
     }
 }
 
-// Read a whole translation unit and answer with what it assembles to.
-assemble_text :: fn(text: str, code_room: i64, data_room: i64) -> Assembly {
-    mut buckets := arena_make($Bucket, 65536)
+// How many name slots a unit starts with, before it is known how many names it
+// holds. A power of two, since a name reaches its slot by masking.
+ASSEMBLE_BUCKETS :: 1024
+
+// Room for one translation unit, which every part of grows to what the unit
+// turns out to need. A build that emits several units assembles each into the
+// same room rather than asking for another of its own per module, and one that
+// hands its units to the toolchain instead never grows any of this past here.
+assembly_of :: fn() -> Assembly {
+    mut buckets := arena_make($Bucket, ASSEMBLE_BUCKETS)
     mut i : i64 = 0
-    while (i < 65536) {
+    while (i < ASSEMBLE_BUCKETS) {
         arena_push(buckets, Bucket { sym = 0 - 1 })
         i = i + 1
     }
-    mut unit := Assembly {
-        src = text,
-        text = buffer_of(code_room),
+    Assembly {
+        src = "",
+        text = buffer_of(0),
         text_count = 0,
-        data = buffer_of(data_room),
+        data = buffer_of(0),
         data_count = 0,
-        scratch = buffer_of(8),
-        insns = arena_make($Insn, 400000),
-        syms = arena_make($AsmSym, 30000),
-        relocs = arena_make($AsmReloc, 200000),
+        insns = arena_make($Insn, 0),
+        syms = arena_make($AsmSym, 0),
+        relocs = arena_make($AsmReloc, 0),
         buckets = buckets,
-        bucket_mask = 65535,
+        bucket_mask = ASSEMBLE_BUCKETS - 1,
         section = SEC_TEXT,
+    }
+}
+
+// Room for one more instruction, twice over when what there is runs out. How
+// many a unit holds is not known before it is read, and reading it twice to
+// find out costs more than the copying this does once in a while.
+push_insn :: fn(mut unit: Assembly, record: Insn) {
+    if (unit.insns.count >= unit.insns.cap) {
+        mut wider := arena_make($Insn, unit.insns.cap * 2 + 4096)
+        mut i : i64 = 0
+        while (i < unit.insns.count) {
+            held := arena_at(unit.insns, i)
+            arena_push(wider, Insn {
+                op = held.op, cc = held.cc,
+                a_kind = held.a_kind, a_reg = held.a_reg,
+                a_disp = held.a_disp, a_sym = held.a_sym,
+                b_kind = held.b_kind, b_reg = held.b_reg,
+                b_disp = held.b_disp, b_sym = held.b_sym,
+                offset = held.offset, size = held.size, long = held.long,
+            })
+            i = i + 1
+        }
+        unit.insns = wider
+    }
+    arena_push(unit.insns, record)
+}
+
+// Read a whole translation unit into the room in hand. Everything the last unit
+// left behind is dropped first, so what comes out depends on this text alone.
+//
+// Assembly says everything at greater length than what it encodes to: the
+// shortest instruction line is eight bytes and stands for one, a name takes as
+// many characters as the object carries and more, and a string or a float takes
+// more characters than the bytes it means. So the text's own length is what
+// bounds both sections, and nothing here has a ceiling of its own.
+assemble_into :: fn(mut unit: Assembly, text: str) {
+    unit.src = text
+    unit.text_count = 0
+    unit.data_count = 0
+    unit.insns.count = 0
+    unit.syms.count = 0
+    unit.relocs.count = 0
+    unit.section = SEC_TEXT
+    room := str_len(text) + SECTION_ALIGNMENT
+    if (str_len(unit.text) < room) {
+        unit.text = buffer_of(room)
+    }
+    if (str_len(unit.data) < room) {
+        unit.data = buffer_of(room)
+    }
+    mut i : i64 = 0
+    while (i < unit.buckets.count) {
+        bucket := arena_at(unit.buckets, i)
+        bucket.sym = 0 - 1
+        i = i + 1
     }
     mut at : i64 = 0
     while (at < str_len(unit.src) && unit.src[at] != 0) {
@@ -1639,7 +1982,6 @@ assemble_text :: fn(text: str, code_room: i64, data_room: i64) -> Assembly {
     while (unit.data_count % SECTION_ALIGNMENT != 0) {
         data_byte(unit, 0)
     }
-    unit
 }
 
 asm_section_bytes :: fn(mut unit: Assembly, section: i64) -> str {

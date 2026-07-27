@@ -14417,6 +14417,139 @@ fn relocation_lines(object: &Path) -> Vec<String> {
     lines
 }
 
+// Decimal literals covering the whole range a double reaches: the ties that sit
+// exactly between two of them, the exact decimal of a double, the numbers too
+// small to be normal, and a spread of ordinary ones.
+fn float_literal_cases() -> Vec<String> {
+    let mut literals: Vec<String> = Vec::new();
+    // Exactly between two doubles, where the answer is whichever of them has a
+    // zero last bit. The last two go opposite ways.
+    for tie in [
+        "9007199254740993",
+        "9007199254740995.0",
+        "1.00000000000000011102230246251565404236316680908203125",
+        "1.00000000000000033306690738754696212708950042724609375",
+        "0.100000000000000012490009027033011079765856266021728515625",
+    ] {
+        literals.push(tie.to_string());
+    }
+    // The exact decimal of a double, which has to come back as the double it
+    // was written from. The smallest one is 751 digits past the point.
+    for value in [
+        0.0f64,
+        1.0,
+        0.5,
+        0.1,
+        std::f64::consts::PI,
+        0.017453292519943295,
+        f64::MIN_POSITIVE,
+        f64::MAX,
+        f64::from_bits(1),
+        f64::from_bits(2),
+        f64::from_bits(0x000f_ffff_ffff_ffff),
+        f64::from_bits(0x0010_0000_0000_0001),
+        123_456_789.123_456_79,
+    ] {
+        literals.push(format!("{value:.1100}"));
+    }
+    // And a spread of ordinary ones, as digits with the point moved through
+    // them, which is the shape a program actually holds.
+    let mut seed: u64 = 0x2026_0727_0000_0001;
+    for _ in 0..600 {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let length = 1 + (seed >> 33) % 25;
+        let mut digits = String::new();
+        for _ in 0..length {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            digits.push((b'0' + ((seed >> 33) % 10) as u8) as char);
+        }
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let point = ((seed >> 33) % (length + 6)) as usize;
+        literals.push(if point >= digits.len() {
+            format!("0.{}{digits}", "0".repeat(point - digits.len()))
+        } else {
+            let at = digits.len() - point;
+            format!("{}.{}", &digits[..at], &digits[at..])
+        });
+    }
+    literals
+}
+
+// A decimal literal names an exact number and a double holds only some numbers,
+// so writing one as the other is a rounding, and there is exactly one right
+// answer: the nearest double, with a tie going to the one whose last bit is
+// zero. This holds the assembler to it against a reader known to round
+// correctly, rather than against `as`, which rounds a tie away from zero and so
+// answers 9007199254740994 where the right answer is 9007199254740992.
+//
+// Nothing else in the suite reaches this. The backend used to hand every float
+// literal to the system assembler as text, so a build only met these numbers
+// once this compiler started encoding its own output.
+#[test]
+fn the_assembler_rounds_a_float_literal_to_the_nearest_double() {
+    if !cfg!(windows) || !binutils_available() {
+        return;
+    }
+    let Some(compiler) = build_self_hosted_compiler("float_literals") else {
+        return;
+    };
+    let literals = float_literal_cases();
+    let directory = std::env::temp_dir();
+    let assembly = directory.join(unique("frost_floats")).with_extension("s");
+    let mut text = String::from("    .data\n");
+    for literal in &literals {
+        text.push_str("    .double ");
+        text.push_str(literal);
+        text.push('\n');
+    }
+    std::fs::write(&assembly, &text).unwrap();
+
+    let object = directory.join(unique("frost_floats")).with_extension("o");
+    let encoded = Command::new(&compiler)
+        .arg("--assemble")
+        .arg("-o")
+        .arg(&object)
+        .arg(&assembly)
+        .output()
+        .unwrap();
+    assert!(
+        encoded.status.success(),
+        "the assembler refused the float literals:\n{}",
+        String::from_utf8_lossy(&encoded.stderr)
+    );
+
+    let got = section_bytes(
+        &object,
+        ".data",
+        &directory.join(unique("floats_section")),
+    );
+    for (index, literal) in literals.iter().enumerate() {
+        let want = literal.parse::<f64>().unwrap().to_bits();
+        let mut eight = [0u8; 8];
+        eight.copy_from_slice(&got[index * 8..index * 8 + 8]);
+        let mine = u64::from_le_bytes(eight);
+        assert_eq!(
+            want,
+            mine,
+            "{} rounded to {mine:#018x} rather than {want:#018x}",
+            if literal.len() > 60 {
+                format!("{}...", &literal[..57])
+            } else {
+                literal.clone()
+            }
+        );
+    }
+
+    let _ = std::fs::remove_file(&assembly);
+    let _ = std::fs::remove_file(&object);
+}
+
 // The assembler in `selfhosted/assemble.frost` against the system assembler,
 // byte for byte. Both read the same text, so any disagreement is this
 // compiler's encoding being wrong, and the object it would have written would
@@ -14516,46 +14649,74 @@ fn the_assembler_encodes_what_the_system_assembler_does() {
             String::from_utf8_lossy(&encoded.stderr)
         );
 
-        for section in [".text", ".data"] {
-            let want = section_bytes(
-                &reference,
-                section,
-                &directory.join(unique("gold_section")),
-            );
-            let got = section_bytes(
-                &ours,
-                section,
-                &directory.join(unique("ours_section")),
-            );
-            assert_eq!(
-                want.len(),
-                got.len(),
-                "{section} is a different length for {what}"
-            );
-            if let Some(at) = want
-                .iter()
-                .zip(&got)
-                .position(|(left, right)| left != right)
-            {
-                let from = at.saturating_sub(8);
-                let to = (at + 8).min(want.len());
-                panic!(
-                    "{section} differs for {what} at byte {at}\n  system: {:02x?}\n  ours:   {:02x?}",
-                    &want[from..to],
-                    &got[from..to]
-                );
-            }
-        }
-
-        assert_eq!(
-            relocation_lines(&reference),
-            relocation_lines(&ours),
-            "the fixups differ for {what}"
+        // The same source again through `--native`, which is the path a build
+        // takes: the assembly is never written down, so the encoder reads it
+        // out of memory and the room it works in is grown rather than read off
+        // a file's length. Checking only `--assemble` would leave the path
+        // everyone actually uses untested, and the two differ in exactly the
+        // place a size is decided.
+        let straight = directory
+            .join(unique("frost_oracle_native"))
+            .with_extension("o");
+        let native = Command::new(&compiler)
+            .arg("--native")
+            .arg("-o")
+            .arg(&straight)
+            .arg(source)
+            .output()
+            .unwrap();
+        assert!(
+            native.status.success(),
+            "this compiler could not compile {what} straight to an object:\n{}",
+            String::from_utf8_lossy(&native.stderr)
         );
+
+        for (theirs, how) in [
+            (&ours, "reading the text back"),
+            (&straight, "straight from memory"),
+        ] {
+            for section in [".text", ".data"] {
+                let want = section_bytes(
+                    &reference,
+                    section,
+                    &directory.join(unique("gold_section")),
+                );
+                let got = section_bytes(
+                    theirs,
+                    section,
+                    &directory.join(unique("ours_section")),
+                );
+                assert_eq!(
+                    want.len(),
+                    got.len(),
+                    "{section} is a different length for {what}, {how}"
+                );
+                if let Some(at) = want
+                    .iter()
+                    .zip(&got)
+                    .position(|(left, right)| left != right)
+                {
+                    let from = at.saturating_sub(8);
+                    let to = (at + 8).min(want.len());
+                    panic!(
+                        "{section} differs for {what} at byte {at}, {how}\n  system: {:02x?}\n  ours:   {:02x?}",
+                        &want[from..to],
+                        &got[from..to]
+                    );
+                }
+            }
+
+            assert_eq!(
+                relocation_lines(&reference),
+                relocation_lines(theirs),
+                "the fixups differ for {what}, {how}"
+            );
+        }
 
         let _ = std::fs::remove_file(&assembly);
         let _ = std::fs::remove_file(&reference);
         let _ = std::fs::remove_file(&ours);
+        let _ = std::fs::remove_file(&straight);
     }
 }
 

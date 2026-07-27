@@ -87,6 +87,42 @@ static FILE *frost_rt_emit_where(void) {
     return frost_rt_emit_target;
 }
 
+/* A destination in memory, which is what a build that assembles its own output
+   emits into: the text never becomes a file, so it is neither written nor read
+   back. The caller owns the buffer and asks how much of it was filled. */
+static char *frost_rt_emit_memory = 0;
+static int64_t frost_rt_emit_memory_room = 0;
+static int64_t frost_rt_emit_memory_used = 0;
+
+void frost_rt_emit_to_memory(char *buffer, int64_t room) {
+    frost_rt_emit_memory = buffer;
+    frost_rt_emit_memory_room = room;
+    frost_rt_emit_memory_used = 0;
+}
+
+int64_t frost_rt_emit_memory_length(void) {
+    return frost_rt_emit_memory_used;
+}
+
+void frost_rt_emit_memory_done(void) {
+    frost_rt_emit_memory = 0;
+    frost_rt_emit_memory_room = 0;
+}
+
+/* Whether the bytes about to be written go to memory, having made room for
+   them. A buffer that fills up is the caller asking for less room than the
+   program needs, which no input can cause and no later check would catch. */
+static int frost_rt_emit_holds(int64_t length) {
+    if (frost_rt_emit_memory == 0) {
+        return 0;
+    }
+    if (frost_rt_emit_memory_used + length > frost_rt_emit_memory_room) {
+        fputs("frost: the emitted text outgrew its buffer\n", stderr);
+        abort();
+    }
+    return 1;
+}
+
 int64_t frost_rt_emit_open(const char *path) {
     static char file_buffer[1 << 16];
     frost_rt_emit_target = fopen(path, "wb");
@@ -105,6 +141,12 @@ void frost_rt_emit_close(void) {
 }
 
 void frost_rt_emit_str(const char *text) {
+    size_t length = strlen(text);
+    if (frost_rt_emit_holds((int64_t)length)) {
+        memcpy(frost_rt_emit_memory + frost_rt_emit_memory_used, text, length);
+        frost_rt_emit_memory_used += (int64_t)length;
+        return;
+    }
     fputs(text, frost_rt_emit_where());
 }
 
@@ -112,6 +154,12 @@ void frost_rt_emit_str(const char *text) {
    caller passes a length-carrying `str` and the read is bounded by it. This is
    what lets the emit path be safe. Nothing scans for a terminator. */
 void frost_rt_emit_bytes(const char *data, int64_t length) {
+    if (frost_rt_emit_holds(length)) {
+        memcpy(frost_rt_emit_memory + frost_rt_emit_memory_used, data,
+               (size_t)length);
+        frost_rt_emit_memory_used += length;
+        return;
+    }
     fwrite(data, 1, (size_t)length, frost_rt_emit_where());
 }
 
@@ -134,11 +182,22 @@ void frost_rt_emit_int(int64_t value) {
     if (value < 0) {
         digits[--at] = '-';
     }
-    fwrite(digits + at, 1, (size_t)((int)sizeof digits - at),
-           frost_rt_emit_where());
+    size_t length = (size_t)((int)sizeof digits - at);
+    if (frost_rt_emit_holds((int64_t)length)) {
+        memcpy(frost_rt_emit_memory + frost_rt_emit_memory_used, digits + at,
+               length);
+        frost_rt_emit_memory_used += (int64_t)length;
+        return;
+    }
+    fwrite(digits + at, 1, length, frost_rt_emit_where());
 }
 
 void frost_rt_emit_char(int64_t byte) {
+    if (frost_rt_emit_holds(1)) {
+        frost_rt_emit_memory[frost_rt_emit_memory_used] = (char)byte;
+        frost_rt_emit_memory_used += 1;
+        return;
+    }
     fputc((int)byte, frost_rt_emit_where());
 }
 

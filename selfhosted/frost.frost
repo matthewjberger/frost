@@ -53,13 +53,14 @@ run_assembling :: fn(raw: ^u8) {
     unsafe { job^.status = frost_rt_run_command(job^.command) }
 }
 
-// A build that compiles each module to its own object. Every module is emitted
-// to `<build>/m<n>.s`; a module whose assembly is byte for byte last build's is
-// left alone, and the rest are assembled again. Then the objects are linked.
+// A build that compiles each module to its own object. A module whose emitted
+// code is byte for byte last build's is left alone, and the rest are assembled
+// again. Then the objects are linked.
 //
-// This is where the time goes on a full build: emitting the compiler's own
-// 14,000 lines takes about 120 ms and assembling and linking them takes about
-// 750 ms, so what pays is not assembling what did not change.
+// This is where the time goes on a full build, so what pays is not assembling
+// what did not change. Where this compiler encodes its own output the module's
+// assembly stays in memory and never becomes a file at all; where the toolchain
+// does the encoding it is written to `<build>/m<n>.s` for that program to read.
 build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     make_directory(options.build_dir)
     prefix := join_two(options.build_dir, "/m")
@@ -71,6 +72,19 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
         }
     }
 
+    // Whether this build encodes its own output. What the encoder writes is
+    // COFF and what it reads is assembly, so the C backend and every other
+    // platform still hand each unit to the toolchain.
+    assembles := options.backend == Backend::Asm && frost_rt_is_windows() == 1
+    mut room := empty_source()
+    // Grown to what each module turns out to need, so a build that hands its
+    // units to the toolchain never grows any of it at all.
+    mut unit := assembly_of()
+    mut blob := object_blob()
+    if (assembles) {
+        room = buffer_of(ASSEMBLE_TEXT_ROOM)
+    }
+
     // Every assembler run this build needs, gathered before any of them is
     // started so they can all be handed to the machine at once. The work is one
     // process per module and they share nothing, which is the whole reason this
@@ -79,19 +93,20 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     mut records : Arena<Assembling> = arena_make($Assembling, 4096)
 
     mut objects : ^i8 = ""
-    mut rebuilt : i64 = 0
     mut index : i64 = 0
     while (index < p.modules.count) {
         mut suffix : ^i8 = ".s"
         if (options.backend == Backend::C) {
             suffix = ".c"
         }
-        unit := join_number(prefix, index, suffix)
+        source := join_number(prefix, index, suffix)
         record := join_number(prefix, index, ".sum")
         object := join_number(prefix, index, ".o")
-        if (unsafe { frost_rt_emit_open(unit) } == 0) {
+        if (assembles) {
+            emit_to_memory(room)
+        } else if (unsafe { frost_rt_emit_open(source) } == 0) {
             report("frost: cannot write '")
-            report_cstr(unit)
+            report_cstr(source)
             report("'")
             frost_rt_die()
         }
@@ -101,34 +116,43 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
             // what it has not seen: the runtime's prototypes, every type, every
             // extern, and a prototype for every function and specialization in
             // the program. What differs between units is which bodies follow.
-            emit_text("#include <stdio.h>
-")
-            emit_text("#include <stdint.h>
-")
+            emit_text("#include <stdio.h>\n")
+            emit_text("#include <stdint.h>\n")
             emit_program(p, program)
         } else {
             emit_asm_program(p, program)
         }
-        frost_rt_emit_close()
         p.emit_module = 0 - 1
 
-        sum := file_checksum(unit)
+        mut text := empty_source()
+        mut sum : i64 = 0
+        if (assembles) {
+            text = buffer_head(room, emit_memory_length())
+            emit_memory_done()
+            sum = text_checksum(text)
+        } else {
+            frost_rt_emit_close()
+            sum = file_checksum(source)
+        }
         mut stale : bool = sum != stored_checksum(record)
         if (unsafe { frost_rt_file_exists(object) } == 0) {
             stale = true
         }
-        if (stale) {
+        if (stale && assembles) {
+            assemble_into(unit, text)
+            write_coff_object(unit, blob, object)
+            // The checksum goes down once the object it stands for is there, so
+            // a build that dies partway leaves nothing claiming to be up to
+            // date.
+            write_checksum(record, sum)
+        } else if (stale) {
             command := join_two(
                 join_two(
-                    join_two(join_two(c_compiler(), " -c "), unit),
+                    join_two(join_two(c_compiler(), " -c "), source),
                     " -o "),
                 object)
             arena_push(jobs, Assembling { command = command, status = 0 })
-            // The checksum is written once the run it belongs to has answered,
-            // so a build that dies partway leaves nothing claiming to be up to
-            // date.
             arena_push(records, Assembling { command = record, status = sum })
-            rebuilt = rebuilt + 1
         }
         objects = join_two(join_two(objects, " "), object)
         index = index + 1
@@ -192,39 +216,98 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     0
 }
 
-// How much room the assembler is given for the code it encodes, the data
-// beside it, and the object holding both. The compiler's own assembly is the
-// largest thing this has to take, and it needs under a megabyte of code.
-ASSEMBLE_CODE_ROOM :: 16777216
-ASSEMBLE_DATA_ROOM :: 4194304
-ASSEMBLE_OBJECT_ROOM :: 25165824
+// How much room the emitted text is given, for a build that assembles its own
+// output and so never writes that text anywhere. The compiler compiled as one
+// unit emits about three megabytes. Everything the assembler and the object
+// writer need follows from the length of that text, so this is the only size
+// here that is a number rather than an answer.
+ASSEMBLE_TEXT_ROOM :: 33554432
+
+// Compile straight to an object: the assembly is emitted into memory and
+// encoded from there, so the text is neither written for another program to
+// read nor read back.
+assemble_program :: fn(mut p: Parser, program: i64, output: ^i8) {
+    room := buffer_of(ASSEMBLE_TEXT_ROOM)
+    emit_to_memory(room)
+    emit_asm_program(p, program)
+    text := buffer_head(room, emit_memory_length())
+    emit_memory_done()
+    mut unit := assembly_of()
+    mut object := object_blob()
+    assemble_into(unit, text)
+    write_coff_object(unit, object, output)
+}
+
+// Hand what was compiled to the linker, along with the C runtime every program
+// needs, and remove what it read. `unit` is an object where this compiler
+// assembled its own output and assembly or C where it did not, and the
+// toolchain takes any of the three.
+//
+// Every program links the C runtime: it holds the bounds check an index
+// compiles to, the assertion, the string and error emitters, and the test
+// runner a `--test` build needs. FROST_RUNTIME says where it is for a checkout
+// that is not the working directory.
+link_with_toolchain :: fn(unit: ^i8, executable: ^i8, options: Options) -> i64 {
+    extra := join_two(" ", cached_runtime_object())
+    base := join_two(
+        join_two(
+            join_two(join_two(join_two(c_compiler(), " "), unit), extra),
+            " -o "),
+        executable)
+    // What `--libs` named goes after the objects and ahead of the platform's
+    // own libraries, which is the order a linker resolves in: a named library
+    // that reaches libm has to be seen before libm is.
+    mut command := join_two(base, options.libs)
+    // A program that reaches the C math functions (std/math.frost's sqrtf and
+    // the rest) needs libm where the platform keeps it out of the C runtime,
+    // which is Linux and the BSDs. Windows keeps them in the CRT, so the flag
+    // is only added off Windows.
+    if (frost_rt_is_windows() == 0) {
+        command = join_two(command, " -lm")
+    }
+    status := unsafe { frost_rt_run_command(command) }
+    unsafe { frost_rt_remove_file(unit) }
+    if (status != 0) {
+        // Name the command, since a failing link is nearly always the toolchain
+        // being absent or a path it could not read, and neither is guessable
+        // from the bare word "failed".
+        report("frost: the linker failed: ")
+        report_cstr(command)
+        report("\n")
+        frost_rt_die()
+    }
+    // Building the tests and not running them would be half an answer, so the
+    // process ends on what they said.
+    if (options.testing == 1) {
+        return unsafe { frost_rt_run_command(executable) }
+    }
+    0
+}
 
 // Read assembly and write the object it stands for. The encoder is checked
 // against the system assembler byte for byte, so this and `as` produce the
 // same code.
 assemble_file :: fn(input: ^i8, output: ^i8) -> i64 {
     if (cstr_len(input) == 0 || cstr_len(output) == 0) {
-        report("frost: --assemble needs an input file and -o
-")
+        report("frost: --assemble needs an input file and -o\n")
         frost_rt_die()
     }
     if (frost_rt_is_windows() == 0) {
         report("frost: --assemble writes COFF, which is the object format on ")
-        report("Windows. Elsewhere the build still runs the assembler.
-")
+        report("Windows. Elsewhere the build still runs the assembler.\n")
         frost_rt_die()
     }
     raw := unsafe { frost_rt_read_file(input) }
     if (cstr_len(raw) == 0) {
         report("frost: cannot read ")
         report_cstr(input)
-        report("
-")
+        report("\n")
         frost_rt_die()
     }
-    mut unit := assemble_text(cstr_slice(raw), ASSEMBLE_CODE_ROOM,
-        ASSEMBLE_DATA_ROOM)
-    write_coff_object(unit, output, ASSEMBLE_OBJECT_ROOM)
+    mut unit := assembly_of()
+    mut object := object_blob()
+    assemble_into(unit, cstr_slice(raw))
+    write_coff_object(unit, object, output)
     0
 }
 
@@ -557,18 +640,36 @@ main :: fn() -> i64 {
         frost_rt_die()
     }
 
+    mut executable : ^i8 = options.output
+    if (options.link == 1 && cstr_len(executable) == 0) {
+        executable = "a.out"
+        if (frost_rt_is_windows() == 1) {
+            executable = "a.exe"
+        }
+    }
+
+    // The encoder is part of this compiler, so a build that ends in an object
+    // reaches one without writing assembly for another program to read back.
+    // What it writes is COFF, so this is the path on Windows and the toolchain
+    // is the path everywhere else.
+    if (options.backend == Backend::Asm && frost_rt_is_windows() == 1
+        && (options.object == 1 || options.link == 1)) {
+        mut object : ^i8 = options.output
+        if (options.link == 1) {
+            object = join_two(executable, ".o")
+        }
+        assemble_program(parser, program, object)
+        if (options.link == 0) {
+            return 0
+        }
+        return link_with_toolchain(object, executable, options)
+    }
+
     // Where the emitted text goes. A link needs it in a file whatever the
     // caller asked for, so it writes one beside the executable and removes it
     // afterwards. Without -o and without --link it goes to standard output.
-    mut executable : ^i8 = options.output
     mut emit_path : ^i8 = options.output
     if (options.link == 1) {
-        if (cstr_len(executable) == 0) {
-            executable = "a.out"
-            if (frost_rt_is_windows() == 1) {
-                executable = "a.exe"
-            }
-        }
         if (options.backend == Backend::Asm) {
             emit_path = join_two(executable, ".s")
         } else {
@@ -618,45 +719,7 @@ main :: fn() -> i64 {
     }
 
     if (options.link == 1) {
-        // Every program links the C runtime: it holds the bounds check an
-        // index compiles to, the assertion, the string and error emitters,
-        // and the test runner a `--test` build needs. FROST_RUNTIME says
-        // where it is for a checkout that is not the working directory.
-        extra := join_two(" ", cached_runtime_object())
-        base := join_two(
-            join_two(
-                join_two(
-                    join_two(join_two(c_compiler(), " "), emit_path),
-                    extra),
-                " -o "),
-            executable)
-        // What `--libs` named goes after the objects and ahead of the
-        // platform's own libraries, which is the order a linker resolves in: a
-        // named library that reaches libm has to be seen before libm is.
-        mut command := join_two(base, options.libs)
-        // A program that reaches the C math functions (std/math.frost's
-        // sqrtf and the rest) needs libm where the platform keeps it out of
-        // the C runtime, which is Linux and the BSDs. Windows keeps them in
-        // the CRT, so the flag is only added off Windows.
-        if (frost_rt_is_windows() == 0) {
-            command = join_two(command, " -lm")
-        }
-        status := unsafe { frost_rt_run_command(command) }
-        unsafe { frost_rt_remove_file(emit_path) }
-        if (status != 0) {
-            // Name the command, since a failing link is nearly always the
-            // toolchain being absent or a path it could not read, and
-            // neither is guessable from the bare word "failed".
-            report("frost: the linker failed: ")
-            report_cstr(command)
-            report("\n")
-            frost_rt_die()
-        }
-        // Building the tests and not running them would be half an answer, so
-        // the process ends on what they said.
-        if (options.testing == 1) {
-            return unsafe { frost_rt_run_command(executable) }
-        }
+        return link_with_toolchain(emit_path, executable, options)
     }
     0
 }
