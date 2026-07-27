@@ -88,7 +88,12 @@ static FILE *frost_rt_emit_where(void) {
 }
 
 int64_t frost_rt_emit_open(const char *path) {
+    static char file_buffer[1 << 16];
     frost_rt_emit_target = fopen(path, "wb");
+    if (frost_rt_emit_target != 0) {
+        setvbuf(frost_rt_emit_target, file_buffer, _IOFBF,
+                sizeof file_buffer);
+    }
     return frost_rt_emit_target != 0;
 }
 
@@ -110,8 +115,27 @@ void frost_rt_emit_bytes(const char *data, int64_t length) {
     fwrite(data, 1, (size_t)length, frost_rt_emit_where());
 }
 
+/* A backend emits a number for every slot, label and immediate it writes, which
+   is hundreds of thousands of numbers for a large program. Going through
+   fprintf for each one spends most of the time parsing the same format string
+   and taking the stream's lock; the digits themselves are a division loop. */
 void frost_rt_emit_int(int64_t value) {
-    fprintf(frost_rt_emit_where(), "%lld", (long long)value);
+    char digits[24];
+    int at = (int)sizeof digits;
+    /* Negating the most negative value overflows, so the magnitude is taken
+       one step away from the edge and put back. */
+    uint64_t magnitude = value < 0
+        ? (uint64_t)(-(value + 1)) + 1u
+        : (uint64_t)value;
+    do {
+        digits[--at] = (char)('0' + (magnitude % 10u));
+        magnitude /= 10u;
+    } while (magnitude != 0);
+    if (value < 0) {
+        digits[--at] = '-';
+    }
+    fwrite(digits + at, 1, (size_t)((int)sizeof digits - at),
+           frost_rt_emit_where());
 }
 
 void frost_rt_emit_char(int64_t byte) {
