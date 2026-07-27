@@ -22,14 +22,17 @@ install: build
     Copy-Item -Force target/release/frost.exe (Join-Path "{{bindir}}" frost.exe)
     New-Item -ItemType Directory -Force (Join-Path "{{bindir}}" std) | Out-Null
     Copy-Item -Force std/*.frost (Join-Path "{{bindir}}" std)
+    New-Item -ItemType Directory -Force (Join-Path "{{bindir}}" runtime) | Out-Null
+    Copy-Item -Force runtime/frost_runtime.c (Join-Path "{{bindir}}" runtime)
     Write-Host "frost -> {{bindir}}"
 
 # Builds the bootstrap compiler, with the standard library beside it (Unix)
 [unix]
 install: build
-    mkdir -p "{{bindir}}/std"
+    mkdir -p "{{bindir}}/std" "{{bindir}}/runtime"
     cp target/release/frost "{{bindir}}/frost"
     cp std/*.frost "{{bindir}}/std/"
+    cp runtime/frost_runtime.c "{{bindir}}/runtime/"
     echo "frost -> {{bindir}}"
 
 # Builds the self-hosted compiler, with the standard library beside it (Windows)
@@ -39,6 +42,8 @@ install-self: selfhost-build
     Copy-Item -Force selfhosted/frost.exe (Join-Path "{{bindir}}" frostc.exe)
     New-Item -ItemType Directory -Force (Join-Path "{{bindir}}" std) | Out-Null
     Copy-Item -Force std/*.frost (Join-Path "{{bindir}}" std)
+    New-Item -ItemType Directory -Force (Join-Path "{{bindir}}" runtime) | Out-Null
+    Copy-Item -Force runtime/frost_runtime.c (Join-Path "{{bindir}}" runtime)
     Write-Host "frostc -> {{bindir}}"
 
 # Builds the self-hosted compiler and puts it on PATH as `frostc` (Unix)
@@ -48,9 +53,10 @@ install-self: selfhost-build
 # ELF binary called `frost.exe`.
 [unix]
 install-self: selfhost-build
-    mkdir -p "{{bindir}}/std"
+    mkdir -p "{{bindir}}/std" "{{bindir}}/runtime"
     cp selfhosted/frost.exe "{{bindir}}/frostc"
     cp std/*.frost "{{bindir}}/std/"
+    cp runtime/frost_runtime.c "{{bindir}}/runtime/"
     echo "frostc -> {{bindir}}"
 
 # Removes both compilers from PATH (Windows)

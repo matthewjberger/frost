@@ -3,8 +3,8 @@
 import "core.frost"
 import "lexer.frost"
 
-export SOURCE_ROOM, SYNTH_ROOM, copy_name, emit_position, module_at,
-    report_where,
+export SOURCE_ROOM, SYNTH_ROOM, copy_name, directory_part, emit_position,
+    joined_path, module_at, report_where,
     resolve_imports, search_roots_from, source_with_room
 
 module_seen :: fn(mut modules: Arena<Module>, path: ^i8) -> bool {
