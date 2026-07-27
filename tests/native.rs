@@ -9,6 +9,21 @@ use frost::{CLayout, CReturn, CScalar, CTarget, Type, classify_return};
 // fails intermittently; a fresh name every time sidesteps it. The process id
 // separates one `cargo test` run from the next, the counter separates tests
 // within a run.
+#[derive(Clone, Copy, PartialEq)]
+enum Audit {
+    On,
+    Off,
+}
+
+impl Audit {
+    fn setting(self) -> &'static str {
+        match self {
+            Audit::On => "1",
+            Audit::Off => "0",
+        }
+    }
+}
+
 fn unique(base: &str) -> String {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
     format!(
@@ -39,11 +54,16 @@ fn linker_available() -> bool {
     false
 }
 
-fn compile_and_run(name: &str, source: &str) -> Option<String> {
-    run_backend(name, source, false)
+fn compile_and_run_unaudited(name: &str, source: &str) -> Option<String> {
+    run_backend(name, source, false, Audit::Off)
 }
 
-fn run_backend(name: &str, source: &str, emit_c: bool) -> Option<String> {
+fn run_backend(
+    name: &str,
+    source: &str,
+    emit_c: bool,
+    audit: Audit,
+) -> Option<String> {
     if !linker_available() {
         return None;
     }
@@ -66,7 +86,7 @@ fn run_backend(name: &str, source: &str, emit_c: bool) -> Option<String> {
     // here rather than when something tries to compile against one.
     command
         .env("FROST_CHECK_INTERFACES", "1")
-        .env("FROST_CHECK_UNSAFE", "0")
+        .env("FROST_CHECK_UNSAFE", audit.setting())
         .arg("--link")
         .arg("-o")
         .arg(&exe_path)
@@ -90,13 +110,13 @@ fn run_backend(name: &str, source: &str, emit_c: bool) -> Option<String> {
     Some(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"))
 }
 
-fn run_ir_oracle(name: &str, source: &str) -> Option<String> {
+fn run_ir_oracle(name: &str, source: &str, audit: Audit) -> Option<String> {
     let directory = std::env::temp_dir();
     let source_path = directory.join(format!("frost_oracle_{name}.frost"));
     std::fs::write(&source_path, source).unwrap();
     let frost = env!("CARGO_BIN_EXE_frost");
     let output = Command::new(frost)
-        .env("FROST_CHECK_UNSAFE", "0")
+        .env("FROST_CHECK_UNSAFE", audit.setting())
         .arg("--run-ir")
         .arg(&source_path)
         .output()
@@ -240,7 +260,7 @@ fn borrow_exclusivity_allows_disjoint_fields() {
         \x20   mut p : Pair = Pair { x = 3, y = 4 }\n\
         \x20   printf(\"%lld\\n\", mix(p.x, p.y))\n    0\n}\n";
     assert_eq!(
-        compile_and_run("disjoint_fields", source),
+        compile_and_run_unaudited("disjoint_fields", source),
         Some("7\n".to_string())
     );
 }
@@ -294,7 +314,11 @@ main :: fn() -> i64 {
 // wrote to stderr. An abort test wants both: the nonzero exit and the message
 // the runtime composed, so a crash for the wrong reason does not read as the
 // right one.
-fn compile_and_run_status(name: &str, source: &str) -> Option<(bool, String)> {
+fn compile_and_run_status(
+    name: &str,
+    source: &str,
+    audit: Audit,
+) -> Option<(bool, String)> {
     if !linker_available() {
         return None;
     }
@@ -307,7 +331,7 @@ fn compile_and_run_status(name: &str, source: &str) -> Option<(bool, String)> {
     std::fs::write(&source_path, source).unwrap();
     let frost = env!("CARGO_BIN_EXE_frost");
     let compile = Command::new(frost)
-        .env("FROST_CHECK_UNSAFE", "0")
+        .env("FROST_CHECK_UNSAFE", audit.setting())
         .arg("--link")
         .arg("-o")
         .arg(&exe_path)
@@ -336,7 +360,7 @@ main :: fn() -> i64 {
 #[test]
 fn native_out_of_bounds_index_aborts() {
     let Some((succeeded, stderr)) =
-        compile_and_run_status("oob", OUT_OF_BOUNDS)
+        compile_and_run_status("oob", OUT_OF_BOUNDS, Audit::Off)
     else {
         return;
     };
@@ -548,7 +572,7 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_arithmetic_and_control_flow() {
-    let Some(output) = compile_and_run("arith", ARITHMETIC) else {
+    let Some(output) = compile_and_run_unaudited("arith", ARITHMETIC) else {
         return;
     };
     assert_eq!(output, "3628800\n5050\n5\n1\n1\n1024\n2\n");
@@ -567,7 +591,7 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_float_operations() {
-    let Some(output) = compile_and_run("floats", FLOATS) else {
+    let Some(output) = compile_and_run_unaudited("floats", FLOATS) else {
         return;
     };
     assert_eq!(output, "1\n1\n0\n");
@@ -594,7 +618,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_f32_operations() {
-    let Some(output) = compile_and_run("f32ops", F32_OPERATIONS) else {
+    let Some(output) = compile_and_run_unaudited("f32ops", F32_OPERATIONS)
+    else {
         return;
     };
     assert_eq!(output, "1\n1\n1\n1\n");
@@ -614,7 +639,7 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_integer_widths_and_casts() {
-    let Some(output) = compile_and_run("widths", WIDTHS) else {
+    let Some(output) = compile_and_run_unaudited("widths", WIDTHS) else {
         return;
     };
     assert_eq!(output, "300\n150\n");
@@ -638,7 +663,9 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_wrapping_and_unary() {
-    let Some(output) = compile_and_run("wrapping", WRAPPING_AND_UNARY) else {
+    let Some(output) =
+        compile_and_run_unaudited("wrapping", WRAPPING_AND_UNARY)
+    else {
         return;
     };
     assert_eq!(output, "44\n705032704\n-42\n");
@@ -778,7 +805,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_function_returns_several_values() {
-    let Some(output) = compile_and_run("multiret", MULTIPLE_RETURN_VALUES)
+    let Some(output) =
+        compile_and_run_unaudited("multiret", MULTIPLE_RETURN_VALUES)
     else {
         return;
     };
@@ -928,7 +956,9 @@ later :: fn(c: Color) -> i64 { paint(c) * 10 }
 
 #[test]
 fn a_variant_takes_its_enum_from_the_context() {
-    let Some(output) = compile_and_run("dotvariant", INFERRED_VARIANTS) else {
+    let Some(output) =
+        compile_and_run_unaudited("dotvariant", INFERRED_VARIANTS)
+    else {
         return;
     };
     assert_eq!(output, "48\n25\n2\n30\n12\n1\n3\n3\n6\n10\n-1\n");
@@ -995,7 +1025,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_distinct_type_carries_its_own_name() {
-    let Some(output) = compile_and_run("distinct", DISTINCT_TYPES) else {
+    let Some(output) = compile_and_run_unaudited("distinct", DISTINCT_TYPES)
+    else {
         return;
     };
     assert_eq!(output, "7\n10\n7\n2.75\n12\n3\n");
@@ -1098,7 +1129,7 @@ const SELF_HOSTED_DISTINCT: &str = "Meters :: distinct i64\n\
 #[test]
 fn self_hosted_compiles_a_distinct_type() {
     let Some(output) =
-        selfhosted_native_output("shdistinct", SELF_HOSTED_DISTINCT)
+        selfhosted_unaudited_output("shdistinct", SELF_HOSTED_DISTINCT)
     else {
         return;
     };
@@ -1147,7 +1178,8 @@ const DISTINCT_ARITHMETIC: &str = "Mask :: distinct u32\n\
 
 #[test]
 fn arithmetic_on_a_distinct_type_answers_with_it() {
-    let Some(output) = compile_and_run("distinctops", DISTINCT_ARITHMETIC)
+    let Some(output) =
+        compile_and_run_unaudited("distinctops", DISTINCT_ARITHMETIC)
     else {
         return;
     };
@@ -1157,7 +1189,7 @@ fn arithmetic_on_a_distinct_type_answers_with_it() {
 #[test]
 fn self_hosted_arithmetic_on_a_distinct_type_answers_with_it() {
     let Some(output) =
-        selfhosted_native_output("shdistinctops", DISTINCT_ARITHMETIC)
+        selfhosted_unaudited_output("shdistinctops", DISTINCT_ARITHMETIC)
     else {
         return;
     };
@@ -1217,7 +1249,7 @@ const FLAGS_OUTPUT: &str = "32
 
 #[test]
 fn a_flags_type_names_its_bits() {
-    let Some(output) = compile_and_run("flagsbits", FLAGS) else {
+    let Some(output) = compile_and_run_unaudited("flagsbits", FLAGS) else {
         return;
     };
     assert_eq!(output, FLAGS_OUTPUT);
@@ -1225,7 +1257,7 @@ fn a_flags_type_names_its_bits() {
 
 #[test]
 fn self_hosted_compiles_a_flags_type() {
-    let Some(output) = selfhosted_native_output("shflagsbits", FLAGS) else {
+    let Some(output) = selfhosted_unaudited_output("shflagsbits", FLAGS) else {
         return;
     };
     assert_eq!(output, FLAGS_OUTPUT);
@@ -1257,7 +1289,7 @@ fn flags_is_still_a_name() {
              0
          }
 ";
-    let Some(output) = compile_and_run("flagsname", source) else {
+    let Some(output) = compile_and_run_unaudited("flagsname", source) else {
         return;
     };
     assert_eq!(
@@ -1388,7 +1420,8 @@ const BINDING_COPIES: &str = "Pair :: struct { a: i64, b: i64 }
 
 #[test]
 fn naming_a_borrowed_aggregate_binds_a_copy() {
-    let Some(output) = compile_and_run("bindcopy", BINDING_COPIES) else {
+    let Some(output) = compile_and_run_unaudited("bindcopy", BINDING_COPIES)
+    else {
         return;
     };
     assert_eq!(
@@ -1403,7 +1436,8 @@ fn naming_a_borrowed_aggregate_binds_a_copy() {
 
 #[test]
 fn self_hosted_naming_a_borrowed_aggregate_binds_a_copy() {
-    let Some(output) = selfhosted_native_output("shbindcopy", BINDING_COPIES)
+    let Some(output) =
+        selfhosted_unaudited_output("shbindcopy", BINDING_COPIES)
     else {
         return;
     };
@@ -1462,7 +1496,8 @@ const WIDE_FRAME: &str = "Table :: struct { rows: [900]i64 }
 
 #[test]
 fn a_function_wider_than_a_page_of_frame() {
-    let Some(output) = compile_and_run("wideframe", WIDE_FRAME) else {
+    let Some(output) = compile_and_run_unaudited("wideframe", WIDE_FRAME)
+    else {
         return;
     };
     assert_eq!(
@@ -1476,7 +1511,7 @@ fn a_function_wider_than_a_page_of_frame() {
 
 #[test]
 fn self_hosted_a_function_wider_than_a_page_of_frame() {
-    let Some(output) = selfhosted_native_output("shwideframe", WIDE_FRAME)
+    let Some(output) = selfhosted_unaudited_output("shwideframe", WIDE_FRAME)
     else {
         return;
     };
@@ -1553,7 +1588,7 @@ const TYPE_IDS: &str = "A :: struct { x: i64 }
 
 #[test]
 fn a_type_has_a_number_of_its_own() {
-    let Some(output) = compile_and_run("typeids", TYPE_IDS) else {
+    let Some(output) = compile_and_run_unaudited("typeids", TYPE_IDS) else {
         return;
     };
     assert_eq!(
@@ -1569,7 +1604,8 @@ fn a_type_has_a_number_of_its_own() {
 
 #[test]
 fn self_hosted_a_type_has_a_number_of_its_own() {
-    let Some(output) = selfhosted_native_output("shtypeids", TYPE_IDS) else {
+    let Some(output) = selfhosted_unaudited_output("shtypeids", TYPE_IDS)
+    else {
         return;
     };
     assert_eq!(
@@ -1585,7 +1621,7 @@ fn self_hosted_a_type_has_a_number_of_its_own() {
 
 #[test]
 fn self_hosted_a_compile_time_list_holds_types_and_expands_into_a_call() {
-    let Some(output) = selfhosted_native_output("shpackfeat", PACK_FEATURES)
+    let Some(output) = selfhosted_unaudited_output("shpackfeat", PACK_FEATURES)
     else {
         return;
     };
@@ -1606,7 +1642,8 @@ fn self_hosted_a_compile_time_list_holds_types_and_expands_into_a_call() {
 
 #[test]
 fn a_compile_time_list_holds_types_and_expands_into_a_call() {
-    let Some(output) = compile_and_run("packfeat", PACK_FEATURES) else {
+    let Some(output) = compile_and_run_unaudited("packfeat", PACK_FEATURES)
+    else {
         return;
     };
     assert_eq!(output, PACK_OUTPUT);
@@ -1644,7 +1681,8 @@ const LOOP_CONTROL: &str = "main :: fn() -> i64 {
 
 #[test]
 fn break_and_continue_answer_to_the_innermost_loop() {
-    let Some(output) = compile_and_run("loopctl", LOOP_CONTROL) else {
+    let Some(output) = compile_and_run_unaudited("loopctl", LOOP_CONTROL)
+    else {
         return;
     };
     assert_eq!(
@@ -1657,7 +1695,7 @@ fn break_and_continue_answer_to_the_innermost_loop() {
 
 #[test]
 fn self_hosted_break_and_continue_answer_to_the_innermost_loop() {
-    let Some(output) = selfhosted_native_output("shloopctl", LOOP_CONTROL)
+    let Some(output) = selfhosted_unaudited_output("shloopctl", LOOP_CONTROL)
     else {
         return;
     };
@@ -1740,7 +1778,9 @@ const LINEAR_TRAILING_CALL: &str = "Holder :: linear struct { count: i64 }
 
 #[test]
 fn a_trailing_call_answering_with_a_linear_value_is_the_return() {
-    let Some(output) = compile_and_run("lintrail", LINEAR_TRAILING_CALL) else {
+    let Some(output) =
+        compile_and_run_unaudited("lintrail", LINEAR_TRAILING_CALL)
+    else {
         return;
     };
     assert_eq!(
@@ -1754,7 +1794,7 @@ fn a_trailing_call_answering_with_a_linear_value_is_the_return() {
 #[test]
 fn self_hosted_a_trailing_call_answering_with_a_linear_value_is_the_return() {
     let Some(output) =
-        selfhosted_native_output("shlintrail", LINEAR_TRAILING_CALL)
+        selfhosted_unaudited_output("shlintrail", LINEAR_TRAILING_CALL)
     else {
         return;
     };
@@ -1804,7 +1844,8 @@ const LINEAR_NESTED_ARGUMENT: &str = "Holder :: linear struct { count: i64 }
 
 #[test]
 fn a_linear_value_is_consumed_inside_a_nested_call() {
-    let Some(output) = compile_and_run("linnest", LINEAR_NESTED_ARGUMENT)
+    let Some(output) =
+        compile_and_run_unaudited("linnest", LINEAR_NESTED_ARGUMENT)
     else {
         return;
     };
@@ -1819,7 +1860,7 @@ fn a_linear_value_is_consumed_inside_a_nested_call() {
 #[test]
 fn self_hosted_a_linear_value_is_consumed_inside_a_nested_call() {
     let Some(output) =
-        selfhosted_native_output("shlinnest", LINEAR_NESTED_ARGUMENT)
+        selfhosted_unaudited_output("shlinnest", LINEAR_NESTED_ARGUMENT)
     else {
         return;
     };
@@ -1886,7 +1927,8 @@ const STRING_CONSTANT: &str = "GREETING :: \"hello\"
 
 #[test]
 fn a_constant_can_be_text() {
-    let Some(output) = compile_and_run("strconst", STRING_CONSTANT) else {
+    let Some(output) = compile_and_run_unaudited("strconst", STRING_CONSTANT)
+    else {
         return;
     };
     assert_eq!(
@@ -1900,7 +1942,8 @@ fn a_constant_can_be_text() {
 
 #[test]
 fn self_hosted_a_constant_can_be_text() {
-    let Some(output) = selfhosted_native_output("shstrconst", STRING_CONSTANT)
+    let Some(output) =
+        selfhosted_unaudited_output("shstrconst", STRING_CONSTANT)
     else {
         return;
     };
@@ -1966,7 +2009,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn an_indirect_call_returns_an_aggregate() {
-    let Some(output) = compile_and_run("indagg", INDIRECT_AGGREGATE_RETURN)
+    let Some(output) =
+        compile_and_run_unaudited("indagg", INDIRECT_AGGREGATE_RETURN)
     else {
         return;
     };
@@ -2041,7 +2085,8 @@ later :: fn(p: Point) -> i64 { sum(p) * 10 }
 
 #[test]
 fn a_literal_takes_its_type_from_the_context() {
-    let Some(output) = compile_and_run("inflit", INFERRED_LITERALS) else {
+    let Some(output) = compile_and_run_unaudited("inflit", INFERRED_LITERALS)
+    else {
         return;
     };
     assert_eq!(output, "7\n30\n50\n25\n0\n207\n11\n10\n");
@@ -2149,7 +2194,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_for_walks_a_sequence() {
-    let Some(output) = compile_and_run("forseq", FOR_OVER_A_SEQUENCE) else {
+    let Some(output) = compile_and_run_unaudited("forseq", FOR_OVER_A_SEQUENCE)
+    else {
         return;
     };
     assert_eq!(output, "100\n100\n200\n44\n294\n20\n7\n1\n");
@@ -2207,7 +2253,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn enum_values_compare_by_variant() {
-    let Some(output) = compile_and_run("enumeq", ENUM_EQUALITY) else {
+    let Some(output) = compile_and_run_unaudited("enumeq", ENUM_EQUALITY)
+    else {
         return;
     };
     assert_eq!(output, "1\n0\n1\n1\n0\n1\n");
@@ -2269,7 +2316,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_match_compares_several_values_at_once() {
-    let Some(output) = compile_and_run("tuplepat", TUPLE_PATTERNS) else {
+    let Some(output) = compile_and_run_unaudited("tuplepat", TUPLE_PATTERNS)
+    else {
         return;
     };
     assert_eq!(output, "15\n3\n5\n0\n123\n103\n0\n");
@@ -2324,7 +2372,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_parenthesis_on_a_new_line_starts_a_statement() {
-    let Some(output) = compile_and_run("parenstmt", PARENTHESISED_STATEMENT)
+    let Some(output) =
+        compile_and_run_unaudited("parenstmt", PARENTHESISED_STATEMENT)
     else {
         return;
     };
@@ -2353,7 +2402,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn print_widens_a_narrow_value() {
-    let Some(output) = compile_and_run("printnarrow", PRINT_NARROW_VALUES)
+    let Some(output) =
+        compile_and_run_unaudited("printnarrow", PRINT_NARROW_VALUES)
     else {
         return;
     };
@@ -2402,7 +2452,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_failure_type_may_be_a_struct() {
-    let Some(output) = compile_and_run("structfail", STRUCT_FAILURE_TYPE)
+    let Some(output) =
+        compile_and_run_unaudited("structfail", STRUCT_FAILURE_TYPE)
     else {
         return;
     };
@@ -2413,7 +2464,8 @@ fn a_failure_type_may_be_a_struct() {
 // the enclosing function's Err on failure; the caller matches Ok/Err.
 #[test]
 fn native_failure_sets() {
-    let Some(output) = compile_and_run("failure_sets", FAILURE_SETS) else {
+    let Some(output) = compile_and_run_unaudited("failure_sets", FAILURE_SETS)
+    else {
         return;
     };
     assert_eq!(output, "43\n-1\n");
@@ -2505,7 +2557,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_function_may_draw_two_allocation_sources() {
-    let Some(output) = compile_and_run("twosources", TWO_ALLOCATION_SOURCES)
+    let Some(output) =
+        compile_and_run_unaudited("twosources", TWO_ALLOCATION_SOURCES)
     else {
         return;
     };
@@ -2515,7 +2568,7 @@ fn a_function_may_draw_two_allocation_sources() {
 #[test]
 fn self_hosted_draws_two_allocation_sources() {
     let Some(output) =
-        selfhosted_native_output("shtwosources", TWO_ALLOCATION_SOURCES)
+        selfhosted_unaudited_output("shtwosources", TWO_ALLOCATION_SOURCES)
     else {
         return;
     };
@@ -2539,7 +2592,8 @@ fn self_hosted_draws_two_allocation_sources() {
 // supplied by a `with` block at the root. No arena is passed by hand.
 #[test]
 fn native_allocation_sources() {
-    let Some(output) = compile_and_run("alloc_sources", ALLOCATION_SOURCES)
+    let Some(output) =
+        compile_and_run_unaudited("alloc_sources", ALLOCATION_SOURCES)
     else {
         return;
     };
@@ -2623,7 +2677,8 @@ main :: fn() -> i64 { make() }
 // plain value and no `&`/`&mut`. The compiler borrows for the mut parameter.
 #[test]
 fn native_parameter_modes() {
-    let Some(output) = compile_and_run("param_modes", PARAM_MODES) else {
+    let Some(output) = compile_and_run_unaudited("param_modes", PARAM_MODES)
+    else {
         return;
     };
     assert_eq!(output, "7\n17\n");
@@ -2631,7 +2686,7 @@ fn native_parameter_modes() {
 
 #[test]
 fn native_anonymous_functions() {
-    let Some(output) = compile_and_run("anon", ANON_FUNCTIONS) else {
+    let Some(output) = compile_and_run_unaudited("anon", ANON_FUNCTIONS) else {
         return;
     };
     assert_eq!(output, "42\n81\n47\n20\n");
@@ -2757,7 +2812,8 @@ const WIDTHS_EXPECTED: &str = "-5\n300\n200\n4000000000\n9000000000\n16\n-7\n9\n
 
 #[test]
 fn self_hosted_integer_widths_natively() {
-    let Some(output) = selfhosted_native_output("widths", SELF_HOSTED_WIDTHS)
+    let Some(output) =
+        selfhosted_unaudited_output("widths", SELF_HOSTED_WIDTHS)
     else {
         return;
     };
@@ -2802,7 +2858,8 @@ const FLOATS_EXPECTED: &str =
 
 #[test]
 fn self_hosted_floats_natively() {
-    let Some(output) = selfhosted_native_output("floats", SELF_HOSTED_FLOATS)
+    let Some(output) =
+        selfhosted_unaudited_output("floats", SELF_HOSTED_FLOATS)
     else {
         return;
     };
@@ -2846,7 +2903,8 @@ const ARRAYS_EXPECTED: &str = "5\n5\n90\n30\n240\n240\n40\n99\n115\n";
 
 #[test]
 fn self_hosted_arrays_natively() {
-    let Some(output) = selfhosted_native_output("arrays", SELF_HOSTED_ARRAYS)
+    let Some(output) =
+        selfhosted_unaudited_output("arrays", SELF_HOSTED_ARRAYS)
     else {
         return;
     };
@@ -2878,7 +2936,8 @@ fn self_hosted_boolean_operators_short_circuit() {
          \x20   mut n : i64 = 0\n\
          \x20   if (n == 1 && trap() == 1) { print 9 } else { print 1 }\n\
          \x20   if (n == 0 || trap() == 1) { print 2 } else { print 8 }\n    0\n}\n";
-    let Some(output) = selfhosted_native_output("shortcircuit", source) else {
+    let Some(output) = selfhosted_unaudited_output("shortcircuit", source)
+    else {
         return;
     };
     assert_eq!(output, "1\n2\n");
@@ -2979,8 +3038,7 @@ fn self_hosted_runs_test_blocks() {
 #[test]
 fn the_self_hosted_compiler_is_clean_under_the_unsafe_gate() {
     let build = Command::new(env!("CARGO_BIN_EXE_frost"))
-        .env("FROST_CHECK_UNSAFE", "0")
-        .env("FROST_CHECK_UNSAFE", "1")
+        .env("FROST_CHECK_UNSAFE", Audit::On.setting())
         .arg("--emit-c")
         .arg("-o")
         .arg(std::env::temp_dir().join("frost_gate_selfhosted.c"))
@@ -3074,7 +3132,7 @@ fn self_hosted_threads_share_a_counter() {
 fn a_safe_extern_needs_no_unsafe_block() {
     let audited = "printf :: safe extern fn(fmt: ^i8, v: i64) -> i32\n\
          main :: fn() -> i64 { printf(\"%lld\\n\", 7)  0 }\n";
-    let Some(output) = compile_and_run("safe_extern", audited) else {
+    let Some(output) = compile_and_run_unaudited("safe_extern", audited) else {
         return;
     };
     assert_eq!(output, "7\n");
@@ -3192,8 +3250,7 @@ fn a_program_using_std_is_clean_under_the_unsafe_gate() {
         std::env::consts::EXE_SUFFIX
     ));
     let build = Command::new(env!("CARGO_BIN_EXE_frost"))
-        .env("FROST_CHECK_UNSAFE", "0")
-        .env("FROST_CHECK_UNSAFE", "1")
+        .env("FROST_CHECK_UNSAFE", Audit::On.setting())
         .arg("-L")
         .arg(root.join("std"))
         .arg("--link")
@@ -3327,7 +3384,7 @@ fn self_hosted_strings_and_if_expressions() {
          main :: fn() -> i64 {\n\
          \x20   print read(\"1234567\")\n    print read(\"-7\")\n\
          \x20   print read(\"0\")\n    print str_len(\"abc\")\n    0\n}\n";
-    let Some(output) = selfhosted_native_output("strif", source) else {
+    let Some(output) = selfhosted_unaudited_output("strif", source) else {
         return;
     };
     assert_eq!(output, "1234567\n-7\n0\n3\n");
@@ -3350,7 +3407,7 @@ const SELF_HOSTED_STR_FIELD: &str = "Document :: struct { source: str, at: i64 }
 #[test]
 fn self_hosted_str_held_in_a_struct_is_indexable() {
     let Some(output) =
-        selfhosted_native_output("shstrfield", SELF_HOSTED_STR_FIELD)
+        selfhosted_unaudited_output("shstrfield", SELF_HOSTED_STR_FIELD)
     else {
         return;
     };
@@ -3386,7 +3443,7 @@ const SELF_HOSTED_CONSTANT_ARRAYS: &str = "CAPACITY :: 8\n\
 #[test]
 fn self_hosted_repeats_an_array_and_sizes_it_by_a_constant() {
     let Some(output) =
-        selfhosted_native_output("shconstarr", SELF_HOSTED_CONSTANT_ARRAYS)
+        selfhosted_unaudited_output("shconstarr", SELF_HOSTED_CONSTANT_ARRAYS)
     else {
         return;
     };
@@ -3418,7 +3475,7 @@ const SELF_HOSTED_KEYWORD_FIELDS: &str = "Node :: struct { struct: i64, return: 
 #[test]
 fn self_hosted_emits_a_field_named_for_a_c_keyword() {
     let Some(output) =
-        selfhosted_native_output("shkwfield", SELF_HOSTED_KEYWORD_FIELDS)
+        selfhosted_unaudited_output("shkwfield", SELF_HOSTED_KEYWORD_FIELDS)
     else {
         return;
     };
@@ -3720,7 +3777,7 @@ fn self_hosted_native_backend_emits_working_assembly() {
 // Put a program through the self-hosted compiler's native backend, assemble the
 // result and run it, returning what it printed. Nothing here goes through a C
 // compiler except the assembler and linker.
-fn selfhosted_native_output(name: &str, source: &str) -> Option<String> {
+fn selfhosted_unaudited_output(name: &str, source: &str) -> Option<String> {
     let compiler = build_self_hosted_compiler(name)?;
     let directory = std::env::temp_dir();
     let input = directory.join(format!("frost_nb_{name}.frost"));
@@ -3919,7 +3976,7 @@ fn native_backend_covers_the_language() {
     ];
 
     for (name, source, expected) in cases {
-        let Some(output) = selfhosted_native_output(name, source) else {
+        let Some(output) = selfhosted_unaudited_output(name, source) else {
             return;
         };
         assert_eq!(&output, expected, "native backend output for {name}");
@@ -4291,7 +4348,7 @@ fn the_readme_snippet_is_the_tour_program() {
         );
     }
 
-    let Some(output) = compile_and_run("tour", &program) else {
+    let Some(output) = compile_and_run_unaudited("tour", &program) else {
         return;
     };
     // 90 healed by 10, a Hero's 10 damage, that doubled by `round`, the party
@@ -4399,7 +4456,7 @@ const SELF_HOSTED_FOR: &str = "sum_slice :: fn(xs: []i64) -> i64 {\n\
 
 #[test]
 fn self_hosted_for_walks_a_sequence() {
-    let Some(output) = selfhosted_native_output("shfor", SELF_HOSTED_FOR)
+    let Some(output) = selfhosted_unaudited_output("shfor", SELF_HOSTED_FOR)
     else {
         return;
     };
@@ -4455,7 +4512,7 @@ const SELF_HOSTED_MULTIPLE_RETURNS: &str =
 #[test]
 fn self_hosted_returns_several_values() {
     let Some(output) =
-        selfhosted_native_output("shmulti", SELF_HOSTED_MULTIPLE_RETURNS)
+        selfhosted_unaudited_output("shmulti", SELF_HOSTED_MULTIPLE_RETURNS)
     else {
         return;
     };
@@ -4525,14 +4582,15 @@ fn self_hosted_takes_a_function_as_a_compile_time_argument() {
     let expected = "42\n-9\n1\n3\n5\n7\n9\n9\n7\n5\n3\n1\n";
     // The bootstrap first, since the point of the feature is that both
     // compilers take it.
-    let Some(bootstrap) =
-        compile_and_run("constfnparity", SELF_HOSTED_COMPILE_TIME_FUNCTIONS)
-    else {
+    let Some(bootstrap) = compile_and_run_unaudited(
+        "constfnparity",
+        SELF_HOSTED_COMPILE_TIME_FUNCTIONS,
+    ) else {
         return;
     };
     assert_eq!(bootstrap, expected);
 
-    let Some(output) = selfhosted_native_output(
+    let Some(output) = selfhosted_unaudited_output(
         "shconstfn",
         SELF_HOSTED_COMPILE_TIME_FUNCTIONS,
     ) else {
@@ -4594,7 +4652,7 @@ const SELF_HOSTED_INFERRED_VARIANTS: &str =
 #[test]
 fn self_hosted_infers_a_variant_enum() {
     let Some(output) =
-        selfhosted_native_output("shdot", SELF_HOSTED_INFERRED_VARIANTS)
+        selfhosted_unaudited_output("shdot", SELF_HOSTED_INFERRED_VARIANTS)
     else {
         return;
     };
@@ -4659,7 +4717,7 @@ const SELF_HOSTED_INFERRED_LITERALS: &str = "Point :: struct { x: i64, y: i64 }\
 #[test]
 fn self_hosted_infers_a_literal_type() {
     let Some(output) =
-        selfhosted_native_output("shlit", SELF_HOSTED_INFERRED_LITERALS)
+        selfhosted_unaudited_output("shlit", SELF_HOSTED_INFERRED_LITERALS)
     else {
         return;
     };
@@ -4712,7 +4770,7 @@ const SELF_HOSTED_TUPLE_PATTERNS: &str = "label :: fn(n: i64) -> i64 {\n\
 #[test]
 fn self_hosted_matches_several_values_at_once() {
     let Some(output) =
-        selfhosted_native_output("shtuple", SELF_HOSTED_TUPLE_PATTERNS)
+        selfhosted_unaudited_output("shtuple", SELF_HOSTED_TUPLE_PATTERNS)
     else {
         return;
     };
@@ -4759,7 +4817,7 @@ const SELF_HOSTED_ENUM_EQUALITY: &str = "Kind :: enum { Num, Var, Bin }\n\
 #[test]
 fn self_hosted_compares_enums_by_variant() {
     let Some(output) =
-        selfhosted_native_output("shenumeq", SELF_HOSTED_ENUM_EQUALITY)
+        selfhosted_unaudited_output("shenumeq", SELF_HOSTED_ENUM_EQUALITY)
     else {
         return;
     };
@@ -4984,7 +5042,7 @@ fn self_hosted_rejects_a_stray_byte() {
 #[test]
 fn self_hosted_skips_a_byte_order_mark() {
     let source = "\u{feff}main :: fn() -> i64 {\n    print 7\n    0\n}\n";
-    let Some(output) = selfhosted_native_output("bom", source) else {
+    let Some(output) = selfhosted_unaudited_output("bom", source) else {
         return;
     };
     assert_eq!(output, "7\n");
@@ -5141,7 +5199,7 @@ fn self_hosted_allocation_sources_through_c() {
 #[test]
 fn self_hosted_allocation_sources_natively() {
     let Some(output) =
-        selfhosted_native_output("alloc", SELF_HOSTED_ALLOCATION_SOURCES)
+        selfhosted_unaudited_output("alloc", SELF_HOSTED_ALLOCATION_SOURCES)
     else {
         return;
     };
@@ -5283,7 +5341,7 @@ fn self_hosted_accepts_a_region_pointer_held_inside() {
                   \x20   with arena {\n        held := alloc()\n\
                   \x20       result = held^\n    }\n\
                   \x20   print result\n    0\n}\n";
-    let Some(output) = selfhosted_native_output("regionheld", source) else {
+    let Some(output) = selfhosted_unaudited_output("regionheld", source) else {
         return;
     };
     assert_eq!(output, "7\n");
@@ -5319,7 +5377,7 @@ fn self_hosted_accepts_a_region_pointer_handed_to_the_caller() {
                   \x20   with arena {\n        held := alloc()\n\
                   \x20       result = held^\n    }\n\
                   \x20   print result\n    0\n}\n";
-    let Some(output) = selfhosted_native_output("regionhandback", source)
+    let Some(output) = selfhosted_unaudited_output("regionhandback", source)
     else {
         return;
     };
@@ -6193,7 +6251,7 @@ fn self_hosted_failure_sets_through_c() {
 #[test]
 fn self_hosted_failure_sets_natively() {
     let Some(output) =
-        selfhosted_native_output("failsets", SELF_HOSTED_FAILURE_SETS)
+        selfhosted_unaudited_output("failsets", SELF_HOSTED_FAILURE_SETS)
     else {
         return;
     };
@@ -6251,7 +6309,7 @@ fn self_hosted_enums_through_c() {
 
 #[test]
 fn self_hosted_enums_natively() {
-    let Some(output) = selfhosted_native_output("enums", SELF_HOSTED_ENUMS)
+    let Some(output) = selfhosted_unaudited_output("enums", SELF_HOSTED_ENUMS)
     else {
         return;
     };
@@ -6280,7 +6338,7 @@ fn self_hosted_native_indexes_bytes() {
                   \x20   s : ^i8 = \"hello\"\n\
                   \x20   print s[0]\n    print s[1]\n    print s[4]\n\
                   \x20   print sizeof(i8)\n    0\n}\n";
-    let Some(output) = selfhosted_native_output("bytes", source) else {
+    let Some(output) = selfhosted_unaudited_output("bytes", source) else {
         return;
     };
     assert_eq!(output, "104\n101\n111\n1\n");
@@ -6303,7 +6361,7 @@ fn self_hosted_reevaluates_a_try_in_a_loop_condition() {
                   \x20   match run() { case .Ok { value }: value case .Err { error }: 0 - 1 }\n}\n\
                   main :: fn() -> i64 {\n\
                   \x20   print got()\n    0\n}\n";
-    let Some(output) = selfhosted_native_output("trywhile", source) else {
+    let Some(output) = selfhosted_unaudited_output("trywhile", source) else {
         return;
     };
     assert_eq!(output, "2\n");
@@ -6320,7 +6378,8 @@ fn self_hosted_emits_a_generic_function_with_no_struct_instance() {
                   main :: fn() -> i64 {\n\
                   \x20   b := wrap($i64, 41)\n\
                   \x20   print unwrap(b) + 1\n    0\n}\n";
-    let Some(output) = selfhosted_native_output("genericonly", source) else {
+    let Some(output) = selfhosted_unaudited_output("genericonly", source)
+    else {
         return;
     };
     assert_eq!(output, "42\n");
@@ -6364,7 +6423,7 @@ fn self_hosted_backends_agree() {
     let expected =
         "4\n4\n32\n1\n77\n5\n24\n0\n6\n13\n42\n65\n66\n2\n1\n3\n-2\n";
 
-    let Some(native) = selfhosted_native_output("agree", source) else {
+    let Some(native) = selfhosted_unaudited_output("agree", source) else {
         return;
     };
     assert_eq!(native, expected, "the native backend disagrees");
@@ -6601,7 +6660,7 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_strings_and_escapes() {
-    let Some(output) = compile_and_run("strings", STRINGS) else {
+    let Some(output) = compile_and_run_unaudited("strings", STRINGS) else {
         return;
     };
     assert_eq!(output, "line one\nline\ttwo\n");
@@ -6642,7 +6701,7 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_str_is_a_length_carrying_view() {
-    let Some(output) = compile_and_run("strview", STR_VIEW) else {
+    let Some(output) = compile_and_run_unaudited("strview", STR_VIEW) else {
         return;
     };
     assert_eq!(output, "5\n70\n114\n111\n115\n116\n70\n3\n121\n6\n");
@@ -6682,7 +6741,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_dynamic_arena_over_malloc() {
-    let Some(output) = compile_and_run("dynarena", DYNAMIC_ARENA) else {
+    let Some(output) = compile_and_run_unaudited("dynarena", DYNAMIC_ARENA)
+    else {
         return;
     };
     assert_eq!(output, "142\n16\n");
@@ -6722,7 +6782,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_allocator_interface() {
-    let Some(output) = compile_and_run("allociface", ALLOCATOR_INTERFACE)
+    let Some(output) =
+        compile_and_run_unaudited("allociface", ALLOCATOR_INTERFACE)
     else {
         return;
     };
@@ -6772,7 +6833,7 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_frost_arena_allocator() {
-    let Some(output) = compile_and_run("arena", ARENA) else {
+    let Some(output) = compile_and_run_unaudited("arena", ARENA) else {
         return;
     };
     assert_eq!(output, "3\n99\n24\n7\n8\n");
@@ -6819,7 +6880,9 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_value_generic_struct() {
-    let Some(output) = compile_and_run("valuegenerics", VALUE_GENERICS) else {
+    let Some(output) =
+        compile_and_run_unaudited("valuegenerics", VALUE_GENERICS)
+    else {
         return;
     };
     assert_eq!(output, "3\n20\n60\n");
@@ -6874,7 +6937,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_slab_handle_place_deref() {
-    let Some(output) = compile_and_run("slabderef", SLAB_DEREF) else {
+    let Some(output) = compile_and_run_unaudited("slabderef", SLAB_DEREF)
+    else {
         return;
     };
     assert_eq!(output, "100\n75\n10\n");
@@ -6925,7 +6989,7 @@ main :: fn() -> i64 {
 #[test]
 fn native_slab_stale_handle_aborts() {
     let Some((succeeded, stderr)) =
-        compile_and_run_status("slabstale", SLAB_STALE_HANDLE)
+        compile_and_run_status("slabstale", SLAB_STALE_HANDLE, Audit::Off)
     else {
         return;
     };
@@ -6978,7 +7042,8 @@ const SELFHOSTED_SLAB: &str = concat!(
 
 #[test]
 fn self_hosted_slab_handle_place_deref() {
-    let Some(output) = selfhosted_native_output("slab", SELFHOSTED_SLAB) else {
+    let Some(output) = selfhosted_unaudited_output("slab", SELFHOSTED_SLAB)
+    else {
         return;
     };
     assert_eq!(output, "100\n75\n10\n");
@@ -7068,7 +7133,7 @@ const SELFHOSTED_VALUE_GENERIC: &str = concat!(
 #[test]
 fn self_hosted_value_generic_struct() {
     let Some(output) =
-        selfhosted_native_output("valuegen", SELFHOSTED_VALUE_GENERIC)
+        selfhosted_unaudited_output("valuegen", SELFHOSTED_VALUE_GENERIC)
     else {
         return;
     };
@@ -7122,7 +7187,7 @@ const SELFHOSTED_GENERIC_SLAB: &str = concat!(
 #[test]
 fn self_hosted_generic_slab_place_deref() {
     let Some(output) =
-        selfhosted_native_output("genslab", SELFHOSTED_GENERIC_SLAB)
+        selfhosted_unaudited_output("genslab", SELFHOSTED_GENERIC_SLAB)
     else {
         return;
     };
@@ -7152,7 +7217,7 @@ const SELFHOSTED_GENERIC_ENUM: &str = concat!(
 #[test]
 fn self_hosted_generic_enum() {
     let Some(output) =
-        selfhosted_native_output("genenum", SELFHOSTED_GENERIC_ENUM)
+        selfhosted_unaudited_output("genenum", SELFHOSTED_GENERIC_ENUM)
     else {
         return;
     };
@@ -7176,7 +7241,7 @@ const SELFHOSTED_NESTED_GENERIC: &str = concat!(
 #[test]
 fn self_hosted_nested_generic() {
     let Some(output) =
-        selfhosted_native_output("nestgen", SELFHOSTED_NESTED_GENERIC)
+        selfhosted_unaudited_output("nestgen", SELFHOSTED_NESTED_GENERIC)
     else {
         return;
     };
@@ -7226,7 +7291,8 @@ const SELFHOSTED_VEC: &str = concat!(
 
 #[test]
 fn self_hosted_growable_vector() {
-    let Some(output) = selfhosted_native_output("vec", SELFHOSTED_VEC) else {
+    let Some(output) = selfhosted_unaudited_output("vec", SELFHOSTED_VEC)
+    else {
         return;
     };
     assert_eq!(output, "3\n10\n30\n");
@@ -7255,7 +7321,8 @@ const SELFHOSTED_STD_MAP: &str = concat!(
 
 #[test]
 fn self_hosted_standard_library_map() {
-    let Some(output) = selfhosted_native_output("stdmap", SELFHOSTED_STD_MAP)
+    let Some(output) =
+        selfhosted_unaudited_output("stdmap", SELFHOSTED_STD_MAP)
     else {
         return;
     };
@@ -7277,7 +7344,7 @@ const SELFHOSTED_STD_IO: &str = concat!(
 
 #[test]
 fn self_hosted_standard_library_io() {
-    let Some(output) = selfhosted_native_output("stdio", SELFHOSTED_STD_IO)
+    let Some(output) = selfhosted_unaudited_output("stdio", SELFHOSTED_STD_IO)
     else {
         return;
     };
@@ -7304,7 +7371,7 @@ const SELFHOSTED_STD_FORMAT: &str = concat!(
 #[test]
 fn self_hosted_standard_library_format() {
     let Some(output) =
-        selfhosted_native_output("stdfmt", SELFHOSTED_STD_FORMAT)
+        selfhosted_unaudited_output("stdfmt", SELFHOSTED_STD_FORMAT)
     else {
         return;
     };
@@ -7344,7 +7411,8 @@ const SELFHOSTED_STD_MATH: &str = concat!(
 
 #[test]
 fn self_hosted_standard_library_math() {
-    let Some(output) = selfhosted_native_output("stdmath", SELFHOSTED_STD_MATH)
+    let Some(output) =
+        selfhosted_unaudited_output("stdmath", SELFHOSTED_STD_MATH)
     else {
         return;
     };
@@ -7386,7 +7454,8 @@ const SELFHOSTED_COLUMNS: &str = concat!(
 
 #[test]
 fn self_hosted_columns_container() {
-    let Some(output) = selfhosted_native_output("columns", SELFHOSTED_COLUMNS)
+    let Some(output) =
+        selfhosted_unaudited_output("columns", SELFHOSTED_COLUMNS)
     else {
         return;
     };
@@ -7443,12 +7512,17 @@ main :: fn() -> i64 {
 
 #[test]
 fn bootstrap_columns_container_both_backends() {
-    let Some(native) =
-        run_backend("columns_boot_native", BOOTSTRAP_COLUMNS, false)
-    else {
+    let Some(native) = run_backend(
+        "columns_boot_native",
+        BOOTSTRAP_COLUMNS,
+        false,
+        Audit::Off,
+    ) else {
         return;
     };
-    let Some(c) = run_backend("columns_boot_c", BOOTSTRAP_COLUMNS, true) else {
+    let Some(c) =
+        run_backend("columns_boot_c", BOOTSTRAP_COLUMNS, true, Audit::Off)
+    else {
         return;
     };
     // 10+1; x set to 100; column sum 100+20; alive true.
@@ -7473,11 +7547,14 @@ const PRINT_STATEMENT: &str = concat!(
 
 #[test]
 fn bootstrap_print_statement_both_backends() {
-    let Some(native) = run_backend("print_boot_native", PRINT_STATEMENT, false)
+    let Some(native) =
+        run_backend("print_boot_native", PRINT_STATEMENT, false, Audit::Off)
     else {
         return;
     };
-    let Some(c) = run_backend("print_boot_c", PRINT_STATEMENT, true) else {
+    let Some(c) =
+        run_backend("print_boot_c", PRINT_STATEMENT, true, Audit::Off)
+    else {
         return;
     };
     assert_eq!(native, "42\n42\n0.5\n");
@@ -7507,7 +7584,8 @@ const CONST_EXPRESSIONS: &str = concat!(
 
 #[test]
 fn self_hosted_const_expressions() {
-    let Some(output) = selfhosted_native_output("constexpr", CONST_EXPRESSIONS)
+    let Some(output) =
+        selfhosted_unaudited_output("constexpr", CONST_EXPRESSIONS)
     else {
         return;
     };
@@ -7517,11 +7595,13 @@ fn self_hosted_const_expressions() {
 #[test]
 fn bootstrap_const_expressions_both_backends() {
     let Some(native) =
-        run_backend("constexpr_native", CONST_EXPRESSIONS, false)
+        run_backend("constexpr_native", CONST_EXPRESSIONS, false, Audit::Off)
     else {
         return;
     };
-    let Some(c) = run_backend("constexpr_c", CONST_EXPRESSIONS, true) else {
+    let Some(c) =
+        run_backend("constexpr_c", CONST_EXPRESSIONS, true, Audit::Off)
+    else {
         return;
     };
     assert_eq!(native, "8\n8\n-5\n8\n");
@@ -7538,7 +7618,7 @@ const SELFHOSTED_INLINE: &str = concat!(
 
 #[test]
 fn self_hosted_inline_marker_runs_on_native() {
-    let Some(output) = selfhosted_native_output("inline", SELFHOSTED_INLINE)
+    let Some(output) = selfhosted_unaudited_output("inline", SELFHOSTED_INLINE)
     else {
         return;
     };
@@ -7597,7 +7677,7 @@ const SELFHOSTED_FUNCTION_POINTER: &str = concat!(
 #[test]
 fn self_hosted_function_pointer() {
     let Some(output) =
-        selfhosted_native_output("funptr", SELFHOSTED_FUNCTION_POINTER)
+        selfhosted_unaudited_output("funptr", SELFHOSTED_FUNCTION_POINTER)
     else {
         return;
     };
@@ -7622,7 +7702,8 @@ const SELFHOSTED_CLOSURE: &str = concat!(
 
 #[test]
 fn self_hosted_closure_as_context_and_function() {
-    let Some(output) = selfhosted_native_output("closure", SELFHOSTED_CLOSURE)
+    let Some(output) =
+        selfhosted_unaudited_output("closure", SELFHOSTED_CLOSURE)
     else {
         return;
     };
@@ -7656,7 +7737,7 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_slices() {
-    let Some(output) = compile_and_run("slices", SLICES) else {
+    let Some(output) = compile_and_run_unaudited("slices", SLICES) else {
         return;
     };
     assert_eq!(output, "4\n30\n100\n100\n");
@@ -7677,7 +7758,7 @@ main :: fn() -> i64 {
 #[test]
 fn native_slice_index_is_bounds_checked() {
     let Some((succeeded, stderr)) =
-        compile_and_run_status("sliceoob", SLICE_OUT_OF_BOUNDS)
+        compile_and_run_status("sliceoob", SLICE_OUT_OF_BOUNDS, Audit::Off)
     else {
         return;
     };
@@ -7756,7 +7837,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_generational_pool_written_in_frost() {
-    let Some(output) = compile_and_run("nativepool", NATIVE_POOL) else {
+    let Some(output) = compile_and_run_unaudited("nativepool", NATIVE_POOL)
+    else {
         return;
     };
     // insert, read, live-before-free, reused-slot-live, stale-handle-dead
@@ -7905,7 +7987,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_str_held_in_a_struct_is_indexable() {
-    let Some(output) = compile_and_run("strfield", STR_IN_A_FIELD) else {
+    let Some(output) = compile_and_run_unaudited("strfield", STR_IN_A_FIELD)
+    else {
         return;
     };
     assert_eq!(output, "104\n101\n111\n5\n108\n");
@@ -7947,7 +8030,9 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_frost_function_may_carry_a_runtime_symbols_name() {
-    let Some(output) = compile_and_run("rtnames", RUNTIME_SYMBOL_NAMES) else {
+    let Some(output) =
+        compile_and_run_unaudited("rtnames", RUNTIME_SYMBOL_NAMES)
+    else {
         return;
     };
     assert_eq!(output, "101\n2\n14\n21\n30\n12\n");
@@ -7967,7 +8052,7 @@ main :: fn() -> i64 {
 #[test]
 fn native_str_index_is_bounds_checked() {
     let Some((succeeded, stderr)) =
-        compile_and_run_status("stroob", STR_OUT_OF_BOUNDS)
+        compile_and_run_status("stroob", STR_OUT_OF_BOUNDS, Audit::Off)
     else {
         return;
     };
@@ -8010,7 +8095,7 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_pointers_and_references() {
-    let Some(output) = compile_and_run("pointers", POINTERS) else {
+    let Some(output) = compile_and_run_unaudited("pointers", POINTERS) else {
         return;
     };
     assert_eq!(output, "20\n10\n21\n31\n");
@@ -8058,7 +8143,7 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_structs_and_field_access() {
-    let Some(output) = compile_and_run("structs", STRUCTS) else {
+    let Some(output) = compile_and_run_unaudited("structs", STRUCTS) else {
         return;
     };
     assert_eq!(output, "3\n7\n200\n8\n7\n1000\n1\n");
@@ -8093,7 +8178,7 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_arrays_and_indexing() {
-    let Some(output) = compile_and_run("arrays", ARRAYS) else {
+    let Some(output) = compile_and_run_unaudited("arrays", ARRAYS) else {
         return;
     };
     assert_eq!(output, "10\n30\n99\n229\n229\n");
@@ -8136,7 +8221,7 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_enums_and_match() {
-    let Some(output) = compile_and_run("enums", ENUMS) else {
+    let Some(output) = compile_and_run_unaudited("enums", ENUMS) else {
         return;
     };
     assert_eq!(output, "42\n-404\n4\n3\n0\n");
@@ -8165,7 +8250,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_aggregate_assignment_between_places() {
-    let Some(output) = compile_and_run("agg_assign", AGGREGATE_ASSIGNMENT)
+    let Some(output) =
+        compile_and_run_unaudited("agg_assign", AGGREGATE_ASSIGNMENT)
     else {
         return;
     };
@@ -8199,7 +8285,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_aggregate_by_value_reads() {
-    let Some(output) = compile_and_run("agg_reads", AGGREGATE_BY_VALUE_READS)
+    let Some(output) =
+        compile_and_run_unaudited("agg_reads", AGGREGATE_BY_VALUE_READS)
     else {
         return;
     };
@@ -8245,7 +8332,9 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_match_on_enum_place() {
-    let Some(output) = compile_and_run("match_place", MATCH_ENUM_PLACE) else {
+    let Some(output) =
+        compile_and_run_unaudited("match_place", MATCH_ENUM_PLACE)
+    else {
         return;
     };
     assert_eq!(output, "42\n0\n-7\n9\n-1\n");
@@ -8281,7 +8370,7 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_pass_struct_by_value() {
-    let Some(output) = compile_and_run("byvalue", BY_VALUE) else {
+    let Some(output) = compile_and_run_unaudited("byvalue", BY_VALUE) else {
         return;
     };
     assert_eq!(output, "7\n110\n");
@@ -8318,7 +8407,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_return_struct_by_value() {
-    let Some(output) = compile_and_run("retagg", RETURN_AGGREGATE) else {
+    let Some(output) = compile_and_run_unaudited("retagg", RETURN_AGGREGATE)
+    else {
         return;
     };
     assert_eq!(output, "3\n4\n11\n22\n");
@@ -8348,7 +8438,7 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_sizeof_including_generic() {
-    let Some(output) = compile_and_run("sizeof", SIZEOF) else {
+    let Some(output) = compile_and_run_unaudited("sizeof", SIZEOF) else {
         return;
     };
     assert_eq!(output, "8\n4\n16\n32\n16\n24\n8\n");
@@ -8395,7 +8485,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_generic_functions_monomorphize() {
-    let Some(output) = compile_and_run("generics", GENERIC_FUNCTIONS) else {
+    let Some(output) = compile_and_run_unaudited("generics", GENERIC_FUNCTIONS)
+    else {
         return;
     };
     assert_eq!(output, "42\n9\n7\n5\n9\n200\n100\n");
@@ -8437,7 +8528,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_generic_structs_monomorphize() {
-    let Some(output) = compile_and_run("generic_structs", GENERIC_STRUCTS)
+    let Some(output) =
+        compile_and_run_unaudited("generic_structs", GENERIC_STRUCTS)
     else {
         return;
     };
@@ -8462,7 +8554,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_borrow_struct_literal_at_call() {
-    let Some(output) = compile_and_run("borrow_struct", BORROW_STRUCT_LITERAL)
+    let Some(output) =
+        compile_and_run_unaudited("borrow_struct", BORROW_STRUCT_LITERAL)
     else {
         return;
     };
@@ -8494,7 +8587,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_borrow_aggregate_literal() {
-    let Some(output) = compile_and_run("borrow_lit", BORROW_AGGREGATE_LITERAL)
+    let Some(output) =
+        compile_and_run_unaudited("borrow_lit", BORROW_AGGREGATE_LITERAL)
     else {
         return;
     };
@@ -8542,7 +8636,7 @@ main :: fn() -> i64 {
 #[test]
 fn native_explicit_type_arguments() {
     let Some(output) =
-        compile_and_run("explicit_types", EXPLICIT_TYPE_ARGUMENTS)
+        compile_and_run_unaudited("explicit_types", EXPLICIT_TYPE_ARGUMENTS)
     else {
         return;
     };
@@ -8587,9 +8681,10 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_generic_construction_inference() {
-    let Some(output) =
-        compile_and_run("gen_construct", GENERIC_CONSTRUCTION_INFERENCE)
-    else {
+    let Some(output) = compile_and_run_unaudited(
+        "gen_construct",
+        GENERIC_CONSTRUCTION_INFERENCE,
+    ) else {
         return;
     };
     assert_eq!(output, "42\n7\n");
@@ -8612,7 +8707,9 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_linear_resource_consumed_by_extern() {
-    let Some(output) = compile_and_run("linear", LINEAR_RESOURCE_NATIVE) else {
+    let Some(output) =
+        compile_and_run_unaudited("linear", LINEAR_RESOURCE_NATIVE)
+    else {
         return;
     };
     assert_eq!(output, "42\n");
@@ -8657,9 +8754,10 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_generic_instance_combinations() {
-    let Some(output) =
-        compile_and_run("gen_instance", GENERIC_INSTANCE_COMBINATIONS)
-    else {
+    let Some(output) = compile_and_run_unaudited(
+        "gen_instance",
+        GENERIC_INSTANCE_COMBINATIONS,
+    ) else {
         return;
     };
     assert_eq!(output, "21\n42\n11\n");
@@ -8695,7 +8793,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_generic_factories_and_payloads() {
-    let Some(output) = compile_and_run("generic_factories", GENERIC_FACTORIES)
+    let Some(output) =
+        compile_and_run_unaudited("generic_factories", GENERIC_FACTORIES)
     else {
         return;
     };
@@ -8728,7 +8827,7 @@ main :: fn() -> i64 {
 #[test]
 fn native_nested_generic_structs() {
     let Some(output) =
-        compile_and_run("nested_generics", NESTED_GENERIC_STRUCTS)
+        compile_and_run_unaudited("nested_generics", NESTED_GENERIC_STRUCTS)
     else {
         return;
     };
@@ -8759,7 +8858,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_generic_multiple_type_parameters() {
-    let Some(output) = compile_and_run("generics_multi", GENERIC_MULTI_PARAM)
+    let Some(output) =
+        compile_and_run_unaudited("generics_multi", GENERIC_MULTI_PARAM)
     else {
         return;
     };
@@ -8819,7 +8919,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_generic_literal_may_name_its_arguments() {
-    let Some(output) = compile_and_run("genwritten", GENERIC_WRITTEN_OUT)
+    let Some(output) =
+        compile_and_run_unaudited("genwritten", GENERIC_WRITTEN_OUT)
     else {
         return;
     };
@@ -8844,9 +8945,10 @@ const SELF_HOSTED_GENERIC_WRITTEN: &str = "Pair :: struct($A: Type, $B: Type) { 
 
 #[test]
 fn self_hosted_takes_a_generic_literal_written_out() {
-    let Some(output) =
-        selfhosted_native_output("shgenwritten", SELF_HOSTED_GENERIC_WRITTEN)
-    else {
+    let Some(output) = selfhosted_unaudited_output(
+        "shgenwritten",
+        SELF_HOSTED_GENERIC_WRITTEN,
+    ) else {
         return;
     };
     assert_eq!(output, "7\n1\n16\n");
@@ -8866,7 +8968,8 @@ fn self_hosted_takes_a_generic_literal_written_out() {
 
 #[test]
 fn a_boolean_is_a_value_when_it_is_a_generic_argument() {
-    let Some(output) = compile_and_run("genericbool", GENERIC_BOOL_ARGUMENT)
+    let Some(output) =
+        compile_and_run_unaudited("genericbool", GENERIC_BOOL_ARGUMENT)
     else {
         return;
     };
@@ -8890,7 +8993,7 @@ const SELF_HOSTED_GENERIC_BOOL: &str = "Pair :: struct($A: Type, $B: Type) { fir
 #[test]
 fn self_hosted_takes_a_boolean_as_a_generic_argument() {
     let Some(output) =
-        selfhosted_native_output("shgenbool", SELF_HOSTED_GENERIC_BOOL)
+        selfhosted_unaudited_output("shgenbool", SELF_HOSTED_GENERIC_BOOL)
     else {
         return;
     };
@@ -8931,7 +9034,7 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_tuple_pattern_match() {
-    let Some(output) = compile_and_run("tuple", TUPLE_MATCH) else {
+    let Some(output) = compile_and_run_unaudited("tuple", TUPLE_MATCH) else {
         return;
     };
     assert_eq!(output, "1\n2\n3\n4\n5\n3\n7\n8\n3\n5\n11\n3\n13\n14\n15\n");
@@ -9014,7 +9117,9 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_pool_handle_deref_as_place() {
-    let Some(output) = compile_and_run("pool_deref", POOL_HANDLE_DEREF) else {
+    let Some(output) =
+        compile_and_run_unaudited("pool_deref", POOL_HANDLE_DEREF)
+    else {
         return;
     };
     assert_eq!(output, "50\n60\n75\n85\n5\n25\n");
@@ -9067,7 +9172,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_function_pointer_array() {
-    let Some(output) = compile_and_run("fnptr_array", FUNCTION_POINTER_ARRAY)
+    let Some(output) =
+        compile_and_run_unaudited("fnptr_array", FUNCTION_POINTER_ARRAY)
     else {
         return;
     };
@@ -9112,7 +9218,9 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_field_may_be_named_for_a_keyword() {
-    let Some(output) = compile_and_run("kwfield", KEYWORD_FIELD_NAMES) else {
+    let Some(output) =
+        compile_and_run_unaudited("kwfield", KEYWORD_FIELD_NAMES)
+    else {
         return;
     };
     assert_eq!(output, "9\n4\n5\n6\n7\n8\n");
@@ -9162,7 +9270,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_constant_sizes_an_array() {
-    let Some(output) = compile_and_run("constarray", CONSTANT_ARRAY_SIZES)
+    let Some(output) =
+        compile_and_run_unaudited("constarray", CONSTANT_ARRAY_SIZES)
     else {
         return;
     };
@@ -9193,7 +9302,9 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_top_level_constants() {
-    let Some(output) = compile_and_run("constants", TOP_LEVEL_CONSTANTS) else {
+    let Some(output) =
+        compile_and_run_unaudited("constants", TOP_LEVEL_CONSTANTS)
+    else {
         return;
     };
     assert_eq!(output, "100\n5\n-3\n9\n20\n");
@@ -9222,7 +9333,8 @@ double_it :: fn(x: i64) -> i64 { x * 2 }
 
 #[test]
 fn native_forward_references_and_mutual_recursion() {
-    let Some(output) = compile_and_run("forward", FORWARD_REFERENCES) else {
+    let Some(output) = compile_and_run_unaudited("forward", FORWARD_REFERENCES)
+    else {
         return;
     };
     assert_eq!(output, "1\n1\n42\n");
@@ -9230,7 +9342,8 @@ fn native_forward_references_and_mutual_recursion() {
 
 #[test]
 fn native_function_pointers() {
-    let Some(output) = compile_and_run("funcptr", FUNCTION_POINTERS) else {
+    let Some(output) = compile_and_run_unaudited("funcptr", FUNCTION_POINTERS)
+    else {
         return;
     };
     assert_eq!(output, "42\n81\n42\n100\n");
@@ -9291,7 +9404,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_combined_features() {
-    let Some(output) = compile_and_run("kitchen", KITCHEN_SINK) else {
+    let Some(output) = compile_and_run_unaudited("kitchen", KITCHEN_SINK)
+    else {
         return;
     };
     assert_eq!(output, "32\n300\n49\n610\n30\n");
@@ -9317,7 +9431,7 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_defer_runs_lifo_at_return() {
-    let Some(output) = compile_and_run("defer", DEFER) else {
+    let Some(output) = compile_and_run_unaudited("defer", DEFER) else {
         return;
     };
     assert_eq!(output, "1\n4\n3\n2\n99\n");
@@ -9346,7 +9460,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_defer_runs_on_a_nested_early_return() {
-    let Some(output) = compile_and_run("defer_nested", DEFER_NESTED_RETURN)
+    let Some(output) =
+        compile_and_run_unaudited("defer_nested", DEFER_NESTED_RETURN)
     else {
         return;
     };
@@ -9377,7 +9492,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_nested_structs() {
-    let Some(output) = compile_and_run("nested", NESTED_STRUCTS) else {
+    let Some(output) = compile_and_run_unaudited("nested", NESTED_STRUCTS)
+    else {
         return;
     };
     assert_eq!(output, "5\n10\n30\n99\n119\n");
@@ -9413,7 +9529,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_array_of_structs_and_struct_of_arrays() {
-    let Some(output) = compile_and_run("data_layouts", DATA_LAYOUTS) else {
+    let Some(output) = compile_and_run_unaudited("data_layouts", DATA_LAYOUTS)
+    else {
         return;
     };
     assert_eq!(output, "1\n4\n99\n103\n20\n77\n4\n");
@@ -9453,7 +9570,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_aggregate_enum_payloads_and_2d_arrays() {
-    let Some(output) = compile_and_run("agg_payloads", AGGREGATE_PAYLOADS)
+    let Some(output) =
+        compile_and_run_unaudited("agg_payloads", AGGREGATE_PAYLOADS)
     else {
         return;
     };
@@ -9498,7 +9616,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_enum_returned_by_value() {
-    let Some(output) = compile_and_run("enum_byval", ENUM_BY_VALUE) else {
+    let Some(output) = compile_and_run_unaudited("enum_byval", ENUM_BY_VALUE)
+    else {
         return;
     };
     assert_eq!(output, "8\n-1\n");
@@ -9532,7 +9651,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_field_borrow_and_returned_struct() {
-    let Some(output) = compile_and_run("field_borrow", FIELD_BORROW) else {
+    let Some(output) = compile_and_run_unaudited("field_borrow", FIELD_BORROW)
+    else {
         return;
     };
     assert_eq!(output, "101\n2\n7\n9\n");
@@ -9569,7 +9689,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_integer_semantics_match() {
-    let Some(output) = compile_and_run("int_semantics", INTEGER_SEMANTICS)
+    let Some(output) =
+        compile_and_run_unaudited("int_semantics", INTEGER_SEMANTICS)
     else {
         return;
     };
@@ -9672,7 +9793,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_widening_in_let_bindings() {
-    let Some(output) = compile_and_run("widening", WIDENING_BINDINGS) else {
+    let Some(output) = compile_and_run_unaudited("widening", WIDENING_BINDINGS)
+    else {
         return;
     };
     assert_eq!(output, "-5\n-1000\n42\n");
@@ -9734,7 +9856,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn native_match_returns_aggregate_by_value() {
-    let Some(output) = compile_and_run("match_agg", MATCH_RETURNS_AGGREGATE)
+    let Some(output) =
+        compile_and_run_unaudited("match_agg", MATCH_RETURNS_AGGREGATE)
     else {
         return;
     };
@@ -9743,7 +9866,8 @@ fn native_match_returns_aggregate_by_value() {
 
 #[test]
 fn native_generational_pool_and_handles() {
-    let Some(output) = compile_and_run("gen_pool", GENERATIONAL_POOL) else {
+    let Some(output) = compile_and_run_unaudited("gen_pool", GENERATIONAL_POOL)
+    else {
         return;
     };
     assert_eq!(output, "0\n1\n0\n100\n999\n1\n1\n0\n0\n1\n0\n");
@@ -9932,8 +10056,8 @@ fn cranelift_and_c_backends_agree() {
         ("diff_bracedarm", BRACED_ARMS),
     ];
     for (name, source) in programs {
-        let native = run_backend(name, source, false);
-        let via_c = run_backend(name, source, true);
+        let native = run_backend(name, source, false, Audit::Off);
+        let via_c = run_backend(name, source, true, Audit::Off);
         if native.is_none() {
             return;
         }
@@ -9941,7 +10065,7 @@ fn cranelift_and_c_backends_agree() {
             native, via_c,
             "Cranelift and C backends disagree on {name}"
         );
-        if let Some(interpreted) = run_ir_oracle(name, source) {
+        if let Some(interpreted) = run_ir_oracle(name, source, Audit::Off) {
             assert_eq!(
                 native.as_deref(),
                 Some(interpreted.as_str()),
@@ -9974,7 +10098,7 @@ main :: fn() -> i64 {
     0
 }
 "#;
-    let Some(output) = compile_and_run("mutscalar", source) else {
+    let Some(output) = compile_and_run_unaudited("mutscalar", source) else {
         return;
     };
     assert_eq!(output, "6\n8\n");
@@ -10213,7 +10337,7 @@ fn reading_a_local_through_a_pointer_is_still_allowed() {
                   \x20   p := unsafe { ptr_to(x) }\n\
                   \x20   unsafe { p^ }\n}\n\
                   main :: fn() -> i64 { print read()\n0 }\n";
-    let Some(output) = compile_and_run("okderef", source) else {
+    let Some(output) = compile_and_run_unaudited("okderef", source) else {
         return;
     };
     assert_eq!(output, "42\n");
@@ -10255,7 +10379,8 @@ fn a_match_naming_every_variant_is_allowed() {
          \x20   }}\n}}\n\
          main :: fn() -> i64 {{ print area(Shape::Rect {{ w = 3, h = 4 }})\n0 }}\n"
     );
-    let Some(output) = compile_and_run("exhaustiveall", &source) else {
+    let Some(output) = compile_and_run_unaudited("exhaustiveall", &source)
+    else {
         return;
     };
     assert_eq!(output, "12\n");
@@ -10272,7 +10397,8 @@ fn a_match_with_a_wildcard_need_not_name_every_variant() {
          \x20   }}\n}}\n\
          main :: fn() -> i64 {{ print area(Shape::Point {{}})\n0 }}\n"
     );
-    let Some(output) = compile_and_run("exhaustivewild", &source) else {
+    let Some(output) = compile_and_run_unaudited("exhaustivewild", &source)
+    else {
         return;
     };
     assert_eq!(output, "0\n");
@@ -10340,7 +10466,7 @@ fn a_try_inside_an_unsafe_block_lowers_like_any_other() {
          \x20   n := unsafe {{ read_size(ok)? }}\n\
          \x20   return n + 1\n}}\n{TRY_TAIL}"
     );
-    let Some(output) = compile_and_run("tryinunsafe", &source) else {
+    let Some(output) = compile_and_run_unaudited("tryinunsafe", &source) else {
         return;
     };
     assert_eq!(output, "43\n-1\n");
@@ -10358,7 +10484,7 @@ fn a_try_inside_a_with_block_lowers_like_any_other() {
          \x20   }}\n\
          \x20   return n + 1\n}}\n{TRY_TAIL}"
     );
-    let Some(output) = compile_and_run("tryinwith", &source) else {
+    let Some(output) = compile_and_run_unaudited("tryinwith", &source) else {
         return;
     };
     assert_eq!(output, "43\n-1\n");
@@ -10393,7 +10519,8 @@ fn a_linear_value_consumed_inside_an_unsafe_block_is_consumed() {
                   \x20   f := File { fd = 1 }\n\
                   \x20   print unsafe { close(f) }\n\
                   \x20   0\n}\n";
-    let Some(output) = compile_and_run("linearinunsafe", source) else {
+    let Some(output) = compile_and_run_unaudited("linearinunsafe", source)
+    else {
         return;
     };
     assert_eq!(output, "1\n");
@@ -10448,7 +10575,7 @@ fn reading_the_value_an_arena_pointer_names_is_allowed() {
          \x20   0\n}}\n\
          main :: fn() -> i64 {{ grab() }}\n"
     );
-    let Some(output) = compile_and_run("arenaread", &source) else {
+    let Some(output) = compile_and_run_unaudited("arenaread", &source) else {
         return;
     };
     assert_eq!(output, "7\n");
@@ -10548,7 +10675,7 @@ main :: fn() -> i64 {
     0
 }
 "#;
-    let Some(output) = compile_and_run("framepass", source) else {
+    let Some(output) = compile_and_run_unaudited("framepass", source) else {
         return;
     };
     assert_eq!(output, "7\n");
@@ -10576,7 +10703,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn print_takes_a_format_and_its_values() {
-    let Some(output) = compile_and_run("formatprint", FORMAT_PRINT) else {
+    let Some(output) = compile_and_run_unaudited("formatprint", FORMAT_PRINT)
+    else {
         return;
     };
     assert_eq!(
@@ -10635,7 +10763,8 @@ const SELF_HOSTED_FORMAT: &str = "main :: fn() -> i64 {\n\
 fn self_hosted_print_takes_a_format() {
     let expected =
         "hello\nworld\nhp 7 of 20\na then 2 then 3.5\nbraces { and } stay\n";
-    let Some(output) = selfhosted_native_output("shformat", SELF_HOSTED_FORMAT)
+    let Some(output) =
+        selfhosted_unaudited_output("shformat", SELF_HOSTED_FORMAT)
     else {
         return;
     };
@@ -10686,7 +10815,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_where_bound_holds_a_generic_to_what_it_needs() {
-    let Some(output) = compile_and_run("wherebound", WHERE_BOUNDS) else {
+    let Some(output) = compile_and_run_unaudited("wherebound", WHERE_BOUNDS)
+    else {
         return;
     };
     assert_eq!(output, "42\n7\n9\n");
@@ -10762,7 +10892,8 @@ const SELF_HOSTED_WHERE: &str = "twice :: fn($T: Type, v: $T) -> T where is_nume
 
 #[test]
 fn self_hosted_holds_a_generic_to_its_bound() {
-    let Some(output) = selfhosted_native_output("shwhere", SELF_HOSTED_WHERE)
+    let Some(output) =
+        selfhosted_unaudited_output("shwhere", SELF_HOSTED_WHERE)
     else {
         return;
     };
@@ -10808,7 +10939,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn an_enum_is_a_value_like_any_other() {
-    let Some(output) = compile_and_run("enumvalues", ENUM_VALUES) else {
+    let Some(output) = compile_and_run_unaudited("enumvalues", ENUM_VALUES)
+    else {
         return;
     };
     assert_eq!(output, "1\n0\n1\n0\n1\n");
@@ -10816,7 +10948,7 @@ fn an_enum_is_a_value_like_any_other() {
 
 #[test]
 fn self_hosted_uses_an_enum_as_a_value() {
-    let Some(output) = selfhosted_native_output("shenumvalues", ENUM_VALUES)
+    let Some(output) = selfhosted_unaudited_output("shenumvalues", ENUM_VALUES)
     else {
         return;
     };
@@ -10867,7 +10999,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_function_pointer_field_is_called_through() {
-    let Some(output) = compile_and_run("fieldcall", FIELD_CALLS) else {
+    let Some(output) = compile_and_run_unaudited("fieldcall", FIELD_CALLS)
+    else {
         return;
     };
     assert_eq!(output, "1\n42\n3\n21\n");
@@ -10875,7 +11008,7 @@ fn a_function_pointer_field_is_called_through() {
 
 #[test]
 fn self_hosted_calls_through_a_function_pointer_field() {
-    let Some(output) = selfhosted_native_output("shfieldcall", FIELD_CALLS)
+    let Some(output) = selfhosted_unaudited_output("shfieldcall", FIELD_CALLS)
     else {
         return;
     };
@@ -10991,7 +11124,9 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_failure_set_carries_a_value_or_a_failure() {
-    let Some(output) = compile_and_run("failureset", FAILURE_SET_PARSE) else {
+    let Some(output) =
+        compile_and_run_unaudited("failureset", FAILURE_SET_PARSE)
+    else {
         return;
     };
     assert_eq!(output, "407\n-1\n-2\n");
@@ -11000,7 +11135,7 @@ fn a_failure_set_carries_a_value_or_a_failure() {
 #[test]
 fn self_hosted_carries_a_value_or_a_failure() {
     let Some(output) =
-        selfhosted_native_output("shfailureset", FAILURE_SET_PARSE)
+        selfhosted_unaudited_output("shfailureset", FAILURE_SET_PARSE)
     else {
         return;
     };
@@ -11058,7 +11193,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_linear_value_survives_a_failure_set() {
-    let Some(output) = compile_and_run("linfail", LINEAR_THROUGH_FAILURE)
+    let Some(output) =
+        compile_and_run_unaudited("linfail", LINEAR_THROUGH_FAILURE)
     else {
         return;
     };
@@ -11068,7 +11204,7 @@ fn a_linear_value_survives_a_failure_set() {
 #[test]
 fn self_hosted_carries_a_linear_value_through_a_failure_set() {
     let Some(output) =
-        selfhosted_native_output("shlinfail", LINEAR_THROUGH_FAILURE)
+        selfhosted_unaudited_output("shlinfail", LINEAR_THROUGH_FAILURE)
     else {
         return;
     };
@@ -11111,7 +11247,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_braced_match_arm_is_a_block() {
-    let Some(output) = compile_and_run("bracedarm", BRACED_ARMS) else {
+    let Some(output) = compile_and_run_unaudited("bracedarm", BRACED_ARMS)
+    else {
         return;
     };
     assert_eq!(output, "7\n8\n");
@@ -11119,7 +11256,7 @@ fn a_braced_match_arm_is_a_block() {
 
 #[test]
 fn self_hosted_reads_a_braced_match_arm_as_a_block() {
-    let Some(output) = selfhosted_native_output("shbracedarm", BRACED_ARMS)
+    let Some(output) = selfhosted_unaudited_output("shbracedarm", BRACED_ARMS)
     else {
         return;
     };
@@ -11172,7 +11309,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_bundle_may_hold_other_bundles() {
-    let Some(output) = compile_and_run("composed", COMPOSED_BUNDLES) else {
+    let Some(output) = compile_and_run_unaudited("composed", COMPOSED_BUNDLES)
+    else {
         return;
     };
     assert_eq!(output, "3\n62\n");
@@ -11180,7 +11318,8 @@ fn a_bundle_may_hold_other_bundles() {
 
 #[test]
 fn self_hosted_composes_bundles() {
-    let Some(output) = selfhosted_native_output("shcomposed", COMPOSED_BUNDLES)
+    let Some(output) =
+        selfhosted_unaudited_output("shcomposed", COMPOSED_BUNDLES)
     else {
         return;
     };
@@ -11214,7 +11353,7 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_linear_enum_is_consumed_by_matching_it() {
-    let Some(output) = compile_and_run("linenum", LINEAR_ENUM) else {
+    let Some(output) = compile_and_run_unaudited("linenum", LINEAR_ENUM) else {
         return;
     };
     assert_eq!(output, "4\n0\n");
@@ -11222,7 +11361,7 @@ fn a_linear_enum_is_consumed_by_matching_it() {
 
 #[test]
 fn self_hosted_consumes_a_linear_enum_by_matching_it() {
-    let Some(output) = selfhosted_native_output("shlinenum", LINEAR_ENUM)
+    let Some(output) = selfhosted_unaudited_output("shlinenum", LINEAR_ENUM)
     else {
         return;
     };
@@ -11276,7 +11415,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_mut_scalar_parameter_writes_through_to_the_caller() {
-    let Some(output) = compile_and_run("mutscalarparam", MUT_SCALAR_PARAMETER)
+    let Some(output) =
+        compile_and_run_unaudited("mutscalarparam", MUT_SCALAR_PARAMETER)
     else {
         return;
     };
@@ -11286,7 +11426,7 @@ fn a_mut_scalar_parameter_writes_through_to_the_caller() {
 #[test]
 fn self_hosted_writes_through_a_mut_scalar_parameter() {
     let Some(output) =
-        selfhosted_native_output("shmutscalarparam", MUT_SCALAR_PARAMETER)
+        selfhosted_unaudited_output("shmutscalarparam", MUT_SCALAR_PARAMETER)
     else {
         return;
     };
@@ -11491,7 +11631,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_walk_over_a_types_fields_is_a_layout_table() {
-    let Some(output) = compile_and_run("fieldwalk", FIELD_WALK) else {
+    let Some(output) = compile_and_run_unaudited("fieldwalk", FIELD_WALK)
+    else {
         return;
     };
     assert_eq!(output, "4\n0\n12\n1\n12\n12\n1\n24\n8\n1\n32\n8\n0\n");
@@ -11499,7 +11640,7 @@ fn a_walk_over_a_types_fields_is_a_layout_table() {
 
 #[test]
 fn self_hosted_walks_a_types_fields() {
-    let Some(output) = selfhosted_native_output("shfieldwalk", FIELD_WALK)
+    let Some(output) = selfhosted_unaudited_output("shfieldwalk", FIELD_WALK)
     else {
         return;
     };
@@ -11564,7 +11705,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_field_walk_in_a_generic_describes_the_type_it_is_given() {
-    let Some(output) = compile_and_run("fieldgeneric", FIELD_WALK_GENERIC)
+    let Some(output) =
+        compile_and_run_unaudited("fieldgeneric", FIELD_WALK_GENERIC)
     else {
         return;
     };
@@ -11574,7 +11716,7 @@ fn a_field_walk_in_a_generic_describes_the_type_it_is_given() {
 #[test]
 fn self_hosted_walks_the_fields_of_a_type_argument() {
     let Some(output) =
-        selfhosted_native_output("shfieldgeneric", FIELD_WALK_GENERIC)
+        selfhosted_unaudited_output("shfieldgeneric", FIELD_WALK_GENERIC)
     else {
         return;
     };
@@ -11639,7 +11781,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_compile_time_list_unrolls_indexes_and_prunes() {
-    let Some(output) = compile_and_run("packlist", COMPILE_TIME_LIST) else {
+    let Some(output) = compile_and_run_unaudited("packlist", COMPILE_TIME_LIST)
+    else {
         return;
     };
     assert_eq!(output, "1\n2\n3\n7\n0\n4\n1\n2.5\n0\n9\n11\n104\n100\n");
@@ -11648,7 +11791,7 @@ fn a_compile_time_list_unrolls_indexes_and_prunes() {
 #[test]
 fn self_hosted_unrolls_a_compile_time_list() {
     let Some(output) =
-        selfhosted_native_output("shpacklist", COMPILE_TIME_LIST)
+        selfhosted_unaudited_output("shpacklist", COMPILE_TIME_LIST)
     else {
         return;
     };
@@ -11694,7 +11837,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_list_element_is_evaluated_once() {
-    let Some(output) = compile_and_run("packonce", LIST_SPECIALIZES) else {
+    let Some(output) = compile_and_run_unaudited("packonce", LIST_SPECIALIZES)
+    else {
         return;
     };
     assert_eq!(output, "1\n1\n1\n1.5\n1.5\n3\n3\n4\n4\n");
@@ -11702,7 +11846,8 @@ fn a_list_element_is_evaluated_once() {
 
 #[test]
 fn self_hosted_evaluates_a_list_element_once() {
-    let Some(output) = selfhosted_native_output("shpackonce", LIST_SPECIALIZES)
+    let Some(output) =
+        selfhosted_unaudited_output("shpackonce", LIST_SPECIALIZES)
     else {
         return;
     };
@@ -11727,7 +11872,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn an_empty_compile_time_list_keeps_nothing() {
-    let Some(output) = compile_and_run("packempty", EMPTY_LIST) else {
+    let Some(output) = compile_and_run_unaudited("packempty", EMPTY_LIST)
+    else {
         return;
     };
     assert_eq!(output, "10\n13\n");
@@ -11735,7 +11881,7 @@ fn an_empty_compile_time_list_keeps_nothing() {
 
 #[test]
 fn self_hosted_keeps_nothing_for_an_empty_list() {
-    let Some(output) = selfhosted_native_output("shpackempty", EMPTY_LIST)
+    let Some(output) = selfhosted_unaudited_output("shpackempty", EMPTY_LIST)
     else {
         return;
     };
@@ -11798,7 +11944,8 @@ main :: fn() -> i64 {
 
 #[test]
 fn a_capability_bundle_is_a_constant_of_function_fields() {
-    let Some(output) = compile_and_run("bundle", CAPABILITY_BUNDLE) else {
+    let Some(output) = compile_and_run_unaudited("bundle", CAPABILITY_BUNDLE)
+    else {
         return;
     };
     assert_eq!(output, "3\n7\n1\n2\n9\n5\n");
@@ -11847,7 +11994,8 @@ fn a_bundle_argument_of_the_wrong_type_is_refused() {
 
 #[test]
 fn self_hosted_takes_a_capability_bundle() {
-    let Some(output) = selfhosted_native_output("shbundle", CAPABILITY_BUNDLE)
+    let Some(output) =
+        selfhosted_unaudited_output("shbundle", CAPABILITY_BUNDLE)
     else {
         return;
     };
@@ -11892,7 +12040,7 @@ main :: fn() -> i64 {
     0
 }
 "#;
-    let Some(output) = compile_and_run("constfn", source) else {
+    let Some(output) = compile_and_run_unaudited("constfn", source) else {
         return;
     };
     assert_eq!(output, "3\n9\n");
@@ -11956,7 +12104,7 @@ main :: fn() -> i64 {
     0
 }
 "#;
-    let Some(output) = compile_and_run("mutwriteback", source) else {
+    let Some(output) = compile_and_run_unaudited("mutwriteback", source) else {
         return;
     };
     assert_eq!(output, "2\n4\n9\n7\n");
@@ -11983,7 +12131,8 @@ main :: fn() -> i64 {
     0
 }
 "#;
-    let Some(output) = compile_and_run("readmodevalue", source) else {
+    let Some(output) = compile_and_run_unaudited("readmodevalue", source)
+    else {
         return;
     };
     assert_eq!(output, "7\n21\n");
@@ -12010,7 +12159,7 @@ main :: fn() -> i64 {
     0
 }
 "#;
-    let Some(output) = compile_and_run("constfnbound", source) else {
+    let Some(output) = compile_and_run_unaudited("constfnbound", source) else {
         return;
     };
     assert_eq!(output, "3\n");
@@ -13190,7 +13339,8 @@ main :: fn() -> i64 {
     0
 }
 "#;
-    let Some(output) = compile_and_run("generic_literal_arg", source) else {
+    let Some(output) = compile_and_run_unaudited("generic_literal_arg", source)
+    else {
         return;
     };
     assert_eq!(output, "7\n30\n");
@@ -13246,7 +13396,7 @@ main :: fn() -> i64 {
     0
 }
 "#;
-    let Some(output) = compile_and_run("generic_enum", source) else {
+    let Some(output) = compile_and_run_unaudited("generic_enum", source) else {
         return;
     };
     assert_eq!(output, "42\n7\n7\n6\n8\n");
@@ -13382,7 +13532,7 @@ fn the_standard_json_reader_walks_a_nested_document() {
                   \x20   if (json_kind(document, json_member(document, root, \"ok\")) == JsonKind::True) { print 1 } else { print 0 }\n\
                   \x20   json_free(document)\n\
                   \x20   0\n}\n";
-    let Some(output) = compile_and_run("stdjson", source) else {
+    let Some(output) = compile_and_run_unaudited("stdjson", source) else {
         return;
     };
     assert_eq!(output, "6\n1\n2\n22\n1\n");
@@ -13401,7 +13551,7 @@ fn the_standard_option_covers_both_variants() {
                   \x20   if (option_is_some($i64, a)) { print 1 } else { print 0 }\n\
                   \x20   if (option_is_some($i64, b)) { print 1 } else { print 0 }\n\
                   \x20   0\n}\n";
-    let Some(output) = compile_and_run("stdoption", source) else {
+    let Some(output) = compile_and_run_unaudited("stdoption", source) else {
         return;
     };
     assert_eq!(output, "42\n7\n1\n0\n");
@@ -13462,7 +13612,7 @@ main :: fn() -> i64 {
     0
 }
 "#;
-    let Some(output) = compile_and_run("mixed_widths", source) else {
+    let Some(output) = compile_and_run_unaudited("mixed_widths", source) else {
         return;
     };
     // 1234567 read a byte at a time, 12347 from the same shape by hand, and
@@ -13498,7 +13648,8 @@ fn a_consumed_generic_linear_is_accepted() {
                   \x20   held := make($i64, 5)\n\
                   \x20   print take($i64, held)\n\
                   \x20   0\n}\n";
-    let Some(output) = compile_and_run("genericlinearok", source) else {
+    let Some(output) = compile_and_run_unaudited("genericlinearok", source)
+    else {
         return;
     };
     assert_eq!(output, "5\n");
@@ -13647,7 +13798,7 @@ fn an_imported_call_inside_an_array_literal_resolves() {
                   \x20   print listed[1].p.x\n\
                   \x20   print repeated[0].p.x\n\
                   \x20   0\n}\n";
-    let Some(output) = compile_and_run("arraylit", source) else {
+    let Some(output) = compile_and_run_unaudited("arraylit", source) else {
         return;
     };
     let _ = std::fs::remove_file(&helper);
@@ -14468,6 +14619,31 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   print h.inner.value\n    print sizeof(Holder)\n    0\n}\n",
         "7\n16\n",
     ),
+    // A field read straight off a generic call's answer, where the caller has a
+    // parameter named the same as one of the template's. The unsafety gate runs
+    // with whatever local table the pass before it left behind, so it looked
+    // the caller's name up against the last instance's locals. Sharing a name
+    // made that a diagnostic; not sharing one made it a wrong answer nobody
+    // saw.
+    (
+        "a_field_of_a_generic_call_answer",
+        "Cell :: struct { value: i64 }
+         Bag :: struct($T: Type) { one: T }
+         only :: fn(a: Bag<$T>) -> ref T {
+             ref held := a.one
+    held
+}
+         Store :: struct { bag: Bag<Cell>, count: i64 }
+         reach :: fn(mut a: Store) -> i64 { only(a.bag).value }
+         main :: fn() -> i64 {
+             mut s := Store { bag = Bag { one = Cell { value = 42 } }, count = 1 }
+             print reach(s)
+    0
+}
+",
+        "42
+",
+    ),
 ];
 
 // Build and run `source` with the self-hosted compiler's native backend, under
@@ -14535,4 +14711,64 @@ fn both_compilers_agree_on_these_programs() {
             "the self-hosted compiler disagreed about {name}"
         );
     }
+}
+
+// The audit is on for anyone running the compiler, and most of the programs in
+// this file are compiled with it off because they call `printf` without a
+// block. That is a choice each helper now states rather than a default nobody
+// reads, and this is what holds the default to being the audited one: a
+// program with an unguarded extern call has to be refused when nothing says
+// otherwise.
+#[test]
+fn the_default_configuration_audits_unsafe_operations() {
+    if c_compiler().is_none() || !linker_available() {
+        return;
+    }
+    let directory = std::env::temp_dir();
+    let input = directory
+        .join(unique("frost_audit_default"))
+        .with_extension("frost");
+    std::fs::write(
+        &input,
+        "printf :: extern fn(format: ^i8, value: i64) -> i32\n\
+         main :: fn() -> i64 {\n    printf(\"%lld\n\", 7)\n    0\n}\n",
+    )
+    .unwrap();
+    let exe = directory
+        .join(unique("frost_audit_default"))
+        .with_extension(std::env::consts::EXE_EXTENSION);
+
+    let audited = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(
+        !audited.status.success(),
+        "an unguarded extern call compiled with nothing turning the audit off"
+    );
+    let complaint = String::from_utf8_lossy(&audited.stderr);
+    assert!(
+        complaint.contains("unsafe"),
+        "the refusal did not name the reason:\n{complaint}"
+    );
+
+    let permitted = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .env("FROST_CHECK_UNSAFE", Audit::Off.setting())
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(
+        permitted.status.success(),
+        "the same program was refused with the audit off:\n{}",
+        String::from_utf8_lossy(&permitted.stderr)
+    );
+
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&exe);
 }
