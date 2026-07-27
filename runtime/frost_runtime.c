@@ -89,14 +89,17 @@ static FILE *frost_rt_emit_where(void) {
 
 /* A destination in memory, which is what a build that assembles its own output
    emits into: the text never becomes a file, so it is neither written nor read
-   back. The caller owns the buffer and asks how much of it was filled. */
+   back. The buffer is owned here and grows to whatever the program emits, so
+   there is no size for a caller to guess at and none to run out of. It is kept
+   between runs, since a build emitting one unit after another emits about as
+   much each time. */
 static char *frost_rt_emit_memory = 0;
 static int64_t frost_rt_emit_memory_room = 0;
 static int64_t frost_rt_emit_memory_used = 0;
+static int frost_rt_emit_to_memory_on = 0;
 
-void frost_rt_emit_to_memory(char *buffer, int64_t room) {
-    frost_rt_emit_memory = buffer;
-    frost_rt_emit_memory_room = room;
+void frost_rt_emit_to_memory(void) {
+    frost_rt_emit_to_memory_on = 1;
     frost_rt_emit_memory_used = 0;
 }
 
@@ -104,21 +107,30 @@ int64_t frost_rt_emit_memory_length(void) {
     return frost_rt_emit_memory_used;
 }
 
+char *frost_rt_emit_memory_at(void) {
+    return frost_rt_emit_memory;
+}
+
 void frost_rt_emit_memory_done(void) {
-    frost_rt_emit_memory = 0;
-    frost_rt_emit_memory_room = 0;
+    frost_rt_emit_to_memory_on = 0;
 }
 
 /* Whether the bytes about to be written go to memory, having made room for
-   them. A buffer that fills up is the caller asking for less room than the
-   program needs, which no input can cause and no later check would catch. */
+   them. Doubling means the copying costs a constant per byte emitted however
+   large the program is. */
 static int frost_rt_emit_holds(int64_t length) {
-    if (frost_rt_emit_memory == 0) {
+    if (frost_rt_emit_to_memory_on == 0) {
         return 0;
     }
     if (frost_rt_emit_memory_used + length > frost_rt_emit_memory_room) {
-        fputs("frost: the emitted text outgrew its buffer\n", stderr);
-        abort();
+        int64_t wanted = frost_rt_emit_memory_room * 2 + length + (1 << 20);
+        char *wider = (char *)realloc(frost_rt_emit_memory, (size_t)wanted);
+        if (wider == 0) {
+            fputs("frost: no room for the emitted text\n", stderr);
+            abort();
+        }
+        frost_rt_emit_memory = wider;
+        frost_rt_emit_memory_room = wanted;
     }
     return 1;
 }

@@ -23,10 +23,9 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     TypeCacheEntry, UnsafeSpan,
     Variant,
     add_root, arena_at, arena_make, arena_push, cstr_eq, emit_text, malloc,
-    emit_to_memory, emit_memory_length, emit_memory_done,
+    emit_to_memory, emit_memory_text,
     report, report_cstr, report_src, SearchRoot,
-    buffer_of, buffer_head, cstr_slice, empty_source, source_end, byte_at,
-    byte_set,
+    buffer_of, cstr_slice, empty_source, source_end, byte_at, byte_set,
     cstr_len,
     frost_rt_arg_at, frost_rt_arg_count,
     frost_rt_die, frost_rt_emit_char, frost_rt_emit_close, frost_rt_emit_int,
@@ -44,11 +43,12 @@ frost_rt_str_len   :: extern fn(s: ^i8) -> i64
 frost_rt_emit_bytes :: extern fn(data: ^u8, length: i64)
 frost_rt_emit_int  :: safe extern fn(value: i64)
 frost_rt_emit_char :: safe extern fn(byte: i64)
-// Send the emitted text to a buffer rather than to a file. The room is the
-// buffer's own length, so the same bound that makes every read of it checked is
-// what the runtime is told to stay inside.
-frost_rt_emit_to_memory :: extern fn(buffer: ^u8, room: i64)
+// Send the emitted text to memory rather than to a file. The buffer belongs to
+// the runtime and grows to hold whatever is emitted, so what comes back is
+// where it ended up and how much of it there is.
+frost_rt_emit_to_memory :: safe extern fn()
 frost_rt_emit_memory_length :: safe extern fn() -> i64
+frost_rt_emit_memory_at :: extern fn() -> ^u8
 frost_rt_emit_memory_done :: safe extern fn()
 frost_rt_read_file :: extern fn(path: ^i8) -> ^i8
 frost_rt_byte_set  :: extern fn(buffer: ^i8, index: i64, value: i64)
@@ -65,22 +65,23 @@ emit_text :: fn(s: str) {
     unsafe { frost_rt_emit_bytes(ptr_to(s[0]), length) }
 }
 
-// Emit into a buffer instead of a file, for a build that hands its own output
-// to the assembler rather than to the toolchain: the text never becomes a file,
-// so it is neither written nor read back.
-emit_to_memory :: fn(s: str) {
-    unsafe { frost_rt_emit_to_memory(ptr_to(s[0]), str_len(s)) }
+// Emit into memory instead of a file, for a build that hands its own output to
+// the assembler rather than to the toolchain: the text never becomes a file, so
+// it is neither written nor read back.
+emit_to_memory :: fn() {
+    frost_rt_emit_to_memory()
 }
 
-// How much of the buffer the emitting filled.
-emit_memory_length :: fn() -> i64 {
-    frost_rt_emit_memory_length()
-}
-
-// Stop emitting into memory, so anything written afterwards goes where it went
-// before.
-emit_memory_done :: fn() {
+// What was emitted, as a run of bytes carrying its own length, which is the
+// last thing read through a bare pointer before the assembler reads it as a
+// slice like everything else.
+emit_memory_text :: fn() -> str {
+    length := frost_rt_emit_memory_length()
     frost_rt_emit_memory_done()
+    if (length == 0) {
+        return empty_source()
+    }
+    unsafe { slice_from($u8, frost_rt_emit_memory_at(), length) }
 }
 
 // Diagnostics. The emitted C goes to stdout, so an error is composed on stderr
@@ -834,13 +835,6 @@ arena_at :: fn(a: Arena<$T>, id: i64) -> ref T {
 // every read and write into the source buffer above is a checked index.
 buffer_of :: fn(size: i64) -> str {
     unsafe { slice_from($u8, malloc(size), size) }
-}
-
-// The part of a buffer that was filled, for a caller that asked for room and
-// then wrote less than it. The bytes past the answer are whatever the allocator
-// left there, so a reader that stops at a terminator is not enough.
-buffer_head :: fn(s: str, length: i64) -> str {
-    unsafe { slice_from($u8, ptr_to(s[0]), length) }
 }
 
 // A C string as a slice of the bytes it holds, for text the environment handed
