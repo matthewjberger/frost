@@ -9,6 +9,9 @@ default-theme = "dark"
 preferred-dark-theme = "ayu"
 mathjax-support = false
 git-repository-url = "https://github.com/matthewjberger/frost"
+# Served from a subpath, so the 404 page and search need to know where the root
+# is. A relative link between chapters works either way.
+site-url = "/frost/"
 edit-url-template = "https://github.com/matthewjberger/frost/edit/main/docs/book/{path}"
 
 [output.html.fold]

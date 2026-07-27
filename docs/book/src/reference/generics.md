@@ -73,9 +73,9 @@ slab_reset($Entity, $4, world)
 ```
 
 Inside the body the name stands for the integer wherever it appears, in a type
-(`[N]T`) and in an expression (`i < N`) alike. `examples/native/lib/slab.frost`
-is a generational pool written this way, generic over both element type and
-capacity.
+(`[N]T`) and in an expression (`i < N`) alike. `std/slab.frost` is a
+generational pool written this way, generic over both element type and capacity,
+and `examples/native/generic_slab.frost` is the same shape as a single file.
 
 ## 11.1b Compile-time function parameters
 
@@ -270,8 +270,8 @@ There is no turbofish. A type is passed as an ordinary argument by writing `$`
 before it, which forms a type value:
 
 ```frost
-make_pool :: fn($T: Type, capacity: i64) -> ^u8 { pool_new(capacity, sizeof(T)) }
-world := make_pool($Entity, 16)
+stride :: fn($T: Type, count: i64) -> i64 { count * sizeof(T) }
+bytes := stride($Entity, 16)
 ```
 
 ## 11.4 Nested generic arguments

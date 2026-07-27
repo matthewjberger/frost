@@ -24,9 +24,16 @@ tokens to decide whether a parenthesized group is a function parameter list
 This discipline is the contract. The reference parser (`src/parser.rs`), the
 self-hosted parser (`selfhosted/`), and this grammar are three views of one
 language. A disagreement between them is a bug in whichever diverges from the
-intent expressed here. A conformance test (`tests/grammar.rs`) feeds a corpus of
-accepted and rejected forms through the reference parser on every build, so the
-grammar and the parser cannot drift apart unnoticed.
+intent expressed here.
+
+`tests/grammar.rs` is a corpus test, and it is worth knowing what it does and
+does not catch. It runs a fixed list of sources through the reference parser and
+asserts that each one parses, and a shorter list that each one does not. It
+never reads chapter 13. A form the grammar describes and the parser rejects is
+caught only if someone put that form in the corpus, and a form the parser
+accepts and the grammar never mentions is not caught at all. The corpus stops a
+parser change from silently breaking what it covers. Keeping this chapter honest
+is a reading job.
 
 ## 1.3 Conformance
 

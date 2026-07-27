@@ -1,8 +1,8 @@
 # Frost architecture
 
-This document describes how the Frost compiler is structured today and the
-direction it is moving. It states what works, what is partial, and what is not
-built yet.
+This document describes how the bootstrap compiler in `src/` is structured and
+the direction it is moving. The compiler written in Frost is
+[a document of its own](self-hosted.md).
 
 ## Pipeline
 
@@ -165,9 +165,9 @@ Working today, verified by running native binaries (`tests/native.rs`):
   integer/float conversions.
 - `extern fn` C interop, including string-literal arguments with escape
   sequences (e.g. `puts`, `printf`), C functions that return a struct by value
-  (classified per target, see below), and callback registration, where a `$`
-  function parameter plus a context taken by `move` hands a C library a Frost
-  function pointer and a typed context.
+  (classified per target by `src/c_abi.rs`), and callback registration, where a
+  `$` function parameter plus a context taken by `move` hands a C library a
+  Frost function pointer and a typed context.
 - `str`, a byte-slice view (pointer plus length): string-literal values,
   `str_len` in constant time, bounds-checked byte indexing `s[i]`, and passing
   and returning `str` by value.
@@ -201,32 +201,6 @@ Working today, verified by running native binaries (`tests/native.rs`):
 - `defer`: function-scoped, run in LIFO order at each return and at the
   trailing expression. A `return` nested inside a branch alongside `defer`
   is rejected (it would need runtime tracking), so defers always run.
-
-### Generational handles and pools
-
-A small C runtime (`runtime/frost_runtime.c`) provides generational pools
-that both backends link automatically, `pool_new(capacity, elem_size)`,
-`pool_alloc`, `pool_get`, `pool_free`, `pool_contains`, `handle_index`, and
-`handle_generation`. This is the design's handle/pool proposition working
-natively without a garbage collector.
-
-The interface is deliberately scalar-only. A pool is an opaque pointer and a
-handle is a packed `i64` (`generation << 32 | index`). Nothing is passed or
-returned by aggregate value, so the runtime's natural C ABI matches Frost's
-internal aggregate-return convention (a hidden out-pointer) with no ABI
-negotiation, and the identical compiled runtime links into both the Cranelift
-and C backends, which is why they agree bit for bit.
-
-The generational guarantee is what the differential test pins down. Freeing a
-slot bumps its generation, so a later allocation reuses the slot at a higher
-generation and the original handle reports `pool_contains == 0`. A stale
-handle can never silently read a live value. Storing the *handle* is fine (it
-is plain copyable data, not a reference). The borrow you get by dereferencing
-through the pool is what stays second-class.
-
-The pool's memory management lives in the raw runtime. The typed surface over it
-is an ordinary Frost library (see below) rather than a set of privileged
-builtins.
 
 ### Generic functions, specialization, and sizeof
 
@@ -268,13 +242,16 @@ fields rather than substituting a template: for each field it registers one
 scatter `c[handle] = value` lower to the slab's bounds-and-generation check
 (`frost_rt_slot`) reused verbatim, selecting the column before indexing it, and
 `columns_new()` zero-initializes. It is the structure-of-arrays sibling of the
-slab. See [native-pools.md](../design/pools-and-columns.md).
+slab. See [pools-and-columns.md](../design/pools-and-columns.md).
 
-Not yet in the native backend (these fail loudly, they are not silently
-miscompiled): growable or heap-backed collections. Capturing closures are absent by design,
-since the language uses function pointers and non-capturing function literals,
-both of which the native backend supports. There is no other backend to fall
-back to, so an unsupported construct is a compile error.
+Growable storage is a library rather than a backend feature. `std/vec.frost` is
+one heap block that doubles when it fills, presented as a `[]T` so every access
+goes through the bounds-checked slice path, and `std/map.frost`,
+`std/json.frost` and `std/format.frost` are written on top of it. Capturing
+closures are absent by design, since the language uses function pointers and
+non-capturing function literals, both of which the native backend supports.
+There is no other backend to fall back to, so a construct a backend cannot lower
+is a compile error rather than silently miscompiled code.
 
 The emitted C is an internal detail, not an interface for external C callers,
 so Frost function names are prefixed (`frost_`) to avoid C keyword clashes.
@@ -322,38 +299,38 @@ Frost is being reshaped toward a data-oriented language with:
 
 ## Ownership checking
 
-`src/ownership.rs` runs after parsing and enforces two rules:
+`src/ownership.rs` runs after parsing, over one top-level item at a time. The
+rules it enforces are the language's rather than the pass's:
+[ownership.md](../reference/ownership.md) has second-class borrows, mutable
+exclusivity and the move rule, and [linear.md](../reference/linear.md) has
+consume-exactly-once. What this pass does with them:
 
-- Second-class borrows. The reference types this pass sees are synthesized
-  by `lower_param_modes`, since the surface has none. One cannot be stored in a
-  struct or enum field, and cannot be returned from a function or extern.
-  Reference *parameters* are the point, and `Handle<T>` (a generational index,
-  not a reference) can be stored and returned freely. Because a borrow cannot
-  escape, borrow analysis stays scope-local.
-- Borrow exclusivity. A `mut` borrow is exclusive. A variable cannot be
-  passed to more than one `mut` parameter, or to both a `mut` and a read
-  parameter, within a single call. Multiple read borrows are fine. Because
-  borrows are second-class, this per-call check is enough to keep mutable
-  aliasing out.
-- Move checking. Per function body, a value of a move type (a struct,
-  enum, or slice, anything not `Copy`) is consumed when it is passed to a
-  `move` parameter, assigned, or returned. Using it again is a use-after-move
-  error. A read or `mut` parameter, field access (`x.f`), and dereference do
-  not consume, and copy types (integers, floats, bools, pointers, references,
-  handles, and `str`) are never
-  moved.
-- Linear resources. A struct or enum declared `linear`
-  (`File :: linear struct { ... }`) is a resource that must be consumed
-  exactly once. The move checker's use-after-move rule gives "at most once".
-  The "exactly once" half, the leak check, is discharged separately on the IR
-  (see below). Consuming means moving it onward, returning it, passing it by
-  value to another function (the terminal consumer is typically an `extern`,
-  which takes ownership across the FFI boundary), or `match`ing it (a `match`
-  on a linear value destructures and consumes it). This is how the design
-  replaces `Drop`. Cleanup is an obligation the type system tracks rather than
-  an implicit call. It also makes a linear error enum non-ignorable, since a
-  `linear enum` returned from a fallible function must be matched (or otherwise
-  consumed), so a failure cannot be silently dropped.
+- It refuses a reference in a struct field or an enum variant's field, and a
+  reference returned from an `extern`. A reference returned from a Frost
+  function is allowed, because the frame-escape check in `src/regions.rs` holds
+  it to storage that outlives the call. The reference types the pass sees at all
+  are synthesized by `lower_param_modes`, since the surface has none.
+- It checks the arguments of each call against each other, reporting a variable
+  passed to two `mut` parameters, or to a `mut` and a read parameter, in one
+  call.
+- It walks each function body tracking which names have been moved out of,
+  reporting a use of one afterwards. A name is a move name when its type is not
+  `Copy`, which `Type::is_copy` in `src/types.rs` answers: structs and enums
+  move, and integers, floats, bools, pointers, references, handles, arrays,
+  `str` and slices copy, so a slice passed by value leaves the caller's own
+  slice usable.
+- It reports a move inside a loop body, which would be a use after move on the
+  next iteration, and a linear value consumed inside one, which would be a
+  second consumption.
+
+Two things about how it reports. It checks every top-level item rather than
+stopping at the first failure, so a program with a move error in three functions
+names all three. And it remembers what it has already said, because past a move
+the state stays moved and every later mention of that name would otherwise fail
+the same way.
+
+That gives "at most once" for a `linear` resource. The other half, the leak
+check that makes it exactly once, is discharged on the IR.
 
 ## Linearity checking on the IR
 
@@ -372,104 +349,3 @@ consumed more than once, consumed before it holds a resource, or a linear local
 still owned on a path to a return (a leak), each located at the source line the
 value was created on. A leak is caught here. A use-after-move is caught on the
 AST. Both point at a line.
-
-### Roadmap
-
-1. Discharge ownership on the IR. *(Partly done: the linear consume discipline
-   now runs as a CFG dataflow pass in `src/ir_ownership.rs`. Move tracking and
-   borrow exclusivity stay on the AST, where the move-versus-borrow distinction
-   the IR erases is still visible. Second-class borrows keep that analysis
-   scope-local.)*
-2. A real type-checking pass on the IR. *(Done: `src/ir_typecheck.rs` runs on
-   the typed IR after lowering and before either backend. It validates local
-   and block id ranges, direct and indirect call arity against the gathered
-   signatures, numeric operands for arithmetic and indexing, and that non-void
-   functions return a value. It also enforces the IR's pointer discipline: loads,
-   stores, field access, and element access all go through a pointer-typed
-   operand; casts stay between numeric types; and an indirect call targets a
-   function-pointer value. These checks hold across the whole native corpus, so a
-   lowering bug that produced a load from a non-pointer or a cast to a struct
-   would be caught before codegen rather than miscompiled.)*
-3. Linear resources with path-sensitive consumption, and error enums that
-   linearity makes non-ignorable.
-4. Handle-dereference-as-borrow, and a first-class pool type. *(Done: `Handle<T>`
-   is a first-class native type (a packed i64), and `pool[handle]` is a place.
-   Read/write fields through it, copy the element out, or pass it to a function,
-   which borrows it under that function's parameter mode. The borrow is
-   second-class like any other, so a handle-deref borrow has nowhere to escape
-   to.
-   A pool is not a compiler type. A program writes its own: a value-generic
-   struct of `[N]T` storage plus a generational free list, all Frost code
-   (`examples/native/generic_slab.frost`), on top of slices, value generics, and
-   `ptr_to`/`ptr_cast`. The runtime pool functions are an opt-in `extern`
-   library, like `malloc`, and `pool[handle]` lowers to `pool_get` when a pool is
-   indexed by a handle. See `docs/native-pools.md` and `docs/allocators.md`.)*
-5. Struct/array/enum by-value passing and tuple patterns in the native
-   backend. *(Done: all three, plus nested aggregates and arrays of structs.)*
-6. Generics by monomorphization. *(Done:
-   generic functions, generic structs (incl. nested `Pair<Pair<i64>>`, factory
-   functions returning instances, construction inference, and generic-over-
-   instance), `sizeof`, and explicit type arguments (`fn($T: Type, ...)` called
-   `f($Concrete, ...)`, with type parameters erased from the specialized ABI).
-   Value parameters too (`struct($T: Type, $N: usize)` sizing a `[N]T` field),
-   resolved to a concrete array size at instantiation, so a slab can be generic
-   over both element type and capacity.)*
-7. Bounds-checked array indexing. *(Done: every fixed-size array index is
-   checked against the statically-known length and aborts on out-of-range.)*
-8. Source locations in errors. *(Done: the lexer and parser carry
-   `line`/`column`, and a `Spanned<T>` wrapper attaches a source position to
-   every statement, so ownership and IR-lowering errors report the exact source
-   line and column, not just the enclosing function. A position also carries the
-   file it came from, so an error inside an imported module names that module
-   rather than a line number in the flattened program.)*
-9. A third differential oracle. *(Done: `src/ir_interp.rs` interprets the typed
-   IR directly, exposed through `--run-ir`. It validates scalar arithmetic,
-   control flow, recursion, and function pointers against the Cranelift and C
-   backends, and declines cleanly on memory and pool operations rather than
-   guessing.)*
-10. Self-hosting the compiler in Frost. *(Done as a fixpoint, in progress as the
-    product: `selfhosted/frost.frost` compiles itself to a byte-identical
-    fixpoint through both its C backend and its own native x86-64 backend, so
-    there is a path with no C compiler in the loop. It is written in the
-    data-oriented native surface, a pool-backed AST arena with integer node
-    indices instead of pointers, and carries imports and modules, failure sets,
-    enums with payloads, and generics. It is the compiler Frost is for, and
-    this file describes the bootstrap that builds its stage 0. See
-    [self-hosting.md](self-hosted.md).)*
-11. Parser error recovery. *(Done: the parser recovers at statement boundaries
-    instead of stopping at the first error, at the top level and inside function
-    bodies alike, so one malformed statement no longer discards the rest of the
-    file or the rest of the enclosing block. `parse_recovering` returns the
-    statements that parsed plus a `Diagnostic` per error, and the plain `parse`
-    entry point reports them all at once. Synchronization skips to the next
-    statement start (a declaration, an assignment, or a leading keyword) and
-    always makes progress, so recovery cannot loop. This is the foundation an
-    editor integration would build on, though the language server itself is not
-    yet in scope.)*
-12. Parallel code generation. *(Done: `src/ir_codegen.rs` builds and compiles
-    functions across every core from a shared work queue. 385 ms to 55 ms on
-    sixteen threads at 10,401 functions, and a full native build of 58k lines
-    in 353 ms. [roadmap.md](../roadmap.md) has the sweep, and why a shared cursor
-    beats splitting the function list into equal chunks.)*
-13. Callbacks with a typed context. *(Done. An `extern fn` with a `$handler`
-    parameter bound to a function signature is a callback registration:
-    `src/callbacks.rs` checks the declaration, `src/regions.rs` holds the
-    registration to the frame that holds its context, and `src/ir_build.rs`
-    passes the handler's address and the context's address. There is no
-    trampoline and no cast, because a `mut` parameter is already a pointer and
-    Frost and C share a calling convention. [callbacks.md](../design/callbacks.md) has the
-    design.)*
-14. The C ABI for struct returns. *(Done. `src/c_abi.rs` classifies an
-    `extern fn`'s aggregate return the way the target's C compiler does, per
-    target, because Frost's uniform hidden out-pointer is Frost's own
-    convention and C does not share it. The C backend defers to the C compiler
-    instead by declaring a real struct type.
-    [c-compatibility.md](c-compatibility.md) has the rules.)*
-15. Separate compilation. *(Done. A module is a file, its interface is its
-    `export` line, and a specialization is emitted in the module that
-    instantiates it. On `--link` each module is its own object, and
-    `--incremental` rebuilds a module only when its own source or an imported
-    interface changes, which is a hash over the interface with generic bodies
-    kept and ordinary ones blanked.
-    [separate-compilation.md](separate-compilation.md) tracks it step by step,
-    including what was found to be wrong about the original design.)*

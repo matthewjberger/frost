@@ -23,18 +23,19 @@ colour_of :: fn(class: i64) -> str { ... }
 ```
 
 This is legal and it is what a C header looks like, which is why it keeps
-appearing. What it costs:
+appearing. What it costs is three things.
 
-- **The parameter says nothing.** `class: i64` accepts a row count, a file
-  descriptor, or `-1`. Nothing is checked, because there is nothing to check
-  against.
-- **It cannot be matched.** `match` over an enum is exhaustive, so adding a
-  variant stops every match that does not handle it from compiling. A run of
-  constants has no such set, so the `if` chain that reads them silently keeps
-  its old answer for a value it has never seen.
-- **The prefix is doing the type's job.** `PLAIN` and `COMMENT` belong together
-  because they start with nothing in common at all. What holds them together is
-  a comment above them and everyone remembering.
+The parameter says nothing. `class: i64` accepts a row count, a file descriptor,
+or `-1`. Nothing is checked, because there is nothing to check against.
+
+It cannot be matched. `match` over an enum is exhaustive, so adding a variant
+stops every match that does not handle it from compiling. A run of constants has
+no such set, so the `if` chain that reads them silently keeps its old answer for
+a value it has never seen.
+
+The prefix is doing the type's job. `PLAIN` and `COMMENT` belong together
+because they start with nothing in common at all. What holds them together is a
+comment above them and everyone remembering.
 
 **Instead.**
 

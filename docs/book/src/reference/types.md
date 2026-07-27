@@ -83,7 +83,8 @@ fields and returned.
 
 A pool is not a built-in type. It is an ordinary struct a program writes for
 itself, an array of storage indexed by `Handle<T>` (chapter 10.1). The compiler
-provides the pieces to build one, not the pool itself.
+provides the pieces to build one, not the pool itself, and `std/slab.frost` is
+one written out in the language.
 
 `columns<T, N>` is a compiler-synthesized structure-of-arrays container for `N`
 elements of struct `T`, one array per field of `T` plus a generational free list,

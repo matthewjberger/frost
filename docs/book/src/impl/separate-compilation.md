@@ -9,10 +9,11 @@ module only when its own source or an imported interface changes.
 
 ## Why the shape has to change
 
-Goal 8 in [philosophy.md](../design/philosophy.md) makes compilation speed a promise. The
-constant factor is already handled: a full native build runs at about 166,000
-lines per second, which clears the bar. This is the other half, and it is not a
-constant factor.
+Goal 9 in [philosophy.md](../design/philosophy.md) makes compilation speed a
+promise. The constant factor is already handled: the bootstrap's full native
+build runs at about 166,000 lines per second, from `just bench-scaling`, which
+clears the bar. This is the other half, and it is not a constant factor.
+[roadmap.md](../roadmap.md) holds the measurements.
 
 `src/imports.rs` flattens every import into one AST. `resolve_imports` reads each
 imported file, parses it, renames its private names, and splices the statements
@@ -55,19 +56,20 @@ C++ and Rust do with COMDAT and weak symbols. That is not available here.
 `Hidden` and `Export`, with no weak or COMDAT variant, so there is nothing to
 ask the object writer for. Two options follow and the first is chosen:
 
-- Emit a private copy per module (`Linkage::Local`), once each module emits
-  its own object. Needs no backend work at all, and duplicate specializations
-  cost code size rather than correctness. Note this only becomes possible with
-  separate objects: two copies in one object file is a duplicate symbol, so
-  while the compiler emits a single object it must keep deduplicating exactly as
-  it does today.
+- Emit a private copy per module (`Linkage::Local`). Needs no backend work at
+  all, and duplicate specializations cost code size rather than correctness.
+  This only works with separate objects: two copies in one object file is a
+  duplicate symbol, not a fold, so the single-object path (`--native -o x.o`)
+  still deduplicates across the whole program.
 - Teach `cranelift-object` to emit COMDAT sections and add a `Linkage` variant
   for it. Better output, upstream work, and not on the critical path. Worth
-  revisiting only if duplicated specializations measurably matter.
+  revisiting only if duplicated specializations measurably matter, which
+  `FROST_MODULE_REPORT=1` is what would say: it counts how many specializations
+  one object emits, how many separate objects emit, and how many more than one
+  module asks for.
 
-Finding this out is why the step order below is worth trusting: it was a design
-assumption that survived being written down and did not survive being checked
-against the API.
+The fold was a design assumption that survived being written down and did not
+survive being checked against the API.
 
 ## What the artifact contains
 
@@ -84,7 +86,7 @@ name today. Working through the pipeline, that is:
 | exported struct layouts | field offsets, sizes, alignment | `ir_build`, both backends |
 | exported enum layouts | tag values, payload offsets | same |
 | which types are `linear` | consume-exactly-once is checked at the caller | `check_linearity` |
-| failure sets (`uses`) | `try` lowering and the result type | `lower_failure_sets` |
+| failure sets (`-> T ! E`) | `?` lowering and the result type | `lower_failure_sets` |
 | allocation capabilities (`uses Arena`) | the implicit parameter a caller has to supply | `lower_allocation_sources` |
 | **generic bodies** | a specialization is stamped out at the caller, so the caller needs the AST | `ir_build` |
 | compile-time parameter signatures | the bound checked at the call | `ir_build` |
@@ -103,184 +105,105 @@ not. So the interface should be hashed with the bodies of exported generics
 included and the bodies of everything else excluded, and that hash is what
 downstream rebuilds key on.
 
-## What has to change first, and it is not the file format
+## What had to change first, and it was not the file format
 
-Two things in the current pipeline are wrong for this in ways that a serialization
-format cannot paper over.
+Two things in the pipeline were wrong for this in ways a serialization format
+could not paper over, and both touched the assumption every later pass rests on,
+which is why they came before anything else.
 
-Private name mangling depends on traversal order. `resolve_into` hands out
-`module_tag` by the order files are visited, so a private `helper` becomes
-`__m3_helper` in one program and `__m7_helper` in another. A module's symbol names
-therefore are not a property of the module, which is exactly what separate
-compilation requires. The tag has to be derived from the module's own identity, a
-hash of its canonical path relative to the project root, so that a module compiled
-alone and a module compiled as part of a program produce the same symbols.
+Private name mangling depended on traversal order. `resolve_into` handed out
+`module_tag` by the order files were visited, so a private `helper` became
+`__m3_helper` in one program and `__m7_helper` in another. A module's symbol
+names were therefore not a property of the module, which is exactly what
+separate compilation requires. The tag is now an FNV-1a hash of the module's
+path relative to the project root, so a module compiled alone and a module
+compiled as part of a program produce the same symbols. FNV is written out
+rather than taken from the standard library because the hash has to mean the
+same thing in every build of the compiler, and `DefaultHasher` promises only
+consistency within one version.
 
-Monomorphization is a whole-program fixpoint. `expand_generic_structs` and the
-specialization loop in `src/ir_build.rs` walk every statement in the flattened
-program. Both need to become per-module, seeded by what that module's own code
-instantiates, with the templates read from interfaces rather than found inline.
-The dedup set that is currently `emitted: HashSet<String>` becomes per-module, and
-duplicate specializations across modules are resolved by the linker rather than by
-the compiler.
+Monomorphization was a whole-program fixpoint. `expand_generic_structs` and the
+specialization loop in `src/ir_build.rs` walked every statement in the flattened
+program, and flattening had thrown away which module a statement came from. A
+`Position` now carries a file id into `src/source_map.rs`, stamped during import
+resolution, so every statement knows its module and every specialization records
+the module that asked for it. The dedup that was one `emitted: HashSet<String>`
+is keyed by module and name, and duplicate specializations across modules are
+private copies rather than a fold.
 
-Neither is a large change. Both are invasive in the sense that they touch the
-assumption every later pass rests on, which is why they come before anything else
-rather than after.
+## What it does now
 
-## The order to build it in
+Compiling a module writes an interface and an object, and `--incremental` skips
+the modules an edit cannot reach.
 
-1. Make symbol names a property of the module. *Done.* The tag is an FNV-1a
-   hash of the module's path relative to the project root, computed in
-   `module_tag` in `src/imports.rs`. FNV is written out rather than taken from
-   the standard library because the hash has to mean the same thing in every
-   build of the compiler, and `DefaultHasher` promises only consistency within
-   one version. The test compiles the same module reached first in one program
-   and second in another and compares the tags, and it was checked against both
-   failure modes: a traversal-order counter fails it, and so does a constant.
-2. Write the interface out and read it back, while still compiling the whole
-   program. *Done.* `src/interface.rs` derives a `ModuleInterface` at the one
-   place a module is parsed, which is what stops it drifting from the source it
-   describes. Three checks run under `FROST_CHECK_INTERFACES`, which the test
-   suite sets on every compilation: it survives a JSON round trip, it declares
-   everything it exports, and it is closed, meaning every name a carried
-   declaration reaches and this module declares is carried too. Serialization is
-   serde and JSON, marked replaceable.
-3. Make monomorphization per-module. *Prerequisite done, the rest not
-   started.* `expand_generic_structs` and the specialization loop in
-   `src/ir_build.rs` walk every statement in the flattened program, and the
-   blocker was that flattening threw away which module a statement came from.
-   That is fixed: a `Position` now carries a file id into `src/source_map.rs`,
-   stamped during import resolution, so every statement knows its module. It
-   earns its place immediately rather than sitting as scaffolding, because it is
-   also what lets a diagnostic name the file it came from, which after
-   flattening it previously could not.
+`src/interface.rs` derives a `ModuleInterface` at the one place a module is
+parsed, which is what stops it drifting from the source it describes. Three
+checks run under `FROST_CHECK_INTERFACES`, which the test suite sets on every
+compilation: it survives a JSON round trip, it declares everything it exports,
+and it is closed, meaning every name a carried declaration reaches and this
+module declares is carried too. `FROST_BUILD_FROM_INTERFACES=1` goes further and
+reduces every imported module to what its interface says, and the whole test
+suite runs a second time under it as `just test-interfaces`, so the sufficiency
+claim is checked on every commit rather than the day the compiler starts relying
+on it. That gate was itself checked by breaking the interface closure and
+confirming it fails.
 
-   *Attribution done.* Every specialization now records the module that asked
-   for it, inherited by anything it goes on to instantiate. Emitted code is
-   unchanged, verified by hashing the C and the object before and after.
-   `FROST_MODULE_REPORT=1` reports how many specializations a single object
-   emits, how many separate objects would emit, and how many are instantiated by
-   more than one module, which is the measurement that decides whether the
-   private-copy choice above ever needs revisiting.
+On the link path each module is its own compilation unit.
+`IrModule::split_by_module` produces one part per module, each becomes its own
+object, and the linker resolves the calls between them. `--native -o x.o` still
+writes the single object its `-o` names, since that output is one file by
+contract. Cross-module calls are declared rather than externed: a part carries
+the other parts' functions in `imported` and declares them with the same
+signature builder that built the definitions, because describing them as externs
+would lose the hidden out-pointer an aggregate return uses and the two objects
+would silently disagree about the ABI.
 
-   What is left is to seed the worklist per module rather than from the whole
-   flattened program, which only becomes observable at step 4.
+`--incremental` keeps a record and an object per module under `--build-dir`. The
+decision is a fingerprint, in `src/build_cache.rs`: a hash of a module's own
+source together with the interface hash of every module reachable through its
+imports, transitively, since a generic this module instantiates can instantiate
+one from further down. A module's interface hash is taken over the interface
+with the bodies of ordinary functions blanked and the bodies of generics kept,
+which is the distinction this document has been claiming since the top and is
+the only thing that makes the cache worth having: an ordinary body is what a
+module can change without rebuilding anything else, and it is most of what
+anyone edits.
 
-   One thing to get right, because it is easy to state the step wrongly. While
-   the compiler still emits one object, per-module copies cannot actually be
-   emitted: two definitions of `Stack<i64>` in one object file is a duplicate
-   symbol, not a fold. So `emitted: HashSet<String>` in `src/ir_build.rs` stays
-   global for as long as the output is one object, and what step 3 changes is
-   only *how the worklist is seeded*. The copies become real at step 4, when
-   each module emits its own object, and that is also when their linkage becomes
-   module-local. Step 3 is therefore a refactor whose output is byte-identical,
-   which is exactly the kind the fixpoint tests are there to hold.
-4. Compile a module from interfaces alone. *Available as an oracle.*
-   `FROST_BUILD_FROM_INTERFACES=1` makes an imported module contribute what its
-   interface says and nothing else, so a program that still behaves identically
-   is evidence that the interface is sufficient. A module's own `import` lines
-   are kept, since an interface carries declarations and not dependencies.
+A skipped module contributes signatures, not bodies. `Statement::Declared` is a
+Frost function's signature with no body, produced by `as_declaration` for the
+functions whose bodies a caller does not need. A generic keeps its body,
+because the caller stamps out the template. A type keeps its fields, because the
+caller lays out its own frame with them. It is not an `extern`, which would have
+been the tempting reuse: an extern means C linkage and a C ABI, which loses the
+hidden out-pointer and has nowhere to put parameter modes, `uses` sets or
+linearity.
 
-   The first thing this found was a live bug that had nothing to do with
-   interfaces. The renamer walked a function's parameters and body but skipped
-   its return signature, so a module exporting a function that returned an
-   unexported type produced a name the importer could not resolve, and such a
-   program did not compile.
+What it is worth to the bootstrap, from `just bench-incremental` on 9,484 lines
+across 65 files, one of which changed:
 
-   The whole test suite runs a second time under it, in CI and as
-   `just test-interfaces`, so the sufficiency claim is checked on every commit
-   rather than the day the compiler starts relying on it. That gate was itself
-   checked by breaking the interface closure and confirming it fails.
+| | full | incremental | incremental, bodies spliced |
+| --- | --- | --- | --- |
+| build | ~580 ms | ~200 ms | 399 ms |
 
-   *Per-module objects done.* On the link path each module is now its own
-   compilation unit: `IrModule::split_by_module` produces one part per module,
-   each becomes its own object, and the linker resolves the calls between them.
-   `--native -o x.o` still writes the single object its `-o` names, since that
-   output is one file by contract.
-
-   Three things this forced, each of which is the design becoming real:
-   - Specializations are module-local. Two modules that instantiate the same
-     generic each emit their own private copy, so exporting them would be a
-     duplicate symbol. `IrFunction::local` says so and the backend declares it
-     `Linkage::Local`.
-   - The dedup had to become per-module. With one global dedup the first
-     module to ask for `wrap<i64>` got it and the second module's object
-     referenced a symbol that was not there. `build_module_per_module` keys the
-     dedup by module and name.
-   - Cross-module calls are declared, not externed. A part carries the other
-     parts' functions in `imported` and declares them with the same signature
-     builder that built the definitions. Describing them as externs would lose
-     the hidden out-pointer an aggregate return uses, and the two objects would
-     silently disagree about the ABI.
-5. Cache and skip. *Done.* `--incremental` keeps a record and an object per
-   module under `--build-dir`, and a module whose own source and whose imported
-   interfaces are all unchanged is never parsed and never code generated: it
-   contributes the interface the record already holds, and its object is linked
-   rather than built.
-
-   The decision is a fingerprint, in `src/build_cache.rs`. A module's is a hash
-   of its own source together with the interface hash of every module reachable
-   through its imports, transitively, since a generic this module instantiates
-   can instantiate one from further down. A module's *interface* hash is taken
-   over the interface with the bodies of ordinary functions blanked and the
-   bodies of generics kept, which is the distinction this document has been
-   claiming since the top and is the only thing that makes the cache worth
-   having: an ordinary body is what a module can change without rebuilding
-   anything else, and it is most of what anyone edits.
-
-   Three things it forced:
-   - The import graph has to be walked before anything is spliced, bottom
-     up, because whether a module can be skipped depends on the interfaces below
-     it. The walk parses only the modules it cannot answer for, and hands those
-     parses to the splice rather than repeating them.
-   - The record carries the import list, even though an interface carries
-     declarations and not dependencies. Deciding whether to skip a module means
-     knowing what it imports before it has been read.
-   - A file id could not go into a record. It is handed out in registration
-     order, so an interface written down with one in it means something else in
-     the process that reads it back, and module attribution is exactly what
-     reads it. Interfaces are written with it zeroed and restamped on load.
-
-   A skipped module contributes signatures, not bodies. The first version of
-   this step spliced the interface as it stood, which carries the bodies of
-   exported functions whether or not they are generic, so the front end walked
-   every body in the program even though it emitted none of them.
-   `Statement::Declared` is a Frost function's signature with no body, produced
-   by `as_declaration` for exactly the functions whose bodies a caller does not
-   need. A generic keeps its body, because the caller stamps out the template. A
-   type keeps its fields, because the caller lays out its own frame with them.
-
-   It is not an `extern`, which would have been the tempting reuse: an extern
-   means C linkage and a C ABI, which loses the hidden out-pointer an aggregate
-   return uses and has nowhere to put parameter modes, `uses` sets or linearity.
-   It rides instead in `IrModule::imported`, which already means "declared here,
-   defined in another object" and which both backends already declare with the
-   same signature builder that builds a definition.
-
-   What it is worth, from `just bench-incremental` on 9,484 lines across 65
-   files, one of which changed:
-
-   | | full | incremental | incremental, bodies spliced |
-   | --- | --- | --- | --- |
-   | build | ~580 ms | ~200 ms | 399 ms |
-
-   About 90 ms of each is process start and the linker, which no amount of
-   skipping removes, so the compiler's own work goes from about 490 ms to about
-   110 ms, and the declaration form is most of that: it took the skipped path
-   from 309 ms of compiler work to 110 ms.
+About 90 ms of each is process start and the linker, which no amount of skipping
+removes, so the compiler's own work goes from about 490 ms to about 110 ms, and
+the declaration form is most of that: it took the skipped path from 309 ms of
+compiler work to 110 ms.
 
 ## Open questions
 
-- Does the self-hosted compiler grow this too? *Yes.*
+- Does the self-hosted compiler grow this too? *Done, and by a smaller route.*
   `selfhosted/frost.frost` is the compiler people will use, so the
-  edit-compile loop goal 9 promises about is the one it runs. Everything in this
-  document is a port waiting to happen: interfaces, the build cache, per-module
-  objects and `--incremental`. See [self-hosting.md](self-hosted.md).
+  edit-compile loop goal 9 promises about is the one it runs. It emits one unit
+  per module and assembles each to its own object, and it needs none of the
+  machinery above to decide what is stale: the cache key is the emitted unit
+  itself, since the compiler has just written what a module compiles to. See
+  [the self-hosted compiler](self-hosted.md).
 - What is a project root? *Settled, smallest answer.* The directory of the
-  file named on the command line. A manifest would make it reliable and nothing
-  needs one yet. Note what this costs. The same library imported from two
-  different roots has two identities and two caches.
+  file named on the command line, or of the `frost.json` beside it. A module
+  found through `-L`, `FROST_PATH` or the manifest is named relative to the root
+  it was found under, and that label is what keeps its identity the same on
+  another machine. See [modules.md](modules.md).
 - Interfaces in what format? *Settled, replaceably.* serde and JSON, for
   both interfaces and build records. The one requirement the design imposes is
   that it can hold a generic's AST, which rules out anything shaped like a C

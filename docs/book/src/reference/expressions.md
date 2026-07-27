@@ -45,7 +45,7 @@ operators are left-associative.
 - Binding a parameter to a name (`x := p`) binds a *copy* of what it holds, so
   writing through `x` does not reach back to the caller. A second name for the
   same place is `ref x := p`, which is the one form that asks for one, and a
-  call answering with a `ref T` (10.6) hands one out on purpose and keeps it. A
+  call answering with a `ref T` (3.3) hands one out on purpose and keeps it. A
   parameter of a `linear` type cannot be bound this way at all, since a copy
   would be a second owner of something consumed exactly once.
 
@@ -178,13 +178,14 @@ consumes it (chapter 9).
 ## 6.8 `sizeof` and `unsafe`
 
 - `sizeof(T)` is a compile-time constant.
-- `unsafe { ... }` is a block whose body may use unchecked operations.
+- `unsafe { ... }` is a block, and it is the only place four operations may be
+  written: reading or writing through a raw pointer, `ptr_cast`, `slice_from`,
+  and calling an `extern fn` that is not marked `safe`. Outside one each is a
+  compile error. Chapter 6a is the rule, the list, and `--audit-unsafe`.
 
-`--audit-unsafe` reports every `unsafe` block that vouches for nothing: one
-holding no unchecked operation, and one written inside another, which already
-covers what is in it. It is off by default. A build pays for the checks that
-keep a program correct. This one keeps it tidy, and tidiness is not worth a pass
-over the source on every compile.
+The block's value is its trailing expression, the same as any other block, so
+`p := unsafe { ptr_cast($T, slot) }` is how a gated operation's result leaves
+one.
 
 ## 6.9 Ranges
 

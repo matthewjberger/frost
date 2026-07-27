@@ -54,9 +54,11 @@ actual work predictable.
    inspectable layout, pools are contiguous, and nothing is boxed implicitly.
 2. Memory safety without a garbage collector and without lifetime
    annotations. Safety comes from making the dangerous shapes unrepresentable
-   (borrowing is a parameter mode, so there is no reference type to store or
-   return) and from a few local rules (moves, exclusivity, linearity,
-   generational handles). See [memory-safety.md](memory-safety.md).
+   (borrowing is a parameter mode, and the one borrow a program writes down,
+   `ref T`, has nowhere to be stored) and from a few local rules (moves,
+   exclusivity, linearity, generational handles, and the frame and region
+   checks that hold a returned borrow to storage outliving the call). See
+   [memory-safety.md](memory-safety.md).
 3. Zero-cost, static polymorphism. Generics monomorphize, and a function
    that varies is a compile-time argument (`$f`) rather than a pointer, so the
    call in the inner loop is direct. How *many* arguments a call makes can vary
@@ -146,9 +148,14 @@ actual work predictable.
   solving and method resolution are among the passes that dominate other
   compilers' front ends, and their absence is measured in
   [self-hosting.md](../impl/self-hosted.md), not assumed.
-- Not access-controlled. There are no visibility modifiers. Every struct
-  field is public, there is no `pub` or private, and the module system needs no
-  visibility rules. Encapsulation by field privacy is out of scope.
+- Not access-controlled per declaration. There is no `pub`, no private
+  marker on any item, and no `pub(crate)` refinement of one. Every struct field
+  is public, so encapsulation by field privacy is out of scope. A module does
+  have a surface, and it is one line: an `export` at the top of a file lists
+  what the file offers, everything else in it is private, and an import is not
+  transitive. One line to read rather than a marker per declaration, and the
+  reasoning is in
+  [declarations.md](../reference/declarations.md).
 - Not a research vehicle for a novel type theory. The type system is a means
   to make data-oriented code safe and fast, not an end in itself.
 

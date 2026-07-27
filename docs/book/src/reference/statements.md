@@ -25,6 +25,8 @@ value is its trailing expression (or `void`).
   A name followed by `{` is a struct literal everywhere else, so the literal is
   not available in the `Expr` of a `for`, whose brace opens the body.
 - `break` and `continue` are loop control.
+- `with`, `with name Block` names the allocation source every `uses` call inside
+  the block draws from, and makes the block that source's region (8a).
 - `defer`, `defer Stmt` runs `Stmt` at scope exit, LIFO (chapter 9.3).
 - `print Expr` writes one value and a newline to standard output: an integer as
   `%lld`, a float as `%g`, and a `str` or `^i8` as its bytes.

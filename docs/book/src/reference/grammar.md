@@ -1,7 +1,8 @@
 # 13. Grammar
 
-This chapter is the complete syntax of the specified language. Legacy forms the
-current parser also accepts are listed in 13.9 and are not part of the language.
+This chapter is the syntax of the specified language. Where a production here
+and `src/parser.rs` disagree, the parser is the one that runs, and either the
+production or the parser is wrong.
 
 ## 13.1 Program and statements
 
@@ -13,10 +14,14 @@ Statement =
     | "defer" Statement
     | "for" IDENT ( "," IDENT )? "in" Expr Block
     | "while" "(" Expr ")" Block
+    | "with" IDENT Block                      // a region, 8a
     | "break" ";"?
     | "continue" ";"?
-    | "import" STRING ";"?
+    | "import" STRING ImportRenames? ";"?
+    | ExportLine
+    | TestBlock
     | "mut" IDENT ( ":=" Expr | ":" Type "=" Expr ) ";"?
+    | "ref" IDENT ":=" Expr ";"?             // bind a borrow of a place (5.1)
     | MultiNames ":=" Expr ";"?              // several values from one call
     | IDENT ":=" Expr ";"?
     | IDENT ":" Type "=" Expr ";"?           // lookahead: ":" not followed by ":"
@@ -28,7 +33,17 @@ Statement =
 ```
 MultiNames = MultiName ( "," MultiName )+
 MultiName  = "mut"? IDENT
+
+ImportRenames = "(" IDENT "as" IDENT ( "," IDENT "as" IDENT )* ","? ")"
+ExportLine    = "export" IDENT ( "," IDENT )*
+TestBlock     = "test" STRING Block
 ```
+
+`export`, `test` and the `as` of a rename are ordinary identifiers the parser
+reads by what follows them (2.4), so each stays usable as a name elsewhere.
+`export` is read only when an identifier follows it, `test` only when a string
+literal and a `{` follow it, and a rename list only when its `(` opens on the
+same line as the import path.
 
 A name followed by a comma at statement position is a list binding and nothing
 else, which is what tells the two `:=` forms apart.
@@ -65,14 +80,23 @@ FlagBit       = IDENT "=" INTEGER
 
 Params        = Param ( "," Param )*
 Param         = ParamMode? "$" IDENT ":" ( "Type" | "type" | "usize" | ProcType )
+              | IDENT ":" "$" "..."          // compile-time list, last (11.1c)
               | ParamMode? IDENT ( ":" Type )?
-ParamMode     = "mut" | "move"
+ParamMode     = "mut" | "move" | "value"
 ProcType      = "fn" "(" ( ProcParam ( "," ProcParam )* )? ")" ( "->" Type )?
 ProcParam     = ParamMode? Type
 ```
 
 A `Name :: fn(...) { ... }` item is the `Expr` alternative of `ConstBody`, whose
 expression is a function literal (13.6).
+
+`value` (chapter 12) is a word rather than a keyword, so a parameter may still
+be named `value`. What tells the two apart is that a mode is followed by the
+parameter's name and a name is followed by its type.
+
+`args: $...` takes no type, since its length and its element types arrive with
+each call, and it is last, because anything after it would have nothing to say
+which side of the list it belonged to.
 
 ## 13.3 Blocks
 
@@ -94,7 +118,6 @@ Prefix =
       Primary
     | "-" Expr
     | "!" Expr
-    | "&" "mut"? Expr                         // borrow / mutable borrow
     | "$" Type                                // type value (11.3)
     | "sizeof" "(" Type ")"
 
@@ -125,12 +148,15 @@ Postfix =
       Expr ".." Expr                          // range (half-open)
     | Expr "..=" Expr                         // range (inclusive)
     | Expr "[" Expr "]"                       // index
-    | Expr "(" ( Expr ( "," Expr )* )? ")"    // call
+    | Expr "(" Arguments? ")"                 // call
     | Expr "." IDENT                          // field access
     | Expr "^"                                // dereference (assignable place)
+    | Expr "?"                                // hand a failure up (5.2b)
     | IDENT "{" StructInit? "}"              // struct literal (bare identifier)
     | IDENT "::" IDENT ( "{" StructInit? "}" )?   // enum variant (bare identifier)
 
+Arguments  = Argument ( "," Argument )* ","?
+Argument   = Expr ( "for" IDENT "in" IDENT )?  // one argument per list element
 StructInit = IDENT "=" Expr ( "," IDENT "=" Expr )* ","?
 ```
 
@@ -138,6 +164,11 @@ StructInit = IDENT "=" Expr ( "," IDENT "=" Expr )* ","?
 is the appropriate shape (a place for `^`, a bare identifier for `{`/`::`). The
 struct-literal `{` is disambiguated from a `match` body by checking that the
 token after `{` is not `case`.
+
+The `for` form of `Argument` is `g(T) for T in list` (11.1c): the expression is
+written once and the call takes one argument per element of the compile-time
+list, with the named variable standing for that element. An argument list is the
+only place it may be written, because what it produces is an argument count.
 
 ## 13.5 `if` and `match`
 
@@ -168,19 +199,30 @@ Grouped =
     | Params ")" ( ReturnSig? Block )?        // function literal (if a body follows)
     | Expr ( "," Expr )* ")"                  // tuple, or a parenthesized expression
 
-ReturnSig = "->" ( Type ( "!" Type )? | ReturnList ) ( "uses" Type ( "," Type )* )?
-ReturnList = "(" ReturnValue "," ReturnValue ( "," ReturnValue )* ")"
+ReturnSig   = ReturnType? UsesClause* WhereClause?
+ReturnType  = "->" ( Type ( "!" Type )? | ReturnList )
+UsesClause  = "uses" Type ( "," Type )*
+WhereClause = "where" Expr
+ReturnList  = "(" ReturnValue "," ReturnValue ( "," ReturnValue )* ")"
 ReturnValue = ( IDENT ":" )? Type
 ```
+
+Every part of a `ReturnSig` is optional and they are read in that order, so
+`fn() uses Arena<256> { }` and `fn($T: Type, v: $T) -> T where is_numeric(T)`
+are both signatures.
 
 A `ReturnList` is the return type list of 5.2a. It holds two or more values,
 names all of them or none, and does not combine with the `!` of a failure set.
 
-A `uses` list draws one allocation capability per type. Each is an implicit
-parameter the body reaches by the type's own name with the first letter
+A `UsesClause` draws one allocation capability per type (8a). Each is an
+implicit parameter the body reaches by the type's own name with the first letter
 lowercased, and a call supplies one argument per capability, found by that name
 among what the caller holds and the `with` blocks around the call. A callee
 drawing exactly one takes the innermost source whatever it is named.
+
+A `WhereClause` is the bound of 11.4a. Its expression is read with struct
+literals switched off, so the `{` that follows opens the body rather than a
+literal.
 
 A `:` at group depth zero marks a parameter list. When a parameter-shaped group
 is not followed by a body, its contents are reinterpreted as expressions (a
@@ -194,7 +236,7 @@ Type =
     | "u8" | "u16" | "u32" | "u64" | "usize"
     | "f32" | "f64" | "bool" | "str" | "void"
     | "^" Type                               // raw pointer
-    | "&" "mut"? Type                        // reference
+    | "ref" Type                             // returnable borrow (3.3)
     | "[" "]" Type                           // slice
     | "[" INTEGER "]" Type                   // array (size first)
     | "[" Type ";" INTEGER "]"               // array (element first)
@@ -207,8 +249,16 @@ Type =
 ```
 
 A type is a single prefix-constructed form. Nesting comes from the recursive
-constructors (`^`, `[]`, `?`, `distinct`, `fn`), not a postfix loop. Closing
+constructors (`^`, `ref`, `[]`, `distinct`, `fn`), not a postfix loop. Closing
 `>` in the generic forms accepts a split `>>` (11.4).
+
+There is no `&` in either position, which is why neither this production nor
+`Prefix` in 13.4 has one. `&x` and `&mut x` are refused where an expression is
+expected, with an error pointing at the parameter mode or at `ptr_to`, and `&T`
+and `&mut T` are refused where a type is expected (3.3). The one place the
+parser reads them is an internal re-parse: `type_from_string` sets a flag that
+accepts them, so the compiler can read back the reference types its own
+parameter-mode lowering wrote out. No program text reaches that path.
 
 ## 13.8 Comparison and equality precedence
 
