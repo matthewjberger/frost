@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use frost::{CLayout, CReturn, CScalar, CTarget, Type, classify_return};
+
 // A temp-file stem no run and no other test reuses. On Windows a just-run or
 // just-deleted executable stays briefly locked, so relinking over the same name
 // fails intermittently; a fresh name every time sidesteps it. The process id
@@ -14082,4 +14084,144 @@ fn both_compilers_call_a_c_function_answering_with_a_struct() {
         answers[0].1, answers[1].1,
         "the two compilers disagree on what a C function answered with"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The C return rule, written down once.
+//
+// Two backends classify aggregate returns separately: `src/c_abi.rs` for the
+// bootstrap and `selfhosted/emit_asm.frost` for the assembly backend. They have
+// drifted before, and a classification that is wrong compiles cleanly and
+// produces a program that reads the wrong register, so nothing complains until
+// something built against a real C library behaves oddly.
+//
+// This table is the rule. `classify_return` is checked against it directly
+// below, and the self-hosted backend is checked against the same shapes by
+// `both_compilers_call_a_c_function_answering_with_a_struct`, which builds a C
+// library of these shapes and runs the result under both compilers. Adding a
+// row here is the place to start when either backend learns a new shape.
+//
+// `None` means the answer travels through a hidden pointer. `Some(v)` means it
+// comes back in `v.len()` registers, where each entry says whether that
+// eightbyte is floating point.
+struct ReturnCase {
+    what: &'static str,
+    size: usize,
+    align: usize,
+    scalars: &'static [(usize, Type)],
+    windows: Option<&'static [bool]>,
+    sysv: Option<&'static [bool]>,
+}
+
+const RETURN_RULE: &[ReturnCase] = &[
+    ReturnCase {
+        what: "struct { u32, u32 }, one eightbyte of integers",
+        size: 8,
+        align: 4,
+        scalars: &[(0, Type::U32), (4, Type::U32)],
+        windows: Some(&[false]),
+        sysv: Some(&[false]),
+    },
+    ReturnCase {
+        what: "struct { u32 }, half an eightbyte",
+        size: 4,
+        align: 4,
+        scalars: &[(0, Type::U32)],
+        windows: Some(&[false]),
+        sysv: Some(&[false]),
+    },
+    ReturnCase {
+        what: "struct { u8, u8, u8 }, three bytes, not a register size",
+        size: 3,
+        align: 1,
+        scalars: &[(0, Type::U8), (1, Type::U8), (2, Type::U8)],
+        // Microsoft x64 takes a pointer for any size that is not 1, 2, 4 or 8,
+        // even one smaller than a register.
+        windows: None,
+        sysv: Some(&[false]),
+    },
+    ReturnCase {
+        what: "struct { f32 }, where the two targets disagree",
+        size: 4,
+        align: 4,
+        scalars: &[(0, Type::F32)],
+        // Microsoft x64 answers in %rax whatever the field is. System V looks
+        // at the field and answers in %xmm0. Reading this one off the wrong
+        // target's rule is the classic mistake.
+        windows: Some(&[false]),
+        sysv: Some(&[true]),
+    },
+    ReturnCase {
+        what: "struct { f64, f64 }, two floating eightbytes",
+        size: 16,
+        align: 8,
+        scalars: &[(0, Type::F64), (8, Type::F64)],
+        windows: None,
+        sysv: Some(&[true, true]),
+    },
+    ReturnCase {
+        what: "struct { f64, i64 }, one of each",
+        size: 16,
+        align: 8,
+        scalars: &[(0, Type::F64), (8, Type::I64)],
+        windows: None,
+        sysv: Some(&[true, false]),
+    },
+    ReturnCase {
+        what: "struct { f32, i32 }, sharing one eightbyte",
+        size: 8,
+        align: 4,
+        scalars: &[(0, Type::F32), (4, Type::I32)],
+        // An eightbyte anything integral reaches is an integer eightbyte, so
+        // the float beside it travels in %rax rather than %xmm0.
+        windows: Some(&[false]),
+        sysv: Some(&[false]),
+    },
+    ReturnCase {
+        what: "struct { i64, i64, i64 }, over two eightbytes",
+        size: 24,
+        align: 8,
+        scalars: &[(0, Type::I64), (8, Type::I64), (16, Type::I64)],
+        windows: None,
+        sysv: None,
+    },
+];
+
+fn describe(answer: &CReturn) -> Option<Vec<bool>> {
+    match answer {
+        CReturn::Indirect => None,
+        CReturn::Registers(registers) => {
+            Some(registers.iter().map(|register| register.float).collect())
+        }
+    }
+}
+
+#[test]
+fn the_c_return_rule_is_what_the_bootstrap_implements() {
+    for case in RETURN_RULE {
+        let layout = CLayout {
+            name: case.what.to_string(),
+            size: case.size,
+            align: case.align,
+            scalars: case
+                .scalars
+                .iter()
+                .map(|(offset, ty)| CScalar {
+                    offset: *offset,
+                    ty: ty.clone(),
+                })
+                .collect(),
+        };
+        for (target, expected) in
+            [(CTarget::Windows, case.windows), (CTarget::SysV, case.sysv)]
+        {
+            let got = describe(&classify_return(&layout, target));
+            let want = expected.map(|floats| floats.to_vec());
+            assert_eq!(
+                got, want,
+                "{target:?} disagrees with the written rule for {}",
+                case.what
+            );
+        }
+    }
 }
