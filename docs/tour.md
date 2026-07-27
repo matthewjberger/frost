@@ -1,6 +1,6 @@
 # A tour of Frost
 
-This is a hands-on walk through the language by example. Every snippet below
+This is a walk through the language by example. Every snippet below
 compiles and runs on both native backends. For the *why* behind these choices,
 see [philosophy.md](philosophy.md). For the safety rules, see
 [memory-safety.md](memory-safety.md).

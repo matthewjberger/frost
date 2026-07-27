@@ -159,7 +159,7 @@ fn record_once(
 /// The expression an `unsafe` block answers with.
 ///
 /// `ptr_to` and `slice_from` are refused outside such a block, so every pointer
-/// a program can actually write leaves its frame or its region wrapped in one.
+/// a program can write leaves its frame or its region wrapped in one.
 /// A check that does not look through the block does not see the pointer at all.
 fn block_value(block: &Block) -> Option<&Expression> {
     match &block.last()?.node {

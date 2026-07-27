@@ -860,7 +860,7 @@ value_abi_slots :: fn(mut p: Parser, ty: i64) -> i64 {
 
 // The type a `value` parameter takes, or -1 when this argument is not one. The
 // declared type is a borrow of the struct, since the argument still arrives
-// here as an address; only the placement differs.
+// here as an address. Only the placement differs.
 value_param_type :: fn(mut p: Parser, params: i64, index: i64) -> i64 {
     if (nth_param_by_value(p, params, index) == false) {
         return 0 - 1

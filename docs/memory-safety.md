@@ -48,8 +48,6 @@ A handle is plain copyable data, not a reference, so the compiler never has to
 track its lifetime. The sixth is a single compile-time-known length compare on
 each array access.
 
----
-
 ## 1. Second-class borrows, so no dangling pointers
 
 A borrow is second-class. It exists only as a *parameter mode*, and there is
@@ -70,7 +68,7 @@ let one escape are not expressible. There is no way to write a reference-typed
 struct field, and no way to write a reference return type, so a borrow can never
 outlive the call it was created for. There is nothing to outlive, so there are
 no lifetimes to infer and no lifetime annotations. That is what lets the
-borrow analysis stay entirely scope-local.
+borrow analysis stay scope-local.
 
 The lowering still forms reference types internally, and `check_ownership` still
 rejects them in fields and return positions, which is what keeps a synthesized
@@ -158,10 +156,9 @@ boundary), or `match`ing it (a `match` on a linear value destructures and
 consumes it). This is how Frost replaces `Drop`. Cleanup is an obligation the
 type system tracks, not an implicit call inserted behind your back.
 
-There is a useful consequence. A `linear enum` returned from a fallible function
-is a non-ignorable error. You cannot drop it on the floor, so a failure must
-be matched (or otherwise consumed), and silently swallowing an error becomes a
-compile error.
+A `linear enum` returned from a fallible function is a non-ignorable error. You
+cannot drop it on the floor, so a failure must be matched (or otherwise
+consumed), and silently swallowing an error becomes a compile error.
 
 Enforced by the same `MoveChecker`, tracking which linear bindings remain live at
 scope exit.
@@ -211,8 +208,6 @@ The borrow you get is second-class (section 1), so there is nowhere to put it
 that would let it escape the region where the pool operation is valid. Handles
 unify with the borrow discipline. The *handle* is data you keep. The *borrow*
 through it is a scoped thing the language gives you no way to save.
-
----
 
 ## 6. Bounds-checked indexing, so no out-of-bounds access
 
@@ -308,4 +303,4 @@ A few honest gaps in the current implementation:
 
 These are implementation gaps, not holes in the design. The design's job is to
 make the safe constructs (borrows, handles, linear resources) impossible to
-misuse, and that is what the six guarantees above deliver.
+misuse.

@@ -1,7 +1,7 @@
 // Operations over `str`, which is a pointer and a length rather than a
 // NUL-terminated buffer, so every one of these is a bounds-checked walk with no
-// allocation anywhere. None of it is compiler magic. `str_len` and `s[i]` are
-// the only primitives, and the rest is ordinary Frost over them.
+// allocation anywhere. `str_len` and `s[i]` are the only primitives, and the
+// rest is ordinary Frost over them.
 //
 // Nothing here returns a new string, because building one needs storage and
 // this module does not decide where a caller's storage comes from. What it

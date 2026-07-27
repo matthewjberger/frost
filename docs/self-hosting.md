@@ -64,7 +64,7 @@ comptime, only specialization. No textual includes, only modules parsed once.
 Those are the features that make other compilers slow, and the spec omits them
 on purpose.
 
-So there is one lever that matters:
+So one lever matters:
 
 1. Emit native code directly instead of C. This removes the C compiler from
    the loop entirely, which is exactly why Jai and Odin are fast. The reference

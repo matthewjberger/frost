@@ -435,7 +435,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             return new_type_node(p, NodeKind::Sizeof, 0, ty)
         }
         // Where a field sits in the type that declares it. The compiler worked
-        // this out to lay the type out; a layout table is the same number.
+        // this out to lay the type out, and a layout table is the same number.
         if (str_range_eq(p.src, offset, length, "offset_of")) {
             advance(p)
             held := field_binding_of(p, cur_off(p), cur_len(p))
@@ -1587,7 +1587,7 @@ parse_struct_fields :: fn(mut p: Parser) -> i64 {
 // What kind a compile-time parameter was declared with, read off the word after
 // the colon the cursor is sitting on. `$N: usize` takes a number, and it is the
 // only kind that does. `$T: Type` takes a type, `$less: fn(T, T) -> bool` takes
-// a function, and `$ops: Ordering<T>` takes a constant of that type; all three
+// a function, and `$ops: Ordering<T>` takes a constant of that type. All three
 // bind to a name rather than to a number, which is the distinction that decides
 // what may be bound.
 kind_is_value :: fn(mut p: Parser) -> i64 {
@@ -1941,7 +1941,7 @@ return_trailing_branches :: fn(mut p: Parser, body: i64) {
 }
 
 // A match used where a value is wanted, whichever shape it took. A match on
-// one value is a NodeKind::Match with a case per arm; a match on several is the
+// one value is a NodeKind::Match with a case per arm. A match on several is the
 // chain of `if`s the tuple patterns stand for, so the arms are its branches.
 assign_match_values :: fn(mut p: Parser, chosen: i64, name_off: i64,
     name_len: i64) {
@@ -3705,7 +3705,7 @@ parse_inferred_variant :: fn(mut p: Parser) -> i64 {
 
 // One literal that named no type, now that the type it is written into is
 // known. A `.Variant` carries the variant's name on the node and needs its tag
-// filled in as well as its type; a `{ ... }` needs only the type. Either way
+// filled in as well as its type. A `{ ... }` needs only the type. Either way
 // the fields are walked, so a literal nested inside one resolves too.
 resolve_untyped_literal :: fn(mut p: Parser, node_id: i64, wanted: i64) {
     node := arena_at(p.arena, node_id)
@@ -4056,7 +4056,7 @@ wrap_result :: fn(mut p: Parser, value: i64) -> i64 {
 
 // `Result { tag = <which>, <name> = <payload> }`, the value a fallible function
 // answers with. The other payload is left alone, since which one is live is
-// exactly what the tag says.
+// what the tag says.
 new_result_value :: fn(mut p: Parser, result_ty: i64, which: i64, name_off: i64,
     name_len: i64, payload: i64) -> i64 {
     which_node := arena_push(
@@ -4237,7 +4237,7 @@ parse_flags :: fn(mut p: Parser) {
 }
 
 // `name :: Type { field = value }`, a constant whose value is a struct. The
-// literal is parsed here and kept as a node; naming the constant anywhere
+// literal is parsed here and kept as a node, and naming the constant anywhere
 // writes that node out again, so the value exists wherever it is used and
 // nowhere else. This is what a capability bundle is declared as.
 parse_value_const :: fn(mut p: Parser) {

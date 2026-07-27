@@ -348,7 +348,7 @@ resolve_imports :: fn(buffer: str, root: ^i8, names: str,
         named := arena_at(scratch, j + 1)
         if (entry.kind == TokenKind::KwImport && named.kind == TokenKind::Str) {
             // The line is about to be blanked, so the edge it stands for is
-            // recorded first. The importer is whoever wrote the line; the
+            // recorded first. The importer is whoever wrote the line, and the
             // module it names is resolved against that file's own directory,
             // the same way it was when the text was placed.
             importer := module_at(modules, entry.off)

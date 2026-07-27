@@ -303,8 +303,8 @@ struct Planned {
     file: u32,
     source_hash: String,
     imports: Vec<String>,
-    // Absent when the module was answered for from the cache, which is the
-    // whole point. Its source was never parsed.
+    // Absent when the module was answered for from the cache. Its source was
+    // never parsed.
     parsed: Option<ParsedModule>,
     interface: ModuleInterface,
     interface_hash: String,
@@ -998,7 +998,7 @@ fn module_renames(
     let mut renames = HashMap::new();
     for statement in statements {
         // An `extern` name is not this module's to rename. It is the symbol a
-        // C library actually defines, so mangling it produces a link against a
+        // C library defines, so mangling it produces a link against a
         // name nothing exports. That only showed up once a module other than
         // the entry file declared one, which is what a standard library doing
         // its own IO is.

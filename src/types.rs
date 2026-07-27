@@ -37,7 +37,7 @@ pub enum Type {
     Enum(String),
     // `Meters :: distinct i64`: the representation of the inner type under a
     // name of its own, so a Meters is not an i64 and not a Feet. The name is
-    // what makes it nominal; without it two distinct types over the same
+    // what makes it nominal. Without it two distinct types over the same
     // representation would compare equal.
     Distinct(String, Box<Type>),
     Handle(Box<Type>),

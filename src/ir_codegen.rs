@@ -13,8 +13,7 @@ use crate::ir::{
 };
 use crate::types::Type;
 
-// A compiler that promises to stay fast should be able to say where its time
-// goes. `FROST_TIMINGS=1` reports the split between generating code for each
+// `FROST_TIMINGS=1` reports the split between generating code for each
 // function and writing the object, which are the two halves of the backend and
 // want different answers. One parallelizes, the other wants more compilation
 // units. Off unless asked for, and it prints to stderr so it never reaches
@@ -400,7 +399,7 @@ impl Generator {
                 }
                 None => None,
             };
-            // An aggregate parameter is a pointer by design, not by accident:
+            // An aggregate parameter is a pointer by design:
             // `close :: extern fn(f: File)` links against `void close(File*)`.
             // That is the documented convention in docs/c-compatibility.md.
             // A parameter written `value` is the exception, and it is the one
@@ -900,7 +899,7 @@ fn is_aggregate(ty: &Type) -> bool {
 
 // The machine type one returned register holds. A register carrying an odd
 // number of bytes is widened to the next one that exists, and only the bytes
-// the aggregate actually has are written back out.
+// the aggregate has are written back out.
 fn register_type(register: CRegister) -> types::Type {
     if register.float {
         return if register.bytes <= 4 {
@@ -1587,8 +1586,8 @@ impl Translator<'_, '_> {
     }
 
     // Write one returned register into the caller's storage. A register holding
-    // a whole number of bytes that a store can express is stored directly;
-    // anything else (a System V eightbyte with three bytes in it, say) goes
+    // a whole number of bytes that a store can express is stored directly.
+    // Anything else (a System V eightbyte with three bytes in it, say) goes
     // through a scratch slot so that not one byte past the aggregate is
     // written.
     fn store_returned_register(

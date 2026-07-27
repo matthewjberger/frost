@@ -347,7 +347,7 @@ pe^.hp = pe^.hp - 25
 Raw pointers are where you step outside the safety guarantees, exactly as
 `unsafe` raw pointers are in Rust. The difference is that in Frost the common
 case (a pool of long-lived objects) is served by safe handles, so you reach for
-raw pointers far less often than you might expect.
+raw pointers far less often.
 
 ## Moves, copies, and linear resources
 
@@ -387,7 +387,7 @@ compile error, the mirror image of a leaked `Drop`. Consuming means moving it
 onward. That means returning it, passing it by value (often to an `extern` that
 takes ownership across the FFI boundary), or `match`ing it.
 
-Two consequences a Rust programmer will appreciate:
+Two consequences for a Rust programmer:
 
 - Cleanup is a checked obligation you can see in the code, not an implicit call
   that runs at a brace you have to imagine. There is no drop order to reason
@@ -457,7 +457,7 @@ d := digit(text, index)?
 ```
 
 The failure type of the call and the failure type of the function it is written
-in have to be the same one. Rust would insert a `From` impl here; Frost makes
+in have to be the same one. Rust would insert a `From` impl here. Frost makes
 you `match` and return the failure you declared, so what a function fails with
 is what its signature says and nothing arrived through a conversion you did not
 read.
@@ -505,9 +505,9 @@ The generation is what makes this safe without a borrow checker. Freeing a slot
 bumps its generation counter. A handle carries the generation it was minted
 with, and a lookup with a stale generation fails instead of reading whoever
 reused the slot. This is the same idea as the `slotmap` and `generational-arena`
-crates in the Rust ecosystem, promoted to a language primitive. It gives you the
-"weak reference that safely goes dangling" behavior without any reference
-counting or runtime borrow tracking.
+crates in Rust, promoted to a language primitive. It gives you the "weak
+reference that safely goes dangling" behavior without any reference counting or
+runtime borrow tracking.
 
 The mental substitution is direct. A `Handle<T>` is what you store in fields and
 return from functions, precisely the things a `&T` may not do. A linked list, a
@@ -730,7 +730,7 @@ greps to exactly one definition.
 What a bundle deliberately cannot do is be found for you. There is no lookup,
 so there is nothing to be coherent about, no orphan rule, and no solver. What
 you also cannot state is a requirement on `T` itself beyond the `where`
-vocabulary above; anything narrower surfaces when the specialization is
+vocabulary above. Anything narrower surfaces when the specialization is
 compiled.
 
 ## Function pointers, not closures
@@ -846,7 +846,7 @@ files pulled in by `import`, not as a module tree with visibility rules.
 
 - `if` and `while` conditions need parentheses, as in `if (x > 5) { .. }`.
 - A variant can leave its enum out where the type is already stated, as in
-  `paint(.Red)` or `c : Color = .Red`. Rust has this only in a `use`; here it
+  `paint(.Red)` or `c : Color = .Red`. Rust has this only in a `use`. Here it
   reads from the context the way the `case .Red` of a match does.
 - A struct literal can leave its name out the same way, as in
   `p : Point = { x = 1, y = 2 }`. The field names stay: there is no tuple struct

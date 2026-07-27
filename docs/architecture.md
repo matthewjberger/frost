@@ -1,8 +1,8 @@
 # Frost architecture
 
 This document describes how the Frost compiler is structured today and the
-direction it is moving. It is kept honest. It states what works, what is
-partial, and what is not built yet.
+direction it is moving. It states what works, what is partial, and what is not
+built yet.
 
 ## Pipeline
 
@@ -39,9 +39,10 @@ Source (.frost)
   object -> exe        C -> exe             direct run
 ```
 
-The typed IR is the single spine. Reference and move checking are discharged
-before it on the AST, type checking and the linear consume discipline are
-discharged on the IR itself, and every backend emits from it.
+The typed IR is the single intermediate representation. Reference and move
+checking are discharged before it on the AST, type checking and the linear
+consume discipline are discharged on the IR itself, and every backend emits
+from it.
 `--native` / `--link` lower to the IR and emit machine code via Cranelift.
 `--emit-c` lowers the same IR to portable C. `--run-ir` interprets the IR
 directly. With no flag, `frost file.frost` compiles, links, and runs the program

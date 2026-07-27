@@ -130,7 +130,7 @@ param_node_by_value :: fn(mut p: Parser, param_node: i64) -> bool {
 }
 
 // Whether the nth parameter borrows what it is given, so the call site is what
-// takes the address. An aggregate is already reached by address; a scalar is
+// takes the address. An aggregate is already reached by address and a scalar is
 // not, and this is what says so.
 nth_param_auto_borrows :: fn(mut p: Parser, params: i64, n: i64) -> bool {
     mut id := params
@@ -413,7 +413,7 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
     if (kind == NodeKind::StrLit) {
         return POINTER_BASE + TY_I8
     }
-    // A number written as a bit of a flags type carries that type; every other
+    // A number written as a bit of a flags type carries that type. Every other
     // one takes its type from where it was written.
     if (kind == NodeKind::Num && node.b != 0) {
         return node.b - 1
@@ -597,7 +597,7 @@ generic_fn_of :: fn(mut p: Parser, fn_index: i64) -> i64 {
 // instance. The first argument is returned. Any beyond it are left in the
 // `gargs` arena at p.call_xarg_start for p.call_xarg_count entries.
 // The tuple a call names, whichever kind of generic the callee is. A callee
-// taking a compile-time list is keyed by what that list was given; every other
+// taking a compile-time list is keyed by what that list was given, every other
 // one by the type arguments written at the call.
 call_args_for :: fn(mut p: Parser, head: i64, fn_index: i64) -> i64 {
     if (pack_call_args(p, head, fn_index)) {
@@ -939,7 +939,7 @@ parse_param_type :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
 }
 
 // The type of one argument given to a compile-time list. A name is what the
-// declaration being parsed bound it to; anything else is derived the ordinary
+// declaration being parsed bound it to. Anything else is derived the ordinary
 // way.
 pack_arg_type :: fn(mut p: Parser, value: i64) -> i64 {
     node := arena_at(p.arena, value)
@@ -995,14 +995,14 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
     }
     // How many compile-time parameters the callee declares before its list: the
     // primary one, if it has one, and the rest. A `$` argument fills those
-    // first; anything past them is an element of the list.
+    // first, and anything past them is an element of the list.
     mut declared : i64 = gfn.xparam_count
     if (gfn.tparam_len > 0) {
         declared = declared + 1
     }
     // The run this call leaves behind is the callee's own compile-time
     // arguments past the first, then the list's elements. Both live in `gargs`
-    // and both are part of what makes this specialization the one it is; what
+    // and both are part of what makes this specialization the one it is. What
     // separates them is the count the declaration wrote, which every reader of
     // the run already has.
     xstart := p.gargs.count

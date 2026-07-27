@@ -642,7 +642,7 @@ impl MoveChecker<'_> {
                     return Ok(());
                 }
                 // What the callee does with each argument. A name that is a
-                // declared function says so directly; anything else is called
+                // declared function says so directly. Anything else is called
                 // through a value, and the signature that value holds is what
                 // says which of its parameters borrow. Without this every
                 // argument of an indirect call read as consumed, so a table of

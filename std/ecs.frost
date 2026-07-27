@@ -3,7 +3,7 @@
 // Entities that hold the same set of components live in one table, and a table
 // keeps one contiguous column per component, so a system walks columns rather
 // than chasing entities. That is the same shape `columns<T, N>` gives a fixed
-// component set (docs/spec.md 10.1a); this is the version where the set is
+// component set (docs/spec.md 10.1a). This is the version where the set is
 // decided while the program runs, which is what an editor and a save file need.
 //
 // What a component is: plain data. No destructor, no copy constructor, nothing
@@ -69,7 +69,7 @@ MAX_COMPONENTS :: 256
 // ---------------------------------------------------------------------------
 // Entities
 //
-// A handle is an id and a generation. The id indexes the slot table; the
+// A handle is an id and a generation. The id indexes the slot table. The
 // generation is bumped when the id is freed, so a handle kept past a despawn
 // names a generation the slot no longer has and every lookup refuses it. This
 // is the same rule `Handle<T>` follows for a pool, written out here because an
@@ -82,7 +82,7 @@ Entity :: struct {
 }
 
 // Where an entity is and whether it is anywhere. `table` and `row` are its
-// storage; a live entity with no components at all sits in the empty table, so
+// storage. A live entity with no components at all sits in the empty table, so
 // there is always a row to name.
 EntitySlot :: struct {
     generation: i64,
@@ -247,7 +247,7 @@ column_of :: fn($T: Type, c: Column) -> []T {
 //
 // `types` is what lets a query name a component by writing its type. A
 // component's index is decided while the program runs, by the order things
-// register, so nothing about the type says what it is; `type_id` is the number
+// register, so nothing about the type says what it is. `type_id` is the number
 // the compiler already has for a type, and this is the table that turns one
 // into the other.
 Registry :: struct {
@@ -921,7 +921,7 @@ ecs_remove :: fn(mut world: World, entity: Entity, component: i64) {
 }
 
 // The component an entity holds, by value. A component is plain data, so a copy
-// is the whole of it; `ecs_slice` is how a system reaches one to write.
+// is the whole of it. `ecs_slice` is how a system reaches one to write.
 ecs_get :: fn($T: Type, world: World, entity: Entity, component: i64) -> $T {
     slot := vec_slice($EntitySlot, world.slots)[entity.id]
     ref table := vec_slice($Table, world.tables)[slot.table]
@@ -2133,7 +2133,7 @@ test "two readers of one channel each see every event once" {
         i = i + 1
     }
     assert(total == 5)
-    // The same reader again sees nothing; the other reader sees both.
+    // The same reader again sees nothing. The other reader sees both.
     assert(slice_len(events_read($TestDamage, channel, renderer)) == 0)
     assert(slice_len(events_read($TestDamage, channel, audio)) == 2)
 

@@ -132,8 +132,8 @@ pub fn classify_return(layout: &CLayout, target: CTarget) -> CReturn {
 
 // Microsoft x64: a struct comes back in RAX when its size is 1, 2, 4 or 8
 // bytes, and through a hidden pointer otherwise. The contents do not matter,
-// which is the part worth stating because it is where this differs from every
-// other target here. A `struct { float a; }` comes back in RAX, not XMM0, and a
+// which is where this differs from every other target here. A
+// `struct { float a; }` comes back in RAX, not XMM0, and a
 // `struct { char a[3]; }` goes indirect despite being smaller than a register.
 //
 // Checked against the host compiler rather than read off a document: gcc on
@@ -269,9 +269,9 @@ mod tests {
     }
 
     // Every one of these was read off the host C compiler's output, which is
-    // the only reason to believe them. The float cases are the interesting
-    // ones. A struct of one float comes back in an integer register here, which
-    // is what makes this target different from the other two.
+    // the only reason to believe them. A struct of one float comes back in an
+    // integer register here, which is what makes this target different from
+    // the other two.
     #[test]
     fn windows_returns_power_of_two_sizes_in_one_register() {
         let cases: &[(usize, CReturn)] = &[

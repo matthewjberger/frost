@@ -56,8 +56,6 @@ and `name :: extern fn(...)` are all the same grammar production,
 `identifier :: value`. Rust has five different keyword-first forms (`const`,
 `fn`, `struct`, `enum`, and `extern` blocks), each with its own parse rules.
 
-The uniform form means the following.
-
 The name always comes first and left-aligned. Answering "where is Point
 defined" is searching for `Point ::`, no matter what kind of thing Point is. In
 Rust you need to know what kind of item you are looking for before you can grep
@@ -129,7 +127,7 @@ the first path.
 
 ## 3. `:=` for declaration, `=` for assignment
 
-In Rust `let x = 5` and `x = 5` do very different things but look almost
+In Rust `let x = 5` and `x = 5` do different things but look almost
 identical, differing only by a keyword. Writing `let` twice is legal and
 silently creates a second variable that shadows the first.
 
@@ -183,7 +181,7 @@ deref.
 
 Rust has `*const T` and `*mut T`. Frost has one raw pointer type, `^T`, and moves
 mutability to bindings and borrows where it already lives. Less redundant state
-to keep consistent, less to write, less to keep in sync.
+to keep in sync, and less to write.
 
 ## 8. Inferred variant shorthand `.Circle`
 
@@ -198,7 +196,7 @@ match s {
 ```
 
 This Swift-style inferred enum scoping is fewer tokens, and pattern code does not
-break when the enum is renamed. Every arm keeps working.
+break when the enum is renamed.
 
 Construction reads the same way wherever the type is already stated:
 
@@ -222,8 +220,8 @@ paint({ at = { x = 7, y = 0 }, colour = .Green })
 ```
 
 What does not follow is a positional literal. `Point { 3, 4 }` is not syntax and
-will not become syntax. The type name is something the compiler already knows;
-the field names are the layout, which is the one thing a data-oriented language
+will not become syntax. The type name is something the compiler already knows.
+The field names are the layout, which is the one thing a data-oriented language
 should not let the reader lose.
 
 ## 9. `foo($u32)` instead of turbofish

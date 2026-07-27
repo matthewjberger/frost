@@ -68,7 +68,7 @@ vec2_normalize :: fn(a: Vec2) -> Vec2 {
 }
 
 // ---------------------------------------------------------------------------
-// Vec3, the workhorse
+// Vec3
 
 vec3 :: inline fn(x: f32, y: f32, z: f32) -> Vec3 { Vec3 { x = x, y = y, z = z } }
 
@@ -249,7 +249,7 @@ mat4_perspective :: fn(fovy: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
 }
 
 // The same projection with the depth range [0, 1] rather than [-1, 1]. OpenGL
-// takes the second; Direct3D, Metal, Vulkan and WebGPU take the first, and a
+// takes the second. Direct3D, Metal, Vulkan and WebGPU take the first, and a
 // matrix built for the wrong one puts half the scene behind the near plane.
 // The handedness is unchanged, looking down -z.
 mat4_perspective_zo :: fn(fovy: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
@@ -563,7 +563,7 @@ test "the zero to one perspective maps the near plane to zero" {
     assert(near(at_near.z / at_near.w, 0.0))
     at_far := mat4_mul_vec4(projection, vec4(0.0, 0.0, 0.0 - 101.0, 1.0))
     assert(near(at_far.z / at_far.w, 1.0))
-    // Across the view it is the same projection; only the depth range differs.
+    // Across the view it is the same projection. Only the depth range differs.
     edge := mat4_mul_vec4(projection, vec4(2.0, 0.0, 0.0 - 2.0, 1.0))
     assert(near(edge.x / edge.w, 1.0))
     // Twice the aspect ratio is half the horizontal spread.

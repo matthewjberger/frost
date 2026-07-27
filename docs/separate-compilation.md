@@ -4,9 +4,8 @@ What a module's compiled artifact contains, and what has to be in it for a
 caller to compile against it without seeing the body, is the question this
 document answers.
 
-The short version: `frost --link --incremental` gives each module its own object
-and rebuilds a module only when its own source or an imported interface
-changes.
+`frost --link --incremental` gives each module its own object and rebuilds a
+module only when its own source or an imported interface changes.
 
 ## Why the shape has to change
 

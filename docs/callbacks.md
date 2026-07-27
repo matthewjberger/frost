@@ -89,7 +89,7 @@ parameter whose type is the type of the handler's context.
 
 The handler's context is its one `mut` parameter, wherever it is written, and
 every other parameter is a callback argument that C passes through. Position is
-not what identifies it; being the one parameter the handler can write is. So
+not what identifies it. Being the one parameter the handler can write is. So
 both of these are registrations, and the second is the order wgpu-native and
 most modern C APIs take:
 

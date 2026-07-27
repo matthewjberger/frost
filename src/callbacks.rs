@@ -21,7 +21,7 @@ use crate::types::Type;
 // when it puts the userdata first and the wrong order for one that puts it
 // last. wgpu-native does, so its callbacks could not be declared at all while
 // the same function pointer in a struct field went unchecked. The position is
-// not what makes the context identifiable; being the one parameter the handler
+// not what makes the context identifiable. Being the one parameter the handler
 // can write is.
 pub fn check_callback_declarations(
     program: &[Spanned<Statement>],
