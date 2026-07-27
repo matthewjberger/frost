@@ -131,9 +131,17 @@ local_slot :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
 // whole register by its own signedness, so the comparison or the arithmetic
 // that follows reads the value the source meant rather than the bits beside it.
 emit_asm_load_from :: fn(mut p: Parser, ty: i64, slot: i64, base: str) {
+    emit_asm_load_into(p, ty, slot, base, "%rax", "%eax")
+}
+
+// The same load into a register the caller names, so the widths are described
+// once however many registers a value is loaded into. `wide` is the whole
+// register and `narrow` its low 32 bits, which a zero extension writes instead.
+emit_asm_load_into :: fn(mut p: Parser, ty: i64, slot: i64, base: str,
+    wide: str, narrow: str) {
     size := scalar_size(ty)
     mut op : str = "movq "
-    mut destination : str = "%rax"
+    mut destination : str = wide
     if (size == 1) {
         op = "movsbq "
         if (is_unsigned(ty)) { op = "movzbq " }
@@ -148,7 +156,7 @@ emit_asm_load_from :: fn(mut p: Parser, ty: i64, slot: i64, base: str) {
         // number, and extending them by sign would be meaningless.
         if (is_unsigned(ty) || is_float(ty)) {
             op = "movl "
-            destination = "%eax"
+            destination = narrow
         }
     }
     emit_text("    ")
@@ -905,6 +913,62 @@ emit_asm_extend_ret :: fn(mut p: Parser, ty: i64) {
     }
 }
 
+// A right operand this backend can produce without touching %rax, so the left
+// one can stay there while it is produced. 0 is everything else, which needs
+// %rax to compute and so needs the left operand spilled around it. Written as
+// one classification with one emitter below, since a pair that disagreed would
+// spill for a value it then did not clobber, or worse.
+SIMPLE_NONE     :: 0
+SIMPLE_NUMBER   :: 1
+SIMPLE_CONST    :: 2
+SIMPLE_LOCAL    :: 3
+
+simple_operand_kind :: fn(mut p: Parser, id: i64) -> i64 {
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    // A number written as a bit of a flags type carries that type rather than
+    // its own value, so it is not the plain literal this reads.
+    if (kind == NodeKind::Num && node.b == 0) {
+        return SIMPLE_NUMBER
+    }
+    if (kind != NodeKind::Var) {
+        return SIMPLE_NONE
+    }
+    off := node.val
+    len := node.c
+    if (is_const(p, off, len)) {
+        return SIMPLE_CONST
+    }
+    // A name that is not a local is a global function's address or a struct
+    // constant built where it is named, and neither is a load.
+    if (local_exists(p, off, len) == false) {
+        return SIMPLE_NONE
+    }
+    // A struct is handled by its address, which is a computation rather than a
+    // load of the value.
+    if (is_aggregate(lookup_local(p, off, len))) {
+        return SIMPLE_NONE
+    }
+    SIMPLE_LOCAL
+}
+
+// The operand `simple_operand_kind` classified, into %r11, leaving %rax alone.
+emit_asm_simple_into_r11 :: fn(mut p: Parser, id: i64, kind: i64) {
+    node := arena_at(p.arena, id)
+    if (kind == SIMPLE_NUMBER) {
+        asm_i("movq $", node.val, ", %r11")
+        return
+    }
+    off := node.val
+    len := node.c
+    if (kind == SIMPLE_CONST) {
+        asm_i("movq $", const_value(p, off, len), ", %r11")
+        return
+    }
+    emit_asm_load_into(p, lookup_local(p, off, len), local_slot(p, off, len),
+        "(%rbp), ", "%r11", "%r11d")
+}
+
 // Whether the call goes through a local of function-pointer type rather than to
 // the name it shares. Such a local holds a Frost proc, which answers the way
 // Frost does however the global of that name was declared, so the C rules for
@@ -1149,16 +1213,16 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
             }
             return
         }
-        // A right operand that is a written number cannot disturb the left one,
-        // so it goes straight into the register the operation reads it from.
-        // The spill and reload either side of it are what a right operand that
-        // could clobber %rax needs, and they are five instructions this way of
-        // writing it does not emit. Comparisons against a literal and steps of
-        // one are most of the arithmetic a program does.
-        right := arena_at(p.arena, bin.b)
-        if (right.kind == NodeKind::Num && right.b == 0) {
+        // A right operand that cannot disturb the left one goes straight into
+        // the register the operation reads it from. The spill and reload either
+        // side of it are what an operand that could clobber %rax needs, and
+        // they are five instructions this way of writing it does not emit.
+        // Reading a local, comparing against a literal and stepping by one are
+        // most of the arithmetic a program does.
+        simple := simple_operand_kind(p, bin.b)
+        if (simple != SIMPLE_NONE) {
             emit_asm_expr(p, bin.a)
-            asm_i("movq $", right.val, ", %r11")
+            emit_asm_simple_into_r11(p, bin.b, simple)
             emit_asm_binop(op)
             return
         }
