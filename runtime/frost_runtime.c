@@ -61,8 +61,27 @@ int64_t frost_rt_str_len(const char *text) {
    which is how `-o` works without every emitter having to carry a destination. */
 static FILE *frost_rt_emit_target = 0;
 
+/* A backend writes its output in small pieces, hundreds of thousands of them
+   for a large program, so the destination has to carry a buffer wide enough
+   that those pieces are not each a write to the operating system. A file opened
+   here gets one. Standard output does not have one by default on Windows when
+   it is a console, and gets one here so that emitting without `-o` costs what
+   emitting to a file costs. */
+static void frost_rt_emit_buffer(FILE *stream) {
+    static char standard_output_buffer[1 << 16];
+    if (stream == stdout) {
+        setvbuf(stream, standard_output_buffer, _IOFBF,
+                sizeof standard_output_buffer);
+    }
+}
+
 static FILE *frost_rt_emit_where(void) {
     if (frost_rt_emit_target == 0) {
+        static int buffered = 0;
+        if (buffered == 0) {
+            buffered = 1;
+            frost_rt_emit_buffer(stdout);
+        }
         return stdout;
     }
     return frost_rt_emit_target;

@@ -606,6 +606,14 @@ Module :: struct {
     path: ^i8,
     start: i64,
     finish: i64,
+    // Where the last line and column question about this module was answered.
+    // Positions are asked for in roughly source order, so the next answer
+    // carries on from here rather than counting newlines from the start again,
+    // which is what made a file's worth of positions cost the file's length
+    // squared. A negative offset is "nothing asked yet".
+    cursor_off: i64,
+    cursor_line: i64,
+    cursor_column: i64,
 }
 
 // One name standing for another while a body is read again. A compile-time
