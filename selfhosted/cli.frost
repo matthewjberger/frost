@@ -6,8 +6,8 @@ import "core.frost"
 import "imports.frost"
 
 export Backend, Options, c_compiler, join_two, join_number,
-    file_checksum, stored_checksum, write_checksum, make_directory,
-    cached_runtime_object, options_from_command_line, usage
+    file_checksum, text_checksum, stored_checksum, write_checksum,
+    make_directory, cached_runtime_object, options_from_command_line, usage
 
 // Which backend the program goes through. Nothing is chosen until the arguments
 // and the environment have both had their say, so the answer starts as nothing.
@@ -189,6 +189,20 @@ file_checksum :: fn(path: ^i8) -> i64 {
     mut k : i64 = 0
     while (k < length) {
         sum = sum * 131 + byte_at(text, k)
+        k = k + 1
+    }
+    sum
+}
+
+// The same number for text already in hand, which is what a build that
+// assembles its own output has: the emitted assembly never becomes a file, so
+// there is nothing to read back and checksum.
+text_checksum :: fn(text: str) -> i64 {
+    length := str_len(text)
+    mut sum : i64 = length + 1
+    mut k : i64 = 0
+    while (k < length) {
+        sum = sum * 131 + text[k]
         k = k + 1
     }
     sum

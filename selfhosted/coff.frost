@@ -4,7 +4,7 @@
 import "core.frost"
 import "assemble.frost"
 
-export write_coff_object
+export Blob, object_blob, write_coff_object
 
 // The two sections this backend ever emits, in the order they are written.
 // Their numbers are one-based in the symbol table, which is what a symbol's
@@ -113,14 +113,45 @@ reloc_symbol_index :: fn(mut unit: Assembly, sym: i64, text_symbol: i64,
     text_symbol
 }
 
+// Room for one object, which grows to what the object turns out to need. A
+// build writing several fills the same room again for each rather than asking
+// for another of its own.
+object_blob :: fn() -> Blob {
+    Blob { bytes = buffer_of(0), count = 0 }
+}
+
+// Everything the object holds, added up: the headers, both sections, a fixup of
+// ten bytes each, a symbol entry of eighteen with a record of eighteen after
+// the two that stand for sections, and every name too long to sit in an entry.
+object_room :: fn(mut unit: Assembly, text_count: i64, data_count: i64,
+    reloc_count: i64) -> i64 {
+    mut names : i64 = 4
+    mut i : i64 = 0
+    while (i < asm_symbol_count(unit)) {
+        if (carried(unit, i)) {
+            held := asm_symbol_at(unit, i)
+            names = names + 18
+            if (held.len > 8) {
+                names = names + held.len + 1
+            }
+        }
+        i = i + 1
+    }
+    20 + 80 + text_count + data_count + reloc_count * 10 + 4 * 18 + names
+}
+
 // Write the object. The layout is the header, the two section headers, the
 // bytes of each section, the fixups, the symbol table and the names too long
 // to sit in a symbol entry.
-write_coff_object :: fn(mut unit: Assembly, path: ^i8, room: i64) {
-    mut object := Blob { bytes = buffer_of(room), count = 0 }
+write_coff_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
+    object.count = 0
     text_count := asm_section_count(unit, SEC_TEXT)
     data_count := asm_section_count(unit, SEC_DATA)
     reloc_count := asm_reloc_count(unit)
+    room := object_room(unit, text_count, data_count, reloc_count)
+    if (str_len(object.bytes) < room) {
+        object.bytes = buffer_of(room)
+    }
 
     // The section symbols come first, each followed by the record describing
     // the section it stands for, so a local fixup has something to name.
