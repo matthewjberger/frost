@@ -261,7 +261,19 @@ emit_asm_convert :: fn(mut p: Parser, held_from: i64, held_to: i64) {
 // The same conversion, where what is being converted is known rather than only
 // its type. A string literal reaching a `str` needs that: the length is counted
 // from the source, since an escape is two bytes written and one byte held.
-emit_asm_coerce :: fn(mut p: Parser, value: i64, want: i64) {
+emit_asm_coerce :: fn(mut p: Parser, value_in: i64, want: i64) {
+    // A constant whose value is a literal stands for that literal here, so a
+    // text constant reaching a `str` is coerced the way the literal written in
+    // its place would be, length and all, rather than as the name.
+    mut value := value_in
+    named := arena_at(p.arena, value_in)
+    if (named.kind == NodeKind::Var
+        && local_exists(p, named.val, named.c) == false) {
+        held := value_const_node(p, named.val, named.c)
+        if (held >= 0) {
+            value = held
+        }
+    }
     have := type_of(p, value)
     if (is_array_ty(want) && is_slice_ty(p, want) && is_pointer(have)) {
         node := arena_at(p.arena, value)

@@ -4341,6 +4341,13 @@ parse_program :: fn(mut p: Parser) -> i64 {
             // arguments before it, is what tells this from a bare
             // `Name :: OtherName`.
             parse_value_const(p)
+        } else if (third == TokenKind::Str || third == TokenKind::Float) {
+            // A constant whose value is a literal this compiler folds no
+            // arithmetic over. It is kept as the literal's node and written out
+            // again wherever the name is read, so it reaches each use the way a
+            // literal written there would, including the length a `str`
+            // carries.
+            parse_value_const(p)
         } else if (third != TokenKind::KwFn && third != TokenKind::KwInline) {
             // Everything above is a form this compiler knows. Anything else
             // would be read as a function and misparse into a crash far from
