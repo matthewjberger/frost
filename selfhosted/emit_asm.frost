@@ -862,6 +862,60 @@ value_abi_kind :: fn(mut p: Parser, ty: i64) -> i64 {
     0
 }
 
+// Whether an `extern` answering with an aggregate does so through a hidden
+// pointer. This is the target's rule rather than this compiler's: Microsoft x64
+// answers a struct of 1, 2, 4 or 8 bytes in %rax whatever it holds, and takes a
+// pointer for every other size. System V answers anything up to two eightbytes
+// in registers. A Frost function always takes the pointer, so this is asked
+// only of an extern.
+extern_ret_indirect :: fn(mut p: Parser, ty: i64) -> bool {
+    size := type_size(p, ty)
+    if (size == 0) {
+        return true
+    }
+    if (p.abi_windows == 1) {
+        if (size == 1 || size == 2 || size == 4 || size == 8) {
+            return false
+        }
+        return true
+    }
+    size > 16
+}
+
+// The eightbytes an extern answered in registers, written into the slot the
+// caller keeps the value in. Windows uses %rax alone. System V takes each
+// eightbyte from %rax then %rdx when anything in it is an integer, and from
+// %xmm0 then %xmm1 when everything reaching it is floating point.
+emit_asm_take_ret_registers :: fn(mut p: Parser, ty: i64, slot: i64) {
+    size := type_size(p, ty)
+    if (p.abi_windows == 1) {
+        asm_i("movq %rax, ", slot, "(%rbp)")
+        return
+    }
+    mut word : i64 = 0
+    mut ints : i64 = 0
+    mut floats : i64 = 0
+    while (word * 8 < size) {
+        at := slot + word * 8
+        if (classify_eightbyte(p, ty, 0, word) == 1) {
+            if (floats == 0) {
+                asm_i("movq %xmm0, ", at, "(%rbp)")
+            } else {
+                asm_i("movq %xmm1, ", at, "(%rbp)")
+            }
+            floats = floats + 1
+        } else {
+            if (ints == 0) {
+                asm_i("movq %rax, ", at, "(%rbp)")
+            } else {
+                asm_i("movq %rdx, ", at, "(%rbp)")
+            }
+            ints = ints + 1
+        }
+        word = word + 1
+    }
+}
+
 value_abi_slots :: fn(mut p: Parser, ty: i64) -> i64 {
     if (value_abi_kind(p, ty) == 1) {
         return 1
@@ -1300,9 +1354,16 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     ret := call_ret_type(p, args, fn_index)
     mut sret : i64 = 0
     mut result_slot : i64 = 0
+    // An extern answering with a small struct hands it back in registers, so
+    // there is no hidden pointer and no argument is pushed along by one.
+    mut register_ret : i64 = 0
     if (is_aggregate(ret)) {
-        sret = 1
         result_slot = alloc_temp(p, type_size(p, ret))
+        if (callee.is_extern == 1 && extern_ret_indirect(p, ret) == false) {
+            register_ret = 1
+        } else {
+            sret = 1
+        }
     }
 
     // Arguments are pushed last to first, so the capabilities, being last, go
@@ -1521,6 +1582,13 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         } else {
             emit_asm_move("movq", "%xmm0", "%rax")
         }
+    }
+    // An aggregate travels as its address, which a hidden pointer already
+    // answered with. One that came back in registers is put in the frame first
+    // so there is an address to hand on.
+    if (register_ret == 1) {
+        emit_asm_take_ret_registers(p, ret, result_slot)
+        asm_i("leaq ", result_slot, "(%rbp), %rax")
     }
 }
 

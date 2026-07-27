@@ -13837,6 +13837,7 @@ fn both_compilers_link_a_c_library_from_outside_the_checkout() {
     let self_hosted = build_self_hosted_compiler("libs")
         .expect("the self-hosted compiler is required for this test");
 
+    let mut outcomes = Vec::new();
     for (label, compiler) in
         [("bootstrap", &bootstrap), ("self-hosted", &self_hosted)]
     {
@@ -13846,6 +13847,9 @@ fn both_compilers_link_a_c_library_from_outside_the_checkout() {
         for name in ["window.frost", "sdl.frost"] {
             std::fs::copy(graphics.join(name), work.join(name)).unwrap();
         }
+        // The library has to sit beside the program it was linked against, or
+        // neither build starts and the comparison below proves nothing.
+        std::fs::copy(&library, work.join("SDL3.dll")).unwrap();
         let exe = work.join(format!("window{}", std::env::consts::EXE_SUFFIX));
         let build = Command::new(&installed)
             .current_dir(&work)
@@ -13864,5 +13868,165 @@ fn both_compilers_link_a_c_library_from_outside_the_checkout() {
             String::from_utf8_lossy(&build.stdout),
             String::from_utf8_lossy(&build.stderr)
         );
+        outcomes.push((label, survives_briefly(&exe, &work)));
     }
+
+    // The program opens a window and waits, so what is asked is whether it is
+    // still running a moment later rather than what it printed. A machine with
+    // no display fails the same way under both compilers, and that is not this
+    // test's business, so the two are compared rather than either being
+    // required to succeed on its own.
+    assert_eq!(
+        outcomes[0].1, outcomes[1].1,
+        "the two compilers disagree on whether the program survives startup"
+    );
+}
+
+// Whether a program is still running a moment after it starts, and the exit
+// code when it is not. A binding miscompiled at the call boundary shows up
+// here as an immediate exit rather than as wrong output.
+fn survives_briefly(exe: &Path, work: &Path) -> Option<i32> {
+    let mut child = Command::new(exe)
+        .current_dir(work)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("the built program could not start");
+    for _ in 0..15 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if let Ok(Some(status)) = child.try_wait() {
+            return Some(status.code().unwrap_or(-1));
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    None
+}
+
+// A C library whose functions answer with structs of the sizes the ABI rules
+// turn on. Microsoft x64 answers 1, 2, 4 and 8 bytes in a register whatever the
+// fields are, and takes a hidden pointer for every other size. System V answers
+// up to two eightbytes in registers. Both compilers write this classification
+// out separately, so the only thing that holds them together is a program that
+// calls one and is run.
+const C_STRUCT_RETURNS: &str = r#"#include <stdint.h>
+typedef struct { uint32_t id; uint32_t generation; } Pair32;
+typedef struct { uint8_t a, b, c; } Three;
+typedef struct { float only; } OneFloat;
+typedef struct { double x, y; } TwoDoubles;
+typedef struct { int64_t a, b, c; } Big;
+
+Pair32 make_pair(int64_t seed) {
+    Pair32 made; made.id = (uint32_t)seed; made.generation = (uint32_t)(seed * 2); return made;
+}
+Three make_three(int64_t seed) {
+    Three made; made.a = (uint8_t)seed; made.b = (uint8_t)(seed + 1); made.c = (uint8_t)(seed + 2); return made;
+}
+OneFloat make_float(float seed) { OneFloat made; made.only = seed * 2.0f; return made; }
+TwoDoubles make_doubles(double seed) { TwoDoubles made; made.x = seed; made.y = seed * 3.0; return made; }
+Big make_big(int64_t seed) { Big made; made.a = seed; made.b = seed * 2; made.c = seed * 3; return made; }
+"#;
+
+const CALLS_C_STRUCT_RETURNS: &str =
+    "Pair32 :: struct { id: u32, generation: u32 }
+     Three :: struct { a: u8, b: u8, c: u8 }
+     OneFloat :: struct { only: f32 }
+     TwoDoubles :: struct { x: f64, y: f64 }
+     Big :: struct { a: i64, b: i64, c: i64 }
+
+     make_pair    :: extern fn(seed: i64) -> Pair32
+     make_three   :: extern fn(seed: i64) -> Three
+     make_float   :: extern fn(seed: f32) -> OneFloat
+     make_doubles :: extern fn(seed: f64) -> TwoDoubles
+     make_big     :: extern fn(seed: i64) -> Big
+
+     main :: fn() -> i64 {
+         pair := unsafe { make_pair(21) }
+         print pair.id
+         print pair.generation
+         three := unsafe { make_three(10) }
+         print three.a
+         print three.c
+         single := unsafe { make_float(1.5) }
+         print single.only
+         doubles := unsafe { make_doubles(2.0) }
+         print doubles.x
+         print doubles.y
+         big := unsafe { make_big(5) }
+         print big.a
+         print big.c
+         0
+     }
+";
+
+#[test]
+fn both_compilers_call_a_c_function_answering_with_a_struct() {
+    let Some(compiler) = c_compiler() else {
+        return;
+    };
+    if !linker_available() {
+        return;
+    }
+    let directory = std::env::temp_dir().join(unique("frost_cret"));
+    std::fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("shapes.c");
+    let object = directory.join("shapes.o");
+    std::fs::write(&source, C_STRUCT_RETURNS).unwrap();
+    let built = Command::new(compiler)
+        .arg("-c")
+        .arg(&source)
+        .arg("-o")
+        .arg(&object)
+        .output()
+        .unwrap();
+    assert!(built.status.success(), "the C library did not compile");
+
+    let program = directory.join("program.frost");
+    std::fs::write(&program, CALLS_C_STRUCT_RETURNS).unwrap();
+
+    let bootstrap = PathBuf::from(env!("CARGO_BIN_EXE_frost"));
+    let self_hosted = build_self_hosted_compiler("cret")
+        .expect("the self-hosted compiler is required for this test");
+
+    let mut answers = Vec::new();
+    for (label, frost) in
+        [("bootstrap", &bootstrap), ("self-hosted", &self_hosted)]
+    {
+        let exe =
+            directory.join(format!("{label}{}", std::env::consts::EXE_SUFFIX));
+        let build = Command::new(frost)
+            .arg("--link")
+            .arg("--libs")
+            .arg(&object)
+            .arg("-o")
+            .arg(&exe)
+            .arg(&program)
+            .output()
+            .unwrap();
+        assert!(
+            build.status.success() && exe.exists(),
+            "{label} could not build the program:\n{}{}",
+            String::from_utf8_lossy(&build.stdout),
+            String::from_utf8_lossy(&build.stderr)
+        );
+        let run = Command::new(&exe).output().unwrap();
+        assert!(
+            run.status.success(),
+            "{label} built a program that did not run: {:?}",
+            run.status.code()
+        );
+        answers.push((
+            label,
+            String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"),
+        ));
+    }
+
+    assert_eq!(
+        answers[0].1, "21\n42\n10\n12\n3\n2\n6\n5\n15\n",
+        "the bootstrap answered wrongly"
+    );
+    assert_eq!(
+        answers[0].1, answers[1].1,
+        "the two compilers disagree on what a C function answered with"
+    );
 }
