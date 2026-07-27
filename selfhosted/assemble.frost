@@ -10,7 +10,8 @@ import "core.frost"
 
 export Assembly, assembly_of, assemble_into, asm_section_bytes, asm_section_count,
     asm_reloc_count, asm_reloc_at, asm_symbol_count, asm_symbol_at,
-    AsmSym, AsmReloc, SEC_TEXT, SEC_DATA, SEC_ABS, SEC_UNDEF
+    AsmSym, AsmReloc, SEC_TEXT, SEC_DATA, SEC_ABS, SEC_UNDEF,
+    FORMAT_COFF, FORMAT_ELF, FIXUP_DATA, FIXUP_CALL, SECTION_ALIGNMENT
 
 // Which section a symbol or a byte belongs to. `SEC_ABS` is a `.set` name,
 // which stands for a number rather than a place. `SEC_UNDEF` is a name this
@@ -144,7 +145,25 @@ AsmReloc :: struct {
     section: i64,
     offset: i64,
     sym: i64,
+    // What to add to the name's address. COFF reads this out of the four bytes
+    // being fixed up and ELF carries it here, so it is written down either way
+    // and each writer takes it from where its format expects it.
+    addend: i64,
+    kind: i64,
 }
+
+// Which object format this unit is being encoded for. It decides two things the
+// encoding cannot be written without: whether a reference to a name this file
+// defines and offers is settled here, and whether a fixup carries its addend or
+// reads one out of the bytes it fills in.
+FORMAT_COFF :: 0
+FORMAT_ELF :: 1
+
+// What a fixup names. Both are measured from the end of the four bytes they
+// fill in and a linker treats them the same, but ELF has a separate name for
+// the one a call makes and matching it is what lets the two be compared.
+FIXUP_DATA :: 0
+FIXUP_CALL :: 1
 
 // What both sections are laid out to, and are padded up to the length of.
 SECTION_ALIGNMENT :: 16
@@ -169,6 +188,7 @@ Assembly :: struct {
     buckets: Arena<Bucket>,
     bucket_mask: i64,
     section: i64,
+    format: i64,
 }
 
 // ---------------------------------------------------------------------------
@@ -818,20 +838,22 @@ arith_rm_opcode :: fn(digit: i64) -> i64 { digit * 8 + 1 }
 arith_acc_opcode :: fn(digit: i64) -> i64 { digit * 8 + 5 }
 
 // Record a place the linker fills in, at the four bytes about to be written.
-note_reloc :: fn(mut unit: Assembly, sym: i64) {
+note_reloc :: fn(mut unit: Assembly, sym: i64, addend: i64, kind: i64) {
     if (unit.relocs.count >= unit.relocs.cap) {
         mut wider := arena_make($AsmReloc, unit.relocs.cap * 2 + 1024)
         mut i : i64 = 0
         while (i < unit.relocs.count) {
             held := arena_at(unit.relocs, i)
             arena_push(wider, AsmReloc {
-                section = held.section, offset = held.offset, sym = held.sym })
+                section = held.section, offset = held.offset, sym = held.sym,
+                addend = held.addend, kind = held.kind })
             i = i + 1
         }
         unit.relocs = wider
     }
     arena_push(unit.relocs, AsmReloc {
-        section = SEC_TEXT, offset = unit.text_count, sym = sym })
+        section = SEC_TEXT, offset = unit.text_count, sym = sym,
+        addend = addend, kind = kind })
 }
 
 // A name used as an address: either this file works the distance out, or the
@@ -841,12 +863,21 @@ note_reloc :: fn(mut unit: Assembly, sym: i64) {
 // units does not come into it.
 resolved_here :: fn(mut unit: Assembly, sym: i64) -> bool {
     held := arena_at(unit.syms, sym)
-    held.section == SEC_TEXT
+    if (held.section != SEC_TEXT) {
+        return false
+    }
+    // ELF lets another object take a global name over at load time, so a
+    // reference to one is the linker's to settle however near it sits. COFF has
+    // no such rule, and `as` settles it here.
+    if (unit.format == FORMAT_ELF && held.global == 1) {
+        return false
+    }
+    true
 }
 
 // The four bytes of a RIP-relative address. `trailing` is how many bytes of
 // the instruction follow them, which the distance is measured past.
-emit_rip_target :: fn(mut unit: Assembly, sym: i64, trailing: i64) {
+emit_rip_target :: fn(mut unit: Assembly, sym: i64, trailing: i64, kind: i64) {
     if (resolved_here(unit, sym)) {
         named := arena_at(unit.syms, sym)
         target := named.value
@@ -856,9 +887,20 @@ emit_rip_target :: fn(mut unit: Assembly, sym: i64, trailing: i64) {
     mut addend : i64 = 0
     held := arena_at(unit.syms, sym)
     if (held.global == 0 && held.section != SEC_UNDEF) {
+        // A name this file defines and does not offer is reached through the
+        // symbol standing for its whole section, so where in that section it
+        // sits is what has to be added.
         addend = held.value
     }
-    note_reloc(unit, sym)
+    if (unit.format == FORMAT_ELF) {
+        // There a fixup carries its own addend rather than reading one out of
+        // the bytes it fills in, and it is measured past those bytes, which is
+        // what the four subtracts.
+        note_reloc(unit, sym, addend - 4 - trailing, kind)
+        text_word32(unit, 0)
+        return
+    }
+    note_reloc(unit, sym, addend, kind)
     text_word32(unit, addend)
 }
 
@@ -916,7 +958,7 @@ encode_insn :: fn(mut unit: Assembly, index: i64) {
             return
         }
         text_byte(unit, 232)
-        emit_rip_target(unit, a_sym, 0)
+        emit_rip_target(unit, a_sym, 0, FIXUP_CALL)
         return
     }
     if (op == M_JMP || op == M_JCC) {
@@ -960,7 +1002,7 @@ encode_insn :: fn(mut unit: Assembly, index: i64) {
             // emit_reg_rm wrote a zero displacement, so back over it and put
             // the real distance there.
             unit.text_count = unit.text_count - 4
-            emit_rip_target(unit, a_sym, 0)
+            emit_rip_target(unit, a_sym, 0, FIXUP_DATA)
             return
         }
         emit_reg_rm(unit, 0, 1, 0, 141, reg_code(b_reg), OPND_MEM,
@@ -1228,14 +1270,14 @@ encode_move :: fn(mut unit: Assembly, op: i64, a_kind: i64, a_reg: i64,
         emit_reg_rm(unit, prefix, w, 0, load, reg_code(b_reg), OPND_MEM, REG_RIP,
             0, force)
         unit.text_count = unit.text_count - 4
-        emit_rip_target(unit, a_sym, 0)
+        emit_rip_target(unit, a_sym, 0, FIXUP_DATA)
         return
     }
     if (b_kind == OPND_MEM_RIP) {
         emit_reg_rm(unit, prefix, w, 0, store, reg_code(a_reg), OPND_MEM, REG_RIP,
             0, force)
         unit.text_count = unit.text_count - 4
-        emit_rip_target(unit, b_sym, 0)
+        emit_rip_target(unit, b_sym, 0, FIXUP_DATA)
         return
     }
     if (a_kind == OPND_MEM) {
@@ -1805,11 +1847,14 @@ lay_out :: fn(mut unit: Assembly) {
     size_everything(unit)
     settle_jump_widths(unit)
     encode_everything(unit)
-    // Each section is as long as its alignment asks, so whatever the linker
-    // places after this object still starts on a boundary. Code is padded with
-    // the one-byte no-op and data with zeros.
-    while (unit.text_count % SECTION_ALIGNMENT != 0) {
-        text_byte(unit, 144)
+    // A COFF section is as long as its alignment asks, so whatever the linker
+    // places after this object still starts on a boundary, and code is padded
+    // with the one-byte no-op. An ELF section says its alignment in its header
+    // instead and is left exactly as long as it is.
+    if (unit.format == FORMAT_COFF) {
+        while (unit.text_count % SECTION_ALIGNMENT != 0) {
+            text_byte(unit, 144)
+        }
     }
 }
 
@@ -1914,7 +1959,7 @@ ASSEMBLE_BUCKETS :: 1024
 // turns out to need. A build that emits several units assembles each into the
 // same room rather than asking for another of its own per module, and one that
 // hands its units to the toolchain instead never grows any of this past here.
-assembly_of :: fn() -> Assembly {
+assembly_of :: fn(format: i64) -> Assembly {
     mut buckets := arena_make($Bucket, ASSEMBLE_BUCKETS)
     mut i : i64 = 0
     while (i < ASSEMBLE_BUCKETS) {
@@ -1933,6 +1978,7 @@ assembly_of :: fn() -> Assembly {
         buckets = buckets,
         bucket_mask = ASSEMBLE_BUCKETS - 1,
         section = SEC_TEXT,
+        format = format,
     }
 }
 
@@ -1994,8 +2040,10 @@ assemble_into :: fn(mut unit: Assembly, text: str) {
         at = read_line(unit, at)
     }
     lay_out(unit)
-    while (unit.data_count % SECTION_ALIGNMENT != 0) {
-        data_byte(unit, 0)
+    if (unit.format == FORMAT_COFF) {
+        while (unit.data_count % SECTION_ALIGNMENT != 0) {
+            data_byte(unit, 0)
+        }
     }
 }
 

@@ -1,0 +1,101 @@
+// A run of bytes being built, with the writing an object format asks for. Both
+// writers work through this, so what differs between them is the layout rather
+// than the byte pushing.
+
+import "core.frost"
+
+export Blob, object_blob, blob_byte, blob_word16, blob_word32, blob_word64,
+    blob_zeros, blob_name, blob_copy, blob_room, blob_write
+
+Blob :: struct {
+    bytes: str,
+    count: i64,
+}
+
+// Room for one object, which grows to what the object turns out to need. A
+// build writing several fills the same room again for each rather than asking
+// for another of its own.
+object_blob :: fn() -> Blob {
+    Blob { bytes = buffer_of(0), count = 0 }
+}
+
+// Room for `room` bytes, kept if there already is that much.
+blob_room :: fn(mut b: Blob, room: i64) {
+    if (str_len(b.bytes) < room) {
+        b.bytes = buffer_of(room)
+    }
+    b.count = 0
+}
+
+blob_byte :: fn(mut b: Blob, value: i64) {
+    if (b.count >= str_len(b.bytes)) {
+        report("frost: the object outgrew its buffer\n")
+        frost_rt_die()
+    }
+    b.bytes[b.count] = value & 255
+    b.count = b.count + 1
+}
+
+blob_word16 :: fn(mut b: Blob, value: i64) {
+    blob_byte(b, value)
+    blob_byte(b, value >> 8)
+}
+
+blob_word32 :: fn(mut b: Blob, value: i64) {
+    blob_byte(b, value)
+    blob_byte(b, value >> 8)
+    blob_byte(b, value >> 16)
+    blob_byte(b, value >> 24)
+}
+
+blob_word64 :: fn(mut b: Blob, value: i64) {
+    blob_word32(b, value)
+    blob_word32(b, value >> 32)
+}
+
+blob_zeros :: fn(mut b: Blob, count: i64) {
+    mut i : i64 = 0
+    while (i < count) {
+        blob_byte(b, 0)
+        i = i + 1
+    }
+}
+
+// A fixed-width name field, padded with zeros.
+blob_name :: fn(mut b: Blob, name: str, width: i64) {
+    mut i : i64 = 0
+    while (i < width) {
+        if (i < str_len(name)) {
+            blob_byte(b, name[i])
+        } else {
+            blob_byte(b, 0)
+        }
+        i = i + 1
+    }
+}
+
+// A run of the assembled bytes, copied across.
+blob_copy :: fn(mut b: Blob, source: str, count: i64) {
+    mut i : i64 = 0
+    while (i < count) {
+        blob_byte(b, source[i])
+        i = i + 1
+    }
+}
+
+// What was built, written where it was asked for.
+blob_write :: fn(mut b: Blob, path: ^i8) {
+    mut opened : i64 = 0
+    unsafe {
+        opened = frost_rt_emit_open(path)
+    }
+    if (opened == 0) {
+        report("frost: cannot write the object\n")
+        frost_rt_die()
+    }
+    written := unsafe {
+        slice_from($u8, ptr_to(b.bytes[0]), b.count)
+    }
+    emit_text(written)
+    frost_rt_emit_close()
+}

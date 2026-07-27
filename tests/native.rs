@@ -14417,6 +14417,299 @@ fn relocation_lines(object: &Path) -> Vec<String> {
     lines
 }
 
+fn std_source(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("std")
+        .join(name)
+}
+
+// A section's bytes out of an ELF object. `objcopy` from binutils reads COFF
+// here, so the LLVM one is what reads the other format.
+fn elf_section_bytes(object: &Path, section: &str, into: &Path) -> Vec<u8> {
+    let extract = Command::new("llvm-objcopy")
+        .arg("-O")
+        .arg("binary")
+        .arg(format!("--only-section={section}"))
+        .arg(object)
+        .arg(into)
+        .output()
+        .unwrap();
+    assert!(
+        extract.status.success(),
+        "could not read {section}:\n{}",
+        String::from_utf8_lossy(&extract.stderr)
+    );
+    let bytes = std::fs::read(into).unwrap_or_default();
+    let _ = std::fs::remove_file(into);
+    bytes
+}
+
+fn clang_available() -> bool {
+    Command::new("clang").arg("--version").output().is_ok()
+        && Command::new("llvm-objcopy")
+            .arg("--version")
+            .output()
+            .is_ok()
+        && Command::new("readelf").arg("--version").output().is_ok()
+}
+
+// The relocations an object carries, as name, kind and addend against the place
+// each fixes up, which is the whole of what a linker acts on.
+fn elf_relocations(object: &Path) -> Vec<String> {
+    let listing = Command::new("readelf")
+        .arg("-r")
+        .arg(object)
+        .output()
+        .unwrap();
+    assert!(listing.status.success());
+    let mut lines: Vec<String> = String::from_utf8_lossy(&listing.stdout)
+        .lines()
+        .filter(|line| line.contains("R_X86_64"))
+        .map(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            format!("{} {} {}", fields[0], fields[2], fields[4..].join(" "))
+        })
+        .collect();
+    lines.sort();
+    lines
+}
+
+// The assembler's ELF half against clang, byte for byte, the way its COFF half
+// is held to `as`. Both read the same text, so a disagreement is this
+// compiler's object being wrong.
+//
+// One substitution is needed first. The backend writes a frame size as a symbol
+// a `.set` gives a value to further down the file, because the size is not
+// known until the body has been emitted. `as` sizes that immediate without the
+// value and takes the wide form, which is what this assembler does; clang makes
+// a further pass and takes the short one. Both are correct and the two texts
+// are then different lengths, so the test resolves those symbols itself and
+// hands both assemblers a file with no forward reference left in it. What that
+// costs is coverage of one instruction form, and
+// `the_assembler_encodes_what_the_system_assembler_does` covers it against `as`.
+#[test]
+fn the_assembler_writes_the_elf_object_clang_writes() {
+    if !clang_available() {
+        return;
+    }
+    let Some(compiler) = build_self_hosted_compiler("elf") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    let sources: &[(&str, PathBuf)] = &[
+        ("the compiler itself", self_hosted_source()),
+        ("the entity store", std_source("ecs.frost")),
+        ("the sort library", std_source("sort.frost")),
+        ("the maths library", std_source("math.frost")),
+    ];
+
+    for (what, source) in sources {
+        let assembly = directory.join(unique("frost_elf")).with_extension("s");
+        let emitted = Command::new(&compiler)
+            .arg("--emit-asm")
+            .arg("-o")
+            .arg(&assembly)
+            .arg(source)
+            .output()
+            .unwrap();
+        assert!(
+            emitted.status.success(),
+            "the self-hosted compiler could not emit assembly for {what}:\n{}",
+            String::from_utf8_lossy(&emitted.stderr)
+        );
+
+        let text = std::fs::read_to_string(&assembly).unwrap();
+        let mut sizes: Vec<(String, String)> = Vec::new();
+        for line in text.lines() {
+            let line = line.trim();
+            if let Some(rest) = line.strip_prefix(".set ")
+                && let Some((name, value)) = rest.split_once(", ")
+            {
+                sizes.push((format!("${name}"), format!("${value}")));
+            }
+        }
+        let mut flattened = text.clone();
+        for (name, value) in &sizes {
+            flattened =
+                flattened.replace(&format!("{name},"), &format!("{value},"));
+        }
+        let flat = directory.join(unique("frost_elf_flat")).with_extension("s");
+        std::fs::write(&flat, &flattened).unwrap();
+
+        let reference =
+            directory.join(unique("frost_elf_gold")).with_extension("o");
+        let system = Command::new("clang")
+            .arg("-target")
+            .arg("x86_64-unknown-linux-gnu")
+            .arg("-c")
+            .arg(&flat)
+            .arg("-o")
+            .arg(&reference)
+            .output()
+            .unwrap();
+        assert!(
+            system.status.success(),
+            "clang rejected the emitted text for {what}:\n{}",
+            String::from_utf8_lossy(&system.stderr)
+        );
+
+        let ours = directory.join(unique("frost_elf_ours")).with_extension("o");
+        let encoded = Command::new(&compiler)
+            .env("FROST_OBJECT", "elf")
+            .arg("--assemble")
+            .arg("-o")
+            .arg(&ours)
+            .arg(&flat)
+            .output()
+            .unwrap();
+        assert!(
+            encoded.status.success(),
+            "this compiler's assembler failed on {what}:\n{}",
+            String::from_utf8_lossy(&encoded.stderr)
+        );
+
+        for section in [".text", ".data"] {
+            let want = elf_section_bytes(
+                &reference,
+                section,
+                &directory.join(unique("elf_gold_section")),
+            );
+            let got = elf_section_bytes(
+                &ours,
+                section,
+                &directory.join(unique("elf_ours_section")),
+            );
+            assert_eq!(
+                want.len(),
+                got.len(),
+                "{section} is a different length for {what}"
+            );
+            if let Some(at) = want
+                .iter()
+                .zip(&got)
+                .position(|(left, right)| left != right)
+            {
+                let from = at.saturating_sub(8);
+                let to = (at + 8).min(want.len());
+                panic!(
+                    "{section} differs for {what} at byte {at}\n  clang: {:02x?}\n  ours:  {:02x?}",
+                    &want[from..to],
+                    &got[from..to]
+                );
+            }
+        }
+
+        assert_eq!(
+            elf_relocations(&reference),
+            elf_relocations(&ours),
+            "the fixups differ for {what}"
+        );
+
+        let _ = std::fs::remove_file(&assembly);
+        let _ = std::fs::remove_file(&flat);
+        let _ = std::fs::remove_file(&reference);
+        let _ = std::fs::remove_file(&ours);
+    }
+}
+
+// The two formats against each other on the same input, which is what says the
+// ELF encoding is the COFF one with the places a linker fills in left for it.
+// COFF is held to `as` byte for byte, so this carries that over rather than
+// checking the same bytes twice.
+#[test]
+fn the_two_object_formats_differ_only_where_a_linker_fills_in() {
+    if !clang_available() || !binutils_available() {
+        return;
+    }
+    let Some(compiler) = build_self_hosted_compiler("formats") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    let assembly = directory.join(unique("frost_formats")).with_extension("s");
+    assert!(
+        Command::new(&compiler)
+            .arg("--emit-asm")
+            .arg("-o")
+            .arg(&assembly)
+            .arg(std_source("ecs.frost"))
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+
+    let mut objects = Vec::new();
+    for format in ["coff", "elf"] {
+        let object = directory
+            .join(unique(&format!("frost_formats_{format}")))
+            .with_extension("o");
+        assert!(
+            Command::new(&compiler)
+                .env("FROST_OBJECT", format)
+                .arg("--assemble")
+                .arg("-o")
+                .arg(&object)
+                .arg(&assembly)
+                .output()
+                .unwrap()
+                .status
+                .success(),
+            "the assembler could not write a {format} object"
+        );
+        objects.push(object);
+    }
+
+    let coff = section_bytes(
+        &objects[0],
+        ".text",
+        &directory.join(unique("coff_text")),
+    );
+    let elf = elf_section_bytes(
+        &objects[1],
+        ".text",
+        &directory.join(unique("elf_text")),
+    );
+    // COFF pads a section up to its alignment and ELF states the alignment in
+    // its header instead, so the ELF one is the shorter of the two.
+    assert!(
+        coff.len() >= elf.len(),
+        "the ELF text is longer than the COFF one"
+    );
+
+    let mut filled = vec![false; elf.len()];
+    for line in elf_relocations(&objects[1]) {
+        let at =
+            usize::from_str_radix(line.split_whitespace().next().unwrap(), 16)
+                .unwrap();
+        filled[at..at + 4].fill(true);
+    }
+
+    let mut fixups = 0;
+    for at in 0..elf.len() {
+        if filled[at] {
+            fixups += 1;
+            assert_eq!(
+                elf[at], 0,
+                "a place the linker fills in was not left empty, at byte {at}"
+            );
+        } else {
+            assert_eq!(
+                coff[at], elf[at],
+                "the two formats encoded byte {at} differently"
+            );
+        }
+    }
+    assert!(
+        fixups > 1000,
+        "only {fixups} bytes were left for the linker"
+    );
+
+    let _ = std::fs::remove_file(&assembly);
+    for object in &objects {
+        let _ = std::fs::remove_file(object);
+    }
+}
+
 // Decimal literals covering the whole range a double reaches: the ties that sit
 // exactly between two of them, the exact decimal of a double, the numbers too
 // small to be normal, and a spread of ordinary ones.
@@ -14811,6 +15104,26 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
 }
 ",
         "42
+",
+    ),
+    // A string literal answered as a `str`. The literal is a pointer and the
+    // place it reaches carries a length beside it, and the C backend emitted
+    // the return without the conversion that adds one, so a function shaped
+    // like this compiled through the assembly backend and not through C.
+    (
+        "a_string_literal_answered_as_a_str",
+        "pick :: fn(n: i64) -> str {
+    if (n == 0) { return \"zero\" }
+    \"many\"
+}
+main :: fn() -> i64 {
+    print pick(0)
+    print pick(7)
+    0
+}
+",
+        "zero
+many
 ",
     ),
     // Arithmetic on the widest unsigned types. The assembly backend divided,

@@ -36,8 +36,10 @@ import "parser.frost"
 import "emit_c.frost"
 import "emit_asm.frost"
 import "regions.frost"
+import "blob.frost"
 import "assemble.frost"
 import "coff.frost"
+import "elf.frost"
 
 // One assembler run waiting to happen: the command line, and what it answered,
 // read after the thread running it is joined.
@@ -72,13 +74,12 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
         }
     }
 
-    // Whether this build encodes its own output. What the encoder writes is
-    // COFF and what it reads is assembly, so the C backend and every other
-    // platform still hand each unit to the toolchain.
-    assembles := options.backend == Backend::Asm && frost_rt_is_windows() == 1
+    // Whether this build encodes its own output. What the encoder reads is
+    // assembly, so the C backend still hands each unit to the toolchain.
+    assembles := options.backend == Backend::Asm
     // Grown to what each module turns out to need, so a build that hands its
     // units to the toolchain never grows any of it at all.
-    mut unit := assembly_of()
+    mut unit := assembly_of(object_format())
     mut blob := object_blob()
 
     // Every assembler run this build needs, gathered before any of them is
@@ -135,7 +136,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
         }
         if (stale && assembles) {
             assemble_into(unit, text)
-            write_coff_object(unit, blob, object)
+            write_object(unit, blob, object)
             // The checksum goes down once the object it stands for is there, so
             // a build that dies partway leaves nothing claiming to be up to
             // date.
@@ -214,6 +215,34 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     0
 }
 
+// Which object format this target reads. It decides how the encoder settles a
+// reference as well as how the object is laid out, so it is asked once and
+// carried into both.
+// The host's format by default. FROST_OBJECT overrides it so the other
+// target's object can be inspected and checked from either host, the way
+// FROST_ABI does for the calling convention.
+object_format :: fn() -> i64 {
+    named := unsafe { frost_rt_getenv("FROST_OBJECT") }
+    if (cstr_eq(named, "elf")) {
+        return FORMAT_ELF
+    }
+    if (cstr_eq(named, "coff")) {
+        return FORMAT_COFF
+    }
+    if (frost_rt_is_windows() == 1) {
+        return FORMAT_COFF
+    }
+    FORMAT_ELF
+}
+
+write_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
+    if (object_format() == FORMAT_COFF) {
+        write_coff_object(unit, object, path)
+        return
+    }
+    write_elf_object(unit, object, path)
+}
+
 // Compile straight to an object: the assembly is emitted into memory and
 // encoded from there, so the text is neither written for another program to
 // read nor read back.
@@ -221,10 +250,10 @@ assemble_program :: fn(mut p: Parser, program: i64, output: ^i8) {
     emit_to_memory()
     emit_asm_program(p, program)
     text := emit_memory_text()
-    mut unit := assembly_of()
+    mut unit := assembly_of(object_format())
     mut object := object_blob()
     assemble_into(unit, text)
-    write_coff_object(unit, object, output)
+    write_object(unit, object, output)
 }
 
 // Hand what was compiled to the linker, along with the C runtime every program
@@ -289,11 +318,6 @@ assemble_file :: fn(input: ^i8, output: ^i8) -> i64 {
         report("frost: --assemble needs an input file and -o\n")
         frost_rt_die()
     }
-    if (frost_rt_is_windows() == 0) {
-        report("frost: --assemble writes COFF, which is the object format on ")
-        report("Windows. Elsewhere the build still runs the assembler.\n")
-        frost_rt_die()
-    }
     raw := unsafe { frost_rt_read_file(input) }
     if (cstr_len(raw) == 0) {
         report("frost: cannot read ")
@@ -301,10 +325,10 @@ assemble_file :: fn(input: ^i8, output: ^i8) -> i64 {
         report("\n")
         frost_rt_die()
     }
-    mut unit := assembly_of()
+    mut unit := assembly_of(object_format())
     mut object := object_blob()
     assemble_into(unit, cstr_slice(raw))
-    write_coff_object(unit, object, output)
+    write_object(unit, object, output)
     0
 }
 
@@ -647,9 +671,7 @@ main :: fn() -> i64 {
 
     // The encoder is part of this compiler, so a build that ends in an object
     // reaches one without writing assembly for another program to read back.
-    // What it writes is COFF, so this is the path on Windows and the toolchain
-    // is the path everywhere else.
-    if (options.backend == Backend::Asm && frost_rt_is_windows() == 1
+    if (options.backend == Backend::Asm
         && (options.object == 1 || options.link == 1)) {
         mut object : ^i8 = options.output
         if (options.link == 1) {
