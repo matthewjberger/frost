@@ -203,6 +203,9 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
         report("frost: the linker failed: ")
         report_cstr(command)
         report("\n")
+        report("frost: the runtime linked was ")
+        report_cstr(runtime_source())
+        report("\n")
         frost_rt_die()
     }
     if (options.testing == 1) {
@@ -259,6 +262,14 @@ link_with_toolchain :: fn(unit: ^i8, executable: ^i8, options: Options) -> i64 {
         // from the bare word "failed".
         report("frost: the linker failed: ")
         report_cstr(command)
+        report("\n")
+        // And name the runtime, because the other way a link fails is a symbol
+        // the runtime beside this compiler does not have. The object is keyed
+        // on what that file holds, which cannot tell "the runtime changed"
+        // apart from "a different runtime is being read", so the resolved path
+        // is the thing that distinguishes them and the linker never says it.
+        report("frost: the runtime linked was ")
+        report_cstr(runtime_source())
         report("\n")
         frost_rt_die()
     }

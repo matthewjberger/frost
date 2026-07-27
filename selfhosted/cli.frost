@@ -7,7 +7,8 @@ import "imports.frost"
 
 export Backend, Options, c_compiler, join_two, join_number,
     file_checksum, text_checksum, stored_checksum, write_checksum,
-    make_directory, cached_runtime_object, options_from_command_line, usage
+    make_directory, cached_runtime_object, runtime_source,
+    options_from_command_line, usage
 
 // Which backend the program goes through. Nothing is chosen until the arguments
 // and the environment have both had their say, so the answer starts as nothing.
