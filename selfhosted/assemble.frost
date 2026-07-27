@@ -90,6 +90,10 @@ M_CVTSS2SD :: 38
 M_CVTSD2SS :: 39
 // The unaligned sixteen-byte move, which is how a struct is copied.
 M_MOVUPS :: 41
+// The unsigned divide and right shift, which is what an operation on the widest
+// unsigned types compiles to.
+M_DIVQ :: 42
+M_SHRQ :: 43
 // Not an instruction: a label definition, which takes a place in the list so
 // its address is whatever the instructions before it add up to.
 M_LABEL :: 40
@@ -537,6 +541,8 @@ mnemonic_of :: fn(src: str, off: i64, len: i64) -> (op: i64, cc: i64) {
     if (bytes_same(src, off, len, "jmp")) { return M_JMP, 0 }
     if (bytes_same(src, off, len, "imulq")) { return M_IMULQ, 0 }
     if (bytes_same(src, off, len, "idivq")) { return M_IDIVQ, 0 }
+    if (bytes_same(src, off, len, "divq")) { return M_DIVQ, 0 }
+    if (bytes_same(src, off, len, "shrq")) { return M_SHRQ, 0 }
     if (bytes_same(src, off, len, "cqto")) { return M_CQTO, 0 }
     if (bytes_same(src, off, len, "andq")) { return M_ANDQ, 0 }
     if (bytes_same(src, off, len, "orq")) { return M_ORQ, 0 }
@@ -922,14 +928,23 @@ encode_insn :: fn(mut unit: Assembly, index: i64) {
             0, byte_reg_forces_rex(a_reg))
         return
     }
-    if (op == M_IDIVQ) {
-        emit_reg_rm(unit, 0, 1, 0, 247, 7, OPND_REG, reg_code(a_reg), 0, 0)
+    if (op == M_IDIVQ || op == M_DIVQ) {
+        // The same opcode either way: which of the two divides it is comes from
+        // the digit in the ModRM byte.
+        mut digit : i64 = 7
+        if (op == M_DIVQ) {
+            digit = 6
+        }
+        emit_reg_rm(unit, 0, 1, 0, 247, digit, OPND_REG, reg_code(a_reg), 0, 0)
         return
     }
-    if (op == M_SHLQ || op == M_SARQ) {
-        digit := 4
+    if (op == M_SHLQ || op == M_SARQ || op == M_SHRQ) {
+        mut digit : i64 = 4
         if (op == M_SARQ) {
             digit = 7
+        }
+        if (op == M_SHRQ) {
+            digit = 5
         }
         emit_reg_rm(unit, 0, 1, 0, 211, digit, OPND_REG, reg_code(b_reg), 0, 0)
         return
