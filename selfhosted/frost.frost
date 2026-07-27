@@ -36,6 +36,8 @@ import "parser.frost"
 import "emit_c.frost"
 import "emit_asm.frost"
 import "regions.frost"
+import "assemble.frost"
+import "coff.frost"
 
 // One assembler run waiting to happen: the command line, and what it answered,
 // read after the thread running it is joined.
@@ -190,6 +192,42 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     0
 }
 
+// How much room the assembler is given for the code it encodes, the data
+// beside it, and the object holding both. The compiler's own assembly is the
+// largest thing this has to take, and it needs under a megabyte of code.
+ASSEMBLE_CODE_ROOM :: 16777216
+ASSEMBLE_DATA_ROOM :: 4194304
+ASSEMBLE_OBJECT_ROOM :: 25165824
+
+// Read assembly and write the object it stands for. The encoder is checked
+// against the system assembler byte for byte, so this and `as` produce the
+// same code.
+assemble_file :: fn(input: ^i8, output: ^i8) -> i64 {
+    if (cstr_len(input) == 0 || cstr_len(output) == 0) {
+        report("frost: --assemble needs an input file and -o
+")
+        frost_rt_die()
+    }
+    if (frost_rt_is_windows() == 0) {
+        report("frost: --assemble writes COFF, which is the object format on ")
+        report("Windows. Elsewhere the build still runs the assembler.
+")
+        frost_rt_die()
+    }
+    raw := unsafe { frost_rt_read_file(input) }
+    if (cstr_len(raw) == 0) {
+        report("frost: cannot read ")
+        report_cstr(input)
+        report("
+")
+        frost_rt_die()
+    }
+    mut unit := assemble_text(cstr_slice(raw), ASSEMBLE_CODE_ROOM,
+        ASSEMBLE_DATA_ROOM)
+    write_coff_object(unit, output, ASSEMBLE_OBJECT_ROOM)
+    0
+}
+
 main :: fn() -> i64 {
     options := options_from_command_line()
     if (options.help == 1) {
@@ -198,6 +236,13 @@ main :: fn() -> i64 {
     }
     if (options.ok == 0) {
         frost_rt_die()
+    }
+
+    // `--assemble` does not compile anything: it reads assembly and writes the
+    // object that text stands for, which is what lets a build reach an object
+    // without a separate assembler.
+    if (options.assemble == 1) {
+        return assemble_file(options.input, options.output)
     }
 
     // With no file named anywhere, the built-in demonstration program is what

@@ -14225,3 +14225,185 @@ fn the_c_return_rule_is_what_the_bootstrap_implements() {
         }
     }
 }
+
+fn binutils_available() -> bool {
+    ["as", "objcopy", "objdump"]
+        .iter()
+        .all(|tool| Command::new(tool).arg("--version").output().is_ok())
+}
+
+fn section_bytes(object: &Path, section: &str, into: &Path) -> Vec<u8> {
+    let extract = Command::new("objcopy")
+        .arg("-O")
+        .arg("binary")
+        .arg(format!("--only-section={section}"))
+        .arg(object)
+        .arg(into)
+        .output()
+        .unwrap();
+    assert!(
+        extract.status.success(),
+        "objcopy could not read {section} out of {}:\n{}",
+        object.display(),
+        String::from_utf8_lossy(&extract.stderr)
+    );
+    std::fs::read(into).unwrap_or_default()
+}
+
+fn relocation_lines(object: &Path) -> Vec<String> {
+    let listing = Command::new("objdump")
+        .arg("-r")
+        .arg(object)
+        .output()
+        .unwrap();
+    assert!(listing.status.success());
+    let mut lines: Vec<String> = String::from_utf8_lossy(&listing.stdout)
+        .lines()
+        .filter(|line| line.contains("IMAGE_REL") || line.contains("R_X86_64"))
+        .map(|line| line.trim().to_string())
+        .collect();
+    lines.sort();
+    lines
+}
+
+// The assembler in `selfhosted/assemble.frost` against the system assembler,
+// byte for byte. Both read the same text, so any disagreement is this
+// compiler's encoding being wrong, and the object it would have written would
+// have been wrong in a way no test of the language's behaviour would catch.
+//
+// The compiler's own source is one of the inputs because it is the widest
+// coverage available: 134,000 instructions over every form the backend emits
+// for integer code. The rest reach the forms it does not use itself.
+#[test]
+fn the_assembler_encodes_what_the_system_assembler_does() {
+    if !cfg!(windows) || !binutils_available() {
+        return;
+    }
+    let Some(compiler) = build_self_hosted_compiler("oracle") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    let sources: &[(&str, PathBuf)] = &[
+        ("the compiler itself", self_hosted_source()),
+        (
+            "the entity store",
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("std")
+                .join("ecs.frost"),
+        ),
+        (
+            "the sort library",
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("std")
+                .join("sort.frost"),
+        ),
+    ];
+
+    let mut floats = directory.join(unique("frost_oracle_floats"));
+    floats.set_extension("frost");
+    std::fs::write(
+        &floats,
+        "main :: fn() -> i64 {\n\
+         \x20   mut x : f64 = 1.5\n\
+         \x20   mut y : f64 = 0.25\n\
+         \x20   print x + y\n    print x - y\n    print x * y\n    print x / y\n\
+         \x20   if (x > y) { print 1 }\n\
+         \x20   mut n : i64 = 3\n    z := x * 2.0\n    print z\n    print n\n    0\n}\n",
+    )
+    .unwrap();
+
+    let mut cases: Vec<(String, PathBuf)> = sources
+        .iter()
+        .map(|(what, path)| ((*what).to_string(), path.clone()))
+        .collect();
+    cases.push(("double-precision arithmetic".to_string(), floats));
+
+    for (what, source) in &cases {
+        let assembly =
+            directory.join(unique("frost_oracle")).with_extension("s");
+        let emitted = Command::new(&compiler)
+            .arg("--emit-asm")
+            .arg("-o")
+            .arg(&assembly)
+            .arg(source)
+            .output()
+            .unwrap();
+        assert!(
+            emitted.status.success(),
+            "the self-hosted compiler could not emit assembly for {what}:\n{}",
+            String::from_utf8_lossy(&emitted.stderr)
+        );
+
+        let reference = directory
+            .join(unique("frost_oracle_gold"))
+            .with_extension("o");
+        let system = Command::new("as")
+            .arg("-o")
+            .arg(&reference)
+            .arg(&assembly)
+            .output()
+            .unwrap();
+        assert!(
+            system.status.success(),
+            "the system assembler rejected the emitted text for {what}:\n{}",
+            String::from_utf8_lossy(&system.stderr)
+        );
+
+        let ours = directory
+            .join(unique("frost_oracle_ours"))
+            .with_extension("o");
+        let encoded = Command::new(&compiler)
+            .arg("--assemble")
+            .arg("-o")
+            .arg(&ours)
+            .arg(&assembly)
+            .output()
+            .unwrap();
+        assert!(
+            encoded.status.success(),
+            "this compiler's assembler failed on {what}:\n{}",
+            String::from_utf8_lossy(&encoded.stderr)
+        );
+
+        for section in [".text", ".data"] {
+            let want = section_bytes(
+                &reference,
+                section,
+                &directory.join(unique("gold_section")),
+            );
+            let got = section_bytes(
+                &ours,
+                section,
+                &directory.join(unique("ours_section")),
+            );
+            assert_eq!(
+                want.len(),
+                got.len(),
+                "{section} is a different length for {what}"
+            );
+            if let Some(at) = want
+                .iter()
+                .zip(&got)
+                .position(|(left, right)| left != right)
+            {
+                let from = at.saturating_sub(8);
+                let to = (at + 8).min(want.len());
+                panic!(
+                    "{section} differs for {what} at byte {at}\n  system: {:02x?}\n  ours:   {:02x?}",
+                    &want[from..to],
+                    &got[from..to]
+                );
+            }
+        }
+
+        assert_eq!(
+            relocation_lines(&reference),
+            relocation_lines(&ours),
+            "the fixups differ for {what}"
+        );
+
+        let _ = std::fs::remove_file(&assembly);
+        let _ = std::fs::remove_file(&reference);
+        let _ = std::fs::remove_file(&ours);
+    }
+}

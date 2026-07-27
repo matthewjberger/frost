@@ -1,0 +1,282 @@
+// Writing what the assembler produced as a COFF object, the format the linker
+// on Windows reads.
+
+import "core.frost"
+import "assemble.frost"
+
+export write_coff_object
+
+// The two sections this backend ever emits, in the order they are written.
+// Their numbers are one-based in the symbol table, which is what a symbol's
+// `SectionNumber` field holds.
+COFF_TEXT_NUMBER :: 1
+COFF_DATA_NUMBER :: 2
+
+// x86-64.
+COFF_MACHINE :: 34404
+
+// Code, executable, readable, sixteen-byte aligned.
+COFF_TEXT_FLAGS :: 1615855648
+// Initialised data, readable, writable, sixteen-byte aligned.
+COFF_DATA_FLAGS :: 3226468416
+
+// A PC-relative fixup measured from the end of the four bytes it fills in.
+COFF_REL32 :: 4
+
+// External, and static, as the storage classes name them.
+COFF_CLASS_EXTERNAL :: 2
+COFF_CLASS_STATIC :: 3
+
+// The type field marking a symbol as a function, which is what puts it in the
+// linker's map of code.
+COFF_TYPE_FUNCTION :: 32
+
+// A growable run of bytes, with the writing helpers the format needs.
+Blob :: struct {
+    bytes: str,
+    count: i64,
+}
+
+blob_byte :: fn(mut b: Blob, value: i64) {
+    if (b.count >= str_len(b.bytes)) {
+        report("frost: the object outgrew its buffer\n")
+        frost_rt_die()
+    }
+    b.bytes[b.count] = value & 255
+    b.count = b.count + 1
+}
+
+blob_word16 :: fn(mut b: Blob, value: i64) {
+    blob_byte(b, value)
+    blob_byte(b, value >> 8)
+}
+
+blob_word32 :: fn(mut b: Blob, value: i64) {
+    blob_byte(b, value)
+    blob_byte(b, value >> 8)
+    blob_byte(b, value >> 16)
+    blob_byte(b, value >> 24)
+}
+
+blob_zeros :: fn(mut b: Blob, count: i64) {
+    mut i : i64 = 0
+    while (i < count) {
+        blob_byte(b, 0)
+        i = i + 1
+    }
+}
+
+// A section's eight-byte name field, padded with zeros.
+blob_name :: fn(mut b: Blob, name: str) {
+    mut i : i64 = 0
+    while (i < 8) {
+        if (i < str_len(name)) {
+            blob_byte(b, name[i])
+        } else {
+            blob_byte(b, 0)
+        }
+        i = i + 1
+    }
+}
+
+// A run of the assembled bytes, copied across.
+blob_copy :: fn(mut b: Blob, source: str, count: i64) {
+    mut i : i64 = 0
+    while (i < count) {
+        blob_byte(b, source[i])
+        i = i + 1
+    }
+}
+
+// Whether a name goes in the object at all. Local names are resolved while
+// assembling, so only what another unit may call or refer to is carried.
+carried :: fn(mut unit: Assembly, index: i64) -> bool {
+    held := asm_symbol_at(unit, index)
+    if (held.section == SEC_ABS) {
+        return false
+    }
+    held.global == 1 || held.section == SEC_UNDEF
+}
+
+// The symbol a fixup names once the local ones have been folded away. A local
+// name is reached through the symbol standing for its whole section, with the
+// distance into that section already written into the four bytes.
+reloc_symbol_index :: fn(mut unit: Assembly, sym: i64, text_symbol: i64,
+    data_symbol: i64) -> i64 {
+    held := asm_symbol_at(unit, sym)
+    if (held.global == 1 || held.section == SEC_UNDEF) {
+        return held.index
+    }
+    if (held.section == SEC_DATA) {
+        return data_symbol
+    }
+    text_symbol
+}
+
+// Write the object. The layout is the header, the two section headers, the
+// bytes of each section, the fixups, the symbol table and the names too long
+// to sit in a symbol entry.
+write_coff_object :: fn(mut unit: Assembly, path: ^i8, room: i64) {
+    mut object := Blob { bytes = buffer_of(room), count = 0 }
+    text_count := asm_section_count(unit, SEC_TEXT)
+    data_count := asm_section_count(unit, SEC_DATA)
+    reloc_count := asm_reloc_count(unit)
+
+    // The section symbols come first, each followed by the record describing
+    // the section it stands for, so a local fixup has something to name.
+    text_symbol := 0
+    data_symbol := 2
+    mut next_index : i64 = 4
+    mut string_size : i64 = 4
+    mut i : i64 = 0
+    while (i < asm_symbol_count(unit)) {
+        if (carried(unit, i)) {
+            held := asm_symbol_at(unit, i)
+            held.index = next_index
+            next_index = next_index + 1
+            if (held.len > 8) {
+                string_size = string_size + held.len + 1
+            }
+        }
+        i = i + 1
+    }
+
+    text_data_at := 20 + 80
+    data_data_at := text_data_at + text_count
+    text_relocs_at := data_data_at + data_count
+    symbols_at := text_relocs_at + reloc_count * 10
+
+    blob_word16(object, COFF_MACHINE)
+    blob_word16(object, 2)
+    blob_word32(object, 0)
+    blob_word32(object, symbols_at)
+    blob_word32(object, next_index)
+    blob_word16(object, 0)
+    blob_word16(object, 0)
+
+    blob_name(object, ".text")
+    blob_word32(object, 0)
+    blob_word32(object, 0)
+    blob_word32(object, text_count)
+    blob_word32(object, text_data_at)
+    blob_word32(object, text_relocs_at)
+    blob_word32(object, 0)
+    blob_word16(object, reloc_count)
+    blob_word16(object, 0)
+    blob_word32(object, COFF_TEXT_FLAGS)
+
+    blob_name(object, ".data")
+    blob_word32(object, 0)
+    blob_word32(object, 0)
+    blob_word32(object, data_count)
+    blob_word32(object, data_data_at)
+    blob_word32(object, 0)
+    blob_word32(object, 0)
+    blob_word16(object, 0)
+    blob_word16(object, 0)
+    blob_word32(object, COFF_DATA_FLAGS)
+
+    blob_copy(object, asm_section_bytes(unit, SEC_TEXT), text_count)
+    blob_copy(object, asm_section_bytes(unit, SEC_DATA), data_count)
+
+    mut r : i64 = 0
+    while (r < reloc_count) {
+        fixup := asm_reloc_at(unit, r)
+        blob_word32(object, fixup.offset)
+        blob_word32(object,
+            reloc_symbol_index(unit, fixup.sym, text_symbol, data_symbol))
+        blob_word16(object, COFF_REL32)
+        r = r + 1
+    }
+
+    write_section_symbol(object, ".text", text_count, reloc_count,
+        COFF_TEXT_NUMBER)
+    write_section_symbol(object, ".data", data_count, 0, COFF_DATA_NUMBER)
+
+    mut string_at : i64 = 4
+    mut s : i64 = 0
+    while (s < asm_symbol_count(unit)) {
+        if (carried(unit, s)) {
+            held := asm_symbol_at(unit, s)
+            if (held.len > 8) {
+                blob_word32(object, 0)
+                blob_word32(object, string_at)
+                string_at = string_at + held.len + 1
+            } else {
+                mut k : i64 = 0
+                while (k < 8) {
+                    if (k < held.len) {
+                        blob_byte(object, unit.src[held.off + k])
+                    } else {
+                        blob_byte(object, 0)
+                    }
+                    k = k + 1
+                }
+            }
+            blob_word32(object, held.value)
+            if (held.section == SEC_UNDEF) {
+                blob_word16(object, 0)
+                blob_word16(object, 0)
+            } else if (held.section == SEC_DATA) {
+                blob_word16(object, COFF_DATA_NUMBER)
+                blob_word16(object, 0)
+            } else {
+                blob_word16(object, COFF_TEXT_NUMBER)
+                blob_word16(object, COFF_TYPE_FUNCTION)
+            }
+            blob_byte(object, COFF_CLASS_EXTERNAL)
+            blob_byte(object, 0)
+        }
+        s = s + 1
+    }
+
+    blob_word32(object, string_size)
+    mut n : i64 = 0
+    while (n < asm_symbol_count(unit)) {
+        if (carried(unit, n)) {
+            held := asm_symbol_at(unit, n)
+            if (held.len > 8) {
+                mut k : i64 = 0
+                while (k < held.len) {
+                    blob_byte(object, unit.src[held.off + k])
+                    k = k + 1
+                }
+                blob_byte(object, 0)
+            }
+        }
+        n = n + 1
+    }
+
+    mut opened : i64 = 0
+    unsafe {
+        opened = frost_rt_emit_open(path)
+    }
+    if (opened == 0) {
+        report("frost: cannot write the object\n")
+        frost_rt_die()
+    }
+    written := unsafe {
+        slice_from($u8, ptr_to(object.bytes[0]), object.count)
+    }
+    emit_text(written)
+    frost_rt_emit_close()
+}
+
+// A symbol standing for a whole section, and the record after it that gives
+// the section's size and how many fixups it carries.
+write_section_symbol :: fn(mut object: Blob, name: str, size: i64,
+    relocs: i64, number: i64) {
+    blob_name(object, name)
+    blob_word32(object, 0)
+    blob_word16(object, number)
+    blob_word16(object, 0)
+    blob_byte(object, COFF_CLASS_STATIC)
+    blob_byte(object, 1)
+    blob_word32(object, size)
+    blob_word16(object, relocs)
+    blob_word16(object, 0)
+    blob_word32(object, 0)
+    blob_word16(object, 0)
+    blob_byte(object, 0)
+    blob_zeros(object, 3)
+}
