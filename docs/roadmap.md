@@ -48,10 +48,20 @@ accepted by the bootstrap and miscompiles rather than being refused. A string
 literal reaching a `str` parameter is why the rule exists; it should ask whether
 the argument is a literal rather than whether its type is a pointer.
 
-One more, in the self-hosted compiler only: it has neither `break` nor
-`continue`. The bootstrap has both, so a loop written with one compiles under
-the first compiler and not the second. The compiler's own source has never
-needed either, which is why it went unnoticed.
+One more, and it is an ordering question rather than a missing feature: **a
+compile-time list element whose type comes from a call to a generic is typed
+before that generic's return type is known.** The tuple a call names is recorded
+while it is parsed, and a generic's concrete return type is worked out
+afterwards, so an element written `f($T, ...)` is recorded as `i64` and the
+emitter, which runs once the types have settled, names a different
+specialization. Both halves are right on their own; what is wrong is that one
+happens first.
+
+What it costs today: `for_each_row` in `std/ecs.frost` works out its columns
+once per row rather than once per table. Hoisting them means handing them to a
+second generic as a list of its own, which is exactly the shape above. The fix
+is to record the node a call names rather than the tuple, and resolve the tuple
+where the return types are settled.
 
 ## What is done, and what it cost
 

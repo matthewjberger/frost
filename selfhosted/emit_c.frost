@@ -1081,6 +1081,18 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         emit_text("\n")
         return
     }
+    if (kind == NodeKind::Break) {
+        emit_text("break;
+")
+        return
+    }
+    // C's `continue` in the `while (1)` form below runs the preamble again
+    // before the test, which is what a condition needing statements means.
+    if (kind == NodeKind::Continue) {
+        emit_text("continue;
+")
+        return
+    }
     if (kind == NodeKind::While) {
         cond := node.a
         body := node.b

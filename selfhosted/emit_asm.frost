@@ -1761,9 +1761,38 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         emit_text(":\n")
         return
     }
+    // Both jump to a label of the loop being emitted, so a loop leaves its two
+    // labels where a statement inside it can find them and puts back whatever
+    // the loop around it left.
+    if (kind == NodeKind::Break) {
+        if (p.loop_end < 0) {
+            report_where(p.modules, p.src, node.pos)
+            report("`break` leaves a loop, and this is not inside one")
+            frost_rt_die()
+        }
+        emit_text("    jmp ")
+        emit_label(".Lend", p.loop_end)
+        emit_text("\n")
+        return
+    }
+    if (kind == NodeKind::Continue) {
+        if (p.loop_top < 0) {
+            report_where(p.modules, p.src, node.pos)
+            report("`continue` goes round a loop again, and this is not inside one")
+            frost_rt_die()
+        }
+        emit_text("    jmp ")
+        emit_label(".Ltop", p.loop_top)
+        emit_text("\n")
+        return
+    }
     if (kind == NodeKind::While) {
         top_id := new_label(p)
         end_id := new_label(p)
+        held_top := p.loop_top
+        held_end := p.loop_end
+        p.loop_top = top_id
+        p.loop_end = end_id
         emit_label(".Ltop", top_id)
         emit_text(":\n")
         emit_asm_block(p, node.c)
@@ -1778,6 +1807,8 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         emit_text("\n")
         emit_label(".Lend", end_id)
         emit_text(":\n")
+        p.loop_top = held_top
+        p.loop_end = held_end
         return
     }
     if (kind == NodeKind::ExprStmt) {

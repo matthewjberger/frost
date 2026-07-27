@@ -59,7 +59,10 @@ actual work predictable.
    generational handles). See [memory-safety.md](memory-safety.md).
 3. Zero-cost, static polymorphism. Generics monomorphize, and a function
    that varies is a compile-time argument (`$f`) rather than a pointer, so the
-   call in the inner loop is direct. You pay for abstraction at compile time,
+   call in the inner loop is direct. How *many* arguments a call makes can vary
+   the same way: a compile-time list decides an arity, so a query over any
+   number of components is one function rather than one per count, and it emits
+   what a hand-written one does. You pay for abstraction at compile time,
    not at run time. Function pointers remain for the cases that are genuinely
    dynamic, and they are honest about costing an indirect call. Neither backend
    devirtualizes one, by design, because goal 7 says the lowering is what you

@@ -38,6 +38,11 @@ nothing downstream would catch a mistake.
 - **Generics by monomorphization** over `$T`, on structs and functions,
   instantiated once per concrete type argument.
 - **Enums with payloads** and `match` over them.
+- **Loop control.** `break` leaves the innermost loop and `continue` goes round
+  it again, both refused outside one.
+- **Compile-time lists.** `args: $...`, walked with `for`, indexed by a literal,
+  holding values or types, handed on to another list by naming it, and expanded
+  into a call's argument list once per element with `g(T) for T in list`.
 - **Allocation sources.** `uses A` on a function, `with a { }` around a call.
 - **Regions.** A `with` block is a region and an arena pointer may not outlive
   it.

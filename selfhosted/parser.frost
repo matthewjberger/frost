@@ -545,11 +545,18 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         note_called_name(p, offset, length)
         fn_index := intern_global(p, offset, length)
         args := parse_arg_list_for(p, fn_index)
-        made := new_node(p, NodeKind::Call, args, 0, fn_index)
+        // A call whose arguments came from a compile-time list that is not
+        // bound belongs to a template's own parse. It is marked here so that
+        // nothing later asks it for a type, since the tuple it would name is
+        // read from elements that do not exist yet.
+        made := new_node(p, NodeKind::Call, args, p.args_unbound_map, fn_index)
         // What a compile-time list was given is the type of each argument past
         // the ordinary parameters, and only here are the names in scope to say
         // what those types are. Every later pass reads the tuple this noted.
-        if (pack_call_args(p, args, fn_index)) {
+        // A call whose arguments came from a list that is not bound is one
+        // this parse is not entitled to name a tuple for: the elements it read
+        // belong to a template, and the real call is read again per instance.
+        if (p.args_unbound_map == 0 && pack_call_args(p, args, fn_index)) {
             note_type_args(p, p.call_pack_primary, p.call_xarg_start,
                 p.call_xarg_count, generic_fn_of(p, fn_index) + 1)
         }
@@ -1018,6 +1025,7 @@ splice_pack_map :: fn(mut p: Parser, argument_start: i64, parsed: i64,
     // thrown away and read again per instance. So the expression is kept once
     // and the tokens are consumed, which is what a template parse is for.
     if (p.pack_len == 0) {
+        p.args_unbound_map = 1
         arg := new_node(p, NodeKind::Arg, parsed, 0, 0)
         mut only_tail := tail_in
         mut only_head := head_in
@@ -1078,6 +1086,7 @@ parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     mut index : i64 = 0
+    p.args_unbound_map = 0
     while (cur(p) != TokenKind::Rparen && cur(p) != TokenKind::Eof) {
         saved_expected := p.expected_type
         saved_alt := p.expected_alt
@@ -2609,6 +2618,16 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         }
         set_next(p, bind_seq, bind_len)
         return bind_seq
+    }
+    // Leaving a loop, and going round it again. Which loop is the innermost
+    // one, so there is nothing to carry: the emitters know where they are.
+    if (kind == TokenKind::KwBreak) {
+        advance(p)
+        return new_node(p, NodeKind::Break, 0, 0, 0)
+    }
+    if (kind == TokenKind::KwContinue) {
+        advance(p)
+        return new_node(p, NodeKind::Continue, 0, 0, 0)
     }
     if (kind == TokenKind::KwWhile) {
         advance(p)
