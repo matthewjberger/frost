@@ -6,7 +6,7 @@ import "core.frost"
 
 export Backend, Options, c_compiler, join_two, join_number,
     file_checksum, stored_checksum, write_checksum, make_directory,
-    options_from_command_line, usage
+    cached_runtime_object, runtime_source, options_from_command_line, usage
 
 // Which backend the program goes through. Nothing is chosen until the arguments
 // and the environment have both had their say, so the answer starts as nothing.
@@ -189,6 +189,61 @@ write_checksum :: fn(path: ^i8, value: i64) {
     frost_rt_emit_close()
 }
 
+// Where the C runtime is, which FROST_RUNTIME moves for a checkout that is not
+// the working directory.
+runtime_source :: fn() -> ^i8 {
+    named := unsafe { frost_rt_getenv("FROST_RUNTIME") }
+    if (cstr_len(named) != 0) {
+        return named
+    }
+    "runtime/frost_runtime.c"
+}
+
+// Where the system keeps temporary files. The compiled runtime goes here rather
+// than beside the program, so a link leaves nothing behind in the directory it
+// was run from.
+temp_directory :: fn() -> ^i8 {
+    mut named := unsafe { frost_rt_getenv("TMPDIR") }
+    if (cstr_len(named) == 0) {
+        named = unsafe { frost_rt_getenv("TMP") }
+    }
+    if (cstr_len(named) == 0) {
+        named = unsafe { frost_rt_getenv("TEMP") }
+    }
+    if (cstr_len(named) == 0) {
+        named = "."
+    }
+    named
+}
+
+// The compiled C runtime, built once and linked thereafter. It is a compilation
+// unit like any other and changes about as often as the C compiler does, so
+// compiling it again for every link is most of what a build that assembled
+// nothing spends. What the source holds is the name, so editing the runtime
+// builds a new one and nothing else does.
+cached_runtime_object :: fn() -> ^i8 {
+    runtime := runtime_source()
+    mut key := file_checksum(runtime) % 1000000007
+    if (key < 0) {
+        key = 0 - key
+    }
+    object := join_number(join_two(temp_directory(), "/frost_runtime_"), key,
+        ".o")
+    if (unsafe { frost_rt_file_exists(object) } == 1) {
+        return object
+    }
+    build := join_two(
+        join_two(join_two(join_two(c_compiler(), " -c "), runtime), " -o "),
+        object)
+    if (unsafe { frost_rt_run_command(build) } != 0) {
+        report("frost: the runtime did not compile: ")
+        report_cstr(build)
+        report("\n")
+        frost_rt_die()
+    }
+    object
+}
+
 // The directory the objects go in, made if it is not there. The shell is what
 // makes a directory on either platform, and the command differs, so this is one
 // of the two places that knows which one it is running on.
@@ -293,10 +348,22 @@ options_from_command_line :: fn() -> Options {
     if (cstr_len(options.input) == 0) {
         options.input = unsafe { frost_rt_getenv("FROST_INPUT") }
     }
+    // Linking means producing a program, and the assembler turns the backend's
+    // own output into one for a fraction of what handing a C compiler a
+    // translation unit costs: for this compiler's source, 370 ms against 807.
+    // It is also what the bootstrap does, which is native code and no C
+    // toolchain in the middle. Emitting on its own stays C, since that is the
+    // portable answer and what a caller reading the output is asking for.
     if (options.backend == Backend::Unset) {
-        options.backend = Backend::C
-        if (cstr_eq(unsafe { frost_rt_getenv("FROST_BACKEND") }, "asm")) {
+        named := unsafe { frost_rt_getenv("FROST_BACKEND") }
+        if (cstr_eq(named, "asm")) {
             options.backend = Backend::Asm
+        } else if (cstr_eq(named, "c")) {
+            options.backend = Backend::C
+        } else if (options.link == 1) {
+            options.backend = Backend::Asm
+        } else {
+            options.backend = Backend::C
         }
     }
     options
