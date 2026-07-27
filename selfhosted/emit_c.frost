@@ -93,7 +93,19 @@ emit_columns_scatter :: fn(mut p: Parser, cbase: i64, cbase_ty: i64,
     }
 }
 
-emit_coerced :: fn(mut p: Parser, value: i64, want: i64) {
+emit_coerced :: fn(mut p: Parser, value_in: i64, want: i64) {
+    // A constant whose value is a literal stands for that literal here, so a
+    // text constant reaching a `str` is coerced the way the literal written in
+    // its place would be, length and all, rather than as the name.
+    mut value := value_in
+    named := arena_at(p.arena, value)
+    if (named.kind == NodeKind::Var
+        && local_exists(p, named.val, named.c) == false) {
+        held := value_const_node(p, named.val, named.c)
+        if (held >= 0) {
+            value = held
+        }
+    }
     // A zeroed columns container. Zero sets every generation and free slot to 0.
     // `columns_reset` lays out the free list before the container is used.
     if (is_columns_new_call(p, value)) {

@@ -1706,6 +1706,61 @@ fn indexing_a_raw_pointer_held_by_a_generic_is_gated() {
     );
 }
 
+// A constant whose value is text. The self-hosted compiler refused the
+// declaration outright, which is why `examples/graphics/sdl.frost` had never
+// been through it: the binding names four window properties that way.
+const STRING_CONSTANT: &str = "GREETING :: \"hello\"
+     PROP :: \"SDL.window.win32.hwnd\"
+     shout :: fn(text: str) -> i64 { str_len(text) }
+     main :: fn() -> i64 {
+         print GREETING
+         print shout(GREETING)
+         print shout(PROP)
+         0
+     }
+";
+
+#[test]
+fn a_constant_can_be_text() {
+    let Some(output) = compile_and_run("strconst", STRING_CONSTANT) else {
+        return;
+    };
+    assert_eq!(
+        output,
+        "hello
+5
+21
+"
+    );
+}
+
+#[test]
+fn self_hosted_a_constant_can_be_text() {
+    let Some(output) = selfhosted_native_output("shstrconst", STRING_CONSTANT)
+    else {
+        return;
+    };
+    assert_eq!(
+        output,
+        "hello
+5
+21
+"
+    );
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shstrconst_input.frost");
+    std::fs::write(&input, STRING_CONSTANT).unwrap();
+    let Some(c_source) = self_hosted_emits("shstrconst", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shstrconst", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
 // A call through a function pointer that answers with a struct. A Frost
 // function hands an aggregate back through a trailing out-pointer, and a call
 // through a pointer is the same call, so the signature the call site builds is
@@ -13475,4 +13530,38 @@ fn the_graphics_examples_compile_against_their_bindings() {
         );
         let _ = std::fs::remove_file(&object);
     }
+}
+
+// The same binding through the other compiler. It could not read the SDL
+// binding at all until a constant was allowed to be text, which is four lines
+// of `sdl.frost` naming the window properties, so the whole graphics surface
+// had never been past this compiler's type checker.
+#[test]
+fn self_hosted_compiles_the_sdl_binding() {
+    let Some(compiler) = build_self_hosted_compiler("gfxsh") else {
+        return;
+    };
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let source = root.join("examples").join("graphics").join("window.frost");
+    let emitted = std::env::temp_dir().join("frost_gfxsh_window.c");
+    let run = Command::new(&compiler)
+        .arg("-o")
+        .arg(&emitted)
+        .arg(&source)
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&compiler);
+    assert!(
+        run.status.success(),
+        "the self-hosted compiler refused the SDL binding:
+{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let emitted_c = std::fs::read_to_string(&emitted).unwrap_or_default();
+    let _ = std::fs::remove_file(&emitted);
+    assert!(
+        emitted_c.contains("SDL_CreateWindow"),
+        "the emitted C does not reach SDL"
+    );
 }

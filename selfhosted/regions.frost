@@ -713,7 +713,11 @@ stmt_consumes :: fn(mut p: Parser, id: i64, off: i64, len: i64) -> bool {
         return true
     }
     mut value : i64 = 0 - 1
-    if (kind == NodeKind::ExprStmt || kind == NodeKind::Let || kind == NodeKind::Return) {
+    // `print close(s)` consumes what the call takes, the same as writing the
+    // call on its own line does. A statement holding an expression holds
+    // whatever that expression hands away.
+    if (kind == NodeKind::ExprStmt || kind == NodeKind::Let
+        || kind == NodeKind::Return || kind == NodeKind::Print) {
         value = node.a
     }
     if (kind == NodeKind::Assign) {
@@ -971,23 +975,51 @@ walk_moves_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     }
 }
 
+// Whether control leaves a block rather than falling out of its end. A `return`
+// is the only way in this compiler's own subset, and what it means for the walk
+// below is that the arm's moves belong to a path that never reaches the code
+// after the `if`.
+block_diverges :: fn(mut p: Parser, head: i64) -> bool {
+    mut id := head
+    while (id != (0 - 1)) {
+        node := arena_at(p.arena, id)
+        next_id := node.next
+        if (node.kind == NodeKind::Return) {
+            return true
+        }
+        id = next_id
+    }
+    false
+}
+
 // Walk both arms of an `if` from the state before it, then join: a value is
-// moved after the `if` if either arm moved it. The arm moves are stacked on
-// move_scratch, so a nested branch's own scratch use does not disturb this one.
+// moved after the `if` if an arm that falls through moved it. An arm that
+// returns takes its moves with it, since control never arrives after the `if`
+// from there, which is what lets a value be consumed on an early-return path
+// and still be live below. The arm moves are stacked on move_scratch, so a
+// nested branch's own scratch use does not disturb this one.
 walk_moves_if :: fn(mut p: Parser, then_head: i64, else_head: i64) {
     base := p.moved.count
+    then_gone := block_diverges(p, then_head)
+    else_gone := block_diverges(p, else_head)
     walk_moves_block(p, then_head)
     scratch_base := p.move_scratch.count
     mut k := base
     while (k < p.moved.count) {
         e := arena_at(p.moved, k)
-        arena_push(p.move_scratch,
-            LocalVar { name_off = e.name_off, name_len = e.name_len, ty = 0, slot = 0 })
+        if (then_gone == false) {
+            arena_push(p.move_scratch,
+                LocalVar { name_off = e.name_off, name_len = e.name_len,
+                    ty = 0, slot = 0 })
+        }
         k = k + 1
     }
     scratch_top := p.move_scratch.count
     p.moved.count = base
     walk_moves_block(p, else_head)
+    if (else_gone) {
+        p.moved.count = base
+    }
     mut s := scratch_base
     while (s < scratch_top) {
         e := arena_at(p.move_scratch, s)
