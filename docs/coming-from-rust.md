@@ -172,8 +172,7 @@ The representation is the inner type, so arithmetic, layout and the C ABI are
 newtype buys: a `Meters` cannot be built from a bare number or from a `Feet`.
 
 The check is one-directional, which is where it differs from the newtype. Going
-out is free, so `printf("%lld
-", m)` and `n : i64 = m` both work, because a
+out is free, so `printf("%lld\n", m)` and `n : i64 = m` both work, because a
 `Meters` is an `i64` in memory and nothing is at stake that way. Going in is
 checked, so a value that means something else cannot become a `Meters` by
 accident. There is no cast in either direction and none is needed.
@@ -818,10 +817,12 @@ the full type mapping.
 
 ## Modules
 
-Source is brought together with `import`. There is no `mod`, no `pub`/`use`
-visibility system, and no crate graph in the Rust sense. This is the least
-developed part of the surface today. For now, think of a program as a set of
-files pulled in by `import`, not as a module tree with visibility rules.
+A module is a file, brought in with `import "x.frost"`. There is no `mod`, no
+crate graph, and no visibility modifier: a file's `export` line is the complete
+set of names another file may use from it, and everything else is private and
+mangled so it cannot collide. An import is not transitive, so a file names what
+it uses. Two imported modules exporting the same name is an error at the use,
+and `(old as new)` renames one of them for the importing file only.
 
 ## What a Rust program leans on that Frost omits, and what to use instead
 

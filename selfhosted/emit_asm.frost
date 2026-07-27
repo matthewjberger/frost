@@ -437,7 +437,7 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
         return
     }
     // A call answering with an aggregate leaves that value's address, which is
-    // what reading a field of the answer needs. 
+    // what reading a field of the answer needs, so `match f() { case .A: }`
     // reads the tag out of what the call answered with.
     if (kind == NodeKind::Call || kind == NodeKind::CallPtr) {
         emit_asm_expr(p, id)

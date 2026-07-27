@@ -1,15 +1,14 @@
 // A generational pool written entirely in Frost, with no runtime support for the
 // pool itself. The storage, the free list, the generation counters, the packed
 // handles, and the stale-handle check are all ordinary Frost code over a
-// fixed-size array inside a struct. Compare examples/native/typed_pool.frost,
-// which uses the compiler's Pool<T> type backed by the C runtime. This file
-// shows the same data-oriented model expressed in the language itself.
+// fixed-size array inside a struct.
 //
-// The one thing this cannot express as a library is `pool[handle].field = x`,
-// an in-place, generation-checked place. A function cannot hand back a reference
-// into the storage (references are second-class), so mutation goes through a
-// read-modify-write (slab_read / slab_write) instead. Keeping the ergonomic
-// place-deref is exactly the thin slice that stays compiler-supported.
+// What this shape does not give is `pool[handle].field = x`, an in-place
+// generation-checked place, since handing back a validated reference into the
+// storage cannot be written where references are second-class. Mutation here
+// goes through a read and a write (slab_read, slab_write) instead.
+// `std/slab.frost` gets the place-deref by being slab-shaped, which the
+// compiler recognizes.
 
 import "io.frost"
 

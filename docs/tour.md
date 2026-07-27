@@ -117,8 +117,7 @@ the construction counterpart of the `case .Circle` an arm writes:
 
 ```frost
 s : Shape = .Circle { radius = 4 }        // the annotation says which enum
-printf("%lld
-", area(.Rect { width = 4, height = 5 }))   // the parameter does
+printf("%lld\n", area(.Rect { width = 4, height = 5 }))   // the parameter does
 round :: fn(r: i64) -> Shape { return .Circle { radius = r } }   // the return does
 ```
 

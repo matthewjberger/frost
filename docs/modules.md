@@ -62,9 +62,9 @@ What is in it is Frost, not compiler magic. `std/option.frost` is a generic enum
 and it exists because the language grew generic enums rather than because the
 compiler has an optional type. `std/slab.frost` is the generational pool, whose
 storage and free list are ordinary struct fields. `std/strings.frost` is walks
-over `str`, whose only primitives are `str_len` and `s[i]`. `std/io.frost` is
-the runtime's emit helpers wrapped so a first program does not have to declare
-`printf` itself.
+over `str`, whose only primitives are `str_len` and `s[i]`. `std/io.frost` wraps
+the runtime's emit helpers so a first program does not have to declare `printf`
+itself.
 
 A module's `test` blocks are its own. They are compiled when that file is the
 one named to `--test`, and dropped when it is imported, so a library with tests
