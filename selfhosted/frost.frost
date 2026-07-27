@@ -362,6 +362,8 @@ main :: fn() -> i64 {
         structs = arena_make($StructDef, 4096),
         fields = arena_make($StructField, 8192),
         locals = arena_make($LocalVar, 4096),
+        spill_slots = arena_make($LocalVar, 256),
+        spill_depth = 0,
         consts = arena_make($ConstDef, 4096),
         value_consts = arena_make($ConstDef, 4096),
         instances = arena_make($Instance, 4096),

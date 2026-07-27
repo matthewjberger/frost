@@ -440,7 +440,7 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
             element = base_ty
             emit_asm_addr(p, base)
         }
-        emit_asm_push()
+        emit_asm_spill(p)
         emit_asm_expr(p, node.b)
         if (checked == 1) {
             if (length_const == (0 - 1)) {
@@ -452,7 +452,7 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
         }
         asm_i("imulq $", type_size(p, element), ", %rax")
         asm("movq %rax, %r11")
-        emit_asm_pop_rax()
+        emit_asm_unspill(p)
         asm("addq %r11, %rax")
         return
     }
@@ -634,7 +634,7 @@ emit_asm_columns_scatter :: fn(mut p: Parser, cbase: i64, cbase_ty: i64,
             element := array_element(p, field_col_ty)
             emit_asm_columns_addr(p, cbase, cbase_ty, cthrough, field_off,
                 field_len, cindex)
-            emit_asm_push()
+            emit_asm_spill(p)
             if (is_pointer(value_ty)) {
                 emit_asm_expr(p, value)
             } else {
@@ -646,7 +646,7 @@ emit_asm_columns_scatter :: fn(mut p: Parser, cbase: i64, cbase_ty: i64,
             }
             emit_asm_load_from(p, element, 0, "(%rax), ")
             asm("movq %rax, %r11")
-            emit_asm_pop_rax()
+            emit_asm_unspill(p)
             emit_asm_store_to(p, element, 0, "(%rax)")
         }
         fid = field_next
@@ -661,6 +661,34 @@ emit_asm_push :: fn() {
 emit_asm_pop_rax :: fn() {
     asm("movq (%rsp), %rax")
     asm("addq $16, %rsp")
+}
+
+// Where an expression leaves its left half while its right half is worked out.
+// The stack would do, and did, but moving the stack pointer either side of the
+// value costs an instruction each way that the frame does not: the function has
+// already reserved its frame in one subtraction, so a slot in it is reached by
+// naming it. One slot per depth of nesting, made the first time that depth is
+// reached and reused by every expression that reaches it after.
+//
+// This is only for a value the emitter puts back where it took it from. An
+// argument waiting for a call is not one of those: those are read positionally
+// off the stack pointer by the call that consumes them.
+emit_asm_spill :: fn(mut p: Parser) {
+    if (p.spill_depth >= p.spill_slots.count) {
+        p.frame_used = p.frame_used + 8
+        arena_push(p.spill_slots,
+            LocalVar { name_off = 0, name_len = 0, ty = 0,
+                slot = 0 - p.frame_used })
+    }
+    held := arena_at(p.spill_slots, p.spill_depth)
+    asm_i("movq %rax, ", held.slot, "(%rbp)")
+    p.spill_depth = p.spill_depth + 1
+}
+
+emit_asm_unspill :: fn(mut p: Parser) {
+    p.spill_depth = p.spill_depth - 1
+    held := arena_at(p.spill_slots, p.spill_depth)
+    asm_i("movq ", held.slot, "(%rbp), %rax")
 }
 
 emit_asm_pop_arg :: fn(mut p: Parser, index: i64) {
@@ -1202,11 +1230,11 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
             // the arithmetic follows one path rather than one per width.
             emit_asm_expr(p, bin.a)
             emit_asm_convert(p, left_ty, TY_F64)
-            emit_asm_push()
+            emit_asm_spill(p)
             emit_asm_expr(p, bin.b)
             emit_asm_convert(p, right_ty, TY_F64)
             asm("movq %rax, %r11")
-            emit_asm_pop_rax()
+            emit_asm_unspill(p)
             emit_asm_float_binop(p, op)
             if (op_answers_truth(op) == false) {
                 emit_asm_convert(p, TY_F64, type_of(p, id))
@@ -1227,10 +1255,10 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
             return
         }
         emit_asm_expr(p, bin.a)
-        emit_asm_push()
+        emit_asm_spill(p)
         emit_asm_expr(p, bin.b)
         asm("movq %rax, %r11")
-        emit_asm_pop_rax()
+        emit_asm_unspill(p)
         emit_asm_binop(op)
         return
     }
@@ -1987,18 +2015,18 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         }
         place_ty := type_of(p, place)
         emit_asm_addr(p, place)
-        emit_asm_push()
+        emit_asm_spill(p)
         emit_asm_expr(p, value)
         emit_asm_coerce(p, value, place_ty)
         if (is_aggregate(place_ty)) {
             asm("movq %rax, %r11")
-            emit_asm_pop_rax()
+            emit_asm_unspill(p)
             asm("movq %rax, %r10")
             emit_asm_copy(type_size(p, place_ty))
             return
         }
         asm("movq %rax, %r11")
-        emit_asm_pop_rax()
+        emit_asm_unspill(p)
         emit_asm_store_to(p, place_ty, 0, "(%rax)")
         return
     }
@@ -2272,6 +2300,8 @@ emit_asm_block :: fn(mut p: Parser, head: i64) {
 emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
     p.locals.count = 0
     p.frame_used = 0
+    p.spill_slots.count = 0
+    p.spill_depth = 0
     p.asm_ret = ret
     p.frame_id = p.frame_id + 1
     mine := p.frame_id

@@ -888,6 +888,14 @@ Parser :: struct {
     // How much of the frame the locals recorded so far take, which is what
     // gives the next one its slot.
     frame_used: i64,
+    // Where a half-finished value waits while the other half of an expression
+    // is worked out. One slot per depth of nesting, taken from the frame the
+    // function already reserves and reused by every expression that reaches
+    // that depth, so a deeply nested expression costs slots and a wide one
+    // costs none. `slot` is the offset; the rest of the record is unused.
+    spill_slots: Arena<LocalVar>,
+    // How many of them are in use where emission has reached.
+    spill_depth: i64,
     // Which module is being emitted, or -1 for the whole program in one unit.
     // A build that compiles each module to its own object emits one unit per
     // module, and a specialization goes in every unit that could call it, as a
