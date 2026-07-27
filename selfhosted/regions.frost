@@ -667,6 +667,9 @@ is_var_named :: fn(mut p: Parser, id: i64, off: i64, len: i64) -> bool {
 // moved, the same rule the backend emits by.
 call_consumes :: fn(mut p: Parser, args: i64, fn_index: i64, off: i64,
     len: i64) -> bool {
+    if (fn_index < 0 || fn_index >= p.fns.count) {
+        return false
+    }
     sym := arena_at(p.fns, fn_index)
     params := sym.params
     count := count_value_args(p, args)
@@ -677,6 +680,16 @@ call_consumes :: fn(mut p: Parser, args: i64, fn_index: i64, off: i64,
         if (param != (0 - 1) && is_var_named(p, arg, off, len)) {
             pnode := arena_at(p.arena, param)
             if (pnode.a != 1) {
+                return true
+            }
+        }
+        // An argument that is itself a call hands the value on the same way a
+        // call written on its own line does, so the name may be consumed any
+        // depth down rather than only in this call's own argument list.
+        if (arg != (0 - 1)) {
+            anode := arena_at(p.arena, arg)
+            if (anode.kind == NodeKind::Call
+                && call_consumes(p, anode.a, anode.val, off, len)) {
                 return true
             }
         }

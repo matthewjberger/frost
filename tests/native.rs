@@ -1776,6 +1776,71 @@ fn self_hosted_a_trailing_call_answering_with_a_linear_value_is_the_return() {
     assert_eq!(via_c, output, "the self-hosted C backend disagrees");
 }
 
+// A call answering with a resource, handed to a `move` parameter from inside
+// another call's argument list. The value is consumed however deep the call
+// holding it sits, so nesting does not change who owes the consumption.
+const LINEAR_NESTED_ARGUMENT: &str = "Holder :: linear struct { count: i64 }
+
+     make_holder :: fn(count: i64) -> Holder {
+         Holder { count = count }
+     }
+
+     release :: fn(move held: Holder) -> i64 {
+         held.count
+     }
+
+     twice :: fn(value: i64) -> i64 {
+         value * 2
+     }
+
+     main :: fn() -> i64 {
+         print twice(release(make_holder(21)))
+         print release(make_holder(3))
+         0
+     }
+";
+
+#[test]
+fn a_linear_value_is_consumed_inside_a_nested_call() {
+    let Some(output) = compile_and_run("linnest", LINEAR_NESTED_ARGUMENT)
+    else {
+        return;
+    };
+    assert_eq!(
+        output,
+        "42
+3
+"
+    );
+}
+
+#[test]
+fn self_hosted_a_linear_value_is_consumed_inside_a_nested_call() {
+    let Some(output) =
+        selfhosted_native_output("shlinnest", LINEAR_NESTED_ARGUMENT)
+    else {
+        return;
+    };
+    assert_eq!(
+        output,
+        "42
+3
+"
+    );
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shlinnest_input.frost");
+    std::fs::write(&input, LINEAR_NESTED_ARGUMENT).unwrap();
+    let Some(c_source) = self_hosted_emits("shlinnest", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shlinnest", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
 // A call whose answer holds a resource, made as a statement, drops it. Nothing
 // consumes what `make_holder` answers with here.
 const LINEAR_DROPPED_CALL: &str = "Holder :: linear struct { count: i64 }
