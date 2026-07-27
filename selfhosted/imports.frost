@@ -130,7 +130,8 @@ place_module :: fn(buffer: str, at: i64, path: ^i8,
     if (module_seen(modules, path)) {
         return at
     }
-    mine := arena_push(modules, Module { path = path, start = 0, finish = 0 })
+    mine := arena_push(modules, Module { path = path, start = 0, finish = 0,
+        cursor_off = 0 - 1, cursor_line = 1, cursor_column = 1 })
     raw := unsafe { frost_rt_read_file(path) }
     // The file's bytes as a slice, once, so nothing below indexes a bare
     // pointer.
@@ -156,7 +157,9 @@ place_module :: fn(buffer: str, at: i64, path: ^i8,
                 Module {
                     path = find_import(path, text, named.off, named.len,
                         roots),
-                    start = 0, finish = 0 },
+                    start = 0, finish = 0,
+                    cursor_off = 0 - 1, cursor_line = 1,
+                    cursor_column = 1 },
             )
         }
         i = i + 1
@@ -244,6 +247,13 @@ emit_position :: fn(mut modules: Arena<Module>, src: str, offset: i64) {
     mut line : i64 = 1
     mut column : i64 = 1
     mut at := entry.start
+    // Carry on from the last answer when this one is further into the file,
+    // which is the ordinary case, and start over when it is behind.
+    if (entry.cursor_off >= 0 && entry.cursor_off <= offset) {
+        at = entry.cursor_off
+        line = entry.cursor_line
+        column = entry.cursor_column
+    }
     while (at < offset) {
         if (src[at] == CH_LF) {
             line = line + 1
@@ -253,6 +263,9 @@ emit_position :: fn(mut modules: Arena<Module>, src: str, offset: i64) {
         }
         at = at + 1
     }
+    entry.cursor_off = offset
+    entry.cursor_line = line
+    entry.cursor_column = column
     mut k : i64 = 0
     length := cstr_len(entry.path)
     while (k < length) {
