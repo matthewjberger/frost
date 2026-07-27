@@ -862,6 +862,49 @@ value_abi_kind :: fn(mut p: Parser, ty: i64) -> i64 {
     0
 }
 
+// The bits above a narrow answer are undefined in the C ABI, so an extern's
+// answer is widened to the whole register before anything reads it. C answers a
+// bool in %al and leaves bits 8 and up holding whatever the callee last had
+// there, and Frost keeps a bool in a whole word, so reading the register whole
+// reads that leftover as true. The same is true of every type narrower than a
+// register: only the low bytes are the answer.
+emit_asm_extend_ret :: fn(mut p: Parser, ty: i64) {
+    repr := distinct_repr(ty)
+    if (repr == TY_VOID || is_float(ty) || is_aggregate(ty)) {
+        return
+    }
+    if (repr == TY_BOOL) {
+        asm("movzbq %al, %rax")
+        return
+    }
+    size := scalar_size(ty)
+    if (size == 1) {
+        if (is_unsigned(ty)) {
+            asm("movzbq %al, %rax")
+        } else {
+            asm("movsbq %al, %rax")
+        }
+        return
+    }
+    if (size == 2) {
+        if (is_unsigned(ty)) {
+            asm("movzwq %ax, %rax")
+        } else {
+            asm("movswq %ax, %rax")
+        }
+        return
+    }
+    if (size == 4) {
+        // Writing the 32-bit register clears the rest of the 64-bit one, so
+        // the unsigned case is the zero extension rather than short of it.
+        if (is_unsigned(ty)) {
+            asm("movl %eax, %eax")
+        } else {
+            asm("movslq %eax, %rax")
+        }
+    }
+}
+
 // Whether an `extern` answering with an aggregate does so through a hidden
 // pointer. This is the target's rule rather than this compiler's: Microsoft x64
 // answers a struct of 1, 2, 4 or 8 bytes in %rax whatever it holds, and takes a
@@ -1092,6 +1135,19 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
             if (op_answers_truth(op) == false) {
                 emit_asm_convert(p, TY_F64, type_of(p, id))
             }
+            return
+        }
+        // A right operand that is a written number cannot disturb the left one,
+        // so it goes straight into the register the operation reads it from.
+        // The spill and reload either side of it are what a right operand that
+        // could clobber %rax needs, and they are five instructions this way of
+        // writing it does not emit. Comparisons against a literal and steps of
+        // one are most of the arithmetic a program does.
+        right := arena_at(p.arena, bin.b)
+        if (right.kind == NodeKind::Num && right.b == 0) {
+            emit_asm_expr(p, bin.a)
+            asm_i("movq $", right.val, ", %r11")
+            emit_asm_binop(op)
             return
         }
         emit_asm_expr(p, bin.a)
@@ -1589,6 +1645,11 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     if (register_ret == 1) {
         emit_asm_take_ret_registers(p, ret, result_slot)
         asm_i("leaq ", result_slot, "(%rbp), %rax")
+    }
+    // Only a C function leaves the bits above a narrow answer undefined. A
+    // Frost function answers with the whole register.
+    if (sym.is_extern == 1) {
+        emit_asm_extend_ret(p, ret)
     }
 }
 
