@@ -456,6 +456,13 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
         || kind == NodeKind::AddrOf || kind == NodeKind::Ref
         || kind == NodeKind::PtrCast || kind == NodeKind::SliceLen
         || kind == NodeKind::Assert) {
+        // Whether a field is reached through a raw pointer is the same
+        // question indexing asks, and it has the same answer only here, so it
+        // is written onto the node the same way.
+        if (kind == NodeKind::Field && is_raw_pointer(type_of(p, node.a))) {
+            mut held := arena_at(p.arena, id)
+            held.b = 1
+        }
         check_types_expr(p, node.a)
         return
     }
@@ -2048,7 +2055,7 @@ check_unsafety :: fn(mut p: Parser) {
         // checked. A borrow was proven safe where it formed. Only a raw
         // pointer is unchecked.
         if (kind == NodeKind::Index) {
-            if (node.c == 1 || is_raw_pointer(type_of(p, node.a))) {
+            if (node.c == 1) {
                 gated = 1
                 what = "indexing a raw pointer"
             }
@@ -2056,8 +2063,16 @@ check_unsafety :: fn(mut p: Parser) {
         // Reading a field through a raw pointer is the same unchecked read a
         // `^` is. A borrow reaching its field is not, which is what lets
         // `mut p: Parser` write `p.field` without a block.
+        //
+        // Both read the answer the type pass wrote down rather than working it
+        // out again. This walk holds whatever local table the pass before it
+        // left behind, which belongs to the last function that pass looked at,
+        // so a name here would be looked up against another function's locals:
+        // where the two functions happen to share a parameter name that is a
+        // diagnostic about the wrong type, and where they do not it is a
+        // silently wrong answer.
         if (kind == NodeKind::Field) {
-            if (is_raw_pointer(type_of(p, node.a))) {
+            if (node.b == 1) {
                 gated = 1
                 what = "reading a field through a raw pointer"
             }
