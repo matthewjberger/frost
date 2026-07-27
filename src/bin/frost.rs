@@ -340,10 +340,6 @@ fn main() -> Result<()> {
     let mut linear_types = resolved.linear_types;
     let tests = resolved.tests;
     let mut modules = resolved.modules;
-    // A `test` block is an ordinary function under a name the compiler made up,
-    // so a build that is not running tests has to drop it rather than lower it.
-    // `assert` is only declared for a test build, so leaving them in refused
-    // every file that carries one, which is most of the standard library.
     if !cli.test {
         statements.retain(|statement| {
             !matches!(

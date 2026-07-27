@@ -608,9 +608,9 @@ Module :: struct {
     finish: i64,
     // Where the last line and column question about this module was answered.
     // Positions are asked for in roughly source order, so the next answer
-    // carries on from here rather than counting newlines from the start again,
-    // which is what made a file's worth of positions cost the file's length
-    // squared. A negative offset is "nothing asked yet".
+    // carries on from here. Counting newlines from the module start each time
+    // would cost a file's worth of positions the file's length squared. A
+    // negative offset means nothing has been asked yet.
     cursor_off: i64,
     cursor_line: i64,
     cursor_column: i64,

@@ -825,15 +825,21 @@ consumes_value :: fn(mut p: Parser, head: i64, off: i64, len: i64) -> bool {
     false
 }
 
-check_linear_locals :: fn(mut p: Parser, head: i64) {
+// `answers` is whether the last statement of this list is the value the
+// enclosing function hands back, which is true only when that function's own
+// return type holds a resource. A trailing expression is the return value, so a
+// call in that position is consumed by the caller rather than dropped here.
+check_linear_locals :: fn(mut p: Parser, head: i64, answers: bool) {
     mut id := head
     while (id != (0 - 1)) {
         node := arena_at(p.arena, id)
         kind := node.kind
+        last := node.next == (0 - 1)
         // A call whose answer holds a resource, made as a statement, drops what
         // it answered with. Naming the value is what gives anything the chance
         // to consume it.
-        if (kind == NodeKind::ExprStmt && node.a != (0 - 1)) {
+        if (kind == NodeKind::ExprStmt && node.a != (0 - 1)
+            && (answers && last) == false) {
             value := arena_at(p.arena, node.a)
             value_kind := value.kind
             callee := value.val
@@ -862,15 +868,18 @@ check_linear_locals :: fn(mut p: Parser, head: i64) {
                 frost_rt_die()
             }
         }
+        // A block in trailing position answers with whatever its own last
+        // statement answers with, so the obligation carries into it. A loop
+        // body never answers.
         if (kind == NodeKind::If) {
-            check_linear_locals(p, node.b)
-            check_linear_locals(p, node.val)
+            check_linear_locals(p, node.b, answers && last)
+            check_linear_locals(p, node.val, answers && last)
         }
         if (kind == NodeKind::While) {
-            check_linear_locals(p, node.b)
+            check_linear_locals(p, node.b, false)
         }
         if (kind == NodeKind::With) {
-            check_linear_locals(p, node.a)
+            check_linear_locals(p, node.a, answers && last)
         }
         id = node.next
     }
@@ -1187,7 +1196,13 @@ check_moves :: fn(mut p: Parser) {
     while (i < p.arena.count) {
         node := arena_at(p.arena, i)
         if (node.kind == NodeKind::Func) {
-            check_linear_locals(p, node.a)
+            fn_index := node.val
+            mut answers : bool = false
+            if (fn_index >= 0 && fn_index < p.fns.count) {
+                sym := arena_at(p.fns, fn_index)
+                answers = is_linear_type(p, sym.ret_type)
+            }
+            check_linear_locals(p, node.a, answers)
             p.moved.count = 0
             walk_moves_block(p, node.a)
         }
