@@ -6863,7 +6863,7 @@ impl<'a> FunctionLowering<'a> {
                 );
             }
             bail!(
-                "native backend: indexing by a Handle needs a slab-shaped struct, one with a 'storage' array and a parallel 'generations' array; see examples/native/lib/slab.frost"
+                "native backend: indexing by a Handle needs a slab-shaped struct, one with a 'storage' array and a parallel 'generations' array; see std/slab.frost"
             );
         }
         if matches!(self.probe_type(base), Some(Type::Str)) {

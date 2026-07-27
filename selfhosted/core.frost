@@ -762,7 +762,9 @@ arena_push :: fn(mut a: Arena<$T>, move value: $T) -> i64 {
         frost_rt_die()
     }
     id := a.count
-    a.data[id] = value
+    // The bounds are checked above, so this index is in range. What the block
+    // vouches for is that and nothing else.
+    unsafe { a.data[id] = value }
     a.count = a.count + 1
     id
 }
@@ -777,8 +779,11 @@ arena_at :: fn(a: Arena<$T>, id: i64) -> ref T {
         frost_rt_error_int(id)
         frost_rt_die()
     }
-    ref result := a.data[id]
-    result
+    // Checked against the count above, so the index is in range.
+    unsafe {
+        ref result := a.data[id]
+        result
+    }
 }
 
 // A directory added to the search list. arena_push answers with an index

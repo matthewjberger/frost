@@ -265,8 +265,13 @@ impl Checker {
                     },
                     _ => return None,
                 };
+                // A generic's fields are declared once, on the template, so a
+                // parameter written `Box<$T>` or a local of `Box<i64>` finds
+                // them under `Box`. Without this the gate cannot see that
+                // `b.data` is a `^T`, and indexing a raw pointer held by any
+                // generic container is allowed outside an `unsafe` block.
                 self.fields
-                    .get(&name)?
+                    .get(Type::template_of(&name))?
                     .iter()
                     .find(|declared| &declared.name == field)
                     .map(|declared| declared.field_type.clone())
