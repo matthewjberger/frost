@@ -88,6 +88,8 @@ M_CVTSI2SDQ :: 36
 M_CVTTSD2SIQ :: 37
 M_CVTSS2SD :: 38
 M_CVTSD2SS :: 39
+// The unaligned sixteen-byte move, which is how a struct is copied.
+M_MOVUPS :: 41
 // Not an instruction: a label definition, which takes a place in the list so
 // its address is whatever the instructions before it add up to.
 M_LABEL :: 40
@@ -500,6 +502,7 @@ mnemonic_of :: fn(src: str, off: i64, len: i64) -> (op: i64, cc: i64) {
     if (bytes_same(src, off, len, "divsd")) { return M_DIVSD, 0 }
     if (bytes_same(src, off, len, "ucomisd")) { return M_UCOMISD, 0 }
     if (bytes_same(src, off, len, "movapd")) { return M_MOVAPD, 0 }
+    if (bytes_same(src, off, len, "movups")) { return M_MOVUPS, 0 }
     if (bytes_same(src, off, len, "cvtsi2sdq")) { return M_CVTSI2SDQ, 0 }
     if (bytes_same(src, off, len, "cvttsd2siq")) { return M_CVTTSD2SIQ, 0 }
     if (bytes_same(src, off, len, "cvtss2sd")) { return M_CVTSS2SD, 0 }
@@ -889,6 +892,19 @@ encode_insn :: fn(mut unit: Assembly, index: i64) {
     if (op == M_MOVZBQ || op == M_MOVZWQ || op == M_MOVSBQ || op == M_MOVSWQ
         || op == M_MOVSLQ) {
         encode_extend(unit, op, a_kind, a_reg, a_disp, b_reg)
+        return
+    }
+    if (op == M_MOVUPS) {
+        // Sixteen bytes between an SSE register and memory, the load and the
+        // store being neighbouring opcodes rather than one with its operands
+        // the other way round.
+        if (b_kind == OPND_REG) {
+            emit_reg_rm(unit, 0, 0, 15, 16, reg_code(b_reg), a_kind,
+                reg_code(a_reg), a_disp, 0)
+        } else {
+            emit_reg_rm(unit, 0, 0, 15, 17, reg_code(a_reg), b_kind,
+                reg_code(b_reg), b_disp, 0)
+        }
         return
     }
     if (op == M_MOVQ || op == M_MOVL || op == M_MOVW || op == M_MOVB

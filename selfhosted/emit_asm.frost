@@ -73,9 +73,22 @@ emit_frame_symbol :: fn(mut p: Parser) {
 }
 
 
-// Copy a struct, a word at a time. Both addresses arrive in registers.
+// Copy a struct. Both addresses arrive in registers. Sixteen bytes travel in
+// one register and so in one instruction each way, which is half what moving
+// them a word at a time costs, and the odd word at the end goes the old way.
+// The wide move does not ask for an aligned address, and a struct's is
+// whatever the frame or the allocator gave it.
+//
+// The register it travels in is only ever live inside this loop: a float
+// reaches an SSE register for the arithmetic itself and leaves in %rax, so
+// nothing of a program's is held there across a copy.
 emit_asm_copy :: fn(size: i64) {
     mut moved : i64 = 0
+    while (size - moved >= 16) {
+        asm_i("movups ", moved, "(%r11), %xmm0")
+        asm_i("movups %xmm0, ", moved, "(%r10)")
+        moved = moved + 16
+    }
     while (moved < size) {
         asm_i("movq ", moved, "(%r11), %rax")
         asm_i("movq %rax, ", moved, "(%r10)")
