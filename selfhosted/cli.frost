@@ -52,6 +52,8 @@ usage :: fn() {
     report("    --libs <item> an object file or library to link. Repeatable\n")
     report("    --incremental one object per module, assembling only what changed\n")
     report("    --build-dir <dir>  where those objects are kept\n")
+    report("    --assemble    turn an assembly file into an object, with\n")
+    report("                  this compiler's own encoder rather than `as`\n")
     report("    --test        build and run the file's `test` blocks\n")
     report("    --audit-unsafe  also report every `unsafe` block vouching for nothing\n")
     report("    -h, --help    this\n\n")

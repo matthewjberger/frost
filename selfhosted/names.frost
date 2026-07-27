@@ -1305,7 +1305,11 @@ generic_index_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     mut i : i64 = 0
     while (i < p.structs.count) {
         entry := arena_at(p.structs, i)
-        if (entry.is_generic == 1 && entry.name_len == length
+        // A template still holding only its name has no body to instantiate
+        // from, so a generic named before it is declared is left unresolved
+        // rather than re-parsed from the top of the file.
+        if (entry.is_generic == 1 && entry.declared == 1
+            && entry.name_len == length
             && bytes_equal(p.src, entry.name_off, offset, length)
             && name_visible(p, entry.name_off, entry.name_len, offset)) {
             return i

@@ -462,6 +462,12 @@ StructDef :: struct {
     // A generic template that is an enum rather than a struct, so an
     // instantiation re-parses its body as variants rather than as fields.
     is_enum: i64,
+    // Whether this entry holds the declaration or only the name. Every type a
+    // file declares is put in the table by name before any body is read, so a
+    // field or a literal naming a type declared further down resolves to the
+    // same thing as one naming a type declared above it. The body fills the
+    // entry in when the declaration is reached.
+    declared: i64,
 }
 
 // A monomorphized instance of a generic struct: which template, the concrete

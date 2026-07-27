@@ -1706,7 +1706,7 @@ instantiate :: fn(mut p: Parser, generic_index: i64, arg: i64, xarg_start: i64,
             field_head = field_head, is_generic = 0, tparam_off = 0,
             tparam_len = 0, field_token = 0, instance_id = struct_index,
             is_linear = holds_linear(p, field_head, template_linear),
-            emitted = 0, xparam_start = 0, xparam_count = 0, is_enum = 0 },
+            emitted = 0, xparam_start = 0, xparam_count = 0, is_enum = 0, declared = 1 },
     )
     arena_push(
         p.instances,
@@ -1805,7 +1805,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
         StructDef { name_off = name_off, name_len = name_len, field_head = head,
             is_generic = 0, tparam_off = 0, tparam_len = 0, field_token = 0,
             instance_id = struct_index, is_linear = 0, emitted = 0,
-            xparam_start = 0, xparam_count = 0, is_enum = 0 },
+            xparam_start = 0, xparam_count = 0, is_enum = 0, declared = 1 },
     )
     STRUCT_BASE + struct_index
 }
@@ -3317,6 +3317,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
 parse_struct :: fn(mut p: Parser) {
     name_offset := cur_off(p)
     name_length := cur_len(p)
+    entry_index := predeclared_index(p, name_offset, name_length)
     advance(p)
     advance(p)
     // `Name :: linear struct { ... }` marks a resource that must be consumed
@@ -3366,24 +3367,20 @@ parse_struct :: fn(mut p: Parser) {
             }
             advance(p)
         }
-        arena_push(
-            p.structs,
+        record_struct(p, entry_index,
             StructDef { name_off = name_offset, name_len = name_length,
                 field_head = 0 - 1, is_generic = 1, tparam_off = tparam_off,
                 tparam_len = tparam_len, field_token = field_token,
                 instance_id = 0 - 1, is_linear = linear_flag, emitted = 0,
-                xparam_start = xparam_start, xparam_count = xparam_count, is_enum = 0 },
-        )
+                xparam_start = xparam_start, xparam_count = xparam_count, is_enum = 0, declared = 1 })
     } else {
         head := parse_struct_fields(p)
-        arena_push(
-            p.structs,
+        record_struct(p, entry_index,
             StructDef { name_off = name_offset, name_len = name_length,
                 field_head = head, is_generic = 0, tparam_off = 0,
                 tparam_len = 0, field_token = 0, instance_id = 0 - 1,
                 is_linear = holds_linear(p, head, linear_flag), emitted = 0,
-                xparam_start = 0, xparam_count = 0, is_enum = 0 },
-        )
+                xparam_start = 0, xparam_count = 0, is_enum = 0, declared = 1 })
     }
 }
 
@@ -3500,6 +3497,7 @@ parse_enum_body :: fn(mut p: Parser, enum_ty: i64) -> i64 {
 parse_enum :: fn(mut p: Parser) {
     name_offset := cur_off(p)
     name_length := cur_len(p)
+    entry_index := predeclared_index(p, name_offset, name_length)
     advance(p)
     advance(p)
     // `Name :: linear enum { ... }` marks a resource that must be consumed
@@ -3548,30 +3546,29 @@ parse_enum :: fn(mut p: Parser) {
             }
             advance(p)
         }
-        arena_push(
-            p.structs,
+        record_struct(p, entry_index,
             StructDef { name_off = name_offset, name_len = name_length,
                 field_head = 0 - 1, is_generic = 1, tparam_off = tparam_off,
                 tparam_len = tparam_len, field_token = field_token,
                 instance_id = 0 - 1, is_linear = linear_flag, emitted = 0,
                 xparam_start = xparam_start, xparam_count = xparam_count,
-                is_enum = 1 },
-        )
+                is_enum = 1, declared = 1 })
         return
     }
     // The enum's own index is known before its body is, since a variant has to
     // record which enum it belongs to.
-    enum_index := p.structs.count
+    mut enum_index := entry_index
+    if (enum_index < 0) {
+        enum_index = p.structs.count
+    }
     enum_ty := STRUCT_BASE + enum_index
     field_head := parse_enum_body(p, enum_ty)
-    arena_push(
-        p.structs,
+    record_struct(p, entry_index,
         StructDef { name_off = name_offset, name_len = name_length,
             field_head = field_head, is_generic = 0, tparam_off = 0,
             tparam_len = 0, field_token = 0, instance_id = 0 - 1,
             is_linear = linear_flag, emitted = 0, xparam_start = 0,
-            xparam_count = 0, is_enum = 1 },
-    )
+            xparam_count = 0, is_enum = 1, declared = 1 })
 }
 
 // `Kind::Enemy { damage = 15 }`, or `Kind::Player` with nothing to carry. The
@@ -3881,7 +3878,7 @@ synth_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
             field_head = tag, is_generic = 0, tparam_off = 0, tparam_len = 0,
             field_token = 0, instance_id = 0 - 1,
             is_linear = result_is_linear(p, ok, bad), emitted = 0,
-            xparam_start = 0, xparam_count = 0, is_enum = 1 },
+            xparam_start = 0, xparam_count = 0, is_enum = 1, declared = 1 },
     )
     result_ty := STRUCT_BASE + index
     arena_push(
@@ -3979,7 +3976,7 @@ synth_multi_struct :: fn(mut p: Parser) -> i64 {
             name_len = 7 + digits_in(p.structs.count),
             field_head = head, is_generic = 0, tparam_off = 0, tparam_len = 0,
             field_token = 0, instance_id = 0 - 1, is_linear = 0, emitted = 0,
-            xparam_start = 0, xparam_count = 0, is_enum = 0 },
+            xparam_start = 0, xparam_count = 0, is_enum = 0, declared = 1 },
     )
     p.multi_count = count
     STRUCT_BASE + index
@@ -4293,7 +4290,210 @@ parse_test :: fn(mut p: Parser) -> i64 {
     made
 }
 
+// Every type this file declares, by name, before any body is read. A type name
+// is resolved where it is written, so a field or a literal naming a type
+// declared further down the file would otherwise resolve to nothing and be
+// taken for an i64: `sizeof` then agrees by coincidence and the program is
+// silently wrong. The entries here hold the name and nothing else until the
+// declaration is reached.
+predeclare_types :: fn(mut p: Parser) {
+    start := p.ti
+    mut depth : i64 = 0
+    while (cur(p) != TokenKind::Eof) {
+        kind := cur(p)
+        if (kind == TokenKind::Lbrace) {
+            depth = depth + 1
+        } else if (kind == TokenKind::Rbrace) {
+            depth = depth - 1
+        } else if (depth == 0 && kind == TokenKind::Ident
+            && peek_kind(p, 1) == TokenKind::Coloncolon) {
+            mut at : i64 = 2
+            if (peek_kind(p, at) == TokenKind::KwLinear) {
+                at = at + 1
+            }
+            named := peek_kind(p, at)
+            if (named == TokenKind::KwStruct || named == TokenKind::KwEnum) {
+                mut generic : i64 = 0
+                if (peek_kind(p, at + 1) == TokenKind::Lparen) {
+                    generic = 1
+                }
+                mut holds_variants : i64 = 0
+                if (named == TokenKind::KwEnum) {
+                    holds_variants = 1
+                }
+                arena_push(
+                    p.structs,
+                    StructDef { name_off = cur_off(p), name_len = cur_len(p),
+                        field_head = 0 - 1, is_generic = generic,
+                        tparam_off = 0, tparam_len = 0, field_token = 0,
+                        instance_id = 0 - 1, is_linear = 0, emitted = 0,
+                        xparam_start = 0, xparam_count = 0,
+                        is_enum = holds_variants, declared = 0 },
+                )
+            }
+        }
+        advance(p)
+    }
+    p.ti = start
+}
+
+// The entry the pre-pass made for this name, or -1. The declarations are
+// reached in the order the pre-pass saw them, so the first entry still holding
+// only a name is this declaration's.
+predeclared_index :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < p.structs.count) {
+        entry := arena_at(p.structs, i)
+        if (entry.declared == 0 && entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)) {
+            return i
+        }
+        i = i + 1
+    }
+    0 - 1
+}
+
+// Put a declaration in the table, filling in the entry the pre-pass made for
+// it. A type the pre-pass did not see, which is one this compiler synthesizes,
+// takes an entry of its own.
+record_struct :: fn(mut p: Parser, index: i64, made: StructDef) -> i64 {
+    if (index < 0) {
+        return arena_push(p.structs, made)
+    }
+    entry := arena_at(p.structs, index)
+    entry.field_head = made.field_head
+    entry.is_generic = made.is_generic
+    entry.tparam_off = made.tparam_off
+    entry.tparam_len = made.tparam_len
+    entry.field_token = made.field_token
+    entry.is_linear = made.is_linear
+    entry.xparam_start = made.xparam_start
+    entry.xparam_count = made.xparam_count
+    entry.is_enum = made.is_enum
+    entry.declared = 1
+    index
+}
+
+// A struct holding a resource is a resource, and a field may name a type
+// declared after the struct that holds it, whose own obligation was not known
+// when that struct was recorded. This settles the question for every type at
+// once, going round until nothing changes, so the answer does not depend on
+// the order the declarations were written in.
+settle_linear_types :: fn(mut p: Parser) {
+    mut changed : i64 = 1
+    while (changed == 1) {
+        changed = 0
+        mut i : i64 = 0
+        while (i < p.structs.count) {
+            entry := arena_at(p.structs, i)
+            head := entry.field_head
+            was := entry.is_linear
+            if (was == 0 && holds_linear(p, head, 0) == 1) {
+                again := arena_at(p.structs, i)
+                again.is_linear = 1
+                changed = 1
+            }
+            i = i + 1
+        }
+    }
+}
+
+// Whether the parser is at the start of a top-level declaration, which is a
+// name followed by `::`, or a `test` block.
+at_declaration_start :: fn(mut p: Parser) -> bool {
+    if (cur(p) == TokenKind::KwTest) {
+        return true
+    }
+    cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Coloncolon
+}
+
+// Whether the declaration here is a compile-time integer constant. An array
+// length may name one, so these are read before the types are.
+at_const_declaration :: fn(mut p: Parser) -> bool {
+    if (cur(p) != TokenKind::Ident || peek_kind(p, 1) != TokenKind::Coloncolon) {
+        return false
+    }
+    third := peek_kind(p, 2)
+    third == TokenKind::Int || third == TokenKind::Lparen
+        || (third == TokenKind::Ident && is_arith_op(peek_kind(p, 3)))
+}
+
+// Whether the declaration here introduces a type rather than a value.
+at_type_declaration :: fn(mut p: Parser) -> bool {
+    if (cur(p) != TokenKind::Ident || peek_kind(p, 1) != TokenKind::Coloncolon) {
+        return false
+    }
+    third := peek_kind(p, 2)
+    if (third == TokenKind::KwEnum || third == TokenKind::KwStruct
+        || third == TokenKind::KwLinear || third == TokenKind::KwDistinct) {
+        return true
+    }
+    third == TokenKind::Ident && peek_is_word(p, 2, "flags")
+        && peek_kind(p, 4) == TokenKind::Lbrace
+}
+
+// Advance past the declaration here without reading it, which is what lets one
+// walk of the file take the type declarations and the next take the rest.
+skip_declaration :: fn(mut p: Parser) {
+    advance(p)
+    mut depth : i64 = 0
+    while (cur(p) != TokenKind::Eof) {
+        kind := cur(p)
+        if (kind == TokenKind::Lbrace) {
+            depth = depth + 1
+        } else if (kind == TokenKind::Rbrace) {
+            depth = depth - 1
+        } else if (depth == 0 && at_declaration_start(p)) {
+            return
+        }
+        advance(p)
+    }
+}
+
+// Every compile-time integer constant, before the types that may size an array
+// by one.
+parse_constant_declarations :: fn(mut p: Parser) {
+    while (cur(p) != TokenKind::Eof) {
+        if (at_const_declaration(p)) {
+            parse_const(p)
+        } else {
+            skip_declaration(p)
+        }
+    }
+}
+
+// Every type declaration, before any function body is read. A body may write a
+// literal of a type declared below it, and the fields are checked where the
+// literal is written, so the bodies of the types have to be in hand first.
+parse_type_declarations :: fn(mut p: Parser) {
+    while (cur(p) != TokenKind::Eof) {
+        if (at_type_declaration(p) == false) {
+            skip_declaration(p)
+        } else {
+            third := peek_kind(p, 2)
+            if (third == TokenKind::KwEnum
+                || (third == TokenKind::KwLinear
+                    && peek_kind(p, 3) == TokenKind::KwEnum)) {
+                parse_enum(p)
+            } else if (third == TokenKind::KwStruct
+                || third == TokenKind::KwLinear) {
+                parse_struct(p)
+            } else if (third == TokenKind::KwDistinct) {
+                parse_distinct(p)
+            } else {
+                parse_flags(p)
+            }
+        }
+    }
+}
+
 parse_program :: fn(mut p: Parser) -> i64 {
+    predeclare_types(p)
+    start := p.ti
+    parse_constant_declarations(p)
+    p.ti = start
+    parse_type_declarations(p)
+    p.ti = start
     mut head : i64 = 0 - 1
     mut tail : i64 = 0 - 1
     while (cur(p) == TokenKind::Ident || cur(p) == TokenKind::KwTest) {
@@ -4307,17 +4507,9 @@ parse_program :: fn(mut p: Parser) -> i64 {
                 set_next(p, tail, item)
                 tail = item
             }
-        } else if (third == TokenKind::KwEnum
-            || (third == TokenKind::KwLinear
-                && peek_kind(p, 3) == TokenKind::KwEnum)) {
-            parse_enum(p)
-        } else if (third == TokenKind::KwStruct || third == TokenKind::KwLinear) {
-            parse_struct(p)
-        } else if (third == TokenKind::KwDistinct) {
-            parse_distinct(p)
-        } else if (third == TokenKind::Ident && peek_is_word(p, 2, "flags")
-            && peek_kind(p, 4) == TokenKind::Lbrace) {
-            parse_flags(p)
+        } else if (at_type_declaration(p)) {
+            // Already read, before any body was.
+            skip_declaration(p)
         } else if (third == TokenKind::KwExtern || third == TokenKind::KwSafe) {
             item := parse_extern(p)
             if (head == (0 - 1)) {
@@ -4327,13 +4519,13 @@ parse_program :: fn(mut p: Parser) -> i64 {
                 set_next(p, tail, item)
                 tail = item
             }
-        } else if (third == TokenKind::Int || third == TokenKind::Lparen
-            || (third == TokenKind::Ident && is_arith_op(peek_kind(p, 3)))) {
+        } else if (at_const_declaration(p)) {
             // A constant, whose value is an integer expression: a literal, a
             // parenthesized combination, or an earlier constant combined with
             // another by an operator. A bare `Name :: OtherName` is left alone,
-            // so `Enum::Variant` is not read as a constant.
-            parse_const(p)
+            // so `Enum::Variant` is not read as a constant. Already read, with
+            // the other constants, before the types.
+            skip_declaration(p)
         } else if (third == TokenKind::Ident
             && (peek_kind(p, 3) == TokenKind::Lbrace
                 || peek_kind(p, 3) == TokenKind::Lt)) {
@@ -4401,6 +4593,7 @@ parse_program :: fn(mut p: Parser) -> i64 {
         report("this is not the start of a declaration")
         frost_rt_die()
     }
+    settle_linear_types(p)
     head
 }
 
