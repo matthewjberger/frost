@@ -19,7 +19,7 @@ import "format.frost"
 import "strings.frost"
 
 IN  :: "examples/tour.frost"
-OUT :: "docs/tour.svg"
+OUT :: "docs/book/src/tour.svg"
 
 // A monospace grid. The advance is what a 13px monospace font measures at, and
 // every position is a multiple of it, so nothing has to be measured at runtime.

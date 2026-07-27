@@ -15,7 +15,7 @@ its own import list rather than inheriting it from something else's.
 `import "list.frost" (insert as list_insert)` reads one of those names under
 another, which is the answer when two modules you cannot edit export the same
 name. The rename belongs to the file that wrote it. See section 5.5 of
-[spec.md](spec.md).
+[spec.md](../reference/conformance.md).
 
 ## The order
 

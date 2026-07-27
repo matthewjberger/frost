@@ -6,7 +6,7 @@ use crate::parser::{Spanned, Statement};
 
 // What a caller needs to know about a module without seeing the rest of it.
 //
-// The design is in docs/separate-compilation.md. The short version of why this
+// The design is in docs/book/src/impl/separate-compilation.md. The short version of why this
 // holds statements rather than a table of signatures: a generic's body is part
 // of its interface, unavoidably, because the caller chooses the type arguments
 // and so the caller is what instantiates the template. Once the body of an
@@ -99,7 +99,7 @@ impl ModuleInterface {
     }
 }
 
-// Step 2 of docs/separate-compilation.md. The compiler writes an interface out
+// Step 2 of docs/book/src/impl/separate-compilation.md. The compiler writes an interface out
 // and reads it back, and checks that what came back says the same thing as the
 // source, while still compiling from source. This is the differential oracle
 // for the feature, and it exists because the class of bug separate compilation
@@ -111,7 +111,7 @@ pub fn interfaces_are_checked() -> bool {
     std::env::var("FROST_CHECK_INTERFACES").is_ok_and(|value| value != "0")
 }
 
-// Step 4 of docs/separate-compilation.md, as an oracle rather than as the way
+// Step 4 of docs/book/src/impl/separate-compilation.md, as an oracle rather than as the way
 // builds work. With this on, an imported module contributes what its interface
 // says it contributes and nothing else, so a program that still compiles and
 // still produces the same output is evidence that the interface is sufficient.

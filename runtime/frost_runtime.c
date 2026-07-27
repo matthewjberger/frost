@@ -244,7 +244,7 @@ void frost_rt_assert_at(int8_t condition, const char *where) {
 /* Diagnostics for a Frost-written compiler. Its program output goes to stdout,
    so errors are composed piecewise on stderr and frost_rt_die ends the process. */
 // Reads an i64 through a pointer. A `linear` resource passed to an extern
-// arrives as a pointer to the moved-in aggregate (docs/c-compatibility.md), and
+// arrives as a pointer to the moved-in aggregate (docs/book/src/impl/c-compatibility.md), and
 // this is the smallest terminal consumer that proves the value crossed intact.
 int64_t frost_rt_read_i64(void *data) {
     return *(int64_t *)data;

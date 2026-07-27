@@ -76,7 +76,7 @@ actual work predictable.
    be stuck without: a function that returns a struct by value, which follows
    the target's real C ABI rather than Frost's own convention, and a callback,
    which is a `$` function parameter plus a context taken by `move` rather than
-   a raw `^u8`. See [c-compatibility.md](c-compatibility.md) and
+   a raw `^u8`. See [c-compatibility.md](../impl/c-compatibility.md) and
    [callbacks.md](callbacks.md).
 6. One typed IR, three execution paths, kept honest. The AST lowers to a
    single typed IR from which a Cranelift backend and a portable C backend emit
@@ -92,7 +92,7 @@ actual work predictable.
    bootstrap compiles the Frost compiler, the Frost compiler compiles itself,
    and no seed binary has to exist or be trusted. Every feature lands in both,
    and what still differs between them is listed in
-   [../selfhosted/README.md](../selfhosted/README.md).
+   [the self-hosted compiler](../impl/self-hosted.md).
 9. Compilation stays fast as programs grow. Not fast at the sizes tested so
    far, which any compiler manages, but fast on a curve that does not turn over.
    This is a promise rather than a happy accident, and it has a bill attached.
@@ -104,9 +104,9 @@ actual work predictable.
    shape. Each module is its own object and `--incremental` rebuilds only the
    modules an edit can reach. Both are measured by commands rather than
    remembered, `just bench-scaling` and `just bench-incremental`, and recorded
-   in [self-hosting.md](self-hosting.md) and
-   [separate-compilation.md](separate-compilation.md).
-   [roadmap.md](roadmap.md) is the surrounding order of work.
+   in [self-hosting.md](../impl/self-hosted.md) and
+   [separate-compilation.md](../impl/separate-compilation.md).
+   [roadmap.md](../roadmap.md) is the surrounding order of work.
 
 ## Non-goals
 
@@ -145,7 +145,7 @@ actual work predictable.
   This is also what keeps the front end near-linear. Coherence checking, bound
   solving and method resolution are among the passes that dominate other
   compilers' front ends, and their absence is measured in
-  [self-hosting.md](self-hosting.md), not assumed.
+  [self-hosting.md](../impl/self-hosted.md), not assumed.
 - Not access-controlled. There are no visibility modifiers. Every struct
   field is public, there is no `pub` or private, and the module system needs no
   visibility rules. Encapsulation by field privacy is out of scope.

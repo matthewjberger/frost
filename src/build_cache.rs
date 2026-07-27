@@ -8,7 +8,7 @@ use crate::parser::{Expression, Parameter, Spanned, Statement};
 use crate::types::Type;
 
 // What the compiler remembers about a module between builds. Step 5 of
-// docs/separate-compilation.md. A module is rebuilt only when its own source or
+// docs/book/src/impl/separate-compilation.md. A module is rebuilt only when its own source or
 // an imported interface changes, and this is the thing that answers that
 // question without reading the module.
 //

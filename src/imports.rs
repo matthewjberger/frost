@@ -131,7 +131,7 @@ pub struct Resolved {
     pub tests: Vec<(String, String)>,
     // One per imported module, and empty unless interface checking is on. The
     // compiler does not build from these yet. See step 2 of
-    // docs/separate-compilation.md.
+    // docs/book/src/impl/separate-compilation.md.
     pub interfaces: Vec<crate::interface::ModuleInterface>,
     // One per imported module, and empty without a build cache. What the driver
     // needs to link a module's cached object instead of compiling it, and to
@@ -182,7 +182,7 @@ pub struct Resolution<'a> {
     pub roots: &'a [SearchRoot],
 }
 
-// Step 5 of docs/separate-compilation.md. With a cache, a module whose own
+// Step 5 of docs/book/src/impl/separate-compilation.md. With a cache, a module whose own
 // source and whose imported interfaces are all unchanged is not read past its
 // first line. It contributes the interface the cache already holds, and its
 // object is linked rather than built.
@@ -203,7 +203,7 @@ pub fn resolve_imports_cached(
     };
     // The directory of the file named on the command line is the project root,
     // and a module's identity is its path relative to that. See the "what is a
-    // project root" question in docs/separate-compilation.md, which this is the
+    // project root" question in docs/book/src/impl/separate-compilation.md, which this is the
     // smallest answer to.
     let root = base_dir.canonicalize().unwrap_or_else(|_| base_dir.into());
 
@@ -800,7 +800,7 @@ impl Walk<'_> {
         let tag = module_tag_of(module_name);
         let mut statements = without_tests(parsed.statements);
 
-        // Steps 2 and 4 of docs/separate-compilation.md. The interface is
+        // Steps 2 and 4 of docs/book/src/impl/separate-compilation.md. The interface is
         // derived at the one place a module is parsed, which is what keeps it
         // from drifting out of step with the source it describes.
         if crate::interface::interfaces_are_checked()

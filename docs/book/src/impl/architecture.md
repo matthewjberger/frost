@@ -188,7 +188,7 @@ Working today, verified by running native binaries (`tests/native.rs`):
 - Fixed-size arrays: array literals, indexed read and write with static or
   runtime indices, and borrowed array parameters (e.g. `sum(a: [5]i64)`). Every
   index is bounds-checked against the statically-known length. An out-of-range
-  index aborts (see [memory-safety.md](memory-safety.md)).
+  index aborts (see [memory-safety.md](../design/memory-safety.md)).
 - Enums and tagged unions: construction, and `match` over a value or a
   reference with enum-variant patterns (binding payload fields), integer
   literal patterns, identifier binding, and wildcard.
@@ -268,7 +268,7 @@ fields rather than substituting a template: for each field it registers one
 scatter `c[handle] = value` lower to the slab's bounds-and-generation check
 (`frost_rt_slot`) reused verbatim, selecting the column before indexing it, and
 `columns_new()` zero-initializes. It is the structure-of-arrays sibling of the
-slab. See [native-pools.md](native-pools.md).
+slab. See [native-pools.md](../design/pools-and-columns.md).
 
 Not yet in the native backend (these fail loudly, they are not silently
 miscompiled): growable or heap-backed collections. Capturing closures are absent by design,
@@ -288,7 +288,7 @@ not handle.
 
 ## Direction
 
-See [philosophy.md](philosophy.md) for the design philosophy, goals and
+See [philosophy.md](../design/philosophy.md) for the design philosophy, goals and
 non-goals, and why Frost is data-oriented rather than object-oriented.
 
 Frost is being reshaped toward a data-oriented language with:
@@ -435,7 +435,7 @@ AST. Both point at a line.
     indices instead of pointers, and carries imports and modules, failure sets,
     enums with payloads, and generics. It is the compiler Frost is for, and
     this file describes the bootstrap that builds its stage 0. See
-    [self-hosting.md](self-hosting.md).)*
+    [self-hosting.md](self-hosted.md).)*
 11. Parser error recovery. *(Done: the parser recovers at statement boundaries
     instead of stopping at the first error, at the top level and inside function
     bodies alike, so one malformed statement no longer discards the rest of the
@@ -449,7 +449,7 @@ AST. Both point at a line.
 12. Parallel code generation. *(Done: `src/ir_codegen.rs` builds and compiles
     functions across every core from a shared work queue. 385 ms to 55 ms on
     sixteen threads at 10,401 functions, and a full native build of 58k lines
-    in 353 ms. [roadmap.md](roadmap.md) has the sweep, and why a shared cursor
+    in 353 ms. [roadmap.md](../roadmap.md) has the sweep, and why a shared cursor
     beats splitting the function list into equal chunks.)*
 13. Callbacks with a typed context. *(Done. An `extern fn` with a `$handler`
     parameter bound to a function signature is a callback registration:
@@ -457,7 +457,7 @@ AST. Both point at a line.
     registration to the frame that holds its context, and `src/ir_build.rs`
     passes the handler's address and the context's address. There is no
     trampoline and no cast, because a `mut` parameter is already a pointer and
-    Frost and C share a calling convention. [callbacks.md](callbacks.md) has the
+    Frost and C share a calling convention. [callbacks.md](../design/callbacks.md) has the
     design.)*
 14. The C ABI for struct returns. *(Done. `src/c_abi.rs` classifies an
     `extern fn`'s aggregate return the way the target's C compiler does, per

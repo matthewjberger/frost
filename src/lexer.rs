@@ -293,7 +293,7 @@ pub struct Position {
     // "line 12" and the reader looks up line 12 of the wrong file. The lexer
     // does not know which file it is reading, so it leaves this 0 and import
     // resolution stamps it, which is also the module provenance step 3 of
-    // docs/separate-compilation.md needs.
+    // docs/book/src/impl/separate-compilation.md needs.
     #[serde(default)]
     pub file: u32,
 }

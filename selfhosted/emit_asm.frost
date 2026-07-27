@@ -767,7 +767,7 @@ abi_class_of :: fn(mut p: Parser, params: i64, index: i64) -> i64 {
 // emitter walks slots rather than arguments because of them.
 //
 // The same classification is in src/c_abi.rs, checked against what the host C
-// compiler actually does. See docs/c-compatibility.md.
+// compiler actually does. See docs/book/src/impl/c-compatibility.md.
 // ---------------------------------------------------------------------------
 
 // Whether every scalar of `ty` reaching the eightbyte numbered `word` is

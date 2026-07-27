@@ -92,7 +92,7 @@ main :: fn() -> i64 {
   function written `handler :: fn(status: i32, value message: View, tail: i64)`
   is compiled to receive one. That is the other direction: the caller takes the
   struct apart, the callee puts it back together, and neither needs a
-  trampoline, which is the same claim [callbacks.md](callbacks.md) makes about
+  trampoline, which is the same claim [callbacks.md](../design/callbacks.md) makes about
   the simpler shapes.
 
   This is what wgpu's callbacks need. Without it the struct had to be declared
@@ -115,7 +115,7 @@ libraries) through `extern fn`, with no FFI glue code.
 The support runtime (`runtime/frost_runtime.c`) is an ordinary C file that both
 backends link automatically. It is about a hundred lines: the bounds and
 generation aborts, assertions, and IO. The pool itself is written in Frost, so
-nothing here allocates or owns one. See [native-pools.md](native-pools.md). Programs reach it through the same
+nothing here allocates or owns one. See [native-pools.md](../design/pools-and-columns.md). Programs reach it through the same
 `extern fn` mechanism:
 
 ```frost

@@ -1,0 +1,93 @@
+# 2. Lexical structure
+
+## 2.1 Source
+
+Source text is UTF-8. Tokens are formed by maximal munch. At each point the
+lexer takes the longest token that matches. Identifiers are ASCII,
+`[A-Za-z_][A-Za-z0-9_]*`. There are no Unicode identifiers.
+
+## 2.2 Whitespace and comments
+
+Whitespace (space, tab, carriage return, newline) separates tokens and is
+otherwise insignificant. Frost is not whitespace-sensitive and has no automatic
+semicolon insertion. Statement terminators (`;`) are always optional.
+
+A line break does decide one thing. A `(` or a `[` that opens a line begins a
+statement rather than continuing the one before it, so
+
+```frost
+table := tables[slot.table]
+(table.mask & mask) != 0
+```
+
+is two statements, not a call of the first line's value. This is the only rule
+whitespace has, and it exists because a statement beginning with a parenthesis
+is otherwise indistinguishable from a call written across two lines.
+
+There are two comment forms:
+
+- Line comment, `//` to end of line.
+- Block comment, `/* ... */`. Block comments do not nest, and an unterminated
+  block comment is an error.
+
+## 2.3 Identifiers and the wildcard
+
+```
+IDENT = ( LETTER | "_" ) ( LETTER | DIGIT | "_" )*
+```
+
+The single underscore `_` is a distinct token, the wildcard, and is not a
+binding name.
+
+## 2.4 Keywords
+
+Reserved words of the specified language:
+
+```
+fn struct enum match case if else while for in mut return break continue
+defer extern inline import linear distinct type unsafe sizeof print
+```
+
+Reserved primitive type names, each its own token:
+
+```
+i8 i16 i32 i64 isize   u8 u16 u32 u64 usize   f32 f64   bool str void
+```
+
+`test` and `export` are not reserved. They are recognized contextually, `test`
+only at the start of a top-level test declaration and `export` only on a
+top-level export line, so both remain usable as ordinary identifiers elsewhere.
+`Type` (capitalized), used in `$T: Type` (chapter 11), is likewise an ordinary
+identifier recognized in that position, not a keyword.
+
+## 2.5 Literals
+
+Integer. `INTEGER = DIGIT+`. Decimal only. No digit separators, no
+hexadecimal, octal, or binary prefixes. Integer literals are non-negative. A
+negative value is the prefix `-` applied to one. An integer literal takes its
+type from context, defaulting to `i64`.
+
+Float. `FLOAT = DIGIT+ "." DIGIT+`, with an optional `f` or `f32` suffix that
+makes it an `f32`, otherwise it is `f64`. A `.` is only taken as a decimal point
+when the following character is not another `.`, so `0..10` lexes as a range.
+There is no exponent notation and no leading-dot form.
+
+String. Delimited by `"`, with escapes `\n`, `\t`, `\r`, `\0`, `\\`, `\"`,
+`\'`. Any other escape is an error. There are no numeric or Unicode escapes. A
+string literal has type `str` (3.7) and denotes a view of its bytes. Where `^i8`
+is expected it instead denotes a pointer to the same bytes with a trailing NUL,
+which is how string literals interoperate with C.
+
+Boolean. `true`, `false`, of type `bool`.
+
+## 2.6 Operators and punctuation
+
+```
+::  :=  :   =   ->  ..  ..=  .   ^   $   ?   #
++   -   *   /   %   &   |   &&  ||  <<  >>
+==  !=  <   <=  >   >=  !
+(   )   {   }   [   ]   ,   ;
+```
+
+`>>` is a single shift token that the
+parser splits when it closes nested generic arguments (11.4).

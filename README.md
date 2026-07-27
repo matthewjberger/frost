@@ -38,7 +38,7 @@ tuple type behind them, and literals that leave out a type the context already
 carries while every field keeps its name.
 
 <p align="center">
-  <img src="docs/tour.svg" alt="A tour of Frost: parameter modes, a linear resource, a failure set, and the inference in a literal" width="700">
+  <img src="docs/book/src/tour.svg" alt="A tour of Frost: parameter modes, a linear resource, a failure set, and the inference in a literal" width="700">
 </p>
 
 ```bash
@@ -52,41 +52,19 @@ For long-lived data, an `Entity` lives in a pool and is named by a `Handle`, a s
 
 ## Documentation
 
-**Learning the language**
+The documentation is a book, in [`docs/book`](docs/book).
 
-| Document | What it covers |
-| --- | --- |
-| [tour](docs/tour.md) | The language by example, one feature at a time |
-| [authoring](docs/authoring.md) | Writing correct Frost quickly, and the mistakes to expect |
-| [patterns](docs/patterns.md) | What the language rewards, what it merely permits, and why |
-| [coming-from-rust](docs/coming-from-rust.md) | Each Rust reflex and what it becomes here |
-| [spec](docs/spec.md) | The reference: types, semantics, and the grammar |
-| [math](docs/math.md) | The standard-library math, `f32` and `f64` |
-| [ecs](docs/ecs.md) | The archetype entity-component system in `std/` |
+```bash
+cargo install mdbook
+cd docs/book && just serve
+```
 
-**Why it is the way it is**
-
-| Document | What it covers |
-| --- | --- |
-| [philosophy](docs/philosophy.md) | The nine goals every decision is measured against |
-| [syntax-design](docs/syntax-design.md) | Why the syntax reads the way it does |
-| [memory-safety](docs/memory-safety.md) | What the safety guarantee covers, and what it does not |
-| [allocators](docs/allocators.md) | Arenas, regions, and where memory comes from |
-| [mem](std/mem.frost) | The typed allocation floor every container is built on |
-| [native-pools](docs/native-pools.md) | Generational handles, and why the pool is Frost rather than C |
-
-**The compiler**
-
-| Document | What it covers |
-| --- | --- |
-| [architecture](docs/architecture.md) | The passes, in order, and what each one decides |
-| [build-modes](docs/build-modes.md) | Native, C, and the IR interpreter |
-| [modules](docs/modules.md) | Imports, the flat namespace, and name collisions |
-| [separate-compilation](docs/separate-compilation.md) | Module interfaces and `--incremental` |
-| [c-compatibility](docs/c-compatibility.md) | Calling C, being called by C, and the ABI |
-| [callbacks](docs/callbacks.md) | Passing a function and a typed context across a boundary |
-| [self-hosting](docs/self-hosting.md) | The Frost compiler in Frost, and the fixpoints |
-| [roadmap](docs/roadmap.md) | What is planned, and what each item is waiting on |
+[A tour of Frost](docs/book/src/tour.md) is the language by example and the
+place to start. [Coming from Rust](docs/book/src/coming-from-rust.md) is the
+same ground for someone who already thinks in ownership and borrows.
+[Patterns](docs/book/src/patterns.md) is what to write instead, once the syntax
+is familiar. The [language reference](docs/book/src/reference/conformance.md) is
+normative, and [the roadmap](docs/book/src/roadmap.md) is what is left.
 
 ## What it does
 
@@ -98,7 +76,7 @@ One typed intermediate representation feeds three backends, a Cranelift native p
 
 The compiler is written in Frost. `selfhosted/frost.frost` reproduces itself byte for byte through its own C backend and its own x86-64 assembly backend, so a build can go from source to a running compiler with no C compiler in the loop. A full native build of 58k lines runs at about 166,000 lines per second with code generation spread across cores, and `--incremental` rebuilds only the modules an edit can reach.
 
-The standard library is ordinary Frost. It has length-carrying strings, a growable `Vec` and a hash map, file and formatted output, a sort, the slab and structure-of-arrays `columns` containers, an archetype entity-component system, and vector, matrix, and quaternion math at both single and double precision. See [`std/`](std), [docs/ecs.md](docs/ecs.md) and [docs/math.md](docs/math.md).
+The standard library is ordinary Frost. It has length-carrying strings, a growable `Vec` and a hash map, file and formatted output, a sort, the slab and structure-of-arrays `columns` containers, an archetype entity-component system, and vector, matrix, and quaternion math at both single and double precision. See [`std/`](std), [docs/book/src/std/ecs.md](docs/book/src/std/ecs.md) and [docs/book/src/std/math.md](docs/book/src/std/math.md).
 
 ## Getting started
 
@@ -146,7 +124,7 @@ frost/
 ├── examples/     # runnable programs
 ├── bench/        # the benchmark generator
 ├── .vscode/      # editor settings, and the VS Code grammar for .frost
-└── docs/
+└── docs/book/   # the documentation, as an mdBook
 ```
 
 ## Tests

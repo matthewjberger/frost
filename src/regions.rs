@@ -490,7 +490,7 @@ pub fn check_frame_escapes_recovering(program: &Program) -> Vec<Diagnostic> {
     // exactly as `ptr_to` does. A context in this frame is the ordinary case
     // and is safe, because `check_linearity` forces the registration to be
     // consumed in the function that made it and this check stops it leaving
-    // that function by any other road. See docs/callbacks.md.
+    // that function by any other road. See docs/book/src/design/callbacks.md.
     let registrations = crate::callbacks::callback_registrations(program);
     let mut diagnostics = Vec::new();
     for statement in program {

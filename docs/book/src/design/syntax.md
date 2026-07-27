@@ -11,8 +11,8 @@ nothing invisible.
 A note on honesty. A few points below are properties of the grammar and the
 design that the implementation has not fully caught up to yet. Those are marked
 inline. Everything else describes the language as it compiles today. For the
-normative rules see [spec.md](spec.md). For a broader Rust-to-Frost guide see
-[coming-from-rust.md](coming-from-rust.md).
+normative rules see [spec.md](../reference/conformance.md). For a broader Rust-to-Frost guide see
+[coming-from-rust.md](../coming-from-rust.md).
 
 ## The Rosetta table
 

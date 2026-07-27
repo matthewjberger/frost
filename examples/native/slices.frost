@@ -2,7 +2,7 @@
 // a copy value, sixteen bytes, the same fat-pointer shape as `str` (which is
 // `[]u8`). An array coerces to a slice of the whole array, indexing is
 // bounds-checked against the runtime length, and `slice_len` reads the length in
-// constant time. A slice is the byte view every allocator needs (docs/allocators.md).
+// constant time. A slice is the byte view every allocator needs (docs/book/src/design/allocators.md).
 
 import "io.frost"
 

@@ -6,8 +6,8 @@ monomorphization, and it spends its time on where Frost agrees with Rust, where
 it deliberately diverges, and how to translate the Rust idioms you reach for by
 reflex.
 
-Read [philosophy.md](philosophy.md) for the reasoning behind the design and
-[memory-safety.md](memory-safety.md) for the safety argument in full. This
+Read [philosophy.md](design/philosophy.md) for the reasoning behind the design and
+[memory-safety.md](design/memory-safety.md) for the safety argument in full. This
 document is the practical bridge.
 
 ## Second-class borrows instead of lifetimes
@@ -758,7 +758,7 @@ taken by `move`, and it is closer to Rust's `Box::into_raw` plus a
 `extern "C" fn` shim than to a closure. The context is handed over, the caller
 cannot touch it while the callback can fire, and getting it back is what
 unregistration is for. Unlike the Rust version there is no `unsafe` and no raw
-pointer in what you write. See chapter 12.1 of [spec.md](spec.md).
+pointer in what you write. See chapter 12.1 of [spec.md](reference/conformance.md).
 
 ## Compile-time evaluation
 
@@ -812,7 +812,7 @@ that Frost calls C, but C does not call Frost. There is no stable exported ABI
 and no attribute to expose a Frost function to a C caller. The C that the
 compiler emits internally is a lowering detail, not an interface. If you need a
 library other languages link against, that is out of scope. The asymmetry is
-what keeps the backend simple. See [c-compatibility.md](c-compatibility.md) for
+what keeps the backend simple. See [c-compatibility.md](impl/c-compatibility.md) for
 the full type mapping.
 
 ## Modules
@@ -921,10 +921,10 @@ like something missing and starts feeling like something removed.
 
 ## Where to go next
 
-- [philosophy.md](philosophy.md), why the language is shaped this way.
-- [memory-safety.md](memory-safety.md), the safety guarantees in depth.
-- [c-compatibility.md](c-compatibility.md), the C type mapping and FFI details.
-- [architecture.md](architecture.md), the compiler pipeline, the typed IR, and
+- [philosophy.md](design/philosophy.md), why the language is shaped this way.
+- [memory-safety.md](design/memory-safety.md), the safety guarantees in depth.
+- [c-compatibility.md](impl/c-compatibility.md), the C type mapping and FFI details.
+- [architecture.md](impl/architecture.md), the compiler pipeline, the typed IR, and
   the three backends that must agree.
 - `examples/native/`, runnable programs, starting with `game_world.frost` and
   `pool_linked_list.frost`.

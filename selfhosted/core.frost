@@ -730,7 +730,7 @@ UnsafeSpan :: struct {
 }
 
 // A growable, index-addressed arena over a single heap allocation. This is the
-// data-oriented allocator from docs/allocators.md, generic over its element.
+// data-oriented allocator from docs/book/src/design/allocators.md, generic over its element.
 // arena_push appends and returns the element's index, arena_at turns an index
 // back into a pointer. The compiler is asked only for the raw memory (malloc)
 // and the pointer reinterpret. The bump logic is here.
@@ -826,7 +826,7 @@ source_end :: fn(text: str) -> i64 {
 // What is missing is the bound. These take a pointer with no length beside it,
 // so the read is unchecked and this is a perimeter rather than a proof. Making
 // it a proof means carrying the buffer as a slice, which is the length threaded
-// through every function that takes a `^i8` here (docs/roadmap.md).
+// through every function that takes a `^i8` here (docs/book/src/roadmap.md).
 byte_at :: fn(src: ^i8, index: i64) -> i64 {
     unsafe { frost_rt_byte_at(src, index) }
 }

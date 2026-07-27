@@ -75,7 +75,7 @@ str_hash :: fn(key: str) -> i64 {
 
 // A string as a key. The bytes are wrapped in a struct rather than used bare
 // because a key is an element of a run, and a run of slices is a shape the
-// self-hosted compiler does not yet hold (docs/roadmap.md).
+// self-hosted compiler does not yet hold (docs/book/src/roadmap.md).
 Text :: struct {
     bytes: str,
 }

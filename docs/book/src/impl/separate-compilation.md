@@ -9,7 +9,7 @@ module only when its own source or an imported interface changes.
 
 ## Why the shape has to change
 
-Goal 8 in [philosophy.md](philosophy.md) makes compilation speed a promise. The
+Goal 8 in [philosophy.md](../design/philosophy.md) makes compilation speed a promise. The
 constant factor is already handled: a full native build runs at about 166,000
 lines per second, which clears the bar. This is the other half, and it is not a
 constant factor.
@@ -276,7 +276,7 @@ rather than after.
   `selfhosted/frost.frost` is the compiler people will use, so the
   edit-compile loop goal 9 promises about is the one it runs. Everything in this
   document is a port waiting to happen: interfaces, the build cache, per-module
-  objects and `--incremental`. See [self-hosting.md](self-hosting.md).
+  objects and `--incremental`. See [self-hosting.md](self-hosted.md).
 - What is a project root? *Settled, smallest answer.* The directory of the
   file named on the command line. A manifest would make it reliable and nothing
   needs one yet. Note what this costs. The same library imported from two
