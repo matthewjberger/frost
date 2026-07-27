@@ -1717,7 +1717,10 @@ impl Translator<'_, '_> {
                 Ok(self.builder.ins().symbol_value(self.pointer_type, local))
             }
             IrConstant::Unit => {
-                bail!("native backend: unit value used as a real value")
+                bail!(
+                    "native backend: unit value used as a real value in '{}'",
+                    self.function.name
+                )
             }
         }
     }

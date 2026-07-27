@@ -15,25 +15,30 @@ bindir := env_var_or_default("FROST_BIN", join(homedir, ".cargo", "bin"))
 build:
     cargo build -r
 
-# Builds the bootstrap compiler and puts it on PATH as `frost` (Windows)
+# Builds the bootstrap compiler, with the standard library beside it (Windows)
 [windows]
 install: build
     New-Item -ItemType Directory -Force "{{bindir}}" | Out-Null
     Copy-Item -Force target/release/frost.exe (Join-Path "{{bindir}}" frost.exe)
+    New-Item -ItemType Directory -Force (Join-Path "{{bindir}}" std) | Out-Null
+    Copy-Item -Force std/*.frost (Join-Path "{{bindir}}" std)
     Write-Host "frost -> {{bindir}}"
 
-# Builds the bootstrap compiler and puts it on PATH as `frost` (Unix)
+# Builds the bootstrap compiler, with the standard library beside it (Unix)
 [unix]
 install: build
-    mkdir -p "{{bindir}}"
+    mkdir -p "{{bindir}}/std"
     cp target/release/frost "{{bindir}}/frost"
+    cp std/*.frost "{{bindir}}/std/"
     echo "frost -> {{bindir}}"
 
-# Builds the self-hosted compiler and puts it on PATH as `frostc` (Windows)
+# Builds the self-hosted compiler, with the standard library beside it (Windows)
 [windows]
 install-self: selfhost-build
     New-Item -ItemType Directory -Force "{{bindir}}" | Out-Null
     Copy-Item -Force selfhosted/frost.exe (Join-Path "{{bindir}}" frostc.exe)
+    New-Item -ItemType Directory -Force (Join-Path "{{bindir}}" std) | Out-Null
+    Copy-Item -Force std/*.frost (Join-Path "{{bindir}}" std)
     Write-Host "frostc -> {{bindir}}"
 
 # Builds the self-hosted compiler and puts it on PATH as `frostc` (Unix)
@@ -43,8 +48,9 @@ install-self: selfhost-build
 # ELF binary called `frost.exe`.
 [unix]
 install-self: selfhost-build
-    mkdir -p "{{bindir}}"
+    mkdir -p "{{bindir}}/std"
     cp selfhosted/frost.exe "{{bindir}}/frostc"
+    cp std/*.frost "{{bindir}}/std/"
     echo "frostc -> {{bindir}}"
 
 # Removes both compilers from PATH (Windows)
