@@ -439,6 +439,13 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
         return lookup_local(p, node.val, node.c)
     }
     if (kind == NodeKind::Call) {
+        // A call a template's own parse produced from a list that is not bound
+        // names no instantiation, so asking it for one would make a
+        // specialization out of elements that do not exist. The parse it
+        // belongs to is thrown away and done again per instance.
+        if (node.b == 1) {
+            return TY_I64
+        }
         // A generic function's declared return type still mentions its type
         // parameter, so a call answers with the concrete type recorded for the
         // instantiation it names.

@@ -129,6 +129,10 @@ NodeKind :: enum {
     Arg, StructLit, Field, FieldInit, Deref, Index, AddrOf, PtrCast, Sizeof,
     ExprStmt, Match, Case, Extern, StrLit, TypeVal, With, Float, ArrayLit,
     SliceLen, Assert, Ref, SliceFrom,
+    // Leaving a loop, and going round it again. Both are statements with
+    // nothing under them: which loop they mean is the innermost one, decided
+    // where they are emitted.
+    Break, Continue,
     // A call through a value rather than through a name: `ops.less(a, b)`,
     // where the callee is any expression of function-pointer type. `a` is that
     // expression and `b` is the argument list.
@@ -251,6 +255,8 @@ TokenKind :: enum {
     KwIf,
     KwElse,
     KwWhile,
+    KwBreak,
+    KwContinue,
     KwReturn,
     KwPrint,
     KwStruct,
@@ -963,6 +969,15 @@ Parser :: struct {
     moved: Arena<LocalVar>,
     label_id: i64,
     abi_windows: i64,
+    // Whether the argument list just read held a `for` over a compile-time list
+    // that was not bound, which is what a template's own parse sees. That parse
+    // is thrown away and done again per instance, so the tuple it would name is
+    // not one any call asks for.
+    args_unbound_map: i64,
+    // The labels of the loop being emitted, for `break` and `continue`. -1
+    // outside a loop, which is what says the two have nothing to jump to.
+    loop_top: i64,
+    loop_end: i64,
     // Which frame symbol the function being emitted uses. A function's frame
     // size is written down after its body, so the two have to agree on a name.
     frame_id: i64,

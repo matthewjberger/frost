@@ -1610,6 +1610,75 @@ fn a_compile_time_list_holds_types_and_expands_into_a_call() {
     assert_eq!(output, PACK_OUTPUT);
 }
 
+// `break` leaves the innermost loop and `continue` goes round it again. The
+// self-hosted compiler had neither, so a loop written with one compiled under
+// the bootstrap and not under it.
+const LOOP_CONTROL: &str = "main :: fn() -> i64 {
+         mut sum : i64 = 0
+         mut i : i64 = 0
+         while (i < 10) {
+             i = i + 1
+             if (i == 3) { continue }
+             if (i == 7) { break }
+             sum = sum + i
+         }
+         print sum
+         mut outer : i64 = 0
+         mut total : i64 = 0
+         while (outer < 3) {
+             outer = outer + 1
+             mut inner : i64 = 0
+             while (inner < 5) {
+                 inner = inner + 1
+                 if (inner == 2) { continue }
+                 if (inner == 4) { break }
+                 total = total + 1
+             }
+         }
+         print total
+         0
+     }
+";
+
+#[test]
+fn break_and_continue_answer_to_the_innermost_loop() {
+    let Some(output) = compile_and_run("loopctl", LOOP_CONTROL) else {
+        return;
+    };
+    assert_eq!(
+        output,
+        "18
+6
+"
+    );
+}
+
+#[test]
+fn self_hosted_break_and_continue_answer_to_the_innermost_loop() {
+    let Some(output) = selfhosted_native_output("shloopctl", LOOP_CONTROL)
+    else {
+        return;
+    };
+    assert_eq!(
+        output,
+        "18
+6
+"
+    );
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shloopctl_input.frost");
+    std::fs::write(&input, LOOP_CONTROL).unwrap();
+    let Some(c_source) = self_hosted_emits("shloopctl", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shloopctl", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
 // A call through a function pointer that answers with a struct. A Frost
 // function hands an aggregate back through a trailing out-pointer, and a call
 // through a pointer is the same call, so the signature the call site builds is

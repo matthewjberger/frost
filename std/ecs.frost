@@ -1355,8 +1355,10 @@ for_each :: fn($body: Type, mut world: World, f: Filters, types: $...) {
 //         filter_changed(no_filters(), transform, last_run), $Transform)
 //
 // The table-level filters still skip whole tables, so what this costs against
-// `for_each` is one call per row and the columns fetched per row rather than
-// per table. A system that reads every row wants `for_each`.
+// `for_each` is one call per row and the columns worked out per row rather than
+// per table. A system that reads every row wants `for_each`. Hoisting the
+// columns out of the row loop means handing them to a second generic as a list
+// of its own, which is what docs/roadmap.md records as still ordered wrong.
 for_each_row :: fn($body: Type, mut world: World, f: Filters, types: $...) {
     mut q := query_begin(world)
     for T in types {

@@ -58,6 +58,10 @@ classify_ident :: fn(src: str, off: i64, len: i64) -> TokenKind {
     if (str_range_eq(src, off, len, "true")) { return TokenKind::KwTrue }
     if (str_range_eq(src, off, len, "print")) { return TokenKind::KwPrint }
     if (str_range_eq(src, off, len, "while")) { return TokenKind::KwWhile }
+    if (str_range_eq(src, off, len, "break")) { return TokenKind::KwBreak }
+    if (str_range_eq(src, off, len, "continue")) {
+        return TokenKind::KwContinue
+    }
     if (str_range_eq(src, off, len, "match")) { return TokenKind::KwMatch }
     if (str_range_eq(src, off, len, "false")) { return TokenKind::KwFalse }
     if (str_range_eq(src, off, len, "return")) { return TokenKind::KwReturn }
