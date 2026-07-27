@@ -13727,3 +13727,142 @@ fn self_hosted_compiles_the_sdl_binding() {
         "the emitted C does not reach SDL"
     );
 }
+
+// Both compilers, run from a working directory that is not the checkout, on a
+// program that imports the standard library. This is what separates a compiler
+// that is installed from one that only works where it was built: the standard
+// library, the runtime and the toolchain all have to be found from the binary's
+// own location rather than from wherever the caller happens to be standing.
+fn installed_layout(name: &str, compiler: &Path) -> Option<(PathBuf, PathBuf)> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let home = std::env::temp_dir().join(unique(&format!("frost_away_{name}")));
+    let bin = home.join("bin");
+    std::fs::create_dir_all(bin.join("std")).ok()?;
+    std::fs::create_dir_all(bin.join("runtime")).ok()?;
+    std::fs::create_dir_all(home.join("work")).ok()?;
+    for entry in std::fs::read_dir(root.join("std")).ok()? {
+        let entry = entry.ok()?;
+        if entry.path().extension().is_some_and(|it| it == "frost") {
+            std::fs::copy(
+                entry.path(),
+                bin.join("std").join(entry.file_name()),
+            )
+            .ok()?;
+        }
+    }
+    std::fs::copy(
+        root.join("runtime").join("frost_runtime.c"),
+        bin.join("runtime").join("frost_runtime.c"),
+    )
+    .ok()?;
+    let installed = bin.join(format!("frostc{}", std::env::consts::EXE_SUFFIX));
+    std::fs::copy(compiler, &installed).ok()?;
+    Some((installed, home.join("work")))
+}
+
+const AWAY_FROM_THE_CHECKOUT: &str = "import \"vec.frost\"
+
+     main :: fn() -> i64 {
+         mut numbers := vec_new($i64, 4)
+         vec_push($i64, numbers, 20)
+         vec_push($i64, numbers, 22)
+         print vec_get($i64, numbers, 0) + vec_get($i64, numbers, 1)
+         vec_free($i64, numbers)
+         0
+     }
+";
+
+#[test]
+fn both_compilers_build_and_run_from_outside_the_checkout() {
+    if c_compiler().is_none() || !linker_available() {
+        return;
+    }
+    let bootstrap = PathBuf::from(env!("CARGO_BIN_EXE_frost"));
+    let self_hosted = build_self_hosted_compiler("away")
+        .expect("the self-hosted compiler is required for this test");
+
+    for (label, compiler) in
+        [("bootstrap", &bootstrap), ("self-hosted", &self_hosted)]
+    {
+        let (installed, work) = installed_layout(label, compiler)
+            .expect("could not lay out an installed compiler");
+        std::fs::write(work.join("program.frost"), AWAY_FROM_THE_CHECKOUT)
+            .unwrap();
+        let exe = work.join(format!("program{}", std::env::consts::EXE_SUFFIX));
+        let build = Command::new(&installed)
+            .current_dir(&work)
+            .arg("--link")
+            .arg("-o")
+            .arg(&exe)
+            .arg("program.frost")
+            .output()
+            .unwrap();
+        assert!(
+            build.status.success() && exe.exists(),
+            "{label} could not build from {}:\n{}{}",
+            work.display(),
+            String::from_utf8_lossy(&build.stdout),
+            String::from_utf8_lossy(&build.stderr)
+        );
+        let run = Command::new(&exe).current_dir(&work).output().unwrap();
+        assert!(
+            run.status.success(),
+            "{label} built a program that did not run"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"),
+            "42\n",
+            "{label} built a program that answered wrongly"
+        );
+    }
+}
+
+// The binding to a C library, built by both compilers from outside the
+// checkout. This is the case `--libs` exists for, and it is the one that says
+// whether a compiler can build a program that talks to anything outside itself.
+// The program opens a window and waits for the user to close it, so it is built
+// and not run.
+#[test]
+fn both_compilers_link_a_c_library_from_outside_the_checkout() {
+    if c_compiler().is_none() || !linker_available() {
+        return;
+    }
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let graphics = root.join("examples").join("graphics");
+    let library = graphics.join("SDL3.dll");
+    if !library.exists() {
+        return;
+    }
+    let bootstrap = PathBuf::from(env!("CARGO_BIN_EXE_frost"));
+    let self_hosted = build_self_hosted_compiler("libs")
+        .expect("the self-hosted compiler is required for this test");
+
+    for (label, compiler) in
+        [("bootstrap", &bootstrap), ("self-hosted", &self_hosted)]
+    {
+        let (installed, work) =
+            installed_layout(&format!("libs_{label}"), compiler)
+                .expect("could not lay out an installed compiler");
+        for name in ["window.frost", "sdl.frost"] {
+            std::fs::copy(graphics.join(name), work.join(name)).unwrap();
+        }
+        let exe = work.join(format!("window{}", std::env::consts::EXE_SUFFIX));
+        let build = Command::new(&installed)
+            .current_dir(&work)
+            .arg("--link")
+            .arg("--libs")
+            .arg(&library)
+            .arg("-o")
+            .arg(&exe)
+            .arg("window.frost")
+            .output()
+            .unwrap();
+        assert!(
+            build.status.success() && exe.exists(),
+            "{label} could not link against a C library from {}:\n{}{}",
+            work.display(),
+            String::from_utf8_lossy(&build.stdout),
+            String::from_utf8_lossy(&build.stderr)
+        );
+    }
+}

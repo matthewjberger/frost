@@ -177,6 +177,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     if (frost_rt_is_windows() == 0) {
         command = join_two(command, " -lm")
     }
+    command = join_two(command, options.libs)
     if (unsafe { frost_rt_run_command(command) } != 0) {
         report("frost: the linker failed: ")
         report_cstr(command)
@@ -517,6 +518,10 @@ main :: fn() -> i64 {
         } else {
             emit_path = join_two(executable, ".c")
         }
+    } else if (options.object == 1 && cstr_len(options.output) != 0) {
+        // The object goes where -o said, so the assembly it is made from is
+        // written beside it and removed once the toolchain has read it.
+        emit_path = join_two(options.output, ".s")
     }
     if (cstr_len(emit_path) != 0) {
         if (unsafe { frost_rt_emit_open(emit_path) } == 0) {
@@ -535,6 +540,30 @@ main :: fn() -> i64 {
         emit_program(parser, program)
     }
     frost_rt_emit_close()
+
+    // `--native` answers with an object, so the emitted assembly goes to the
+    // toolchain rather than to the caller. Without an output path there is
+    // nowhere for an object to go, and assembly on standard output is what
+    // `--emit-asm` is for.
+    if (options.object == 1 && options.link == 0) {
+        if (cstr_len(options.output) == 0) {
+            report("frost: --native writes an object, so it needs -o <path>")
+            frost_rt_die()
+        }
+        build := join_two(
+            join_two(join_two(join_two(c_compiler(), " -c "), emit_path),
+                " -o "),
+            options.output)
+        status := unsafe { frost_rt_run_command(build) }
+        unsafe { frost_rt_remove_file(emit_path) }
+        if (status != 0) {
+            report("frost: the assembler failed: ")
+            report_cstr(build)
+            report("\n")
+            frost_rt_die()
+        }
+        return 0
+    }
 
     if (options.link == 1) {
         // Every program links the C runtime: it holds the bounds check an
@@ -557,6 +586,9 @@ main :: fn() -> i64 {
         if (frost_rt_is_windows() == 0) {
             command = join_two(base, " -lm")
         }
+        // What `--libs` named goes after the objects, which is the order a
+        // linker resolves in.
+        command = join_two(command, options.libs)
         status := unsafe { frost_rt_run_command(command) }
         unsafe { frost_rt_remove_file(emit_path) }
         if (status != 0) {

@@ -3,6 +3,7 @@
 // toolchain.
 
 import "core.frost"
+import "imports.frost"
 
 export Backend, Options, c_compiler, join_two, join_number,
     file_checksum, stored_checksum, write_checksum, make_directory,
@@ -19,8 +20,14 @@ Options :: struct {
     output: ^i8,
     backend: Backend,
     link: i64,
+    // Assemble the emitted text into an object rather than leaving it as
+    // assembly, which is what `--native` answers with in both compilers.
+    object: i64,
     testing: i64,
     audit_unsafe: i64,
+    // Object files and libraries the link is given, in the order written, as
+    // one string ready to hand the toolchain.
+    libs: ^i8,
     roots: Arena<SearchRoot>,
     // Compile each module to its own object and assemble only the ones whose
     // emitted code changed. `build_dir` is where those objects are kept.
@@ -37,15 +44,19 @@ usage :: fn() {
     report("    -L <dir>      a directory to find imports under\n")
     report("    --emit-c      emit a C translation unit (the default)\n")
     report("    --emit-asm    emit x86-64 assembly\n")
-    report("    --native      the same as --emit-asm\n")
-    report("    --link        assemble and link an executable\n")
+    report("    -n, --native  compile to an object file\n")
+    report("    -l, --link    assemble and link an executable\n")
+    report("    --libs <item> an object file or library to link. Repeatable\n")
     report("    --incremental one object per module, assembling only what changed\n")
     report("    --build-dir <dir>  where those objects are kept\n")
     report("    --test        build and run the file's `test` blocks\n")
+    report("    --audit-unsafe  also report every `unsafe` block vouching for nothing\n")
     report("    -h, --help    this\n\n")
     report("Without -o the output goes to standard output. FROST_INPUT ")
     report("and\nFROST_BACKEND are read when the matching argument is ")
     report("absent.\n")
+    report("--run-ir and --freestanding are bootstrap options with no path ")
+    report("here.\n")
 }
 
 // Which C toolchain the emitted translation unit goes to. `CC` overrides, as
@@ -62,6 +73,33 @@ c_compiler :: fn() -> ^i8 {
         return "gcc"
     }
     "cc"
+}
+
+// The text after `--flag=` when an argument is written that way, and an empty
+// string when the argument is something else. A caller that also takes the
+// value as a separate word checks that first.
+value_after :: fn(argument: ^i8, flag: ^i8) -> ^i8 {
+    flag_len := cstr_len(flag)
+    argument_len := cstr_len(argument)
+    if (argument_len <= flag_len) {
+        return ""
+    }
+    mut k : i64 = 0
+    while (k < flag_len) {
+        if (byte_at(argument, k) != byte_at(flag, k)) {
+            return ""
+        }
+        k = k + 1
+    }
+    rest := argument_len - flag_len
+    out := unsafe { ptr_cast($i8, malloc(rest + 1)) }
+    k = 0
+    while (k < rest) {
+        byte_set(out, k, byte_at(argument, flag_len + k))
+        k = k + 1
+    }
+    byte_set(out, rest, 0)
+    out
 }
 
 // Two strings end to end, in memory the caller keeps. Command lines and derived
@@ -189,12 +227,29 @@ write_checksum :: fn(path: ^i8, value: i64) {
     frost_rt_emit_close()
 }
 
-// Where the C runtime is, which FROST_RUNTIME moves for a checkout that is not
-// the working directory.
+// Where the C runtime is. FROST_RUNTIME names it outright. Otherwise it is
+// looked for beside the compiler and then up the directories a checkout puts it
+// under, which is the search the standard library gets, so a compiler run from
+// somewhere other than the directory it was built in still finds it.
 runtime_source :: fn() -> ^i8 {
     named := unsafe { frost_rt_getenv("FROST_RUNTIME") }
     if (cstr_len(named) != 0) {
         return named
+    }
+    program := frost_rt_arg_at(0)
+    length := cstr_len(program)
+    if (length > 0) {
+        mut directory := directory_part(program, length)
+        mut tries : i64 = 0
+        while (tries < 3) {
+            here := joined_path(program, directory,
+                "runtime/frost_runtime.c")
+            if (unsafe { frost_rt_file_exists(here) } == 1) {
+                return here
+            }
+            directory = directory_part(program, directory)
+            tries = tries + 1
+        }
     }
     "runtime/frost_runtime.c"
 }
@@ -223,6 +278,15 @@ temp_directory :: fn() -> ^i8 {
 // builds a new one and nothing else does.
 cached_runtime_object :: fn() -> ^i8 {
     runtime := runtime_source()
+    // A missing runtime checksums to the same 0 as any other missing file, so
+    // saying which path was looked at beats letting the C compiler report a
+    // file it was handed and letting the cache key collide meanwhile.
+    if (unsafe { frost_rt_file_exists(runtime) } == 0) {
+        report("frost: cannot find the runtime at '")
+        report_cstr(runtime)
+        report("'. FROST_RUNTIME names it, or install it beside the compiler\n")
+        frost_rt_die()
+    }
     mut key := file_checksum(runtime) % 1000000007
     if (key < 0) {
         key = 0 - key
@@ -271,8 +335,10 @@ options_from_command_line :: fn() -> Options {
         output = "",
         backend = Backend::Unset,
         link = 0,
+        object = 0,
         testing = 0,
         audit_unsafe = 0,
+        libs = "",
         roots = arena_make($SearchRoot, 64),
         incremental = 0,
         build_dir = ".frost-build",
@@ -289,11 +355,44 @@ options_from_command_line :: fn() -> Options {
         }
         if (cstr_eq(argument, "--emit-c")) {
             options.backend = Backend::C
-        } else if (cstr_eq(argument, "--emit-asm")
-            || cstr_eq(argument, "--native")) {
+        } else if (cstr_eq(argument, "--emit-asm")) {
             options.backend = Backend::Asm
-        } else if (cstr_eq(argument, "--link")) {
+        } else if (cstr_eq(argument, "--native") || cstr_eq(argument, "-n")) {
+            // An object, which is what the bootstrap's `--native` answers with.
+            // `--emit-asm` is the assembly on its own.
+            options.backend = Backend::Asm
+            options.object = 1
+        } else if (cstr_eq(argument, "--libs")) {
+            index = index + 1
+            if (index >= count) {
+                report("frost: --libs needs an object file or library")
+                options.ok = 0
+                return options
+            }
+            options.libs = join_two(join_two(options.libs, " "),
+                frost_rt_arg_at(index))
+        } else if (cstr_len(value_after(argument, "--libs=")) != 0) {
+            options.libs = join_two(join_two(options.libs, " "),
+                value_after(argument, "--libs="))
+        } else if (cstr_len(value_after(argument, "--build-dir=")) != 0) {
+            options.build_dir = value_after(argument, "--build-dir=")
+        } else if (cstr_len(value_after(argument, "-L")) != 0) {
+            add_root(options.roots, value_after(argument, "-L"))
+        } else if (cstr_len(value_after(argument, "-o")) != 0) {
+            options.output = value_after(argument, "-o")
+        } else if (cstr_eq(argument, "--link") || cstr_eq(argument, "-l")) {
             options.link = 1
+        } else if (cstr_eq(argument, "--run-ir")
+            || cstr_eq(argument, "--freestanding")) {
+            // Both name a path only the bootstrap has: it carries an IR
+            // interpreter and a libc-free runtime, and this compiler carries
+            // neither. Saying so beats reporting the option as unknown, which
+            // reads as a spelling mistake.
+            report("frost: '")
+            report_cstr(argument)
+            report("' is a bootstrap option, and this compiler has no such path")
+            options.ok = 0
+            return options
         } else if (cstr_eq(argument, "--incremental")) {
             // One object per module, and only the modules whose emitted code
             // changed are assembled again. A build that keeps objects is a
