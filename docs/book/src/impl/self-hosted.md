@@ -82,8 +82,8 @@ Parallelism. The bootstrap generates code on every core from a shared work
 queue. The self-hosted compiler emits and assembles one unit at a time.
 
 Output. The bootstrap emits an object through Cranelift, portable C, or runs the
-IR directly. This one emits C or x86-64 assembly of its own, and on Windows
-encodes that assembly to an object itself.
+IR directly. This one emits C or x86-64 assembly of its own, and encodes that
+assembly to an object itself, COFF or ELF as the target asks.
 
 ## What the fixpoint cannot see
 
