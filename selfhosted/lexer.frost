@@ -32,12 +32,11 @@ byte_of :: fn(src: str, index: i64, len: i64) -> i64 {
     src[index]
 }
 
-// Measuring the word's length first meant walking it to its terminator before
-// comparing anything, and every identifier is asked about every keyword, so the
-// walk happened about a million times for a file of a few thousand lines.
-// Comparing straight away answers on the first byte for almost every pair, and
-// the terminator check at the end is what keeps a word that merely starts the
-// same from matching.
+// Every identifier is asked about every keyword, so this runs about a million
+// times for a file of a few thousand lines. Comparing straight away answers on
+// the first byte for almost every pair, where measuring the word's length first
+// would walk it to its terminator before comparing anything. The terminator
+// check at the end keeps a word that merely starts the same from matching.
 str_range_eq :: fn(src: str, off: i64, len: i64, word: ^i8) -> bool {
     mut k : i64 = 0
     while (k < len) {

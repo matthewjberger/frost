@@ -1706,9 +1706,106 @@ fn indexing_a_raw_pointer_held_by_a_generic_is_gated() {
     );
 }
 
-// A constant whose value is text. The self-hosted compiler refused the
-// declaration outright, which is why `examples/graphics/sdl.frost` had never
-// been through it: the binding names four window properties that way.
+// A function's trailing expression is its return value, so a call in that
+// position hands its answer to the caller. A call and a struct literal are both
+// valid there, and a linear answer is consumed either way.
+const LINEAR_TRAILING_CALL: &str = "Holder :: linear struct { count: i64 }
+
+     make_holder :: fn(count: i64) -> Holder {
+         Holder { count = count }
+     }
+
+     forward :: fn(count: i64) -> Holder {
+         make_holder(count * 2)
+     }
+
+     literal :: fn(count: i64) -> Holder {
+         Holder { count = count }
+     }
+
+     release :: fn(move held: Holder) -> i64 {
+         held.count
+     }
+
+     main :: fn() -> i64 {
+         through_call := forward(21)
+         print release(through_call)
+         through_literal := literal(7)
+         print release(through_literal)
+         0
+     }
+";
+
+#[test]
+fn a_trailing_call_answering_with_a_linear_value_is_the_return() {
+    let Some(output) = compile_and_run("lintrail", LINEAR_TRAILING_CALL) else {
+        return;
+    };
+    assert_eq!(
+        output,
+        "42
+7
+"
+    );
+}
+
+#[test]
+fn self_hosted_a_trailing_call_answering_with_a_linear_value_is_the_return() {
+    let Some(output) =
+        selfhosted_native_output("shlintrail", LINEAR_TRAILING_CALL)
+    else {
+        return;
+    };
+    assert_eq!(
+        output,
+        "42
+7
+"
+    );
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shlintrail_input.frost");
+    std::fs::write(&input, LINEAR_TRAILING_CALL).unwrap();
+    let Some(c_source) = self_hosted_emits("shlintrail", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shlintrail", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, output, "the self-hosted C backend disagrees");
+}
+
+// A call whose answer holds a resource, made as a statement, drops it. Nothing
+// consumes what `make_holder` answers with here.
+const LINEAR_DROPPED_CALL: &str = "Holder :: linear struct { count: i64 }
+
+     make_holder :: fn(count: i64) -> Holder {
+         Holder { count = count }
+     }
+
+     leaks :: fn() -> i64 {
+         make_holder(1)
+         0
+     }
+
+     main :: fn() -> i64 {
+         leaks()
+     }
+";
+
+#[test]
+fn a_linear_value_a_statement_drops_is_still_refused() {
+    let message = compile_error("lindrop", LINEAR_DROPPED_CALL);
+    assert!(
+        message.contains("never consumed"),
+        "the bootstrap let a dropped linear value through:
+{message}"
+    );
+}
+
+// A constant whose value is text, which is how a binding names a string the
+// program uses in several places.
 const STRING_CONSTANT: &str = "GREETING :: \"hello\"
      PROP :: \"SDL.window.win32.hwnd\"
      shout :: fn(text: str) -> i64 { str_len(text) }

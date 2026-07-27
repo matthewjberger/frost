@@ -348,11 +348,9 @@ options_from_command_line :: fn() -> Options {
     if (cstr_len(options.input) == 0) {
         options.input = unsafe { frost_rt_getenv("FROST_INPUT") }
     }
-    // Linking means producing a program, and the assembler turns the backend's
-    // own output into one for a fraction of what handing a C compiler a
-    // translation unit costs: for this compiler's source, 370 ms against 807.
-    // It is also what the bootstrap does, which is native code and no C
-    // toolchain in the middle. Emitting on its own stays C, since that is the
+    // Linking produces a program, and the assembler turns this compiler's own
+    // output into one for a fraction of what handing a C compiler a generated
+    // translation unit costs. Emitting on its own stays C, which is the
     // portable answer and what a caller reading the output is asking for.
     if (options.backend == Backend::Unset) {
         named := unsafe { frost_rt_getenv("FROST_BACKEND") }

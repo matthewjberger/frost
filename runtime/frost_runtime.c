@@ -118,7 +118,7 @@ void frost_rt_emit_bytes(const char *data, int64_t length) {
 /* A backend emits a number for every slot, label and immediate it writes, which
    is hundreds of thousands of numbers for a large program. Going through
    fprintf for each one spends most of the time parsing the same format string
-   and taking the stream's lock; the digits themselves are a division loop. */
+   and taking the stream's lock. The digits themselves are a division loop. */
 void frost_rt_emit_int(int64_t value) {
     char digits[24];
     int at = (int)sizeof digits;

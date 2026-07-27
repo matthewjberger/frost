@@ -281,10 +281,6 @@ fn build_module_inner(
 
     if !has_main && !top_level.is_empty() {
         let empty_params: Vec<Parameter> = Vec::new();
-        // The synthesized entry point returns i64, so a body that does not end
-        // in an expression has to say what the exit status is rather than fall
-        // off the end producing a unit. A file whose top level ends in an
-        // expression keeps it as the status.
         let mut body = top_level.clone();
         let ends_in_expression = matches!(
             body.last().map(|statement| &statement.node),
