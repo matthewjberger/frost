@@ -1,9 +1,10 @@
 # Callbacks with a typed context
 
 How a Frost function and a Frost context cross into a C library that takes a
-callback, and why the crossing needs no generated code. A handler with a typed
-context runs through a real C callback API on both backends, which the end of
-this document walks through.
+callback, and why the crossing needs no generated code. It runs against a real C
+callback API on both backends, in the test
+`a_callback_registered_with_a_c_library_runs`, which links a small C library
+that stores a `(callback, userdata)` pair and calls it back later.
 
 ## The contradiction it exists to remove
 
@@ -12,10 +13,11 @@ shapes unrepresentable. Without a callback form of its own, the only way to writ
 one is the C idiom: a function pointer beside an untyped `^u8` the callee casts
 back. Every piece of that idiom is already in the language:
 
-- `fn(T1, ...) -> R` is a function pointer type (spec 3.5), and a named function
-  used as a value lowers to `IrRvalue::FunctionAddress` in `src/ir.rs`.
-- `ptr_cast($T, p)` reinterprets a pointer at no runtime cost (spec 3.3).
-- `^T` carries no guarantee once formed, which the spec says outright.
+- `fn(T1, ...) -> R` is a function pointer type
+  ([types.md](../reference/types.md) 3.5), and a named function used as a value
+  lowers to `IrRvalue::FunctionAddress` in `src/ir.rs`.
+- `ptr_cast($T, p)` reinterprets a pointer at no runtime cost (types.md 3.3).
+- `^T` carries no guarantee once formed, which the reference says outright.
 
 So a callback is writable and it is entirely outside every check the language
 has. `src/regions.rs` reasons about arena pointers by provenance, and its
@@ -43,32 +45,30 @@ on_event :: fn(mut ctx: Ctx, code: i64) { ctx.hits = ctx.hits + code }
 register :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64
 ```
 
-The design assumed the compiler would emit a trampoline per
-`(handler, context type)` pair, holding the one cast from the untyped userdata
-back to `^Ctx` so that nobody has to write it. Building it showed the cast does
-not have to happen at all. A `mut` parameter is already a pointer in the
-signature, and Frost and C share a calling convention, so `on_event` compiled for
-Frost *is* the `void (*)(void*, int64_t)` the library wants. What the compiler
-does at a registration is pass the handler's address and the context's address.
-There is no generated code and no cast anywhere in the program.
+Nothing is generated for the crossing. A `mut` parameter is already a pointer in
+the signature, and Frost and C share a calling convention, so `on_event`
+compiled for Frost *is* the `void (*)(void*, int64_t)` the library wants. What
+the compiler does at a registration is pass the handler's address and the
+context's address, and there is no cast anywhere in the program. The design
+expected a trampoline to hold that cast. Why there is none is in
+[history.md](../appendix/history.md).
 
-## Three questions the roadmap left, and the answers
+## What the declaration says
 
-### Whether `uses CallbackAbi` is written or inferred
+### The handler is a bound compile-time parameter
 
-Inferred, and `uses CallbackAbi` is dropped. A `$handler` parameter with a
-function bound on an `extern fn` is already the complete statement of "this
-extern takes a callback". A `uses` clause beside it would be a second thing
-that has to be kept in step with the first, and it would be a capability that
-grants nothing. `uses Arena` means a real implicit parameter is supplied at the
-call, which `src/allocation_sources.rs` inserts. A capability that supplies
-nothing is a keyword pretending to be a capability.
+A `$handler` parameter carrying a function bound on an `extern fn` is the
+complete statement of "this extern takes a callback". Nothing is written beside
+it, and in particular no capability: `uses Arena` means a real implicit
+parameter is supplied at the call, which `src/allocation_sources.rs` inserts,
+and a callback needs no such parameter. A `uses CallbackAbi` would be a keyword
+pretending to be a capability and a second thing to keep in step with the first.
 
-This also settles which form of compile-time parameter it is. Not `$handler:
+Which form of compile-time parameter it is follows from that. Not `$handler:
 Type`, which says only "some type", but the bound form `$handler: fn(mut Ctx,
-i64)` (spec 11.1b), so the handler's signature is checked
-against what the library expects at the call, by the code already in
-`src/ir_build.rs` that checks compile-time signatures.
+i64)` ([generics.md](../reference/generics.md) 11.1b), so the handler's
+signature is checked against what the library expects at the call, by the code
+in `src/ir_build.rs` that already checks compile-time signatures.
 
 ### The extern's C signature
 
@@ -98,11 +98,6 @@ register :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64
 request  :: extern fn($handler: fn(i32, i64, mut Ctx), move ctx: Ctx) -> i64
 ```
 
-The rule was originally "the first parameter", which made the second shape
-undeclarable. The alternative was to put the same function pointer in a struct
-field, where none of these checks apply, so the rule cost safety rather than
-buying it.
-
 A declaration where no extern parameter has the context's type is an error at
 the declaration, not at the call. So is a handler with no `mut` parameter: a
 callback that cannot write its context is a callback that cannot do anything,
@@ -127,9 +122,11 @@ unregister         :: fn(move r: Registration) -> Ctx { unregister_handler(r.tok
 
 Three things fall out, and each is a reason to prefer moving over borrowing.
 
-- No new machinery. A borrow that outlives its call would be the first thing
-  in the language that does, and inventing it means inventing the region
-  annotation the whole design is built on not having. Moving needs nothing new.
+- No new machinery. A borrow held by C after the call returns is nothing the
+  language has. `ref T` is returnable, but it is handed to a caller whose frame
+  already outlives it, while a registered context is held by code the compiler
+  cannot see, so making that safe means inventing the region annotation the
+  whole design is built on not having. Moving needs nothing new.
   `check_ownership` already stops the caller touching a moved value, and
   `check_linearity` already forces a `linear` value to be consumed exactly once.
 - The aliasing guarantee is the one you want. While registered, the callback
@@ -144,21 +141,19 @@ not get an exception. The registration is still linear, and a program that means
 to abandon it says so with a terminal consumer that takes it and returns nothing.
 "I am deliberately leaking this" is worth having to write.
 
-## What the design as written down does not survive
+## Where the context lives
 
-The three answers above are the easy part. Working them against the code turns up
-one thing that the roadmap's version of this design does not handle, and it is
-the thing that decides whether the feature is safe or merely tidier.
-
-The question is where the context lives while the callback can fire.
+The rules above are the easy part. One question decides whether the feature is
+safe or merely tidier, and it is where the context lives while the callback can
+fire.
 
 `move ctx: Ctx` hands the value to the extern, and the extern keeps a pointer to
 it. So the storage the pointer names has to outlive the call, and a moved
-argument today is a value in the caller's frame. `src/regions.rs` and
+argument is a value in the caller's frame. `src/regions.rs` and
 `check_frame_escapes` between them already reject a pointer into the current
 frame being returned, stored into a parameter, or carried out inside a struct.
-They do not reject one being *handed to an extern that keeps it*, because nothing
-in the language could keep it until now.
+What they did not reject was one being *handed to an extern that keeps it*,
+because until callbacks nothing in the language could keep one.
 
 So the feature adds exactly one obligation, and it is the whole safety argument:
 
@@ -188,100 +183,15 @@ are closed by the code that was already closing them. Linearity closes the
 fourth, which is not consuming it at all.
 
 That is what makes this different from the C idiom rather than a prettier
-spelling of it. Without it the trampoline is type-safe and the program still has
-a dangling pointer.
+spelling of it. Without it the crossing is type-safe and the program still has a
+dangling pointer.
 
-## The order to build it in
+## What is not settled
 
-Each step is meant to be landable on its own, against the differential oracle and
-both self-hosting fixpoints, in the way the separate-compilation steps were.
+The order this was built in, and the two answers that changed along the way, are
+in [history.md](../appendix/history.md). These are the questions the design has
+not answered at all.
 
-1. Parse the declaration. *Done.* `$handler: fn(...)` and parameter modes
-   are accepted on an `extern fn`, and `src/callbacks.rs` checks at the
-   declaration that the handler has exactly one `mut` parameter, which is the
-   context, that some parameter of the extern has that type, and that it is
-   taken by `move`. This comes first, and not the safety check, because nothing can
-   tell a callback registration from any other extern call until the declaration
-   says so, which is the ordering the first draft of this list got backwards.
-
-   Two things it turned up.
-
-   A function type could not say a mode. `fn(T1, ...) -> R` parsed types and
-   nothing else, so the bound `fn(mut Ctx, i64)` could not be written at all. A
-   `mut` parameter is a reference in the signature and the surface deliberately
-   has no way to write a reference type. `mut` is now a marker inside a function
-   type and means the reference the mode means. Unmarked stays the type as
-   written, which is what the spec says a function type is and what every
-   existing bound already means. Changing that would have broken
-   `$before: fn(T, T) -> bool` in the same edit.
-
-   The ownership guarantee cost nothing, which is the claim above being
-   true rather than merely argued. `src/param_modes.rs` and `src/ownership.rs`
-   already read an extern's parameter list the same way they read a function's,
-   so `move ctx: Ctx` on an extern makes the argument a move with no further
-   work, and a program that registers a context and then reads it is rejected
-   by the pass that was already there.
-2. Close the roads out. *Done.* `check_frame_escapes` now treats a
-   registration whose context is rooted in this frame as a value that points
-   into this frame, so it cannot be returned, stored where the call cannot see,
-   or be the call's answer. `callback_registrations` in `src/callbacks.rs` is
-   what tells it which calls those are and which argument is the context.
-
-   This lands before anything is emitted, so there is a window where the feature
-   can only say no, which is the right way round. It was checked in both
-   directions. A registration returned out of the frame holding its context is
-   rejected, and the shape the design is for, registering and unregistering in
-   one frame, gets past every check the language has and stops only at lowering,
-   which is steps 3 and 4. Emptying the registration table makes the first of
-   those stop failing, which is the confirmation that the check is what catches
-   it rather than something downstream.
-3. Emit the trampoline. *There is no trampoline, and finding that out is the
-   whole of this step.* The plan was one function per `(handler, context type)`
-   pair holding the one `ptr_cast` nobody should have to write. But the
-   handler's context parameter is `mut`, so it is already a pointer in the
-   signature, and a Frost function and a C function use the same calling
-   convention. `on_event` compiled for Frost is bit for bit the
-   `void (*)(void*, int64_t)` the library wants. The cast the design set out to
-   hide inside generated code does not exist, so there is nothing to generate
-   and nothing to dedup.
-4. Lower the call. *Done.* The `$handler` argument becomes
-   `IrRvalue::FunctionAddress` of the handler itself, and the context argument
-   becomes its address. An extern's C-facing parameter types are computed in
-   `extern_parameter_types` in `src/ir_build.rs`, since a registration's C
-   signature is not what its Frost declaration says literally. Everything else
-   about the extern call is unchanged, on both backends.
-5. Run one. *Done.* `a_callback_registered_with_a_c_library_runs` compiles a
-   small C library that stores a `(callback, userdata)` pair and calls it back
-   later, links it, and registers a Frost handler with a Frost context against
-   it. The handler runs, writes the Frost struct through the pointer the library
-   kept, and the library reads the updated value back out. That is the claim in
-   step 3 being true rather than argued. If the ABI did not line up, this is
-   where it would crash.
-
-Steps 1 and 2 are parsing and a check, and they come before anything is
-emitted, which is the order that catches a wrong safety rule while it is still
-cheap to change.
-
-## What is still open
-
-- How the caller gets its context back. *Answered, and it needed nothing
-  from callbacks.* The context goes in by `move`, so the name it was bound to is
-  dead to `check_ownership` for the rest of the function while the callback
-  writes that exact storage, and for a while a caller could not read what its own
-  callback did.
-
-  The roadmap's sketch had a `Registration` holding a `Ctx` field, and that does
-  not work. The field is a copy, and the copy is not the storage the library
-  wrote through. What does work is unregistration as an ordinary extern that
-  hands the context back by value, `unregister_handler :: extern fn(token: i64)
-  -> Ctx`, wrapped in the Frost function that consumes the linear registration.
-  The caller rebinds the result and reads it, and nothing about callbacks has to
-  know.
-
-  What this needs is unrelated to callbacks: an `extern fn` returning a
-  struct by value. `src/c_abi.rs` classifies return types the way the target's
-  C compiler does, and with that the round trip runs end to end in
-  `a_callback_registered_with_a_c_library_runs`.
 - What `token` holds for a library whose unregister takes something other
   than an integer. The `Registration` in the end-to-end test is an ordinary
   `linear struct` a binding author writes and the compiler knows nothing about

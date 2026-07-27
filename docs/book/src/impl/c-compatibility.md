@@ -110,13 +110,45 @@ main :: fn() -> i64 {
 Frost programs get the entire C ecosystem (libc, OS syscalls, third-party
 libraries) through `extern fn`, with no FFI glue code.
 
+### An `extern` call is gated, and `safe extern fn` is how a binding lifts it
+
+Calling an `extern fn` is refused outside an `unsafe` block. The compiler has
+checked the Frost side of the call and nothing whatever about the other side, so
+what the declaration says the C function does is a claim, and the block is where
+someone writes that claim down. [unsafe.md](../reference/unsafe.md) has the rule
+and the rest of what the gate covers.
+
+`safe extern fn` marks one declaration audited, and calls to it need no block.
+The audit is about the signature. `sqrtf :: safe extern fn(x: f32) -> f32` in
+`std/math.frost` takes and returns a number and touches no memory of the
+caller's, so there is nothing a call site could get wrong that the type checker
+has not already caught. `malloc :: safe extern fn(size: i64) -> ^u8` in
+`selfhosted/core.frost` is safe for a different reason: it hands memory back
+rather than reading any, so it cannot corrupt what the caller holds. What it
+returns is still a raw pointer, and reading through one is gated on its own.
+
+A declaration taking a pointer usually cannot be marked safe, because the
+callee's read is bounded by something the signature does not say.
+`frost_rt_emit_bytes :: extern fn(data: ^u8, length: i64)` stays gated for that
+reason, and its one caller hands it a `str` whose length it already knows, so
+the `unsafe` sits at that call rather than at every emit.
+
+What this buys a binding author is a perimeter. When every declaration in a
+binding file is either `safe` or reached through a wrapper that establishes what
+the C side needs, a program using the binding writes no `unsafe` of its own, and
+that file is the complete list of places to look when memory is corrupted. The
+generated wgpu binding is written that way, with a safe wrapper per call, so a
+program that draws a triangle writes none for the graphics API.
+
 ### The support runtime is itself just linked C
 
 The support runtime (`runtime/frost_runtime.c`) is an ordinary C file that both
-backends link automatically. It is about a hundred lines: the bounds and
-generation aborts, assertions, and IO. The pool itself is written in Frost, so
-nothing here allocates or owns one. See [native-pools.md](../design/pools-and-columns.md). Programs reach it through the same
-`extern fn` mechanism:
+backends link automatically. It is a few hundred lines: the bounds and
+generation aborts, the assertions, the IO helpers, process arguments, and the
+reporting `--test` runs through. The pool itself is written in Frost, so nothing
+here allocates or owns one. See
+[pools-and-columns.md](../design/pools-and-columns.md). Programs reach it
+through the same `extern fn` mechanism:
 
 ```frost
 frost_rt_bounds_check :: extern fn(index: i64, length: i64)
@@ -129,11 +161,11 @@ aggregate value, so the runtime's *natural* C ABI matches Frost's internal
 aggregate convention with zero negotiation. That is also why the identical
 compiled runtime links into both backends and they agree bit for bit.
 
-The memory model is not in here. A slab is a Frost struct with Frost
-operations over it (`examples/native/lib/slab.frost`), which is why
+The memory model is not in here. A slab is a Frost struct with Frost operations
+over it (`std/slab.frost` in the standard library, and
+`examples/native/generic_slab.frost` for one written out in full), which is why
 fixed-capacity storage works under `--freestanding` where there is no libc at
-all. What C holds is bounds and generation aborts, assertions, and the IO
-helpers.
+all. What C holds is the aborts, the assertions and the IO.
 
 ## 2. Frost lowers through C with `--emit-c`
 
@@ -192,4 +224,5 @@ frost program.frost --link --incremental -o program  # rebuild only what changed
 ```
 
 Both `--link` paths automatically compile and link `runtime/frost_runtime.c`, so
-pool programs work without any extra flags.
+the bounds and generation checks, the assertions and the IO helpers are there
+without any extra flags.

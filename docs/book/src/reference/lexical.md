@@ -41,12 +41,16 @@ binding name.
 
 ## 2.4 Keywords
 
-Reserved words of the specified language:
+Reserved words of the specified language, the keyword table of `src/lexer.rs`
+in full:
 
 ```
-fn struct enum match case if else while for in mut return break continue
-defer extern inline import linear distinct type unsafe sizeof print
+break case continue defer distinct else enum extern false fn for if import
+in inline linear match move mut print ref return safe sizeof struct true
+type unsafe uses where while with
 ```
+
+`true` and `false` are reserved here and are the boolean literals of 2.5.
 
 Reserved primitive type names, each its own token:
 
@@ -54,11 +58,13 @@ Reserved primitive type names, each its own token:
 i8 i16 i32 i64 isize   u8 u16 u32 u64 usize   f32 f64   bool str void
 ```
 
-`test` and `export` are not reserved. They are recognized contextually, `test`
-only at the start of a top-level test declaration and `export` only on a
-top-level export line, so both remain usable as ordinary identifiers elsewhere.
-`Type` (capitalized), used in `$T: Type` (chapter 11), is likewise an ordinary
-identifier recognized in that position, not a keyword.
+Four words carry meaning without being reserved, so each stays usable as an
+ordinary identifier. `test` is read only at the start of a top-level test
+declaration (5.4) and `export` only on a top-level export line (5.5). `flags` is
+read as a declaration only when a scalar type and a brace follow it (3.6b), and
+`value` only as a parameter mode, where a name follows it (chapter 12). `Type`
+(capitalized), used in `$T: Type` (chapter 11), is likewise an ordinary
+identifier recognized in that position, unlike the lowercase keyword `type`.
 
 ## 2.5 Literals
 

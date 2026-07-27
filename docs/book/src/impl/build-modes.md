@@ -47,36 +47,41 @@ function.
 
 This is the axis that made moving the pool out of C matter. A fixed-capacity
 slab lives inside a struct rather than behind `malloc`, so generational storage
-now works with no libc at all. See [native-pools.md](../design/pools-and-columns.md).
+now works with no libc at all. See
+[pools-and-columns.md](../design/pools-and-columns.md).
 
 ## Self-hosted, what the compiler is written in
 
-`selfhosted/` is the Frost compiler, written in Frost. `src/` is the bootstrap
-that compiles its stage 0.
+`selfhosted/frost.frost` is the Frost compiler, written in Frost, and it is the
+one people will use. That is the destination. Frost is meant to be written in
+Frost, and the compiler someone downloads is meant to be the Frost one.
 
-The claim it discharges is a three-stage fixpoint. It compiles its own
-source, a compiler built from that output compiles the source again, and the two
-outputs are byte-identical. That holds through both of its backends, the C one
-and its own assembly emitter (`FROST_BACKEND=asm`), and both fixpoints are
+`src/*.rs` is the bootstrap, and its job is to make writing that compiler
+possible. It compiles stage 0, so every feature `frost.frost` uses has to exist
+in Rust before a line of it can be written in Frost, and it is the oracle the
+differential tests compare against, so a miscompilation in the Frost compiler
+has something to be caught by. Both roles are scaffolding. The bootstrap being
+ahead on a feature is a stage of the work rather than a division of labour.
+
+The claim the Frost compiler discharges is a three-stage fixpoint. It compiles
+its own source, a compiler built from that output compiles the source again, and
+the two outputs are byte-identical. That holds through both of its backends, the
+C one and its own assembly emitter (`FROST_BACKEND=asm`), and both fixpoints are
 checked on every build by `self_hosting_is_a_fixpoint` and
-`native_self_hosting_is_a_fixpoint`.
+`native_self_hosting_is_a_fixpoint`. The fixpoint is how the compiler is
+checked, not what it is for.
 
-It implements ownership and linearity (use after move, and linear values
-consumed exactly once), monomorphized generics, structs, enums with `match`, and
-`extern` FFI. What it does not implement yet is listed in
-[the self-hosted compiler](self-hosted.md). See
-[self-hosting.md](self-hosted.md) for the measurements.
+Both compilers are held to the same two promises. They accept the same
+language, goal 8 in [philosophy.md](../design/philosophy.md), and they are under
+the same compilation-speed promise, goal 9, which matters more for the Frost one
+because it is what a user's edit-compile loop runs. The self-hosted compiler
+carries the speed work: it emits one unit per module, keys a build cache on the
+bytes it just emitted, and rebuilds only what an edit reaches under
+`--incremental`. What it does not do yet is generate code on every core.
+[The self-hosted compiler](self-hosted.md) has what it implements, and
+[roadmap.md](../roadmap.md) has the measurements.
 
 ## How the axes interact
-
-`src/` (Rust) is the bootstrap and `selfhosted/frost.frost` is the compiler
-people will use. The bootstrap compiles stage 0 and is the differential
-oracle, which is why every feature lands there first. That ordering is the only
-reason it is ahead.
-
-Both are under the same promises: the full language, and goal 9's speed. They
-accept the same language. What the self-hosted compiler does not have yet is the
-speed work: parallel code generation, separate compilation and `--incremental`.
 
 The axes compose freely. The self-hosted compiler emits assembly, so it is
 native without being freestanding. A `--emit-c --link` build is neither native

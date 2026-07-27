@@ -6,35 +6,61 @@ borrow rules run after parsing (`src/ownership.rs`).
 ## 8.1 Copy and move
 
 Each type is copy or move. Scalars, pointers, function pointers, handles,
-strings, and slices are copy: a slice and a `str` are a pointer and a length, and
-copying one copies that pair rather than what it names. Structs and enums are
-move. A
-move value is consumed when passed by value, assigned, or returned. Using it
+strings, slices, and fixed arrays are copy. A slice and a `str` are a pointer
+and a length, and copying one copies that pair rather than what it names. A
+fixed array `[N]T` is copy as well, so passing one does not consume it. Structs
+and enums are move, and `is_copy` in `src/types.rs` is the whole list.
+
+A move value is consumed when passed by value, assigned, or returned. Using it
 after is a use-after-move error. There is no `Copy`/`Clone` derive and no
 implicit deep copy. A second copy of an aggregate is constructed explicitly.
 
 ## 8.2 Second-class borrows
 
-A borrow exists only as a parameter mode, so it cannot be stored in a struct or
-enum field, placed in an array, or returned: there is no syntax that would name
-one. Because a borrow cannot escape its call, borrow analysis is scope-local, and
-Frost has no lifetime annotations, lifetime variables, or borrow regions.
+An implicit borrow is a parameter mode and nothing else, so it cannot be stored
+in a struct or enum field, placed in an array, or returned: there is no syntax
+that would name one. The one borrow a program writes down is `ref T` (3.3),
+which may be returned and may not be stored, and which the checks below hold to
+what outlives the call. Neither kind carries a lifetime annotation, a lifetime
+variable, or a borrow region, and there is nothing to write in a signature about
+how long one lives.
 
 A raw pointer can escape, which is what it is for, so the two ways one could
 outlive its storage are checked rather than forbidden. A function may not answer
 with a pointer or a slice that names its own frame, and an arena pointer may not
 outlive the `with` block that owns the arena. A `uses` function may hand one back
 to its caller, whose region checks it, but may not store one into a parameter.
+Chapter 8a is that check in full, along with the `uses` and `with` forms it runs
+over.
 
 ## 8.3 Borrow exclusivity
 
 Within one call, a value may be read-borrowed any number of times or write-
 borrowed exactly once, never both at once. Passing the same variable to two `mut`
 parameters of one call is rejected. This per-call check suffices to prevent
-mutable aliasing precisely because borrows cannot escape.
+mutable aliasing precisely because an implicit borrow cannot escape the call it
+was made for.
 
 ## 8.4 Reference escape through returns
 
-A function or `extern` whose return type contains a reference is rejected.
-`Handle<T>` is not a reference and may be returned and stored freely, the
-intended replacement for an escaping borrow.
+An implicit borrow cannot be returned, because there is nothing to write. It is
+what a parameter mode means (3.3) and has no type of its own, so a signature has
+no way to say it hands one back.
+
+`ref T` is the explicit exception, and it is checked rather than refused. A
+function may answer with one: `arena_at(...) -> ref T` is the reason it exists,
+and reaching into `std/slab.frost`'s storage is what it is for. What holds it to
+something that outlives the call is the pair of checks in 8.2, applied to a
+`ref` the same way they are applied to a `^T` or a slice. A `ref` naming storage
+in the returning function's own frame is refused, and one into an arena may not
+outlive the `with` block that owns the arena (8a). Storing one is refused
+separately, whatever its provenance: no struct field, no array element, no
+container.
+
+An `extern` is the one place the old blanket rule survives. Its return type may
+not contain a reference at all, since no check on this side governs what a C
+function's answer names.
+
+`Handle<T>` is not a reference and may be returned and stored freely, which is
+what a program reaches for when what it wants to keep has to outlive the call
+that produced it.

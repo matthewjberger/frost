@@ -11,15 +11,20 @@ element type and capacity, built on value generics (`[N]T` storage, 11.1a) and
 slices (`slice_len` to recover the capacity). The compiler provides the pieces,
 arrays, handles, value generics, `ptr_to`/`ptr_cast`, and the byte buffer, not
 the pool itself. This is the data-oriented memory model expressed in the
-language, and the direction is written up in `docs/native-pools.md` and
-`docs/allocators.md`.
+language, and the direction is written up in
+[pools-and-columns.md](../design/pools-and-columns.md) and
+[allocators.md](../design/allocators.md).
 
-The runtime in `runtime/frost_runtime.c` offers a ready-made generational pool
-(`pool_new`, `pool_alloc`, `pool_get`, `pool_free`, `pool_contains`,
-`pool_destroy`), reachable as an opt-in library by declaring the functions with
-`extern fn`, the way `malloc` is. Nothing about it is compiler-special. When a
-pool from it is indexed by a `Handle<T>`, `pool[handle]` lowers to its `pool_get`
-(10.2).
+The runtime (`runtime/frost_runtime.c`) has no pool in it. It holds aborts,
+assertions, IO, and the checks a handle deref calls (`frost_rt_bounds_check`,
+`frost_rt_generation_check`, and `frost_rt_slot`, which runs both and answers
+with the validated index). Nothing in it allocates or hands out a slot. The pool
+the standard library offers is
+`std/slab.frost`, ordinary Frost: a `Slab<T, N>` carrying `storage`,
+`generations`, `free_list` and `free_count`, with `slab_reset`, `slab_full`,
+`slab_insert`, `slab_alive` and `slab_release` written out as ordinary
+functions over them. Reaching one through a handle is the one part the compiler
+supplies (10.2).
 
 ## 10.1a Structure-of-arrays columns
 
@@ -43,9 +48,25 @@ element scatter `c[handle] = value` are compiler-supplied for the reason
 second-class borrow cannot express. Everything else is a library,
 `std/columns.frost`, mirroring `std/slab.frost`. The reserved field names are
 `storage`, `generations`, `free_list`, and `free_count`. See
-`docs/native-pools.md`.
+[pools-and-columns.md](../design/pools-and-columns.md).
 
 ## 10.2 `pool[handle]` is a place
+
+Which struct is a pool is decided by shape, not by a declaration. A struct is
+slab-shaped when it declares a `storage` array and a parallel `generations`
+array (`slab_shaped_base`, `src/ir_build.rs`), and indexing one by a `Handle<T>`
+is generated inline rather than lowered to a call:
+
+- the handle is read back as the `i64` it is at the ABI, its low 32 bits the
+  slot index and its high 32 bits the generation;
+- the index goes through `frost_rt_bounds_check` against the length the
+  `storage` array was declared with;
+- the generation goes through `frost_rt_generation_check` against
+  `generations[index]`;
+- what is left is the address of `storage[index]`.
+
+`c[handle].field` on a `columns<T, N>` (10.1a) runs the same two checks and
+scales the checked index into the named column instead.
 
 `pool[handle]` is a place. Read a field, write a field, copy the element out, or
 pass it to a parameter, which borrows it. The borrow obtained is second-class and
@@ -55,8 +76,8 @@ cannot escape the call.
 
 A handle carries the generation of the slot it was minted for. Freeing a slot
 increments its generation. A lookup whose handle generation does not match the
-slot's current generation fails rather than returning the slot's new occupant, so
-a stale handle can never read or write freed-and-reused data.
+slot's current generation aborts rather than returning the slot's new occupant,
+so a stale handle can never read or write freed-and-reused data.
 
 ## 10.4 Bounds checking
 
@@ -68,7 +89,7 @@ form.
 
 | Guarantee | Mechanism |
 | --- | --- |
-| No dangling references | references are second-class (8.2) |
+| No dangling references | an implicit borrow cannot escape (8.2); a `ref` is frame- and region-checked (8.4) |
 | No use-after-move | move checking (8.1) |
 | No mutable aliasing | per-call borrow exclusivity (8.3) |
 | No leaked resources | linear consume-exactly-once (9.1) |

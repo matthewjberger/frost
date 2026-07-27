@@ -11,43 +11,9 @@ nothing invisible.
 A note on honesty. A few points below are properties of the grammar and the
 design that the implementation has not fully caught up to yet. Those are marked
 inline. Everything else describes the language as it compiles today. For the
-normative rules see [spec.md](../reference/conformance.md). For a broader Rust-to-Frost guide see
-[coming-from-rust.md](../coming-from-rust.md).
-
-## The Rosetta table
-
-| Rust | Frost |
-|---|---|
-| `let x = 5;` | `x := 5` |
-| `let mut x = 5;` | `mut x := 5` |
-| `let x: i64 = 5;` | `x : i64 = 5` |
-| `const MAX: i64 = 10;` | `MAX :: 10` |
-| `fn add(a: i64, b: i64) -> i64 { a + b }` | `add :: fn(a: i64, b: i64) -> i64 { a + b }` |
-| `struct Point { x: i64, y: i64 }` | `Point :: struct { x: i64, y: i64 }` |
-| `enum Shape { Circle { r: i64 }, .. }` | `Shape :: enum { Circle { r: i64 }, .. }` |
-| `Point { x: 1, y: 2 }` | `Point { x = 1, y = 2 }` |
-| `match s { Shape::Circle { r } => .. }` | `match s { case .Circle { r }: .. }` |
-| `if x > 5 { a } else { b }` | `if (x > 5) { a } else { b }` |
-| `for i in 0..n { }` | `for i in 0..n { }` |
-| `for x in &xs { }` | `for x in xs { }` |
-| `for (i, x) in xs.iter().enumerate()` | `for i, x in xs { }` |
-| `fn f() -> (i64, i64)` (a tuple) | `f :: fn() -> (i64, i64)`, and no tuple type |
-| `let (q, r) = divide(a, b);` | `q, r := divide(a, b)` |
-| no equivalent | `-> (quotient: i64, remainder: i64)`, named like Odin's |
-| `Shape::Circle { r: 5 }` | `Shape::Circle { radius = 5 }`, or `.Circle { radius = 5 }` |
-| `Point { x: 1, y: 2 }` | `Point { x = 1, y = 2 }`, or `{ x = 1, y = 2 }` |
-| `while cond { }` | `while (cond) { }` |
-| `&x`, `&mut x` | nothing: a borrow is what a parameter mode means |
-| `&T`, `&mut T` (parameter) | `x: T` (read), `mut x: T` (write) |
-| `*p` (deref) | `p^` |
-| `*const T`, `*mut T` | `^T` |
-| `fn(i64) -> i64` (fn pointer) | `fn(i64) -> i64` |
-| `Box<T>` / `Rc<T>` / arena index | `Handle<T>` into a pool |
-| `impl Drop for T` | `T :: linear struct { .. }` plus a consumer |
-| generics with `<T: Trait>` | `$T` type parameters, unbounded |
-| a trait method a generic calls | `$f: fn(..) -> ..` compile-time parameter |
-| `foo::<u32>()` (turbofish) | `foo($u32, ..)` |
-| `extern "C" { .. }` | `name :: extern fn(..) -> ..` |
+normative rules see [the reference](../reference/conformance.md), and for the
+form-by-form Rust mapping, including the table of everything below in one place,
+see [coming-from-rust.md](../coming-from-rust.md).
 
 ## 1. Uniform declaration syntax
 
@@ -183,48 +149,7 @@ Rust has `*const T` and `*mut T`. Frost has one raw pointer type, `^T`, and move
 mutability to bindings and borrows where it already lives. Less redundant state
 to keep in sync, and less to write.
 
-## 8. Inferred variant shorthand `.Circle`
-
-When the compiler already knows the scrutinee is a `Shape`, you do not repeat
-`Shape` in the pattern:
-
-```frost
-match s {
-    case .Circle { radius }: ...
-    case .Rect { width, height }: ...
-}
-```
-
-This Swift-style inferred enum scoping is fewer tokens, and pattern code does not
-break when the enum is renamed.
-
-Construction reads the same way wherever the type is already stated:
-
-```frost
-c : Color = .Red                   // the annotation says which enum
-paint(.Green)                      // the parameter's type does
-Theme { primary = .Red }           // the field's type does
-round :: fn(r: i64) -> Shape { return .Circle { radius = r } }
-```
-
-The rule is the same one the pattern follows: the dot means the enum the context
-already knows. Where there is no context to read it from, as in a bare
-`c := .Red`, it is an error rather than a guess.
-
-A struct literal leaves its name out the same way, and the two nest:
-
-```frost
-p : Point = { x = 3, y = 4 }
-length_sq({ from = { x = 0, y = 0 }, to = { x = 3, y = 4 } })
-paint({ at = { x = 7, y = 0 }, colour = .Green })
-```
-
-What does not follow is a positional literal. `Point { 3, 4 }` is not syntax and
-will not become syntax. The type name is something the compiler already knows.
-The field names are the layout, which is the one thing a data-oriented language
-should not let the reader lose.
-
-## 9. `foo($u32)` instead of turbofish
+## 8. `foo($u32)` instead of turbofish
 
 The turbofish `foo::<T>()` exists because `foo<T>()` collides with `a < b > (c)`.
 With angle brackets, Rust cannot tell `<` for generics apart from `<` for
@@ -232,40 +157,26 @@ less-than in expression position. Frost passes a type as an ordinary argument
 marked with `$` (`foo($u32)`), sidestepping the `<` disambiguation entirely, one
 of the ugliest corners of Rust's grammar.
 
-## 10. Linear structs instead of `Drop`
-
-This one is semantic more than syntactic, but the surface effect matters. Nothing
-invisible runs at scope exit. Rust's `Drop` fires automatically and silently when
-a value leaves scope. A Frost `linear` type makes you call the cleanup yourself,
-and forgetting to consume a linear value is a type error at the point of the leak
-rather than an implicit destructor quietly firing. For generated code,
-"everything that happens is written down" is an auditability win. Nothing happens
-that is not literally in the source.
-
-## 11. No visibility modifiers
-
-Frost has no `pub`, no private, and no visibility keywords at all. Every struct
-field is public, and there is nothing to specify. Rust threads `pub` through
-fields, functions, modules, and re-exports, with `pub(crate)` and `pub(super)`
-refinements on top. Frost drops the entire axis. A struct is its fields and they
-are all reachable, so there is one fewer decision per field and one fewer piece
-of grammar. This also means the module system needs no visibility rules. Bringing
-a file in with `import` makes its names available, and that is the whole story.
-
 ## Honest tradeoffs
 
-Unbounded type parameters. `$T` carries no bound, so an error about what a
-body requires of `T` surfaces at instantiation rather than at the declaration.
-This is the C++ template experience that Rust's trait bounds were designed to
-fix, where error messages point into the generic's body instead of at the call
-site's contract. If the corpus author is a model iterating against compiler
-output, that may be acceptable, but it is a real cost.
+A closed vocabulary of bounds. `$T` can carry a bound, written as a `where`
+clause after the signature, but only from a fixed list: `is_numeric`,
+`is_integer`, `is_float`, `is_struct`, `is_array`, `is_slice` and `is_pointer`,
+combined with `&&`, `||` and `!`. Every one of those is a question the compiler
+answers for itself anyway, to pick an integer or a floating point instruction
+and to decide how wide a value is and whether it travels by address. Nothing a
+program can extend, so a requirement outside the list has no way to be written
+down and surfaces at instantiation instead, pointing into the generic's body
+rather than at the caller's line. That is the C++ template experience Rust's
+trait bounds were designed to fix, and the trade taken here is that opening the
+vocabulary means bound solving, coherence, and the front-end cost that comes
+with them.
 
-The common case is narrower than it looks, and it is answered. A compile-time
-function parameter can declare the signature it needs (`$before: fn(T, T) ->
-bool`), and a mismatch there is reported against the parameter list. What remains
-unbounded is what a body does with `T` itself, such as requiring it to be
-numeric.
+Two things narrow it. A compile-time function parameter declares the signature
+it needs (`$before: fn(T, T) -> bool`), and a mismatch is reported against the
+parameter list. A capability bundle says what can be *done* with a type, which
+is the other half of what a trait bound is usually asked for. The full rules are
+in [generics.md](../reference/generics.md).
 
 Ergonomics traded for predictability. Mandatory parentheses and explicit
 consumers cost some human ergonomics in exchange for machine predictability. That
@@ -289,8 +200,6 @@ some syntax (capture lists).
 | Deref chains | Auto-deref magic | Explicit postfix `^` |
 | Raw pointer types | Two | One |
 | Generic call syntax | Turbofish workaround | `$` sigil, no ambiguity |
-| Cleanup | Invisible `Drop` at scope exit | Explicit consumer, enforced by linearity |
-| Visibility | `pub`, `pub(crate)`, private by default | None, all fields public |
 
 Almost every difference reduces context-sensitivity, overloaded symbols, or
 invisible compiler behavior. That is the design thesis. Code that is cheap to

@@ -14,16 +14,22 @@ one decision plus a small number of local rules.
 
 ## The six guarantees
 
-1. Nothing that borrows storage outlives it. A borrow can never outlive the
-   value it names. Borrows exist only as parameter modes and so last exactly one
-   call, and the two things that could carry storage out of a frame are checked
-   instead of forbidden: a raw pointer formed from a local, and a slice over one,
-   may not be returned (`src/regions.rs`, the frame check). A pointer a function
-   was handed is not its frame's and passes back out freely.
+1. Nothing that borrows storage outlives it. A borrow taken by a parameter
+   mode is implicit, lasts exactly one call, and has nowhere to be written down,
+   so it cannot escape at all. `ref T` is the explicit exception, the one borrow
+   a program writes, and it may be returned, so it is held instead to storage
+   that already outlives the call. A function answering with a borrowed view
+   (`ref T`, a raw pointer, or a slice) may not hand back one formed from its
+   own frame, whether by returning it, by storing it where the call cannot see,
+   or by ending with it (`src/regions.rs`, the frame check). A view it was
+   handed names storage the caller owns and passes back out freely. What no
+   borrow of either kind may do is be stored: not in a struct field, not in an
+   array element, not in a container.
 
-   The same check covers arenas. A raw pointer into an arena may not outlive the
-   `with` block that owns it, and a `uses` function may hand one back to its
-   caller, whose region checks it, but may not store one into a parameter.
+   The region check asks the same question about an arena. A pointer into one
+   may not outlive the `with` block that owns it, and a `uses` function may hand
+   one back to its caller, where that caller's own region check catches it, but
+   may not store one into a parameter.
 2. No use-after-move. A non-`Copy` value is consumed when moved. Using it
    again is a compile error.
 3. No mutable aliasing. Within a call, a value cannot be passed to two
@@ -50,10 +56,10 @@ each array access.
 
 ## 1. Second-class borrows, so no dangling pointers
 
-A borrow is second-class. It exists only as a *parameter mode*, and there is
-no reference type in the surface language to write anywhere else. `x: T` borrows
-to read, `mut x: T` borrows to mutate, `move x: T` takes ownership, and the call
-site writes no sigil at all.
+A borrow is second-class: it may be passed and it may be returned, and it may
+never be stored. Mostly it is not even a type a program writes. It is what a
+*parameter mode* means. `x: T` borrows to read, `mut x: T` borrows to mutate,
+`move x: T` takes ownership, and the call site writes no sigil at all.
 
 ```frost
 read  :: fn(x: i64) -> i64 { x }        // borrowed to read
@@ -63,16 +69,26 @@ eat   :: fn(move p: Point) -> i64 { p.x }
 bump(n)                                  // no '&mut' at the call
 ```
 
-Since the only place a borrow can appear is a parameter, the shapes that would
-let one escape are not expressible. There is no way to write a reference-typed
-struct field, and no way to write a reference return type, so a borrow can never
-outlive the call it was created for. There is nothing to outlive, so there are
-no lifetimes to infer and no lifetime annotations. That is what lets the
-borrow analysis stay scope-local.
+A parameter-mode borrow cannot escape because there is nowhere to put it. A
+reference-typed struct field is rejected, an enum variant's field the same, and
+so is an `extern` that returns one, all by `check_ownership` reading
+`Type::contains_reference()` over the declared types. No container can hold one
+either, since a container's element type is a field type.
 
-The lowering still forms reference types internally, and `check_ownership` still
-rejects them in fields and return positions, which is what keeps a synthesized
-reference from escaping either.
+The exception a program can write is `ref T`, a returnable borrow of a place.
+An accessor over a container needs it. `arena_at` hands back the element rather
+than a copy of it, so a caller writes `entry.kind = ...` through the borrow, and
+without it every such accessor would be a read-and-write-back pair or an
+`unsafe` block over a raw pointer. So a return position is deliberately allowed,
+and what keeps it sound is the frame check rather than the type: a function that
+answers with a borrowed view may not answer with one built from its own frame.
+`ref T` is still storable nowhere.
+
+That is why there are no lifetimes to infer and no lifetime annotations. The
+question a lifetime variable answers, how long the storage behind this borrow
+lives, is replaced by a provenance question with two answers, this frame or the
+caller's, which a single pass over the function reads off the shape of the code.
+The borrow analysis stays scope-local.
 
 The same rule is what makes `pool[handle]` sound (see section 5). Passing
 `pool[handle]` to a function borrows it under that function's parameter mode,
@@ -80,13 +96,16 @@ and that borrow is second-class like any other. You cannot stash it in a struct
 or return it, so it cannot dangle past the pool operation.
 
 Enforced in `check_ownership` via `Type::contains_reference()` on declared
-struct/enum field types and function return signatures.
+struct and enum field types and on an `extern`'s return type, and in
+`check_frame_escapes` for what a Frost function answers with.
 
 ## 2. Move checking, so no use-after-move
 
-Every type is either Copy (integers, floats, bools, raw pointers,
-references, function pointers, handles) or a move type (structs, enums,
-strings, arrays of move types). A move-typed value is *consumed* when it is:
+Every type is either copy or move, and the line is drawn by
+`Type::is_copy()`. Copy is the scalars (integers, floats, bools), raw pointers,
+borrows, function pointers, handles, `str`, a slice, and a fixed array whatever
+its element type. Move is structs and enums, and a distinct type is whichever
+the type it is represented by is. A move-typed value is *consumed* when it is:
 
 - passed by value to a function,
 - assigned to another binding, or
@@ -186,10 +205,11 @@ slab_alive($Entity, $8, world, h)               // false, the old handle can nev
 ```
 
 Those operations are ordinary Frost, not compiler builtins or a runtime.
-`examples/native/lib/slab.frost` is the whole implementation, generic over
-element type and capacity. The only part the compiler supplies is the validated
-place-deref `world[h]`, because "return a checked reference into storage" cannot
-be written where references are second-class.
+`std/slab.frost` is the whole implementation, generic over element type and
+capacity, and `examples/native/generic_slab.frost` is the same thing written out
+as a worked example. The only part the compiler supplies is the validated
+place-deref `world[h]`, which is inline index and generation arithmetic against
+the struct's own fields rather than a call.
 
 This is the memory-safety property a raw pointer cannot give you. After a free
 and reuse, the *bit pattern* of the old handle no longer matches, so it cannot be
@@ -235,11 +255,12 @@ generational check instead (section 5).
 Traditional borrow checking spends most of its complexity on lifetimes,
 inferring how long each reference is valid, relating those regions to each other,
 and threading them through generics. Frost pays a different price up front, that
-references cannot escape, and in exchange deletes that entire machinery.
+a borrow cannot be stored and a returned one is judged by where its storage came
+from, and in exchange deletes that entire machinery.
 
 | Hazard                       | How Frost removes it                                   |
 | ---------------------------- | ------------------------------------------------------ |
-| Dangling reference           | References are second-class and cannot outlive the call |
+| Dangling reference           | A borrow is unstorable, a returned one is not this frame's |
 | Use-after-move               | Move checking on non-`Copy` values                     |
 | Mutable aliasing             | Per-call borrow exclusivity (sufficient, not just necessary) |
 | Leak / double-free / drop    | Linear resources: consume exactly once                 |

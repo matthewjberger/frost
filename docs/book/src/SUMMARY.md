@@ -21,8 +21,10 @@
 - [The type system](reference/type-system.md)
 - [Declarations and bindings](reference/declarations.md)
 - [Expressions](reference/expressions.md)
+- [Unchecked operations and `unsafe`](reference/unsafe.md)
 - [Statements](reference/statements.md)
 - [Ownership and borrowing](reference/ownership.md)
+- [Allocation sources and regions](reference/allocation-and-regions.md)
 - [Linear resources](reference/linear.md)
 - [Handles, pools, and the memory model](reference/handles-and-pools.md)
 - [Generics and compile-time specialization](reference/generics.md)
@@ -45,8 +47,15 @@
 
 # The standard library
 
+- [What is in std/](std/index.md)
+- [Typed allocation](std/mem.md)
+- [Containers](std/containers.md)
+- [Text, files, and JSON](std/text-and-io.md)
+- [Sorting, and orderings as values](std/sort.md)
 - [Math](std/math.md)
 - [The entity-component system](std/ecs.md)
+- [Threads](std/thread.md)
+- [Graphics bindings](std/graphics.md)
 
 ---
 
@@ -69,4 +78,5 @@
 
 # Appendices
 
-- [Writing Frost quickly](appendix/authoring.md)
+- [The command line and the environment](appendix/cli.md)
+- [How it got here](appendix/history.md)
