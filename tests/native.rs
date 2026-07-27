@@ -14813,6 +14813,45 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "42
 ",
     ),
+    // Arithmetic on the widest unsigned types. The assembly backend divided,
+    // compared and shifted every integer as a signed one, so a `u64` or a
+    // `usize` past 2^63 came out negative there and right everywhere else. The
+    // bootstrap and the C backend both follow the type. Nothing caught it
+    // because the compiler's own `usize` values are array lengths, which never
+    // reach the top bit.
+    (
+        "the_widest_unsigned_types_are_unsigned",
+        "main :: fn() -> i64 {
+    mut big : u64 = 9223372036854775807
+    big = big + 1
+    mut two : u64 = 2
+    mut one : u64 = 1
+    print big / two
+    print big % 3
+    if (big > one) { print 1 } else { print 0 }
+    if (big < one) { print 1 } else { print 0 }
+    print big >> 1
+    mut span : usize = 9223372036854775807
+    span = span + 2
+    if (span > one) { print 1 } else { print 0 }
+    print span / two
+    mut n : i64 = 0 - 100
+    print n / 7
+    print n >> 2
+    0
+}
+",
+        "4611686018427387904
+2
+1
+0
+4611686018427387904
+1
+4611686018427387904
+-14
+-25
+",
+    ),
 ];
 
 // Build and run `source` with the self-hosted compiler's native backend, under

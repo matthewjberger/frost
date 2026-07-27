@@ -720,7 +720,19 @@ emit_asm_compare :: fn(setcc: str) {
     asm("movzbq %al, %rax")
 }
 
-emit_asm_binop :: fn(op: i64) {
+// Whether an operation on these two operands is the unsigned one. Only the
+// widest unsigned types can carry a top bit that means anything: a narrower one
+// is zero-extended into a whole register when it is loaded, so the signed
+// sixty-four-bit operation on it answers the same. C converts a mixed pair to
+// the unsigned type, and the C backend is the other half of this language, so
+// the same rule holds here.
+wide_unsigned :: fn(ty: i64) -> bool { ty == TY_U64 || ty == TY_USIZE }
+
+binop_is_unsigned :: fn(left: i64, right: i64) -> bool {
+    wide_unsigned(left) || wide_unsigned(right)
+}
+
+emit_asm_binop :: fn(op: i64, unsigned: bool) {
     if (op == 0) {
         asm("addq %r11, %rax")
         return
@@ -733,31 +745,36 @@ emit_asm_binop :: fn(op: i64) {
         asm("imulq %r11, %rax")
         return
     }
-    if (op == 3) {
-        asm("cqto")
-        asm("idivq %r11")
-        return
-    }
-    if (op == 4) {
-        asm("cqto")
-        asm("idivq %r11")
-        asm("movq %rdx, %rax")
+    if (op == 3 || op == 4) {
+        // The dividend fills both registers the divide reads, and how it is
+        // widened into them is the whole difference: the signed form copies
+        // the sign into the high half and the unsigned form clears it.
+        if (unsigned) {
+            asm("xorq %rdx, %rdx")
+            asm("divq %r11")
+        } else {
+            asm("cqto")
+            asm("idivq %r11")
+        }
+        if (op == 4) {
+            asm("movq %rdx, %rax")
+        }
         return
     }
     if (op == 5) {
-        emit_asm_compare("setl")
+        if (unsigned) { emit_asm_compare("setb") } else { emit_asm_compare("setl") }
         return
     }
     if (op == 6) {
-        emit_asm_compare("setg")
+        if (unsigned) { emit_asm_compare("seta") } else { emit_asm_compare("setg") }
         return
     }
     if (op == 7) {
-        emit_asm_compare("setle")
+        if (unsigned) { emit_asm_compare("setbe") } else { emit_asm_compare("setle") }
         return
     }
     if (op == 8) {
-        emit_asm_compare("setge")
+        if (unsigned) { emit_asm_compare("setae") } else { emit_asm_compare("setge") }
         return
     }
     if (op == 9) {
@@ -768,9 +785,9 @@ emit_asm_binop :: fn(op: i64) {
         emit_asm_compare("setne")
         return
     }
-    // A shift takes its count in %cl, so the right operand moves there first. The
-    // right shift is arithmetic, matching the C backend's `>>` on a signed
-    // int64_t, which is what a handle's generation is unpacked with.
+    // A shift takes its count in %cl, so the right operand moves there first. A
+    // right shift keeps the sign of a signed operand, which is what a handle's
+    // generation is unpacked with, and brings in zeros for an unsigned one.
     if (op == OP_SHL) {
         asm("movq %r11, %rcx")
         asm("shlq %cl, %rax")
@@ -778,7 +795,11 @@ emit_asm_binop :: fn(op: i64) {
     }
     if (op == OP_SHR) {
         asm("movq %r11, %rcx")
-        asm("sarq %cl, %rax")
+        if (unsigned) {
+            asm("shrq %cl, %rax")
+        } else {
+            asm("sarq %cl, %rax")
+        }
         return
     }
     if (op == OP_BITAND) {
@@ -1264,7 +1285,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         if (simple != SIMPLE_NONE) {
             emit_asm_expr(p, bin.a)
             emit_asm_simple_into_r11(p, bin.b, simple)
-            emit_asm_binop(op)
+            emit_asm_binop(op, binop_is_unsigned(left_ty, right_ty))
             return
         }
         emit_asm_expr(p, bin.a)
@@ -1272,7 +1293,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         emit_asm_expr(p, bin.b)
         asm("movq %rax, %r11")
         emit_asm_unspill(p)
-        emit_asm_binop(op)
+        emit_asm_binop(op, binop_is_unsigned(left_ty, right_ty))
         return
     }
     if (kind == NodeKind::Call) {
