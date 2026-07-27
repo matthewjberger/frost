@@ -13925,7 +13925,26 @@ Three make_three(int64_t seed) {
 OneFloat make_float(float seed) { OneFloat made; made.only = seed * 2.0f; return made; }
 TwoDoubles make_doubles(double seed) { TwoDoubles made; made.x = seed; made.y = seed * 3.0; return made; }
 Big make_big(int64_t seed) { Big made; made.a = seed; made.b = seed * 2; made.c = seed * 3; return made; }
+uint8_t small_u8(void) { return 7; }
+int32_t neg_i32(void) { return -3; }
+uint32_t big_u32(void) { return 4000000000u; }
 "#;
+
+// A callee written by hand, because what matters is the bits a C compiler is
+// free to leave above a narrow answer and no C source can be made to leave them
+// reliably. Both of these answer in %al with the rest of the register holding
+// something else, which the ABI permits and a caller reading the whole register
+// reads as true.
+const DIRTY_NARROW_RETURNS: &str = "    .text
+    .globl dirty_false
+dirty_false:
+    movabsq $0xDEADBEEF00, %rax
+    ret
+    .globl dirty_true
+dirty_true:
+    movabsq $0xDEADBEEF01, %rax
+    ret
+";
 
 const CALLS_C_STRUCT_RETURNS: &str =
     "Pair32 :: struct { id: u32, generation: u32 }
@@ -13939,6 +13958,11 @@ const CALLS_C_STRUCT_RETURNS: &str =
      make_float   :: extern fn(seed: f32) -> OneFloat
      make_doubles :: extern fn(seed: f64) -> TwoDoubles
      make_big     :: extern fn(seed: i64) -> Big
+     small_u8     :: extern fn() -> u8
+     neg_i32      :: extern fn() -> i32
+     big_u32      :: extern fn() -> u32
+     dirty_false  :: extern fn() -> bool
+     dirty_true   :: extern fn() -> bool
 
      main :: fn() -> i64 {
          pair := unsafe { make_pair(21) }
@@ -13955,6 +13979,11 @@ const CALLS_C_STRUCT_RETURNS: &str =
          big := unsafe { make_big(5) }
          print big.a
          print big.c
+         print unsafe { small_u8() }
+         print unsafe { neg_i32() }
+         print unsafe { big_u32() }
+         if (unsafe { dirty_false() }) { print 999 } else { print 0 }
+         if (unsafe { dirty_true() }) { print 1 } else { print 999 }
          0
      }
 ";
@@ -13981,6 +14010,20 @@ fn both_compilers_call_a_c_function_answering_with_a_struct() {
         .unwrap();
     assert!(built.status.success(), "the C library did not compile");
 
+    let dirty_source = directory.join("dirty.s");
+    let dirty_object = directory.join("dirty.o");
+    std::fs::write(&dirty_source, DIRTY_NARROW_RETURNS).unwrap();
+    let assembled = Command::new(compiler)
+        .arg("-c")
+        .arg(&dirty_source)
+        .arg("-o")
+        .arg(&dirty_object)
+        .output()
+        .unwrap();
+    if !assembled.status.success() {
+        return;
+    }
+
     let program = directory.join("program.frost");
     std::fs::write(&program, CALLS_C_STRUCT_RETURNS).unwrap();
 
@@ -13998,6 +14041,8 @@ fn both_compilers_call_a_c_function_answering_with_a_struct() {
             .arg("--link")
             .arg("--libs")
             .arg(&object)
+            .arg("--libs")
+            .arg(&dirty_object)
             .arg("-o")
             .arg(&exe)
             .arg(&program)
@@ -14022,7 +14067,8 @@ fn both_compilers_call_a_c_function_answering_with_a_struct() {
     }
 
     assert_eq!(
-        answers[0].1, "21\n42\n10\n12\n3\n2\n6\n5\n15\n",
+        answers[0].1,
+        "21\n42\n10\n12\n3\n2\n6\n5\n15\n7\n-3\n4000000000\n0\n1\n",
         "the bootstrap answered wrongly"
     );
     assert_eq!(

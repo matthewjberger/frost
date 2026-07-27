@@ -49,41 +49,114 @@ str_range_eq :: fn(src: str, off: i64, len: i64, word: ^i8) -> bool {
     byte_at(word, len) == 0
 }
 
+// Every identifier in the source is asked whether it is a keyword, and there
+// are thirty-two of them, so asking about each in turn is thirty-two
+// comparisons for every name a program mentions. A keyword's length rules out
+// all but a handful before any bytes are looked at.
 classify_ident :: fn(src: str, off: i64, len: i64) -> TokenKind {
-    if (str_range_eq(src, off, len, "fn")) { return TokenKind::KwFn }
-    if (str_range_eq(src, off, len, "if")) { return TokenKind::KwIf }
-    if (str_range_eq(src, off, len, "let")) { return TokenKind::KwLet }
-    if (str_range_eq(src, off, len, "mut")) { return TokenKind::KwMut }
-    if (str_range_eq(src, off, len, "linear")) { return TokenKind::KwLinear }
-    if (str_range_eq(src, off, len, "move")) { return TokenKind::KwMove }
-    if (str_range_eq(src, off, len, "else")) { return TokenKind::KwElse }
-    if (str_range_eq(src, off, len, "case")) { return TokenKind::KwCase }
-    if (str_range_eq(src, off, len, "true")) { return TokenKind::KwTrue }
-    if (str_range_eq(src, off, len, "print")) { return TokenKind::KwPrint }
-    if (str_range_eq(src, off, len, "while")) { return TokenKind::KwWhile }
-    if (str_range_eq(src, off, len, "break")) { return TokenKind::KwBreak }
-    if (str_range_eq(src, off, len, "continue")) {
-        return TokenKind::KwContinue
+    if (len == 2) {
+        if (str_range_eq(src, off, len, "fn")) {
+            return TokenKind::KwFn
+        }
+        if (str_range_eq(src, off, len, "if")) {
+            return TokenKind::KwIf
+        }
+        if (str_range_eq(src, off, len, "in")) {
+            return TokenKind::KwIn
+        }
+    } else if (len == 3) {
+        if (str_range_eq(src, off, len, "for")) {
+            return TokenKind::KwFor
+        }
+        if (str_range_eq(src, off, len, "let")) {
+            return TokenKind::KwLet
+        }
+        if (str_range_eq(src, off, len, "mut")) {
+            return TokenKind::KwMut
+        }
+        if (str_range_eq(src, off, len, "ref")) {
+            return TokenKind::KwRef
+        }
+    } else if (len == 4) {
+        if (str_range_eq(src, off, len, "case")) {
+            return TokenKind::KwCase
+        }
+        if (str_range_eq(src, off, len, "else")) {
+            return TokenKind::KwElse
+        }
+        if (str_range_eq(src, off, len, "enum")) {
+            return TokenKind::KwEnum
+        }
+        if (str_range_eq(src, off, len, "move")) {
+            return TokenKind::KwMove
+        }
+        if (str_range_eq(src, off, len, "safe")) {
+            return TokenKind::KwSafe
+        }
+        if (str_range_eq(src, off, len, "test")) {
+            return TokenKind::KwTest
+        }
+        if (str_range_eq(src, off, len, "true")) {
+            return TokenKind::KwTrue
+        }
+        if (str_range_eq(src, off, len, "uses")) {
+            return TokenKind::KwUses
+        }
+        if (str_range_eq(src, off, len, "with")) {
+            return TokenKind::KwWith
+        }
+    } else if (len == 5) {
+        if (str_range_eq(src, off, len, "break")) {
+            return TokenKind::KwBreak
+        }
+        if (str_range_eq(src, off, len, "false")) {
+            return TokenKind::KwFalse
+        }
+        if (str_range_eq(src, off, len, "match")) {
+            return TokenKind::KwMatch
+        }
+        if (str_range_eq(src, off, len, "print")) {
+            return TokenKind::KwPrint
+        }
+        if (str_range_eq(src, off, len, "where")) {
+            return TokenKind::KwWhere
+        }
+        if (str_range_eq(src, off, len, "while")) {
+            return TokenKind::KwWhile
+        }
+    } else if (len == 6) {
+        if (str_range_eq(src, off, len, "export")) {
+            return TokenKind::KwExport
+        }
+        if (str_range_eq(src, off, len, "extern")) {
+            return TokenKind::KwExtern
+        }
+        if (str_range_eq(src, off, len, "import")) {
+            return TokenKind::KwImport
+        }
+        if (str_range_eq(src, off, len, "inline")) {
+            return TokenKind::KwInline
+        }
+        if (str_range_eq(src, off, len, "linear")) {
+            return TokenKind::KwLinear
+        }
+        if (str_range_eq(src, off, len, "return")) {
+            return TokenKind::KwReturn
+        }
+        if (str_range_eq(src, off, len, "struct")) {
+            return TokenKind::KwStruct
+        }
+        if (str_range_eq(src, off, len, "unsafe")) {
+            return TokenKind::KwUnsafe
+        }
+    } else if (len == 8) {
+        if (str_range_eq(src, off, len, "continue")) {
+            return TokenKind::KwContinue
+        }
+        if (str_range_eq(src, off, len, "distinct")) {
+            return TokenKind::KwDistinct
+        }
     }
-    if (str_range_eq(src, off, len, "match")) { return TokenKind::KwMatch }
-    if (str_range_eq(src, off, len, "false")) { return TokenKind::KwFalse }
-    if (str_range_eq(src, off, len, "return")) { return TokenKind::KwReturn }
-    if (str_range_eq(src, off, len, "struct")) { return TokenKind::KwStruct }
-    if (str_range_eq(src, off, len, "extern")) { return TokenKind::KwExtern }
-    if (str_range_eq(src, off, len, "safe")) { return TokenKind::KwSafe }
-    if (str_range_eq(src, off, len, "inline")) { return TokenKind::KwInline }
-    if (str_range_eq(src, off, len, "ref")) { return TokenKind::KwRef }
-    if (str_range_eq(src, off, len, "uses")) { return TokenKind::KwUses }
-    if (str_range_eq(src, off, len, "where")) { return TokenKind::KwWhere }
-    if (str_range_eq(src, off, len, "with")) { return TokenKind::KwWith }
-    if (str_range_eq(src, off, len, "for")) { return TokenKind::KwFor }
-    if (str_range_eq(src, off, len, "in")) { return TokenKind::KwIn }
-    if (str_range_eq(src, off, len, "import")) { return TokenKind::KwImport }
-    if (str_range_eq(src, off, len, "export")) { return TokenKind::KwExport }
-    if (str_range_eq(src, off, len, "enum")) { return TokenKind::KwEnum }
-    if (str_range_eq(src, off, len, "test")) { return TokenKind::KwTest }
-    if (str_range_eq(src, off, len, "unsafe")) { return TokenKind::KwUnsafe }
-    if (str_range_eq(src, off, len, "distinct")) { return TokenKind::KwDistinct }
     TokenKind::Ident
 }
 
