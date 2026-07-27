@@ -520,7 +520,7 @@ pub enum Statement {
     // object is being linked rather than rebuilt, so the program needs the
     // signature to type and emit calls and needs nothing else. This is the last
     // whole-program piece of the front end. See step 5 of
-    // docs/separate-compilation.md.
+    // docs/book/src/impl/separate-compilation.md.
     //
     // Not an `Extern`, which means C linkage and a C ABI. This is a Frost
     // function that some other object defines.
@@ -2135,7 +2135,7 @@ impl<'a> Parser<'a> {
                 // same reason an ordinary function does. A callback
                 // registration is declared as an extern, it takes its context
                 // by `move`, and the handler it wants is a `$` parameter with a
-                // function bound. See docs/callbacks.md.
+                // function bound. See docs/book/src/design/callbacks.md.
                 let mode = match self.peek_nth(0) {
                     Token::Mut => {
                         self.read_token();

@@ -43,7 +43,7 @@ pub struct IrBuilder {
     generic_functions: HashMap<String, GenericFunction>,
     generic_struct_defs: HashMap<String, (Vec<String>, Vec<StructField>)>,
     linear: HashSet<String>,
-    // Callback registrations, by name. See docs/callbacks.md.
+    // Callback registrations, by name. See docs/book/src/design/callbacks.md.
     registrations: HashMap<String, crate::callbacks::CallbackShape>,
     // A number per type, handed out in the order `type_id` first asks for one.
     // What it is for is a table keyed by type in a program that decides at run
@@ -318,7 +318,7 @@ fn build_module_inner(
             // The output is one object, so a specialization is emitted once no
             // matter how many modules ask for it. Per-module copies become
             // possible only when each module emits its own object. See step 3
-            // of docs/separate-compilation.md.
+            // of docs/book/src/impl/separate-compilation.md.
             if !emitted.insert((key, specialization.mangled_name.clone())) {
                 continue;
             }
@@ -493,7 +493,7 @@ fn declared_function(
 // What an extern's parameters are once C sees them. For a registration these
 // are not what the declaration says literally. The `$handler` parameter is the
 // callback pointer, and the context is passed as an address, because the library
-// keeps it past the call. See docs/callbacks.md.
+// keeps it past the call. See docs/book/src/design/callbacks.md.
 fn extern_parameter_types(params: &[Parameter]) -> Vec<Type> {
     let shape = crate::callbacks::callback_shape(params);
     params
@@ -993,7 +993,7 @@ struct Specialization {
     //
     // Nothing downstream uses this yet and the emitted code does not depend on
     // it. It exists to answer the question the design in
-    // docs/separate-compilation.md leaves open. Separate compilation gives each
+    // docs/book/src/impl/separate-compilation.md leaves open. Separate compilation gives each
     // module its own copy of a specialization it instantiates, and whether that
     // duplication is worth caring about is a measurement, not an opinion.
     requested_by: u32,
@@ -5157,7 +5157,7 @@ impl<'a> FunctionLowering<'a> {
         }
     }
 
-    // docs/callbacks.md, steps 3 and 4. There is no trampoline, and finding that
+    // docs/book/src/design/callbacks.md, steps 3 and 4. There is no trampoline, and finding that
     // out is the whole of step 3: the handler's context parameter is `mut`, so
     // it is already a pointer in the signature, and a Frost function and a C
     // one use the same calling convention. So `on_event` compiled for Frost is

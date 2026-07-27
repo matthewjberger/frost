@@ -23,10 +23,10 @@ a division of labour.
 
 The target is parity, on both axes. The self-hosted compiler implements the
 full language, everything the bootstrap supports, and it is under the same speed
-promise, goal 9 in [philosophy.md](philosophy.md). Speed matters more there than
+promise, goal 9 in [philosophy.md](../design/philosophy.md). Speed matters more there than
 here, because it is the compiler a user's edit-compile loop actually runs.
 What is not yet ported is listed in
-[../selfhosted/README.md](../selfhosted/README.md), and the shape of each port
+this chapter, and the shape of each port
 is the four-step pattern at the end of this document.
 
 It self-hosts twice over, through its C backend and through its own x64

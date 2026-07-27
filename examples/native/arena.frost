@@ -5,7 +5,7 @@
 // the pointer as `^T` with ptr_cast. Freeing is resetting the offset to a saved
 // marker, which reclaims everything allocated since in one move.
 //
-// This is the arena layer of docs/allocators.md, in the language: the storage and
+// This is the arena layer of docs/book/src/design/allocators.md, in the language: the storage and
 // the bump logic are Frost, and the only primitives the compiler provides are a
 // raw address-of and a pointer reinterpret. Allocations here are 8-byte aligned
 // because every type used is, so the running offset stays aligned. A general

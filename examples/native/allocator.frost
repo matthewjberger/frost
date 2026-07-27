@@ -1,6 +1,6 @@
 // The allocator interface. An allocator is a value, so a data structure can be
 // backed by any of them and the backing can be swapped. Following the Odin model
-// (docs/allocators.md), an Allocator is a function pointer plus the allocator's
+// (docs/book/src/design/allocators.md), an Allocator is a function pointer plus the allocator's
 // own state, no closures and no vtable. Frost's function pointers express this
 // directly. Here a bump allocator over a byte buffer implements the interface,
 // and `alloc` allocates through the interface without naming the bump at all.

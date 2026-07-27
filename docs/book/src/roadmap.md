@@ -1,6 +1,6 @@
 # What is left, and the order to do it in
 
-Goal 9 in [philosophy.md](philosophy.md) makes compilation speed a promise
+Goal 9 in [philosophy.md](design/philosophy.md) makes compilation speed a promise
 rather than a happy accident, and that promise has a bill. This is the bill,
 sequenced so that nothing here gets built twice.
 
@@ -18,7 +18,7 @@ the two items that followed it are built.
 
 Everything the two compilers are held to is done: they accept the same language,
 and what says so is a suite of programs run through both rather than a claim.
-See [../selfhosted/README.md](../selfhosted/README.md).
+See [the self-hosted compiler](impl/self-hosted.md).
 
 ## What is left
 

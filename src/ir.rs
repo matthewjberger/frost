@@ -29,7 +29,7 @@ impl IrModule {
     // This is what makes each module a compilation unit. A specialization two
     // modules both instantiate appears in both parts, which is the duplication
     // the design accepts in exchange for a module's work depending only on the
-    // module. See docs/separate-compilation.md. `FROST_MODULE_REPORT` measures
+    // module. See docs/book/src/impl/separate-compilation.md. `FROST_MODULE_REPORT` measures
     // how much of it there is.
     pub fn split_by_module(self) -> Vec<IrModule> {
         let mut order: Vec<u32> = Vec::new();
@@ -126,7 +126,7 @@ pub struct IrExtern {
     pub return_type: Type,
     // Present when the return type is an aggregate, which C returns by a rule
     // of its own that the backends have to follow rather than reuse Frost's.
-    // See src/c_abi.rs and item 4 of docs/roadmap.md.
+    // See src/c_abi.rs and item 4 of docs/book/src/roadmap.md.
     pub return_layout: Option<crate::c_abi::CLayout>,
 }
 
@@ -148,12 +148,12 @@ pub struct IrFunction {
     // The module this function belongs to, as a source map file id. For a
     // specialization it is the module that instantiated it, which is the module
     // that would emit it once modules are compilation units. See
-    // docs/separate-compilation.md.
+    // docs/book/src/impl/separate-compilation.md.
     pub module: u32,
     // Set when this function is a specialization, naming it the way the reader
     // wrote it and pointing at the call that asked for it. A diagnostic inside a
     // stamped-out body otherwise names a line in a template the reader never
-    // wrote. See item 2 of the smaller things in docs/roadmap.md.
+    // wrote. See item 2 of the smaller things in docs/book/src/roadmap.md.
     pub instantiated: Option<Instantiation>,
     // Whether this symbol is private to its object file. True for
     // specializations and anonymous function literals, which are only ever

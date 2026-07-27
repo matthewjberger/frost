@@ -59,7 +59,7 @@ fn run_backend(name: &str, source: &str, emit_c: bool) -> Option<String> {
     if emit_c {
         command.arg("--emit-c");
     }
-    // The interface oracle from docs/separate-compilation.md runs on every test
+    // The interface oracle from docs/book/src/impl/separate-compilation.md runs on every test
     // compilation, so a module whose interface would not describe it is caught
     // here rather than when something tries to compile against one.
     command
@@ -4006,10 +4006,11 @@ fn the_readme_snippet_is_the_tour_program() {
     // was drawn from, so a change to the tour that was never re-rendered fails
     // here rather than leaving a stale image nobody looks at twice.
     assert!(
-        readme.contains("docs/tour.svg"),
+        readme.contains("docs/book/src/tour.svg"),
         "README.md no longer shows the tour"
     );
-    let svg = std::fs::read_to_string(root.join("docs/tour.svg")).unwrap();
+    let svg =
+        std::fs::read_to_string(root.join("docs/book/src/tour.svg")).unwrap();
     let mut drawn = String::new();
     let mut inside = false;
     for character in svg.chars() {
@@ -4040,7 +4041,7 @@ fn the_readme_snippet_is_the_tour_program() {
         }
         assert!(
             squashed.contains(&wanted),
-            "docs/tour.svg is missing a line of the tour, so it needs redrawing with `just tour-image`:\n{line}"
+            "docs/book/src/tour.svg is missing a line of the tour, so it needs redrawing with `just tour-image`:\n{line}"
         );
     }
 
@@ -5398,7 +5399,7 @@ fn an_exported_function_may_return_an_unexported_type() {
     assert_eq!(output, "7\n");
 }
 
-// Step 4 of docs/separate-compilation.md, as an oracle. With
+// Step 4 of docs/book/src/impl/separate-compilation.md, as an oracle. With
 // FROST_BUILD_FROM_INTERFACES an imported module contributes what its interface
 // says and nothing else, so producing the same program either way is the
 // evidence that an interface is sufficient. The module here uses the things
@@ -5731,7 +5732,7 @@ fn a_diagnostic_from_an_imported_module_names_the_file() {
 }
 
 // A module's private symbols are a property of the module, not of the order it
-// happened to be reached in. This is step 1 of docs/separate-compilation.md and
+// happened to be reached in. This is step 1 of docs/book/src/impl/separate-compilation.md and
 // the thing the rest of it cannot be built without: a module compiled once has
 // to produce the symbols every other module will link against. The tag used to
 // be a counter handed out in import traversal order, so the same file's private
@@ -11860,7 +11861,7 @@ fn a_frame_pointer_may_not_leave_by_any_road() {
     }
 }
 
-// Step 5 of docs/separate-compilation.md. A module is rebuilt only when its own
+// Step 5 of docs/book/src/impl/separate-compilation.md. A module is rebuilt only when its own
 // source or an imported interface changes, and the distinction that decides it
 // is that a generic's body is part of its interface while an ordinary body is
 // not. This builds a three module chain and edits the leaf twice, once in each
@@ -12021,7 +12022,7 @@ fn only_the_modules_an_edit_reaches_are_rebuilt() {
     let _ = std::fs::remove_dir_all(&directory);
 }
 
-// docs/callbacks.md, step 1. A callback registration is an `extern fn` with a
+// docs/book/src/design/callbacks.md, step 1. A callback registration is an `extern fn` with a
 // `$handler` parameter bound to a function signature, and the whole ownership
 // argument is that the context moves in. What this checks is that the argument
 // costs no new machinery: `check_ownership` already stops a caller touching a
@@ -12063,7 +12064,7 @@ fn a_registration_declaration_is_checked() {
     );
 }
 
-// docs/callbacks.md, step 2, and the whole safety argument. A registration
+// docs/book/src/design/callbacks.md, step 2, and the whole safety argument. A registration
 // holds its context for as long as it is registered, so the value it answers
 // with names storage in the frame that holds the context. A context in that
 // frame is the ordinary case and is safe, because `check_linearity` forces the
@@ -12118,7 +12119,7 @@ fn registering_and_unregistering_in_one_frame_is_allowed() {
     }
 }
 
-// docs/callbacks.md, step 5: bind a real C callback API and register against
+// docs/book/src/design/callbacks.md, step 5: bind a real C callback API and register against
 // it, because every earlier step is checkable without a library and none of
 // them proves the ABI. The library here is the smallest one that is still the
 // real shape, `(callback, userdata)` stored and called back later, compiled by
@@ -12134,7 +12135,7 @@ fn registering_and_unregistering_in_one_frame_is_allowed() {
 // which is an ordinary extern returning a struct by value. That needed no
 // callback machinery at all, only the C return classification in
 // src/c_abi.rs, which is what closed the last open question in
-// docs/callbacks.md.
+// docs/book/src/design/callbacks.md.
 #[test]
 fn a_callback_registered_with_a_c_library_runs() {
     let Some(compiler) = c_compiler() else {
@@ -12219,11 +12220,11 @@ fn a_callback_registered_with_a_c_library_runs() {
     // 4 then 5 through the callback, read back by the library out of the Frost
     // struct it was handed, then the token the library returned. The context is
     // read by the library rather than by Frost because it was moved in, and
-    // getting it back is the open question at the end of docs/callbacks.md.
+    // getting it back is the open question at the end of docs/book/src/design/callbacks.md.
     assert_eq!(output, "9\n77\n");
 }
 
-// docs/c-compatibility.md said outright that passing a struct to C by value had
+// docs/book/src/impl/c-compatibility.md said outright that passing a struct to C by value had
 // no spelling, and `value` is it. Every shape here lands on a different side of
 // some rule: 16 bytes is what wgpu's WGPUStringView is and is two eightbytes on
 // System V, 8 bytes is one integer register on Windows, 4 bytes of float is
@@ -12368,7 +12369,7 @@ fn a_struct_is_passed_to_c_by_value() {
 // comes out of the wrong one. wgpu's callbacks are exactly this shape.
 //
 // There is still no trampoline. The Frost function is compiled to receive what
-// C sends, which is the same claim docs/callbacks.md makes about the simple
+// C sends, which is the same claim docs/book/src/design/callbacks.md makes about the simple
 // case, extended to the one shape that needed the compiler to know the rule.
 #[test]
 fn c_calls_back_with_a_struct_by_value() {
@@ -12575,7 +12576,7 @@ fn a_callback_whose_context_comes_last_runs() {
     assert_eq!(output, "13\n31\n");
 }
 
-// Item 4 of docs/roadmap.md. C returns a struct by a rule of its own, and the
+// Item 4 of docs/book/src/roadmap.md. C returns a struct by a rule of its own, and the
 // rule differs by target and, on some targets, by whether the fields are
 // floating point. Every shape here was chosen because it lands on a different
 // side of some boundary: 3 bytes is not a power of two, 4 bytes of float is the

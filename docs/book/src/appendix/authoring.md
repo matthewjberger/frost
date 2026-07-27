@@ -3,8 +3,8 @@
 This is the practical guide to writing correct Frost quickly. It is dense on
 purpose, so it is a good single document to hand a new author, human or model,
 before they write their first program. For the reasoning behind the choices see
-[syntax-design.md](syntax-design.md), for the full rules see [spec.md](spec.md),
-and for a Rust-to-Frost mapping see [coming-from-rust.md](coming-from-rust.md).
+[syntax-design.md](../design/syntax.md), for the full rules see [spec.md](../reference/conformance.md),
+and for a Rust-to-Frost mapping see [coming-from-rust.md](../coming-from-rust.md).
 
 ## What Frost is
 

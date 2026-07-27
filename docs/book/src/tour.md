@@ -2,8 +2,8 @@
 
 This is a walk through the language by example. Every snippet below
 compiles and runs on both native backends. For the *why* behind these choices,
-see [philosophy.md](philosophy.md). For the safety rules, see
-[memory-safety.md](memory-safety.md).
+see [philosophy.md](design/philosophy.md). For the safety rules, see
+[memory-safety.md](design/memory-safety.md).
 
 Run a program with:
 
@@ -319,7 +319,7 @@ main :: fn() -> i64 {
 
 Moving a system from a pool to structure-of-arrays is changing `Slab<T, N>` to
 `columns<T, N>` and the `slab_` prefix to `columns_`. See
-[native-pools.md](native-pools.md).
+[native-pools.md](design/pools-and-columns.md).
 
 ## Generics specialize at compile time
 
@@ -538,7 +538,7 @@ works as a build gate.
 
 `extern fn` links against any C library with the natural ABI. This is how the
 examples reach `printf`, `malloc`, and the pool runtime. See
-[c-compatibility.md](c-compatibility.md).
+[c-compatibility.md](impl/c-compatibility.md).
 
 ## The standard library
 
@@ -547,12 +547,12 @@ The library under `std/` is ordinary Frost, imported by name (`import
 file and formatted IO, an `Ordering<T>` bundle with a sort that takes one, the
 `slab` and `columns` containers,
 and a single-precision graphics-math library of vectors, matrices, and
-quaternions. The math library is described in [math.md](math.md), and
+quaternions. The math library is described in [math.md](std/math.md), and
 `examples/native/math_transform.frost` puts it through a model-view-projection.
 
 ## Where to next
 
 - Runnable programs live in `examples/native/`. Start with `game_world.frost`
   (an entity system) and `pool_linked_list.frost` (handles as links).
-- [architecture.md](architecture.md) explains the compiler pipeline and exactly
+- [architecture.md](impl/architecture.md) explains the compiler pipeline and exactly
   what the native path supports today.

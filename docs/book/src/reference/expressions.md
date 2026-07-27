@@ -1,0 +1,192 @@
+# 6. Expressions
+
+## 6.1 Primary expressions
+
+The primary expressions are integer, float, string, and boolean literals,
+identifiers, parenthesized expressions `( Expr )`, and array literals, either the
+listed form `[ e, ... ]` or the repeat form `[ e ; N ]` for `N` copies of `e`
+(the way a large or zeroed backing buffer is written, e.g. `[0; 256]`). The
+count is an integer, a constant, or a value parameter of the generic the literal
+is written in (11.1a).
+
+A call may go through a value rather than a name. A parameter, a binding, or a
+struct field of function-pointer type is called by writing the call on it:
+
+```frost
+System :: struct { run: fn(mut World), stage: i64 }
+
+systems[index].run(world)
+held := systems[index].run
+held(world)
+```
+
+The parameters of an indirect call travel exactly as the signature writes them:
+`fn(mut World)` borrows, so the world is not consumed by being handed to one.
+This is what a schedule of systems is built from, where which functions run is
+decided while the program runs rather than where each call is written.
+
+## 6.2 Operators
+
+Prefix `-` (negate) and `!` (logical not). Binary operators, grouped by the
+precedence in 14.1, are `||`, `&&`, `==` `!=`, `<` `<=` `>` `>=`, `|`, `&`, `<<`
+`>>`, `+` `-`, `*` `/` `%`, and the range operators `..` and `..=`. All binary
+operators are left-associative.
+
+## 6.3 References and dereference
+
+- `ptr_to(place)` the address of a place. There is no borrow operator: a
+  borrow is what a parameter mode means, inserted at the call.
+- `expr^` dereferences a raw pointer to its pointee value and is assignable
+  (`p^ = v`). Member access through a raw pointer is written `p^.field`.
+- A borrowed parameter needs no dereference at all, whatever its type. `p.field`
+  reads and writes a field of a borrowed aggregate, and `p = q` on a `mut`
+  parameter assigns the whole value through the borrow rather than rebinding
+  anything local. Naming a `mut` parameter always means the caller's value.
+- Binding a parameter to a name (`x := p`) binds a *copy* of what it holds, so
+  writing through `x` does not reach back to the caller. A second name for the
+  same place is `ref x := p`, which is the one form that asks for one, and a
+  call answering with a `ref T` (10.6) hands one out on purpose and keeps it. A
+  parameter of a `linear` type cannot be bound this way at all, since a copy
+  would be a second owner of something consumed exactly once.
+
+## 6.4 Calls, indexing, and field access
+
+- `f(a, b, ...)` calls a function or function pointer.
+- `a[i]` indexes an array, slice, or pool (for a pool, `i` is a `Handle`).
+- `e.field` accesses a struct field or, on an enum place, a variant field.
+
+## 6.5 Construction
+
+```
+Point { x = 1, y = 2 }                // struct literal (fields use =)
+Shape::Circle { radius = 5 }          // enum variant with payload
+Shape::Player                         // unit variant
+.Circle { radius = 5 }                // the enum comes from the context
+.Player                               // the same, with no payload
+{ x = 1, y = 2 }                      // the struct comes from the context
+```
+
+Struct and enum-variant construction are recognized only when the operand to the
+left of `{` or `::` is a bare identifier.
+
+**The leading dot.** `.Variant` names a variant without naming its enum, and
+takes the enum from the type the surrounding code expects. It is the
+construction counterpart of the `case .Variant` a pattern writes (6.7): the code
+does not repeat a type the compiler already knows, and it does not have to be
+rewritten when the enum is renamed.
+
+The contexts that supply a type are the ones that state it:
+
+| Context | What supplies the enum |
+| --- | --- |
+| `c : Color = .Red` | the annotation |
+| `paint(.Red)` | the parameter's declared type |
+| `Theme { primary = .Red }` | the field's declared type |
+| `return .Circle { radius = r }` | the function's declared return type |
+| `c = .Blue` | the type of the place assigned to |
+| `wheel : [3]Color = [.Red, .Green, .Blue]` | the array's element type |
+
+In a function with a failure set the return is two types, so `.Denied` names a
+variant of the failure set when it has one and a variant of the value type
+otherwise. That is how `return .Denied` fails and `return .Some { value = 3 }`
+succeeds in the same function.
+
+A dot with nothing to take its enum from is an error naming the variant, not a
+guess. `c := .Red` has no annotation and no context, so it is rejected and the
+fix is `c : Color = .Red` or `c := Color::Red`.
+
+**The inferred literal.** `{ x = 1, y = 2 }` is a struct literal that leaves out
+a type name the context already carries. It reads from the same contexts the
+leading dot does, and the two nest: a literal's field supplies the type of a
+literal written inside it, so
+`{ from = { x = 0, y = 0 }, to = { x = 3, y = 4 } }` and
+`{ at = { x = 7, y = 0 }, colour = .Green }` both resolve all the way down.
+
+Every field is still named. There is no positional literal, here or anywhere
+else in the language, and there is not going to be one. A field's name is what
+says where the value lands, and a positional form would make the meaning of a
+literal depend on the declaration order of a struct the reader is not looking
+at. Leaving out a type the compiler already knows costs nothing. Leaving out the
+field names costs the reader the layout, which goal 1 of
+[philosophy.md](../design/philosophy.md) says is the design itself.
+
+A literal with nothing to take its type from is an error, the same as a bare
+dot. `p := { x = 1, y = 2 }` is rejected and the fix is `p : Point = { .. }` or
+`p := Point { .. }`.
+
+The two compilers reach the same answer by different routes. The bootstrap
+resolves both forms while lowering, where every expression already carries the
+type its context expects. The self-hosted compiler resolves a variant's tag and
+a literal's layout at parse time, so either form written as an argument to a
+function defined later in the program is recorded and patched once every
+signature is parsed, fields and all.
+
+A literal must write every field. There is no partial construction, no
+`..rest`, and no implicit zero. A field left out would name storage nothing
+wrote, and reading it afterwards would read whatever was there, which is exactly
+the shape chapter 8 exists to make unrepresentable. A missing field is an error
+that names it.
+
+## 6.6 `if` expression
+
+```
+if ( Cond ) Block
+if ( Cond ) Block else Block
+```
+
+The condition is parenthesized. `if` is an expression. Both arms are blocks and
+their trailing expressions are the value.
+
+An `if` answers with a value when both of its arms do. An arm whose block ends
+in a statement answers with nothing, and then the whole `if` answers with
+nothing however the other arm ended, which is what makes
+
+```frost
+if (queued) { spawn(world) } else { report(world) }
+```
+
+an ordinary statement rather than an expression whose two arms disagree. An `if`
+with no `else` never answers with a value, since the path where the condition
+was false has none to give.
+
+## 6.7 `match` expression
+
+```
+match Scrutinee {
+    case Pattern : Expr
+    case Pattern : Block
+    ...
+}
+```
+
+An arm is `case`, a pattern, `:`, then an expression or block. A `{` after the
+colon opens a block, so an arm that answers with an unnamed struct literal names
+its type. There is no separator between arms. An arm ends where the next `case`
+or the closing `}` begins. Patterns:
+
+- Variant, shorthand, `.Variant` or `.Variant { field, field }`, binding each
+  named field to a same-named local.
+- Variant, qualified, `Enum::Variant` with the same optional field list.
+- Value, an integer, float, string, or boolean literal (`case 90:`).
+- Tuple, `( P, P, ... )`.
+- Binding, a bare identifier.
+- Wildcard, `_`.
+
+`match` works over a value or a reference. Matching a value of a `linear` type
+consumes it (chapter 9).
+
+## 6.8 `sizeof` and `unsafe`
+
+- `sizeof(T)` is a compile-time constant.
+- `unsafe { ... }` is a block whose body may use unchecked operations.
+
+`--audit-unsafe` reports every `unsafe` block that vouches for nothing: one
+holding no unchecked operation, and one written inside another, which already
+covers what is in it. It is off by default. A build pays for the checks that
+keep a program correct. This one keeps it tidy, and tidiness is not worth a pass
+over the source on every compile.
+
+## 6.9 Ranges
+
+`a..b` is half-open, `a..=b` inclusive. Ranges appear in `for` and are the
+lowest-binding binary form.

@@ -47,7 +47,7 @@ function.
 
 This is the axis that made moving the pool out of C matter. A fixed-capacity
 slab lives inside a struct rather than behind `malloc`, so generational storage
-now works with no libc at all. See [native-pools.md](native-pools.md).
+now works with no libc at all. See [native-pools.md](../design/pools-and-columns.md).
 
 ## Self-hosted, what the compiler is written in
 
@@ -64,8 +64,8 @@ checked on every build by `self_hosting_is_a_fixpoint` and
 It implements ownership and linearity (use after move, and linear values
 consumed exactly once), monomorphized generics, structs, enums with `match`, and
 `extern` FFI. What it does not implement yet is listed in
-[../selfhosted/README.md](../selfhosted/README.md). See
-[self-hosting.md](self-hosting.md) for the measurements.
+[the self-hosted compiler](self-hosted.md). See
+[self-hosting.md](self-hosted.md) for the measurements.
 
 ## How the axes interact
 
