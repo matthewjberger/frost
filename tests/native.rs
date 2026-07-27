@@ -14407,3 +14407,132 @@ fn the_assembler_encodes_what_the_system_assembler_does() {
         let _ = std::fs::remove_file(&ours);
     }
 }
+
+// Build and run `source` with the bootstrap, and return what it printed.
+fn bootstrap_output(name: &str, source: &str) -> Option<String> {
+    if c_compiler().is_none() || !linker_available() {
+        return None;
+    }
+    let directory = std::env::temp_dir();
+    let input = directory.join(format!("frost_bs_{name}.frost"));
+    std::fs::write(&input, source).unwrap();
+    let exe = directory
+        .join(format!("frost_bs_{name}{}", std::env::consts::EXE_SUFFIX));
+    let build = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .env("FROST_CHECK_UNSAFE", "0")
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "the bootstrap refused {name}:\n{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let run = Command::new(&exe).output().unwrap();
+    assert!(run.status.success(), "{name} exited with failure");
+    let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&exe);
+    Some(output)
+}
+
+// Programs whose meaning the two compilers used to disagree about. Each ran
+// correctly under the bootstrap and was miscompiled or refused by the
+// self-hosted one, which is the drift that matters: the language is whatever
+// both compilers do, so a construct only one of them handles is a bug in
+// whichever is wrong rather than a feature with a caveat.
+const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A type named before it is declared. The name resolved to nothing and was
+    // taken for an i64, so the assembly backend read the wrong bytes and the C
+    // backend died looking the type up. `sizeof` agreed by coincidence, which
+    // is what kept it invisible.
+    (
+        "type_named_before_it_is_declared",
+        "make :: fn() -> i64 {\n\
+         \x20   mut held := Later { value = 3 }\n\
+         \x20   held.value\n}\n\
+         Later :: struct { value: i64 }\n\
+         main :: fn() -> i64 {\n    print make()\n    0\n}\n",
+        "3\n",
+    ),
+    // The same, as the type of a field rather than of a literal.
+    (
+        "field_of_a_type_declared_below",
+        "Holder :: struct { inner: Later, tag: i64 }\n\
+         Later :: struct { value: i64 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut h := Holder { inner = Later { value = 7 }, tag = 1 }\n\
+         \x20   print h.inner.value\n    print sizeof(Holder)\n    0\n}\n",
+        "7\n16\n",
+    ),
+];
+
+// Build and run `source` with the self-hosted compiler's native backend, under
+// the settings a build gets by default. The shared helper turns the unsafe
+// audit off, and that pass is part of what decides these programs' meaning: one
+// of the cases below compiles either way with it off and is refused with it on.
+fn selfhosted_default_output(name: &str, source: &str) -> Option<String> {
+    let compiler = build_self_hosted_compiler(name)?;
+    let directory = std::env::temp_dir();
+    let input = directory.join(format!("frost_sl_{name}.frost"));
+    std::fs::write(&input, source).unwrap();
+    let assembly = directory.join(format!("frost_sl_{name}.s"));
+    let exe = directory
+        .join(format!("frost_sl_{name}{}", std::env::consts::EXE_SUFFIX));
+    let emit = Command::new(&compiler)
+        .arg("--emit-asm")
+        .arg("-o")
+        .arg(&assembly)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(
+        emit.status.success(),
+        "the self-hosted compiler refused {name}:
+{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let runtime =
+        format!("{}/runtime/frost_runtime.c", env!("CARGO_MANIFEST_DIR"));
+    let built = Command::new(c_compiler().unwrap())
+        .arg(&assembly)
+        .arg(&runtime)
+        .arg("-lm")
+        .arg("-o")
+        .arg(&exe)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "the assembly for {name} did not assemble:
+{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let run = Command::new(&exe).output().unwrap();
+    assert!(run.status.success(), "{name} exited with failure");
+    let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&assembly);
+    let _ = std::fs::remove_file(&exe);
+    Some(output)
+}
+
+#[test]
+fn both_compilers_agree_on_these_programs() {
+    for (name, source, want) in SAME_LANGUAGE_CASES {
+        let Some(bootstrap) = bootstrap_output(name, source) else {
+            return;
+        };
+        assert_eq!(bootstrap, *want, "the bootstrap disagreed about {name}");
+        let Some(hosted) = selfhosted_default_output(name, source) else {
+            return;
+        };
+        assert_eq!(
+            hosted, *want,
+            "the self-hosted compiler disagreed about {name}"
+        );
+    }
+}
