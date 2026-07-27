@@ -1466,6 +1466,18 @@ emit_asm_call_through :: fn(mut p: Parser, callee: i64, args: i64) {
     }
 }
 
+// Where a pushed argument is read from when it is placed. One going to a
+// register is still in the cell it was pushed to, so it needs no staging
+// register. One taken apart on the way is in %r10 by then.
+emit_asm_arg_from :: fn(direct: i64, offset: i64) {
+    if (direct == 1) {
+        frost_rt_emit_int(offset)
+        emit_text("(%rsp)")
+    } else {
+        emit_text("%r10")
+    }
+}
+
 emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     callee := arena_at(p.fns, fn_index)
     // The instance this call names, when the callee is generic, since the
@@ -1612,9 +1624,16 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         // through that address at its own eightbyte.
         mut slot : i64 = 0
         while (slot < slots) {
-            asm_i("movq ", frame + 16 * r, "(%rsp), %r10")
             mut wants_sse : bool = false
+            // An ordinary argument is asked about before it is read, so one
+            // going to a register can be read straight into it. One taken
+            // apart on the way goes through %r10 first, and so does one going
+            // back to the stack, since nothing moves memory to memory.
+            if (want < 0 && r < value_count && typed_params) {
+                wants_sse = is_float(abi_class_of(p, params_of_call, r))
+            }
             if (want >= 0) {
+                asm_i("movq ", frame + 16 * r, "(%rsp), %r10")
                 if (kind == 1) {
                     // Windows, and a size no register holds: copy the bytes
                     // somewhere the caller owns and hand over that address, so
@@ -1634,8 +1653,6 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
                         wants_sse = classify_eightbyte(p, want, 0, slot) == 1
                     }
                 }
-            } else if (r < value_count && typed_params) {
-                wants_sse = is_float(abi_class_of(p, params_of_call, r))
             }
             mut int_reg := int_next
             mut sse_reg := sse_next
@@ -1643,18 +1660,35 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
                 int_reg = position
                 sse_reg = position
             }
+            // Whether this one lands in a register, which is what decides
+            // where it is read from.
+            to_register := kind != 2
+                && ((wants_sse && sse_reg < sse_regs)
+                    || (wants_sse == false && int_reg < regs))
+            mut direct : i64 = 0
+            if (want < 0) {
+                if (to_register) {
+                    direct = 1
+                } else {
+                    asm_i("movq ", frame + 16 * r, "(%rsp), %r10")
+                }
+            }
             // A System V struct classed as memory goes on the stack whatever
             // is free, which is the one case a register is not tried.
             if (kind == 2) {
                 asm_i("movq %r10, ", shadow + 8 * spilled, "(%rsp)")
                 spilled = spilled + 1
             } else if (wants_sse && sse_reg < sse_regs) {
-                emit_text("    movq %r10, ")
+                emit_text("    movq ")
+                emit_asm_arg_from(direct, frame + 16 * r)
+                emit_text(", ")
                 emit_asm_sse_reg(sse_reg)
                 emit_text("\n")
                 sse_next = sse_next + 1
             } else if (wants_sse == false && int_reg < regs) {
-                emit_text("    movq %r10, ")
+                emit_text("    movq ")
+                emit_asm_arg_from(direct, frame + 16 * r)
+                emit_text(", ")
                 emit_asm_arg_reg(p, int_reg)
                 emit_text("\n")
                 int_next = int_next + 1
