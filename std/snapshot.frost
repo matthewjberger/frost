@@ -29,6 +29,11 @@ export Snapshot, snapshot_new, snapshot_free, snapshot_len, snapshot_bytes,
 //
 // So the snapshot carries the registry it was written under and refuses a world
 // whose registry differs: the same number of components, each the same width
+// and under the same name. The name rather than the compiler's number for the
+// type, because a name is what the source says and survives a rebuild, and the
+// number need not: it is handed out in the order the compiler first asked, so
+// an unrelated edit can move it. What is being checked is that both sides mean
+// the same components in the same order, and the name is what says so
 // and the same type, in the same order. That turns a reordering from a program
 // that reads garbage into a program that refuses to start. Append to the
 // registration list, never reorder it, and old snapshots keep working.
@@ -79,6 +84,36 @@ snapshot_put :: fn(mut s: Snapshot, value: i64) {
     }
 }
 
+// A name, as its length then its bytes. Components are matched by name on the
+// way back in, since a name is what the source calls a type and survives a
+// rebuild, where the compiler's number for it need not.
+snapshot_put_text :: fn(mut s: Snapshot, value: str) {
+    snapshot_put(s, str_len(value))
+    mut index : i64 = 0
+    while (index < str_len(value)) {
+        vec_push($u8, s.bytes, value[index])
+        index = index + 1
+    }
+}
+
+// Whether the name written here is the one given, without building a string to
+// compare against. A read that says no has still consumed the name, which is
+// what lets the caller answer false and stop rather than unpick where it was.
+snapshot_text_is :: fn(mut s: Snapshot, wanted: str) -> bool {
+    length := snapshot_take(s)
+    held := vec_slice($u8, s.bytes)
+    mut same := length == str_len(wanted)
+    mut index : i64 = 0
+    while (index < length) {
+        if (same && held[s.at] != wanted[index]) {
+            same = false
+        }
+        s.at = s.at + 1
+        index = index + 1
+    }
+    same
+}
+
 snapshot_take :: fn(mut s: Snapshot) -> i64 {
     held := vec_slice($u8, s.bytes)
     mut value : i64 = 0
@@ -117,11 +152,11 @@ ecs_save :: fn(world: World, mut s: Snapshot) {
     snapshot_put(s, SNAPSHOT_MAGIC)
     snapshot_put(s, world.registry.count)
     sizes := vec_slice($i64, world.registry.sizes)
-    types := vec_slice($i64, world.registry.types)
+    names := vec_slice($str, world.registry.names)
     mut component : i64 = 0
     while (component < world.registry.count) {
         snapshot_put(s, sizes[component])
-        snapshot_put(s, types[component])
+        snapshot_put_text(s, names[component])
         component = component + 1
     }
     snapshot_put(s, world.tick)
@@ -201,13 +236,13 @@ ecs_load :: fn(mut world: World, mut s: Snapshot) -> bool {
         return false
     }
     sizes := vec_slice($i64, world.registry.sizes)
-    types := vec_slice($i64, world.registry.types)
+    names := vec_slice($str, world.registry.names)
     mut component : i64 = 0
     while (component < count) {
         if (snapshot_take(s) != sizes[component]) {
             return false
         }
-        if (snapshot_take(s) != types[component]) {
+        if (snapshot_text_is(s, names[component]) == false) {
             return false
         }
         component = component + 1
@@ -291,6 +326,9 @@ ecs_load :: fn(mut world: World, mut s: Snapshot) -> bool {
 
 SavedPosition :: struct { x: f32, y: f32 }
 SavedHealth :: struct { points: i64 }
+// The same eight bytes as a position and a different thing entirely, which is
+// the pair a width check cannot tell apart.
+SavedVelocity :: struct { x: f32, y: f32 }
 
 test "a world survives being written down and read back" {
     mut world := ecs_new()
@@ -371,6 +409,36 @@ test "a snapshot refuses a world whose components are in another order" {
 
     ecs_free(short)
     ecs_free(swapped)
+    snapshot_free(s)
+    ecs_free(world)
+}
+
+// Two components of the same width in the same slot is exactly what a shape
+// check cannot separate, and what the name does. Without the name this reads
+// back as though a velocity had always been a position.
+test "a snapshot refuses a registry naming a different component" {
+    mut world := ecs_new()
+    position := ecs_register($SavedPosition, world)
+    entity := ecs_spawn(world)
+    ecs_add($SavedPosition, world, entity, position,
+        SavedPosition { x = 1.0, y = 2.0 })
+
+    mut s := snapshot_new()
+    ecs_save(world, s)
+
+    mut other := ecs_new()
+    ecs_register($SavedVelocity, other)
+    assert(ecs_load(other, s) == false)
+
+    // The same name in the same slot reads back, so what was refused was the
+    // name and not the shape.
+    mut same := ecs_new()
+    ecs_register($SavedPosition, same)
+    assert(ecs_load(same, s))
+    assert(ecs_get($SavedPosition, same, entity, position).x == 1.0)
+
+    ecs_free(same)
+    ecs_free(other)
     snapshot_free(s)
     ecs_free(world)
 }
