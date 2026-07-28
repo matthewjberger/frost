@@ -5824,6 +5824,63 @@ fn a_constant_defined_in_terms_of_itself_is_refused() {
     );
 }
 
+// A value moved into a `print` is moved. The ownership pass walked past that
+// statement entirely, so it was the one place a use-after-move went unnoticed,
+// and the compiler that ships caught it while the bootstrap did not.
+#[test]
+fn a_value_moved_into_a_print_is_moved() {
+    let directory = std::env::temp_dir();
+    let input = directory.join(unique("frost_move")).with_extension("frost");
+    std::fs::write(
+        &input,
+        "Held :: struct { value: i64 }\n\
+         take :: fn(move h: Held) -> i64 { h.value }\n\
+         main :: fn() -> i64 {\n\
+         \x20   a := Held { value = 1 }\n\
+         \x20   print take(a)\n\
+         \x20   print a.value\n    0\n}\n",
+    )
+    .unwrap();
+    let exe = directory
+        .join(unique("frost_move"))
+        .with_extension(std::env::consts::EXE_EXTENSION);
+    let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe)
+        .arg(&input)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&exe);
+    assert!(!built.status.success(), "a use after move compiled");
+    let complaint = String::from_utf8_lossy(&built.stderr);
+    assert!(
+        complaint.contains("use of moved value 'a'"),
+        "the refusal did not say what was wrong:\n{complaint}"
+    );
+
+    // And the compiler that ships says the same thing, which is the point:
+    // what a language accepts is what both of them accept.
+    if let Some(compiler) = build_self_hosted_compiler("moveprint") {
+        let emitted = directory.join(unique("frost_move")).with_extension("c");
+        let hosted = Command::new(&compiler)
+            .arg("--emit-c")
+            .arg("-o")
+            .arg(&emitted)
+            .arg(&input)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&emitted);
+        let _ = std::fs::remove_file(&compiler);
+        assert!(!hosted.status.success());
+        assert!(
+            String::from_utf8_lossy(&hosted.stderr)
+                .contains("use of moved value 'a'")
+        );
+    }
+    let _ = std::fs::remove_file(&input);
+}
+
 // A line table, so a debugger can turn an address back into the line it came
 // from. `-g` rather than always, because the paths in it are absolute and a
 // build that carries them is not the same bytes on another machine, which is
