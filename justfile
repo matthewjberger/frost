@@ -386,6 +386,23 @@ selfhost-native file: selfhost-build
     cc {{file}}.s runtime/frost_runtime.c -o {{file}}.exe
     ./{{file}}.exe
 
+# Builds a file with a line table, so a debugger can step through the source
+# (Unix). The assembly goes through `as`, which is what turns `.loc` into
+# `.debug_line`; the compiler's own assembler writes no debug sections.
+[unix]
+debug file: selfhost-build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ./selfhosted/frost.exe -g --emit-asm -o {{file}}.s {{file}}
+    cc -g {{file}}.s runtime/frost_runtime.c -o {{file}}.exe
+    echo "built {{file}}.exe with line information. try: gdb ./{{file}}.exe"
+
+# Builds a file with a line table, so a debugger can step through the source
+# (Windows)
+[windows]
+debug file: selfhost-build
+    ./selfhosted/frost.exe -g --emit-asm -o "{{file}}.s" "{{file}}"; gcc -g "{{file}}.s" runtime/frost_runtime.c -o "{{file}}.exe"; Write-Host "built {{file}}.exe with line information. try: gdb ./{{file}}.exe"
+
 # Compiles a frost file with the self-hosted native backend, then assembles and runs it (Windows)
 [windows]
 selfhost-native file: selfhost-build
