@@ -302,7 +302,7 @@ emit_ctype :: fn(mut p: Parser, held: i64) {
         return
     }
     if (ty == TY_BOOL) {
-        emit_text("int64_t")
+        emit_text("int8_t")
         return
     }
     if (ty == TY_VOID) {

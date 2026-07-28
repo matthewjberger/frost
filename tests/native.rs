@@ -6412,6 +6412,67 @@ fn a_named_constant_too_large_for_its_use_is_refused() {
     );
 }
 
+// A `bool` is one byte. What that costs is that every read and write of one
+// has to be byte wide, so three of them packed into a struct sit at offsets 0,
+// 1 and 2, and writing the middle one must leave its neighbours alone.
+const BOOL_IS_A_BYTE: &str = "Packed :: struct { a: bool, b: bool, c: bool }\n\
+     Flagged :: struct { on: bool, count: i64 }\n\
+     main :: fn() -> i64 {\n\
+     \x20   print sizeof(bool)\n\
+     \x20   print sizeof(Packed)\n\
+     \x20   print sizeof(Flagged)\n\
+     \x20   mut packed := Packed { a = true, b = false, c = true }\n\
+     \x20   if (packed.a) { print 1 }\n\
+     \x20   if (packed.b) { print 2 }\n\
+     \x20   if (packed.c) { print 3 }\n\
+     \x20   packed.b = true\n\
+     \x20   if (packed.a) { print 4 }\n\
+     \x20   if (packed.b) { print 5 }\n\
+     \x20   if (packed.c) { print 6 }\n\
+     \x20   flagged := Flagged { on = false, count = 77 }\n\
+     \x20   if (flagged.on) { print 7 }\n\
+     \x20   print flagged.count\n\
+     \x20   0\n\
+     }\n";
+
+const BOOL_SIZES: &str = "1\n3\n16\n1\n3\n4\n5\n6\n77\n";
+
+#[test]
+fn a_bool_is_one_byte() {
+    let Some(output) = compile_and_run_unaudited("boolbyte", BOOL_IS_A_BYTE)
+    else {
+        return;
+    };
+    assert_eq!(output, BOOL_SIZES);
+    if let Some(interpreted) =
+        run_ir_oracle("boolbyte", BOOL_IS_A_BYTE, Audit::Off)
+    {
+        assert_eq!(interpreted, BOOL_SIZES, "the ir interpreter disagrees");
+    }
+}
+
+#[test]
+fn the_self_hosted_compiler_agrees_a_bool_is_one_byte() {
+    let Some(output) =
+        selfhosted_unaudited_output("shboolbyte", BOOL_IS_A_BYTE)
+    else {
+        return;
+    };
+    assert_eq!(output, BOOL_SIZES);
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shboolbyte_input.frost");
+    std::fs::write(&input, BOOL_IS_A_BYTE).unwrap();
+    let Some(c_source) = self_hosted_emits("shboolbyte", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shboolbyte", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, BOOL_SIZES, "the self-hosted C backend disagrees");
+}
+
 // With FROST_BUILD_FROM_INTERFACES an imported module contributes what its
 // interface says and nothing else, so producing the same program either way is the
 // evidence that an interface is sufficient. The module here uses the things
