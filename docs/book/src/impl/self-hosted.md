@@ -109,9 +109,31 @@ key that does not match, and only one of them is a stale cache. A failing link
 therefore names the runtime path it resolved, because the linker only names the
 symbol it could not find.
 
-So: a check that compares two things is blind to whatever they have in common.
-Reach outside the loop for anything that has to hold absolutely, which for the
-emitted assembly means a byte comparison against a build from a different tree.
+So: a check that compares two things is blind to whatever they have in common,
+and to any path only one of them takes. Four of this project's bugs are that one
+shape.
+
+- The fixpoint could not see a property every stage shared, which is the CRLF
+  above.
+- A test that meant to prove a compiler works from anywhere passed because cargo
+  had already put it in the checkout, so the path it named was not the path it
+  took. `installed_layout` now builds a directory that is not the checkout and
+  runs from inside it.
+- Most of the suite compiled with the unsafe audit off, because the programs in
+  it call C without a block, so the pass that decides what a program means by
+  default was absent from nearly every check. Each helper now states which
+  setting it wants, and one test holds the default to being the audited one.
+- `both_compilers_agree_on_these_programs` ran every case through the
+  self-hosted assembly backend alone. Its C backend wrote integer literals with
+  no width suffix, so `1 << 63` answered zero there and correctly everywhere
+  else, and a compiler built through it lost the sign of a negative float
+  literal when it assembled one. Two backends were named and one was asked.
+
+None of the four was fixed by adding a case. Each was fixed by widening what the
+check reaches: compare against a build from another tree, name the resolved
+path, run the configuration a user gets, ask both backends. Reach outside the
+loop for anything that has to hold absolutely, which for the emitted assembly
+means a byte comparison against a build from a different tree.
 
 ## Compile speed
 
