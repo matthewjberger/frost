@@ -426,8 +426,8 @@ main :: fn() -> i64 {
     mut i : i64 = 0
     while (i < 50) { map_put($i64, m, i, i * i)  i = i + 1 }
     printf("%lld\n", map_len_i(m))
-    printf("%lld\n", map_get($i64, m, 7, 0 - 1))
-    printf("%lld\n", map_get($i64, m, 999, 0 - 1))
+    printf("%lld\n", map_get($i64, m, 7, -1))
+    printf("%lld\n", map_get($i64, m, 999, -1))
     if (map_remove($i64, m, 7)) { printf("%lld\n", 1) }
     if (map_has($i64, m, 7)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
     unsafe { frost_rt_heap_free(ptr_cast($u8, m.keys)) }
@@ -701,7 +701,7 @@ use_it :: fn(ok: i64) -> i64 ! FileError {
 report :: fn(ok: i64) -> i64 {
     match use_it(ok) {
         case .Ok { value }: value
-        case .Err { error }: 0 - 1
+        case .Err { error }: -1
     }
 }
 
@@ -762,7 +762,7 @@ main :: fn() -> i64 {
     half, odd := halve(9)
     printf("%lld\n", half * 10 + odd)
 
-    magnitude, mut negative := classify(0 - 9)
+    magnitude, mut negative := classify(-9)
     printf("%lld\n", magnitude)
     if (negative) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
     negative = false
@@ -922,7 +922,7 @@ main :: fn() -> i64 {
     printf("%lld\n", good)
     bad := match pick(0) {
         case .Ok { value }: value
-        case .Err { error }: 0 - 1
+        case .Err { error }: -1
     }
     printf("%lld\n", bad)
     0
@@ -2368,7 +2368,7 @@ byte :: fn() -> u8 { 200 }
 
 main :: fn() -> i64 {
     print answered(1)
-    print answered(0 - 1)
+    print answered(-1)
     print narrow()
     print byte()
     print true
@@ -2422,7 +2422,7 @@ report :: fn(hp: i64) -> i64 {
 main :: fn() -> i64 {
     printf("%lld\n", report(5))
     printf("%lld\n", report(0))
-    printf("%lld\n", report(0 - 3))
+    printf("%lld\n", report(-3))
     0
 }
 "#;
@@ -2750,16 +2750,16 @@ fn self_hosted_compiler_emits_working_c() {
 // what says they agree.
 const SELF_HOSTED_WIDTHS: &str = "Mixed :: struct { a: i32, b: i16, c: u8, d: i64 }\n\
      main :: fn() -> i64 {\n\
-     \x20   mut small : i32 = 0 - 5\n\
+     \x20   mut small : i32 = -5\n\
      \x20   mut tiny : i16 = 300\n\
      \x20   mut byte : u8 = 200\n\
      \x20   mut big : u32 = 4000000000\n\
      \x20   mut wide : usize = 9000000000\n\
      \x20   print small\n    print tiny\n    print byte\n    print big\n\
      \x20   print wide\n    print sizeof(Mixed)\n\
-     \x20   m := Mixed { a = 0 - 7, b = 9, c = 250, d = 123456789 }\n\
+     \x20   m := Mixed { a = -7, b = 9, c = 250, d = 123456789 }\n\
      \x20   print m.a\n    print m.b\n    print m.c\n    print m.d\n\
-     \x20   ptr := ptr_to(m)\n    ptr^.a = 0 - 1\n\
+     \x20   ptr := ptr_to(m)\n    ptr^.a = -1\n\
      \x20   print m.a\n    print m.d\n    0\n}\n";
 
 const WIDTHS_EXPECTED: &str = "-5\n300\n200\n4000000000\n9000000000\n16\n-7\n9\n250\n123456789\n-1\n123456789\n";
@@ -3921,7 +3921,7 @@ fn native_backend_covers_the_language() {
     let cases: &[(&str, &str, &str)] = &[
         (
             "arith",
-            "main :: fn() -> i64 {\n    print 2 + 3 * 4\n    print 20 / 6\n    print 20 % 6\n    print 0 - 7\n    0\n}\n",
+            "main :: fn() -> i64 {\n    print 2 + 3 * 4\n    print 20 / 6\n    print 20 % 6\n    print -7\n    0\n}\n",
             "14\n3\n2\n-7\n",
         ),
         (
@@ -4501,7 +4501,7 @@ const SELF_HOSTED_MULTIPLE_RETURNS: &str =
          high, low := split_bytes(700)
          print high
          print low
-         magnitude, mut negative := classify(0 - 9)
+         magnitude, mut negative := classify(-9)
          print magnitude
          if (negative) { print 1 } else { print 0 }
          negative = false
@@ -6637,7 +6637,7 @@ fn self_hosted_reevaluates_a_try_in_a_loop_condition() {
                   \x20   while (step(n)? < 3) { n = n + 1 }\n\
                   \x20   n\n}\n\
                   got :: fn() -> i64 {\n\
-                  \x20   match run() { case .Ok { value }: value case .Err { error }: 0 - 1 }\n}\n\
+                  \x20   match run() { case .Ok { value }: value case .Err { error }: -1 }\n}\n\
                   main :: fn() -> i64 {\n\
                   \x20   print got()\n    0\n}\n";
     let Some(output) = selfhosted_unaudited_output("trywhile", source) else {
@@ -6698,7 +6698,7 @@ fn self_hosted_backends_agree() {
          \x20       if (i % 2 == 0) { acc = acc + i } else { acc = acc - i }\n\
          \x20       i = i + 1\n    }\n\
          \x20   print acc\n    print (3 < 4) && (5 >= 5)\n\
-         \x20   print 17 / 5\n    print 0 - 17 % 5\n    0\n}\n";
+         \x20   print 17 / 5\n    print -17 % 5\n    0\n}\n";
     let expected =
         "4\n4\n32\n1\n77\n5\n24\n0\n6\n13\n42\n65\n66\n2\n1\n3\n-2\n";
 
@@ -7640,7 +7640,7 @@ const SELFHOSTED_STD_FORMAT: &str = concat!(
     "    mut b : Builder = builder_new(16)\n",
     "    builder_str_value(b, \"count = \")\n",
     "    builder_int(b, 12345)\n",
-    "    builder_int(b, 0 - 99)\n",
+    "    builder_int(b, -99)\n",
     "    print_str_line(builder_str(b))\n",
     "    builder_free(b)\n",
     "    0\n",
@@ -7850,7 +7850,7 @@ const CONST_EXPRESSIONS: &str = concat!(
     "UV :: 2\n",
     "STRIDE :: POS + NORMAL + UV\n",
     "FLAGS :: 1 << 3\n",
-    "NEG :: 0 - 5\n",
+    "NEG :: -5\n",
     "main :: fn() -> i64 {\n",
     "    data : [STRIDE]i64 = [1, 2, 3, 4, 5, 6, 7, 8]\n",
     "    print STRIDE\n",
@@ -8590,7 +8590,7 @@ first :: fn(states: [2]State, i: i64) -> i64 {
     match states[i] {
         case .Running { pid }: pid
         case .Done { code }: code
-        case .Idle: 0 - 1
+        case .Idle: -1
     }
 }
 
@@ -8849,7 +8849,7 @@ State :: enum { Running { pid: i64 }, Idle }
 pid_of :: fn(s: State) -> i64 {
     match s {
         case .Running { pid }: match pid {
-            case 0: 0 - 1
+            case 0: -1
             case _: pid
         }
         case .Idle: 0
@@ -9562,7 +9562,7 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 LIMIT :: 100
 STEP :: 5
-OFFSET :: 0 - 3
+OFFSET :: -3
 COMPUTED :: 2 * 4 + 1
 
 main :: fn() -> i64 {
@@ -9884,11 +9884,11 @@ unwrap_or :: fn(o: Option, fallback: i64) -> i64 {
 main :: fn() -> i64 {
     data := [1, 3, 5, 8, 9, 10]
     r := find_first_even(data)
-    printf("%lld\n", unwrap_or(r, 0 - 1))
+    printf("%lld\n", unwrap_or(r, -1))
 
     odds := [1, 3, 5, 7, 9, 11]
     r2 := find_first_even(odds)
-    printf("%lld\n", unwrap_or(r2, 0 - 1))
+    printf("%lld\n", unwrap_or(r2, -1))
     0
 }
 "#;
@@ -9941,7 +9941,7 @@ const INTEGER_SEMANTICS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 main :: fn() -> i64 {
-    a : i32 = 0 - 5
+    a : i32 = -5
     b : i32 = 3
     printf("%lld\n", a / b)
     printf("%lld\n", a % b)
@@ -9949,7 +9949,7 @@ main :: fn() -> i64 {
     big : i64 = 1000000000
     printf("%lld\n", big * 3)
 
-    neg : i64 = 0 - 100
+    neg : i64 = -100
     shifted : i64 = neg >> 2
     printf("%lld\n", shifted)
 
@@ -10058,9 +10058,9 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 widen :: fn(x: i8) -> i64 { x }
 
 main :: fn() -> i64 {
-    a : i8 = 0 - 5
+    a : i8 = -5
     printf("%lld\n", widen(a))
-    b : i16 = 0 - 1000
+    b : i16 = -1000
     c : i64 = b
     printf("%lld\n", c)
     small : i32 = 42
@@ -10102,7 +10102,7 @@ choose :: fn(t: i64) -> Opt {
 unwrap :: fn(o: Opt) -> i64 {
     match o {
         case .Some { v }: v
-        case .None: 0 - 1
+        case .None: -1
     }
 }
 
@@ -10721,7 +10721,7 @@ const TRY_TAIL: &str = r#"
 report :: fn(ok: i64) -> i64 {
     match use_it(ok) {
         case .Ok { value }: value
-        case .Err { error }: 0 - 1
+        case .Err { error }: -1
     }
 }
 
@@ -11464,7 +11464,7 @@ held :: fn(n: i64) -> i64 {
 
 main :: fn() -> i64 {
     print use_it(3)
-    print use_it(0 - 2)
+    print use_it(-2)
     print held(5)
     0
 }
@@ -11976,7 +11976,7 @@ show :: fn($T: Type) {
 
 main :: fn() -> i64 {
     show($Vertex)
-    print 0 - 1
+    print -1
     show($Particle)
     0
 }
@@ -15388,13 +15388,13 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
     // A prefix minus. The self-hosted parser had no prefix layer at all, so
     // `-1` came out right by accident and `-z` was read as a subtraction with
     // nothing on its left: it printed whatever was lying there. It was not
-    // refused, it was miscompiled, which is why `0 - 1` appears five hundred
+    // refused, it was miscompiled, which is why `-1` appears five hundred
     // times across the standard library and this compiler and why there is not
     // one bare negative literal in either.
     (
         "a_prefix_minus",
         "main :: fn() -> i64 {\n\
-         \x20   x := 0 - 1\n\
+         \x20   x := -1\n\
          \x20   print x\n\
          \x20   y := -1\n\
          \x20   print y\n\
@@ -15592,7 +15592,7 @@ many
     span = span + 2
     if (span > one) { print 1 } else { print 0 }
     print span / two
-    mut n : i64 = 0 - 100
+    mut n : i64 = -100
     print n / 7
     print n >> 2
     0

@@ -142,7 +142,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
         } else {
             emit_asm_program(p, program)
         }
-        p.emit_module = 0 - 1
+        p.emit_module = -1
 
         mut text := empty_source()
         mut sum : i64 = 0
@@ -508,7 +508,7 @@ main :: fn() -> i64 {
         providers = arena_make($Provider, 4096),
         aliases = arena_make($Alias, 64),
         frame_used = 0,
-        emit_module = 0 - 1,
+        emit_module = -1,
         field_bindings = arena_make($LocalVar, 64),
         parse_locals = arena_make($LocalVar, 4096),
         parse_param_start = 0,
@@ -535,12 +535,12 @@ main :: fn() -> i64 {
         type_binding = 0,
         binding_active = 0,
         expected_type = 0,
-        expected_alt = 0 - 1,
-        ok_ty = 0 - 1,
+        expected_alt = -1,
+        ok_ty = -1,
         variant_fixups = arena_make($VariantFixup, 4096),
         saw_type_param = 0,
         tparam_called = 0,
-        bound_token = 0 - 1,
+        bound_token = -1,
         decl_pack_off = 0,
         decl_pack_len = 0,
         decl_pack_fixed = 0,
@@ -554,8 +554,8 @@ main :: fn() -> i64 {
         label_id = 0,
         abi_windows = 0,
         args_unbound_map = 0,
-        loop_top = 0 - 1,
-        loop_end = 0 - 1,
+        loop_top = -1,
+        loop_end = -1,
         frame_id = 0,
         asm_ret = 0,
         sret_slot = 0,
@@ -584,13 +584,13 @@ main :: fn() -> i64 {
         renames = renames,
         shared_exports = 0,
         export_names = export_names,
-        result_ty = 0 - 1,
-        failure_ty = 0 - 1,
-        multi_ty = 0 - 1,
+        result_ty = -1,
+        failure_ty = -1,
+        multi_ty = -1,
         multi_count = 0,
         variants = arena_make($Variant, 4096),
         match_count = 0,
-        case_variant = 0 - 1,
+        case_variant = -1,
         type_args = arena_make($TypeArg, 4096),
         pending = arena_make($LocalVar, 4096),
         try_count = 0,
@@ -644,7 +644,7 @@ main :: fn() -> i64 {
     // argument tuple nothing had asked for: a sort taking a comparison calls a
     // swap that takes only the element type. Keep going until a round finds no
     // new tuple.
-    mut known : i64 = 0 - 1
+    mut known : i64 = -1
     while (known != parser.type_args.count) {
         known = parser.type_args.count
         collect_type_args(parser)

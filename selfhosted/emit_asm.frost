@@ -481,7 +481,7 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
             if (is_slice_ty(p, through)) {
                 // The length is the word past the run's address. Keep it before
                 // the address itself is overwritten by the run's own.
-                length_const = 0 - 1
+                length_const = -1
                 len_slot = alloc_temp(p, 8)
                 asm("movq 8(%rax), %r11")
                 asm_i("movq %r11, ", len_slot, "(%rbp)")
@@ -499,7 +499,7 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
         emit_asm_spill(p)
         emit_asm_expr(p, node.b)
         if (checked == 1) {
-            if (length_const == (0 - 1)) {
+            if (length_const == (-1)) {
                 asm_i("movq ", len_slot, "(%rbp), %r11")
             } else {
                 asm_i("movq $", length_const, ", %r11")
@@ -697,7 +697,7 @@ emit_asm_columns_scatter :: fn(mut p: Parser, cbase: i64, cbase_ty: i64,
     }
     def := arena_at(p.structs, struct_index_of(cthrough))
     mut fid := def.field_head
-    while (fid != (0 - 1)) {
+    while (fid != (-1)) {
         field := arena_at(p.fields, fid)
         field_off := field.name_off
         field_len := field.name_len
@@ -923,7 +923,7 @@ classify_eightbyte :: fn(mut p: Parser, ty: i64, at: i64, word: i64) -> i64 {
         mut fid := def.field_head
         mut offset : i64 = 0
         mut answer : i64 = 0
-        while (fid != (0 - 1)) {
+        while (fid != (-1)) {
             field := arena_at(p.fields, fid)
             field_ty := field.ty
             next_field := field.next
@@ -1170,7 +1170,7 @@ value_abi_slots :: fn(mut p: Parser, ty: i64) -> i64 {
 // here as an address. Only the placement differs.
 value_param_type :: fn(mut p: Parser, params: i64, index: i64) -> i64 {
     if (nth_param_by_value(p, params, index) == false) {
-        return 0 - 1
+        return -1
     }
     declared := nth_param_type(p, params, index)
     if (is_pointer(declared)) {
@@ -1424,7 +1424,7 @@ emit_asm_array_lit :: fn(mut p: Parser, id: i64) {
     slot := alloc_temp(p, type_size(p, array_ty))
     mut at : i64 = 0
     mut entry := node.a
-    while (entry != (0 - 1)) {
+    while (entry != (-1)) {
         enode := arena_at(p.arena, entry)
         emit_asm_expr(p, enode.a)
         emit_asm_coerce(p, enode.a, element)
@@ -1459,7 +1459,7 @@ emit_asm_struct_lit :: fn(mut p: Parser, id: i64) {
     inits := node.a
     slot := alloc_temp(p, type_size(p, struct_ty))
     mut fid := inits
-    while (fid != (0 - 1)) {
+    while (fid != (-1)) {
         fnode := arena_at(p.arena, fid)
         value := fnode.a
         next_id := fnode.next
@@ -1645,7 +1645,7 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     // to say how an argument travels. That call is emitted again for each
     // instance, where there is.
     mut typed_params : bool = true
-    if (params_of_call == (0 - 1)) {
+    if (params_of_call == (-1)) {
         params_of_call = callee.params
         typed_params = generic_fn_of(p, fn_index) < 0
     }
@@ -1767,7 +1767,7 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     mut total : i64 = sret
     mut counted : i64 = 0
     while (counted < count) {
-        want := 0 - 1
+        want := -1
         if (counted < value_count && typed_params) {
             want = value_param_type(p, params_of_call, counted)
         }
@@ -1806,7 +1806,7 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     mut position : i64 = sret
     mut r : i64 = 0
     while (r < count) {
-        mut want : i64 = 0 - 1
+        mut want : i64 = -1
         if (r < value_count && typed_params) {
             want = value_param_type(p, params_of_call, r)
         }
@@ -2059,7 +2059,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         off := node.val
         len := node.c
         mut ty := annotation
-        if (annotation == (0 - 1)) {
+        if (annotation == (-1)) {
             ty = binding_type(p, value)
         }
         // `columns_new()` is a zeroed container. There is no call to make, only
@@ -2131,9 +2131,9 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
     if (kind == NodeKind::Print) {
         // A format was split into its pieces at parse time, so what is left is
         // a list to write in order, with one newline at the end.
-        if (node.a == (0 - 1)) {
+        if (node.a == (-1)) {
             mut piece := node.b
-            while (piece != (0 - 1)) {
+            while (piece != (-1)) {
                 pnode := arena_at(p.arena, piece)
                 next_piece := pnode.next
                 if (pnode.kind == NodeKind::StrLit) {
@@ -2210,7 +2210,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         emit_label(".Lelse", else_id)
         emit_text(":\n")
         else_head := node.val
-        if (else_head != (0 - 1)) {
+        if (else_head != (-1)) {
             emit_asm_block(p, else_head)
         }
         emit_label(".Lend", end_id)
@@ -2287,7 +2287,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         emit_asm_expr(p, scrutinee)
         asm_i("movq %rax, ", slot, "(%rbp)")
         mut cid := cases
-        while (cid != (0 - 1)) {
+        while (cid != (-1)) {
             cnode := arena_at(p.arena, cid)
             is_default := cnode.c
             value := cnode.val
@@ -2324,7 +2324,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
 // Leave a function. A struct result is copied into the buffer the caller
 // supplied, because the frame it was built in is about to go away.
 emit_asm_return :: fn(mut p: Parser, value: i64) {
-    if (value == (0 - 1)) {
+    if (value == (-1)) {
         asm("movq $0, %rax")
         asm("leave")
         asm("ret")
@@ -2349,18 +2349,18 @@ emit_asm_return :: fn(mut p: Parser, value: i64) {
 
 // A body's last statement, when it is an expression, is its result.
 emit_asm_function_body :: fn(mut p: Parser, body: i64) {
-    if (body == (0 - 1)) {
+    if (body == (-1)) {
         asm("movq $0, %rax")
         asm("leave")
         asm("ret")
         return
     }
     mut id := body
-    while (id != (0 - 1)) {
+    while (id != (-1)) {
         node := arena_at(p.arena, id)
         kind := node.kind
         next_id := node.next
-        if (next_id == (0 - 1)) {
+        if (next_id == (-1)) {
             if (kind == NodeKind::ExprStmt && type_of(p, node.a) != TY_VOID) {
                 emit_asm_return(p, node.a)
             } else {
@@ -2380,7 +2380,7 @@ emit_asm_function_body :: fn(mut p: Parser, body: i64) {
 
 emit_asm_block :: fn(mut p: Parser, head: i64) {
     mut id := head
-    while (id != (0 - 1)) {
+    while (id != (-1)) {
         node := arena_at(p.arena, id)
         next_id := node.next
         emit_asm_stmt(p, id)
@@ -2452,7 +2452,7 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
     mut spilled : i64 = 0
     mut pid := params
     mut index : i64 = 0
-    while (pid != (0 - 1)) {
+    while (pid != (-1)) {
         pnode := arena_at(p.arena, pid)
         off := pnode.val
         len := pnode.c
@@ -2474,7 +2474,7 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
         // passes one, so the pieces are put back into storage this function
         // owns and the parameter holds its address, which is the shape the body
         // already reads a borrowed struct through.
-        mut want : i64 = 0 - 1
+        mut want : i64 = -1
         if (param_node_by_value(p, pid)) {
             want = pointee(ptype)
         }
@@ -2737,7 +2737,7 @@ unit_owns_generic :: fn(mut p: Parser, gfn_index: i64) -> bool {
 emit_asm_program :: fn(mut p: Parser, head: i64) {
     asm(".text")
     mut id := head
-    while (id != (0 - 1)) {
+    while (id != (-1)) {
         node := arena_at(p.arena, id)
         kind := node.kind
         next_id := node.next
@@ -2839,7 +2839,7 @@ emit_asm_strings :: fn(mut p: Parser) {
 count_params :: fn(mut p: Parser, head: i64) -> i64 {
     mut count : i64 = 0
     mut id := head
-    while (id != (0 - 1)) {
+    while (id != (-1)) {
         node := arena_at(p.arena, id)
         count = count + 1
         id = node.next
@@ -2852,7 +2852,7 @@ count_params :: fn(mut p: Parser, head: i64) -> i64 {
 count_args :: fn(mut p: Parser, head: i64) -> i64 {
     mut count : i64 = 0
     mut id := head
-    while (id != (0 - 1)) {
+    while (id != (-1)) {
         node := arena_at(p.arena, id)
         value := node.a
         next_id := node.next

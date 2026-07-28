@@ -131,7 +131,7 @@ place_module :: fn(buffer: str, at: i64, path: ^i8,
         return at
     }
     mine := arena_push(modules, Module { path = path, start = 0, finish = 0,
-        cursor_off = 0 - 1, cursor_line = 1, cursor_column = 1 })
+        cursor_off = -1, cursor_line = 1, cursor_column = 1 })
     raw := unsafe { frost_rt_read_file(path) }
     // The file's bytes as a slice, once, so nothing below indexes a bare
     // pointer.
@@ -158,7 +158,7 @@ place_module :: fn(buffer: str, at: i64, path: ^i8,
                     path = find_import(path, text, named.off, named.len,
                         roots),
                     start = 0, finish = 0,
-                    cursor_off = 0 - 1, cursor_line = 1,
+                    cursor_off = -1, cursor_line = 1,
                     cursor_column = 1 },
             )
         }
@@ -422,7 +422,7 @@ resolve_imports :: fn(buffer: str, root: ^i8, names: str,
             // module it names is resolved against that file's own directory,
             // the same way it was when the text was placed.
             importer := module_at(modules, entry.off)
-            mut imported : i64 = 0 - 1
+            mut imported : i64 = -1
             if (importer >= 0) {
                 mine := arena_at(modules, importer)
                 found := find_import(mine.path, buffer, named.off, named.len,

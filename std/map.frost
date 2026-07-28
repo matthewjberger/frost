@@ -276,7 +276,7 @@ test "a value is put and read back" {
     assert(map_len($i64, $i64, m) == 2)
     assert(map_get($i64, $i64, $i64_keys, m, 1, 0) == 10)
     assert(map_get($i64, $i64, $i64_keys, m, 2, 0) == 20)
-    assert(map_get($i64, $i64, $i64_keys, m, 3, 0 - 1) == 0 - 1)
+    assert(map_get($i64, $i64, $i64_keys, m, 3, -1) == -1)
     assert(map_has($i64, $i64, $i64_keys, m, 2))
     map_free($i64, $i64, m)
 }
@@ -421,7 +421,7 @@ test "a tombstone is stepped over rather than stopped at" {
     assert(map_remove($i64, $i64, $i64_keys, m, 0))
     mut k : i64 = 1
     while (k < 6) {
-        assert(map_get($i64, $i64, $i64_keys, m, k * 8, 0 - 1) == k)
+        assert(map_get($i64, $i64, $i64_keys, m, k * 8, -1) == k)
         k = k + 1
     }
     map_free($i64, $i64, m)

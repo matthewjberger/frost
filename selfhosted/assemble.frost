@@ -309,7 +309,7 @@ widen_buckets :: fn(mut unit: Assembly) {
     mut fresh := arena_make($Bucket, wider)
     mut i : i64 = 0
     while (i < wider) {
-        arena_push(fresh, Bucket { sym = 0 - 1 })
+        arena_push(fresh, Bucket { sym = -1 })
         i = i + 1
     }
     unit.buckets = fresh
@@ -321,7 +321,7 @@ widen_buckets :: fn(mut unit: Assembly) {
         mut placed := false
         while (placed == false) {
             bucket := arena_at(unit.buckets, slot)
-            if (bucket.sym == (0 - 1)) {
+            if (bucket.sym == (-1)) {
                 bucket.sym = s
                 placed = true
             } else {
@@ -360,14 +360,14 @@ intern_symbol :: fn(mut unit: Assembly, off: i64, len: i64) -> i64 {
         widen_symbols(unit)
     }
     mut slot := name_hash(unit.src, off, len) & unit.bucket_mask
-    mut answer : i64 = 0 - 1
+    mut answer : i64 = -1
     while (answer < 0) {
         bucket := arena_at(unit.buckets, slot)
         held := bucket.sym
-        if (held == (0 - 1)) {
+        if (held == (-1)) {
             index := arena_push(unit.syms, AsmSym {
                 off = off, len = len, section = SEC_UNDEF,
-                value = 0, global = 0, index = 0 - 1,
+                value = 0, global = 0, index = -1,
             })
             bucket := arena_at(unit.buckets, slot)
             bucket.sym = index
@@ -431,7 +431,7 @@ core_index :: fn(first: i64, second: i64) -> i64 {
         if (first == CH_c) { return 1 }
         if (first == CH_d) { return 2 }
         if (first == CH_b) { return 3 }
-        return 0 - 1
+        return -1
     }
     if (first == CH_s && second == CH_p) { return 4 }
     if (first == CH_b && second == CH_p) { return 5 }
@@ -464,7 +464,7 @@ parse_register :: fn(src: str, off: i64, len: i64) -> i64 {
             at = at + 1
         }
         if (number < 8 || number > 15) {
-            return 0 - 1
+            return -1
         }
         if (at == off + len) {
             return reg_pack(REG_GPR, 8, number)
@@ -475,33 +475,33 @@ parse_register :: fn(src: str, off: i64, len: i64) -> i64 {
             if (suffix == CH_w) { return reg_pack(REG_GPR, 2, number) }
             if (suffix == CH_b) { return reg_pack(REG_GPR, 1, number) }
         }
-        return 0 - 1
+        return -1
     }
     if (len == 3 && src[off] == CH_r) {
         code := core_index(src[off + 1], src[off + 2])
         if (code >= 0) { return reg_pack(REG_GPR, 8, code) }
-        return 0 - 1
+        return -1
     }
     if (len == 3 && src[off] == CH_e) {
         code := core_index(src[off + 1], src[off + 2])
         if (code >= 0) { return reg_pack(REG_GPR, 4, code) }
-        return 0 - 1
+        return -1
     }
     // spl, bpl, sil, dil: the eight-bit names of the second four.
     if (len == 3 && src[off + 2] == CH_l) {
         code := core_index(src[off], src[off + 1])
         if (code >= 4) { return reg_pack(REG_GPR, 1, code) }
-        return 0 - 1
+        return -1
     }
     if (len == 2 && src[off + 1] == CH_l) {
         code := byte_core_index(src[off])
         if (code >= 0) { return reg_pack(REG_GPR, 1, code) }
-        return 0 - 1
+        return -1
     }
     if (len == 2) {
         code := core_index(src[off], src[off + 1])
         if (code >= 0) { return reg_pack(REG_GPR, 2, code) }
-        return 0 - 1
+        return -1
     }
     if (len >= 4 && src[off] == CH_x && src[off + 1] == CH_m
         && src[off + 2] == CH_m) {
@@ -512,7 +512,7 @@ parse_register :: fn(src: str, off: i64, len: i64) -> i64 {
             at = at + 1
         }
         if (at != off + len || number > 15) {
-            return 0 - 1
+            return -1
         }
         return reg_pack(REG_XMM, 8, number)
     }
@@ -533,7 +533,7 @@ condition_code :: fn(src: str, off: i64, len: i64) -> i64 {
         if (src[off] == CH_b) { return 2 }
         if (src[off] == CH_a) { return 7 }
         if (src[off] == CH_s) { return 8 }
-        return 0 - 1
+        return -1
     }
     if (len == 2) {
         first := src[off]
@@ -544,7 +544,7 @@ condition_code :: fn(src: str, off: i64, len: i64) -> i64 {
         if (first == CH_b && second == CH_e) { return 6 }
         if (first == CH_a && second == CH_e) { return 3 }
         if (first == CH_n && second == CH_s) { return 9 }
-        return 0 - 1
+        return -1
     }
     0 - 1
 }
@@ -630,13 +630,13 @@ parse_operand :: fn(mut unit: Assembly, at: i64) -> Operand {
             assemble_fail(unit, "unknown register", i)
         }
         return Operand { kind = OPND_REG, reg = register, disp = 0,
-            sym = 0 - 1, next = i + 1 + len }
+            sym = -1, next = i + 1 + len }
     }
     if (src[i] == CH_DOLLAR) {
         if (is_digit(src[i + 1]) || src[i + 1] == CH_MINUS) {
             value, after_number := read_number(src, i + 1)
             return Operand { kind = OPND_IMM, reg = 0, disp = value,
-                sym = 0 - 1, next = after_number }
+                sym = -1, next = after_number }
         }
         len := name_length(src, i + 1)
         sym := intern_symbol(unit, i + 1, len)
@@ -646,7 +646,7 @@ parse_operand :: fn(mut unit: Assembly, at: i64) -> Operand {
     if (src[i] == CH_STAR) {
         inner := parse_operand(unit, i + 1)
         return Operand { kind = OPND_INDIRECT, reg = inner.reg, disp = 0,
-            sym = 0 - 1, next = inner.next }
+            sym = -1, next = inner.next }
     }
     // A displacement, or nothing before the parenthesis.
     mut displacement : i64 = 0
@@ -666,7 +666,7 @@ parse_operand :: fn(mut unit: Assembly, at: i64) -> Operand {
             assemble_fail(unit, "unit bare displacement off %rip", i)
         }
         return Operand { kind = OPND_MEM, reg = register, disp = displacement,
-            sym = 0 - 1, next = after }
+            sym = -1, next = after }
     }
     // A name: either `name(%rip)` or a branch target.
     len := name_length(src, i)
@@ -737,10 +737,10 @@ text_word64 :: fn(mut unit: Assembly, value: i64) {
     text_word32(unit, value >> 32)
 }
 
-fits_in_byte :: fn(value: i64) -> bool { value >= 0 - 128 && value <= 127 }
+fits_in_byte :: fn(value: i64) -> bool { value >= -128 && value <= 127 }
 
 fits_in_word32 :: fn(value: i64) -> bool {
-    value >= 0 - 2147483648 && value <= 2147483647
+    value >= -2147483648 && value <= 2147483647
 }
 
 // REX, written only when one of its bits is needed. An eight-bit register
@@ -1572,7 +1572,7 @@ big_window :: fn(mut x: Big, from: i64, width: i64) -> i64 {
 // anything below that range is written in.
 DOUBLE_SIGNIFICAND :: 53
 DOUBLE_LEADING_BIT :: 4503599627370496
-DOUBLE_MIN_STEP :: 0 - 1074
+DOUBLE_MIN_STEP :: -1074
 DOUBLE_MAX_EXPONENT :: 1023
 DOUBLE_BIAS :: 1023
 DOUBLE_INFINITY :: 9218868437227405312
@@ -1696,7 +1696,7 @@ read_double :: fn(mut unit: Assembly, at: i64) -> i64 {
     if (reach > 309) {
         // Past the largest double there is, so infinity is what is nearest.
         bits = bits | DOUBLE_INFINITY
-    } else if (reach > 0 - 324) {
+    } else if (reach > -324) {
         // Inside the range a double reaches. Below it nothing is nearer than
         // zero, which is the sign on its own and so what is already in hand.
         mut scale : i64 = 0
@@ -1750,7 +1750,7 @@ read_line :: fn(mut unit: Assembly, at: i64) -> i64 {
             push_insn(unit, Insn {
                 op = M_LABEL, cc = 0,
                 a_kind = OPND_NONE, a_reg = 0, a_disp = 0, a_sym = sym,
-                b_kind = OPND_NONE, b_reg = 0, b_disp = 0, b_sym = 0 - 1,
+                b_kind = OPND_NONE, b_reg = 0, b_disp = 0, b_sym = -1,
                 offset = 0, size = 0, long = 0,
             })
         }
@@ -1821,9 +1821,9 @@ read_instruction :: fn(mut unit: Assembly, at: i64, len: i64, stop: i64) -> i64 
     if (op == M_NONE) {
         assemble_fail(unit, "an instruction this assembler does not know", at)
     }
-    mut first := Operand { kind = OPND_NONE, reg = 0, disp = 0, sym = 0 - 1,
+    mut first := Operand { kind = OPND_NONE, reg = 0, disp = 0, sym = -1,
         next = at + len }
-    mut second := Operand { kind = OPND_NONE, reg = 0, disp = 0, sym = 0 - 1,
+    mut second := Operand { kind = OPND_NONE, reg = 0, disp = 0, sym = -1,
         next = at + len }
     mut i := skip_spaces(src, at + len)
     if (i < stop) {
@@ -1984,7 +1984,7 @@ assembly_of :: fn(format: i64) -> Assembly {
     mut buckets := arena_make($Bucket, ASSEMBLE_BUCKETS)
     mut i : i64 = 0
     while (i < ASSEMBLE_BUCKETS) {
-        arena_push(buckets, Bucket { sym = 0 - 1 })
+        arena_push(buckets, Bucket { sym = -1 })
         i = i + 1
     }
     Assembly {
@@ -2053,7 +2053,7 @@ assemble_into :: fn(mut unit: Assembly, text: str) {
     mut i : i64 = 0
     while (i < unit.buckets.count) {
         bucket := arena_at(unit.buckets, i)
-        bucket.sym = 0 - 1
+        bucket.sym = -1
         i = i + 1
     }
     mut at : i64 = 0

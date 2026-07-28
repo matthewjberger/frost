@@ -56,9 +56,9 @@ lower_enum_compare :: fn(mut p: Parser, id: i64) {
         return
     }
     first_field := def.field_head
-    if (first_field != (0 - 1)) {
+    if (first_field != (-1)) {
         field := arena_at(p.fields, first_field)
-        if (field.next != (0 - 1)) {
+        if (field.next != (-1)) {
             report_where(p.modules, p.src, position)
             report("an enum whose variants carry fields cannot be compared with ==, since two values can be the same variant and hold different things; match on it instead")
             frost_rt_die()
@@ -83,7 +83,7 @@ enum_tag_operand :: fn(mut p: Parser, side: i64) -> i64 {
     node := arena_at(p.arena, side)
     if (node.kind == NodeKind::StructLit) {
         mut init := node.a
-        while (init != (0 - 1)) {
+        while (init != (-1)) {
             held := arena_at(p.arena, init)
             value := held.a
             name_off := held.val
@@ -104,7 +104,7 @@ enum_tag_operand :: fn(mut p: Parser, side: i64) -> i64 {
 nth_param_type :: fn(mut p: Parser, params: i64, n: i64) -> i64 {
     mut id := params
     mut index : i64 = 0
-    while (id != (0 - 1)) {
+    while (id != (-1)) {
         node := arena_at(p.arena, id)
         if (index == n) {
             return node.b
@@ -136,7 +136,7 @@ param_node_by_value :: fn(mut p: Parser, param_node: i64) -> bool {
 nth_param_auto_borrows :: fn(mut p: Parser, params: i64, n: i64) -> bool {
     mut id := params
     mut index : i64 = 0
-    while (id != (0 - 1)) {
+    while (id != (-1)) {
         node := arena_at(p.arena, id)
         next_id := node.next
         borrows := node.a
@@ -152,7 +152,7 @@ nth_param_auto_borrows :: fn(mut p: Parser, params: i64, n: i64) -> bool {
 nth_param_by_value :: fn(mut p: Parser, params: i64, n: i64) -> bool {
     mut id := params
     mut index : i64 = 0
-    while (id != (0 - 1)) {
+    while (id != (-1)) {
         node := arena_at(p.arena, id)
         next_id := node.next
         if (index == n) {
@@ -229,7 +229,7 @@ binding_type :: fn(mut p: Parser, value: i64) -> i64 {
     // length is read out of the source while the literal is still in hand. A
     // binding that kept the pointer would have nowhere to recover it from.
     if (node.kind == NodeKind::StrLit) {
-        return array_of(p, TY_U8, 0 - 1)
+        return array_of(p, TY_U8, -1)
     }
     if (node.kind != NodeKind::Var) {
         return ty
@@ -266,10 +266,16 @@ literal_value :: fn(mut p: Parser, id: i64) -> i64 {
 // is read as an i64, so the top half of a u64 cannot be written as one anyway.
 integer_low :: fn(ty: i64) -> i64 {
     held := distinct_repr(ty)
-    if (held == TY_I8) { return 0 - 128 }
-    if (held == TY_I16) { return 0 - 32768 }
-    if (held == TY_I32) { return 0 - 2147483648 }
-    if (held == TY_I64 || held == TY_ISIZE) { return 0 - 9223372036854775807 - 1 }
+    if (held == TY_I8) { return -128 }
+    if (held == TY_I16) { return -32768 }
+    if (held == TY_I32) { return -2147483648 }
+    // A u64 is as wide as the literal, so a negative one loses no bits and is
+    // the only way to write a sentinel of all ones while there are no hex
+    // literals. The narrower unsigned types do lose bits, and are refused.
+    if (held == TY_I64 || held == TY_ISIZE || held == TY_U64
+        || held == TY_USIZE) {
+        return -9223372036854775807 - 1
+    }
     0
 }
 
@@ -453,7 +459,7 @@ field_type :: fn(mut p: Parser, base_ty: i64, off: i64, len: i64) -> i64 {
     struct_off := def.name_off
     struct_len := def.name_len
     mut fid := def.field_head
-    while (fid != (0 - 1)) {
+    while (fid != (-1)) {
         field := arena_at(p.fields, fid)
         if (field.name_len == len
             && bytes_equal(p.src, field.name_off, off, len)) {
@@ -621,7 +627,7 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
         if (node.val != 0) {
             element = node.val - 1
         } else {
-            if (node.a != (0 - 1)) {
+            if (node.a != (-1)) {
                 first := arena_at(p.arena, node.a)
                 element = type_of(p, first.a)
             }
@@ -717,7 +723,7 @@ call_type_args :: fn(mut p: Parser, head: i64) -> i64 {
     mut first : i64 = TY_I64
     xstart := p.gargs.count
     mut id := head
-    while (id != (0 - 1)) {
+    while (id != (-1)) {
         node := arena_at(p.arena, id)
         value := node.a
         next_id := node.next
@@ -740,7 +746,7 @@ call_type_args :: fn(mut p: Parser, head: i64) -> i64 {
     p.call_xarg_start = 0
     p.call_xarg_count = 0
     id = head
-    while (id != (0 - 1)) {
+    while (id != (-1)) {
         node := arena_at(p.arena, id)
         value := node.a
         next_id := node.next
@@ -900,30 +906,30 @@ fn_index_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
 bundle_field_fn :: fn(mut p: Parser, callee: i64) -> i64 {
     node := arena_at(p.arena, callee)
     if (node.kind != NodeKind::Field) {
-        return 0 - 1
+        return -1
     }
     base := node.a
     field_off := node.val
     field_len := node.c
     base_node := arena_at(p.arena, base)
     if (base_node.kind != NodeKind::Var) {
-        return 0 - 1
+        return -1
     }
     name_off := base_node.val
     name_len := base_node.c
     if (local_exists(p, name_off, name_len)) {
-        return 0 - 1
+        return -1
     }
     literal := value_const_node(p, name_off, name_len)
     if (literal < 0) {
-        return 0 - 1
+        return -1
     }
     literal_node := arena_at(p.arena, literal)
     if (literal_node.kind != NodeKind::StructLit) {
-        return 0 - 1
+        return -1
     }
     mut id := literal_node.a
-    while (id != (0 - 1)) {
+    while (id != (-1)) {
         init := arena_at(p.arena, id)
         init_off := init.val
         init_len := init.c
@@ -933,7 +939,7 @@ bundle_field_fn :: fn(mut p: Parser, callee: i64) -> i64 {
             && bytes_equal(p.src, init_off, field_off, field_len)) {
             value_node := arena_at(p.arena, value)
             if (value_node.kind != NodeKind::Var) {
-                return 0 - 1
+                return -1
             }
             return fn_index_of(p, value_node.val, value_node.c)
         }
@@ -951,7 +957,7 @@ fn_proc_type :: fn(mut p: Parser, fn_index: i64) -> i64 {
     param_start := p.proc_params.count
     mut count : i64 = 0
     mut pid := sym.params
-    while (pid != (0 - 1)) {
+    while (pid != (-1)) {
         pnode := arena_at(p.arena, pid)
         arena_push(p.proc_params, GArg { value = pnode.b, is_type = 0 })
         count = count + 1
@@ -1115,7 +1121,7 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
     mut primary : i64 = TY_I64
     mut types_seen : i64 = 0
     mut id := args
-    while (id != (0 - 1)) {
+    while (id != (-1)) {
         node := arena_at(p.arena, id)
         value := node.a
         next_id := node.next
@@ -1134,7 +1140,7 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
     mut index : i64 = 0
     mut seen : i64 = 0
     id = args
-    while (id != (0 - 1)) {
+    while (id != (-1)) {
         node := arena_at(p.arena, id)
         value := node.a
         next_id := node.next
@@ -1185,7 +1191,7 @@ call_ret_type :: fn(mut p: Parser, args: i64, fn_index: i64) -> i64 {
 nth_value_arg :: fn(mut p: Parser, args: i64, n: i64) -> i64 {
     mut id := args
     mut seen : i64 = 0
-    while (id != (0 - 1)) {
+    while (id != (-1)) {
         node := arena_at(p.arena, id)
         value := node.a
         next_id := node.next
@@ -1204,7 +1210,7 @@ nth_value_arg :: fn(mut p: Parser, args: i64, n: i64) -> i64 {
 count_value_args :: fn(mut p: Parser, args: i64) -> i64 {
     mut id := args
     mut count : i64 = 0
-    while (id != (0 - 1)) {
+    while (id != (-1)) {
         node := arena_at(p.arena, id)
         value := node.a
         next_id := node.next
