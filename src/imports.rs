@@ -1351,6 +1351,7 @@ impl Renamer {
             }
             Expression::Sizeof(ty)
             | Expression::TypeId(ty)
+            | Expression::TypeName(ty)
             | Expression::TypeValue(ty) => self.ty(ty),
             Expression::Tuple(elements) => {
                 for element in elements.iter_mut() {

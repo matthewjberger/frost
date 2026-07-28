@@ -175,12 +175,17 @@ or the closing `}` begins. Patterns:
 `match` works over a value or a reference. Matching a value of a `linear` type
 consumes it (chapter 9).
 
-## 6.8 `sizeof`, `cast`, and `unsafe`
+## 6.8 `sizeof`, `cast`, `typename`, and `unsafe`
 
 - `sizeof(T)` is a compile-time constant.
 - `cast($T, value)` converts a scalar to `T` when the conversion loses
   something, which is the only time it is needed and the only time it is
   accepted quietly (3.1a). It is safe and needs no block.
+- `type_id(T)` is a number standing for the type, and `typename(T)` is its name
+  as the source spells it, as a `str`. Both are compile-time constants, fixed
+  where the type is known, so a generic asked inside its own body answers with
+  what it was instantiated with rather than with the name of its parameter. A
+  distinct type answers with its own name, not its representation's.
 - `unsafe { ... }` is a block, and it is the only place four operations may be
   written: reading or writing through a raw pointer, `ptr_cast`, `slice_from`,
   and calling an `extern fn` that is not marked `safe`. Outside one each is a

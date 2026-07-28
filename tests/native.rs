@@ -3301,7 +3301,7 @@ fn self_hosted_runs_the_standard_library_tests() {
         ("math64.frost", "20 passed"),
         ("sort.frost", "3 passed"),
         ("mem.frost", "13 passed"),
-        ("ecs.frost", "90 passed"),
+        ("ecs.frost", "92 passed"),
         ("snapshot.frost", "4 passed"),
         ("thread.frost", "3 passed"),
     ];
@@ -6409,6 +6409,82 @@ fn a_named_constant_too_large_for_its_use_is_refused() {
     assert!(
         complaint.contains("400 does not fit in a") && complaint.contains("u8"),
         "the refusal did not say what was wrong:\n{complaint}"
+    );
+}
+
+// A type's name as text. The compiler knows it well enough to put in a
+// diagnostic, and a registry keyed by type that wants to be readable in a file
+// or a debugger wants the same string. Folded at the point the type is known,
+// so a generic gets the name of what it was instantiated with rather than the
+// name of its own parameter.
+const TYPE_NAMES: &str = "Position :: struct { x: f32, y: f32 }
+     Health :: struct { points: i64 }
+     Meters :: distinct f32
+     name_of :: fn($T: Type) -> str { typename($T) }
+     width :: fn($T: Type) -> i64 { str_len(typename($T)) }
+     main :: fn() -> i64 {
+         print typename($Position)
+         print typename($i64)
+         print typename($Meters)
+         print name_of($Health)
+         print name_of($Position)
+         print width($Health)
+         held := typename($Position)
+         print str_len(held)
+         print held[0]
+         0
+     }
+";
+
+// The two struct names, a scalar, the distinct type by its own name rather
+// than its representation, the same two through a generic, the length of
+// "Health", the length of "Position" through a binding, and its first byte.
+const TYPE_NAME_RESULTS: &str = "Position
+i64
+Meters
+Health
+Position
+6
+8
+80
+";
+
+#[test]
+fn a_type_can_be_asked_for_its_name() {
+    let Some(output) = compile_and_run_unaudited("typename", TYPE_NAMES) else {
+        return;
+    };
+    assert_eq!(output, TYPE_NAME_RESULTS);
+    if let Some(interpreted) = run_ir_oracle("typename", TYPE_NAMES, Audit::Off)
+    {
+        assert_eq!(
+            interpreted, TYPE_NAME_RESULTS,
+            "the ir interpreter disagrees"
+        );
+    }
+}
+
+#[test]
+fn the_self_hosted_compiler_names_a_type_the_same_way() {
+    let Some(output) = selfhosted_unaudited_output("shtypename", TYPE_NAMES)
+    else {
+        return;
+    };
+    assert_eq!(output, TYPE_NAME_RESULTS);
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shtypename_input.frost");
+    std::fs::write(&input, TYPE_NAMES).unwrap();
+    let Some(c_source) = self_hosted_emits("shtypename", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shtypename", &c_source) else {
+        return;
+    };
+    assert_eq!(
+        via_c, TYPE_NAME_RESULTS,
+        "the self-hosted C backend disagrees"
     );
 }
 

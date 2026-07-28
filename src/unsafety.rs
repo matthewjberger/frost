@@ -487,6 +487,7 @@ impl Checker {
             | Expression::Literal(_)
             | Expression::Boolean(_)
             | Expression::Sizeof(_)
+            | Expression::TypeName(_)
             | Expression::TypeId(_)
             | Expression::TypeValue(_) => {}
         }

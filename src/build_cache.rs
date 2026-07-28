@@ -307,6 +307,7 @@ fn stamp_expression(expression: &mut Expression, file: u32) {
         | Expression::Boolean(_)
         | Expression::Sizeof(_)
         | Expression::TypeId(_)
+        | Expression::TypeName(_)
         | Expression::TypeValue(_) => {}
     }
 }
