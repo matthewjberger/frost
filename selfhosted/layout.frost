@@ -19,7 +19,7 @@ scalar_size :: fn(held: i64) -> i64 {
     if (is_pointer(ty)) {
         return 8
     }
-    if (ty == TY_I8 || ty == TY_U8) {
+    if (ty == TY_I8 || ty == TY_U8 || ty == TY_BOOL) {
         return 1
     }
     if (ty == TY_I16 || ty == TY_U16) {
@@ -32,12 +32,12 @@ scalar_size :: fn(held: i64) -> i64 {
 }
 
 // Which of the two extensions a narrow value takes on its way into a register.
-// `bool` is emitted as a word, so it is not narrow and does not appear here.
+// A `bool` is a 0 or a 1 in one byte, so it zero-extends.
 is_unsigned :: fn(held: i64) -> bool {
     ty := distinct_repr(held)
     is_pointer(ty) == false
-        && (ty == TY_U8 || ty == TY_U16 || ty == TY_U32 || ty == TY_U64
-            || ty == TY_USIZE)
+        && (ty == TY_BOOL || ty == TY_U8 || ty == TY_U16 || ty == TY_U32
+            || ty == TY_U64 || ty == TY_USIZE)
 }
 
 align_up :: fn(offset: i64, alignment: i64) -> i64 {
