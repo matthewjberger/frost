@@ -23,7 +23,8 @@ one decision plus a small number of local rules.
    trace its storage to a parameter or an allocation capability. Storage it
    cannot trace is refused, whether the view leaves by being returned, by being
    stored where the call cannot see, or by being what the block ends with
-   (`src/regions.rs`, the frame check). A view the function was handed names
+   (`src/regions.rs`, and `check_frame_escapes` in `selfhosted/regions.frost`;
+   both compilers refuse the same programs). A view the function was handed names
    storage the caller owns and passes back out freely. What no borrow of either
    kind may do is be stored: not in a struct field, not in an array element, not
    in a container.
@@ -97,9 +98,13 @@ answers with a borrowed view may not answer with one built from its own frame.
 
 That is why there are no lifetimes to infer and no lifetime annotations. The
 question a lifetime variable answers, how long the storage behind this borrow
-lives, is replaced by a provenance question with two answers, this frame or the
-caller's, which a single pass over the function reads off the shape of the code.
-The borrow analysis stays scope-local.
+lives, is replaced by a provenance question with three answers, which a single
+pass over the function reads off the shape of the code: storage this call did
+not create, storage this frame owns, and neither shown. A view leaves the call
+only on the first. The third is what makes the pass a proof rather than a list,
+since a value built out of parts is worth its shortest-lived part and a shape
+the walk cannot follow has no shortest-lived part to name. The borrow analysis
+stays scope-local.
 
 The same rule is what makes `pool[handle]` sound (see section 5). Passing
 `pool[handle]` to a function borrows it under that function's parameter mode,
@@ -271,7 +276,7 @@ from, and in exchange deletes that entire machinery.
 
 | Hazard                       | How Frost removes it                                   |
 | ---------------------------- | ------------------------------------------------------ |
-| Dangling reference           | A borrow is unstorable, a returned one is not this frame's |
+| Dangling reference           | A borrow is unstorable, a returned one is traced to storage that outlives the call |
 | Use-after-move               | Move checking on non-`Copy` values                     |
 | Mutable aliasing             | Per-call borrow exclusivity (sufficient, not just necessary) |
 | Leak / double-free / drop    | Linear resources: consume exactly once                 |
