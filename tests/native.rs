@@ -6412,6 +6412,72 @@ fn a_named_constant_too_large_for_its_use_is_refused() {
     );
 }
 
+// A named float constant is a name for a number, so it is typed where it is
+// written the way a written one is. A whole family of these: the integer form,
+// the text form, and this one, all asking what the name stands for rather than
+// what the name is.
+//
+// The mixed case belongs to it too. `0.3 + count` has no float width of its
+// own, since the only float in it is the literal and the integer converts to
+// whatever the context asks for, so it reads at an f32 without being narrowed.
+const FLOAT_CONSTANTS: &str = "LIMIT :: 1.5607963267948966
+     STEP :: 0.5
+     narrow :: fn(value: f32) -> i64 { cast($i64, value * 1000.0) }
+     main :: fn() -> i64 {
+         held : f32 = LIMIT
+         print narrow(held)
+         print narrow(STEP)
+         print narrow(-STEP)
+         mut count : i64 = 2
+         mixed : f32 = 0.25 + count
+         print narrow(mixed)
+         also : f32 = STEP * count
+         print narrow(also)
+         0
+     }
+";
+
+const FLOAT_CONSTANT_RESULTS: &str = "1560
+500
+-500
+2250
+1000
+";
+
+#[test]
+fn a_named_float_constant_is_typed_where_it_is_written() {
+    let Some(output) = compile_and_run_unaudited("floatconst", FLOAT_CONSTANTS)
+    else {
+        return;
+    };
+    assert_eq!(output, FLOAT_CONSTANT_RESULTS);
+}
+
+#[test]
+fn the_self_hosted_compiler_types_a_float_constant_the_same_way() {
+    let Some(output) =
+        selfhosted_unaudited_output("shfloatconst", FLOAT_CONSTANTS)
+    else {
+        return;
+    };
+    assert_eq!(output, FLOAT_CONSTANT_RESULTS);
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shfloatconst_input.frost");
+    std::fs::write(&input, FLOAT_CONSTANTS).unwrap();
+    let Some(c_source) = self_hosted_emits("shfloatconst", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shfloatconst", &c_source) else {
+        return;
+    };
+    assert_eq!(
+        via_c, FLOAT_CONSTANT_RESULTS,
+        "the self-hosted C backend disagrees"
+    );
+}
+
 // A type's name as text. The compiler knows it well enough to put in a
 // diagnostic, and a registry keyed by type that wants to be readable in a file
 // or a debugger wants the same string. Folded at the point the type is known,
