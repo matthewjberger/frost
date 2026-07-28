@@ -862,9 +862,10 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
             mut param_next : i64 = -1
             mut have_param : i64 = 0
             mut param_ty : i64 = -1
+            mut param_auto : i64 = 0
             if (param != (-1)) {
                 pnode := arena_at(p.arena, param)
-                param_auto := pnode.a
+                param_auto = pnode.a
                 param_ty = pnode.b
                 param_next = pnode.next
                 have_param = 1
@@ -907,13 +908,21 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
             if (is_pointer(want_ty)) {
                 want_ty = pointee(want_ty)
             }
-            literal_slice := have_param == 1
+            // Only where the parameter borrows. A generic taking its value
+            // outright is handed the slice itself, and handing it an address
+            // there is the wrong type rather than an extra indirection.
+            literal_slice := have_param == 1 && param_auto == 1
+                && arena_at(p.arena, value).kind == NodeKind::StrLit
+                && is_array_ty(want_ty) && is_slice_ty(p, want_ty)
+            literal_value := have_param == 1 && param_auto != 1
                 && arena_at(p.arena, value).kind == NodeKind::StrLit
                 && is_array_ty(want_ty) && is_slice_ty(p, want_ty)
             if (literal_slice) {
                 emit_text("(&")
                 emit_coerced(p, value, want_ty)
                 emit_text(")")
+            } else if (literal_value) {
+                emit_coerced(p, value, want_ty)
             } else if (borrow == 1 && have_param == 1
                 && param_node_by_value(p, param)) {
                 borrow = 0
