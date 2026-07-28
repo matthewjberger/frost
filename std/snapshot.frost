@@ -1,0 +1,432 @@
+// A world written down, and read back.
+//
+// What a save file writes and an editor's undo keeps. It is here rather than
+// in the entity store because a store's job is to hold rows and answer queries,
+// and a format is a separate thing with separate reasons to change: a version,
+// an endianness, a decision about what is worth keeping. Neither needs the
+// other to be correct.
+//
+// It is here rather than in a program because the layout of a table is the
+// world's business. Nothing above the ECS should have to know how a column is
+// laid out to write one down.
+
+import "ecs.frost"
+import "vec.frost"
+import "mem.frost"
+
+export Snapshot, snapshot_new, snapshot_free, snapshot_len, snapshot_bytes,
+    snapshot_put, snapshot_take, snapshot_put_bytes, snapshot_take_bytes,
+    ecs_save, ecs_load, SNAPSHOT_MAGIC
+
+// ---------------------------------------------------------------------------
+// The schema
+//
+// Registration order is the schema. A component is named by its index, an index
+// is the order it was registered in, and a table's columns are in ascending
+// index order, so a snapshot read into a world that registered its components
+// in a different order would read every column as the wrong type. Nothing in
+// the bytes can tell, because a column is bytes and a width.
+//
+// So the snapshot carries the registry it was written under and refuses a world
+// whose registry differs: the same number of components, each the same width
+// and the same type, in the same order. That turns a reordering from a program
+// that reads garbage into a program that refuses to start. Append to the
+// registration list, never reorder it, and old snapshots keep working.
+//
+// Width alone would not do it. Two components of the same size are the same
+// number of bytes and swapping them reads each as the other, which is exactly
+// the mistake worth catching, so the type each was registered under goes in
+// beside the width. That identity is the compiler's, so it holds across a run
+// and across a rebuild of the same program. A snapshot is not a format for
+// carrying a world to a different program, and this is the check saying so
+// rather than a promise it does not make.
+// ---------------------------------------------------------------------------
+
+SNAPSHOT_MAGIC :: 1179929426
+
+Snapshot :: struct {
+    bytes: Vec<u8>,
+    // Where a read has got to. A write leaves it at zero.
+    at: i64,
+}
+
+snapshot_new :: fn() -> Snapshot {
+    Snapshot { bytes = vec_new($u8, 256), at = 0 }
+}
+
+snapshot_free :: fn(move s: Snapshot) {
+    vec_free($u8, s.bytes)
+}
+
+snapshot_len :: fn(s: Snapshot) -> i64 {
+    vec_len($u8, s.bytes)
+}
+
+snapshot_bytes :: fn(s: Snapshot) -> []u8 {
+    vec_slice($u8, s.bytes)
+}
+
+// Eight bytes, least significant first, which is the order the machines this
+// runs on already use. Written a byte at a time rather than as a word, because
+// a snapshot is written once and read once and the shape is worth more than the
+// speed.
+snapshot_put :: fn(mut s: Snapshot, value: i64) {
+    mut shift : i64 = 0
+    while (shift < 64) {
+        held : u8 = (value >> shift) & 255
+        vec_push($u8, s.bytes, held)
+        shift = shift + 8
+    }
+}
+
+snapshot_take :: fn(mut s: Snapshot) -> i64 {
+    held := vec_slice($u8, s.bytes)
+    mut value : i64 = 0
+    mut shift : i64 = 0
+    while (shift < 64) {
+        byte : i64 = held[s.at]
+        value = value | (byte << shift)
+        s.at = s.at + 1
+        shift = shift + 8
+    }
+    value
+}
+
+snapshot_put_bytes :: fn(mut s: Snapshot, block: ^u8, count: i64) {
+    held := bytes_as($u8, block, count)
+    mut index : i64 = 0
+    while (index < count) {
+        vec_push($u8, s.bytes, held[index])
+        index = index + 1
+    }
+}
+
+snapshot_take_bytes :: fn(mut s: Snapshot, block: ^u8, count: i64) {
+    source := vec_slice($u8, s.bytes)
+    mut target := bytes_as($u8, block, count)
+    mut index : i64 = 0
+    while (index < count) {
+        target[index] = source[s.at]
+        s.at = s.at + 1
+        index = index + 1
+    }
+}
+
+// The whole world, in the order a read expects it.
+ecs_save :: fn(world: World, mut s: Snapshot) {
+    snapshot_put(s, SNAPSHOT_MAGIC)
+    snapshot_put(s, world.registry.count)
+    sizes := vec_slice($i64, world.registry.sizes)
+    types := vec_slice($i64, world.registry.types)
+    mut component : i64 = 0
+    while (component < world.registry.count) {
+        snapshot_put(s, sizes[component])
+        snapshot_put(s, types[component])
+        component = component + 1
+    }
+    snapshot_put(s, world.tick)
+    snapshot_put(s, world.next_id)
+    snapshot_put(s, world.live)
+
+    slots := vec_slice($EntitySlot, world.slots)
+    snapshot_put(s, vec_len($EntitySlot, world.slots))
+    mut slot : i64 = 0
+    while (slot < vec_len($EntitySlot, world.slots)) {
+        snapshot_put(s, slots[slot].generation)
+        mut alive : i64 = 0
+        if (slots[slot].alive) { alive = 1 }
+        snapshot_put(s, alive)
+        snapshot_put(s, slots[slot].table)
+        snapshot_put(s, slots[slot].row)
+        slot = slot + 1
+    }
+
+    free := vec_slice($i64, world.free_ids)
+    snapshot_put(s, vec_len($i64, world.free_ids))
+    mut freed : i64 = 0
+    while (freed < vec_len($i64, world.free_ids)) {
+        snapshot_put(s, free[freed])
+        freed = freed + 1
+    }
+
+    snapshot_put(s, vec_len($Table, world.tables))
+    mut index : i64 = 0
+    while (index < vec_len($Table, world.tables)) {
+        ref table := vec_slice($Table, world.tables)[index]
+        mut word : i64 = 0
+        while (word < MASK_WORDS) {
+            held : i64 = table.mask.words[word]
+            snapshot_put(s, held)
+            word = word + 1
+        }
+        rows := vec_len($Entity, table.entities)
+        snapshot_put(s, rows)
+        entities := vec_slice($Entity, table.entities)
+        mut row : i64 = 0
+        while (row < rows) {
+            snapshot_put(s, entities[row].id)
+            snapshot_put(s, entities[row].generation)
+            row = row + 1
+        }
+        columns := vec_len($Column, table.columns)
+        snapshot_put(s, columns)
+        mut held : i64 = 0
+        while (held < columns) {
+            ref column := vec_slice($Column, table.columns)[held]
+            snapshot_put(s, column.item_size)
+            snapshot_put(s, column.count)
+            if (column.count > 0) {
+                snapshot_put_bytes(s, column.data,
+                    column.count * column.item_size)
+                snapshot_put_bytes(s, column.changed,
+                    column.count * TICK_SIZE)
+                snapshot_put_bytes(s, column.added, column.count * TICK_SIZE)
+            }
+            held = held + 1
+        }
+        index = index + 1
+    }
+}
+
+// Reads a snapshot into a world that has registered the same components in the
+// same order, and answers false when it has not. The world is emptied first, so
+// a read is a replacement rather than a merge.
+ecs_load :: fn(mut world: World, mut s: Snapshot) -> bool {
+    s.at = 0
+    if (snapshot_take(s) != SNAPSHOT_MAGIC) {
+        return false
+    }
+    count := snapshot_take(s)
+    if (count != world.registry.count) {
+        return false
+    }
+    sizes := vec_slice($i64, world.registry.sizes)
+    types := vec_slice($i64, world.registry.types)
+    mut component : i64 = 0
+    while (component < count) {
+        if (snapshot_take(s) != sizes[component]) {
+            return false
+        }
+        if (snapshot_take(s) != types[component]) {
+            return false
+        }
+        component = component + 1
+    }
+
+    world_clear(world)
+    world.tick = snapshot_take(s)
+    world.next_id = snapshot_take(s)
+    world.live = snapshot_take(s)
+
+    slot_count := snapshot_take(s)
+    mut slot : i64 = 0
+    while (slot < slot_count) {
+        generation := snapshot_take(s)
+        alive := snapshot_take(s)
+        table := snapshot_take(s)
+        row := snapshot_take(s)
+        vec_push($EntitySlot, world.slots,
+            EntitySlot { generation = generation, alive = alive == 1,
+                table = table, row = row })
+        slot = slot + 1
+    }
+
+    free_count := snapshot_take(s)
+    mut freed : i64 = 0
+    while (freed < free_count) {
+        vec_push($i64, world.free_ids, snapshot_take(s))
+        freed = freed + 1
+    }
+
+    table_count := snapshot_take(s)
+    mut index : i64 = 0
+    while (index < table_count) {
+        // The table is made first and its mask read into it, rather than a
+        // mask being built beside it and handed over. One less copy of the
+        // thing, and the lookup is told about the table's own.
+        vec_push($Table, world.tables,
+            Table { mask = mask_empty(), entities = vec_new($Entity, 16),
+                columns = vec_new($Column, 4) })
+        ref table := vec_slice($Table, world.tables)[index]
+        mut word : i64 = 0
+        while (word < MASK_WORDS) {
+            held := snapshot_take(s)
+            table.mask.words[word] = held
+            word = word + 1
+        }
+        lookup_put(world.lookup, table.mask, index)
+        rows := snapshot_take(s)
+        mut row : i64 = 0
+        while (row < rows) {
+            id := snapshot_take(s)
+            generation := snapshot_take(s)
+            vec_push($Entity, table.entities,
+                Entity { id = id, generation = generation })
+            row = row + 1
+        }
+        columns := snapshot_take(s)
+        mut held : i64 = 0
+        while (held < columns) {
+            item_size := snapshot_take(s)
+            filled := snapshot_take(s)
+            vec_push($Column, table.columns, column_new(item_size))
+            ref column := vec_slice($Column, table.columns)[held]
+            mut made : i64 = 0
+            while (made < filled) {
+                column_push_zero(column, 0)
+                made = made + 1
+            }
+            if (filled > 0) {
+                snapshot_take_bytes(s, column.data, filled * item_size)
+                snapshot_take_bytes(s, column.changed, filled * TICK_SIZE)
+                snapshot_take_bytes(s, column.added, filled * TICK_SIZE)
+            }
+            held = held + 1
+        }
+        index = index + 1
+    }
+    true
+}
+
+
+SavedPosition :: struct { x: f32, y: f32 }
+SavedHealth :: struct { points: i64 }
+
+test "a world survives being written down and read back" {
+    mut world := ecs_new()
+    position := ecs_register($SavedPosition, world)
+    health := ecs_register($SavedHealth, world)
+
+    mut kept : [3]Entity = [no_entity(); 3]
+    mut index : i64 = 0
+    while (index < 3) {
+        entity := ecs_spawn(world)
+        held : f32 = index
+        ecs_add($SavedPosition, world, entity, position,
+            SavedPosition { x = held, y = held + 1.0 })
+        if (index == 1) {
+            ecs_add($SavedHealth, world, entity, health,
+                SavedHealth { points = 42 })
+        }
+        kept[index] = entity
+        index = index + 1
+    }
+    gone := ecs_spawn(world)
+    ecs_despawn(world, gone)
+
+    mut s := snapshot_new()
+    ecs_save(world, s)
+    assert(snapshot_len(s) > 0)
+
+    mut read := ecs_new()
+    ecs_register($SavedPosition, read)
+    ecs_register($SavedHealth, read)
+    assert(ecs_load(read, s))
+
+    assert(ecs_count(read) == ecs_count(world))
+    mut checked : i64 = 0
+    while (checked < 3) {
+        held : f32 = checked
+        assert(ecs_alive(read, kept[checked]))
+        assert(ecs_get($SavedPosition, read, kept[checked], position).x == held)
+        assert(ecs_get($SavedPosition, read, kept[checked], position).y
+            == held + 1.0)
+        checked = checked + 1
+    }
+    assert(ecs_get($SavedHealth, read, kept[1], health).points == 42)
+    assert(ecs_has(read, kept[0], health) == false)
+    // The handle that outlived its entity is refused after a read too, so a
+    // save file does not resurrect one.
+    assert(ecs_alive(read, gone) == false)
+
+    ecs_free(read)
+    snapshot_free(s)
+    ecs_free(world)
+}
+
+// Registration order is the schema, and the bytes cannot tell you it changed:
+// a column is bytes and a width. So the snapshot carries the shape it was
+// written under and refuses a world that does not match.
+test "a snapshot refuses a world whose components are in another order" {
+    mut world := ecs_new()
+    ecs_register($SavedPosition, world)
+    ecs_register($SavedHealth, world)
+    entity := ecs_spawn(world)
+    ecs_add($SavedPosition, world, entity, 0, SavedPosition { x = 1.0, y = 2.0 })
+
+    mut s := snapshot_new()
+    ecs_save(world, s)
+
+    // Two components as before and the same count, in the other order. The
+    // widths differ, so the shape check catches it.
+    mut swapped := ecs_new()
+    ecs_register($SavedHealth, swapped)
+    ecs_register($SavedPosition, swapped)
+    assert(ecs_load(swapped, s) == false)
+
+    // And a world that registered fewer.
+    mut short := ecs_new()
+    ecs_register($SavedPosition, short)
+    assert(ecs_load(short, s) == false)
+
+    ecs_free(short)
+    ecs_free(swapped)
+    snapshot_free(s)
+    ecs_free(world)
+}
+
+// A read replaces rather than merges, so loading twice is loading once.
+test "a read replaces whatever the world held" {
+    mut world := ecs_new()
+    position := ecs_register($SavedPosition, world)
+    first := ecs_spawn(world)
+    ecs_add($SavedPosition, world, first, position,
+        SavedPosition { x = 1.0, y = 0.0 })
+
+    mut s := snapshot_new()
+    ecs_save(world, s)
+
+    mut read := ecs_new()
+    ecs_register($SavedPosition, read)
+    mut extra : i64 = 0
+    while (extra < 5) {
+        other := ecs_spawn(read)
+        ecs_add($SavedPosition, read, other, position,
+            SavedPosition { x = 99.0, y = 0.0 })
+        extra = extra + 1
+    }
+    assert(ecs_count(read) == 5)
+    assert(ecs_load(read, s))
+    assert(ecs_count(read) == 1)
+    assert(ecs_get($SavedPosition, read, first, position).x == 1.0)
+    ecs_free(read)
+    snapshot_free(s)
+    ecs_free(world)
+}
+
+// The write times come back too, so a system that ran before a save and asks
+// what moved since is not told everything moved.
+test "a snapshot carries the write times" {
+    mut world := ecs_new()
+    position := ecs_register($SavedPosition, world)
+    quiet := ecs_spawn(world)
+    ecs_add($SavedPosition, world, quiet, position,
+        SavedPosition { x = 0.0, y = 0.0 })
+    mark := ecs_now(world)
+    ecs_tick(world)
+    loud := ecs_spawn(world)
+    ecs_add($SavedPosition, world, loud, position,
+        SavedPosition { x = 1.0, y = 0.0 })
+
+    mut s := snapshot_new()
+    ecs_save(world, s)
+    mut read := ecs_new()
+    ecs_register($SavedPosition, read)
+    assert(ecs_load(read, s))
+
+    assert(ecs_changed_since(read, loud, position, mark))
+    assert(ecs_changed_since(read, quiet, position, mark) == false)
+    ecs_free(read)
+    snapshot_free(s)
+    ecs_free(world)
+}
