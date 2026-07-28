@@ -3160,6 +3160,83 @@ fn indexing_a_ptr_to_binding_is_gated() {
     );
 }
 
+// `print` holds expressions like any other statement, and the gate walked past
+// it, so every gated operation written under one was allowed. A program with no
+// `unsafe` block in it read out of bounds through a raw pointer and died on the
+// access.
+#[test]
+fn print_does_not_hide_a_gated_operation() {
+    let cases = [
+        (
+            "printderef",
+            "main :: fn() -> i64 {\n\
+             \x20   mut x : i64 = 42\n\
+             \x20   p := ptr_to(x)\n\
+             \x20   print p^\n\
+             \x20   0\n}\n",
+            "reading through a raw pointer",
+        ),
+        (
+            "printindex",
+            "main :: fn() -> i64 {\n\
+             \x20   mut xs : [3]i64 = [7, 8, 9]\n\
+             \x20   p := ptr_to(xs[0])\n\
+             \x20   print p[100000]\n\
+             \x20   0\n}\n",
+            "indexing a raw pointer",
+        ),
+        (
+            "printextern",
+            "abs :: extern fn(n: i32) -> i32\n\
+             main :: fn() -> i64 {\n\
+             \x20   print abs(0 - 5)\n\
+             \x20   0\n}\n",
+            "calling the C function 'abs'",
+        ),
+    ];
+    for (name, source, wanted) in cases {
+        let message = compile_error_checked(name, source);
+        assert!(
+            message.contains(wanted)
+                && message.contains("belongs in an `unsafe` block"),
+            "{name} should be gated, got:\n{message}"
+        );
+    }
+}
+
+// The multiple-return lowering runs after the gate, so a call bound to several
+// names is still written as one statement when the gate walks it.
+#[test]
+fn a_multiple_return_binding_does_not_hide_a_gated_call() {
+    let source = "pair :: extern fn() -> i64\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   a := pair()\n\
+                  \x20   a\n}\n";
+    let message = compile_error_checked("multiretgate", source);
+    assert!(
+        message.contains("calling the C function 'pair'"),
+        "expected the extern gate, got:\n{message}"
+    );
+}
+
+// A base whose type the gate cannot name may be a raw pointer, so it is refused
+// rather than allowed. What keeps that from refusing ordinary code is that the
+// pass reads a call's return type off the declaration, so a binding produced by
+// a call is named rather than unknown.
+#[test]
+fn indexing_a_base_of_unknown_type_is_gated() {
+    let source = "opaque :: fn(n: i64) -> ^i64 { unsafe { ptr_cast($i64, ptr_to(n)) } }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   held := opaque(3)\n\
+                  \x20   x := held[1]\n\
+                  \x20   x\n}\n";
+    let message = compile_error_checked("unknownindex", source);
+    assert!(
+        message.contains("indexing a raw pointer"),
+        "expected the raw-pointer index gate through the call's return type, got:\n{message}"
+    );
+}
+
 // The whole point of the standard library absorbing the unsafe floor: a program
 // that uses vec, sort, format, strings and io compiles under the unsafety gate
 // with no `unsafe` of its own. The containers' raw pointers and FFI are wrapped
