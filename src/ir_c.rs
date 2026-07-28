@@ -9,6 +9,11 @@ use crate::ir::{
 };
 use crate::types::Type;
 
+// The runtime's index check. Every checked read names it, and it is emitted as
+// a comparison guarding the call rather than as the call, so it is written once
+// here.
+const BOUNDS_CHECK: &str = "frost_rt_bounds_check";
+
 // What the emitter needs to know about the C side: which names are external,
 // and which of those return an aggregate. C returns a struct by a rule of its
 // own, and the way to get that rule right in emitted C is to declare a real
@@ -56,7 +61,7 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
         aggregate_returns: HashMap::new(),
         value_parameters: HashMap::new(),
     };
-    externs.insert("frost_rt_bounds_check");
+    externs.insert(BOUNDS_CHECK);
 
     let mut output = String::new();
     output.push_str("#include <stdint.h>\n\n");
@@ -325,6 +330,25 @@ fn emit_statement(
         IrStatement::Assign(local, rvalue) => {
             let local_type = function.local_type(*local).clone();
             if matches!(local_type, Type::Void | Type::Unknown) {
+                // An index check is written as the comparison it is, so the
+                // call is reached only by an index that is out of range. The C
+                // compiler can then drop the ones it can prove, which it cannot
+                // do with a call into another translation unit.
+                if let IrRvalue::Call {
+                    function: name,
+                    arguments,
+                } = rvalue
+                    && name == BOUNDS_CHECK
+                    && arguments.len() == 2
+                {
+                    let index = operand_expr(function, &arguments[0])?;
+                    let length = operand_expr(function, &arguments[1])?;
+                    writeln!(
+                        output,
+                        "  if ((uint64_t)({index}) >= (uint64_t)({length})) {BOUNDS_CHECK}({index}, {length});"
+                    )?;
+                    return Ok(());
+                }
                 if matches!(
                     rvalue,
                     IrRvalue::Call { .. } | IrRvalue::CallIndirect { .. }
