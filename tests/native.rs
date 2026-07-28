@@ -6412,6 +6412,71 @@ fn a_named_constant_too_large_for_its_use_is_refused() {
     );
 }
 
+// A constant whose value is text is written out where it is named, so a name
+// standing for one is that literal and everything a literal can do it can do.
+// `str_len` was the one place that did not look through the name: it tested the
+// node in hand for a literal, found a name, and fell through to reading a
+// length field off a bare pointer, which the C backend spelled
+// `(".debug_line")->len` and would not compile.
+const NAMED_TEXT: &str = "SECTION :: \".debug_line\"\n\
+     EMPTY :: \"\"\n\
+     width :: fn(text: str) -> i64 { str_len(text) }\n\
+     main :: fn() -> i64 {\n\
+     \x20   print str_len(SECTION)\n\
+     \x20   print str_len(EMPTY)\n\
+     \x20   print width(SECTION)\n\
+     \x20   print SECTION[1]\n\
+     \x20   held := SECTION\n\
+     \x20   print str_len(held)\n\
+     \x20   print str_len(SECTION) + 1\n\
+     \x20   0\n\
+     }\n";
+
+// The length of \".debug_line\", nothing, the same length through a parameter,
+// the 'd' after the dot, the length again through a binding, and one more.
+const NAMED_TEXT_RESULTS: &str = "11\n0\n11\n100\n11\n12\n";
+
+#[test]
+fn a_named_text_constant_is_the_literal_it_stands_for() {
+    let Some(output) = compile_and_run_unaudited("namedtext", NAMED_TEXT)
+    else {
+        return;
+    };
+    assert_eq!(output, NAMED_TEXT_RESULTS);
+    if let Some(interpreted) =
+        run_ir_oracle("namedtext", NAMED_TEXT, Audit::Off)
+    {
+        assert_eq!(
+            interpreted, NAMED_TEXT_RESULTS,
+            "the ir interpreter disagrees"
+        );
+    }
+}
+
+#[test]
+fn the_self_hosted_compiler_reads_a_named_text_constant_the_same_way() {
+    let Some(output) = selfhosted_unaudited_output("shnamedtext", NAMED_TEXT)
+    else {
+        return;
+    };
+    assert_eq!(output, NAMED_TEXT_RESULTS);
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shnamedtext_input.frost");
+    std::fs::write(&input, NAMED_TEXT).unwrap();
+    let Some(c_source) = self_hosted_emits("shnamedtext", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shnamedtext", &c_source) else {
+        return;
+    };
+    assert_eq!(
+        via_c, NAMED_TEXT_RESULTS,
+        "the self-hosted C backend disagrees"
+    );
+}
+
 // A statement ends at the line break, so a `-` that opens a line negates what
 // follows it rather than subtracting it from the line above. Written the other
 // way round, `count = 4` followed by `-total` was one statement, `count = 4 -

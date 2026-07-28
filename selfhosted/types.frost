@@ -235,8 +235,10 @@ binding_type :: fn(mut p: Parser, value: i64) -> i64 {
     //
     // It has to be settled here rather than left to the coercion, because the
     // length is read out of the source while the literal is still in hand. A
-    // binding that kept the pointer would have nowhere to recover it from.
-    if (node.kind == NodeKind::StrLit) {
+    // binding that kept the pointer would have nowhere to recover it from. A
+    // name standing for a literal is the literal, and binding one has the same
+    // nowhere to recover the length from.
+    if (arena_at(p.arena, constant_node(p, value)).kind == NodeKind::StrLit) {
         return array_of(p, TY_U8, -1)
     }
     if (node.kind != NodeKind::Var) {

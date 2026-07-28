@@ -660,8 +660,10 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         // An array's length is in its type, so this is a constant there and a
         // field read only for a slice, which carries its own.
         inner := node.a
-        // A literal has no length beside it, so its own is counted here.
-        held := arena_at(p.arena, inner)
+        // A literal has no length beside it, so its own is counted here. A name
+        // standing for one is the literal, since a constant is written out
+        // where it is used and there is nothing else there to read a length off.
+        held := arena_at(p.arena, constant_node(p, inner))
         if (held.kind == NodeKind::StrLit) {
             frost_rt_emit_int(literal_length(p.src, held.val, held.c))
             return

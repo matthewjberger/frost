@@ -1259,8 +1259,10 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
     }
     if (kind == NodeKind::SliceLen) {
         inner := node.a
-        // A literal has no length beside it, so its own is counted here.
-        held := arena_at(p.arena, inner)
+        // A literal has no length beside it, so its own is counted here. A name
+        // standing for one is the literal, since a constant is written out
+        // where it is used and there is nothing else there to read a length off.
+        held := arena_at(p.arena, constant_node(p, inner))
         if (held.kind == NodeKind::StrLit) {
             asm_i("movq $", literal_length(p.src, held.val, held.c), ", %rax")
             return
