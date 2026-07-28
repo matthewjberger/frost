@@ -1,0 +1,259 @@
+// A spinning triangle, drawn through the platform and the renderer rather than
+// by a program that opens its own window and brings up its own device.
+//
+//   just scene
+//
+// Escape closes it. Resizing works, which the triangle example does not do:
+// the renderer reconfigures the surface when the platform says the window
+// changed.
+//
+// What is worth looking at is not the triangle, it is the shape. `main` opens
+// two things and runs a loop. The drawing lives in a `Pass`, which is a name, a
+// function, and the state that function needs, and `renderer_run` is handed a
+// list of them. One pass is a list of one, and nothing about the pass changes
+// when there are eight.
+
+import "platform.frost"
+import "renderer.frost"
+import "wgpu.frost"
+import "math.frost"
+import "io.frost"
+
+WIDTH :: 960
+HEIGHT :: 540
+VERTEX_COUNT :: 3
+VERTEX_BYTES :: 96
+UNIFORM_BYTES :: 64
+
+Vertex :: struct { position: Vec4, colour: Vec4 }
+
+// Everything the triangle pass needs to draw. A pass holds its own state
+// because there are no closures to capture it, which turns out to be the
+// clearer arrangement: what a pass owns is written down rather than implied by
+// what its body happens to mention.
+Triangle :: struct {
+    pipeline: RenderPipeline,
+    bind_group: BindGroup,
+    vertices: Buffer,
+    uniform: Buffer,
+    queue: Queue,
+    view_projection: Mat4,
+    turned: f32,
+}
+
+SHADER :: "
+struct Uniforms { mvp: mat4x4<f32> }
+@group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+struct VertexOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) colour: vec4<f32>,
+}
+
+@vertex
+fn vs_main(@location(0) position: vec4<f32>,
+           @location(1) colour: vec4<f32>) -> VertexOut {
+    var out: VertexOut;
+    out.position = uniforms.mvp * position;
+    out.colour = colour;
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    return in.colour;
+}
+"
+
+// The pass body. It takes the frame and its own state, writes the matrix for
+// this frame, and records one draw.
+draw_triangle :: fn(mut f: Frame, state: ^u8) {
+    mut held := unsafe { ptr_cast($Triangle, state) }
+    mut model := mat4_rotation_y(unsafe { held^.turned })
+    mut mvp := mat4_mul(unsafe { held^.view_projection }, model)
+    queue_write_buffer(unsafe { held^.queue }, unsafe { held^.uniform }, 0,
+        unsafe { ptr_cast($u8, ptr_to(mvp.m[0])) }, UNIFORM_BYTES)
+
+    pass := frame_pass(f, LOAD_OP_CLEAR,
+        Color { r = 0.05, g = 0.05, b = 0.08, a = 1.0 })
+    render_pass_encoder_set_pipeline(pass, unsafe { held^.pipeline })
+    render_pass_encoder_set_bind_group(pass, 0, unsafe { held^.bind_group }, 0,
+        no_pointer())
+    render_pass_encoder_set_vertex_buffer(pass, 0, unsafe { held^.vertices }, 0,
+        VERTEX_BYTES)
+    render_pass_encoder_draw(pass, VERTEX_COUNT, 1, 0, 0)
+    render_pass_encoder_end(pass)
+}
+
+// Builds everything the pass will hold. Done once, because none of it changes
+// between frames: the pipeline, the buffers, and the binding that ties the
+// uniform to the shader.
+make_triangle :: fn(device: Device, queue: Queue, format: u32) -> Triangle {
+    mut wgsl := shader_source_WGSL_init()
+    wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
+    wgsl.code = StringView { data = SHADER, length = str_len(SHADER) }
+    mut module_descriptor := shader_module_descriptor_init()
+    module_descriptor.next_in_chain = unsafe { ptr_cast($u8, ptr_to(wgsl)) }
+    shader := device_create_shader_module(device, ptr_to(module_descriptor))
+
+    mut vertices : [VERTEX_COUNT]Vertex = [
+        Vertex { position = vec4(0.0 - 1.0, 0.0 - 1.0, 0.0, 1.0),
+            colour = vec4(1.0, 0.2, 0.2, 1.0) },
+        Vertex { position = vec4(1.0, 0.0 - 1.0, 0.0, 1.0),
+            colour = vec4(0.2, 1.0, 0.4, 1.0) },
+        Vertex { position = vec4(0.0, 1.0, 0.0, 1.0),
+            colour = vec4(0.3, 0.4, 1.0, 1.0) },
+    ]
+    mut vertex_descriptor := buffer_descriptor_init()
+    vertex_descriptor.usage = BufferUsage::Vertex | BufferUsage::CopyDst
+    vertex_descriptor.size = VERTEX_BYTES
+    vertex_buffer := device_create_buffer(device, ptr_to(vertex_descriptor))
+    queue_write_buffer(queue, vertex_buffer, 0,
+        unsafe { ptr_cast($u8, ptr_to(vertices[0])) }, VERTEX_BYTES)
+
+    mut uniform_descriptor := buffer_descriptor_init()
+    uniform_descriptor.usage = BufferUsage::Uniform | BufferUsage::CopyDst
+    uniform_descriptor.size = UNIFORM_BYTES
+    uniform_buffer := device_create_buffer(device, ptr_to(uniform_descriptor))
+
+    mut layout_entry := bind_group_layout_entry_init()
+    layout_entry.binding = 0
+    layout_entry.visibility = ShaderStage::Vertex
+    layout_entry.buffer.type = BUFFER_BINDING_TYPE_UNIFORM
+    layout_entry.buffer.min_binding_size = UNIFORM_BYTES
+    mut group_layout_descriptor := bind_group_layout_descriptor_init()
+    group_layout_descriptor.entries_count = 1
+    group_layout_descriptor.entries =
+        unsafe { ptr_cast($u8, ptr_to(layout_entry)) }
+    group_layout := device_create_bind_group_layout(device,
+        ptr_to(group_layout_descriptor))
+
+    mut group_entry := bind_group_entry_init()
+    group_entry.binding = 0
+    group_entry.buffer = uniform_buffer
+    group_entry.size = UNIFORM_BYTES
+    mut group_descriptor := bind_group_descriptor_init()
+    group_descriptor.layout = group_layout
+    group_descriptor.entries_count = 1
+    group_descriptor.entries = unsafe { ptr_cast($u8, ptr_to(group_entry)) }
+    bind_group := device_create_bind_group(device, ptr_to(group_descriptor))
+
+    mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
+    pipeline_layout_descriptor.bind_group_layouts_count = 1
+    pipeline_layout_descriptor.bind_group_layouts =
+        unsafe { ptr_cast($u8, ptr_to(group_layout)) }
+    pipeline_layout := device_create_pipeline_layout(device,
+        ptr_to(pipeline_layout_descriptor))
+
+    mut attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
+    attributes[0].format = VERTEX_FORMAT_FLOAT32X4
+    attributes[0].offset = 0
+    attributes[0].shader_location = 0
+    attributes[1].format = VERTEX_FORMAT_FLOAT32X4
+    attributes[1].offset = 16
+    attributes[1].shader_location = 1
+
+    mut layout := vertex_buffer_layout_init()
+    layout.array_stride = 32
+    layout.step_mode = VERTEX_STEP_MODE_VERTEX
+    layout.attributes_count = 2
+    layout.attributes = unsafe { ptr_cast($u8, ptr_to(attributes[0])) }
+
+    mut target := color_target_state_init()
+    target.format = format
+    target.write_mask = ColorWriteMask::All
+
+    mut fragment := fragment_state_init()
+    fragment.module = shader
+    fragment.entry_point = StringView { data = "fs_main", length = 7 }
+    fragment.targets_count = 1
+    fragment.targets = unsafe { ptr_cast($u8, ptr_to(target)) }
+
+    mut pipeline_descriptor := render_pipeline_descriptor_init()
+    pipeline_descriptor.layout = pipeline_layout
+    pipeline_descriptor.vertex.module = shader
+    pipeline_descriptor.vertex.entry_point =
+        StringView { data = "vs_main", length = 7 }
+    pipeline_descriptor.vertex.buffers_count = 1
+    pipeline_descriptor.vertex.buffers =
+        unsafe { ptr_cast($u8, ptr_to(layout)) }
+    pipeline_descriptor.primitive.topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
+    pipeline_descriptor.primitive.front_face = FRONT_FACE_CCW
+    pipeline_descriptor.primitive.cull_mode = CULL_MODE_NONE
+    pipeline_descriptor.multisample.count = 1
+    pipeline_descriptor.multisample.mask = 4294967295
+    pipeline_descriptor.fragment = unsafe { ptr_cast($u8, ptr_to(fragment)) }
+
+    Triangle {
+        pipeline = device_create_render_pipeline(device,
+            ptr_to(pipeline_descriptor)),
+        bind_group = bind_group,
+        vertices = vertex_buffer,
+        uniform = uniform_buffer,
+        queue = queue,
+        view_projection = mat4_identity(),
+        turned = 0.0,
+    }
+}
+
+// The camera, rebuilt when the window changes shape so the triangle does not
+// stretch with it.
+look :: fn(w: i64, h: i64) -> Mat4 {
+    mut aspect : f32 = 1.0
+    if (h > 0) {
+        wide : f32 = w
+        tall : f32 = h
+        aspect = wide / tall
+    }
+    projection := mat4_perspective_zo(radians(60.0), aspect, 0.1, 100.0)
+    view := mat4_look_at(vec3(0.0, 0.0, 3.0), vec3(0.0, 0.0, 0.0),
+        vec3(0.0, 1.0, 0.0))
+    mat4_mul(projection, view)
+}
+
+main :: fn() -> i64 {
+    mut p := platform_open("Frost scene", WIDTH, HEIGHT)
+    if (platform_ok(p) == false) {
+        print_str_line("no window")
+        print_str_line(platform_error())
+        return 1
+    }
+    mut r := renderer_open(platform_window(p), WIDTH, HEIGHT)
+    if (renderer_ok(r) == false) {
+        print_str_line("no device")
+        platform_close(p)
+        return 2
+    }
+
+    mut triangle := make_triangle(renderer_device(r), renderer_queue(r),
+        renderer_format(r))
+    triangle.view_projection = look(WIDTH, HEIGHT)
+
+    mut passes : [1]Pass = [
+        Pass { name = "triangle", draw = draw_triangle,
+            state = unsafe { ptr_cast($u8, ptr_to(triangle)) } },
+    ]
+
+    while (platform_poll(p)) {
+        if (key_pressed(p, KEY_ESCAPE)) {
+            break
+        }
+        if (resized(p)) {
+            renderer_resize(r, width(p), height(p))
+            triangle.view_projection = look(width(p), height(p))
+        }
+        // A third of a turn a second, from the clock rather than the frame
+        // count, so the speed does not follow the frame rate.
+        triangle.turned = triangle.turned + radians(120.0) * delta_seconds(p)
+
+        mut f := renderer_begin(r)
+        if (frame_ok(f)) {
+            renderer_run(f, passes)
+            renderer_end(r, f)
+        }
+    }
+
+    renderer_close(r)
+    platform_close(p)
+    0
+}
