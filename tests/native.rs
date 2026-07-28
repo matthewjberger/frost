@@ -11528,6 +11528,119 @@ fn a_view_traced_to_storage_that_outlives_the_call_is_allowed() {
     );
 }
 
+// The self-hosted compiler answers the same way, on the same programs. Two
+// compilers that disagree about which programs are safe is one guarantee written
+// twice and kept in one place, so the same roads and the same traced view are
+// run through both. The compiler is built once here rather than per case, since
+// building it is most of what the test costs.
+#[test]
+fn the_self_hosted_compiler_traces_a_frame_view_the_same_way() {
+    let Some(compiler) = build_self_hosted_compiler("frametrace") else {
+        return;
+    };
+    let refused = [
+        (
+            "launderedcall",
+            "launder :: fn(p: ^i64) -> ^i64 { p }\n\
+             leak :: fn() -> ^i64 {\n\
+             \x20   mut local : i64 = 42\n\
+             \x20   launder(ptr_to(local))\n}\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+        (
+            "launderedref",
+            "Holder :: struct { a: [4]i64 }\n\
+             pick :: fn(mut h: Holder, i: i64) -> ref i64 { h.a[i] }\n\
+             leak :: fn() -> ref i64 {\n\
+             \x20   mut local : Holder = Holder { a = [11, 22, 33, 44] }\n\
+             \x20   pick(local, 0)\n}\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+        (
+            "launderedfnptr",
+            "Ops :: struct { pass: fn(^i64) -> ^i64 }\n\
+             identity :: fn(p: ^i64) -> ^i64 { p }\n\
+             leak :: fn() -> ^i64 {\n\
+             \x20   mut local : i64 = 42\n\
+             \x20   ops := Ops { pass = identity }\n\
+             \x20   ops.pass(ptr_to(local))\n}\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+        (
+            "assignedthenreturned",
+            "start :: fn(seed: ^i64) -> ^i64 { seed }\n\
+             leak :: fn(seed: ^i64) -> ^i64 {\n\
+             \x20   mut local : i64 = 42\n\
+             \x20   mut p : ^i64 = start(seed)\n\
+             \x20   p = ptr_to(local)\n\
+             \x20   p\n}\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+        (
+            "moveparameteraddress",
+            "Point :: struct { x: i64, y: i64 }\n\
+             leak :: fn(move p: Point) -> ^i64 { ptr_to(p.x) }\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+    ];
+    let directory = std::env::temp_dir();
+    let emitted = directory.join("frost_shframe_out.c");
+    for (name, source) in refused {
+        let input = directory.join(format!("frost_shframe_{name}.frost"));
+        std::fs::write(&input, source).unwrap();
+        let run = Command::new(&compiler)
+            .env("FROST_CHECK_UNSAFE", "0")
+            .arg(&input)
+            .arg("-o")
+            .arg(&emitted)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&input);
+        let message = String::from_utf8_lossy(&run.stderr).to_string();
+        assert!(
+            !run.status.success(),
+            "{name} should not compile under the self-hosted compiler"
+        );
+        assert!(
+            message.contains("pointer into this frame")
+                || message.contains("cannot be traced"),
+            "{name} should be refused by the frame check, got:\n{message}"
+        );
+    }
+
+    // And the other half: what the walk can trace still compiles, so the
+    // inversion is not a check that refuses everything.
+    let allowed = "Holder :: struct { a: [4]i64 }\n\
+                   Ops :: struct { pass: fn(^i64) -> ^i64 }\n\
+                   identity :: fn(p: ^i64) -> ^i64 { p }\n\
+                   pick :: fn(mut h: Holder, i: i64) -> ref i64 { h.a[i] }\n\
+                   through :: fn(mut h: Holder) -> ref i64 { pick(h, 0) }\n\
+                   handed :: fn(p: ^i64) -> ^i64 { identity(p) }\n\
+                   indirect :: fn(p: ^i64, ops: Ops) -> ^i64 { ops.pass(p) }\n\
+                   bump :: fn(mut v: i64) -> i64 { v }\n\
+                   main :: fn() -> i64 {\n\
+                   \x20   mut h : Holder = Holder { a = [1, 2, 3, 4] }\n\
+                   \x20   print bump(through(h))\n\
+                   \x20   0\n}\n";
+    let input = directory.join("frost_shframe_allowed.frost");
+    std::fs::write(&input, allowed).unwrap();
+    let run = Command::new(&compiler)
+        .env("FROST_CHECK_UNSAFE", "0")
+        .arg(&input)
+        .arg("-o")
+        .arg(&emitted)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&emitted);
+    let _ = std::fs::remove_file(&compiler);
+    assert!(
+        run.status.success(),
+        "a view traced to a parameter should compile, got:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
+
 // Reading back through a pointer at a local that holds a frame pointer hands
 // the frame pointer out again.
 #[test]

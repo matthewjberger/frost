@@ -198,15 +198,16 @@ region: a pointer into arena 'arena' escapes its region by being returned;
 it may not outlive the arena
 ```
 
-This is the arena half of 8.2. The frame half is checked beside it in
-`src/regions.rs` and refused on the same grounds, with one difference in where
-the burden sits. The arena check asks whether a pointer is known to come from the
-region and refuses it when it is; the frame check asks whether a view is known to
-come from somewhere that outlives the call and refuses it when it is not. A view
-whose storage the walk cannot trace is refused, so a road nobody wrote down is a
+This is the arena half of 8.2. The frame half is checked beside it, in
+`src/regions.rs` and in `check_frame_escapes` in `selfhosted/regions.frost`, and
+refused on the same grounds, with one difference in where the burden sits. The
+arena check asks whether a pointer is known to come from the region and refuses
+it when it is; the frame check asks whether a view is known to come from
+somewhere that outlives the call and refuses it when it is not. A view whose
+storage the walk cannot trace is refused, so a road nobody wrote down is a
 refusal rather than a leak. What that costs is measured rather than assumed:
 across the standard library, the self-hosted compiler and the examples it refuses
-nothing.
+nothing, and both compilers refuse the same programs.
 
 ## 8a.6 What this is not
 
