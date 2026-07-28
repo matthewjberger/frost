@@ -82,6 +82,12 @@ emit_frame_symbol :: fn(mut p: Parser) {
 // The register it travels in is only ever live inside this loop: a float
 // reaches an SSE register for the arithmetic itself and leaves in %rax, so
 // nothing of a program's is held there across a copy.
+// The tail is moved in the widest piece that still fits, down to a byte. It
+// used to finish with whole words whatever was left, so a four-byte struct was
+// copied as eight and wrote four bytes past whatever it was copied into. A
+// struct of that size sitting in a heap block ends one element short of the
+// end, so the write went off the end of the block, and whether that was noticed
+// depended on where the allocator had put it.
 emit_asm_copy :: fn(size: i64) {
     mut moved : i64 = 0
     while (size - moved >= 16) {
@@ -89,10 +95,25 @@ emit_asm_copy :: fn(size: i64) {
         asm_i("movups %xmm0, ", moved, "(%r10)")
         moved = moved + 16
     }
-    while (moved < size) {
+    while (size - moved >= 8) {
         asm_i("movq ", moved, "(%r11), %rax")
         asm_i("movq %rax, ", moved, "(%r10)")
         moved = moved + 8
+    }
+    while (size - moved >= 4) {
+        asm_i("movl ", moved, "(%r11), %eax")
+        asm_i("movl %eax, ", moved, "(%r10)")
+        moved = moved + 4
+    }
+    while (size - moved >= 2) {
+        asm_i("movw ", moved, "(%r11), %ax")
+        asm_i("movw %ax, ", moved, "(%r10)")
+        moved = moved + 2
+    }
+    while (moved < size) {
+        asm_i("movb ", moved, "(%r11), %al")
+        asm_i("movb %al, ", moved, "(%r10)")
+        moved = moved + 1
     }
 }
 
@@ -102,9 +123,21 @@ emit_asm_copy :: fn(size: i64) {
 emit_asm_zero :: fn(size: i64) {
     asm("xorq %rax, %rax")
     mut cleared : i64 = 0
-    while (cleared < size) {
+    while (size - cleared >= 8) {
         asm_i("movq %rax, ", cleared, "(%r10)")
         cleared = cleared + 8
+    }
+    while (size - cleared >= 4) {
+        asm_i("movl %eax, ", cleared, "(%r10)")
+        cleared = cleared + 4
+    }
+    while (size - cleared >= 2) {
+        asm_i("movw %ax, ", cleared, "(%r10)")
+        cleared = cleared + 2
+    }
+    while (cleared < size) {
+        asm_i("movb %al, ", cleared, "(%r10)")
+        cleared = cleared + 1
     }
 }
 
