@@ -366,8 +366,13 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         return
     }
     // The digits as written. C reads a decimal literal the same way the source
-    // means it, so nothing here converts one.
+    // means it, so nothing here converts one. A sign in front when the literal
+    // was written negative, which is carried on the node rather than turned
+    // into a subtraction so that -0.0 stays the number it was written as.
     if (kind == NodeKind::Float) {
+        if (node.b == 1) {
+            emit_text("-")
+        }
         emit_source(p.src, node.val, node.c)
         return
     }

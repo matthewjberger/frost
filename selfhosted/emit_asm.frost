@@ -2824,6 +2824,11 @@ emit_asm_strings :: fn(mut p: Parser) {
             frost_rt_emit_int(i)
             emit_text(":\n")
             emit_text("    .double ")
+            // A sign when the literal was written negative. The assembler's own
+            // reader already takes a leading minus, so this needs nothing else.
+            if (node.b == 1) {
+                emit_text("-")
+            }
             emit_source(p.src, off, len)
             emit_text("\n")
         }
