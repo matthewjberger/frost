@@ -1084,20 +1084,33 @@ Parser :: struct {
     region_off: i64,
     region_len: i64,
     region_returns: i64,
-    // The frame-escape check's sets: locals declared in the function being
-    // checked, those holding a pointer into its frame, and those built here so
-    // a view of them is a view of the frame. frame_answers records whether the
-    // function returns a borrow, pointer or slice at all.
+    // The frame-escape check's sets. A name's storage and a name's value are
+    // different questions, so they are different tables: `frame_storage` holds
+    // the names this frame owns and `frame_outlives` the names it did not
+    // create. A `move` parameter is in both, since its storage is this call's
+    // copy while its value is whatever the caller handed over.
     frame_storage: Arena<LocalVar>,
-    frame_bound: Arena<LocalVar>,
-    // Bindings holding the address of one already in frame_bound, so reading
-    // back through one hands the frame pointer out again.
-    frame_via_pointer: Arena<LocalVar>,
+    frame_outlives: Arena<LocalVar>,
+    // What each local's value names, as a provenance in `slot`.
+    frame_locals: Arena<LocalVar>,
+    // For a local that borrows rather than owning storage, where the place it
+    // names lives. `ref x := place` binds one, and so does a binding taken from
+    // a call answering with a `ref`.
+    frame_places: Arena<LocalVar>,
+    // The declared or inferred type of each parameter and local, in `ty`. The
+    // frame check runs before the type pass, so it carries its own.
+    frame_types: Arena<LocalVar>,
     // The same idea for a region: bindings holding the address of one already
     // tainted, so reading back through one hands the arena pointer out again.
     region_via_pointer: Arena<LocalVar>,
-    frame_materialized: Arena<LocalVar>,
-    frame_answers: i64,
+    // What the function being checked answers with, and the three separate
+    // questions asked of it: whether it holds a view at all, whether it is a
+    // `ref` and so denotes a place, and whether it is a view itself rather than
+    // a value holding one.
+    frame_ret: i64,
+    frame_answers_view: i64,
+    frame_answers_place: i64,
+    frame_answers_direct: i64,
     // The parameter nodes declared `mut`, by node index, so the exclusivity
     // check can tell an exclusive borrow from a shared one where the type alone
     // cannot. A `mut` and a read of an aggregate both pass by address.
