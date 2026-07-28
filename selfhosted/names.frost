@@ -23,8 +23,10 @@ export append_node, array_element, array_index_of, array_length, array_of,
     slab_field_id, slab_field_type,
     mark_defined, mark_extern, mark_inline, new_case, new_field_init,
     new_field_node,
-    new_func_node, new_index, new_let_node, new_named_node, new_node,
-    new_struct_lit, new_type_node, new_unary, node_next, pointee,
+    new_func_node, new_index, new_let_node, new_named_node,
+    new_named_node_at, new_node, new_node_at,
+    new_struct_lit, new_type_node, new_unary, new_unary_at, node_next,
+    pointee,
     record_generic_fn, register_const, set_field_next, set_next, set_params,
     cap_at, cap_count_of, pack_element_name, alias_for, push_alias,
     unit_holds, in_any_module,
@@ -535,23 +537,46 @@ is_main_name :: fn(src: str, offset: i64, length: i64) -> bool {
 // Parsing.
 // ---------------------------------------------------------------------------
 
-new_node :: fn(mut p: Parser, kind: NodeKind, a: i64, b: i64, val: i64) -> i64 {
+// Where a node is, for a diagnostic to point at.
+//
+// The plain forms stamp where the cursor is now, which is after the node's
+// children have been read, so a node built out of anything carries the offset
+// of the token past it. That is why every diagnostic this compiler wrote landed
+// one construct late: an error about a binding on line five was reported at the
+// statement on line eight.
+//
+// The `_at` forms take the offset instead, and a parser that builds a node out
+// of children captures it before reading them. The plain forms stay for the
+// nodes with no children, where now and the start are the same place.
+new_node_at :: fn(mut p: Parser, kind: NodeKind, a: i64, b: i64, val: i64,
+    at: i64) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = kind, a = a, b = b, c = 0, val = val, next = 0 - 1, pos = cur_off(p) },
+        Node { kind = kind, a = a, b = b, c = 0, val = val, next = 0 - 1, pos = at },
     )
+}
+
+new_node :: fn(mut p: Parser, kind: NodeKind, a: i64, b: i64, val: i64) -> i64 {
+    held := cur_off(p)
+    new_node_at(p, kind, a, b, val, held)
 }
 
 // A node that names a local by its source byte range: `val` is the offset and
 // `c` is the length, so code generation re-emits the identifier text directly.
 // This is what lets locals become named C variables instead of `v[]` slots.
-new_named_node :: fn(mut p: Parser, kind: NodeKind, child: i64, offset: i64,
-    length: i64) -> i64 {
+new_named_node_at :: fn(mut p: Parser, kind: NodeKind, child: i64,
+    offset: i64, length: i64, at: i64) -> i64 {
     arena_push(
         p.arena,
         Node { kind = kind, a = child, b = 0, c = length, val = offset,
-            next = 0 - 1, pos = cur_off(p) },
+            next = 0 - 1, pos = at },
     )
+}
+
+new_named_node :: fn(mut p: Parser, kind: NodeKind, child: i64, offset: i64,
+    length: i64) -> i64 {
+    held := cur_off(p)
+    new_named_node_at(p, kind, child, offset, length, held)
 }
 
 // A local binding. `b` carries the annotated type, or -1 to infer the type from
@@ -561,8 +586,10 @@ new_let_node :: fn(mut p: Parser, value: i64, offset: i64, length: i64,
     annotation: i64) -> i64 {
     arena_push(
         p.arena,
+        // The name it binds, which is where the binding is. The cursor is past
+        // the whole statement by now, since the value has been read.
         Node { kind = NodeKind::Let, a = value, b = annotation, c = length,
-            val = offset, next = 0 - 1, pos = cur_off(p) },
+            val = offset, next = 0 - 1, pos = offset },
     )
 }
 
@@ -1320,11 +1347,17 @@ generic_index_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
 }
 
 // A unary node wrapping a single child expression (deref, address-of).
-new_unary :: fn(mut p: Parser, kind: NodeKind, child: i64) -> i64 {
+new_unary_at :: fn(mut p: Parser, kind: NodeKind, child: i64,
+    at: i64) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = kind, a = child, b = 0, c = 0, val = 0, next = 0 - 1, pos = cur_off(p) },
+        Node { kind = kind, a = child, b = 0, c = 0, val = 0, next = 0 - 1, pos = at },
     )
+}
+
+new_unary :: fn(mut p: Parser, kind: NodeKind, child: i64) -> i64 {
+    held := cur_off(p)
+    new_unary_at(p, kind, child, held)
 }
 
 // An index node `base[index]`: `a` is the base, `b` the index expression.

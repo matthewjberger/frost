@@ -5824,6 +5824,71 @@ fn a_constant_defined_in_terms_of_itself_is_refused() {
     );
 }
 
+// Where a diagnostic points. Every one of them used to land one construct late,
+// because a node was stamped with the cursor when it was built, which is after
+// its children had been read. An error about a binding on line five was
+// reported at whatever statement came next.
+//
+// The blank lines matter: they are what makes a late position land somewhere
+// obviously wrong rather than a line or two off.
+#[test]
+fn a_self_hosted_diagnostic_points_at_the_construct_it_is_about() {
+    let Some(compiler) = build_self_hosted_compiler("positions") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    for (source, line, column, carets) in [
+        (
+            "Point :: struct { x: i64, y: i64 }\n\
+             \n\
+             main :: fn() -> i64 {\n\
+             \x20   p := Point { x = 1, y = 2 }\n\
+             \x20   n : i64 = p\n\
+             \n\
+             \n\
+             \x20   print 1\n\
+             \x20   print 2\n    0\n}\n",
+            5,
+            5,
+            "n : i64 = p",
+        ),
+        (
+            "main :: fn() -> i64 {\n\
+             \x20   a : u8 = 300\n\
+             \n\
+             \n\
+             \x20   print a\n    0\n}\n",
+            2,
+            14,
+            "a : u8 = 300",
+        ),
+    ] {
+        let input = directory.join(unique("frost_pos")).with_extension("frost");
+        std::fs::write(&input, source).unwrap();
+        let emitted = directory.join(unique("frost_pos")).with_extension("c");
+        let built = Command::new(&compiler)
+            .arg("--emit-c")
+            .arg("-o")
+            .arg(&emitted)
+            .arg(&input)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&input);
+        let _ = std::fs::remove_file(&emitted);
+        assert!(!built.status.success(), "this was supposed to be refused");
+        let complaint = String::from_utf8_lossy(&built.stderr);
+        assert!(
+            complaint.contains(&format!(":{line}:{column}:")),
+            "expected {line}:{column}, got:\n{complaint}"
+        );
+        assert!(
+            complaint.contains(carets),
+            "the line shown was not the one at fault:\n{complaint}"
+        );
+    }
+    let _ = std::fs::remove_file(&compiler);
+}
+
 // A literal that does not fit the type it is written at. Both compilers used to
 // truncate it in silence: `a : u8 = 300` was 44 and `b : i8 = 200` was -56.
 // Both agreeing about it is exactly why running them against each other could
