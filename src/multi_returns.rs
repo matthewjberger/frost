@@ -118,7 +118,12 @@ impl Lowering {
                 }
                 other => {
                     let mut node = other;
-                    self.rewrite_statement(&mut node, returns)?;
+                    // Located here rather than inside, because this is where
+                    // the statement and its position are both in hand.
+                    crate::source_map::locate(
+                        self.rewrite_statement(&mut node, returns),
+                        position,
+                    )?;
                     rewritten.push(Spanned::new(node, position));
                 }
             }

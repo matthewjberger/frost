@@ -34,7 +34,10 @@ pub fn check_callback_declarations(
             let Some(bound) = &parameter.compile_time_signature else {
                 continue;
             };
-            check_registration(name, params, parameter, bound)?;
+            crate::source_map::locate(
+                check_registration(name, params, parameter, bound),
+                statement.position,
+            )?;
         }
     }
     Ok(())
