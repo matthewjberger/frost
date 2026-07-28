@@ -4,7 +4,7 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use frost::{
     BuildCache, Expression, Lexer, Literal, Manifest, Parameter,
@@ -249,7 +249,30 @@ fn test_directory(directory: &Path, arguments: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// How much stack the compiler runs on.
+///
+/// Every pass over a program recurses over its syntax, so how deep the compiler
+/// goes follows how deeply the program nests, and the compiler's own source is
+/// the deepest program it is asked about. Windows gives a main thread one
+/// megabyte, which a debug build of these passes spends before reaching the
+/// bottom of the self-hosted compiler: it dies with a stack overflow while a
+/// release build of the same code, with smaller frames, finishes.
+///
+/// That difference is the reason this is not left to the default. A limit that
+/// only a debug build reaches turns every test that compiles a large program
+/// into a failure that does not reproduce under `--release`.
+const COMPILER_STACK_BYTES: usize = 256 * 1024 * 1024;
+
 fn main() -> Result<()> {
+    std::thread::Builder::new()
+        .stack_size(COMPILER_STACK_BYTES)
+        .spawn(compile)
+        .context("failed to start the compiler thread")?
+        .join()
+        .map_err(|_| anyhow!("the compiler thread panicked"))?
+}
+
+fn compile() -> Result<()> {
     let cli = Cli::parse();
 
     // A directory is a suite rather than a program, so it never reaches the
