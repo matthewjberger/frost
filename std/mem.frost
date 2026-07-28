@@ -17,7 +17,7 @@
 
 export heap_array, heap_slice, heap_grow, heap_grow_slice, heap_release,
     heap_release_slice, heap_bytes, heap_grow_bytes, heap_zero, heap_copy,
-    bytes_at, bytes_as, slice_prefix, heap_live
+    bytes_at, bytes_as, slice_prefix, slice_range, slice_span, heap_live
 
 // How many blocks are out. A container that frees what it took leaves this
 // where it found it, so a test can say a leak happened rather than waiting for
@@ -83,6 +83,40 @@ slice_prefix :: fn($T: Type, held: []T, count: i64) -> []T {
     unsafe { slice_from($T, ptr_to(held[0]), count) }
 }
 
+// `count` elements starting at `from`. The pointer is taken from the slice's
+// own storage rather than from this frame, which is what lets the view outlive
+// the call the way `slice_prefix` does.
+//
+// `from` is bounds-checked because reaching it is an index. `count` is the
+// caller's word, as it is for `slice_prefix`: a run longer than what is left
+// views memory past the end. Where the count is derived rather than known,
+// `slice_span` clamps it instead.
+slice_range :: fn($T: Type, held: []T, from: i64, count: i64) -> []T {
+    unsafe { slice_from($T, ptr_to(held[from]), count) }
+}
+
+// The same run, but ending at the slice's end rather than past it. An empty
+// answer where `from` has reached the length, so a walk to the end needs no
+// special case at its last step.
+//
+// An empty slice answers with itself rather than a run built from one, since
+// there is no element to point at and reaching for one is an index like any
+// other.
+slice_span :: fn($T: Type, held: []T, from: i64, count: i64) -> []T {
+    length := slice_len(held)
+    if (length == 0) {
+        return held
+    }
+    if (from >= length) {
+        return slice_range($T, held, length - 1, 0)
+    }
+    mut room := length - from
+    if (count < room) {
+        room = count
+    }
+    slice_range($T, held, from, room)
+}
+
 heap_release :: fn($T: Type, move block: ^T) {
     unsafe { frost_rt_heap_free(ptr_cast($u8, block)) }
 }
@@ -133,6 +167,30 @@ heap_zero :: fn(destination: ^u8, size: i64) {
 
 heap_copy :: fn(destination: ^u8, source: ^u8, size: i64) {
     unsafe { frost_rt_mem_copy(destination, source, size) }
+}
+
+test "a range views the middle of a slice" {
+    mut held := heap_slice($i64, 8)
+    mut fill : i64 = 0
+    while (fill < 8) {
+        held[fill] = fill * 10
+        fill = fill + 1
+    }
+    middle := slice_range($i64, held, 2, 3)
+    assert(slice_len(middle) == 3)
+    assert(middle[0] == 20)
+    assert(middle[2] == 40)
+    heap_release_slice($i64, held)
+}
+
+test "a span stops at the end of what it views" {
+    mut held := heap_slice($i64, 4)
+    held[3] = 7
+    assert(slice_len(slice_span($i64, held, 2, 99)) == 2)
+    assert(slice_span($i64, held, 2, 99)[1] == 7)
+    assert(slice_len(slice_span($i64, held, 4, 2)) == 0)
+    assert(slice_len(slice_span($i64, held, 99, 2)) == 0)
+    heap_release_slice($i64, held)
 }
 
 test "a prefix is as long as it was asked for" {

@@ -3,14 +3,33 @@
 // allocation anywhere. `str_len` and `s[i]` are the only primitives, and the
 // rest is ordinary Frost over them.
 //
-// Nothing here returns a new string, because building one needs storage and
-// this module does not decide where a caller's storage comes from. What it
-// offers is answers about strings: are they equal, does one contain another,
-// where is a byte. Building goes through an arena the caller owns.
+// Nothing here builds a string, because that needs storage and this module does
+// not decide where a caller's storage comes from. What it offers is answers
+// about strings, and views into the one it was given: a view carries a pointer
+// and a length into bytes that already exist, so it allocates nothing and lasts
+// as long as what it views. Building goes through an arena the caller owns.
 
-export str_eq, str_starts_with, str_ends_with, str_index_of, str_contains, str_count, str_is_empty, str_to_i64, str_byte_is_digit, str_byte_is_space
+import "mem.frost"
+
+export str_eq, str_starts_with, str_ends_with, str_index_of, str_contains,
+    str_count, str_is_empty, str_to_i64, str_byte_is_digit, str_byte_is_space,
+    str_slice, str_span
 
 str_is_empty :: fn(s: str) -> bool { str_len(s) == 0 }
+
+// `count` bytes of `s` starting at `from`, viewing the same storage. `from` is
+// bounds-checked because reaching it is an index, and `count` is the caller's
+// word. This is what a program reaches for instead of carrying an offset and a
+// length beside every string it means to look at part of.
+str_slice :: fn(s: str, from: i64, count: i64) -> str {
+    slice_range($u8, s, from, count)
+}
+
+// The same, stopping at the end of `s` rather than past it, so a walk that asks
+// for more than is left gets what is left.
+str_span :: fn(s: str, from: i64, count: i64) -> str {
+    slice_span($u8, s, from, count)
+}
 
 str_eq :: fn(a: str, b: str) -> bool {
     if (str_len(a) != str_len(b)) { return false }
@@ -132,6 +151,32 @@ test "reading an integer" {
     assert(str_to_i64("-7") == 0 - 7)
     assert(str_to_i64("1234567") == 1234567)
     assert(str_to_i64("12a") == 0)
+}
+
+test "a slice views part of a string" {
+    s := "hello world"
+    assert(str_eq(str_slice(s, 0, 5), "hello"))
+    assert(str_eq(str_slice(s, 6, 5), "world"))
+    assert(str_eq(str_slice(s, 4, 3), "o w"))
+    assert(str_len(str_slice(s, 3, 0)) == 0)
+}
+
+test "a span stops at the end" {
+    s := "hello"
+    assert(str_eq(str_span(s, 3, 99), "lo"))
+    assert(str_eq(str_span(s, 0, 99), "hello"))
+    assert(str_len(str_span(s, 5, 4)) == 0)
+    assert(str_len(str_span(s, 99, 4)) == 0)
+    assert(str_len(str_span("", 0, 4)) == 0)
+}
+
+test "a view is the bytes it views" {
+    s := "banana"
+    inner := str_slice(s, 1, 3)
+    assert(str_eq(inner, "ana"))
+    assert(str_index_of(inner, "n") == 1)
+    assert(str_contains(inner, "na"))
+    assert(str_count(inner, 97) == 2)
 }
 
 test "byte classes" {

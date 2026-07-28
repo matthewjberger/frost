@@ -219,6 +219,17 @@ untyped_literal :: fn(mut p: Parser, id: i64) -> bool {
 binding_type :: fn(mut p: Parser, value: i64) -> i64 {
     ty := type_of(p, value)
     node := arena_at(p.arena, value)
+    // A string literal is a pointer where a `^i8` is asked for and a `str`
+    // where a `str` is, and a binding with no annotation asks for neither. It
+    // takes `str`, which is what the language calls text and what every
+    // operation over one expects. A program wanting the pointer says `^i8`.
+    //
+    // It has to be settled here rather than left to the coercion, because the
+    // length is read out of the source while the literal is still in hand. A
+    // binding that kept the pointer would have nowhere to recover it from.
+    if (node.kind == NodeKind::StrLit) {
+        return array_of(p, TY_U8, 0 - 1)
+    }
     if (node.kind != NodeKind::Var) {
         return ty
     }

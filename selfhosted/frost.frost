@@ -63,6 +63,29 @@ run_assembling :: fn(raw: ^u8) {
 // what did not change. Where this compiler encodes its own output the module's
 // assembly stays in memory and never becomes a file at all; where the toolchain
 // does the encoding it is written to `<build>/m<n>.s` for that program to read.
+// A built program named for running rather than for writing. The name a link
+// produces is a path, and a shell given a bare one searches what is on PATH
+// rather than where the file is, so a program built into the working directory
+// is not found there. Saying the directory is what makes it a path again.
+//
+// A name that already has a directory in it is left alone, since it is already
+// telling the shell where to look.
+runnable :: fn(path: ^i8) -> ^i8 {
+    length := cstr_len(path)
+    mut index : i64 = 0
+    while (index < length) {
+        byte := unsafe { path[index] }
+        if (byte == 47 || byte == 92) {
+            return path
+        }
+        index = index + 1
+    }
+    if (frost_rt_is_windows() == 1) {
+        return join_two(".\\", path)
+    }
+    join_two("./", path)
+}
+
 build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
     make_directory(options.build_dir)
     prefix := join_two(options.build_dir, "/m")
@@ -210,7 +233,7 @@ build_per_module :: fn(mut p: Parser, program: i64, options: Options) -> i64 {
         frost_rt_die()
     }
     if (options.testing == 1) {
-        return unsafe { frost_rt_run_command(executable) }
+        return unsafe { frost_rt_run_command(runnable(executable)) }
     }
     0
 }
@@ -314,7 +337,7 @@ link_with_toolchain :: fn(unit: ^i8, executable: ^i8, options: Options) -> i64 {
     // Building the tests and not running them would be half an answer, so the
     // process ends on what they said.
     if (options.testing == 1) {
-        return unsafe { frost_rt_run_command(executable) }
+        return unsafe { frost_rt_run_command(runnable(executable)) }
     }
     0
 }
