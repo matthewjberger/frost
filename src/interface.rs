@@ -6,8 +6,7 @@ use crate::parser::{Spanned, Statement};
 
 // What a caller needs to know about a module without seeing the rest of it.
 //
-// The design is in docs/book/src/impl/separate-compilation.md. The short version of why this
-// holds statements rather than a table of signatures: a generic's body is part
+// Why this holds statements rather than a table of signatures: a generic's body is part
 // of its interface, unavoidably, because the caller chooses the type arguments
 // and so the caller is what instantiates the template. Once the body of an
 // exported generic has to be here, the cheapest thing that is definitely
@@ -99,8 +98,7 @@ impl ModuleInterface {
     }
 }
 
-// Step 2 of docs/book/src/impl/separate-compilation.md. The compiler writes an interface out
-// and reads it back, and checks that what came back says the same thing as the
+// The compiler writes an interface out and reads it back, and checks that what came back says the same thing as the
 // source, while still compiling from source. This is the differential oracle
 // for the feature, and it exists because the class of bug separate compilation
 // invites is the one that passes the test suite and links the wrong code.
@@ -111,12 +109,11 @@ pub fn interfaces_are_checked() -> bool {
     std::env::var("FROST_CHECK_INTERFACES").is_ok_and(|value| value != "0")
 }
 
-// Step 4 of docs/book/src/impl/separate-compilation.md, as an oracle rather than as the way
-// builds work. With this on, an imported module contributes what its interface
+// An oracle rather than the way builds work. With this on, an imported module contributes what its interface
 // says it contributes and nothing else, so a program that still compiles and
 // still produces the same output is evidence that the interface is sufficient.
-// That is the gate step 5 needs, and it is much cheaper to establish here than
-// to debug once the compiler has started trusting interfaces for real.
+// That is the gate a build cache needs, and it is much cheaper to establish
+// here than to debug once the compiler trusts interfaces for real.
 pub fn built_from_interfaces() -> bool {
     std::env::var("FROST_BUILD_FROM_INTERFACES").is_ok_and(|value| value != "0")
 }

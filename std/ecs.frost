@@ -3,8 +3,8 @@
 // Entities that hold the same set of components live in one table, and a table
 // keeps one contiguous column per component, so a system walks columns rather
 // than chasing entities. That is the same shape `columns<T, N>` gives a fixed
-// component set (docs/book/src/reference/conformance.md 10.1a). This is the version where the set is
-// decided while the program runs, which is what an editor and a save file need.
+// component set. This is the version where the set is decided while the
+// program runs, which is what an editor and a save file need.
 //
 // What a component is: plain data. No destructor, no copy constructor, nothing
 // a type knows that the compiler does not. That one fact removes the table of
@@ -1420,7 +1420,7 @@ for_each :: fn($body: Type, mut world: World, f: Filters, types: $...) {
 // `for_each` is one call per row and the columns worked out per row rather than
 // per table. A system that reads every row wants `for_each`. Hoisting the
 // columns out of the row loop means handing them to a second generic as a list
-// of its own, which is what docs/book/src/roadmap.md records as still ordered wrong.
+// of its own, and the order that would take is not settled.
 for_each_row :: fn($body: Type, mut world: World, f: Filters, types: $...) {
     mut q := query_begin(world)
     for T in types {

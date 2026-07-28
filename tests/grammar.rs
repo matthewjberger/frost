@@ -26,7 +26,7 @@ fn grammar_accepts_specified_constructs() {
         "printf :: extern fn(fmt: ^i8, value: i64) -> i32",
         "close :: extern fn(f: i64)",
         // An extern takes parameter modes and compile-time parameters, which
-        // is what a callback registration is written with (spec 12.1).
+        // is what a callback registration is written with.
         "consume :: extern fn(move f: i64)",
         "reg :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64",
         "make :: extern fn(v: i64) -> Ctx",

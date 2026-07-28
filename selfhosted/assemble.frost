@@ -709,7 +709,7 @@ text_byte :: fn(mut unit: Assembly, value: i64) {
         report("frost: the assembled code outgrew its buffer\n")
         frost_rt_die()
     }
-    unit.text[unit.text_count] = value & 255
+    unit.text[unit.text_count] = cast($u8, value & 255)
     unit.text_count = unit.text_count + 1
 }
 
@@ -718,7 +718,7 @@ data_byte :: fn(mut unit: Assembly, value: i64) {
         report("frost: the assembled data outgrew its buffer\n")
         frost_rt_die()
     }
-    unit.data[unit.data_count] = value & 255
+    unit.data[unit.data_count] = cast($u8, value & 255)
     unit.data_count = unit.data_count + 1
 }
 

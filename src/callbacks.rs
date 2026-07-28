@@ -5,8 +5,8 @@ use anyhow::{Result, bail};
 use crate::parser::{ParamMode, Parameter, Spanned, Statement};
 use crate::types::Type;
 
-// docs/book/src/design/callbacks.md. An `extern fn` with a `$handler` parameter bound to a
-// function signature is a callback registration. The compiler will emit a
+// An `extern fn` with a `$handler` parameter bound to a function signature is
+// a callback registration. The compiler will emit a
 // trampoline with the C ABI the library expects, and that trampoline is the
 // only code that casts the untyped userdata back to the context type.
 //
@@ -54,7 +54,7 @@ pub struct CallbackShape {
 }
 
 // The shape of an `extern fn`'s parameter list read as a registration, or
-// `None` when it is an ordinary extern. See docs/book/src/design/callbacks.md.
+// `None` when it is an ordinary extern.
 pub fn callback_shape(params: &[Parameter]) -> Option<CallbackShape> {
     for (handler, parameter) in params.iter().enumerate() {
         let Some(Type::Proc(handler_params, _)) =
@@ -153,8 +153,7 @@ fn check_registration(
         );
     };
     // The registration keeps the context past the call, so the caller must not
-    // still be able to reach it. See the ownership argument in
-    // docs/book/src/design/callbacks.md.
+    // still be able to reach it.
     if carrier.mode != ParamMode::Move {
         bail!(
             "'{}' is the context of the callback '${}' of the extern '{name}', so it has to be taken by 'move': the callback can fire at any time while it is registered, and the caller must not still hold it",

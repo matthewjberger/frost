@@ -203,9 +203,9 @@ write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, w: i64, h: i64) {
     values[17] = at.y
     values[18] = at.z
     values[19] = 1.0
-    values[20] = 0.0 - 0.4
-    values[21] = 0.0 - 1.0
-    values[22] = 0.0 - 0.5
+    values[20] = -0.4
+    values[21] = -1.0
+    values[22] = -0.5
     values[23] = 0.0
     values[24] = 1.0
     values[25] = 0.97

@@ -73,7 +73,7 @@ snapshot_bytes :: fn(s: Snapshot) -> []u8 {
 snapshot_put :: fn(mut s: Snapshot, value: i64) {
     mut shift : i64 = 0
     while (shift < 64) {
-        held : u8 = (value >> shift) & 255
+        held : u8 = cast($u8, (value >> shift) & 255)
         vec_push($u8, s.bytes, held)
         shift = shift + 8
     }

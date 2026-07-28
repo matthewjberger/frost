@@ -40,7 +40,7 @@ synth_literal :: fn(mut p: Parser, word: ^i8) -> i64 {
     length := cstr_len(word)
     mut k : i64 = 0
     while (k < length) {
-        p.src[start + k] = byte_at(word, k)
+        p.src[start + k] = cast($u8, byte_at(word, k))
         k = k + 1
     }
     p.src[start + length] = 0
@@ -73,7 +73,7 @@ synth_numbered :: fn(mut p: Parser, word: ^i8, number: i64) -> i64 {
     mut written : i64 = 0
     while (written < digits) {
         digit := value / scale
-        p.src[p.synth_next - 1 + written] = CH_0 + digit
+        p.src[p.synth_next - 1 + written] = cast($u8, CH_0 + digit)
         value = value - digit * scale
         scale = scale / 10
         written = written + 1
@@ -338,7 +338,7 @@ pack_element_name :: fn(mut p: Parser, off: i64, len: i64,
     while (written < digits) {
         digit := value / scale
         unsafe {
-            p.src[start + len + 2 + written] = CH_0 + digit
+            p.src[start + len + 2 + written] = cast($u8, CH_0 + digit)
         }
         value = value - digit * scale
         scale = scale / 10

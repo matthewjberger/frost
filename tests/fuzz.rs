@@ -1,10 +1,8 @@
 // Random programs, run through every compiler and every backend, checked for
 // one answer.
 //
-// It used to have three oracles and all three were the bootstrap: its native
-// backend, its C backend, and its IR interpreter. Three backends, one compiler,
-// which is the shape docs/book/src/impl/self-hosted.md already records as the
-// mistake that let an earlier bug through. It cost something real: the
+// Three oracles that are all the same compiler are three backends and one
+// front end, and a front-end bug passes all three. It cost something real: the
 // generator has always written `rng.below(20) - 10` into the source, so it has
 // been emitting bare negative literals since it was written, and the
 // self-hosted compiler miscompiled every one of them. Seed 0 would have caught

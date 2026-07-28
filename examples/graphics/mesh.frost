@@ -118,8 +118,8 @@ mesh_upload :: fn(device: Device, queue: Queue, vertices: []Vertex,
         unsafe { ptr_cast($u8, ptr_to(indices[0])) }, index_bytes)
 
     Mesh { vertices = vertex_buffer, indices = index_buffer,
-        index_count = slice_len(indices), vertex_bytes = vertex_bytes,
-        index_bytes = index_bytes }
+        index_count = cast($u32, slice_len(indices)),
+        vertex_bytes = vertex_bytes, index_bytes = index_bytes }
 }
 
 // Two triangles over four corners, wound counter-clockwise seen from outside,
@@ -132,12 +132,12 @@ quad :: fn(mut vertices: []Vertex, mut indices: []u32, at: i64,
     vertices[base + 2] = Vertex { position = c, normal = normal }
     vertices[base + 3] = Vertex { position = d, normal = normal }
     corner := at * 6
-    indices[corner] = base
-    indices[corner + 1] = base + 1
-    indices[corner + 2] = base + 2
-    indices[corner + 3] = base
-    indices[corner + 4] = base + 2
-    indices[corner + 5] = base + 3
+    indices[corner] = cast($u32, base)
+    indices[corner + 1] = cast($u32, base + 1)
+    indices[corner + 2] = cast($u32, base + 2)
+    indices[corner + 3] = cast($u32, base)
+    indices[corner + 4] = cast($u32, base + 2)
+    indices[corner + 5] = cast($u32, base + 3)
 }
 
 // A unit cube about the origin. Four vertices per face rather than eight in
@@ -146,24 +146,24 @@ cube_mesh :: fn(device: Device, queue: Queue) -> Mesh {
     mut vertices := heap_slice($Vertex, 24)
     mut indices := heap_slice($u32, 36)
     half : f32 = 0.5
-    low := 0.0 - half
+    low := -half
 
     quad(vertices, indices, 0, vec3(1.0, 0.0, 0.0),
         vec3(half, low, half), vec3(half, low, low),
         vec3(half, half, low), vec3(half, half, half))
-    quad(vertices, indices, 1, vec3(0.0 - 1.0, 0.0, 0.0),
+    quad(vertices, indices, 1, vec3(-1.0, 0.0, 0.0),
         vec3(low, low, low), vec3(low, low, half),
         vec3(low, half, half), vec3(low, half, low))
     quad(vertices, indices, 2, vec3(0.0, 1.0, 0.0),
         vec3(low, half, half), vec3(half, half, half),
         vec3(half, half, low), vec3(low, half, low))
-    quad(vertices, indices, 3, vec3(0.0, 0.0 - 1.0, 0.0),
+    quad(vertices, indices, 3, vec3(0.0, -1.0, 0.0),
         vec3(low, low, low), vec3(half, low, low),
         vec3(half, low, half), vec3(low, low, half))
     quad(vertices, indices, 4, vec3(0.0, 0.0, 1.0),
         vec3(low, low, half), vec3(half, low, half),
         vec3(half, half, half), vec3(low, half, half))
-    quad(vertices, indices, 5, vec3(0.0, 0.0, 0.0 - 1.0),
+    quad(vertices, indices, 5, vec3(0.0, 0.0, -1.0),
         vec3(half, low, low), vec3(low, low, low),
         vec3(low, half, low), vec3(half, half, low))
 
@@ -191,12 +191,12 @@ sphere_mesh :: fn(device: Device, queue: Queue, radius: f32, rings: i64,
     while (ring <= rings) {
         tall : f32 = ring
         total : f32 = rings
-        theta := 3.141592653589793 * (tall / total)
+        theta : f32 = 3.141592653589793 * (tall / total)
         mut segment : i64 = 0
         while (segment <= segments) {
             around : f32 = segment
             span : f32 = segments
-            phi := 6.283185307179586 * (around / span)
+            phi : f32 = 6.283185307179586 * (around / span)
             unit := vec3(cosf(phi) * sinf(theta), cosf(theta),
                 sinf(phi) * sinf(theta))
             vertices[ring * (segments + 1) + segment] =
@@ -211,8 +211,8 @@ sphere_mesh :: fn(device: Device, queue: Queue, radius: f32, rings: i64,
     while (row < rings) {
         mut column : i64 = 0
         while (column < segments) {
-            first := row * (segments + 1) + column
-            next := first + segments + 1
+            first := cast($u32, row * (segments + 1) + column)
+            next := first + cast($u32, segments + 1)
             indices[written] = first
             indices[written + 1] = next
             indices[written + 2] = first + 1

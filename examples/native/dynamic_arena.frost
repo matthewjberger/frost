@@ -1,7 +1,6 @@
 // A dynamic arena: the same bump allocator, but its backing buffer comes from a
 // single call to the operating system instead of a fixed inline array. malloc is
-// the one platform extern at the floor of docs/book/src/design/allocators.md, and everything
-// above it is Frost. The arena is a `linear` resource, so the compiler requires
+// the one platform extern at the floor, and everything above it is Frost. The arena is a `linear` resource, so the compiler requires
 // it be destroyed exactly once (arena_destroy, which frees the one allocation).
 // Forgetting the destroy is a compile error, which is how a dynamic allocation
 // is kept from leaking without a garbage collector.

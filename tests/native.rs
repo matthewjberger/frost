@@ -58,8 +58,7 @@ fn run_backend(
     if emit_c {
         command.arg("--emit-c");
     }
-    // The interface oracle from docs/book/src/impl/separate-compilation.md runs on every test
-    // compilation, so a module whose interface would not describe it is caught
+    // The interface oracle runs on every test compilation, so a module whose interface would not describe it is caught
     // here rather than when something tries to compile against one.
     command
         .env("FROST_CHECK_INTERFACES", "1")
@@ -6198,9 +6197,223 @@ fn the_self_hosted_compiler_refuses_a_literal_that_does_not_fit() {
     );
 }
 
-// Step 4 of docs/book/src/impl/separate-compilation.md, as an oracle. With
-// FROST_BUILD_FROM_INTERFACES an imported module contributes what its interface
-// says and nothing else, so producing the same program either way is the
+// A conversion that cannot hold what it is given has to be written. Every one
+// of these used to happen in silence at an assignment, an argument, or a
+// return, so `count : i32 = total` quietly kept the low half and a float
+// handed to an integer parameter quietly lost its fraction.
+const NARROWING_REFUSALS: &[(&str, &str, &str)] = &[
+    (
+        "assign",
+        "main :: fn() -> i64 {\n    total : i64 = 5000000000\n    \
+         count : i32 = total\n    print count\n    0\n}\n",
+        "i32",
+    ),
+    (
+        "argument",
+        "take :: fn(b: u8) -> i64 { b }\n\
+         main :: fn() -> i64 {\n    n : i64 = 7\n    print take(n)\n    0\n}\n",
+        "u8",
+    ),
+    (
+        "return",
+        "shrink :: fn(n: i64) -> u16 { n }\n\
+         main :: fn() -> i64 { print shrink(9)  0 }\n",
+        "u16",
+    ),
+    (
+        "float",
+        "main :: fn() -> i64 {\n    tall : f64 = 3.9\n    short : f32 = tall\n \
+         \x20  print short\n    0\n}\n",
+        "f32",
+    ),
+    (
+        "truncate",
+        "main :: fn() -> i64 {\n    tall : f64 = 3.9\n    whole : i64 = tall\n \
+         \x20  print whole\n    0\n}\n",
+        "i64",
+    ),
+];
+
+#[test]
+fn a_narrowing_conversion_has_to_be_written() {
+    for (name, source, wanted) in NARROWING_REFUSALS {
+        let complaint = compile_error(&format!("narrow_{name}"), source);
+        assert!(
+            complaint.contains("which cannot hold all of one")
+                && complaint.contains(&format!("write cast(${wanted}")),
+            "the {name} narrowing was not refused the way it should be:\n\
+             {complaint}"
+        );
+    }
+}
+
+// And from the compiler that ships, since a language is what both of them
+// accept. One program is enough here: the refusal is one check in one place,
+// and the bootstrap covers the shapes it fires on.
+#[test]
+fn the_self_hosted_compiler_refuses_a_narrowing_conversion() {
+    let Some(compiler) = build_self_hosted_compiler("narrow") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    let input = directory
+        .join(unique("frost_shnarrow"))
+        .with_extension("frost");
+    std::fs::write(&input, NARROWING_REFUSALS[0].1).unwrap();
+    let emitted = directory.join(unique("frost_shnarrow")).with_extension("c");
+    let built = Command::new(&compiler)
+        .arg("--emit-c")
+        .arg("-o")
+        .arg(&emitted)
+        .arg(&input)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&emitted);
+    let _ = std::fs::remove_file(&compiler);
+    assert!(
+        !built.status.success(),
+        "the self-hosted compiler narrowed an i64 into an i32 in silence"
+    );
+    let complaint = String::from_utf8_lossy(&built.stderr);
+    assert!(
+        complaint.contains("this is a 'i64' and a 'i32' is wanted")
+            && complaint.contains("write cast($i32"),
+        "the refusal did not say what was wrong:\n{complaint}"
+    );
+}
+
+// `cast` is the conversion written out loud, and what it answers is what the
+// hardware does: the low bits of an integer, a float truncated toward zero, a
+// negative read as the unsigned pattern it already is. It never checks and
+// never traps, which is the reason it has to be asked for.
+const CASTS: &str = "main :: fn() -> i64 {\n\
+     \x20   big : i64 = 300\n\
+     \x20   small : u8 = cast($u8, big)\n\
+     \x20   wide : i64 = small\n\
+     \x20   print wide\n\
+     \x20   over : i64 = 200\n\
+     \x20   signed : i8 = cast($i8, over)\n\
+     \x20   print cast($i64, signed)\n\
+     \x20   tall : f64 = 3.9\n\
+     \x20   print cast($i64, tall)\n\
+     \x20   print cast($i64, -tall)\n\
+     \x20   span : i64 = -1\n\
+     \x20   unsigned : u32 = cast($u32, span)\n\
+     \x20   print cast($i64, unsigned)\n\
+     \x20   narrow : f32 = cast($f32, tall)\n\
+     \x20   print cast($i64, narrow * 10.0)\n\
+     \x20   0\n\
+     }\n";
+
+const CAST_RESULTS: &str = "44\n-56\n3\n-3\n4294967295\n39\n";
+
+#[test]
+fn a_cast_converts_and_says_so() {
+    let Some(output) = compile_and_run_unaudited("casts", CASTS) else {
+        return;
+    };
+    assert_eq!(output, CAST_RESULTS);
+    if let Some(interpreted) = run_ir_oracle("casts", CASTS, Audit::Off) {
+        assert_eq!(interpreted, CAST_RESULTS, "the ir interpreter disagrees");
+    }
+}
+
+#[test]
+fn the_self_hosted_compiler_casts_the_same_way() {
+    let Some(output) = selfhosted_unaudited_output("shcasts", CASTS) else {
+        return;
+    };
+    assert_eq!(output, CAST_RESULTS);
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shcasts_input.frost");
+    std::fs::write(&input, CASTS).unwrap();
+    let Some(c_source) = self_hosted_emits("shcasts", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shcasts", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, CAST_RESULTS, "the self-hosted C backend disagrees");
+}
+
+// A named integer constant is a name for a number, inlined at every use, so it
+// is typed where it is written exactly as the number would be. The self-hosted
+// compiler used to give one an i64 of its own, which made `into[at] = CH_LF`
+// into a narrowing and made every character constant unusable at a `u8`. The
+// same rule types `byte + 32`: the literal has no width, so it takes the one
+// beside it, and the sum stays a u8 rather than widening to an i64.
+const CONSTANTS_ARE_LITERALS: &str = "LIMIT :: 200\n\
+     SHIFT :: 32\n\
+     main :: fn() -> i64 {\n\
+     \x20   top : u8 = LIMIT\n\
+     \x20   print cast($i64, top)\n\
+     \x20   mut byte : u8 = 65\n\
+     \x20   byte = byte + SHIFT\n\
+     \x20   print cast($i64, byte)\n\
+     \x20   room : i16 = LIMIT * 2\n\
+     \x20   print cast($i64, room)\n\
+     \x20   0\n\
+     }\n";
+
+const CONSTANT_RESULTS: &str = "200\n97\n400\n";
+
+#[test]
+fn a_named_constant_is_typed_where_it_is_written() {
+    let Some(output) =
+        compile_and_run_unaudited("constlit", CONSTANTS_ARE_LITERALS)
+    else {
+        return;
+    };
+    assert_eq!(output, CONSTANT_RESULTS);
+}
+
+#[test]
+fn the_self_hosted_compiler_types_a_constant_where_it_is_written() {
+    let Some(output) =
+        selfhosted_unaudited_output("shconstlit", CONSTANTS_ARE_LITERALS)
+    else {
+        return;
+    };
+    assert_eq!(output, CONSTANT_RESULTS);
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shconstlit_input.frost");
+    std::fs::write(&input, CONSTANTS_ARE_LITERALS).unwrap();
+    let Some(c_source) = self_hosted_emits("shconstlit", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shconstlit", &c_source) else {
+        return;
+    };
+    assert_eq!(
+        via_c, CONSTANT_RESULTS,
+        "the self-hosted C backend disagrees"
+    );
+}
+
+// Being a literal cuts both ways: a constant that does not fit where it is
+// written is refused there, the same as the number would be.
+#[test]
+fn a_named_constant_too_large_for_its_use_is_refused() {
+    let source = "LIMIT :: 200\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   over : u8 = LIMIT * 2\n\
+                  \x20   print cast($i64, over)\n\
+                  \x20   0\n\
+                  }\n";
+    let complaint = compile_error("constrange", source);
+    assert!(
+        complaint.contains("400 does not fit in a") && complaint.contains("u8"),
+        "the refusal did not say what was wrong:\n{complaint}"
+    );
+}
+
+// With FROST_BUILD_FROM_INTERFACES an imported module contributes what its
+// interface says and nothing else, so producing the same program either way is the
 // evidence that an interface is sufficient. The module here uses the things
 // most likely to be missing from one: a private helper reached only through an
 // export, a generic whose body the caller has to instantiate, an enum, a struct
@@ -6531,8 +6744,8 @@ fn a_diagnostic_from_an_imported_module_names_the_file() {
 }
 
 // A module's private symbols are a property of the module, not of the order it
-// happened to be reached in. This is step 1 of docs/book/src/impl/separate-compilation.md and
-// the thing the rest of it cannot be built without: a module compiled once has
+// happened to be reached in, and separate compilation cannot be built without
+// it: a module compiled once has
 // to produce the symbols every other module will link against. The tag used to
 // be a counter handed out in import traversal order, so the same file's private
 // `secret` was `__m0_secret` reached first and `__m1_secret` reached second, and
@@ -9739,7 +9952,7 @@ STRIDE :: 1 << 4 | 0
 fill :: fn(mut buffer: Buffer) {
     mut index : i64 = 0
     while (index < CAPACITY) {
-        buffer.bytes[index] = 65 + index
+        buffer.bytes[index] = cast($u8, 65 + index)
         index = index + 1
     }
     buffer.used = CAPACITY
@@ -12751,8 +12964,8 @@ fn a_frame_pointer_may_not_leave_by_any_road() {
     }
 }
 
-// Step 5 of docs/book/src/impl/separate-compilation.md. A module is rebuilt only when its own
-// source or an imported interface changes, and the distinction that decides it
+// A module is rebuilt only when its own source or an imported interface
+// changes, and the distinction that decides it
 // is that a generic's body is part of its interface while an ordinary body is
 // not. This builds a three module chain and edits the leaf twice, once in each
 // kind of body, which is the only way to tell a cache that works from one that
@@ -12912,8 +13125,8 @@ fn only_the_modules_an_edit_reaches_are_rebuilt() {
     let _ = std::fs::remove_dir_all(&directory);
 }
 
-// docs/book/src/design/callbacks.md, step 1. A callback registration is an `extern fn` with a
-// `$handler` parameter bound to a function signature, and the whole ownership
+// A callback registration is an `extern fn` with a `$handler` parameter bound
+// to a function signature, and the whole ownership
 // argument is that the context moves in. What this checks is that the argument
 // costs no new machinery: `check_ownership` already stops a caller touching a
 // moved value, so a program that registers a context and then reads it is
@@ -12954,8 +13167,8 @@ fn a_registration_declaration_is_checked() {
     );
 }
 
-// docs/book/src/design/callbacks.md, step 2, and the whole safety argument. A registration
-// holds its context for as long as it is registered, so the value it answers
+// The whole safety argument for a callback. A registration holds its context
+// for as long as it is registered, so the value it answers
 // with names storage in the frame that holds the context. A context in that
 // frame is the ordinary case and is safe, because `check_linearity` forces the
 // registration to be consumed in the function that made it; what has to be
@@ -13009,13 +13222,12 @@ fn registering_and_unregistering_in_one_frame_is_allowed() {
     }
 }
 
-// docs/book/src/design/callbacks.md, step 5: bind a real C callback API and register against
-// it, because every earlier step is checkable without a library and none of
-// them proves the ABI. The library here is the smallest one that is still the
+// Bind a real C callback API and register against it, because every other
+// check here works without a library and none of them proves the ABI. The library here is the smallest one that is still the
 // real shape, `(callback, userdata)` stored and called back later, compiled by
 // the C compiler and linked in.
 //
-// What this settles is the finding that made step 3 disappear. A `mut`
+// What this settles is that no trampoline is needed at all. A `mut`
 // parameter is already a pointer in the signature and Frost and C share a
 // calling convention, so the handler compiled for Frost *is* the
 // `void (*)(void*, int64_t)` the library wants, and there is no trampoline and
@@ -13023,9 +13235,7 @@ fn registering_and_unregistering_in_one_frame_is_allowed() {
 //
 // The context goes in by `move` and comes back out through unregistration,
 // which is an ordinary extern returning a struct by value. That needed no
-// callback machinery at all, only the C return classification in
-// src/c_abi.rs, which is what closed the last open question in
-// docs/book/src/design/callbacks.md.
+// callback machinery at all, only the C return classification.
 #[test]
 fn a_callback_registered_with_a_c_library_runs() {
     let Some(compiler) = c_compiler() else {
@@ -13110,12 +13320,11 @@ fn a_callback_registered_with_a_c_library_runs() {
     // 4 then 5 through the callback, read back by the library out of the Frost
     // struct it was handed, then the token the library returned. The context is
     // read by the library rather than by Frost because it was moved in, and
-    // getting it back is the open question at the end of docs/book/src/design/callbacks.md.
+    // getting it back is what unregistration is for.
     assert_eq!(output, "9\n77\n");
 }
 
-// docs/book/src/impl/c-compatibility.md said outright that passing a struct to C by value had
-// no spelling, and `value` is it. Every shape here lands on a different side of
+// Passing a struct to C by value had no spelling, and `value` is it. Every shape here lands on a different side of
 // some rule: 16 bytes is what wgpu's WGPUStringView is and is two eightbytes on
 // System V, 8 bytes is one integer register on Windows, 4 bytes of float is
 // where Windows and System V disagree, and 12 bytes is not a power of two so
@@ -13259,8 +13468,8 @@ fn a_struct_is_passed_to_c_by_value() {
 // comes out of the wrong one. wgpu's callbacks are exactly this shape.
 //
 // There is still no trampoline. The Frost function is compiled to receive what
-// C sends, which is the same claim docs/book/src/design/callbacks.md makes about the simple
-// case, extended to the one shape that needed the compiler to know the rule.
+// C sends, which is the same claim as for the simple case, extended to the one
+// shape that needed the compiler to know the rule.
 #[test]
 fn c_calls_back_with_a_struct_by_value() {
     let Some(compiler) = c_compiler() else {
@@ -13466,8 +13675,7 @@ fn a_callback_whose_context_comes_last_runs() {
     assert_eq!(output, "13\n31\n");
 }
 
-// Item 4 of docs/book/src/roadmap.md. C returns a struct by a rule of its own, and the
-// rule differs by target and, on some targets, by whether the fields are
+// C returns a struct by a rule of its own, and the rule differs by target and, on some targets, by whether the fields are
 // floating point. Every shape here was chosen because it lands on a different
 // side of some boundary: 3 bytes is not a power of two, 4 bytes of float is the
 // case where Windows and System V disagree, 16 bytes is the last size System V

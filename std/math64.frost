@@ -5,9 +5,8 @@
 // It is a second copy rather than one generic library over the element type.
 // A generic here would have to take the transcendentals as compile-time
 // arguments at every call, since `sqrt` and `sqrtf` are different C functions,
-// which costs more at every use than a copy costs once. That is the trade
-// [docs/book/src/design/philosophy.md](../docs/book/src/design/philosophy.md) names: the code a program needs
-// over the arrangement that looks tidiest.
+// which costs more at every use than a copy costs once. The code a program
+// needs beats the arrangement that looks tidiest.
 //
 // Reach for this when the range or the accumulated error matters (a simulation
 // stepping for hours, world coordinates far from the origin, a solver). For
@@ -85,7 +84,7 @@ vec3d_scale :: inline fn(a: Vec3d, s: f64) -> Vec3d {
     Vec3d { x = a.x * s, y = a.y * s, z = a.z * s }
 }
 vec3d_neg :: inline fn(a: Vec3d) -> Vec3d {
-    Vec3d { x = 0.0 - a.x, y = 0.0 - a.y, z = 0.0 - a.z }
+    Vec3d { x = -a.x, y = -a.y, z = -a.z }
 }
 vec3d_dot :: inline fn(a: Vec3d, b: Vec3d) -> f64 {
     a.x * b.x + a.y * b.y + a.z * b.z
@@ -213,7 +212,7 @@ mat4d_rotation_x :: fn(angle: f64) -> Mat4d {
     mut out := mat4d_identity()
     out.m[5] = c
     out.m[6] = s
-    out.m[9] = 0.0 - s
+    out.m[9] = -s
     out.m[10] = c
     out
 }
@@ -222,7 +221,7 @@ mat4d_rotation_y :: fn(angle: f64) -> Mat4d {
     s := sin(angle)
     mut out := mat4d_identity()
     out.m[0] = c
-    out.m[2] = 0.0 - s
+    out.m[2] = -s
     out.m[8] = s
     out.m[10] = c
     out
@@ -233,7 +232,7 @@ mat4d_rotation_z :: fn(angle: f64) -> Mat4d {
     mut out := mat4d_identity()
     out.m[0] = c
     out.m[1] = s
-    out.m[4] = 0.0 - s
+    out.m[4] = -s
     out.m[5] = c
     out
 }
@@ -246,7 +245,7 @@ mat4d_perspective :: fn(fovy: f64, aspect: f64, near: f64, far: f64) -> Mat4d {
     out.m[0] = f / aspect
     out.m[5] = f
     out.m[10] = (far + near) / (near - far)
-    out.m[11] = 0.0 - 1.0
+    out.m[11] = -1.0
     out.m[14] = (2.0 * far * near) / (near - far)
     out
 }
@@ -261,7 +260,7 @@ mat4d_perspective_zo :: fn(fovy: f64, aspect: f64, near: f64, far: f64) -> Mat4d
     out.m[0] = f / aspect
     out.m[5] = f
     out.m[10] = far / (near - far)
-    out.m[11] = 0.0 - 1.0
+    out.m[11] = -1.0
     out.m[14] = (far * near) / (near - far)
     out
 }
@@ -271,7 +270,7 @@ mat4d_ortho :: fn(left: f64, right: f64, bottom: f64, top: f64,
     mut out := mat4d_identity()
     out.m[0] = 2.0 / (right - left)
     out.m[5] = 2.0 / (top - bottom)
-    out.m[10] = 0.0 - 2.0 / (far - near)
+    out.m[10] = -2.0 / (far - near)
     out.m[12] = 0.0 - (right + left) / (right - left)
     out.m[13] = 0.0 - (top + bottom) / (top - bottom)
     out.m[14] = 0.0 - (far + near) / (far - near)
@@ -290,11 +289,11 @@ mat4d_look_at :: fn(eye: Vec3d, center: Vec3d, up: Vec3d) -> Mat4d {
     out.m[1] = upward.x
     out.m[5] = upward.y
     out.m[9] = upward.z
-    out.m[2] = 0.0 - forward.x
-    out.m[6] = 0.0 - forward.y
-    out.m[10] = 0.0 - forward.z
-    out.m[12] = 0.0 - vec3d_dot(side, eye)
-    out.m[13] = 0.0 - vec3d_dot(upward, eye)
+    out.m[2] = -forward.x
+    out.m[6] = -forward.y
+    out.m[10] = -forward.z
+    out.m[12] = -vec3d_dot(side, eye)
+    out.m[13] = -vec3d_dot(upward, eye)
     out.m[14] = vec3d_dot(forward, eye)
     out
 }
@@ -330,7 +329,7 @@ quatd_normalize :: fn(a: Quatd) -> Quatd {
     Quatd { x = a.x * inv, y = a.y * inv, z = a.z * inv, w = a.w * inv }
 }
 quatd_conjugate :: fn(a: Quatd) -> Quatd {
-    Quatd { x = 0.0 - a.x, y = 0.0 - a.y, z = 0.0 - a.z, w = a.w }
+    Quatd { x = -a.x, y = -a.y, z = -a.z, w = a.w }
 }
 
 // Rotate a vector by a quaternion: q * (v, 0) * conjugate(q), the scalar part
@@ -375,7 +374,7 @@ quatd_to_mat4 :: fn(q: Quatd) -> Mat4d {
 near :: fn(a: f64, b: f64) -> bool {
     d := a - b
     if (d < 0.0) {
-        return 0.0 - d < 0.0001
+        return -d < 0.0001
     }
     d < 0.0001
 }
@@ -435,7 +434,7 @@ test "vec3 arithmetic" {
     assert(near_vec3d(vec3d_add(a, b), vec3d(5.0, 7.0, 9.0)))
     assert(near_vec3d(vec3d_sub(b, a), vec3d(3.0, 3.0, 3.0)))
     assert(near_vec3d(vec3d_scale(a, 2.0), vec3d(2.0, 4.0, 6.0)))
-    assert(near_vec3d(vec3d_neg(a), vec3d(0.0 - 1.0, 0.0 - 2.0, 0.0 - 3.0)))
+    assert(near_vec3d(vec3d_neg(a), vec3d(-1.0, -2.0, -3.0)))
     assert(near(vec3d_dot(a, b), 32.0))
 }
 
@@ -551,44 +550,44 @@ test "mat4 rotations turn one axis into the next" {
 test "perspective maps the near and far planes to minus one and one" {
     projection := mat4d_perspective(radiansd(90.0), 1.0, 1.0, 101.0)
     // A point on the near plane, in front of a camera looking down -z.
-    at_near := mat4d_mul_vec4d(projection, vec4d(0.0, 0.0, 0.0 - 1.0, 1.0))
-    assert(near(at_near.z / at_near.w, 0.0 - 1.0))
-    at_far := mat4d_mul_vec4d(projection, vec4d(0.0, 0.0, 0.0 - 101.0, 1.0))
+    at_near := mat4d_mul_vec4d(projection, vec4d(0.0, 0.0, -1.0, 1.0))
+    assert(near(at_near.z / at_near.w, -1.0))
+    at_far := mat4d_mul_vec4d(projection, vec4d(0.0, 0.0, -101.0, 1.0))
     assert(near(at_far.z / at_far.w, 1.0))
     // A ninety degree field of view puts the edge of the frustum on the
     // diagonal, so a point with x equal to -z lands on the edge of clip space.
-    edge := mat4d_mul_vec4d(projection, vec4d(2.0, 0.0, 0.0 - 2.0, 1.0))
+    edge := mat4d_mul_vec4d(projection, vec4d(2.0, 0.0, -2.0, 1.0))
     assert(near(edge.x / edge.w, 1.0))
 }
 
 test "the zero to one perspective maps the near plane to zero" {
     projection := mat4d_perspective_zo(radiansd(90.0), 1.0, 1.0, 101.0)
-    at_near := mat4d_mul_vec4d(projection, vec4d(0.0, 0.0, 0.0 - 1.0, 1.0))
+    at_near := mat4d_mul_vec4d(projection, vec4d(0.0, 0.0, -1.0, 1.0))
     assert(near(at_near.z / at_near.w, 0.0))
-    at_far := mat4d_mul_vec4d(projection, vec4d(0.0, 0.0, 0.0 - 101.0, 1.0))
+    at_far := mat4d_mul_vec4d(projection, vec4d(0.0, 0.0, -101.0, 1.0))
     assert(near(at_far.z / at_far.w, 1.0))
     // Across the view it is the same projection. Only the depth range differs.
-    edge := mat4d_mul_vec4d(projection, vec4d(2.0, 0.0, 0.0 - 2.0, 1.0))
+    edge := mat4d_mul_vec4d(projection, vec4d(2.0, 0.0, -2.0, 1.0))
     assert(near(edge.x / edge.w, 1.0))
     // Twice the aspect ratio is half the horizontal spread.
     wide := mat4d_perspective_zo(radiansd(90.0), 2.0, 1.0, 101.0)
-    squeezed := mat4d_mul_vec4d(wide, vec4d(2.0, 0.0, 0.0 - 2.0, 1.0))
+    squeezed := mat4d_mul_vec4d(wide, vec4d(2.0, 0.0, -2.0, 1.0))
     assert(near(squeezed.x / squeezed.w, 0.5))
 }
 
 test "ortho maps its box onto clip space" {
-    box := mat4d_ortho(0.0 - 2.0, 2.0, 0.0 - 1.0, 1.0, 1.0, 11.0)
-    left := mat4d_transform_point(box, vec3d(0.0 - 2.0, 0.0, 0.0))
-    assert(near(left.x, 0.0 - 1.0))
+    box := mat4d_ortho(-2.0, 2.0, -1.0, 1.0, 1.0, 11.0)
+    left := mat4d_transform_point(box, vec3d(-2.0, 0.0, 0.0))
+    assert(near(left.x, -1.0))
     right := mat4d_transform_point(box, vec3d(2.0, 0.0, 0.0))
     assert(near(right.x, 1.0))
     top := mat4d_transform_point(box, vec3d(0.0, 1.0, 0.0))
     assert(near(top.y, 1.0))
     // Depth runs from the near plane at -1 to the far plane at 1, both of them
     // in front of a camera looking down -z.
-    at_near := mat4d_transform_point(box, vec3d(0.0, 0.0, 0.0 - 1.0))
-    assert(near(at_near.z, 0.0 - 1.0))
-    at_far := mat4d_transform_point(box, vec3d(0.0, 0.0, 0.0 - 11.0))
+    at_near := mat4d_transform_point(box, vec3d(0.0, 0.0, -1.0))
+    assert(near(at_near.z, -1.0))
+    at_far := mat4d_transform_point(box, vec3d(0.0, 0.0, -11.0))
     assert(near(at_far.z, 1.0))
 }
 
@@ -597,7 +596,7 @@ test "look at puts the camera where it says" {
     view := mat4d_look_at(vec3d(0.0, 0.0, 3.0), vec3d(0.0, 0.0, 0.0), up)
     // What the camera looks at lands in front of it, three away down -z.
     assert(near_vec3d(mat4d_transform_point(view, vec3d(0.0, 0.0, 0.0)),
-        vec3d(0.0, 0.0, 0.0 - 3.0)))
+        vec3d(0.0, 0.0, -3.0)))
     // The camera's own position lands on the origin, which is what a view
     // matrix is for.
     assert(near_vec3d(mat4d_transform_point(view, vec3d(0.0, 0.0, 3.0)),
@@ -609,7 +608,7 @@ test "look at puts the camera where it says" {
     // Looking from the side instead, the same target is still three ahead.
     from_x := mat4d_look_at(vec3d(3.0, 0.0, 0.0), vec3d(0.0, 0.0, 0.0), up)
     assert(near_vec3d(mat4d_transform_point(from_x, vec3d(0.0, 0.0, 0.0)),
-        vec3d(0.0, 0.0, 0.0 - 3.0)))
+        vec3d(0.0, 0.0, -3.0)))
 }
 
 test "quaternion identity and length" {
@@ -654,7 +653,7 @@ test "quaternion multiplication composes rotations" {
     about_y := quatd_from_axis_angle(y, quarter)
     // Two quarter turns about one axis are a half turn about it.
     half := quatd_mul(about_y, about_y)
-    assert(near_vec3d(quatd_rotate_vec3d(half, z), vec3d(0.0, 0.0, 0.0 - 1.0)))
+    assert(near_vec3d(quatd_rotate_vec3d(half, z), vec3d(0.0, 0.0, -1.0)))
     assert(near_mat4(quatd_to_mat4(half), mat4d_rotation_y(radiansd(180.0))))
     // The identity composes with anything and changes nothing.
     assert(near_mat4(quatd_to_mat4(quatd_mul(quatd_identity(), about_y)),
@@ -665,8 +664,8 @@ test "quaternion multiplication composes rotations" {
     assert(near_vec3d(quatd_rotate_vec3d(back, z), z))
     // The conjugate negates the vector part and keeps the scalar one.
     reversed := quatd_conjugate(about_y)
-    assert(near(reversed.x, 0.0 - about_y.x))
-    assert(near(reversed.y, 0.0 - about_y.y))
-    assert(near(reversed.z, 0.0 - about_y.z))
+    assert(near(reversed.x, -about_y.x))
+    assert(near(reversed.y, -about_y.y))
+    assert(near(reversed.z, -about_y.z))
     assert(near(reversed.w, about_y.w))
 }

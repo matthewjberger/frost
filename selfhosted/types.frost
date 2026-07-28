@@ -206,6 +206,14 @@ untyped_literal :: fn(mut p: Parser, id: i64) -> bool {
     if (node.kind == NodeKind::Float) {
         return true
     }
+    // An integer constant is a name for a number and is inlined at every use,
+    // so it is one of the numbers the context gets to type: `CH_LF` read at a
+    // `u8` is the same as writing 10 there, range check and all. A local of the
+    // same name is a value with a type and shadows it.
+    if (node.kind == NodeKind::Var && local_exists(p, node.val, node.c) == false
+        && is_const(p, node.val, node.c)) {
+        return true
+    }
     if (node.kind == NodeKind::Bin && op_answers_truth(node.val) == false) {
         return untyped_literal(p, node.a) && untyped_literal(p, node.b)
     }
@@ -249,6 +257,10 @@ literal_value :: fn(mut p: Parser, id: i64) -> i64 {
     if (node.kind == NodeKind::Num) {
         return node.val
     }
+    if (node.kind == NodeKind::Var && local_exists(p, node.val, node.c) == false
+        && is_const(p, node.val, node.c)) {
+        return const_value(p, node.val, node.c)
+    }
     if (node.kind == NodeKind::Bin) {
         left := literal_value(p, node.a)
         right := literal_value(p, node.b)
@@ -257,6 +269,14 @@ literal_value :: fn(mut p: Parser, id: i64) -> i64 {
         if (node.val == OP_MUL) { return left * right }
         if (node.val == OP_DIV && right != 0) { return left / right }
         if (node.val == OP_MOD && right != 0) { return left % right }
+        if (node.val == OP_BITAND) { return left & right }
+        if (node.val == OP_BITOR) { return left | right }
+        if (node.val == OP_SHL && right >= 0 && right < 64) {
+            return left << right
+        }
+        if (node.val == OP_SHR && right >= 0 && right < 64) {
+            return left >> right
+        }
     }
     0
 }
@@ -290,12 +310,45 @@ integer_high :: fn(ty: i64) -> i64 {
     9223372036854775807
 }
 
+// Whether reading one type at another can lose what it holds: a narrower
+// integer, or a float becoming one. Widening loses nothing and stays implicit.
+is_narrowing :: fn(from: i64, to: i64) -> bool {
+    held_from := distinct_repr(from)
+    held_to := distinct_repr(to)
+    if (is_float(held_from) && is_integer(held_to)) {
+        return true
+    }
+    if (is_integer(held_from) && is_integer(held_to)) {
+        return scalar_size(held_to) < scalar_size(held_from)
+    }
+    if (is_float(held_from) && is_float(held_to)) {
+        return scalar_size(held_to) < scalar_size(held_from)
+    }
+    false
+}
+
 value_fits :: fn(mut p: Parser, value: i64, from: i64, to: i64) -> bool {
-    // A literal that does not fit what it is being read at. The type is in
-    // hand and so is the number, which is the whole of what a range check
-    // needs, and nothing used to look: `a : u8 = 300` was quietly 44 and
-    // `b : i8 = 200` was quietly -56. Both compilers agreed about it, which is
-    // exactly why running them against each other could not see it.
+    // A conversion that can lose the value is the reader's to ask for: an i64
+    // of 300 read at a u8 is 44. A literal is exempt, since one is checked
+    // against the range it is written at instead. Two different named types are
+    // a different complaint, and the one that names them says more than a width
+    // does, so this fires only between the same type and between plain ones.
+    named := is_distinct(from) || is_distinct(to)
+    if (from == to || named == false) {
+        if (is_narrowing(from, to) && untyped_literal(p, value) == false) {
+            report_where(p.modules, p.src, arena_at(p.arena, value).pos)
+            report("this is a '")
+            report_type_name(p, from)
+            report("' and a '")
+            report_type_name(p, to)
+            report("' is wanted, which cannot hold all of one; write cast($")
+            report_type_name(p, to)
+            report(", ...) to say the loss is meant")
+            frost_rt_die()
+        }
+    }
+    // A literal that does not fit what it is being read at. The type is in hand
+    // and so is the number, which is the whole of what a range check needs.
     if (value >= 0 && is_integer(to) && untyped_literal(p, value)) {
         held := literal_value(p, value)
         if (held < integer_low(to) || held > integer_high(to)) {
@@ -644,6 +697,9 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
         inner := node.a
         return POINTER_BASE + type_of(p, inner)
     }
+    if (kind == NodeKind::Cast) {
+        return node.val
+    }
     if (kind == NodeKind::PtrCast) {
         return POINTER_BASE + node.val
     }
@@ -669,20 +725,48 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
             return TY_I64
         }
         left := type_of(p, node.a)
+        right := type_of(p, node.b)
         // Arithmetic on a distinct type answers with that type. Adding two
         // lengths gives a length, and the sum can go back where either came
         // from, which is the whole reason to have named the type.
         if (is_distinct(left)) {
             return left
         }
-        if (is_float(left)) {
-            return left
-        }
-        right := type_of(p, node.b)
         if (is_distinct(right)) {
             return right
         }
+        // A literal has no width of its own, so it takes the other operand's:
+        // `byte + 32` where `byte` is a `u8` is a `u8` and `1.0 / length` where
+        // `length` is an `f32` is an `f32`. Two operands of one type stay that
+        // type, and genuinely mixed widths widen to the wider, which holds both.
+        if (is_float(left) && is_float(right)) {
+            if (untyped_literal(p, node.b)) {
+                return left
+            }
+            if (untyped_literal(p, node.a)) {
+                return right
+            }
+            if (scalar_size(left) >= scalar_size(right)) {
+                return left
+            }
+            return right
+        }
+        if (is_float(left)) {
+            return left
+        }
         if (is_float(right)) {
+            return right
+        }
+        if (is_integer(left) && is_integer(right)) {
+            if (untyped_literal(p, node.b)) {
+                return left
+            }
+            if (untyped_literal(p, node.a)) {
+                return right
+            }
+            if (scalar_size(left) >= scalar_size(right)) {
+                return left
+            }
             return right
         }
         return TY_I64
@@ -967,7 +1051,7 @@ fn_proc_type :: fn(mut p: Parser, fn_index: i64) -> i64 {
 }
 
 // Whether a name is one of the type predicates, and what it answers of a type.
-// The vocabulary is fixed and closed (spec 11.4a): every one of these is a
+// The vocabulary is fixed and closed: every one of these is a
 // question the compiler answers for itself to decide what to emit. Two things
 // ask it, a `where` clause at a call and an expansion-time `if` in an unrolled
 // body, and they ask the same one so the two cannot drift.

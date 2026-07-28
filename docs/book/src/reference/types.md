@@ -15,6 +15,37 @@ type width with two's-complement semantics and is never checked for overflow.
 Mixed-width integer arithmetic is permitted. The narrower operand widens to the
 wider type.
 
+## 3.1a Conversions
+
+A value converts to another scalar type on its own only when the destination
+can hold every value the source can. `i32` to `i64`, `u16` to `u32`, `f32` to
+`f64`, and any integer to a float wide enough for it all happen silently at an
+assignment, an argument, a return, or a field. Nothing is lost, so nothing has
+to be said.
+
+Every other conversion is refused, and the diagnostic names both types:
+
+```
+count : i32 = total    // total is an i64
+                ^ this is a i64 and a i32 is wanted, which cannot hold all of
+                  one; write cast($i32, ...) to say the loss is meant
+```
+
+`cast($T, value)` is the conversion written out loud. It converts between any
+two scalars: integer to narrower integer (truncating the high bits), signed to
+unsigned and back (reinterpreting the bit pattern), float to integer
+(truncating toward zero), integer to float, and `f64` to `f32`. The result is
+`T`. It never checks and never traps, which is why it has to be written: the
+loss is the caller's to intend.
+
+A literal is not converted, it is typed. `-1` written where an `i32` is wanted
+is an `i32`, and `1.5` where an `f32` is wanted is an `f32`, so neither is a
+narrowing and neither needs a cast. A literal too large for the type it is
+written at is a compile error rather than a silent wrap.
+
+`cast` is for scalars. Reinterpreting a pointer is `ptr_cast` and lives inside
+`unsafe` (6.8); the two are not spellings of each other.
+
 ## 3.2 Aggregate types
 
 - Structs `Name`, declared `Name :: struct { field: T, ... }`, are exactly

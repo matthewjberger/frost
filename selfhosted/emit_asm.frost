@@ -908,8 +908,8 @@ abi_class_of :: fn(mut p: Parser, params: i64, index: i64) -> i64 {
 // or several slots. These three answer what those slots are, and the call
 // emitter walks slots rather than arguments because of them.
 //
-// The same classification is in src/c_abi.rs, checked against what the host C
-// compiler actually does. See docs/book/src/impl/c-compatibility.md.
+// The same classification is in the bootstrap compiler, checked against what
+// the host C compiler actually does.
 // ---------------------------------------------------------------------------
 
 // Whether every scalar of `ty` reaching the eightbyte numbered `word` is
@@ -1377,6 +1377,13 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
     }
     if (kind == NodeKind::Sizeof) {
         asm_i("movq $", type_size(p, node.val), ", %rax")
+        return
+    }
+    // A conversion between numbers, which is the same widening and narrowing
+    // an assignment does; it is written here so it can be asked for.
+    if (kind == NodeKind::Cast) {
+        emit_asm_expr(p, node.a)
+        emit_asm_convert(p, type_of(p, node.a), node.val)
         return
     }
     // A cast between pointers is a retype, so the value is already right.

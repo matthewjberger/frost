@@ -520,6 +520,22 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             advance(p)
             return new_unary(p, NodeKind::SliceLen, inner)
         }
+        // `cast($u8, n)`: a conversion the reader asked for. Written the way
+        // `ptr_cast` and `slice_from` are, so it needs no keyword and no new
+        // precedence level, and what it is for is that a conversion which
+        // loses something otherwise has no spelling: refusing one would leave
+        // no way to say you meant it.
+        if (str_range_eq(p.src, offset, length, "cast")) {
+            advance(p)
+            if (cur(p) == TokenKind::Dollar) {
+                advance(p)
+            }
+            ty := parse_type(p)
+            advance(p)
+            expr := parse_expr(p)
+            advance(p)
+            return new_type_node(p, NodeKind::Cast, expr, ty)
+        }
         if (str_range_eq(p.src, offset, length, "ptr_cast")) {
             advance(p)
             if (cur(p) == TokenKind::Dollar) {
@@ -2856,8 +2872,8 @@ parse_stmt_list :: fn(mut p: Parser, terminator: TokenKind) -> i64 {
 }
 
 // What an `if` over a type predicate answers, or -1 when the condition is not
-// one. The vocabulary is the `where` clause's (spec 11.4a), asked here of a
-// value rather than of a type parameter, since inside an unrolled body the
+// one. The vocabulary is the `where` clause's, asked here of a value rather
+// than of a type parameter, since inside an unrolled body the
 // element's type is what there is to ask about.
 //
 // The cursor sits on the `(` of the condition. It is left where it was.
