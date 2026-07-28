@@ -97,6 +97,34 @@ frost --link -L vendor -o program program.frost       # add an import search pat
 
 Requires a Rust toolchain and a C compiler (gcc or clang) for linking. An import is looked for beside the importing file, then on `-L` and `FROST_PATH`, then in the project's `frost.json`, then in the bundled [`std/`](std).
 
+### The graphics demos
+
+Five programs that open a window and draw through wgpu, in the order they were
+built, each one the smallest step past the last:
+
+```bash
+just deps        # fetch SDL3 and wgpu-native, once
+
+just window      # a window that opens, resizes, and closes
+just triangle    # the first thing drawn: one triangle, one pipeline
+just scene       # entities in an ECS, two passes, depth deciding what is in front
+just spinning    # lit surfaces: a mesh cache, a material registry, two bind groups
+just textured    # the same field with its surfaces read off an image
+```
+
+`W`/`A`/`S`/`D` move, `Q` and `E` drop and rise, the arrow keys look, and escape
+closes. Resizing works in all of them. `just input` opens a window and reports
+what the platform layer saw, which is what to run when a key is not doing what
+it should.
+
+`just deps` puts SDL3 and wgpu-native beside the examples. It is the only step
+that reaches the network, and it is needed once. Set `SDL3_DIR` to use an SDL
+already on the machine instead.
+
+The bindings in [`examples/graphics/wgpu.frost`](examples/graphics) are generated
+from `webgpu.json` rather than written, which is why there are three thousand
+lines of them and no hand-maintained header.
+
 ### Editor support
 
 ```bash

@@ -443,6 +443,39 @@ test "a snapshot refuses a registry naming a different component" {
     ecs_free(world)
 }
 
+// The bytes a snapshot is, and the bytes back. What a program writing one to a
+// file and reading it in again goes through, and the only way in or out.
+test "a snapshot is a run of bytes that reads back" {
+    mut world := ecs_new()
+    position := ecs_register($SavedPosition, world)
+    entity := ecs_spawn(world)
+    ecs_add($SavedPosition, world, entity, position,
+        SavedPosition { x = 3.0, y = 4.0 })
+
+    mut written := snapshot_new()
+    ecs_save(world, written)
+    held := snapshot_bytes(written)
+    assert(slice_len(held) == snapshot_len(written))
+    assert(slice_len(held) > 0)
+
+    // The same bytes handed to a fresh snapshot are the same snapshot: a file
+    // read back in is this, with the run of bytes coming from somewhere else.
+    mut copied := snapshot_new()
+    snapshot_put_bytes(copied, unsafe { ptr_to(held[0]) }, slice_len(held))
+    assert(snapshot_len(copied) == snapshot_len(written))
+
+    mut read := ecs_new()
+    ecs_register($SavedPosition, read)
+    assert(ecs_load(read, copied))
+    assert(ecs_get($SavedPosition, read, entity, position).x == 3.0)
+    assert(ecs_get($SavedPosition, read, entity, position).y == 4.0)
+
+    snapshot_free(copied)
+    snapshot_free(written)
+    ecs_free(read)
+    ecs_free(world)
+}
+
 // A read replaces rather than merges, so loading twice is loading once.
 test "a read replaces whatever the world held" {
     mut world := ecs_new()
