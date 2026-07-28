@@ -3606,6 +3606,71 @@ fn compile_c_with_runtime(name: &str, c_source: &str) -> Option<PathBuf> {
     Some(exe_path)
 }
 
+// The compiler that ships is built through the bootstrap's C backend, which is
+// what `just selfhost-build` asks for, because the compiler that comes out is
+// two and a half times faster than the same source through Cranelift. Both
+// fixpoints build their first stage through Cranelift, and every other helper
+// here does too, so without this nothing in the suite would build a compiler
+// the way the one people run is built. Two routes to the same compiler have to
+// answer the same, and a difference is a miscompilation in whichever of them is
+// wrong.
+#[test]
+fn both_routes_build_the_same_compiler() {
+    if c_compiler().is_none() || !linker_available() {
+        return;
+    }
+    let directory = std::env::temp_dir();
+    let source = self_hosted_source();
+    let frost = env!("CARGO_BIN_EXE_frost");
+    let mut emitted: Vec<String> = Vec::new();
+    for (route, through_c) in [("cranelift", false), ("throughc", true)] {
+        let compiler = directory.join(format!(
+            "{}{}",
+            unique(&format!("frost_route_{route}")),
+            std::env::consts::EXE_SUFFIX
+        ));
+        let mut build = Command::new(frost);
+        build.env("FROST_CHECK_UNSAFE", "0").arg("--link");
+        if through_c {
+            build.arg("--emit-c");
+        }
+        let built = build
+            .arg("-o")
+            .arg(&compiler)
+            .arg(&source)
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "the {route} route did not build a compiler:\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let run = Command::new(&compiler)
+            .env("FROST_CHECK_UNSAFE", "0")
+            .env("FROST_BACKEND", "asm")
+            .env("FROST_INPUT", &source)
+            .output()
+            .unwrap();
+        assert!(
+            run.status.success(),
+            "the compiler the {route} route built failed on its own source:\n{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        emitted
+            .push(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"));
+        let _ = std::fs::remove_file(&compiler);
+    }
+    assert!(
+        emitted[0].lines().count() > 10000,
+        "assembly for the compiler implausibly small ({} lines)",
+        emitted[0].lines().count()
+    );
+    assert_eq!(
+        emitted[0], emitted[1],
+        "the two routes to a compiler disagree about what its own source compiles to"
+    );
+}
+
 // The self-hosting fixpoint: the self-hosted compiler compiles its own source, the resulting
 // compiler compiles that source again, and the two emitted translation units are
 // byte-identical (the classic three-stage bootstrap check).

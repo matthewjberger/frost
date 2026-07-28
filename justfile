@@ -245,8 +245,16 @@ triangle:
     ./examples/graphics/triangle
 
 # Builds the self-hosted compiler (frost written in frost)
+#
+# Through the C backend rather than the native one. That takes about six seconds
+# against six hundred milliseconds, and it is deliberate: the compiler it
+# produces is two and a half times faster on everything it goes on to do,
+# because a C compiler inlines and allocates registers where Cranelift does not.
+# The two routes are held to emitting the same bytes by
+# both_routes_build_the_same_compiler, which is the only thing in the suite that
+# builds a compiler the way this one ships.
 selfhost-build:
-    cargo run -r -q -p frost --bin frost -- --link -o selfhosted/frost.exe selfhosted/frost.frost
+    cargo run -r -q -p frost --bin frost -- --link --emit-c -o selfhosted/frost.exe selfhosted/frost.frost
 
 # Compiles a frost file with the self-hosted compiler, via its C backend (Unix)
 [unix]
