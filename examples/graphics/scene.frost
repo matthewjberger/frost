@@ -1,22 +1,29 @@
-// A spinning triangle, drawn through the platform and the renderer rather than
-// by a program that opens its own window and brings up its own device.
+// A scene the ECS holds and two passes draw, with depth sorting between them.
 //
 //   just scene
 //
-// Escape closes it. Resizing works, which the triangle example does not do:
-// the renderer reconfigures the surface when the platform says the window
-// changed.
+// W/A/S/D move, Q and E drop and rise, the arrow keys look, escape closes it,
+// and resizing works. Four triangles spin at different distances
+// and different speeds. Two passes draw them: the near ones clear the targets,
+// the far ones load and draw over. The far pass runs second and its triangles
+// still go behind, because depth decides that rather than order.
 //
-// What is worth looking at is not the triangle, it is the shape. `main` opens
-// two things and runs a loop. The drawing lives in a `Pass`, which is a name, a
-// function, and the state that function needs, and `renderer_run` is handed a
-// list of them. One pass is a list of one, and nothing about the pass changes
-// when there are eight.
+// That is the point of drawing it this way. If the depth attachment were
+// missing, or the second pass cleared depth instead of loading it, the far
+// triangles would sit on top of the near ones and everything else would look
+// identical. It is a thing that is either right or obviously wrong on screen.
+//
+// The entities are ordinary ECS rows. `ecs_spawn_with` puts each one in its
+// archetype as it is made rather than migrating it there a component at a time,
+// and a query walks the columns.
 
 import "platform.frost"
+import "camera.frost"
 import "renderer.frost"
 import "wgpu.frost"
+import "ecs.frost"
 import "math.frost"
+import "mem.frost"
 import "io.frost"
 
 WIDTH :: 960
@@ -24,21 +31,36 @@ HEIGHT :: 540
 VERTEX_COUNT :: 3
 VERTEX_BYTES :: 96
 UNIFORM_BYTES :: 64
+INSTANCES :: 4
 
 Vertex :: struct { position: Vec4, colour: Vec4 }
 
-// Everything the triangle pass needs to draw. A pass holds its own state
-// because there are no closures to capture it, which turns out to be the
-// clearer arrangement: what a pass owns is written down rather than implied by
-// what its body happens to mention.
-Triangle :: struct {
+// What an entity is: where it sits, how fast it turns, how far round it is now,
+// and which of the two passes draws it.
+Placement :: struct { x: f32, y: f32, z: f32 }
+Spin :: struct { rate: f32, angle: f32 }
+Layer :: struct { near: i64 }
+
+// One uniform buffer and one binding per entity, because each is drawn with its
+// own matrix, and which layer it belongs to. A real scene would write the
+// matrices into one buffer at different offsets; four is not enough to be worth
+// it and the shape is the same.
+Slot :: struct { uniform: Buffer, group: BindGroup, near: i64 }
+
+// What a pass draws with. No world in it: the ECS is read once a frame, before
+// any pass runs, and what it produces is the matrix in each slot's buffer. So a
+// pass reads nothing that can change while it records, and the world is
+// borrowed in exactly one place rather than held by two passes at once.
+//
+// That split is not a workaround for the move checker refusing the other
+// arrangement, though it did. Preparing and executing are different jobs: one
+// walks game state and the other records commands, and keeping them apart is
+// what lets the second be handed a list of slots and nothing else.
+Scene :: struct {
     pipeline: RenderPipeline,
-    bind_group: BindGroup,
     vertices: Buffer,
-    uniform: Buffer,
-    queue: Queue,
-    view_projection: Mat4,
-    turned: f32,
+    slots: []Slot,
+    draw_near: i64,
 }
 
 SHADER :: "
@@ -65,85 +87,72 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 }
 "
 
-// The pass body. It takes the frame and its own state, writes the matrix for
-// this frame, and records one draw.
-draw_triangle :: fn(mut f: Frame, state: ^u8) {
-    mut held := unsafe { ptr_cast($Triangle, state) }
-    mut model := mat4_rotation_y(unsafe { held^.turned })
-    mut mvp := mat4_mul(unsafe { held^.view_projection }, model)
-    queue_write_buffer(unsafe { held^.queue }, unsafe { held^.uniform }, 0,
-        unsafe { ptr_cast($u8, ptr_to(mvp.m[0])) }, UNIFORM_BYTES)
+// One pass body, told by its state which layer it is for. Both passes are the
+// same function with different state, which is what a pass being a value buys:
+// nothing had to be written twice to have two of them.
+draw_layer :: fn(mut f: Frame, state: ^u8) {
+    mut s := unsafe { ptr_cast($Scene, state) }
+    near := unsafe { s^.draw_near }
 
-    pass := frame_pass(f, LOAD_OP_CLEAR,
-        Color { r = 0.05, g = 0.05, b = 0.08, a = 1.0 })
-    render_pass_encoder_set_pipeline(pass, unsafe { held^.pipeline })
-    render_pass_encoder_set_bind_group(pass, 0, unsafe { held^.bind_group }, 0,
-        no_pointer())
-    render_pass_encoder_set_vertex_buffer(pass, 0, unsafe { held^.vertices }, 0,
+    // The first pass clears both targets, the second loads them. Loading depth
+    // is what lets the second pass sort against the first rather than only
+    // against itself.
+    mut load := LOAD_OP_LOAD
+    mut depth_load := LOAD_OP_LOAD
+    if (near == 1) {
+        load = LOAD_OP_CLEAR
+        depth_load = LOAD_OP_CLEAR
+    }
+    pass := frame_pass(f, load,
+        Color { r = 0.05, g = 0.05, b = 0.08, a = 1.0 }, depth_load)
+    render_pass_encoder_set_pipeline(pass, unsafe { s^.pipeline })
+    render_pass_encoder_set_vertex_buffer(pass, 0, unsafe { s^.vertices }, 0,
         VERTEX_BYTES)
-    render_pass_encoder_draw(pass, VERTEX_COUNT, 1, 0, 0)
+
+    mut index : i64 = 0
+    while (index < INSTANCES) {
+        slot := unsafe { s^.slots[index] }
+        if (slot.near == near) {
+            render_pass_encoder_set_bind_group(pass, 0, slot.group, 0,
+                no_pointer())
+            render_pass_encoder_draw(pass, VERTEX_COUNT, 1, 0, 0)
+        }
+        index = index + 1
+    }
     render_pass_encoder_end(pass)
 }
 
-// Builds everything the pass will hold. Done once, because none of it changes
-// between frames: the pipeline, the buffers, and the binding that ties the
-// uniform to the shader.
-make_triangle :: fn(device: Device, queue: Queue, format: u32) -> Triangle {
+// The frame's read of the world: advance every angle, work out where each
+// entity is, and leave the matrix in the buffer its binding points at. This is
+// the only place the world is touched, and it happens before any pass records.
+prepare :: fn(mut world: World, queue: Queue, entities: []Entity,
+    slots: []Slot, placement: i64, spin: i64, view_projection: Mat4,
+    step: f32) {
+    mut index : i64 = 0
+    while (index < slice_len(entities)) {
+        held := entities[index]
+        mut turn := ecs_get($Spin, world, held, spin)
+        turn.angle = turn.angle + turn.rate * step
+        ecs_set($Spin, world, held, spin, turn)
+
+        place := ecs_get($Placement, world, held, placement)
+        model := mat4_mul(mat4_translation(vec3(place.x, place.y, place.z)),
+            mat4_rotation_y(turn.angle))
+        mut mvp := mat4_mul(view_projection, model)
+        queue_write_buffer(queue, slots[index].uniform, 0,
+            unsafe { ptr_cast($u8, ptr_to(mvp.m[0])) }, UNIFORM_BYTES)
+        index = index + 1
+    }
+}
+
+make_pipeline :: fn(device: Device, format: u32,
+    layout: PipelineLayout) -> RenderPipeline {
     mut wgsl := shader_source_WGSL_init()
     wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
     wgsl.code = StringView { data = SHADER, length = str_len(SHADER) }
     mut module_descriptor := shader_module_descriptor_init()
     module_descriptor.next_in_chain = unsafe { ptr_cast($u8, ptr_to(wgsl)) }
     shader := device_create_shader_module(device, ptr_to(module_descriptor))
-
-    mut vertices : [VERTEX_COUNT]Vertex = [
-        Vertex { position = vec4(0.0 - 1.0, 0.0 - 1.0, 0.0, 1.0),
-            colour = vec4(1.0, 0.2, 0.2, 1.0) },
-        Vertex { position = vec4(1.0, 0.0 - 1.0, 0.0, 1.0),
-            colour = vec4(0.2, 1.0, 0.4, 1.0) },
-        Vertex { position = vec4(0.0, 1.0, 0.0, 1.0),
-            colour = vec4(0.3, 0.4, 1.0, 1.0) },
-    ]
-    mut vertex_descriptor := buffer_descriptor_init()
-    vertex_descriptor.usage = BufferUsage::Vertex | BufferUsage::CopyDst
-    vertex_descriptor.size = VERTEX_BYTES
-    vertex_buffer := device_create_buffer(device, ptr_to(vertex_descriptor))
-    queue_write_buffer(queue, vertex_buffer, 0,
-        unsafe { ptr_cast($u8, ptr_to(vertices[0])) }, VERTEX_BYTES)
-
-    mut uniform_descriptor := buffer_descriptor_init()
-    uniform_descriptor.usage = BufferUsage::Uniform | BufferUsage::CopyDst
-    uniform_descriptor.size = UNIFORM_BYTES
-    uniform_buffer := device_create_buffer(device, ptr_to(uniform_descriptor))
-
-    mut layout_entry := bind_group_layout_entry_init()
-    layout_entry.binding = 0
-    layout_entry.visibility = ShaderStage::Vertex
-    layout_entry.buffer.type = BUFFER_BINDING_TYPE_UNIFORM
-    layout_entry.buffer.min_binding_size = UNIFORM_BYTES
-    mut group_layout_descriptor := bind_group_layout_descriptor_init()
-    group_layout_descriptor.entries_count = 1
-    group_layout_descriptor.entries =
-        unsafe { ptr_cast($u8, ptr_to(layout_entry)) }
-    group_layout := device_create_bind_group_layout(device,
-        ptr_to(group_layout_descriptor))
-
-    mut group_entry := bind_group_entry_init()
-    group_entry.binding = 0
-    group_entry.buffer = uniform_buffer
-    group_entry.size = UNIFORM_BYTES
-    mut group_descriptor := bind_group_descriptor_init()
-    group_descriptor.layout = group_layout
-    group_descriptor.entries_count = 1
-    group_descriptor.entries = unsafe { ptr_cast($u8, ptr_to(group_entry)) }
-    bind_group := device_create_bind_group(device, ptr_to(group_descriptor))
-
-    mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
-    pipeline_layout_descriptor.bind_group_layouts_count = 1
-    pipeline_layout_descriptor.bind_group_layouts =
-        unsafe { ptr_cast($u8, ptr_to(group_layout)) }
-    pipeline_layout := device_create_pipeline_layout(device,
-        ptr_to(pipeline_layout_descriptor))
 
     mut attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
     attributes[0].format = VERTEX_FORMAT_FLOAT32X4
@@ -153,11 +162,11 @@ make_triangle :: fn(device: Device, queue: Queue, format: u32) -> Triangle {
     attributes[1].offset = 16
     attributes[1].shader_location = 1
 
-    mut layout := vertex_buffer_layout_init()
-    layout.array_stride = 32
-    layout.step_mode = VERTEX_STEP_MODE_VERTEX
-    layout.attributes_count = 2
-    layout.attributes = unsafe { ptr_cast($u8, ptr_to(attributes[0])) }
+    mut buffer_layout := vertex_buffer_layout_init()
+    buffer_layout.array_stride = 32
+    buffer_layout.step_mode = VERTEX_STEP_MODE_VERTEX
+    buffer_layout.attributes_count = 2
+    buffer_layout.attributes = unsafe { ptr_cast($u8, ptr_to(attributes[0])) }
 
     mut target := color_target_state_init()
     target.format = format
@@ -169,46 +178,27 @@ make_triangle :: fn(device: Device, queue: Queue, format: u32) -> Triangle {
     fragment.targets_count = 1
     fragment.targets = unsafe { ptr_cast($u8, ptr_to(target)) }
 
-    mut pipeline_descriptor := render_pipeline_descriptor_init()
-    pipeline_descriptor.layout = pipeline_layout
-    pipeline_descriptor.vertex.module = shader
-    pipeline_descriptor.vertex.entry_point =
-        StringView { data = "vs_main", length = 7 }
-    pipeline_descriptor.vertex.buffers_count = 1
-    pipeline_descriptor.vertex.buffers =
-        unsafe { ptr_cast($u8, ptr_to(layout)) }
-    pipeline_descriptor.primitive.topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
-    pipeline_descriptor.primitive.front_face = FRONT_FACE_CCW
-    pipeline_descriptor.primitive.cull_mode = CULL_MODE_NONE
-    pipeline_descriptor.multisample.count = 1
-    pipeline_descriptor.multisample.mask = 4294967295
-    pipeline_descriptor.fragment = unsafe { ptr_cast($u8, ptr_to(fragment)) }
+    // Depth on: write it, and keep the fragment only where it is nearer than
+    // what is already there.
+    mut depth := depth_stencil_state_init()
+    depth.format = depth_format()
+    depth.depth_write_enabled = OPTIONAL_BOOL_TRUE
+    depth.depth_compare = COMPARE_FUNCTION_LESS
 
-    Triangle {
-        pipeline = device_create_render_pipeline(device,
-            ptr_to(pipeline_descriptor)),
-        bind_group = bind_group,
-        vertices = vertex_buffer,
-        uniform = uniform_buffer,
-        queue = queue,
-        view_projection = mat4_identity(),
-        turned = 0.0,
-    }
-}
-
-// The camera, rebuilt when the window changes shape so the triangle does not
-// stretch with it.
-look :: fn(w: i64, h: i64) -> Mat4 {
-    mut aspect : f32 = 1.0
-    if (h > 0) {
-        wide : f32 = w
-        tall : f32 = h
-        aspect = wide / tall
-    }
-    projection := mat4_perspective_zo(radians(60.0), aspect, 0.1, 100.0)
-    view := mat4_look_at(vec3(0.0, 0.0, 3.0), vec3(0.0, 0.0, 0.0),
-        vec3(0.0, 1.0, 0.0))
-    mat4_mul(projection, view)
+    mut descriptor := render_pipeline_descriptor_init()
+    descriptor.layout = layout
+    descriptor.vertex.module = shader
+    descriptor.vertex.entry_point = StringView { data = "vs_main", length = 7 }
+    descriptor.vertex.buffers_count = 1
+    descriptor.vertex.buffers = unsafe { ptr_cast($u8, ptr_to(buffer_layout)) }
+    descriptor.primitive.topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
+    descriptor.primitive.front_face = FRONT_FACE_CCW
+    descriptor.primitive.cull_mode = CULL_MODE_NONE
+    descriptor.multisample.count = 1
+    descriptor.multisample.mask = 4294967295
+    descriptor.depth_stencil = ptr_to(depth)
+    descriptor.fragment = unsafe { ptr_cast($u8, ptr_to(fragment)) }
+    device_create_render_pipeline(device, ptr_to(descriptor))
 }
 
 main :: fn() -> i64 {
@@ -224,14 +214,103 @@ main :: fn() -> i64 {
         platform_close(p)
         return 2
     }
+    device := renderer_device(r)
+    queue := renderer_queue(r)
 
-    mut triangle := make_triangle(renderer_device(r), renderer_queue(r),
-        renderer_format(r))
-    triangle.view_projection = look(WIDTH, HEIGHT)
+    mut vertices : [VERTEX_COUNT]Vertex = [
+        Vertex { position = vec4(0.0 - 0.6, 0.0 - 0.5, 0.0, 1.0),
+            colour = vec4(1.0, 0.3, 0.3, 1.0) },
+        Vertex { position = vec4(0.6, 0.0 - 0.5, 0.0, 1.0),
+            colour = vec4(0.3, 1.0, 0.4, 1.0) },
+        Vertex { position = vec4(0.0, 0.6, 0.0, 1.0),
+            colour = vec4(0.4, 0.5, 1.0, 1.0) },
+    ]
+    mut vertex_descriptor := buffer_descriptor_init()
+    vertex_descriptor.usage = BufferUsage::Vertex | BufferUsage::CopyDst
+    vertex_descriptor.size = VERTEX_BYTES
+    vertex_buffer := device_create_buffer(device, ptr_to(vertex_descriptor))
+    queue_write_buffer(queue, vertex_buffer, 0,
+        unsafe { ptr_cast($u8, ptr_to(vertices[0])) }, VERTEX_BYTES)
 
-    mut passes : [1]Pass = [
-        Pass { name = "triangle", draw = draw_triangle,
-            state = unsafe { ptr_cast($u8, ptr_to(triangle)) } },
+    mut layout_entry := bind_group_layout_entry_init()
+    layout_entry.binding = 0
+    layout_entry.visibility = ShaderStage::Vertex
+    layout_entry.buffer.type = BUFFER_BINDING_TYPE_UNIFORM
+    layout_entry.buffer.min_binding_size = UNIFORM_BYTES
+    mut group_layout_descriptor := bind_group_layout_descriptor_init()
+    group_layout_descriptor.entries_count = 1
+    group_layout_descriptor.entries =
+        unsafe { ptr_cast($u8, ptr_to(layout_entry)) }
+    group_layout := device_create_bind_group_layout(device,
+        ptr_to(group_layout_descriptor))
+
+    mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
+    pipeline_layout_descriptor.bind_group_layouts_count = 1
+    pipeline_layout_descriptor.bind_group_layouts =
+        unsafe { ptr_cast($u8, ptr_to(group_layout)) }
+    pipeline_layout := device_create_pipeline_layout(device,
+        ptr_to(pipeline_layout_descriptor))
+
+    // The world, and the three components a drawn thing has.
+    mut world := ecs_new()
+    placement := ecs_register($Placement, world)
+    spin := ecs_register($Spin, world)
+    layer := ecs_register($Layer, world)
+    wanted := mask_with(mask_with(mask_with(mask_empty(), placement), spin),
+        layer)
+
+    mut entities := heap_slice($Entity, INSTANCES)
+    mut slots := heap_slice($Slot, INSTANCES)
+    mut spread : [INSTANCES]f32 = [0.0 - 1.1, 1.1, 0.0 - 0.5, 0.6]
+    mut depths : [INSTANCES]f32 = [0.0, 0.0, 0.0 - 1.6, 0.0 - 1.6]
+    mut rates : [INSTANCES]f32 = [1.0, 0.0 - 1.4, 0.7, 0.0 - 0.5]
+    mut nears : [INSTANCES]i64 = [1, 1, 0, 0]
+
+    mut made : i64 = 0
+    while (made < INSTANCES) {
+        // Straight into the archetype it belongs in, rather than spawning bare
+        // and migrating once per component.
+        held := ecs_spawn_with(world, wanted)
+        ecs_set($Placement, world, held, placement,
+            Placement { x = spread[made], y = 0.0, z = depths[made] })
+        ecs_set($Spin, world, held, spin,
+            Spin { rate = rates[made], angle = 0.0 })
+        ecs_set($Layer, world, held, layer, Layer { near = nears[made] })
+        entities[made] = held
+
+        mut uniform_descriptor := buffer_descriptor_init()
+        uniform_descriptor.usage = BufferUsage::Uniform | BufferUsage::CopyDst
+        uniform_descriptor.size = UNIFORM_BYTES
+        uniform := device_create_buffer(device, ptr_to(uniform_descriptor))
+        mut group_entry := bind_group_entry_init()
+        group_entry.binding = 0
+        group_entry.buffer = uniform
+        group_entry.size = UNIFORM_BYTES
+        mut group_descriptor := bind_group_descriptor_init()
+        group_descriptor.layout = group_layout
+        group_descriptor.entries_count = 1
+        group_descriptor.entries =
+            unsafe { ptr_cast($u8, ptr_to(group_entry)) }
+        slots[made] = Slot { uniform = uniform,
+            group = device_create_bind_group(device, ptr_to(group_descriptor)),
+            near = nears[made] }
+        made = made + 1
+    }
+
+    pipeline := make_pipeline(device, renderer_format(r), pipeline_layout)
+    mut eye := camera_default()
+    mut near_scene := Scene { pipeline = pipeline, vertices = vertex_buffer,
+        slots = slots, draw_near = 1 }
+    mut far_scene := Scene { pipeline = pipeline, vertices = vertex_buffer,
+        slots = slots, draw_near = 0 }
+
+    // Near first so it clears, far second so it loads and is sorted against
+    // what the first wrote.
+    mut passes : [2]Pass = [
+        Pass { name = "near", draw = draw_layer,
+            state = unsafe { ptr_cast($u8, ptr_to(near_scene)) } },
+        Pass { name = "far", draw = draw_layer,
+            state = unsafe { ptr_cast($u8, ptr_to(far_scene)) } },
     ]
 
     while (platform_poll(p)) {
@@ -240,11 +319,11 @@ main :: fn() -> i64 {
         }
         if (resized(p)) {
             renderer_resize(r, width(p), height(p))
-            triangle.view_projection = look(width(p), height(p))
         }
-        // A third of a turn a second, from the clock rather than the frame
-        // count, so the speed does not follow the frame rate.
-        triangle.turned = triangle.turned + radians(120.0) * delta_seconds(p)
+        step := delta_seconds(p)
+        camera_advance(eye, p, step)
+        prepare(world, queue, entities, slots, placement, spin,
+            camera_view_projection(eye, width(p), height(p)), step)
 
         mut f := renderer_begin(r)
         if (frame_ok(f)) {
@@ -253,6 +332,9 @@ main :: fn() -> i64 {
         }
     }
 
+    heap_release_slice($Slot, slots)
+    heap_release_slice($Entity, entities)
+    ecs_free(world)
     renderer_close(r)
     platform_close(p)
     0
