@@ -5778,6 +5778,126 @@ fn an_exported_function_may_return_an_unexported_type() {
     assert_eq!(output, "7\n");
 }
 
+// A constant standing for a constant another module exports, which is what
+// declaring one is for: a name for a number a C header wrote down, given once
+// where the binding is and used by everything that imports it.
+//
+// Worth its own case because the substitution and the import are separate
+// mechanisms and a name that resolves inside one file says nothing about a name
+// that arrives through an export list.
+#[test]
+fn a_constant_may_stand_for_one_from_another_module() {
+    let directory = std::env::temp_dir().join("frost_const_alias");
+    let library = directory.join("lib");
+    std::fs::create_dir_all(&library).unwrap();
+    std::fs::write(
+        library.join("formats.frost"),
+        "export TEXTURE_DEPTH24\n\
+         TEXTURE_DEPTH24 :: 46\n",
+    )
+    .unwrap();
+    let root = directory.join("const_alias_app.frost");
+    std::fs::write(
+        &root,
+        "import \"lib/formats.frost\"\n\
+         DEPTH :: TEXTURE_DEPTH24\n\
+         main :: fn() -> i64 {\n    print DEPTH\n    0\n}\n",
+    )
+    .unwrap();
+
+    if !linker_available() {
+        let _ = std::fs::remove_dir_all(&directory);
+        return;
+    }
+    let exe = directory.join(format!("app{}", std::env::consts::EXE_SUFFIX));
+    let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe)
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "a constant naming an imported constant did not compile:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let ran = Command::new(&exe).output().unwrap();
+    let output = String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n");
+
+    // The self-hosted compiler answers the same, since a constant is a constant
+    // in one language rather than in one compiler.
+    let hosted = build_self_hosted_compiler("constalias").map(|compiler| {
+        let hosted_exe =
+            directory.join(format!("hosted{}", std::env::consts::EXE_SUFFIX));
+        let emitted = Command::new(&compiler)
+            .arg("--link")
+            .arg("-o")
+            .arg(&hosted_exe)
+            .arg(&root)
+            .output()
+            .unwrap();
+        assert!(
+            emitted.status.success(),
+            "the self-hosted compiler refused the imported constant:\n{}",
+            String::from_utf8_lossy(&emitted.stderr)
+        );
+        let ran = Command::new(&hosted_exe).output().unwrap();
+        let _ = std::fs::remove_file(&compiler);
+        String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n")
+    });
+
+    let _ = std::fs::remove_dir_all(&directory);
+    assert_eq!(output, "46\n");
+    if let Some(hosted) = hosted {
+        assert_eq!(hosted, "46\n", "the two compilers disagreed");
+    }
+}
+
+// A constant that reaches itself has no value, and substituting one never
+// finishes: the compiler recursed until the stack ran out and reported nothing.
+// It is refused now, by name, before anything is lowered.
+#[test]
+fn a_constant_defined_in_terms_of_itself_is_refused() {
+    let directory = std::env::temp_dir();
+    let input = directory
+        .join(unique("frost_const_cycle"))
+        .with_extension("frost");
+    std::fs::write(
+        &input,
+        "FIRST :: SECOND + 1\n\
+         SECOND :: FIRST + 1\n\
+         main :: fn() -> i64 {\n    print FIRST\n    0\n}\n",
+    )
+    .unwrap();
+    let exe = directory
+        .join(unique("frost_const_cycle"))
+        .with_extension(std::env::consts::EXE_EXTENSION);
+
+    let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe)
+        .arg(&input)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&exe);
+    assert!(
+        !built.status.success(),
+        "a constant defined in terms of itself compiled"
+    );
+    let complaint = String::from_utf8_lossy(&built.stderr);
+    assert!(
+        complaint.contains("defined in terms of itself"),
+        "the refusal did not say what was wrong:\n{complaint}"
+    );
+    assert!(
+        complaint.contains("FIRST") && complaint.contains("SECOND"),
+        "the refusal did not name the constants in the cycle:\n{complaint}"
+    );
+}
+
 // Step 4 of docs/book/src/impl/separate-compilation.md, as an oracle. With
 // FROST_BUILD_FROM_INTERFACES an imported module contributes what its interface
 // says and nothing else, so producing the same program either way is the
@@ -15133,6 +15253,54 @@ fn bootstrap_output(name: &str, source: &str) -> Option<String> {
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A constant standing for another constant. Both compilers parsed
+    // `ALIAS :: BASE` as an expression rather than a declaration, because those
+    // are also the tokens of `Enum::Variant` and what followed had to say which
+    // it was. So the constant did not exist, and every use of it came back as
+    // an unknown variable from a file that named it two lines up.
+    //
+    // At the top level a variant on its own is a statement with no effect and
+    // nothing writes one, so the depth settles it and nothing has to follow.
+    (
+        "a_constant_standing_for_another_constant",
+        "BASE :: 46\n\
+         ALIAS :: BASE\n\
+         main :: fn() -> i64 {\n    print ALIAS\n    0\n}\n",
+        "46\n",
+    ),
+    // The same through three, since one link working says nothing about a
+    // chain: each is substituted into the next until a literal is reached.
+    (
+        "a_chain_of_three_constants",
+        "FIRST :: 7\n\
+         SECOND :: FIRST\n\
+         THIRD :: SECOND\n\
+         main :: fn() -> i64 {\n    print THIRD + 1\n    0\n}\n",
+        "8\n",
+    ),
+    // Indexing a constant that is a string. The name is the literal wherever it
+    // is written, and every question the index path asks was asked of the name
+    // instead: the bootstrap reached the array path and answered unknown
+    // variable, the self-hosted compiler typed the literal as a raw pointer and
+    // demanded an `unsafe` block for a read whose length it had counted itself.
+    (
+        "indexing_a_constant_that_is_a_string",
+        "SUFFIX :: \"xyzw\"\n\
+         main :: fn() -> i64 {\n\
+         \x20   print SUFFIX[0]\n\
+         \x20   print SUFFIX[3]\n    0\n}\n",
+        "120\n119\n",
+    ),
+    // And one that is an array, which is the same bug: an aggregate constant
+    // has to have an address before it can be indexed, and neither compiler
+    // gave one a place to be.
+    (
+        "indexing_a_constant_that_is_an_array",
+        "ROW :: [10, 20, 30]\n\
+         main :: fn() -> i64 {\n\
+         \x20   print ROW[1]\n    0\n}\n",
+        "20\n",
+    ),
     // A string literal bound to a name with no annotation. The literal is a
     // pointer where a `^i8` is asked for and a `str` where a `str` is, and a
     // binding asks for neither, so the self-hosted compiler kept the pointer

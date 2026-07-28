@@ -441,7 +441,12 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
         // type, and the locals that answer it exist only here. The unsafety
         // gate runs before this pass and has no local table, so what it needs
         // is written onto the node while it can be known.
-        if (kind == NodeKind::Index && is_raw_pointer(type_of(p, node.a))) {
+        // A string literal is typed as a pointer, and indexing one is still
+        // checked: its length came out of the source along with its bytes, so
+        // nothing is being vouched for and no block is asked for.
+        if (kind == NodeKind::Index && is_raw_pointer(type_of(p, node.a))
+            && arena_at(p.arena, constant_node(p, node.a)).kind
+                != NodeKind::StrLit) {
             mut held := arena_at(p.arena, id)
             held.c = 1
         }

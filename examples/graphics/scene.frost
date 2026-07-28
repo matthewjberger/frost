@@ -181,7 +181,7 @@ make_pipeline :: fn(device: Device, format: u32,
     // Depth on: write it, and keep the fragment only where it is nearer than
     // what is already there.
     mut depth := depth_stencil_state_init()
-    depth.format = depth_format()
+    depth.format = DEPTH_FORMAT
     depth.depth_write_enabled = OPTIONAL_BOOL_TRUE
     depth.depth_compare = COMPARE_FUNCTION_LESS
 

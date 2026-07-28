@@ -32,7 +32,7 @@ export Renderer, Frame, Pass,
     renderer_begin, renderer_end, renderer_run,
     renderer_device, renderer_queue, renderer_format, renderer_depth_format,
     frame_ok, frame_encoder, frame_view, frame_pass,
-    depth_format, no_pointer
+    DEPTH_FORMAT, no_pointer
 
 no_pointer :: fn() -> ^u8 {
     zero := 0
@@ -40,13 +40,9 @@ no_pointer :: fn() -> ^u8 {
 }
 
 // What depth is kept in. Twenty-four bits with no stencil is what a scene that
-// only sorts needs, and every backend has it.
-//
-// A function rather than a constant because a constant standing for another
-// module's constant does not reach the backend: what a name is worth has to be
-// folded, and the fold does not cross the import. One call, and both the
-// texture and every pipeline tested against it agree without either naming 46.
-depth_format :: fn() -> u32 { TEXTURE_FORMAT_DEPTH24_PLUS }
+// only sorts needs, and every backend has it. One name, so the texture and
+// every pipeline tested against it agree without either writing the number.
+DEPTH_FORMAT :: TEXTURE_FORMAT_DEPTH24_PLUS
 
 // The pieces a draw needs, kept together because none of them is useful alone
 // and every one of them is made once.
@@ -72,7 +68,7 @@ make_depth :: fn(mut r: Renderer, w: i64, h: i64) {
     descriptor.dimension = TEXTURE_DIMENSION_2D
     descriptor.size = Extent3D { width = w, height = h,
         depth_or_array_layers = 1 }
-    descriptor.format = depth_format()
+    descriptor.format = DEPTH_FORMAT
     descriptor.mip_level_count = 1
     descriptor.sample_count = 1
     r.depth = device_create_texture(r.device, ptr_to(descriptor))
@@ -222,7 +218,7 @@ renderer_ok :: fn(r: Renderer) -> bool { r.opened }
 renderer_device :: fn(r: Renderer) -> Device { r.device }
 renderer_queue :: fn(r: Renderer) -> Queue { r.queue }
 renderer_format :: fn(r: Renderer) -> u32 { r.format }
-renderer_depth_format :: fn(r: Renderer) -> u32 { depth_format() }
+renderer_depth_format :: fn(r: Renderer) -> u32 { DEPTH_FORMAT }
 
 renderer_close :: fn(mut r: Renderer) {
     r.opened = false

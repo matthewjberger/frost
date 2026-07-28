@@ -4414,8 +4414,22 @@ at_const_declaration :: fn(mut p: Parser) -> bool {
         return false
     }
     third := peek_kind(p, 2)
-    third == TokenKind::Int || third == TokenKind::Lparen
-        || (third == TokenKind::Ident && is_arith_op(peek_kind(p, 3)))
+    if (third == TokenKind::Int || third == TokenKind::Lparen) {
+        return true
+    }
+    if (third != TokenKind::Ident) {
+        return false
+    }
+    if (is_arith_op(peek_kind(p, 3))) {
+        return true
+    }
+    // `DEPTH :: TEXTURE_DEPTH24`, a name standing for a name. What follows used
+    // to have to be an operator, because `Enum::Variant` is these same tokens
+    // and is an expression. Asking whether the second name is already a
+    // constant tells them apart without one: a variant's type is not, and a
+    // constant this one is written in terms of has been read by the time this
+    // is, since a constant may only name one written above it.
+    is_const(p, peek_off(p, 2), peek_len(p, 2))
 }
 
 // Whether the declaration here introduces a type rather than a value.
@@ -4533,12 +4547,13 @@ parse_program :: fn(mut p: Parser) -> i64 {
             // arguments before it, is what tells this from a bare
             // `Name :: OtherName`.
             parse_value_const(p)
-        } else if (third == TokenKind::Str || third == TokenKind::Float) {
+        } else if (third == TokenKind::Str || third == TokenKind::Float
+            || third == TokenKind::Lbracket) {
             // A constant whose value is a literal this compiler folds no
             // arithmetic over. It is kept as the literal's node and written out
             // again wherever the name is read, so it reaches each use the way a
-            // literal written there would, including the length a `str`
-            // carries.
+            // literal written there would, including the length a `str` or an
+            // array carries.
             parse_value_const(p)
         } else if (third != TokenKind::KwFn && third != TokenKind::KwInline) {
             // Everything above is a form this compiler knows. Anything else

@@ -108,7 +108,10 @@ fn names_in_block(block: &Block, out: &mut Vec<String>) {
     }
 }
 
-fn names_in_expression(expression: &Expression, out: &mut Vec<String>) {
+pub(crate) fn names_in_expression(
+    expression: &Expression,
+    out: &mut Vec<String>,
+) {
     match expression {
         // A call names its callee, which for a generic body is how a template
         // reaches a helper the module did not export.
