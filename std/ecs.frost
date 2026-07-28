@@ -2372,6 +2372,17 @@ world_clear :: fn(mut world: World) {
     world.next_id = 0
     lookup_free(world.lookup)
     world.lookup = lookup_new(32)
+    // The empty archetype comes back, because a world without one is not a
+    // world: `ecs_spawn` reaches it by index rather than through the lookup, so
+    // the next spawn into a cleared world would otherwise put a row where there
+    // is no table. A read fills the rest in over the top of this.
+    vec_push(
+        $Table,
+        world.tables,
+        Table { mask = mask_empty(), entities = vec_new($Entity, 16),
+            columns = vec_new($Column, 1) },
+    )
+    lookup_put(world.lookup, mask_empty(), 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -5134,6 +5145,193 @@ test "a partial trim keeps what is past the mark" {
     assert(slice_len(events_slice($TestHealth, channel)) == 0)
     assert(events_sent(channel) == 5)
     events_free(channel)
+}
+
+// The pieces underneath a mask: how many bits a word holds and which column a
+// component's bit lands on. A table's columns are in ascending component order
+// and nothing maps one to the other at run time, so this counting is what makes
+// a component reach its column at all.
+test "a column is found by counting the bits below it" {
+    assert(bits_in(0) == 0)
+    assert(bits_in(1) == 1)
+    assert(bits_in(255) == 8)
+
+    mut m := mask_empty()
+    m = mask_with(m, 1)
+    m = mask_with(m, 4)
+    m = mask_with(m, 9)
+    // Three components held, so three columns, in the order the indices run.
+    assert(column_position(m, 1) == 0)
+    assert(column_position(m, 4) == 1)
+    assert(column_position(m, 9) == 2)
+    assert(bits_in(m.words[0]) == 3)
+
+    // Clearing a whole set at once is what a bundle leaving takes off.
+    unwanted := mask_with(mask_empty(), 4)
+    left := mask_without_mask(m, unwanted)
+    assert(mask_has(left, 1))
+    assert(mask_has(left, 4) == false)
+    assert(mask_has(left, 9))
+    assert(column_position(left, 9) == 1)
+}
+
+// A world emptied in place keeps the registry it was given and loses everything
+// that was in it. The archetype holding nothing comes back with it, since
+// `ecs_spawn` reaches that one by index and a cleared world is still a world.
+test "clearing a world keeps its registry and drops its rows" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    entity := ecs_spawn(world)
+    ecs_add($TestPosition, world, entity, position,
+        TestPosition { x = 5.0, y = 0.0 })
+    assert(ecs_count(world) == 1)
+
+    world_clear(world)
+    assert(ecs_count(world) == 0)
+    assert(ecs_alive(world, entity) == false)
+    // The registry survives, so the same component is still known by the same
+    // index and the world is usable rather than needing building again.
+    assert(world.registry.count == 1)
+    assert(ecs_component_by_name(world, "TestPosition") == position)
+
+    again := ecs_spawn(world)
+    ecs_add($TestPosition, world, again, position,
+        TestPosition { x = 6.0, y = 0.0 })
+    assert(ecs_get($TestPosition, world, again, position).x == 6.0)
+    ecs_free(world)
+}
+
+// The ticks a column carries per row, read off the table a walk stopped on.
+// `query_changed` says when a row was last written and `query_added` when it
+// arrived, which are different questions and different arrays.
+test "a walk reads when a row arrived and when it changed" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    early := ecs_spawn(world)
+    ecs_add($TestPosition, world, early, position,
+        TestPosition { x = 1.0, y = 0.0 })
+
+    mark := ecs_now(world)
+    ecs_tick(world)
+    ecs_set($TestPosition, world, early, position,
+        TestPosition { x = 2.0, y = 0.0 })
+
+    mut q := query_begin(world)
+    query_with(q, position)
+    mut found := false
+    while (query_next(world, q)) {
+        changed := query_changed(world, q, position)
+        added := query_added(world, q, position)
+        assert(slice_len(changed) == q.count)
+        assert(slice_len(added) == q.count)
+        mut row : i64 = 0
+        while (row < q.count) {
+            // Written after the mark, and put there before it.
+            assert(changed[row] > mark)
+            assert(added[row] <= mark)
+            found = true
+            row = row + 1
+        }
+    }
+    assert(found)
+    ecs_free(world)
+}
+
+// Stages run in the order they are written down, and the order is a number so
+// a schedule can sort by it.
+test "the stages are ordered" {
+    assert(stage_order(Stage::First) == 0)
+    assert(stage_order(Stage::Update) == 1)
+    assert(stage_order(Stage::Last) == 2)
+    assert(stage_order(Stage::First) < stage_order(Stage::Update))
+    assert(stage_order(Stage::Update) < stage_order(Stage::Last))
+}
+
+// A tag named by a type rather than by a handle, kept by the group so several
+// members can ask about the same mark. The tag inside it is released in place
+// when the group goes, which is what `tag_release` is for: a tag held within
+// another value cannot be moved out of it to be consumed.
+test "a group holds tags named by type" {
+    mut g := group_new()
+    engine := group_add_world(g)
+    group_register($EngineTransform, g, engine)
+
+    marked_entity := group_spawn(g)
+    plain := group_spawn(g)
+    group_set($EngineTransform, g, marked_entity,
+        EngineTransform { x = 1.0, y = 0.0 })
+    group_set($EngineTransform, g, plain, EngineTransform { x = 2.0, y = 0.0 })
+
+    // The type names the tag, so two places asking for the same one get the
+    // same set without passing a handle between them.
+    first := group_tag_type($GameHealth, g)
+    again := group_tag_type($GameHealth, g)
+    assert(first == again)
+    assert(group_tag_type($GameSpeed, g) != first)
+
+    group_add_tag($GameHealth, g, marked_entity)
+    assert(group_has_tag($GameHealth, g, marked_entity))
+    assert(group_has_tag($GameHealth, g, plain) == false)
+    assert(group_has_tag($GameSpeed, g, marked_entity) == false)
+
+    group_remove_tag($GameHealth, g, marked_entity)
+    assert(group_has_tag($GameHealth, g, marked_entity) == false)
+
+    // A tag on a despawned identity is not a mark on whatever gets the id next.
+    group_add_tag($GameHealth, g, plain)
+    group_despawn(g, plain)
+    reused := group_spawn(g)
+    assert(group_has_tag($GameHealth, g, reused) == false)
+    group_free(g)
+}
+
+// A component taken off wherever it lives, a run of identities retired at once,
+// and the log of what happened emptied. The three group operations nothing else
+// here reaches.
+test "a group removes, despawns a run, and clears its log" {
+    mut g := group_new()
+    engine := group_add_world(g)
+    game := group_add_world(g)
+    group_register($EngineTransform, g, engine)
+    group_register($GameHealth, g, game)
+
+    // A route asked for a component no member registered is the one that is
+    // not found, and every real one is.
+    assert(route_found(no_route()) == false)
+    assert(route_found(group_route($EngineTransform, g)))
+    assert(route_found(group_route($GameSpeed, g)) == false)
+
+    mut made : [3]Entity = [no_entity(); 3]
+    mut index : i64 = 0
+    while (index < 3) {
+        entity := group_spawn(g)
+        held : f32 = index
+        group_set($EngineTransform, g, entity,
+            EngineTransform { x = held, y = 0.0 })
+        group_set($GameHealth, g, entity, GameHealth { points = index })
+        made[index] = entity
+        index = index + 1
+    }
+    assert(group_count(g) == 3)
+
+    // One component off one entity, leaving the rest of it alone.
+    group_remove($GameHealth, g, made[0])
+    assert(group_has($GameHealth, g, made[0]) == false)
+    assert(group_has($EngineTransform, g, made[0]))
+    assert(group_alive(g, made[0]))
+
+    group_log_enable(g, true)
+    mut pair : [2]Entity = [made[1], made[2]]
+    group_despawn_entities(g, pair)
+    assert(group_alive(g, made[1]) == false)
+    assert(group_alive(g, made[2]) == false)
+    assert(group_alive(g, made[0]))
+    assert(group_count(g) == 1)
+    assert(slice_len(group_log(g)) > 0)
+
+    group_log_clear(g)
+    assert(slice_len(group_log(g)) == 0)
+    group_free(g)
 }
 
 // A world written down and read back is the same world: the same entities in
