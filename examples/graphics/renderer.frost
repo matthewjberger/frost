@@ -1,0 +1,275 @@
+// The device, the surface, and the frame, under one handle a program opens
+// once and a pass draws into.
+//
+//   mut r := renderer_open(platform_window(p), width(p), height(p))
+//   while (platform_poll(p)) {
+//       if (resized(p)) { renderer_resize(r, width(p), height(p)) }
+//       mut f := renderer_begin(r)
+//       if (frame_ok(f)) {
+//           run(f, ...)
+//           renderer_end(r, f)
+//       }
+//   }
+//
+// Bringing wgpu up is the same twelve steps every time and none of them are a
+// program's business: an instance, a surface off the platform window, an
+// adapter chosen knowing that surface, a device, a queue, and a configuration
+// whose format the surface names rather than a guess. That is what this owns.
+//
+// What it deliberately does not own is what to draw. A `Pass` is a name and a
+// function, and `renderer_run` hands each one the frame in order. That is the
+// whole of the graph here: passes declare nothing about resources yet, because
+// with one target there is nothing to schedule, and a list is what a scheduler
+// degenerates to. When there are transient targets to alias and passes that
+// must not run before their input exists, this is where that goes, and a pass
+// written today does not change shape when it arrives.
+
+import "sdl.frost"
+import "wgpu.frost"
+
+export Renderer, Frame, Pass,
+    renderer_open, renderer_close, renderer_ok, renderer_resize,
+    renderer_begin, renderer_end, renderer_run,
+    renderer_device, renderer_queue, renderer_format,
+    frame_ok, frame_encoder, frame_view, frame_pass,
+    no_pointer
+
+no_pointer :: fn() -> ^u8 {
+    zero := 0
+    unsafe { ptr_cast($u8, zero) }
+}
+
+// The pieces a draw needs, kept together because none of them is useful alone
+// and every one of them is made once.
+Renderer :: struct {
+    instance: Instance,
+    surface: Surface,
+    adapter: Adapter,
+    device: Device,
+    queue: Queue,
+    format: u32,
+    configuration: SurfaceConfiguration,
+    opened: bool,
+}
+
+// One frame in flight. The texture is the surface's own, so it is not held past
+// the present that consumes it.
+Frame :: struct {
+    texture: SurfaceTexture,
+    view: TextureView,
+    encoder: CommandEncoder,
+    ready: bool,
+}
+
+// A named step in a frame. `draw` is handed the frame and whatever the pass was
+// built with, since Frost has no closures and a pass has state: a pipeline, a
+// bind group, the buffers it wrote once.
+//
+// This is the shape a trait would have in another language, written out. The
+// advantage of writing it out is that a pass is a value, so a program can hold
+// a list of them, reorder it, or leave one out, without the language having an
+// opinion about registration.
+Pass :: struct {
+    name: str,
+    draw: fn(mut Frame, ^u8),
+    state: ^u8,
+}
+
+// Waits for a callback that answers on the instance's own event pump. wgpu
+// answers a request when it is ready and not before, and there is no thread to
+// wait on, so the pump is the wait.
+spin_until :: fn(instance: Instance, mut ready: i64, limit: i64) -> bool {
+    mut spins : i64 = 0
+    while (ready == 0 && spins < limit) {
+        instance_process_events(instance)
+        spins = spins + 1
+    }
+    ready != 0
+}
+
+AdapterSlot :: struct { handle: Adapter, ready: i64 }
+DeviceSlot :: struct { handle: Device, ready: i64 }
+
+take_adapter :: fn(status: u32, handle: Adapter, value message: StringView,
+    userdata1: ^u8, userdata2: ^u8) {
+    mut slot := unsafe { ptr_cast($AdapterSlot, userdata1) }
+    unsafe { slot^.handle = handle }
+    unsafe { slot^.ready = 1 }
+}
+
+take_device :: fn(status: u32, handle: Device, value message: StringView,
+    userdata1: ^u8, userdata2: ^u8) {
+    mut slot := unsafe { ptr_cast($DeviceSlot, userdata1) }
+    unsafe { slot^.handle = handle }
+    unsafe { slot^.ready = 1 }
+}
+
+// Opens the device against a platform window. A renderer that could not be
+// brought up answers false to `renderer_ok`, and a caller checks that before
+// beginning a frame rather than drawing into nothing.
+renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
+    mut r := Renderer {
+        instance = no_instance(), surface = no_surface(),
+        adapter = no_adapter(), device = no_device(), queue = no_queue(),
+        format = 0, configuration = surface_configuration_init(),
+        opened = false,
+    }
+    r.instance = create_instance(no_pointer())
+
+    // The surface, chained off whatever handle this platform names a window
+    // with.
+    properties := window_properties(window)
+    hwnd := window_pointer_property(properties, PROP_WIN32_HWND)
+    if (hwnd == no_pointer()) {
+        return r
+    }
+    mut source := surface_source_windows_HWND_init()
+    source.chain.stype = S_TYPE_SURFACE_SOURCE_WINDOWS_HWND
+    source.hwnd = hwnd
+    mut descriptor := surface_descriptor_init()
+    descriptor.next_in_chain = unsafe { ptr_cast($u8, ptr_to(source)) }
+    r.surface = instance_create_surface(r.instance, ptr_to(descriptor))
+
+    // The adapter is chosen knowing the surface it will draw to. Choosing it
+    // first can hand back one this surface cannot use, and the surface only
+    // says so later, when it is asked what formats it takes.
+    mut adapter_slot := AdapterSlot { handle = no_adapter(), ready = 0 }
+    mut adapter_info := RequestAdapterCallbackInfo {
+        next_in_chain = no_pointer(),
+        mode = CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
+        callback = take_adapter,
+        userdata1 = unsafe { ptr_cast($u8, ptr_to(adapter_slot)) },
+        userdata2 = no_pointer(),
+    }
+    mut options := request_adapter_options_init()
+    options.feature_level = FEATURE_LEVEL_CORE
+    options.compatible_surface = r.surface
+    instance_request_adapter(r.instance, ptr_to(options), ptr_to(adapter_info))
+    if (spin_until(r.instance, adapter_slot.ready, 2000000) == false) {
+        return r
+    }
+    r.adapter = adapter_slot.handle
+
+    mut device_slot := DeviceSlot { handle = no_device(), ready = 0 }
+    mut device_info := RequestDeviceCallbackInfo {
+        next_in_chain = no_pointer(),
+        mode = CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
+        callback = take_device,
+        userdata1 = unsafe { ptr_cast($u8, ptr_to(device_slot)) },
+        userdata2 = no_pointer(),
+    }
+    adapter_request_device(r.adapter, no_pointer(), ptr_to(device_info))
+    if (spin_until(r.instance, device_slot.ready, 2000000) == false) {
+        return r
+    }
+    r.device = device_slot.handle
+    r.queue = device_get_queue(r.device)
+
+    // The format the surface accepts, asked rather than assumed: which ones it
+    // takes belongs to the driver and the window, not to the API.
+    mut capabilities := surface_capabilities_init()
+    if (surface_get_capabilities(r.surface, r.adapter, ptr_to(capabilities)) != 1) {
+        return r
+    }
+    if (capabilities.formats_count == 0) {
+        return r
+    }
+    r.format = unsafe { ptr_cast($u32, capabilities.formats)^ }
+
+    r.configuration = surface_configuration_init()
+    r.configuration.device = r.device
+    r.configuration.format = r.format
+    r.configuration.usage = TextureUsage::RenderAttachment
+    r.configuration.width = w
+    r.configuration.height = h
+    r.configuration.present_mode = PRESENT_MODE_FIFO
+    surface_configure(r.surface, ptr_to(r.configuration))
+    r.opened = true
+    r
+}
+
+renderer_ok :: fn(r: Renderer) -> bool { r.opened }
+renderer_device :: fn(r: Renderer) -> Device { r.device }
+renderer_queue :: fn(r: Renderer) -> Queue { r.queue }
+renderer_format :: fn(r: Renderer) -> u32 { r.format }
+
+renderer_close :: fn(mut r: Renderer) {
+    r.opened = false
+}
+
+// A surface has to be told the window changed. Nothing else does, so a resize
+// is one call rather than a rebuild.
+renderer_resize :: fn(mut r: Renderer, w: i64, h: i64) {
+    if (w <= 0 || h <= 0) {
+        return
+    }
+    r.configuration.width = w
+    r.configuration.height = h
+    surface_configure(r.surface, ptr_to(r.configuration))
+}
+
+// Acquires the frame's texture and opens an encoder for it.
+//
+// A surface goes stale when the window moves under it, and skipping the frame
+// is not enough: nothing would make it fresh again and the window would stay
+// black. So a bad status reconfigures before the frame is given up, and the
+// next one succeeds.
+renderer_begin :: fn(mut r: Renderer) -> Frame {
+    mut f := Frame {
+        texture = surface_texture_init(),
+        view = no_texture_view(),
+        encoder = no_command_encoder(),
+        ready = false,
+    }
+    surface_get_current_texture(r.surface, ptr_to(f.texture))
+    good := f.texture.status == SURFACE_GET_CURRENT_TEXTURE_STATUS_SUCCESS_OPTIMAL
+        || f.texture.status == SURFACE_GET_CURRENT_TEXTURE_STATUS_SUCCESS_SUBOPTIMAL
+    if (good == false) {
+        surface_configure(r.surface, ptr_to(r.configuration))
+        return f
+    }
+    f.view = texture_create_view(f.texture.texture, no_pointer())
+    f.encoder = device_create_command_encoder(r.device, no_pointer())
+    f.ready = true
+    f
+}
+
+frame_ok :: fn(f: Frame) -> bool { f.ready }
+frame_encoder :: fn(f: Frame) -> CommandEncoder { f.encoder }
+frame_view :: fn(f: Frame) -> TextureView { f.view }
+
+// A render pass over the frame's own target. `load` says whether what is there
+// already survives, which is what lets a second pass draw over a first instead
+// of erasing it.
+frame_pass :: fn(mut f: Frame, load: u32, clear: Color) -> RenderPassEncoder {
+    mut attachment := render_pass_color_attachment_init()
+    attachment.view = f.view
+    attachment.load_op = load
+    attachment.store_op = STORE_OP_STORE
+    attachment.clear_value = clear
+    mut descriptor := render_pass_descriptor_init()
+    descriptor.color_attachments_count = 1
+    descriptor.color_attachments =
+        unsafe { ptr_cast($u8, ptr_to(attachment)) }
+    command_encoder_begin_render_pass(f.encoder, ptr_to(descriptor))
+}
+
+// Each pass in order, given the frame and its own state.
+renderer_run :: fn(mut f: Frame, passes: []Pass) {
+    mut index : i64 = 0
+    while (index < slice_len(passes)) {
+        held := passes[index]
+        held.draw(f, held.state)
+        index = index + 1
+    }
+}
+
+// Closes the encoder, submits it, and shows the result.
+renderer_end :: fn(mut r: Renderer, mut f: Frame) {
+    if (f.ready == false) {
+        return
+    }
+    mut command := command_encoder_finish(f.encoder, no_pointer())
+    queue_submit(r.queue, 1, ptr_to(command))
+    surface_present(r.surface)
+}
