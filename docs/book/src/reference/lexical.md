@@ -68,15 +68,27 @@ identifier recognized in that position, unlike the lowercase keyword `type`.
 
 ## 2.5 Literals
 
-Integer. `INTEGER = DIGIT+`. Decimal only. No digit separators, no
-hexadecimal, octal, or binary prefixes. Integer literals are non-negative. A
-negative value is the prefix `-` applied to one. An integer literal takes its
-type from context, defaulting to `i64`.
+Integer. `INTEGER = DECIMAL | HEX | BINARY`, where
+`DECIMAL = DIGIT (DIGIT | "_")*`, `HEX = "0" ("x" | "X") (HEXDIGIT | "_")+` and
+`BINARY = "0" ("b" | "B") (BINDIGIT | "_")+`. There is no octal prefix. An
+underscore may sit between digits and is dropped before the number is read, so
+`0xFF_FF` and `1_000_000` are `65535` and `1000000`. Integer literals are
+non-negative; a negative value is the prefix `-` applied to one. An integer
+literal takes its type from context, defaulting to `i64`.
 
-Float. `FLOAT = DIGIT+ "." DIGIT+`, with an optional `f` or `f32` suffix that
-makes it an `f32`, otherwise it is `f64`. A `.` is only taken as a decimal point
-when the following character is not another `.`, so `0..10` lexes as a range.
-There is no exponent notation and no leading-dot form.
+A hex or binary literal is read as unsigned and reinterpreted, so the whole of
+a sixty-four bit mask can be written: `0xFFFFFFFFFFFFFFFF` is the all-ones
+sentinel a C header spells that way, and it is past what an `i64` holds as a
+positive number. A literal that does not fit the type it is written at is
+refused rather than truncated (3.2).
+
+Float. `FLOAT = DIGIT (DIGIT | "_")* ("." DIGIT (DIGIT | "_")*)? EXPONENT?`,
+where `EXPONENT = ("e" | "E") ("+" | "-")? DIGIT+`, with an optional `f` or
+`f32` suffix that makes it an `f32`, otherwise it is `f64`. Either a fraction
+or an exponent makes the number a float, so `1e3` is one, and `1` is not. A `.`
+is only taken as a decimal point when the following character is not another
+`.`, so `0..10` lexes as a range. An `e` is only taken as an exponent when
+digits, or a sign and then digits, follow it. There is no leading-dot form.
 
 String. Delimited by `"`, with escapes `\n`, `\t`, `\r`, `\0`, `\\`, `\"`,
 `\'`. Any other escape is an error. There are no numeric or Unicode escapes. A

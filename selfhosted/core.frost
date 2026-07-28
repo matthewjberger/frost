@@ -7,6 +7,8 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     CH_LPAREN, CH_LT, CH_MINUS, CH_PERCENT, CH_PIPE, CH_PLUS, CH_QUESTION,
     CH_RBRACE, CH_RBRACKET, CH_RPAREN, CH_SEMI, CH_SLASH, CH_SPACE, CH_STAR,
     CH_TAB, CH_UNDERSCORE, CH_UPPER_A, CH_UPPER_Z, Alias, ConstDef, Export,
+    CH_LOWER_B, CH_LOWER_E, CH_LOWER_F, CH_LOWER_X, CH_UPPER_B, CH_UPPER_E,
+    CH_UPPER_F, CH_UPPER_X,
     Cap, Provider, FlagBit,
     GenericFn, GParam, GArg, GBinding, ImportEdge, Instance, LocalVar, Module,
     Rename,
@@ -409,6 +411,14 @@ CH_LBRACKET   :: 91
 CH_RBRACKET   :: 93
 CH_CARET      :: 94
 CH_UNDERSCORE :: 95
+CH_LOWER_B :: 98
+CH_LOWER_E :: 101
+CH_LOWER_F :: 102
+CH_LOWER_X :: 120
+CH_UPPER_B :: 66
+CH_UPPER_E :: 69
+CH_UPPER_F :: 70
+CH_UPPER_X :: 88
 CH_BACKSLASH  :: 92
 CH_LOWER_N    :: 110
 CH_LOWER_T    :: 116

@@ -4,6 +4,10 @@ This chapter is the syntax of the specified language. Where a production here
 and `src/parser.rs` disagree, the parser is the one that runs, and either the
 production or the parser is wrong.
 
+`IDENT`, `INTEGER`, `FLOAT` and `STRING` are terminals and are spelled out in
+2.5. `INTEGER` covers decimal, `0x` hex and `0b` binary, each of which may
+carry `_` between digits; `FLOAT` covers a fraction, an `e` exponent, or both.
+
 ## 13.1 Program and statements
 
 ```

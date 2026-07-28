@@ -15385,6 +15385,36 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   print ROW[1]\n    0\n}\n",
         "20\n",
     ),
+    // Hex, binary, digit separators and an exponent. A `flags u32` declaration
+    // transcribes a C header written in hex, and doing that by hand in decimal
+    // is a step where a digit goes missing quietly. The exponent is what lets a
+    // graphics program write 1e-6 rather than a run of zeroes it has to count.
+    (
+        "hex_binary_and_separator_literals",
+        "main :: fn() -> i64 {\n\
+         \x20   print 0xFF\n\
+         \x20   print 0xff\n\
+         \x20   print 0b1010\n\
+         \x20   print 0x_1_0\n\
+         \x20   print 1_000_000\n\
+         \x20   print 0x7FFFFFFF\n\
+         \x20   mask : u64 = 0xFFFFFFFFFFFFFFFF\n\
+         \x20   print mask == -1\n    0\n}\n",
+        "255\n255\n10\n16\n1000000\n2147483647\n1\n",
+    ),
+    (
+        "exponent_literals",
+        "main :: fn() -> i64 {\n\
+         \x20   a := 1e3\n\
+         \x20   print a\n\
+         \x20   b := 1.5e-3\n\
+         \x20   print b * 1000.0\n\
+         \x20   c := 2.5e2\n\
+         \x20   print c\n\
+         \x20   d := 1E2\n\
+         \x20   print d\n    0\n}\n",
+        "1000\n1.5\n250\n100\n",
+    ),
     // A prefix minus. The self-hosted parser had no prefix layer at all, so
     // `-1` came out right by accident and `-z` was read as a subtraction with
     // nothing on its left: it printed whatever was lying there. It was not
