@@ -39,6 +39,7 @@ export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     query_with,
     query_filter, query_row_passes, for_each, for_each_row, component_of,
     Filters, no_filters, filter_without, filter_changed, filter_added,
+    filter_tagged, filter_untagged, no_marks, marked,
     tag_new, tag_free, tag_release, tag_add, tag_remove, tag_has,
     Group, GroupSlot, Route, TagType, GROUP_MEMBERS,
     group_new, group_free, group_add_world, group_world_count,
@@ -1049,6 +1050,11 @@ Query :: struct {
     changed: Mask,
     added: Mask,
     since: i64,
+    // The marks a row is tested against, one set it must be in and one it must
+    // not. A tag costs no mask bit, so neither can be answered per table the
+    // way a component can, and both are read per row.
+    tagged: []i64,
+    untagged: []i64,
     // Where the walk is, and where it stopped.
     next_table: i64,
     table: i64,
@@ -1058,6 +1064,7 @@ Query :: struct {
 query_begin :: fn(world: World) -> Query {
     Query { wanted = mask_empty(), excluded = mask_empty(),
         changed = mask_empty(), added = mask_empty(), since = 0,
+        tagged = no_marks(), untagged = no_marks(),
         next_table = 0, table = -1, count = 0 }
 }
 
@@ -1070,6 +1077,10 @@ query_begin :: fn(world: World) -> Query {
 // other two are row-level and read the tick arrays a column already carries.
 // The distinction is the point of archetype storage, so it is visible in which
 // function a filter goes through rather than left to a comment.
+//
+// A tag is row-level and cannot be otherwise. It holds no mask bit on purpose,
+// so a table cannot say whether any of its rows carries one and every row is
+// asked. That is what a tag trades a mask bit for.
 // ---------------------------------------------------------------------------
 
 Filters :: struct {
@@ -1079,11 +1090,29 @@ Filters :: struct {
     changed: Mask,
     added: Mask,
     since: i64,
+    // Row level: the marks a row must carry, and the ones it must not. A tag is
+    // not a component and holds no mask bit, so a table cannot answer for it
+    // and every row is asked.
+    //
+    // The marks rather than the tag, because a borrow cannot be stored and a
+    // slice is a value. What that costs is that the slice is the run the tag
+    // held when the filter was built: adding a tag to an entity past the end of
+    // that run during the walk is not seen. Nothing else here mutates while a
+    // walk is running either, which is what the command queue is for.
+    tagged: []i64,
+    untagged: []i64,
 }
 
 no_filters :: fn() -> Filters {
     Filters { excluded = mask_empty(), changed = mask_empty(),
-        added = mask_empty(), since = 0 }
+        added = mask_empty(), since = 0,
+        tagged = no_marks(), untagged = no_marks() }
+}
+
+// An empty run of marks, which is what a filter asking about no tag holds and
+// what every row passes.
+no_marks :: fn() -> []i64 {
+    unsafe { slice_from($i64, ptr_cast($i64, 0), 0) }
 }
 
 // A component an entity must not have. Matched against the table's mask, so a
@@ -1118,11 +1147,47 @@ query_filter :: fn(mut q: Query, f: Filters) {
     q.changed = f.changed
     q.added = f.added
     q.since = f.since
+    q.tagged = f.tagged
+    q.untagged = f.untagged
+}
+
+// Only rows carrying the tag, and only rows not carrying it. Both read the
+// marks out of the tag rather than keeping the tag, which is what lets a filter
+// be a value the walk carries.
+filter_tagged :: fn(f: Filters, t: Tag) -> Filters {
+    mut out := f
+    out.tagged = vec_slice($i64, t.marks)
+    out
+}
+
+filter_untagged :: fn(f: Filters, t: Tag) -> Filters {
+    mut out := f
+    out.untagged = vec_slice($i64, t.marks)
+    out
+}
+
+// Whether an entity is marked in a run of marks. Past the end is unmarked: a
+// tag that has never been given to an id has no room recorded for it.
+marked :: fn(marks: []i64, entity: Entity) -> bool {
+    if (entity.id >= slice_len(marks)) {
+        return false
+    }
+    marks[entity.id] == entity.generation + 1
 }
 
 // Whether one row of the table the cursor is on passes the row-level filters.
 // Nothing is read when none were asked for, which is the common case.
 query_row_passes :: fn(world: World, q: Query, row: i64) -> bool {
+    if (slice_len(q.tagged) > 0 || slice_len(q.untagged) > 0) {
+        ref rows := vec_slice($Table, world.tables)[q.table]
+        entity := vec_slice($Entity, rows.entities)[row]
+        if (slice_len(q.tagged) > 0 && marked(q.tagged, entity) == false) {
+            return false
+        }
+        if (slice_len(q.untagged) > 0 && marked(q.untagged, entity)) {
+            return false
+        }
+    }
     if (mask_is_empty(q.changed) && mask_is_empty(q.added)) {
         return true
     }
@@ -2002,6 +2067,13 @@ GroupSlot :: struct {
     alive: bool,
 }
 
+// A component no member registered cannot be answered with a value, so the
+// accessors that must return one say which mistake was made and stop.
+no_member_holds :: fn() {
+    unsafe { frost_rt_error("frost: no member world holds this component\n") }
+    frost_rt_die()
+}
+
 // Which member owns a component and what index it has there. Both, because
 // neither alone names a column: two members number their components from zero.
 Route :: struct {
@@ -2298,8 +2370,7 @@ group_has :: fn($T: Type, g: Group, entity: Entity) -> bool {
 group_get :: fn($T: Type, g: Group, entity: Entity) -> $T {
     route := group_route($T, g)
     if (route_found(route) == false) {
-        unsafe { frost_rt_error("frost: no member world holds this component\n") }
-        frost_rt_die()
+        no_member_holds()
     }
     ref held := vec_slice($World, g.members)[route.member]
     ecs_get($T, held, entity, route.component)
@@ -2312,8 +2383,7 @@ group_get :: fn($T: Type, g: Group, entity: Entity) -> $T {
 group_set :: fn($T: Type, mut g: Group, entity: Entity, value: $T) {
     route := group_route($T, g)
     if (route_found(route) == false) {
-        unsafe { frost_rt_error("frost: no member world holds this component\n") }
-        frost_rt_die()
+        no_member_holds()
         return
     }
     if (group_alive(g, entity) == false) {
@@ -3789,6 +3859,66 @@ test "a query without a component skips the tables that hold it" {
 
     assert(ecs_get($TestPosition, world, moving, position).x == 101.0)
     assert(ecs_get($TestPosition, world, still, position).x == 1.0)
+    ecs_free(world)
+}
+
+// A tag is row-level whatever else is asked, since nothing about a table says
+// which of its rows carry one. Both entities are in the same archetype here,
+// which is the case a table-level test could not tell apart.
+test "a query for a tag visits only the rows carrying it" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    mut chosen := tag_new()
+
+    marked_entity := ecs_spawn(world)
+    ecs_add($TestPosition, world, marked_entity, position,
+        TestPosition { x = 1.0, y = 0.0 })
+    plain := ecs_spawn(world)
+    ecs_add($TestPosition, world, plain, position,
+        TestPosition { x = 1.0, y = 0.0 })
+    tag_add(chosen, marked_entity)
+
+    for_each_row($test_one_row, world, filter_tagged(no_filters(), chosen),
+        $TestPosition)
+
+    assert(ecs_get($TestPosition, world, marked_entity, position).y == 1000.0)
+    assert(ecs_get($TestPosition, world, plain, position).y == 0.0)
+
+    // And the other way round, which visits the rows the first run skipped.
+    for_each_row($test_one_row, world, filter_untagged(no_filters(), chosen),
+        $TestPosition)
+
+    assert(ecs_get($TestPosition, world, marked_entity, position).y == 1000.0)
+    assert(ecs_get($TestPosition, world, plain, position).y == 1000.0)
+
+    tag_free(chosen)
+    ecs_free(world)
+}
+
+// A tag left on a despawned id is not a mark on whatever gets the id next, and
+// a filter has to see that the same way `tag_has` does.
+test "a query for a tag does not read a stale mark" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    mut chosen := tag_new()
+
+    first := ecs_spawn(world)
+    ecs_add($TestPosition, world, first, position,
+        TestPosition { x = 1.0, y = 0.0 })
+    tag_add(chosen, first)
+    ecs_despawn(world, first)
+
+    reused := ecs_spawn(world)
+    ecs_add($TestPosition, world, reused, position,
+        TestPosition { x = 1.0, y = 0.0 })
+    assert(reused.id == first.id)
+    assert(tag_has(chosen, reused) == false)
+
+    for_each_row($test_one_row, world, filter_tagged(no_filters(), chosen),
+        $TestPosition)
+
+    assert(ecs_get($TestPosition, world, reused, position).y == 0.0)
+    tag_free(chosen)
     ecs_free(world)
 }
 
