@@ -13,6 +13,7 @@ export call_ret_type, call_type_args, call_args_for, collect_type_args,
     parse_local_type, parse_param_type, field_binding_of,
     fn_proc_type, bundle_field_fn,
     count_value_args, field_type, generic_fn_of, is_linear_type, is_moved,
+    constant_node,
     local_exists, lookup_local, lower_enum_compare, nth_param_by_value,
     nth_param_type, nth_value_arg, nth_param_auto_borrows,
     param_node_by_value,
@@ -310,6 +311,29 @@ local_exists :: fn(mut p: Parser, off: i64, len: i64) -> bool {
     false
 }
 
+// The node a name stands for when it names a constant that is a value, and the
+// node itself otherwise.
+//
+// A value constant is its literal wherever it is written, so every question
+// about the literal has to be asked of the literal: what type it has, whether
+// indexing it is checked, what to emit for it. Asking the name instead answers
+// about a name, which is how a string constant came to be a thing that could be
+// declared and then not indexed.
+constant_node :: fn(mut p: Parser, id: i64) -> i64 {
+    node := arena_at(p.arena, id)
+    if (node.kind != NodeKind::Var) {
+        return id
+    }
+    if (local_exists(p, node.val, node.c)) {
+        return id
+    }
+    held := value_const_node(p, node.val, node.c)
+    if (held < 0) {
+        return id
+    }
+    held
+}
+
 // Whether the value named (off, len) has been moved on the current path, read
 // by the flow-aware move check as it walks a function body.
 is_moved :: fn(mut p: Parser, off: i64, len: i64) -> bool {
@@ -495,6 +519,16 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
     if (kind == NodeKind::Index) {
         base := node.a
         t := type_of(p, base)
+        // A literal is a `^i8` everywhere else, because that is what a call
+        // taking one wants and the coercion builds text out of it where text is
+        // wanted. Indexed, it is neither: the compiler read the bytes out of
+        // the source and knows how many there are, so the read is checked and
+        // answers a byte. A constant that is a string is this literal wherever
+        // it is named, so this is what makes one indexable.
+        if (arena_at(p.arena, constant_node(p, base)).kind
+            == NodeKind::StrLit) {
+            return TY_U8
+        }
         // A slab indexed by a handle yields one of its stored elements, so the
         // type is the storage array's element, not the slab.
         if (type_of(p, node.b) == TY_HANDLE && is_slab_ty(p, t)) {

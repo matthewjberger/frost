@@ -1660,18 +1660,21 @@ impl<'a> Parser<'a> {
                 Some(self.parse_constant_or_struct_statement()?)
             }
             // A constant that is a struct value, such as
-            // `i64_ordering :: Ordering<i64> { less = i64_less }`. The brace,
-            // or the generic arguments before it, is what tells this from
-            // `Name :: OtherName`, which names a type. Only at the top level:
-            // inside a body the same tokens are `Enum::Variant { .. }`.
+            // `i64_ordering :: Ordering<i64> { less = i64_less }`, and a
+            // constant that is another name, `DEPTH :: TEXTURE_DEPTH24`.
+            //
+            // Both are `Name :: OtherName` and the depth is what settles them.
+            // Inside a body those tokens are `Enum::Variant`, an expression;
+            // at the top level a variant on its own is a statement with no
+            // effect and nothing writes one, so a declaration is the only thing
+            // it can be. What follows used to have to say so, which meant a
+            // name standing for a name was read as a path expression and the
+            // constant it declared did not exist: every use of it came back as
+            // an unknown variable, from a file that named it two lines up.
             Token::Identifier(_)
                 if self.block_depth == 0
                     && matches!(self.peek_nth(1), Token::DoubleColon)
-                    && matches!(self.peek_nth(2), Token::Identifier(_))
-                    && matches!(
-                        self.peek_nth(3),
-                        Token::LeftBrace | Token::LessThan
-                    ) =>
+                    && matches!(self.peek_nth(2), Token::Identifier(_)) =>
             {
                 Some(self.parse_constant_or_struct_statement()?)
             }
@@ -4691,28 +4694,59 @@ mod tests {
 
     #[test]
     fn scoped_identifier() -> Result<()> {
-        // Bare `Enum::Variant` at statement position stays variant access, an
-        // expression. Only `Name :: value <operator>` is a constant declaration,
-        // so a variant with no trailing operator is not mistaken for one.
-        let input = "Color::Green";
+        // `Name :: Other` is two things and the depth is what settles them.
+        // Inside a body it is variant access, an expression, which is where
+        // every variant anyone writes appears. At the top level it is a
+        // constant: a variant on its own is a statement with no effect there,
+        // and the file that has no `main` returns its last expression as an
+        // exit code, which a variant is not one of either.
+        let input = "shown :: fn() -> i64 {\n    held := Color::Green\n    0\n}";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize()?;
         let mut parser = Parser::new(&tokens);
         let program = parser.parse()?;
 
         assert_eq!(program.len(), 1);
-        if let Statement::Expression(Expression::EnumVariantInit(
-            enum_name,
-            variant_name,
-            fields,
-        )) = &program[0].node
+        let (Statement::Constant(_, Expression::Function(_, _, body))
+        | Statement::Constant(_, Expression::Proc(_, _, body))) =
+            &program[0].node
+        else {
+            bail!("Expected a function, got {:?}", program[0]);
+        };
+        if let Statement::Let {
+            value:
+                Expression::EnumVariantInit(enum_name, variant_name, fields),
+            ..
+        } = &body[0].node
         {
             assert_eq!(enum_name, "Color");
             assert_eq!(variant_name, "Green");
             assert!(fields.is_empty());
         } else {
-            bail!("Expected EnumVariantInit, got {:?}", program[0]);
+            bail!("Expected EnumVariantInit, got {:?}", body[0]);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn a_name_standing_for_a_name_is_a_constant() -> Result<()> {
+        // The same two tokens at the top level. This used to parse as the
+        // variant access above, so the constant it declares did not exist and
+        // every use of it was an unknown variable.
+        let input = "DEPTH :: TEXTURE_DEPTH24";
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(&tokens);
+        let program = parser.parse()?;
+
+        assert_eq!(program.len(), 1);
+        let Statement::Constant(name, Expression::Identifier(value)) =
+            &program[0].node
+        else {
+            bail!("Expected a constant, got {:?}", program[0]);
+        };
+        assert_eq!(name, "DEPTH");
+        assert_eq!(value, "TEXTURE_DEPTH24");
         Ok(())
     }
 

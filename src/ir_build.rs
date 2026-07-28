@@ -119,6 +119,7 @@ fn build_module_inner(
             constants.insert(name.clone(), value.clone());
         }
     }
+    check_constant_cycles(&constants)?;
     let mut generic_functions = HashMap::new();
     for statement in statements {
         if let Statement::Constant(
@@ -647,6 +648,61 @@ fn report_module_specializations(
     for (name, count) in rows {
         eprintln!("frost:   {name} instantiates {count}");
     }
+}
+
+/// Refuses a constant that is defined in terms of itself.
+///
+/// A constant is its value wherever it is named, so substituting one that
+/// reaches itself never finishes: the compiler recurses until the stack runs
+/// out and says so from a thousand frames down, naming nothing.
+///
+/// Checking the whole table once, here, is what lets every site that follows a
+/// constant do it plainly. There are several of them, they are reached from
+/// different directions, and a guard at each would be four chances to forget
+/// one; a table with no cycle in it cannot be walked forever from anywhere.
+fn check_constant_cycles(
+    constants: &HashMap<String, Expression>,
+) -> Result<()> {
+    let mut settled: HashSet<String> = HashSet::new();
+    let mut path: Vec<String> = Vec::new();
+    let mut names: Vec<&String> = constants.keys().collect();
+    names.sort();
+    for name in names {
+        walk_constant(name, constants, &mut settled, &mut path)?;
+    }
+    Ok(())
+}
+
+fn walk_constant(
+    name: &str,
+    constants: &HashMap<String, Expression>,
+    settled: &mut HashSet<String>,
+    path: &mut Vec<String>,
+) -> Result<()> {
+    if settled.contains(name) {
+        return Ok(());
+    }
+    if let Some(at) = path.iter().position(|held| held == name) {
+        let mut cycle: Vec<String> = path[at..].to_vec();
+        cycle.push(name.to_string());
+        bail!(
+            "the constant '{name}' is defined in terms of itself: {}",
+            cycle.join(" names ")
+        );
+    }
+    path.push(name.to_string());
+    let mut referenced = Vec::new();
+    if let Some(value) = constants.get(name) {
+        crate::interface_names::names_in_expression(value, &mut referenced);
+    }
+    for reference in referenced {
+        if constants.contains_key(&reference) {
+            walk_constant(&reference, constants, settled, path)?;
+        }
+    }
+    path.pop();
+    settled.insert(name.to_string());
+    Ok(())
 }
 
 impl IrBuilder {
@@ -4642,8 +4698,21 @@ impl<'a> FunctionLowering<'a> {
                 self.build_str_value(local, value);
                 Ok((IrOperand::Local(local), Type::Str))
             }
-            other => {
-                bail!("native backend: unsupported literal: {other}")
+            // An array written where a value is wanted rather than as the
+            // initializer of something already declared: a constant named here,
+            // an argument, the thing an index is taken of. It goes in a
+            // temporary, which is where an array bound to a name lives too, so
+            // nothing after this can tell the two apart.
+            Literal::Array(elements) => {
+                let element = array_element_type(
+                    expected,
+                    elements,
+                    &self.builder.signatures,
+                );
+                let ty = Type::Array(Box::new(element.clone()), elements.len());
+                let temp = self.fresh_local(ty.clone(), None);
+                self.init_array(temp, &element, elements)?;
+                Ok((IrOperand::Local(temp), ty))
             }
         }
     }
@@ -6867,6 +6936,18 @@ impl<'a> FunctionLowering<'a> {
         base: &Expression,
         index: &Expression,
     ) -> Result<(IrOperand, Type)> {
+        // A constant is its value wherever it is named, and every question
+        // below asks what the base is before it asks where it lives: whether it
+        // is a string, a slice, a raw pointer. A name none of them can resolve
+        // reaches the array path and comes back as an unknown variable, so the
+        // value goes in ahead of them and they see a string literal rather than
+        // a name. Before the index is lowered, so it is lowered once.
+        if let Expression::Identifier(name) = base
+            && self.resolve_variable(name).is_none()
+            && let Some(value) = self.builder.constants.get(name).cloned()
+        {
+            return self.element_address(&value, index);
+        }
         let (index_operand, index_type) = self.lower_expression(index, None)?;
         if matches!(index_type, Type::Handle(_)) {
             if let Some(struct_name) = self.slab_shaped_base(base) {
@@ -6880,7 +6961,11 @@ impl<'a> FunctionLowering<'a> {
                 "native backend: indexing by a Handle needs a slab-shaped struct, one with a 'storage' array and a parallel 'generations' array; see std/slab.frost"
             );
         }
-        if matches!(self.probe_type(base), Some(Type::Str)) {
+        // The literal as well as a place holding one, because a string constant
+        // is the literal it was written as by the time it gets here.
+        if matches!(self.probe_type(base), Some(Type::Str))
+            || matches!(base, Expression::Literal(Literal::String(_)))
+        {
             return self.str_byte_address(base, index_operand, index_type);
         }
         if let Some(element) = self.slice_element_of(base) {
@@ -6904,26 +6989,45 @@ impl<'a> FunctionLowering<'a> {
         // storage, so indexing the spilled temporary reads and writes there.
         // Only a non-place base reaches here without a matched probe, so this
         // does not lower a place twice.
-        if !is_place_expression(base) {
+        let (base_pointer, element_type, length) = if !is_place_expression(base)
+        {
             let (value, value_type) = self.lower_expression(base, None)?;
-            if let Type::Slice(element) = value_type {
-                let IrOperand::Local(local) = value else {
-                    bail!("native backend: slice value is not addressable");
-                };
-                self.mark_in_memory(local);
-                let slice_address =
-                    self.address_of_local(local, &Type::Slice(element.clone()));
-                return self.slice_element_address_from(
-                    slice_address,
-                    index_operand,
-                    index_type,
-                    *element,
-                );
+            let IrOperand::Local(local) = value else {
+                bail!("native backend: cannot index into: {base}");
+            };
+            match value_type {
+                Type::Slice(element) => {
+                    self.mark_in_memory(local);
+                    let slice_address = self
+                        .address_of_local(local, &Type::Slice(element.clone()));
+                    return self.slice_element_address_from(
+                        slice_address,
+                        index_operand,
+                        index_type,
+                        *element,
+                    );
+                }
+                // An array with no place of its own: a constant written out
+                // here, or what a call handed back. Spilling it gives the index
+                // something to be an offset from, and the count it was declared
+                // with is still known, so it is bounds-checked like any other.
+                Type::Array(element, count) => {
+                    self.mark_in_memory(local);
+                    let result = self.fresh_local(
+                        Type::Ptr(Box::new((*element).clone())),
+                        None,
+                    );
+                    self.emit(IrStatement::Assign(
+                        result,
+                        IrRvalue::AddressOf { local, offset: 0 },
+                    ));
+                    (IrOperand::Local(result), *element, Some(count))
+                }
+                _ => bail!("native backend: cannot index into: {base}"),
             }
-            bail!("native backend: cannot index into: {base}");
-        }
-        let (base_pointer, element_type, length) =
-            self.array_base_pointer(base)?;
+        } else {
+            self.array_base_pointer(base)?
+        };
         let element_size = self.builder.byte_size(&element_type);
         let index_operand = self.coerce(index_operand, &index_type, &Type::I64);
         if let Some(length) = length {

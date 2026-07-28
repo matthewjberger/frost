@@ -571,6 +571,22 @@ emit_expr :: fn(mut p: Parser, id: i64) {
             }
             return
         }
+        // A literal, whose bytes are in the read-only section: naming it
+        // produces their address and how many there are was counted at the
+        // source, so the read is checked against a number written here. The
+        // cast is what makes a byte past 127 the same number it is in the other
+        // backend, since C reads a plain string as signed.
+        base_node := arena_at(p.arena, constant_node(p, base))
+        if (base_node.kind == NodeKind::StrLit) {
+            emit_text("((unsigned char)")
+            emit_expr(p, base)
+            emit_text("[frost_index(")
+            emit_expr(p, index)
+            emit_text(", ")
+            frost_rt_emit_int(literal_length(p.src, base_node.val, base_node.c))
+            emit_text(")])")
+            return
+        }
         // An array and a slice are both a named C struct, so the run of
         // elements inside one has to be named before it can be indexed. The
         // index is bounds-checked against the length, a constant for a fixed

@@ -425,7 +425,17 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
         mut checked : i64 = 0
         mut length_const : i64 = 0
         mut len_slot : i64 = 0
-        if (is_array_ty(through)) {
+        // A literal, which is neither: its bytes are in the read-only section
+        // and their address is what naming it produces, while how many there
+        // are was counted at the source. So the address needs no dereference
+        // and the bound is a number written here.
+        base_node := arena_at(p.arena, constant_node(p, base))
+        if (base_node.kind == NodeKind::StrLit) {
+            element = TY_U8
+            checked = 1
+            length_const = literal_length(p.src, base_node.val, base_node.c)
+            emit_asm_expr(p, base)
+        } else if (is_array_ty(through)) {
             element = array_element(p, through)
             checked = 1
             // An aggregate is reached by its address, and a slice holds the
@@ -482,6 +492,12 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
     // place, which an enum variant written at a call is.
     if (kind == NodeKind::StructLit) {
         emit_asm_struct_lit(p, id)
+        return
+    }
+    // The same for an array written out where an address is wanted, which is
+    // what a constant that is an array turns into wherever it is indexed.
+    if (kind == NodeKind::ArrayLit) {
+        emit_asm_array_lit(p, id)
         return
     }
     // Where it was written, since which expression it is, is the whole
