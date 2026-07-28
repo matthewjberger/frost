@@ -1676,15 +1676,45 @@ read_double :: fn(mut unit: Assembly, at: i64) -> i64 {
             i = i + 1
         }
     }
+    // An exponent moves the point, which is the same thing `places` already
+    // counts: `1.5e-3` is three more places and `1.5e3` is two fewer. Reading
+    // it here rather than refusing it costs one loop, and what it buys is that
+    // a program can write 1e-6 rather than a run of zeroes it has to count.
+    if (i < str_len(src) && (src[i] == CH_LOWER_E || src[i] == CH_UPPER_E)) {
+        i = i + 1
+        mut exponent_negative := false
+        if (i < str_len(src) && (src[i] == CH_PLUS || src[i] == CH_MINUS)) {
+            exponent_negative = src[i] == CH_MINUS
+            i = i + 1
+        }
+        mut exponent : i64 = 0
+        while (i < str_len(src) && is_digit(src[i])) {
+            exponent = exponent * 10 + (src[i] - CH_0)
+            i = i + 1
+        }
+        if (exponent_negative) {
+            places = places + exponent
+        } else {
+            places = places - exponent
+        }
+    }
     if (i < str_len(src) && is_name_byte(src[i])) {
-        // The language has no exponent form, so anything still attached to the
-        // number is a shape this reader was not written for rather than a
-        // literal it could work harder at.
+        // Anything still attached to the number is a shape this reader was not
+        // written for rather than a literal it could work harder at.
         report("frost: assembling: this is not a float literal this ")
         report("assembler reads: ")
         report_src(src, at, i - at)
         report("\n")
         frost_rt_die()
+    }
+    // Fewer than no places means the number is bigger than its digits say, so
+    // the digits are made bigger and the count goes back to none. Multiplying
+    // by ten is exact here, which is what keeps the rounding below deciding
+    // between the two doubles either side rather than between two guesses.
+    while (places < 0) {
+        big_mul_add(digits, 10, 0)
+        significant = significant + 1
+        places = places + 1
     }
     mut bits : i64 = 0
     if (negative) {

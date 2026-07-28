@@ -4,6 +4,47 @@ import "core.frost"
 
 export str_range_eq, tokenize
 
+// Whether `0` is followed by a radix mark, which is what makes the number that
+// starts here hex or binary rather than decimal.
+is_radix_mark :: fn(c: i64) -> bool {
+    c == CH_LOWER_X || c == CH_UPPER_X || c == CH_LOWER_B || c == CH_UPPER_B
+}
+
+is_radix_digit :: fn(c: i64, base: i64) -> bool {
+    if (base == 2) {
+        return c == CH_0 || c == CH_0 + 1
+    }
+    is_digit(c) || (c >= CH_LOWER_A && c <= CH_LOWER_F)
+        || (c >= CH_UPPER_A && c <= CH_UPPER_F)
+}
+
+radix_digit :: fn(c: i64) -> i64 {
+    if (c >= CH_LOWER_A && c <= CH_LOWER_F) {
+        return c - CH_LOWER_A + 10
+    }
+    if (c >= CH_UPPER_A && c <= CH_UPPER_F) {
+        return c - CH_UPPER_A + 10
+    }
+    c - CH_0
+}
+
+// An `e` with digits after it, or a sign and then digits. Anything else after a
+// number is the next token, `1.eq(x)` among them.
+starts_exponent :: fn(src: str, i: i64, len: i64) -> bool {
+    held := byte_of(src, i, len)
+    if (held != CH_LOWER_E && held != CH_UPPER_E) {
+        return false
+    }
+    next := byte_of(src, i + 1, len)
+    if (is_digit(next)) {
+        return true
+    }
+    if (next != CH_PLUS && next != CH_MINUS) {
+        return false
+    }
+    is_digit(byte_of(src, i + 2, len))
+}
+
 is_digit :: fn(c: i64) -> bool {
     c >= CH_0 && c <= CH_9
 }
@@ -277,20 +318,66 @@ tokenize :: fn(src: str, len: i64, mut tokens: Arena<Token>) {
         } else if (is_digit(c)) {
             start := i
             mut value : i64 = 0
-            while (is_digit(byte_of(src, i, len))) {
-                value = value * 10 + (byte_of(src, i, len) - CH_0)
+            // `0x` and `0b`, read before the decimal path since both start with
+            // a digit that is a number on its own. A C header writes its
+            // constants in hex, and transcribing them into decimal by hand is a
+            // step where a digit goes missing quietly.
+            mut base : i64 = 10
+            if (c == CH_0 && is_radix_mark(byte_of(src, i + 1, len))) {
+                mark := byte_of(src, i + 1, len)
+                base = 16
+                if (mark == CH_LOWER_B || mark == CH_UPPER_B) {
+                    base = 2
+                }
+                i = i + 2
+                while (is_radix_digit(byte_of(src, i, len), base)
+                    || byte_of(src, i, len) == CH_UNDERSCORE) {
+                    held := byte_of(src, i, len)
+                    if (held != CH_UNDERSCORE) {
+                        value = value * base + radix_digit(held)
+                    }
+                    i = i + 1
+                }
+                push_token(tokens, TokenKind::Int, start, i - start, value)
+                continue
+            }
+            while (is_digit(byte_of(src, i, len))
+                || byte_of(src, i, len) == CH_UNDERSCORE) {
+                held := byte_of(src, i, len)
+                if (held != CH_UNDERSCORE) {
+                    value = value * 10 + (held - CH_0)
+                }
                 i = i + 1
             }
             // A dot with a digit behind it continues the number rather than
             // starting a field access. The fractional part is not converted
             // here. A float literal keeps its byte range and both backends
             // hand the text to the tool that already knows how to read it.
+            mut is_float : bool = false
             if (byte_of(src, i, len) == CH_DOT
                 && is_digit(byte_of(src, i + 1, len))) {
+                is_float = true
                 i = i + 1
+                while (is_digit(byte_of(src, i, len))
+                    || byte_of(src, i, len) == CH_UNDERSCORE) {
+                    i = i + 1
+                }
+            }
+            // An exponent, so a program can write 1e-6 rather than a run of
+            // zeroes it has to count. The digits are handed on as they were
+            // written, so nothing here reads the number.
+            if (starts_exponent(src, i, len)) {
+                is_float = true
+                i = i + 1
+                if (byte_of(src, i, len) == CH_PLUS
+                    || byte_of(src, i, len) == CH_MINUS) {
+                    i = i + 1
+                }
                 while (is_digit(byte_of(src, i, len))) {
                     i = i + 1
                 }
+            }
+            if (is_float) {
                 push_token(tokens, TokenKind::Float, start, i - start, 0)
             } else {
                 push_token(tokens, TokenKind::Int, start, i - start, value)

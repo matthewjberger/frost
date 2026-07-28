@@ -509,12 +509,57 @@ impl<'a> Lexer<'a> {
                 identifier.push_str(&self.take_while(Self::is_ident_char));
                 lookup_identifier(&identifier)
             }
+            // `0x` and `0b` are read before the decimal path, since both start
+            // with a digit that is also a number on its own. A C header's
+            // constants are written in hex, and transcribing them into decimal
+            // by hand is a step where a digit goes missing quietly.
+            '0' if matches!(self.peek_nth(0), 'x' | 'X') => {
+                self.read_char();
+                let digits = self.take_while(Self::is_hex_or_separator);
+                let cleaned = digits.replace('_', "");
+                if cleaned.is_empty() {
+                    Illegal("0x".to_string())
+                } else {
+                    Integer(Self::radix(&cleaned, 16)?)
+                }
+            }
+            '0' if matches!(self.peek_nth(0), 'b' | 'B') => {
+                self.read_char();
+                let digits = self.take_while(Self::is_binary_or_separator);
+                let cleaned = digits.replace('_', "");
+                if cleaned.is_empty() {
+                    Illegal("0b".to_string())
+                } else {
+                    Integer(Self::radix(&cleaned, 2)?)
+                }
+            }
             c if Self::is_digit(c) => {
                 let mut number = c.to_string();
-                number.push_str(&self.take_while(Self::is_digit));
+                number.push_str(&self.take_while(Self::is_digit_or_separator));
+                let mut is_float = false;
                 if self.peek_nth(0) == '.' && self.peek_nth(1) != '.' {
+                    is_float = true;
                     number.push(self.read_char());
+                    number.push_str(
+                        &self.take_while(Self::is_digit_or_separator),
+                    );
+                }
+                // An exponent, so a graphics program can write 1e-6 rather than
+                // a run of zeroes it has to count.
+                if matches!(self.peek_nth(0), 'e' | 'E')
+                    && (Self::is_digit(self.peek_nth(1))
+                        || (matches!(self.peek_nth(1), '+' | '-')
+                            && Self::is_digit(self.peek_nth(2))))
+                {
+                    is_float = true;
+                    number.push(self.read_char());
+                    if matches!(self.peek_nth(0), '+' | '-') {
+                        number.push(self.read_char());
+                    }
                     number.push_str(&self.take_while(Self::is_digit));
+                }
+                let number = number.replace('_', "");
+                if is_float {
                     if self.peek_nth(0) == 'f' {
                         self.read_char();
                         if self.peek_nth(0) == '3' && self.peek_nth(1) == '2' {
@@ -583,6 +628,31 @@ impl<'a> Lexer<'a> {
 
     fn is_digit(c: char) -> bool {
         c.is_ascii_digit()
+    }
+
+    // An underscore may go between digits, so a mask reads in groups. It is
+    // dropped before the number is read, so it never reaches the value.
+    fn is_digit_or_separator(c: char) -> bool {
+        c.is_ascii_digit() || c == '_'
+    }
+
+    fn is_hex_or_separator(c: char) -> bool {
+        c.is_ascii_hexdigit() || c == '_'
+    }
+
+    fn is_binary_or_separator(c: char) -> bool {
+        c == '0' || c == '1' || c == '_'
+    }
+
+    // A hex or binary literal is read as unsigned and reinterpreted, so the
+    // whole of a sixty-four bit mask can be written: `0xFFFFFFFFFFFFFFFF` is
+    // the all-ones sentinel a C header spells that way, and it is past what an
+    // i64 holds as a positive number.
+    fn radix(digits: &str, base: u32) -> Result<i64> {
+        match u64::from_str_radix(digits, base) {
+            Ok(value) => Ok(value as i64),
+            Err(_) => bail!("{digits} does not fit in sixty-four bits"),
+        }
     }
 
     fn is_whitespace(c: char) -> bool {
