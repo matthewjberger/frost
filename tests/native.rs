@@ -15236,6 +15236,144 @@ fn relocation_lines(object: &Path) -> Vec<String> {
     lines
 }
 
+// The rows of a line table, as `line address`, read back out of an object with
+// whatever wrote it. Only the decoded table is compared: a line program can be
+// spelled several ways and two spellings that decode alike are both right.
+fn decoded_line_rows(object: &Path) -> Vec<String> {
+    let listing = Command::new("objdump")
+        .arg("--dwarf=decodedline")
+        .arg(object)
+        .output()
+        .unwrap();
+    assert!(
+        listing.status.success(),
+        "objdump could not read the line table:\n{}",
+        String::from_utf8_lossy(&listing.stderr)
+    );
+    String::from_utf8_lossy(&listing.stdout)
+        .lines()
+        .filter_map(|line| {
+            // A row reads `<file> <line> <address>` and may carry a view
+            // number and a statement mark after it, so the address is found
+            // by its own shape rather than by counting from either end.
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            let at = fields.iter().position(|f| f.starts_with("0x"))?;
+            if at == 0 {
+                return None;
+            }
+            let number = fields[at - 1];
+            // The last row of a sequence has no line, only the address it
+            // stops at, and that address differs by format: a COFF section is
+            // padded to its alignment and an ELF one is not.
+            if number == "-" || number.parse::<u32>().is_err() {
+                return None;
+            }
+            Some(format!("{number} {}", fields[at]))
+        })
+        .collect()
+}
+
+// The line table this compiler writes into an object itself, against the one
+// the system assembler writes from the same text. The encoder here has to
+// agree with `as` about which address every source line begins at, and that is
+// the whole of what a debugger reads.
+#[test]
+fn the_assembler_writes_the_line_table_the_system_assembler_writes() {
+    if Command::new("objdump").arg("--version").output().is_err()
+        || Command::new("as").arg("--version").output().is_err()
+    {
+        return;
+    }
+    let Some(compiler) = build_self_hosted_compiler("dwarf") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    let source = directory
+        .join(unique("frost_dwarf"))
+        .with_extension("frost");
+    std::fs::write(
+        &source,
+        "add :: fn(a: i64, b: i64) -> i64 {\n\
+         \x20   total := a + b\n\
+         \x20   total\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut sum : i64 = 0\n\
+         \x20   sum = add(sum, 3)\n\
+         \x20   sum = add(sum, 4)\n\
+         \x20   while (sum < 40) {\n\
+         \x20       sum = add(sum, 5)\n\
+         \x20   }\n\
+         \x20   print sum\n\
+         \x20   0\n\
+         }\n",
+    )
+    .unwrap();
+
+    let assembly = directory.join(unique("frost_dwarf")).with_extension("s");
+    let emitted = Command::new(&compiler)
+        .arg("--emit-asm")
+        .arg("-g")
+        .arg("-o")
+        .arg(&assembly)
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        emitted.status.success(),
+        "the self-hosted compiler could not emit assembly with -g:\n{}",
+        String::from_utf8_lossy(&emitted.stderr)
+    );
+
+    let reference =
+        directory.join(unique("frost_dwarf_as")).with_extension("o");
+    let system = Command::new("as")
+        .arg("-o")
+        .arg(&reference)
+        .arg(&assembly)
+        .output()
+        .unwrap();
+    assert!(
+        system.status.success(),
+        "`as` rejected the emitted text:\n{}",
+        String::from_utf8_lossy(&system.stderr)
+    );
+
+    let ours = directory
+        .join(unique("frost_dwarf_ours"))
+        .with_extension("o");
+    let encoded = Command::new(&compiler)
+        .arg("--native")
+        .arg("-g")
+        .arg("-o")
+        .arg(&ours)
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(
+        encoded.status.success(),
+        "this compiler's assembler failed with -g:\n{}",
+        String::from_utf8_lossy(&encoded.stderr)
+    );
+
+    let want = decoded_line_rows(&reference);
+    let got = decoded_line_rows(&ours);
+    assert!(
+        !want.is_empty(),
+        "`as` wrote no line table, so nothing was compared"
+    );
+    assert_eq!(
+        got, want,
+        "the line table disagrees with the one `as` wrote"
+    );
+
+    let _ = std::fs::remove_file(&source);
+    let _ = std::fs::remove_file(&assembly);
+    let _ = std::fs::remove_file(&reference);
+    let _ = std::fs::remove_file(&ours);
+    let _ = std::fs::remove_file(&compiler);
+}
+
 fn std_source(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("std")

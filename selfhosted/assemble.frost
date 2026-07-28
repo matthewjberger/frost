@@ -10,7 +10,9 @@ import "core.frost"
 
 export Assembly, assembly_of, assemble_into, asm_section_bytes, asm_section_count,
     asm_reloc_count, asm_reloc_at, asm_symbol_count, asm_symbol_at,
-    AsmSym, AsmReloc, SEC_TEXT, SEC_DATA, SEC_ABS, SEC_UNDEF,
+    AsmSym, AsmReloc, AsmFile, AsmLoc,
+    asm_file_count, asm_file_at, asm_loc_count, asm_loc_at, asm_loc_address,
+    SEC_TEXT, SEC_DATA, SEC_ABS, SEC_UNDEF,
     FORMAT_COFF, FORMAT_ELF, FIXUP_DATA, FIXUP_CALL, SECTION_ALIGNMENT
 
 // Which section a symbol or a byte belongs to. `SEC_ABS` is a `.set` name,
@@ -181,6 +183,16 @@ Bucket :: struct {
 }
 
 // Everything one translation unit assembles to.
+// A source file the line table names, as a range of the assembly text holding
+// the quoted path. The escapes are undone where the path is written out, so
+// what is kept here is exactly what was read.
+AsmFile :: struct { off: i64, len: i64 }
+
+// One row of the line table: where in the source, and which instruction it sits
+// in front of. The address is that instruction's, read after placement, since a
+// jump settling wider moves everything after it.
+AsmLoc :: struct { file: i64, line: i64, column: i64, insn: i64 }
+
 Assembly :: struct {
     src: str,
     text: str,
@@ -190,6 +202,8 @@ Assembly :: struct {
     insns: Arena<Insn>,
     syms: Arena<AsmSym>,
     relocs: Arena<AsmReloc>,
+    files: Arena<AsmFile>,
+    locs: Arena<AsmLoc>,
     // Open addressing over the symbol names, so resolving a reference is a
     // hash rather than a walk of every name defined so far.
     buckets: Arena<Bucket>,
@@ -1842,15 +1856,56 @@ read_directive :: fn(mut unit: Assembly, at: i64, len: i64, stop: i64) -> i64 {
         return stop + 1
     }
     // The line table, which is for a debugger reading the object rather than
-    // for the code in it. This assembler writes no debug sections, so it reads
-    // past them: the alternative is two kinds of assembly text, one for `as`
-    // and one for here, and then only one of them is ever checked.
-    if (bytes_same(src, at, len, ".file")
-        || bytes_same(src, at, len, ".loc")) {
+    // for the code in it. Both are kept and turned into DWARF sections at the
+    // end; a file writes none of these unless it was compiled with `-g`.
+    if (bytes_same(src, at, len, ".file")) {
+        read_file_directive(unit, rest)
+        return stop + 1
+    }
+    if (bytes_same(src, at, len, ".loc")) {
+        read_loc_directive(unit, rest)
         return stop + 1
     }
     assemble_fail(unit, "unit directive this assembler does not know", at)
     stop + 1
+}
+
+// `.file N "path"`. The numbers run from one and arrive in order, so the entry
+// is appended and the number is its position rather than a key.
+read_file_directive :: fn(mut unit: Assembly, at: i64) {
+    src := unit.src
+    number, after := read_number(src, at)
+    mut i := skip_spaces(src, after)
+    if (i >= str_len(src) || src[i] != CH_DQUOTE) {
+        return
+    }
+    i = i + 1
+    start := i
+    while (i < str_len(src) && src[i] != CH_DQUOTE) {
+        if (src[i] == CH_BACKSLASH) {
+            i = i + 1
+        }
+        i = i + 1
+    }
+    while (unit.files.count < number) {
+        push_file(unit, AsmFile { off = 0, len = 0 })
+    }
+    mut held := arena_at(unit.files, number - 1)
+    held.off = start
+    held.len = i - start
+}
+
+// `.loc file line column`. It stands in front of the next instruction, which
+// has not been read yet, so the row names the position that instruction will
+// take in the list.
+read_loc_directive :: fn(mut unit: Assembly, at: i64) {
+    src := unit.src
+    file, after_file := read_number(src, at)
+    line, after_line := read_number(src, skip_spaces(src, after_file))
+    column, unused := read_number(src, skip_spaces(src, after_line))
+    push_loc(unit, AsmLoc {
+        file = file, line = line, column = column, insn = unit.insns.count,
+    })
 }
 
 read_instruction :: fn(mut unit: Assembly, at: i64, len: i64, stop: i64) -> i64 {
@@ -2034,6 +2089,8 @@ assembly_of :: fn(format: i64) -> Assembly {
         insns = arena_make($Insn, 0),
         syms = arena_make($AsmSym, 0),
         relocs = arena_make($AsmReloc, 0),
+        files = arena_make($AsmFile, 0),
+        locs = arena_make($AsmLoc, 0),
         buckets = buckets,
         bucket_mask = ASSEMBLE_BUCKETS - 1,
         section = SEC_TEXT,
@@ -2065,6 +2122,38 @@ push_insn :: fn(mut unit: Assembly, record: Insn) {
     arena_push(unit.insns, record)
 }
 
+// The same room-doubling as the instructions, for the two line-table arenas.
+// A file compiled without `-g` writes neither directive and neither of these
+// ever asks for a byte.
+push_file :: fn(mut unit: Assembly, record: AsmFile) {
+    if (unit.files.count >= unit.files.cap) {
+        mut wider := arena_make($AsmFile, unit.files.cap * 2 + 64)
+        mut i : i64 = 0
+        while (i < unit.files.count) {
+            held := arena_at(unit.files, i)
+            arena_push(wider, AsmFile { off = held.off, len = held.len })
+            i = i + 1
+        }
+        unit.files = wider
+    }
+    arena_push(unit.files, record)
+}
+
+push_loc :: fn(mut unit: Assembly, record: AsmLoc) {
+    if (unit.locs.count >= unit.locs.cap) {
+        mut wider := arena_make($AsmLoc, unit.locs.cap * 2 + 4096)
+        mut i : i64 = 0
+        while (i < unit.locs.count) {
+            held := arena_at(unit.locs, i)
+            arena_push(wider, AsmLoc { file = held.file, line = held.line,
+                column = held.column, insn = held.insn })
+            i = i + 1
+        }
+        unit.locs = wider
+    }
+    arena_push(unit.locs, record)
+}
+
 // Read a whole translation unit into the room in hand. Everything the last unit
 // left behind is dropped first, so what comes out depends on this text alone.
 //
@@ -2080,6 +2169,8 @@ assemble_into :: fn(mut unit: Assembly, text: str) {
     unit.insns.count = 0
     unit.syms.count = 0
     unit.relocs.count = 0
+    unit.files.count = 0
+    unit.locs.count = 0
     unit.section = SEC_TEXT
     room := str_len(text) + SECTION_ALIGNMENT
     if (str_len(unit.text) < room) {
@@ -2118,6 +2209,29 @@ asm_section_count :: fn(mut unit: Assembly, section: i64) -> i64 {
         return unit.text_count
     }
     unit.data_count
+}
+
+asm_file_count :: fn(mut unit: Assembly) -> i64 { unit.files.count }
+
+asm_file_at :: fn(mut unit: Assembly, index: i64) -> ref AsmFile {
+    arena_at(unit.files, index)
+}
+
+asm_loc_count :: fn(mut unit: Assembly) -> i64 { unit.locs.count }
+
+asm_loc_at :: fn(mut unit: Assembly, index: i64) -> ref AsmLoc {
+    arena_at(unit.locs, index)
+}
+
+// Where in the text the row's instruction ended up. A row in front of nothing
+// is the end of the section, which is where the last sequence stops.
+asm_loc_address :: fn(mut unit: Assembly, index: i64) -> i64 {
+    held := arena_at(unit.locs, index)
+    at := held.insn
+    if (at >= unit.insns.count) {
+        return unit.text_count
+    }
+    arena_at(unit.insns, at).offset
 }
 
 asm_reloc_count :: fn(mut unit: Assembly) -> i64 { unit.relocs.count }

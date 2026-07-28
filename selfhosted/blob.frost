@@ -5,7 +5,7 @@
 import "core.frost"
 
 export Blob, object_blob, blob_byte, blob_word16, blob_word32, blob_word64,
-    blob_zeros, blob_name, blob_copy, blob_room, blob_write
+    blob_zeros, blob_name, blob_copy, blob_range, blob_room, blob_write
 
 Blob :: struct {
     bytes: str,
@@ -79,6 +79,16 @@ blob_copy :: fn(mut b: Blob, source: str, count: i64) {
     mut i : i64 = 0
     while (i < count) {
         blob_byte(b, source[i])
+        i = i + 1
+    }
+}
+
+// A run out of the middle of another blob, which is how a section built off to
+// one side lands in the object at the place the layout gave it.
+blob_range :: fn(mut b: Blob, source: Blob, at: i64, count: i64) {
+    mut i : i64 = 0
+    while (i < count) {
+        blob_byte(b, source.bytes[at + i])
         i = i + 1
     }
 }
