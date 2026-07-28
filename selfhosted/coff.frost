@@ -126,13 +126,6 @@ coff_long_name :: fn(mut object: Blob, at: i64) {
     }
 }
 
-// How much of the string table a name takes. Written as a call rather than
-// `str_len` on the constant, because the self-hosted C backend lowers a string
-// constant named in place as a pointer rather than as text.
-coff_name_room :: fn(name: str) -> i64 {
-    str_len(name) + 1
-}
-
 coff_string :: fn(mut object: Blob, name: str) {
     blob_copy(object, name, str_len(name))
     blob_byte(object, 0)
@@ -210,11 +203,11 @@ write_coff_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
     mut info_name_at : i64 = 0
     if (debug) {
         line_name_at = string_size
-        string_size = string_size + coff_name_room(COFF_LINE_NAME)
+        string_size = string_size + str_len(COFF_LINE_NAME) + 1
         abbrev_name_at = string_size
-        string_size = string_size + coff_name_room(COFF_ABBREV_NAME)
+        string_size = string_size + str_len(COFF_ABBREV_NAME) + 1
         info_name_at = string_size
-        string_size = string_size + coff_name_room(COFF_INFO_NAME)
+        string_size = string_size + str_len(COFF_INFO_NAME) + 1
     }
     mut i : i64 = 0
     while (i < asm_symbol_count(unit)) {
