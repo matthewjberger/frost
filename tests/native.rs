@@ -11414,6 +11414,120 @@ fn a_frame_pointer_may_not_leave_an_unsafe_block_by_any_road() {
     }
 }
 
+// Provenance the walk has to establish rather than assume. Each of these handed
+// back a view of a dead frame, and each did it by taking a road the walk had not
+// been taught: an ordinary call, a call through a function pointer, an
+// assignment into a local, a `return` inside a match arm, the address of a
+// `move` parameter. Answering "this does not point into the frame" for a shape
+// nobody enumerated is what they all had in common.
+#[test]
+fn a_frame_view_may_not_leave_by_a_road_the_walk_cannot_follow() {
+    let cases = [
+        (
+            "launderedcall",
+            "launder :: fn(p: ^i64) -> ^i64 { p }\n\
+             leak :: fn() -> ^i64 {\n\
+             \x20   mut local : i64 = 42\n\
+             \x20   launder(ptr_to(local))\n}\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+        (
+            "launderedref",
+            "Holder :: struct { a: [4]i64 }\n\
+             pick :: fn(mut h: Holder, i: i64) -> ref i64 { h.a[i] }\n\
+             leak :: fn() -> ref i64 {\n\
+             \x20   mut local : Holder = Holder { a = [11, 22, 33, 44] }\n\
+             \x20   pick(local, 0)\n}\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+        (
+            "launderedfnptr",
+            "Ops :: struct { pass: fn(^i64) -> ^i64 }\n\
+             identity :: fn(p: ^i64) -> ^i64 { p }\n\
+             leak :: fn() -> ^i64 {\n\
+             \x20   mut local : i64 = 42\n\
+             \x20   ops := Ops { pass = identity }\n\
+             \x20   ops.pass(ptr_to(local))\n}\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+        (
+            "assignedthenreturned",
+            "start :: fn(seed: ^i64) -> ^i64 { seed }\n\
+             leak :: fn(seed: ^i64) -> ^i64 {\n\
+             \x20   mut local : i64 = 42\n\
+             \x20   mut p : ^i64 = start(seed)\n\
+             \x20   p = ptr_to(local)\n\
+             \x20   p\n}\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+        (
+            "returninmatcharm",
+            "Pick :: enum { One, Two }\n\
+             leak :: fn(p: Pick, fallback: ^i64) -> ^i64 {\n\
+             \x20   mut x : i64 = 42\n\
+             \x20   match p {\n\
+             \x20       case .One: { return ptr_to(x) }\n\
+             \x20       case .Two: { x = x + 1 }\n\
+             \x20   }\n\
+             \x20   fallback\n}\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+        (
+            "moveparameteraddress",
+            "Point :: struct { x: i64, y: i64 }\n\
+             leak :: fn(move p: Point) -> ^i64 { ptr_to(p.x) }\n\
+             main :: fn() -> i64 { 0 }\n",
+        ),
+    ];
+    for (name, source) in cases {
+        let message = compile_error_checked(name, source);
+        assert!(
+            message.contains("region:"),
+            "{name} should not compile, got:\n{message}"
+        );
+    }
+}
+
+// The other half of the same rule: what the walk can trace to a parameter, an
+// allocation capability or the heap still compiles. Without these the inversion
+// would be a check that refuses everything.
+#[test]
+fn a_view_traced_to_storage_that_outlives_the_call_is_allowed() {
+    let source = "Holder :: struct { a: [4]i64 }\n\
+                  Ops :: struct { pass: fn(^i64) -> ^i64 }\n\
+                  identity :: fn(p: ^i64) -> ^i64 { p }\n\
+                  pick :: fn(mut h: Holder, i: i64) -> ref i64 { h.a[i] }\n\
+                  through :: fn(mut h: Holder) -> ref i64 { pick(h, 0) }\n\
+                  handed :: fn(p: ^i64) -> ^i64 { identity(p) }\n\
+                  indirect :: fn(p: ^i64, ops: Ops) -> ^i64 { ops.pass(p) }\n\
+                  span :: fn(held: []i64, from: i64) -> []i64 {\n\
+                  \x20   count := slice_len(held) - from\n\
+                  \x20   unsafe { slice_from($i64, ptr_to(held[from]), count) }\n}\n\
+                  bump :: fn(mut v: i64) -> i64 { v }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   mut h : Holder = Holder { a = [1, 2, 3, 4] }\n\
+                  \x20   print bump(through(h))\n\
+                  \x20   0\n}\n";
+    let directory = std::env::temp_dir();
+    let source_path = directory.join("frost_traced_view.frost");
+    let exe_path = directory
+        .join(format!("frost_traced_view{}", std::env::consts::EXE_SUFFIX));
+    std::fs::write(&source_path, source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe_path)
+        .arg(&source_path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&source_path);
+    assert!(
+        output.status.success(),
+        "a view traced to a parameter should compile, got:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 // Reading back through a pointer at a local that holds a frame pointer hands
 // the frame pointer out again.
 #[test]
