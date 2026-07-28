@@ -5824,6 +5824,99 @@ fn a_constant_defined_in_terms_of_itself_is_refused() {
     );
 }
 
+// A literal that does not fit the type it is written at. Both compilers used to
+// truncate it in silence: `a : u8 = 300` was 44 and `b : i8 = 200` was -56.
+// Both agreeing about it is exactly why running them against each other could
+// not see it, and the type is in hand at the point of coercion, so nothing was
+// missing except the look.
+#[test]
+fn a_literal_that_does_not_fit_its_type_is_refused() {
+    let directory = std::env::temp_dir();
+    for (source, wanted) in [
+        (
+            "main :: fn() -> i64 {\n    a : u8 = 300\n    print a\n    0\n}\n",
+            "u8",
+        ),
+        (
+            "main :: fn() -> i64 {\n    b : i8 = 200\n    print b\n    0\n}\n",
+            "i8",
+        ),
+        (
+            "main :: fn() -> i64 {\n    c : i16 = 40000\n    print c\n    0\n}\n",
+            "i16",
+        ),
+        (
+            "main :: fn() -> i64 {\n    d : u8 = -1\n    print d\n    0\n}\n",
+            "u8",
+        ),
+    ] {
+        let input = directory
+            .join(unique("frost_range"))
+            .with_extension("frost");
+        std::fs::write(&input, source).unwrap();
+        let exe = directory
+            .join(unique("frost_range"))
+            .with_extension(std::env::consts::EXE_EXTENSION);
+        let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+            .arg("--link")
+            .arg("-o")
+            .arg(&exe)
+            .arg(&input)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&input);
+        let _ = std::fs::remove_file(&exe);
+        assert!(
+            !built.status.success(),
+            "a literal outside {wanted} compiled:\n{source}"
+        );
+        let complaint = String::from_utf8_lossy(&built.stderr);
+        assert!(
+            complaint.contains("does not fit in a")
+                && complaint.contains(wanted),
+            "the refusal did not say what was wrong:\n{complaint}"
+        );
+    }
+}
+
+// And the same from the compiler that ships, since a language is what both of
+// them accept.
+#[test]
+fn the_self_hosted_compiler_refuses_a_literal_that_does_not_fit() {
+    let Some(compiler) = build_self_hosted_compiler("range") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    let input = directory
+        .join(unique("frost_shrange"))
+        .with_extension("frost");
+    std::fs::write(
+        &input,
+        "main :: fn() -> i64 {\n    a : u8 = 300\n    print a\n    0\n}\n",
+    )
+    .unwrap();
+    let emitted = directory.join(unique("frost_shrange")).with_extension("c");
+    let built = Command::new(&compiler)
+        .arg("--emit-c")
+        .arg("-o")
+        .arg(&emitted)
+        .arg(&input)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&emitted);
+    let _ = std::fs::remove_file(&compiler);
+    assert!(
+        !built.status.success(),
+        "the self-hosted compiler took a literal outside a u8"
+    );
+    let complaint = String::from_utf8_lossy(&built.stderr);
+    assert!(
+        complaint.contains("300 does not fit in a 'u8'"),
+        "the refusal did not say what was wrong:\n{complaint}"
+    );
+}
+
 // Step 4 of docs/book/src/impl/separate-compilation.md, as an oracle. With
 // FROST_BUILD_FROM_INTERFACES an imported module contributes what its interface
 // says and nothing else, so producing the same program either way is the

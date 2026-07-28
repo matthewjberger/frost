@@ -242,7 +242,68 @@ binding_type :: fn(mut p: Parser, value: i64) -> i64 {
 
 // Whether a value of type `from` may be given to something of type `to`, with
 // the value in hand, so a literal can be exempt from the distinct-type rule.
+// The number a literal spells, folded the same way `untyped_literal` decides
+// whether it is one. Only integers: a float is not range-checked here.
+literal_value :: fn(mut p: Parser, id: i64) -> i64 {
+    node := arena_at(p.arena, id)
+    if (node.kind == NodeKind::Num) {
+        return node.val
+    }
+    if (node.kind == NodeKind::Bin) {
+        left := literal_value(p, node.a)
+        right := literal_value(p, node.b)
+        if (node.val == OP_ADD) { return left + right }
+        if (node.val == OP_SUB) { return left - right }
+        if (node.val == OP_MUL) { return left * right }
+        if (node.val == OP_DIV && right != 0) { return left / right }
+        if (node.val == OP_MOD && right != 0) { return left % right }
+    }
+    0
+}
+
+// The smallest and largest a type holds. `usize` and `isize` are the word this
+// compiler targets, which is sixty-four bits everywhere it runs, and a literal
+// is read as an i64, so the top half of a u64 cannot be written as one anyway.
+integer_low :: fn(ty: i64) -> i64 {
+    held := distinct_repr(ty)
+    if (held == TY_I8) { return 0 - 128 }
+    if (held == TY_I16) { return 0 - 32768 }
+    if (held == TY_I32) { return 0 - 2147483648 }
+    if (held == TY_I64 || held == TY_ISIZE) { return 0 - 9223372036854775807 - 1 }
+    0
+}
+
+integer_high :: fn(ty: i64) -> i64 {
+    held := distinct_repr(ty)
+    if (held == TY_I8) { return 127 }
+    if (held == TY_U8) { return 255 }
+    if (held == TY_I16) { return 32767 }
+    if (held == TY_U16) { return 65535 }
+    if (held == TY_I32) { return 2147483647 }
+    if (held == TY_U32) { return 4294967295 }
+    9223372036854775807
+}
+
 value_fits :: fn(mut p: Parser, value: i64, from: i64, to: i64) -> bool {
+    // A literal that does not fit what it is being read at. The type is in
+    // hand and so is the number, which is the whole of what a range check
+    // needs, and nothing used to look: `a : u8 = 300` was quietly 44 and
+    // `b : i8 = 200` was quietly -56. Both compilers agreed about it, which is
+    // exactly why running them against each other could not see it.
+    if (value >= 0 && is_integer(to) && untyped_literal(p, value)) {
+        held := literal_value(p, value)
+        if (held < integer_low(to) || held > integer_high(to)) {
+            report_where(p.modules, p.src, arena_at(p.arena, value).pos)
+            report_int(held)
+            report(" does not fit in a '")
+            report_type_name(p, to)
+            report("', which holds ")
+            report_int(integer_low(to))
+            report(" to ")
+            report_int(integer_high(to))
+            frost_rt_die()
+        }
+    }
     // A set of bits has no such exemption. Its whole content is the names, so a
     // number written where one belongs is the thing the declaration replaces.
     if (is_flags_type(p, to)) {

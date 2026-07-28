@@ -24,7 +24,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     Variant,
     add_root, arena_at, arena_make, arena_push, cstr_eq, emit_text, malloc,
     emit_to_memory, emit_memory_text,
-    report, report_cstr, report_src, SearchRoot,
+    report, report_cstr, report_int, report_src, SearchRoot,
     buffer_of, cstr_slice, empty_source, source_end, byte_at, byte_set,
     cstr_len,
     frost_rt_arg_at, frost_rt_arg_count,
@@ -109,6 +109,32 @@ report :: fn(s: str) {
         return
     }
     unsafe { frost_rt_error_bytes(ptr_to(s[0]), length) }
+}
+
+// A number in a diagnostic. `frost_rt_emit_int` writes to the emit stream,
+// which is where a backend's output goes, so a diagnostic that used it put its
+// number somewhere else and the message came out in pieces.
+report_int :: fn(value: i64) {
+    if (value == 0) {
+        report("0")
+        return
+    }
+    mut held := value
+    if (held < 0) {
+        report("-")
+        held = 0 - held
+    }
+    mut digits : [24]u8 = [0; 24]
+    mut count : i64 = 0
+    while (held > 0) {
+        digits[count] = 48 + (held % 10)
+        held = held / 10
+        count = count + 1
+    }
+    while (count > 0) {
+        count = count - 1
+        unsafe { frost_rt_error_bytes(ptr_to(digits[count]), 1) }
+    }
 }
 
 report_src :: fn(src: str, offset: i64, length: i64) {
