@@ -168,6 +168,26 @@ append_member_name :: fn(mut out: Builder, mut document: Json, node: i64) {
 // named in a member is that struct by value unless the member says pointer.
 // ---------------------------------------------------------------------------
 
+// Whether a type is a list, which C spells as a count and a pointer rather than
+// as one member.
+//
+// The schema escapes the angle brackets, so an array member reads here as
+// `array<...`: the json reader answers with the bytes as they sit in the
+// file rather than decoding them. Both spellings are the same type and the
+// difference belongs to the file, so it is settled once here instead of at each
+// of the six places that ask.
+//
+// What testing only the plain spelling cost: every struct holding a list lost
+// the count beside it, so `SurfaceCapabilities` and `RenderPassDescriptor` came
+// out the wrong size and the wrong shape, and a call filling one in wrote
+// through whatever followed it in the caller's frame. It compiled and linked.
+type_is_array :: fn(mut document: Json, node: i64) -> bool {
+    if (type_starts(document, node, "array<")) {
+        return true
+    }
+    type_starts(document, node, "array\\u003c")
+}
+
 // Whether a type string starts with this prefix.
 type_starts :: fn(mut document: Json, node: i64, prefix: str) -> bool {
     off := json_text_off(document, node)
@@ -296,7 +316,7 @@ append_type :: fn(mut out: Builder, mut document: Json, holder: i64) {
         append_after_dot(out, document, kind)
         return
     }
-    if (type_starts(document, kind, "array<")) {
+    if (type_is_array(document, kind)) {
         builder_str_value(out, "^u8")
         return
     }
@@ -408,7 +428,7 @@ append_default :: fn(mut out: Builder, mut document: Json, held: i64) {
     }
     if (type_starts(document, kind, "object.")
         || type_starts(document, kind, "callback.")
-        || type_starts(document, kind, "array<")
+        || type_is_array(document, kind)
         || json_text_eq(document, kind, "c_void")) {
         builder_str_value(out, "unsafe { ptr_cast($u8, zero) }")
         return
@@ -503,7 +523,7 @@ emit_inits :: fn(mut out: Builder, mut names: Builder, mut document: Json,
             held := json_at(document, members, member)
             member_name := json_member(document, held, "name")
             member_type := json_member(document, held, "type")
-            if (type_starts(document, member_type, "array<")) {
+            if (type_is_array(document, member_type)) {
                 builder_str_value(out, "        ")
                 append_member_name(out, document, member_name)
                 builder_str_value(out, "_count = 0,\n")
@@ -703,7 +723,7 @@ emit_structs :: fn(mut out: Builder, mut names: Builder,
             member_type := json_member(document, held, "type")
             // An array is a count and a pointer in C, so it is two members
             // here, named the way the header names them.
-            if (type_starts(document, member_type, "array<")) {
+            if (type_is_array(document, member_type)) {
                 builder_str_value(out, "    ")
                 append_snake(out, document, member_name)
                 builder_str_value(out, "_count: u64,\n")
@@ -792,7 +812,7 @@ append_args_declared :: fn(mut out: Builder, mut document: Json, args: i64) {
         each := json_at(document, args, arg)
         arg_name := json_member(document, each, "name")
         arg_type := json_member(document, each, "type")
-        if (type_starts(document, arg_type, "array<")) {
+        if (type_is_array(document, arg_type)) {
             builder_str_value(out, ", ")
             append_param_name(out, document, arg_name)
             builder_str_value(out, "_count: u64")
@@ -814,7 +834,7 @@ append_args_forwarded :: fn(mut out: Builder, mut document: Json, args: i64) {
         each := json_at(document, args, arg)
         arg_name := json_member(document, each, "name")
         arg_type := json_member(document, each, "type")
-        if (type_starts(document, arg_type, "array<")) {
+        if (type_is_array(document, arg_type)) {
             builder_str_value(out, ", ")
             append_param_name(out, document, arg_name)
             builder_str_value(out, "_count")
