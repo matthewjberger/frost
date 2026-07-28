@@ -557,8 +557,11 @@ fn rvalue_expr(
         IrRvalue::Unary(op, operand) => {
             let expr = operand_expr(function, operand)?;
             match op {
-                IrUnOp::Negate => format!("(-{expr})"),
-                IrUnOp::Not => format!("(!{expr})"),
+                // The operand is parenthesised, not just the whole thing. A
+                // negated negative constant came out as `--9`, which C reads as
+                // a decrement and refuses because a literal is not a place.
+                IrUnOp::Negate => format!("(-({expr}))"),
+                IrUnOp::Not => format!("(!({expr}))"),
             }
         }
         IrRvalue::Cast(operand, target) => {

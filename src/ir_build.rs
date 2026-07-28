@@ -803,7 +803,7 @@ impl IrBuilder {
                     function.set_terminator(IrTerminator::Return(None));
                 } else {
                     let operand =
-                        function.coerce(value, &value_type, &return_type);
+                        function.coerce(value, &value_type, &return_type)?;
                     function
                         .set_terminator(IrTerminator::Return(Some(operand)));
                 }
@@ -3896,7 +3896,11 @@ impl<'a> FunctionLowering<'a> {
                         let operand = if matches!(return_type, Type::Void) {
                             None
                         } else {
-                            Some(self.coerce(value, &value_type, return_type))
+                            Some(self.coerce(
+                                value,
+                                &value_type,
+                                return_type,
+                            )?)
                         };
                         self.emit_return(operand)?;
                     }
@@ -4080,7 +4084,7 @@ impl<'a> FunctionLowering<'a> {
                     (None, Some(inner)) => inner.clone(),
                     (None, None) => value_type.clone(),
                 };
-                let coerced = self.coerce(operand, &value_type, &declared);
+                let coerced = self.coerce(operand, &value_type, &declared)?;
                 let local =
                     self.fresh_local(declared.clone(), Some(name.clone()));
                 self.emit(IrStatement::Assign(local, IrRvalue::Use(coerced)));
@@ -4122,7 +4126,7 @@ impl<'a> FunctionLowering<'a> {
                         );
                     }
                     let coerced =
-                        self.coerce(operand, &value_type, &return_type);
+                        self.coerce(operand, &value_type, &return_type)?;
                     self.emit_return(Some(coerced))?;
                 }
                 Ok(())
@@ -4236,7 +4240,7 @@ impl<'a> FunctionLowering<'a> {
             _ => self.lower_slice_len(std::slice::from_ref(&walked.clone()))?,
         };
         let bound = self.fresh_local(Type::I64, None);
-        let coerced = self.coerce(length, &length_type, &Type::I64);
+        let coerced = self.coerce(length, &length_type, &Type::I64)?;
         self.emit(IrStatement::Assign(bound, IrRvalue::Use(coerced)));
 
         let index_name = second.map(|_| variable);
@@ -4370,13 +4374,13 @@ impl<'a> FunctionLowering<'a> {
         let index =
             self.fresh_local(start_type.clone(), Some(variable.to_string()));
         let start_coerced =
-            self.coerce(start_operand, &start_type, &start_type);
+            self.coerce(start_operand, &start_type, &start_type)?;
         self.emit(IrStatement::Assign(index, IrRvalue::Use(start_coerced)));
 
         let (end_operand, end_type) =
             self.lower_expression(end, Some(&start_type))?;
         let end_local = self.fresh_local(end_type.clone(), None);
-        let end_coerced = self.coerce(end_operand, &end_type, &start_type);
+        let end_coerced = self.coerce(end_operand, &end_type, &start_type)?;
         self.emit(IrStatement::Assign(end_local, IrRvalue::Use(end_coerced)));
 
         let header = self.new_block();
@@ -4510,6 +4514,23 @@ impl<'a> FunctionLowering<'a> {
                     IrRvalue::FunctionAddress(name),
                 ));
                 Ok((IrOperand::Local(result), proc_type))
+            }
+            // A negated literal is a literal, and folding it here is what lets
+            // it be range-checked at the type it is written at. Left as a
+            // negation it was a computed value, so `d : u8 = -1` went round the
+            // check and was quietly 255.
+            Expression::Prefix(crate::parser::Operator::Negate, operand)
+                if matches!(
+                    operand.as_ref(),
+                    Expression::Literal(Literal::Integer(_))
+                ) =>
+            {
+                let Expression::Literal(Literal::Integer(value)) =
+                    operand.as_ref()
+                else {
+                    unreachable!()
+                };
+                self.lower_literal(&Literal::Integer(-value), expected)
             }
             Expression::Prefix(operator, operand) => {
                 self.lower_prefix(*operator, operand, expected)
@@ -4657,6 +4678,15 @@ impl<'a> FunctionLowering<'a> {
                     Some(ty) if ty.is_integer() => ty.clone(),
                     _ => Type::I64,
                 };
+                // The type the literal is being read at is in hand here, which
+                // is the whole of what a range check needs. Nothing used to
+                // look, so `a : u8 = 300` was quietly 44.
+                if !fits_in(*value, &ty) {
+                    let (low, high) = range_of(&ty).expect("integer type");
+                    bail!(
+                        "{value} does not fit in a {ty}, which holds {low} to {high}"
+                    );
+                }
                 Ok((
                     IrOperand::Constant(IrConstant::Integer(
                         *value,
@@ -4805,7 +4835,7 @@ impl<'a> FunctionLowering<'a> {
                 str_byte_ptr_type(),
             );
             let length = self.str_field(base, STR_LEN_OFFSET, Type::Usize);
-            let length = self.coerce(length, &Type::Usize, &Type::I64);
+            let length = self.coerce(length, &Type::Usize, &Type::I64)?;
             let sink = self.fresh_local(Type::Void, None);
             self.emit(IrStatement::Assign(
                 sink,
@@ -4841,7 +4871,7 @@ impl<'a> FunctionLowering<'a> {
                 "there is no way to write a '{value_type}', so print what it holds instead"
             )
         };
-        let coerced = self.coerce(operand, &value_type, &target);
+        let coerced = self.coerce(operand, &value_type, &target)?;
         let sink = self.fresh_local(Type::Void, None);
         self.emit(IrStatement::Assign(
             sink,
@@ -5005,9 +5035,9 @@ impl<'a> FunctionLowering<'a> {
             }
             let operand_type = unify(&left_type, &right_type);
             let left_final =
-                self.coerce(left_operand, &left_type, &operand_type);
+                self.coerce(left_operand, &left_type, &operand_type)?;
             let right_final =
-                self.coerce(right_operand, &right_type, &operand_type);
+                self.coerce(right_operand, &right_type, &operand_type)?;
             let result = self.fresh_local(Type::Bool, None);
             self.emit(IrStatement::Assign(
                 result,
@@ -5026,8 +5056,9 @@ impl<'a> FunctionLowering<'a> {
             (right, &right_type),
         )?;
         let result_type = unify(&left_type, &right_type);
-        let left_final = self.coerce(left_operand, &left_type, &result_type);
-        let right_final = self.coerce(right_operand, &right_type, &result_type);
+        let left_final = self.coerce(left_operand, &left_type, &result_type)?;
+        let right_final =
+            self.coerce(right_operand, &right_type, &result_type)?;
         let result = self.fresh_local(result_type.clone(), None);
         self.emit(IrStatement::Assign(
             result,
@@ -5200,7 +5231,8 @@ impl<'a> FunctionLowering<'a> {
             if matches!(then_type, Type::Void) {
                 then_answered = false;
             } else {
-                let coerced = self.coerce(then_value, &then_type, &result_type);
+                let coerced =
+                    self.coerce(then_value, &then_type, &result_type)?;
                 self.emit(IrStatement::Assign(
                     result_local,
                     IrRvalue::Use(coerced),
@@ -5219,7 +5251,7 @@ impl<'a> FunctionLowering<'a> {
                     else_answered = false;
                 } else {
                     let coerced =
-                        self.coerce(else_value, &else_type, &result_type);
+                        self.coerce(else_value, &else_type, &result_type)?;
                     self.emit(IrStatement::Assign(
                         result_local,
                         IrRvalue::Use(coerced),
@@ -5757,7 +5789,7 @@ impl<'a> FunctionLowering<'a> {
                             && !needs_memory(inner)
                         {
                             let coerced =
-                                self.coerce(operand, &value_type, inner);
+                                self.coerce(operand, &value_type, inner)?;
                             lowered.push(coerced);
                             continue;
                         }
@@ -5809,7 +5841,11 @@ impl<'a> FunctionLowering<'a> {
                             lowered.push(self.address_of_local(local, target));
                         }
                     } else {
-                        lowered.push(self.coerce(operand, &value_type, target));
+                        lowered.push(self.coerce(
+                            operand,
+                            &value_type,
+                            target,
+                        )?);
                     }
                 }
                 ArgPlan::Borrow(index) => {
@@ -5833,7 +5869,7 @@ impl<'a> FunctionLowering<'a> {
                             Some(&pointee),
                         )?;
                         let coerced =
-                            self.coerce(operand, &value_type, &pointee);
+                            self.coerce(operand, &value_type, &pointee)?;
                         lowered.push(coerced);
                         continue;
                     }
@@ -5957,7 +5993,7 @@ impl<'a> FunctionLowering<'a> {
                 );
             }
             let coerced = match expected {
-                Some(target) => self.coerce(operand, &value_type, target),
+                Some(target) => self.coerce(operand, &value_type, target)?,
                 None => operand,
             };
             lowered.push(coerced);
@@ -6054,7 +6090,7 @@ impl<'a> FunctionLowering<'a> {
                 );
             }
             let coerced = match expected {
-                Some(target) => self.coerce(operand, &value_type, target),
+                Some(target) => self.coerce(operand, &value_type, target)?,
                 None => operand,
             };
             lowered.push(coerced);
@@ -6244,7 +6280,7 @@ impl<'a> FunctionLowering<'a> {
                     "'{name}' is a '{target_type}' and the value is {described}; {note}"
                 );
             }
-            let coerced = self.coerce(operand, &value_type, &target_type);
+            let coerced = self.coerce(operand, &value_type, &target_type)?;
             self.emit(IrStatement::Assign(local, IrRvalue::Use(coerced)));
             return Ok(());
         }
@@ -6293,7 +6329,7 @@ impl<'a> FunctionLowering<'a> {
             });
             return Ok(());
         }
-        let coerced = self.coerce(operand, &value_type, &pointee);
+        let coerced = self.coerce(operand, &value_type, &pointee)?;
         self.emit(IrStatement::Store {
             address,
             value: coerced,
@@ -6433,7 +6469,7 @@ impl<'a> FunctionLowering<'a> {
     ) -> Result<(IrOperand, Type)> {
         let (base_pointer, _) = self.lower_expression(base, None)?;
         let element_size = self.builder.byte_size(&pointee);
-        let index = self.coerce(index_operand, &index_type, &Type::I64);
+        let index = self.coerce(index_operand, &index_type, &Type::I64)?;
         let result =
             self.fresh_local(Type::Ptr(Box::new(pointee.clone())), None);
         self.emit(IrStatement::Assign(
@@ -6515,8 +6551,8 @@ impl<'a> FunctionLowering<'a> {
             str_byte_ptr_type(),
         );
         let length = self.str_field(str_address, STR_LEN_OFFSET, Type::Usize);
-        let index = self.coerce(index_operand, &index_type, &Type::I64);
-        let length = self.coerce(length, &Type::Usize, &Type::I64);
+        let index = self.coerce(index_operand, &index_type, &Type::I64)?;
+        let length = self.coerce(length, &Type::Usize, &Type::I64)?;
         let check = self.fresh_local(Type::Void, None);
         self.emit(IrStatement::Assign(
             check,
@@ -6644,8 +6680,8 @@ impl<'a> FunctionLowering<'a> {
         );
         let length =
             self.str_field(slice_address, SLICE_LEN_OFFSET, Type::Usize);
-        let index = self.coerce(index_operand, &index_type, &Type::I64);
-        let length = self.coerce(length, &Type::Usize, &Type::I64);
+        let index = self.coerce(index_operand, &index_type, &Type::I64)?;
+        let length = self.coerce(length, &Type::Usize, &Type::I64)?;
         let check = self.fresh_local(Type::Void, None);
         self.emit(IrStatement::Assign(
             check,
@@ -6783,7 +6819,7 @@ impl<'a> FunctionLowering<'a> {
         let (pointer, _) = self.lower_expression(&arguments[1], None)?;
         let (length, length_type) =
             self.lower_expression(&arguments[2], None)?;
-        let length = self.coerce(length, &length_type, &Type::Usize);
+        let length = self.coerce(length, &length_type, &Type::Usize)?;
         let slice_type = Type::Slice(Box::new(element.clone()));
         let slice_local = self.fresh_local(slice_type.clone(), None);
         self.mark_in_memory(slice_local);
@@ -7005,7 +7041,8 @@ impl<'a> FunctionLowering<'a> {
             self.array_base_pointer(base)?
         };
         let element_size = self.builder.byte_size(&element_type);
-        let index_operand = self.coerce(index_operand, &index_type, &Type::I64);
+        let index_operand =
+            self.coerce(index_operand, &index_type, &Type::I64)?;
         if let Some(length) = length {
             let check_result = self.fresh_local(Type::Void, None);
             self.emit(IrStatement::Assign(
@@ -7556,7 +7593,8 @@ impl<'a> FunctionLowering<'a> {
             } else {
                 let (operand, value_type) =
                     self.lower_expression(element, Some(element_type))?;
-                let coerced = self.coerce(operand, &value_type, element_type);
+                let coerced =
+                    self.coerce(operand, &value_type, element_type)?;
                 self.emit(IrStatement::Store {
                     address: IrOperand::Local(address),
                     value: coerced,
@@ -7800,7 +7838,7 @@ impl<'a> FunctionLowering<'a> {
             } else {
                 let (operand, value_type) =
                     self.lower_expression(field_value, Some(field_type))?;
-                let coerced = self.coerce(operand, &value_type, field_type);
+                let coerced = self.coerce(operand, &value_type, field_type)?;
                 self.emit(IrStatement::Store {
                     address: IrOperand::Local(address),
                     value: coerced,
@@ -7943,7 +7981,7 @@ impl<'a> FunctionLowering<'a> {
             } else {
                 let (operand, value_type) =
                     self.lower_expression(field_value, Some(field_type))?;
-                let coerced = self.coerce(operand, &value_type, field_type);
+                let coerced = self.coerce(operand, &value_type, field_type)?;
                 self.emit(IrStatement::Store {
                     address: IrOperand::Local(address),
                     value: coerced,
@@ -8183,7 +8221,7 @@ impl<'a> FunctionLowering<'a> {
                     Some(self.fresh_local(result_type.clone(), None));
             }
             let target = result_local.unwrap();
-            let coerced = self.coerce(value, &value_type, &result_type);
+            let coerced = self.coerce(value, &value_type, &result_type)?;
             self.emit(IrStatement::Assign(target, IrRvalue::Use(coerced)));
             self.pop_scope();
             self.set_terminator(IrTerminator::Jump(merge));
@@ -8365,7 +8403,7 @@ impl<'a> FunctionLowering<'a> {
                     Some(self.fresh_local(result_type.clone(), None));
             }
             let target = result_local.unwrap();
-            let coerced = self.coerce(value, &value_type, &result_type);
+            let coerced = self.coerce(value, &value_type, &result_type)?;
             self.emit(IrStatement::Assign(target, IrRvalue::Use(coerced)));
             self.pop_scope();
             self.set_terminator(IrTerminator::Jump(merge));
@@ -8572,14 +8610,21 @@ impl<'a> FunctionLowering<'a> {
         Some(format!("{struct_name}<{}>", rendered.join(", ")))
     }
 
+    /// Puts a value into the type the place it is going has.
+    ///
+    /// Fallible because of one case: a literal that does not fit. The type it
+    /// is going into is in hand right here, which is the whole of what a range
+    /// check needs, and nothing used to look at it, so `a : u8 = 300` was
+    /// quietly 44 and `b : i8 = 200` was quietly -56. Both compilers agreed
+    /// about it, which is exactly why the differential oracle could not see it.
     fn coerce(
         &mut self,
         operand: IrOperand,
         from: &Type,
         to: &Type,
-    ) -> IrOperand {
+    ) -> Result<IrOperand> {
         if from == to || matches!(to, Type::Void | Type::Unknown) {
-            return operand;
+            return Ok(operand);
         }
         if let (Type::Array(from_element, count), Type::Slice(to_element)) =
             (from, to)
@@ -8589,12 +8634,22 @@ impl<'a> FunctionLowering<'a> {
             self.mark_in_memory(array_local);
             let array_type = Type::Array(from_element.clone(), *count);
             let base = self.address_of_local(array_local, &array_type);
-            return self.build_slice_from_address(base, from_element, *count);
+            return Ok(self.build_slice_from_address(
+                base,
+                from_element,
+                *count,
+            ));
         }
-        match &operand {
+        Ok(match &operand {
             IrOperand::Constant(IrConstant::Integer(value, _))
                 if to.is_integer() =>
             {
+                if !fits_in(*value, to) {
+                    let (low, high) = range_of(to).expect("integer type");
+                    bail!(
+                        "{value} does not fit in a {to}, which holds {low} to {high}"
+                    );
+                }
                 IrOperand::Constant(IrConstant::Integer(*value, to.clone()))
             }
             IrOperand::Constant(IrConstant::Float(value, _))
@@ -8611,7 +8666,42 @@ impl<'a> FunctionLowering<'a> {
                 IrOperand::Local(result)
             }
             _ => operand,
+        })
+    }
+}
+
+/// What an integer type holds, or `None` when it is not one.
+///
+/// `usize` and `isize` are the word this compiler targets, which is sixty-four
+/// bits everywhere it runs.
+fn range_of(ty: &Type) -> Option<(i128, i128)> {
+    let held = match ty {
+        Type::Distinct(_, inner) => return range_of(inner),
+        other => other,
+    };
+    match held {
+        Type::I8 => Some((i8::MIN as i128, i8::MAX as i128)),
+        Type::I16 => Some((i16::MIN as i128, i16::MAX as i128)),
+        Type::I32 => Some((i32::MIN as i128, i32::MAX as i128)),
+        Type::I64 | Type::Isize => Some((i64::MIN as i128, i64::MAX as i128)),
+        Type::U8 => Some((0, u8::MAX as i128)),
+        Type::U16 => Some((0, u16::MAX as i128)),
+        Type::U32 => Some((0, u32::MAX as i128)),
+        // A literal is read as an i64, so the largest one that can be written
+        // is i64::MAX and the whole of u64 is not reachable from a literal.
+        // Negative values are, and none of them fit.
+        Type::U64 | Type::Usize => Some((0, i64::MAX as i128)),
+        _ => None,
+    }
+}
+
+fn fits_in(value: i64, ty: &Type) -> bool {
+    match range_of(ty) {
+        Some((low, high)) => {
+            let value = value as i128;
+            value >= low && value <= high
         }
+        None => true,
     }
 }
 
