@@ -18,20 +18,28 @@
 //
 // What it deliberately does not own is what to draw. A `Pass` is a name and a
 // function, and `renderer_run` hands each one the frame in order. That is the
-// whole of the graph here: passes declare nothing about resources yet, because
-// with one target there is nothing to schedule, and a list is what a scheduler
-// degenerates to. When there are transient targets to alias and passes that
-// must not run before their input exists, this is where that goes, and a pass
-// written today does not change shape when it arrives.
+// whole of the graph here: passes declare nothing about resources yet, so
+// ordering is the order they are written in. When there are transient targets
+// to alias and passes that must not run before their input exists, this is
+// where that goes, and a pass written today does not change shape when it
+// arrives.
+//
+// What a pass draws into is a `Target`, not the window. The frame's own target
+// is the surface texture and the depth beside it, and a pass that wants one of
+// its own makes it and hands it over instead. That is what a shadow map, a
+// picking buffer, and every post-process step are: draw into a texture, then
+// read it in the pass after. A renderer that can only reach the window can do
+// none of them, and the difference is this one struct.
 
 import "sdl.frost"
 import "wgpu.frost"
 
-export Renderer, Frame, Pass,
+export Renderer, Frame, Pass, Target,
     renderer_open, renderer_close, renderer_ok, renderer_resize,
     renderer_begin, renderer_end, renderer_run,
     renderer_device, renderer_queue, renderer_format, renderer_depth_format,
-    frame_ok, frame_encoder, frame_view, frame_pass,
+    frame_ok, frame_encoder, frame_view, frame_pass, frame_pass_into,
+    frame_target, target_of, no_depth,
     DEPTH_FORMAT, no_pointer
 
 no_pointer :: fn() -> ^u8 {
@@ -276,10 +284,47 @@ frame_view :: fn(f: Frame) -> TextureView { f.view }
 // Depth follows the same rule and it is the more important one. Every pass
 // after the first has to load the depth the passes before it wrote, or each one
 // sorts only against itself and the last to draw wins wherever they overlap.
+// Where a pass draws. A colour attachment, a depth attachment, or both: a
+// shadow map is depth with no colour, a post-process step is colour with no
+// depth, and an ordinary scene pass is both.
+Target :: struct {
+    color: TextureView,
+    depth: TextureView,
+    has_color: bool,
+    has_depth: bool,
+}
+
+// A target naming views a caller made, for a pass drawing somewhere other than
+// the window. `no_depth()` where a pass needs no depth buffer.
+target_of :: fn(color: TextureView, depth: TextureView, has_color: bool,
+    has_depth: bool) -> Target {
+    Target { color = color, depth = depth, has_color = has_color,
+        has_depth = has_depth }
+}
+
+no_depth :: fn() -> TextureView { no_texture_view() }
+
+// The frame's own: the surface texture this frame acquired, and the depth
+// buffer beside it.
+frame_target :: fn(f: Frame) -> Target {
+    Target { color = f.view, depth = f.depth_view, has_color = true,
+        has_depth = true }
+}
+
+// The frame's target, which is what a pass drawing to the window wants and
+// what every pass wanted when there was only one.
 frame_pass :: fn(mut f: Frame, load: u32, clear: Color,
     depth_load: u32) -> RenderPassEncoder {
+    frame_pass_into(f, frame_target(f), load, clear, depth_load)
+}
+
+// A pass into whatever it was given. The attachments a pass has are the ones
+// its target says it has, so a depth-only pass writes no colour and a
+// post-process step is not asked for a depth buffer it does not have.
+frame_pass_into :: fn(mut f: Frame, into: Target, load: u32, clear: Color,
+    depth_load: u32) -> RenderPassEncoder {
     mut attachment := render_pass_color_attachment_init()
-    attachment.view = f.view
+    attachment.view = into.color
     attachment.load_op = load
     attachment.store_op = STORE_OP_STORE
     attachment.clear_value = clear
@@ -287,16 +332,21 @@ frame_pass :: fn(mut f: Frame, load: u32, clear: Color,
     // Nearer is smaller, so the buffer starts at the far plane and every
     // fragment that passes is closer than what was already there.
     mut depth := render_pass_depth_stencil_attachment_init()
-    depth.view = f.depth_view
+    depth.view = into.depth
     depth.depth_load_op = depth_load
     depth.depth_store_op = STORE_OP_STORE
     depth.depth_clear_value = 1.0
 
     mut descriptor := render_pass_descriptor_init()
-    descriptor.color_attachments_count = 1
-    descriptor.color_attachments =
-        unsafe { ptr_cast($u8, ptr_to(attachment)) }
-    descriptor.depth_stencil_attachment = ptr_to(depth)
+    descriptor.color_attachments_count = 0
+    if (into.has_color) {
+        descriptor.color_attachments_count = 1
+        descriptor.color_attachments =
+            unsafe { ptr_cast($u8, ptr_to(attachment)) }
+    }
+    if (into.has_depth) {
+        descriptor.depth_stencil_attachment = ptr_to(depth)
+    }
     command_encoder_begin_render_pass(f.encoder, ptr_to(descriptor))
 }
 
