@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 
-use crate::parser::{Block, Diagnostic, Expression, Statement, StructField};
+use crate::parser::{
+    Block, Diagnostic, Expression, Literal, Statement, StructField,
+};
 use crate::types::Type;
 use crate::{Position, Spanned};
 
@@ -10,26 +12,33 @@ use crate::{Position, Spanned};
 //
 // Every other check in this compiler proves something about a program it can
 // see all of: a value is not used after it moves, a linear resource is consumed
-// exactly once, an arena pointer does not outlive its block. Three operations
+// exactly once, an arena pointer does not outlive its block. Four operations
 // reach memory none of that covers, and an `unsafe` block is where they are
 // allowed:
 //
 //   - reading or writing through a raw pointer, `p^` and `p[i]`
 //   - `ptr_cast`, which says the bytes at an address are a different type
+//   - `slice_from`, which says how many elements live at an address
 //   - calling an `extern fn`, which is arbitrary C
 //
 // Nothing else in the language can touch memory it has not been shown to own.
 // So the point of the block is not that it enables anything. It is that the
-// three are refused outside one, which makes `unsafe` the complete list of
+// four are refused outside one, which makes `unsafe` the complete list of
 // places to look when something has corrupted memory. Without the refusal the
 // block would be a comment.
 //
-// What this cannot see: a raw pointer whose type this pass could not work out.
-// It resolves a name's type from a parameter's annotation, a `let` annotation,
-// a `ptr_cast`, and a struct field, which is how a raw pointer is
-// held. A pointer arriving somewhere none of those describe is indexed without
-// complaint. Dereference, `ptr_cast` and extern calls are exact, since none of
-// them needs a type to be recognized.
+// Three of the four are recognized by shape and need no type. The index rule is
+// the one that has to know whether the base is a raw pointer, and it refuses a
+// base whose type it cannot name rather than allowing it: a gate that lets the
+// unknown through reports what it happened to recognize, and the list of blocks
+// is then worth nothing. What keeps that from refusing ordinary code is that
+// `type_of` reads a call's return type off the declaration, an element's off its
+// array or slice, and a field's off the struct, so a base is named in the shapes
+// programs actually write.
+//
+// The walks below list every statement and expression form rather than ending in
+// a wildcard. A form nobody handled is a compile error here instead of a hole
+// nobody sees until a program reaches through it. `print` was that hole.
 pub fn check_unsafety(statements: &[Spanned<Statement>]) -> Result<()> {
     let diagnostics = check_unsafety_recovering(statements);
     if diagnostics.is_empty() {
@@ -68,6 +77,7 @@ fn walk_unsafety(
         externs: HashSet::new(),
         unsafe_fns: HashSet::new(),
         fields: HashMap::new(),
+        returns: HashMap::new(),
         depth: 0,
         audit,
         vouched: Vec::new(),
@@ -75,6 +85,32 @@ fn walk_unsafety(
         diagnostics: Vec::new(),
     };
     for statement in statements {
+        // What each function answers with. The index rule below refuses a base
+        // whose type it cannot name, and a binding is most often given its type
+        // by the call that produced it, so without this the rule would fall to
+        // the refusal on ordinary code rather than on a raw pointer.
+        match &statement.node {
+            Statement::Constant(name, value) => {
+                if let Some(ty) = declared_return(value) {
+                    checker.returns.insert(name.clone(), ty);
+                }
+            }
+            Statement::Extern {
+                name,
+                return_type: Some(return_type),
+                ..
+            } => {
+                checker.returns.insert(name.clone(), return_type.clone());
+            }
+            Statement::Declared {
+                name, return_sig, ..
+            } => {
+                if let Some(ty) = return_sig.to_type() {
+                    checker.returns.insert(name.clone(), ty);
+                }
+            }
+            _ => {}
+        }
         match &statement.node {
             // An extern is the built-in unsafe function. Calling C is
             // unchecked, so a call to one is gated exactly as a call to a
@@ -203,10 +239,24 @@ fn strip_expression(expression: &mut Expression) {
     }
 }
 
+/// What a named constant answers with, where the constant is a function. An
+/// `unsafe fn` wraps the function it marks, so the signature is one level in.
+fn declared_return(value: &Expression) -> Option<Type> {
+    match value {
+        Expression::Function(_, return_sig, _)
+        | Expression::Proc(_, return_sig, _) => return_sig.to_type(),
+        Expression::UnsafeFn(inner) => declared_return(inner),
+        _ => None,
+    }
+}
+
 struct Checker {
     externs: HashSet<String>,
     unsafe_fns: HashSet<String>,
     fields: HashMap<String, Vec<StructField>>,
+    // What each named function answers with, so a binding takes its type from
+    // the call that produced it.
+    returns: HashMap<String, Type>,
     // How many `unsafe` blocks enclose what is being walked. Nesting one inside
     // another is allowed and means nothing extra, the same as in Rust.
     depth: usize,
@@ -276,6 +326,80 @@ impl Checker {
                     .find(|declared| &declared.name == field)
                     .map(|declared| declared.field_type.clone())
             }
+            // An element of an array or a slice, so `rows[i][j]` names the inner
+            // element rather than nothing. A `str` indexes to a byte.
+            Expression::Index(base, _) => match self.type_of(base)? {
+                Type::Array(inner, _) | Type::Slice(inner) => Some(*inner),
+                Type::Str => Some(Type::U8),
+                Type::Ptr(inner) => Some(*inner),
+                _ => None,
+            },
+            Expression::Dereference(inner) => match self.type_of(inner)? {
+                Type::Ptr(pointee)
+                | Type::Ref(pointee)
+                | Type::RefMut(pointee) => Some(*pointee),
+                _ => None,
+            },
+            Expression::Call(callee, _) => {
+                let Expression::Identifier(name) = &**callee else {
+                    return None;
+                };
+                self.returns.get(name).cloned()
+            }
+            // A block's value is what its last statement answers with, and
+            // `ptr_cast` is written inside one, so the type of what comes out is
+            // read through it rather than lost at the boundary.
+            Expression::Unsafe(body) => match &body.last()?.node {
+                Statement::Expression(value) => self.produced_type(value),
+                _ => None,
+            },
+            Expression::If(_, consequence, alternative) => {
+                [Some(consequence), alternative.as_ref()]
+                    .into_iter()
+                    .flatten()
+                    .find_map(|block| match &block.last()?.node {
+                        Statement::Expression(value) => {
+                            self.produced_type(value)
+                        }
+                        _ => None,
+                    })
+            }
+            Expression::Switch(_, cases) => {
+                cases.iter().find_map(|case| match &case.body.last()?.node {
+                    Statement::Expression(value) => self.produced_type(value),
+                    _ => None,
+                })
+            }
+            Expression::StructInit(name, _) => Some(Type::Struct(name.clone())),
+            Expression::EnumVariantInit(name, _, _) => {
+                Some(Type::Enum(name.clone()))
+            }
+            // A written-out array. Its length is how many elements it holds, and
+            // its element type is whatever the first one is, which is the whole
+            // of what the index rule needs: a written array is not a pointer.
+            Expression::Literal(Literal::Array(elements)) => {
+                let element = elements
+                    .first()
+                    .and_then(|first| self.produced_type(first))
+                    .unwrap_or(Type::Unknown);
+                Some(Type::Array(Box::new(element), elements.len()))
+            }
+            // `[value; N]` where `N` is a generic's value parameter. How many is
+            // not known until the specialization, and the index rule does not
+            // ask how many.
+            Expression::ArrayRepeat(value, count) => {
+                let element =
+                    self.produced_type(value).unwrap_or(Type::Unknown);
+                Some(Type::ArrayGeneric(Box::new(element), count.clone()))
+            }
+            Expression::Literal(Literal::String(_)) => Some(Type::Str),
+            Expression::Literal(Literal::Integer(_)) => Some(Type::I64),
+            Expression::Literal(Literal::Float(_)) => Some(Type::F64),
+            Expression::Literal(Literal::Float32(_)) => Some(Type::F32),
+            Expression::Literal(Literal::Boolean(_))
+            | Expression::Boolean(_) => Some(Type::Bool),
+            Expression::Sizeof(_) | Expression::TypeId(_) => Some(Type::I64),
+            Expression::TypeName(_) => Some(Type::Str),
             _ => None,
         }
     }
@@ -303,10 +427,28 @@ impl Checker {
                     .or_else(|| self.produced_type(value));
                 self.bind(name, known);
             }
+            // The multiple-return lowering runs after this pass, so a call
+            // bound to several names is still written this way here. Walking
+            // past it left an unchecked call with no block around it.
+            Statement::LetMultiple(bindings, value) => {
+                self.expression(value, at);
+                for binding in bindings {
+                    self.bind(&binding.name, None);
+                }
+            }
             Statement::Constant(_, value) | Statement::Return(value) => {
                 self.expression(value, at);
             }
             Statement::Expression(value) => self.expression(value, at),
+            // `print` holds expressions the way any other statement does, and
+            // the gated operations are expression forms. A walk that stopped
+            // here let a raw-pointer read out of the block it belongs in.
+            Statement::Print(value, arguments) => {
+                self.expression(value, at);
+                for argument in arguments {
+                    self.expression(argument, at);
+                }
+            }
             Statement::Assignment(place, value) => {
                 self.expression(place, at);
                 self.expression(value, at);
@@ -317,10 +459,19 @@ impl Checker {
                     position: at,
                 });
             }
-            Statement::For(name, _, range, body) => {
+            // Two names bind the index and then the element, so the first is an
+            // integer either way. One name over a range is an integer too, and
+            // one over a sequence is an element whose type this pass cannot
+            // name, which is left unknown rather than assumed.
+            Statement::For(name, element, range, body) => {
                 self.expression(range, at);
                 self.scope.push(HashMap::new());
-                self.bind(name, Some(Type::I64));
+                let counts =
+                    element.is_some() || matches!(range, Expression::Range(..));
+                self.bind(name, counts.then_some(Type::I64));
+                if let Some(element) = element {
+                    self.bind(element, None);
+                }
                 self.block(body);
                 self.scope.pop();
             }
@@ -329,7 +480,19 @@ impl Checker {
                 self.block(body);
             }
             Statement::With(_, body) => self.block(body),
-            _ => {}
+            // A declaration holds no expression to walk, and neither does a
+            // control transfer. Listed rather than caught by `_`, so a new
+            // statement form is a compile error here instead of a hole in the
+            // gate that nobody sees until a program reaches through it.
+            Statement::Struct(..)
+            | Statement::Enum(..)
+            | Statement::Flags(..)
+            | Statement::TypeAlias(..)
+            | Statement::Break
+            | Statement::Continue
+            | Statement::Import(..)
+            | Statement::Extern { .. }
+            | Statement::Declared { .. } => {}
         }
     }
 
@@ -358,7 +521,9 @@ impl Checker {
                             .and_then(|argument| self.type_of(argument))
                             .unwrap_or(Type::Void),
                     ))),
-                    _ => None,
+                    // Anything else answers with whatever its signature says,
+                    // which `type_of` reads off the declaration.
+                    _ => self.type_of(value),
                 }
             }
             Expression::AddressOf(inner) => {
@@ -405,9 +570,22 @@ impl Checker {
                 self.refuse("reading through a raw pointer", at);
                 self.expression(inner, at);
             }
+            // An array, a slice and a `str` each carry a length and are checked,
+            // so indexing one is not gated. A raw pointer carries neither, so
+            // indexing one is. A base this pass cannot name might be either, and
+            // a gate that lets the unknown through reports what it happened to
+            // recognize rather than what a program can reach. Refusing here is
+            // what makes the list of blocks the whole list.
             Expression::Index(base, index) => {
-                if matches!(self.type_of(base), Some(Type::Ptr(_))) {
-                    self.refuse("indexing a raw pointer", at);
+                match self.type_of(base) {
+                    Some(Type::Ptr(_)) => {
+                        self.refuse("indexing a raw pointer", at);
+                    }
+                    Some(_) => {}
+                    None => self.refuse(
+                        "indexing a value whose type is not known here",
+                        at,
+                    ),
                 }
                 self.expression(base, at);
                 self.expression(index, at);
