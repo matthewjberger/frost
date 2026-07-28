@@ -15165,37 +15165,68 @@ many
 -25
 ",
     ),
+    // A literal shifted past the thirty-second bit. Every integer in Frost is
+    // sixty-four bits wide, and the self-hosted C backend wrote a literal
+    // without the suffix that says so, so a C compiler shifted a thirty-two bit
+    // one and answered with zero. It surfaced as the assembler losing the sign
+    // of a negative float literal, since the sign bit is written `1 << 63`, and
+    // only when the compiler doing the assembling had itself been built through
+    // that backend.
+    (
+        "a_literal_shifted_past_the_word",
+        "main :: fn() -> i64 {
+    print 1 << 63
+    print 1 << 40
+    mut bits : i64 = 0
+    bits = bits | (1 << 63)
+    print bits
+    0
+}
+",
+        "-9223372036854775808
+1099511627776
+-9223372036854775808
+",
+    ),
 ];
 
-// Build and run `source` with the self-hosted compiler's native backend, under
-// the settings a build gets by default. The shared helper turns the unsafe
-// audit off, and that pass is part of what decides these programs' meaning: one
-// of the cases below compiles either way with it off and is refused with it on.
-fn selfhosted_default_output(name: &str, source: &str) -> Option<String> {
-    let compiler = build_self_hosted_compiler(name)?;
+// Build and run `source` with the self-hosted compiler through one of its
+// backends, under the settings a build gets by default. The shared helper turns
+// the unsafe audit off, and that pass is part of what decides these programs'
+// meaning: one of the cases below compiles either way with it off and is
+// refused with it on.
+fn selfhosted_default_output(
+    compiler: &Path,
+    name: &str,
+    source: &str,
+    backend: &str,
+    suffix: &str,
+) -> String {
     let directory = std::env::temp_dir();
     let input = directory.join(format!("frost_sl_{name}.frost"));
     std::fs::write(&input, source).unwrap();
-    let assembly = directory.join(format!("frost_sl_{name}.s"));
-    let exe = directory
-        .join(format!("frost_sl_{name}{}", std::env::consts::EXE_SUFFIX));
-    let emit = Command::new(&compiler)
-        .arg("--emit-asm")
+    let emitted = directory.join(format!("frost_sl_{name}.{suffix}"));
+    let exe = directory.join(format!(
+        "frost_sl_{name}_{suffix}{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    let emit = Command::new(compiler)
+        .arg(backend)
         .arg("-o")
-        .arg(&assembly)
+        .arg(&emitted)
         .arg(&input)
         .output()
         .unwrap();
     assert!(
         emit.status.success(),
-        "the self-hosted compiler refused {name}:
+        "the self-hosted compiler refused {name} through {backend}:
 {}",
         String::from_utf8_lossy(&emit.stderr)
     );
     let runtime =
         format!("{}/runtime/frost_runtime.c", env!("CARGO_MANIFEST_DIR"));
     let built = Command::new(c_compiler().unwrap())
-        .arg(&assembly)
+        .arg(&emitted)
         .arg(&runtime)
         .arg("-lm")
         .arg("-o")
@@ -15204,7 +15235,7 @@ fn selfhosted_default_output(name: &str, source: &str) -> Option<String> {
         .unwrap();
     assert!(
         built.status.success(),
-        "the assembly for {name} did not assemble:
+        "what {backend} emitted for {name} did not build:
 {}",
         String::from_utf8_lossy(&built.stderr)
     );
@@ -15212,26 +15243,36 @@ fn selfhosted_default_output(name: &str, source: &str) -> Option<String> {
     assert!(run.status.success(), "{name} exited with failure");
     let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
     let _ = std::fs::remove_file(&input);
-    let _ = std::fs::remove_file(&assembly);
+    let _ = std::fs::remove_file(&emitted);
     let _ = std::fs::remove_file(&exe);
-    Some(output)
+    output
 }
 
+// Both self-hosted backends run every case, because a difference between them
+// is a difference in the language. The C one wrote an integer literal without
+// the suffix that makes it sixty-four bits wide, so every shift past the
+// thirty-second bit answered with zero there and correctly everywhere else.
 #[test]
 fn both_compilers_agree_on_these_programs() {
+    let Some(compiler) = build_self_hosted_compiler("samelanguage") else {
+        return;
+    };
     for (name, source, want) in SAME_LANGUAGE_CASES {
         let Some(bootstrap) = bootstrap_output(name, source) else {
             return;
         };
         assert_eq!(bootstrap, *want, "the bootstrap disagreed about {name}");
-        let Some(hosted) = selfhosted_default_output(name, source) else {
-            return;
-        };
-        assert_eq!(
-            hosted, *want,
-            "the self-hosted compiler disagreed about {name}"
-        );
+        for (backend, suffix) in [("--emit-asm", "s"), ("--emit-c", "c")] {
+            let hosted = selfhosted_default_output(
+                &compiler, name, source, backend, suffix,
+            );
+            assert_eq!(
+                hosted, *want,
+                "the self-hosted compiler's {backend} disagreed about {name}"
+            );
+        }
     }
+    let _ = std::fs::remove_file(&compiler);
 }
 
 // The audit is on for anyone running the compiler, and most of the programs in
