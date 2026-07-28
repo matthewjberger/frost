@@ -15301,6 +15301,26 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   print ROW[1]\n    0\n}\n",
         "20\n",
     ),
+    // Indexing a fixed-size array taken as a `mut` parameter. It arrives as a
+    // pointer to the array, and the bootstrap's index path had no case for one:
+    // it type-checked and died at lowering. The self-hosted compiler compiled
+    // it correctly the whole time, which is what said what the answer was
+    // rather than whether there should be one.
+    //
+    // Nothing in the tree writes it. Every array parameter anywhere is a slice,
+    // which is why a shape the language accepts went years without a backend.
+    (
+        "indexing_an_array_taken_as_a_mut_parameter",
+        "fill :: fn(mut out: [4]i64) {\n\
+         \x20   out[0] = 7\n\
+         \x20   out[3] = out[0] + 1\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut held : [4]i64 = [0; 4]\n\
+         \x20   fill(held)\n\
+         \x20   print held[0]\n\
+         \x20   print held[3]\n    0\n}\n",
+        "7\n8\n",
+    ),
     // A string literal bound to a name with no annotation. The literal is a
     // pointer where a `^i8` is asked for and a `str` where a `str` is, and a
     // binding asks for neither, so the self-hosted compiler kept the pointer

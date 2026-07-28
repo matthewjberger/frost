@@ -7532,6 +7532,28 @@ impl<'a> FunctionLowering<'a> {
                 };
                 Ok((address, *element, Some(count)))
             }
+            // An array reached through a pointer, which is what a `mut [N]T`
+            // parameter is once the mode pass has rewritten it: the pointer
+            // already holds the array's address, so there is nothing here to
+            // take the address of.
+            //
+            // Every array parameter in the tree is a slice, so nothing had ever
+            // written this and it type-checked and then died at lowering. The
+            // self-hosted compiler compiles it correctly, which is what says
+            // what the answer is rather than whether there should be one.
+            Expression::Dereference(pointer) => {
+                let (operand, pointer_type) =
+                    self.lower_expression(pointer, None)?;
+                let (Type::Ptr(inner) | Type::Ref(inner) | Type::RefMut(inner)) =
+                    pointer_type
+                else {
+                    bail!("native backend: cannot index into: {base}");
+                };
+                let Type::Array(element, count) = *inner else {
+                    bail!("native backend: cannot index into: {base}");
+                };
+                Ok((operand, *element, Some(count)))
+            }
             Expression::Index(inner, index) => {
                 let (address, element_type) =
                     self.element_address(inner, index)?;
