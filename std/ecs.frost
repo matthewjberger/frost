@@ -24,6 +24,7 @@
 
 import "vec.frost"
 import "mem.frost"
+import "strings.frost"
 
 // Saying which mistake was made needs the runtime, since a component named by a
 // type nothing registered cannot be answered with a value.
@@ -33,11 +34,13 @@ frost_rt_die   :: safe extern fn()
 export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     Commands, Change, Events, EventReader,
     ecs_new, ecs_free, ecs_register, ecs_component_size,
+    ecs_component_by_name, ecs_component_name,
     ecs_spawn, ecs_spawn_with, ecs_despawn, ecs_alive, ecs_count,
     ecs_add, ecs_remove, ecs_has, ecs_get, ecs_set, ecs_slice,
     query_begin, query_next, query_column, query_entities,
     query_with,
     query_filter, query_row_passes, for_each, for_each_row, component_of,
+    ecs_single, ecs_count_matching, ecs_gather, ecs_pairs, EntityPair,
     Filters, no_filters, filter_without, filter_changed, filter_added,
     filter_tagged, filter_untagged, no_marks, marked,
     tag_new, tag_free, tag_release, tag_add, tag_remove, tag_has,
@@ -55,7 +58,8 @@ export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     commands_apply,
     ecs_tick, ecs_now, ecs_changed_since, ecs_added_since,
     ecs_mark_changed, ecs_mark_column,
-    mask_of, ecs_spawn_bundle,
+    mask_of, ecs_spawn_bundle, ecs_remove_bundle, ecs_has_bundle,
+    mask_without_mask,
     world_clear,
     query_changed, query_added,
     ecs_resource_register, ecs_resource, ecs_resource_set,
@@ -63,7 +67,8 @@ export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     ecs_log_enable, ecs_log, ecs_log_clear,
     ChangeKind,
     events_new, events_free, events_send, events_sent, events_slice,
-    events_clear, reader_new, events_read,
+    events_clear, reader_new, events_read, events_since, events_pending,
+    events_trim, readers_oldest,
     Hierarchy, hierarchy_new, hierarchy_free, hierarchy_attach,
     hierarchy_detach, hierarchy_parent, hierarchy_first_child,
     hierarchy_next_sibling, hierarchy_child_count, hierarchy_despawn_tree,
@@ -279,6 +284,11 @@ Registry :: struct {
     count: i64,
     sizes: Vec<i64>,
     types: Vec<i64>,
+    // What each component is called, so a thing that reads a name off a file or
+    // shows one to a person has something to turn into an index. The compiler
+    // knows the name and hands it over at the registration, which is the one
+    // place the type is still written down.
+    names: Vec<str>,
 }
 
 // A set of components, as one bit per registered index. Four words wide, which
@@ -362,6 +372,21 @@ mask_disjoint :: fn(held: Mask, excluded: Mask) -> bool {
         i = i + 1
     }
     true
+}
+
+// Every bit of `b` cleared from `a`, which is what a whole bundle leaving an
+// entity takes off at once.
+mask_without_mask :: fn(held: Mask, unwanted: Mask) -> Mask {
+    mut out := held
+    mut i : i64 = 0
+    while (i < MASK_WORDS) {
+        // No bitwise complement in the language, and none is needed: the bits
+        // in common are all present in the word they are taken from, so the
+        // subtraction never borrows and clears exactly them.
+        out.words[i] = out.words[i] - (out.words[i] & unwanted.words[i])
+        i = i + 1
+    }
+    out
 }
 
 mask_equal :: fn(a: Mask, b: Mask) -> bool {
@@ -587,7 +612,7 @@ World :: struct {
 ecs_new :: fn() -> World {
     mut world := World {
         registry = Registry { count = 0, sizes = vec_new($i64, 16),
-            types = vec_new($i64, 16) },
+            types = vec_new($i64, 16), names = vec_new($str, 16) },
         slots = vec_new($EntitySlot, 64),
         free_ids = vec_new($i64, 64),
         next_id = 0,
@@ -618,14 +643,7 @@ world_release :: fn(mut world: World) {
     mut t : i64 = 0
     while (t < vec_len($Table, world.tables)) {
         ref table := vec_slice($Table, world.tables)[t]
-        mut c : i64 = 0
-        while (c < vec_len($Column, table.columns)) {
-            ref column := vec_slice($Column, table.columns)[c]
-            column_free(column)
-            c = c + 1
-        }
-        vec_free($Column, table.columns)
-        vec_free($Entity, table.entities)
+        table_release(table)
         t = t + 1
     }
     mut r : i64 = 0
@@ -641,6 +659,7 @@ world_release :: fn(mut world: World) {
     vec_free($i64, world.free_ids)
     vec_free($i64, world.registry.sizes)
     vec_free($i64, world.registry.types)
+    vec_free($str, world.registry.names)
     lookup_free(world.lookup)
 }
 
@@ -703,8 +722,31 @@ ecs_register :: fn($T: Type, mut world: World) -> i64 {
     }
     vec_push($i64, world.registry.sizes, sizeof(T))
     vec_push($i64, world.registry.types, type_id(T))
+    vec_push($str, world.registry.names, typename(T))
     world.registry.count = index + 1
     index
+}
+
+// The index a name stands for, or -1. What an editor listing components and a
+// save file naming them both need, and the reverse of `ecs_component_name`.
+ecs_component_by_name :: fn(world: World, wanted: str) -> i64 {
+    known := vec_slice($str, world.registry.names)
+    mut index : i64 = 0
+    while (index < world.registry.count) {
+        if (str_eq(known[index], wanted)) {
+            return index
+        }
+        index = index + 1
+    }
+    -1
+}
+
+// What a component is called, by the index it was given.
+ecs_component_name :: fn(world: World, component: i64) -> str {
+    if (component < 0 || component >= world.registry.count) {
+        return ""
+    }
+    vec_slice($str, world.registry.names)[component]
 }
 
 // The component a type was registered as, which is what lets a query be written
@@ -1429,13 +1471,77 @@ events_read :: fn($T: Type, e: Events, mut r: EventReader) -> []T {
     if (r.seen < e.first) {
         r.seen = e.first
     }
-    start := r.seen - e.first
-    count := e.count - start
+    held := events_since($T, e, r.seen)
     r.seen = e.first + e.count
+    held
+}
+
+// Everything sent at or after a sequence number, without a reader and without
+// moving one. What a system that keeps its own mark uses, and what `events_read`
+// is written in terms of, so the two cannot disagree about where a run starts.
+// A mark older than the channel answers with what is still there rather than
+// with nothing, since what was dropped is gone either way.
+events_since :: fn($T: Type, e: Events, mark: i64) -> []T {
+    mut from := mark
+    if (from < e.first) {
+        from = e.first
+    }
+    start := from - e.first
+    count := e.count - start
     if (count <= 0) {
         return bytes_as($T, e.data, 0)
     }
     bytes_as($T, bytes_at(e.data, start * e.item_size), count)
+}
+
+// What a reader would read, without reading it. A system that wants to know
+// whether anything arrived before deciding to do the work asks this.
+events_pending :: fn(e: Events, r: EventReader) -> i64 {
+    mut from := r.seen
+    if (from < e.first) {
+        from = e.first
+    }
+    e.first + e.count - from
+}
+
+// Drop everything up to a sequence number and keep the rest. What a channel
+// read by several systems does once the slowest of them has passed a mark,
+// rather than clearing the whole thing and making the others miss what they
+// had not reached.
+events_trim :: fn(mut e: Events, upto: i64) {
+    if (upto <= e.first) {
+        return
+    }
+    mut dropped := upto - e.first
+    if (dropped > e.count) {
+        dropped = e.count
+    }
+    kept := e.count - dropped
+    mut index : i64 = 0
+    while (index < kept * e.item_size) {
+        held := bytes_at(e.data, dropped * e.item_size + index)
+        unsafe { e.data[index] = held[0] }
+        index = index + 1
+    }
+    e.first = e.first + dropped
+    e.count = kept
+}
+
+// The oldest mark any of them has reached, which is what a channel is trimmed
+// to when several systems read it.
+readers_oldest :: fn(readers: []EventReader) -> i64 {
+    if (slice_len(readers) == 0) {
+        return 0
+    }
+    mut oldest := readers[0].seen
+    mut index : i64 = 1
+    while (index < slice_len(readers)) {
+        if (readers[index].seen < oldest) {
+            oldest = readers[index].seen
+        }
+        index = index + 1
+    }
+    oldest
 }
 
 // The same walk with the body handed in as a compile-time argument, so the call
@@ -1502,6 +1608,130 @@ for_each_row :: fn($body: Type, mut world: World, f: Filters, types: $...) {
             row = row + 1
         }
     }
+}
+
+// The one entity holding every named component, or no entity when there is not
+// exactly one. What a system reading a singleton asks: the camera, the player,
+// the clock. Answering with nothing for none and for several is deliberate, so
+// a scene that grew a second one fails where it is read rather than silently
+// using whichever came first.
+ecs_single :: fn(world: World, f: Filters, types: $...) -> Entity {
+    mut q := query_begin(world)
+    for T in types {
+        query_with(q, component_of($T, world))
+    }
+    query_filter(q, f)
+    mut found := no_entity()
+    mut seen : i64 = 0
+    while (query_next(world, q)) {
+        rows := query_entities(world, q)
+        mut row : i64 = 0
+        while (row < q.count) {
+            if (query_row_passes(world, q, row)) {
+                seen = seen + 1
+                if (seen > 1) {
+                    return no_entity()
+                }
+                found = rows[row]
+            }
+            row = row + 1
+        }
+    }
+    found
+}
+
+// How many rows a query would visit, without visiting them. What a system uses
+// to size a buffer before the walk that fills it.
+ecs_count_matching :: fn(world: World, f: Filters, types: $...) -> i64 {
+    mut q := query_begin(world)
+    for T in types {
+        query_with(q, component_of($T, world))
+    }
+    query_filter(q, f)
+    mut total : i64 = 0
+    while (query_next(world, q)) {
+        mut row : i64 = 0
+        while (row < q.count) {
+            if (query_row_passes(world, q, row)) {
+                total = total + 1
+            }
+            row = row + 1
+        }
+    }
+    total
+}
+
+// Every entity a query names, gathered into one run. The two-pass shape a
+// structural change needs: gather here, then spawn or despawn over what came
+// back, since doing either during the walk moves the rows the walk is holding.
+//
+// The caller owns what comes back and releases it with `heap_release_slice`.
+ecs_gather :: fn(world: World, f: Filters, types: $...) -> []Entity {
+    total := ecs_count_matching(world, f, $T for T in types)
+    mut out := heap_slice($Entity, total)
+    if (total == 0) {
+        return out
+    }
+    mut q := query_begin(world)
+    for T in types {
+        query_with(q, component_of($T, world))
+    }
+    query_filter(q, f)
+    mut written : i64 = 0
+    while (query_next(world, q)) {
+        rows := query_entities(world, q)
+        mut row : i64 = 0
+        while (row < q.count) {
+            if (query_row_passes(world, q, row) && written < total) {
+                out[written] = rows[row]
+                written = written + 1
+            }
+            row = row + 1
+        }
+    }
+    out
+}
+
+// Every unordered pair of entities a query names, which is what a check between
+// each thing and every other thing walks: collisions, attractions, anything
+// answering a question about two of them at once.
+//
+// Written as a gather and two index loops rather than as a cursor, since a pair
+// is two rows that may be in two different tables and no single walk is over
+// both. The caller owns what comes back.
+ecs_pairs :: fn(world: World, f: Filters, types: $...) -> []EntityPair {
+    held := ecs_gather(world, f, $T for T in types)
+    total := slice_len(held)
+    mut out := heap_slice($EntityPair, total * (total - 1) / 2)
+    mut written : i64 = 0
+    mut first : i64 = 0
+    while (first < total) {
+        mut second := first + 1
+        while (second < total) {
+            out[written] = EntityPair { a = held[first], b = held[second] }
+            written = written + 1
+            second = second + 1
+        }
+        first = first + 1
+    }
+    heap_release_slice($Entity, held)
+    out
+}
+
+// Two entities a pair walk named, in the order the walk found them.
+EntityPair :: struct { a: Entity, b: Entity }
+
+// Everything one table allocated. `world_release` frees them all in a loop; a
+// compaction frees only the ones it drops.
+table_release :: fn(mut held: Table) {
+    mut c : i64 = 0
+    while (c < vec_len($Column, held.columns)) {
+        ref column := vec_slice($Column, held.columns)[c]
+        column_free(column)
+        c = c + 1
+    }
+    vec_free($Column, held.columns)
+    vec_free($Entity, held.entities)
 }
 
 // ---------------------------------------------------------------------------
@@ -1992,6 +2222,45 @@ mask_of :: fn(world: World, types: $...) -> Mask {
 ecs_spawn_bundle :: fn(mut world: World, types: $...) -> Entity {
     wanted := mask_of(world, $T for T in types)
     ecs_spawn_with(world, wanted)
+}
+
+// Every component of the bundle, gone in one migration rather than one each.
+// The same half that costs on the way in costs on the way out: reaching the
+// archetype a component at a time copies every column still there, every time.
+// A component the entity does not hold is not an error; the set that comes off
+// is the set that was on.
+ecs_remove_bundle :: fn(mut world: World, entity: Entity, types: $...) {
+    if (ecs_alive(world, entity) == false) {
+        return
+    }
+    unwanted := mask_of(world, $T for T in types)
+    slot := vec_slice($EntitySlot, world.slots)[entity.id]
+    current := vec_slice($Table, world.tables)[slot.table].mask
+    wanted := mask_without_mask(current, unwanted)
+    if (mask_equal(wanted, current)) {
+        return
+    }
+    // What is leaving is noted before it leaves, since afterwards there is no
+    // row to say it was ever there.
+    mut component : i64 = 0
+    while (component < world.registry.count) {
+        if (mask_has(current, component) && mask_has(unwanted, component)) {
+            note_change(world, ChangeKind::Remove, entity, component)
+        }
+        component = component + 1
+    }
+    migrate(world, entity, wanted)
+}
+
+// Whether an entity holds every component of the bundle, which is the question
+// a system asks before reading them all.
+ecs_has_bundle :: fn(world: World, entity: Entity, types: $...) -> bool {
+    if (ecs_alive(world, entity) == false) {
+        return false
+    }
+    wanted := mask_of(world, $T for T in types)
+    slot := vec_slice($EntitySlot, world.slots)[entity.id]
+    mask_covers(vec_slice($Table, world.tables)[slot.table].mask, wanted)
 }
 
 // Everything a world holds except what it registered, released. The registry
@@ -4485,6 +4754,147 @@ test "a bundle mask is the components it names" {
     assert(mask_has(wanted, position))
     assert(mask_has(wanted, velocity))
     assert(mask_has(wanted, 2) == false)
+    ecs_free(world)
+}
+
+// A whole bundle leaves in one migration, and what it takes off is the part the
+// entity actually had.
+test "a bundle comes off in one go" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    velocity := ecs_register($TestVelocity, world)
+    health := ecs_register($TestHealth, world)
+
+    entity := ecs_spawn_bundle(world, $TestPosition, $TestVelocity,
+        $TestHealth)
+    assert(ecs_has_bundle(world, entity, $TestPosition, $TestVelocity))
+
+    ecs_remove_bundle(world, entity, $TestPosition, $TestVelocity)
+    assert(ecs_has(world, entity, position) == false)
+    assert(ecs_has(world, entity, velocity) == false)
+    assert(ecs_has(world, entity, health))
+    assert(ecs_has_bundle(world, entity, $TestPosition, $TestVelocity)
+        == false)
+
+    // A component the entity does not hold is not an error, and what is left
+    // still is.
+    ecs_remove_bundle(world, entity, $TestPosition, $TestHealth)
+    assert(ecs_has(world, entity, health) == false)
+    assert(ecs_alive(world, entity))
+    ecs_free(world)
+}
+
+// A component is found by the name the compiler knows it by, which is what an
+// editor and a save file both read.
+test "a component is found by its name" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    health := ecs_register($TestHealth, world)
+
+    assert(ecs_component_by_name(world, "TestPosition") == position)
+    assert(ecs_component_by_name(world, "TestHealth") == health)
+    assert(ecs_component_by_name(world, "TestVelocity") == (-1))
+    assert(str_eq(ecs_component_name(world, position), "TestPosition"))
+    assert(str_eq(ecs_component_name(world, 99), ""))
+    ecs_free(world)
+}
+
+// The singleton read: one entity answers, none and several answer with nothing,
+// so a scene that grew a second one fails where it is read.
+test "a single match answers and an ambiguous one does not" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    ecs_register($TestHealth, world)
+
+    assert(is_no_entity(ecs_single(world, no_filters(), $TestPosition)))
+
+    first := ecs_spawn(world)
+    ecs_add($TestPosition, world, first, position,
+        TestPosition { x = 1.0, y = 0.0 })
+    found := ecs_single(world, no_filters(), $TestPosition)
+    assert(found.id == first.id)
+
+    second := ecs_spawn(world)
+    ecs_add($TestPosition, world, second, position,
+        TestPosition { x = 2.0, y = 0.0 })
+    assert(is_no_entity(ecs_single(world, no_filters(), $TestPosition)))
+    ecs_free(world)
+}
+
+// Gathering names every entity a query would visit, which is the first half of
+// the two-pass shape a structural change needs. Counting agrees with it.
+test "a gather names every row a walk would visit" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    health := ecs_register($TestHealth, world)
+
+    mut made : i64 = 0
+    while (made < 5) {
+        entity := ecs_spawn(world)
+        ecs_add($TestPosition, world, entity, position,
+            TestPosition { x = 0.0, y = 0.0 })
+        // Two of them land in a second archetype, so the gather is over more
+        // than one table.
+        if (made < 2) {
+            ecs_add($TestHealth, world, entity, health,
+                TestHealth { points = 1 })
+        }
+        made = made + 1
+    }
+
+    assert(ecs_count_matching(world, no_filters(), $TestPosition) == 5)
+    assert(ecs_count_matching(world, no_filters(), $TestHealth) == 2)
+
+    held := ecs_gather(world, no_filters(), $TestPosition)
+    assert(slice_len(held) == 5)
+    // Every one of them is alive and distinct, which is what a second pass
+    // over the gather relies on.
+    mut index : i64 = 0
+    while (index < slice_len(held)) {
+        assert(ecs_alive(world, held[index]))
+        mut other := index + 1
+        while (other < slice_len(held)) {
+            assert(held[index].id != held[other].id)
+            other = other + 1
+        }
+        index = index + 1
+    }
+    heap_release_slice($Entity, held)
+    ecs_free(world)
+}
+
+// Every unordered pair, once each, which is what a check between each thing and
+// every other thing walks.
+test "a pair walk names each pair once" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    mut made : i64 = 0
+    while (made < 4) {
+        entity := ecs_spawn(world)
+        ecs_add($TestPosition, world, entity, position,
+            TestPosition { x = 0.0, y = 0.0 })
+        made = made + 1
+    }
+
+    pairs := ecs_pairs(world, no_filters(), $TestPosition)
+    // Four things make six pairs, and neither ordering of one appears twice.
+    assert(slice_len(pairs) == 6)
+    mut index : i64 = 0
+    while (index < slice_len(pairs)) {
+        assert(pairs[index].a.id != pairs[index].b.id)
+        mut other := index + 1
+        while (other < slice_len(pairs)) {
+            same := pairs[index].a.id == pairs[other].a.id
+                && pairs[index].b.id == pairs[other].b.id
+            flipped := pairs[index].a.id == pairs[other].b.id
+                && pairs[index].b.id == pairs[other].a.id
+            assert(same == false)
+            assert(flipped == false)
+            other = other + 1
+        }
+        index = index + 1
+    }
+    heap_release_slice($EntityPair, pairs)
     ecs_free(world)
 }
 
