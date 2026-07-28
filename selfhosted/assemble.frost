@@ -1841,6 +1841,14 @@ read_directive :: fn(mut unit: Assembly, at: i64, len: i64, stop: i64) -> i64 {
         read_double(unit, rest)
         return stop + 1
     }
+    // The line table, which is for a debugger reading the object rather than
+    // for the code in it. This assembler writes no debug sections, so it reads
+    // past them: the alternative is two kinds of assembly text, one for `as`
+    // and one for here, and then only one of them is ever checked.
+    if (bytes_same(src, at, len, ".file")
+        || bytes_same(src, at, len, ".loc")) {
+        return stop + 1
+    }
     assemble_fail(unit, "unit directive this assembler does not know", at)
     stop + 1
 }

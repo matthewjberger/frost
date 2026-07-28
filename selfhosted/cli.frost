@@ -29,6 +29,7 @@ Options :: struct {
     assemble: i64,
     testing: i64,
     audit_unsafe: i64,
+    debug_lines: i64,
     // Object files and libraries the link is given, in the order written, as
     // one string ready to hand the toolchain.
     libs: ^i8,
@@ -359,6 +360,7 @@ options_from_command_line :: fn() -> Options {
         assemble = 0,
         testing = 0,
         audit_unsafe = 0,
+        debug_lines = 0,
         libs = "",
         roots = arena_make($SearchRoot, 64),
         incremental = 0,
@@ -430,6 +432,8 @@ options_from_command_line :: fn() -> Options {
                 return options
             }
             options.build_dir = frost_rt_arg_at(index)
+        } else if (cstr_eq(argument, "-g") || cstr_eq(argument, "--debug")) {
+            options.debug_lines = 1
         } else if (cstr_eq(argument, "--audit-unsafe")) {
             options.audit_unsafe = 1
         } else if (cstr_eq(argument, "--test")) {

@@ -2053,6 +2053,7 @@ emit_asm_write_value :: fn(mut p: Parser, value: i64) {
 emit_asm_stmt :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
     kind := node.kind
+    emit_asm_loc(p, node.pos)
     if (kind == NodeKind::Let) {
         value := node.a
         annotation := node.b
@@ -2734,7 +2735,60 @@ unit_owns_generic :: fn(mut p: Parser, gfn_index: i64) -> bool {
     unit_holds(p, sym.off)
 }
 
+// The files a program was written in, so a `.loc` can name one. Emitted before
+// anything else, since a file number has to be declared before it is used.
+//
+// Free when `as` or clang assembles the text: what it buys is stepping through
+// a program in gdb or lldb, in the source rather than in the disassembly. The
+// assembler in this compiler reads past them, because writing debug sections is
+// a separate job and having two kinds of assembly text would mean only one of
+// them is ever checked.
+emit_asm_files :: fn(mut p: Parser) {
+    if (p.debug_lines != 1) {
+        return
+    }
+    mut i : i64 = 0
+    while (i < p.modules.count) {
+        entry := arena_at(p.modules, i)
+        emit_text("    .file ")
+        frost_rt_emit_int(i + 1)
+        emit_text(" \"")
+        mut k : i64 = 0
+        length := cstr_len(entry.path)
+        while (k < length) {
+            byte := byte_at(entry.path, k)
+            if (byte == CH_BACKSLASH) {
+                frost_rt_emit_char(CH_BACKSLASH)
+            }
+            frost_rt_emit_char(byte)
+            k = k + 1
+        }
+        emit_text("\"\n")
+        i = i + 1
+    }
+}
+
+// Where the statement about to be emitted was written. A debugger reads these
+// to turn an address back into a line.
+emit_asm_loc :: fn(mut p: Parser, offset: i64) {
+    if (p.debug_lines != 1) {
+        return
+    }
+    file := file_of(p.modules, offset)
+    if (file < 1) {
+        return
+    }
+    emit_text("    .loc ")
+    frost_rt_emit_int(file)
+    emit_text(" ")
+    frost_rt_emit_int(line_of(p.modules, p.src, offset))
+    emit_text(" ")
+    frost_rt_emit_int(column_of(p.modules, p.src, offset))
+    emit_text("\n")
+}
+
 emit_asm_program :: fn(mut p: Parser, head: i64) {
+    emit_asm_files(p)
     asm(".text")
     mut id := head
     while (id != (-1)) {
