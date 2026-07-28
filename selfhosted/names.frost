@@ -31,11 +31,25 @@ export append_node, array_element, array_index_of, array_length, array_of,
     cap_at, cap_count_of, pack_element_name, alias_for, push_alias,
     unit_holds, in_any_module,
     set_ret_type, set_uses, struct_index_of, synth_capability_name,
-    synth_join, synth_literal, synth_numbered, synth_type_name, type_code_for
+    synth_join, synth_literal, synth_numbered, synth_room_for, synth_type_name,
+    type_code_for
+
+// Whether there is room for `wanted` more bytes past the source, said here
+// rather than found out by writing over whatever follows the buffer. The room
+// is fixed and every synthesized name spends it for good, so a program that
+// asks for more than there is has to be told, not left to corrupt itself.
+synth_room_for :: fn(mut p: Parser, wanted: i64) {
+    if (p.synth_next + wanted < str_len(p.src)) {
+        return
+    }
+    report("frost: the compiler ran out of room for the names it makes up")
+    frost_rt_die()
+}
 
 // Copy a literal name into the room past the source and answer its offset, for
 // a name the compiler needs that no source spells.
 synth_literal :: fn(mut p: Parser, word: ^i8) -> i64 {
+    synth_room_for(p, cstr_len(word) + 1)
     start := p.synth_next
     length := cstr_len(word)
     mut k : i64 = 0
@@ -88,6 +102,7 @@ synth_numbered :: fn(mut p: Parser, word: ^i8, number: i64) -> i64 {
 // may each carry a `damage` and they stay apart.
 synth_join :: fn(mut p: Parser, first_off: i64, first_len: i64, second_off: i64,
     second_len: i64) -> i64 {
+    synth_room_for(p, first_len + second_len + 2)
     start := p.synth_next
     mut k : i64 = 0
     while (k < first_len) {
@@ -779,6 +794,7 @@ synth_type_name :: fn(mut p: Parser, ty: i64) -> (off: i64, len: i64) {
 
 synth_bytes :: fn(mut p: Parser, word: ^i8) {
     length := cstr_len(word)
+    synth_room_for(p, length + 1)
     mut k : i64 = 0
     while (k < length) {
         p.src[p.synth_next + k] = cast($u8, byte_at(word, k))
@@ -788,6 +804,7 @@ synth_bytes :: fn(mut p: Parser, word: ^i8) {
 }
 
 synth_range :: fn(mut p: Parser, off: i64, len: i64) {
+    synth_room_for(p, len + 1)
     mut k : i64 = 0
     while (k < len) {
         p.src[p.synth_next + k] = p.src[off + k]
