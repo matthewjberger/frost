@@ -259,6 +259,8 @@ deps:
     $root = "$work/sdl/SDL3-{{sdl_version}}/x86_64-w64-mingw32"
     Copy-Item "$root/bin/SDL3.dll" examples/graphics -Force
     Copy-Item "$root/lib/libSDL3.dll.a" examples/graphics/SDL3.lib -Force
+    Remove-Item "examples/graphics/SDL3" -Recurse -Force -ErrorAction SilentlyContinue
+    Copy-Item "$root/include/SDL3" examples/graphics/SDL3 -Recurse -Force
     Write-Host "wgpu-native {{wgpu_version}}"
     $wgpu = "https://github.com/gfx-rs/wgpu-native/releases/download/{{wgpu_version}}/wgpu-windows-x86_64-gnu-release.zip"
     Invoke-WebRequest -Uri $wgpu -OutFile "$work/wgpu.zip" -UseBasicParsing
@@ -292,11 +294,23 @@ deps:
     unzip -q "$work/wgpu.zip" -d "$work/wgpu"
     cp "$work"/wgpu/lib/libwgpu_native.* examples/graphics/wgpu/
     cp -r "$work/wgpu/include" examples/graphics/wgpu/
+    echo "SDL3 headers are the system package's here."
     echo "webgpu.json at {{webgpu_headers_rev}}"
     curl -fsSL -o examples/graphics/wgpu/webgpu.json \
       "https://raw.githubusercontent.com/webgpu-native/webgpu-headers/{{webgpu_headers_rev}}/webgpu.json"
     echo "SDL3 comes from the system here: install libsdl3-dev or sdl3."
     echo "ready. run: just bindgen; just triangle"
+
+# Opens a window and reports what the platform layer saw (Windows)
+[windows]
+input:
+    $dir = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "examples/graphics" }; if (-not (Test-Path "$dir/SDL3.dll")) { throw "no SDL3.dll in $dir. Run `just deps`, or set SDL3_DIR." }; cargo run -r -q -p frost --bin frost -- --link --libs "$dir/SDL3.dll" -o examples/graphics/input.exe examples/graphics/input.frost; if ($dir -ne "examples/graphics") { Copy-Item "$dir/SDL3.dll" examples/graphics -Force }; & ./examples/graphics/input.exe
+
+# Opens a window and reports what the platform layer saw (Unix)
+[unix]
+input:
+    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 -o examples/graphics/input examples/graphics/input.frost
+    ./examples/graphics/input
 
 # Regenerates the wgpu bindings from webgpu.json
 bindgen:
