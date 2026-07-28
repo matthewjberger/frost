@@ -4700,7 +4700,8 @@ mod tests {
         // constant: a variant on its own is a statement with no effect there,
         // and the file that has no `main` returns its last expression as an
         // exit code, which a variant is not one of either.
-        let input = "shown :: fn() -> i64 {\n    held := Color::Green\n    0\n}";
+        let input =
+            "shown :: fn() -> i64 {\n    held := Color::Green\n    0\n}";
         let mut lexer = Lexer::new(input);
         let tokens = lexer.tokenize()?;
         let mut parser = Parser::new(&tokens);
@@ -4714,8 +4715,7 @@ mod tests {
             bail!("Expected a function, got {:?}", program[0]);
         };
         if let Statement::Let {
-            value:
-                Expression::EnumVariantInit(enum_name, variant_name, fields),
+            value: Expression::EnumVariantInit(enum_name, variant_name, fields),
             ..
         } = &body[0].node
         {

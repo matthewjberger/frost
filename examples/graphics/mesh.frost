@@ -1,0 +1,232 @@
+// Geometry on the GPU, and the cache a program names it through.
+//
+//   mut cache := mesh_cache_new(8)
+//   mesh_cache_insert(cache, "cube", cube_mesh(device, queue))
+//   held := mesh_cache_at(cache, mesh_cache_find(cache, "cube"))
+//
+// A mesh is a vertex buffer, an index buffer and how many indices there are.
+// Indexed, because a cube drawn as bare triangles is thirty-six vertices with
+// eight distinct positions among them, and the normal is what makes the
+// duplication real: a corner belongs to three faces pointing three ways, so
+// twenty-four vertices is the honest count and the indices are what stop it
+// being thirty-six.
+//
+// The cache is by name rather than by handle so a thing that is drawn says what
+// it is rather than which slot it landed in, which is what lets the geometry be
+// built in one place and named in another. Names are compared rather than
+// hashed: a scene has a handful of meshes and the lookup happens once when an
+// entity is made, not once a frame.
+
+import "wgpu.frost"
+import "math.frost"
+import "mem.frost"
+import "strings.frost"
+
+export Vertex, Mesh, MeshCache,
+    mesh_cache_new, mesh_cache_insert, mesh_cache_find, mesh_cache_at,
+    mesh_cache_free, mesh_bind, mesh_upload,
+    cube_mesh, sphere_mesh,
+    VERTEX_STRIDE, POSITION_OFFSET, NORMAL_OFFSET
+
+// Position and normal, which is what a lit surface needs and nothing more. No
+// texture coordinates yet, because nothing samples a texture.
+Vertex :: struct { position: Vec3, normal: Vec3 }
+
+VERTEX_STRIDE :: 24
+POSITION_OFFSET :: 0
+NORMAL_OFFSET :: 12
+INDEX_BYTES :: 4
+
+// The two buffers, how many indices there are, and how long each buffer is.
+// The lengths are kept rather than asked for with a sentinel, because a mesh
+// knows what it uploaded and the binding is exact: nothing downstream has to
+// mean "to the end" when it means a number it already had.
+Mesh :: struct {
+    vertices: Buffer,
+    indices: Buffer,
+    index_count: u32,
+    vertex_bytes: u64,
+    index_bytes: u64,
+}
+
+MeshCache :: struct { names: []str, meshes: []Mesh, count: i64 }
+
+mesh_cache_new :: fn(capacity: i64) -> MeshCache {
+    MeshCache { names = heap_slice($str, capacity),
+        meshes = heap_slice($Mesh, capacity), count = 0 }
+}
+
+mesh_cache_free :: fn(mut cache: MeshCache) {
+    heap_release_slice($str, cache.names)
+    heap_release_slice($Mesh, cache.meshes)
+    cache.count = 0
+}
+
+mesh_cache_insert :: fn(mut cache: MeshCache, name: str, held: Mesh) {
+    if (cache.count >= slice_len(cache.meshes)) {
+        return
+    }
+    cache.names[cache.count] = name
+    cache.meshes[cache.count] = held
+    cache.count = cache.count + 1
+}
+
+// Which slot a name is in, or -1. A caller resolves once and keeps the number,
+// so nothing compares strings while drawing.
+mesh_cache_find :: fn(cache: MeshCache, name: str) -> i64 {
+    mut index : i64 = 0
+    while (index < cache.count) {
+        if (str_eq(cache.names[index], name)) {
+            return index
+        }
+        index = index + 1
+    }
+    0 - 1
+}
+
+mesh_cache_at :: fn(cache: MeshCache, index: i64) -> Mesh {
+    cache.meshes[index]
+}
+
+// Both buffers onto the pass, in the order a draw needs them.
+mesh_bind :: fn(pass: RenderPassEncoder, held: Mesh) {
+    render_pass_encoder_set_vertex_buffer(pass, 0, held.vertices, 0,
+        held.vertex_bytes)
+    render_pass_encoder_set_index_buffer(pass, held.indices,
+        INDEX_FORMAT_UINT32, 0, held.index_bytes)
+}
+
+// The vertices and indices as they are, straight to the device. Written once at
+// startup, so the buffers are not mapped and nothing reads them back.
+mesh_upload :: fn(device: Device, queue: Queue, vertices: []Vertex,
+    indices: []u32) -> Mesh {
+    vertex_bytes := slice_len(vertices) * VERTEX_STRIDE
+    index_bytes := slice_len(indices) * INDEX_BYTES
+
+    mut vertex_descriptor := buffer_descriptor_init()
+    vertex_descriptor.usage = BufferUsage::Vertex | BufferUsage::CopyDst
+    vertex_descriptor.size = vertex_bytes
+    vertex_buffer := device_create_buffer(device, ptr_to(vertex_descriptor))
+    queue_write_buffer(queue, vertex_buffer, 0,
+        unsafe { ptr_cast($u8, ptr_to(vertices[0])) }, vertex_bytes)
+
+    mut index_descriptor := buffer_descriptor_init()
+    index_descriptor.usage = BufferUsage::Index | BufferUsage::CopyDst
+    index_descriptor.size = index_bytes
+    index_buffer := device_create_buffer(device, ptr_to(index_descriptor))
+    queue_write_buffer(queue, index_buffer, 0,
+        unsafe { ptr_cast($u8, ptr_to(indices[0])) }, index_bytes)
+
+    Mesh { vertices = vertex_buffer, indices = index_buffer,
+        index_count = slice_len(indices), vertex_bytes = vertex_bytes,
+        index_bytes = index_bytes }
+}
+
+// Two triangles over four corners, wound counter-clockwise seen from outside,
+// which is the winding the pipeline calls front.
+quad :: fn(mut vertices: []Vertex, mut indices: []u32, at: i64,
+    normal: Vec3, a: Vec3, b: Vec3, c: Vec3, d: Vec3) {
+    base := at * 4
+    vertices[base] = Vertex { position = a, normal = normal }
+    vertices[base + 1] = Vertex { position = b, normal = normal }
+    vertices[base + 2] = Vertex { position = c, normal = normal }
+    vertices[base + 3] = Vertex { position = d, normal = normal }
+    corner := at * 6
+    indices[corner] = base
+    indices[corner + 1] = base + 1
+    indices[corner + 2] = base + 2
+    indices[corner + 3] = base
+    indices[corner + 4] = base + 2
+    indices[corner + 5] = base + 3
+}
+
+// A unit cube about the origin. Four vertices per face rather than eight in
+// total, because a corner has three normals and a vertex has one.
+cube_mesh :: fn(device: Device, queue: Queue) -> Mesh {
+    mut vertices := heap_slice($Vertex, 24)
+    mut indices := heap_slice($u32, 36)
+    half : f32 = 0.5
+    low := 0.0 - half
+
+    quad(vertices, indices, 0, vec3(1.0, 0.0, 0.0),
+        vec3(half, low, half), vec3(half, low, low),
+        vec3(half, half, low), vec3(half, half, half))
+    quad(vertices, indices, 1, vec3(0.0 - 1.0, 0.0, 0.0),
+        vec3(low, low, low), vec3(low, low, half),
+        vec3(low, half, half), vec3(low, half, low))
+    quad(vertices, indices, 2, vec3(0.0, 1.0, 0.0),
+        vec3(low, half, half), vec3(half, half, half),
+        vec3(half, half, low), vec3(low, half, low))
+    quad(vertices, indices, 3, vec3(0.0, 0.0 - 1.0, 0.0),
+        vec3(low, low, low), vec3(half, low, low),
+        vec3(half, low, half), vec3(low, low, half))
+    quad(vertices, indices, 4, vec3(0.0, 0.0, 1.0),
+        vec3(low, low, half), vec3(half, low, half),
+        vec3(half, half, half), vec3(low, half, half))
+    quad(vertices, indices, 5, vec3(0.0, 0.0, 0.0 - 1.0),
+        vec3(half, low, low), vec3(low, low, low),
+        vec3(low, half, low), vec3(half, half, low))
+
+    held := mesh_upload(device, queue, vertices, indices)
+    heap_release_slice($Vertex, vertices)
+    heap_release_slice($u32, indices)
+    held
+}
+
+// A sphere of latitude rings and longitude segments. The normal is the position
+// made unit, which is exactly true for a sphere about the origin and is why
+// this one carries no normal computation of its own.
+//
+// Both ends of a ring are separate vertices at the same place, which looks
+// wasteful and is not: the seam is where the texture coordinate would wrap, and
+// a shared vertex there cannot hold two of them.
+sphere_mesh :: fn(device: Device, queue: Queue, radius: f32, rings: i64,
+    segments: i64) -> Mesh {
+    vertex_count := (rings + 1) * (segments + 1)
+    index_count := rings * segments * 6
+    mut vertices := heap_slice($Vertex, vertex_count)
+    mut indices := heap_slice($u32, index_count)
+
+    mut ring : i64 = 0
+    while (ring <= rings) {
+        tall : f32 = ring
+        total : f32 = rings
+        theta := 3.141592653589793 * (tall / total)
+        mut segment : i64 = 0
+        while (segment <= segments) {
+            around : f32 = segment
+            span : f32 = segments
+            phi := 6.283185307179586 * (around / span)
+            unit := vec3(cosf(phi) * sinf(theta), cosf(theta),
+                sinf(phi) * sinf(theta))
+            vertices[ring * (segments + 1) + segment] =
+                Vertex { position = vec3_scale(unit, radius), normal = unit }
+            segment = segment + 1
+        }
+        ring = ring + 1
+    }
+
+    mut written : i64 = 0
+    mut row : i64 = 0
+    while (row < rings) {
+        mut column : i64 = 0
+        while (column < segments) {
+            first := row * (segments + 1) + column
+            next := first + segments + 1
+            indices[written] = first
+            indices[written + 1] = next
+            indices[written + 2] = first + 1
+            indices[written + 3] = first + 1
+            indices[written + 4] = next
+            indices[written + 5] = next + 1
+            written = written + 6
+            column = column + 1
+        }
+        row = row + 1
+    }
+
+    held := mesh_upload(device, queue, vertices, indices)
+    heap_release_slice($Vertex, vertices)
+    heap_release_slice($u32, indices)
+    held
+}

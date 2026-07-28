@@ -1,0 +1,75 @@
+// What a surface is made of, and the registry a drawn thing names one through.
+//
+//   mut registry := materials_new(64)
+//   brass := materials_add(registry, Material { base_color = ..., roughness = 0.3 })
+//
+// A material is data, and an entity carries the number it was given rather than
+// the material itself. That is the difference that matters: two hundred things
+// sharing one look share one entry, and changing it changes all of them without
+// anything walking the scene.
+//
+// Base colour, roughness and metalness, which is the smallest set that reads as
+// a real surface rather than a flat fill. The shader they feed is not a full
+// physically based one and the names are the same on purpose: what grows here
+// is the shader, not what a program has to say.
+
+import "math.frost"
+import "mem.frost"
+
+export Material, Materials, MATERIAL_BYTES,
+    materials_new, materials_add, materials_at, materials_free,
+    material_default, material_color, material_surface
+
+// Sixty-four bytes: the colour, then the two numbers padded out to the vector
+// the uniform is read as. A uniform's members align to sixteen, so the padding
+// is written down rather than left for the driver to disagree about.
+MATERIAL_BYTES :: 32
+
+Material :: struct {
+    base_color: Vec4,
+    roughness: f32,
+    metallic: f32,
+}
+
+material_default :: fn() -> Material {
+    Material { base_color = vec4(0.8, 0.8, 0.8, 1.0), roughness = 0.5,
+        metallic = 0.0 }
+}
+
+Materials :: struct { items: []Material, count: i64 }
+
+materials_new :: fn(capacity: i64) -> Materials {
+    Materials { items = heap_slice($Material, capacity), count = 0 }
+}
+
+materials_free :: fn(mut registry: Materials) {
+    heap_release_slice($Material, registry.items)
+    registry.count = 0
+}
+
+// The number the material was given, which is what a drawn thing carries. Full
+// answers with the last slot rather than growing, since a scene declares what
+// it needs up front and a silent reallocation would move every entry.
+materials_add :: fn(mut registry: Materials, held: Material) -> i64 {
+    if (registry.count >= slice_len(registry.items)) {
+        return registry.count - 1
+    }
+    at := registry.count
+    registry.items[at] = held
+    registry.count = at + 1
+    at
+}
+
+materials_at :: fn(registry: Materials, index: i64) -> Material {
+    registry.items[index]
+}
+
+// The two vectors the shader reads a material as. Roughness and metalness are
+// two numbers in a vector of four rather than two numbers, because a uniform's
+// members align to sixteen bytes and the padding is better written down here
+// than discovered as a shape the driver read differently.
+material_color :: fn(held: Material) -> Vec4 { held.base_color }
+
+material_surface :: fn(held: Material) -> Vec4 {
+    vec4(held.roughness, held.metallic, 0.0, 0.0)
+}
