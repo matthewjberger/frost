@@ -155,7 +155,10 @@ pub struct ModulePlan {
 pub fn register_entry_file(path: &Path, base_dir: &Path) -> u32 {
     let root = base_dir.canonicalize().unwrap_or_else(|_| base_dir.into());
     let key = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    crate::source_map::register(&relative_module_name(&key, &root))
+    crate::source_map::register_at(
+        &relative_module_name(&key, &root),
+        &key.to_string_lossy(),
+    )
 }
 
 pub fn resolve_imports(
@@ -374,7 +377,7 @@ fn plan_module(
         format!("failed to read imported file: {}", full.display())
     })?;
     let module = found.module.clone();
-    let file = crate::source_map::register(&module);
+    let file = crate::source_map::register_at(&module, &full.to_string_lossy());
     let tag = module_tag_of(&module);
     let source_hash = digest(&source);
     let record = cache.load(&tag, &source_hash);
@@ -780,7 +783,10 @@ impl Walk<'_> {
         let source = fs::read_to_string(full).with_context(|| {
             format!("failed to read imported file: {}", full.display())
         })?;
-        let file = crate::source_map::register(module_name);
+        let file = crate::source_map::register_at(
+            module_name,
+            &full.to_string_lossy(),
+        );
         let parsed = parse_module(
             &source,
             file,

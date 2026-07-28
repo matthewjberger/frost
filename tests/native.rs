@@ -5824,6 +5824,54 @@ fn a_constant_defined_in_terms_of_itself_is_refused() {
     );
 }
 
+// What the bootstrap prints when it refuses a program. It used to be one line,
+// `at file:line:col: message`, naming a place the reader then had to go and
+// look at. The self-hosted compiler has shown the line and a caret under the
+// column for a long time and there is no reason for two formats.
+#[test]
+fn the_bootstrap_shows_the_line_a_failure_is_about() {
+    let directory = std::env::temp_dir();
+    let input = directory
+        .join(unique("frost_render"))
+        .with_extension("frost");
+    std::fs::write(
+        &input,
+        "main :: fn() -> i64 {\n\
+         \x20   a : u8 = 300\n\
+         \x20   print a\n    0\n}\n",
+    )
+    .unwrap();
+    let exe = directory
+        .join(unique("frost_render"))
+        .with_extension(std::env::consts::EXE_EXTENSION);
+    let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe)
+        .arg(&input)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&exe);
+    assert!(!built.status.success());
+    let complaint = String::from_utf8_lossy(&built.stderr);
+    assert!(complaint.contains(":2:5:"), "no position in:\n{complaint}");
+    assert!(
+        complaint.contains("    a : u8 = 300"),
+        "the line at fault was not shown:\n{complaint}"
+    );
+    assert!(
+        complaint.contains("    ^ 300 does not fit"),
+        "no caret under the column:\n{complaint}"
+    );
+    // The phase label and anyhow's chain are gone: the position says which
+    // phase it was better than the word does.
+    assert!(
+        !complaint.contains("Caused by"),
+        "the error still prints as a chain:\n{complaint}"
+    );
+}
+
 // Where a diagnostic points. Every one of them used to land one construct late,
 // because a node was stamped with the cursor when it was built, which is after
 // its children had been read. An error about a binding on line five was

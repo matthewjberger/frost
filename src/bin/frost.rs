@@ -263,13 +263,29 @@ fn test_directory(directory: &Path, arguments: &[String]) -> Result<()> {
 /// into a failure that does not reproduce under `--release`.
 const COMPILER_STACK_BYTES: usize = 256 * 1024 * 1024;
 
-fn main() -> Result<()> {
-    std::thread::Builder::new()
+fn main() -> std::process::ExitCode {
+    let outcome = std::thread::Builder::new()
         .stack_size(COMPILER_STACK_BYTES)
         .spawn(compile)
-        .context("failed to start the compiler thread")?
-        .join()
-        .map_err(|_| anyhow!("the compiler thread panicked"))?
+        .map_err(|error| {
+            anyhow!("failed to start the compiler thread: {error}")
+        })
+        .and_then(|handle| {
+            handle
+                .join()
+                .map_err(|_| anyhow!("the compiler panicked"))?
+        });
+    match outcome {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            // Rendered rather than printed as a chain: a message that knows
+            // where it is gets the line it is about and a caret under the
+            // column, which is what the self-hosted compiler has always done
+            // and there is no reason for two formats.
+            eprint!("{}", frost::render_diagnostic(&error));
+            std::process::ExitCode::FAILURE
+        }
+    }
 }
 
 fn compile() -> Result<()> {
