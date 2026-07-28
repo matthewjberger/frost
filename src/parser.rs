@@ -729,6 +729,10 @@ pub enum Expression {
     Dereference(Box<Expression>),
     StructInit(Identifier, Vec<(Identifier, Expression)>),
     Sizeof(Type),
+    /// The type's name as the source spells it, as text. The compiler knows it
+    /// to report a diagnostic, and a registry that wants to be readable in a
+    /// file or a debugger wants the same string.
+    TypeName(Type),
     // `type_id(T)`: a number this build gives that type, the same one wherever
     // the type is written and different for every other type. What it is for is
     // a table keyed by type in a program whose contents are decided at run
@@ -853,6 +857,7 @@ impl Display for Expression {
                 format!("{} {{ {} }}", name, field_strs.join(", "))
             }
             Self::TypeId(typ) => format!("type_id({typ})"),
+            Self::TypeName(typ) => format!("typename({typ})"),
             Self::Sizeof(typ) => {
                 format!("sizeof({})", typ)
             }
@@ -2359,6 +2364,10 @@ impl<'a> Parser<'a> {
                 advance = false;
                 self.parse_sizeof()?
             }
+            Token::Typename => {
+                advance = false;
+                self.parse_typename()?
+            }
             Token::Dollar => {
                 advance = false;
                 self.read_token();
@@ -2672,6 +2681,22 @@ impl<'a> Parser<'a> {
             Box::new(expression),
             Box::new(index_expression),
         ))
+    }
+
+    // `typename(T)` and `typename($T)`, the same shape `type_id` takes.
+    fn parse_typename(&mut self) -> Result<Expression> {
+        self.read_token();
+        if !matches!(self.read_token(), Token::LeftParentheses) {
+            bail!("Expected '(' after typename");
+        }
+        if matches!(self.peek_nth(0), Token::Dollar) {
+            self.read_token();
+        }
+        let typ = self.parse_type()?;
+        if !matches!(self.read_token(), Token::RightParentheses) {
+            bail!("Expected ')' after the type in typename");
+        }
+        Ok(Expression::TypeName(typ))
     }
 
     fn parse_sizeof(&mut self) -> Result<Expression> {
@@ -4983,7 +5008,9 @@ mod tests {
 
         assert_eq!(program.len(), 1);
         if let Statement::Expression(
-            Expression::Sizeof(typ) | Expression::TypeId(typ),
+            Expression::Sizeof(typ)
+            | Expression::TypeId(typ)
+            | Expression::TypeName(typ),
         ) = &program[0].node
         {
             assert_eq!(*typ, Type::I64);
@@ -5003,7 +5030,9 @@ mod tests {
 
         assert_eq!(program.len(), 1);
         if let Statement::Expression(
-            Expression::Sizeof(typ) | Expression::TypeId(typ),
+            Expression::Sizeof(typ)
+            | Expression::TypeId(typ)
+            | Expression::TypeName(typ),
         ) = &program[0].node
         {
             assert_eq!(*typ, Type::Ptr(Box::new(Type::I64)));

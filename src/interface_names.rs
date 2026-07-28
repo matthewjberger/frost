@@ -130,6 +130,7 @@ pub(crate) fn names_in_expression(
         }
         Expression::Sizeof(ty)
         | Expression::TypeId(ty)
+        | Expression::TypeName(ty)
         | Expression::TypeValue(ty) => names_in_type(ty, out),
         Expression::Function(params, return_sig, body)
         | Expression::Proc(params, return_sig, body) => {

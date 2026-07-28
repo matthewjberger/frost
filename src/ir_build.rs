@@ -2584,9 +2584,9 @@ fn collect_instances_in_expression(
     out: &mut Vec<String>,
 ) {
     match expression {
-        Expression::Sizeof(ty) | Expression::TypeId(ty) => {
-            collect_instances_in_type(ty, out)
-        }
+        Expression::Sizeof(ty)
+        | Expression::TypeId(ty)
+        | Expression::TypeName(ty) => collect_instances_in_type(ty, out),
         Expression::Prefix(_, operand)
         | Expression::AddressOf(operand)
         | Expression::Borrow(operand)
@@ -3418,6 +3418,9 @@ fn substitute_expression(
         }
         Expression::Sizeof(ty) => {
             Expression::Sizeof(substitute_type(ty, subst))
+        }
+        Expression::TypeName(ty) => {
+            Expression::TypeName(substitute_type(ty, subst))
         }
         Expression::TypeId(ty) => {
             Expression::TypeId(substitute_type(ty, subst))
@@ -4568,6 +4571,19 @@ impl<'a> FunctionLowering<'a> {
                     IrOperand::Constant(IrConstant::Integer(id, Type::I64)),
                     Type::I64,
                 ))
+            }
+            Expression::TypeName(ty) => {
+                let name =
+                    crate::imports::demangle_private_names(&ty.to_string());
+                if matches!(expected, Some(Type::Ptr(_))) {
+                    return Ok((
+                        IrOperand::Constant(IrConstant::CString(name)),
+                        Type::Ptr(Box::new(Type::I8)),
+                    ));
+                }
+                let local = self.fresh_local(Type::Str, None);
+                self.build_str_value(local, &name);
+                Ok((IrOperand::Local(local), Type::Str))
             }
             Expression::Borrow(inner) => {
                 self.lower_address_of(inner, RefKind::Ref)

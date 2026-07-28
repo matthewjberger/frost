@@ -438,6 +438,24 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             advance(p)
             return new_type_node(p, NodeKind::Sizeof, 0, ty)
         }
+        // A type's own name, as text. The compiler knows it well enough to put
+        // it in a diagnostic, and a registry that wants to be readable in a
+        // file or a debugger wants the same string.
+        if (str_range_eq(p.src, offset, length, "typename")) {
+            advance(p)
+            if (cur(p) == TokenKind::Dollar) {
+                advance(p)
+            }
+            if (unbound_template(p)) {
+                advance(p)
+                advance(p)
+                return new_named_node(p, NodeKind::StrLit, 0, offset, 0)
+            }
+            ty := parse_type(p)
+            advance(p)
+            name_off, name_len := synth_type_name(p, ty)
+            return new_named_node(p, NodeKind::StrLit, 0, name_off, name_len)
+        }
         // Where a field sits in the type that declares it. The compiler worked
         // this out to lay the type out, and a layout table is the same number.
         if (str_range_eq(p.src, offset, length, "offset_of")) {

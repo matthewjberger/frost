@@ -31,7 +31,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     cap_at, cap_count_of, pack_element_name, alias_for, push_alias,
     unit_holds, in_any_module,
     set_ret_type, set_uses, struct_index_of, synth_capability_name,
-    synth_join, synth_literal, synth_numbered, type_code_for
+    synth_join, synth_literal, synth_numbered, synth_type_name, type_code_for
 
 // Copy a literal name into the room past the source and answer its offset, for
 // a name the compiler needs that no source spells.
@@ -763,6 +763,83 @@ report_type_name :: fn(mut p: Parser, ty: i64) {
         return
     }
     report("a value")
+}
+
+// A type's name as text in the room past the source, which is what `typename`
+// answers with. The same walk `report_type_name` does, writing bytes instead of
+// reporting them, so the two cannot drift about what a type is called.
+synth_type_name :: fn(mut p: Parser, ty: i64) -> (off: i64, len: i64) {
+    start := p.synth_next
+    write_type_name(p, ty)
+    length := p.synth_next - start
+    p.src[p.synth_next] = 0
+    p.synth_next = p.synth_next + 1
+    return start, length
+}
+
+synth_bytes :: fn(mut p: Parser, word: ^i8) {
+    length := cstr_len(word)
+    mut k : i64 = 0
+    while (k < length) {
+        p.src[p.synth_next + k] = cast($u8, byte_at(word, k))
+        k = k + 1
+    }
+    p.synth_next = p.synth_next + length
+}
+
+synth_range :: fn(mut p: Parser, off: i64, len: i64) {
+    mut k : i64 = 0
+    while (k < len) {
+        p.src[p.synth_next + k] = p.src[off + k]
+        k = k + 1
+    }
+    p.synth_next = p.synth_next + len
+}
+
+write_type_name :: fn(mut p: Parser, ty: i64) {
+    if (is_distinct(ty)) {
+        mut a : i64 = 0
+        while (a < p.type_aliases.count) {
+            entry := arena_at(p.type_aliases, a)
+            if (entry.value == ty) {
+                synth_range(p, entry.name_off, entry.name_len)
+                return
+            }
+            a = a + 1
+        }
+    }
+    held := distinct_repr(ty)
+    if (held == TY_I64) { synth_bytes(p, "i64")     return }
+    if (held == TY_I32) { synth_bytes(p, "i32")     return }
+    if (held == TY_I16) { synth_bytes(p, "i16")     return }
+    if (held == TY_I8) { synth_bytes(p, "i8")       return }
+    if (held == TY_ISIZE) { synth_bytes(p, "isize") return }
+    if (held == TY_U64) { synth_bytes(p, "u64")     return }
+    if (held == TY_U32) { synth_bytes(p, "u32")     return }
+    if (held == TY_U16) { synth_bytes(p, "u16")     return }
+    if (held == TY_U8) { synth_bytes(p, "u8")       return }
+    if (held == TY_USIZE) { synth_bytes(p, "usize") return }
+    if (held == TY_F64) { synth_bytes(p, "f64")     return }
+    if (held == TY_F32) { synth_bytes(p, "f32")     return }
+    if (held == TY_BOOL) { synth_bytes(p, "bool")   return }
+    if (held == TY_VOID) { synth_bytes(p, "void")   return }
+    if (held == TY_HANDLE) { synth_bytes(p, "Handle") return }
+    if (is_pointer(held)) {
+        synth_bytes(p, "^")
+        write_type_name(p, pointee(held))
+        return
+    }
+    if (is_array_ty(held)) {
+        synth_bytes(p, "[]")
+        write_type_name(p, array_element(p, held))
+        return
+    }
+    if (is_struct_ty(held)) {
+        def := arena_at(p.structs, struct_index_of(held))
+        synth_range(p, def.name_off, def.name_len)
+        return
+    }
+    synth_bytes(p, "a value")
 }
 
 // The sentence that says which rule was broken, when the rule is the one about

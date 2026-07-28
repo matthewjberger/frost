@@ -203,6 +203,7 @@ fn walk_expression(
         }
         Expression::Sizeof(ty)
         | Expression::TypeId(ty)
+        | Expression::TypeName(ty)
         | Expression::TypeValue(ty) => substitute(ty, declared),
         Expression::PackMap(inner, _, _)
         | Expression::Prefix(_, inner)
