@@ -95,6 +95,13 @@ M_MOVUPS :: 41
 // unsigned types compiles to.
 M_DIVQ :: 42
 M_SHRQ :: 43
+// The single-precision half of the conversions. An `f32` reaching an integer
+// and an integer reaching an `f32` encode as their double-precision twins with
+// the other prefix, and the backend has always emitted them: nothing had
+// assembled a program that converts one, because the standard library's floats
+// arrive as float literals and never cross.
+M_CVTSI2SSQ :: 44
+M_CVTTSS2SIQ :: 45
 // Not an instruction: a label definition, which takes a place in the list so
 // its address is whatever the instructions before it add up to.
 M_LABEL :: 40
@@ -583,6 +590,8 @@ mnemonic_of :: fn(src: str, off: i64, len: i64) -> (op: i64, cc: i64) {
     if (bytes_same(src, off, len, "movups")) { return M_MOVUPS, 0 }
     if (bytes_same(src, off, len, "cvtsi2sdq")) { return M_CVTSI2SDQ, 0 }
     if (bytes_same(src, off, len, "cvttsd2siq")) { return M_CVTTSD2SIQ, 0 }
+    if (bytes_same(src, off, len, "cvtsi2ssq")) { return M_CVTSI2SSQ, 0 }
+    if (bytes_same(src, off, len, "cvttss2siq")) { return M_CVTTSS2SIQ, 0 }
     if (bytes_same(src, off, len, "cvtss2sd")) { return M_CVTSS2SD, 0 }
     if (bytes_same(src, off, len, "cvtsd2ss")) { return M_CVTSD2SS, 0 }
     if (len >= 4 && bytes_same(src, off, 3, "set")) {
@@ -1203,6 +1212,18 @@ encode_sse :: fn(mut unit: Assembly, op: i64, a_reg: i64, b_reg: i64,
     }
     if (op == M_CVTTSD2SIQ) {
         emit_reg_rm(unit, 242, 1, 15, 44, reg_code(b_reg), OPND_REG,
+            reg_code(a_reg), 0, 0)
+        return
+    }
+    // The same two opcodes under the single-precision prefix. 0xF3 selects the
+    // `ss` form where 0xF2 selects `sd`, and nothing else about them differs.
+    if (op == M_CVTSI2SSQ) {
+        emit_reg_rm(unit, 243, 1, 15, 42, reg_code(b_reg), OPND_REG,
+            reg_code(a_reg), 0, 0)
+        return
+    }
+    if (op == M_CVTTSS2SIQ) {
+        emit_reg_rm(unit, 243, 1, 15, 44, reg_code(b_reg), OPND_REG,
             reg_code(a_reg), 0, 0)
         return
     }

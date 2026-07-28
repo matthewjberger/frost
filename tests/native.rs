@@ -3335,11 +3335,20 @@ fn self_hosted_runs_the_standard_library_tests() {
     // arrays and a struct returned by value, none of which strings.frost
     // reaches, and sort.frost is the one that carries a capability bundle
     // through two levels of generic.
+    //
+    // ecs.frost is the largest of them and was not here, which is how the
+    // assembler went without the two single-precision conversions for as long
+    // as it did: it is the only module whose tests write an integer into an
+    // `f32` field, and every other one arrives at its floats as float literals.
+    // A list naming the standard library and holding four of its modules is the
+    // shape this suite exists to catch.
     let modules = [
         ("strings.frost", "9 passed"),
         ("math.frost", "20 passed"),
         ("math64.frost", "20 passed"),
         ("sort.frost", "3 passed"),
+        ("mem.frost", "11 passed"),
+        ("ecs.frost", "74 passed"),
     ];
     for (label, backend) in [("stdc", "--emit-c"), ("stdasm", "--emit-asm")] {
         for (module, expected) in modules {
