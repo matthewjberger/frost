@@ -197,7 +197,11 @@ untyped_literal :: fn(mut p: Parser, id: i64) -> bool {
     if (id < 0) {
         return false
     }
-    node := arena_at(p.arena, id)
+    // A constant is written out where it is named, so the question is asked of
+    // what it stands for: `PITCH_LIMIT` read at an `f32` is the same as writing
+    // the number there. A local of the same name is a value with a type and
+    // shadows it, which `constant_node` answers for.
+    node := arena_at(p.arena, constant_node(p, id))
     if (node.kind == NodeKind::Num) {
         // A bit of a flags type is written as a name and carries that type, so
         // it is not one of the numbers the context gets to type.
@@ -206,16 +210,26 @@ untyped_literal :: fn(mut p: Parser, id: i64) -> bool {
     if (node.kind == NodeKind::Float) {
         return true
     }
-    // An integer constant is a name for a number and is inlined at every use,
-    // so it is one of the numbers the context gets to type: `CH_LF` read at a
-    // `u8` is the same as writing 10 there, range check and all. A local of the
-    // same name is a value with a type and shadows it.
+    // An integer constant is a name for a number too, and is kept in a table of
+    // its own rather than as a node, so it is asked about separately.
     if (node.kind == NodeKind::Var && local_exists(p, node.val, node.c) == false
         && is_const(p, node.val, node.c)) {
         return true
     }
     if (node.kind == NodeKind::Bin && op_answers_truth(node.val) == false) {
-        return untyped_literal(p, node.a) && untyped_literal(p, node.b)
+        if (untyped_literal(p, node.a) && untyped_literal(p, node.b)) {
+            return true
+        }
+        // A literal mixed with an integer has no width of its own either: the
+        // only float in `0.3 + count` is the literal, and the integer converts
+        // to whatever float the context asks for. One typed float on either
+        // side does fix the width, and then it is not one of these.
+        if (untyped_literal(p, node.a) && is_integer(type_of(p, node.b))) {
+            return true
+        }
+        if (untyped_literal(p, node.b) && is_integer(type_of(p, node.a))) {
+            return true
+        }
     }
     false
 }
