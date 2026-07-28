@@ -39,7 +39,17 @@ export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     query_with,
     query_filter, query_row_passes, for_each, for_each_row, component_of,
     Filters, no_filters, filter_without, filter_changed, filter_added,
-    tag_new, tag_free, tag_add, tag_remove, tag_has,
+    tag_new, tag_free, tag_release, tag_add, tag_remove, tag_has,
+    Group, GroupSlot, Route, TagType, GROUP_MEMBERS,
+    group_new, group_free, group_add_world, group_world_count,
+    group_members,
+    group_register, group_route, route_found, no_route,
+    group_spawn, group_alive, group_count, group_despawn,
+    group_despawn_entities,
+    group_get, group_set, group_has, group_remove,
+    group_tag_type, group_add_tag, group_remove_tag, group_has_tag,
+    group_log_enable, group_log, group_log_clear,
+    world_release, member_adopt, member_retire,
     commands_new, commands_free, commands_spawn, commands_despawn,
     commands_apply,
     ecs_tick, ecs_now, ecs_changed_since, ecs_added_since,
@@ -591,7 +601,10 @@ ecs_new :: fn() -> World {
     world
 }
 
-ecs_free :: fn(move world: World) {
+// Everything a world allocated, released in place. The consuming form below is
+// what a program calls; this one is what a group calls, because a member is
+// reached through the group's storage and cannot be moved out of it.
+world_release :: fn(mut world: World) {
     mut t : i64 = 0
     while (t < vec_len($Table, world.tables)) {
         ref table := vec_slice($Table, world.tables)[t]
@@ -619,6 +632,10 @@ ecs_free :: fn(move world: World) {
     vec_free($i64, world.registry.sizes)
     vec_free($i64, world.registry.types)
     lookup_free(world.lookup)
+}
+
+ecs_free :: fn(move world: World) {
+    world_release(world)
 }
 
 // ---------------------------------------------------------------------------
@@ -1431,8 +1448,12 @@ tag_new :: fn() -> Tag {
     Tag { marks = vec_new($i64, 64) }
 }
 
-tag_free :: fn(move t: Tag) {
+tag_release :: fn(mut t: Tag) {
     vec_free($i64, t.marks)
+}
+
+tag_free :: fn(move t: Tag) {
+    tag_release(t)
 }
 
 // Marks are held as the generation plus one, so zero means unmarked and no
@@ -1817,6 +1838,418 @@ time_advance :: fn(mut t: Time, delta: f64) {
     t.delta = delta
     t.elapsed = t.elapsed + delta
     t.frame = t.frame + 1
+}
+
+// ---------------------------------------------------------------------------
+// Member worlds
+//
+// A group is several worlds sharing one set of entity identities. An entity is
+// allocated by the group and holds a row in whichever members have something to
+// say about it: the renderer's components in one, the game's in another, and
+// nothing in the ones that do not care. One despawn takes the rows out of every
+// member at once, because the identity is the group's and the rows only follow
+// it.
+//
+// This is what layering an application over an engine looks like without either
+// knowing about the other. The engine registers its components in its own
+// member and queries them there, a game adds a member of its own and sets its
+// components on the same entities, and neither has a link component, a parallel
+// id, or a pass that copies a position from one to the other.
+//
+// Which member owns a component is decided by where it was registered, and a
+// routed write finds it by asking each member whether it knows the type. A
+// handful of members and a handful of types, asked once when a system starts
+// rather than once per entity.
+//
+// On the shape of it
+//
+// A borrow cannot be stored or escape a call here, so there is no cursor object
+// holding a reference to the group and no iterator handing out references into
+// its columns. Every walk is index-driven: ask for a table, ask for its columns
+// as slices, walk the slices. That is not a workaround for having no closures,
+// it is what the borrow rule leaves, and it is the shape the single-world
+// queries above already have.
+//
+// Joining across members follows from it. One member drives, because the walk
+// has to be over somebody's tables, and what the other members hold is read per
+// entity through the routed accessors. A read per entity rather than a column
+// walk is the honest cost of the row being somewhere else.
+// ---------------------------------------------------------------------------
+
+// How many members a group can hold. An engine's core, its interface, a game's
+// own, and room for what a plugin brings.
+GROUP_MEMBERS :: 8
+
+// Whether an identity is live, and which one it is. Where its rows are is each
+// member's business, so this is all the group keeps.
+GroupSlot :: struct {
+    generation: i64,
+    alive: bool,
+}
+
+// Which member owns a component and what index it has there. Both, because
+// neither alone names a column: two members number their components from zero.
+Route :: struct {
+    member: i64,
+    component: i64,
+}
+
+no_route :: fn() -> Route {
+    Route { member = 0 - 1, component = 0 - 1 }
+}
+
+route_found :: fn(r: Route) -> bool {
+    r.member >= 0
+}
+
+// A tag on the group rather than on one member: a mark an entity carries that
+// no member's mask has a bit for, which is what lets a selection or an in-hand
+// flag be added without moving a row. Dropped when the entity dies, as the rows
+// are.
+TagType :: struct {
+    key: i64,
+    set: Tag,
+}
+
+Group :: struct {
+    members: Vec<World>,
+    count: i64,
+    slots: Vec<GroupSlot>,
+    free_ids: Vec<i64>,
+    next_id: i64,
+    live: i64,
+    tags: Vec<TagType>,
+    // The group's own structural log, which records identities coming and
+    // going. What happened to a row inside a member is that member's log, and
+    // the two are separate because they answer different questions: one says an
+    // entity exists now, the other says it gained a component.
+    log: Vec<Change>,
+    logging: bool,
+}
+
+group_new :: fn() -> Group {
+    Group {
+        members = vec_new($World, GROUP_MEMBERS),
+        count = 0,
+        slots = vec_new($GroupSlot, 64),
+        free_ids = vec_new($i64, 64),
+        next_id = 0,
+        live = 0,
+        tags = vec_new($TagType, 4),
+        log = vec_new($Change, 16),
+        logging = false,
+    }
+}
+
+group_free :: fn(move g: Group) {
+    mut index : i64 = 0
+    while (index < g.count) {
+        ref member := vec_slice($World, g.members)[index]
+        world_release(member)
+        index = index + 1
+    }
+    mut held : i64 = 0
+    while (held < vec_len($TagType, g.tags)) {
+        ref marked := vec_slice($TagType, g.tags)[held]
+        tag_release(marked.set)
+        held = held + 1
+    }
+    vec_free($TagType, g.tags)
+    vec_free($World, g.members)
+    vec_free($GroupSlot, g.slots)
+    vec_free($i64, g.free_ids)
+    vec_free($Change, g.log)
+}
+
+// Adds a member and answers with its index. The order they are added in is the
+// order they are numbered in, so a program naming a member by number is naming
+// the order it declared them: append, never reorder.
+group_add_world :: fn(mut g: Group) -> i64 {
+    if (g.count >= GROUP_MEMBERS) {
+        unsafe { frost_rt_error("frost: a group holds no more member worlds\n") }
+        frost_rt_die()
+        return 0 - 1
+    }
+    index := g.count
+    vec_push($World, g.members, ecs_new())
+    g.count = index + 1
+    index
+}
+
+group_world_count :: fn(g: Group) -> i64 {
+    g.count
+}
+
+// The members, so a query reaches one by reference:
+//
+//     ref world := group_members(g)[engine]
+//     mut q := query_begin(world)
+//     while (query_next(world, q)) { ... }
+//
+// By reference rather than by value, and this is the borrow rule showing its
+// hand rather than a preference. A world holds linear storage, so a world
+// handed back from a call is a value the caller has to consume, and a caller
+// that only wanted to read it has nothing to do with it. A reference into the
+// group's own storage is what a walk wants anyway: the tables it is about to
+// read are the group's, not a copy of them.
+//
+// It is also why there is no group-level query cursor. The single-world one
+// above needs no change to walk a member, because what it walks is a world and
+// this is how you get one.
+group_members :: fn(g: Group) -> []World {
+    vec_slice($World, g.members)
+}
+
+// Registers a component in one member. Which member is a decision about how the
+// program is layered rather than about the type, so it is written here rather
+// than worked out.
+group_register :: fn($T: Type, mut g: Group, member: i64) -> i64 {
+    ref held := vec_slice($World, g.members)[member]
+    ecs_register($T, held)
+}
+
+// Where a component lives, or no route when nothing registered it. Asked once
+// when a system starts rather than once per entity.
+group_route :: fn($T: Type, g: Group) -> Route {
+    wanted := type_id(T)
+    mut index : i64 = 0
+    while (index < g.count) {
+        ref held := vec_slice($World, g.members)[index]
+        known := vec_slice($i64, held.registry.types)
+        mut component : i64 = 0
+        while (component < held.registry.count) {
+            if (known[component] == wanted) {
+                return Route { member = index, component = component }
+            }
+            component = component + 1
+        }
+        index = index + 1
+    }
+    no_route()
+}
+
+group_note :: fn(mut g: Group, kind: ChangeKind, entity: Entity) {
+    if (g.logging == false) {
+        return
+    }
+    vec_push($Change, g.log,
+        Change { kind = kind, entity = entity, component = 0 - 1, tick = 0 })
+}
+
+group_log_enable :: fn(mut g: Group, on: bool) {
+    g.logging = on
+}
+
+group_log :: fn(g: Group) -> []Change {
+    vec_slice($Change, g.log)
+}
+
+group_log_clear :: fn(mut g: Group) {
+    g.log.len = 0
+}
+
+// An identity with no rows anywhere. A member gains one the first time
+// something is set on the entity there, which is what lets an entity the
+// renderer knows about carry no game state at all.
+group_spawn :: fn(mut g: Group) -> Entity {
+    mut id : i64 = 0
+    mut generation : i64 = 0
+    free_count := vec_len($i64, g.free_ids)
+    if (free_count > 0) {
+        id = vec_get($i64, g.free_ids, free_count - 1)
+        g.free_ids.len = free_count - 1
+        generation = vec_slice($GroupSlot, g.slots)[id].generation
+    } else {
+        id = g.next_id
+        g.next_id = id + 1
+        vec_push($GroupSlot, g.slots,
+            GroupSlot { generation = 0, alive = false })
+    }
+    ref slot := vec_slice($GroupSlot, g.slots)[id]
+    slot.generation = generation
+    slot.alive = true
+    g.live = g.live + 1
+    made := Entity { id = id, generation = generation }
+    group_note(g, ChangeKind::Spawn, made)
+    made
+}
+
+group_alive :: fn(g: Group, entity: Entity) -> bool {
+    if (entity.id < 0 || entity.id >= vec_len($GroupSlot, g.slots)) {
+        return false
+    }
+    slot := vec_slice($GroupSlot, g.slots)[entity.id]
+    slot.alive && slot.generation == entity.generation
+}
+
+group_count :: fn(g: Group) -> i64 {
+    g.live
+}
+
+// The row this entity has in a member, made if it has none. A member's own
+// allocator never runs: the identity is the group's, and this is a member being
+// told about one it has not seen.
+member_adopt :: fn(mut world: World, entity: Entity) {
+    while (vec_len($EntitySlot, world.slots) <= entity.id) {
+        vec_push($EntitySlot, world.slots,
+            EntitySlot { generation = 0, alive = false, table = 0, row = 0 })
+    }
+    existing := vec_slice($EntitySlot, world.slots)[entity.id]
+    if (existing.alive && existing.generation == entity.generation) {
+        return
+    }
+    // Read before the push, because pushing takes the entity: `vec_push` is
+    // generic and declares its value `move` for the types that need it.
+    id := entity.id
+    generation := entity.generation
+    ref empty := vec_slice($Table, world.tables)[0]
+    row := vec_len($Entity, empty.entities)
+    vec_push($Entity, empty.entities, entity)
+    ref slot := vec_slice($EntitySlot, world.slots)[id]
+    slot.generation = generation
+    slot.alive = true
+    slot.table = 0
+    slot.row = row
+    world.live = world.live + 1
+}
+
+// Takes the entity's row out of a member, if it has one. The generation is left
+// bumped, so a handle that outlived the entity is refused here as well as at
+// the group.
+member_retire :: fn(mut world: World, entity: Entity) {
+    if (entity.id < 0 || entity.id >= vec_len($EntitySlot, world.slots)) {
+        return
+    }
+    held := vec_slice($EntitySlot, world.slots)[entity.id]
+    if (held.alive == false || held.generation != entity.generation) {
+        return
+    }
+    table_swap_remove(world, held.table, held.row)
+    ref slot := vec_slice($EntitySlot, world.slots)[entity.id]
+    slot.alive = false
+    slot.generation = entity.generation + 1
+    world.live = world.live - 1
+}
+
+// Every row in every member, and every group tag. One call, because an entity
+// is one thing however many members hold a piece of it.
+group_despawn :: fn(mut g: Group, entity: Entity) -> bool {
+    if (group_alive(g, entity) == false) {
+        return false
+    }
+    mut index : i64 = 0
+    while (index < g.count) {
+        ref member := vec_slice($World, g.members)[index]
+        member_retire(member, entity)
+        index = index + 1
+    }
+    mut held : i64 = 0
+    while (held < vec_len($TagType, g.tags)) {
+        ref marked := vec_slice($TagType, g.tags)[held]
+        tag_remove(marked.set, entity)
+        held = held + 1
+    }
+    ref slot := vec_slice($GroupSlot, g.slots)[entity.id]
+    slot.alive = false
+    slot.generation = entity.generation + 1
+    g.live = g.live - 1
+    vec_push($i64, g.free_ids, entity.id)
+    group_note(g, ChangeKind::Despawn, entity)
+    true
+}
+
+group_despawn_entities :: fn(mut g: Group, entities: []Entity) {
+    mut index : i64 = 0
+    while (index < slice_len(entities)) {
+        group_despawn(g, entities[index])
+        index = index + 1
+    }
+}
+
+// Whether the entity holds this component, wherever it lives.
+group_has :: fn($T: Type, g: Group, entity: Entity) -> bool {
+    route := group_route($T, g)
+    if (route_found(route) == false) {
+        return false
+    }
+    if (group_alive(g, entity) == false) {
+        return false
+    }
+    ref held := vec_slice($World, g.members)[route.member]
+    ecs_has(held, entity, route.component)
+}
+
+// The component, from whichever member owns it.
+group_get :: fn($T: Type, g: Group, entity: Entity) -> $T {
+    route := group_route($T, g)
+    if (route_found(route) == false) {
+        unsafe { frost_rt_error("frost: no member world holds this component\n") }
+        frost_rt_die()
+    }
+    ref held := vec_slice($World, g.members)[route.member]
+    ecs_get($T, held, entity, route.component)
+}
+
+// Sets the component on the entity, in whichever member owns it, giving that
+// member a row for the entity and the entity the component if either is
+// missing. This is the whole of what an application does to an engine entity:
+// name a type of its own and write it.
+group_set :: fn($T: Type, mut g: Group, entity: Entity, value: $T) {
+    route := group_route($T, g)
+    if (route_found(route) == false) {
+        unsafe { frost_rt_error("frost: no member world holds this component\n") }
+        frost_rt_die()
+        return
+    }
+    if (group_alive(g, entity) == false) {
+        return
+    }
+    ref member := vec_slice($World, g.members)[route.member]
+    member_adopt(member, entity)
+    ecs_add($T, member, entity, route.component, value)
+}
+
+group_remove :: fn($T: Type, mut g: Group, entity: Entity) {
+    route := group_route($T, g)
+    if (route_found(route) == false) {
+        return
+    }
+    ref member := vec_slice($World, g.members)[route.member]
+    ecs_remove(member, entity, route.component)
+}
+
+// A tag type, registered the first time it is named. No mask bit, so nothing
+// migrates when one is added and nothing has to be declared up front.
+group_tag_type :: fn($T: Type, mut g: Group) -> i64 {
+    wanted := type_id(T)
+    mut index : i64 = 0
+    while (index < vec_len($TagType, g.tags)) {
+        if (vec_slice($TagType, g.tags)[index].key == wanted) {
+            return index
+        }
+        index = index + 1
+    }
+    made := vec_len($TagType, g.tags)
+    vec_push($TagType, g.tags, TagType { key = wanted, set = tag_new() })
+    made
+}
+
+group_add_tag :: fn($T: Type, mut g: Group, entity: Entity) {
+    slot := group_tag_type($T, g)
+    ref held := vec_slice($TagType, g.tags)[slot]
+    tag_add(held.set, entity)
+}
+
+group_remove_tag :: fn($T: Type, mut g: Group, entity: Entity) {
+    slot := group_tag_type($T, g)
+    ref held := vec_slice($TagType, g.tags)[slot]
+    tag_remove(held.set, entity)
+}
+
+group_has_tag :: fn($T: Type, mut g: Group, entity: Entity) -> bool {
+    slot := group_tag_type($T, g)
+    ref held := vec_slice($TagType, g.tags)[slot]
+    tag_has(held.set, entity)
 }
 
 // ---------------------------------------------------------------------------
@@ -3343,4 +3776,324 @@ test "a component is found by the type it registered under" {
     assert(component_of($TestPosition, world) == position)
     assert(component_of($TestVelocity, world) == velocity)
     ecs_free(world)
+}
+
+// The pattern a game laid over an engine uses: the engine's components in one
+// member, the game's in another, one identity across both. Nothing links them
+// and nothing copies between them.
+EngineTransform :: struct { x: f32, y: f32 }
+EngineVisible :: struct { shown: bool }
+GameHealth :: struct { points: i64 }
+GameSpeed :: struct { rate: f32 }
+GameSelected :: struct { held: i64 }
+
+test "a member world holds what another member does not" {
+    mut g := group_new()
+    engine := group_add_world(g)
+    game := group_add_world(g)
+    group_register($EngineTransform, g, engine)
+    group_register($GameHealth, g, game)
+
+    entity := group_spawn(g)
+    group_set($EngineTransform, g, entity, EngineTransform { x = 3.0, y = 4.0 })
+    group_set($GameHealth, g, entity, GameHealth { points = 75 })
+
+    assert(group_has($EngineTransform, g, entity))
+    assert(group_has($GameHealth, g, entity))
+    assert(group_get($EngineTransform, g, entity).x == 3.0)
+    assert(group_get($GameHealth, g, entity).points == 75)
+    group_free(g)
+}
+
+// An entity the engine knows about and the game has nothing to say about. The
+// row in the game's member is never made, which is the point of the member
+// being separate rather than a wider mask.
+test "an entity with nothing in a member has no row there" {
+    mut g := group_new()
+    engine := group_add_world(g)
+    game := group_add_world(g)
+    group_register($EngineTransform, g, engine)
+    group_register($GameHealth, g, game)
+
+    bare := group_spawn(g)
+    group_set($EngineTransform, g, bare, EngineTransform { x = 1.0, y = 1.0 })
+    assert(group_has($GameHealth, g, bare) == false)
+    ref game_world := group_members(g)[game]
+    assert(ecs_count(game_world) == 0)
+
+    both := group_spawn(g)
+    group_set($GameHealth, g, both, GameHealth { points = 1 })
+    assert(ecs_count(game_world) == 1)
+    group_free(g)
+}
+
+// One despawn, every member. This is what makes the identity the group's: an
+// entity is one thing however many members hold a piece of it.
+test "one despawn takes the rows out of every member" {
+    mut g := group_new()
+    engine := group_add_world(g)
+    game := group_add_world(g)
+    group_register($EngineTransform, g, engine)
+    group_register($GameHealth, g, game)
+
+    entity := group_spawn(g)
+    group_set($EngineTransform, g, entity, EngineTransform { x = 2.0, y = 0.0 })
+    group_set($GameHealth, g, entity, GameHealth { points = 30 })
+    ref engine_world := group_members(g)[engine]
+    ref game_world := group_members(g)[game]
+    assert(ecs_count(engine_world) == 1)
+    assert(ecs_count(game_world) == 1)
+
+    assert(group_despawn(g, entity))
+    assert(group_alive(g, entity) == false)
+    assert(ecs_count(engine_world) == 0)
+    assert(ecs_count(game_world) == 0)
+    assert(group_count(g) == 0)
+    assert(group_despawn(g, entity) == false)
+    group_free(g)
+}
+
+// A handle that outlived its entity is refused everywhere, not only where the
+// group keeps its generation.
+test "a stale handle is refused by every member" {
+    mut g := group_new()
+    engine := group_add_world(g)
+    game := group_add_world(g)
+    group_register($EngineTransform, g, engine)
+    group_register($GameHealth, g, game)
+
+    first := group_spawn(g)
+    group_set($EngineTransform, g, first, EngineTransform { x = 5.0, y = 5.0 })
+    group_set($GameHealth, g, first, GameHealth { points = 9 })
+    group_despawn(g, first)
+
+    second := group_spawn(g)
+    assert(second.id == first.id)
+    assert(second.generation == first.generation + 1)
+    assert(group_alive(g, first) == false)
+    assert(group_has($GameHealth, g, first) == false)
+    ref game_world := group_members(g)[game]
+    assert(ecs_alive(game_world, first) == false)
+    group_free(g)
+}
+
+// The join: one member drives the walk and the other is read per entity. There
+// is no cursor holding both, because a borrow cannot be stored, so what crosses
+// the boundary is an entity and the read is routed.
+test "a walk of one member reads what another member holds" {
+    mut g := group_new()
+    engine := group_add_world(g)
+    game := group_add_world(g)
+    transform := group_register($EngineTransform, g, engine)
+    group_register($GameSpeed, g, game)
+
+    mut made : [3]Entity = [no_entity(); 3]
+    mut index : i64 = 0
+    while (index < 3) {
+        entity := group_spawn(g)
+        held : f32 = index
+        group_set($EngineTransform, g, entity,
+            EngineTransform { x = held, y = 0.0 })
+        group_set($GameSpeed, g, entity, GameSpeed { rate = held + 1.0 })
+        made[index] = entity
+        index = index + 1
+    }
+
+    // The engine's member drives, since the walk has to be over somebody's
+    // tables, and the game's rate is read for each entity the walk names.
+    mut total : f32 = 0.0
+    ref world := group_members(g)[engine]
+    mut q := query_begin(world)
+    query_with(q, transform)
+    while (query_next(world, q)) {
+        entities := query_entities(world, q)
+        placed := query_column($EngineTransform, world, q, transform)
+        mut row : i64 = 0
+        while (row < q.count) {
+            rate := group_get($GameSpeed, g, entities[row]).rate
+            total = total + placed[row].x * rate
+            row = row + 1
+        }
+    }
+    // 0*1 + 1*2 + 2*3
+    assert(total == 8.0)
+    group_free(g)
+}
+
+// A write through the join, which is the half a read cannot do: the driving
+// walk gathers, and the routed writes happen after it, because a write into
+// another member can move rows the walk is standing on.
+test "a join gathers first and writes after" {
+    mut g := group_new()
+    engine := group_add_world(g)
+    game := group_add_world(g)
+    transform := group_register($EngineTransform, g, engine)
+    group_register($GameHealth, g, game)
+
+    mut index : i64 = 0
+    while (index < 4) {
+        entity := group_spawn(g)
+        held : f32 = index
+        group_set($EngineTransform, g, entity,
+            EngineTransform { x = held, y = 0.0 })
+        index = index + 1
+    }
+
+    // Two passes, which is what the language asks for anyway: gathering into a
+    // small buffer and then applying is how a structural change is made while
+    // something is being walked.
+    mut gathered := vec_new($Entity, 4)
+    ref world := group_members(g)[engine]
+    mut q := query_begin(world)
+    query_with(q, transform)
+    while (query_next(world, q)) {
+        entities := query_entities(world, q)
+        placed := query_column($EngineTransform, world, q, transform)
+        mut row : i64 = 0
+        while (row < q.count) {
+            if (placed[row].x > 1.0) {
+                vec_push($Entity, gathered, entities[row])
+            }
+            row = row + 1
+        }
+    }
+    mut taken : i64 = 0
+    while (taken < vec_len($Entity, gathered)) {
+        entity := vec_get($Entity, gathered, taken)
+        group_set($GameHealth, g, entity, GameHealth { points = 100 })
+        taken = taken + 1
+    }
+    assert(vec_len($Entity, gathered) == 2)
+    ref game_world := group_members(g)[game]
+    assert(ecs_count(game_world) == 2)
+    vec_free($Entity, gathered)
+    group_free(g)
+}
+
+// A tag the group carries, which no member's mask has a bit for. Adding one
+// moves no rows, and it goes when the entity does.
+test "a group tag marks an entity without moving a row" {
+    mut g := group_new()
+    engine := group_add_world(g)
+    transform := group_register($EngineTransform, g, engine)
+
+    entity := group_spawn(g)
+    group_set($EngineTransform, g, entity, EngineTransform { x = 0.0, y = 0.0 })
+    ref world := group_members(g)[engine]
+    before := vec_slice($EntitySlot, world.slots)[entity.id]
+
+    assert(group_has_tag($GameSelected, g, entity) == false)
+    group_add_tag($GameSelected, g, entity)
+    assert(group_has_tag($GameSelected, g, entity))
+
+    after := vec_slice($EntitySlot, world.slots)[entity.id]
+    assert(before.table == after.table)
+    assert(before.row == after.row)
+    assert(ecs_has(world, entity, transform))
+
+    group_remove_tag($GameSelected, g, entity)
+    assert(group_has_tag($GameSelected, g, entity) == false)
+    group_free(g)
+}
+
+test "a group tag is dropped when the entity dies" {
+    mut g := group_new()
+    engine := group_add_world(g)
+    group_register($EngineTransform, g, engine)
+
+    first := group_spawn(g)
+    group_add_tag($GameSelected, g, first)
+    assert(group_has_tag($GameSelected, g, first))
+    group_despawn(g, first)
+
+    second := group_spawn(g)
+    assert(second.id == first.id)
+    assert(group_has_tag($GameSelected, g, second) == false)
+    group_free(g)
+}
+
+// Which member owns a type is where it was registered, and asking is how a
+// write finds the column without anything mapping types to members by hand.
+test "a component routes to the member it was registered in" {
+    mut g := group_new()
+    engine := group_add_world(g)
+    game := group_add_world(g)
+    transform := group_register($EngineTransform, g, engine)
+    health := group_register($GameHealth, g, game)
+
+    first := group_route($EngineTransform, g)
+    second := group_route($GameHealth, g)
+    assert(first.member == engine)
+    assert(first.component == transform)
+    assert(second.member == game)
+    assert(second.component == health)
+    // Both members number their own components from zero, which is why a route
+    // is a pair rather than an index.
+    assert(transform == 0)
+    assert(health == 0)
+
+    missing := group_route($GameSpeed, g)
+    assert(route_found(missing) == false)
+    group_free(g)
+}
+
+// The group's log says an identity came or went. What a row did inside a member
+// is that member's log, and the two answer different questions.
+test "the group log records identities and the member log records rows" {
+    mut g := group_new()
+    engine := group_add_world(g)
+    transform := group_register($EngineTransform, g, engine)
+    group_log_enable(g, true)
+    ref member := vec_slice($World, g.members)[engine]
+    ecs_log_enable(member, true)
+
+    entity := group_spawn(g)
+    group_set($EngineTransform, g, entity, EngineTransform { x = 0.0, y = 0.0 })
+
+    identities := group_log(g)
+    assert(slice_len(identities) == 1)
+    assert(identities[0].kind == ChangeKind::Spawn)
+
+    rows := ecs_log(member)
+    mut added : i64 = 0
+    mut held : i64 = 0
+    while (held < slice_len(rows)) {
+        if (rows[held].kind == ChangeKind::Add
+            && rows[held].component == transform) {
+            added = added + 1
+        }
+        held = held + 1
+    }
+    assert(added == 1)
+    group_free(g)
+}
+
+// Three members, which is the engine's core, its interface and a game's own.
+test "a group holds more than two members" {
+    mut g := group_new()
+    core := group_add_world(g)
+    interface := group_add_world(g)
+    game := group_add_world(g)
+    group_register($EngineTransform, g, core)
+    group_register($EngineVisible, g, interface)
+    group_register($GameHealth, g, game)
+    assert(group_world_count(g) == 3)
+
+    entity := group_spawn(g)
+    group_set($EngineTransform, g, entity, EngineTransform { x = 7.0, y = 8.0 })
+    group_set($EngineVisible, g, entity, EngineVisible { shown = true })
+    group_set($GameHealth, g, entity, GameHealth { points = 12 })
+
+    assert(group_get($EngineTransform, g, entity).y == 8.0)
+    assert(group_get($EngineVisible, g, entity).shown)
+    assert(group_get($GameHealth, g, entity).points == 12)
+
+    group_despawn(g, entity)
+    ref core_world := group_members(g)[core]
+    ref interface_world := group_members(g)[interface]
+    ref game_world := group_members(g)[game]
+    assert(ecs_count(core_world) == 0)
+    assert(ecs_count(interface_world) == 0)
+    assert(ecs_count(game_world) == 0)
+    group_free(g)
 }
