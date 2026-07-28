@@ -460,6 +460,17 @@ impl MoveChecker<'_> {
                 Ok(false)
             }
             Statement::Break | Statement::Continue => Ok(true),
+            // `print` takes what it is given the way any other call does, and
+            // this pass used to walk straight past it: a value moved into a
+            // `print` stayed live and could be used again, which is the one
+            // place a use-after-move went unnoticed.
+            Statement::Print(expression, arguments) => {
+                self.visit(expression, false)?;
+                for argument in arguments {
+                    self.visit(argument, false)?;
+                }
+                Ok(false)
+            }
             _ => Ok(false),
         }
     }
