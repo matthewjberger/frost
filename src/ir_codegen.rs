@@ -13,6 +13,10 @@ use crate::ir::{
 };
 use crate::types::Type;
 
+// The runtime's index check. Every checked read names it, and this backend
+// answers for it itself rather than calling it, so it is written once here.
+const BOUNDS_CHECK: &str = "frost_rt_bounds_check";
+
 // `FROST_TIMINGS=1` reports the split between generating code for each
 // function and writing the object, which are the two halves of the backend and
 // want different answers. One parallelizes, the other wants more compilation
@@ -537,7 +541,7 @@ impl Generator {
             self.functions.insert("memcpy".to_string(), func_id);
         }
 
-        for name in ["frost_rt_bounds_check", "frost_rt_generation_check"] {
+        for name in [BOUNDS_CHECK, "frost_rt_generation_check"] {
             if self.functions.contains_key(name) {
                 continue;
             }
@@ -1391,6 +1395,10 @@ impl Translator<'_, '_> {
         function: &str,
         arguments: &[IrOperand],
     ) -> Result<Vec<Value>> {
+        if function == BOUNDS_CHECK && arguments.len() == 2 {
+            self.emit_bounds_check(arguments)?;
+            return Ok(Vec::new());
+        }
         let Some(func_id) = self.functions.get(function) else {
             bail!("native backend: call to undeclared function '{function}'");
         };
@@ -1399,6 +1407,36 @@ impl Translator<'_, '_> {
         let argument_values = self.call_arguments(function, arguments)?;
         let call = self.builder.ins().call(func_ref, &argument_values);
         Ok(self.builder.inst_results(call).to_vec())
+    }
+
+    // An index check as a compare and a branch. The runtime holds the message
+    // and the abort, and an index in range reaches neither, so what a checked
+    // read costs is the compare rather than a call with its arguments. The
+    // comparison is unsigned, which is what makes one of them answer for a
+    // negative index as well as one past the end.
+    fn emit_bounds_check(&mut self, arguments: &[IrOperand]) -> Result<()> {
+        let Some(func_id) = self.functions.get(BOUNDS_CHECK) else {
+            bail!(
+                "native backend: call to undeclared function '{BOUNDS_CHECK}'"
+            );
+        };
+        let func_ref =
+            self.decls.declare_func_in_func(*func_id, self.builder.func);
+        let index = self.operand(&arguments[0])?;
+        let length = self.operand(&arguments[1])?;
+        let outside = self.builder.ins().icmp(
+            IntCC::UnsignedGreaterThanOrEqual,
+            index,
+            length,
+        );
+        let report = self.builder.create_block();
+        let past = self.builder.create_block();
+        self.builder.ins().brif(outside, report, &[], past, &[]);
+        self.builder.switch_to_block(report);
+        self.builder.ins().call(func_ref, &[index, length]);
+        self.builder.ins().jump(past, &[]);
+        self.builder.switch_to_block(past);
+        Ok(())
     }
 
     // The values a call passes. Every aggregate is a pointer in the IR, so a

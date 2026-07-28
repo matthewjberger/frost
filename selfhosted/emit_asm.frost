@@ -499,10 +499,19 @@ asm_unsupported :: fn(what: ^i8) {
 
 // Bounds-check an index in %rax against a length in %r11, leaving the checked
 // index in %rax. The runtime aborts on an out-of-range one, so what returns is
-// always in range. The pushed run pointer sits above the call's frame and is
-// untouched.
+// always in range. An index inside the run reaches nothing but the comparison:
+// the runtime holds the message and the abort, and only an index outside
+// reaches them, so a checked read costs a compare and a branch rather than a
+// call with its arguments. The comparison is unsigned, which is what makes one
+// of them answer for a negative index as well as for one past the end. The
+// pushed run pointer sits above the call's frame and is untouched.
 emit_asm_bounds_call :: fn(mut p: Parser) {
     shadow := abi_shadow(p)
+    inside := new_label(p)
+    asm("cmpq %r11, %rax")
+    emit_text("    jb .Lidx")
+    frost_rt_emit_int(inside)
+    emit_text("\n")
     emit_text("    movq %rax, ")
     emit_asm_arg_reg(p, 0)
     emit_text("\n")
@@ -512,6 +521,8 @@ emit_asm_bounds_call :: fn(mut p: Parser) {
     asm_i("subq $", shadow, ", %rsp")
     asm("call frost_rt_check_index")
     asm_i("addq $", shadow, ", %rsp")
+    emit_label(".Lidx", inside)
+    emit_text(":\n")
 }
 
 // The address of a slab element named by a handle. The slab's address is kept

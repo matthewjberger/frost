@@ -585,7 +585,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
             } else {
                 emit_text("items[")
             }
-            emit_text("frost_rt_check_index(")
+            emit_text("frost_index(")
             emit_expr(p, index)
             emit_text(", ")
             if (is_slice_ty(p, through)) {
@@ -1630,6 +1630,15 @@ emit_mono_prototype :: fn(mut p: Parser, id: i64, arg: i64, xarg_start: i64,
 emit_program :: fn(mut p: Parser, head: i64) {
     emit_text("void frost_rt_assert_at(signed char, const char*);\n")
     emit_text("int64_t frost_rt_check_index(int64_t, int64_t);\n")
+    // The index check as a comparison the C compiler can see, so the ones it
+    // can prove cost nothing and the rest cost a compare. The runtime holds the
+    // message and the abort, and only an index outside the run reaches them.
+    // Unsigned, which is what makes one comparison answer for a negative index
+    // as well as for one past the end.
+    emit_text("static inline int64_t frost_index(int64_t i, int64_t n) {\n")
+    emit_text("  if ((uint64_t)i >= (uint64_t)n) { frost_rt_check_index(i, n); }\n")
+    emit_text("  return i;\n")
+    emit_text("}\n")
     emit_text("int64_t frost_rt_slot(int64_t, int64_t, const int64_t*);\n")
     emit_text("void frost_rt_write_bytes(const char*, int64_t);\n")
     emit_text("void frost_rt_write_i64(int64_t);\n")
