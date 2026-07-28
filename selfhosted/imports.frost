@@ -4,7 +4,7 @@ import "core.frost"
 import "lexer.frost"
 
 export SOURCE_ROOM, SYNTH_ROOM, copy_name, directory_part, emit_position,
-    joined_path, module_at, report_where,
+    joined_path, module_at, report_where, line_of, column_of, file_of,
     resolve_imports, search_roots_from, source_with_room
 
 module_seen :: fn(mut modules: Arena<Module>, path: ^i8) -> bool {
@@ -190,6 +190,57 @@ place_module :: fn(buffer: str, at: i64, path: ^i8,
 // This walks rather than keeping a table of line starts. It runs once, on the
 // way to reporting an error and ending the process, so what it costs is not on
 // any path a working build takes.
+// The line an offset is on, counting from one, and the module holding it.
+// `report_where` works the same thing out in order to print it; this is for
+// the places that want the numbers, which is the debug line table.
+line_of :: fn(mut modules: Arena<Module>, src: str, offset: i64) -> i64 {
+    index := module_at(modules, offset)
+    if (index < 0) {
+        return 0
+    }
+    entry := arena_at(modules, index)
+    // Bounded by the text as well as by the offset. A module's range covers the
+    // room appended after it for synthesized names, and a node built out of one
+    // carries an offset in there, which is past anything to read.
+    mut line : i64 = 1
+    mut at := entry.start
+    stop := str_len(src)
+    while (at < offset && at < stop) {
+        if (src[at] == CH_LF) {
+            line = line + 1
+        }
+        at = at + 1
+    }
+    line
+}
+
+column_of :: fn(mut modules: Arena<Module>, src: str, offset: i64) -> i64 {
+    index := module_at(modules, offset)
+    if (index < 0) {
+        return 0
+    }
+    entry := arena_at(modules, index)
+    mut column : i64 = 1
+    mut at := entry.start
+    stop := str_len(src)
+    while (at < offset && at < stop) {
+        if (src[at] == CH_LF) {
+            column = 1
+        } else {
+            column = column + 1
+        }
+        at = at + 1
+    }
+    column
+}
+
+// Which module an offset belongs to, as a number a `.file` directive can carry.
+// One rather than zero, since a file number of zero is not one an assembler
+// takes.
+file_of :: fn(mut modules: Arena<Module>, offset: i64) -> i64 {
+    module_at(modules, offset) + 1
+}
+
 report_where :: fn(mut modules: Arena<Module>, src: str, offset: i64) {
     index := module_at(modules, offset)
     if (index < 0) {

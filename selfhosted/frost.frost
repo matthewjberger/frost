@@ -611,6 +611,7 @@ main :: fn() -> i64 {
         tests = arena_make($TestCase, 4096),
         testing = options.testing,
         audit_unsafe = options.audit_unsafe,
+        debug_lines = options.debug_lines,
         type_cache = arena_make($TypeCacheEntry, 262144),
         type_cache_on = 0,
     }

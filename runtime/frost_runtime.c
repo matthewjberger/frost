@@ -3,16 +3,63 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#if !defined(_WIN32)
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <sys/wait.h>
+#if defined(__has_include)
+#if __has_include(<execinfo.h>)
+#define FROST_HAS_EXECINFO 1
+#include <execinfo.h>
 #endif
+#endif
+#endif
+
+/* What was running when a check failed.
+
+   A bounds check that says only "index 7 out of bounds for length 4" tells you
+   what happened and not where, and where is the whole question: the same
+   container is indexed from twenty places. There is no debug information yet,
+   so these are addresses rather than names, but an address plus the binary is
+   enough for addr2line, and it is the difference between a bug you can find
+   and a number you cannot. */
+static void frost_rt_backtrace(void) {
+#if defined(_WIN32)
+    void *frames[32];
+    USHORT taken = CaptureStackBackTrace(1, 32, frames, 0);
+    if (taken == 0) {
+        return;
+    }
+    fprintf(stderr, "frost: called from\n");
+    for (USHORT i = 0; i < taken; i++) {
+        fprintf(stderr, "  %p\n", frames[i]);
+    }
+#elif defined(FROST_HAS_EXECINFO)
+    void *frames[32];
+    int taken = backtrace(frames, 32);
+    if (taken <= 1) {
+        return;
+    }
+    fprintf(stderr, "frost: called from\n");
+    /* The first frame is this function, which the reader already knows. */
+    backtrace_symbols_fd(frames + 1, taken - 1, 2);
+#endif
+}
+
+/* Every check that ends the process goes through here, so the trace is printed
+   once and in one place rather than remembered at each call to abort. */
+static void frost_rt_stop(void) {
+    frost_rt_backtrace();
+    fflush(stderr);
+    abort();
+}
 
 void frost_rt_bounds_check(int64_t index, int64_t length) {
     if ((uint64_t)index >= (uint64_t)length) {
         fprintf(stderr,
                 "frost: index %lld out of bounds for length %lld\n",
                 (long long)index, (long long)length);
-        abort();
+        frost_rt_stop();
     }
 }
 
@@ -28,7 +75,7 @@ void frost_rt_generation_check(int64_t stored, int64_t expected) {
         fprintf(stderr,
                 "frost: stale handle, slot generation %lld but handle expected %lld\n",
                 (long long)stored, (long long)expected);
-        abort();
+        frost_rt_stop();
     }
 }
 
@@ -337,7 +384,7 @@ static void frost_rt_assert_failed(const char *where) {
     if (frost_rt_inside_test) {
         longjmp(frost_rt_test_escape, 1);
     }
-    abort();
+    frost_rt_stop();
 }
 
 void frost_rt_assert(int8_t condition) {

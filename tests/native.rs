@@ -7,7 +7,7 @@ use frost::{CLayout, CReturn, CScalar, CTarget, Type, classify_return};
 mod support;
 
 use support::{
-    build_self_hosted_compiler, c_compiler, linker_available,
+    build_self_hosted_compiler, c_compiler, linker_available, runtime_source,
     self_hosted_source, selfhosted_default_output, unique,
 };
 
@@ -5822,6 +5822,117 @@ fn a_constant_defined_in_terms_of_itself_is_refused() {
         complaint.contains("FIRST") && complaint.contains("SECOND"),
         "the refusal did not name the constants in the cycle:\n{complaint}"
     );
+}
+
+// A line table, so a debugger can turn an address back into the line it came
+// from. `-g` rather than always, because the paths in it are absolute and a
+// build that carries them is not the same bytes on another machine, which is
+// what the self-hosting fixpoint is about.
+#[test]
+fn the_assembly_backend_writes_a_line_table_when_asked() {
+    let Some(compiler) = build_self_hosted_compiler("debuglines") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    let input = directory
+        .join(unique("frost_lines"))
+        .with_extension("frost");
+    std::fs::write(
+        &input,
+        "main :: fn() -> i64 {\n\
+         \x20   a := 1\n\
+         \x20   b := a + 2\n\
+         \x20   print b\n    0\n}\n",
+    )
+    .unwrap();
+
+    let plain = directory.join(unique("frost_lines")).with_extension("s");
+    let built = Command::new(&compiler)
+        .arg("--emit-asm")
+        .arg("-o")
+        .arg(&plain)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(built.status.success());
+    let text = std::fs::read_to_string(&plain).unwrap();
+    assert!(
+        !text.contains(".loc "),
+        "a line table was written without being asked for"
+    );
+
+    let debugged = directory.join(unique("frost_lines")).with_extension("s");
+    let built = Command::new(&compiler)
+        .arg("-g")
+        .arg("--emit-asm")
+        .arg("-o")
+        .arg(&debugged)
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(
+        built.status.success(),
+        "-g was refused:\n{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let text = std::fs::read_to_string(&debugged).unwrap();
+    assert!(text.contains(".file 1 "), "no file was declared:\n{text}");
+    // The three statements of the body, each naming the line it was written on.
+    for line in [2, 3, 5] {
+        assert!(
+            text.contains(&format!(".loc 1 {line} ")),
+            "line {line} is not in the table"
+        );
+    }
+
+    // And it assembles: a directive the assembler refuses is worse than none.
+    if let Some(cc) = c_compiler() {
+        let object = directory.join(unique("frost_lines")).with_extension("o");
+        let assembled = Command::new(cc)
+            .arg("-c")
+            .arg(&debugged)
+            .arg("-o")
+            .arg(&object)
+            .output()
+            .unwrap();
+        assert!(
+            assembled.status.success(),
+            "the line table did not assemble:\n{}",
+            String::from_utf8_lossy(&assembled.stderr)
+        );
+        let _ = std::fs::remove_file(&object);
+    }
+
+    // The compiler's own assembler reads past them rather than refusing, so
+    // there is one kind of assembly text rather than two.
+    let exe = directory
+        .join(unique("frost_lines"))
+        .with_extension(std::env::consts::EXE_EXTENSION);
+    let linked = Command::new(&compiler)
+        .arg("-g")
+        .arg("--link")
+        .arg("-o")
+        .arg(&exe)
+        .arg(&input)
+        .env("FROST_RUNTIME", runtime_source())
+        .output()
+        .unwrap();
+    assert!(
+        linked.status.success(),
+        "the in-process assembler refused a line table:\n{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    let ran = Command::new(&exe).output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n"),
+        "3\n"
+    );
+
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&plain);
+    let _ = std::fs::remove_file(&debugged);
+    let _ = std::fs::remove_file(&exe);
+    let _ = std::fs::remove_file(&compiler);
 }
 
 // What the bootstrap prints when it refuses a program. It used to be one line,

@@ -1163,6 +1163,10 @@ Parser :: struct {
     // Whether to report an `unsafe` block that vouches for nothing. Off unless
     // asked for, so an ordinary build never walks the spans.
     audit_unsafe: i64,
+    // Whether a line table is written beside the code. Off unless asked for,
+    // since the paths in it are absolute and a build that carries them is not
+    // the same bytes on another machine.
+    debug_lines: i64,
     // A memo of each node's derived type, read by type_of. It is filled only
     // while emitting, where a node's type is fixed and asked for repeatedly.
     // type_cache_on gates it so the checks, which ask under generic bindings
