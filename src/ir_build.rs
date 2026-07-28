@@ -6199,6 +6199,12 @@ impl<'a> FunctionLowering<'a> {
     }
 
     fn address_of_local(&mut self, local: LocalId, ty: &Type) -> IrOperand {
+        // Taking a local's address is what "in memory" means, so it is said
+        // here rather than left to each caller to remember. One that forgot is
+        // how `t.field = held` came to be refused with "aggregate local is not
+        // in memory": the copy asked for the source's address and nothing had
+        // given it a slot to have one of.
+        self.mark_in_memory(local);
         let result = self.fresh_local(Type::Ptr(Box::new(ty.clone())), None);
         self.emit(IrStatement::Assign(
             result,

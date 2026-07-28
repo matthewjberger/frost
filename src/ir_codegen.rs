@@ -1006,7 +1006,11 @@ struct Translator<'a, 'b> {
 impl Translator<'_, '_> {
     fn slot_address(&mut self, local: usize) -> Result<Value> {
         let slot = self.slots.get(&local).ok_or_else(|| {
-            anyhow::anyhow!("native backend: aggregate local is not in memory")
+            anyhow::anyhow!(
+                "_{local} in '{}' is a {} and has no storage to take the address of",
+                self.function.name,
+                self.function.local_type(local)
+            )
         })?;
         Ok(self.builder.ins().stack_addr(self.pointer_type, *slot, 0))
     }
@@ -1693,7 +1697,12 @@ impl Translator<'_, '_> {
     fn emit_return(&mut self, operand: Option<&IrOperand>) -> Result<()> {
         if let Some(out_pointer) = self.out_pointer {
             if let Some(IrOperand::Local(source)) = operand {
-                let source_address = self.slot_address(*source)?;
+                // Through the same door as every other aggregate read: a
+                // borrowed parameter already holds the address, and asking for
+                // its slot asked for the address of the pointer. Returning one
+                // straight back, `fn(held: Small) -> Small { held }`, was
+                // refused for want of storage that was never needed.
+                let source_address = self.aggregate_address(*source)?;
                 let size = self.function.locals[*source].size;
                 self.emit_memcpy(out_pointer, source_address, size);
             }

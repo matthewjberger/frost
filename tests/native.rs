@@ -15638,15 +15638,16 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "copying_a_struct_that_is_not_a_multiple_of_eight_bytes",
         "Small :: struct { value: f32 }\n\
          Trio :: struct { a: Small, b: Small, tail: i64 }\n\
+         take :: fn(held: Small) -> Small { held }\n\
          main :: fn() -> i64 {\n\
          \x20   mut t := Trio { a = Small { value = 0.0 },\n\
          \x20       b = Small { value = 2.5 }, tail = 4242 }\n\
-         \x20   t.a = Small { value = 1.5 }\n\
+         \x20   t.a = take(Small { value = 1.5 })\n\
          \x20   print t.b.value == 2.5\n\
          \x20   print t.tail\n\
          \x20   mut held : [3]Small = [Small { value = 0.0 }; 3]\n\
          \x20   mut guard : i64 = 777\n\
-         \x20   held[1] = Small { value = 3.5 }\n\
+         \x20   held[1] = take(Small { value = 3.5 })\n\
          \x20   print held[2].value == 0.0\n\
          \x20   print guard\n    0\n}\n",
         "1\n4242\n1\n777\n",
