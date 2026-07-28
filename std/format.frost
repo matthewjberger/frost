@@ -56,7 +56,7 @@ builder_str_value :: fn(mut b: Builder, text: str) {
 builder_int :: fn(mut b: Builder, value: i64) {
     if (value < 0) {
         vec_push($u8, b.bytes, 45)
-        builder_uint(b, 0 - value)
+        builder_uint(b, -value)
         return
     }
     builder_uint(b, value)

@@ -112,7 +112,7 @@ nth_param_type :: fn(mut p: Parser, params: i64, n: i64) -> i64 {
         index = index + 1
         id = node.next
     }
-    0 - 1
+    -1
 }
 
 // Whether a parameter was declared `value`, so the struct crosses to C the way
@@ -494,7 +494,7 @@ record_local :: fn(mut p: Parser, off: i64, len: i64, ty: i64) {
     // size measured again on every step of it.
     p.frame_used = p.frame_used + align_up(type_size(p, ty), 8)
     arena_push(p.locals, LocalVar { name_off = off, name_len = len, ty = ty,
-        slot = 0 - p.frame_used })
+        slot = -p.frame_used })
 }
 
 // The type of a struct field. The base type may be a pointer (a borrow of a
@@ -784,7 +784,7 @@ generic_fn_of :: fn(mut p: Parser, fn_index: i64) -> i64 {
         }
         i = i + 1
     }
-    0 - 1
+    -1
 }
 
 // Determine the concrete argument tuple of a generic call: the explicit `$Type`
@@ -979,7 +979,7 @@ fn_index_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
         }
         i = i + 1
     }
-    0 - 1
+    -1
 }
 
 // The function a bundle's field names, for a bundle that is a constant, or -1
@@ -1029,7 +1029,7 @@ bundle_field_fn :: fn(mut p: Parser, callee: i64) -> i64 {
         }
         id = next_id
     }
-    0 - 1
+    -1
 }
 
 // The function-pointer type of a global function: its parameter types and its
@@ -1094,7 +1094,7 @@ predicate_holds :: fn(mut p: Parser, off: i64, len: i64, ty: i64) -> i64 {
         if (is_pointer(ty)) { return 1 }
         return 0
     }
-    0 - 1
+    -1
 }
 
 // Record what a name binds for the rest of this declaration's parse.
@@ -1115,7 +1115,7 @@ parse_local_type :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
             return entry.ty
         }
     }
-    0 - 1
+    -1
 }
 
 // The same, over the parameters of the declaration being parsed and nothing
@@ -1131,7 +1131,7 @@ parse_param_type :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
             return entry.ty
         }
     }
-    0 - 1
+    -1
 }
 
 // The type of one argument given to a compile-time list. A name is what the
@@ -1160,7 +1160,7 @@ field_binding_of :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
             return i
         }
     }
-    0 - 1
+    -1
 }
 
 // Whether a callee takes a compile-time list.
@@ -1288,7 +1288,7 @@ nth_value_arg :: fn(mut p: Parser, args: i64, n: i64) -> i64 {
         }
         id = next_id
     }
-    0 - 1
+    -1
 }
 
 count_value_args :: fn(mut p: Parser, args: i64) -> i64 {

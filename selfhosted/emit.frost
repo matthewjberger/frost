@@ -120,7 +120,7 @@ provider_for :: fn(mut p: Parser, fn_index: i64, index: i64) -> i64 {
     if (cap_count_of(p, fn_index) == 1 && p.providers.count > 0) {
         return p.providers.count - 1
     }
-    0 - 1
+    -1
 }
 
 // The diagnostic for a call with nothing to draw from.

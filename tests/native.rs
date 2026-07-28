@@ -6412,6 +6412,61 @@ fn a_named_constant_too_large_for_its_use_is_refused() {
     );
 }
 
+// A statement ends at the line break, so a `-` that opens a line negates what
+// follows it rather than subtracting it from the line above. Written the other
+// way round, `count = 4` followed by `-total` was one statement, `count = 4 -
+// total`, and the assignment silently held a different number than the one
+// written beside it.
+const MINUS_OPENS_A_STATEMENT: &str = "main :: fn() -> i64 {\n\
+     \x20   mut total : i64 = 10\n\
+     \x20   mut count : i64 = 0\n\
+     \x20   count = 4\n\
+     \x20   -total\n\
+     \x20   print total\n\
+     \x20   print count\n\
+     \x20   held := count -\n\
+     \x20       total\n\
+     \x20   print held\n\
+     \x20   0\n\
+     }\n";
+
+// 10 and 4, so the negation was its own statement; then -6, so an expression
+// still spans a line break when the `-` is written at the end of the first one,
+// which is where it says a subtraction is meant.
+const MINUS_RESULTS: &str = "10\n4\n-6\n";
+
+#[test]
+fn a_minus_that_opens_a_line_starts_a_statement() {
+    let Some(output) =
+        compile_and_run_unaudited("minusline", MINUS_OPENS_A_STATEMENT)
+    else {
+        return;
+    };
+    assert_eq!(output, MINUS_RESULTS);
+}
+
+#[test]
+fn the_self_hosted_compiler_reads_a_leading_minus_the_same_way() {
+    let Some(output) =
+        selfhosted_unaudited_output("shminusline", MINUS_OPENS_A_STATEMENT)
+    else {
+        return;
+    };
+    assert_eq!(output, MINUS_RESULTS);
+
+    let directory = std::env::temp_dir();
+    let input = directory.join("frost_shminusline_input.frost");
+    std::fs::write(&input, MINUS_OPENS_A_STATEMENT).unwrap();
+    let Some(c_source) = self_hosted_emits("shminusline", &input, None) else {
+        return;
+    };
+    let _ = std::fs::remove_file(&input);
+    let Some(via_c) = compile_c_and_run("shminusline", &c_source) else {
+        return;
+    };
+    assert_eq!(via_c, MINUS_RESULTS, "the self-hosted C backend disagrees");
+}
+
 // A `bool` is one byte. What that costs is that every read and write of one
 // has to be byte wide, so three of them packed into a struct sit at offsets 0,
 // 1 and 2, and writing the middle one must leave its neighbours alone.

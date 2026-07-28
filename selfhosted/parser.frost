@@ -704,7 +704,7 @@ instance_generic_of :: fn(mut p: Parser, ty: i64) -> i64 {
         }
         i = i + 1
     }
-    0 - 1
+    -1
 }
 
 // The struct type for a literal `Name { ... }`. A generic name resolves, under
@@ -1197,7 +1197,7 @@ parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
 // `m : Meters = -1` is still a literal taking a type from where it is written.
 // A negated float carries a flag rather than becoming a subtraction, which is
 // what keeps `-0.0` the number it was written as. Everything else becomes the
-// arithmetic it means, `0 - x`, which `type_of` already answers correctly for
+// arithmetic it means, `-x`, which `type_of` already answers correctly for
 // floats, for distinct types and for every integer width, and `!x` becomes
 // `x == false`, which is what it is.
 //
@@ -1213,7 +1213,7 @@ parse_unary :: fn(mut p: Parser) -> i64 {
         if (cur(p) == TokenKind::Int) {
             value := cur_val(p)
             advance(p)
-            return new_node_at(p, NodeKind::Num, 0, 0, 0 - value, start)
+            return new_node_at(p, NodeKind::Num, 0, 0, -value, start)
         }
         if (cur(p) == TokenKind::Float) {
             offset := cur_off(p)
@@ -1262,7 +1262,12 @@ parse_add :: fn(mut p: Parser) -> i64 {
     start := cur_off(p)
     mut left := parse_mul(p)
     mut kind := cur(p)
-    while (kind == TokenKind::Plus || kind == TokenKind::Minus) {
+    // A `-` that opens a line negates what follows it rather than subtracting
+    // it from the statement above, since a statement ends at the line break and
+    // `-x` is a statement of its own. A `+` has no prefix form, so a line that
+    // opens with one can only be the continuation of the line above it.
+    while (kind == TokenKind::Plus
+        || (kind == TokenKind::Minus && on_same_line(p))) {
         mut op : i64 = OP_ADD
         if (kind == TokenKind::Minus) {
             op = OP_SUB
@@ -3526,7 +3531,7 @@ find_variant :: fn(mut p: Parser, enum_ty: i64, off: i64, len: i64) -> i64 {
         }
         i = i + 1
     }
-    0 - 1
+    -1
 }
 
 // `Name :: enum { A, B { x: i64 } }`. The fields of every variant are laid out
@@ -3777,7 +3782,7 @@ expected_variant_enum :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
         && find_variant(p, p.expected_alt, off, len) >= 0) {
         return p.expected_alt
     }
-    0 - 1
+    -1
 }
 
 // `.Variant` and `.Variant { field = value }`, the construction counterpart of
@@ -4013,7 +4018,7 @@ nth_field :: fn(mut p: Parser, struct_ty: i64, index: i64) -> i64 {
         fid = held.next
         at = at + 1
     }
-    0 - 1
+    -1
 }
 
 // The struct standing for the list, made fresh per function so its field types
@@ -4443,7 +4448,7 @@ predeclared_index :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
         }
         i = i + 1
     }
-    0 - 1
+    -1
 }
 
 // Put a declaration in the table, filling in the entry the pre-pass made for

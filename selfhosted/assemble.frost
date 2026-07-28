@@ -256,7 +256,7 @@ read_number :: fn(src: str, at: i64) -> (value: i64, next: i64) {
         i = i + 1
     }
     if (negative) {
-        value = 0 - value
+        value = -value
     }
     return value, i
 }
@@ -437,7 +437,7 @@ core_index :: fn(first: i64, second: i64) -> i64 {
     if (first == CH_b && second == CH_p) { return 5 }
     if (first == CH_s && second == CH_i) { return 6 }
     if (first == CH_d && second == CH_i) { return 7 }
-    0 - 1
+    -1
 }
 
 // The eight-bit name of one of the first four: al cl dl bl.
@@ -446,7 +446,7 @@ byte_core_index :: fn(first: i64) -> i64 {
     if (first == CH_c) { return 1 }
     if (first == CH_d) { return 2 }
     if (first == CH_b) { return 3 }
-    0 - 1
+    -1
 }
 
 // A register name, without the `%`, as its packed form, or -1.
@@ -516,7 +516,7 @@ parse_register :: fn(src: str, off: i64, len: i64) -> i64 {
         }
         return reg_pack(REG_XMM, 8, number)
     }
-    0 - 1
+    -1
 }
 
 // ---------------------------------------------------------------------------
@@ -546,7 +546,7 @@ condition_code :: fn(src: str, off: i64, len: i64) -> i64 {
         if (first == CH_n && second == CH_s) { return 9 }
         return -1
     }
-    0 - 1
+    -1
 }
 
 // The mnemonic a name stands for, and the condition it carries. An unknown
@@ -837,7 +837,7 @@ arith_digit :: fn(op: i64) -> i64 {
     if (op == M_ANDQ) { return ARITH_AND }
     if (op == M_ORQ)  { return ARITH_OR }
     if (op == M_XORQ) { return ARITH_XOR }
-    0 - 1
+    -1
 }
 
 // The `op r/m, r` opcode, which is the digit's row of the one-byte table.
@@ -1745,7 +1745,7 @@ read_double :: fn(mut unit: Assembly, at: i64) -> i64 {
             }
             step = step + 1
         }
-        bits = double_from_big(digits, 0 - (scale + places), sticky, negative)
+        bits = double_from_big(digits, -(scale + places), sticky, negative)
     }
     mut k : i64 = 0
     while (k < 8) {

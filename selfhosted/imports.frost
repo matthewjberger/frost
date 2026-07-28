@@ -432,7 +432,7 @@ module_index_of :: fn(mut modules: Arena<Module>, path: ^i8) -> i64 {
         }
         i = i + 1
     }
-    0 - 1
+    -1
 }
 
 // Copy a name out of one buffer into another, answering with the length so the

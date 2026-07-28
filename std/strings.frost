@@ -74,7 +74,7 @@ str_index_of :: fn(s: str, needle: str) -> i64 {
         if (same) { return start }
         start = start + 1
     }
-    0 - 1
+    -1
 }
 
 str_contains :: fn(s: str, needle: str) -> bool {
@@ -109,7 +109,7 @@ str_to_i64 :: fn(s: str) -> i64 {
         value = value * 10 + (s[i] - 48)
         i = i + 1
     }
-    if (negative) { 0 - value } else { value }
+    if (negative) { -value } else { value }
 }
 
 test "equality compares bytes and length" {

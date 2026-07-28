@@ -60,7 +60,7 @@ bound_argument :: fn(mut p: Parser, gfn_index: i64, off: i64, len: i64,
         }
         i = i + 1
     }
-    0 - 1
+    -1
 }
 
 // `pred(T)`, `!term`, and a parenthesized bound. The cursor is left just past
@@ -813,7 +813,7 @@ match_in :: fn(mut p: Parser, id: i64) -> i64 {
             return inner
         }
     }
-    0 - 1
+    -1
 }
 
 // Whether a block consumes the value on every path through it: a statement that
@@ -1249,7 +1249,7 @@ nth_param_node :: fn(mut p: Parser, params: i64, n: i64) -> i64 {
         index = index + 1
         id = node.next
     }
-    0 - 1
+    -1
 }
 
 is_mut_param :: fn(mut p: Parser, param_node: i64) -> bool {
@@ -1609,7 +1609,7 @@ block_answer :: fn(mut p: Parser, head: i64) -> i64 {
     if (node.kind == NodeKind::ExprStmt) {
         return node.a
     }
-    0 - 1
+    -1
 }
 
 // Whether any item in a struct-literal or array-literal list points into this
@@ -1795,7 +1795,7 @@ root_name :: fn(mut p: Parser, id: i64) -> i64 {
             return -1
         }
     }
-    0 - 1
+    -1
 }
 
 // Whether an expression names the region's arena or anything already known to
@@ -2225,7 +2225,7 @@ let_proc_type :: fn(mut p: Parser, value: i64) -> i64 {
             }
         }
     }
-    0 - 1
+    -1
 }
 
 proc_param_named :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
@@ -2252,7 +2252,7 @@ proc_param_named :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
         }
         i = i + 1
     }
-    0 - 1
+    -1
 }
 
 // Whether a name is a `$f` parameter of some generic in this program, the

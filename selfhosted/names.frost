@@ -459,7 +459,7 @@ rename_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         }
         i = i + 1
     }
-    0 - 1
+    -1
 }
 
 // Whether one module imports another directly. A file compiled on its own has
@@ -490,7 +490,7 @@ const_value :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         }
         i = i + 1
     }
-    0 - 1
+    -1
 }
 
 // The node a struct constant's literal parsed to, or -1 for a name that is not
@@ -507,7 +507,7 @@ value_const_node :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         }
         i = i + 1
     }
-    0 - 1
+    -1
 }
 
 is_const :: fn(mut p: Parser, offset: i64, length: i64) -> bool {
@@ -695,7 +695,7 @@ flag_bit_value :: fn(mut p: Parser, ty: i64, off: i64, len: i64) -> i64 {
         }
         i = i + 1
     }
-    0 - 1
+    -1
 }
 
 record_flag_bit :: fn(mut p: Parser, ty: i64, off: i64, len: i64, value: i64) {
@@ -1004,7 +1004,7 @@ slab_field_id :: fn(mut p: Parser, struct_ty: i64, name: ^i8) -> i64 {
         }
         fid = field.next
     }
-    0 - 1
+    -1
 }
 
 // The type of a struct field named by a literal, or -1 if there is none.
@@ -1050,7 +1050,7 @@ field_type_by_range :: fn(mut p: Parser, struct_ty: i64, off: i64, len: i64)
         }
         fid = field.next
     }
-    0 - 1
+    -1
 }
 
 // A columns container: the SoA sibling of a slab. It keeps the same
@@ -1125,7 +1125,7 @@ columns_lookup :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
         }
         i = i + 1
     }
-    0 - 1
+    -1
 }
 
 // Resolve a type name (byte range) to a type code: the current generic type
@@ -1227,7 +1227,7 @@ value_binding_of :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
             return binding.bound - CONST_BASE
         }
     }
-    0 - 1
+    -1
 }
 
 // What a compile-time parameter is bound to right now, whatever kind it is, or
@@ -1247,7 +1247,7 @@ binding_of :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
             return binding.bound
         }
     }
-    0 - 1
+    -1
 }
 
 // The function a compile-time function parameter is bound to, or -1 when the
@@ -1269,7 +1269,7 @@ fn_binding_of :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
             return binding.bound - FN_BASE
         }
     }
-    0 - 1
+    -1
 }
 
 // Whether a name is a type: a bound generic parameter, an alias, a primitive,
@@ -1343,7 +1343,7 @@ generic_index_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         }
         i = i + 1
     }
-    0 - 1
+    -1
 }
 
 // A unary node wrapping a single child expression (deref, address-of).
