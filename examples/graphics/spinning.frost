@@ -1,0 +1,449 @@
+// A field of lit primitives, each turning about its own axis.
+//
+//   just spinning
+//
+// W/A/S/D move, Q and E drop and rise, the arrow keys look, escape closes it.
+//
+// This is the first scene with surfaces rather than flat triangles, and what
+// makes it one is the normal: a vertex says which way the surface faces there,
+// a light says which way it comes from, and the two together are what makes a
+// sphere look round and a cube look like it has six sides. Nothing about it is
+// a texture; the geometry and one directional light are the whole of it.
+//
+// The shape follows the engine's. Geometry lives in a cache and a thing that is
+// drawn names it. A material is an entry in a registry and a thing that is
+// drawn carries the number, so thirty-six of them share four looks without
+// anything walking the scene to change one. The world holds where each is and
+// how it turns, read once a frame before any pass records.
+//
+// Two bindings rather than one, split by how often they change: the camera and
+// the light are written once a frame, and each thing's own model matrix and
+// material are written per thing. That is the split every renderer ends up
+// making and it is worth making early, because it is the one a pass is
+// organized around.
+
+import "platform.frost"
+import "camera.frost"
+import "renderer.frost"
+import "mesh.frost"
+import "material.frost"
+import "wgpu.frost"
+import "ecs.frost"
+import "math.frost"
+import "mem.frost"
+import "io.frost"
+
+WIDTH :: 1280
+HEIGHT :: 720
+
+GRID :: 6
+INSTANCES :: 36
+
+// The camera and the light, written once a frame: a matrix, then four vectors.
+FRAME_FLOATS :: 32
+FRAME_BYTES :: 128
+
+// One thing's own: its model matrix, its colour, and the two numbers that say
+// how the surface behaves.
+OBJECT_FLOATS :: 24
+OBJECT_BYTES :: 96
+
+// Where a thing is, how it turns, and what it is drawn as. Three components
+// because they change at three different times: the first never, the second
+// every frame, the third only when the scene is built.
+Placement :: struct { x: f32, y: f32, z: f32 }
+Spin :: struct { axis: Vec3, speed: f32, angle: f32 }
+Drawn :: struct { mesh: i64, material: i64 }
+
+// The buffer and binding a thing is drawn with. One each, because each carries
+// its own matrix. A scene with thousands would write them into one buffer at
+// different offsets and bind it once with a dynamic offset; at thirty-six the
+// shape is the same and the bookkeeping is not worth it.
+Slot :: struct { uniform: Buffer, group: BindGroup }
+
+Scene :: struct {
+    pipeline: RenderPipeline,
+    frame_group: BindGroup,
+    slots: []Slot,
+    entities: []Entity,
+    meshes: []Mesh,
+    count: i64,
+}
+
+SHADER :: "
+struct Frame {
+    view_projection: mat4x4<f32>,
+    camera_position: vec4<f32>,
+    light_direction: vec4<f32>,
+    light_color: vec4<f32>,
+    ambient: vec4<f32>,
+}
+
+struct Object {
+    model: mat4x4<f32>,
+    base_color: vec4<f32>,
+    surface: vec4<f32>,
+}
+
+@group(0) @binding(0) var<uniform> frame: Frame;
+@group(1) @binding(0) var<uniform> object: Object;
+
+struct VertexOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) world: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+}
+
+@vertex
+fn vs_main(@location(0) position: vec3<f32>,
+           @location(1) normal: vec3<f32>) -> VertexOut {
+    var out: VertexOut;
+    let world = object.model * vec4<f32>(position, 1.0);
+    out.clip = frame.view_projection * world;
+    out.world = world.xyz;
+    out.normal = (object.model * vec4<f32>(normal, 0.0)).xyz;
+    return out;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    let facing = normalize(in.normal);
+    let toward_light = normalize(-frame.light_direction.xyz);
+    let toward_eye = normalize(frame.camera_position.xyz - in.world);
+    let halfway = normalize(toward_light + toward_eye);
+
+    let lambert = max(dot(facing, toward_light), 0.0);
+    let rough = clamp(object.surface.x, 0.05, 1.0);
+    let tightness = 2.0 / (rough * rough) - 2.0;
+    let highlight = pow(max(dot(facing, halfway), 0.0), tightness)
+        * (1.0 - rough);
+
+    let strength = frame.light_color.w;
+    let lit = object.base_color.rgb
+        * (frame.ambient.rgb + frame.light_color.rgb * strength * lambert)
+        + frame.light_color.rgb * strength * highlight;
+    return vec4<f32>(lit, object.base_color.a);
+}
+"
+
+// One pass over everything. Both bindings are set here and neither is built
+// here: what a pass does is record, and what it records was decided before it
+// ran.
+draw_scene :: fn(mut f: Frame, state: ^u8) {
+    mut s := unsafe { ptr_cast($Scene, state) }
+    pass := frame_pass(f, LOAD_OP_CLEAR,
+        Color { r = 0.04, g = 0.05, b = 0.07, a = 1.0 }, LOAD_OP_CLEAR)
+    render_pass_encoder_set_pipeline(pass, unsafe { s^.pipeline })
+    render_pass_encoder_set_bind_group(pass, 0, unsafe { s^.frame_group }, 0,
+        no_pointer())
+
+    mut index : i64 = 0
+    while (index < unsafe { s^.count }) {
+        render_pass_encoder_set_bind_group(pass, 1,
+            unsafe { s^.slots[index].group }, 0, no_pointer())
+        held := unsafe { s^.meshes[index] }
+        mesh_bind(pass, held)
+        render_pass_encoder_draw_indexed(pass, held.index_count, 1, 0, 0, 0)
+        index = index + 1
+    }
+    render_pass_encoder_end(pass)
+}
+
+// The frame's read of the world: turn everything, work out where it is, and
+// leave each matrix in the buffer its binding points at.
+prepare :: fn(mut world: World, queue: Queue, entities: []Entity,
+    slots: []Slot, registry: Materials, placement: i64, spin: i64, drawn: i64,
+    step: f32) {
+    mut index : i64 = 0
+    while (index < slice_len(entities)) {
+        entity := entities[index]
+        mut turn := ecs_get($Spin, world, entity, spin)
+        turn.angle = turn.angle + turn.speed * step
+        ecs_set($Spin, world, entity, spin, turn)
+
+        place := ecs_get($Placement, world, entity, placement)
+        shown := ecs_get($Drawn, world, entity, drawn)
+        model := mat4_mul(mat4_translation(vec3(place.x, place.y, place.z)),
+            quat_to_mat4(quat_from_axis_angle(turn.axis, turn.angle)))
+        surface := materials_at(registry, shown.material)
+
+        mut values : [OBJECT_FLOATS]f32 = [0.0; OBJECT_FLOATS]
+        mut element : i64 = 0
+        while (element < 16) {
+            values[element] = model.m[element]
+            element = element + 1
+        }
+        colour := material_color(surface)
+        values[16] = colour.x
+        values[17] = colour.y
+        values[18] = colour.z
+        values[19] = colour.w
+        behaviour := material_surface(surface)
+        values[20] = behaviour.x
+        values[21] = behaviour.y
+        values[22] = behaviour.z
+        values[23] = behaviour.w
+        queue_write_buffer(queue, slots[index].uniform, 0,
+            unsafe { ptr_cast($u8, ptr_to(values[0])) }, OBJECT_BYTES)
+        index = index + 1
+    }
+}
+
+// The camera and the light, as the bytes the shader reads them as.
+write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, w: i64, h: i64) {
+    mut values : [FRAME_FLOATS]f32 = [0.0; FRAME_FLOATS]
+    mut view_projection := camera_view_projection(eye, w, h)
+    mut element : i64 = 0
+    while (element < 16) {
+        values[element] = view_projection.m[element]
+        element = element + 1
+    }
+    at := camera_position(eye)
+    values[16] = at.x
+    values[17] = at.y
+    values[18] = at.z
+    values[19] = 1.0
+    values[20] = 0.0 - 0.4
+    values[21] = 0.0 - 1.0
+    values[22] = 0.0 - 0.5
+    values[23] = 0.0
+    values[24] = 1.0
+    values[25] = 0.97
+    values[26] = 0.9
+    values[27] = 2.5
+    values[28] = 0.12
+    values[29] = 0.14
+    values[30] = 0.18
+    values[31] = 1.0
+    queue_write_buffer(queue, uniform, 0,
+        unsafe { ptr_cast($u8, ptr_to(values[0])) }, FRAME_BYTES)
+}
+
+uniform_layout :: fn(device: Device, size: i64) -> BindGroupLayout {
+    mut entry := bind_group_layout_entry_init()
+    entry.binding = 0
+    entry.visibility = ShaderStage::Vertex | ShaderStage::Fragment
+    entry.buffer.type = BUFFER_BINDING_TYPE_UNIFORM
+    entry.buffer.min_binding_size = size
+    mut descriptor := bind_group_layout_descriptor_init()
+    descriptor.entries_count = 1
+    descriptor.entries = unsafe { ptr_cast($u8, ptr_to(entry)) }
+    device_create_bind_group_layout(device, ptr_to(descriptor))
+}
+
+uniform_buffer :: fn(device: Device, size: i64) -> Buffer {
+    mut descriptor := buffer_descriptor_init()
+    descriptor.usage = BufferUsage::Uniform | BufferUsage::CopyDst
+    descriptor.size = size
+    device_create_buffer(device, ptr_to(descriptor))
+}
+
+uniform_group :: fn(device: Device, layout: BindGroupLayout, held: Buffer,
+    size: i64) -> BindGroup {
+    mut entry := bind_group_entry_init()
+    entry.binding = 0
+    entry.buffer = held
+    entry.size = size
+    mut descriptor := bind_group_descriptor_init()
+    descriptor.layout = layout
+    descriptor.entries_count = 1
+    descriptor.entries = unsafe { ptr_cast($u8, ptr_to(entry)) }
+    device_create_bind_group(device, ptr_to(descriptor))
+}
+
+make_pipeline :: fn(device: Device, format: u32,
+    layout: PipelineLayout) -> RenderPipeline {
+    mut wgsl := shader_source_WGSL_init()
+    wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
+    wgsl.code = StringView { data = SHADER, length = str_len(SHADER) }
+    mut module_descriptor := shader_module_descriptor_init()
+    module_descriptor.next_in_chain = unsafe { ptr_cast($u8, ptr_to(wgsl)) }
+    shader := device_create_shader_module(device, ptr_to(module_descriptor))
+
+    mut attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
+    attributes[0].format = VERTEX_FORMAT_FLOAT32X3
+    attributes[0].offset = POSITION_OFFSET
+    attributes[0].shader_location = 0
+    attributes[1].format = VERTEX_FORMAT_FLOAT32X3
+    attributes[1].offset = NORMAL_OFFSET
+    attributes[1].shader_location = 1
+
+    mut buffer_layout := vertex_buffer_layout_init()
+    buffer_layout.array_stride = VERTEX_STRIDE
+    buffer_layout.step_mode = VERTEX_STEP_MODE_VERTEX
+    buffer_layout.attributes_count = 2
+    buffer_layout.attributes = unsafe { ptr_cast($u8, ptr_to(attributes[0])) }
+
+    mut target := color_target_state_init()
+    target.format = format
+    target.write_mask = ColorWriteMask::All
+
+    mut fragment := fragment_state_init()
+    fragment.module = shader
+    fragment.entry_point = StringView { data = "fs_main", length = 7 }
+    fragment.targets_count = 1
+    fragment.targets = unsafe { ptr_cast($u8, ptr_to(target)) }
+
+    mut depth := depth_stencil_state_init()
+    depth.format = DEPTH_FORMAT
+    depth.depth_write_enabled = OPTIONAL_BOOL_TRUE
+    depth.depth_compare = COMPARE_FUNCTION_LESS
+
+    mut descriptor := render_pipeline_descriptor_init()
+    descriptor.layout = layout
+    descriptor.vertex.module = shader
+    descriptor.vertex.entry_point = StringView { data = "vs_main", length = 7 }
+    descriptor.vertex.buffers_count = 1
+    descriptor.vertex.buffers = unsafe { ptr_cast($u8, ptr_to(buffer_layout)) }
+    descriptor.primitive.topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
+    descriptor.primitive.front_face = FRONT_FACE_CCW
+    // Backs are thrown away, which is what the winding is for and what makes a
+    // closed shape cost half of what it looks like it costs.
+    descriptor.primitive.cull_mode = CULL_MODE_BACK
+    descriptor.multisample.count = 1
+    descriptor.multisample.mask = 4294967295
+    descriptor.depth_stencil = ptr_to(depth)
+    descriptor.fragment = unsafe { ptr_cast($u8, ptr_to(fragment)) }
+    device_create_render_pipeline(device, ptr_to(descriptor))
+}
+
+main :: fn() -> i64 {
+    mut p := platform_open("Frost spinning primitives", WIDTH, HEIGHT)
+    if (platform_ok(p) == false) {
+        print_str_line("no window")
+        print_str_line(platform_error())
+        return 1
+    }
+    mut r := renderer_open(platform_window(p), WIDTH, HEIGHT)
+    if (renderer_ok(r) == false) {
+        print_str_line("no device")
+        platform_close(p)
+        return 2
+    }
+    device := renderer_device(r)
+    queue := renderer_queue(r)
+
+    mut cache := mesh_cache_new(4)
+    mesh_cache_insert(cache, "cube", cube_mesh(device, queue))
+    mesh_cache_insert(cache, "sphere", sphere_mesh(device, queue, 0.6, 16, 24))
+    cube := mesh_cache_find(cache, "cube")
+    sphere := mesh_cache_find(cache, "sphere")
+
+    mut registry := materials_new(8)
+    mut looks : [4]i64 = [0; 4]
+    looks[0] = materials_add(registry, Material {
+        base_color = vec4(0.85, 0.3, 0.28, 1.0), roughness = 0.35,
+        metallic = 0.0 })
+    looks[1] = materials_add(registry, Material {
+        base_color = vec4(0.3, 0.75, 0.45, 1.0), roughness = 0.6,
+        metallic = 0.0 })
+    looks[2] = materials_add(registry, Material {
+        base_color = vec4(0.35, 0.5, 0.9, 1.0), roughness = 0.2,
+        metallic = 0.0 })
+    looks[3] = materials_add(registry, Material {
+        base_color = vec4(0.9, 0.75, 0.3, 1.0), roughness = 0.45,
+        metallic = 0.0 })
+
+    frame_layout := uniform_layout(device, FRAME_BYTES)
+    object_layout := uniform_layout(device, OBJECT_BYTES)
+    mut layouts : [2]BindGroupLayout = [frame_layout, object_layout]
+    mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
+    pipeline_layout_descriptor.bind_group_layouts_count = 2
+    pipeline_layout_descriptor.bind_group_layouts =
+        unsafe { ptr_cast($u8, ptr_to(layouts[0])) }
+    pipeline_layout := device_create_pipeline_layout(device,
+        ptr_to(pipeline_layout_descriptor))
+
+    frame_uniform := uniform_buffer(device, FRAME_BYTES)
+    frame_group := uniform_group(device, frame_layout, frame_uniform,
+        FRAME_BYTES)
+
+    mut world := ecs_new()
+    placement := ecs_register($Placement, world)
+    spin := ecs_register($Spin, world)
+    drawn := ecs_register($Drawn, world)
+    wanted := mask_with(mask_with(mask_with(mask_empty(), placement), spin),
+        drawn)
+
+    mut entities := heap_slice($Entity, INSTANCES)
+    mut slots := heap_slice($Slot, INSTANCES)
+    mut meshes := heap_slice($Mesh, INSTANCES)
+
+    half : f32 = 2.5
+    mut made : i64 = 0
+    while (made < INSTANCES) {
+        row := made / GRID
+        column := made - row * GRID
+        across : f32 = column
+        up : f32 = row
+        entity := ecs_spawn_with(world, wanted)
+        ecs_set($Placement, world, entity, placement, Placement {
+            x = (across - half) * 1.8, y = (up - half) * 1.8, z = 0.0 })
+
+        // An axis that differs from one to the next, so the field does not read
+        // as one object drawn thirty-six times.
+        turning := vec3_normalize(vec3(0.3 + row, 1.0, 0.2 + column))
+        speed : f32 = 0.4 + 0.09 * made
+        ecs_set($Spin, world, entity, spin, Spin { axis = turning,
+            speed = speed, angle = 0.0 })
+
+        mut shape := cube
+        if (made - (made / 2) * 2 == 1) {
+            shape = sphere
+        }
+        ecs_set($Drawn, world, entity, drawn, Drawn { mesh = shape,
+            material = looks[made - (made / 4) * 4] })
+
+        entities[made] = entity
+        meshes[made] = mesh_cache_at(cache, shape)
+        held := uniform_buffer(device, OBJECT_BYTES)
+        slots[made] = Slot { uniform = held,
+            group = uniform_group(device, object_layout, held, OBJECT_BYTES) }
+        made = made + 1
+    }
+
+    mut scene := Scene {
+        pipeline = make_pipeline(device, renderer_format(r), pipeline_layout),
+        frame_group = frame_group,
+        slots = slots, entities = entities, meshes = meshes,
+        count = INSTANCES,
+    }
+    mut passes : [1]Pass = [
+        Pass { name = "scene", draw = draw_scene,
+            state = unsafe { ptr_cast($u8, ptr_to(scene)) } },
+    ]
+
+    mut eye := camera_default()
+    eye.position = vec3(0.0, 0.0, 14.0)
+    eye.pitch = 0.0
+
+    while (platform_poll(p)) {
+        if (key_pressed(p, KEY_ESCAPE)) {
+            break
+        }
+        if (resized(p)) {
+            renderer_resize(r, width(p), height(p))
+        }
+        step := delta_seconds(p)
+        camera_advance(eye, p, step)
+        write_frame(queue, frame_uniform, eye, width(p), height(p))
+        prepare(world, queue, entities, slots, registry, placement, spin,
+            drawn, step)
+
+        mut f := renderer_begin(r)
+        if (frame_ok(f)) {
+            renderer_run(f, passes)
+            renderer_end(r, f)
+        }
+    }
+
+    heap_release_slice($Mesh, meshes)
+    heap_release_slice($Slot, slots)
+    heap_release_slice($Entity, entities)
+    materials_free(registry)
+    mesh_cache_free(cache)
+    ecs_free(world)
+    renderer_close(r)
+    platform_close(p)
+    0
+}

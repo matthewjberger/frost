@@ -312,6 +312,17 @@ scene:
     cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 --libs=-lwgpu_native -o examples/graphics/scene examples/graphics/scene.frost
     ./examples/graphics/scene
 
+# A field of lit primitives, each turning about its own axis (Windows)
+[windows]
+spinning:
+    $sdl = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "examples/graphics" }; cargo run -r -q -p frost --bin frost -- --link --libs "$sdl/SDL3.dll" --libs "examples/graphics/wgpu/wgpu_native.dll" -o examples/graphics/spinning.exe examples/graphics/spinning.frost; Copy-Item examples/graphics/wgpu/wgpu_native.dll examples/graphics -Force; & ./examples/graphics/spinning.exe
+
+# A field of lit primitives, each turning about its own axis (Unix)
+[unix]
+spinning:
+    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 --libs=-lwgpu_native -o examples/graphics/spinning examples/graphics/spinning.frost
+    ./examples/graphics/spinning
+
 # Opens a window and reports what the platform layer saw (Windows)
 [windows]
 input:

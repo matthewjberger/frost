@@ -345,8 +345,25 @@ emit_constants :: fn(mut out: Builder, mut names: Builder,
         builder_str_value(out, " :: ")
         if (json_text_eq(document, value, "uint32_max")) {
             builder_str_value(out, "4294967295")
+        } else if (json_text_eq(document, value, "uint64_max")
+            || json_text_eq(document, value, "usize_max")) {
+            // Every bit set, written as the negative one that is those same
+            // sixty-four bits, because the number itself is past what a literal
+            // can say. These are sentinels and wgpu compares them for equality,
+            // so near enough is not enough: the largest number an i64 can hold
+            // is not the one it is compared against.
+            //
+            // It matters. WHOLE_SIZE said i64 max, so a vertex buffer bound
+            // with it was not bound to the end of the buffer but to a length
+            // nine quintillion bytes long, and the draw was refused.
+            builder_str_value(out, "0 - 1")
         } else {
-            // uint64_max, usize_max and nan all land on what an i64 can hold.
+            // nan, which is a float sentinel with no literal in this language.
+            // It stands for a depth clear value nobody gave, which is read only
+            // when a pass says it clears depth, and a pass that says so gives
+            // one. A number this large is not a depth either, so a pass that
+            // forgets is refused rather than quietly clearing to the near
+            // plane.
             builder_str_value(out, "9223372036854775807")
         }
         builder_byte(out, 10)
