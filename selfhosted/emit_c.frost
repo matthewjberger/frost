@@ -93,6 +93,15 @@ emit_columns_scatter :: fn(mut p: Parser, cbase: i64, cbase_ty: i64,
     }
 }
 
+// Whether an expression names storage rather than producing a value: a name, a
+// field of one, an element, or what a pointer points at. Everything else has no
+// address until it is given one.
+is_place_node :: fn(mut p: Parser, id: i64) -> bool {
+    kind := arena_at(p.arena, id).kind
+    kind == NodeKind::Var || kind == NodeKind::Field
+        || kind == NodeKind::Index || kind == NodeKind::Deref
+}
+
 emit_coerced :: fn(mut p: Parser, value_in: i64, want: i64) {
     // A constant whose value is a literal stands for that literal here, so a
     // text constant reaching a `str` is coerced the way the literal written in
@@ -908,10 +917,22 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                     emit_text("(&")
                     emit_coerced(p, value, want)
                     emit_text(")")
-                } else {
+                } else if (is_place_node(p, value)) {
                     emit_text("(&(")
                     emit_expr(p, value)
                     emit_text("))")
+                } else {
+                    // A value with nowhere to point at: what a call answered
+                    // with. C refuses `&f()`, and a literal of one element
+                    // gives it somewhere, since an array's element is an
+                    // lvalue and a compound literal lives as long as the block
+                    // it is written in, which outlasts the call it is an
+                    // argument to.
+                    emit_text("(&((")
+                    emit_ctype(p, want)
+                    emit_text("[1]){ ")
+                    emit_expr(p, value)
+                    emit_text(" })[0])")
                 }
             } else if (have_param == 1) {
                 emit_coerced(p, value, param_ty)

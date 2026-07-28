@@ -15679,6 +15679,20 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   print !(n == 8)\n    0\n}\n",
         "111\n0\n1\n1\n",
     ),
+    // A call's result handed straight to something that borrows it. The
+    // self-hosted C backend wrote `&f()`, which C refuses because a call has no
+    // address, and the bootstrap never noticed because its IR spills every call
+    // result to a local first.
+    (
+        "passing_a_call_result_where_a_borrow_is_wanted",
+        "Held :: struct { a: i64, b: i64 }\n\
+         make :: fn() -> Held { Held { a = 1, b = 2 } }\n\
+         use :: fn(h: Held) -> i64 { h.a + h.b }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print use(make())\n\
+         \x20   print use(Held { a = 10, b = 20 })\n    0\n}\n",
+        "3\n30\n",
+    ),
     // Copying a struct whose size is not a multiple of eight. The self-hosted
     // assembly backend moved the tail in whole words whatever was left, so a
     // four-byte struct was copied as eight and wrote four bytes past wherever
