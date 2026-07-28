@@ -24,7 +24,8 @@ export Vec2, Vec3, Vec4, Mat4, Quat,
     mat4_transform_point, mat4_transform_dir,
     quat_identity, quat_from_axis_angle, quat_mul, quat_length,
     quat_normalize, quat_conjugate, quat_rotate_vec3, quat_to_mat4,
-    radians, degrees
+    radians, degrees,
+    sqrtf, sinf, cosf, tanf
 
 // The C standard library's single-precision transcendentals. Each takes and
 // returns a number with no pointer, so it is `safe` and needs no block.

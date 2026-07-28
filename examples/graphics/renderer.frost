@@ -30,14 +30,23 @@ import "wgpu.frost"
 export Renderer, Frame, Pass,
     renderer_open, renderer_close, renderer_ok, renderer_resize,
     renderer_begin, renderer_end, renderer_run,
-    renderer_device, renderer_queue, renderer_format,
+    renderer_device, renderer_queue, renderer_format, renderer_depth_format,
     frame_ok, frame_encoder, frame_view, frame_pass,
-    no_pointer
+    depth_format, no_pointer
 
 no_pointer :: fn() -> ^u8 {
     zero := 0
     unsafe { ptr_cast($u8, zero) }
 }
+
+// What depth is kept in. Twenty-four bits with no stencil is what a scene that
+// only sorts needs, and every backend has it.
+//
+// A function rather than a constant because a constant standing for another
+// module's constant does not reach the backend: what a name is worth has to be
+// folded, and the fold does not cross the import. One call, and both the
+// texture and every pipeline tested against it agree without either naming 46.
+depth_format :: fn() -> u32 { TEXTURE_FORMAT_DEPTH24_PLUS }
 
 // The pieces a draw needs, kept together because none of them is useful alone
 // and every one of them is made once.
@@ -49,7 +58,25 @@ Renderer :: struct {
     queue: Queue,
     format: u32,
     configuration: SurfaceConfiguration,
+    depth: Texture,
+    depth_view: TextureView,
     opened: bool,
+}
+
+// The depth target, which is the renderer's rather than a frame's: it is the
+// same size as the window and outlives every frame drawn into it, so it is made
+// with the surface and remade when the surface is.
+make_depth :: fn(mut r: Renderer, w: i64, h: i64) {
+    mut descriptor := texture_descriptor_init()
+    descriptor.usage = TextureUsage::RenderAttachment
+    descriptor.dimension = TEXTURE_DIMENSION_2D
+    descriptor.size = Extent3D { width = w, height = h,
+        depth_or_array_layers = 1 }
+    descriptor.format = depth_format()
+    descriptor.mip_level_count = 1
+    descriptor.sample_count = 1
+    r.depth = device_create_texture(r.device, ptr_to(descriptor))
+    r.depth_view = texture_create_view(r.depth, no_pointer())
 }
 
 // One frame in flight. The texture is the surface's own, so it is not held past
@@ -57,6 +84,7 @@ Renderer :: struct {
 Frame :: struct {
     texture: SurfaceTexture,
     view: TextureView,
+    depth_view: TextureView,
     encoder: CommandEncoder,
     ready: bool,
 }
@@ -112,6 +140,7 @@ renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
         instance = no_instance(), surface = no_surface(),
         adapter = no_adapter(), device = no_device(), queue = no_queue(),
         format = 0, configuration = surface_configuration_init(),
+        depth = no_texture(), depth_view = no_texture_view(),
         opened = false,
     }
     r.instance = create_instance(no_pointer())
@@ -184,6 +213,7 @@ renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
     r.configuration.height = h
     r.configuration.present_mode = PRESENT_MODE_FIFO
     surface_configure(r.surface, ptr_to(r.configuration))
+    make_depth(r, w, h)
     r.opened = true
     r
 }
@@ -192,13 +222,15 @@ renderer_ok :: fn(r: Renderer) -> bool { r.opened }
 renderer_device :: fn(r: Renderer) -> Device { r.device }
 renderer_queue :: fn(r: Renderer) -> Queue { r.queue }
 renderer_format :: fn(r: Renderer) -> u32 { r.format }
+renderer_depth_format :: fn(r: Renderer) -> u32 { depth_format() }
 
 renderer_close :: fn(mut r: Renderer) {
     r.opened = false
 }
 
-// A surface has to be told the window changed. Nothing else does, so a resize
-// is one call rather than a rebuild.
+// A surface has to be told the window changed, and the depth target has to be
+// the same size as what it is tested against, so it is thrown away and made
+// again rather than resized: a texture has one size for its whole life.
 renderer_resize :: fn(mut r: Renderer, w: i64, h: i64) {
     if (w <= 0 || h <= 0) {
         return
@@ -206,6 +238,8 @@ renderer_resize :: fn(mut r: Renderer, w: i64, h: i64) {
     r.configuration.width = w
     r.configuration.height = h
     surface_configure(r.surface, ptr_to(r.configuration))
+    texture_destroy(r.depth)
+    make_depth(r, w, h)
 }
 
 // Acquires the frame's texture and opens an encoder for it.
@@ -218,6 +252,7 @@ renderer_begin :: fn(mut r: Renderer) -> Frame {
     mut f := Frame {
         texture = surface_texture_init(),
         view = no_texture_view(),
+        depth_view = r.depth_view,
         encoder = no_command_encoder(),
         ready = false,
     }
@@ -238,19 +273,34 @@ frame_ok :: fn(f: Frame) -> bool { f.ready }
 frame_encoder :: fn(f: Frame) -> CommandEncoder { f.encoder }
 frame_view :: fn(f: Frame) -> TextureView { f.view }
 
-// A render pass over the frame's own target. `load` says whether what is there
-// already survives, which is what lets a second pass draw over a first instead
-// of erasing it.
-frame_pass :: fn(mut f: Frame, load: u32, clear: Color) -> RenderPassEncoder {
+// A render pass over the frame's colour and depth targets. `load` says whether
+// what is there already survives, which is what lets a second pass draw over a
+// first instead of erasing it: the first clears, the rest load.
+//
+// Depth follows the same rule and it is the more important one. Every pass
+// after the first has to load the depth the passes before it wrote, or each one
+// sorts only against itself and the last to draw wins wherever they overlap.
+frame_pass :: fn(mut f: Frame, load: u32, clear: Color,
+    depth_load: u32) -> RenderPassEncoder {
     mut attachment := render_pass_color_attachment_init()
     attachment.view = f.view
     attachment.load_op = load
     attachment.store_op = STORE_OP_STORE
     attachment.clear_value = clear
+
+    // Nearer is smaller, so the buffer starts at the far plane and every
+    // fragment that passes is closer than what was already there.
+    mut depth := render_pass_depth_stencil_attachment_init()
+    depth.view = f.depth_view
+    depth.depth_load_op = depth_load
+    depth.depth_store_op = STORE_OP_STORE
+    depth.depth_clear_value = 1.0
+
     mut descriptor := render_pass_descriptor_init()
     descriptor.color_attachments_count = 1
     descriptor.color_attachments =
         unsafe { ptr_cast($u8, ptr_to(attachment)) }
+    descriptor.depth_stencil_attachment = ptr_to(depth)
     command_encoder_begin_render_pass(f.encoder, ptr_to(descriptor))
 }
 

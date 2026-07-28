@@ -1,0 +1,123 @@
+// A first-person fly camera as plain data, and the two matrices a frame wants
+// from it.
+//
+//   mut c := camera_default()
+//   camera_advance(c, p, delta_seconds(p))
+//   mvp := mat4_mul(camera_view_projection(c, width(p), height(p)), model)
+//
+// W/A/S/D move along the ground, Q and E drop and rise, the arrow keys look.
+// Yaw turns about world +Y and pitch about the camera's own right axis, and zero
+// yaw looks down -Z, so a scene built around the origin is in front of a camera
+// that has not been turned yet.
+//
+// Pitch stops just short of straight up and straight down. At exactly straight
+// up the forward direction and the world up are the same line, the cross product
+// that makes the right axis is zero, and the view matrix has no answer: the
+// picture snaps round. A hundredth of a radian is enough to keep them apart and
+// is not visible.
+//
+// Nothing here reads the window except to get the aspect ratio, and nothing
+// writes to the renderer. It is state and the functions over it, so a program
+// with two cameras keeps two of these.
+
+import "platform.frost"
+import "math.frost"
+
+export Camera, camera_default, camera_advance, camera_forward, camera_view,
+    camera_projection, camera_view_projection, camera_position
+
+Camera :: struct {
+    position: Vec3,
+    yaw: f32,
+    pitch: f32,
+    y_fov: f32,
+    z_near: f32,
+    z_far: f32,
+    move_speed: f32,
+    look_speed: f32,
+}
+
+// Back from the origin and a little above it, tilted down enough to see a floor
+// if there is one.
+camera_default :: fn() -> Camera {
+    Camera {
+        position = vec3(0.0, 1.5, 6.0),
+        yaw = 0.0,
+        pitch = 0.0 - 0.15,
+        y_fov = radians(45.0),
+        z_near = 0.1,
+        z_far = 1000.0,
+        move_speed = 6.0,
+        look_speed = 1.5,
+    }
+}
+
+camera_position :: fn(c: Camera) -> Vec3 { c.position }
+
+// Where it is looking, from the two angles. Yaw first about +Y, then pitch about
+// the right axis, which is this in closed form rather than two matrices.
+camera_forward :: fn(c: Camera) -> Vec3 {
+    flat := cosf(c.pitch)
+    vec3(flat * sinf(c.yaw), sinf(c.pitch), 0.0 - flat * cosf(c.yaw))
+}
+
+camera_view :: fn(c: Camera) -> Mat4 {
+    target := vec3_add(c.position, camera_forward(c))
+    mat4_look_at(c.position, target, vec3(0.0, 1.0, 0.0))
+}
+
+// The window decides only the aspect ratio. A height of zero happens while a
+// window is being dragged to nothing and would divide by it.
+camera_projection :: fn(c: Camera, w: i64, h: i64) -> Mat4 {
+    mut aspect : f32 = 1.0
+    if (h > 0) {
+        wide : f32 = w
+        tall : f32 = h
+        aspect = wide / tall
+    }
+    mat4_perspective_zo(c.y_fov, aspect, c.z_near, c.z_far)
+}
+
+camera_view_projection :: fn(c: Camera, w: i64, h: i64) -> Mat4 {
+    mat4_mul(camera_projection(c, w, h), camera_view(c))
+}
+
+// One frame of input. Everything is scaled by the step, so how fast it moves
+// does not depend on how fast the frames are.
+camera_advance :: fn(mut c: Camera, p: Platform, step: f32) {
+    mut turn : f32 = 0.0
+    mut tilt : f32 = 0.0
+    if (key_down(p, KEY_LEFT)) { turn = turn + 1.0 }
+    if (key_down(p, KEY_RIGHT)) { turn = turn - 1.0 }
+    if (key_down(p, KEY_UP)) { tilt = tilt + 1.0 }
+    if (key_down(p, KEY_DOWN)) { tilt = tilt - 1.0 }
+    c.yaw = c.yaw + turn * c.look_speed * step
+    c.pitch = clamp_pitch(c.pitch + tilt * c.look_speed * step)
+
+    // Right is derived from where it is looking rather than kept, so it stays
+    // correct after a turn without anything having to remember to update it.
+    forward := camera_forward(c)
+    right := vec3_normalize(vec3_cross(forward, vec3(0.0, 1.0, 0.0)))
+    mut motion := vec3(0.0, 0.0, 0.0)
+    if (key_down(p, KEY_W)) { motion = vec3_add(motion, forward) }
+    if (key_down(p, KEY_S)) { motion = vec3_sub(motion, forward) }
+    if (key_down(p, KEY_D)) { motion = vec3_add(motion, right) }
+    if (key_down(p, KEY_A)) { motion = vec3_sub(motion, right) }
+    if (key_down(p, KEY_E)) { motion = vec3_add(motion, vec3(0.0, 1.0, 0.0)) }
+    if (key_down(p, KEY_Q)) { motion = vec3_sub(motion, vec3(0.0, 1.0, 0.0)) }
+
+    // Normalised, so holding two keys is not faster than holding one, and
+    // skipped when nothing is held, since normalising zero is a division by it.
+    if (vec3_length(motion) > 0.0) {
+        c.position = vec3_add(c.position,
+            vec3_scale(vec3_normalize(motion), c.move_speed * step))
+    }
+}
+
+PITCH_LIMIT :: 1.5607963267948966
+
+clamp_pitch :: fn(angle: f32) -> f32 {
+    if (angle > PITCH_LIMIT) { return PITCH_LIMIT }
+    if (angle < 0.0 - PITCH_LIMIT) { return 0.0 - PITCH_LIMIT }
+    angle
+}
