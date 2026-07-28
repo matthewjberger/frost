@@ -3347,8 +3347,9 @@ fn self_hosted_runs_the_standard_library_tests() {
         ("math.frost", "20 passed"),
         ("math64.frost", "20 passed"),
         ("sort.frost", "3 passed"),
-        ("mem.frost", "11 passed"),
+        ("mem.frost", "13 passed"),
         ("ecs.frost", "74 passed"),
+        ("thread.frost", "3 passed"),
     ];
     for (label, backend) in [("stdc", "--emit-c"), ("stdasm", "--emit-asm")] {
         for (module, expected) in modules {
