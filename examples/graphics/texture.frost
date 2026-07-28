@@ -1,0 +1,250 @@
+// Images on the device, and the patterns a program makes when it has no files
+// to read.
+//
+//   mut image := image_new(64, 64)
+//   image_checker(image, 8, ...)
+//   held := texture_upload(device, queue, image)
+//
+// A texture is three things a shader needs together: the image itself, a view
+// that says how to read it, and a sampler that says what happens between the
+// texels. They are made together and bound together, so they are one value.
+//
+// The patterns are written here rather than loaded because a file format is a
+// parser and a parser is its own piece of work. What matters for drawing is
+// that a surface reads a different colour at different points on it, and eight
+// lines of arithmetic give that. Every one of them is asymmetric on purpose: a
+// checker looks the same upside down, so it cannot tell you that the vertical
+// coordinate is flipped, and that is the mistake this exists to make visible.
+
+import "wgpu.frost"
+import "math.frost"
+import "mem.frost"
+
+export Image, image_new, image_free, image_set, image_fill,
+    image_checker, image_bricks, image_rings, image_corner_marks,
+    Texture2D, texture_upload, texture_free, texture_view_of, texture_sampler_of
+
+// Four bytes a texel, red first, which is what `RGBA8_UNORM` reads.
+CHANNELS :: 4
+
+// A picture in memory: the bytes, and how wide a row is so the two coordinates
+// can be turned into one offset.
+Image :: struct { pixels: []u8, width: i64, height: i64 }
+
+image_new :: fn(width: i64, height: i64) -> Image {
+    Image { pixels = heap_slice($u8, width * height * CHANNELS),
+        width = width, height = height }
+}
+
+image_free :: fn(mut held: Image) {
+    heap_release_slice($u8, held.pixels)
+    held.width = 0
+    held.height = 0
+}
+
+// One texel. The row is counted from the top, which is the direction a texture
+// coordinate of zero means and the direction the rows are uploaded in.
+image_set :: fn(mut held: Image, x: i64, y: i64, colour: Vec4) {
+    if (x < 0 || y < 0 || x >= held.width || y >= held.height) {
+        return
+    }
+    at := (y * held.width + x) * CHANNELS
+    held.pixels[at] = channel(colour.x)
+    held.pixels[at + 1] = channel(colour.y)
+    held.pixels[at + 2] = channel(colour.z)
+    held.pixels[at + 3] = channel(colour.w)
+}
+
+// A number from zero to one as a byte, with anything outside brought back in
+// rather than allowed to wrap into the wrong colour entirely.
+channel :: fn(value: f32) -> u8 {
+    mut held := value
+    if (held < 0.0) {
+        held = 0.0
+    }
+    if (held > 1.0) {
+        held = 1.0
+    }
+    cast($u8, held * 255.0 + 0.5)
+}
+
+image_fill :: fn(mut held: Image, colour: Vec4) {
+    mut y : i64 = 0
+    while (y < held.height) {
+        mut x : i64 = 0
+        while (x < held.width) {
+            image_set(held, x, y, colour)
+            x = x + 1
+        }
+        y = y + 1
+    }
+}
+
+// Squares of two colours, `size` texels a side.
+image_checker :: fn(mut held: Image, size: i64, first: Vec4, second: Vec4) {
+    mut y : i64 = 0
+    while (y < held.height) {
+        mut x : i64 = 0
+        while (x < held.width) {
+            cell := x / size + y / size
+            mut colour := first
+            if (cell - (cell / 2) * 2 == 1) {
+                colour = second
+            }
+            image_set(held, x, y, colour)
+            x = x + 1
+        }
+        y = y + 1
+    }
+}
+
+// Courses of bricks, every other one offset by half a brick, with mortar
+// between. Asymmetric top to bottom as well as left to right, so it shows a
+// flipped coordinate the way a checker cannot.
+image_bricks :: fn(mut held: Image, brick: Vec4, mortar: Vec4) {
+    course := held.height / 8
+    length := held.width / 4
+    mut y : i64 = 0
+    while (y < held.height) {
+        row := y / course
+        mut shift : i64 = 0
+        if (row - (row / 2) * 2 == 1) {
+            shift = length / 2
+        }
+        mut x : i64 = 0
+        while (x < held.width) {
+            along := (x + shift) - ((x + shift) / length) * length
+            down := y - row * course
+            mut colour := brick
+            if (down < 2 || along < 2) {
+                colour = mortar
+            }
+            image_set(held, x, y, colour)
+            x = x + 1
+        }
+        y = y + 1
+    }
+}
+
+// Rings out from the middle, which reads as curvature on a sphere and as a
+// target on a flat face.
+image_rings :: fn(mut held: Image, first: Vec4, second: Vec4) {
+    middle_x := held.width / 2
+    middle_y := held.height / 2
+    mut y : i64 = 0
+    while (y < held.height) {
+        mut x : i64 = 0
+        while (x < held.width) {
+            across : f32 = x - middle_x
+            down : f32 = y - middle_y
+            away := sqrtf(across * across + down * down)
+            band := cast($i64, away / 6.0)
+            mut colour := first
+            if (band - (band / 2) * 2 == 1) {
+                colour = second
+            }
+            image_set(held, x, y, colour)
+            x = x + 1
+        }
+        y = y + 1
+    }
+}
+
+// A square in one corner and a stripe down one edge, over whatever is already
+// there. Nothing about a pattern says which way up it went on; this does, and
+// it is the whole reason to draw it.
+image_corner_marks :: fn(mut held: Image, colour: Vec4) {
+    size := held.width / 8
+    mut y : i64 = 0
+    while (y < size) {
+        mut x : i64 = 0
+        while (x < size) {
+            image_set(held, x, y, colour)
+            x = x + 1
+        }
+        y = y + 1
+    }
+    mut down : i64 = 0
+    while (down < held.height) {
+        mut across : i64 = 0
+        while (across < 2) {
+            image_set(held, across, down, colour)
+            across = across + 1
+        }
+        down = down + 1
+    }
+}
+
+// The whole of a two-dimensional image, as the size every call here means.
+whole_extent :: fn(width: i64, height: i64) -> Extent3D {
+    mut size := extent_3D_init()
+    size.width = cast($u32, width)
+    size.height = cast($u32, height)
+    size.depth_or_array_layers = 1
+    size
+}
+
+// An image on the device and the two things needed to read it. Kept together
+// because a binding wants all three and none of them is useful alone.
+Texture2D :: struct { texture: Texture, view: TextureView, sampler: Sampler }
+
+texture_view_of :: fn(held: Texture2D) -> TextureView { held.view }
+texture_sampler_of :: fn(held: Texture2D) -> Sampler { held.sampler }
+
+// The image onto the device, with a view over the whole of it and a sampler
+// that reads between texels and repeats past the edge.
+texture_upload :: fn(device: Device, queue: Queue, held: Image) -> Texture2D {
+    // Two of them, because the descriptor takes one by value and the write
+    // takes the address of one, and a value that moved into a field is no
+    // longer here to take the address of.
+    mut descriptor := texture_descriptor_init()
+    descriptor.usage = TextureUsage::TextureBinding | TextureUsage::CopyDst
+    descriptor.dimension = TEXTURE_DIMENSION_2D
+    descriptor.size = whole_extent(held.width, held.height)
+    descriptor.format = TEXTURE_FORMAT_RGBA8_UNORM
+    descriptor.mip_level_count = 1
+    descriptor.sample_count = 1
+    made := device_create_texture(device, ptr_to(descriptor))
+
+    mut destination := texel_copy_texture_info_init()
+    destination.texture = made
+    destination.mip_level = 0
+    destination.aspect = TEXTURE_ASPECT_ALL
+
+    mut layout := texel_copy_buffer_layout_init()
+    layout.offset = 0
+    layout.bytes_per_row = cast($u32, held.width * CHANNELS)
+    layout.rows_per_image = cast($u32, held.height)
+
+    mut written := whole_extent(held.width, held.height)
+    queue_write_texture(queue, ptr_to(destination),
+        unsafe { ptr_to(held.pixels[0]) },
+        cast($u64, held.width * held.height * CHANNELS), ptr_to(layout),
+        ptr_to(written))
+
+    mut view_descriptor := texture_view_descriptor_init()
+    view_descriptor.format = TEXTURE_FORMAT_RGBA8_UNORM
+    view_descriptor.dimension = TEXTURE_VIEW_DIMENSION_2D
+    view_descriptor.mip_level_count = 1
+    view_descriptor.array_layer_count = 1
+    view_descriptor.aspect = TEXTURE_ASPECT_ALL
+    view := texture_create_view(made, ptr_to(view_descriptor))
+
+    mut sampler_descriptor := sampler_descriptor_init()
+    sampler_descriptor.address_mode_u = ADDRESS_MODE_REPEAT
+    sampler_descriptor.address_mode_v = ADDRESS_MODE_REPEAT
+    sampler_descriptor.address_mode_w = ADDRESS_MODE_REPEAT
+    sampler_descriptor.mag_filter = FILTER_MODE_LINEAR
+    sampler_descriptor.min_filter = FILTER_MODE_LINEAR
+    sampler_descriptor.mipmap_filter = MIPMAP_FILTER_MODE_NEAREST
+    sampler_descriptor.lod_min_clamp = 0.0
+    sampler_descriptor.lod_max_clamp = 1.0
+    sampler_descriptor.max_anisotropy = 1
+    sampler := device_create_sampler(device, ptr_to(sampler_descriptor))
+
+    Texture2D { texture = made, view = view, sampler = sampler }
+}
+
+texture_free :: fn(mut held: Texture2D) {
+    texture_destroy(held.texture)
+}
