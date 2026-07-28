@@ -267,11 +267,20 @@ assemble_program :: fn(mut p: Parser, program: i64, output: ^i8) {
 // that is not the working directory.
 link_with_toolchain :: fn(unit: ^i8, executable: ^i8, options: Options) -> i64 {
     extra := join_two(" ", cached_runtime_object())
-    base := join_two(
+    mut base := join_two(
         join_two(
             join_two(join_two(join_two(c_compiler(), " "), unit), extra),
             " -o "),
         executable)
+    // A C unit is held to what Frost means rather than to what C allows: an
+    // integer wraps on overflow here rather than being undefined, and
+    // `ptr_cast` reads the same bytes through another type on purpose. A C
+    // compiler entitled to assume neither ever happens is entitled to
+    // miscompile the unit, and comparing this backend against the other one
+    // would not show it, since both sides go through the same C compiler.
+    if (options.backend != Backend::Asm) {
+        base = join_two(base, " -fwrapv -fno-strict-aliasing")
+    }
     // What `--libs` named goes after the objects and ahead of the platform's
     // own libraries, which is the order a linker resolves in: a named library
     // that reaches libm has to be seen before libm is.

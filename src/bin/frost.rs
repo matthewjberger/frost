@@ -754,6 +754,14 @@ fn compile_c(
     // should be. Without this the C path ran unoptimized while the Cranelift
     // path asked for speed, which made the two backends answer the same thing
     // at different cost and made the C path a poor measurement.
+    //
+    // The two flags beside the optimizer are not tuning. They hold the C
+    // compiler to what Frost means: an integer wraps on overflow here rather
+    // than being undefined, and `ptr_cast` reads the same bytes through another
+    // type on purpose. A compiler entitled to assume neither ever happens is
+    // entitled to miscompile this, and no comparison against another backend
+    // would show it, since a differential compiles both sides the same way.
+    // MSVC assumes neither by default, so the `cl` branch needs no flag.
     let mut cmd = Command::new(compiler);
     if compiler == "cl" {
         cmd.arg("/O2");
@@ -766,6 +774,8 @@ fn compile_c(
     } else {
         cmd.arg("-std=c11");
         cmd.arg("-O2");
+        cmd.arg("-fwrapv");
+        cmd.arg("-fno-strict-aliasing");
         cmd.arg(c_path);
         cmd.arg(&runtime_path);
         cmd.arg("-o");
