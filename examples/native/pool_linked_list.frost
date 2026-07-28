@@ -41,7 +41,7 @@ main :: fn() -> i64 {
     }
     slab_reset($Node, $16, p)
 
-    mut head : i64 = 0 - 1
+    mut head : i64 = -1
     head = push_front(p, head, 10)
     head = push_front(p, head, 20)
     head = push_front(p, head, 30)

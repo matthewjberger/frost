@@ -453,7 +453,7 @@ lookup_new :: fn(capacity: i64) -> Lookup {
     mut i : i64 = 0
     while (i < cap) {
         vec_push($Mask, made.masks, mask_empty())
-        vec_push($i64, made.rows, 0 - 1)
+        vec_push($i64, made.rows, -1)
         i = i + 1
     }
     made
@@ -526,7 +526,7 @@ lookup_grow :: fn(mut l: Lookup) {
     mut k : i64 = 0
     while (k < room) {
         vec_push($Mask, masks, mask_empty())
-        vec_push($i64, rows, 0 - 1)
+        vec_push($i64, rows, -1)
         k = k + 1
     }
     l.masks = masks
@@ -698,7 +698,7 @@ ecs_register :: fn($T: Type, mut world: World) -> i64 {
     // too many finds out at its next call rather than writing over a component
     // that already exists.
     if (index >= MAX_COMPONENTS) {
-        return 0 - 1
+        return -1
     }
     vec_push($i64, world.registry.sizes, sizeof(T))
     vec_push($i64, world.registry.types, type_id(T))
@@ -794,7 +794,7 @@ ecs_spawn :: fn(mut world: World) -> Entity {
     slot.row = row
     world.live = world.live + 1
     made := Entity { id = id, generation = generation }
-    note_change(world, ChangeKind::Spawn, made, 0 - 1)
+    note_change(world, ChangeKind::Spawn, made, -1)
     made
 }
 
@@ -882,7 +882,7 @@ ecs_despawn :: fn(mut world: World, entity: Entity) {
     held.generation = held.generation + 1
     vec_push($i64, world.free_ids, entity.id)
     world.live = world.live - 1
-    note_change(world, ChangeKind::Despawn, entity, 0 - 1)
+    note_change(world, ChangeKind::Despawn, entity, -1)
 }
 
 // ---------------------------------------------------------------------------
@@ -1058,7 +1058,7 @@ Query :: struct {
 query_begin :: fn(world: World) -> Query {
     Query { wanted = mask_empty(), excluded = mask_empty(),
         changed = mask_empty(), added = mask_empty(), since = 0,
-        next_table = 0, table = 0 - 1, count = 0 }
+        next_table = 0, table = -1, count = 0 }
 }
 
 // ---------------------------------------------------------------------------
@@ -1173,7 +1173,7 @@ query_next :: fn(world: World, mut q: Query) -> bool {
         index = index + 1
     }
     q.next_table = total
-    q.table = 0 - 1
+    q.table = -1
     q.count = 0
     false
 }
@@ -1566,7 +1566,7 @@ Hierarchy :: struct {
 // The handle that names nobody. An id of -1 is one no slot has, so nothing can
 // be confused with it and no generation makes it live.
 no_entity :: fn() -> Entity {
-    Entity { id = 0 - 1, generation = 0 }
+    Entity { id = -1, generation = 0 }
 }
 
 is_no_entity :: fn(entity: Entity) -> bool {
@@ -1730,7 +1730,7 @@ stage_order :: fn(s: Stage) -> i64 {
 }
 
 // A system with this state runs whatever the state is.
-ANY_STATE :: 0 - 1
+ANY_STATE :: -1
 
 System :: struct {
     run: fn(mut World),
@@ -2010,7 +2010,7 @@ Route :: struct {
 }
 
 no_route :: fn() -> Route {
-    Route { member = 0 - 1, component = 0 - 1 }
+    Route { member = -1, component = -1 }
 }
 
 route_found :: fn(r: Route) -> bool {
@@ -2083,7 +2083,7 @@ group_add_world :: fn(mut g: Group) -> i64 {
     if (g.count >= GROUP_MEMBERS) {
         unsafe { frost_rt_error("frost: a group holds no more member worlds\n") }
         frost_rt_die()
-        return 0 - 1
+        return -1
     }
     index := g.count
     vec_push($World, g.members, ecs_new())
@@ -2148,7 +2148,7 @@ group_note :: fn(mut g: Group, kind: ChangeKind, entity: Entity) {
         return
     }
     vec_push($Change, g.log,
-        Change { kind = kind, entity = entity, component = 0 - 1, tick = 0 })
+        Change { kind = kind, entity = entity, component = -1, tick = 0 })
 }
 
 group_log_enable :: fn(mut g: Group, on: bool) {
@@ -3082,7 +3082,7 @@ test "a column freed and used again holds what is put in it" {
 test "a handle from nowhere is refused" {
     mut world := ecs_new()
     assert(ecs_alive(world, Entity { id = 0, generation = 0 }) == false)
-    assert(ecs_alive(world, Entity { id = 0 - 1, generation = 0 }) == false)
+    assert(ecs_alive(world, Entity { id = -1, generation = 0 }) == false)
     assert(ecs_alive(world, Entity { id = 4096, generation = 0 }) == false)
     assert(ecs_has(world, Entity { id = 9, generation = 0 }, 1) == false)
     ecs_free(world)
@@ -3164,7 +3164,7 @@ test "a component past the ceiling is refused rather than given an index" {
         registered = registered + 1
     }
     // -1 names no component, which is what says there was none left to give.
-    assert(ecs_register($TestHealth, world) == 0 - 1)
+    assert(ecs_register($TestHealth, world) == -1)
     ecs_free(world)
 }
 

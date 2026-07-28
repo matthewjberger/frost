@@ -61,7 +61,7 @@ str_ends_with :: fn(s: str, suffix: str) -> bool {
 // an enum here would cost a match at every call for nothing.
 str_index_of :: fn(s: str, needle: str) -> i64 {
     if (str_len(needle) == 0) { return 0 }
-    if (str_len(needle) > str_len(s)) { return 0 - 1 }
+    if (str_len(needle) > str_len(s)) { return -1 }
     last := str_len(s) - str_len(needle)
     mut start : i64 = 0
     while (start <= last) {
@@ -131,9 +131,9 @@ test "prefixes and suffixes" {
 test "searching" {
     assert(str_index_of("hello world", "world") == 6)
     assert(str_index_of("hello", "h") == 0)
-    assert(str_index_of("hello", "z") == 0 - 1)
+    assert(str_index_of("hello", "z") == -1)
     assert(str_index_of("hello", "") == 0)
-    assert(str_index_of("ab", "abc") == 0 - 1)
+    assert(str_index_of("ab", "abc") == -1)
     assert(str_contains("hello world", "lo w"))
     assert(str_contains("hello", "world") == false)
 }
@@ -148,7 +148,7 @@ test "counting and emptiness" {
 test "reading an integer" {
     assert(str_to_i64("0") == 0)
     assert(str_to_i64("42") == 42)
-    assert(str_to_i64("-7") == 0 - 7)
+    assert(str_to_i64("-7") == -7)
     assert(str_to_i64("1234567") == 1234567)
     assert(str_to_i64("12a") == 0)
 }

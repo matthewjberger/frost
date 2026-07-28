@@ -161,7 +161,7 @@ intern_global :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     // only in that module.
     mut sought_off := offset
     mut sought_len := length
-    mut wanted : i64 = 0 - 1
+    mut wanted : i64 = -1
     held := rename_for(p, offset, length)
     if (held >= 0) {
         entry := arena_at(p.renames, held)
@@ -170,7 +170,7 @@ intern_global :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         wanted = entry.imported
     }
     mut i : i64 = 0
-    mut found : i64 = 0 - 1
+    mut found : i64 = -1
     while (i < p.fns.count) {
         entry := arena_at(p.fns, i)
         if (entry.len == sought_len
@@ -213,7 +213,7 @@ intern_global :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
         p.fns,
         Sym { off = offset, len = length, is_extern = 0, is_safe = 0,
             is_inline = 0, ret_type = TY_I64,
-            params = 0 - 1, defined = 0, cap_start = 0, cap_count = 0 },
+            params = -1, defined = 0, cap_start = 0, cap_count = 0 },
     )
 }
 
@@ -282,12 +282,12 @@ node_next :: fn(mut p: Parser, id: i64) -> i64 {
 }
 
 append_node :: fn(mut p: Parser, head: i64, extra: i64) -> i64 {
-    if (head == (0 - 1)) {
+    if (head == (-1)) {
         return extra
     }
     mut tail := head
     mut following := node_next(p, tail)
-    while (following != (0 - 1)) {
+    while (following != (-1)) {
         tail = following
         following = node_next(p, tail)
     }
@@ -447,7 +447,7 @@ place_renames :: fn(mut p: Parser, held: str) {
 // imports offering the same name stay apart.
 rename_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     if (p.renames.count == 0) {
-        return 0 - 1
+        return -1
     }
     user := module_at(p.modules, offset)
     mut i : i64 = 0
@@ -552,7 +552,7 @@ new_node_at :: fn(mut p: Parser, kind: NodeKind, a: i64, b: i64, val: i64,
     at: i64) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = kind, a = a, b = b, c = 0, val = val, next = 0 - 1, pos = at },
+        Node { kind = kind, a = a, b = b, c = 0, val = val, next = -1, pos = at },
     )
 }
 
@@ -569,7 +569,7 @@ new_named_node_at :: fn(mut p: Parser, kind: NodeKind, child: i64,
     arena_push(
         p.arena,
         Node { kind = kind, a = child, b = 0, c = length, val = offset,
-            next = 0 - 1, pos = at },
+            next = -1, pos = at },
     )
 }
 
@@ -589,7 +589,7 @@ new_let_node :: fn(mut p: Parser, value: i64, offset: i64, length: i64,
         // The name it binds, which is where the binding is. The cursor is past
         // the whole statement by now, since the value has been read.
         Node { kind = NodeKind::Let, a = value, b = annotation, c = length,
-            val = offset, next = 0 - 1, pos = offset },
+            val = offset, next = -1, pos = offset },
     )
 }
 
@@ -603,7 +603,7 @@ new_func_node :: fn(mut p: Parser, body: i64, params: i64, fn_index: i64,
             b = params,
             c = is_main,
             val = fn_index,
-            next = 0 - 1,
+            next = -1,
             pos = cur_off(p),
         },
     )
@@ -620,7 +620,7 @@ new_field_node :: fn(mut p: Parser, base: i64, offset: i64, length: i64) -> i64 
     arena_push(
         p.arena,
         Node { kind = NodeKind::Field, a = base, b = 0, c = length, val = offset,
-            next = 0 - 1, pos = cur_off(p) },
+            next = -1, pos = cur_off(p) },
     )
 }
 
@@ -630,7 +630,7 @@ new_struct_lit :: fn(mut p: Parser, struct_index: i64, inits: i64) -> i64 {
     arena_push(
         p.arena,
         Node { kind = NodeKind::StructLit, a = inits, b = 0, c = 0,
-            val = struct_index, next = 0 - 1, pos = cur_off(p) },
+            val = struct_index, next = -1, pos = cur_off(p) },
     )
 }
 
@@ -640,7 +640,7 @@ new_field_init :: fn(mut p: Parser, value: i64, offset: i64, length: i64) -> i64
     arena_push(
         p.arena,
         Node { kind = NodeKind::FieldInit, a = value, b = 0, c = length,
-            val = offset, next = 0 - 1, pos = cur_off(p) },
+            val = offset, next = -1, pos = cur_off(p) },
     )
 }
 
@@ -993,11 +993,11 @@ slab_field_id :: fn(mut p: Parser, struct_ty: i64, name: ^i8) -> i64 {
         base = pointee(base)
     }
     if (is_struct_ty(base) == false) {
-        return 0 - 1
+        return -1
     }
     def := arena_at(p.structs, struct_index_of(base))
     mut fid := def.field_head
-    while (fid != (0 - 1)) {
+    while (fid != (-1)) {
         field := arena_at(p.fields, fid)
         if (str_range_eq(p.src, field.name_off, field.name_len, name)) {
             return fid
@@ -1010,8 +1010,8 @@ slab_field_id :: fn(mut p: Parser, struct_ty: i64, name: ^i8) -> i64 {
 // The type of a struct field named by a literal, or -1 if there is none.
 slab_field_type :: fn(mut p: Parser, struct_ty: i64, name: ^i8) -> i64 {
     fid := slab_field_id(p, struct_ty, name)
-    if (fid == (0 - 1)) {
-        return 0 - 1
+    if (fid == (-1)) {
+        return -1
     }
     field := arena_at(p.fields, fid)
     field.ty
@@ -1038,11 +1038,11 @@ field_type_by_range :: fn(mut p: Parser, struct_ty: i64, off: i64, len: i64)
         base = pointee(base)
     }
     if (is_struct_ty(base) == false) {
-        return 0 - 1
+        return -1
     }
     def := arena_at(p.structs, struct_index_of(base))
     mut fid := def.field_head
-    while (fid != (0 - 1)) {
+    while (fid != (-1)) {
         field := arena_at(p.fields, fid)
         if (field.name_len == len
             && bytes_equal(p.src, field.name_off, off, len)) {
@@ -1063,7 +1063,7 @@ is_columns_ty :: fn(mut p: Parser, struct_ty: i64) -> bool {
     generations := slab_field_type(p, struct_ty, "generations")
     free_list := slab_field_type(p, struct_ty, "free_list")
     storage := slab_field_type(p, struct_ty, "storage")
-    is_array_ty(generations) && is_array_ty(free_list) && storage == (0 - 1)
+    is_array_ty(generations) && is_array_ty(free_list) && storage == (-1)
 }
 
 // Every field of the element struct `element` has a matching `[N]field` column
@@ -1074,7 +1074,7 @@ columns_fields_match :: fn(mut p: Parser, candidate: i64, element: i64) -> bool 
     }
     def := arena_at(p.structs, struct_index_of(element))
     mut fid := def.field_head
-    while (fid != (0 - 1)) {
+    while (fid != (-1)) {
         field := arena_at(p.fields, fid)
         col := field_type_by_range(p, candidate, field.name_off, field.name_len)
         if (is_array_ty(col) == false) {
@@ -1177,7 +1177,7 @@ type_code_for :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
     if (str_range_eq(p.src, offset, length, "f64")) { return TY_F64 }
     if (str_range_eq(p.src, offset, length, "f32")) { return TY_F32 }
     if (str_range_eq(p.src, offset, length, "str")) {
-        return array_of(p, TY_U8, 0 - 1)
+        return array_of(p, TY_U8, -1)
     }
     if (str_range_eq(p.src, offset, length, "bool")) { return TY_BOOL }
     mut i : i64 = 0
@@ -1351,7 +1351,7 @@ new_unary_at :: fn(mut p: Parser, kind: NodeKind, child: i64,
     at: i64) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = kind, a = child, b = 0, c = 0, val = 0, next = 0 - 1, pos = at },
+        Node { kind = kind, a = child, b = 0, c = 0, val = 0, next = -1, pos = at },
     )
 }
 
@@ -1365,7 +1365,7 @@ new_index :: fn(mut p: Parser, base: i64, index: i64) -> i64 {
     arena_push(
         p.arena,
         Node { kind = NodeKind::Index, a = base, b = index, c = 0, val = 0,
-            next = 0 - 1, pos = cur_off(p) },
+            next = -1, pos = cur_off(p) },
     )
 }
 
@@ -1374,7 +1374,7 @@ new_index :: fn(mut p: Parser, base: i64, index: i64) -> i64 {
 new_type_node :: fn(mut p: Parser, kind: NodeKind, expr: i64, ty: i64) -> i64 {
     arena_push(
         p.arena,
-        Node { kind = kind, a = expr, b = 0, c = 0, val = ty, next = 0 - 1, pos = cur_off(p) },
+        Node { kind = kind, a = expr, b = 0, c = 0, val = ty, next = -1, pos = cur_off(p) },
     )
 }
 
@@ -1384,7 +1384,7 @@ new_case :: fn(mut p: Parser, body: i64, value: i64, is_default: i64) -> i64 {
     arena_push(
         p.arena,
         Node { kind = NodeKind::Case, a = body, b = 0, c = is_default, val = value,
-            next = 0 - 1, pos = cur_off(p) },
+            next = -1, pos = cur_off(p) },
     )
 }
 

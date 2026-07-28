@@ -8688,9 +8688,12 @@ fn range_of(ty: &Type) -> Option<(i128, i128)> {
         Type::U16 => Some((0, u16::MAX as i128)),
         Type::U32 => Some((0, u32::MAX as i128)),
         // A literal is read as an i64, so the largest one that can be written
-        // is i64::MAX and the whole of u64 is not reachable from a literal.
-        // Negative values are, and none of them fit.
-        Type::U64 | Type::Usize => Some((0, i64::MAX as i128)),
+        // is i64::MAX and the top half of u64 is not reachable from a literal
+        // at all. A negative one is: it is the same sixty-four bits, and with
+        // no hex literals it is the only way to write a sentinel of all ones.
+        // Nothing is lost, which is what this check is about, so it is allowed
+        // here and refused for the narrower unsigned types, where bits do go.
+        Type::U64 | Type::Usize => Some((i64::MIN as i128, i64::MAX as i128)),
         _ => None,
     }
 }

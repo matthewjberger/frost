@@ -18,7 +18,7 @@ main :: fn() -> i64 {
     print_int_line(max_of(3, 9))
     print_int_line(min_of(3, 9))
     print_int_line(clamp(15, 0, 10))
-    print_int_line(clamp(0 - 5, 0, 10))
+    print_int_line(clamp(-5, 0, 10))
 
     mut a : i64 = 100
     mut b : i64 = 200

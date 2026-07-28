@@ -27,7 +27,7 @@ is_ident_cont :: fn(c: i64) -> bool {
 
 byte_of :: fn(src: str, index: i64, len: i64) -> i64 {
     if (index >= len) {
-        return 0 - 1
+        return -1
     }
     src[index]
 }

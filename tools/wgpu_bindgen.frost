@@ -356,7 +356,7 @@ emit_constants :: fn(mut out: Builder, mut names: Builder,
             // It matters. WHOLE_SIZE said i64 max, so a vertex buffer bound
             // with it was not bound to the end of the buffer but to a length
             // nine quintillion bytes long, and the draw was refused.
-            builder_str_value(out, "0 - 1")
+            builder_str_value(out, "-1")
         } else {
             // nan, which is a float sentinel with no literal in this language.
             // It stands for a depth clear value nobody gave, which is read only
