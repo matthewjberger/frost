@@ -53,6 +53,9 @@ export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     commands_new, commands_free, commands_spawn, commands_despawn,
     commands_apply,
     ecs_tick, ecs_now, ecs_changed_since, ecs_added_since,
+    ecs_mark_changed, ecs_mark_column,
+    mask_of, ecs_spawn_bundle,
+    world_clear,
     query_changed, query_added,
     ecs_resource_register, ecs_resource, ecs_resource_set,
     ecs_resource_slice,
@@ -70,6 +73,12 @@ export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     States, states_new, states_request, states_apply, states_current,
     Time, time_new, time_advance,
     column_of, column_position, bits_below, bits_in,
+    // What writing a world down needs to reach: a column's width, how a fresh
+    // one is made and filled, and the archetype lookup a read rebuilds. The
+    // format is std/snapshot.frost's, and the layout is this file's, so these
+    // are the seam between them.
+    TICK_SIZE, column_new, column_push_zero,
+    lookup_new, lookup_free, lookup_put,
     Mask, MASK_WORDS, MAX_COMPONENTS,
     mask_empty, mask_with, mask_without, mask_has, mask_covers, mask_disjoint,
     mask_or, mask_equal, mask_is_empty
@@ -1838,6 +1847,112 @@ time_advance :: fn(mut t: Time, delta: f64) {
     t.delta = delta
     t.elapsed = t.elapsed + delta
     t.frame = t.frame + 1
+}
+
+// ---------------------------------------------------------------------------
+// Marking a write the raw tier made
+//
+// `ecs_set` stamps the row it wrote, and so does a write through a column a
+// query handed over, because the tick is beside the data and the write goes
+// through the same slice. What does not stamp is a pass that reaches the bytes
+// another way, and that is deliberate: a walk that reads every row and writes
+// none should cost nothing, and a walk that stamps everything it visits has
+// told every watcher that everything moved.
+//
+// So the raw tier says so afterwards. A pass that wrote through `ecs_slice`
+// marks the rows it touched, or the whole column when it touched all of them,
+// and a system watching for changes sees exactly those.
+// ---------------------------------------------------------------------------
+
+// One row, stamped now. What a pass calls for the rows it actually wrote.
+ecs_mark_changed :: fn(mut world: World, entity: Entity, component: i64) {
+    if (ecs_alive(world, entity) == false) {
+        return
+    }
+    slot := vec_slice($EntitySlot, world.slots)[entity.id]
+    ref table := vec_slice($Table, world.tables)[slot.table]
+    if (mask_has(table.mask, component) == false) {
+        return
+    }
+    position := column_position(table.mask, component)
+    ref column := vec_slice($Column, table.columns)[position]
+    mut changed := column_changed(column)
+    changed[slot.row] = world.tick
+}
+
+// Every row of one component in one table. What a pass that wrote a whole
+// column calls, which is the ordinary case: a walk over a table wrote all of
+// it, and marking each row separately would look up the same column each time.
+ecs_mark_column :: fn(mut world: World, table_index: i64, component: i64) {
+    ref table := vec_slice($Table, world.tables)[table_index]
+    if (mask_has(table.mask, component) == false) {
+        return
+    }
+    position := column_position(table.mask, component)
+    ref column := vec_slice($Column, table.columns)[position]
+    mut changed := column_changed(column)
+    mut row : i64 = 0
+    while (row < column.count) {
+        changed[row] = world.tick
+        row = row + 1
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bundles
+//
+// A set of components named by type rather than by index, so an entity is made
+// in the archetype it belongs in without the caller working out the mask:
+//
+//     entity := ecs_spawn_bundle(world, $Position, $Velocity, $Health)
+//
+// There is no macro here to build a bundle type out of values, and none is
+// wanted. What a bundle is for is naming the archetype up front, which is the
+// half that costs: reaching the same place a component at a time is a migration
+// each, and a migration copies every column the entity already has. The values
+// are written afterwards into columns that are already there, and nothing
+// migrates.
+// ---------------------------------------------------------------------------
+
+// The mask a set of types adds up to. Compile-time, so the loop is unrolled and
+// what is left is the four-word or of a handful of constants.
+mask_of :: fn(world: World, types: $...) -> Mask {
+    mut m := mask_empty()
+    for T in types {
+        m = mask_with(m, component_of($T, world))
+    }
+    m
+}
+
+ecs_spawn_bundle :: fn(mut world: World, types: $...) -> Entity {
+    wanted := mask_of(world, $T for T in types)
+    ecs_spawn_with(world, wanted)
+}
+
+// Everything a world holds except what it registered, released. The registry
+// stays, because it is the schema a snapshot is read against.
+world_clear :: fn(mut world: World) {
+    mut index : i64 = 0
+    while (index < vec_len($Table, world.tables)) {
+        ref table := vec_slice($Table, world.tables)[index]
+        mut held : i64 = 0
+        while (held < vec_len($Column, table.columns)) {
+            ref column := vec_slice($Column, table.columns)[held]
+            column_free(column)
+            held = held + 1
+        }
+        vec_free($Column, table.columns)
+        vec_free($Entity, table.entities)
+        index = index + 1
+    }
+    world.tables.len = 0
+    world.slots.len = 0
+    world.free_ids.len = 0
+    world.log.len = 0
+    world.live = 0
+    world.next_id = 0
+    lookup_free(world.lookup)
+    world.lookup = lookup_new(32)
 }
 
 // ---------------------------------------------------------------------------
@@ -4097,3 +4212,151 @@ test "a group holds more than two members" {
     assert(ecs_count(game_world) == 0)
     group_free(g)
 }
+
+// A pass that reads every row and writes none should cost nothing, which is
+// why a raw walk does not stamp. This is the half that says so.
+// A pass that reads every row and writes none should cost nothing, which is
+// why a raw walk does not stamp. This is the half that says so.
+test "a raw walk leaves the write times alone" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    mut index : i64 = 0
+    while (index < 3) {
+        entity := ecs_spawn(world)
+        ecs_add($TestPosition, world, entity, position,
+            TestPosition { x = 0.0, y = 0.0 })
+        index = index + 1
+    }
+    mark := ecs_now(world)
+    ecs_tick(world)
+
+    // Written through the raw slice, which reaches the bytes without going
+    // past the tick beside them.
+    mut q := query_begin(world)
+    query_with(q, position)
+    while (query_next(world, q)) {
+        mut held := ecs_slice($TestPosition, world, q.table, position)
+        mut row : i64 = 0
+        while (row < q.count) {
+            held[row].x = 5.0
+            row = row + 1
+        }
+    }
+
+    mut seen : i64 = 0
+    mut walk := query_begin(world)
+    query_with(walk, position)
+    query_filter(walk, filter_changed(no_filters(), position, mark))
+    while (query_next(world, walk)) {
+        mut row : i64 = 0
+        while (row < walk.count) {
+            if (query_row_passes(world, walk, row)) {
+                seen = seen + 1
+            }
+            row = row + 1
+        }
+    }
+    assert(seen == 0)
+    ecs_free(world)
+}
+
+// And the half that opts in. The same pass, saying afterwards which rows it
+// wrote, and a watcher seeing exactly those.
+test "a raw walk marks the rows it wrote" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    mut held : [3]Entity = [no_entity(); 3]
+    mut index : i64 = 0
+    while (index < 3) {
+        entity := ecs_spawn(world)
+        ecs_add($TestPosition, world, entity, position,
+            TestPosition { x = 0.0, y = 0.0 })
+        held[index] = entity
+        index = index + 1
+    }
+    mark := ecs_now(world)
+    ecs_tick(world)
+
+    mut items := ecs_slice($TestPosition, world, 1, position)
+    items[0].x = 9.0
+    ecs_mark_changed(world, held[0], position)
+
+    mut seen : i64 = 0
+    mut walk := query_begin(world)
+    query_with(walk, position)
+    query_filter(walk, filter_changed(no_filters(), position, mark))
+    while (query_next(world, walk)) {
+        mut row : i64 = 0
+        while (row < walk.count) {
+            if (query_row_passes(world, walk, row)) {
+                seen = seen + 1
+            }
+            row = row + 1
+        }
+    }
+    assert(seen == 1)
+    ecs_free(world)
+}
+
+test "a whole column is marked at once" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    mut index : i64 = 0
+    while (index < 4) {
+        entity := ecs_spawn(world)
+        ecs_add($TestPosition, world, entity, position,
+            TestPosition { x = 0.0, y = 0.0 })
+        index = index + 1
+    }
+    mark := ecs_now(world)
+    ecs_tick(world)
+    ecs_mark_column(world, 1, position)
+
+    mut seen : i64 = 0
+    mut walk := query_begin(world)
+    query_with(walk, position)
+    query_filter(walk, filter_changed(no_filters(), position, mark))
+    while (query_next(world, walk)) {
+        mut row : i64 = 0
+        while (row < walk.count) {
+            if (query_row_passes(world, walk, row)) {
+                seen = seen + 1
+            }
+            row = row + 1
+        }
+    }
+    assert(seen == 4)
+    ecs_free(world)
+}
+
+test "a bundle spawns straight into its archetype" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    velocity := ecs_register($TestVelocity, world)
+    health := ecs_register($TestHealth, world)
+
+    entity := ecs_spawn_bundle(world, $TestPosition, $TestVelocity)
+    assert(ecs_has(world, entity, position))
+    assert(ecs_has(world, entity, velocity))
+    assert(ecs_has(world, entity, health) == false)
+
+    // One table for the empty archetype and one for this bundle. A walk into
+    // it would have made two more on the way.
+    assert(vec_len($Table, world.tables) == 2)
+    ecs_free(world)
+}
+
+test "a bundle mask is the components it names" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    velocity := ecs_register($TestVelocity, world)
+    ecs_register($TestHealth, world)
+    wanted := mask_of(world, $TestPosition, $TestVelocity)
+    assert(mask_has(wanted, position))
+    assert(mask_has(wanted, velocity))
+    assert(mask_has(wanted, 2) == false)
+    ecs_free(world)
+}
+
+// A world written down and read back is the same world: the same entities in
+// the same tables holding the same values, and the same handles still refused.
