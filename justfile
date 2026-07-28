@@ -223,6 +223,81 @@ window:
     cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 -o examples/graphics/window examples/graphics/window.frost
     ./examples/graphics/window
 
+# Fetches the libraries the graphics examples link against, and the schema the
+# wgpu binding is generated from. Everything it writes is gitignored, so a fresh
+# checkout runs this once and `just triangle` works.
+#
+# The three versions are pinned rather than tracking whatever is newest, and the
+# last two are not free to move apart. A wgpu release ships the schema it was
+# built from as `webgpu.yml`, the binding generator reads json, and the json
+# lives in the header repository. So the commit below is the one that release
+# vendored, read from its own submodule rather than chosen:
+#
+#     gh api repos/gfx-rs/wgpu-native/contents/ffi/webgpu-headers?ref=<tag>
+#
+# Taking whatever the header repository has newest instead gives a binding a
+# release older than it does not answer to. That is not a build failure at the
+# boundary, it is a field named something else three hundred lines into a
+# program that was compiling yesterday.
+sdl_version := "3.4.12"
+wgpu_version := "v29.0.1.1"
+webgpu_headers_rev := "673658bc2bd70ec39fc55ebe6bb0173cf6d0a603"
+
+[windows]
+deps:
+    #!powershell.exe -NoProfile
+    $ErrorActionPreference = "Stop"
+    $ProgressPreference = "SilentlyContinue"
+    $work = Join-Path $env:TEMP "frost-deps"
+    New-Item -ItemType Directory -Force $work | Out-Null
+    New-Item -ItemType Directory -Force "examples/graphics/wgpu" | Out-Null
+    Write-Host "SDL {{sdl_version}}"
+    $sdl = "https://github.com/libsdl-org/SDL/releases/download/release-{{sdl_version}}/SDL3-devel-{{sdl_version}}-mingw.zip"
+    Invoke-WebRequest -Uri $sdl -OutFile "$work/sdl.zip" -UseBasicParsing
+    Remove-Item "$work/sdl" -Recurse -Force -ErrorAction SilentlyContinue
+    Expand-Archive "$work/sdl.zip" "$work/sdl" -Force
+    $root = "$work/sdl/SDL3-{{sdl_version}}/x86_64-w64-mingw32"
+    Copy-Item "$root/bin/SDL3.dll" examples/graphics -Force
+    Copy-Item "$root/lib/libSDL3.dll.a" examples/graphics/SDL3.lib -Force
+    Write-Host "wgpu-native {{wgpu_version}}"
+    $wgpu = "https://github.com/gfx-rs/wgpu-native/releases/download/{{wgpu_version}}/wgpu-windows-x86_64-gnu-release.zip"
+    Invoke-WebRequest -Uri $wgpu -OutFile "$work/wgpu.zip" -UseBasicParsing
+    Remove-Item "$work/wgpu" -Recurse -Force -ErrorAction SilentlyContinue
+    Expand-Archive "$work/wgpu.zip" "$work/wgpu" -Force
+    Copy-Item "$work/wgpu/lib/wgpu_native.dll" examples/graphics/wgpu -Force
+    Copy-Item "$work/wgpu/lib/libwgpu_native.dll.a" examples/graphics/wgpu -Force
+    Copy-Item "$work/wgpu/include" examples/graphics/wgpu -Recurse -Force
+    Write-Host "webgpu.json at {{webgpu_headers_rev}}"
+    $json = "https://raw.githubusercontent.com/webgpu-native/webgpu-headers/{{webgpu_headers_rev}}/webgpu.json"
+    Invoke-WebRequest -Uri $json -OutFile "examples/graphics/wgpu/webgpu.json" -UseBasicParsing
+    Write-Host "ready. run: just bindgen; just triangle"
+
+[unix]
+deps:
+    #!/usr/bin/env sh
+    set -e
+    work="${TMPDIR:-/tmp}/frost-deps"
+    mkdir -p "$work" examples/graphics/wgpu
+    case "$(uname -s)-$(uname -m)" in
+      Linux-x86_64)  target=wgpu-linux-x86_64-release.zip ;;
+      Linux-aarch64) target=wgpu-linux-aarch64-release.zip ;;
+      Darwin-x86_64) target=wgpu-macos-x86_64-release.zip ;;
+      Darwin-arm64)  target=wgpu-macos-aarch64-release.zip ;;
+      *) echo "no wgpu-native build published for $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+    esac
+    echo "wgpu-native {{wgpu_version}} ($target)"
+    curl -fsSL -o "$work/wgpu.zip" \
+      "https://github.com/gfx-rs/wgpu-native/releases/download/{{wgpu_version}}/$target"
+    rm -rf "$work/wgpu" && mkdir -p "$work/wgpu"
+    unzip -q "$work/wgpu.zip" -d "$work/wgpu"
+    cp "$work"/wgpu/lib/libwgpu_native.* examples/graphics/wgpu/
+    cp -r "$work/wgpu/include" examples/graphics/wgpu/
+    echo "webgpu.json at {{webgpu_headers_rev}}"
+    curl -fsSL -o examples/graphics/wgpu/webgpu.json \
+      "https://raw.githubusercontent.com/webgpu-native/webgpu-headers/{{webgpu_headers_rev}}/webgpu.json"
+    echo "SDL3 comes from the system here: install libsdl3-dev or sdl3."
+    echo "ready. run: just bindgen; just triangle"
+
 # Regenerates the wgpu bindings from webgpu.json
 bindgen:
     cargo run -r -q -p frost --bin frost -- --link -o tools/wgpu_bindgen.exe tools/wgpu_bindgen.frost
