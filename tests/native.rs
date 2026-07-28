@@ -3348,7 +3348,8 @@ fn self_hosted_runs_the_standard_library_tests() {
         ("math64.frost", "20 passed"),
         ("sort.frost", "3 passed"),
         ("mem.frost", "13 passed"),
-        ("ecs.frost", "85 passed"),
+        ("ecs.frost", "90 passed"),
+        ("snapshot.frost", "4 passed"),
         ("thread.frost", "3 passed"),
     ];
     for (label, backend) in [("stdc", "--emit-c"), ("stdasm", "--emit-asm")] {
@@ -15300,6 +15301,35 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          main :: fn() -> i64 {\n\
          \x20   print ROW[1]\n    0\n}\n",
         "20\n",
+    ),
+    // Copying a struct whose size is not a multiple of eight. The self-hosted
+    // assembly backend moved the tail in whole words whatever was left, so a
+    // four-byte struct was copied as eight and wrote four bytes past wherever
+    // it was copied into.
+    //
+    // It took a long time to find because of where it lands. A struct that size
+    // in the last element of a heap block writes off the end of the block, and
+    // whether anything notices depends on what the allocator put there, so the
+    // same program crashed in a different test each run and sometimes not at
+    // all. The guard here is the pattern that makes it deterministic: a run
+    // sized exactly for the struct, with something whose value is known written
+    // after it.
+    (
+        "copying_a_struct_that_is_not_a_multiple_of_eight_bytes",
+        "Small :: struct { value: f32 }\n\
+         Trio :: struct { a: Small, b: Small, tail: i64 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut t := Trio { a = Small { value = 0.0 },\n\
+         \x20       b = Small { value = 2.5 }, tail = 4242 }\n\
+         \x20   t.a = Small { value = 1.5 }\n\
+         \x20   print t.b.value == 2.5\n\
+         \x20   print t.tail\n\
+         \x20   mut held : [3]Small = [Small { value = 0.0 }; 3]\n\
+         \x20   mut guard : i64 = 777\n\
+         \x20   held[1] = Small { value = 3.5 }\n\
+         \x20   print held[2].value == 0.0\n\
+         \x20   print guard\n    0\n}\n",
+        "1\n4242\n1\n777\n",
     ),
     // Indexing a fixed-size array taken as a `mut` parameter. It arrives as a
     // pointer to the array, and the bootstrap's index path had no case for one:
