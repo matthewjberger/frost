@@ -31,3 +31,53 @@ join :: fn(handle: i64) {
 atomic_add :: fn(cell: ^i64, amount: i64) -> i64 {
     unsafe { frost_rt_atomic_add_i64(cell, amount) }
 }
+
+// A body takes the context as the `void*` C hands it and casts it back, which
+// is the whole of the convention. These two are what the tests below run.
+bump_once :: fn(context: ^u8) {
+    atomic_add(unsafe { ptr_cast($i64, context) }, 1)
+}
+
+bump_many :: fn(context: ^u8) {
+    cell := unsafe { ptr_cast($i64, context) }
+    mut left : i64 = 0
+    while (left < 1000) {
+        atomic_add(cell, 1)
+        left = left + 1
+    }
+}
+
+test "a thread runs its body and a join waits for it" {
+    mut cell : i64 = 0
+    handle := spawn(bump_once, unsafe { ptr_cast($u8, ptr_to(cell)) })
+    join(handle)
+    assert(cell == 1)
+}
+
+// Four threads adding to one word a thousand times each. Without the atomic
+// this loses adds, so the count is what says the operation is one.
+test "concurrent adds to one cell lose nothing" {
+    mut cell : i64 = 0
+    mut handles : [4]i64 = [0, 0, 0, 0]
+    mut spawned : i64 = 0
+    while (spawned < 4) {
+        handles[spawned] = spawn(bump_many,
+            unsafe { ptr_cast($u8, ptr_to(cell)) })
+        spawned = spawned + 1
+    }
+    mut joined : i64 = 0
+    while (joined < 4) {
+        join(handles[joined])
+        joined = joined + 1
+    }
+    assert(cell == 4000)
+}
+
+// What the add answers is the value before it, so a thread can tell which of
+// them it was without a second read that another could land between.
+test "an atomic add answers the value it found" {
+    mut cell : i64 = 7
+    before := atomic_add(ptr_to(cell), 5)
+    assert(before == 7)
+    assert(cell == 12)
+}

@@ -17,7 +17,8 @@
 
 export heap_array, heap_slice, heap_grow, heap_grow_slice, heap_release,
     heap_release_slice, heap_bytes, heap_grow_bytes, heap_zero, heap_copy,
-    bytes_at, bytes_as, slice_prefix, slice_range, slice_span, heap_live
+    bytes_at, bytes_as, slice_prefix, slice_range, slice_span, slice_chunk,
+    heap_live
 
 // How many blocks are out. A container that frees what it took leaves this
 // where it found it, so a test can say a leak happened rather than waiting for
@@ -117,6 +118,32 @@ slice_span :: fn($T: Type, held: []T, from: i64, count: i64) -> []T {
     slice_range($T, held, from, room)
 }
 
+// The `index`th of `count` spans that together cover a slice and never overlap.
+// Sizes differ by at most one, the first `extra` spans taking the remainder.
+//
+// This is what makes handing a slice to several threads safe rather than
+// hopeful: no two spans hold the same element, so no two workers can reach it,
+// and a borrow cannot escape the call that was given one. An index outside the
+// count answers empty rather than aborting, so a worker pool larger than the
+// work has nothing to special-case.
+slice_chunk :: fn($T: Type, held: []T, count: i64, index: i64) -> []T {
+    total := slice_len(held)
+    if (count < 1 || index < 0 || index >= count) {
+        return slice_span($T, held, total, 0)
+    }
+    per := total / count
+    extra := total % count
+    mut from := index * per
+    mut room := per
+    if (index < extra) {
+        from = from + index
+        room = room + 1
+    } else {
+        from = from + extra
+    }
+    slice_span($T, held, from, room)
+}
+
 heap_release :: fn($T: Type, move block: ^T) {
     unsafe { frost_rt_heap_free(ptr_cast($u8, block)) }
 }
@@ -190,6 +217,54 @@ test "a span stops at the end of what it views" {
     assert(slice_span($i64, held, 2, 99)[1] == 7)
     assert(slice_len(slice_span($i64, held, 4, 2)) == 0)
     assert(slice_len(slice_span($i64, held, 99, 2)) == 0)
+    heap_release_slice($i64, held)
+}
+
+// Every element in exactly one span, whatever the count divides into. Writing
+// each element's own index through its span and reading the whole slice back is
+// what says the spans covered it and did not overlap: an element two spans held
+// would be written twice and one no span held would keep its zero.
+test "chunks cover a slice exactly once" {
+    mut counts : [5]i64 = [1, 2, 3, 4, 7]
+    mut which : i64 = 0
+    while (which < 5) {
+        count := counts[which]
+        mut held := heap_slice($i64, 10)
+        mut clear : i64 = 0
+        while (clear < 10) {
+            held[clear] = 0
+            clear = clear + 1
+        }
+        mut index : i64 = 0
+        mut seen : i64 = 0
+        while (index < count) {
+            mut span := slice_chunk($i64, held, count, index)
+            seen = seen + slice_len(span)
+            mut at : i64 = 0
+            while (at < slice_len(span)) {
+                span[at] = span[at] + 1
+                at = at + 1
+            }
+            index = index + 1
+        }
+        assert(seen == 10)
+        mut every : i64 = 0
+        while (every < 10) {
+            assert(held[every] == 1)
+            every = every + 1
+        }
+        heap_release_slice($i64, held)
+        which = which + 1
+    }
+}
+
+test "chunks answer empty where there is no work for them" {
+    mut held := heap_slice($i64, 2)
+    assert(slice_len(slice_chunk($i64, held, 5, 0)) == 1)
+    assert(slice_len(slice_chunk($i64, held, 5, 1)) == 1)
+    assert(slice_len(slice_chunk($i64, held, 5, 2)) == 0)
+    assert(slice_len(slice_chunk($i64, held, 5, 9)) == 0)
+    assert(slice_len(slice_chunk($i64, held, 0, 0)) == 0)
     heap_release_slice($i64, held)
 }
 
