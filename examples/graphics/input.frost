@@ -1,0 +1,87 @@
+// The platform layer, driven for a few seconds and then reported on.
+//
+//   just input
+//
+// It opens a window, runs until escape or the close button, and prints what it
+// saw. That is the point: every number below came from a real event queue on a
+// real window, so the offsets the payload readers use are checked by something
+// running rather than by having been read carefully.
+//
+// Move the mouse, press some keys, scroll, resize the window, then press
+// escape.
+
+import "platform.frost"
+import "io.frost"
+import "format.frost"
+
+say :: fn(label: str, value: i64) {
+    mut line := builder_new(64)
+    builder_str_value(line, label)
+    builder_int(line, value)
+    print_str_line(builder_str(line))
+    builder_free(line)
+}
+
+main :: fn() -> i64 {
+    mut p := platform_open("Frost input", 960, 540)
+    if (platform_ok(p) == false) {
+        print_str_line("no window")
+        print_str_line(platform_error())
+        return 1
+    }
+
+    mut key_downs : i64 = 0
+    mut key_ups : i64 = 0
+    mut clicks : i64 = 0
+    mut moves : i64 = 0
+    mut scrolls : i64 = 0
+    mut resizes : i64 = 0
+    mut travelled : f32 = 0.0
+
+    print_str_line("running. escape or close the window to finish.")
+    while (platform_poll(p)) {
+        if (key_pressed(p, KEY_ESCAPE)) {
+            break
+        }
+        // Counting edges rather than states is what says the two are different:
+        // a held key adds one, not one per frame.
+        mut code : i64 = 0
+        while (code < KEY_COUNT) {
+            if (key_pressed(p, code)) { key_downs = key_downs + 1 }
+            if (key_released(p, code)) { key_ups = key_ups + 1 }
+            code = code + 1
+        }
+        mut held : i64 = 0
+        while (held < BUTTON_COUNT) {
+            if (button_pressed(p, held)) { clicks = clicks + 1 }
+            held = held + 1
+        }
+        dx := pointer_dx(p)
+        dy := pointer_dy(p)
+        if (dx != 0.0 || dy != 0.0) {
+            moves = moves + 1
+            mut far := dx
+            if (far < 0.0) { far = 0.0 - far }
+            mut down := dy
+            if (down < 0.0) { down = 0.0 - down }
+            travelled = travelled + far + down
+        }
+        if (wheel(p) != 0.0) { scrolls = scrolls + 1 }
+        if (resized(p)) { resizes = resizes + 1 }
+    }
+
+    say("frames        ", frame_index(p))
+    say("key presses   ", key_downs)
+    say("key releases  ", key_ups)
+    say("clicks        ", clicks)
+    say("motion frames ", moves)
+    say("pointer travel", travelled)
+    say("scroll frames ", scrolls)
+    say("resizes       ", resizes)
+    say("width         ", width(p))
+    say("height        ", height(p))
+    say("seconds       ", elapsed_seconds(p))
+
+    platform_close(p)
+    0
+}

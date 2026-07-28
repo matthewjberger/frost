@@ -1,0 +1,266 @@
+// A window, its input, and the clock that paces them, as one thing a frame
+// asks rather than a loop each program writes again.
+//
+//   mut p := platform_open("Title", 960, 540)
+//   while (platform_poll(p)) {
+//       if (key_pressed(p, KEY_ESCAPE)) { break }
+//       move(step * delta_seconds(p))
+//   }
+//   platform_close(p)
+//
+// What it holds is state a frame reads, not events. SDL answers with things
+// that happened; a program wants to know what is true now and what changed
+// since last frame, and those are different questions. `platform_poll` drains
+// the queue once and answers both: `key_down` is the state, `key_pressed` is
+// the edge, and the edge is true for exactly the one frame the key went down.
+//
+// The keyboard is indexed by scancode, which is where a key sits on the board
+// rather than what it prints, so a program that reads WASD reads the same three
+// corners under any layout.
+
+import "sdl.frost"
+
+export Platform, platform_open, platform_close, platform_poll, platform_window,
+    platform_ok, platform_error,
+    KEY_COUNT, BUTTON_COUNT,
+    KEY_A, KEY_D, KEY_S, KEY_W, KEY_SPACE, KEY_ESCAPE, KEY_LSHIFT,
+    BUTTON_LEFT, BUTTON_MIDDLE, BUTTON_RIGHT,
+    key_down, key_pressed, key_released,
+    button_down, button_pressed, button_released,
+    pointer_x, pointer_y, pointer_dx, pointer_dy, wheel,
+    width, height, resized,
+    delta_seconds, elapsed_seconds, frame_index
+
+// SDL's scancode table is this long, so a scancode indexes the arrays below
+// without a bound of its own.
+KEY_COUNT :: 512
+
+// SDL numbers buttons from one, and five is as many as a mouse reports.
+BUTTON_COUNT :: 8
+
+// The few scancodes a program is likely to name. The rest are SDL's numbers and
+// a program that wants one writes it.
+KEY_A :: 4
+KEY_D :: 7
+KEY_S :: 22
+KEY_W :: 26
+KEY_SPACE :: 44
+KEY_ESCAPE :: 41
+KEY_LSHIFT :: 225
+
+BUTTON_LEFT :: 1
+BUTTON_MIDDLE :: 2
+BUTTON_RIGHT :: 3
+
+// Two copies of every button, this frame's and last frame's. An edge is the
+// difference between them, which is why the pair is here rather than a flag set
+// when the event arrives: a key pressed and released inside one frame would
+// otherwise report neither.
+Platform :: struct {
+    window: Window,
+    keys: [KEY_COUNT]bool,
+    keys_before: [KEY_COUNT]bool,
+    buttons: [BUTTON_COUNT]bool,
+    buttons_before: [BUTTON_COUNT]bool,
+    at_x: f32,
+    at_y: f32,
+    moved_x: f32,
+    moved_y: f32,
+    scrolled: f32,
+    window_width: i64,
+    window_height: i64,
+    was_resized: bool,
+    closing: bool,
+    started_at: u64,
+    ticked_at: u64,
+    step: f32,
+    since_start: f32,
+    frames: i64,
+}
+
+// Opens the window and starts the clock. A window that could not be made comes
+// back with `is_no_window` true on `platform_window`, which a caller checks
+// before drawing into it, and SDL says why in `sdl_error`.
+platform_open :: fn(title: str, w: i64, h: i64) -> Platform {
+    sdl_init(InitFlags::Video | InitFlags::Events)
+    made := window_create(title, w, h,
+        WindowFlags::Resizable | WindowFlags::HighPixelDensity)
+    now := sdl_ticks()
+    Platform {
+        window = made,
+        keys = [false; KEY_COUNT],
+        keys_before = [false; KEY_COUNT],
+        buttons = [false; BUTTON_COUNT],
+        buttons_before = [false; BUTTON_COUNT],
+        at_x = 0.0, at_y = 0.0, moved_x = 0.0, moved_y = 0.0, scrolled = 0.0,
+        window_width = w, window_height = h,
+        was_resized = false, closing = false,
+        started_at = now, ticked_at = now,
+        step = 0.0, since_start = 0.0, frames = 0,
+    }
+}
+
+platform_close :: fn(mut p: Platform) {
+    window_destroy(p.window)
+    sdl_quit()
+}
+
+platform_window :: fn(p: Platform) -> Window { p.window }
+
+// Whether the window was made. A program checks this before drawing, and asks
+// `platform_error` when it is false.
+//
+// These two are here rather than left to the caller because an import says what
+// a file may name: a program reaching for `is_no_window` would have to import
+// SDL to ask a question about the platform, and then it depends on SDL rather
+// than on this.
+platform_ok :: fn(p: Platform) -> bool {
+    is_no_window(p.window) == false
+}
+
+platform_error :: fn() -> str { sdl_error() }
+
+// Advances one frame: ages the edges, drains the queue, and reads the clock.
+// False once the window has asked to close, which is what a main loop runs
+// until.
+//
+// Everything that is per-frame rather than per-event is cleared first. Movement
+// and the wheel accumulate across however many events arrived, so a frame that
+// saw three motion events sees one total rather than the last of them.
+platform_poll :: fn(mut p: Platform) -> bool {
+    mut index : i64 = 0
+    while (index < KEY_COUNT) {
+        p.keys_before[index] = p.keys[index]
+        index = index + 1
+    }
+    mut button : i64 = 0
+    while (button < BUTTON_COUNT) {
+        p.buttons_before[button] = p.buttons[button]
+        button = button + 1
+    }
+    p.moved_x = 0.0
+    p.moved_y = 0.0
+    p.scrolled = 0.0
+    p.was_resized = false
+
+    mut event := event_new()
+    while (poll_event(event)) {
+        kind := event_kind(event)
+        if (kind == EventKind::Quit || kind == EventKind::WindowClosed) {
+            p.closing = true
+        }
+        if (kind == EventKind::WindowResized) {
+            p.window_width = event_window_width(event)
+            p.window_height = event_window_height(event)
+            p.was_resized = true
+        }
+        // A repeat is the system saying the key is still down, which the state
+        // already says, so only the first press moves anything.
+        if (kind == EventKind::KeyDown && event_key_repeat(event) == false) {
+            code := event_scancode(event)
+            if (code >= 0 && code < KEY_COUNT) {
+                p.keys[code] = true
+            }
+        }
+        if (kind == EventKind::KeyUp) {
+            code := event_scancode(event)
+            if (code >= 0 && code < KEY_COUNT) {
+                p.keys[code] = false
+            }
+        }
+        if (kind == EventKind::MouseMotion) {
+            p.at_x = event_mouse_x(event)
+            p.at_y = event_mouse_y(event)
+            p.moved_x = p.moved_x + event_mouse_dx(event)
+            p.moved_y = p.moved_y + event_mouse_dy(event)
+        }
+        if (kind == EventKind::MouseButtonDown) {
+            held := event_button(event)
+            if (held >= 0 && held < BUTTON_COUNT) {
+                p.buttons[held] = true
+            }
+        }
+        if (kind == EventKind::MouseButtonUp) {
+            held := event_button(event)
+            if (held >= 0 && held < BUTTON_COUNT) {
+                p.buttons[held] = false
+            }
+        }
+        if (kind == EventKind::MouseWheel) {
+            p.scrolled = p.scrolled + event_wheel_y(event)
+        }
+    }
+
+    now := sdl_ticks()
+    p.step = elapsed_between(p.ticked_at, now)
+    p.since_start = elapsed_between(p.started_at, now)
+    p.ticked_at = now
+    p.frames = p.frames + 1
+    p.closing == false
+}
+
+// Milliseconds apart, as seconds. SDL counts from when it started, so the
+// subtraction is what makes it a duration.
+elapsed_between :: fn(from: u64, to: u64) -> f32 {
+    apart := to - from
+    held : f32 = apart
+    held / 1000.0
+}
+
+// The state now.
+key_down :: fn(p: Platform, code: i64) -> bool {
+    if (code < 0 || code >= KEY_COUNT) { return false }
+    p.keys[code]
+}
+
+// The frame it went down, and the frame it came up. True for exactly one frame
+// each, which is what a program means by "pressed" rather than "held".
+key_pressed :: fn(p: Platform, code: i64) -> bool {
+    if (code < 0 || code >= KEY_COUNT) { return false }
+    p.keys[code] && p.keys_before[code] == false
+}
+
+key_released :: fn(p: Platform, code: i64) -> bool {
+    if (code < 0 || code >= KEY_COUNT) { return false }
+    p.keys[code] == false && p.keys_before[code]
+}
+
+button_down :: fn(p: Platform, held: i64) -> bool {
+    if (held < 0 || held >= BUTTON_COUNT) { return false }
+    p.buttons[held]
+}
+
+button_pressed :: fn(p: Platform, held: i64) -> bool {
+    if (held < 0 || held >= BUTTON_COUNT) { return false }
+    p.buttons[held] && p.buttons_before[held] == false
+}
+
+button_released :: fn(p: Platform, held: i64) -> bool {
+    if (held < 0 || held >= BUTTON_COUNT) { return false }
+    p.buttons[held] == false && p.buttons_before[held]
+}
+
+// Where the pointer is, in window coordinates.
+pointer_x :: fn(p: Platform) -> f32 { p.at_x }
+pointer_y :: fn(p: Platform) -> f32 { p.at_y }
+
+// How far it moved this frame, which is what a look control reads rather than
+// the position.
+pointer_dx :: fn(p: Platform) -> f32 { p.moved_x }
+pointer_dy :: fn(p: Platform) -> f32 { p.moved_y }
+
+// Wheel notches this frame, positive away from the hand.
+wheel :: fn(p: Platform) -> f32 { p.scrolled }
+
+width :: fn(p: Platform) -> i64 { p.window_width }
+height :: fn(p: Platform) -> i64 { p.window_height }
+
+// Whether the window changed size this frame, which is when a surface has to be
+// configured again.
+resized :: fn(p: Platform) -> bool { p.was_resized }
+
+// Seconds since the last frame, and since the first.
+delta_seconds :: fn(p: Platform) -> f32 { p.step }
+elapsed_seconds :: fn(p: Platform) -> f32 { p.since_start }
+
+frame_index :: fn(p: Platform) -> i64 { p.frames }

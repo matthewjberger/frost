@@ -12,6 +12,10 @@
 import "mem.frost"
 
 export Window, is_no_window, Event, event_new, event_kind, event_number,
+    event_u32_at, event_f32_at, event_scancode, event_key_repeat,
+    event_mouse_x, event_mouse_y, event_mouse_dx, event_mouse_dy,
+    event_button, event_wheel_x, event_wheel_y,
+    event_window_width, event_window_height,
     EventKind, InitFlags, WindowFlags,
     PROP_WIN32_HWND, PROP_X11_DISPLAY, PROP_X11_WINDOW, PROP_COCOA_WINDOW,
     sdl_init, sdl_quit, sdl_ticks, sdl_delay, sdl_error,
@@ -74,8 +78,8 @@ EVENT_SIZE :: 128
 // with gaps and a program handles a few of them, so the rest arrive as `Other`
 // and the kind a program did not ask about is still a kind it can see.
 EventKind :: enum {
-    Quit, WindowResized, KeyDown, KeyUp,
-    MouseMotion, MouseButtonDown, MouseButtonUp, Other,
+    Quit, WindowResized, WindowClosed, KeyDown, KeyUp,
+    MouseMotion, MouseButtonDown, MouseButtonUp, MouseWheel, Other,
 }
 
 // The properties a window carries the platform's own handle under. Which one a
@@ -101,14 +105,64 @@ event_number :: fn(e: Event) -> u32 {
 event_kind :: fn(e: Event) -> EventKind {
     held := event_number(e)
     if (held == 256) { return EventKind::Quit }
-    if (held == 519) { return EventKind::WindowResized }
+    // 518 is a resize. 519 is `SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED`, a
+    // different event, and it was what this asked for until the header was read
+    // rather than remembered.
+    if (held == 518) { return EventKind::WindowResized }
+    if (held == 528) { return EventKind::WindowClosed }
     if (held == 768) { return EventKind::KeyDown }
     if (held == 769) { return EventKind::KeyUp }
     if (held == 1024) { return EventKind::MouseMotion }
     if (held == 1025) { return EventKind::MouseButtonDown }
     if (held == 1026) { return EventKind::MouseButtonUp }
+    if (held == 1027) { return EventKind::MouseWheel }
     EventKind::Other
 }
+
+// ---------------------------------------------------------------------------
+// What an event carries
+//
+// Every SDL event opens with the same twenty bytes, a type, a padding word, a
+// timestamp and a window id, and each kind lays its own fields after them. The
+// offsets below are what the compiler reports for this SDL, taken with
+// `offsetof` against `SDL_events.h` rather than counted by hand: a field read
+// from the wrong place is a number that looks plausible.
+// ---------------------------------------------------------------------------
+
+event_u32_at :: fn(e: Event, offset: i64) -> u32 {
+    unsafe { ptr_cast($u32, ptr_to(e.bytes[offset]))^ }
+}
+
+event_f32_at :: fn(e: Event, offset: i64) -> f32 {
+    unsafe { ptr_cast($f32, ptr_to(e.bytes[offset]))^ }
+}
+
+// Where a key sits on the board rather than what it prints, so a layout does
+// not move it.
+event_scancode :: fn(e: Event) -> i64 { event_u32_at(e, 24) }
+
+// Whether the key was already down and the system repeated it.
+event_key_repeat :: fn(e: Event) -> bool { e.bytes[37] != 0 }
+
+// Motion says where the pointer is and how far it came, both in window
+// coordinates. The movement is since the last event rather than the last frame.
+event_mouse_x :: fn(e: Event) -> f32 { event_f32_at(e, 28) }
+event_mouse_y :: fn(e: Event) -> f32 { event_f32_at(e, 32) }
+event_mouse_dx :: fn(e: Event) -> f32 { event_f32_at(e, 36) }
+event_mouse_dy :: fn(e: Event) -> f32 { event_f32_at(e, 40) }
+
+// A button event puts the button where motion puts its state, so the position
+// offsets are shared and this one is not.
+event_button :: fn(e: Event) -> i64 { e.bytes[24] }
+
+// The wheel, in notches rather than pixels.
+event_wheel_x :: fn(e: Event) -> f32 { event_f32_at(e, 24) }
+event_wheel_y :: fn(e: Event) -> f32 { event_f32_at(e, 28) }
+
+// A window event's two numbers, which for a resize are the new width and
+// height.
+event_window_width :: fn(e: Event) -> i64 { event_u32_at(e, 20) }
+event_window_height :: fn(e: Event) -> i64 { event_u32_at(e, 24) }
 
 // Whether a window is the one that names nothing, which is what a failed
 // creation answers with. SDL says why in `sdl_error`. This asks the question
