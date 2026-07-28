@@ -26,15 +26,18 @@ export Vertex, Mesh, MeshCache,
     mesh_cache_new, mesh_cache_insert, mesh_cache_find, mesh_cache_at,
     mesh_cache_free, mesh_bind, mesh_upload,
     cube_mesh, sphere_mesh,
-    VERTEX_STRIDE, POSITION_OFFSET, NORMAL_OFFSET
+    VERTEX_STRIDE, POSITION_OFFSET, NORMAL_OFFSET, TEXCOORD_OFFSET
 
-// Position and normal, which is what a lit surface needs and nothing more. No
-// texture coordinates yet, because nothing samples a texture.
-Vertex :: struct { position: Vec3, normal: Vec3 }
+// Where the surface is, which way it faces, and where on an image it reads
+// from. A program that samples nothing pays the eight bytes and ignores the
+// attribute, which costs less than two vertex types and two of everything that
+// takes one.
+Vertex :: struct { position: Vec3, normal: Vec3, texcoord: Vec2 }
 
-VERTEX_STRIDE :: 24
+VERTEX_STRIDE :: 32
 POSITION_OFFSET :: 0
 NORMAL_OFFSET :: 12
+TEXCOORD_OFFSET :: 24
 INDEX_BYTES :: 4
 
 // The two buffers, how many indices there are, and how long each buffer is.
@@ -123,14 +126,20 @@ mesh_upload :: fn(device: Device, queue: Queue, vertices: []Vertex,
 }
 
 // Two triangles over four corners, wound counter-clockwise seen from outside,
-// which is the winding the pipeline calls front.
+// which is the winding the pipeline calls front. The four corners take the four
+// corners of the image in the same order, so every face reads the whole of it
+// and every face reads it the same way up.
 quad :: fn(mut vertices: []Vertex, mut indices: []u32, at: i64,
     normal: Vec3, a: Vec3, b: Vec3, c: Vec3, d: Vec3) {
     base := at * 4
-    vertices[base] = Vertex { position = a, normal = normal }
-    vertices[base + 1] = Vertex { position = b, normal = normal }
-    vertices[base + 2] = Vertex { position = c, normal = normal }
-    vertices[base + 3] = Vertex { position = d, normal = normal }
+    vertices[base] = Vertex { position = a, normal = normal,
+        texcoord = vec2(0.0, 1.0) }
+    vertices[base + 1] = Vertex { position = b, normal = normal,
+        texcoord = vec2(1.0, 1.0) }
+    vertices[base + 2] = Vertex { position = c, normal = normal,
+        texcoord = vec2(1.0, 0.0) }
+    vertices[base + 3] = Vertex { position = d, normal = normal,
+        texcoord = vec2(0.0, 0.0) }
     corner := at * 6
     indices[corner] = cast($u32, base)
     indices[corner + 1] = cast($u32, base + 1)
@@ -199,8 +208,11 @@ sphere_mesh :: fn(device: Device, queue: Queue, radius: f32, rings: i64,
             phi : f32 = 6.283185307179586 * (around / span)
             unit := vec3(cosf(phi) * sinf(theta), cosf(theta),
                 sinf(phi) * sinf(theta))
+            // Longitude across and latitude down, which is the mapping that
+            // makes the seam land where the duplicated column already is.
             vertices[ring * (segments + 1) + segment] =
-                Vertex { position = vec3_scale(unit, radius), normal = unit }
+                Vertex { position = vec3_scale(unit, radius), normal = unit,
+                    texcoord = vec2(around / span, tall / total) }
             segment = segment + 1
         }
         ring = ring + 1

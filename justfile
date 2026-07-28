@@ -323,6 +323,17 @@ spinning:
     cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 --libs=-lwgpu_native -o examples/graphics/spinning examples/graphics/spinning.frost
     ./examples/graphics/spinning
 
+# The same lit field with its surfaces read off an image (Windows)
+[windows]
+textured:
+    $sdl = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "examples/graphics" }; cargo run -r -q -p frost --bin frost -- --link --libs "$sdl/SDL3.dll" --libs "examples/graphics/wgpu/wgpu_native.dll" -o examples/graphics/textured.exe examples/graphics/textured.frost; Copy-Item examples/graphics/wgpu/wgpu_native.dll examples/graphics -Force; & ./examples/graphics/textured.exe
+
+# The same lit field with its surfaces read off an image (Unix)
+[unix]
+textured:
+    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 --libs=-lwgpu_native -o examples/graphics/textured examples/graphics/textured.frost
+    ./examples/graphics/textured
+
 # Opens a window and reports what the platform layer saw (Windows)
 [windows]
 input:
