@@ -1303,26 +1303,23 @@ strip_place :: fn(mut p: Parser, id: i64, n: i64) -> i64 {
     strip_place(p, node.a, n - 1)
 }
 
-// Whether two index expressions name the same element for sure: a literal or a
-// bare variable does. Anything else is left distinct, since proving it equal
-// would take evaluating it, and a distinct index means no overlap rather than a
-// wrong one.
-index_equal :: fn(mut p: Parser, a: i64, b: i64) -> bool {
+// Whether two index expressions could name the same element.
+//
+// Two numbers are apart when the numbers differ, and that is the whole of what
+// can be settled without running the program. Anything else is one element until
+// shown otherwise: `xs[i]` and `xs[j]` are the same slot whenever `i == j`, and
+// answering that they are apart let two `mut` borrows of one element through,
+// which is the aliasing this check exists to refuse.
+index_overlaps :: fn(mut p: Parser, a: i64, b: i64) -> bool {
     if (a == (-1) || b == (-1)) {
-        return false
+        return true
     }
     na := arena_at(p.arena, a)
     nb := arena_at(p.arena, b)
-    if (na.kind != nb.kind) {
-        return false
-    }
-    if (na.kind == NodeKind::Num) {
+    if (na.kind == NodeKind::Num && nb.kind == NodeKind::Num) {
         return na.val == nb.val
     }
-    if (na.kind == NodeKind::Var) {
-        return na.c == nb.c && bytes_equal(p.src, na.val, nb.val, na.c)
-    }
-    false
+    true
 }
 
 places_equal :: fn(mut p: Parser, a: i64, b: i64) -> bool {
@@ -1345,7 +1342,7 @@ places_equal :: fn(mut p: Parser, a: i64, b: i64) -> bool {
         return places_equal(p, na.a, nb.a)
     }
     if (kind == NodeKind::Index) {
-        return places_equal(p, na.a, nb.a) && index_equal(p, na.b, nb.b)
+        return places_equal(p, na.a, nb.a) && index_overlaps(p, na.b, nb.b)
     }
     if (kind == NodeKind::Deref) {
         return places_equal(p, na.a, nb.a)
