@@ -33,7 +33,7 @@ frost_rt_die   :: safe extern fn()
 export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     Commands, Change, Events, EventReader,
     ecs_new, ecs_free, ecs_register, ecs_component_size,
-    ecs_spawn, ecs_despawn, ecs_alive, ecs_count,
+    ecs_spawn, ecs_spawn_with, ecs_despawn, ecs_alive, ecs_count,
     ecs_add, ecs_remove, ecs_has, ecs_get, ecs_set, ecs_slice,
     query_begin, query_next, query_column, query_entities,
     query_with,
@@ -769,6 +769,36 @@ ecs_spawn :: fn(mut world: World) -> Entity {
     world.live = world.live + 1
     made := Entity { id = id, generation = generation }
     note_change(world, ChangeKind::Spawn, made, 0 - 1)
+    made
+}
+
+// An entity that starts out holding a set of components, placed in that
+// archetype rather than walked into it.
+//
+// Reaching the same place through `ecs_add` costs one migration per component,
+// and a migration copies every column the entity already has, so building a row
+// of n components moves on the order of n squared bytes to land somewhere the
+// table lookup could have named outright. This asks for the destination.
+//
+// The components are zeroed and marked added at the current tick, exactly as a
+// migration leaves one it had no value for, so `ecs_set` afterwards writes into
+// a column that is already there and nothing migrates.
+ecs_spawn_with :: fn(mut world: World, mask: Mask) -> Entity {
+    made := ecs_spawn(world)
+    if (mask_is_empty(mask)) {
+        return made
+    }
+    migrate(world, made, mask)
+    // Every component of a fresh row was added now. `migrate` already says so
+    // for the ones it zeroed, and it zeroes all of them here, since the entity
+    // came from the empty table holding nothing.
+    mut index : i64 = 0
+    while (index < world.registry.count) {
+        if (mask_has(mask, index)) {
+            note_change(world, ChangeKind::Add, made, index)
+        }
+        index = index + 1
+    }
     made
 }
 
@@ -1873,6 +1903,56 @@ test "adding a component carries the ones already there" {
     assert(after.x == 3.0)
     still := ecs_get($TestHealth, world, a, health)
     assert(still.points == 12)
+    ecs_free(world)
+}
+
+test "an entity can start out in the archetype it belongs in" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    velocity := ecs_register($TestVelocity, world)
+    health := ecs_register($TestHealth, world)
+
+    wanted := mask_with(mask_with(mask_empty(), position), velocity)
+    a := ecs_spawn_with(world, wanted)
+    assert(ecs_has(world, a, position))
+    assert(ecs_has(world, a, velocity))
+    assert(ecs_has(world, a, health) == false)
+
+    // The columns are there, so writing into them migrates nothing. Reading
+    // back is what says the row is the one the mask asked for.
+    ecs_set($TestPosition, world, a, position, TestPosition { x = 1.0, y = 2.0 })
+    ecs_set($TestVelocity, world, a, velocity, TestVelocity { x = 9.0, y = 0.0 })
+    held := ecs_get($TestPosition, world, a, position)
+    assert(held.x == 1.0)
+    assert(held.y == 2.0)
+    speed := ecs_get($TestVelocity, world, a, velocity)
+    assert(speed.x == 9.0)
+
+    // Landing there is the same archetype walking there reaches, so the two
+    // share a table rather than the world holding one for each route.
+    b := ecs_spawn(world)
+    ecs_add($TestPosition, world, b, position, TestPosition { x = 0.0, y = 0.0 })
+    ecs_add($TestVelocity, world, b, velocity, TestVelocity { x = 0.0, y = 0.0 })
+    slots := vec_slice($EntitySlot, world.slots)
+    table_a := slots[a.id].table
+    table_b := slots[b.id].table
+    assert(table_a == table_b)
+
+    // An empty mask is the entity `ecs_spawn` already gives.
+    c := ecs_spawn_with(world, mask_empty())
+    assert(ecs_alive(world, c))
+    assert(ecs_has(world, c, position) == false)
+    ecs_free(world)
+}
+
+test "a component a fresh row starts with counts as added" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    ecs_tick(world)
+    before := ecs_now(world)
+    ecs_tick(world)
+    a := ecs_spawn_with(world, mask_with(mask_empty(), position))
+    assert(ecs_added_since(world, a, position, before))
     ecs_free(world)
 }
 
