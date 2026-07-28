@@ -89,14 +89,28 @@ none.
 `safe` is a keyword (2.4) and means nothing anywhere else. An `extern fn`
 without it is gated, and there is no per-call opt-out.
 
-## 6a.5 What the check cannot see
+## 6a.5 What the check refuses when it cannot tell
 
-The rule for a raw-pointer *index* needs the pointer's type, and the bootstrap
-pass works that out from a parameter's annotation, a binding's annotation, a
-`ptr_cast`, a `ptr_to`, and a struct field's declared type, which is how a raw
-pointer is held in practice. A pointer arriving by some road none of those
-describe is indexed without complaint. The other three operations are exact,
-since none of them needs a type to be recognized.
+Three of the four operations are recognized by their shape and need no type. The
+index rule is the one that has to know whether the base is a raw pointer, since
+an array, a slice and a `str` each carry a length and are checked while a `^T` is
+not.
+
+A base whose type the pass cannot name is refused rather than allowed. A gate
+that lets the unknown through reports what it happened to recognize, and the list
+of `unsafe` blocks is then worth nothing. What keeps the rule from refusing
+ordinary code is that the pass names a base in the shapes programs write: a
+call's return type off the declaration, an element's off its array, slice, `str`
+or pointer, a pointee's off the pointer, a field's off the struct, a block's off
+its last statement, and a literal's off itself. Across `selfhosted/frost.frost`
+and `std/ecs.frost` that leaves no unnameable base, so the strict rule costs
+nothing.
+
+The walk lists every statement and expression form rather than ending in a
+wildcard, so a form nobody handled is a compile error in the compiler instead of
+a hole in the gate. `print` was that hole: every gated operation written under
+one compiled, and a program holding no `unsafe` block at all read far out of
+bounds through a raw pointer and died on the access.
 
 The gate runs on every build. `FROST_CHECK_UNSAFE=0` turns it off, which exists
 for compiling older sources that have not marked their unchecked operations yet

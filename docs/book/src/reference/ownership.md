@@ -41,6 +41,17 @@ parameters of one call is rejected. This per-call check suffices to prevent
 mutable aliasing precisely because an implicit borrow cannot escape the call it
 was made for.
 
+Two places overlap unless something says they are apart. Fields are apart when
+the names differ. Two indexes are apart only when both are numbers and the
+numbers differ, so `xs[0]` and `xs[1]` are two elements while `xs[i]` and `xs[j]`
+are one until the program says otherwise: they name the same slot whenever `i`
+and `j` evaluate the same, and nothing in a compiler can rule that out.
+
+The one pair this does not separate is two places reached through different raw
+pointers. `p^` and `q^` are one place whenever `p` and `q` hold one address.
+Reaching through a `^T` is gated on an `unsafe` block (6a), which is where that
+sits.
+
 ## 8.4 Reference escape through returns
 
 An implicit borrow cannot be returned, because there is nothing to write. It is

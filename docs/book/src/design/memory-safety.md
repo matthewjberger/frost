@@ -19,12 +19,23 @@ one decision plus a small number of local rules.
    so it cannot escape at all. `ref T` is the explicit exception, the one borrow
    a program writes, and it may be returned, so it is held instead to storage
    that already outlives the call. A function answering with a borrowed view
-   (`ref T`, a raw pointer, or a slice) may not hand back one formed from its
-   own frame, whether by returning it, by storing it where the call cannot see,
-   or by ending with it (`src/regions.rs`, the frame check). A view it was
-   handed names storage the caller owns and passes back out freely. What no
-   borrow of either kind may do is be stored: not in a struct field, not in an
-   array element, not in a container.
+   (`ref T`, a raw pointer, or a slice) hands one back only where the check can
+   trace its storage to a parameter or an allocation capability. Storage it
+   cannot trace is refused, whether the view leaves by being returned, by being
+   stored where the call cannot see, or by being what the block ends with
+   (`src/regions.rs`, the frame check). A view the function was handed names
+   storage the caller owns and passes back out freely. What no borrow of either
+   kind may do is be stored: not in a struct field, not in an array element, not
+   in a container.
+
+   Refusing what it cannot trace is the point rather than an implementation
+   detail. The check answered "this does not name my frame" for every expression
+   form nobody had taught it, which made each road a view could travel a hole
+   until someone wrote it down: an ordinary call, a call through a function
+   pointer, an assignment into a local, a `return` inside a match arm, the
+   address of a `move` parameter. Every one of those compiled and handed back a
+   view of a dead frame. A check whose soundness rests on having enumerated
+   every shape is a list, not a proof.
 
    The region check asks the same question about an arena. A pointer into one
    may not outlive the `with` block that owns it, and a `uses` function may hand
@@ -301,15 +312,33 @@ one audited function and hand back something the language can check.
 
 ## What is not yet guarded
 
-A few honest gaps in the current implementation:
+The guarantees above are what the checks prove. This is what they do not, stated
+so nobody has to find out by reading the passes.
 
 - Raw pointers (`^T`) are an explicit escape hatch, used for FFI and the pool
   runtime's internals. They are `Copy` and unchecked, exactly like C pointers,
   and code that uses them takes on the corresponding responsibility. The safe
   surface of borrows, handles, and linear resources is what the guarantees above
-  cover. `check_frame_escapes` narrows the hatch. A raw pointer formed from this
-  frame's own storage, including one taken with `ptr_to` or a slice over a local
-  array, cannot be returned.
+  cover. `check_frame_escapes` narrows the hatch: a raw pointer whose storage
+  cannot be traced past the call cannot leave it.
+- `slice_from($T, p, n)` is a trusted primitive. It asserts that `n` elements of
+  `T` live at `p`, and nothing checks that assertion. Every bounds-check
+  guarantee downstream of a slice is conditional on it, which is why the call is
+  gated on an `unsafe` block and why `std/mem.frost` is the one place in the
+  containers that writes one.
+- The roughly 150 hand-written `unsafe` blocks in the standard library, the
+  compiler and the examples are audited rather than proven. `Vec`, `Map` and the
+  ECS are ordinary safe code resting on `std/mem.frost` being right.
+- Two places reached through different raw pointers are read as apart, so
+  `f(p^, q^)` with `p` and `q` holding one address passes the exclusivity check.
+  Both dereferences are gated on an `unsafe` block, which is the reason this is
+  left where it is.
+- Integer overflow wraps rather than trapping. An index computed with arithmetic
+  that overflows wraps to some other number, and the bounds check then runs on
+  that number: the read stays inside the array and lands on the wrong element. A
+  wrong answer, not a wrong address.
+- There is no stack-depth guard. Unbounded recursion runs the stack out and the
+  process dies however the host decides.
 - A callback's guarantee stops at the C boundary. The Frost side is checked.
   The context moves in and comes back out, the registration is `linear` so
   forgetting to unregister is a compile error, and the region check holds the
@@ -318,10 +347,11 @@ A few honest gaps in the current implementation:
   the library's own threading, and a library that keeps the pointer after
   unregistration is outside what the compiler can see. See
   [callbacks.md](callbacks.md).
-- The static checks run on the AST, so integer overflow follows the backend's
-  C semantics (wrapping for unsigned, two's-complement for signed) rather than
-  trapping.
+- There is no data-race story. `std/thread.frost` is the reasonable-C floor:
+  the spawner owns the context and must keep it alive until the join, and shared
+  state goes through `atomic_add` or the program races.
 
-These are implementation gaps, not holes in the design. The design's job is to
-make the safe constructs (borrows, handles, linear resources) impossible to
-misuse.
+Two things the language rules out by construction rather than by checking, which
+is why they are not on the list above. A binding cannot be declared without a
+value, so there is no uninitialized read to catch. And an implicit borrow has no
+type to write down, so no expression stores one.
