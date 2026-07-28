@@ -471,7 +471,31 @@ impl MoveChecker<'_> {
                 }
                 Ok(false)
             }
-            _ => Ok(false),
+            // The allocation-sources lowering runs before this check and leaves
+            // no `with` behind, and the multiple-return lowering leaves no
+            // `LetMultiple`. Both are walked anyway, so neither becomes a hole
+            // if that order ever changes.
+            Statement::With(_, body) => {
+                self.check_block(body);
+                Ok(false)
+            }
+            Statement::LetMultiple(bindings, value) => {
+                self.visit(value, true)?;
+                for binding in bindings {
+                    self.note_binding(&binding.name, None);
+                }
+                Ok(false)
+            }
+            // A declaration holds no expression whose ownership this pass could
+            // read. Listed rather than caught by `_`, so a new statement form is
+            // a compile error here instead of a move nobody counted.
+            Statement::Struct(..)
+            | Statement::Enum(..)
+            | Statement::Flags(..)
+            | Statement::TypeAlias(..)
+            | Statement::Import(..)
+            | Statement::Extern { .. }
+            | Statement::Declared { .. } => Ok(false),
         }
     }
 
@@ -784,40 +808,104 @@ impl MoveChecker<'_> {
     }
 }
 
+// One step of the path to a borrowed place.
+#[derive(Clone, PartialEq, Eq)]
+enum Step {
+    // A named field, or a dereference, which is the same question: two of these
+    // name the same storage exactly when they are written the same way.
+    Named(String),
+    // An index. What it selects is decided while the program runs, so two of
+    // them are known apart only when both are numbers.
+    Index(Option<i64>, String),
+    // A dereference. Where it lands is decided by what the pointer holds, so
+    // two places reached through one may be the same storage however different
+    // the names in front of them read.
+    Deref,
+}
+
 // The place a borrowed argument names, as a path from a root variable through
-// fields, indexes and dereferences: `s.x` is `["s", ".x"]` and `xs[i]` is
-// `["xs", "[i]"]`. An index is keyed by how it is written, so `xs[i]` and
-// `xs[j]` are distinct places while `xs[i]` and `xs[i]` are one. `None` for an
-// expression that is not a place (a call, a literal), which cannot alias.
-fn borrow_place(expression: &Expression) -> Option<Vec<String>> {
+// fields, indexes and dereferences. `None` for an expression that is not a
+// place (a call, a literal), which names no storage a second borrow could
+// reach.
+fn borrow_place(expression: &Expression) -> Option<Vec<Step>> {
     match expression {
-        Expression::Identifier(name) => Some(vec![name.clone()]),
+        Expression::Identifier(name) => Some(vec![Step::Named(name.clone())]),
         Expression::FieldAccess(base, field) => {
             let mut path = borrow_place(base)?;
-            path.push(format!(".{field}"));
+            path.push(Step::Named(format!(".{field}")));
             Some(path)
         }
         Expression::Index(base, index) => {
             let mut path = borrow_place(base)?;
-            path.push(format!("[{index}]"));
+            let literal = match index.as_ref() {
+                Expression::Literal(Literal::Integer(value)) => Some(*value),
+                _ => None,
+            };
+            path.push(Step::Index(literal, format!("[{index}]")));
             Some(path)
         }
         Expression::Dereference(base) => {
             let mut path = borrow_place(base)?;
-            path.push("^".to_string());
+            path.push(Step::Deref);
             Some(path)
         }
         _ => None,
     }
 }
 
-// Two places overlap when one contains the other. They share the whole of the
-// shorter as a prefix, so `s` overlaps `s.x`, and `s.x` overlaps `s.x.y`, while
-// `s.x` and `s.y` are disjoint. Overlapping places name storage that intersects,
-// which is what an exclusive borrow may not share.
-fn places_overlap(first: &[String], second: &[String]) -> bool {
+// Whether two steps definitely name different storage.
+//
+// Two indexes are apart only when both are numbers and the numbers differ.
+// `xs[i]` and `xs[j]` are the same element whenever `i == j`, and nothing here
+// can rule that out, so they are not apart. Reading them as apart is what let
+// two `mut` borrows of one element through: `swap_bump(xs[i], xs[j])` with
+// `i == j` handed the same slot to both parameters.
+fn steps_apart(left: &Step, right: &Step) -> bool {
+    match (left, right) {
+        (Step::Named(one), Step::Named(other)) => one != other,
+        (Step::Index(Some(one), _), Step::Index(Some(other), _)) => {
+            one != other
+        }
+        (Step::Index(..), Step::Index(..)) => false,
+        // A field and an index of the same base name different storage only
+        // because one of them is not a place the other could be. They cannot
+        // both be written of one type, so this does not arise; reading it as
+        // together costs nothing.
+        _ => false,
+    }
+}
+
+// Two places overlap unless some step along their common length is known to name
+// different storage. They share the whole of the shorter as a prefix when
+// neither differs, so `s` overlaps `s.x`, `s.x` overlaps `s.x.y`, and `s.x` and
+// `s.y` are apart. Overlapping places name storage that intersects, which is
+// what an exclusive borrow may not share.
+// Two places reached through different pointers are read as apart, which is a
+// hole this check does not close. `p^` and `q^` are one place whenever `p` and
+// `q` hold one address, and nothing here says what either holds. Closing it by
+// reading every pair of dereferences as overlapping refuses the ordinary case
+// instead: a `mut` parameter is rewritten to `name^` by the parameter-mode
+// lowering that runs before this check, so two distinct `mut` parameters of the
+// enclosing function reach a call as two dereferences. Those are apart, and the
+// caller's own exclusivity check is what says so. What is left uncovered is two
+// raw pointers at one place, and reaching through a `^T` is gated on an `unsafe`
+// block and outside the guarantee for that reason.
+fn places_overlap(first: &[Step], second: &[Step]) -> bool {
     let common = first.len().min(second.len());
-    first[..common] == second[..common]
+    !first[..common]
+        .iter()
+        .zip(&second[..common])
+        .any(|(left, right)| steps_apart(left, right))
+}
+
+// How a place reads back in a diagnostic.
+fn describe_place(path: &[Step]) -> String {
+    path.iter()
+        .map(|step| match step {
+            Step::Named(text) | Step::Index(_, text) => text.as_str(),
+            Step::Deref => "^",
+        })
+        .collect()
 }
 
 fn check_borrow_exclusivity(
@@ -827,7 +915,7 @@ fn check_borrow_exclusivity(
     // Each borrowed argument as (place path, whether it is exclusive). A `mut`
     // parameter and an explicit `&mut` borrow exclusively. A `read` parameter
     // and a `&` share.
-    let mut borrows: Vec<(Vec<String>, bool)> = Vec::new();
+    let mut borrows: Vec<(Vec<Step>, bool)> = Vec::new();
     for (index, argument) in arguments.iter().enumerate() {
         let mode = param_types
             .and_then(|types| types.get(index))
@@ -859,8 +947,8 @@ fn check_borrow_exclusivity(
                 continue;
             }
             if places_overlap(place, other_place) {
-                let name = place.join("");
-                let other = other_place.join("");
+                let name = describe_place(place);
+                let other = describe_place(other_place);
                 if *exclusive && *other_exclusive {
                     bail!(
                         "ownership: '{name}' and '{other}' are both borrowed as mutable in a single call; mutable borrows are exclusive"
@@ -1087,6 +1175,43 @@ mod tests {
             run :: fn() {\n\
                 mut x : Point = Point { x = 0, y = 0 }\n\
                 mix(x, x)\n\
+            }";
+        assert!(check(source).is_err());
+    }
+
+    // Two index expressions name one element whenever they evaluate the same,
+    // and comparing them by how they are written read `xs[i]` and `xs[j]` as
+    // apart. With `i == j` both increments landed on the same slot.
+    #[test]
+    fn mutable_borrows_of_two_unproven_indexes_are_rejected() {
+        let source = "\
+            bump :: fn(mut a: i64, mut b: i64) { }\n\
+            run :: fn(i: i64, j: i64) {\n\
+                mut xs : [4]i64 = [0, 0, 0, 0]\n\
+                bump(xs[i], xs[j])\n\
+            }";
+        assert!(check(source).is_err());
+    }
+
+    // Two literal indexes are apart, since the numbers say so.
+    #[test]
+    fn mutable_borrows_of_two_literal_indexes_are_allowed() {
+        let source = "\
+            bump :: fn(mut a: i64, mut b: i64) { }\n\
+            run :: fn() {\n\
+                mut xs : [4]i64 = [0, 0, 0, 0]\n\
+                bump(xs[0], xs[1])\n\
+            }";
+        assert!(check(source).is_ok());
+    }
+
+    #[test]
+    fn mutable_borrows_of_one_literal_index_twice_are_rejected() {
+        let source = "\
+            bump :: fn(mut a: i64, mut b: i64) { }\n\
+            run :: fn() {\n\
+                mut xs : [4]i64 = [0, 0, 0, 0]\n\
+                bump(xs[2], xs[2])\n\
             }";
         assert!(check(source).is_err());
     }

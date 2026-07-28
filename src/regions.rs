@@ -295,7 +295,37 @@ impl<'a> Region<'a> {
                 Statement::Expression(value) => {
                     self.check_conditional(value);
                 }
-                _ => {}
+                // A deferred statement runs at scope exit, inside the region
+                // still, so what it writes is written from in here.
+                Statement::Defer(inner) => {
+                    let deferred = vec![Spanned::new((**inner).clone(), at)];
+                    self.check(&deferred, false);
+                }
+                // The multiple-return lowering runs before this check, so this
+                // shape is already gone. Named rather than left to a wildcard so
+                // it stays that way on purpose.
+                Statement::LetMultiple(bindings, value) => {
+                    for binding in bindings {
+                        self.inner.insert(binding.name.clone());
+                        if self.is_region_pointer(value) {
+                            self.bound.insert(binding.name.clone());
+                        }
+                    }
+                }
+                // `print` writes a value out and stores nothing, and the rest
+                // are declarations or control transfers. Listed rather than
+                // caught by `_`, so a new statement form is a compile error
+                // here instead of a road out of the region nobody walked.
+                Statement::Print(..)
+                | Statement::Struct(..)
+                | Statement::Enum(..)
+                | Statement::Flags(..)
+                | Statement::TypeAlias(..)
+                | Statement::Break
+                | Statement::Continue
+                | Statement::Import(..)
+                | Statement::Extern { .. }
+                | Statement::Declared { .. } => {}
             }
         }
         // The block's trailing expression is its value. In a `with` block that
