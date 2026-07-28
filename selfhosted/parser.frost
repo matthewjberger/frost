@@ -1160,8 +1160,55 @@ parse_arg_list_for :: fn(mut p: Parser, callee: i64) -> i64 {
     head
 }
 
+// Prefix `-` and `!`, binding tighter than every binary operator and looser
+// than a postfix, which is what the precedence table says.
+//
+// There is no node kind for either, and that is not a shortcut. A negated
+// number is folded into the number, so it stays the untyped literal it was and
+// `m : Meters = -1` is still a literal taking a type from where it is written.
+// A negated float carries a flag rather than becoming a subtraction, which is
+// what keeps `-0.0` the number it was written as. Everything else becomes the
+// arithmetic it means, `0 - x`, which `type_of` already answers correctly for
+// floats, for distinct types and for every integer width, and `!x` becomes
+// `x == false`, which is what it is.
+//
+// This layer was missing entirely. `-1` parsed, and `-z` did not: it was read
+// as a subtraction with nothing on its left, and what came out was whatever
+// happened to be lying there. That is why there is not one bare negative
+// literal anywhere in the standard library or in this compiler.
+parse_unary :: fn(mut p: Parser) -> i64 {
+    kind := cur(p)
+    if (kind == TokenKind::Minus) {
+        advance(p)
+        if (cur(p) == TokenKind::Int) {
+            value := cur_val(p)
+            advance(p)
+            return new_node(p, NodeKind::Num, 0, 0, 0 - value)
+        }
+        if (cur(p) == TokenKind::Float) {
+            offset := cur_off(p)
+            length := cur_len(p)
+            advance(p)
+            made := new_named_node(p, NodeKind::Float, 0, offset, length)
+            mut node := arena_at(p.arena, made)
+            node.b = 1
+            return made
+        }
+        operand := parse_unary(p)
+        zero := new_node(p, NodeKind::Num, 0, 0, 0)
+        return new_node(p, NodeKind::Bin, zero, operand, OP_SUB)
+    }
+    if (kind == TokenKind::Bang) {
+        advance(p)
+        operand := parse_unary(p)
+        zero := new_node(p, NodeKind::Num, 0, 0, 0)
+        return new_node(p, NodeKind::Bin, operand, zero, OP_EQ)
+    }
+    parse_factor(p)
+}
+
 parse_mul :: fn(mut p: Parser) -> i64 {
-    mut left := parse_factor(p)
+    mut left := parse_unary(p)
     mut kind := cur(p)
     while (kind == TokenKind::Star || kind == TokenKind::Slash || kind == TokenKind::Percent) {
         mut op : i64 = OP_MUL
@@ -1172,7 +1219,7 @@ parse_mul :: fn(mut p: Parser) -> i64 {
             op = OP_MOD
         }
         advance(p)
-        right := parse_factor(p)
+        right := parse_unary(p)
         left = new_node(p, NodeKind::Bin, left, right, op)
         kind = cur(p)
     }

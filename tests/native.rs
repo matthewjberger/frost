@@ -15302,6 +15302,54 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   print ROW[1]\n    0\n}\n",
         "20\n",
     ),
+    // A prefix minus. The self-hosted parser had no prefix layer at all, so
+    // `-1` came out right by accident and `-z` was read as a subtraction with
+    // nothing on its left: it printed whatever was lying there. It was not
+    // refused, it was miscompiled, which is why `0 - 1` appears five hundred
+    // times across the standard library and this compiler and why there is not
+    // one bare negative literal in either.
+    (
+        "a_prefix_minus",
+        "main :: fn() -> i64 {\n\
+         \x20   x := 0 - 1\n\
+         \x20   print x\n\
+         \x20   y := -1\n\
+         \x20   print y\n\
+         \x20   z := 5\n\
+         \x20   print -z\n\
+         \x20   print -z * 2\n\
+         \x20   print -(z - 8)\n\
+         \x20   print 3 - -z\n    0\n}\n",
+        "-1\n-1\n-5\n-10\n3\n8\n",
+    ),
+    // The same for a float, where the sign is carried on the literal rather
+    // than turned into a subtraction, so that -0.0 stays what it was written
+    // as and a negative literal is still a literal taking a type.
+    (
+        "a_prefix_minus_on_a_float",
+        "main :: fn() -> i64 {\n\
+         \x20   a := -1.5\n\
+         \x20   b := 2.5\n\
+         \x20   print a + b\n\
+         \x20   print -b\n\
+         \x20   c : f32 = -0.75\n\
+         \x20   print c\n    0\n}\n",
+        "1\n-2.5\n-0.75\n",
+    ),
+    // Prefix `!`, which aborted the self-hosted compiler with an internal
+    // arena error rather than a diagnostic. It is `x == false`, which is what
+    // it means and what the rest of the tree writes out by hand.
+    (
+        "a_prefix_bang",
+        "main :: fn() -> i64 {\n\
+         \x20   flag := false\n\
+         \x20   if (!flag) { print 111 } else { print 222 }\n\
+         \x20   n := 7\n\
+         \x20   print !(n == 7)\n\
+         \x20   print !!(n == 7)\n\
+         \x20   print !(n == 8)\n    0\n}\n",
+        "111\n0\n1\n1\n",
+    ),
     // Copying a struct whose size is not a multiple of eight. The self-hosted
     // assembly backend moved the tail in whole words whatever was left, so a
     // four-byte struct was copied as eight and wrote four bytes past wherever
