@@ -9,7 +9,14 @@ use crate::ir::{
 use crate::types::Type;
 
 struct Signature {
-    param_count: usize,
+    param_types: Vec<Type>,
+    return_type: Type,
+}
+
+impl Signature {
+    fn param_count(&self) -> usize {
+        self.param_types.len()
+    }
 }
 
 const RUNTIME_INTRINSICS: &[&str] = &[
@@ -56,7 +63,13 @@ pub fn check_module_recovering(module: &IrModule) -> Vec<String> {
         signatures.insert(
             function.name.as_str(),
             Signature {
-                param_count: function.param_count,
+                // A function's parameters are its first locals, which is where
+                // their types are written down.
+                param_types: function.locals[..function.param_count]
+                    .iter()
+                    .map(|local| local.ty.clone())
+                    .collect(),
+                return_type: function.return_type.clone(),
             },
         );
     }
@@ -64,7 +77,8 @@ pub fn check_module_recovering(module: &IrModule) -> Vec<String> {
         signatures.insert(
             external.name.as_str(),
             Signature {
-                param_count: external.params.len(),
+                param_types: external.params.clone(),
+                return_type: external.return_type.clone(),
             },
         );
     }
@@ -149,11 +163,33 @@ fn check_statement(
         IrStatement::Assign(local, rvalue) => {
             check_local(function, *local)?;
             check_rvalue(function, rvalue, signatures)?;
+            if let Some(produced) = rvalue_type(function, rvalue, signatures) {
+                let wanted = function.local_type(*local);
+                if !fits(&produced, wanted) {
+                    bail!(
+                        "{}_{local} in '{}' is a {wanted} and is assigned a {produced}",
+                        at(function, &IrOperand::Local(*local)),
+                        function.name
+                    );
+                }
+            }
         }
         IrStatement::Store { address, value } => {
             check_operand(function, address)?;
             check_operand(function, value)?;
             require_pointer(function, address, "store address")?;
+            {
+                let held = operand_type(function, address);
+                let given = operand_type(function, value);
+                if let Some(pointee) = pointee_of(&held)
+                    && !fits(&given, pointee)
+                {
+                    bail!(
+                        "{}a store through a {held} writes a {given}",
+                        at(function, value)
+                    );
+                }
+            }
         }
         IrStatement::Copy {
             destination,
@@ -183,6 +219,16 @@ fn check_rvalue(
             if !op.is_comparison() {
                 require_numeric(function, left)?;
                 require_numeric(function, right)?;
+            }
+            {
+                let held = operand_type(function, left);
+                let other = operand_type(function, right);
+                if !fits(&held, &other) && !fits(&other, &held) {
+                    bail!(
+                        "{}an operator has a {held} on one side and a {other} on the other",
+                        at(function, left)
+                    );
+                }
             }
         }
         IrRvalue::Unary(_, operand) => {
@@ -222,13 +268,30 @@ fn check_rvalue(
             }
             match signatures.get(callee.as_str()) {
                 Some(signature) => {
-                    if arguments.len() != signature.param_count {
+                    if arguments.len() != signature.param_count() {
                         bail!(
                             "call to '{}' passes {} arguments but it takes {}",
                             callee,
                             arguments.len(),
-                            signature.param_count
+                            signature.param_count()
                         );
+                    }
+                    {
+                        for (index, (argument, wanted)) in arguments
+                            .iter()
+                            .zip(signature.param_types.iter())
+                            .enumerate()
+                        {
+                            let given = operand_type(function, argument);
+                            if !fits(&given, wanted) {
+                                bail!(
+                                    "{}argument {} of the call to '{}' is a {given}, and it takes a {wanted}",
+                                    at(function, argument),
+                                    index + 1,
+                                    callee
+                                );
+                            }
+                        }
                     }
                 }
                 None if is_runtime_intrinsic(callee) => {}
@@ -290,6 +353,17 @@ fn check_terminator(
         IrTerminator::Return(value) => {
             if let Some(operand) = value {
                 check_operand(function, operand)?;
+                {
+                    let given = operand_type(function, operand);
+                    if !fits(&given, &function.return_type) {
+                        bail!(
+                            "{}'{}' answers with a {}, and this returns a {given}",
+                            at(function, operand),
+                            function.name,
+                            function.return_type
+                        );
+                    }
+                }
             } else if function.return_type != Type::Void {
                 bail!(
                     "function '{}' returns {} but a block returns no value",
@@ -313,6 +387,177 @@ fn check_terminator(
         IrTerminator::Unreachable => {}
     }
     Ok(())
+}
+
+/// The type an rvalue produces, or `None` where this pass does not model it.
+///
+/// `None` rather than a guess. The three address-forming rvalues produce a
+/// pointer whose pointee is the lowering's business, and answering with a
+/// plausible one here would turn this from a check into a second opinion that
+/// is sometimes wrong.
+fn rvalue_type(
+    function: &IrFunction,
+    rvalue: &IrRvalue,
+    signatures: &HashMap<&str, Signature>,
+) -> Option<Type> {
+    match rvalue {
+        IrRvalue::Use(operand) => Some(operand_type(function, operand)),
+        IrRvalue::Binary(op, left, _) => {
+            if op.is_comparison() {
+                Some(Type::Bool)
+            } else {
+                Some(operand_type(function, left))
+            }
+        }
+        IrRvalue::Unary(_, operand) => Some(operand_type(function, operand)),
+        IrRvalue::Cast(_, target) => Some(target.clone()),
+        IrRvalue::Load { ty, .. } => Some(ty.clone()),
+        IrRvalue::Call {
+            function: callee, ..
+        } => signatures
+            .get(callee.as_str())
+            .map(|signature| signature.return_type.clone()),
+        IrRvalue::CallIndirect { return_type, .. } => Some(return_type.clone()),
+        IrRvalue::AddressOf { .. }
+        | IrRvalue::FieldAddress { .. }
+        | IrRvalue::ElementAddress { .. }
+        | IrRvalue::FunctionAddress(_) => None,
+    }
+}
+
+fn pointee_of(ty: &Type) -> Option<&Type> {
+    match ty {
+        Type::Ptr(inner) | Type::Ref(inner) | Type::RefMut(inner) => {
+            Some(inner)
+        }
+        _ => None,
+    }
+}
+
+/// A distinct type is its own type to a program and its base type to a machine,
+/// and this pass is about the machine.
+fn strip(ty: &Type) -> &Type {
+    match ty {
+        Type::Distinct(_, inner) => strip(inner),
+        other => other,
+    }
+}
+
+fn is_integer(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64
+            | Type::Isize
+            | Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+            | Type::Usize
+    )
+}
+
+fn is_integer_like(ty: &Type) -> bool {
+    is_integer(ty) || matches!(ty, Type::Handle(_))
+}
+
+fn is_float(ty: &Type) -> bool {
+    matches!(ty, Type::F32 | Type::F64)
+}
+
+// The name a struct or an enum carries, so the two spellings of one declared
+// type can be recognised as the same thing.
+fn named(ty: &Type) -> Option<&str> {
+    match ty {
+        Type::Struct(name) | Type::Enum(name) => Some(name.as_str()),
+        _ => None,
+    }
+}
+
+fn is_text(ty: &Type) -> bool {
+    match ty {
+        Type::Str => true,
+        Type::Slice(inner) => matches!(**inner, Type::U8 | Type::I8),
+        _ => false,
+    }
+}
+
+fn is_aggregate(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::Struct(_)
+            | Type::Enum(_)
+            | Type::Array(_, _)
+            | Type::Slice(_)
+            | Type::Str
+    )
+}
+
+/// Whether a value of one type may stand where the other is wanted.
+///
+/// Not equality. Two integer widths fit each other here, because the language
+/// converts between them wherever one is written for the other and whether it
+/// should is a question about the language rather than about this pass. What
+/// does not fit is a truth value where a number is wanted, or text where either
+/// is, which is where the holes this was written for actually are: an i64 was
+/// accepted for a `bool` parameter and answered 111, and a `str` reached a
+/// backend that had nothing to say about it beyond its own name.
+fn fits(given: &Type, wanted: &Type) -> bool {
+    let given = strip(given);
+    let wanted = strip(wanted);
+    if given == wanted {
+        return true;
+    }
+    // Text is a run of bytes. The two spellings are one type and the lowering
+    // uses whichever the source wrote.
+    if is_text(given) && is_text(wanted) {
+        return true;
+    }
+    // An enum is laid out as a struct with a tag beside the variant's fields,
+    // so the two spell one type here and which one a value carries depends on
+    // whether it came from the declaration or from the layout.
+    if named(given) == named(wanted) && named(given).is_some() {
+        return true;
+    }
+    // Void is a result nobody asked for. A statement's value is assigned to one
+    // and goes no further, which is the lowering saying it is discarded rather
+    // than saying it is nothing.
+    if matches!(wanted, Type::Void) {
+        return true;
+    }
+    // An aggregate travels by address: the mode pass rewrites a parameter that
+    // holds one into a pointer to it, so a call passes the address where the
+    // signature says the value. That is the calling convention rather than a
+    // mismatch, and the pointee is checked where it is read.
+    if (is_aggregate(wanted) && is_pointer(given))
+        || (is_aggregate(given) && is_pointer(wanted))
+    {
+        return true;
+    }
+    // A pointer is a machine word and the lowering retypes them freely: an
+    // address is checked where it is loaded from rather than where it is
+    // carried.
+    if is_pointer(given) && is_pointer(wanted) {
+        return true;
+    }
+    // A handle is a generation and an index packed into one word, so it is an
+    // integer to everything below the language.
+    if is_integer_like(given) && is_integer_like(wanted) {
+        return true;
+    }
+    if is_float(given) && is_float(wanted) {
+        return true;
+    }
+    // A number becoming a pointer and back is how the language spells an
+    // untyped address, and `no_pointer()` is written that way everywhere.
+    if (is_integer(given) && is_pointer(wanted))
+        || (is_pointer(given) && is_integer(wanted))
+    {
+        return true;
+    }
+    false
 }
 
 fn operand_type(function: &IrFunction, operand: &IrOperand) -> Type {
@@ -468,6 +713,107 @@ mod tests {
 
     fn integer(value: i64) -> IrOperand {
         IrOperand::Constant(IrConstant::Integer(value, Type::I64))
+    }
+
+    // What the strict checks are for. Each of these is a shape the pass used to
+    // accept: it counted a call's arguments without looking at them, and it
+    // never compared an assignment, a store or a return against the type it was
+    // going into.
+    #[test]
+    fn refuses_an_assignment_of_the_wrong_type() {
+        let module = single_block(
+            Type::I64,
+            vec![local(Type::I64), local(Type::Str)],
+            vec![IrStatement::Assign(0, IrRvalue::Use(IrOperand::Local(1)))],
+            IrTerminator::Return(Some(IrOperand::Local(0))),
+        );
+        let reports = check_module_recovering(&module);
+        assert_eq!(reports.len(), 1, "{reports:?}");
+        assert!(reports[0].contains("is a i64 and is assigned a str"));
+    }
+
+    #[test]
+    fn refuses_a_return_of_the_wrong_type() {
+        let module = single_block(
+            Type::Bool,
+            vec![local(Type::Str)],
+            vec![IrStatement::Assign(0, IrRvalue::Use(IrOperand::Local(0)))],
+            IrTerminator::Return(Some(IrOperand::Local(0))),
+        );
+        let reports = check_module_recovering(&module);
+        assert_eq!(reports.len(), 1, "{reports:?}");
+        assert!(reports[0].contains("answers with a bool"));
+    }
+
+    #[test]
+    fn refuses_a_store_of_the_wrong_type() {
+        let module = single_block(
+            Type::I64,
+            vec![
+                local(Type::Ptr(Box::new(Type::Bool))),
+                local(Type::Str),
+                local(Type::I64),
+            ],
+            vec![IrStatement::Store {
+                address: IrOperand::Local(0),
+                value: IrOperand::Local(1),
+            }],
+            IrTerminator::Return(Some(IrOperand::Local(2))),
+        );
+        let reports = check_module_recovering(&module);
+        assert_eq!(reports.len(), 1, "{reports:?}");
+        assert!(reports[0].contains("writes a str"));
+    }
+
+    #[test]
+    fn refuses_an_argument_of_the_wrong_type() {
+        let mut module = single_block(
+            Type::I64,
+            vec![local(Type::Str), local(Type::I64)],
+            vec![IrStatement::Assign(
+                1,
+                IrRvalue::Call {
+                    function: "takes_a_truth".to_string(),
+                    arguments: vec![IrOperand::Local(0)],
+                },
+            )],
+            IrTerminator::Return(Some(IrOperand::Local(1))),
+        );
+        module.functions.push(IrFunction {
+            name: "takes_a_truth".to_string(),
+            param_count: 1,
+            param_layouts: vec![None],
+            return_type: Type::I64,
+            locals: vec![local(Type::Bool)],
+            blocks: vec![IrBlock {
+                statements: Vec::new(),
+                terminator: IrTerminator::Return(Some(integer(0))),
+            }],
+            entry: 0,
+            module: 0,
+            local: false,
+            instantiated: None,
+        });
+        let reports = check_module_recovering(&module);
+        assert_eq!(reports.len(), 1, "{reports:?}");
+        assert!(reports[0].contains("is a str, and it takes a bool"));
+    }
+
+    // Two integer widths do fit each other, because whether they should is a
+    // question about the language rather than about this pass, and answering it
+    // here would refuse programs the language accepts everywhere else.
+    #[test]
+    fn accepts_one_integer_width_where_another_is_wanted() {
+        let module = single_block(
+            Type::I64,
+            vec![local(Type::I32), local(Type::I64)],
+            vec![
+                IrStatement::Assign(0, IrRvalue::Use(integer(7))),
+                IrStatement::Assign(1, IrRvalue::Use(IrOperand::Local(0))),
+            ],
+            IrTerminator::Return(Some(IrOperand::Local(1))),
+        );
+        assert!(check_module(&module).is_ok());
     }
 
     #[test]
