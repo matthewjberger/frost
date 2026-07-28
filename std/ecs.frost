@@ -41,6 +41,7 @@ export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     query_with,
     query_filter, query_row_passes, for_each, for_each_row, component_of,
     ecs_single, ecs_count_matching, ecs_gather, ecs_pairs, EntityPair,
+    ecs_compact,
     Filters, no_filters, filter_without, filter_changed, filter_added,
     filter_tagged, filter_untagged, no_marks, marked,
     tag_new, tag_free, tag_release, tag_add, tag_remove, tag_has,
@@ -1137,10 +1138,15 @@ Filters :: struct {
     // and every row is asked.
     //
     // The marks rather than the tag, because a borrow cannot be stored and a
-    // slice is a value. What that costs is that the slice is the run the tag
-    // held when the filter was built: adding a tag to an entity past the end of
-    // that run during the walk is not seen. Nothing else here mutates while a
-    // walk is running either, which is what the command queue is for.
+    // slice is a value. What that costs has to be said plainly: the slice is
+    // the storage the tag held when the filter was built, and `tag_add` grows
+    // that storage by reallocating it. A filter outliving a `tag_add` that
+    // grew the marks points at freed memory, which is a read of whatever the
+    // allocator did next rather than a stale answer.
+    //
+    // So a filter is built after the tagging it asks about and thrown away
+    // before the next. Nothing else here may be mutated mid-walk either, which
+    // is what the command queue is for, and this is the same rule.
     tagged: []i64,
     untagged: []i64,
 }
@@ -1517,10 +1523,12 @@ events_trim :: fn(mut e: Events, upto: i64) {
         dropped = e.count
     }
     kept := e.count - dropped
+    // Forward, because what is kept moves down: the source is always ahead of
+    // the destination, so a run copied in order never writes over itself.
+    moved := dropped * e.item_size
     mut index : i64 = 0
     while (index < kept * e.item_size) {
-        held := bytes_at(e.data, dropped * e.item_size + index)
-        unsafe { e.data[index] = held[0] }
+        unsafe { e.data[index] = e.data[moved + index] }
         index = index + 1
     }
     e.first = e.first + dropped
@@ -1665,10 +1673,15 @@ ecs_count_matching :: fn(world: World, f: Filters, types: $...) -> i64 {
 // structural change needs: gather here, then spawn or despawn over what came
 // back, since doing either during the walk moves the rows the walk is holding.
 //
-// The caller owns what comes back and releases it with `heap_release_slice`.
-ecs_gather :: fn(world: World, f: Filters, types: $...) -> []Entity {
+// A `Vec` rather than a slice, because a run of nothing is a real answer here
+// and a slice cannot be one: the heap hands out at least one element whatever
+// is asked for, so an empty slice would either carry a length nobody wrote or
+// lose the pointer it has to be freed through. A `Vec` keeps the two apart.
+//
+// The caller owns what comes back and releases it with `vec_free`.
+ecs_gather :: fn(world: World, f: Filters, types: $...) -> Vec<Entity> {
     total := ecs_count_matching(world, f, $T for T in types)
-    mut out := heap_slice($Entity, total)
+    mut out := vec_new($Entity, total)
     if (total == 0) {
         return out
     }
@@ -1677,14 +1690,12 @@ ecs_gather :: fn(world: World, f: Filters, types: $...) -> []Entity {
         query_with(q, component_of($T, world))
     }
     query_filter(q, f)
-    mut written : i64 = 0
     while (query_next(world, q)) {
         rows := query_entities(world, q)
         mut row : i64 = 0
         while (row < q.count) {
-            if (query_row_passes(world, q, row) && written < total) {
-                out[written] = rows[row]
-                written = written + 1
+            if (query_row_passes(world, q, row)) {
+                vec_push($Entity, out, rows[row])
             }
             row = row + 1
         }
@@ -1698,28 +1709,102 @@ ecs_gather :: fn(world: World, f: Filters, types: $...) -> []Entity {
 //
 // Written as a gather and two index loops rather than as a cursor, since a pair
 // is two rows that may be in two different tables and no single walk is over
-// both. The caller owns what comes back.
-ecs_pairs :: fn(world: World, f: Filters, types: $...) -> []EntityPair {
-    held := ecs_gather(world, f, $T for T in types)
-    total := slice_len(held)
-    mut out := heap_slice($EntityPair, total * (total - 1) / 2)
-    mut written : i64 = 0
+// both. The caller owns what comes back and releases it with `vec_free`.
+ecs_pairs :: fn(world: World, f: Filters, types: $...) -> Vec<EntityPair> {
+    mut held := ecs_gather(world, f, $T for T in types)
+    names := vec_slice($Entity, held)
+    total := slice_len(names)
+    mut out := vec_new($EntityPair, total * (total - 1) / 2)
     mut first : i64 = 0
     while (first < total) {
         mut second := first + 1
         while (second < total) {
-            out[written] = EntityPair { a = held[first], b = held[second] }
-            written = written + 1
+            vec_push($EntityPair, out,
+                EntityPair { a = names[first], b = names[second] })
             second = second + 1
         }
         first = first + 1
     }
-    heap_release_slice($Entity, held)
+    vec_free($Entity, held)
     out
 }
 
 // Two entities a pair walk named, in the order the walk found them.
 EntityPair :: struct { a: Entity, b: Entity }
+
+// Drop the tables nothing is in. A world that spawned a wide spread of
+// archetypes and then despawned most of them keeps a table per archetype it
+// ever held, and every query walks all of them to skip them. This releases the
+// empty ones and works out again where everything left is.
+//
+// Table zero is never dropped, empty or not. A fresh entity is put in the
+// archetype holding nothing and `ecs_spawn` reaches that table by index rather
+// than by lookup, so it is the one table whose position is part of how the
+// world works rather than an accident of what was spawned. Dropping it puts the
+// next spawn's row in whatever archetype landed at zero, with a row in that
+// table's entities and none in its columns, and the world comes apart a read
+// later.
+//
+// Every other table index a caller is holding is stale afterwards, which is why
+// this is asked for rather than done as a matter of course: only the caller
+// knows there is no walk in flight.
+ecs_compact :: fn(mut world: World) -> i64 {
+    total := vec_len($Table, world.tables)
+    mut kept := vec_new($Table, total)
+    mut dropped : i64 = 0
+    mut index : i64 = 0
+    while (index < total) {
+        ref table := vec_slice($Table, world.tables)[index]
+        if (index == 0 || vec_len($Entity, table.entities) > 0) {
+            vec_push($Table, kept, table_move(table))
+        } else {
+            table_release(table)
+            dropped = dropped + 1
+        }
+        index = index + 1
+    }
+    if (dropped == 0) {
+        vec_free($Table, kept)
+        return 0
+    }
+    vec_free($Table, world.tables)
+    world.tables = kept
+    rebuild_lookup(world)
+    dropped
+}
+
+// A table's storage handed to another Vec, leaving the old row owning nothing.
+// The columns are the same allocations; what moves is who holds them, and the
+// empty Vecs left behind are what `vec_free` over the old run then releases.
+table_move :: fn(mut held: Table) -> Table {
+    out := Table { mask = held.mask, entities = held.entities,
+        columns = held.columns }
+    held.entities = vec_new($Entity, 0)
+    held.columns = vec_new($Column, 0)
+    out
+}
+
+// Where every entity is, and which mask reaches which table, worked out again
+// over the tables that are left.
+rebuild_lookup :: fn(mut world: World) {
+    lookup_free(world.lookup)
+    world.lookup = lookup_new(vec_len($Table, world.tables) * 2 + 16)
+    mut index : i64 = 0
+    while (index < vec_len($Table, world.tables)) {
+        ref table := vec_slice($Table, world.tables)[index]
+        lookup_put(world.lookup, table.mask, index)
+        rows := vec_slice($Entity, table.entities)
+        mut row : i64 = 0
+        while (row < slice_len(rows)) {
+            entity := rows[row]
+            ref slot := vec_slice($EntitySlot, world.slots)[entity.id]
+            slot.table = index
+            slot.row = row
+            row = row + 1
+        }
+        index = index + 1
+    }
+}
 
 // Everything one table allocated. `world_release` frees them all in a loop; a
 // compaction frees only the ones it drops.
@@ -4845,7 +4930,8 @@ test "a gather names every row a walk would visit" {
     assert(ecs_count_matching(world, no_filters(), $TestPosition) == 5)
     assert(ecs_count_matching(world, no_filters(), $TestHealth) == 2)
 
-    held := ecs_gather(world, no_filters(), $TestPosition)
+    mut gathered := ecs_gather(world, no_filters(), $TestPosition)
+    held := vec_slice($Entity, gathered)
     assert(slice_len(held) == 5)
     // Every one of them is alive and distinct, which is what a second pass
     // over the gather relies on.
@@ -4859,7 +4945,7 @@ test "a gather names every row a walk would visit" {
         }
         index = index + 1
     }
-    heap_release_slice($Entity, held)
+    vec_free($Entity, gathered)
     ecs_free(world)
 }
 
@@ -4876,7 +4962,8 @@ test "a pair walk names each pair once" {
         made = made + 1
     }
 
-    pairs := ecs_pairs(world, no_filters(), $TestPosition)
+    mut found := ecs_pairs(world, no_filters(), $TestPosition)
+    pairs := vec_slice($EntityPair, found)
     // Four things make six pairs, and neither ordering of one appears twice.
     assert(slice_len(pairs) == 6)
     mut index : i64 = 0
@@ -4894,8 +4981,159 @@ test "a pair walk names each pair once" {
         }
         index = index + 1
     }
-    heap_release_slice($EntityPair, pairs)
+    vec_free($EntityPair, found)
     ecs_free(world)
+}
+
+// The empty answer is a real answer, and it is the one a slice could not carry:
+// the heap hands out at least one element whatever is asked for, so a gather
+// that matched nothing would otherwise hand back a length nobody wrote.
+test "a gather that matches nothing is empty" {
+    mut world := ecs_new()
+    ecs_register($TestPosition, world)
+    ecs_register($TestHealth, world)
+
+    mut empty := ecs_gather(world, no_filters(), $TestPosition)
+    assert(slice_len(vec_slice($Entity, empty)) == 0)
+    assert(ecs_count_matching(world, no_filters(), $TestPosition) == 0)
+    vec_free($Entity, empty)
+
+    // And so is a pair walk over fewer than two things, which is the other
+    // count that multiplies out to nothing.
+    lone := ecs_spawn_bundle(world, $TestPosition)
+    mut pairs := ecs_pairs(world, no_filters(), $TestPosition)
+    assert(slice_len(vec_slice($EntityPair, pairs)) == 0)
+    vec_free($EntityPair, pairs)
+    assert(ecs_alive(world, lone))
+    ecs_free(world)
+}
+
+// Compaction drops the tables nothing is in and leaves the world working: every
+// entity still findable, and a fresh spawn still landing in the archetype
+// holding nothing, which is the table compaction is not allowed to drop.
+test "compaction drops the empty tables and leaves the world working" {
+    mut world := ecs_new()
+    position := ecs_register($TestPosition, world)
+    health := ecs_register($TestHealth, world)
+
+    kept := ecs_spawn(world)
+    ecs_add($TestPosition, world, kept, position,
+        TestPosition { x = 7.0, y = 0.0 })
+    gone := ecs_spawn(world)
+    ecs_add($TestHealth, world, gone, health, TestHealth { points = 3 })
+    both := ecs_spawn_bundle(world, $TestPosition, $TestHealth)
+    ecs_set($TestPosition, world, both, position,
+        TestPosition { x = 9.0, y = 0.0 })
+    ecs_despawn(world, gone)
+
+    dropped := ecs_compact(world)
+    assert(dropped > 0)
+    assert(ecs_alive(world, kept))
+    assert(ecs_alive(world, both))
+    assert(ecs_get($TestPosition, world, kept, position).x == 7.0)
+    assert(ecs_get($TestPosition, world, both, position).x == 9.0)
+    assert(ecs_count_matching(world, no_filters(), $TestPosition) == 2)
+
+    // The part that broke when table zero was dropped: a fresh entity goes in
+    // the archetype holding nothing, and what it is given afterwards has to
+    // reach the columns of wherever it migrates to.
+    fresh := ecs_spawn(world)
+    ecs_add($TestPosition, world, fresh, position,
+        TestPosition { x = 4.0, y = 0.0 })
+    assert(ecs_get($TestPosition, world, fresh, position).x == 4.0)
+    assert(ecs_get($TestPosition, world, kept, position).x == 7.0)
+    assert(ecs_count_matching(world, no_filters(), $TestPosition) == 3)
+
+    // Nothing left to drop the second time.
+    assert(ecs_compact(world) == 0)
+    ecs_free(world)
+}
+
+// A reader keeps its own place, and a channel several systems read is trimmed
+// to the oldest of them rather than cleared out from under the slowest.
+test "a channel is read from a mark and trimmed to the slowest reader" {
+    mut channel := events_new($TestHealth)
+    mut fast := reader_new()
+    mut slow := reader_new()
+
+    events_send($TestHealth, channel, TestHealth { points = 1 })
+    events_send($TestHealth, channel, TestHealth { points = 2 })
+    assert(events_pending(channel, fast) == 2)
+
+    seen := events_read($TestHealth, channel, fast)
+    assert(slice_len(seen) == 2)
+    assert(seen[0].points == 1)
+    assert(events_pending(channel, fast) == 0)
+    // The other reader has not moved, so what it has waiting is untouched.
+    assert(events_pending(channel, slow) == 2)
+
+    events_send($TestHealth, channel, TestHealth { points = 3 })
+    assert(events_pending(channel, fast) == 1)
+    assert(events_pending(channel, slow) == 3)
+
+    // A mark rather than a reader, which is what a system keeping its own uses.
+    from_start := events_since($TestHealth, channel, 0)
+    assert(slice_len(from_start) == 3)
+    from_second := events_since($TestHealth, channel, 1)
+    assert(slice_len(from_second) == 2)
+    assert(from_second[0].points == 2)
+
+    mut readers : [2]EventReader = [EventReader { seen = fast.seen },
+        EventReader { seen = slow.seen }]
+    assert(readers_oldest(readers) == 0)
+
+    // Trimming to the slowest drops nothing yet, since it has read nothing.
+    events_trim(channel, readers_oldest(readers))
+    assert(events_sent(channel) == 3)
+    assert(events_pending(channel, slow) == 3)
+
+    // Once it catches up, what both have passed goes, and what is left is what
+    // is left: the sequence numbers carry on across the trim.
+    caught := events_read($TestHealth, channel, slow)
+    assert(slice_len(caught) == 3)
+    readers[0] = EventReader { seen = fast.seen }
+    readers[1] = EventReader { seen = slow.seen }
+    events_trim(channel, readers_oldest(readers))
+    assert(events_sent(channel) == 3)
+    // Trimming to the oldest keeps what the fastest has not reached: the third
+    // is still waiting for the reader that stopped after the second.
+    assert(events_pending(channel, fast) == 1)
+
+    events_send($TestHealth, channel, TestHealth { points = 4 })
+    after := events_read($TestHealth, channel, fast)
+    assert(slice_len(after) == 2)
+    assert(after[0].points == 3)
+    assert(after[1].points == 4)
+    events_free(channel)
+}
+
+// A partial trim keeps what is past the mark, in order, which is the shifting
+// the whole thing turns on.
+test "a partial trim keeps what is past the mark" {
+    mut channel := events_new($TestHealth)
+    mut index : i64 = 0
+    while (index < 5) {
+        events_send($TestHealth, channel, TestHealth { points = index })
+        index = index + 1
+    }
+
+    events_trim(channel, 2)
+    left := events_slice($TestHealth, channel)
+    assert(slice_len(left) == 3)
+    assert(left[0].points == 2)
+    assert(left[1].points == 3)
+    assert(left[2].points == 4)
+    // The numbering did not restart, so a reader that saw the first two is
+    // still where it was rather than back at the beginning.
+    assert(events_sent(channel) == 5)
+
+    // Past everything empties it, and a mark already behind does nothing.
+    events_trim(channel, 2)
+    assert(slice_len(events_slice($TestHealth, channel)) == 3)
+    events_trim(channel, 99)
+    assert(slice_len(events_slice($TestHealth, channel)) == 0)
+    assert(events_sent(channel) == 5)
+    events_free(channel)
 }
 
 // A world written down and read back is the same world: the same entities in
