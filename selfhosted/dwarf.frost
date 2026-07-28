@@ -1,0 +1,341 @@
+// The debug sections, built from the `.file` and `.loc` directives the
+// assembler kept. Three of them: a line-number program, and the smallest
+// compilation-unit entry that points a debugger at it.
+//
+// The line program is written with the plain opcodes rather than the packed
+// special ones. A special opcode encodes a line delta and an address delta in
+// one byte when both are small, which is what makes a real line table compact;
+// here the table is read by a debugger and never by a person, and packing it
+// wrong yields a table that is subtly off rather than one that fails, so the
+// form with nothing to get wrong is the one written.
+//
+// The three sections go end to end into one run of bytes the caller owns. What
+// the object writers need back is where each one starts, how long it is, and
+// which places in them hold a value the linker has to fill in.
+
+import "core.frost"
+import "blob.frost"
+import "assemble.frost"
+
+export Dwarf, dwarf_build
+
+// Version four, which every debugger in use reads and which keeps the file
+// table in the header rather than in a section of its own.
+DWARF_VERSION :: 4
+
+// The line program's constants. A special opcode covers line deltas from
+// `LINE_BASE` to `LINE_BASE + LINE_RANGE - 1`; nothing here emits one, but the
+// header declares them because a reader uses them to decode.
+LINE_BASE :: -5
+LINE_RANGE :: 14
+OPCODE_BASE :: 13
+MINIMUM_INSTRUCTION_LENGTH :: 1
+
+// The standard opcodes this writes.
+DW_LNS_COPY :: 1
+DW_LNS_ADVANCE_PC :: 2
+DW_LNS_ADVANCE_LINE :: 3
+DW_LNS_SET_FILE :: 4
+DW_LNS_SET_COLUMN :: 5
+
+// The extended ones, which are an escape byte, a length, and a sub-opcode.
+DW_LNE_END_SEQUENCE :: 1
+DW_LNE_SET_ADDRESS :: 2
+
+// The tag, the attributes and the forms the one entry uses.
+DW_TAG_COMPILE_UNIT :: 17
+DW_CHILDREN_NO :: 0
+DW_AT_NAME :: 3
+DW_AT_STMT_LIST :: 16
+DW_AT_LOW_PC :: 17
+DW_AT_HIGH_PC :: 18
+DW_AT_LANGUAGE :: 19
+DW_AT_PRODUCER :: 37
+DW_FORM_ADDR :: 1
+DW_FORM_DATA4 :: 6
+DW_FORM_STRING :: 8
+DW_FORM_DATA1 :: 11
+DW_FORM_SEC_OFFSET :: 23
+
+// C, because a debugger reads the language to decide how to print a name and
+// Frost's own shapes are closer to C's than to anything else in the list.
+DW_LANG_C99 :: 12
+
+// Where each section sits in the bytes that were built, and the places in them
+// the linker fills in. Each writer turns those into the fixup its format
+// spells.
+Dwarf :: struct {
+    wanted: bool,
+    line_at: i64,
+    line_size: i64,
+    abbrev_at: i64,
+    abbrev_size: i64,
+    info_at: i64,
+    info_size: i64,
+    // In `.debug_line`, the eight bytes the sequence's first address goes into.
+    line_address: i64,
+    // In `.debug_info`, the low address, the offset of the abbreviations, and
+    // the offset of the line program.
+    info_address: i64,
+    info_abbrev: i64,
+    info_stmt: i64,
+}
+
+// An unsigned number, seven bits at a time, least significant first, with the
+// top bit set on every byte but the last.
+uleb :: fn(mut out: Blob, value: i64) {
+    mut held := value
+    mut more := true
+    while (more) {
+        mut byte := held & 127
+        held = held >> 7
+        if (held == 0) {
+            more = false
+        } else {
+            byte = byte | 128
+        }
+        blob_byte(out, byte)
+    }
+}
+
+// The signed form. The sign is carried by bit six of the last byte, so the
+// shift keeps the sign and the stop test looks at that bit.
+sleb :: fn(mut out: Blob, value: i64) {
+    mut held := value
+    mut more := true
+    while (more) {
+        byte := held & 127
+        held = held >> 7
+        sign := byte & 64
+        if ((held == 0 && sign == 0) || (held == -1 && sign != 0)) {
+            more = false
+            blob_byte(out, byte)
+        } else {
+            blob_byte(out, byte | 128)
+        }
+    }
+}
+
+// A path, with the escapes the assembly text carries undone. A backslash before
+// anything stands for that byte, which is the only escape the backend writes.
+dwarf_path :: fn(mut out: Blob, src: str, off: i64, len: i64) {
+    mut i : i64 = 0
+    while (i < len) {
+        byte := src[off + i]
+        if (byte == CH_BACKSLASH && i + 1 < len) {
+            i = i + 1
+            blob_byte(out, src[off + i])
+        } else {
+            blob_byte(out, byte)
+        }
+        i = i + 1
+    }
+    blob_byte(out, 0)
+}
+
+dwarf_text :: fn(mut out: Blob, value: str) {
+    blob_copy(out, value, str_len(value))
+    blob_byte(out, 0)
+}
+
+// Fill in four bytes already written, which is how a length covering what
+// follows it is set once the end is known.
+patch32 :: fn(mut out: Blob, at: i64, value: i64) {
+    out.bytes[at] = cast($u8, value & 255)
+    out.bytes[at + 1] = cast($u8, (value >> 8) & 255)
+    out.bytes[at + 2] = cast($u8, (value >> 16) & 255)
+    out.bytes[at + 3] = cast($u8, (value >> 24) & 255)
+}
+
+// How much room the three sections could take: the headers and one path per
+// file, and per row a set-file, a set-column, an advance-line, an advance-pc
+// and a copy, none of which exceeds ten bytes.
+dwarf_room :: fn(mut unit: Assembly, producer: str) -> i64 {
+    mut names := str_len(producer)
+    mut i : i64 = 0
+    while (i < asm_file_count(unit)) {
+        names = names + asm_file_at(unit, i).len + 8
+        i = i + 1
+    }
+    1024 + names * 2 + asm_loc_count(unit) * 48
+}
+
+// Build the three sections into `out`. A unit with no rows wants none of them,
+// which is every unit not compiled with `-g`.
+dwarf_build :: fn(mut unit: Assembly, mut out: Blob, producer: str) -> Dwarf {
+    mut held := Dwarf {
+        wanted = false,
+        line_at = 0, line_size = 0,
+        abbrev_at = 0, abbrev_size = 0,
+        info_at = 0, info_size = 0,
+        line_address = 0, info_address = 0,
+        info_abbrev = 0, info_stmt = 0,
+    }
+    if (asm_loc_count(unit) == 0 || asm_file_count(unit) == 0) {
+        return held
+    }
+    held.wanted = true
+    blob_room(out, dwarf_room(unit, producer))
+    dwarf_line(unit, out, held)
+    dwarf_abbrev(out, held)
+    dwarf_info(unit, out, held, producer)
+    held
+}
+
+// The line-number program: a header naming the files, one row per `.loc`, then
+// the end of the sequence at the end of the text.
+dwarf_line :: fn(mut unit: Assembly, mut out: Blob, mut held: Dwarf) {
+    held.line_at = out.count
+
+    length_at := out.count
+    blob_word32(out, 0)
+    blob_word16(out, DWARF_VERSION)
+    header_length_at := out.count
+    blob_word32(out, 0)
+
+    blob_byte(out, MINIMUM_INSTRUCTION_LENGTH)
+    blob_byte(out, 1)
+    blob_byte(out, 1)
+    blob_byte(out, LINE_BASE & 255)
+    blob_byte(out, LINE_RANGE)
+    blob_byte(out, OPCODE_BASE)
+    // How many arguments each standard opcode below `OPCODE_BASE` takes.
+    blob_byte(out, 0)
+    blob_byte(out, 1)
+    blob_byte(out, 1)
+    blob_byte(out, 1)
+    blob_byte(out, 1)
+    blob_byte(out, 0)
+    blob_byte(out, 0)
+    blob_byte(out, 0)
+    blob_byte(out, 1)
+    blob_byte(out, 0)
+    blob_byte(out, 0)
+    blob_byte(out, 1)
+
+    // No include directories: every path is written whole, so none of them is
+    // relative to anything that would be listed here.
+    blob_byte(out, 0)
+    mut f : i64 = 0
+    while (f < asm_file_count(unit)) {
+        entry := asm_file_at(unit, f)
+        dwarf_path(out, unit.src, entry.off, entry.len)
+        uleb(out, 0)
+        uleb(out, 0)
+        uleb(out, 0)
+        f = f + 1
+    }
+    blob_byte(out, 0)
+    patch32(out, header_length_at, out.count - (header_length_at + 4))
+
+    // The state the header says a sequence starts in, which is what the deltas
+    // below are measured from.
+    mut line : i64 = 1
+    mut file : i64 = 1
+    mut column : i64 = 0
+    mut address : i64 = 0
+
+    blob_byte(out, 0)
+    uleb(out, 9)
+    blob_byte(out, DW_LNE_SET_ADDRESS)
+    held.line_address = out.count
+    blob_word64(out, 0)
+
+    mut r : i64 = 0
+    while (r < asm_loc_count(unit)) {
+        row := asm_loc_at(unit, r)
+        row_file := row.file
+        row_line := row.line
+        row_column := row.column
+        here := asm_loc_address(unit, r)
+        if (row_file != file) {
+            blob_byte(out, DW_LNS_SET_FILE)
+            uleb(out, row_file)
+            file = row_file
+        }
+        if (row_column != column) {
+            blob_byte(out, DW_LNS_SET_COLUMN)
+            uleb(out, row_column)
+            column = row_column
+        }
+        if (row_line != line) {
+            blob_byte(out, DW_LNS_ADVANCE_LINE)
+            sleb(out, row_line - line)
+            line = row_line
+        }
+        if (here != address) {
+            blob_byte(out, DW_LNS_ADVANCE_PC)
+            uleb(out, here - address)
+            address = here
+        }
+        blob_byte(out, DW_LNS_COPY)
+        r = r + 1
+    }
+
+    if (unit.text_count != address) {
+        blob_byte(out, DW_LNS_ADVANCE_PC)
+        uleb(out, unit.text_count - address)
+    }
+    blob_byte(out, 0)
+    uleb(out, 1)
+    blob_byte(out, DW_LNE_END_SEQUENCE)
+
+    patch32(out, length_at, out.count - (length_at + 4))
+    held.line_size = out.count - held.line_at
+}
+
+// One abbreviation, for the one entry the information section holds.
+dwarf_abbrev :: fn(mut out: Blob, mut held: Dwarf) {
+    held.abbrev_at = out.count
+
+    uleb(out, 1)
+    uleb(out, DW_TAG_COMPILE_UNIT)
+    blob_byte(out, DW_CHILDREN_NO)
+    uleb(out, DW_AT_PRODUCER)
+    uleb(out, DW_FORM_STRING)
+    uleb(out, DW_AT_LANGUAGE)
+    uleb(out, DW_FORM_DATA1)
+    uleb(out, DW_AT_NAME)
+    uleb(out, DW_FORM_STRING)
+    uleb(out, DW_AT_LOW_PC)
+    uleb(out, DW_FORM_ADDR)
+    uleb(out, DW_AT_HIGH_PC)
+    uleb(out, DW_FORM_DATA4)
+    uleb(out, DW_AT_STMT_LIST)
+    uleb(out, DW_FORM_SEC_OFFSET)
+    uleb(out, 0)
+    uleb(out, 0)
+    uleb(out, 0)
+
+    held.abbrev_size = out.count - held.abbrev_at
+}
+
+// The compilation unit: what compiled it, what it was called, the run of code
+// it covers, and where its line program is.
+dwarf_info :: fn(mut unit: Assembly, mut out: Blob, mut held: Dwarf,
+    producer: str) {
+    held.info_at = out.count
+
+    length_at := out.count
+    blob_word32(out, 0)
+    blob_word16(out, DWARF_VERSION)
+    held.info_abbrev = out.count
+    blob_word32(out, 0)
+    blob_byte(out, 8)
+
+    uleb(out, 1)
+    dwarf_text(out, producer)
+    blob_byte(out, DW_LANG_C99)
+    first := asm_file_at(unit, 0)
+    first_off := first.off
+    first_len := first.len
+    dwarf_path(out, unit.src, first_off, first_len)
+    held.info_address = out.count
+    blob_word64(out, 0)
+    blob_word32(out, unit.text_count)
+    held.info_stmt = out.count
+    blob_word32(out, 0)
+
+    patch32(out, length_at, out.count - (length_at + 4))
+    held.info_size = out.count - held.info_at
+}
