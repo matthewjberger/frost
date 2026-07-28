@@ -81,7 +81,7 @@ mesh_cache_find :: fn(cache: MeshCache, name: str) -> i64 {
         }
         index = index + 1
     }
-    0 - 1
+    -1
 }
 
 mesh_cache_at :: fn(cache: MeshCache, index: i64) -> Mesh {

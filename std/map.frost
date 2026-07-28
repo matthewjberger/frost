@@ -142,7 +142,7 @@ map_find :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>,
     key: $K) -> i64 {
     mut i := ops.hash(key) % m.cap
     if (i < 0) {
-        i = 0 - i
+        i = -i
     }
     held := m.keys
     while (true) {
@@ -154,7 +154,7 @@ map_find :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>,
         i = i + 1
         if (i >= m.cap) { i = 0 }
     }
-    0 - 1
+    -1
 }
 
 // Place a key and value into a table that is known to have room, without the

@@ -2420,6 +2420,12 @@ impl<'a> Parser<'a> {
             && precedence < Precedence::from(self.peek_nth(0))
         {
             match self.peek_nth(0) {
+                // A `-` that opens a line negates what follows it rather than
+                // subtracting it from the statement above, since a statement
+                // ends at the line break and `-x` is a statement of its own.
+                // The other operators have no prefix form, so a line that opens
+                // with one can only be the continuation of the line above it.
+                Token::Minus if !self.on_the_same_line() => break,
                 Token::Plus
                 | Token::Minus
                 | Token::Slash

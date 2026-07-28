@@ -16,7 +16,7 @@ Entity :: struct { hp: i64, kind: Kind }
 delta :: fn(k: Kind) -> i64 {
     match k {
         case .Player: 0
-        case .Enemy { damage }: 0 - damage
+        case .Enemy { damage }: -damage
         case .Pickup { amount }: amount
     }
 }

@@ -271,9 +271,9 @@ mat4d_ortho :: fn(left: f64, right: f64, bottom: f64, top: f64,
     out.m[0] = 2.0 / (right - left)
     out.m[5] = 2.0 / (top - bottom)
     out.m[10] = -2.0 / (far - near)
-    out.m[12] = 0.0 - (right + left) / (right - left)
-    out.m[13] = 0.0 - (top + bottom) / (top - bottom)
-    out.m[14] = 0.0 - (far + near) / (far - near)
+    out.m[12] = -(right + left) / (right - left)
+    out.m[13] = -(top + bottom) / (top - bottom)
+    out.m[14] = -(far + near) / (far - near)
     out
 }
 

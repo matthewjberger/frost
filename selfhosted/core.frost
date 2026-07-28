@@ -124,7 +124,7 @@ report_int :: fn(value: i64) {
     mut held := value
     if (held < 0) {
         report("-")
-        held = 0 - held
+        held = -held
     }
     mut digits : [24]u8 = [0; 24]
     mut count : i64 = 0

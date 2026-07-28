@@ -169,7 +169,7 @@ local_slot :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
             return entry.slot
         }
     }
-    0 - 8
+    -8
 }
 
 // Load a scalar into %rax from `slot(base)`, where `base` closes the address
@@ -751,7 +751,7 @@ emit_asm_spill :: fn(mut p: Parser) {
         p.frame_used = p.frame_used + 8
         arena_push(p.spill_slots,
             LocalVar { name_off = 0, name_len = 0, ty = 0,
-                slot = 0 - p.frame_used })
+                slot = -p.frame_used })
     }
     held := arena_at(p.spill_slots, p.spill_depth)
     asm_i("movq %rax, ", held.slot, "(%rbp)")

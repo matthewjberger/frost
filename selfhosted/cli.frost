@@ -232,7 +232,7 @@ stored_checksum :: fn(path: ^i8) -> i64 {
         k = k + 1
     }
     if (negative) {
-        return 0 - value
+        return -value
     }
     value
 }
@@ -310,7 +310,7 @@ cached_runtime_object :: fn() -> ^i8 {
     }
     mut key := file_checksum(runtime) % 1000000007
     if (key < 0) {
-        key = 0 - key
+        key = -key
     }
     object := join_number(join_two(temp_directory(), "/frost_runtime_"), key,
         ".o")

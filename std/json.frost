@@ -121,7 +121,7 @@ json_member :: fn(mut document: Json, object: i64, name: str) -> i64 {
         }
         child = held.next
     }
-    0 - 1
+    -1
 }
 
 key_is :: fn(mut document: Json, node: JsonNode, name: str) -> bool {
@@ -151,7 +151,7 @@ json_at :: fn(mut document: Json, container: i64, wanted: i64) -> i64 {
         index = index + 1
         child = vec_slice($JsonNode, document.nodes)[child].next
     }
-    0 - 1
+    -1
 }
 
 json_count :: fn(mut document: Json, container: i64) -> i64 {
@@ -238,7 +238,7 @@ parse_value :: fn(mut document: Json) -> i64 {
     if (byte == 45 || str_byte_is_digit(byte)) {
         return parse_number(document)
     }
-    0 - 1
+    -1
 }
 
 parse_string :: fn(mut document: Json) -> i64 {
@@ -290,7 +290,7 @@ parse_number :: fn(mut document: Json) -> i64 {
     slot := vec_slice($JsonNode, document.nodes)
     ref held := slot[node]
     if (negative == 1) {
-        held.number = 0 - value
+        held.number = -value
     } else {
         held.number = value
     }

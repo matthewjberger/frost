@@ -12,17 +12,32 @@ Whitespace (space, tab, carriage return, newline) separates tokens and is
 otherwise insignificant. Frost is not whitespace-sensitive and has no automatic
 semicolon insertion. Statement terminators (`;`) are always optional.
 
-A line break does decide one thing. A `(` or a `[` that opens a line begins a
-statement rather than continuing the one before it, so
+A line break does decide one thing. A token that opens a line and could begin a
+statement of its own does begin one rather than continuing the line above. Three
+tokens are in that position, `(`, `[`, and `-`, so
 
 ```frost
 table := tables[slot.table]
 (table.mask & mask) != 0
+
+count = 4
+-total
 ```
 
-is two statements, not a call of the first line's value. This is the only rule
-whitespace has, and it exists because a statement beginning with a parenthesis
-is otherwise indistinguishable from a call written across two lines.
+is four statements: no call of the first line's value, and no subtraction from
+`4`. Every other operator has no prefix form, so a line opening with one can
+only be a continuation and is read as one. To spell a subtraction across a line
+break, put the `-` at the end of the first line:
+
+```frost
+held := count -
+    total
+```
+
+This is the only rule whitespace has. It exists because a statement beginning
+with a parenthesis or a negation is otherwise indistinguishable from a call or a
+subtraction written across two lines, and the reading that agrees with the
+indentation is the one a reader means.
 
 There are two comment forms:
 

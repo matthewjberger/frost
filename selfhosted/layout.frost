@@ -122,6 +122,6 @@ field_offset :: fn(mut p: Parser, struct_ty: i64, off: i64, len: i64) -> i64 {
 // function's frame has to be and the two cannot grow into each other.
 alloc_temp :: fn(mut p: Parser, size: i64) -> i64 {
     p.frame_used = p.frame_used + align_up(size, 8)
-    0 - p.frame_used
+    -p.frame_used
 }
 
