@@ -240,7 +240,7 @@ fn build_module_inner(
                         }
                         let Some(ty) = &parameter.type_annotation else {
                             bail!(
-                                "native backend: the parameter '{}' of the extern '{name}' is written 'value' but has no type",
+                                "the parameter '{}' of the extern '{name}' is written 'value' but has no type",
                                 parameter.name
                             );
                         };
@@ -3227,7 +3227,7 @@ fn instance_substitution(
 ) -> Result<HashMap<String, Type>> {
     if type_params.len() != argument_strings.len() {
         bail!(
-            "native backend: generic {kind} '{base}' expects {} type argument(s) but {} were given",
+            "generic {kind} '{base}' expects {} type argument(s) but {} were given",
             type_params.len(),
             argument_strings.len()
         );
@@ -3236,9 +3236,7 @@ fn instance_substitution(
     for (type_param, argument) in type_params.iter().zip(argument_strings) {
         let argument_type = crate::parser::type_from_string(argument)
             .with_context(|| {
-                format!(
-                    "native backend: type argument '{argument}' of '{instance}'"
-                )
+                format!("type argument '{argument}' of '{instance}'")
             })?;
         subst.insert(type_param.clone(), argument_type);
     }
@@ -4052,7 +4050,7 @@ impl<'a> FunctionLowering<'a> {
                 }
                 if matches!(value_type, Type::Void) {
                     bail!(
-                        "native backend: cannot bind '{name}' to a void value; this expression produces no value"
+                        "cannot bind '{name}' to a void value; this expression produces no value"
                     );
                 }
                 // Binding a borrowed aggregate *by name* is a copy of the
@@ -4144,19 +4142,19 @@ impl<'a> FunctionLowering<'a> {
             }
             Statement::Break => {
                 let Some(targets) = self.loops.last() else {
-                    bail!("native backend: break outside loop");
+                    bail!("break outside loop");
                 };
                 self.set_terminator(IrTerminator::Jump(targets.break_block));
                 Ok(())
             }
             Statement::Continue => {
                 let Some(targets) = self.loops.last() else {
-                    bail!("native backend: continue outside loop");
+                    bail!("continue outside loop");
                 };
                 self.set_terminator(IrTerminator::Jump(targets.continue_block));
                 Ok(())
             }
-            other => bail!("native backend: unsupported statement: {other}"),
+            other => bail!("unsupported statement: {other}"),
         }
     }
 
@@ -4218,7 +4216,7 @@ impl<'a> FunctionLowering<'a> {
             ),
         };
         let IrOperand::Local(held) = sequence else {
-            bail!("native backend: the sequence a `for` walks is not a place");
+            bail!("the sequence a `for` walks is not a place");
         };
         let sequence_name = format!("__for_sequence_{held}");
         self.define_variable(&sequence_name, held);
@@ -4346,7 +4344,7 @@ impl<'a> FunctionLowering<'a> {
         indexed: &Expression,
     ) -> Result<(IrOperand, Type)> {
         let Expression::Index(base, index) = indexed else {
-            bail!("native backend: expected an index expression");
+            bail!("expected an index expression");
         };
         self.element_address(base, index)
     }
@@ -4488,7 +4486,7 @@ impl<'a> FunctionLowering<'a> {
                 if let Some(value) = self.builder.constants.get(name).cloned() {
                     return self.lower_expression(&value, expected);
                 }
-                bail!("native backend: unknown variable '{name}'");
+                bail!("unknown variable '{name}'");
             }
             Expression::Function(parameters, return_sig, body)
             | Expression::Proc(parameters, return_sig, body) => {
@@ -4643,7 +4641,7 @@ impl<'a> FunctionLowering<'a> {
                 )
             }
             other => {
-                bail!("native backend: unsupported expression: {other}")
+                bail!("unsupported expression: {other}")
             }
         }
     }
@@ -4866,7 +4864,7 @@ impl<'a> FunctionLowering<'a> {
         if let IrOperand::Local(local) = operand {
             return Ok(self.address_of_local(local, value_type));
         }
-        bail!("native backend: a str to write is not a place")
+        bail!("a str to write is not a place")
     }
 
     fn lower_prefix(
@@ -4896,7 +4894,7 @@ impl<'a> FunctionLowering<'a> {
                 Ok((IrOperand::Local(result), Type::Bool))
             }
             other => {
-                bail!("native backend: unsupported prefix operator: {other}")
+                bail!("unsupported prefix operator: {other}")
             }
         }
     }
@@ -4922,7 +4920,7 @@ impl<'a> FunctionLowering<'a> {
             return Ok(IrOperand::Local(tag));
         }
         let IrOperand::Local(local) = operand else {
-            bail!("native backend: enum value is not addressable");
+            bail!("enum value is not addressable");
         };
         self.mark_in_memory(local);
         let address = self.address_of_local(local, ty);
@@ -4981,7 +4979,7 @@ impl<'a> FunctionLowering<'a> {
                 && matches!(binop, IrBinOp::Equal | IrBinOp::NotEqual)
             {
                 let Some(layout) = self.builder.enum_layout(&name) else {
-                    bail!("native backend: unknown enum '{name}'");
+                    bail!("unknown enum '{name}'");
                 };
                 if let Some(carrying) = layout
                     .variants
@@ -5261,20 +5259,20 @@ impl<'a> FunctionLowering<'a> {
         let mut rewritten = arguments.to_vec();
         let Some(handler) = rewritten.get(shape.handler) else {
             bail!(
-                "native backend: '{name}' registers a callback and needs one as its argument {}",
+                "'{name}' registers a callback and needs one as its argument {}",
                 shape.handler + 1
             );
         };
         let Expression::TypeValue(Type::Struct(handler)) = handler else {
             bail!(
-                "native backend: argument {} of '{name}' is the callback and has to be written '$name'",
+                "argument {} of '{name}' is the callback and has to be written '$name'",
                 shape.handler + 1
             );
         };
         rewritten[shape.handler] = Expression::Identifier(handler.clone());
         let Some(context) = rewritten.get(shape.context).cloned() else {
             bail!(
-                "native backend: '{name}' registers a callback and needs its context as argument {}",
+                "'{name}' registers a callback and needs its context as argument {}",
                 shape.context + 1
             );
         };
@@ -5416,7 +5414,7 @@ impl<'a> FunctionLowering<'a> {
             || (!packed && arguments.len() != generic.parameters.len())
         {
             bail!(
-                "native backend: generic function '{name}' expects {} argument(s) but {} were given",
+                "generic function '{name}' expects {} argument(s) but {} were given",
                 generic.parameters.len(),
                 arguments.len()
             );
@@ -5448,7 +5446,7 @@ impl<'a> FunctionLowering<'a> {
             if is_type_parameter(parameter) {
                 let Expression::TypeValue(ty) = argument else {
                     bail!(
-                        "native backend: type parameter '{}' of '{name}' requires a type argument like '${}'",
+                        "type parameter '{}' of '{name}' requires a type argument like '${}'",
                         parameter.name,
                         parameter.name
                     );
@@ -5481,7 +5479,7 @@ impl<'a> FunctionLowering<'a> {
                             && !is_generic_instance(named) =>
                     {
                         bail!(
-                            "native backend: '{named}' given to '{}' as the compile-time argument '{}' names neither a type nor a function",
+                            "'{named}' given to '{}' as the compile-time argument '{}' names neither a type nor a function",
                             name,
                             parameter.name
                         );
@@ -5492,7 +5490,7 @@ impl<'a> FunctionLowering<'a> {
                     Some(Type::Proc(..)) => {
                         let Type::ConstFn(target) = &bound else {
                             bail!(
-                                "native backend: '{}' of '{name}' is declared as a function, so it needs a function as its argument, not the type '{}'",
+                                "'{}' of '{name}' is declared as a function, so it needs a function as its argument, not the type '{}'",
                                 parameter.name,
                                 bound
                             );
@@ -5502,7 +5500,7 @@ impl<'a> FunctionLowering<'a> {
                     Some(_) => {
                         let Type::ConstValue(target) = &bound else {
                             bail!(
-                                "native backend: '{}' of '{name}' is declared as a bundle, so it needs a constant of that type as its argument, not '{}'",
+                                "'{}' of '{name}' is declared as a bundle, so it needs a constant of that type as its argument, not '{}'",
                                 parameter.name,
                                 bound
                             );
@@ -5613,14 +5611,14 @@ impl<'a> FunctionLowering<'a> {
                 self.builder.constants.get(&target)
             else {
                 bail!(
-                    "native backend: '{target}' given to '{name}' as '{}' is not a struct constant, and '{}' is declared as '{expected}'",
+                    "'{target}' given to '{name}' as '{}' is not a struct constant, and '{}' is declared as '{expected}'",
                     parameter.name,
                     parameter.name
                 );
             };
             if Type::Struct(actual.clone()) != expected {
                 bail!(
-                    "native backend: '{target}' given to '{name}' as '{}' is a '{actual}', but '{}' is declared as '{expected}'",
+                    "'{target}' given to '{name}' as '{}' is a '{actual}', but '{}' is declared as '{expected}'",
                     parameter.name,
                     parameter.name
                 );
@@ -5642,7 +5640,7 @@ impl<'a> FunctionLowering<'a> {
             );
             if actual != expected {
                 bail!(
-                    "native backend: '{}' given to '{name}' as '{}' has the signature '{actual}', but '{}' is declared as '{expected}'",
+                    "'{}' given to '{name}' as '{}' has the signature '{actual}', but '{}' is declared as '{expected}'",
                     target,
                     parameter.name,
                     parameter.name
@@ -5765,7 +5763,7 @@ impl<'a> FunctionLowering<'a> {
                         }
                         let IrOperand::Local(local) = operand else {
                             bail!(
-                                "native backend: this argument is a '{value_type}' with no storage, and '{name}' borrows it here"
+                                "this argument is a '{value_type}' with no storage, and '{name}' borrows it here"
                             );
                         };
                         lowered.push(self.address_of_local(local, inner));
@@ -5781,22 +5779,20 @@ impl<'a> FunctionLowering<'a> {
                     {
                         let IrOperand::Local(local) = operand else {
                             bail!(
-                                "native backend: an array argument to a generic call is not a place"
+                                "an array argument to a generic call is not a place"
                             );
                         };
                         let base = self.address_of_local(local, &value_type);
                         let slice = self
                             .build_slice_from_address(base, element, *count);
                         let IrOperand::Local(view) = slice else {
-                            bail!(
-                                "native backend: slice construction did not yield a place"
-                            );
+                            bail!("slice construction did not yield a place");
                         };
                         lowered.push(self.address_of_local(view, target));
                     } else if needs_memory(target) {
                         let IrOperand::Local(local) = operand else {
                             bail!(
-                                "native backend: aggregate argument to generic call is not a place"
+                                "aggregate argument to generic call is not a place"
                             );
                         };
                         // A local already holding the address of the aggregate
@@ -5876,7 +5872,7 @@ impl<'a> FunctionLowering<'a> {
 
         if arguments.len() != parameter_types.len() {
             bail!(
-                "native backend: function '{name}' expects {} argument(s) but {} were given",
+                "function '{name}' expects {} argument(s) but {} were given",
                 parameter_types.len(),
                 arguments.len()
             );
@@ -5939,7 +5935,7 @@ impl<'a> FunctionLowering<'a> {
                 && value_type == **inner
             {
                 bail!(
-                    "native backend: cannot pass a '{value_type}' by value to a reference parameter '&{value_type}'; take a reference with '&' or '&mut'"
+                    "cannot pass a '{value_type}' by value to a reference parameter '&{value_type}'; take a reference with '&' or '&mut'"
                 );
             }
             if let Some(target) = expected
@@ -5986,14 +5982,12 @@ impl<'a> FunctionLowering<'a> {
         let (callee_operand, callee_type) =
             self.lower_expression(callee, None)?;
         let Type::Proc(parameter_types, return_type) = callee_type else {
-            bail!(
-                "native backend: cannot call a value that is not a function pointer"
-            );
+            bail!("cannot call a value that is not a function pointer");
         };
         let return_type = *return_type;
         if arguments.len() != parameter_types.len() {
             bail!(
-                "native backend: function pointer expects {} argument(s) but {} were given",
+                "function pointer expects {} argument(s) but {} were given",
                 parameter_types.len(),
                 arguments.len()
             );
@@ -6056,7 +6050,7 @@ impl<'a> FunctionLowering<'a> {
                 && value_type == **inner
             {
                 bail!(
-                    "native backend: cannot pass a '{value_type}' by value to a reference parameter '&{value_type}'; take a reference with '&' or '&mut'"
+                    "cannot pass a '{value_type}' by value to a reference parameter '&{value_type}'; take a reference with '&' or '&mut'"
                 );
             }
             let coerced = match expected {
@@ -6100,9 +6094,7 @@ impl<'a> FunctionLowering<'a> {
             let (base, _) = self.place_address(argument)?;
             let slice = self.build_slice_from_address(base, element, count);
             let IrOperand::Local(slice_local) = slice else {
-                bail!(
-                    "native backend: slice construction did not yield a place"
-                );
+                bail!("slice construction did not yield a place");
             };
             return Ok(self.address_of_local(slice_local, target));
         }
@@ -6148,9 +6140,7 @@ impl<'a> FunctionLowering<'a> {
                 let (operand, _) =
                     self.lower_expression(argument, Some(target))?;
                 let IrOperand::Local(local) = operand else {
-                    bail!(
-                        "native backend: cannot pass this value as an aggregate argument"
-                    );
+                    bail!("cannot pass this value as an aggregate argument");
                 };
                 // A borrowed parameter is handed an address, so an aggregate
                 // that is not already in memory is put there first: the value
@@ -6216,12 +6206,12 @@ impl<'a> FunctionLowering<'a> {
             }
             Expression::Literal(Literal::Array(elements)) => {
                 let Type::Array(element, _) = self.type_of_local(local) else {
-                    bail!("native backend: array literal has non-array type");
+                    bail!("array literal has non-array type");
                 };
                 self.init_array(local, &element, elements)
             }
             _ => {
-                bail!("native backend: cannot materialize this aggregate")
+                bail!("cannot materialize this aggregate")
             }
         }
     }
@@ -6233,9 +6223,7 @@ impl<'a> FunctionLowering<'a> {
     ) -> Result<()> {
         if let Expression::Identifier(name) = target {
             let Some(local) = self.resolve_variable(name) else {
-                bail!(
-                    "native backend: assignment to unknown variable '{name}'"
-                );
+                bail!("assignment to unknown variable '{name}'");
             };
             let target_type = self.type_of_local(local);
             let (operand, value_type) =
@@ -6284,9 +6272,7 @@ impl<'a> FunctionLowering<'a> {
             self.lower_expression(value, Some(&pointee))?;
         if needs_memory(&pointee) {
             let IrOperand::Local(source_local) = operand else {
-                bail!(
-                    "native backend: aggregate assignment from a non-place value"
-                );
+                bail!("aggregate assignment from a non-place value");
             };
             // A local already holding the address of the value is where to copy
             // from. A read parameter of struct type is one, so storing it copies
@@ -6472,10 +6458,10 @@ impl<'a> FunctionLowering<'a> {
         let (operand, value_type) =
             self.lower_expression(expression, Some(&Type::Str))?;
         if value_type != Type::Str {
-            bail!("native backend: expected a str value, found {value_type}");
+            bail!("expected a str value, found {value_type}");
         }
         let IrOperand::Local(local) = operand else {
-            bail!("native backend: str value is not addressable");
+            bail!("str value is not addressable");
         };
         self.mark_in_memory(local);
         Ok(self.address_of_local(local, &Type::Str))
@@ -6509,7 +6495,7 @@ impl<'a> FunctionLowering<'a> {
         arguments: &[Expression],
     ) -> Result<(IrOperand, Type)> {
         if arguments.len() != 1 {
-            bail!("native backend: str_len expects one argument");
+            bail!("str_len expects one argument");
         }
         let base = self.str_value_address(&arguments[0])?;
         let length = self.str_field(base, STR_LEN_OFFSET, Type::Usize);
@@ -6608,10 +6594,10 @@ impl<'a> FunctionLowering<'a> {
         }
         let (operand, value_type) = self.lower_expression(expression, None)?;
         let Type::Slice(_) = value_type else {
-            bail!("native backend: expected a slice value, found {value_type}");
+            bail!("expected a slice value, found {value_type}");
         };
         let IrOperand::Local(local) = operand else {
-            bail!("native backend: slice value is not addressable");
+            bail!("slice value is not addressable");
         };
         self.mark_in_memory(local);
         Ok(self.address_of_local(local, &value_type))
@@ -6686,7 +6672,7 @@ impl<'a> FunctionLowering<'a> {
         arguments: &[Expression],
     ) -> Result<(IrOperand, Type)> {
         if arguments.len() != 1 {
-            bail!("native backend: slice_len expects one argument");
+            bail!("slice_len expects one argument");
         }
         let base = self.slice_value_address(&arguments[0])?;
         let length = self.str_field(base, SLICE_LEN_OFFSET, Type::Usize);
@@ -6768,7 +6754,7 @@ impl<'a> FunctionLowering<'a> {
         arguments: &[Expression],
     ) -> Result<(IrOperand, Type)> {
         if arguments.len() != 1 {
-            bail!("native backend: ptr_to expects one place argument");
+            bail!("ptr_to expects one place argument");
         }
         let (address, pointee) = self.place_address(&arguments[0])?;
         Ok((address, Type::Ptr(Box::new(pointee))))
@@ -6787,13 +6773,11 @@ impl<'a> FunctionLowering<'a> {
     ) -> Result<(IrOperand, Type)> {
         if arguments.len() != 3 {
             bail!(
-                "native backend: slice_from expects a type, a pointer and a length, as in slice_from($T, p, n)"
+                "slice_from expects a type, a pointer and a length, as in slice_from($T, p, n)"
             );
         }
         let Expression::TypeValue(element) = &arguments[0] else {
-            bail!(
-                "native backend: slice_from's first argument must be a type, as in $Entity"
-            );
+            bail!("slice_from's first argument must be a type, as in $Entity");
         };
         let element = element.clone();
         let (pointer, _) = self.lower_expression(&arguments[1], None)?;
@@ -6839,13 +6823,11 @@ impl<'a> FunctionLowering<'a> {
     ) -> Result<(IrOperand, Type)> {
         if arguments.len() != 2 {
             bail!(
-                "native backend: ptr_cast expects a type and a pointer, as in ptr_cast($T, p)"
+                "ptr_cast expects a type and a pointer, as in ptr_cast($T, p)"
             );
         }
         let Expression::TypeValue(target) = &arguments[0] else {
-            bail!(
-                "native backend: ptr_cast's first argument must be a type, as in $Entity"
-            );
+            bail!("ptr_cast's first argument must be a type, as in $Entity");
         };
         let target = Type::Ptr(Box::new(target.clone()));
         let (pointer, _) = self.lower_expression(&arguments[1], None)?;
@@ -6891,9 +6873,7 @@ impl<'a> FunctionLowering<'a> {
                         let address = self.address_of_local(held, &ty);
                         return Ok((address, ty));
                     }
-                    bail!(
-                        "native backend: address of unknown variable '{name}'"
-                    );
+                    bail!("address of unknown variable '{name}'");
                 };
                 self.mark_in_memory(local);
                 let pointee = self.type_of_local(local);
@@ -6917,16 +6897,12 @@ impl<'a> FunctionLowering<'a> {
             | Expression::Literal(Literal::Array(_)) => {
                 let (operand, ty) = self.lower_expression(place, None)?;
                 let IrOperand::Local(local) = operand else {
-                    bail!(
-                        "native backend: cannot take the address of this value"
-                    );
+                    bail!("cannot take the address of this value");
                 };
                 Ok((self.address_of_local(local, &ty), ty))
             }
             other => {
-                bail!(
-                    "native backend: expression is not an assignable place: {other}"
-                )
+                bail!("expression is not an assignable place: {other}")
             }
         }
     }
@@ -6958,7 +6934,7 @@ impl<'a> FunctionLowering<'a> {
                 );
             }
             bail!(
-                "native backend: indexing by a Handle needs a slab-shaped struct, one with a 'storage' array and a parallel 'generations' array; see std/slab.frost"
+                "indexing by a Handle needs a slab-shaped struct, one with a 'storage' array and a parallel 'generations' array; see std/slab.frost"
             );
         }
         // The literal as well as a place holding one, because a string constant
@@ -6993,7 +6969,7 @@ impl<'a> FunctionLowering<'a> {
         {
             let (value, value_type) = self.lower_expression(base, None)?;
             let IrOperand::Local(local) = value else {
-                bail!("native backend: cannot index into: {base}");
+                bail!("cannot index into: {base}");
             };
             match value_type {
                 Type::Slice(element) => {
@@ -7023,7 +6999,7 @@ impl<'a> FunctionLowering<'a> {
                     ));
                     (IrOperand::Local(result), *element, Some(count))
                 }
-                _ => bail!("native backend: cannot index into: {base}"),
+                _ => bail!("cannot index into: {base}"),
             }
         } else {
             self.array_base_pointer(base)?
@@ -7119,20 +7095,16 @@ impl<'a> FunctionLowering<'a> {
         let (storage_offset, element, count, generations_offset) = {
             let layout =
                 self.builder.struct_layout(struct_name).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "native backend: unknown slab '{struct_name}'"
-                    )
+                    anyhow::anyhow!("unknown slab '{struct_name}'")
                 })?;
             let storage = layout.field("storage").ok_or_else(|| {
-                anyhow::anyhow!("native backend: slab has no 'storage' field")
+                anyhow::anyhow!("slab has no 'storage' field")
             })?;
             let generations = layout.field("generations").ok_or_else(|| {
-                anyhow::anyhow!(
-                    "native backend: slab has no 'generations' field"
-                )
+                anyhow::anyhow!("slab has no 'generations' field")
             })?;
             let Type::Array(inner, count) = &storage.ty else {
-                bail!("native backend: slab 'storage' is not an array");
+                bail!("slab 'storage' is not an array");
             };
             (
                 storage.offset,
@@ -7247,27 +7219,21 @@ impl<'a> FunctionLowering<'a> {
         let (column_offset, column_element, count, generations_offset) = {
             let layout =
                 self.builder.struct_layout(struct_name).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "native backend: unknown columns '{struct_name}'"
-                    )
+                    anyhow::anyhow!("unknown columns '{struct_name}'")
                 })?;
             let column = layout.field(field).ok_or_else(|| {
                 anyhow::anyhow!(
-                    "native backend: columns '{struct_name}' has no field '{field}'"
+                    "columns '{struct_name}' has no field '{field}'"
                 )
             })?;
             let generations = layout.field("generations").ok_or_else(|| {
-                anyhow::anyhow!(
-                    "native backend: columns has no 'generations' field"
-                )
+                anyhow::anyhow!("columns has no 'generations' field")
             })?;
             let Type::Array(_, count) = &generations.ty else {
-                bail!("native backend: columns 'generations' is not an array");
+                bail!("columns 'generations' is not an array");
             };
             let Type::Array(element, _) = &column.ty else {
-                bail!(
-                    "native backend: columns field '{field}' is not a column array"
-                );
+                bail!("columns field '{field}' is not a column array");
             };
             (
                 column.offset,
@@ -7367,9 +7333,7 @@ impl<'a> FunctionLowering<'a> {
         let column_fields: Vec<String> = {
             let layout =
                 self.builder.struct_layout(struct_name).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "native backend: unknown columns '{struct_name}'"
-                    )
+                    anyhow::anyhow!("unknown columns '{struct_name}'")
                 })?;
             layout
                 .fields
@@ -7386,28 +7350,27 @@ impl<'a> FunctionLowering<'a> {
 
         let (value_operand, value_type) = self.lower_expression(value, None)?;
         let IrOperand::Local(value_local) = value_operand else {
-            bail!(
-                "native backend: a columns scatter needs an addressable element"
-            );
+            bail!("a columns scatter needs an addressable element");
         };
         let value_address = self.address_of_local(value_local, &value_type);
         let Type::Struct(value_name) = &value_type else {
-            bail!("native backend: a columns element value must be a struct");
+            bail!("a columns element value must be a struct");
         };
 
         for field in &column_fields {
             let (field_offset, field_ty) = {
-                let value_layout =
-                    self.builder.struct_layout(value_name).ok_or_else(|| {
+                let value_layout = self
+                    .builder
+                    .struct_layout(value_name)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("unknown element struct '{value_name}'")
+                    })?;
+                let layout_field =
+                    value_layout.field(field).ok_or_else(|| {
                         anyhow::anyhow!(
-                            "native backend: unknown element struct '{value_name}'"
+                            "element '{value_name}' has no field '{field}'"
                         )
                     })?;
-                let layout_field = value_layout.field(field).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "native backend: element '{value_name}' has no field '{field}'"
-                    )
-                })?;
                 (layout_field.offset, layout_field.ty.clone())
             };
             let (destination, _) = self.columns_place_deref(
@@ -7460,13 +7423,11 @@ impl<'a> FunctionLowering<'a> {
     ) -> Result<(IrOperand, Type)> {
         let Some(Type::Struct(name)) = expected else {
             bail!(
-                "native backend: columns_new() needs a columns type from its context, e.g. `mut c : columns<T, N> = columns_new()`"
+                "columns_new() needs a columns type from its context, e.g. `mut c : columns<T, N> = columns_new()`"
             );
         };
         if !name.starts_with("columns<") {
-            bail!(
-                "native backend: columns_new() initializes a columns type, not '{name}'"
-            );
+            bail!("columns_new() initializes a columns type, not '{name}'");
         }
         let ty = Type::Struct(name.clone());
         let size = self.builder.byte_size(&ty) as i64;
@@ -7495,7 +7456,7 @@ impl<'a> FunctionLowering<'a> {
         match base {
             Expression::Identifier(name) => {
                 let Some(local) = self.resolve_variable(name) else {
-                    bail!("native backend: unknown variable '{name}'");
+                    bail!("unknown variable '{name}'");
                 };
                 match self.type_of_local(local) {
                     Type::Array(element, count) => {
@@ -7520,15 +7481,13 @@ impl<'a> FunctionLowering<'a> {
                         };
                         Ok((IrOperand::Local(local), *element, Some(count)))
                     }
-                    other => bail!(
-                        "native backend: '{name}' is not an array (found {other})"
-                    ),
+                    other => bail!("'{name}' is not an array (found {other})"),
                 }
             }
             Expression::FieldAccess(inner, field) => {
                 let (address, field_type) = self.field_address(inner, field)?;
                 let Type::Array(element, count) = field_type else {
-                    bail!("native backend: field '{field}' is not an array");
+                    bail!("field '{field}' is not an array");
                 };
                 Ok((address, *element, Some(count)))
             }
@@ -7547,10 +7506,10 @@ impl<'a> FunctionLowering<'a> {
                 let (Type::Ptr(inner) | Type::Ref(inner) | Type::RefMut(inner)) =
                     pointer_type
                 else {
-                    bail!("native backend: cannot index into: {base}");
+                    bail!("cannot index into: {base}");
                 };
                 let Type::Array(element, count) = *inner else {
-                    bail!("native backend: cannot index into: {base}");
+                    bail!("cannot index into: {base}");
                 };
                 Ok((operand, *element, Some(count)))
             }
@@ -7558,12 +7517,12 @@ impl<'a> FunctionLowering<'a> {
                 let (address, element_type) =
                     self.element_address(inner, index)?;
                 let Type::Array(element, count) = element_type else {
-                    bail!("native backend: indexed value is not an array");
+                    bail!("indexed value is not an array");
                 };
                 Ok((address, *element, Some(count)))
             }
             other => {
-                bail!("native backend: cannot index into: {other}")
+                bail!("cannot index into: {other}")
             }
         }
     }
@@ -7639,16 +7598,12 @@ impl<'a> FunctionLowering<'a> {
             }
         }
         let (base_pointer, struct_name) = self.struct_place(base)?;
-        let layout =
-            self.builder.struct_layout(&struct_name).ok_or_else(|| {
-                anyhow::anyhow!(
-                    "native backend: unknown struct '{struct_name}'"
-                )
-            })?;
+        let layout = self
+            .builder
+            .struct_layout(&struct_name)
+            .ok_or_else(|| anyhow::anyhow!("unknown struct '{struct_name}'"))?;
         let field_layout = layout.field(field).ok_or_else(|| {
-            anyhow::anyhow!(
-                "native backend: struct '{struct_name}' has no field '{field}'"
-            )
+            anyhow::anyhow!("struct '{struct_name}' has no field '{field}'")
         })?;
         let field_type = field_layout.ty.clone();
         let offset = field_layout.offset;
@@ -7678,7 +7633,7 @@ impl<'a> FunctionLowering<'a> {
                     {
                         return self.struct_place(&value);
                     }
-                    bail!("native backend: unknown variable '{name}'");
+                    bail!("unknown variable '{name}'");
                 };
                 match self.type_of_local(local) {
                     Type::Struct(struct_name) => {
@@ -7705,15 +7660,13 @@ impl<'a> FunctionLowering<'a> {
                         };
                         Ok((IrOperand::Local(local), struct_name))
                     }
-                    other => bail!(
-                        "native backend: '{name}' is not a struct (found {other})"
-                    ),
+                    other => bail!("'{name}' is not a struct (found {other})"),
                 }
             }
             Expression::FieldAccess(inner, field) => {
                 let (address, field_type) = self.field_address(inner, field)?;
                 let Type::Struct(struct_name) = field_type else {
-                    bail!("native backend: field '{field}' is not a struct");
+                    bail!("field '{field}' is not a struct");
                 };
                 Ok((address, struct_name))
             }
@@ -7722,7 +7675,7 @@ impl<'a> FunctionLowering<'a> {
                     self.lower_expression(pointer, None)?;
                 let pointee = deref_target(&pointer_type)?;
                 let Type::Struct(struct_name) = pointee else {
-                    bail!("native backend: dereference is not a struct");
+                    bail!("dereference is not a struct");
                 };
                 Ok((pointer_operand, struct_name))
             }
@@ -7730,7 +7683,7 @@ impl<'a> FunctionLowering<'a> {
                 let (address, element_type) =
                     self.element_address(inner, index)?;
                 let Type::Struct(struct_name) = element_type else {
-                    bail!("native backend: indexed element is not a struct");
+                    bail!("indexed element is not a struct");
                 };
                 Ok((address, struct_name))
             }
@@ -7755,9 +7708,7 @@ impl<'a> FunctionLowering<'a> {
                     // was built.
                     Type::Struct(struct_name) => {
                         let IrOperand::Local(local) = operand else {
-                            bail!(
-                                "native backend: not a struct place: {other}"
-                            );
+                            bail!("not a struct place: {other}");
                         };
                         self.mark_in_memory(local);
                         let address = self.address_of_local(
@@ -7766,7 +7717,7 @@ impl<'a> FunctionLowering<'a> {
                         );
                         Ok((address, struct_name))
                     }
-                    _ => bail!("native backend: not a struct place: {other}"),
+                    _ => bail!("not a struct place: {other}"),
                 }
             }
         }
@@ -7788,9 +7739,7 @@ impl<'a> FunctionLowering<'a> {
         let fields: Vec<(String, usize, Type)> = {
             let layout =
                 self.builder.struct_layout(struct_name).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "native backend: unknown struct '{struct_name}'"
-                    )
+                    anyhow::anyhow!("unknown struct '{struct_name}'")
                 })?;
             layout
                 .fields
@@ -7811,7 +7760,7 @@ impl<'a> FunctionLowering<'a> {
             .collect();
         if !missing.is_empty() {
             bail!(
-                "native backend: struct '{struct_name}' is missing {} {}; a field left out would be read uninitialized",
+                "struct '{struct_name}' is missing {} {}; a field left out would be read uninitialized",
                 if missing.len() == 1 {
                     "field"
                 } else {
@@ -7829,9 +7778,7 @@ impl<'a> FunctionLowering<'a> {
             let Some((_, offset, field_type)) =
                 fields.iter().find(|(name, _, _)| name == field_name)
             else {
-                bail!(
-                    "native backend: struct '{struct_name}' has no field '{field_name}'"
-                );
+                bail!("struct '{struct_name}' has no field '{field_name}'");
             };
             let address =
                 self.fresh_local(Type::Ptr(Box::new(field_type.clone())), None);
@@ -7910,15 +7857,13 @@ impl<'a> FunctionLowering<'a> {
     ) -> Result<()> {
         self.mark_owned(local);
         let (tag, fields): (u32, Vec<(String, usize, Type)>) = {
-            let layout =
-                self.builder.enum_layout(enum_name).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "native backend: unknown enum '{enum_name}'"
-                    )
-                })?;
+            let layout = self
+                .builder
+                .enum_layout(enum_name)
+                .ok_or_else(|| anyhow::anyhow!("unknown enum '{enum_name}'"))?;
             let variant = layout.variant(variant_name).ok_or_else(|| {
                 anyhow::anyhow!(
-                    "native backend: enum '{enum_name}' has no variant '{variant_name}'"
+                    "enum '{enum_name}' has no variant '{variant_name}'"
                 )
             })?;
             (
@@ -7956,7 +7901,7 @@ impl<'a> FunctionLowering<'a> {
             .collect();
         if !missing.is_empty() {
             bail!(
-                "native backend: variant '{variant_name}' is missing {} {}; a field left out would be read uninitialized",
+                "variant '{variant_name}' is missing {} {}; a field left out would be read uninitialized",
                 if missing.len() == 1 {
                     "field"
                 } else {
@@ -7975,7 +7920,7 @@ impl<'a> FunctionLowering<'a> {
                 fields.iter().find(|(name, _, _)| name == field_name)
             else {
                 bail!(
-                    "native backend: enum variant '{variant_name}' has no field '{field_name}'"
+                    "enum variant '{variant_name}' has no field '{field_name}'"
                 );
             };
             let address =
@@ -8065,7 +8010,7 @@ impl<'a> FunctionLowering<'a> {
         expected: Option<&Type>,
     ) -> Result<(IrOperand, Type)> {
         if cases.is_empty() {
-            bail!("native backend: match with no cases");
+            bail!("match with no cases");
         }
 
         if let Expression::Tuple(elements) = scrutinee {
@@ -8090,9 +8035,7 @@ impl<'a> FunctionLowering<'a> {
                     self.lower_expression(scrutinee, None)?;
                 if let Some(name) = self.enum_name_of(&value_type) {
                     let IrOperand::Local(local) = value else {
-                        bail!(
-                            "native backend: enum match value is not a place"
-                        );
+                        bail!("enum match value is not a place");
                     };
                     self.mark_in_memory(local);
                     let address = self.address_of_local(local, &value_type);
@@ -8139,9 +8082,7 @@ impl<'a> FunctionLowering<'a> {
                 }
                 Pattern::Literal(literal) => {
                     let Some((value, value_type)) = &scalar else {
-                        bail!(
-                            "native backend: literal pattern requires a scalar match value"
-                        );
+                        bail!("literal pattern requires a scalar match value");
                     };
                     let (literal_operand, _) =
                         self.lower_literal(literal, Some(value_type))?;
@@ -8163,7 +8104,7 @@ impl<'a> FunctionLowering<'a> {
                 Pattern::EnumVariant { variant_name, .. } => {
                     let Some(tag) = &tag_operand else {
                         bail!(
-                            "native backend: enum variant pattern requires an enum match value"
+                            "enum variant pattern requires an enum match value"
                         );
                     };
                     let enum_name = enum_name.as_ref().unwrap();
@@ -8174,7 +8115,7 @@ impl<'a> FunctionLowering<'a> {
                         .map(|variant| variant.tag)
                         .ok_or_else(|| {
                             anyhow::anyhow!(
-                                "native backend: enum '{enum_name}' has no variant '{variant_name}'"
+                                "enum '{enum_name}' has no variant '{variant_name}'"
                             )
                         })?;
                     let condition = self.fresh_local(Type::Bool, None);
@@ -8346,9 +8287,7 @@ impl<'a> FunctionLowering<'a> {
             let patterns: Vec<&Pattern> = match &case.pattern {
                 Pattern::Tuple(patterns) => patterns.iter().collect(),
                 Pattern::Wildcard | Pattern::Identifier(_) => Vec::new(),
-                other => bail!(
-                    "native backend: unsupported tuple match pattern: {other:?}"
-                ),
+                other => bail!("unsupported tuple match pattern: {other:?}"),
             };
 
             let mut condition: Option<LocalId> = None;
@@ -8484,9 +8423,7 @@ impl<'a> FunctionLowering<'a> {
                 let (Some(address), Some(enum_name)) =
                     (enum_address, enum_name)
                 else {
-                    bail!(
-                        "native backend: enum pattern on a non-enum match value"
-                    );
+                    bail!("enum pattern on a non-enum match value");
                 };
                 let fields: Vec<(String, usize, Type)> = self
                     .builder
@@ -8511,7 +8448,7 @@ impl<'a> FunctionLowering<'a> {
                         fields.iter().find(|(name, _, _)| name == field_name)
                     else {
                         bail!(
-                            "native backend: variant '{variant_name}' has no field '{field_name}'"
+                            "variant '{variant_name}' has no field '{field_name}'"
                         );
                     };
                     let field_address = self.fresh_local(
@@ -8691,7 +8628,7 @@ fn deref_target(pointer_type: &Type) -> Result<Type> {
             Ok((**inner).clone())
         }
         other => {
-            bail!("native backend: cannot dereference a value of type {other}")
+            bail!("cannot dereference a value of type {other}")
         }
     }
 }
@@ -8798,6 +8735,6 @@ fn binop_of(operator: Operator) -> Result<IrBinOp> {
         Operator::LessThanOrEqual => IrBinOp::LessThanOrEqual,
         Operator::GreaterThan => IrBinOp::GreaterThan,
         Operator::GreaterThanOrEqual => IrBinOp::GreaterThanOrEqual,
-        other => bail!("native backend: unsupported binary operator: {other}"),
+        other => bail!("unsupported binary operator: {other}"),
     })
 }

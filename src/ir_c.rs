@@ -421,7 +421,7 @@ fn emit_statement(
                             args.join(", ")
                         )?;
                     }
-                    _ => bail!("C backend: unsupported aggregate assignment"),
+                    _ => bail!("unsupported aggregate assignment"),
                 }
                 return Ok(());
             }
@@ -684,7 +684,7 @@ fn constant_expr(constant: &IrConstant) -> Result<String> {
             }
         }
         IrConstant::CString(text) => format!("(char*){}", c_string(text)),
-        IrConstant::Unit => bail!("C backend: unit value used as a value"),
+        IrConstant::Unit => bail!("unit value used as a value"),
     })
 }
 
@@ -746,7 +746,7 @@ fn c_return_fields(layout: &crate::c_abi::CLayout) -> Result<Vec<String>> {
         if scalar.offset < at {
             if scalar.ty.is_float() {
                 bail!(
-                    "C backend: '{}' overlaps a floating point field with another, which C has no way to declare and whose calling convention Frost will not guess at",
+                    "'{}' overlaps a floating point field with another, which C has no way to declare and whose calling convention Frost will not guess at",
                     layout.name
                 );
             }
@@ -782,7 +782,7 @@ fn c_type(ty: &Type) -> Result<String> {
         Type::Proc(_, _) => "void*".to_string(),
         Type::Handle(_) => "int64_t".to_string(),
         Type::Distinct(_, inner) => c_type(inner)?,
-        other => bail!("C backend: type not supported: {other}"),
+        other => bail!("type not supported: {other}"),
     })
 }
 
