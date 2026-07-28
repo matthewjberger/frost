@@ -1481,112 +1481,769 @@ check_reference_fields :: fn(mut p: Parser) {
 // region check, and together they hold every returnable borrow to storage that
 // lives at least as long as it does.
 //
-// A type that names storage it does not own: a raw pointer, a borrow (both are
-// indirect) or a slice.
-is_borrowed_view :: fn(mut p: Parser, ty: i64) -> bool {
+// The two differ in where the burden sits. The region check asks whether a
+// pointer is known to come from the arena and refuses it when it is. The frame
+// check asks whether a view is known to come from somewhere that outlives the
+// call and refuses it when it is not. Answering the permissive way for a shape
+// nobody taught the walk about is what let a frame pointer out through an
+// ordinary call, through a function pointer, and out of a `move` parameter: each
+// of those is a shape, and a check whose soundness rests on having enumerated
+// every shape is a list rather than a proof. Refusing what it cannot trace turns
+// the enumeration into a question about how much honest code compiles, which is
+// something a build can measure.
+
+// Where the storage a value names comes from, as far as a walk over one function
+// body can tell. The order is what a value built from several parts takes: it is
+// as short-lived as its shortest part, so joining is a maximum.
+//
+// A view leaves the call only on PROV_OUTLIVES: storage this call did not
+// create, which is a parameter, an allocation capability, a function's own name,
+// or a value holding no storage at all. PROV_FRAME is storage this frame owns
+// and dies with it. PROV_UNKNOWN is neither shown, and a view leaving on it is
+// refused, because a walk that reads it as outliving the call is reporting what
+// it recognized rather than what holds.
+PROV_OUTLIVES :: 0
+PROV_UNKNOWN :: 1
+PROV_FRAME :: 2
+
+// How far the type walks below descend before answering the conservative way. A
+// struct cannot hold itself by value, so nothing a program can write reaches
+// this; a template whose field types are still placeholders could.
+FRAME_TYPE_DEPTH :: 24
+
+prov_max :: fn(a: i64, b: i64) -> i64 {
+    if (a > b) {
+        return a
+    }
+    b
+}
+
+// The provenance recorded against a name, or -1 when the table says nothing.
+prov_listed :: fn(mut table: Arena<LocalVar>, src: str, off: i64, len: i64)
+    -> i64 {
+    mut i : i64 = 0
+    while (i < table.count) {
+        entry := arena_at(table, i)
+        if (entry.name_len == len
+            && bytes_equal(src, entry.name_off, off, len)) {
+            return entry.slot
+        }
+        i = i + 1
+    }
+    -1
+}
+
+// Record what a name is worth, replacing whatever it was worth before. A name
+// reassigned holds what it now holds, not what it held when it was declared.
+note_prov :: fn(mut table: Arena<LocalVar>, src: str, off: i64, len: i64,
+    held: i64) {
+    mut i : i64 = 0
+    while (i < table.count) {
+        mut entry := arena_at(table, i)
+        if (entry.name_len == len
+            && bytes_equal(src, entry.name_off, off, len)) {
+            entry.slot = held
+            return
+        }
+        i = i + 1
+    }
+    arena_push(table, LocalVar { name_off = off, name_len = len, ty = 0,
+        slot = held })
+}
+
+// The declared type recorded against a name, or -1.
+type_listed :: fn(mut table: Arena<LocalVar>, src: str, off: i64, len: i64)
+    -> i64 {
+    mut i : i64 = 0
+    while (i < table.count) {
+        entry := arena_at(table, i)
+        if (entry.name_len == len
+            && bytes_equal(src, entry.name_off, off, len)) {
+            return entry.ty
+        }
+        i = i + 1
+    }
+    -1
+}
+
+note_type :: fn(mut table: Arena<LocalVar>, src: str, off: i64, len: i64,
+    ty: i64) {
+    mut i : i64 = 0
+    while (i < table.count) {
+        mut entry := arena_at(table, i)
+        if (entry.name_len == len
+            && bytes_equal(src, entry.name_off, off, len)) {
+            entry.ty = ty
+            return
+        }
+        i = i + 1
+    }
+    arena_push(table, LocalVar { name_off = off, name_len = len, ty = ty,
+        slot = 0 })
+}
+
+// Whether a value of this type is, or holds, a view of storage it does not own.
+// Only such a value can carry storage out of a call, so only a function
+// answering with one has to account for where that storage came from.
+//
+// A pointer answers yes without looking at what it points at, so the walk only
+// descends through storage held inline.
+type_holds_view :: fn(mut p: Parser, ty: i64, depth: i64) -> bool {
+    if (depth <= 0) {
+        return true
+    }
+    // A type the walk could not name. It might hold anything, and the answer
+    // that costs nothing here is the one that asks the question.
+    if (ty < 0) {
+        return true
+    }
+    if (is_pointer(ty)) {
+        return true
+    }
+    // A function pointer is a callable value rather than a view of storage, and
+    // a compile-time argument is resolved away before it is a type. Both ride
+    // above the pointer range in the same i64 space.
+    if (distinct_repr(ty) >= CONST_BASE) {
+        return false
+    }
+    if (is_array_ty(ty)) {
+        if (is_slice_ty(p, ty)) {
+            return true
+        }
+        return type_holds_view(p, array_element(p, ty), depth - 1)
+    }
+    if (is_struct_ty(ty)) {
+        def := arena_at(p.structs, struct_index_of(ty))
+        mut fid := def.field_head
+        while (fid != (-1)) {
+            field := arena_at(p.fields, fid)
+            held := field.ty
+            fid = field.next
+            if (type_holds_view(p, held, depth - 1)) {
+                return true
+            }
+        }
+        return false
+    }
+    false
+}
+
+// Whether a type is itself a view rather than a value that holds one.
+//
+// The difference decides whether handing a place over takes its address.
+// `-> []i64` given an array takes the array's address; `-> Options` given a
+// struct copies the struct, and the pointers inside it keep pointing wherever
+// they already did.
+type_is_direct_view :: fn(mut p: Parser, ty: i64) -> bool {
+    if (ty < 0) {
+        return false
+    }
     if (is_pointer(ty)) {
         return true
     }
     is_array_ty(ty) && is_slice_ty(p, ty)
 }
 
-// Whether a place is rooted at a local of the function being checked, walking
-// down through fields, indexes and dereferences to the name it starts at.
-frame_rooted_here :: fn(mut p: Parser, id: i64) -> bool {
-    if (id == (-1)) {
+// Whether a value of type `held` holds an `element` inline.
+//
+// A view points at elements of one type, and it can land inside a value only
+// where that value holds one of those by value. Anything reached through a
+// pointer or a slice is not that value's own storage, so the walk stops at every
+// indirection.
+type_holds_inline :: fn(mut p: Parser, element: i64, held: i64, depth: i64)
+    -> bool {
+    if (depth <= 0) {
+        return true
+    }
+    if (element < 0 || held < 0) {
+        return true
+    }
+    // A generic that is not yet substituted stands for whatever it will be.
+    if (element == TY_PARAM || held == TY_PARAM) {
+        return true
+    }
+    if (element == held) {
+        return true
+    }
+    if (is_array_ty(held)) {
+        if (is_slice_ty(p, held)) {
+            return false
+        }
+        return type_holds_inline(p, element, array_element(p, held), depth - 1)
+    }
+    if (is_struct_ty(held)) {
+        def := arena_at(p.structs, struct_index_of(held))
+        mut fid := def.field_head
+        while (fid != (-1)) {
+            field := arena_at(p.fields, fid)
+            ty := field.ty
+            fid = field.next
+            if (type_holds_inline(p, element, ty, depth - 1)) {
+                return true
+            }
+        }
         return false
-    }
-    node := arena_at(p.arena, id)
-    kind := node.kind
-    if (kind == NodeKind::Var) {
-        return name_listed(p.frame_storage, p.src, node.val, node.c)
-    }
-    if (kind == NodeKind::Field || kind == NodeKind::Index || kind == NodeKind::Deref
-        || kind == NodeKind::AddrOf || kind == NodeKind::Ref) {
-        return frame_rooted_here(p, node.a)
     }
     false
 }
 
-// Whether a value points into this frame: an address or borrow taken of storage
-// here, a binding already known to hold one, or, when the function answers with
-// a view, a view of storage built here.
-frame_points_into :: fn(mut p: Parser, id: i64) -> bool {
+// Whether a view of the answer type could name storage held inside a value of
+// the parameter type. A `[]Entity` cannot point inside a `Query` that holds no
+// Entity by value, whatever address the callee was given.
+view_lands_in :: fn(mut p: Parser, answer: i64, param: i64) -> bool {
+    if (answer < 0) {
+        return true
+    }
+    if (is_pointer(answer)) {
+        return type_holds_inline(p, pointee(answer), param, FRAME_TYPE_DEPTH)
+    }
+    if (is_array_ty(answer) && is_slice_ty(p, answer)) {
+        return type_holds_inline(p, array_element(p, answer), param,
+            FRAME_TYPE_DEPTH)
+    }
+    // An aggregate holding views could hold any of them, which says nothing
+    // about where they point.
+    true
+}
+
+// The declared type of a place, as far as the annotations and the struct
+// declarations give it. -1 says the walk cannot tell, and the rules that ask
+// treat that as the answer that keeps storage in.
+//
+// This is read off declarations rather than out of the type pass, which runs
+// after this check and whose local table belongs to whichever function it looked
+// at last.
+frame_place_type :: fn(mut p: Parser, id: i64) -> i64 {
     if (id == (-1)) {
-        return false
+        return -1
     }
     node := arena_at(p.arena, id)
     kind := node.kind
+    child := node.a
+    off := node.val
+    len := node.c
+    if (kind == NodeKind::Var) {
+        return type_listed(p.frame_types, p.src, off, len)
+    }
+    if (kind == NodeKind::Field) {
+        base := frame_place_type(p, child)
+        if (base < 0) {
+            return -1
+        }
+        return field_type_by_range(p, base, off, len)
+    }
+    if (kind == NodeKind::Index) {
+        base := frame_place_type(p, child)
+        if (base < 0) {
+            return -1
+        }
+        if (is_array_ty(base)) {
+            return array_element(p, base)
+        }
+        // An array reached through a borrow indexes to its element, the same as
+        // one named directly. A raw pointer indexes to what it points at. A
+        // struct indexed is a slab or a columns container, whose element is a
+        // question this walk does not need to answer.
+        if (is_pointer(base)) {
+            inner := pointee(base)
+            if (is_array_ty(inner)) {
+                return array_element(p, inner)
+            }
+            if (is_struct_ty(inner)) {
+                return -1
+            }
+            return inner
+        }
+        return -1
+    }
+    if (kind == NodeKind::Deref) {
+        base := frame_place_type(p, child)
+        if (base < 0 || is_pointer(base) == false) {
+            return -1
+        }
+        return pointee(base)
+    }
+    -1
+}
+
+// The type a value has, for the shapes that say so without the type pass: a
+// call's return type off its symbol, a literal off itself, an address off the
+// place it names. Only enough to answer the questions the rules below ask.
+frame_value_type :: fn(mut p: Parser, id: i64) -> i64 {
+    if (id == (-1)) {
+        return -1
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    child := node.a
+    val := node.val
+    if (kind == NodeKind::Call) {
+        sym := arena_at(p.fns, val)
+        if (sym.defined == 0) {
+            return -1
+        }
+        return sym.ret_type
+    }
+    if (kind == NodeKind::CallPtr) {
+        callee := frame_place_type(p, child)
+        if (callee < 0 || is_proc(callee) == false) {
+            return -1
+        }
+        return proc_ret(p, callee)
+    }
+    if (kind == NodeKind::AddrOf) {
+        held := frame_place_type(p, child)
+        if (held < 0) {
+            return -1
+        }
+        return POINTER_BASE + held
+    }
+    if (kind == NodeKind::Ref) {
+        held := frame_place_type(p, child)
+        if (held < 0) {
+            return -1
+        }
+        return BORROW_FLAG + held
+    }
+    if (kind == NodeKind::PtrCast) {
+        return POINTER_BASE + val
+    }
+    if (kind == NodeKind::SliceFrom || kind == NodeKind::Cast) {
+        return val
+    }
+    // A literal is a `^i8` everywhere but an index into one, which is where the
+    // compiler reads the bytes it already holds.
+    if (kind == NodeKind::StrLit) {
+        return POINTER_BASE + TY_I8
+    }
+    // A struct literal carries its type, not its table index.
+    if (kind == NodeKind::StructLit) {
+        return val
+    }
+    // A literal says both halves of its own type: the element from a declared
+    // type when one was in force, otherwise from the first thing in it, and the
+    // length from how many there are. Both halves are stored plus one, so an
+    // untouched zero is "not written down".
+    if (kind == NodeKind::ArrayLit) {
+        mut element : i64 = -1
+        if (val != 0) {
+            element = val - 1
+        } else if (child != (-1)) {
+            first := arena_at(p.arena, child)
+            element = frame_value_type(p, first.a)
+        }
+        if (element < 0) {
+            return -1
+        }
+        return array_of(p, element, node.c)
+    }
+    // A number written as a bit of a flags type carries that type, stored plus
+    // one. Every other one takes its type from where it was written.
+    if (kind == NodeKind::Num) {
+        if (node.b != 0) {
+            return node.b - 1
+        }
+        return TY_I64
+    }
+    if (kind == NodeKind::Float) {
+        return TY_F64
+    }
+    if (kind == NodeKind::SliceLen || kind == NodeKind::Sizeof) {
+        return TY_I64
+    }
+    frame_place_type(p, id)
+}
+
+// Whether a name is declared at the top of a file rather than inside this call:
+// a compile-time constant, a struct constant, or a function named as a value,
+// which is how a table of them is filled in. None of them dies when the call
+// returns.
+frame_global_name :: fn(mut p: Parser, off: i64, len: i64) -> bool {
+    if (is_const(p, off, len)) {
+        return true
+    }
+    if (value_const_node(p, off, len) >= 0) {
+        return true
+    }
+    fn_index_of(p, off, len) >= 0
+}
+
+// What a name's value names. A local answers with whatever its binding was
+// given, which is how a pointer bound here and handed back later is caught.
+frame_name_prov :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
+    held := prov_listed(p.frame_locals, p.src, off, len)
+    if (held >= 0) {
+        return held
+    }
+    if (name_listed(p.frame_outlives, p.src, off, len)) {
+        return PROV_OUTLIVES
+    }
+    if (name_listed(p.frame_storage, p.src, off, len)) {
+        return PROV_FRAME
+    }
+    if (frame_global_name(p, off, len)) {
+        return PROV_OUTLIVES
+    }
+    PROV_UNKNOWN
+}
+
+// The storage a place names. Reaching into a place stays in whatever the root
+// named, and reaching through an indirection lands wherever it points, which is
+// a question about a value rather than about a place.
+frame_place_prov :: fn(mut p: Parser, id: i64) -> i64 {
+    if (id == (-1)) {
+        return PROV_OUTLIVES
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    child := node.a
+    off := node.val
+    len := node.c
+    if (kind == NodeKind::Var) {
+        // A borrow names storage somewhere else, so it answers with wherever
+        // that was and not with the frame it sits in.
+        held := prov_listed(p.frame_places, p.src, off, len)
+        if (held >= 0) {
+            return held
+        }
+        if (name_listed(p.frame_storage, p.src, off, len)) {
+            return PROV_FRAME
+        }
+        if (name_listed(p.frame_outlives, p.src, off, len)) {
+            return PROV_OUTLIVES
+        }
+        if (frame_global_name(p, off, len)) {
+            return PROV_OUTLIVES
+        }
+        return PROV_UNKNOWN
+    }
+    // Indexing a fixed array stays inside the base's storage. Indexing a slice,
+    // a `str` or a raw pointer lands wherever that indirection points, which is
+    // a question about the base's value: `held[0]` on a `[]T` parameter names
+    // the caller's block, not the slice sitting in this frame.
+    if (kind == NodeKind::Index) {
+        base := frame_place_type(p, child)
+        if (base >= 0 && (is_pointer(base) || is_slice_ty(p, base))) {
+            return frame_value_prov(p, child)
+        }
+        return frame_place_prov(p, child)
+    }
+    if (kind == NodeKind::Field || kind == NodeKind::Ref
+        || kind == NodeKind::AddrOf) {
+        return frame_place_prov(p, child)
+    }
+    if (kind == NodeKind::Deref) {
+        return frame_value_prov(p, child)
+    }
+    // Not a place. It names no storage of its own, so it holds nothing to how
+    // long a view built from it may live.
+    PROV_OUTLIVES
+}
+
+// The shortest-lived of a struct-literal or array-literal list, which is what a
+// value built from all of them is worth. Each item holds its value in `.a` and
+// chains through `.next`.
+frame_list_prov :: fn(mut p: Parser, head: i64) -> i64 {
+    mut held : i64 = PROV_OUTLIVES
+    mut item := head
+    while (item != (-1)) {
+        inode := arena_at(p.arena, item)
+        value := inode.a
+        item = inode.next
+        held = prov_max(held, frame_value_prov(p, value))
+    }
+    held
+}
+
+// What a block hands back, which is what its last statement answers with. A
+// block ending in something that is not a value hands back nothing.
+frame_block_prov :: fn(mut p: Parser, head: i64) -> i64 {
+    frame_value_prov(p, block_answer(p, head))
+}
+
+// One argument's contribution, given what the callee answers with, the type it
+// declared for that parameter, and whether it was handed the argument's address.
+frame_held_arg :: fn(mut p: Parser, answer: i64, declared: i64,
+    addressed: bool, arg: i64) -> i64 {
+    if (declared < 0) {
+        return prov_max(frame_place_prov(p, arg), frame_value_prov(p, arg))
+    }
+    // The callee was handed the argument's address, so a view it builds can name
+    // the argument's own storage. Only where the view could land there: reading
+    // it as though it always could made `query_entities(world, q)` a leak of the
+    // local `q`.
+    if (addressed && view_lands_in(p, answer, declared)) {
+        return prov_max(frame_place_prov(p, arg), frame_value_prov(p, arg))
+    }
+    // The callee was handed a copy. It can still build a view from what that
+    // copy points at, so a slice or a pointer carries its pointee's provenance
+    // across. A parameter holding no view carries nothing at all: an `i64` count
+    // says nothing about how long anything lives, and joining it in is what made
+    // `slice_span($T, held, total, 0)` read as a leak.
+    if (type_holds_view(p, declared, FRAME_TYPE_DEPTH)) {
+        return frame_value_prov(p, arg)
+    }
+    PROV_OUTLIVES
+}
+
+// What a call answers with. Frost has no global storage and no closures, so the
+// only storage a callee can name is storage it was handed, which makes this the
+// join over the arguments rather than a walk into the callee.
+frame_call_prov :: fn(mut p: Parser, id: i64) -> i64 {
+    node := arena_at(p.arena, id)
+    args := node.a
+    sym := arena_at(p.fns, node.val)
+    // A name with no signature in this program: a compile-time parameter
+    // standing for a function, or one the walk never saw.
+    if (sym.defined == 0) {
+        return PROV_UNKNOWN
+    }
+    answer := sym.ret_type
+    params := sym.params
+    // A callee answering with no view answers with a value, and a value carries
+    // no storage out however it was built.
+    if (type_holds_view(p, answer, FRAME_TYPE_DEPTH) == false) {
+        return PROV_OUTLIVES
+    }
+    mut held : i64 = PROV_OUTLIVES
+    count := count_value_args(p, args)
+    mut i : i64 = 0
+    while (i < count) {
+        arg := nth_value_arg(p, args, i)
+        param := nth_param_node(p, params, i)
+        mut declared : i64 = -1
+        mut addressed : bool = false
+        if (param != (-1)) {
+            pnode := arena_at(p.arena, param)
+            declared = pnode.b
+            // A parameter that borrows carries the flag in its type. The rules
+            // ask about the value the caller named, so the flag comes off and
+            // the mode is carried beside it.
+            if (pnode.a == 1) {
+                addressed = true
+                declared = pointee(declared)
+            }
+        }
+        held = prov_max(held,
+            frame_held_arg(p, answer, declared, addressed, arg))
+        i = i + 1
+    }
+    held
+}
+
+// A call through a value: a function pointer read out of a field or a table. The
+// signature it holds says what it answers with and how it takes each argument,
+// so a call through one is weighed the same way a named call is. Where that
+// signature cannot be read, nothing says where the answer came from, and
+// answering that it outlives the call is what let a frame pointer out through
+// `ops.pass(ptr_to(local))`.
+frame_call_ptr_prov :: fn(mut p: Parser, id: i64) -> i64 {
+    node := arena_at(p.arena, id)
+    callee := node.a
+    args := node.b
+    proc_ty := frame_place_type(p, callee)
+    if (proc_ty < 0 || is_proc(proc_ty) == false) {
+        return PROV_UNKNOWN
+    }
+    answer := proc_ret(p, proc_ty)
+    if (type_holds_view(p, answer, FRAME_TYPE_DEPTH) == false) {
+        return PROV_OUTLIVES
+    }
+    count := proc_param_count(p, proc_ty)
+    mut held : i64 = PROV_OUTLIVES
+    mut index : i64 = 0
+    mut arg := args
+    while (arg != (-1)) {
+        anode := arena_at(p.arena, arg)
+        value := anode.a
+        arg = anode.next
+        mut declared : i64 = -1
+        if (index < count) {
+            declared = proc_param_at(p, proc_ty, index)
+        }
+        // A signature records no modes, so an aggregate parameter is read as
+        // being handed the argument's address the way a read of one is, and
+        // everything narrower as being handed a copy.
+        held = prov_max(held,
+            frame_held_arg(p, answer, declared, is_struct_ty(declared), value))
+        index = index + 1
+    }
+    held
+}
+
+// The storage a value names.
+frame_value_prov :: fn(mut p: Parser, id: i64) -> i64 {
+    if (id == (-1)) {
+        return PROV_OUTLIVES
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    child := node.a
+    // An address of a place names that place's storage.
     if (kind == NodeKind::AddrOf || kind == NodeKind::Ref) {
-        return frame_rooted_here(p, node.a)
+        return frame_place_prov(p, child)
     }
     if (kind == NodeKind::Var) {
-        if (name_listed(p.frame_bound, p.src, node.val, node.c)) {
-            return true
+        return frame_name_prov(p, node.val, node.c)
+    }
+    // Reaching into a value stays inside whatever it named.
+    if (kind == NodeKind::Index || kind == NodeKind::Field) {
+        return frame_value_prov(p, child)
+    }
+    // Reading back through a pointer hands out whatever sits there. A scalar
+    // read carries no storage however short-lived the pointer was, which is why
+    // `p^` under `-> i64` is the ordinary way to read a local. A read whose type
+    // holds a view hands the view out again, which is `pp^` where `pp` was taken
+    // from a binding that held a frame pointer.
+    if (kind == NodeKind::Deref) {
+        base := frame_place_type(p, child)
+        if (base >= 0 && is_pointer(base)
+            && type_holds_view(p, pointee(base), FRAME_TYPE_DEPTH) == false) {
+            return PROV_OUTLIVES
         }
-        return p.frame_answers == 1
-            && name_listed(p.frame_materialized, p.src, node.val, node.c)
+        return frame_value_prov(p, child)
     }
-    if (kind == NodeKind::Index || kind == NodeKind::Field || kind == NodeKind::PtrCast
-        || kind == NodeKind::SliceFrom) {
-        return frame_points_into(p, node.a)
+    // A cast keeps pointing where it pointed, and a slice wraps a pointer in a
+    // length, so both answer with what they were built from.
+    if (kind == NodeKind::PtrCast || kind == NodeKind::Cast) {
+        return frame_value_prov(p, child)
     }
-    // A struct or array literal carries a frame pointer out inside itself, so a
-    // value built around one points into this frame just as a bare one does. An
-    // enum variant is a struct literal too, so this covers it. Each field or
-    // element holds its value in `.a` and chains through `.next`.
+    if (kind == NodeKind::SliceFrom) {
+        return prov_max(frame_value_prov(p, child),
+            frame_value_prov(p, node.b))
+    }
+    // A value built around views is as short-lived as the shortest of them, so a
+    // struct carrying a frame pointer out is caught the way a bare one is. An
+    // enum variant is a struct literal too, so this covers it.
     if (kind == NodeKind::StructLit || kind == NodeKind::ArrayLit) {
-        return frame_list_points_into(p, node.a)
+        return frame_list_prov(p, child)
     }
-    // A block used as a value answers with whichever branch runs, so the frame
-    // escapes if any of them hands one back.
+    // A block used as a value answers with whichever branch runs, so it is worth
+    // the shortest-lived of them.
     if (kind == NodeKind::If) {
-        if (frame_points_into(p, block_answer(p, node.b))) {
-            return true
-        }
-        return frame_points_into(p, block_answer(p, node.val))
+        return prov_max(frame_block_prov(p, node.b),
+            frame_block_prov(p, node.val))
     }
     if (kind == NodeKind::Match) {
+        mut held : i64 = PROV_OUTLIVES
         mut arm := node.b
         while (arm != (-1)) {
             case_node := arena_at(p.arena, arm)
-            if (frame_points_into(p, block_answer(p, case_node.a))) {
-                return true
-            }
+            body := case_node.a
             arm = case_node.next
+            held = prov_max(held, frame_block_prov(p, body))
         }
-        return false
+        return held
     }
-    // Reading back through a pointer at a binding that holds a frame pointer
-    // hands that pointer out again. `pp^` where `pp` was taken from something
-    // already bound, not `p^` where `p` is the pointer itself.
-    if (kind == NodeKind::Deref) {
-        root := root_name(p, node.a)
-        if (root != (-1)) {
-            rnode := arena_at(p.arena, root)
-            return name_listed(p.frame_via_pointer, p.src, rnode.val, rnode.c)
-        }
-        return false
+    if (kind == NodeKind::Call) {
+        return frame_call_prov(p, id)
     }
-    false
+    if (kind == NodeKind::CallPtr) {
+        return frame_call_ptr_prov(p, id)
+    }
+    // A value that names no storage places no constraint on how long a view
+    // built from it may live. Arithmetic is among them: there is no pointer
+    // arithmetic in the surface, so a binary operator answers with a number.
+    if (kind == NodeKind::Num || kind == NodeKind::Float
+        || kind == NodeKind::StrLit || kind == NodeKind::TypeVal
+        || kind == NodeKind::Bin || kind == NodeKind::SliceLen
+        || kind == NodeKind::Sizeof || kind == NodeKind::Assert) {
+        return PROV_OUTLIVES
+    }
+    // Listed rather than caught by a fallthrough. Frost has no exhaustiveness
+    // error to lean on here, so the walk says outright that it met a form nobody
+    // wrote a rule for, which is a hole in the check rather than a value that
+    // outlives the call.
+    frame_unhandled(p, "value", node.pos)
+    PROV_UNKNOWN
 }
 
-// Whether a value is the address of a binding that already holds a frame
-// pointer, which is the only way a dereference can hand one back out.
-frame_points_at_bound :: fn(mut p: Parser, id: i64) -> bool {
+// The storage a view takes the address of when it is built by coercion.
+//
+// `view : []i64 = arr` and `fn() -> []i64 { arr }` both hand back a view of the
+// array rather than a copy of it, so the array's storage is what the view names.
+// A value that is already a view carries its own provenance and no new address
+// is taken, which is what keeps a slice parameter passed straight back out from
+// reading as this frame's.
+frame_coercion_prov :: fn(mut p: Parser, id: i64) -> i64 {
+    held := frame_value_type(p, id)
+    if (held >= 0 && type_is_direct_view(p, held)) {
+        return PROV_OUTLIVES
+    }
+    frame_place_prov(p, id)
+}
+
+// Where the place a binding names lives, when the binding borrows rather than
+// owning storage of its own. `ref x := place` binds one, and so does a binding
+// taken from a call answering with a `ref`. -1 says the binding is storage this
+// frame owns. Without this, an accessor built on one refuses itself.
+frame_borrowed_place :: fn(mut p: Parser, id: i64) -> i64 {
     if (id == (-1)) {
-        return false
+        return -1
     }
     node := arena_at(p.arena, id)
-    if (node.kind != NodeKind::AddrOf && node.kind != NodeKind::Ref) {
-        return false
+    kind := node.kind
+    if (kind == NodeKind::Ref) {
+        return frame_place_prov(p, node.a)
     }
-    root := root_name(p, node.a)
-    if (root == (-1)) {
-        return false
+    if (kind == NodeKind::Call) {
+        sym := arena_at(p.fns, node.val)
+        if (sym.defined == 1 && is_borrow(sym.ret_type)) {
+            return frame_call_prov(p, id)
+        }
     }
-    rnode := arena_at(p.arena, root)
-    name_listed(p.frame_bound, p.src, rnode.val, rnode.c)
+    -1
+}
+
+frame_escape :: fn(mut p: Parser, pos: i64, how: ^i8) {
+    report_where(p.modules, p.src, pos)
+    report("a pointer into this frame is ")
+    report_cstr(how)
+    report("; the storage it names dies when the call returns")
+    frost_rt_die()
+}
+
+frame_unproven :: fn(mut p: Parser, pos: i64) {
+    report_where(p.modules, p.src, pos)
+    report("this answers with a borrowed view whose storage cannot be traced ")
+    report("to a parameter or an allocation capability; a view that leaves the ")
+    report("call has to name storage that outlives it")
+    frost_rt_die()
+}
+
+frame_unhandled :: fn(mut p: Parser, what: ^i8, pos: i64) {
+    report_where(p.modules, p.src, pos)
+    report("the frame check has no rule for this ")
+    report_cstr(what)
+    report(", so it cannot say where the storage it names lives")
+    frost_rt_die()
+}
+
+// What a value leaving the call is worth. PROV_FRAME is refused outright.
+// PROV_UNKNOWN is refused wherever the function answers with something that
+// holds a view, since that is where a value the walk could not classify is able
+// to carry storage out.
+//
+// A function answering with `ref T` answers with a place: `local.a[0]` there
+// hands back the element rather than a copy of it, so the storage the answer
+// names is what matters and not what happens to sit there. Under `-> i64` the
+// same expression is a read, and reading a local carries nothing out. Under
+// `-> ^T` it is a value that happens to be an address, so a local holding a heap
+// pointer hands back the pointer rather than the local.
+frame_judge :: fn(mut p: Parser, id: i64, how: ^i8, pos: i64) {
+    mut held := frame_value_prov(p, id)
+    if (p.frame_answers_place == 1) {
+        held = prov_max(held, frame_place_prov(p, id))
+    }
+    if (p.frame_answers_direct == 1) {
+        held = prov_max(held, frame_coercion_prov(p, id))
+    }
+    if (held == PROV_FRAME) {
+        frame_escape(p, pos, how)
+    }
+    if (held == PROV_UNKNOWN && p.frame_answers_view == 1) {
+        frame_unproven(p, pos)
+    }
 }
 
 // The value a block answers with: its last statement, when that is an
@@ -1609,131 +2266,145 @@ block_answer :: fn(mut p: Parser, head: i64) -> i64 {
     -1
 }
 
-// Whether any item in a struct-literal or array-literal list points into this
-// frame. Walks the `.next` chain and asks of each item's value in `.a`.
-frame_list_points_into :: fn(mut p: Parser, head: i64) -> bool {
-    mut item := head
-    while (item != (-1)) {
-        inode := arena_at(p.arena, item)
-        if (frame_points_into(p, inode.a)) {
-            return true
-        }
-        item = inode.next
-    }
-    false
-}
-
-// Whether a value is a view of storage built here, which is what makes a slice
-// over a local array escape while a slice handed in does not.
-frame_views_this :: fn(mut p: Parser, id: i64) -> bool {
-    if (id == (-1)) {
-        return false
-    }
+frame_note_let :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
-    kind := node.kind
-    if (kind == NodeKind::Var) {
-        if (name_listed(p.frame_materialized, p.src, node.val, node.c)) {
-            return true
-        }
-        return name_listed(p.frame_bound, p.src, node.val, node.c)
+    value := node.a
+    annotation := node.b
+    off := node.val
+    len := node.c
+    mut held := frame_value_prov(p, value)
+    // A binding declared as a view and given a place takes the address of that
+    // place, so `view : []i64 = arr` holds a view of the array rather than a
+    // copy of it.
+    if (annotation >= 0 && type_is_direct_view(p, annotation)) {
+        held = prov_max(held, frame_coercion_prov(p, value))
     }
-    if (kind == NodeKind::Index || kind == NodeKind::Field) {
-        return frame_views_this(p, node.a)
+    borrowed := frame_borrowed_place(p, value)
+    mut ty := annotation
+    if (ty < 0) {
+        ty = frame_value_type(p, value)
     }
-    false
+    list_name(p.frame_storage, off, len)
+    note_prov(p.frame_locals, p.src, off, len, held)
+    if (borrowed >= 0) {
+        note_prov(p.frame_places, p.src, off, len, borrowed)
+    }
+    if (ty >= 0) {
+        note_type(p.frame_types, p.src, off, len, ty)
+    }
 }
 
-// Whether a binding's value is storage built here rather than one handed in: an
-// array or a struct written out lands in this frame.
-frame_materializes :: fn(mut p: Parser, id: i64) -> bool {
+// Writing a view into a place the call cannot see hands it to the caller just as
+// returning it does, and the caller's frame outlives this one. Writing one into
+// this frame's own storage keeps it here, and that place now holds whatever the
+// value named: without recording it, a pointer stored in a local and returned
+// afterwards left with nobody having asked. A `match` or an `if` used as a value
+// is that shape, since both desugar into a synthesized local the arms assign to.
+frame_note_assign :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
-    node.kind == NodeKind::ArrayLit || node.kind == NodeKind::StructLit
+    place := node.a
+    value := node.b
+    pos := node.pos
+    held := frame_value_prov(p, value)
+    if (frame_place_prov(p, place) == PROV_FRAME) {
+        target := root_name(p, place)
+        if (target != (-1)) {
+            tnode := arena_at(p.arena, target)
+            off := tnode.val
+            len := tnode.c
+            mut now := prov_listed(p.frame_locals, p.src, off, len)
+            if (now < 0) {
+                now = PROV_OUTLIVES
+            }
+            note_prov(p.frame_locals, p.src, off, len, prov_max(now, held))
+        }
+        return
+    }
+    if (held == PROV_FRAME) {
+        frame_escape(p, pos, "stored where the call cannot see it")
+    }
 }
 
-frame_escape :: fn(mut p: Parser, pos: i64, how: ^i8) {
-    report_where(p.modules, p.src, pos)
-    report("a pointer into this frame is ")
-    report_cstr(how)
-    report("; the storage it names dies when the call returns")
-    frost_rt_die()
-}
-
+// Walk a block. `root` says whether this block's trailing value is what the
+// function hands back, which only the function's own body and a branch of a
+// block in value position can be. Without it, a nested block's last statement
+// reads as the call's answer and ordinary code is refused.
 frame_check_block :: fn(mut p: Parser, head: i64, root: i64) {
     mut id := head
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         kind := node.kind
+        first := node.a
+        second := node.b
+        third := node.val
+        pos := node.pos
         next_id := node.next
+        // Whether the value this statement ends with is the block's. A statement
+        // with something after it hands its value nowhere.
+        mut answers : i64 = 0
+        if (root == 1 && next_id == (-1)) {
+            answers = 1
+        }
         if (kind == NodeKind::Let) {
-            value := node.a
-            annotation := node.b
-            mut views_frame : bool = false
-            if (annotation != (-1) && is_borrowed_view(p, annotation)) {
-                views_frame = frame_views_this(p, value)
+            frame_note_let(p, id)
+        } else if (kind == NodeKind::Assign) {
+            frame_note_assign(p, id)
+        } else if (kind == NodeKind::Return) {
+            frame_judge(p, first, "returned", pos)
+        } else if (kind == NodeKind::ExprStmt) {
+            if (answers == 1) {
+                frame_judge(p, first, "the block's value", pos)
             }
-            if (frame_points_into(p, value) || views_frame) {
-                list_name(p.frame_bound, node.val, node.c)
-            }
-            if (frame_materializes(p, value)) {
-                list_name(p.frame_materialized, node.val, node.c)
-            }
-            if (frame_points_at_bound(p, value)) {
-                list_name(p.frame_via_pointer, node.val, node.c)
-            }
-            list_name(p.frame_storage, node.val, node.c)
-        }
-        if (kind == NodeKind::Return) {
-            if (frame_points_into(p, node.a)) {
-                frame_escape(p, node.pos, "returned")
-            }
-        }
-        // Writing one into a place the call cannot see hands it to the caller
-        // just as returning it does. A place rooted in this frame's own storage
-        // dies with the frame, so it may hold one.
-        if (kind == NodeKind::Assign) {
-            if (frame_points_into(p, node.b)) {
-                if (frame_rooted_here(p, node.a) == false) {
-                    frame_escape(p, node.pos,
-                        "stored where the call cannot see it")
-                } else {
-                    // Writing one into a local this frame owns is allowed, but
-                    // the local now holds it. Without this a `match` or `if`
-                    // used as a value escapes unseen, since those desugar into
-                    // a synthesized local the arms assign to, and the block
-                    // answers with that local rather than with the branch.
-                    target := root_name(p, node.a)
-                    if (target != (-1)) {
-                        tnode := arena_at(p.arena, target)
-                        list_name(p.frame_bound, tnode.val, tnode.c)
-                    }
-                }
-            }
-        }
-        if (kind == NodeKind::If) {
-            frame_check_block(p, node.b, root)
-            frame_check_block(p, node.val, root)
-        }
-        if (kind == NodeKind::Match) {
-            mut arm := node.b
+        } else if (kind == NodeKind::If) {
+            frame_check_block(p, second, answers)
+            frame_check_block(p, third, answers)
+        } else if (kind == NodeKind::Match) {
+            mut arm := second
             while (arm != (-1)) {
                 case_node := arena_at(p.arena, arm)
-                frame_check_block(p, case_node.a, root)
+                body := case_node.a
                 arm = case_node.next
+                frame_check_block(p, body, answers)
             }
-        }
-        if (kind == NodeKind::While) {
-            frame_check_block(p, node.b, 0)
-        }
-        if (kind == NodeKind::With) {
-            frame_check_block(p, node.a, 0)
-        }
-        // A body's last statement, when it is an expression, is its answer.
-        if (kind == NodeKind::ExprStmt && root == 1 && next_id == (-1)) {
-            if (frame_points_into(p, node.a)) {
-                frame_escape(p, node.pos, "the block's value")
-            }
+        } else if (kind == NodeKind::While) {
+            frame_check_block(p, second, 0)
+        } else if (kind == NodeKind::With) {
+            frame_check_block(p, first, 0)
+        } else if (kind == NodeKind::Print || kind == NodeKind::Assert
+            || kind == NodeKind::Break || kind == NodeKind::Continue) {
+            // Nothing leaves the frame through one. A print writes a value out
+            // and hands nothing back, an assert reads one, and the two transfers
+            // carry no value at all.
+        } else {
+            frame_unhandled(p, "statement", pos)
         }
         id = next_id
+    }
+}
+
+// Every parameter's name and type, before the body is walked.
+//
+// A borrow names the caller's storage, which outlives the call by definition. A
+// `move` parameter is in both sets, because the two answer different questions:
+// its storage is this call's own copy, so `ptr_to(p.x)` is an address into this
+// frame, and its value is whatever the caller handed over, so reading it out and
+// passing it on carries nothing of this frame with it. An allocation capability
+// is a trailing parameter of the same kind, and the arena it names belongs to
+// the caller's `with` block, where the region half of this file checks it.
+frame_seed_params :: fn(mut p: Parser, params: i64) {
+    mut id := params
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        off := node.val
+        len := node.c
+        ty := node.b
+        mode := node.a
+        id = node.next
+        list_name(p.frame_outlives, off, len)
+        if (mode == 2) {
+            list_name(p.frame_storage, off, len)
+        }
+        note_type(p.frame_types, p.src, off, len, ty)
     }
 }
 
@@ -1742,16 +2413,30 @@ check_frame_escapes :: fn(mut p: Parser) {
     while (i < p.arena.count) {
         node := arena_at(p.arena, i)
         if (node.kind == NodeKind::Func) {
+            body := node.a
             sym := arena_at(p.fns, node.val)
+            answer := sym.ret_type
+            params := sym.params
             p.frame_storage.count = 0
-            p.frame_bound.count = 0
-            p.frame_via_pointer.count = 0
-            p.frame_materialized.count = 0
-            p.frame_answers = 0
-            if (is_borrowed_view(p, sym.ret_type)) {
-                p.frame_answers = 1
+            p.frame_outlives.count = 0
+            p.frame_locals.count = 0
+            p.frame_places.count = 0
+            p.frame_types.count = 0
+            p.frame_ret = answer
+            p.frame_answers_view = 0
+            p.frame_answers_place = 0
+            p.frame_answers_direct = 0
+            if (type_holds_view(p, answer, FRAME_TYPE_DEPTH)) {
+                p.frame_answers_view = 1
             }
-            frame_check_block(p, node.a, 1)
+            if (is_borrow(answer)) {
+                p.frame_answers_place = 1
+            }
+            if (type_is_direct_view(p, answer)) {
+                p.frame_answers_direct = 1
+            }
+            frame_seed_params(p, params)
+            frame_check_block(p, body, 1)
         }
         i = i + 1
     }
