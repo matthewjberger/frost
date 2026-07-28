@@ -3336,7 +3336,7 @@ fn self_hosted_runs_the_standard_library_tests() {
     // reaches, and sort.frost is the one that carries a capability bundle
     // through two levels of generic.
     let modules = [
-        ("strings.frost", "6 passed"),
+        ("strings.frost", "9 passed"),
         ("math.frost", "20 passed"),
         ("math64.frost", "20 passed"),
         ("sort.frost", "3 passed"),
@@ -15123,6 +15123,26 @@ fn bootstrap_output(name: &str, source: &str) -> Option<String> {
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // A string literal bound to a name with no annotation. The literal is a
+    // pointer where a `^i8` is asked for and a `str` where a `str` is, and a
+    // binding asks for neither, so the self-hosted compiler kept the pointer
+    // and the length was gone by the time anything wanted it. Passing the name
+    // to anything taking a `str` then handed over a pointer: the C backend
+    // refused it and the assembly backend read a length out of whatever
+    // followed.
+    //
+    // Nothing in the tree had ever written it. Every literal was either an
+    // argument, where the coercion sees the target type, or assigned to a name
+    // already declared.
+    (
+        "a_string_literal_bound_to_a_name",
+        "shown :: fn(s: str) -> i64 { str_len(s) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   held := \"hello\"\n\
+         \x20   print shown(held)\n\
+         \x20   print str_len(held)\n    0\n}\n",
+        "5\n5\n",
+    ),
     // A type named before it is declared. The name resolved to nothing and was
     // taken for an i64, so the assembly backend read the wrong bytes and the C
     // backend died looking the type up. `sizeof` agreed by coincidence, which
