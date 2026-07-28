@@ -3301,7 +3301,7 @@ fn self_hosted_runs_the_standard_library_tests() {
         ("math64.frost", "20 passed"),
         ("sort.frost", "3 passed"),
         ("mem.frost", "13 passed"),
-        ("ecs.frost", "92 passed"),
+        ("ecs.frost", "97 passed"),
         ("snapshot.frost", "4 passed"),
         ("thread.frost", "3 passed"),
     ];
