@@ -1,6 +1,6 @@
-// The snippet in README.md, kept here so it is a program that runs rather than
-// prose that drifts. `readme_snippet_is_this_program` in tests/native.rs checks
-// the two against each other and checks what this prints.
+// The snippet the README shows, kept here so it is a program that runs rather
+// than prose that drifts. The test suite checks the two against each other and
+// checks what this prints.
 //
 //   frost examples/tour.frost
 

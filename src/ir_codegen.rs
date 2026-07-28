@@ -382,7 +382,7 @@ impl Generator {
                 Some(layout) => {
                     let Some(target) = self.c_target else {
                         bail!(
-                            "native backend: '{}' returns '{}' by value, and this target's C rule for returning a struct is not one Frost knows; see item 4 of docs/book/src/roadmap.md",
+                            "native backend: '{}' returns '{}' by value, and this target's C rule for returning a struct is not one Frost knows",
                             external.name,
                             external.return_type
                         );
@@ -405,7 +405,6 @@ impl Generator {
             };
             // An aggregate parameter is a pointer by design:
             // `close :: extern fn(f: File)` links against `void close(File*)`.
-            // That is the documented convention in docs/book/src/impl/c-compatibility.md.
             // A parameter written `value` is the exception, and it is the one
             // that has to be classified the way a return is, because C splits a
             // struct across registers by a rule of the target's.
@@ -422,7 +421,7 @@ impl Generator {
                 };
                 let Some(target) = self.c_target else {
                     bail!(
-                        "native backend: '{}' takes a parameter by value, and this target's C rule for passing a struct is not one Frost knows; see docs/book/src/impl/c-compatibility.md",
+                        "native backend: '{}' takes a parameter by value, and this target's C rule for passing a struct is not one Frost knows",
                         external.name
                     );
                 };
@@ -692,7 +691,7 @@ impl Generator {
             {
                 let Some(target) = self.c_target else {
                     bail!(
-                        "native backend: '{}' takes a parameter by value, and this target's C rule for passing a struct is not one Frost knows; see docs/book/src/impl/c-compatibility.md",
+                        "native backend: '{}' takes a parameter by value, and this target's C rule for passing a struct is not one Frost knows",
                         function.name
                     );
                 };

@@ -11,9 +11,8 @@
 // The whole thing is written against the data-oriented surface the language is
 // for: no closures, no dynamic collections, references are second-class, and
 // every mutable working set is an arena (the token stream, the AST, and the
-// symbol tables). The arenas are the language's own allocator
-// (docs/book/src/design/allocators.md), a generic bump allocator over one `malloc` per arena,
-// not a runtime pool.
+// symbol tables). The arenas are the language's own allocator, a generic bump
+// allocator over one `malloc` per arena, not a runtime pool.
 //
 // The AST is an arena of Node records. A node names its children by their arena
 // index (a plain integer), which is the data-oriented replacement for pointers

@@ -97,8 +97,8 @@ draw_layer :: fn(mut f: Frame, state: ^u8) {
     // The first pass clears both targets, the second loads them. Loading depth
     // is what lets the second pass sort against the first rather than only
     // against itself.
-    mut load := LOAD_OP_LOAD
-    mut depth_load := LOAD_OP_LOAD
+    mut load : u32 = LOAD_OP_LOAD
+    mut depth_load : u32 = LOAD_OP_LOAD
     if (near == 1) {
         load = LOAD_OP_CLEAR
         depth_load = LOAD_OP_CLEAR
@@ -218,9 +218,9 @@ main :: fn() -> i64 {
     queue := renderer_queue(r)
 
     mut vertices : [VERTEX_COUNT]Vertex = [
-        Vertex { position = vec4(0.0 - 0.6, 0.0 - 0.5, 0.0, 1.0),
+        Vertex { position = vec4(-0.6, -0.5, 0.0, 1.0),
             colour = vec4(1.0, 0.3, 0.3, 1.0) },
-        Vertex { position = vec4(0.6, 0.0 - 0.5, 0.0, 1.0),
+        Vertex { position = vec4(0.6, -0.5, 0.0, 1.0),
             colour = vec4(0.3, 1.0, 0.4, 1.0) },
         Vertex { position = vec4(0.0, 0.6, 0.0, 1.0),
             colour = vec4(0.4, 0.5, 1.0, 1.0) },
@@ -261,9 +261,9 @@ main :: fn() -> i64 {
 
     mut entities := heap_slice($Entity, INSTANCES)
     mut slots := heap_slice($Slot, INSTANCES)
-    mut spread : [INSTANCES]f32 = [0.0 - 1.1, 1.1, 0.0 - 0.5, 0.6]
-    mut depths : [INSTANCES]f32 = [0.0, 0.0, 0.0 - 1.6, 0.0 - 1.6]
-    mut rates : [INSTANCES]f32 = [1.0, 0.0 - 1.4, 0.7, 0.0 - 0.5]
+    mut spread : [INSTANCES]f32 = [-1.1, 1.1, -0.5, 0.6]
+    mut depths : [INSTANCES]f32 = [0.0, 0.0, -1.6, -1.6]
+    mut rates : [INSTANCES]f32 = [1.0, -1.4, 0.7, -0.5]
     mut nears : [INSTANCES]i64 = [1, 1, 0, 0]
 
     mut made : i64 = 0

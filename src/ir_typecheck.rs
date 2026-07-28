@@ -515,6 +515,22 @@ fn fits(given: &Type, wanted: &Type) -> bool {
     if is_text(given) && is_text(wanted) {
         return true;
     }
+    // Two function types fit when their parts do. The same aggregate-travels-by
+    // -address rule applies inside a signature: a bundle field declared
+    // `fn(Text) -> i64` is filled by a function whose parameter became a
+    // `&Text` when the mode pass ran, and the two are one signature.
+    if let (
+        Type::Proc(given_params, given_ret),
+        Type::Proc(wanted_params, wanted_ret),
+    ) = (given, wanted)
+    {
+        return given_params.len() == wanted_params.len()
+            && given_params
+                .iter()
+                .zip(wanted_params.iter())
+                .all(|(a, b)| fits(a, b))
+            && fits(given_ret, wanted_ret);
+    }
     // An enum is laid out as a struct with a tag beside the variant's fields,
     // so the two spell one type here and which one a value carries depends on
     // whether it came from the declaration or from the layout.

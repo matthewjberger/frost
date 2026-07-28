@@ -718,6 +718,14 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         emit_text("))")
         return
     }
+    if (kind == NodeKind::Cast) {
+        emit_text("((")
+        emit_ctype(p, node.val)
+        emit_text(")(")
+        emit_expr(p, node.a)
+        emit_text("))")
+        return
+    }
     if (kind == NodeKind::PtrCast) {
         target := node.val
         expr := node.a

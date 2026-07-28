@@ -7,9 +7,8 @@ use crate::interface::ModuleInterface;
 use crate::parser::{Expression, Parameter, Spanned, Statement};
 use crate::types::Type;
 
-// What the compiler remembers about a module between builds. Step 5 of
-// docs/book/src/impl/separate-compilation.md. A module is rebuilt only when its own source or
-// an imported interface changes, and this is the thing that answers that
+// What the compiler remembers about a module between builds. A module is
+// rebuilt only when its own source or an imported interface changes, and this is the thing that answers that
 // question without reading the module.
 //
 // The import list is here rather than in the interface because an interface

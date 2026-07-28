@@ -17,6 +17,7 @@ use crate::{Literal, Operator};
 
 pub const BUILTIN_FUNCTIONS: &[&str] = &[
     "assert",
+    "cast",
     "flags_has",
     "ptr_cast",
     "ptr_to",
@@ -43,7 +44,7 @@ pub struct IrBuilder {
     generic_functions: HashMap<String, GenericFunction>,
     generic_struct_defs: HashMap<String, (Vec<String>, Vec<StructField>)>,
     linear: HashSet<String>,
-    // Callback registrations, by name. See docs/book/src/design/callbacks.md.
+    // Callback registrations, by name.
     registrations: HashMap<String, crate::callbacks::CallbackShape>,
     // A number per type, handed out in the order `type_id` first asks for one.
     // What it is for is a table keyed by type in a program that decides at run
@@ -332,8 +333,7 @@ fn build_module_inner(
             };
             // The output is one object, so a specialization is emitted once no
             // matter how many modules ask for it. Per-module copies become
-            // possible only when each module emits its own object. See step 3
-            // of docs/book/src/impl/separate-compilation.md.
+            // possible only when each module emits its own object.
             if !emitted.insert((key, specialization.mangled_name.clone())) {
                 continue;
             }
@@ -508,7 +508,7 @@ fn declared_function(
 // What an extern's parameters are once C sees them. For a registration these
 // are not what the declaration says literally. The `$handler` parameter is the
 // callback pointer, and the context is passed as an address, because the library
-// keeps it past the call. See docs/book/src/design/callbacks.md.
+// keeps it past the call.
 fn extern_parameter_types(params: &[Parameter]) -> Vec<Type> {
     let shape = crate::callbacks::callback_shape(params);
     params
@@ -1062,9 +1062,8 @@ struct Specialization {
     // have to emit both once modules are compilation units.
     //
     // Nothing downstream uses this yet and the emitted code does not depend on
-    // it. It exists to answer the question the design in
-    // docs/book/src/impl/separate-compilation.md leaves open. Separate compilation gives each
-    // module its own copy of a specialization it instantiates, and whether that
+    // it. It exists to answer an open question: separate compilation gives
+    // each module its own copy of a specialization it instantiates, and whether that
     // duplication is worth caring about is a measurement, not an opinion.
     requested_by: u32,
     // Where the call that asked for this one was written, and how it reads
@@ -5056,6 +5055,24 @@ impl<'a> FunctionLowering<'a> {
             (right, &right_type),
         )?;
         let result_type = unify(&left_type, &right_type);
+        // An expression built out of literals is a literal, so it folds here
+        // and the number that comes out takes the same range check a written
+        // one does.
+        if let (
+            IrOperand::Constant(IrConstant::Integer(left_value, _)),
+            IrOperand::Constant(IrConstant::Integer(right_value, _)),
+        ) = (&left_operand, &right_operand)
+            && result_type.is_integer()
+            && let Some(folded) =
+                fold_integers(binop, *left_value, *right_value)
+        {
+            let operand =
+                IrOperand::Constant(IrConstant::Integer(folded, Type::I64));
+            return Ok((
+                self.coerce(operand, &Type::I64, &result_type)?,
+                result_type,
+            ));
+        }
         let left_final = self.coerce(left_operand, &left_type, &result_type)?;
         let right_final =
             self.coerce(right_operand, &right_type, &result_type)?;
@@ -5270,8 +5287,7 @@ impl<'a> FunctionLowering<'a> {
         }
     }
 
-    // docs/book/src/design/callbacks.md, steps 3 and 4. There is no trampoline, and finding that
-    // out is the whole of step 3: the handler's context parameter is `mut`, so
+    // There is no trampoline: the handler's context parameter is `mut`, so
     // it is already a pointer in the signature, and a Frost function and a C
     // one use the same calling convention. So `on_event` compiled for Frost is
     // bit for bit the `void (*)(void*, ...)` the library wants, and the cast the
@@ -5370,6 +5386,7 @@ impl<'a> FunctionLowering<'a> {
         {
             match name.as_str() {
                 "ptr_to" => return self.lower_ptr_to(arguments),
+                "cast" => return self.lower_cast(arguments),
                 "ptr_cast" => return self.lower_ptr_cast(arguments),
                 "slice_from" => return self.lower_slice_from(arguments),
                 _ => {}
@@ -6857,6 +6874,44 @@ impl<'a> FunctionLowering<'a> {
             value: length,
         });
         Ok((IrOperand::Local(slice_local), slice_type))
+    }
+
+    /// `cast($T, value)`: a conversion the reader asked for.
+    ///
+    /// It is written the way its neighbours are, `ptr_cast($T, p)` and
+    /// `slice_from($T, p, n)` and `sizeof(T)`, so it needs no keyword, no new
+    /// precedence level, and no parsing that did not already exist.
+    ///
+    /// What it is for is the other half: without it, a conversion that loses
+    /// something has no spelling, so refusing one would leave no way to say you
+    /// meant it. With it, `held : u8 = wide` is refused and
+    /// `held : u8 = cast($u8, wide)` is what you write instead.
+    fn lower_cast(
+        &mut self,
+        arguments: &[Expression],
+    ) -> Result<(IrOperand, Type)> {
+        if arguments.len() != 2 {
+            bail!("cast expects a type and a value, as in cast($u8, n)");
+        }
+        let Expression::TypeValue(target) = &arguments[0] else {
+            bail!("cast's first argument must be a type, as in $u8");
+        };
+        let target = target.clone();
+        let (value, from) = self.lower_expression(&arguments[1], None)?;
+        if !is_numeric(&from) || !is_numeric(&target) {
+            bail!(
+                "cast converts between numbers, and this is asked to turn a {from} into a {target}"
+            );
+        }
+        if from == target {
+            return Ok((value, target));
+        }
+        let result = self.fresh_local(target.clone(), None);
+        self.emit(IrStatement::Assign(
+            result,
+            IrRvalue::Cast(value, target.clone()),
+        ));
+        Ok((IrOperand::Local(result), target))
     }
 
     fn lower_ptr_cast(
@@ -8664,6 +8719,11 @@ impl<'a> FunctionLowering<'a> {
                 IrOperand::Constant(IrConstant::Float(*value, to.clone()))
             }
             _ if needs_cast(from, to) => {
+                if is_narrowing(from, to) {
+                    bail!(
+                        "this is a {from} and a {to} is wanted, which cannot hold all of one; write cast(${to}, ...) to say the loss is meant"
+                    );
+                }
                 let result = self.fresh_local(to.clone(), None);
                 self.emit(IrStatement::Assign(
                     result,
@@ -8759,6 +8819,67 @@ fn is_castable_integer(ty: &Type) -> bool {
     ty.is_integer() || matches!(ty, Type::Bool)
 }
 
+fn is_numeric(ty: &Type) -> bool {
+    match ty {
+        Type::Distinct(_, inner) => is_numeric(inner),
+        other => {
+            other.is_integer()
+                || other.is_float()
+                || matches!(other, Type::Bool)
+        }
+    }
+}
+
+/// A conversion that can lose what it is given: a narrower integer, or a float
+/// becoming one.
+///
+/// Widening is not one of these and stays implicit, because nothing is lost and
+/// requiring a cast for it would be noise. What this refuses is the case where
+/// the value may come out different from the one written: an i64 of 300 read
+/// at a u8 is 44, and 3.9 read at an i64 is 3.
+fn is_narrowing(from: &Type, to: &Type) -> bool {
+    let from = match from {
+        Type::Distinct(_, inner) => inner.as_ref(),
+        other => other,
+    };
+    let to = match to {
+        Type::Distinct(_, inner) => inner.as_ref(),
+        other => other,
+    };
+    if from.is_float() && to.is_integer() {
+        return true;
+    }
+    if is_castable_integer(from) && is_castable_integer(to) {
+        return to.size_of() < from.size_of();
+    }
+    if from.is_float() && to.is_float() {
+        return to.size_of() < from.size_of();
+    }
+    false
+}
+
+// A binary operation over two integers already known, at the full width a
+// literal is read at. Division and remainder by zero, and a shift past the
+// word, have no value to answer with and stay as they are written.
+fn fold_integers(binop: IrBinOp, left: i64, right: i64) -> Option<i64> {
+    Some(match binop {
+        IrBinOp::Add => left.wrapping_add(right),
+        IrBinOp::Subtract => left.wrapping_sub(right),
+        IrBinOp::Multiply => left.wrapping_mul(right),
+        IrBinOp::Divide if right != 0 => left.wrapping_div(right),
+        IrBinOp::Modulo if right != 0 => left.wrapping_rem(right),
+        IrBinOp::BitwiseAnd => left & right,
+        IrBinOp::BitwiseOr => left | right,
+        IrBinOp::ShiftLeft if (0..64).contains(&right) => {
+            left.wrapping_shl(right as u32)
+        }
+        IrBinOp::ShiftRight if (0..64).contains(&right) => {
+            left.wrapping_shr(right as u32)
+        }
+        _ => return None,
+    })
+}
+
 fn needs_cast(from: &Type, to: &Type) -> bool {
     (is_castable_integer(from) && is_castable_integer(to))
         || (from.is_float() && to.is_float())
@@ -8766,17 +8887,10 @@ fn needs_cast(from: &Type, to: &Type) -> bool {
         || (from.is_float() && to.is_integer())
 }
 
-// The type a binary operation is computed at. Spec 3.1: the narrower operand
-// widens to the wider.
-//
-// This used to say that `i64` mixed with any other integer yields the *other*
-// type, which is the opposite, and it silently truncated: `value * 10 + digit`
-// with an `i64` accumulator and a `u8` digit computed the whole thing at eight
-// bits, so reading "1234567" out of a string answered 135. The rule was there to
-// keep an untyped literal from dragging a narrow value up to `i64`, and it is
-// not needed for that. The right operand is lowered with the left's type as its
-// expectation, so a literal has already taken the other side's width by the time
-// this runs.
+// The type a binary operation is computed at: the narrower operand widens to
+// the wider. A literal has no width of its own and has already taken the other
+// side's by the time this runs, since the right operand is lowered with the
+// left's type as its expectation.
 fn unify(left: &Type, right: &Type) -> Type {
     if left == right {
         return left.clone();

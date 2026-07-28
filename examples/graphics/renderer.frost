@@ -66,8 +66,8 @@ make_depth :: fn(mut r: Renderer, w: i64, h: i64) {
     mut descriptor := texture_descriptor_init()
     descriptor.usage = TextureUsage::RenderAttachment
     descriptor.dimension = TEXTURE_DIMENSION_2D
-    descriptor.size = Extent3D { width = w, height = h,
-        depth_or_array_layers = 1 }
+    descriptor.size = Extent3D { width = cast($u32, w),
+        height = cast($u32, h), depth_or_array_layers = 1 }
     descriptor.format = DEPTH_FORMAT
     descriptor.mip_level_count = 1
     descriptor.sample_count = 1
@@ -205,8 +205,8 @@ renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
     r.configuration.device = r.device
     r.configuration.format = r.format
     r.configuration.usage = TextureUsage::RenderAttachment
-    r.configuration.width = w
-    r.configuration.height = h
+    r.configuration.width = cast($u32, w)
+    r.configuration.height = cast($u32, h)
     r.configuration.present_mode = PRESENT_MODE_FIFO
     surface_configure(r.surface, ptr_to(r.configuration))
     make_depth(r, w, h)
@@ -231,8 +231,8 @@ renderer_resize :: fn(mut r: Renderer, w: i64, h: i64) {
     if (w <= 0 || h <= 0) {
         return
     }
-    r.configuration.width = w
-    r.configuration.height = h
+    r.configuration.width = cast($u32, w)
+    r.configuration.height = cast($u32, h)
     surface_configure(r.surface, ptr_to(r.configuration))
     texture_destroy(r.depth)
     make_depth(r, w, h)

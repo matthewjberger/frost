@@ -43,7 +43,7 @@ camera_default :: fn() -> Camera {
     Camera {
         position = vec3(0.0, 1.5, 6.0),
         yaw = 0.0,
-        pitch = 0.0 - 0.15,
+        pitch = -0.15,
         y_fov = radians(45.0),
         z_near = 0.1,
         z_far = 1000.0,
@@ -58,7 +58,7 @@ camera_position :: fn(c: Camera) -> Vec3 { c.position }
 // the right axis, which is this in closed form rather than two matrices.
 camera_forward :: fn(c: Camera) -> Vec3 {
     flat := cosf(c.pitch)
-    vec3(flat * sinf(c.yaw), sinf(c.pitch), 0.0 - flat * cosf(c.yaw))
+    vec3(flat * sinf(c.yaw), sinf(c.pitch), -flat * cosf(c.yaw))
 }
 
 camera_view :: fn(c: Camera) -> Mat4 {
@@ -118,6 +118,6 @@ PITCH_LIMIT :: 1.5607963267948966
 
 clamp_pitch :: fn(angle: f32) -> f32 {
     if (angle > PITCH_LIMIT) { return PITCH_LIMIT }
-    if (angle < 0.0 - PITCH_LIMIT) { return 0.0 - PITCH_LIMIT }
+    if (angle < -PITCH_LIMIT) { return -PITCH_LIMIT }
     angle
 }

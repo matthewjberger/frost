@@ -224,11 +224,11 @@ main :: fn() -> i64 {
     // Frost laid out.
     mut vertices : [VERTEX_COUNT]Vertex = [
         Vertex {
-            position = vec4(0.0 - 1.0, 0.0 - 1.0, 0.0, 1.0),
+            position = vec4(-1.0, -1.0, 0.0, 1.0),
             colour = vec4(1.0, 0.2, 0.2, 1.0),
         },
         Vertex {
-            position = vec4(1.0, 0.0 - 1.0, 0.0, 1.0),
+            position = vec4(1.0, -1.0, 0.0, 1.0),
             colour = vec4(0.2, 1.0, 0.4, 1.0),
         },
         Vertex {

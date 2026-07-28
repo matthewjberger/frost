@@ -129,7 +129,7 @@ report_int :: fn(value: i64) {
     mut digits : [24]u8 = [0; 24]
     mut count : i64 = 0
     while (held > 0) {
-        digits[count] = 48 + (held % 10)
+        digits[count] = cast($u8, 48 + (held % 10))
         held = held / 10
         count = count + 1
     }
@@ -181,7 +181,8 @@ frost_rt_file_exists :: extern fn(path: ^i8) -> i64
 // gated. Reads through the slice it returns are bounds-checked and are not.
 NodeKind :: enum {
     Num, Var, Bin, Let, Assign, Print, If, While, Return, Call, Func, Param,
-    Arg, StructLit, Field, FieldInit, Deref, Index, AddrOf, PtrCast, Sizeof,
+    Arg, StructLit, Field, FieldInit, Deref, Index, AddrOf, PtrCast, Cast,
+    Sizeof,
     ExprStmt, Match, Case, Extern, StrLit, TypeVal, With, Float, ArrayLit,
     SliceLen, Assert, Ref, SliceFrom,
     // Leaving a loop, and going round it again. Both are statements with
@@ -807,7 +808,7 @@ UnsafeSpan :: struct {
 }
 
 // A growable, index-addressed arena over a single heap allocation. This is the
-// data-oriented allocator from docs/book/src/design/allocators.md, generic over its element.
+// data-oriented allocator, generic over its element.
 // arena_push appends and returns the element's index, arena_at turns an index
 // back into a pointer. The compiler is asked only for the raw memory (malloc)
 // and the pointer reinterpret. The bump logic is here.
@@ -908,7 +909,7 @@ source_end :: fn(text: str) -> i64 {
 // What is missing is the bound. These take a pointer with no length beside it,
 // so the read is unchecked and this is a perimeter rather than a proof. Making
 // it a proof means carrying the buffer as a slice, which is the length threaded
-// through every function that takes a `^i8` here (docs/book/src/roadmap.md).
+// through every function that takes a `^i8` here.
 byte_at :: fn(src: ^i8, index: i64) -> i64 {
     unsafe { frost_rt_byte_at(src, index) }
 }

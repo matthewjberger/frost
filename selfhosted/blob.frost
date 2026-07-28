@@ -32,7 +32,7 @@ blob_byte :: fn(mut b: Blob, value: i64) {
         report("frost: the object outgrew its buffer\n")
         frost_rt_die()
     }
-    b.bytes[b.count] = value & 255
+    b.bytes[b.count] = cast($u8, value & 255)
     b.count = b.count + 1
 }
 

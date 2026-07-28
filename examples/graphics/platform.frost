@@ -91,7 +91,7 @@ Platform :: struct {
 // before drawing into it, and SDL says why in `sdl_error`.
 platform_open :: fn(title: str, w: i64, h: i64) -> Platform {
     sdl_init(InitFlags::Video | InitFlags::Events)
-    made := window_create(title, w, h,
+    made := window_create(title, cast($i32, w), cast($i32, h),
         WindowFlags::Resizable | WindowFlags::HighPixelDensity)
     now := sdl_ticks()
     Platform {

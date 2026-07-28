@@ -61,9 +61,9 @@ main :: fn() -> i64 {
         if (dx != 0.0 || dy != 0.0) {
             moves = moves + 1
             mut far := dx
-            if (far < 0.0) { far = 0.0 - far }
+            if (far < 0.0) { far = -far }
             mut down := dy
-            if (down < 0.0) { down = 0.0 - down }
+            if (down < 0.0) { down = -down }
             travelled = travelled + far + down
         }
         if (wheel(p) != 0.0) { scrolls = scrolls + 1 }
@@ -75,12 +75,12 @@ main :: fn() -> i64 {
     say("key releases  ", key_ups)
     say("clicks        ", clicks)
     say("motion frames ", moves)
-    say("pointer travel", travelled)
+    say("pointer travel", cast($i64, travelled))
     say("scroll frames ", scrolls)
     say("resizes       ", resizes)
     say("width         ", width(p))
     say("height        ", height(p))
-    say("seconds       ", elapsed_seconds(p))
+    say("seconds       ", cast($i64, elapsed_seconds(p)))
 
     platform_close(p)
     0

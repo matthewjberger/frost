@@ -175,9 +175,12 @@ or the closing `}` begins. Patterns:
 `match` works over a value or a reference. Matching a value of a `linear` type
 consumes it (chapter 9).
 
-## 6.8 `sizeof` and `unsafe`
+## 6.8 `sizeof`, `cast`, and `unsafe`
 
 - `sizeof(T)` is a compile-time constant.
+- `cast($T, value)` converts a scalar to `T` when the conversion loses
+  something, which is the only time it is needed and the only time it is
+  accepted quietly (3.1a). It is safe and needs no block.
 - `unsafe { ... }` is a block, and it is the only place four operations may be
   written: reading or writing through a raw pointer, `ptr_cast`, `slice_from`,
   and calling an `extern fn` that is not marked `safe`. Outside one each is a

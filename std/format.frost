@@ -40,7 +40,7 @@ builder_str :: fn(b: Builder) -> str {
 }
 
 builder_byte :: fn(mut b: Builder, byte: i64) {
-    vec_push($u8, b.bytes, byte)
+    vec_push($u8, b.bytes, cast($u8, byte))
 }
 
 // Append a `str`, byte for byte.
@@ -72,7 +72,7 @@ builder_uint :: fn(mut b: Builder, value: i64) {
     mut count : i64 = 0
     mut left := value
     while (left > 0) {
-        digits[count] = 48 + left % 10
+        digits[count] = cast($u8, 48 + left % 10)
         left = left / 10
         count = count + 1
     }
