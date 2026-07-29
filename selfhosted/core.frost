@@ -24,7 +24,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     TY_U32, TY_U64, TY_U8, TY_USIZE, TY_VOID, Token, TypeArg,
     TypeCacheEntry, UnsafeSpan,
     Variant,
-    add_root, arena_at, arena_make, arena_push, cstr_eq, emit_text, malloc,
+    add_root, arena_at, arena_make, arena_push, cstr_eq, emit_text, frost_rt_alloc,
     emit_to_memory, emit_memory_text,
     report, report_cstr, report_int, report_src, SearchRoot,
     buffer_of, cstr_slice, empty_source, source_end, byte_at, byte_set,
@@ -36,7 +36,14 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     frost_rt_read_file, frost_rt_remove_file, frost_rt_run_command,
     frost_rt_thread_spawn, frost_rt_thread_join
 
-malloc          :: safe extern fn(size: i64) -> ^u8
+// The runtime's allocator rather than the C library's, so a request that cannot
+// be met stops here with a message instead of answering null and leaving the
+// caller to write through it. Safe because the call either gives back a block or
+// does not return; what is done with the block is gated as ever.
+frost_rt_alloc  :: safe extern fn(size: i64) -> ^u8
+// How many bytes a count of elements takes, refused where the product would
+// wrap. Safe because it is arithmetic and an abort.
+frost_rt_check_size :: safe extern fn(count: i64, width: i64) -> i64
 frost_rt_byte_at   :: extern fn(s: ^i8, i: i64) -> i64
 frost_rt_str_len   :: extern fn(s: ^i8) -> i64
 // Emits a counted run of bytes. The read is bounded by the length, so the one
@@ -810,8 +817,8 @@ UnsafeSpan :: struct {
 // A growable, index-addressed arena over a single heap allocation. This is the
 // data-oriented allocator, generic over its element.
 // arena_push appends and returns the element's index, arena_at turns an index
-// back into a pointer. The compiler is asked only for the raw memory (malloc)
-// and the pointer reinterpret. The bump logic is here.
+// back into a pointer. The compiler is asked only for the raw memory and the
+// pointer reinterpret. The bump logic is here.
 Arena :: struct($T: Type) {
     data: ^T,
     cap: i64,
@@ -819,10 +826,14 @@ Arena :: struct($T: Type) {
 }
 
 arena_make :: fn($T: Type, cap: i64) -> Arena<T> {
-    // `malloc` is a `safe extern`: it hands back memory and cannot corrupt any.
-    // Reading those bytes as a `T` is the unchecked part, and that is all this
-    // block vouches for.
-    bytes := malloc(cap * sizeof(T))
+    // `frost_rt_alloc` is a `safe extern`: it hands back memory or does not
+    // return, so it cannot corrupt any. Reading those bytes as a `T` is the
+    // unchecked part, and that is all the block below vouches for.
+    //
+    // The size is answered for rather than multiplied out. A count times a width
+    // that wraps asks for fewer bytes than the arena believes it has, and the
+    // arena's own bounds check then runs against the count it was told.
+    bytes := frost_rt_alloc(frost_rt_check_size(cap, sizeof(T)))
     Arena { data = unsafe { ptr_cast($T, bytes) }, cap = cap, count = 0 }
 }
 
@@ -871,7 +882,7 @@ arena_at :: fn(a: Arena<$T>, id: i64) -> ref T {
 // compiler asks for memory, and what it hands back carries its own length, so
 // every read and write into the source buffer above is a checked index.
 buffer_of :: fn(size: i64) -> str {
-    unsafe { slice_from($u8, malloc(size), size) }
+    unsafe { slice_from($u8, frost_rt_alloc(size), size) }
 }
 
 // A C string as a slice of the bytes it holds, for text the environment handed

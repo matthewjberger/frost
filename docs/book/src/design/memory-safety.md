@@ -350,9 +350,18 @@ so nobody has to find out by reading the passes.
   would wrap in a slice. A negative count and a wrapped size are not
   unverifiable claims but meaningless ones, which is why they are refused rather
   than trusted.
-- The roughly 150 hand-written `unsafe` blocks in the standard library, the
-  compiler and the examples are audited rather than proven. `Vec`, `Map` and the
-  ECS are ordinary safe code resting on `std/mem.frost` being right.
+- The hand-written `unsafe` blocks in the standard library, the compiler and the
+  examples are audited rather than proven. `Vec`, `Map` and the ECS are ordinary
+  safe code resting on `std/mem.frost` being right. What is enforced is that
+  every one of them earns itself: `just audit` fails on a block holding no
+  unchecked operation and on a block written inside another, so the list stays
+  worth reading. A list with idle entries is one nobody reads, and eleven had
+  accumulated in the compiler before it was wired into the gate.
+- `safe extern fn` is the same trust in a quieter place: it says a C function was
+  audited once at its declaration, so its calls need no block. The claim has to
+  be true of every argument the type system permits, which rules out anything
+  taking a pointer and a length separately, since those can disagree and that is
+  exactly what `slice_from` is gated for.
 - A raw place against an ordinary one is read as apart, so `f(p^, x)` with `p`
   holding `x`'s address passes the exclusivity check. Two places that each reach
   through a raw pointer are no longer read as apart, since every step in front of
