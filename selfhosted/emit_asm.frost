@@ -878,6 +878,35 @@ emit_asm_narrow_check :: fn(mut p: Parser, bits: i64, unsigned: bool,
     emit_text(":
 ")
 }
+// What has to be answered for before the operation runs rather than after: a
+// divisor of zero faults, and a shift wider than the type is masked by the
+// hardware into a different shift. Both read the right operand from %r11, where
+// the caller has just put it.
+emit_asm_arith_pre :: fn(mut p: Parser, op: i64, ty: i64) {
+    if (is_integer(ty) == false) {
+        return
+    }
+    if (op == OP_DIV || op == OP_MOD) {
+        code := 3
+        if (op == OP_MOD) {
+            emit_asm_guard(p, "jne", 4)
+            return
+        }
+        emit_asm_guard(p, "jne", code)
+        return
+    }
+    if (op == OP_SHL || op == OP_SHR) {
+        asm_i("cmpq $", scalar_size(ty) * 8, ", %r11")
+        emit_asm_arith_call(p, "jb", 7)
+    }
+}
+
+// A divisor compared against zero, with `taken` the jump that skips the report.
+emit_asm_guard :: fn(mut p: Parser, taken: str, code: i64) {
+    asm("cmpq $0, %r11")
+    emit_asm_arith_call(p, taken, code)
+}
+
 // The check an operation's own width and signedness call for, emitted where the
 // flags the arithmetic just set are still live.
 emit_asm_arith_check :: fn(mut p: Parser, op: i64, ty: i64, unsigned: bool) {
@@ -1470,6 +1499,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
             emit_asm_expr(p, bin.a)
             emit_asm_simple_into_r11(p, bin.b, simple)
             unsigned := binop_is_unsigned(left_ty, right_ty)
+            emit_asm_arith_pre(p, op, type_of(p, id))
             emit_asm_binop(op, unsigned)
             emit_asm_arith_check(p, op, type_of(p, id), unsigned)
             return
@@ -1480,6 +1510,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         asm("movq %rax, %r11")
         emit_asm_unspill(p)
         unsigned := binop_is_unsigned(left_ty, right_ty)
+        emit_asm_arith_pre(p, op, type_of(p, id))
         emit_asm_binop(op, unsigned)
         emit_asm_arith_check(p, op, type_of(p, id), unsigned)
         return

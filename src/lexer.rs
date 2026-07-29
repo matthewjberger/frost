@@ -479,6 +479,14 @@ impl<'a> Lexer<'a> {
                         EOF_CHAR => bail!(
                             "Reached end of file while scanning string. Expected closing delimiter '\"'."
                         ),
+                        // A literal may span lines, and one written on a file
+                        // saved with CRLF must be the same string as the same
+                        // literal saved with LF. The carriage return is dropped
+                        // so the program does not depend on how the file
+                        // reached the compiler. `\r` still says the byte.
+                        '\r' if self.peek_nth(1) == '\n' => {
+                            self.read_char();
+                        }
                         '"' => {
                             self.read_char();
                             break;
