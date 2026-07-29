@@ -3465,7 +3465,15 @@ fn self_hosted_runs_the_standard_library_tests() {
     // `f32` field, and every other one arrives at its floats as float literals.
     // A list naming the standard library and holding four of its modules is the
     // shape this suite exists to catch.
+    //
+    // It is the same list `the_standard_library_passes_its_own_tests` holds the
+    // bootstrap to, and the two are meant to stay the same list. map, slab and
+    // vec were in that one and not this one, so the containers a program is
+    // most likely to reach for were compiled by one compiler and not the other.
     let modules = [
+        ("map.frost", "12 passed"),
+        ("slab.frost", "1 passed"),
+        ("vec.frost", "5 passed"),
         ("strings.frost", "9 passed"),
         ("math.frost", "20 passed"),
         ("math64.frost", "20 passed"),
@@ -7655,6 +7663,38 @@ fn both_compilers_refuse_a_defer_inside_a_block() {
              {name}:\n{hosted}"
         );
     }
+}
+
+// A deferred statement is written out again at every exit and its names are
+// resolved there, so a name it mentions that is bound again below it reads as
+// that later binding. Both compilers took this and both got it wrong, by
+// different routes and to different answers: the bootstrap and the self-hosted
+// C backend printed the shadowing value, and the self-hosted assembly backend
+// printed a slot the path taken never wrote, because its locals are flat and
+// the last binding of a name wins. Three answers to one program, none of them
+// the one the line has.
+#[test]
+fn both_compilers_refuse_a_defer_over_a_rebound_name() {
+    let source = "trace :: fn(n: i64) { print n }\n\
+         shadowed :: fn(c: i64) -> i64 {\n\
+         \x20   x := 1\n\
+         \x20   defer trace(x)\n\
+         \x20   if (c > 0) {\n        x := 99\n        trace(x)\n\
+         \x20       return 0\n    }\n\
+         \x20   7\n}\n\
+         main :: fn() -> i64 { print shadowed(1)  0 }\n";
+    let bootstrap = compile_error("defershadow", source);
+    assert!(
+        bootstrap.contains("bound again below this `defer`"),
+        "the bootstrap took a `defer` over a rebound name:\n{bootstrap}"
+    );
+    let Some(hosted) = self_hosted_rejects("defershadow", source) else {
+        return;
+    };
+    assert!(
+        hosted.contains("bound again below the `defer`"),
+        "the self-hosted compiler took a `defer` over a rebound name:\n{hosted}"
+    );
 }
 
 // The example programs, run under both compilers and compared. They are the
@@ -17416,6 +17456,88 @@ main :: fn() -> i64 {
 1
 200
 24
+",
+    ),
+    // A generic whose type parameter is not its first parameter. What a call
+    // binds the parameter to was read off the first argument whose type was
+    // known, so `scale(10, u)` was compiled for `i64` and the body reached for a
+    // field of one. The declaration says which argument stands for the
+    // parameter, and that is the one read now.
+    //
+    // The second half is the tuple that cannot be named. Once the argument is
+    // the right one, its type is still unknown out where the tuples are
+    // gathered, because no local table lives there and a name nothing knows
+    // reads as `i64`. Answering `i64` there named a second instance nothing had
+    // asked for, which the assembly backend emitted happily and the C backend
+    // refused, since C is what type-checks a field read.
+    (
+        "a_generic_whose_parameter_is_not_first",
+        "Vec3 :: struct { x: i64, y: i64, z: i64 }
+
+scale :: fn(by: i64, mut v: $T) {
+    v.x = v.x * by
+}
+
+widest :: fn(mut a: $T, by: i64) -> i64 {
+    a.y = a.y + by
+    a.y
+}
+
+main :: fn() -> i64 {
+    mut u := Vec3 { x = 3, y = 4, z = 5 }
+    scale(10, u)
+    print u.x
+    print widest(u, 6)
+    print u.y
+    0
+}
+",
+        "30
+10
+10
+",
+    ),
+    // A `defer` and a `?`. Handing a failure on is the function leaving, so
+    // whatever it deferred runs there the way it runs at a `return` written out.
+    // The self-hosted compiler built the `?` return node directly rather than
+    // through the path a `return` takes, so the deferred statement ran on the
+    // path that succeeded and not on the path that failed, which is a resource
+    // left behind on exactly the exit that was meant to be the tidy one.
+    (
+        "a_defer_runs_where_a_question_mark_hands_on",
+        "ParseError :: struct { at: i64 }
+
+digit_of :: fn(c: i64) -> i64 ! ParseError {
+    if (c < 48 || c > 57) {
+        return ParseError { at = c }
+    }
+    c - 48
+}
+
+two_digits :: fn(high: i64, low: i64) -> i64 ! ParseError {
+    defer print 99
+    tens := digit_of(high)?
+    ones := digit_of(low)?
+    tens * 10 + ones
+}
+
+side :: fn(high: i64, low: i64) -> i64 {
+    match two_digits(high, low) {
+        case .Ok { value }: 0
+        case .Err { error }: 1
+    }
+}
+
+main :: fn() -> i64 {
+    print side(52, 55)
+    print side(52, 90)
+    0
+}
+",
+        "99
+0
+99
+1
 ",
     ),
 ];

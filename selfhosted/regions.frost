@@ -141,13 +141,14 @@ check_bound_at_call :: fn(mut p: Parser, gfn_index: i64, fn_index: i64,
     if (gfn.bound_token < 0) {
         return
     }
-    arg := call_type_args(p, args)
+    arg := call_type_args(p, args, gfn_index)
     xarg_start := p.call_xarg_start
     xarg_count := p.call_xarg_count
     // A call written inside a template names its enclosing parameters, which
     // are bound only once that template is instantiated. The instance is
-    // checked in its own right, so the placeholder is left alone here.
-    if (arg == TY_PARAM) {
+    // checked in its own right, so the placeholder is left alone here, and so
+    // is a tuple nothing in scope could name.
+    if (arg < 0 || arg == TY_PARAM) {
         return
     }
     held := p.ti
@@ -1004,8 +1005,8 @@ walk_moves_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
             mut ptype := pnode.b
             if (generic_fn_of(p, fn_index) >= 0
                 && (is_aggregate(pnode.b) || pnode.b == TY_PARAM)) {
-                ptype = call_type_args(p, args)
-                if (ptype == TY_PARAM) {
+                ptype = call_type_args(p, args, generic_fn_of(p, fn_index))
+                if (ptype < 0 || ptype == TY_PARAM) {
                     ptype = TY_VOID
                 }
             }

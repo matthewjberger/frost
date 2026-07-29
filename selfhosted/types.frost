@@ -3,6 +3,7 @@
 
 import "core.frost"
 import "lexer.frost"
+import "cursor.frost"
 import "imports.frost"
 import "names.frost"
 import "layout.frost"
@@ -833,10 +834,13 @@ call_args_for :: fn(mut p: Parser, head: i64, fn_index: i64) -> i64 {
     if (pack_call_args(p, head, fn_index)) {
         return p.call_pack_primary
     }
-    call_type_args(p, head)
+    call_type_args(p, head, generic_fn_of(p, fn_index))
 }
 
-call_type_args :: fn(mut p: Parser, head: i64) -> i64 {
+// `owner` is the generic being called, or -1 where the caller does not know it.
+// It is what says which argument stands for the type parameter; without it the
+// first argument whose type is known has to do.
+call_type_args :: fn(mut p: Parser, head: i64, owner: i64) -> i64 {
     mut count : i64 = 0
     mut first : i64 = TY_I64
     xstart := p.gargs.count
@@ -892,7 +896,19 @@ call_type_args :: fn(mut p: Parser, head: i64) -> i64 {
     }
     // No argument carried a tuple, so the tuple is the type an argument has: a
     // generic over a plain type names that type through what it was given and
-    // nowhere else.
+    // nowhere else. Which argument is the one the declaration wrote `$T` on,
+    // where it says; the first whose type is known otherwise.
+    if (owner >= 0) {
+        at := tparam_position(p, owner)
+        if (at >= 0) {
+            // -1 rather than a default. The argument that stands for the
+            // parameter is known to be this one and its type is not known here,
+            // so there is no tuple to name. Answering `i64` would name an
+            // instance nothing asked for, and that instance is emitted and
+            // compiled like any other.
+            return call_arg_type_at(p, head, at)
+        }
+    }
     id = head
     while (id != (-1)) {
         node := arena_at(p.arena, id)
@@ -900,7 +916,7 @@ call_type_args :: fn(mut p: Parser, head: i64) -> i64 {
         next_id := node.next
         vnode := arena_at(p.arena, value)
         if (vnode.kind != NodeKind::TypeVal) {
-            mut held := type_of(p, value)
+            mut held := argument_type(p, value)
             if (is_pointer(held)) {
                 held = pointee(held)
             }
@@ -1000,7 +1016,7 @@ collect_type_args :: fn(mut p: Parser) {
                 // type of each argument and only the parse has the names in
                 // scope to say what those are.
                 if (takes_pack(p, node.val) == false) {
-                    arg := call_type_args(p, node.a)
+                    arg := call_type_args(p, node.a, owner)
                     note_type_args(p, arg, p.call_xarg_start,
                         p.call_xarg_count, 0, owner)
                 }
@@ -1207,13 +1223,135 @@ pack_arg_type :: fn(mut p: Parser, value: i64) -> i64 {
     type_of(p, value)
 }
 
+// Which runtime argument of a call to this generic carries the type parameter,
+// or -1 where the declaration does not say plainly. The parameter list is read
+// back from the declaration's own tokens, and the position wanted is the first
+// parameter written exactly `$T`: the argument there has the type the parameter
+// stands for, where a parameter written `Vec<$T>` or `[]$T` has only a type
+// built from it. A parameter whose *name* carries the `$` is compile-time and
+// fills no runtime position, so it is counted out.
+tparam_position :: fn(mut p: Parser, gfn_index: i64) -> i64 {
+    gfn := arena_at(p.generic_fns, gfn_index)
+    name_off := gfn.tparam_off
+    name_len := gfn.tparam_len
+    if (name_len == 0) {
+        return -1
+    }
+    held_ti := p.ti
+    p.ti = gfn.token_start
+    while (cur(p) != TokenKind::Lparen && cur(p) != TokenKind::Eof) {
+        advance(p)
+    }
+    advance(p)
+    mut depth : i64 = 0
+    mut position : i64 = 0
+    mut found : i64 = -1
+    mut at_start : i64 = 1
+    mut compile_time : i64 = 0
+    while (cur(p) != TokenKind::Eof) {
+        kind := cur(p)
+        if (kind == TokenKind::Rparen && depth == 0) {
+            break
+        }
+        if (kind == TokenKind::Lparen || kind == TokenKind::Lbracket) {
+            depth = depth + 1
+            advance(p)
+            continue
+        }
+        if (kind == TokenKind::Rparen || kind == TokenKind::Rbracket) {
+            depth = depth - 1
+            advance(p)
+            continue
+        }
+        if (kind == TokenKind::Comma && depth == 0) {
+            if (compile_time == 0) {
+                position = position + 1
+            }
+            at_start = 1
+            compile_time = 0
+            advance(p)
+            continue
+        }
+        if (at_start == 1) {
+            if (kind == TokenKind::KwMut || kind == TokenKind::KwMove
+                || kind == TokenKind::KwRef) {
+                advance(p)
+                continue
+            }
+            if (kind == TokenKind::Dollar) {
+                compile_time = 1
+                advance(p)
+                continue
+            }
+            at_start = 0
+            advance(p)
+            if (cur(p) == TokenKind::Colon) {
+                advance(p)
+                if (compile_time == 0 && found < 0
+                    && cur(p) == TokenKind::Dollar
+                    && peek_kind(p, 1) == TokenKind::Ident
+                    && peek_len(p, 1) == name_len
+                    && bytes_equal(p.src, peek_off(p, 1), name_off, name_len)) {
+                    found = position
+                }
+            }
+            continue
+        }
+        advance(p)
+    }
+    p.ti = held_ti
+    found
+}
+
+// The type an argument has where something in scope says so, and -1 where
+// nothing does. A name is asked of the table the parse keeps and then of the one
+// the walks build. Where neither holds it the answer is that it is not known,
+// rather than the `i64` `lookup_local` hands back for a name it has never seen:
+// a tuple built from that default names an instance the program never asked
+// for, and that instance is emitted and compiled like any other.
+argument_type :: fn(mut p: Parser, value: i64) -> i64 {
+    node := arena_at(p.arena, value)
+    if (node.kind == NodeKind::Var) {
+        held := parse_local_type(p, node.val, node.c)
+        if (held >= 0) {
+            return held
+        }
+        if (local_exists(p, node.val, node.c) == false) {
+            return -1
+        }
+    }
+    type_of(p, value)
+}
+
+// The type of the nth runtime argument of a call, with a pointer read through,
+// or -1 where nothing here says what it is.
+call_arg_type_at :: fn(mut p: Parser, args: i64, at: i64) -> i64 {
+    mut id := args
+    mut seen : i64 = 0
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        value := node.a
+        next_id := node.next
+        if (seen == at) {
+            mut held := argument_type(p, value)
+            if (is_pointer(held)) {
+                held = pointee(held)
+            }
+            return held
+        }
+        seen = seen + 1
+        id = next_id
+    }
+    -1
+}
+
 // The tuple a call to a generic names through its arguments alone, read while
 // the declaration around it is being parsed. A generic over a plain type names
 // that type only in the local table, and this is where that table is in scope.
 //
 // -1 when the call writes its type arguments out, since those are read where
 // the tuples are collected and need nothing from here.
-parse_call_type_args :: fn(mut p: Parser, args: i64) -> i64 {
+parse_call_type_args :: fn(mut p: Parser, args: i64, gfn_index: i64) -> i64 {
     mut id := args
     while (id != (-1)) {
         node := arena_at(p.arena, id)
@@ -1225,12 +1363,24 @@ parse_call_type_args :: fn(mut p: Parser, args: i64) -> i64 {
         }
         id = next_id
     }
+    // Where the declaration says which argument stands for the parameter, that
+    // argument is the answer and no other. A generic whose first parameter is
+    // an ordinary type took the first argument's type otherwise, so
+    // `scale(by: i64, mut v: $T)` was compiled for `i64` whatever it was given.
+    at := tparam_position(p, gfn_index)
+    if (at >= 0) {
+        held := call_arg_type_at(p, args, at)
+        if (held >= 0) {
+            return held
+        }
+        return -1
+    }
     id = args
     while (id != (-1)) {
         node := arena_at(p.arena, id)
         value := node.a
         next_id := node.next
-        mut held := pack_arg_type(p, value)
+        mut held := argument_type(p, value)
         if (is_pointer(held)) {
             held = pointee(held)
         }

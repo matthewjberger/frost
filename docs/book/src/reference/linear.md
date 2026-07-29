@@ -20,9 +20,10 @@ cannot be silently dropped, so errors are non-ignorable by construction.
 
 Function exit rather than scope exit, and the difference is worth writing down.
 A `defer` belongs at the top level of a function body. It runs before every
-`return`, wherever that `return` is written, and where the body falls off the
-end. It does not run on `break` or `continue`, which leave a loop rather than
-the function.
+`return`, wherever that `return` is written, where the body falls off the end,
+and where a `?` hands a failure on, since that is the function leaving too. It
+does not run on `break` or `continue`, which leave a loop rather than the
+function.
 
 Written inside an `if` or a loop body it is refused, by both compilers. Down
 there it would mean something other than it reads: it would run past the end of
@@ -33,6 +34,24 @@ Refusing is the answer because neither of those is what anyone writing it meant.
 What the function answers with is worked out before the deferred statements run
 and is held in a name of its own, so a deferred statement cannot change what the
 caller receives. Both compilers do this and both are held to it by a test.
+
+A deferred statement is written out again at each exit, so the names it mentions
+are read there. A name it mentions that is bound again below the `defer` is
+therefore refused: the copy would read that later binding rather than the one in
+scope where the `defer` was written, and on a path that never reached the later
+binding it would read something nothing had written.
+
+Its arguments are read where it runs, not where it was written, so a variable
+reassigned after the `defer` changes what the deferred statement is given:
+
+```frost
+mut f : i64 = 1
+defer close(f)
+f = 2               // closes 2
+```
+
+This is where Frost and Go differ. Go evaluates a deferred call's arguments at
+the `defer` and would close 1.
 
 Nothing here is checked. There is no unwinding in Frost, so `defer` is not
 about a path an abort takes; what it does not do is notice that you never wrote
