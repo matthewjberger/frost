@@ -610,7 +610,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         } else if (p.args_unbound_map == 0 && generic_fn_of(p, fn_index) >= 0) {
             // A generic called over a plain type names it in the local table
             // and nowhere else, so the tuple is read here or not at all.
-            held := parse_call_type_args(p, args)
+            held := parse_call_type_args(p, args, generic_fn_of(p, fn_index))
             if (held >= 0) {
                 note_type_args(p, held, p.gargs.count, 0, 0,
                     generic_fn_of(p, fn_index))
@@ -793,12 +793,14 @@ lower_try :: fn(mut p: Parser, value: i64) -> i64 {
         p.name_err_error,
         9,
     )
-    hand_on := new_node(
+    // A `?` hands the failure on, which is the function leaving, so whatever it
+    // deferred runs here the way it runs at a `return` written out. Handing the
+    // failure on without them is a resource left behind on exactly the path that
+    // was meant to be the tidy one.
+    hand_on := defer_before_return(
         p,
-        NodeKind::Return,
         new_result_value(p, p.result_ty, 1, p.name_err_error, 9, carried),
-        0,
-        0,
+        cur_off(p),
     )
     guard := new_node(p, NodeKind::If, failed, hand_on, -1)
     arena_push(p.pending, LocalVar { name_off = bind, name_len = guard, ty = 0, slot = 0 })
@@ -2671,9 +2673,15 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
             frost_rt_die()
         }
         advance(p)
-        arena_push(p.defers,
-            LocalVar { name_off = p.ti, name_len = 0, ty = 0, slot = 0 })
+        started := p.ti
+        // What this function had bound by the time the `defer` was written. A
+        // name bound past this point is a different binding from the one the
+        // deferred statement names, which is what the check below refuses.
+        bound := p.parse_locals.count
         parse_stmt(p)
+        arena_push(p.defers,
+            LocalVar { name_off = started, name_len = p.ti, ty = bound,
+                slot = 0 })
         return nothing_statement(p)
     }
     if (kind == TokenKind::KwReturn) {
@@ -3164,6 +3172,52 @@ nothing_statement :: fn(mut p: Parser) -> i64 {
     new_unary(p, NodeKind::ExprStmt, zero)
 }
 
+// Whether this function binds this name past `from`. Locals are recorded in
+// declaration order and never popped, so everything past a mark is what was
+// bound after the point that mark was taken.
+bound_after :: fn(mut p: Parser, from: i64, off: i64, len: i64) -> bool {
+    mut i := from
+    while (i < p.parse_locals.count) {
+        entry := arena_at(p.parse_locals, i)
+        if (entry.name_len == len
+            && bytes_equal(p.src, entry.name_off, off, len)) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+// A deferred statement is copied to each exit and its names are resolved there,
+// so a name it mentions that is bound again below the `defer` reads as that
+// later binding rather than the one in scope where the `defer` was written.
+// Neither is what the line looks like, and one of them is a slot the path taken
+// never wrote, so it is refused where it is written rather than given a meaning
+// nobody would predict.
+check_defer_shadowing :: fn(mut p: Parser) {
+    mut k := p.defer_base
+    while (k < p.defers.count) {
+        site := arena_at(p.defers, k)
+        start := site.name_off
+        finish := site.name_len
+        bound := site.ty
+        mut t := start
+        while (t < finish) {
+            token := arena_at(p.tokens, t)
+            kind := token.kind
+            off := token.off
+            len := token.len
+            if (kind == TokenKind::Ident && bound_after(p, bound, off, len)) {
+                report_where(p.modules, p.src, off)
+                report("this name is bound again below the `defer` that mentions it, and a `defer` is copied to every exit, so the copy would read that binding rather than the one in scope here")
+                frost_rt_die()
+            }
+            t = t + 1
+        }
+        k = k + 1
+    }
+}
+
 // The statements this function put off, written out again where it leaves. Each
 // was recorded as the token index of the statement after the keyword, so a copy
 // is made by reading those tokens once more rather than by copying nodes, which
@@ -3643,6 +3697,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
     p.defer_base = p.defers.count
     p.defer_depth = p.block_depth + 1
     mut body := parse_block(p)
+    check_defer_shadowing(p)
     if (p.result_ty != (-1)) {
         wrap_trailing_ok(p, body)
     }
@@ -4634,6 +4689,7 @@ parse_test :: fn(mut p: Parser) -> i64 {
     p.defer_base = p.defers.count
     p.defer_depth = p.block_depth + 1
     mut body := parse_block(p)
+    check_defer_shadowing(p)
     body = defer_trailing(p, body, TY_VOID)
     p.defers.count = p.defer_base
     p.defer_base = saved_defer_base
@@ -5010,8 +5066,9 @@ instance_params :: fn(mut p: Parser, fn_index: i64, args: i64) -> i64 {
         is_pack = gi + 1
     }
     // The tuple is this call's own, so the generic it belongs to is the one
-    // being asked about.
-    if (arg == TY_PARAM
+    // being asked about. A tuple nothing in scope could name is -1, and there
+    // is no instance to reach for from here.
+    if (arg < 0 || arg == TY_PARAM
         || instance_fits_kind(p, gi, arg, xstart, xcount, is_pack, gi)
             == false) {
         return -1

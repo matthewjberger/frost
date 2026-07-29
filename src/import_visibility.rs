@@ -137,7 +137,10 @@ fn top_level_name(statement: &Statement) -> Option<&str> {
 
 // Every name a declaration binds anywhere inside it: parameters, locals, loop
 // and region names, and what a pattern binds.
-fn bound_in_statement(statement: &Statement, out: &mut HashSet<String>) {
+pub(crate) fn bound_in_statement(
+    statement: &Statement,
+    out: &mut HashSet<String>,
+) {
     match statement {
         Statement::Let { name, value, .. } => {
             out.insert(name.clone());

@@ -3562,6 +3562,36 @@ fn array_element_type(
     }
 }
 
+// A deferred statement is lowered again at every exit and its names are resolved
+// there, so a name it mentions that is bound again after the `defer` reads as
+// that later binding rather than the one in scope where the `defer` was written.
+// Refused where it is written, because neither reading is the one the line has,
+// and one of them is a binding the path taken never reached. The self-hosted
+// compiler refuses the same programs, walking the deferred statement's tokens
+// against the locals the function bound.
+fn check_defer_names(
+    deferred: &Statement,
+    rest: &[Spanned<Statement>],
+) -> Result<()> {
+    let mut mentioned = Vec::new();
+    crate::interface_names::names_in_statement(deferred, &mut mentioned);
+    let mut rebound = HashSet::new();
+    for statement in rest {
+        crate::import_visibility::bound_in_statement(
+            &statement.node,
+            &mut rebound,
+        );
+    }
+    for name in mentioned {
+        if rebound.contains(&name) {
+            bail!(
+                "'{name}' is bound again below this `defer`, which is lowered at every exit, so the copy would read that binding rather than the one in scope here"
+            );
+        }
+    }
+    Ok(())
+}
+
 type LayoutMaps = (HashMap<String, StructLayout>, HashMap<String, EnumLayout>);
 
 fn compute_layouts(statements: &[Statement]) -> LayoutMaps {
@@ -3893,6 +3923,10 @@ impl<'a> FunctionLowering<'a> {
             self.current_position = position;
             match &statement.node {
                 Statement::Defer(inner) => {
+                    locate(
+                        check_defer_names(inner, &body[index + 1..]),
+                        position,
+                    )?;
                     self.active_defers.push((**inner).clone());
                 }
                 Statement::Expression(expression) if is_last => {
