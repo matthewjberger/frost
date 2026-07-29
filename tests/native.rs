@@ -8877,6 +8877,92 @@ fn native_slice_index_is_bounds_checked() {
     );
 }
 
+// The bounds check compares unsigned, which is what makes one comparison answer
+// for a negative index as well as for one past the end. The same cast read a
+// negative *length* as enormous, so every index through such a slice passed and
+// the slice was unchecked. `slice_prefix($T, xs, -1)` reached this from ordinary
+// safe code, with no `unsafe` block anywhere in the program.
+#[test]
+fn a_slice_may_not_be_built_with_a_negative_length() {
+    let source = "main :: fn() -> i64 {\n\
+         \x20   arr := [1, 2, 3, 4]\n\
+         \x20   bad := unsafe { slice_from($i64, ptr_to(arr[0]), 0 - 1) }\n\
+         \x20   print slice_len(bad)\n\
+         \x20   0\n}\n";
+    let Some((succeeded, stderr)) =
+        compile_and_run_status("neglen", source, Audit::Off)
+    else {
+        return;
+    };
+    assert!(!succeeded, "a negative slice length should abort");
+    assert!(
+        stderr.contains("cannot be -1 elements long"),
+        "expected the length check, got:\n{stderr}"
+    );
+}
+
+// The other end of the same rule: an empty slice is not a negative one, and a
+// container that hands out a zero-length prefix has to keep working.
+#[test]
+fn a_slice_of_no_elements_is_still_allowed() {
+    let source = "main :: fn() -> i64 {\n\
+         \x20   arr := [1, 2, 3, 4]\n\
+         \x20   none := unsafe { slice_from($i64, ptr_to(arr[0]), 0) }\n\
+         \x20   print slice_len(none)\n\
+         \x20   0\n}\n";
+    let Some((succeeded, stderr)) =
+        compile_and_run_status("zerolen", source, Audit::Off)
+    else {
+        return;
+    };
+    assert!(succeeded, "an empty slice should be fine, got:\n{stderr}");
+}
+
+// `count * sizeof(T)` wrapped, so the allocator was asked for fewer bytes than
+// the caller believed and the slice built over the block carried the count that
+// was asked for. Every read past the block's real end was then checked against
+// the wrong number and passed.
+#[test]
+fn an_allocation_size_that_wraps_is_refused() {
+    let source = "frost_rt_check_size :: safe extern fn(count: i64, width: i64) -> i64\n\
+         main :: fn() -> i64 {\n\
+         \x20   print frost_rt_check_size(2305843009213693952, 8)\n\
+         \x20   0\n}\n";
+    let Some((succeeded, stderr)) =
+        compile_and_run_status("sizewrap", source, Audit::Off)
+    else {
+        return;
+    };
+    assert!(!succeeded, "an allocation size that wraps should abort");
+    assert!(
+        stderr.contains("more memory than can be addressed"),
+        "expected the size check, got:\n{stderr}"
+    );
+}
+
+// An allocation that failed answered with nothing, and every caller in std/
+// wrapped what came back in a slice without looking. A null wrapped in a slice
+// reads as a run of `count` elements at address zero, each access checked
+// against a length that has nothing to do with what was allocated.
+#[test]
+fn an_allocation_that_fails_aborts_rather_than_answering_null() {
+    let source = "frost_rt_heap_alloc :: extern fn(size: i64) -> ^u8\n\
+         main :: fn() -> i64 {\n\
+         \x20   held := unsafe { frost_rt_heap_alloc(9000000000000000) }\n\
+         \x20   print 1\n\
+         \x20   0\n}\n";
+    let Some((succeeded, stderr)) =
+        compile_and_run_status("allocfail", source, Audit::Off)
+    else {
+        return;
+    };
+    assert!(!succeeded, "a failed allocation should abort");
+    assert!(
+        stderr.contains("out of memory"),
+        "expected the allocation-failure message, got:\n{stderr}"
+    );
+}
+
 const NATIVE_POOL: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 

@@ -256,6 +256,21 @@ impl<'a> Interpreter<'a> {
             self.output.push('\n');
             return Ok(Value::Int(0));
         }
+        // Every slice is built through this, so the interpreter has to answer it
+        // the way the linked runtime does or a program that builds one stops
+        // here rather than being compared against the other two backends.
+        if callee == "frost_rt_check_length" {
+            let value = operand_value(&arguments[0], locals);
+            let Value::Int(length) = value else {
+                return unsupported("a slice length that is not an integer");
+            };
+            if length < 0 {
+                return unsupported(format!(
+                    "a slice cannot be {length} elements long"
+                ));
+            }
+            return Ok(Value::Int(length));
+        }
         if let Some(target) =
             self.module.functions.iter().find(|f| f.name == callee)
         {

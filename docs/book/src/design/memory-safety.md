@@ -331,6 +331,20 @@ so nobody has to find out by reading the passes.
   guarantee downstream of a slice is conditional on it, which is why the call is
   gated on an `unsafe` block and why `std/mem.frost` is the one place in the
   containers that writes one.
+
+  What is checked is the part of that claim which can be: `n` is refused where
+  it is negative. The bounds check compares unsigned, so one comparison answers
+  for a negative index as well as for one past the end, and the same cast read a
+  negative length as enormous and let every index through. A length is settled
+  once where the slice is built while an access happens in a loop, so it is
+  answered for there. Two allocation shapes are checked for the same reason:
+  `count * sizeof(T)` is refused where the product would wrap, since a wrapped
+  size asks for fewer bytes than the caller believes and the slice over that
+  block then reads past its end with every access reporting as bounds-checked,
+  and an allocation that fails aborts rather than answering with a null a caller
+  would wrap in a slice. A negative count and a wrapped size are not
+  unverifiable claims but meaningless ones, which is why they are refused rather
+  than trusted.
 - The roughly 150 hand-written `unsafe` blocks in the standard library, the
   compiler and the examples are audited rather than proven. `Vec`, `Map` and the
   ECS are ordinary safe code resting on `std/mem.frost` being right.

@@ -708,9 +708,9 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         emit_ctype(p, node.val)
         emit_text("){ (")
         emit_expr(p, node.a)
-        emit_text("), ")
+        emit_text("), frost_length(")
         emit_expr(p, node.b)
-        emit_text(" }")
+        emit_text(") }")
         return
     }
     if (kind == NodeKind::AddrOf || kind == NodeKind::Ref) {
@@ -1709,6 +1709,14 @@ emit_program :: fn(mut p: Parser, head: i64) {
     emit_text("static inline int64_t frost_index(int64_t i, int64_t n) {\n")
     emit_text("  if ((uint64_t)i >= (uint64_t)n) { frost_rt_check_index(i, n); }\n")
     emit_text("  return i;\n")
+    emit_text("}\n")
+    // The same unsigned comparison that answers for a negative index would read
+    // a negative length as enormous and let every index through, so a length is
+    // answered for once where the slice is built rather than at each access.
+    emit_text("int64_t frost_rt_check_length(int64_t);\n")
+    emit_text("static inline int64_t frost_length(int64_t n) {\n")
+    emit_text("  if (n < 0) { frost_rt_check_length(n); }\n")
+    emit_text("  return n;\n")
     emit_text("}\n")
     emit_text("int64_t frost_rt_slot(int64_t, int64_t, const int64_t*);\n")
     emit_text("void frost_rt_write_bytes(const char*, int64_t);\n")

@@ -16,6 +16,7 @@ use crate::types::Type;
 // The runtime's index check. Every checked read names it, and this backend
 // answers for it itself rather than calling it, so it is written once here.
 const BOUNDS_CHECK: &str = "frost_rt_bounds_check";
+const LENGTH_CHECK: &str = "frost_rt_check_length";
 
 // `FROST_TIMINGS=1` reports the split between generating code for each
 // function and writing the object, which are the two halves of the backend and
@@ -551,6 +552,19 @@ impl Generator {
                 object.declare_function(name, Linkage::Import, &signature)?;
             self.decls.functions.insert(func_id, (signature, false));
             self.functions.insert(name.to_string(), func_id);
+        }
+
+        if !self.functions.contains_key(LENGTH_CHECK) {
+            let mut signature = self.decls.make_signature();
+            signature.params.push(AbiParam::new(types::I64));
+            signature.returns.push(AbiParam::new(types::I64));
+            let func_id = object.declare_function(
+                LENGTH_CHECK,
+                Linkage::Import,
+                &signature,
+            )?;
+            self.decls.functions.insert(func_id, (signature, false));
+            self.functions.insert(LENGTH_CHECK.to_string(), func_id);
         }
 
         if !self.functions.contains_key("frost_rt_mem_set") {

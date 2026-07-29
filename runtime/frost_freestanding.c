@@ -36,6 +36,13 @@ frost_rt_i64 frost_rt_check_index(frost_rt_i64 index, frost_rt_i64 length) {
     return index;
 }
 
+frost_rt_i64 frost_rt_check_length(frost_rt_i64 length) {
+    if (length < 0) {
+        __builtin_trap();
+    }
+    return length;
+}
+
 void frost_rt_generation_check(frost_rt_i64 stored, frost_rt_i64 expected) {
     if (stored != expected) {
         __builtin_trap();

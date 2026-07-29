@@ -70,6 +70,50 @@ int64_t frost_rt_check_index(int64_t index, int64_t length) {
     return index;
 }
 
+/* A slice's length is the whole of what its bounds check has to go on, and that
+   check compares unsigned so that one comparison answers for a negative index as
+   well as for one past the end. The same cast reads a negative *length* as
+   enormous, which would let every index through and leave the slice unchecked.
+
+   A length is answered for where the slice is built rather than at each access,
+   because `slice_from` is the one place a slice comes from and a length is
+   settled once while an access happens in a loop. Trusting the pointer and the
+   run behind it is what makes the primitive unchecked; a negative count is not
+   an unverifiable claim but a meaningless one, so it is refused here. */
+int64_t frost_rt_check_length(int64_t length) {
+    if (length < 0) {
+        fprintf(stderr,
+                "frost: a slice cannot be %lld elements long\n",
+                (long long)length);
+        frost_rt_stop();
+    }
+    return length;
+}
+
+/* How many bytes `count` elements of `width` take, refused where the product
+   would wrap.
+
+   A wrapped size asks the allocator for fewer bytes than the caller believes it
+   is getting. The slice built over that block carries the count the caller
+   asked for, so every read past the block's real end is bounds-checked against
+   the wrong number and passes. The multiplication is the whole of the failure,
+   so it is done here rather than at each container. */
+int64_t frost_rt_check_size(int64_t count, int64_t width) {
+    if (count < 0 || width <= 0) {
+        fprintf(stderr,
+                "frost: cannot allocate %lld elements of %lld bytes\n",
+                (long long)count, (long long)width);
+        frost_rt_stop();
+    }
+    if (count > INT64_MAX / width) {
+        fprintf(stderr,
+                "frost: %lld elements of %lld bytes is more memory than can be addressed\n",
+                (long long)count, (long long)width);
+        frost_rt_stop();
+    }
+    return count * width;
+}
+
 void frost_rt_generation_check(int64_t stored, int64_t expected) {
     if (stored != expected) {
         fprintf(stderr,
@@ -492,17 +536,36 @@ int64_t frost_rt_heap_live(void) {
     return frost_rt_heap_blocks;
 }
 
+/* An allocation that fails aborts rather than answering with nothing.
+
+   Frost has no way to say a call ran out of memory: there is no
+   `-> ^u8 ! OutOfMemory` on these, and every caller in std/ wraps what comes
+   back in a slice without looking. A null wrapped in a slice reads as a run of
+   `count` elements at address zero, and each access through it is bounds-checked
+   against a length that has nothing to do with what was allocated. Aborting is
+   what the rest of the runtime does with a condition a program cannot answer
+   for, and it fails where the memory ran out rather than somewhere later. */
 void *frost_rt_heap_alloc(int64_t size) {
     void *block = malloc((size_t)size);
-    if (block != NULL) {
-        frost_rt_heap_blocks += 1;
+    if (block == NULL) {
+        fprintf(stderr,
+                "frost: out of memory asking for %lld bytes\n",
+                (long long)size);
+        frost_rt_stop();
     }
+    frost_rt_heap_blocks += 1;
     return block;
 }
 
 void *frost_rt_heap_realloc(void *block, int64_t size) {
     void *moved = realloc(block, (size_t)size);
-    if (block == NULL && moved != NULL) {
+    if (moved == NULL) {
+        fprintf(stderr,
+                "frost: out of memory asking for %lld bytes\n",
+                (long long)size);
+        frost_rt_stop();
+    }
+    if (block == NULL) {
         frost_rt_heap_blocks += 1;
     }
     return moved;
