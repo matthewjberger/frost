@@ -25,3 +25,8 @@ examples/graphics/wgpu.frost
 # The rendered book. The source is docs/book/src.
 /docs/book/book
 examples/graphics/SDL3/
+
+# Scratch output from compiling a file to check it, which every sweep over the
+# tree leaves behind.
+*.tmp
+audit.tmp
