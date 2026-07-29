@@ -906,7 +906,7 @@ call_type_args :: fn(mut p: Parser, head: i64, owner: i64) -> i64 {
             // so there is no tuple to name. Answering `i64` would name an
             // instance nothing asked for, and that instance is emitted and
             // compiled like any other.
-            return call_arg_type_at(p, head, at)
+            return call_arg_type_at(p, head, at, p.tparam_through)
         }
     }
     id = head
@@ -1287,12 +1287,26 @@ tparam_position :: fn(mut p: Parser, gfn_index: i64) -> i64 {
             advance(p)
             if (cur(p) == TokenKind::Colon) {
                 advance(p)
+                // `[]$T` and `[N]$T` name the parameter through what they hold,
+                // so the argument's element is what it binds to. The brackets
+                // are stepped over and how many were stepped over is the answer
+                // to that.
+                mut through : i64 = 0
+                if (cur(p) == TokenKind::Lbracket) {
+                    while (cur(p) != TokenKind::Rbracket
+                        && cur(p) != TokenKind::Eof) {
+                        advance(p)
+                    }
+                    advance(p)
+                    through = 1
+                }
                 if (compile_time == 0 && found < 0
                     && cur(p) == TokenKind::Dollar
                     && peek_kind(p, 1) == TokenKind::Ident
                     && peek_len(p, 1) == name_len
                     && bytes_equal(p.src, peek_off(p, 1), name_off, name_len)) {
                     found = position
+                    p.tparam_through = through
                 }
             }
             continue
@@ -1324,8 +1338,11 @@ argument_type :: fn(mut p: Parser, value: i64) -> i64 {
 }
 
 // The type of the nth runtime argument of a call, with a pointer read through,
-// or -1 where nothing here says what it is.
-call_arg_type_at :: fn(mut p: Parser, args: i64, at: i64) -> i64 {
+// or -1 where nothing here says what it is. `through` is 1 where the declaration
+// wrote the parameter inside brackets, so what it binds to is the argument's
+// element rather than the argument.
+call_arg_type_at :: fn(mut p: Parser, args: i64, at: i64,
+    through: i64) -> i64 {
     mut id := args
     mut seen : i64 = 0
     while (id != (-1)) {
@@ -1336,6 +1353,12 @@ call_arg_type_at :: fn(mut p: Parser, args: i64, at: i64) -> i64 {
             mut held := argument_type(p, value)
             if (is_pointer(held)) {
                 held = pointee(held)
+            }
+            if (through == 1) {
+                if (held < 0 || is_array_ty(held) == false) {
+                    return -1
+                }
+                return array_element(p, held)
             }
             return held
         }
@@ -1369,7 +1392,7 @@ parse_call_type_args :: fn(mut p: Parser, args: i64, gfn_index: i64) -> i64 {
     // `scale(by: i64, mut v: $T)` was compiled for `i64` whatever it was given.
     at := tparam_position(p, gfn_index)
     if (at >= 0) {
-        held := call_arg_type_at(p, args, at)
+        held := call_arg_type_at(p, args, at, p.tparam_through)
         if (held >= 0) {
             return held
         }

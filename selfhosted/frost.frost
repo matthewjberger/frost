@@ -554,6 +554,7 @@ main :: fn() -> i64 {
         defer_count = 0,
         block_depth = 0,
         defer_depth = -1,
+        tparam_through = 0,
         moved = arena_make($LocalVar, 4096),
         label_id = 0,
         abi_windows = 0,
