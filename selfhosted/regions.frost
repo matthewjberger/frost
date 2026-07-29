@@ -1350,9 +1350,47 @@ places_equal :: fn(mut p: Parser, a: i64, b: i64) -> bool {
     false
 }
 
+// Whether a place reaches storage through a raw pointer at any point.
+//
+// The parser marks a read through a borrow where it makes the node, which is the
+// same answer the unsafety gate reads, so the two checks agree on what raw
+// means. A `mut` scalar parameter is rewritten to `name^` and carries that mark;
+// anything else reached through a `^` is a raw pointer.
+place_reaches_raw :: fn(mut p: Parser, id: i64) -> bool {
+    if (id == (-1)) {
+        return false
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NodeKind::Deref) {
+        if (node.val != 1) {
+            return true
+        }
+        return place_reaches_raw(p, node.a)
+    }
+    if (kind == NodeKind::Field || kind == NodeKind::Index) {
+        return place_reaches_raw(p, node.a)
+    }
+    false
+}
+
 // Two places overlap when one contains the other: reduce the deeper to the
 // shorter's depth, then they overlap exactly when they are then the same place.
+//
+// A raw dereference breaks the argument that comparison rests on. Every step in
+// front of one says where the pointer was read from and none of them says where
+// it points, so `p^` and `q^` are one place whenever `p` and `q` hold one
+// address and the names settle nothing. A pair that each reach through a raw
+// pointer therefore overlap.
+//
+// Both sides rather than either. A raw place against an ordinary one is the same
+// question, since `p` may point at `x`, but answering it the same way refuses
+// `f(p^, y)` for every unrelated `y` in a body that holds one raw pointer, which
+// is most of what unsafe code is.
 places_overlap :: fn(mut p: Parser, a: i64, b: i64) -> bool {
+    if (place_reaches_raw(p, a) && place_reaches_raw(p, b)) {
+        return true
+    }
     mut left := a
     mut right := b
     da := place_depth(p, a)

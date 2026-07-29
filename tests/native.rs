@@ -225,6 +225,55 @@ main :: fn() -> i64 {
     );
 }
 
+// Every step in front of a raw dereference says where the pointer was read from
+// and none of them says where it points, so two places that each reach through
+// one may be one place however different their roots read. They used to be read
+// as apart, and `f(p^, q^)` with `p` and `q` holding one address handed the same
+// storage to two `mut` parameters.
+#[test]
+fn two_places_reached_through_raw_pointers_may_be_one() {
+    let source = "bump_both :: fn(mut a: i64, mut b: i64) {\n\
+         \x20   a = a + 1\n\
+         \x20   b = b + 10\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut x : i64 = 0\n\
+         \x20   p := unsafe { ptr_to(x) }\n\
+         \x20   q := unsafe { ptr_to(x) }\n\
+         \x20   unsafe { bump_both(p^, q^) }\n\
+         \x20   0\n}\n";
+    let message = compile_error_checked("rawalias", source);
+    assert!(
+        message.contains("exclusive"),
+        "two raw dereferences should not be read as apart, got:\n{message}"
+    );
+}
+
+// The rule has to tell a raw pointer from a borrow, because the parameter-mode
+// lowering rewrites every `mut` scalar parameter to `name^`. Two distinct `mut`
+// parameters passed on to a second call are two dereferences and are genuinely
+// apart, which is what the caller's own exclusivity check says.
+#[test]
+fn two_borrowed_parameters_passed_on_are_still_apart() {
+    let source = "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
+         bump_both :: fn(mut a: i64, mut b: i64) {\n\
+         \x20   a = a + 1\n\
+         \x20   b = b + 10\n\
+         }\n\
+         outer :: fn(mut m: i64, mut n: i64) { bump_both(m, n) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut x : i64 = 0\n\
+         \x20   mut y : i64 = 0\n\
+         \x20   outer(x, y)\n\
+         \x20   printf(\"%lld\\n\", x + y)\n\
+         \x20   0\n}\n";
+    let Some(output) = compile_and_run_unaudited("borrowedparams", source)
+    else {
+        return;
+    };
+    assert_eq!(output, "11\n");
+}
+
 // Two mutable borrows of different fields of one struct name disjoint storage,
 // so they do not conflict and the program compiles and runs.
 #[test]

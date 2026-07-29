@@ -690,7 +690,7 @@ impl MoveChecker<'_> {
                     }
                     _ => held.as_ref(),
                 };
-                check_borrow_exclusivity(arguments, param_types)?;
+                check_borrow_exclusivity(self, arguments, param_types)?;
                 // A call to a compile-time parameter names a function only
                 // once the generic is specialized, so it says nothing about
                 // ownership yet and the specialized body answers for it
@@ -806,6 +806,55 @@ impl MoveChecker<'_> {
             .map(|ty| !ty.is_copy())
             .unwrap_or(false)
     }
+
+    /// The place a borrowed argument names, as a path from a root variable
+    /// through fields, indexes and dereferences. `None` for an expression that
+    /// is not a place (a call, a literal), which names no storage a second
+    /// borrow could reach.
+    fn borrow_place(&self, expression: &Expression) -> Option<Vec<Step>> {
+        match expression {
+            Expression::Identifier(name) => {
+                Some(vec![Step::Named(name.clone())])
+            }
+            Expression::FieldAccess(base, field) => {
+                let mut path = self.borrow_place(base)?;
+                path.push(Step::Named(format!(".{field}")));
+                Some(path)
+            }
+            Expression::Index(base, index) => {
+                let mut path = self.borrow_place(base)?;
+                let literal = match index.as_ref() {
+                    Expression::Literal(Literal::Integer(value)) => {
+                        Some(*value)
+                    }
+                    _ => None,
+                };
+                path.push(Step::Index(literal, format!("[{index}]")));
+                Some(path)
+            }
+            Expression::Dereference(base) => {
+                let mut path = self.borrow_place(base)?;
+                path.push(Step::Deref(self.reads_raw_pointer(base)));
+                Some(path)
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether a dereference of this expression goes through a raw pointer
+    /// rather than through a borrow.
+    ///
+    /// A type the walk cannot name answers yes. Where it points is then exactly
+    /// what nothing here knows, and this check is about what two places might
+    /// share rather than what they are known to share.
+    fn reads_raw_pointer(&self, base: &Expression) -> bool {
+        match self.value_type(base) {
+            Some(Type::Ref(_) | Type::RefMut(_)) => false,
+            Some(Type::Ptr(_)) => true,
+            Some(_) => false,
+            None => true,
+        }
+    }
 }
 
 // One step of the path to a borrowed place.
@@ -817,40 +866,17 @@ enum Step {
     // An index. What it selects is decided while the program runs, so two of
     // them are known apart only when both are numbers.
     Index(Option<i64>, String),
-    // A dereference. Where it lands is decided by what the pointer holds, so
-    // two places reached through one may be the same storage however different
-    // the names in front of them read.
-    Deref,
-}
-
-// The place a borrowed argument names, as a path from a root variable through
-// fields, indexes and dereferences. `None` for an expression that is not a
-// place (a call, a literal), which names no storage a second borrow could
-// reach.
-fn borrow_place(expression: &Expression) -> Option<Vec<Step>> {
-    match expression {
-        Expression::Identifier(name) => Some(vec![Step::Named(name.clone())]),
-        Expression::FieldAccess(base, field) => {
-            let mut path = borrow_place(base)?;
-            path.push(Step::Named(format!(".{field}")));
-            Some(path)
-        }
-        Expression::Index(base, index) => {
-            let mut path = borrow_place(base)?;
-            let literal = match index.as_ref() {
-                Expression::Literal(Literal::Integer(value)) => Some(*value),
-                _ => None,
-            };
-            path.push(Step::Index(literal, format!("[{index}]")));
-            Some(path)
-        }
-        Expression::Dereference(base) => {
-            let mut path = borrow_place(base)?;
-            path.push(Step::Deref);
-            Some(path)
-        }
-        _ => None,
-    }
+    // A dereference, and whether it goes through a raw pointer. Where a
+    // dereference lands is decided by what the pointer holds, so two places
+    // reached through raw pointers may be one storage however different the
+    // names in front of them read.
+    //
+    // A borrow is not one of those. It was proven safe where it formed, and the
+    // parameter-mode lowering that runs before this check rewrites every `mut`
+    // scalar parameter to `name^`, so two distinct `mut` parameters reach a call
+    // as two dereferences. Reading those as together would refuse ordinary code,
+    // which is why the two are told apart rather than counted together.
+    Deref(bool),
 }
 
 // Whether two steps definitely name different storage.
@@ -875,22 +901,33 @@ fn steps_apart(left: &Step, right: &Step) -> bool {
     }
 }
 
+// Whether a path reaches storage through a raw pointer at any point.
+fn reaches_through_raw(path: &[Step]) -> bool {
+    path.iter().any(|step| matches!(step, Step::Deref(true)))
+}
+
 // Two places overlap unless some step along their common length is known to name
 // different storage. They share the whole of the shorter as a prefix when
 // neither differs, so `s` overlaps `s.x`, `s.x` overlaps `s.x.y`, and `s.x` and
 // `s.y` are apart. Overlapping places name storage that intersects, which is
 // what an exclusive borrow may not share.
-// Two places reached through different pointers are read as apart, which is a
-// hole this check does not close. `p^` and `q^` are one place whenever `p` and
-// `q` hold one address, and nothing here says what either holds. Closing it by
-// reading every pair of dereferences as overlapping refuses the ordinary case
-// instead: a `mut` parameter is rewritten to `name^` by the parameter-mode
-// lowering that runs before this check, so two distinct `mut` parameters of the
-// enclosing function reach a call as two dereferences. Those are apart, and the
-// caller's own exclusivity check is what says so. What is left uncovered is two
-// raw pointers at one place, and reaching through a `^T` is gated on an `unsafe`
-// block and outside the guarantee for that reason.
+//
+// A raw dereference breaks the argument the prefix comparison rests on. Every
+// step before one says where the pointer was read from, and none of them says
+// where it points, so `p^` and `q^` are one place whenever `p` and `q` hold one
+// address and the names in front of them settle nothing. A pair that each reach
+// through a raw pointer therefore overlap: what the comparison could prove about
+// them, it cannot.
+//
+// Both sides rather than either. A raw place against an ordinary one is the same
+// question, since `p` may point at `x`, but answering it the same way refuses
+// `f(p^, y)` for every unrelated `y` in a body that holds one raw pointer, and
+// that is most of what unsafe code is. It stays on the list of what is not
+// guarded rather than being closed by refusing the cases around it.
 fn places_overlap(first: &[Step], second: &[Step]) -> bool {
+    if reaches_through_raw(first) && reaches_through_raw(second) {
+        return true;
+    }
     let common = first.len().min(second.len());
     !first[..common]
         .iter()
@@ -903,12 +940,13 @@ fn describe_place(path: &[Step]) -> String {
     path.iter()
         .map(|step| match step {
             Step::Named(text) | Step::Index(_, text) => text.as_str(),
-            Step::Deref => "^",
+            Step::Deref(_) => "^",
         })
         .collect()
 }
 
 fn check_borrow_exclusivity(
+    checker: &MoveChecker<'_>,
     arguments: &[Expression],
     param_types: Option<&Vec<Option<Type>>>,
 ) -> Result<()> {
@@ -922,17 +960,17 @@ fn check_borrow_exclusivity(
             .and_then(|ty| ty.as_ref());
         let borrow = match argument {
             Expression::BorrowMut(inner) => {
-                borrow_place(inner).map(|p| (p, true))
+                checker.borrow_place(inner).map(|p| (p, true))
             }
             Expression::Borrow(inner) => {
-                borrow_place(inner).map(|p| (p, false))
+                checker.borrow_place(inner).map(|p| (p, false))
             }
             _ => match mode {
                 Some(Type::RefMut(_)) => {
-                    borrow_place(argument).map(|p| (p, true))
+                    checker.borrow_place(argument).map(|p| (p, true))
                 }
                 Some(Type::Ref(_)) => {
-                    borrow_place(argument).map(|p| (p, false))
+                    checker.borrow_place(argument).map(|p| (p, false))
                 }
                 _ => None,
             },
