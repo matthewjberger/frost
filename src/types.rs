@@ -120,8 +120,15 @@ impl Type {
         linear: &std::collections::HashSet<String>,
     ) -> bool {
         match self {
+            // The instantiation first, then the template it came from. A
+            // generic declared `linear` is a resource whatever it is bound to,
+            // which is what the template answers for. An ordinary generic is a
+            // resource only where what it was bound to is one, and that is a
+            // question about `Pool<File>` rather than about `Pool`, so asking
+            // only the template could never tell the two apart.
             Type::Struct(name) | Type::Enum(name) => {
-                linear.contains(Type::template_of(name))
+                linear.contains(name.as_str())
+                    || linear.contains(Type::template_of(name))
             }
             Type::Distinct(_, inner) => inner.is_linear_with(linear),
             // A run of resources is a resource: freeing the run is not freeing

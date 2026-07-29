@@ -15569,6 +15569,162 @@ fn the_self_hosted_compiler_refuses_a_leaked_generic_linear() {
     );
 }
 
+// A run of resources is a resource. The bootstrap read a fixed array of a
+// linear type that way and the self-hosted compiler did not, so a struct
+// holding one was an obligation in one compiler and ordinary data in the other:
+// the leak below was refused by one and compiled by the other. A slice is not
+// one of these, since it does not own what it looks at.
+#[test]
+fn both_compilers_refuse_a_leaked_run_of_resources() {
+    let source = "File :: linear struct { fd: i64 }\n\
+                  Holder :: struct { items: [2]File }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   h := Holder { items = [File { fd = 1 }; 2] }\n\
+                  \x20   0\n}\n";
+    let bootstrap = bootstrap_refusal("runboot", source);
+    assert!(
+        bootstrap.contains("consumed"),
+        "the bootstrap took a leaked run of resources:\n{bootstrap}"
+    );
+    let Some(hosted) = self_hosted_rejects("runself", source) else {
+        return;
+    };
+    assert!(
+        hosted.contains("consumed"),
+        "the self-hosted compiler took it:\n{hosted}"
+    );
+}
+
+// A generic struct's declared field names a parameter bound to nothing, so the
+// declarations alone say `Slab` holds no resource and therefore that no
+// `Slab<T, N>` does. A pool of a type holding a resource was ordinary data, so
+// the resource in a slot was dropped when the slot was reused and neither
+// compiler said anything. The instantiation the program writes is what binds the
+// parameter, and that is what is asked now.
+#[test]
+fn both_compilers_refuse_a_pool_of_resources_nobody_releases() {
+    let source = "Slab :: struct($T: Type, $N: usize) {\n\
+                  \x20   storage: [N]T,\n\
+                  \x20   generations: [N]i64,\n\
+                  \x20   free_list: [N]i64,\n\
+                  \x20   free_count: i64,\n}\n\
+                  File :: linear struct { fd: i64 }\n\
+                  Node :: struct { file: File, hp: i64 }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   mut pool : Slab<Node, 2> = Slab {\n\
+                  \x20       storage = [Node { file = File { fd = 1 }, hp = 0 }; 2],\n\
+                  \x20       generations = [0; 2],\n\
+                  \x20       free_list = [0; 2],\n\
+                  \x20       free_count = 0,\n\
+                  \x20   }\n\
+                  \x20   0\n}\n";
+    let bootstrap = bootstrap_refusal("poolboot", source);
+    assert!(
+        bootstrap.contains("is a pool of"),
+        "the bootstrap took a pool of resources:\n{bootstrap}"
+    );
+    let Some(hosted) = self_hosted_rejects("poolself", source) else {
+        return;
+    };
+    assert!(
+        hosted.contains("is a pool of"),
+        "the self-hosted compiler took it:\n{hosted}"
+    );
+}
+
+// What the bootstrap said when it would not compile a program.
+fn bootstrap_refusal(name: &str, source: &str) -> String {
+    let directory = std::env::temp_dir();
+    let source_path = directory.join(format!("frost_refuse_{name}.frost"));
+    std::fs::write(&source_path, source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("-o")
+        .arg(directory.join(format!("frost_refuse_{name}.o")))
+        .arg(&source_path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&source_path);
+    assert!(
+        !output.status.success(),
+        "the bootstrap accepted {name}, which it should refuse"
+    );
+    String::from_utf8_lossy(&output.stderr).to_string()
+}
+
+// A resource reached through a field is a place of its own, so consuming it
+// twice consumes it twice. Both compilers tracked moves by name, so the field
+// was never recorded and neither said the second consumption was one: three
+// calls to a consumer over one resource, in safe code, with no `unsafe`
+// anywhere. With a consumer that frees, that is a double free.
+//
+// Held here against both compilers, since a refusal only one of them makes is a
+// divergence rather than a rule.
+#[test]
+fn both_compilers_refuse_consuming_a_field_twice() {
+    let source = "File :: linear struct { fd: i64 }\n\
+                  Holder :: struct { file: File, name: i64 }\n\
+                  close :: fn(move f: File) -> i64 { f.fd }\n\
+                  drop_holder :: fn(move h: Holder) -> i64 { close(h.file) }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   h := Holder { file = File { fd = 7 }, name = 1 }\n\
+                  \x20   close(h.file)\n\
+                  \x20   close(h.file)\n\
+                  \x20   drop_holder(h)\n}\n";
+    let bootstrap = bootstrap_refusal("dfboot", source);
+    assert!(
+        bootstrap.contains("moved"),
+        "the bootstrap took a resource consumed twice:\n{bootstrap}"
+    );
+    let Some(hosted) = self_hosted_rejects("dfself", source) else {
+        return;
+    };
+    assert!(
+        hosted.contains("moved"),
+        "the self-hosted compiler took it:\n{hosted}"
+    );
+}
+
+// The same through an element, and through a `mut` borrow, which reaches the
+// place by a different road: the mode lowering has already turned the parameter
+// into a borrow by the time the check runs, so what the callee declared it
+// takes is what says a resource was handed over.
+#[test]
+fn both_compilers_refuse_consuming_an_element_or_a_borrowed_field_twice() {
+    let element = "File :: linear struct { fd: i64 }\n\
+                   close :: fn(move f: File) -> i64 { f.fd }\n\
+                   drop_run :: fn(move xs: [2]File) -> i64 { 0 }\n\
+                   main :: fn() -> i64 {\n\
+                   \x20   mut run : [2]File = [File { fd = 9 }; 2]\n\
+                   \x20   close(run[0])\n\
+                   \x20   close(run[0])\n\
+                   \x20   drop_run(run)\n}\n";
+    let borrowed = "File :: linear struct { fd: i64 }\n\
+                    Holder :: struct { file: File, name: i64 }\n\
+                    close :: fn(move f: File) -> i64 { f.fd }\n\
+                    twice :: fn(mut h: Holder) -> i64 {\n\
+                    \x20   close(h.file)\n\
+                    \x20   close(h.file)\n}\n\
+                    drop_holder :: fn(move h: Holder) -> i64 { close(h.file) }\n\
+                    main :: fn() -> i64 {\n\
+                    \x20   mut h := Holder { file = File { fd = 5 }, name = 1 }\n\
+                    \x20   twice(h)\n\
+                    \x20   drop_holder(h)\n}\n";
+    for (name, source) in [("dfelem", element), ("dfborrow", borrowed)] {
+        let bootstrap = bootstrap_refusal(name, source);
+        assert!(
+            bootstrap.contains("moved"),
+            "the bootstrap took {name}:\n{bootstrap}"
+        );
+        let Some(hosted) = self_hosted_rejects(name, source) else {
+            return;
+        };
+        assert!(
+            hosted.contains("moved"),
+            "the self-hosted compiler took {name}:\n{hosted}"
+        );
+    }
+}
+
 // `--audit-unsafe` is the opt-in pass that reports a block vouching for
 // nothing. It is off by default, so a build pays for the checks that keep a
 // program correct rather than the ones that keep it tidy.

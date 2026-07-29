@@ -22,6 +22,7 @@ mod lexer;
 mod manifest;
 mod multi_returns;
 mod ownership;
+mod linear_instances;
 mod param_modes;
 mod parser;
 mod regions;
