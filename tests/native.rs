@@ -16,31 +16,11 @@ use support::{
 // fails intermittently; a fresh name every time sidesteps it. The process id
 // separates one `cargo test` run from the next, the counter separates tests
 // within a run.
-#[derive(Clone, Copy, PartialEq)]
-enum Audit {
-    On,
-    Off,
-}
-
-impl Audit {
-    fn setting(self) -> &'static str {
-        match self {
-            Audit::On => "1",
-            Audit::Off => "0",
-        }
-    }
-}
-
 fn compile_and_run_unaudited(name: &str, source: &str) -> Option<String> {
-    run_backend(name, source, false, Audit::Off)
+    run_backend(name, source, false)
 }
 
-fn run_backend(
-    name: &str,
-    source: &str,
-    emit_c: bool,
-    audit: Audit,
-) -> Option<String> {
+fn run_backend(name: &str, source: &str, emit_c: bool) -> Option<String> {
     if !linker_available() {
         return None;
     }
@@ -62,7 +42,6 @@ fn run_backend(
     // here rather than when something tries to compile against one.
     command
         .env("FROST_CHECK_INTERFACES", "1")
-        .env("FROST_CHECK_UNSAFE", audit.setting())
         .arg("--link")
         .arg("-o")
         .arg(&exe_path)
@@ -86,13 +65,12 @@ fn run_backend(
     Some(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"))
 }
 
-fn run_ir_oracle(name: &str, source: &str, audit: Audit) -> Option<String> {
+fn run_ir_oracle(name: &str, source: &str) -> Option<String> {
     let directory = std::env::temp_dir();
     let source_path = directory.join(format!("frost_oracle_{name}.frost"));
     std::fs::write(&source_path, source).unwrap();
     let frost = env!("CARGO_BIN_EXE_frost");
     let output = Command::new(frost)
-        .env("FROST_CHECK_UNSAFE", audit.setting())
         .arg("--run-ir")
         .arg(&source_path)
         .output()
@@ -110,7 +88,7 @@ fn run_ir_oracle(name: &str, source: &str, audit: Audit) -> Option<String> {
 }
 
 fn compile_error(name: &str, source: &str) -> String {
-    compile_error_gated(name, source, false)
+    compile_error_gated(name, source)
 }
 
 /// A compile error from a source built with the unsafety gate on, which is the
@@ -119,10 +97,10 @@ fn compile_error(name: &str, source: &str) -> String {
 /// only ever sees the bare form is not being tested against what programs
 /// actually contain.
 fn compile_error_checked(name: &str, source: &str) -> String {
-    compile_error_gated(name, source, true)
+    compile_error_gated(name, source)
 }
 
-fn compile_error_gated(name: &str, source: &str, gate: bool) -> String {
+fn compile_error_gated(name: &str, source: &str) -> String {
     let directory = std::env::temp_dir();
     let source_path = directory.join(format!("frost_err_{name}.frost"));
     let exe_path = directory
@@ -130,7 +108,6 @@ fn compile_error_gated(name: &str, source: &str, gate: bool) -> String {
     std::fs::write(&source_path, source).unwrap();
     let frost = env!("CARGO_BIN_EXE_frost");
     let output = Command::new(frost)
-        .env("FROST_CHECK_UNSAFE", if gate { "1" } else { "0" })
         .arg("--link")
         .arg("-o")
         .arg(&exe_path)
@@ -285,7 +262,7 @@ fn two_borrowed_parameters_passed_on_are_still_apart() {
          \x20   mut x : i64 = 0\n\
          \x20   mut y : i64 = 0\n\
          \x20   outer(x, y)\n\
-         \x20   printf(\"%lld\\n\", x + y)\n\
+         \x20   unsafe { printf(\"%lld\\n\", x + y) }\n\
          \x20   0\n}\n";
     let Some(output) = compile_and_run_unaudited("borrowedparams", source)
     else {
@@ -303,7 +280,7 @@ fn borrow_exclusivity_allows_disjoint_fields() {
         mix :: fn(mut a: i64, mut b: i64) -> i64 { a + b }\n\
         main :: fn() -> i64 {\n\
         \x20   mut p : Pair = Pair { x = 3, y = 4 }\n\
-        \x20   printf(\"%lld\\n\", mix(p.x, p.y))\n    0\n}\n";
+        \x20   unsafe { printf(\"%lld\\n\", mix(p.x, p.y)) }\n    0\n}\n";
     assert_eq!(
         compile_and_run_unaudited("disjoint_fields", source),
         Some("7\n".to_string())
@@ -359,11 +336,7 @@ main :: fn() -> i64 {
 // wrote to stderr. An abort test wants both: the nonzero exit and the message
 // the runtime composed, so a crash for the wrong reason does not read as the
 // right one.
-fn compile_and_run_status(
-    name: &str,
-    source: &str,
-    audit: Audit,
-) -> Option<(bool, String)> {
+fn compile_and_run_status(name: &str, source: &str) -> Option<(bool, String)> {
     if !linker_available() {
         return None;
     }
@@ -376,7 +349,6 @@ fn compile_and_run_status(
     std::fs::write(&source_path, source).unwrap();
     let frost = env!("CARGO_BIN_EXE_frost");
     let compile = Command::new(frost)
-        .env("FROST_CHECK_UNSAFE", audit.setting())
         .arg("--link")
         .arg("-o")
         .arg(&exe_path)
@@ -397,7 +369,7 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 main :: fn() -> i64 {
     arr := [10, 20, 30]
     mut i : i64 = 5
-    printf("%lld\n", arr[i])
+    unsafe { printf("%lld\n", arr[i]) }
     0
 }
 "#;
@@ -405,7 +377,7 @@ main :: fn() -> i64 {
 #[test]
 fn native_out_of_bounds_index_aborts() {
     let Some((succeeded, stderr)) =
-        compile_and_run_status("oob", OUT_OF_BOUNDS, Audit::Off)
+        compile_and_run_status("oob", OUT_OF_BOUNDS)
     else {
         return;
     };
@@ -493,11 +465,11 @@ main :: fn() -> i64 {
     mut m := map_new($i64, 4)
     mut i : i64 = 0
     while (i < 50) { map_put($i64, m, i, i * i)  i = i + 1 }
-    printf("%lld\n", map_len_i(m))
-    printf("%lld\n", map_get($i64, m, 7, -1))
-    printf("%lld\n", map_get($i64, m, 999, -1))
-    if (map_remove($i64, m, 7)) { printf("%lld\n", 1) }
-    if (map_has($i64, m, 7)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    unsafe { printf("%lld\n", map_len_i(m)) }
+    unsafe { printf("%lld\n", map_get($i64, m, 7, -1)) }
+    unsafe { printf("%lld\n", map_get($i64, m, 999, -1)) }
+    if (map_remove($i64, m, 7)) { unsafe { printf("%lld\n", 1) } }
+    if (map_has($i64, m, 7)) { unsafe { printf("%lld\n", 1) } } else { unsafe { printf("%lld\n", 0) } }
     unsafe { frost_rt_heap_free(ptr_cast($u8, m.keys)) }
     0
 }
@@ -540,14 +512,14 @@ main :: fn() -> i64 {
     mut v := vec_new($i64, 2)
     mut i : i64 = 0
     while (i < 10) { vec_push($i64, v, i * i)  i = i + 1 }
-    printf("%lld\n", vec_len($i64, v))
-    printf("%lld\n", vec_get($i64, v, 9))
+    unsafe { printf("%lld\n", vec_len($i64, v)) }
+    unsafe { printf("%lld\n", vec_get($i64, v, 9)) }
     vec_set($i64, v, 3, 999)
-    printf("%lld\n", vec_get($i64, v, 3))
+    unsafe { printf("%lld\n", vec_get($i64, v, 3)) }
     mut sum : i64 = 0
     mut j : i64 = 0
     while (j < vec_len($i64, v)) { sum = sum + vec_get($i64, v, j)  j = j + 1 }
-    printf("%lld\n", sum)
+    unsafe { printf("%lld\n", sum) }
     unsafe { frost_rt_heap_free(ptr_cast($u8, v.data)) }
     0
 }
@@ -572,8 +544,8 @@ main :: fn() -> i64 {
     mut ar := Arena { data = backing, count = 0 }
     grow(ar, 2)
     grow(ar, 3)
-    printf("%lld\n", read_it(ar, 2))
-    printf("%lld\n", read_it(ar, 3))
+    unsafe { printf("%lld\n", read_it(ar, 2)) }
+    unsafe { printf("%lld\n", read_it(ar, 3)) }
     0
 }
 "#;
@@ -604,13 +576,13 @@ count_evens :: fn(limit: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    printf("%lld\n", factorial(10))
-    printf("%lld\n", sum_to(100))
-    printf("%lld\n", count_evens(10))
-    printf("%lld\n", if (3 < 5 && 5 < 10) { 1 } else { 0 })
-    printf("%lld\n", if (2 > 9 || 4 == 4) { 1 } else { 0 })
-    printf("%lld\n", 1 << 10)
-    printf("%lld\n", 100 % 7)
+    unsafe { printf("%lld\n", factorial(10)) }
+    unsafe { printf("%lld\n", sum_to(100)) }
+    unsafe { printf("%lld\n", count_evens(10)) }
+    unsafe { printf("%lld\n", if (3 < 5 && 5 < 10) { 1 } else { 0 }) }
+    unsafe { printf("%lld\n", if (2 > 9 || 4 == 4) { 1 } else { 0 }) }
+    unsafe { printf("%lld\n", 1 << 10) }
+    unsafe { printf("%lld\n", 100 % 7) }
     0
 }
 "#;
@@ -627,9 +599,9 @@ const FLOATS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 main :: fn() -> i64 {
-    printf("%lld\n", if (7.0 / 2.0 > 3.0) { 1 } else { 0 })
-    printf("%lld\n", if (1.5 + 1.5 == 3.0) { 1 } else { 0 })
-    printf("%lld\n", if (2.0 * 2.0 < 3.9) { 1 } else { 0 })
+    unsafe { printf("%lld\n", if (7.0 / 2.0 > 3.0) { 1 } else { 0 }) }
+    unsafe { printf("%lld\n", if (1.5 + 1.5 == 3.0) { 1 } else { 0 }) }
+    unsafe { printf("%lld\n", if (2.0 * 2.0 < 3.9) { 1 } else { 0 }) }
     0
 }
 "#;
@@ -651,12 +623,12 @@ main :: fn() -> i64 {
     a : f32 = 1.5
     b : f32 = 2.5
     c : f32 = a + b
-    printf("%lld\n", if (c == 4.0) { 1 } else { 0 })
+    unsafe { printf("%lld\n", if (c == 4.0) { 1 } else { 0 }) }
     widened : f64 = c
-    printf("%lld\n", if (widened == 4.0) { 1 } else { 0 })
-    printf("%lld\n", if (scale(3.0, 2.5) == 7.5) { 1 } else { 0 })
+    unsafe { printf("%lld\n", if (widened == 4.0) { 1 } else { 0 }) }
+    unsafe { printf("%lld\n", if (scale(3.0, 2.5) == 7.5) { 1 } else { 0 }) }
     arr : [3]f32 = [1.5, 2.5, 3.0]
-    printf("%lld\n", if (arr[1] == 2.5) { 1 } else { 0 })
+    unsafe { printf("%lld\n", if (arr[1] == 2.5) { 1 } else { 0 }) }
     0
 }
 "#;
@@ -675,9 +647,9 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 main :: fn() -> i64 {
     small : i32 = 300
-    printf("%lld\n", small)
+    unsafe { printf("%lld\n", small) }
     byte_sum : u8 = 100
-    printf("%lld\n", byte_sum + 50)
+    unsafe { printf("%lld\n", byte_sum + 50) }
     0
 }
 "#;
@@ -696,12 +668,12 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 main :: fn() -> i64 {
     a : u8 = 200
     b : u8 = 100
-    printf("%lld\n", a + b)
+    unsafe { printf("%lld\n", a + b) }
     d : u32 = 4000000000
     e : u32 = 1000000000
-    printf("%lld\n", d + e)
+    unsafe { printf("%lld\n", d + e) }
     g : i64 = 42
-    printf("%lld\n", -g)
+    unsafe { printf("%lld\n", -g) }
     0
 }
 "#;
@@ -722,12 +694,12 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 apply :: fn(f: fn(i64) -> i64, x: i64) -> i64 { f(x) }
 
 main :: fn() -> i64 {
-    printf("%lld\n", apply(fn(a: i64) -> i64 { a + 1 }, 41))
-    printf("%lld\n", apply(fn(a: i64) -> i64 { a * a }, 9))
+    unsafe { printf("%lld\n", apply(fn(a: i64) -> i64 { a + 1 }, 41)) }
+    unsafe { printf("%lld\n", apply(fn(a: i64) -> i64 { a * a }, 9)) }
     g := fn(a: i64) -> i64 { a - 3 }
-    printf("%lld\n", g(50))
+    unsafe { printf("%lld\n", g(50)) }
     ops := [fn(a: i64) -> i64 { a + 1 }, fn(a: i64) -> i64 { a * 2 }]
-    printf("%lld\n", ops[1](10))
+    unsafe { printf("%lld\n", ops[1](10)) }
     0
 }
 "#;
@@ -745,8 +717,8 @@ main :: fn() -> i64 {
     mut pt : Point = Point { x = 5, y = 10 }
     bump(pt)
     bump(pt)
-    printf("%lld\n", pt.x)
-    printf("%lld\n", sum(pt))
+    unsafe { printf("%lld\n", pt.x) }
+    unsafe { printf("%lld\n", sum(pt)) }
     0
 }
 "#;
@@ -774,8 +746,8 @@ report :: fn(ok: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    printf("%lld\n", report(1))
-    printf("%lld\n", report(0))
+    unsafe { printf("%lld\n", report(1)) }
+    unsafe { printf("%lld\n", report(0)) }
     0
 }
 "#;
@@ -820,30 +792,30 @@ corners :: fn(size: i64) -> (Point, Point) {
 
 main :: fn() -> i64 {
     quotient, remainder := divide(17, 5)
-    printf("%lld\n", quotient)
-    printf("%lld\n", remainder)
+    unsafe { printf("%lld\n", quotient) }
+    unsafe { printf("%lld\n", remainder) }
 
     high, low := split_bytes(700)
-    printf("%lld\n", high)
-    printf("%lld\n", low)
+    unsafe { printf("%lld\n", high) }
+    unsafe { printf("%lld\n", low) }
 
     half, odd := halve(9)
-    printf("%lld\n", half * 10 + odd)
+    unsafe { printf("%lld\n", half * 10 + odd) }
 
     magnitude, mut negative := classify(-9)
-    printf("%lld\n", magnitude)
-    if (negative) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    unsafe { printf("%lld\n", magnitude) }
+    if (negative) { unsafe { printf("%lld\n", 1) } } else { unsafe { printf("%lld\n", 0) } }
     negative = false
-    if (negative) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    if (negative) { unsafe { printf("%lld\n", 1) } } else { unsafe { printf("%lld\n", 0) } }
 
     origin, far := corners(12)
-    printf("%lld\n", origin.x + far.x)
-    printf("%lld\n", far.y)
+    unsafe { printf("%lld\n", origin.x + far.x) }
+    unsafe { printf("%lld\n", far.y) }
 
     // The values feed straight into another call.
     a, b := divide(9, 4)
     c, d := divide(a, b)
-    printf("%lld\n", c * 10 + d)
+    unsafe { printf("%lld\n", c * 10 + d) }
     0
 }
 "#;
@@ -957,23 +929,23 @@ pick :: fn(want: i64) -> i64 ! Fault {
 
 main :: fn() -> i64 {
     s : Shape = .Circle { radius = 4 }
-    printf("%lld\n", area(s))
+    unsafe { printf("%lld\n", area(s)) }
 
     // A call's parameter, including one whose function is written later.
-    printf("%lld\n", area(.Square { side = 5 }))
-    printf("%lld\n", paint(.Green))
-    printf("%lld\n", later(.Blue))
-    printf("%lld\n", area(round(2)))
+    unsafe { printf("%lld\n", area(.Square { side = 5 })) }
+    unsafe { printf("%lld\n", paint(.Green)) }
+    unsafe { printf("%lld\n", later(.Blue)) }
+    unsafe { printf("%lld\n", area(round(2))) }
 
     // A struct field.
     t := Theme { primary = .Red, accent = .Blue }
-    printf("%lld\n", paint(t.primary))
-    printf("%lld\n", paint(t.accent))
+    unsafe { printf("%lld\n", paint(t.primary)) }
+    unsafe { printf("%lld\n", paint(t.accent)) }
 
     // An assignment to a place whose type is known.
     mut c : Color = .Red
     c = .Blue
-    printf("%lld\n", paint(c))
+    unsafe { printf("%lld\n", paint(c)) }
 
     // An element of an array, whose type the annotation gives.
     mut wheel : [3]Color = [.Red, .Green, .Blue]
@@ -981,18 +953,18 @@ main :: fn() -> i64 {
     for held in wheel {
         sum = sum + paint(held)
     }
-    printf("%lld\n", sum)
+    unsafe { printf("%lld\n", sum) }
 
     good := match pick(5) {
         case .Ok { value }: value
         case .Err { error }: 0
     }
-    printf("%lld\n", good)
+    unsafe { printf("%lld\n", good) }
     bad := match pick(0) {
         case .Ok { value }: value
         case .Err { error }: -1
     }
-    printf("%lld\n", bad)
+    unsafe { printf("%lld\n", bad) }
     0
 }
 
@@ -1050,20 +1022,20 @@ total :: fn(t: Trip) -> Meters { add_meters(t.there, t.back) }
 main :: fn() -> i64 {
     a : Meters = 3
     b : Meters = 4
-    printf("%lld\n", add_meters(a, b))
+    unsafe { printf("%lld\n", add_meters(a, b)) }
 
     f : Feet = 10
-    printf("%lld\n", f)
+    unsafe { printf("%lld\n", f) }
 
     trip := Trip { there = a, back = b }
-    printf("%lld\n", total(trip))
+    unsafe { printf("%lld\n", total(trip)) }
 
     leg := Leg { distance = 12, took = 1.5 }
     print elapsed(leg.took, 4.25)
-    printf("%lld\n", leg.distance)
+    unsafe { printf("%lld\n", leg.distance) }
 
     mut marks : [3]Meters = [1, 2, 3]
-    printf("%lld\n", marks[2])
+    unsafe { printf("%lld\n", marks[2]) }
     0
 }
 "#;
@@ -1131,7 +1103,6 @@ fn a_distinct_type_is_not_its_representation() {
         let input = directory.join(format!("frost_distinctbad{index}.frost"));
         std::fs::write(&input, &source).unwrap();
         let refused = Command::new(&compiler)
-            .env("FROST_CHECK_UNSAFE", "0")
             .env("FROST_INPUT", &input)
             .output()
             .unwrap();
@@ -1413,7 +1384,6 @@ fn a_flags_type_refuses_what_is_not_one_of_its_bits() {
         let input = directory.join(format!("frost_flagsbad{index}.frost"));
         std::fs::write(&input, &source).unwrap();
         let refused = Command::new(compiler)
-            .env("FROST_CHECK_UNSAFE", "0")
             .env("FROST_INPUT", &input)
             .output()
             .unwrap();
@@ -2037,17 +2007,17 @@ apply :: fn(make: fn(i64) -> Point, scale: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    printf("%lld\n", apply(origin, 3))
-    printf("%lld\n", apply(shifted, 3))
+    unsafe { printf("%lld\n", apply(origin, 3)) }
+    unsafe { printf("%lld\n", apply(shifted, 3)) }
 
     // And as a local that is reassigned, so the callee is not known at the
     // call site at all.
     mut chosen : fn(i64) -> Point = origin
     q := chosen(5)
-    printf("%lld\n", q.x + q.y)
+    unsafe { printf("%lld\n", q.x + q.y) }
     chosen = shifted
     r := chosen(5)
-    printf("%lld\n", r.x + r.y)
+    unsafe { printf("%lld\n", r.x + r.y) }
     0
 }
 "#;
@@ -2095,25 +2065,25 @@ paint :: fn(m: Marked) -> i64 {
 
 main :: fn() -> i64 {
     p : Point = { x = 3, y = 4 }
-    printf("%lld\n", sum(p))
+    unsafe { printf("%lld\n", sum(p)) }
 
     // A parameter, including one whose function is written later.
-    printf("%lld\n", sum({ x = 10, y = 20 }))
-    printf("%lld\n", later({ x = 2, y = 3 }))
+    unsafe { printf("%lld\n", sum({ x = 10, y = 20 })) }
+    unsafe { printf("%lld\n", later({ x = 2, y = 3 })) }
 
     // Nested, each inner literal taking its type from the field it fills.
-    printf("%lld\n", length_sq({ from = { x = 0, y = 0 }, to = { x = 3, y = 4 } }))
+    unsafe { printf("%lld\n", length_sq({ from = { x = 0, y = 0 }, to = { x = 3, y = 4 } })) }
 
     // A return.
-    printf("%lld\n", sum(origin()))
+    unsafe { printf("%lld\n", sum(origin())) }
 
     // A variant inside an inferred literal, taking its enum from the field.
-    printf("%lld\n", paint({ at = { x = 7, y = 0 }, colour = .Green }))
+    unsafe { printf("%lld\n", paint({ at = { x = 7, y = 0 }, colour = .Green })) }
 
     // An assignment to a place whose type is known.
     mut q : Point = { x = 1, y = 1 }
     q = { x = 5, y = 6 }
-    printf("%lld\n", sum(q))
+    unsafe { printf("%lld\n", sum(q)) }
 
     // Elements of an array, from the annotation's element type.
     grid : [2]Point = [{ x = 1, y = 2 }, { x = 3, y = 4 }]
@@ -2121,7 +2091,7 @@ main :: fn() -> i64 {
     for held in grid {
         total = total + sum(held)
     }
-    printf("%lld\n", total)
+    unsafe { printf("%lld\n", total) }
     0
 }
 
@@ -2173,7 +2143,7 @@ sum_slice :: fn(xs: []i64) -> i64 {
 // however many elements it answers with.
 counted :: fn(mut calls: i64) -> []i64 {
     calls = calls + 1
-    slice_from($i64, ptr_cast($i64, ptr_to(calls)), 1)
+    unsafe { slice_from($i64, ptr_cast($i64, ptr_to(calls)), 1) }
 }
 
 main :: fn() -> i64 {
@@ -2182,15 +2152,15 @@ main :: fn() -> i64 {
     for value in numbers {
         total = total + value
     }
-    printf("%lld\n", total)
-    printf("%lld\n", sum_slice(numbers))
+    unsafe { printf("%lld\n", total) }
+    unsafe { printf("%lld\n", sum_slice(numbers)) }
 
     // The position as well as the element.
     mut weighted : i64 = 0
     for index, value in numbers {
         weighted = weighted + index * value
     }
-    printf("%lld\n", weighted)
+    unsafe { printf("%lld\n", weighted) }
 
     // An aggregate element binds as a borrow, so nothing is copied per step.
     mut points : [3]Point = [
@@ -2202,14 +2172,14 @@ main :: fn() -> i64 {
     for p in points {
         sum = sum + p.x * p.y
     }
-    printf("%lld\n", sum)
+    unsafe { printf("%lld\n", sum) }
 
     // A `str` yields its bytes.
     mut bytes : i64 = 0
     for byte in "abc" {
         bytes = bytes + byte
     }
-    printf("%lld\n", bytes)
+    unsafe { printf("%lld\n", bytes) }
 
     // `break` and `continue` reach the loop the same as in a range.
     mut first : i64 = 0
@@ -2218,21 +2188,21 @@ main :: fn() -> i64 {
         first = value
         break
     }
-    printf("%lld\n", first)
+    unsafe { printf("%lld\n", first) }
 
     mut empty : [0]i64 = []
     mut never : i64 = 7
     for value in empty {
         never = value
     }
-    printf("%lld\n", never)
+    unsafe { printf("%lld\n", never) }
 
     mut calls : i64 = 0
     mut seen : i64 = 0
     for value in counted(calls) {
         seen = seen + value
     }
-    printf("%lld\n", calls)
+    unsafe { printf("%lld\n", calls) }
     0
 }
 "#;
@@ -2282,16 +2252,16 @@ main :: fn() -> i64 {
     a := Kind::Var
     b := Kind::Var
     c := Kind::Bin
-    printf("%lld\n", a == b)
-    printf("%lld\n", a == c)
-    printf("%lld\n", a != c)
+    unsafe { printf("%lld\n", a == b) }
+    unsafe { printf("%lld\n", a == c) }
+    unsafe { printf("%lld\n", a != c) }
 
     node := Node { kind = Kind::Var, weight = 7 }
-    printf("%lld\n", is_var(node))
-    printf("%lld\n", node.kind == Kind::Bin)
+    unsafe { printf("%lld\n", is_var(node)) }
+    unsafe { printf("%lld\n", node.kind == Kind::Bin) }
 
     held := node.kind
-    printf("%lld\n", held == Kind::Var)
+    unsafe { printf("%lld\n", held == Kind::Var) }
     0
 }
 "#;
@@ -2348,13 +2318,13 @@ shape :: fn(a: i64, b: i64, c: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    printf("%lld\n", label(15))
-    printf("%lld\n", label(9))
-    printf("%lld\n", label(10))
-    printf("%lld\n", label(7))
-    printf("%lld\n", shape(1, 2, 3))
-    printf("%lld\n", shape(1, 9, 3))
-    printf("%lld\n", shape(4, 5, 6))
+    unsafe { printf("%lld\n", label(15)) }
+    unsafe { printf("%lld\n", label(9)) }
+    unsafe { printf("%lld\n", label(10)) }
+    unsafe { printf("%lld\n", label(7)) }
+    unsafe { printf("%lld\n", shape(1, 2, 3)) }
+    unsafe { printf("%lld\n", shape(1, 9, 3)) }
+    unsafe { printf("%lld\n", shape(4, 5, 6)) }
     0
 }
 "#;
@@ -2404,13 +2374,13 @@ doubled :: fn(n: i64) -> i64 {
 spread :: fn(a: i64, b: i64) -> i64 { a * 10 + b }
 
 main :: fn() -> i64 {
-    printf("%lld\n", eightbytes(0))
-    printf("%lld\n", eightbytes(24))
-    printf("%lld\n", eightbytes(1))
-    printf("%lld\n", doubled(5))
-    printf("%lld\n", spread(
+    unsafe { printf("%lld\n", eightbytes(0)) }
+    unsafe { printf("%lld\n", eightbytes(24)) }
+    unsafe { printf("%lld\n", eightbytes(1)) }
+    unsafe { printf("%lld\n", doubled(5)) }
+    unsafe { printf("%lld\n", spread(
         3,
-        4))
+        4)) }
     0
 }
 "#;
@@ -2488,9 +2458,9 @@ report :: fn(hp: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    printf("%lld\n", report(5))
-    printf("%lld\n", report(0))
-    printf("%lld\n", report(-3))
+    unsafe { printf("%lld\n", report(5)) }
+    unsafe { printf("%lld\n", report(0)) }
+    unsafe { printf("%lld\n", report(-3)) }
     0
 }
 "#;
@@ -2525,17 +2495,17 @@ Arena :: struct($N: usize) {
 }
 
 alloc_int :: fn(mut a: Arena<256>) -> ^i64 {
-    slot := ptr_to(a.data[a.offset])
+    slot := unsafe { ptr_to(a.data[a.offset]) }
     a.offset = a.offset + sizeof(i64)
-    ptr_cast($i64, slot)
+    unsafe { ptr_cast($i64, slot) }
 }
 
 make_two :: fn() -> i64 uses Arena<256> {
     p := alloc_int(arena)
-    p^ = 10
+    unsafe { p^ = 10 }
     q := alloc_int(arena)
-    q^ = 32
-    p^ + q^
+    unsafe { q^ = 32 }
+    unsafe { p^ + q^ }
 }
 
 forward :: fn() -> i64 uses Arena<256> {
@@ -2548,7 +2518,7 @@ main :: fn() -> i64 {
     with arena {
         result = forward()
     }
-    printf("%lld\n", result)
+    unsafe { printf("%lld\n", result) }
     0
 }
 "#;
@@ -2653,9 +2623,9 @@ fn region_pointer_escape_is_rejected() {
 Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
 
 alloc_int :: fn(mut a: Arena<256>) -> ^i64 {
-    slot := ptr_to(a.data[a.offset])
+    slot := unsafe { ptr_to(a.data[a.offset]) }
     a.offset = a.offset + sizeof(i64)
-    ptr_cast($i64, slot)
+    unsafe { ptr_cast($i64, slot) }
 }
 
 main :: fn() -> i64 {
@@ -2664,7 +2634,7 @@ main :: fn() -> i64 {
     with arena {
         escaped = alloc_int(arena)
     }
-    escaped^
+    unsafe { escaped^ }
 }
 "#;
     let message = compile_error("region_escape", source);
@@ -2684,9 +2654,9 @@ Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
 Reg :: struct { ptr: ^i64 }
 
 alloc_int :: fn(mut a: Arena<256>) -> ^i64 {
-    slot := ptr_to(a.data[a.offset])
+    slot := unsafe { ptr_to(a.data[a.offset]) }
     a.offset = a.offset + sizeof(i64)
-    ptr_cast($i64, slot)
+    unsafe { ptr_cast($i64, slot) }
 }
 
 stash :: fn(mut r: Reg) -> i64 uses Arena<256> {
@@ -2747,7 +2717,6 @@ fn self_hosted_emits(
     let compiler = build_self_hosted_compiler(name)?;
     let mut command = Command::new(&compiler);
     command.env("FROST_INPUT", input);
-    command.env("FROST_CHECK_UNSAFE", "0");
     if let Some(backend) = backend {
         command.env("FROST_BACKEND", backend);
     }
@@ -2827,7 +2796,7 @@ const SELF_HOSTED_WIDTHS: &str = "Mixed :: struct { a: i32, b: i16, c: u8, d: i6
      \x20   print wide\n    print sizeof(Mixed)\n\
      \x20   m := Mixed { a = -7, b = 9, c = 250, d = 123456789 }\n\
      \x20   print m.a\n    print m.b\n    print m.c\n    print m.d\n\
-     \x20   ptr := ptr_to(m)\n    ptr^.a = -1\n\
+     \x20   ptr := ptr_to(m)\n    unsafe { ptr^.a = -1 }\n\
      \x20   print m.a\n    print m.d\n    0\n}\n";
 
 const WIDTHS_EXPECTED: &str = "-5\n300\n200\n4000000000\n9000000000\n16\n-7\n9\n250\n123456789\n-1\n123456789\n";
@@ -3060,7 +3029,6 @@ fn self_hosted_runs_test_blocks() {
 #[test]
 fn the_self_hosted_compiler_is_clean_under_the_unsafe_gate() {
     let build = Command::new(env!("CARGO_BIN_EXE_frost"))
-        .env("FROST_CHECK_UNSAFE", Audit::On.setting())
         .arg("--emit-c")
         .arg("-o")
         .arg(std::env::temp_dir().join("frost_gate_selfhosted.c"))
@@ -3092,23 +3060,25 @@ fn self_hosted_threads_share_a_counter() {
          import \"thread.frost\"\n\
          Work :: struct { start: i64, count: i64, total: ^i64 }\n\
          worker :: fn(raw: ^u8) {\n\
-         \x20   w := ptr_cast($Work, raw)\n\
+         \x20   w := unsafe { ptr_cast($Work, raw) }\n\
          \x20   mut i : i64 = 0\n\
-         \x20   while (i < w^.count) { atomic_add(w^.total, w^.start + i)  i = i + 1 }\n\
+         \x20   count := unsafe { w^.count }\n\
+         \x20   cell := unsafe { w^.total }\n\
+         \x20   start := unsafe { w^.start }\n\
+         \x20   while (i < count) { atomic_add(cell, start + i)  i = i + 1 }\n\
          }\n\
          main :: fn() -> i64 {\n\
          \x20   mut total : i64 = 0\n\
          \x20   mut w1 := Work { start = 0, count = 500, total = ptr_to(total) }\n\
          \x20   mut w2 := Work { start = 500, count = 500, total = ptr_to(total) }\n\
-         \x20   t1 := spawn(worker, ptr_cast($u8, ptr_to(w1)))\n\
-         \x20   t2 := spawn(worker, ptr_cast($u8, ptr_to(w2)))\n\
+         \x20   t1 := unsafe { spawn(worker, ptr_cast($u8, ptr_to(w1))) }\n\
+         \x20   t2 := unsafe { spawn(worker, ptr_cast($u8, ptr_to(w2))) }\n\
          \x20   join(t1)  join(t2)\n\
          \x20   print_int_line(total)\n    0\n}\n",
     )
     .unwrap();
     let c_path = directory.join("threads.c");
     let build = Command::new(env!("CARGO_BIN_EXE_frost"))
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg("-L")
         .arg(root.join("std"))
         .arg("--emit-c")
@@ -3159,8 +3129,6 @@ fn a_safe_extern_needs_no_unsafe_block() {
     };
     assert_eq!(output, "7\n");
 
-    // Not `compile_error`, which turns the gate off so the other error tests do
-    // not have to satisfy it. This one is about the gate, so it runs with it on.
     let plain = "printf :: extern fn(fmt: ^i8, v: i64) -> i32\n\
          main :: fn() -> i64 { printf(\"%lld\\n\", 7)  0 }\n";
     let directory = std::env::temp_dir();
@@ -3349,7 +3317,6 @@ fn a_program_using_std_is_clean_under_the_unsafe_gate() {
         std::env::consts::EXE_SUFFIX
     ));
     let build = Command::new(env!("CARGO_BIN_EXE_frost"))
-        .env("FROST_CHECK_UNSAFE", Audit::On.setting())
         .arg("-L")
         .arg(root.join("std"))
         .arg("--link")
@@ -3740,7 +3707,7 @@ fn both_routes_build_the_same_compiler() {
             std::env::consts::EXE_SUFFIX
         ));
         let mut build = Command::new(frost);
-        build.env("FROST_CHECK_UNSAFE", "0").arg("--link");
+        build.arg("--link");
         if through_c {
             build.arg("--emit-c");
         }
@@ -3756,7 +3723,6 @@ fn both_routes_build_the_same_compiler() {
             String::from_utf8_lossy(&built.stderr)
         );
         let run = Command::new(&compiler)
-            .env("FROST_CHECK_UNSAFE", "0")
             .env("FROST_BACKEND", "asm")
             .env("FROST_INPUT", &source)
             .output()
@@ -3807,7 +3773,6 @@ fn self_hosting_is_a_fixpoint() {
         return;
     };
     let gen2 = Command::new(&gen1_exe)
-        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_INPUT", &source_file)
         .output()
         .unwrap();
@@ -3837,7 +3802,6 @@ fn native_self_hosting_is_a_fixpoint() {
     let emit_self = |exe: &PathBuf, stage: &str| -> String {
         let emit = Command::new(exe)
             .env("FROST_BACKEND", "asm")
-            .env("FROST_CHECK_UNSAFE", "0")
             .env("FROST_INPUT", &source)
             .output()
             .unwrap();
@@ -3910,7 +3874,6 @@ fn self_hosted_native_backend_emits_working_assembly() {
 
     let emit = Command::new(&compiler)
         .env("FROST_BACKEND", "asm")
-        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_INPUT", &input)
         .output()
         .unwrap();
@@ -3960,7 +3923,6 @@ fn selfhosted_unaudited_output(name: &str, source: &str) -> Option<String> {
 
     let emit = Command::new(&compiler)
         .env("FROST_BACKEND", "asm")
-        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_INPUT", &input)
         .output()
         .unwrap();
@@ -4019,7 +3981,6 @@ fn selfhosted_native_status(
 
     let emit = Command::new(&compiler)
         .env("FROST_BACKEND", "asm")
-        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_INPUT", &input)
         .output()
         .unwrap();
@@ -4101,7 +4062,7 @@ fn native_backend_covers_the_language() {
         ),
         (
             "pointers",
-            "P :: struct { x: i64, y: i64 }\nmain :: fn() -> i64 {\n    mut a : P = P { x = 3, y = 4 }\n    r : ^P = ptr_to(a)\n    print r^.y\n    r^.y = 55\n    print a.y\n    0\n}\n",
+            "P :: struct { x: i64, y: i64 }\nmain :: fn() -> i64 {\n    mut a : P = P { x = 3, y = 4 }\n    r : ^P = ptr_to(a)\n    unsafe { print r^.y }\n    unsafe { r^.y = 55 }\n    print a.y\n    0\n}\n",
             "4\n55\n",
         ),
         (
@@ -4176,7 +4137,6 @@ fn both_self_hosted_backends_refuse_the_same_programs() {
         std::fs::write(&input, source).unwrap();
         for backend in ["", "asm"] {
             let run = Command::new(&compiler)
-                .env("FROST_CHECK_UNSAFE", "0")
                 .env("FROST_BACKEND", backend)
                 .env("FROST_INPUT", &input)
                 .output()
@@ -4206,7 +4166,6 @@ fn self_hosted_rejects(name: &str, source: &str) -> Option<String> {
     let input = directory.join(format!("frost_mfck_input_{name}.frost"));
     std::fs::write(&input, source).unwrap();
     let run = Command::new(&compiler)
-        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_INPUT", &input)
         .output()
         .unwrap();
@@ -4270,7 +4229,7 @@ fn self_hosted_enforces_the_unsafe_gate() {
     let (ok, _) = check(
         "safe",
         "puts :: safe extern fn(s: ^i8) -> i64\n\
-         main :: fn() -> i64 { puts(\"hi\")  mut xs : [3]i64 = [1,2,3]  xs[1] }\n",
+         main :: fn() -> i64 { unsafe { puts(\"hi\") }  mut xs : [3]i64 = [1,2,3]  xs[1] }\n",
     );
     assert!(ok, "a safe extern and an array index need no block");
 
@@ -4348,7 +4307,6 @@ fn a_file_may_only_name_what_it_imported() {
     .unwrap();
 
     let built = Command::new(env!("CARGO_BIN_EXE_frost"))
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--native")
         .arg("-o")
         .arg(directory.join("app.o"))
@@ -4371,7 +4329,6 @@ fn a_file_may_only_name_what_it_imported() {
     if let Some(compiler) = build_self_hosted_compiler("visibility") {
         let run = Command::new(&compiler)
             .env("FROST_INPUT", &entry)
-            .env("FROST_CHECK_UNSAFE", "0")
             .output()
             .unwrap();
         let said = format!(
@@ -4398,7 +4355,6 @@ fn a_file_may_only_name_what_it_imported() {
     .unwrap();
     let exe = directory.join(format!("app{}", std::env::consts::EXE_SUFFIX));
     let built = Command::new(env!("CARGO_BIN_EXE_frost"))
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("-o")
         .arg(&exe)
@@ -5373,12 +5329,12 @@ fn self_hosted_rejects_a_uses_call_with_no_capability() {
 #[test]
 fn self_hosted_rejects_a_region_pointer_stored_outside() {
     let source = "Arena :: struct { offset: i64 }\n\
-                  alloc :: fn() -> ^i64 uses Arena { ptr_to(arena^.offset) }\n\
+                  alloc :: fn() -> ^i64 uses Arena { unsafe { ptr_to(arena^.offset) } }\n\
                   main :: fn() -> i64 {\n\
                   \x20   mut arena : Arena = Arena { offset = 0 }\n\
                   \x20   mut escaped : ^i64 = ptr_to(arena.offset)\n\
                   \x20   with arena { escaped = alloc() }\n\
-                  \x20   escaped^\n}\n";
+                  \x20   unsafe { escaped^ }\n}\n";
     let Some(message) = self_hosted_rejects("regionstore", source) else {
         return;
     };
@@ -5391,7 +5347,7 @@ fn self_hosted_rejects_a_region_pointer_stored_outside() {
 #[test]
 fn self_hosted_rejects_a_returned_region_pointer() {
     let source = "Arena :: struct { offset: i64 }\n\
-                  alloc :: fn() -> ^i64 uses Arena { ptr_to(arena^.offset) }\n\
+                  alloc :: fn() -> ^i64 uses Arena { unsafe { ptr_to(arena^.offset) } }\n\
                   grab :: fn() -> ^i64 {\n\
                   \x20   mut arena : Arena = Arena { offset = 0 }\n\
                   \x20   with arena { return alloc() }\n\
@@ -5480,12 +5436,12 @@ fn self_hosted_rejects_overlapping_mutable_borrows() {
 #[test]
 fn self_hosted_accepts_a_region_pointer_held_inside() {
     let source = "Arena :: struct { offset: i64 }\n\
-                  alloc :: fn() -> ^i64 uses Arena { ptr_to(arena^.offset) }\n\
+                  alloc :: fn() -> ^i64 uses Arena { unsafe { ptr_to(arena^.offset) } }\n\
                   main :: fn() -> i64 {\n\
                   \x20   mut arena : Arena = Arena { offset = 7 }\n\
                   \x20   mut result : i64 = 0\n\
                   \x20   with arena {\n        held := alloc()\n\
-                  \x20       result = held^\n    }\n\
+                  \x20       result = unsafe { held^ }\n    }\n\
                   \x20   print result\n    0\n}\n";
     let Some(output) = selfhosted_unaudited_output("regionheld", source) else {
         return;
@@ -5516,12 +5472,12 @@ fn self_hosted_rejects_a_region_pointer_stored_into_a_parameter() {
 fn self_hosted_accepts_a_region_pointer_handed_to_the_caller() {
     let source = "Arena :: struct { offset: i64 }\n\
                   alloc :: fn() -> ^i64 uses Arena {\n\
-                  \x20   slot := ptr_to(arena^.offset)\n    return slot\n}\n\
+                  \x20   slot := unsafe { ptr_to(arena^.offset) }\n    return slot\n}\n\
                   main :: fn() -> i64 {\n\
                   \x20   mut arena : Arena = Arena { offset = 5 }\n\
                   \x20   mut result : i64 = 0\n\
                   \x20   with arena {\n        held := alloc()\n\
-                  \x20       result = held^\n    }\n\
+                  \x20       result = unsafe { held^ }\n    }\n\
                   \x20   print result\n    0\n}\n";
     let Some(output) = selfhosted_unaudited_output("regionhandback", source)
     else {
@@ -5567,7 +5523,6 @@ fn self_hosted_resolves_imports() {
     .unwrap();
 
     let emit = Command::new(&compiler)
-        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_INPUT", &root)
         .output()
         .unwrap();
@@ -5615,7 +5570,6 @@ fn export_name_collision_is_rejected_by_both_compilers() {
 
     // The bootstrap rejects it during import resolution.
     let bootstrap = Command::new(env!("CARGO_BIN_EXE_frost"))
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--emit-c")
         .arg(&root)
         .output()
@@ -5636,7 +5590,6 @@ fn export_name_collision_is_rejected_by_both_compilers() {
         return;
     };
     let selfhosted = Command::new(&compiler)
-        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_INPUT", &root)
         .output()
         .unwrap();
@@ -5697,7 +5650,6 @@ fn a_name_can_be_read_under_another_on_import() {
 
     let exe = directory.join(format!("app{}", std::env::consts::EXE_SUFFIX));
     let built = Command::new(env!("CARGO_BIN_EXE_frost"))
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("-o")
         .arg(&exe)
@@ -5724,7 +5676,6 @@ fn a_name_can_be_read_under_another_on_import() {
     )
     .unwrap();
     let rejected = Command::new(env!("CARGO_BIN_EXE_frost"))
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--emit-c")
         .arg(&wrong)
         .output()
@@ -5739,7 +5690,6 @@ fn a_name_can_be_read_under_another_on_import() {
     // The same program through the self-hosted compiler.
     if let Some(compiler) = build_self_hosted_compiler("rename") {
         let emitted = Command::new(&compiler)
-            .env("FROST_CHECK_UNSAFE", "0")
             .env("FROST_INPUT", &root)
             .output()
             .unwrap();
@@ -5781,7 +5731,6 @@ fn self_hosted_survives_an_import_cycle() {
     .unwrap();
 
     let emit = Command::new(&compiler)
-        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_INPUT", &root)
         .output()
         .unwrap();
@@ -5821,7 +5770,7 @@ fn an_exported_function_may_return_an_unexported_type() {
         &root,
         "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
          import \"lib/hidden.frost\"\n\
-         main :: fn() -> i64 { h := make(7)  printf(\"%lld\\n\", h.v)  0 }\n",
+         main :: fn() -> i64 { h := make(7)  unsafe { printf(\"%lld\\n\", h.v) }  0 }\n",
     )
     .unwrap();
 
@@ -5831,7 +5780,6 @@ fn an_exported_function_may_return_an_unexported_type() {
     }
     let exe = directory.join(format!("app{}", std::env::consts::EXE_SUFFIX));
     let built = Command::new(env!("CARGO_BIN_EXE_frost"))
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("-o")
         .arg(&exe)
@@ -6460,7 +6408,7 @@ fn a_cast_converts_and_says_so() {
         return;
     };
     assert_eq!(output, CAST_RESULTS);
-    if let Some(interpreted) = run_ir_oracle("casts", CASTS, Audit::Off) {
+    if let Some(interpreted) = run_ir_oracle("casts", CASTS) {
         assert_eq!(interpreted, CAST_RESULTS, "the ir interpreter disagrees");
     }
 }
@@ -6667,8 +6615,7 @@ fn a_type_can_be_asked_for_its_name() {
         return;
     };
     assert_eq!(output, TYPE_NAME_RESULTS);
-    if let Some(interpreted) = run_ir_oracle("typename", TYPE_NAMES, Audit::Off)
-    {
+    if let Some(interpreted) = run_ir_oracle("typename", TYPE_NAMES) {
         assert_eq!(
             interpreted, TYPE_NAME_RESULTS,
             "the ir interpreter disagrees"
@@ -6713,7 +6660,7 @@ const NAMED_TEXT: &str = "SECTION :: \".debug_line\"\n\
      \x20   print str_len(SECTION)\n\
      \x20   print str_len(EMPTY)\n\
      \x20   print width(SECTION)\n\
-     \x20   print SECTION[1]\n\
+     \x20   unsafe { print SECTION[1] }\n\
      \x20   held := SECTION\n\
      \x20   print str_len(held)\n\
      \x20   print str_len(SECTION) + 1\n\
@@ -6731,9 +6678,7 @@ fn a_named_text_constant_is_the_literal_it_stands_for() {
         return;
     };
     assert_eq!(output, NAMED_TEXT_RESULTS);
-    if let Some(interpreted) =
-        run_ir_oracle("namedtext", NAMED_TEXT, Audit::Off)
-    {
+    if let Some(interpreted) = run_ir_oracle("namedtext", NAMED_TEXT) {
         assert_eq!(
             interpreted, NAMED_TEXT_RESULTS,
             "the ir interpreter disagrees"
@@ -6852,9 +6797,7 @@ fn a_bool_is_one_byte() {
         return;
     };
     assert_eq!(output, BOOL_SIZES);
-    if let Some(interpreted) =
-        run_ir_oracle("boolbyte", BOOL_IS_A_BYTE, Audit::Off)
-    {
+    if let Some(interpreted) = run_ir_oracle("boolbyte", BOOL_IS_A_BYTE) {
         assert_eq!(interpreted, BOOL_SIZES, "the ir interpreter disagrees");
     }
 }
@@ -6919,10 +6862,10 @@ fn a_program_built_from_interfaces_is_the_same_program() {
          import \"lib/shapes.frost\"\n\
          wider :: fn(a: i64, b: i64) -> bool { a > b }\n\
          main :: fn() -> i64 {\n\
-         \x20   printf(\"%lld\\n\", area(Shape::Rect { w = 4, h = 5 }))\n\
+         \x20   unsafe { printf(\"%lld\\n\", area(Shape::Rect { w = 4, h = 5 })) }\n\
          \x20   report := describe(Shape::Circle { r = 2 })\n\
-         \x20   printf(\"%lld\\n\", report.value)\n\
-         \x20   printf(\"%lld\\n\", biggest($i64, $wider, 7, 3))\n\
+         \x20   unsafe { printf(\"%lld\\n\", report.value) }\n\
+         \x20   unsafe { printf(\"%lld\\n\", biggest($i64, $wider, 7, 3)) }\n\
          \x20   0\n\
          }\n",
     )
@@ -6932,9 +6875,7 @@ fn a_program_built_from_interfaces_is_the_same_program() {
     let emit = |from_interfaces: bool, name: &str| {
         let c_path = directory.join(format!("{name}.c"));
         let output = Command::new(frost)
-            .env("FROST_CHECK_UNSAFE", "0")
             .env("FROST_CHECK_INTERFACES", "1")
-            .env("FROST_CHECK_UNSAFE", "0")
             .env(
                 "FROST_BUILD_FROM_INTERFACES",
                 if from_interfaces { "1" } else { "0" },
@@ -6983,9 +6924,7 @@ fn a_program_built_from_interfaces_is_the_same_program() {
         let exe =
             directory.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
         let built = Command::new(frost)
-            .env("FROST_CHECK_UNSAFE", "0")
             .env("FROST_CHECK_INTERFACES", "1")
-            .env("FROST_CHECK_UNSAFE", "0")
             .env(
                 "FROST_BUILD_FROM_INTERFACES",
                 if from_interfaces { "1" } else { "0" },
@@ -7061,7 +7000,7 @@ fn each_module_becomes_its_own_object() {
          import \"lib/one.frost\"\n\
          import \"lib/two.frost\"\n\
          main :: fn() -> i64 {\n\
-         \x20   printf(\"%lld\\n\", use_one() + use_two())\n\
+         \x20   unsafe { printf(\"%lld\\n\", use_one() + use_two()) }\n\
          \x20   0\n\
          }\n",
     )
@@ -7074,7 +7013,6 @@ fn each_module_becomes_its_own_object() {
     let exe = directory
         .join(format!("per_module_app{}", std::env::consts::EXE_SUFFIX));
     let built = Command::new(env!("CARGO_BIN_EXE_frost"))
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("-o")
         .arg(&exe)
@@ -7134,7 +7072,6 @@ fn the_module_report_counts_what_separate_compilation_would_duplicate() {
 
     let frost = env!("CARGO_BIN_EXE_frost");
     let output = Command::new(frost)
-        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_MODULE_REPORT", "1")
         .arg("--emit-c")
         .arg("-o")
@@ -7187,7 +7124,6 @@ fn a_diagnostic_from_an_imported_module_names_the_file() {
 
     let frost = env!("CARGO_BIN_EXE_frost");
     let output = Command::new(frost)
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--emit-c")
         .arg("-o")
         .arg(directory.join("out.c"))
@@ -7263,7 +7199,6 @@ fn a_modules_private_symbols_do_not_depend_on_import_order() {
         let c_path = directory.join(format!("{label}.c"));
         let frost = env!("CARGO_BIN_EXE_frost");
         let emitted = Command::new(frost)
-            .env("FROST_CHECK_UNSAFE", "0")
             .arg("--emit-c")
             .arg("-o")
             .arg(&c_path)
@@ -7344,7 +7279,6 @@ fn self_hosted_keeps_unexported_names_private() {
     std::fs::write(&root, program).unwrap();
 
     let emit = Command::new(&compiler)
-        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_INPUT", &root)
         .output()
         .unwrap();
@@ -7366,7 +7300,6 @@ fn self_hosted_keeps_unexported_names_private() {
     )
     .unwrap();
     let refused = Command::new(&compiler)
-        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_INPUT", &root)
         .output()
         .unwrap();
@@ -7513,7 +7446,8 @@ fn self_hosted_rejects_an_unknown_variant() {
 fn self_hosted_native_indexes_bytes() {
     let source = "main :: fn() -> i64 {\n\
                   \x20   s : ^i8 = \"hello\"\n\
-                  \x20   print s[0]\n    print s[1]\n    print s[4]\n\
+                  \x20   unsafe { print s[0] }\n    unsafe { print s[1] }\n\
+                  \x20   unsafe { print s[4] }\n\
                   \x20   print sizeof(i8)\n    0\n}\n";
     let Some(output) = selfhosted_unaudited_output("bytes", source) else {
         return;
@@ -7551,7 +7485,7 @@ fn self_hosted_reevaluates_a_try_in_a_loop_condition() {
 fn self_hosted_emits_a_generic_function_with_no_struct_instance() {
     let source = "Box :: struct($T: Type) { value: $T }\n\
                   wrap :: fn($T: Type, v: $T) -> Box<T> { Box { value = v } }\n\
-                  unwrap :: fn(b: Box<$T>) -> $T { b^.value }\n\
+                  unwrap :: fn(b: Box<$T>) -> $T { unsafe { b^.value } }\n\
                   main :: fn() -> i64 {\n\
                   \x20   b := wrap($i64, 41)\n\
                   \x20   print unwrap(b) + 1\n    0\n}\n";
@@ -7573,7 +7507,7 @@ fn self_hosted_backends_agree() {
          Kind :: enum { None, One { x: i64 }, Two { x: i64, y: i64 } }\n\
          Box :: struct($T: Type) { value: $T }\n\
          wrap :: fn($T: Type, v: $T) -> Box<T> { Box { value = v } }\n\
-         unwrap :: fn(b: Box<$T>) -> $T { b^.value }\n\
+         unwrap :: fn(b: Box<$T>) -> $T { unsafe { b^.value } }\n\
          sum_kind :: fn(k: Kind) -> i64 {\n\
          \x20   match k {\n        case .None: 0\n\
          \x20       case .One { x }: x\n        case .Two { x, y }: x + y\n    }\n}\n\
@@ -7589,8 +7523,9 @@ fn self_hosted_backends_agree() {
          \x20   print sum_kind(Kind::One { x = 6 })\n\
          \x20   print sum_kind(Kind::Two { x = 6, y = 7 })\n\
          \x20   b := wrap($i64, 41)\n    print unwrap(b) + 1\n\
-         \x20   buf := malloc(8)\n    buf[0] = 65\n    buf[1] = 66\n\
-         \x20   print buf[0]\n    print buf[1]\n\
+         \x20   buf := unsafe { malloc(8) }\n\
+         \x20   unsafe { buf[0] = 65 }\n    unsafe { buf[1] = 66 }\n\
+         \x20   unsafe { print buf[0] }\n    unsafe { print buf[1] }\n\
          \x20   mut acc : i64 = 0\n    mut i : i64 = 0\n\
          \x20   while (i < 5) {\n\
          \x20       if (i % 2 == 0) { acc = acc + i } else { acc = acc - i }\n\
@@ -7689,7 +7624,6 @@ fn run_test_mode(name: &str, source: &str) -> Option<(String, bool)> {
     std::fs::write(&source_path, source).unwrap();
     let frost = env!("CARGO_BIN_EXE_frost");
     let output = Command::new(frost)
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--test")
         .arg(&source_path)
         .output()
@@ -7732,14 +7666,13 @@ fn native_import_resolves_across_files() {
         &main_path,
         "import \"helper.frost\"\n\
          printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
-         main :: fn() -> i64 { printf(\"%lld\\n\", triple(14)) 0 }\n",
+         main :: fn() -> i64 { unsafe { printf(\"%lld\\n\", triple(14)) } 0 }\n",
     )
     .unwrap();
     let exe_path =
         directory.join(format!("imp_main{}", std::env::consts::EXE_SUFFIX));
     let frost = env!("CARGO_BIN_EXE_frost");
     let compile = Command::new(frost)
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("-o")
         .arg(&exe_path)
@@ -7759,7 +7692,6 @@ fn native_import_resolves_across_files() {
 fn frost_compiles(dir: &std::path::Path, main: &str) -> (bool, String) {
     let exe = dir.join(format!("out{}", std::env::consts::EXE_SUFFIX));
     let output = Command::new(env!("CARGO_BIN_EXE_frost"))
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("-o")
         .arg(&exe)
@@ -7796,7 +7728,7 @@ fn module_export_hides_private_items() {
         dir.join("uses_public.frost"),
         "import \"lib.frost\"\n\
          printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
-         main :: fn() -> i64 { printf(\"%lld\\n\", area(3, 5)) 0 }\n",
+         main :: fn() -> i64 { unsafe { printf(\"%lld\\n\", area(3, 5)) } 0 }\n",
     )
     .unwrap();
     let (ok, out) = frost_compiles(&dir, "uses_public.frost");
@@ -7807,7 +7739,7 @@ fn module_export_hides_private_items() {
         dir.join("uses_private.frost"),
         "import \"lib.frost\"\n\
          printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
-         main :: fn() -> i64 { printf(\"%lld\\n\", scale(10)) 0 }\n",
+         main :: fn() -> i64 { unsafe { printf(\"%lld\\n\", scale(10)) } 0 }\n",
     )
     .unwrap();
     let (ok, err) = frost_compiles(&dir, "uses_private.frost");
@@ -7829,8 +7761,8 @@ const STRINGS: &str = r#"
 puts :: extern fn(s: ^i8) -> i32
 
 main :: fn() -> i64 {
-    puts("line one")
-    puts("line\ttwo")
+    unsafe { puts("line one") }
+    unsafe { puts("line\ttwo") }
     0
 }
 "#;
@@ -7860,18 +7792,18 @@ pick :: fn(flag: i64) -> str {
 main :: fn() -> i64 {
     greeting := "Frost"
     n := str_len(greeting)
-    printf("%lld\n", n)
+    unsafe { printf("%lld\n", n) }
     mut i : i64 = 0
     while (i < n) {
-        printf("%lld\n", greeting[i])
+        unsafe { printf("%lld\n", greeting[i]) }
         i = i + 1
     }
-    printf("%lld\n", first_byte(greeting))
+    unsafe { printf("%lld\n", first_byte(greeting)) }
     chosen := pick(0)
-    printf("%lld\n", str_len(chosen))
-    printf("%lld\n", chosen[0])
+    unsafe { printf("%lld\n", str_len(chosen)) }
+    unsafe { printf("%lld\n", chosen[0]) }
     other := pick(1)
-    printf("%lld\n", str_len(other))
+    unsafe { printf("%lld\n", str_len(other)) }
     0
 }
 "#;
@@ -7892,25 +7824,25 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 Arena :: linear struct { data: ^u8, cap: i64, offset: i64 }
 
 arena_new :: fn(cap: i64) -> Arena {
-    Arena { data = malloc(cap), cap = cap, offset = 0 }
+    unsafe { Arena { data = malloc(cap), cap = cap, offset = 0 } }
 }
 
-arena_destroy :: fn(move a: Arena) { free(a.data) }
+arena_destroy :: fn(move a: Arena) { unsafe { free(a.data) } }
 
 alloc_int :: fn(mut a: Arena) -> ^i64 {
-    slot := ptr_to(a.data[a.offset])
+    slot := unsafe { ptr_to(a.data[a.offset]) }
     a.offset = a.offset + sizeof(i64)
-    ptr_cast($i64, slot)
+    unsafe { ptr_cast($i64, slot) }
 }
 
 main :: fn() -> i64 {
     mut a := arena_new(256)
     p := alloc_int(a)
-    p^ = 42
+    unsafe { p^ = 42 }
     q := alloc_int(a)
-    q^ = 100
-    printf("%lld\n", p^ + q^)
-    printf("%lld\n", a.offset)
+    unsafe { q^ = 100 }
+    unsafe { printf("%lld\n", unsafe { p^ + q^ }) }
+    unsafe { printf("%lld\n", a.offset) }
     arena_destroy(a)
     0
 }
@@ -7931,9 +7863,9 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 Bump :: struct { data: ^u8, cap: i64, offset: i64 }
 
 bump_take :: fn(state: ^u8, size: i64) -> ^u8 {
-    b := ptr_cast($Bump, state)
-    slot := ptr_to(b^.data[b^.offset])
-    b^.offset = b^.offset + size
+    b := unsafe { ptr_cast($Bump, state) }
+    slot := unsafe { ptr_to(b^.data[b^.offset]) }
+    unsafe { b^.offset = b^.offset + size }
     slot
 }
 
@@ -7946,13 +7878,13 @@ alloc :: fn(a: Allocator, size: i64) -> ^u8 {
 main :: fn() -> i64 {
     mut backing : [64]u8 = [0; 64]
     mut bump : Bump = Bump { data = ptr_to(backing[0]), cap = 64, offset = 0 }
-    a : Allocator = Allocator { take = bump_take, state = ptr_cast($u8, ptr_to(bump)) }
-    p := ptr_cast($i64, alloc(a, 8))
-    p^ = 42
-    q := ptr_cast($i64, alloc(a, 8))
-    q^ = 7
-    printf("%lld\n", p^ + q^)
-    printf("%lld\n", bump.offset)
+    a : Allocator = unsafe { Allocator { take = bump_take, state = ptr_cast($u8, ptr_to(bump)) } }
+    p := unsafe { ptr_cast($i64, alloc(a, 8)) }
+    unsafe { p^ = 42 }
+    q := unsafe { ptr_cast($i64, alloc(a, 8)) }
+    unsafe { q^ = 7 }
+    unsafe { printf("%lld\n", unsafe { p^ + q^ }) }
+    unsafe { printf("%lld\n", bump.offset) }
     0
 }
 "#;
@@ -7978,32 +7910,32 @@ Arena :: struct($N: usize) {
 }
 
 alloc_point :: fn(mut a: Arena<128>) -> ^Point {
-    slot := ptr_to(a.data[a.offset])
+    slot := unsafe { ptr_to(a.data[a.offset]) }
     a.offset = a.offset + sizeof(Point)
-    ptr_cast($Point, slot)
+    unsafe { ptr_cast($Point, slot) }
 }
 
 alloc_int :: fn(mut a: Arena<128>) -> ^i64 {
-    slot := ptr_to(a.data[a.offset])
+    slot := unsafe { ptr_to(a.data[a.offset]) }
     a.offset = a.offset + sizeof(i64)
-    ptr_cast($i64, slot)
+    unsafe { ptr_cast($i64, slot) }
 }
 
 main :: fn() -> i64 {
     mut arena : Arena<128> = Arena { data = [0; 128], offset = 0 }
     p : ^Point = alloc_point(arena)
-    p^.x = 3
-    p^.y = 4
+    unsafe { p^.x = 3 }
+    unsafe { p^.y = 4 }
     q : ^i64 = alloc_int(arena)
-    q^ = 99
-    printf("%lld\n", p^.x)
-    printf("%lld\n", q^)
-    printf("%lld\n", arena.offset)
+    unsafe { q^ = 99 }
+    unsafe { printf("%lld\n", p^.x) }
+    unsafe { printf("%lld\n", q^) }
+    unsafe { printf("%lld\n", arena.offset) }
     arena.offset = 0
     r : ^i64 = alloc_int(arena)
-    r^ = 7
-    printf("%lld\n", r^)
-    printf("%lld\n", arena.offset)
+    unsafe { r^ = 7 }
+    unsafe { printf("%lld\n", r^) }
+    unsafe { printf("%lld\n", arena.offset) }
     0
 }
 "#;
@@ -8048,9 +7980,9 @@ main :: fn() -> i64 {
     push(b, 10)
     push(b, 20)
     push(b, 30)
-    printf("%lld\n", b.len)
-    printf("%lld\n", b.data[1])
-    printf("%lld\n", total(b))
+    unsafe { printf("%lld\n", b.len) }
+    unsafe { printf("%lld\n", b.data[1]) }
+    unsafe { printf("%lld\n", total(b)) }
     0
 }
 "#;
@@ -8104,10 +8036,10 @@ main :: fn() -> i64 {
     reset(world)
     hero : Handle<Entity> = insert(world, Entity{hp=100, mana=30})
     foe : Handle<Entity> = insert(world, Entity{hp=40, mana=10})
-    printf("%lld\n", world[hero].hp)
+    unsafe { printf("%lld\n", world[hero].hp) }
     world[hero].hp = world[hero].hp - 25
-    printf("%lld\n", world[hero].hp)
-    printf("%lld\n", world[foe].mana)
+    unsafe { printf("%lld\n", world[hero].hp) }
+    unsafe { printf("%lld\n", world[foe].mana) }
     0
 }
 "#;
@@ -8158,7 +8090,7 @@ main :: fn() -> i64 {
     old : Handle<Entity> = insert(w, Entity{hp=100})
     release(w, old)
     insert(w, Entity{hp=7})
-    printf("%lld\n", w[old].hp)
+    unsafe { printf("%lld\n", w[old].hp) }
     0
 }
 "#;
@@ -8166,7 +8098,7 @@ main :: fn() -> i64 {
 #[test]
 fn native_slab_stale_handle_aborts() {
     let Some((succeeded, stderr)) =
-        compile_and_run_status("slabstale", SLAB_STALE_HANDLE, Audit::Off)
+        compile_and_run_status("slabstale", SLAB_STALE_HANDLE)
     else {
         return;
     };
@@ -8678,28 +8610,23 @@ main :: fn() -> i64 {
     col_reset($Particle, $8, c)
     a := col_insert($Particle, $8, c, Particle { x = 10, y = 1 })
     col_insert($Particle, $8, c, Particle { x = 20, y = 2 })
-    printf("%lld\n", c[a].x + c[a].y)
+    unsafe { printf("%lld\n", c[a].x + c[a].y) }
     c[a].x = 100
-    printf("%lld\n", c[a].x)
-    printf("%lld\n", sum_col(c.x))
-    if (col_alive($Particle, $8, c, a)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    unsafe { printf("%lld\n", c[a].x) }
+    unsafe { printf("%lld\n", sum_col(c.x)) }
+    if (col_alive($Particle, $8, c, a)) { unsafe { printf("%lld\n", 1) } } else { unsafe { printf("%lld\n", 0) } }
     0
 }
 "#;
 
 #[test]
 fn bootstrap_columns_container_both_backends() {
-    let Some(native) = run_backend(
-        "columns_boot_native",
-        BOOTSTRAP_COLUMNS,
-        false,
-        Audit::Off,
-    ) else {
+    let Some(native) =
+        run_backend("columns_boot_native", BOOTSTRAP_COLUMNS, false)
+    else {
         return;
     };
-    let Some(c) =
-        run_backend("columns_boot_c", BOOTSTRAP_COLUMNS, true, Audit::Off)
-    else {
+    let Some(c) = run_backend("columns_boot_c", BOOTSTRAP_COLUMNS, true) else {
         return;
     };
     // 10+1; x set to 100; column sum 100+20; alive true.
@@ -8724,14 +8651,11 @@ const PRINT_STATEMENT: &str = concat!(
 
 #[test]
 fn bootstrap_print_statement_both_backends() {
-    let Some(native) =
-        run_backend("print_boot_native", PRINT_STATEMENT, false, Audit::Off)
+    let Some(native) = run_backend("print_boot_native", PRINT_STATEMENT, false)
     else {
         return;
     };
-    let Some(c) =
-        run_backend("print_boot_c", PRINT_STATEMENT, true, Audit::Off)
-    else {
+    let Some(c) = run_backend("print_boot_c", PRINT_STATEMENT, true) else {
         return;
     };
     assert_eq!(native, "42\n42\n0.5\n");
@@ -8772,13 +8696,11 @@ fn self_hosted_const_expressions() {
 #[test]
 fn bootstrap_const_expressions_both_backends() {
     let Some(native) =
-        run_backend("constexpr_native", CONST_EXPRESSIONS, false, Audit::Off)
+        run_backend("constexpr_native", CONST_EXPRESSIONS, false)
     else {
         return;
     };
-    let Some(c) =
-        run_backend("constexpr_c", CONST_EXPRESSIONS, true, Audit::Off)
-    else {
+    let Some(c) = run_backend("constexpr_c", CONST_EXPRESSIONS, true) else {
         return;
     };
     assert_eq!(native, "8\n8\n-5\n8\n");
@@ -8815,7 +8737,6 @@ fn self_hosted_inline_emits_c_qualifier() {
     let input = directory.join("frost_inline_c.frost");
     std::fs::write(&input, SELFHOSTED_INLINE).unwrap();
     let emit = Command::new(&compiler)
-        .env("FROST_CHECK_UNSAFE", "0")
         .env("FROST_INPUT", &input)
         .output()
         .unwrap();
@@ -8904,10 +8825,10 @@ sum :: fn(s: []i64) -> i64 {
 main :: fn() -> i64 {
     arr := [10, 20, 30, 40]
     view : []i64 = arr
-    printf("%lld\n", slice_len(view))
-    printf("%lld\n", view[2])
-    printf("%lld\n", sum(view))
-    printf("%lld\n", sum(arr))
+    unsafe { printf("%lld\n", slice_len(view)) }
+    unsafe { printf("%lld\n", view[2]) }
+    unsafe { printf("%lld\n", sum(view)) }
+    unsafe { printf("%lld\n", sum(arr)) }
     0
 }
 "#;
@@ -8927,7 +8848,7 @@ main :: fn() -> i64 {
     arr := [1, 2, 3]
     view : []i64 = arr
     mut i : i64 = 7
-    printf("%lld\n", view[i])
+    unsafe { printf("%lld\n", view[i]) }
     0
 }
 "#;
@@ -8935,7 +8856,7 @@ main :: fn() -> i64 {
 #[test]
 fn native_slice_index_is_bounds_checked() {
     let Some((succeeded, stderr)) =
-        compile_and_run_status("sliceoob", SLICE_OUT_OF_BOUNDS, Audit::Off)
+        compile_and_run_status("sliceoob", SLICE_OUT_OF_BOUNDS)
     else {
         return;
     };
@@ -8958,8 +8879,7 @@ fn a_slice_may_not_be_built_with_a_negative_length() {
          \x20   bad := unsafe { slice_from($i64, ptr_to(arr[0]), 0 - 1) }\n\
          \x20   print slice_len(bad)\n\
          \x20   0\n}\n";
-    let Some((succeeded, stderr)) =
-        compile_and_run_status("neglen", source, Audit::Off)
+    let Some((succeeded, stderr)) = compile_and_run_status("neglen", source)
     else {
         return;
     };
@@ -8990,8 +8910,7 @@ fn a_sub_slice_may_not_reach_past_the_run_it_came_from() {
              \x20   print slice_len(wide)\n\
              \x20   0\n}}\n"
         );
-        let Some((succeeded, stderr)) =
-            compile_and_run_status(name, &source, Audit::Off)
+        let Some((succeeded, stderr)) = compile_and_run_status(name, &source)
         else {
             return;
         };
@@ -9016,7 +8935,7 @@ fn an_index_whose_arithmetic_wraps_stays_inside_the_array() {
          main :: fn() -> i64 {\n\
          \x20   mut xs : [4]i64 = [10, 20, 30, 40]\n\
          \x20   huge := 4611686018427387904\n\
-         \x20   printf(\"%lld\\n\", xs[huge * 4])\n\
+         \x20   unsafe { printf(\"%lld\\n\", xs[huge * 4]) }\n\
          \x20   0\n}\n";
     let Some(output) = compile_and_run_unaudited("wrapindex", source) else {
         return;
@@ -9040,7 +8959,7 @@ fn a_frame_wider_than_a_page_touches_each_page() {
          \x20   buffer[0] + buffer[8191]\n\
          }\n\
          main :: fn() -> i64 {\n\
-         \x20   printf(\"%lld\\n\", wide(21))\n\
+         \x20   unsafe { printf(\"%lld\\n\", wide(21)) }\n\
          \x20   0\n}\n";
     let Some(output) = compile_and_run_unaudited("pageprobe", source) else {
         return;
@@ -9061,8 +8980,7 @@ fn an_exhausted_stack_says_what_happened() {
          main :: fn() -> i64 {\n\
          \x20   print down(100000000)\n\
          \x20   0\n}\n";
-    let Some((succeeded, stderr)) =
-        compile_and_run_status("stackout", source, Audit::Off)
+    let Some((succeeded, stderr)) = compile_and_run_status("stackout", source)
     else {
         return;
     };
@@ -9082,8 +9000,7 @@ fn a_slice_of_no_elements_is_still_allowed() {
          \x20   none := unsafe { slice_from($i64, ptr_to(arr[0]), 0) }\n\
          \x20   print slice_len(none)\n\
          \x20   0\n}\n";
-    let Some((succeeded, stderr)) =
-        compile_and_run_status("zerolen", source, Audit::Off)
+    let Some((succeeded, stderr)) = compile_and_run_status("zerolen", source)
     else {
         return;
     };
@@ -9100,8 +9017,7 @@ fn an_allocation_size_that_wraps_is_refused() {
          main :: fn() -> i64 {\n\
          \x20   print frost_rt_check_size(2305843009213693952, 8)\n\
          \x20   0\n}\n";
-    let Some((succeeded, stderr)) =
-        compile_and_run_status("sizewrap", source, Audit::Off)
+    let Some((succeeded, stderr)) = compile_and_run_status("sizewrap", source)
     else {
         return;
     };
@@ -9123,8 +9039,7 @@ fn an_allocation_that_fails_aborts_rather_than_answering_null() {
          \x20   held := unsafe { frost_rt_heap_alloc(9000000000000000) }\n\
          \x20   print 1\n\
          \x20   0\n}\n";
-    let Some((succeeded, stderr)) =
-        compile_and_run_status("allocfail", source, Audit::Off)
+    let Some((succeeded, stderr)) = compile_and_run_status("allocfail", source)
     else {
         return;
     };
@@ -9191,12 +9106,12 @@ main :: fn() -> i64 {
     hero := slab_insert(world, Entity { hp = 100, mana = 30 })
     foe := slab_insert(world, Entity { hp = 40, mana = 10 })
     a := slab_read(world, hero)
-    printf("%lld\n", a.hp)
-    if (slab_alive(world, foe)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    unsafe { printf("%lld\n", a.hp) }
+    if (slab_alive(world, foe)) { unsafe { printf("%lld\n", 1) } } else { unsafe { printf("%lld\n", 0) } }
     slab_release(world, foe)
     reused := slab_insert(world, Entity { hp = 7, mana = 7 })
-    if (slab_alive(world, reused)) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
-    if (slab_alive(world, foe)) { printf("%lld\n", 9) } else { printf("%lld\n", 0) }
+    if (slab_alive(world, reused)) { unsafe { printf("%lld\n", 1) } } else { unsafe { printf("%lld\n", 0) } }
+    if (slab_alive(world, foe)) { unsafe { printf("%lld\n", 9) } } else { unsafe { printf("%lld\n", 0) } }
     0
 }
 "#;
@@ -9211,14 +9126,7 @@ fn native_generational_pool_written_in_frost() {
     assert_eq!(output, "100\n1\n1\n0\n");
 }
 
-// The example itself rather than a copy of it, and with the gate on.
-//
-// This test held its own transcription of `examples/freestanding.frost` and
-// compiled it with `FROST_CHECK_UNSAFE=0`, so when the unsafety gate became the
-// default the example stopped compiling and nothing said so: the copy still
-// built because the gate was off, and the file nobody compiled rotted. Reading
-// the file is what keeps the two from drifting, and leaving the gate on is what
-// holds an example to the language everyone else writes.
+// The example itself rather than a copy of it, so the two cannot drift.
 #[test]
 fn native_freestanding_links_without_libc() {
     if !linker_available() {
@@ -9283,7 +9191,6 @@ fn native_freestanding_out_of_bounds_traps() {
     std::fs::write(&source_path, FREESTANDING_OUT_OF_BOUNDS).unwrap();
     let frost = env!("CARGO_BIN_EXE_frost");
     let compile = Command::new(frost)
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("--freestanding")
         .arg("-o")
@@ -9335,13 +9242,13 @@ byte_at :: fn(document: Document, index: i64) -> i64 {
 
 main :: fn() -> i64 {
     document := Document { source = "hello", at = 1 }
-    printf("%lld\n", document.source[0])
-    printf("%lld\n", document.source[document.at])
-    printf("%lld\n", byte_at(document, 4))
-    printf("%lld\n", str_len(document.source))
+    unsafe { printf("%lld\n", document.source[0]) }
+    unsafe { printf("%lld\n", document.source[document.at]) }
+    unsafe { printf("%lld\n", byte_at(document, 4)) }
+    unsafe { printf("%lld\n", str_len(document.source)) }
 
     outer := Outer { inner = document }
-    printf("%lld\n", outer.inner.source[2])
+    unsafe { printf("%lld\n", outer.inner.source[2]) }
     0
 }
 "#;
@@ -9379,12 +9286,12 @@ heap_alloc :: fn(n: i64) -> i64 { n + 10 }
 rt_slot :: fn(n: i64) -> i64 { n + 11 }
 
 main :: fn() -> i64 {
-    printf("%lld\n", byte_at("hello", 1))
-    printf("%lld\n", str_len(1))
-    printf("%lld\n", die(1) + error(1) + slot(1) + getenv(1))
-    printf("%lld\n", mem_set(1) + bounds_check(1) + check_index(1))
-    printf("%lld\n", assert_at(1) + print_i64(1) + heap_alloc(1))
-    printf("%lld\n", rt_slot(1))
+    unsafe { printf("%lld\n", byte_at("hello", 1)) }
+    unsafe { printf("%lld\n", str_len(1)) }
+    unsafe { printf("%lld\n", die(1) + error(1) + slot(1) + getenv(1)) }
+    unsafe { printf("%lld\n", mem_set(1) + bounds_check(1) + check_index(1)) }
+    unsafe { printf("%lld\n", assert_at(1) + print_i64(1) + heap_alloc(1)) }
+    unsafe { printf("%lld\n", rt_slot(1)) }
     0
 }
 "#;
@@ -9405,7 +9312,7 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 main :: fn() -> i64 {
     greeting := "hi"
     mut i : i64 = 5
-    printf("%lld\n", greeting[i])
+    unsafe { printf("%lld\n", greeting[i]) }
     0
 }
 "#;
@@ -9413,7 +9320,7 @@ main :: fn() -> i64 {
 #[test]
 fn native_str_index_is_bounds_checked() {
     let Some((succeeded, stderr)) =
-        compile_and_run_status("stroob", STR_OUT_OF_BOUNDS, Audit::Off)
+        compile_and_run_status("stroob", STR_OUT_OF_BOUNDS)
     else {
         return;
     };
@@ -9428,9 +9335,9 @@ const POINTERS: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 swap :: fn(a: ^i64, b: ^i64) {
-    temp := a^
-    a^ = b^
-    b^ = temp
+    temp := unsafe { a^ }
+    unsafe { a^ = b^ }
+    unsafe { b^ = temp }
 }
 
 increment :: fn(mut x: i64) {
@@ -9445,11 +9352,11 @@ main :: fn() -> i64 {
     mut x : i64 = 10
     mut y : i64 = 20
     swap(ptr_to(x), ptr_to(y))
-    printf("%lld\n", x)
-    printf("%lld\n", y)
+    unsafe { printf("%lld\n", x) }
+    unsafe { printf("%lld\n", y) }
     increment(x)
-    printf("%lld\n", x)
-    printf("%lld\n", read_sum(x, y))
+    unsafe { printf("%lld\n", x) }
+    unsafe { printf("%lld\n", read_sum(x, y)) }
     0
 }
 "#;
@@ -9487,17 +9394,17 @@ Mixed :: struct {
 
 main :: fn() -> i64 {
     mut p := Point { x = 3, y = 4 }
-    printf("%lld\n", p.x)
-    printf("%lld\n", read_sum(p))
+    unsafe { printf("%lld\n", p.x) }
+    unsafe { printf("%lld\n", read_sum(p)) }
     p.x = 100
     scale(p, 2)
-    printf("%lld\n", p.x)
-    printf("%lld\n", p.y)
+    unsafe { printf("%lld\n", p.x) }
+    unsafe { printf("%lld\n", p.y) }
 
     m := Mixed { tag = 7, value = 1000, flag = 1 }
-    printf("%lld\n", m.tag)
-    printf("%lld\n", m.value)
-    printf("%lld\n", m.flag)
+    unsafe { printf("%lld\n", m.tag) }
+    unsafe { printf("%lld\n", m.value) }
+    unsafe { printf("%lld\n", m.flag) }
     0
 }
 "#;
@@ -9523,16 +9430,16 @@ sum_array :: fn(a: [5]i64) -> i64 {
 
 main :: fn() -> i64 {
     mut nums := [10, 20, 30, 40, 50]
-    printf("%lld\n", nums[0])
-    printf("%lld\n", nums[2])
+    unsafe { printf("%lld\n", nums[0]) }
+    unsafe { printf("%lld\n", nums[2]) }
     nums[1] = 99
-    printf("%lld\n", nums[1])
+    unsafe { printf("%lld\n", nums[1]) }
     mut running : i64 = 0
     for i in 0..5 {
         running = running + nums[i]
     }
-    printf("%lld\n", running)
-    printf("%lld\n", sum_array(nums))
+    unsafe { printf("%lld\n", running) }
+    unsafe { printf("%lld\n", sum_array(nums)) }
     0
 }
 "#;
@@ -9571,11 +9478,11 @@ grade :: fn(score: i64) -> i64 {
 main :: fn() -> i64 {
     ok := Result::Ok { value = 42 }
     err := Result::Err { code = 404 }
-    printf("%lld\n", unwrap_or_neg(ok))
-    printf("%lld\n", unwrap_or_neg(err))
-    printf("%lld\n", grade(90))
-    printf("%lld\n", grade(80))
-    printf("%lld\n", grade(50))
+    unsafe { printf("%lld\n", unwrap_or_neg(ok)) }
+    unsafe { printf("%lld\n", unwrap_or_neg(err)) }
+    unsafe { printf("%lld\n", grade(90)) }
+    unsafe { printf("%lld\n", grade(80)) }
+    unsafe { printf("%lld\n", grade(50)) }
     0
 }
 "#;
@@ -9598,13 +9505,13 @@ P :: struct { x: i64, y: i64 }
 main :: fn() -> i64 {
     mut o := Outer { one = Inner { a = 1, b = 2 }, two = Inner { a = 3, b = 4 } }
     o.one = o.two
-    printf("%lld\n", o.one.a)
-    printf("%lld\n", o.one.b)
+    unsafe { printf("%lld\n", o.one.a) }
+    unsafe { printf("%lld\n", o.one.b) }
 
     mut arr := [P { x = 1, y = 2 }, P { x = 9, y = 8 }]
     arr[0] = arr[1]
-    printf("%lld\n", arr[0].x)
-    printf("%lld\n", arr[0].y)
+    unsafe { printf("%lld\n", arr[0].x) }
+    unsafe { printf("%lld\n", arr[0].y) }
     0
 }
 "#;
@@ -9630,16 +9537,16 @@ get_inner :: fn(o: Outer) -> Inner { o.inner }
 main :: fn() -> i64 {
     o := Outer { tag = 1, inner = Inner { a = 5, b = 6 } }
     bound := o.inner
-    printf("%lld\n", bound.a)
-    printf("%lld\n", bound.b)
+    unsafe { printf("%lld\n", bound.a) }
+    unsafe { printf("%lld\n", bound.b) }
 
     returned := get_inner(o)
-    printf("%lld\n", returned.a)
+    unsafe { printf("%lld\n", returned.a) }
 
     arr := [Inner { a = 10, b = 20 }, Inner { a = 30, b = 40 }]
     picked := arr[1]
-    printf("%lld\n", picked.a)
-    printf("%lld\n", picked.b)
+    unsafe { printf("%lld\n", picked.a) }
+    unsafe { printf("%lld\n", picked.b) }
     0
 }
 "#;
@@ -9680,13 +9587,13 @@ main :: fn() -> i64 {
     a := Task { id = 1, state = State::Running { pid = 42 } }
     b := Task { id = 2, state = State::Idle }
     c := Task { id = 3, state = State::Done { code = 7 } }
-    printf("%lld\n", describe(a))
-    printf("%lld\n", describe(b))
-    printf("%lld\n", describe(c))
+    unsafe { printf("%lld\n", describe(a)) }
+    unsafe { printf("%lld\n", describe(b)) }
+    unsafe { printf("%lld\n", describe(c)) }
 
     arr := [State::Done { code = 9 }, State::Idle]
-    printf("%lld\n", first(arr, 0))
-    printf("%lld\n", first(arr, 1))
+    unsafe { printf("%lld\n", first(arr, 0)) }
+    unsafe { printf("%lld\n", first(arr, 1)) }
     0
 }
 "#;
@@ -9722,9 +9629,9 @@ scaled_sum :: fn(p: Point, factor: i64) -> i64 {
 
 main :: fn() -> i64 {
     origin := Point { x = 3, y = 4 }
-    printf("%lld\n", manhattan(origin))
+    unsafe { printf("%lld\n", manhattan(origin)) }
     other := Point { x = 5, y = 6 }
-    printf("%lld\n", scaled_sum(other, 10))
+    unsafe { printf("%lld\n", scaled_sum(other, 10)) }
     0
 }
 "#;
@@ -9757,11 +9664,11 @@ add_points :: fn(p: Point, q: Point) -> Point {
 
 main :: fn() -> i64 {
     a := make_point(3, 4)
-    printf("%lld\n", a.x)
-    printf("%lld\n", a.y)
+    unsafe { printf("%lld\n", a.x) }
+    unsafe { printf("%lld\n", a.y) }
     sum := add_points(make_point(1, 2), make_point(10, 20))
-    printf("%lld\n", sum.x)
-    printf("%lld\n", sum.y)
+    unsafe { printf("%lld\n", sum.x) }
+    unsafe { printf("%lld\n", sum.y) }
     0
 }
 "#;
@@ -9784,15 +9691,15 @@ Entity :: struct { hp: i64, mana: i64, name: i64 }
 measure :: fn(move sample: $T) -> i64 { sizeof(T) }
 
 main :: fn() -> i64 {
-    printf("%lld\n", sizeof(i64))
-    printf("%lld\n", sizeof(i32))
-    printf("%lld\n", sizeof(Point))
-    printf("%lld\n", sizeof([4]i64))
+    unsafe { printf("%lld\n", sizeof(i64)) }
+    unsafe { printf("%lld\n", sizeof(i32)) }
+    unsafe { printf("%lld\n", sizeof(Point)) }
+    unsafe { printf("%lld\n", sizeof([4]i64)) }
     p := Point { x = 1, y = 2 }
     e := Entity { hp = 1, mana = 2, name = 3 }
-    printf("%lld\n", measure(p))
-    printf("%lld\n", measure(e))
-    printf("%lld\n", measure(42))
+    unsafe { printf("%lld\n", measure(p)) }
+    unsafe { printf("%lld\n", measure(e)) }
+    unsafe { printf("%lld\n", measure(42)) }
     0
 }
 "#;
@@ -9822,24 +9729,24 @@ swap :: fn(mut a: $T, mut b: $T) {
 }
 
 main :: fn() -> i64 {
-    printf("%lld\n", identity(42))
-    printf("%lld\n", max_of(3, 9))
+    unsafe { printf("%lld\n", identity(42)) }
+    unsafe { printf("%lld\n", max_of(3, 9)) }
 
     small : i32 = 7
     widened : i64 = identity(small)
-    printf("%lld\n", widened)
+    unsafe { printf("%lld\n", widened) }
 
     p := first_of(Point { x = 5, y = 6 }, Point { x = 1, y = 2 })
-    printf("%lld\n", p.x)
+    unsafe { printf("%lld\n", p.x) }
 
     w := wrap(Point { x = 8, y = 9 })
-    printf("%lld\n", w.y)
+    unsafe { printf("%lld\n", w.y) }
 
     mut a : i64 = 100
     mut b : i64 = 200
     swap(a, b)
-    printf("%lld\n", a)
-    printf("%lld\n", b)
+    unsafe { printf("%lld\n", a) }
+    unsafe { printf("%lld\n", b) }
     0
 }
 "#;
@@ -9866,23 +9773,23 @@ sum_pair :: fn(p: Pair<i64>) -> i64 { p.first + p.second }
 
 main :: fn() -> i64 {
     p : Pair<i64> = Pair { first = 3, second = 4 }
-    printf("%lld\n", p.first + p.second)
-    printf("%lld\n", sum_pair(p))
+    unsafe { printf("%lld\n", p.first + p.second) }
+    unsafe { printf("%lld\n", sum_pair(p)) }
 
     pts : Pair<Point> = Pair { first = Point { x = 1, y = 2 }, second = Point { x = 3, y = 4 } }
-    printf("%lld\n", pts.first.x + pts.second.y)
+    unsafe { printf("%lld\n", pts.first.x + pts.second.y) }
 
     mixed : Both<i64, i32> = Both { left = 100, right = 5 }
-    printf("%lld\n", mixed.left)
-    printf("%lld\n", mixed.right)
+    unsafe { printf("%lld\n", mixed.left) }
+    unsafe { printf("%lld\n", mixed.right) }
 
     b : Buffer<i64> = Buffer { data = [7, 8, 9], count = 3 }
-    printf("%lld\n", b.data[2])
+    unsafe { printf("%lld\n", b.data[2]) }
 
     mut w := Wrapper { pair = p, tag = 99 }
     w.pair.second = 40
-    printf("%lld\n", w.pair.first + w.pair.second)
-    printf("%lld\n", w.tag)
+    unsafe { printf("%lld\n", w.pair.first + w.pair.second) }
+    unsafe { printf("%lld\n", w.tag) }
     0
 }
 "#;
@@ -9906,9 +9813,9 @@ sum :: fn(p: Point) -> i64 { p.x + p.y }
 scaled :: fn(mut p: Point, k: i64) -> i64 { p.x = p.x * k  p.x + p.y }
 
 main :: fn() -> i64 {
-    printf("%lld\n", sum(Point { x = 8, y = 9 }))
+    unsafe { printf("%lld\n", sum(Point { x = 8, y = 9 })) }
     mut q := Point { x = 3, y = 4 }
-    printf("%lld\n", scaled(q, 10))
+    unsafe { printf("%lld\n", scaled(q, 10)) }
     0
 }
 "#;
@@ -9939,9 +9846,9 @@ pid_of :: fn(s: State) -> i64 {
 }
 
 main :: fn() -> i64 {
-    printf("%lld\n", pid_of(State::Running { pid = 42 }))
-    printf("%lld\n", pid_of(State::Running { pid = 0 }))
-    printf("%lld\n", pid_of(State::Idle))
+    unsafe { printf("%lld\n", pid_of(State::Running { pid = 42 })) }
+    unsafe { printf("%lld\n", pid_of(State::Running { pid = 0 })) }
+    unsafe { printf("%lld\n", pid_of(State::Idle)) }
     0
 }
 "#;
@@ -9979,8 +9886,8 @@ insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> Handle<T
 }
 
 main :: fn() -> i64 {
-    printf("%lld\n", size_of($i64))
-    printf("%lld\n", size_of($Entity))
+    unsafe { printf("%lld\n", size_of($i64)) }
+    unsafe { printf("%lld\n", size_of($Entity)) }
 
     mut world : Slab<Entity, 16> = Slab {
         storage = [Entity { hp = 0, mana = 0 }; 16],
@@ -9989,7 +9896,7 @@ main :: fn() -> i64 {
         free_count = 0,
     }
     h := insert($Entity, $16, world, Entity { hp = 100, mana = 30 })
-    printf("%lld\n", world[h].hp + world[h].mana)
+    unsafe { printf("%lld\n", world[h].hp + world[h].mana) }
     0
 }
 "#;
@@ -10027,7 +9934,7 @@ insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> Handle<T
 
 main :: fn() -> i64 {
     inferred := Pair { first = 30, second = 12 }
-    printf("%lld\n", inferred.first + inferred.second)
+    unsafe { printf("%lld\n", inferred.first + inferred.second) }
 
     mut pool : Slab<Pair<i64>, 4> = Slab {
         storage = [zero_pair(); 4],
@@ -10035,7 +9942,7 @@ main :: fn() -> i64 {
         free_count = 0,
     }
     h := insert($Pair<i64>, $4, pool, Pair { first = 3, second = 4 })
-    printf("%lld\n", pool[h].first + pool[h].second)
+    unsafe { printf("%lld\n", pool[h].first + pool[h].second) }
     0
 }
 "#;
@@ -10061,7 +9968,7 @@ open :: fn(n: i64) -> File { File { fd = n } }
 
 main :: fn() -> i64 {
     f := open(42)
-    printf("%lld\n", frost_rt_read_i64(f))
+    unsafe { printf("%lld\n", frost_rt_read_i64(f)) }
     0
 }
 "#;
@@ -10099,16 +10006,16 @@ main :: fn() -> i64 {
     for i in 0..3 {
         total = total + arr[i].first + arr[i].second
     }
-    printf("%lld\n", total)
+    unsafe { printf("%lld\n", total) }
 
     o : Op<i64> = Op { f = inc, seed = 41 }
     g := o.f
-    printf("%lld\n", g(o.seed))
+    unsafe { printf("%lld\n", g(o.seed)) }
 
     mut x : Pair<i64> = Pair { first = 1, second = 2 }
     mut y : Pair<i64> = Pair { first = 9, second = 8 }
     swap(x, y)
-    printf("%lld\n", x.first + y.second)
+    unsafe { printf("%lld\n", x.first + y.second) }
     0
 }
 "#;
@@ -10137,17 +10044,17 @@ unwrap :: fn(move b: Box<$T>) -> $T { b.value }
 
 main :: fn() -> i64 {
     p := make_pair(3, 4)
-    printf("%lld\n", p.first + p.second)
+    unsafe { printf("%lld\n", p.first + p.second) }
 
     b := wrap(99)
-    printf("%lld\n", unwrap(b))
+    unsafe { printf("%lld\n", unwrap(b)) }
 
     w := Tagged::Some { p = Pair { first = 5, second = 6 } }
     r := match w {
         case .Some { p }: p.first + p.second
         case .None: 0
     }
-    printf("%lld\n", r)
+    unsafe { printf("%lld\n", r) }
     0
 }
 "#;
@@ -10172,15 +10079,15 @@ main :: fn() -> i64 {
         first = Pair { first = 1, second = 2 },
         second = Pair { first = 3, second = 4 }
     }
-    printf("%lld\n", p.first.second)
-    printf("%lld\n", p.second.first)
+    unsafe { printf("%lld\n", p.first.second) }
+    unsafe { printf("%lld\n", p.second.first) }
 
     q : Pair<Pair<Pair<i64>>> = Pair {
         first = Pair { first = Pair { first = 5, second = 6 }, second = Pair { first = 7, second = 8 } },
         second = Pair { first = Pair { first = 9, second = 10 }, second = Pair { first = 11, second = 12 } }
     }
-    printf("%lld\n", q.first.first.second)
-    printf("%lld\n", q.second.second.first)
+    unsafe { printf("%lld\n", q.first.first.second) }
+    unsafe { printf("%lld\n", q.second.second.first) }
     0
 }
 "#;
@@ -10206,13 +10113,13 @@ second :: fn(move a: $T, move b: $U) -> U { b }
 
 main :: fn() -> i64 {
     p := dup(Pair { a = 3, b = 4 })
-    printf("%lld\n", p.a + p.b)
+    unsafe { printf("%lld\n", p.a + p.b) }
 
-    printf("%lld\n", pick_first(42, 99))
-    printf("%lld\n", second(1, 7))
+    unsafe { printf("%lld\n", pick_first(42, 99)) }
+    unsafe { printf("%lld\n", second(1, 7)) }
 
     q := pick_first(Pair { a = 10, b = 20 }, 5)
-    printf("%lld\n", q.b)
+    unsafe { printf("%lld\n", q.b) }
     0
 }
 "#;
@@ -10245,9 +10152,9 @@ count :: fn($A: Type, a: $A) -> i64 { 1 }
 
 main :: fn() -> i64 {
     q := make($i64, $bool, 9, true)
-    printf("%lld\n", q.first)
-    if (q.second) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
-    printf("%lld\n", count($bool, false))
+    unsafe { printf("%lld\n", q.first) }
+    if (q.second) { unsafe { printf("%lld\n", 1) } } else { unsafe { printf("%lld\n", 0) } }
+    unsafe { printf("%lld\n", count($bool, false)) }
     0
 }
 "#;
@@ -10268,12 +10175,12 @@ filled :: fn($T: Type, $N: usize, value: $T) -> Buffer<T, N> {
 
 main :: fn() -> i64 {
     p := Pair<i64, bool> { first = 7, second = true }
-    printf("%lld\n", p.first)
-    if (p.second) { printf("%lld\n", 1) } else { printf("%lld\n", 0) }
+    unsafe { printf("%lld\n", p.first) }
+    if (p.second) { unsafe { printf("%lld\n", 1) } } else { unsafe { printf("%lld\n", 0) } }
 
     mut b := filled($i64, $4, 3)
     b.items[1] = 9
-    printf("%lld\n", b.items[0] + b.items[1] + b.count)
+    unsafe { printf("%lld\n", b.items[0] + b.items[1] + b.count) }
     0
 }
 "#;
@@ -10387,7 +10294,7 @@ classify :: fn(i: i64) -> i64 {
 
 main :: fn() -> i64 {
     for i in 1..16 {
-        printf("%lld\n", classify(i))
+        unsafe { printf("%lld\n", classify(i)) }
     }
     0
 }
@@ -10461,17 +10368,17 @@ main :: fn() -> i64 {
     ha := insert($Entity, $8, world, Entity { hp = 50, mana = 10 })
     hb := insert($Entity, $8, world, Entity { hp = 20, mana = 5 })
 
-    printf("%lld\n", world[ha].hp)
+    unsafe { printf("%lld\n", world[ha].hp) }
     world[ha].hp = 60
-    printf("%lld\n", world[ha].hp)
+    unsafe { printf("%lld\n", world[ha].hp) }
 
     heal(world[ha], 15)
-    printf("%lld\n", world[ha].hp)
-    printf("%lld\n", total(world[ha]))
+    unsafe { printf("%lld\n", world[ha].hp) }
+    unsafe { printf("%lld\n", total(world[ha])) }
 
     copy := world[hb]
-    printf("%lld\n", copy.mana)
-    printf("%lld\n", total(world[hb]))
+    unsafe { printf("%lld\n", copy.mana) }
+    unsafe { printf("%lld\n", total(world[hb])) }
     0
 }
 "#;
@@ -10502,11 +10409,11 @@ apply_twice :: fn(f: fn(i64) -> i64, value: i64) -> i64 {
 }
 
 main :: fn() -> i64 {
-    printf("%lld\n", apply(double, 21))
-    printf("%lld\n", apply(square, 9))
-    printf("%lld\n", apply_twice(increment, 40))
+    unsafe { printf("%lld\n", apply(double, 21)) }
+    unsafe { printf("%lld\n", apply(square, 9)) }
+    unsafe { printf("%lld\n", apply_twice(increment, 40)) }
     g := double
-    printf("%lld\n", g(50))
+    unsafe { printf("%lld\n", g(50)) }
     0
 }
 "#;
@@ -10525,8 +10432,8 @@ main :: fn() -> i64 {
         f := ops[i]
         v = f(v)
     }
-    printf("%lld\n", v)
-    printf("%lld\n", ops[1](21))
+    unsafe { printf("%lld\n", v) }
+    unsafe { printf("%lld\n", ops[1](21)) }
     0
 }
 "#;
@@ -10567,12 +10474,12 @@ main :: fn() -> i64 {
         type = 3, match = 4, struct = 5, return = 6,
     }
     d.type = 9
-    printf("%lld\n", d.type)
-    printf("%lld\n", d.match)
-    printf("%lld\n", d.struct)
-    printf("%lld\n", d.return)
-    printf("%lld\n", kind_of(Shape::Round { type = 1, id = 7 }))
-    printf("%lld\n", kind_of(Shape::Flat { id = 8 }))
+    unsafe { printf("%lld\n", d.type) }
+    unsafe { printf("%lld\n", d.match) }
+    unsafe { printf("%lld\n", d.struct) }
+    unsafe { printf("%lld\n", d.return) }
+    unsafe { printf("%lld\n", kind_of(Shape::Round { type = 1, id = 7 })) }
+    unsafe { printf("%lld\n", kind_of(Shape::Flat { id = 8 })) }
     0
 }
 "#;
@@ -10614,17 +10521,17 @@ fill :: fn(mut buffer: Buffer) {
 main :: fn() -> i64 {
     mut buffer : Buffer = Buffer { bytes = [0; CAPACITY], used = 0 }
     fill(buffer)
-    printf("%lld\n", buffer.bytes[0])
-    printf("%lld\n", buffer.bytes[7])
-    printf("%lld\n", buffer.used)
-    printf("%lld\n", sizeof(Buffer))
+    unsafe { printf("%lld\n", buffer.bytes[0]) }
+    unsafe { printf("%lld\n", buffer.bytes[7]) }
+    unsafe { printf("%lld\n", buffer.used) }
+    unsafe { printf("%lld\n", sizeof(Buffer)) }
 
     mut wide : [DOUBLE]i64 = [3; DOUBLE]
     wide[15] = 9
-    printf("%lld\n", wide[0])
-    printf("%lld\n", wide[15])
-    printf("%lld\n", sizeof([DOUBLE]i64))
-    printf("%lld\n", sizeof([STRIDE]u8))
+    unsafe { printf("%lld\n", wide[0]) }
+    unsafe { printf("%lld\n", wide[15]) }
+    unsafe { printf("%lld\n", sizeof([DOUBLE]i64)) }
+    unsafe { printf("%lld\n", sizeof([STRIDE]u8)) }
     0
 }
 "#;
@@ -10648,15 +10555,15 @@ OFFSET :: -3
 COMPUTED :: 2 * 4 + 1
 
 main :: fn() -> i64 {
-    printf("%lld\n", LIMIT)
-    printf("%lld\n", STEP)
-    printf("%lld\n", OFFSET)
-    printf("%lld\n", COMPUTED)
+    unsafe { printf("%lld\n", LIMIT) }
+    unsafe { printf("%lld\n", STEP) }
+    unsafe { printf("%lld\n", OFFSET) }
+    unsafe { printf("%lld\n", COMPUTED) }
     mut total : i64 = 0
     for i in 0..LIMIT {
         if (i % STEP == 0) { total = total + 1 }
     }
-    printf("%lld\n", total)
+    unsafe { printf("%lld\n", total) }
     0
 }
 "#;
@@ -10675,9 +10582,9 @@ const FORWARD_REFERENCES: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 main :: fn() -> i64 {
-    printf("%lld\n", is_even(10))
-    printf("%lld\n", is_odd(7))
-    printf("%lld\n", double_it(21))
+    unsafe { printf("%lld\n", is_even(10)) }
+    unsafe { printf("%lld\n", is_odd(7)) }
+    unsafe { printf("%lld\n", double_it(21)) }
     0
 }
 
@@ -10748,17 +10655,17 @@ apply_to_array :: fn(f: fn(i64) -> i64, values: [4]i64) -> i64 {
 main :: fn() -> i64 {
     a := Vec3 { x = 1, y = 2, z = 3 }
     b := Vec3 { x = 4, y = 5, z = 6 }
-    printf("%lld\n", dot(a, b))
+    unsafe { printf("%lld\n", dot(a, b)) }
 
     c := Shape::Circle { radius = 10 }
     sq := Shape::Box { side = 7 }
-    printf("%lld\n", area(c))
-    printf("%lld\n", area(sq))
+    unsafe { printf("%lld\n", area(c)) }
+    unsafe { printf("%lld\n", area(sq)) }
 
-    printf("%lld\n", fib(15))
+    unsafe { printf("%lld\n", fib(15)) }
 
     nums := [1, 2, 3, 4]
-    printf("%lld\n", apply_to_array(triple, nums))
+    unsafe { printf("%lld\n", apply_to_array(triple, nums)) }
     0
 }
 "#;
@@ -10776,16 +10683,16 @@ const DEFER: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 work :: fn() -> i64 {
-    printf("%lld\n", 1)
-    defer printf("%lld\n", 2)
-    defer printf("%lld\n", 3)
-    printf("%lld\n", 4)
+    unsafe { printf("%lld\n", 1) }
+    defer unsafe { printf("%lld\n", 2) }
+    defer unsafe { printf("%lld\n", 3) }
+    unsafe { printf("%lld\n", 4) }
     99
 }
 
 main :: fn() -> i64 {
     r := work()
-    printf("%lld\n", r)
+    unsafe { printf("%lld\n", r) }
     0
 }
 "#;
@@ -10802,19 +10709,19 @@ const DEFER_NESTED_RETURN: &str = r#"
 printf :: extern fn(fmt: ^i8, value: i64) -> i32
 
 work :: fn(which: i64) -> i64 {
-    defer printf("%lld\n", 8)
-    defer printf("%lld\n", 9)
+    defer unsafe { printf("%lld\n", 8) }
+    defer unsafe { printf("%lld\n", 9) }
     if (which == 0) {
-        printf("%lld\n", 1)
+        unsafe { printf("%lld\n", 1) }
         return 100
     }
-    printf("%lld\n", 2)
+    unsafe { printf("%lld\n", 2) }
     200
 }
 
 main :: fn() -> i64 {
-    printf("%lld\n", work(0))
-    printf("%lld\n", work(1))
+    unsafe { printf("%lld\n", work(0)) }
+    unsafe { printf("%lld\n", work(1)) }
     0
 }
 "#;
@@ -10841,12 +10748,12 @@ sum_inner :: fn(o: Outer) -> i64 {
 
 main :: fn() -> i64 {
     mut o := Outer { tag = 5, inner = Inner { a = 10, b = 20 } }
-    printf("%lld\n", o.tag)
-    printf("%lld\n", o.inner.a)
-    printf("%lld\n", sum_inner(o))
+    unsafe { printf("%lld\n", o.tag) }
+    unsafe { printf("%lld\n", o.inner.a) }
+    unsafe { printf("%lld\n", sum_inner(o)) }
     o.inner.a = 99
-    printf("%lld\n", o.inner.a)
-    printf("%lld\n", sum_inner(o))
+    unsafe { printf("%lld\n", o.inner.a) }
+    unsafe { printf("%lld\n", sum_inner(o)) }
     0
 }
 "#;
@@ -10868,22 +10775,22 @@ Grid :: struct { cells: [4]i64, count: i64 }
 
 main :: fn() -> i64 {
     mut ps := [Particle { x = 1, y = 2 }, Particle { x = 3, y = 4 }, Particle { x = 5, y = 6 }]
-    printf("%lld\n", ps[0].x)
-    printf("%lld\n", ps[1].y)
+    unsafe { printf("%lld\n", ps[0].x) }
+    unsafe { printf("%lld\n", ps[1].y) }
     ps[2].x = 99
-    printf("%lld\n", ps[2].x)
+    unsafe { printf("%lld\n", ps[2].x) }
 
     mut total : i64 = 0
     for i in 0..3 {
         total = total + ps[i].x
     }
-    printf("%lld\n", total)
+    unsafe { printf("%lld\n", total) }
 
     mut g := Grid { cells = [10, 20, 30, 40], count = 4 }
-    printf("%lld\n", g.cells[1])
+    unsafe { printf("%lld\n", g.cells[1]) }
     g.cells[2] = 77
-    printf("%lld\n", g.cells[2])
-    printf("%lld\n", g.count)
+    unsafe { printf("%lld\n", g.cells[2]) }
+    unsafe { printf("%lld\n", g.count) }
     0
 }
 "#;
@@ -10917,14 +10824,14 @@ describe :: fn(n: Node) -> i64 {
 main :: fn() -> i64 {
     leaf := Node::Leaf { value = 7 }
     pair := Node::Pair { location = Point { x = 3, y = 4 }, weight = 100 }
-    printf("%lld\n", describe(leaf))
-    printf("%lld\n", describe(pair))
+    unsafe { printf("%lld\n", describe(leaf)) }
+    unsafe { printf("%lld\n", describe(pair)) }
 
     mut grid := [[1, 2, 3], [4, 5, 6]]
-    printf("%lld\n", grid[0][2])
-    printf("%lld\n", grid[1][1])
+    unsafe { printf("%lld\n", grid[0][2]) }
+    unsafe { printf("%lld\n", grid[1][1]) }
     grid[1][2] = 99
-    printf("%lld\n", grid[1][2])
+    unsafe { printf("%lld\n", grid[1][2]) }
     0
 }
 "#;
@@ -10966,11 +10873,11 @@ unwrap_or :: fn(o: Option, fallback: i64) -> i64 {
 main :: fn() -> i64 {
     data := [1, 3, 5, 8, 9, 10]
     r := find_first_even(data)
-    printf("%lld\n", unwrap_or(r, -1))
+    unsafe { printf("%lld\n", unwrap_or(r, -1)) }
 
     odds := [1, 3, 5, 7, 9, 11]
     r2 := find_first_even(odds)
-    printf("%lld\n", unwrap_or(r2, -1))
+    unsafe { printf("%lld\n", unwrap_or(r2, -1)) }
     0
 }
 "#;
@@ -11000,12 +10907,12 @@ origin :: fn() -> Point {
 main :: fn() -> i64 {
     mut p := Point { x = 1, y = 2 }
     bump(p.x)
-    printf("%lld\n", p.x)
-    printf("%lld\n", p.y)
+    unsafe { printf("%lld\n", p.x) }
+    unsafe { printf("%lld\n", p.y) }
 
     q := origin()
-    printf("%lld\n", q.x)
-    printf("%lld\n", q.y)
+    unsafe { printf("%lld\n", q.x) }
+    unsafe { printf("%lld\n", q.y) }
     0
 }
 "#;
@@ -11025,25 +10932,25 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 main :: fn() -> i64 {
     a : i32 = -5
     b : i32 = 3
-    printf("%lld\n", a / b)
-    printf("%lld\n", a % b)
+    unsafe { printf("%lld\n", a / b) }
+    unsafe { printf("%lld\n", a % b) }
 
     big : i64 = 1000000000
-    printf("%lld\n", big * 3)
+    unsafe { printf("%lld\n", big * 3) }
 
     neg : i64 = -100
     shifted : i64 = neg >> 2
-    printf("%lld\n", shifted)
+    unsafe { printf("%lld\n", shifted) }
 
     wide : i16 = 30000
-    printf("%lld\n", wide + 100)
+    unsafe { printf("%lld\n", wide + 100) }
 
     mask : i64 = 255
-    printf("%lld\n", mask & 15)
-    printf("%lld\n", mask | 256)
+    unsafe { printf("%lld\n", mask & 15) }
+    unsafe { printf("%lld\n", mask | 256) }
 
     small : u8 = 200
-    printf("%lld\n", small + 100)
+    unsafe { printf("%lld\n", small + 100) }
     0
 }
 "#;
@@ -11114,22 +11021,22 @@ main :: fn() -> i64 {
     ha := insert($Entity, $8, p, Entity { hp = 100, mana = 30 })
     hb := insert($Entity, $8, p, Entity { hp = 50, mana = 10 })
 
-    printf("%lld\n", index_of(ha))
-    printf("%lld\n", index_of(hb))
-    printf("%lld\n", generation_of(ha))
+    unsafe { printf("%lld\n", index_of(ha)) }
+    unsafe { printf("%lld\n", index_of(hb)) }
+    unsafe { printf("%lld\n", generation_of(ha)) }
 
-    printf("%lld\n", p[ha].hp)
+    unsafe { printf("%lld\n", p[ha].hp) }
     p[ha].hp = 999
-    printf("%lld\n", p[ha].hp)
+    unsafe { printf("%lld\n", p[ha].hp) }
 
-    printf("%lld\n", alive($Entity, $8, p, ha))
-    printf("%lld\n", release($Entity, $8, p, ha))
-    printf("%lld\n", alive($Entity, $8, p, ha))
+    unsafe { printf("%lld\n", alive($Entity, $8, p, ha)) }
+    unsafe { printf("%lld\n", release($Entity, $8, p, ha)) }
+    unsafe { printf("%lld\n", alive($Entity, $8, p, ha)) }
 
     hc := insert($Entity, $8, p, Entity { hp = 7, mana = 7 })
-    printf("%lld\n", index_of(hc))
-    printf("%lld\n", generation_of(hc))
-    printf("%lld\n", alive($Entity, $8, p, ha))
+    unsafe { printf("%lld\n", index_of(hc)) }
+    unsafe { printf("%lld\n", generation_of(hc)) }
+    unsafe { printf("%lld\n", alive($Entity, $8, p, ha)) }
     0
 }
 "#;
@@ -11141,13 +11048,13 @@ widen :: fn(x: i8) -> i64 { x }
 
 main :: fn() -> i64 {
     a : i8 = -5
-    printf("%lld\n", widen(a))
+    unsafe { printf("%lld\n", widen(a)) }
     b : i16 = -1000
     c : i64 = b
-    printf("%lld\n", c)
+    unsafe { printf("%lld\n", c) }
     small : i32 = 42
     wide : i64 = small
-    printf("%lld\n", wide)
+    unsafe { printf("%lld\n", wide) }
     0
 }
 "#;
@@ -11199,18 +11106,18 @@ classify :: fn(a: i64, b: i64) -> P {
 main :: fn() -> i64 {
     a := pick(0)
     b := pick(5)
-    printf("%lld\n", a.x)
-    printf("%lld\n", b.y)
+    unsafe { printf("%lld\n", a.x) }
+    unsafe { printf("%lld\n", b.y) }
 
     none := choose(0)
     some := choose(7)
-    printf("%lld\n", unwrap(none))
-    printf("%lld\n", unwrap(some))
+    unsafe { printf("%lld\n", unwrap(none)) }
+    unsafe { printf("%lld\n", unwrap(some)) }
 
     p := classify(4, 6)
     q := classify(3, 6)
-    printf("%lld\n", p.x)
-    printf("%lld\n", q.y)
+    unsafe { printf("%lld\n", p.x) }
+    unsafe { printf("%lld\n", q.y) }
     0
 }
 "#;
@@ -11250,13 +11157,11 @@ fn run_example(
         std::env::consts::EXE_SUFFIX
     ));
     let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
-    command.env("FROST_CHECK_UNSAFE", "0");
     if emit_c {
         command.arg("--emit-c");
     }
     command
         .env("FROST_CHECK_INTERFACES", "1")
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("-o")
         .arg(&exe_path)
@@ -11417,8 +11322,8 @@ fn cranelift_and_c_backends_agree() {
         ("diff_bracedarm", BRACED_ARMS),
     ];
     for (name, source) in programs {
-        let native = run_backend(name, source, false, Audit::Off);
-        let via_c = run_backend(name, source, true, Audit::Off);
+        let native = run_backend(name, source, false);
+        let via_c = run_backend(name, source, true);
         if native.is_none() {
             return;
         }
@@ -11426,7 +11331,7 @@ fn cranelift_and_c_backends_agree() {
             native, via_c,
             "Cranelift and C backends disagree on {name}"
         );
-        if let Some(interpreted) = run_ir_oracle(name, source, Audit::Off) {
+        if let Some(interpreted) = run_ir_oracle(name, source) {
             assert_eq!(
                 native.as_deref(),
                 Some(interpreted.as_str()),
@@ -11453,9 +11358,9 @@ twice :: fn(mut n: i64) {
 main :: fn() -> i64 {
     mut x : i64 = 5
     bump(x)
-    printf("%lld\n", x)
+    unsafe { printf("%lld\n", x) }
     twice(x)
-    printf("%lld\n", x)
+    unsafe { printf("%lld\n", x) }
     0
 }
 "#;
@@ -11631,7 +11536,7 @@ fn a_frame_pointer_may_not_leave_an_unsafe_block_by_any_road() {
             "nestedunsafe",
             "leak :: fn() -> ^i64 {\n\
              \x20   mut x : i64 = 42\n\
-             \x20   unsafe { unsafe { ptr_to(x) } }\n}\n\
+             \x20   unsafe { ptr_to(x) }\n}\n\
              main :: fn() -> i64 { 0 }\n",
         ),
         (
@@ -11842,7 +11747,6 @@ fn the_self_hosted_compiler_traces_a_frame_view_the_same_way() {
         let input = directory.join(format!("frost_shframe_{name}.frost"));
         std::fs::write(&input, source).unwrap();
         let run = Command::new(&compiler)
-            .env("FROST_CHECK_UNSAFE", "0")
             .arg(&input)
             .arg("-o")
             .arg(&emitted)
@@ -11878,7 +11782,6 @@ fn the_self_hosted_compiler_traces_a_frame_view_the_same_way() {
     let input = directory.join("frost_shframe_allowed.frost");
     std::fs::write(&input, allowed).unwrap();
     let run = Command::new(&compiler)
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg(&input)
         .arg("-o")
         .arg(&emitted)
@@ -12259,7 +12162,7 @@ pass_through :: fn(p: ^i64) -> ^i64 {
 main :: fn() -> i64 {
     mut n : i64 = 7
     q := pass_through(ptr_to(n))
-    printf("%lld\n", q^)
+    unsafe { printf("%lld\n", q^) }
     0
 }
 "#;
@@ -12319,7 +12222,6 @@ fn a_format_and_its_values_have_to_agree() {
         let input = directory.join(format!("frost_formatbad{index}.frost"));
         std::fs::write(&input, source).unwrap();
         let refused = Command::new(&compiler)
-            .env("FROST_CHECK_UNSAFE", "0")
             .env("FROST_INPUT", &input)
             .output()
             .unwrap();
@@ -12393,10 +12295,10 @@ widest :: fn($T: Type, a: $T, b: $T) -> T where is_integer(T) || is_float(T) {
 }
 
 main :: fn() -> i64 {
-    printf("%lld\n", twice($i64, 21))
+    unsafe { printf("%lld\n", twice($i64, 21)) }
     mut numbers : [3]i64 = [7, 8, 9]
-    printf("%lld\n", first($i64, numbers))
-    printf("%lld\n", widest($i64, 4, 9))
+    unsafe { printf("%lld\n", first($i64, numbers)) }
+    unsafe { printf("%lld\n", widest($i64, 4, 9)) }
     0
 }
 "#;
@@ -12442,7 +12344,6 @@ fn a_where_bound_is_checked_at_the_call() {
         let input = directory.join(format!("frost_boundbad{index}.frost"));
         std::fs::write(&input, source).unwrap();
         let refused = Command::new(&compiler)
-            .env("FROST_CHECK_UNSAFE", "0")
             .env("FROST_INPUT", &input)
             .output()
             .unwrap();
@@ -13068,7 +12969,6 @@ fn the_self_hosted_incremental_build_is_the_same_program() {
             .arg(exe)
             .arg(&source)
             .env("FROST_RUNTIME", &runtime)
-            .env("FROST_CHECK_UNSAFE", "0")
             .output()
             .unwrap()
     };
@@ -13084,7 +12984,6 @@ fn the_self_hosted_incremental_build_is_the_same_program() {
             .arg(exe)
             .arg(&source)
             .env("FROST_RUNTIME", &runtime)
-            .env("FROST_CHECK_UNSAFE", "0")
             .output()
             .unwrap()
     };
@@ -13176,7 +13075,6 @@ fn the_self_hosted_incremental_build_is_the_same_program() {
         .arg(&test_exe)
         .arg(&source)
         .env("FROST_RUNTIME", &runtime)
-        .env("FROST_CHECK_UNSAFE", "0")
         .output()
         .unwrap();
     let printed = String::from_utf8_lossy(&built.stdout).replace("\r\n", "\n");
@@ -13347,7 +13245,7 @@ show :: fn(args: $...) {
 }
 
 first :: fn(args: $...) -> i64 {
-    args[0]
+    unsafe { args[0] }
 }
 
 count :: fn(label: i64, args: $...) -> i64 {
@@ -13482,7 +13380,7 @@ fn self_hosted_keeps_nothing_for_an_empty_list() {
 fn a_list_indexed_by_a_variable_is_refused() {
     let source = "pick :: fn(args: $...) -> i64 {\n\
                   \x20   mut at : i64 = 0\n\
-                  \x20   args[at]\n}\n\
+                  \x20   unsafe { args[at] }\n}\n\
                   main :: fn() -> i64 { pick(1, 2) }\n";
     let message = compile_error("packindexvar", source);
     assert!(
@@ -13623,8 +13521,8 @@ best3 :: fn($T: Type, $before: Type, move x: $T, move y: $T, move z: $T) -> $T {
 }
 
 main :: fn() -> i64 {
-    printf("%lld\n", best3($i64, $ascending, 7, 3, 9))
-    printf("%lld\n", best3($i64, $descending, 7, 3, 9))
+    unsafe { printf("%lld\n", best3($i64, $ascending, 7, 3, 9)) }
+    unsafe { printf("%lld\n", best3($i64, $descending, 7, 3, 9)) }
     0
 }
 "#;
@@ -13674,21 +13572,21 @@ main :: fn() -> i64 {
     mut x : i64 = 1
     mut y : i64 = 2
     swap_scalar(x, y)
-    printf("%lld\n", x)
+    unsafe { printf("%lld\n", x) }
 
     mut m : i64 = 3
     mut n : i64 = 4
     swap_generic(m, n)
-    printf("%lld\n", m)
+    unsafe { printf("%lld\n", m) }
 
     mut a := Point { x = 1, y = 2 }
     mut b := Point { x = 9, y = 8 }
     swap_generic(a, b)
-    printf("%lld\n", a.x)
+    unsafe { printf("%lld\n", a.x) }
 
     mut c := Point { x = 5, y = 6 }
     replace(c, Point { x = 7, y = 0 })
-    printf("%lld\n", c.x)
+    unsafe { printf("%lld\n", c.x) }
     0
 }
 "#;
@@ -13711,11 +13609,11 @@ make_pair :: fn(a: $T, b: $T) -> Pair<T> { Pair { first = a, second = b } }
 
 main :: fn() -> i64 {
     p := make_pair(3, 4)
-    printf("%lld\n", p.first + p.second)
+    unsafe { printf("%lld\n", p.first + p.second) }
     m : i64 = 10
     n : i64 = 11
     q := make_pair(m, n)
-    printf("%lld\n", q.first + q.second)
+    unsafe { printf("%lld\n", q.first + q.second) }
     0
 }
 "#;
@@ -13743,7 +13641,7 @@ best :: fn($T: Type, $before: fn(T, T) -> bool, move x: $T, move y: $T) -> $T {
 }
 
 main :: fn() -> i64 {
-    printf("%lld\n", best($i64, $ascending, 7, 3))
+    unsafe { printf("%lld\n", best($i64, $ascending, 7, 3)) }
     0
 }
 "#;
@@ -13791,7 +13689,6 @@ fn emit_c_source(name: &str, source: &str) -> Option<String> {
     std::fs::write(&source_path, source).unwrap();
     let frost = env!("CARGO_BIN_EXE_frost");
     let emitted = Command::new(frost)
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--emit-c")
         .arg("-o")
         .arg(&c_path)
@@ -13892,7 +13789,7 @@ fn only_the_modules_an_edit_reaches_are_rebuilt() {
          import \"lib/leaf.frost\"\n\
          main :: fn() -> i64 {\n\
          \x20   b := boxed(1)\n\
-         \x20   printf(\"%lld\n\", combine(5) + b.value + twice($i64, 2))\n\
+         \x20   unsafe { printf(\"%lld\n\", combine(5) + b.value + twice($i64, 2)) }\n\
          \x20   0\n\
          }\n",
     )
@@ -13901,9 +13798,7 @@ fn only_the_modules_an_edit_reaches_are_rebuilt() {
     let exe = directory.join(format!("app{}", std::env::consts::EXE_SUFFIX));
     let build_once = || -> (Vec<String>, String) {
         let built = Command::new(env!("CARGO_BIN_EXE_frost"))
-            .env("FROST_CHECK_UNSAFE", "0")
             .env("FROST_CHECK_INTERFACES", "1")
-            .env("FROST_CHECK_UNSAFE", "0")
             .arg("--link")
             .arg("--incremental")
             .arg("--build-dir")
@@ -14020,7 +13915,7 @@ fn a_registered_context_may_not_still_be_read() {
          register :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> i64\n\
          main :: fn() -> i64 {\n\
          \x20   c := Ctx { hits = 0 }\n\
-         \x20   t := register($on_event, c)\n\
+         \x20   t := unsafe { register($on_event, c) }\n\
          \x20   c.hits\n\
          }\n",
     );
@@ -14063,7 +13958,7 @@ fn a_registration_may_not_outlive_its_context() {
          register :: extern fn($handler: fn(mut Ctx, i64), move ctx: Ctx) -> Registration\n\
          leak :: fn() -> Registration {\n\
          \x20   c := Ctx { hits = 0 }\n\
-         \x20   register($on_event, c)\n\
+         \x20   unsafe { register($on_event, c) }\n\
          }\n\
          main :: fn() -> i64 { 0 }\n",
     );
@@ -14090,7 +13985,7 @@ fn registering_and_unregistering_in_one_frame_is_allowed() {
          unregister :: fn(move r: Registration) -> i64 { r.token }\n\
          main :: fn() -> i64 {\n\
          \x20   c := Ctx { hits = 0 }\n\
-         \x20   r := register($on_event, c)\n\
+         \x20   r := unsafe { register($on_event, c) }\n\
          \x20   unregister(r)\n\
          }\n",
     );
@@ -14167,11 +14062,11 @@ fn a_callback_registered_with_a_c_library_runs() {
          unregister :: fn(move r: Registration) -> i64 { r.token }\n\
          main :: fn() -> i64 {\n\
          \x20   c := Ctx { hits = 0 }\n\
-         \x20   r := Registration { token = register_handler($on_event, c) }\n\
-         \x20   pump(4)\n\
-         \x20   pump(5)\n\
-         \x20   printf(\"%lld\n\", peek())\n\
-         \x20   printf(\"%lld\n\", unregister(r))\n\
+         \x20   r := unsafe { Registration { token = register_handler($on_event, c) } }\n\
+         \x20   unsafe { pump(4) }\n\
+         \x20   unsafe { pump(5) }\n\
+         \x20   unsafe { printf(\"%lld\n\", peek()) }\n\
+         \x20   unsafe { printf(\"%lld\n\", unregister(r)) }\n\
          \x20   0\n\
          }\n",
     )
@@ -14179,7 +14074,6 @@ fn a_callback_registered_with_a_c_library_runs() {
 
     let exe = directory.join(format!("events{}", std::env::consts::EXE_SUFFIX));
     let built = Command::new(env!("CARGO_BIN_EXE_frost"))
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("--libs")
         .arg(&library)
@@ -14282,20 +14176,20 @@ fn a_struct_is_passed_to_c_by_value() {
          mixed :: extern fn(before: i64, value p: Pair, after: i64) -> i64\n\
          main :: fn() -> i64 {\n\
          \x20   v := View { data = \"hello\", len = 5 }\n\
-         \x20   printf(\"%lld\n\", view_len(v))\n\
-         \x20   printf(\"%lld\n\", view_first(v))\n\
+         \x20   unsafe { printf(\"%lld\n\", view_len(v)) }\n\
+         \x20   unsafe { printf(\"%lld\n\", view_first(v)) }\n\
          \x20   p := Pair { x = 3, y = 4 }\n\
-         \x20   printf(\"%lld\n\", pair_sum(p))\n\
-         \x20   printf(\"%lld\n\", single_ten(Single { a = 2.5 }))\n\
+         \x20   unsafe { printf(\"%lld\n\", pair_sum(p)) }\n\
+         \x20   unsafe { printf(\"%lld\n\", single_ten(Single { a = 2.5 })) }\n\
          \x20   t := Triple { a = 1, b = 2, c = 3 }\n\
-         \x20   printf(\"%lld\n\", triple_sum(t))\n\
-         \x20   printf(\"%lld\n\", clobber(t))\n\
-         \x20   printf(\"%lld\n\", triple_sum(t))\n\
-         \x20   printf(\"%lld\n\", mixed(7, p, 9))\n\
+         \x20   unsafe { printf(\"%lld\n\", triple_sum(t)) }\n\
+         \x20   unsafe { printf(\"%lld\n\", clobber(t)) }\n\
+         \x20   unsafe { printf(\"%lld\n\", triple_sum(t)) }\n\
+         \x20   unsafe { printf(\"%lld\n\", mixed(7, p, 9)) }\n\
          \x20   w := Wide { a = 1, b = 2, c = 3, d = 4 }\n\
-         \x20   printf(\"%lld\n\", wide_sum(w))\n\
-         \x20   printf(\"%lld\n\", wider_sum(Wider { a = 1.5, b = 2.5, c = 3.0 }))\n\
-         \x20   printf(\"%lld\n\", wide_after(5, w, 6))\n\
+         \x20   unsafe { printf(\"%lld\n\", wide_sum(w)) }\n\
+         \x20   unsafe { printf(\"%lld\n\", wider_sum(Wider { a = 1.5, b = 2.5, c = 3.0 })) }\n\
+         \x20   unsafe { printf(\"%lld\n\", wide_after(5, w, 6)) }\n\
          \x20   0\n\
          }\n";
     let root = directory.join("shapes.frost");
@@ -14315,7 +14209,6 @@ fn a_struct_is_passed_to_c_by_value() {
             std::env::consts::EXE_SUFFIX
         ));
         let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
-        command.env("FROST_CHECK_UNSAFE", "0");
         if emit_c {
             command.arg("--emit-c");
         }
@@ -14407,7 +14300,7 @@ fn c_calls_back_with_a_struct_by_value() {
          handler :: fn(status: i32, value message: View, tail: i64) {\n\
          \x20   print status\n\
          \x20   print message.len\n\
-         \x20   print message.data[0]\n\
+         \x20   unsafe { print message.data[0] }\n\
          \x20   print tail\n\
          }\n\
          wide_handler :: fn(status: i32, value w: Wide, tail: i64) {\n\
@@ -14436,7 +14329,6 @@ fn c_calls_back_with_a_struct_by_value() {
             std::env::consts::EXE_SUFFIX
         ));
         let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
-        command.env("FROST_CHECK_UNSAFE", "0");
         if emit_c {
             command.arg("--emit-c");
         }
@@ -14522,11 +14414,11 @@ fn a_callback_whose_context_comes_last_runs() {
          unregister :: fn(move r: Registration) -> i64 { r.token }\n\
          main :: fn() -> i64 {\n\
          \x20   c := Ctx { hits = 0 }\n\
-         \x20   r := Registration { token = request($on_ready, c) }\n\
-         \x20   deliver(1, 6)\n\
-         \x20   deliver(1, 7)\n\
-         \x20   printf(\"%lld\n\", peek())\n\
-         \x20   printf(\"%lld\n\", unregister(r))\n\
+         \x20   r := unsafe { Registration { token = request($on_ready, c) } }\n\
+         \x20   unsafe { deliver(1, 6) }\n\
+         \x20   unsafe { deliver(1, 7) }\n\
+         \x20   unsafe { printf(\"%lld\n\", peek()) }\n\
+         \x20   unsafe { printf(\"%lld\n\", unregister(r)) }\n\
          \x20   0\n\
          }\n",
     )
@@ -14534,7 +14426,6 @@ fn a_callback_whose_context_comes_last_runs() {
 
     let exe = directory.join(format!("late{}", std::env::consts::EXE_SUFFIX));
     let built = Command::new(env!("CARGO_BIN_EXE_frost"))
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("--libs")
         .arg(&library)
@@ -14648,21 +14539,21 @@ fn a_struct_returned_from_c_comes_back_correctly() {
          m16 :: extern fn() -> S16\n\
          mdd :: extern fn() -> SDD\n\
          m24 :: extern fn() -> S24\n\
-         show :: fn(v: i64) { printf(\"%lld\n\", v) }\n\
-         showd :: fn(v: f64) { printf_d(\"%.4f\n\", v) }\n\
+         show :: fn(v: i64) { unsafe { printf(\"%lld\n\", v) } }\n\
+         showd :: fn(v: f64) { unsafe { printf_d(\"%.4f\n\", v) } }\n\
          main :: fn() -> i64 {\n\
-         \x20   v1 := m1()   a1 : i64 = v1.a  show(a1)\n\
-         \x20   v2 := m2()   a2 : i64 = v2.a  show(a2)\n\
-         \x20   v3 := m3()   a3 : i64 = v3.a  b3 : i64 = v3.b  c3 : i64 = v3.c\n\
+         \x20   v1 := unsafe { m1() }   a1 : i64 = v1.a  show(a1)\n\
+         \x20   v2 := unsafe { m2() }   a2 : i64 = v2.a  show(a2)\n\
+         \x20   v3 := unsafe { m3() }   a3 : i64 = v3.a  b3 : i64 = v3.b  c3 : i64 = v3.c\n\
          \x20   show(a3 * 100 + b3 * 10 + c3)\n\
-         \x20   v4 := m4()   a4 : i64 = v4.a  show(a4)\n\
-         \x20   v8 := m8()   show(v8.a)\n\
-         \x20   vf := mf()   af : f64 = vf.a  showd(af)\n\
-         \x20   vff := mff() aff : f64 = vff.a  bff : f64 = vff.b  showd(aff)  showd(bff)\n\
-         \x20   vm := mmix() am : i64 = vm.a  bm : f64 = vm.b  show(am)  showd(bm)\n\
-         \x20   v16 := m16() show(v16.a)  show(v16.b)\n\
-         \x20   vdd := mdd() showd(vdd.a)  showd(vdd.b)\n\
-         \x20   v24 := m24() show(v24.a)  show(v24.b)  show(v24.c)\n\
+         \x20   v4 := unsafe { m4() }   a4 : i64 = v4.a  show(a4)\n\
+         \x20   v8 := unsafe { m8() }   show(v8.a)\n\
+         \x20   vf := unsafe { mf() }   af : f64 = vf.a  showd(af)\n\
+         \x20   vff := unsafe { mff() } aff : f64 = vff.a  bff : f64 = vff.b  showd(aff)  showd(bff)\n\
+         \x20   vm := unsafe { mmix() } am : i64 = vm.a  bm : f64 = vm.b  show(am)  showd(bm)\n\
+         \x20   v16 := unsafe { m16() } show(v16.a)  show(v16.b)\n\
+         \x20   vdd := unsafe { mdd() } showd(vdd.a)  showd(vdd.b)\n\
+         \x20   v24 := unsafe { m24() } show(v24.a)  show(v24.b)  show(v24.c)\n\
          \x20   0\n\
          }\n",
     )
@@ -14674,7 +14565,6 @@ fn a_struct_returned_from_c_comes_back_correctly() {
         let exe = directory
             .join(format!("shapes_{emit_c}{}", std::env::consts::EXE_SUFFIX));
         let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
-        command.env("FROST_CHECK_UNSAFE", "0");
         if emit_c {
             command.arg("--emit-c");
         }
@@ -14744,10 +14634,10 @@ fn an_enum_returned_from_c_comes_back_correctly() {
          Shape :: enum { Empty, Full { v: i64 } }\n\
          mk :: extern fn() -> Shape\n\
          main :: fn() -> i64 {\n\
-         \x20   s := mk()\n\
+         \x20   s := unsafe { mk() }\n\
          \x20   match s {\n\
-         \x20       case .Empty: printf(\"%lld\n\", 0)\n\
-         \x20       case .Full { v }: printf(\"%lld\n\", v)\n\
+         \x20       case .Empty: unsafe { printf(\"%lld\n\", 0) }\n\
+         \x20       case .Full { v }: unsafe { printf(\"%lld\n\", v) }\n\
          \x20   }\n\
          \x20   0\n\
          }\n",
@@ -14758,7 +14648,6 @@ fn an_enum_returned_from_c_comes_back_correctly() {
         let exe = directory
             .join(format!("shape_{emit_c}{}", std::env::consts::EXE_SUFFIX));
         let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
-        command.env("FROST_CHECK_UNSAFE", "0");
         if emit_c {
             command.arg("--emit-c");
         }
@@ -14815,7 +14704,6 @@ fn an_error_inside_a_specialization_names_the_call() {
     .unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_frost"))
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--emit-c")
         .arg("-o")
         .arg(directory.join("out.c"))
@@ -14914,11 +14802,11 @@ insert :: fn($T: Type, $N: usize, mut s: Slab<T, N>, move value: $T) -> i64 {
 zero :: fn() -> Pair<i64> { Pair { first = 0, second = 0 } }
 
 main :: fn() -> i64 {
-    printf("%lld\n", sum($Pair<i64>, Pair { first = 3, second = 4 }))
+    unsafe { printf("%lld\n", sum($Pair<i64>, Pair { first = 3, second = 4 })) }
 
     mut pool : Slab<Pair<i64>, 4> = Slab { storage = [zero(); 4], count = 0 }
     h := insert($Pair<i64>, $4, pool, Pair { first = 10, second = 20 })
-    printf("%lld\n", pool.storage[h].first + pool.storage[h].second)
+    unsafe { printf("%lld\n", pool.storage[h].first + pool.storage[h].second) }
     0
 }
 "#;
@@ -14953,27 +14841,27 @@ unwrap_or :: fn($T: Type, m: Option<T>, fallback: $T) -> $T {
 main :: fn() -> i64 {
     a : Option<i64> = Option::Some { value = 42 }
     b : Option<i64> = Option::None
-    printf("%lld\n", unwrap_or($i64, a, 0))
-    printf("%lld\n", unwrap_or($i64, b, 7))
+    unsafe { printf("%lld\n", unwrap_or($i64, a, 0)) }
+    unsafe { printf("%lld\n", unwrap_or($i64, b, 7)) }
 
     p : Option<Point> = Option::Some { value = Point { x = 3, y = 4 } }
     match p {
-        case .None: printf("%lld\n", 0)
-        case .Some { value }: printf("%lld\n", value.x + value.y)
+        case .None: unsafe { printf("%lld\n", 0) }
+        case .Some { value }: unsafe { printf("%lld\n", value.x + value.y) }
     }
 
     e : Either<i64, Point> = Either::Right { value = Point { x = 5, y = 6 } }
     match e {
-        case .Left { value }: printf("%lld\n", value)
-        case .Right { value }: printf("%lld\n", value.y)
+        case .Left { value }: unsafe { printf("%lld\n", value) }
+        case .Right { value }: unsafe { printf("%lld\n", value.y) }
     }
 
     nested : Option<Option<i64>> = Option::Some { value = Option::Some { value = 8 } }
     match nested {
-        case .None: printf("%lld\n", 0)
+        case .None: unsafe { printf("%lld\n", 0) }
         case .Some { value }: match value {
-            case .None: printf("%lld\n", 0)
-            case .Some { value }: printf("%lld\n", value)
+            case .None: unsafe { printf("%lld\n", 0) }
+            case .Some { value }: unsafe { printf("%lld\n", value) }
         }
     }
     0
@@ -15012,7 +14900,7 @@ fn an_import_resolves_through_every_search_root() {
         format!(
             "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
              import \"{import}\"\n\
-             main :: fn() -> i64 {{ printf(\"%lld\n\", twice(21))  0 }}\n"
+             main :: fn() -> i64 {{ unsafe {{ printf(\"%lld\n\", twice(21)) }}  0 }}\n"
         )
     };
 
@@ -15023,7 +14911,6 @@ fn an_import_resolves_through_every_search_root() {
             let exe = directory
                 .join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
             let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
-            command.env("FROST_CHECK_UNSAFE", "0");
             for (key, value) in env {
                 command.env(key, value);
             }
@@ -15089,7 +14976,7 @@ fn an_import_resolves_through_every_search_root() {
          import \"option.frost\"\n\
          main :: fn() -> i64 {\n\
          \x20   m := option_some($i64, 42)\n\
-         \x20   printf(\"%lld\n\", option_unwrap_or($i64, m, 0))\n\
+         \x20   unsafe { printf(\"%lld\n\", option_unwrap_or($i64, m, 0)) }\n\
          \x20   0\n\
          }\n";
     assert_eq!(build("standard", uses_std, &[], &[]), "42\n");
@@ -15179,19 +15066,19 @@ to_i64 :: fn(s: str) -> i64 {
 }
 
 main :: fn() -> i64 {
-    printf("%lld\n", to_i64("1234567"))
+    unsafe { printf("%lld\n", to_i64("1234567")) }
 
     text := "7"
     byte := text[0]
     mut accumulator : i64 = 1234
-    printf("%lld\n", accumulator * 10 + (byte - 48))
+    unsafe { printf("%lld\n", accumulator * 10 + (byte - 48)) }
 
     // A literal still takes the width of what it is combined with, which is
     // what the backwards rule was there to protect and which still holds.
     mut small : u8 = 250
     small = small + 10
     wide : i64 = small
-    printf("%lld\n", wide)
+    unsafe { printf("%lld\n", wide) }
     0
 }
 "#;
@@ -16753,7 +16640,6 @@ fn bootstrap_output(name: &str, source: &str) -> Option<String> {
     let exe = directory
         .join(format!("frost_bs_{name}{}", std::env::consts::EXE_SUFFIX));
     let build = Command::new(env!("CARGO_BIN_EXE_frost"))
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("-o")
         .arg(&exe)
@@ -16813,8 +16699,8 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
         "indexing_a_constant_that_is_a_string",
         "SUFFIX :: \"xyzw\"\n\
          main :: fn() -> i64 {\n\
-         \x20   print SUFFIX[0]\n\
-         \x20   print SUFFIX[3]\n    0\n}\n",
+         \x20   unsafe { print SUFFIX[0] }\n\
+         \x20   unsafe { print SUFFIX[3] }\n    0\n}\n",
         "120\n119\n",
     ),
     // And one that is an array, which is the same bug: an aggregate constant
@@ -17153,12 +17039,9 @@ fn both_compilers_agree_on_these_programs() {
     let _ = std::fs::remove_file(&compiler);
 }
 
-// The audit is on for anyone running the compiler, and most of the programs in
-// this file are compiled with it off because they call `printf` without a
-// block. That is a choice each helper now states rather than a default nobody
-// reads, and this is what holds the default to being the audited one: a
-// program with an unguarded extern call has to be refused when nothing says
-// otherwise.
+// The gate runs on every compilation and nothing turns it off, so a program
+// with an unguarded extern call is refused. This is what holds that: the
+// compiler is invoked the way anyone invokes it, with no environment set.
 #[test]
 fn the_default_configuration_audits_unsafe_operations() {
     if c_compiler().is_none() || !linker_available() {
@@ -17193,20 +17076,6 @@ fn the_default_configuration_audits_unsafe_operations() {
     assert!(
         complaint.contains("unsafe"),
         "the refusal did not name the reason:\n{complaint}"
-    );
-
-    let permitted = Command::new(env!("CARGO_BIN_EXE_frost"))
-        .env("FROST_CHECK_UNSAFE", Audit::Off.setting())
-        .arg("--link")
-        .arg("-o")
-        .arg(&exe)
-        .arg(&input)
-        .output()
-        .unwrap();
-    assert!(
-        permitted.status.success(),
-        "the same program was refused with the audit off:\n{}",
-        String::from_utf8_lossy(&permitted.stderr)
     );
 
     let _ = std::fs::remove_file(&input);
