@@ -112,9 +112,10 @@ a hole in the gate. `print` was that hole: every gated operation written under
 one compiled, and a program holding no `unsafe` block at all read far out of
 bounds through a raw pointer and died on the access.
 
-The gate runs on every build. `FROST_CHECK_UNSAFE=0` turns it off, which exists
-for compiling older sources that have not marked their unchecked operations yet
-and is not part of the language.
+The gate runs on every build and nothing turns it off. A switch that did would
+make `unsafe` a claim about how a program was compiled rather than about the
+program, and the list of places to look when memory is corrupted is only worth
+reading if it is the whole list.
 
 ## 6a.6 `--audit-unsafe`
 

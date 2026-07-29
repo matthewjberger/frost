@@ -27,6 +27,10 @@ nothing downstream would catch a mistake.
 - Enums with payloads, and `match` over them.
 - Loop control. `break` leaves the innermost loop and `continue` goes round it
   again, both refused outside one.
+- `for`, over a sequence (`for item in items`, `for index, item in items`) and
+  over a range (`for i in 0..n`, `for i in 0..=n`). Each is written out as the
+  counted loop it stands for, so no node kind, no pass and no backend learns
+  anything new.
 - Compile-time lists. `args: $...`, walked with `for`, indexed by a literal,
   holding values or types, handed on to another list by naming it, and expanded
   into a call's argument list once per element with `g(T) for T in list`.
@@ -43,8 +47,8 @@ nothing downstream would catch a mistake.
 - The unsafety gate, enforced rather than merely parsed. Reading through a raw
   pointer, `ptr_cast`, and calling an `extern fn` that is not `safe` are refused
   outside an `unsafe` block, so `unsafe` is the complete list of places to look
-  when memory is corrupted. It passes its own gate on its own source.
-  `FROST_CHECK_UNSAFE=0` turns it off, as in the bootstrap.
+  when memory is corrupted. It passes its own gate on its own source, and
+  nothing turns it off.
 - `test` blocks, run by `--test`, which reports each test and summarises.
 - Diagnostics carrying a file, line and column, since a compiler that refuses a
   program owes you the position.

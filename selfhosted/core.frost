@@ -362,6 +362,8 @@ TokenKind :: enum {
     Rbracket,
     Comma,
     Dot,
+    Dotdot,
+    Dotdoteq,
     Colon,
     Coloncolon,
     Coloneq,
