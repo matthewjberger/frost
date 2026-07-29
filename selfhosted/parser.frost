@@ -2047,9 +2047,42 @@ assign_block_value :: fn(mut p: Parser, head: i64, name_off: i64,
 }
 
 // A block's trailing expression, made into the answer it already was.
-return_block_tail :: fn(mut p: Parser, head: i64) {
+// Answers with the block's head, which is not the one it was given when a
+// deferred statement was put in front of the return.
+return_block_tail :: fn(mut p: Parser, head: i64) -> i64 {
     if (head == (-1)) {
-        return
+        return head
+    }
+    mut previous : i64 = -1
+    mut last := head
+    mut following := node_next(p, last)
+    while (following != (-1)) {
+        previous = last
+        last = following
+        following = node_next(p, last)
+    }
+    body := arena_at(p.arena, last)
+    kind := body.kind
+    value := body.a
+    at := body.pos
+    if (kind != NodeKind::ExprStmt || type_of(p, value) == TY_VOID) {
+        return head
+    }
+    // Through the road a written `return` takes, so a branch that answers runs
+    // what the function deferred the way every other exit does.
+    made := defer_before_return(p, value, at)
+    if (previous == (-1)) {
+        return made
+    }
+    set_next(p, previous, made)
+    head
+}
+
+// Whether this block ends in a `return`, which is what says a branch answers
+// rather than falling out of the `if` it sits in.
+block_returns :: fn(mut p: Parser, head: i64) -> bool {
+    if (head == (-1)) {
+        return false
     }
     mut last := head
     mut following := node_next(p, last)
@@ -2057,10 +2090,7 @@ return_block_tail :: fn(mut p: Parser, head: i64) {
         last = following
         following = node_next(p, last)
     }
-    body := arena_at(p.arena, last)
-    if (body.kind == NodeKind::ExprStmt && type_of(p, body.a) != TY_VOID) {
-        body.kind = NodeKind::Return
-    }
+    arena_at(p.arena, last).kind == NodeKind::Return
 }
 
 // A body ending in an `if` answers with whichever branch ran, so each branch's
@@ -2080,8 +2110,16 @@ return_trailing_branches :: fn(mut p: Parser, body: i64) {
     if (node.kind != NodeKind::If) {
         return
     }
-    return_block_tail(p, node.b)
-    return_block_tail(p, node.val)
+    then_head := node.b
+    else_head := node.val
+    // Both branches are rewritten before either is stored back, since pushing to
+    // the arena can move it and a borrow taken first would be writing to where
+    // it was.
+    made_then := return_block_tail(p, then_head)
+    made_else := return_block_tail(p, else_head)
+    mut held := arena_at(p.arena, last)
+    held.b = made_then
+    held.val = made_else
 }
 
 // A match used where a value is wanted, whichever shape it took. A match on
@@ -3279,6 +3317,13 @@ defer_trailing :: fn(mut p: Parser, body: i64, ret: i64) -> i64 {
     if (node.kind == NodeKind::Return) {
         return body
     }
+    // An `if` whose branches both answer has already run them, one copy per
+    // branch, and nothing reaches past it. Appending here would put the copies
+    // after a statement that always returns and take the answer with them.
+    if (node.kind == NodeKind::If && block_returns(p, node.b)
+        && block_returns(p, node.val)) {
+        return body
+    }
     if (node.kind != NodeKind::ExprStmt || ret == TY_VOID) {
         return append_node(p, body, defer_copies(p))
     }
@@ -3701,11 +3746,14 @@ parse_function :: fn(mut p: Parser) -> i64 {
     if (p.result_ty != (-1)) {
         wrap_trailing_ok(p, body)
     }
+    // The branches of an answering `if` become returns first, so each carries
+    // what was deferred the way a written `return` does. Afterwards there is
+    // nothing left for the trailing walk to put copies in front of.
+    return_trailing_branches(p, body)
     body = defer_trailing(p, body, ret)
     p.defers.count = p.defer_base
     p.defer_base = saved_defer_base
     p.defer_depth = saved_defer_depth
-    return_trailing_branches(p, body)
     made := new_func_node(p, body, params, fn_index, is_main)
     p.parse_locals.count = locals_mark
     p.parse_param_start = saved_param_start

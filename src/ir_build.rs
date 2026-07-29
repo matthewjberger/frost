@@ -4186,6 +4186,15 @@ impl<'a> FunctionLowering<'a> {
             Statement::For(variable, second, range, body) => {
                 self.lower_for(variable, second.as_deref(), range, body)
             }
+            // Only the top level of a function body collects a `defer`, so one
+            // reaching here is written inside a block. Named rather than left to
+            // the catch-all below, which says a statement is unsupported and
+            // gives a reader nothing to do about it.
+            Statement::Defer(_) => {
+                bail!(
+                    "a `defer` belongs at the top level of a body, since it runs where the function leaves rather than where this block does"
+                )
+            }
             Statement::Break => {
                 let Some(targets) = self.loops.last() else {
                     bail!("break outside loop");
