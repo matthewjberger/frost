@@ -505,6 +505,16 @@ is_moved :: fn(mut p: Parser, off: i64, len: i64) -> bool {
 }
 
 is_linear_type :: fn(mut p: Parser, ty: i64) -> bool {
+    // A run of resources is a resource: freeing the run is not freeing what is
+    // in it, and a fixed array holds its elements by value. A slice does not
+    // own what it looks at, so it answers for nothing, and it is told from an
+    // array by carrying no length of its own.
+    //
+    // A distinct type is whichever the type it stands for is, which
+    // `distinct_repr` answers at the front of every other type predicate too.
+    if (is_array_ty(ty) && is_slice_ty(p, ty) == false) {
+        return is_linear_type(p, array_element(p, ty))
+    }
     if (is_struct_ty(ty) == false) {
         return false
     }

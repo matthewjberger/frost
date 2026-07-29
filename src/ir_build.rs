@@ -1020,6 +1020,10 @@ fn linear_with_holders(
     if held.is_empty() {
         return held;
     }
+    // The instantiations the program writes, which the declarations alone cannot
+    // answer for: a generic's field is a parameter bound to nothing here, so
+    // `Slab` holds no resource while `Slab<Node, 2>` does.
+    let instances = crate::linear_instances::collect_instances(statements);
     loop {
         let mut grew = false;
         for statement in statements {
@@ -1036,6 +1040,16 @@ fn linear_with_holders(
                 held.insert(name.clone());
                 grew = true;
             }
+        }
+        // In the same loop as the holders, since an instance is a resource
+        // because of a field and a struct is one because of an instance in a
+        // field of its own.
+        if crate::linear_instances::note_linear_instances(
+            statements,
+            &instances,
+            &mut held,
+        ) {
+            grew = true;
         }
         if !grew {
             return held;
