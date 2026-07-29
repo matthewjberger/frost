@@ -25,6 +25,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     TypeCacheEntry, UnsafeSpan,
     Variant,
     add_root, arena_at, arena_make, arena_push, cstr_eq, emit_text, frost_rt_alloc,
+    frost_rt_check_size, frost_rt_check_span,
     emit_to_memory, emit_memory_text,
     report, report_cstr, report_int, report_src, SearchRoot,
     buffer_of, cstr_slice, empty_source, source_end, byte_at, byte_set,
@@ -44,6 +45,9 @@ frost_rt_alloc  :: safe extern fn(size: i64) -> ^u8
 // How many bytes a count of elements takes, refused where the product would
 // wrap. Safe because it is arithmetic and an abort.
 frost_rt_check_size :: safe extern fn(count: i64, width: i64) -> i64
+// A view of `count` elements starting `from` into a run of `room`, refused where
+// it reaches past the end. Safe for the same reason.
+frost_rt_check_span :: safe extern fn(from: i64, count: i64, room: i64) -> i64
 frost_rt_byte_at   :: extern fn(s: ^i8, i: i64) -> i64
 frost_rt_str_len   :: extern fn(s: ^i8) -> i64
 // Emits a counted run of bytes. The read is bounded by the length, so the one

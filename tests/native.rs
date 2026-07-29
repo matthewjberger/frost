@@ -249,6 +249,26 @@ fn two_places_reached_through_raw_pointers_may_be_one() {
     );
 }
 
+// The same question with only one side raw: `p` may hold `x`'s address, and the
+// names settle that no better than they settle two pointers against each other.
+#[test]
+fn a_raw_place_and_an_ordinary_one_may_be_one() {
+    let source = "bump_both :: fn(mut a: i64, mut b: i64) {\n\
+         \x20   a = a + 1\n\
+         \x20   b = b + 10\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut x : i64 = 0\n\
+         \x20   p := unsafe { ptr_to(x) }\n\
+         \x20   unsafe { bump_both(p^, x) }\n\
+         \x20   0\n}\n";
+    let message = compile_error_checked("rawalias2", source);
+    assert!(
+        message.contains("exclusive"),
+        "a raw place and the local it may name should not be apart, got:\n{message}"
+    );
+}
+
 // The rule has to tell a raw pointer from a borrow, because the parameter-mode
 // lowering rewrites every `mut` scalar parameter to `name^`. Two distinct `mut`
 // parameters passed on to a second call are two dereferences and are genuinely

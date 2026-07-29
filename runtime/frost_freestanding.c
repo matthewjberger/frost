@@ -43,6 +43,31 @@ frost_rt_i64 frost_rt_check_length(frost_rt_i64 length) {
     return length;
 }
 
+/* The same three checks the hosted runtime makes, since a program built without
+   libc is held to the same guarantees as one built with it. There is no heap
+   here, so nothing calls the allocator, but a program can still cut a view from
+   a stack array and can still ask how many bytes a count of elements takes. */
+frost_rt_i64 frost_rt_check_span(frost_rt_i64 from, frost_rt_i64 count,
+                                 frost_rt_i64 room) {
+    if (from < 0 || from > room) {
+        __builtin_trap();
+    }
+    if (count < 0 || count > room - from) {
+        __builtin_trap();
+    }
+    return count;
+}
+
+frost_rt_i64 frost_rt_check_size(frost_rt_i64 count, frost_rt_i64 width) {
+    if (count < 0 || width <= 0) {
+        __builtin_trap();
+    }
+    if (count > 0x7fffffffffffffffLL / width) {
+        __builtin_trap();
+    }
+    return count * width;
+}
+
 void frost_rt_generation_check(frost_rt_i64 stored, frost_rt_i64 expected) {
     if (stored != expected) {
         __builtin_trap();
