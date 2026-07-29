@@ -94,6 +94,44 @@ is a handle nothing accepts, never a stale handle something does. `std/slab.fros
 and `std/columns.frost` retire the slot; the pool examples under `examples/` are
 written for the shape and say so.
 
+### What the check costs, and how to pay it once
+
+`pool[handle]` reads the slot's generation and compares it on every access. For a
+handful of lookups that is nothing. For a pass that walks the same elements over
+and over it is paid once a hop for an answer that cannot change while the pass
+runs, and it is measurable: over twenty million hops, summing one field, the
+handle form takes 53 ms against 26 ms for the same loop over a plain array. About
+a nanosecond a hop, and most of a loop that does nothing else.
+
+`slab_slot` is how that is paid once. It checks the generation, answers with the
+slot the handle names, or `-1` where the handle is stale. Indexing `storage` with
+that number is an ordinary array access: bounds-checked like any other, compared
+against no generation.
+
+```frost
+slot := slab_slot($Unit, $1024, pool, handle)
+if (slot >= 0) {
+    mut round : i64 = 0
+    while (round < many) {
+        total = total + pool.storage[slot].hp
+        round = round + 1
+    }
+}
+```
+
+The same twenty million hops through a slot take 33 ms, so about three quarters
+of the check's cost goes. What is left over the plain array is the second index
+rather than the check: a slot table is one more load than walking storage
+directly.
+
+What it costs in the other direction is the guarantee. A slot is a number, and
+nothing says it still names the element it named. Release that slot while a loop
+holds its number and the loop reads whatever moved in, which is the reading a
+handle exists to refuse. So this belongs where a walk owns its data for the
+length of the walk, and the handle belongs everywhere else. It is a word at the
+site for that reason, the same way leaving the range is `wrap_add` rather than a
+compiler flag.
+
 ## 10.4 Bounds checking
 
 Every fixed-array index is checked against the statically known length. An

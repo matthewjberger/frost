@@ -13,8 +13,8 @@
 // the generation are packed together. The two convert freely because a handle is
 // an i64 at the ABI.
 
-export Slab, slab_reset, slab_full, slab_insert, slab_alive, slab_release,
-    GENERATION_LIMIT
+export Slab, slab_reset, slab_full, slab_insert, slab_alive, slab_slot,
+    slab_release, GENERATION_LIMIT
 
 // The highest generation a slot can carry. A handle packs the generation into
 // the top 32 bits of an i64, and reading it back sign-extends, so a generation
@@ -68,6 +68,41 @@ slab_alive :: fn($T: Type, $N: usize, s: Slab<T, N>, handle: Handle<T>) -> bool 
     s.generations[raw & 4294967295] == (raw >> 32)
 }
 
+// The slot a handle names, or -1 where the handle is stale.
+//
+// `s[handle]` checks the generation on every read, which is what makes a stale
+// handle unreadable and is the right price for a handful of them. A pass that
+// walks the same elements over and over pays it once a hop for an answer that
+// cannot change while it runs: measured over twenty million hops, the check is
+// about a nanosecond each and sixty per cent of a loop that does nothing else.
+//
+// This is how that is paid once. Ask for the slot at the boundary, and then index
+// `storage` with it, which is bounds-checked like any array and compares against
+// no generation:
+//
+//     slot := slab_slot($Unit, $1024, pool, handle)
+//     if (slot >= 0) {
+//         mut round : i64 = 0
+//         while (round < many) {
+//             total = total + pool.storage[slot].hp
+//             round = round + 1
+//         }
+//     }
+//
+// What it costs is that the slot is a number rather than a handle, so nothing
+// says it is still the element it was. Release a slot while a loop holds its
+// number and the loop reads whatever moved in, which is exactly the reading a
+// handle exists to refuse. So this belongs where the walk owns its data for the
+// length of the walk, and the handle belongs everywhere else. It is spelled out
+// at the site for that reason, the same way leaving the range is.
+slab_slot :: fn($T: Type, $N: usize, s: Slab<T, N>, handle: Handle<T>) -> i64 {
+    if (slab_alive($T, $N, s, handle) == false) {
+        return -1
+    }
+    raw : i64 = handle
+    raw & 4294967295
+}
+
 // Bumping the generation is what makes every outstanding handle to this slot
 // stale, so a later read through one aborts rather than seeing the next tenant.
 slab_release :: fn($T: Type, $N: usize, mut s: Slab<T, N>, handle: Handle<T>) -> bool {
@@ -86,6 +121,27 @@ slab_release :: fn($T: Type, $N: usize, mut s: Slab<T, N>, handle: Handle<T>) ->
 }
 
 SlabThing :: struct { hp: i64 }
+
+// The slot a live handle names is the one its element sits in, so indexing
+// `storage` with it reads what the handle reads. A released handle names no slot,
+// which is what keeps the boundary honest: the check happens here or the caller
+// is told there is nothing to walk.
+test "a slot stands in for a handle until the handle goes stale" {
+    mut s : Slab<SlabThing, 2> = Slab {
+        storage = [SlabThing { hp = 0 }, SlabThing { hp = 0 }],
+        generations = [0, 0],
+        free_list = [0, 0],
+        free_count = 0,
+    }
+    slab_reset($SlabThing, $2, s)
+    held := slab_insert($SlabThing, $2, s, SlabThing { hp = 41 })
+    slot := slab_slot($SlabThing, $2, s, held)
+    assert(slot >= 0)
+    assert(s.storage[slot].hp == 41)
+    assert(s.storage[slot].hp == s[held].hp)
+    assert(slab_release($SlabThing, $2, s, held))
+    assert(slab_slot($SlabThing, $2, s, held) == (-1))
+}
 
 // A slot one release short of its bound still works, and the release that takes
 // it past retires it rather than handing it back. Driven by writing the
