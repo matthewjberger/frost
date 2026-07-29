@@ -1597,17 +1597,44 @@ emit_struct_ordered :: fn(mut p: Parser, i: i64) {
     emit_struct_name(p, i)
     emit_text(" {\n")
     fid = field_head
+    // A variant's payload goes inside an anonymous struct inside one anonymous
+    // union, so no two variants occupy the same bytes twice and every field is
+    // still reached by the flat name it was declared under. C11 makes a member
+    // of an anonymous struct or union a member of what contains it, which is
+    // what lets `.Circle_radius` name it both here and at an initializer.
+    mut opened : i64 = 0
+    mut carried : i64 = -1
     while (fid != (-1)) {
         field := arena_at(p.fields, fid)
         fty := field.ty
         off := field.name_off
         len := field.name_len
+        which := field.variant
         next_field := field.next
+        if (which >= 0) {
+            if (opened == 0) {
+                emit_text("union {\n")
+                opened = 1
+            }
+            if (which != carried) {
+                if (carried >= 0) {
+                    emit_text("};\n")
+                }
+                carried = which
+                emit_text("struct {\n")
+            }
+        }
         emit_ctype(p, fty)
         emit_text(" ")
         emit_field_name(p, off, len)
         emit_text(";\n")
         fid = next_field
+    }
+    if (carried >= 0) {
+        emit_text("};\n")
+    }
+    if (opened == 1) {
+        emit_text("};\n")
     }
     emit_text("};\n")
 }

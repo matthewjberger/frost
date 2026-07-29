@@ -4,8 +4,8 @@
 import "core.frost"
 import "names.frost"
 
-export align_of, align_up, alloc_temp, field_offset, is_unsigned, scalar_size,
-    type_size
+export align_of, align_up, alloc_temp, field_offset, is_unsigned, payload_base,
+    scalar_size, type_size
 
 // What the C compiler would compute, because the two backends have to agree.
 // A scalar is as wide as its name says, a pointer is a word, and a struct is
@@ -70,6 +70,29 @@ align_of :: fn(mut p: Parser, ty: i64) -> i64 {
     widest
 }
 
+// Where an enum's payload starts: after the tag, on the widest alignment any
+// variant's field asks for. Every variant is laid from here, so no two of them
+// are ever both readable and the enum is as wide as its largest.
+payload_base :: fn(mut p: Parser, field_head: i64) -> i64 {
+    mut fid := field_head
+    mut after_tag : i64 = 0
+    mut widest : i64 = 1
+    while (fid != (-1)) {
+        field := arena_at(p.fields, fid)
+        if (field.variant < 0) {
+            after_tag = align_up(after_tag, align_of(p, field.ty))
+                + type_size(p, field.ty)
+        } else {
+            one := align_of(p, field.ty)
+            if (one > widest) {
+                widest = one
+            }
+        }
+        fid = field.next
+    }
+    align_up(after_tag, widest)
+}
+
 type_size :: fn(mut p: Parser, ty: i64) -> i64 {
     if (is_array_ty(ty)) {
         if (is_slice_ty(p, ty)) {
@@ -81,12 +104,27 @@ type_size :: fn(mut p: Parser, ty: i64) -> i64 {
         return scalar_size(ty)
     }
     def := arena_at(p.structs, struct_index_of(ty))
+    base := payload_base(p, def.field_head)
     mut fid := def.field_head
     mut total : i64 = 0
+    mut running : i64 = base
+    mut carried : i64 = -1
     while (fid != (-1)) {
         field := arena_at(p.fields, fid)
-        total = align_up(total, align_of(p, field.ty))
-            + type_size(p, field.ty)
+        if (field.variant < 0) {
+            total = align_up(total, align_of(p, field.ty))
+                + type_size(p, field.ty)
+        } else {
+            if (field.variant != carried) {
+                carried = field.variant
+                running = base
+            }
+            running = align_up(running, align_of(p, field.ty))
+                + type_size(p, field.ty)
+            if (running > total) {
+                total = running
+            }
+        }
         fid = field.next
     }
     align_up(total, align_of(p, ty))
@@ -101,10 +139,16 @@ field_offset :: fn(mut p: Parser, struct_ty: i64, off: i64, len: i64) -> i64 {
         return 0
     }
     def := arena_at(p.structs, struct_index_of(base))
+    start := payload_base(p, def.field_head)
     mut fid := def.field_head
     mut running : i64 = 0
+    mut carried : i64 = -1
     while (fid != (-1)) {
         field := arena_at(p.fields, fid)
+        if (field.variant >= 0 && field.variant != carried) {
+            carried = field.variant
+            running = start
+        }
         running = align_up(running, align_of(p, field.ty))
         if (field.name_len == len
             && bytes_equal(p.src, field.name_off, off, len)) {

@@ -1689,7 +1689,7 @@ parse_struct_fields :: fn(mut p: Parser) -> i64 {
         field := arena_push(
             p.fields,
             StructField { name_off = field_offset, name_len = field_length,
-                ty = field_ty, next = -1 },
+                ty = field_ty, next = -1, variant = -1 },
         )
         if (head == (-1)) {
             head = field
@@ -1884,7 +1884,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
         node := arena_push(
             p.fields,
             StructField { name_off = field_name_off, name_len = field_name_len,
-                ty = col_ty, next = -1 },
+                ty = col_ty, next = -1, variant = -1 },
         )
         if (head == (-1)) {
             head = node
@@ -1902,7 +1902,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
         p.fields,
         StructField { name_off = gen_off,
             name_len = cstr_len("generations"),
-            ty = i64_col, next = -1 },
+            ty = i64_col, next = -1, variant = -1 },
     )
     if (head == (-1)) {
         head = gen_node
@@ -1916,7 +1916,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
         p.fields,
         StructField { name_off = free_off,
             name_len = cstr_len("free_list"),
-            ty = i64_col, next = -1 },
+            ty = i64_col, next = -1, variant = -1 },
     )
     set_field_next(p, tail, free_node)
     tail = free_node
@@ -1925,7 +1925,7 @@ synth_columns :: fn(mut p: Parser, element: i64, count: i64) -> i64 {
         p.fields,
         StructField { name_off = count_off,
             name_len = cstr_len("free_count"),
-            ty = TY_I64, next = -1 },
+            ty = TY_I64, next = -1, variant = -1 },
     )
     set_field_next(p, tail, count_node)
 
@@ -3549,10 +3549,12 @@ holds_linear :: fn(mut p: Parser, field_head: i64, declared: i64) -> i64 {
 // type of its own, which is why construction, field access and matching all
 // reduce to what the compiler already does with structs and integers.
 //
-// The variants sit side by side rather than overlapping, so an enum is as wide
-// as all of them together. Overlapping them would be a union, which the C
-// backend cannot express as a plain struct, and the space is not what this
-// compiler is short of.
+// The tag says which variant is live, so no two variants are ever readable at
+// once and they are laid at the same offset: an enum is its tag plus its widest
+// variant. The C backend writes that as one anonymous union holding an
+// anonymous struct per variant, which keeps every field reachable by the flat
+// name it was declared under. The bootstrap reaches the same number by its own
+// route, and `an_enum_is_the_same_width_under_both_compilers` holds them to it.
 // ---------------------------------------------------------------------------
 
 // The variant of `enum_ty` with this name, or -1. A pattern written `.Circle`
@@ -3586,8 +3588,8 @@ parse_enum_body :: fn(mut p: Parser, enum_ty: i64) -> i64 {
     result_field_names(p)
     tag_field := arena_push(
         p.fields,
-        StructField { name_off = p.name_tag, name_len = 3, ty = TY_I64,
-            next = -1 },
+        StructField { name_off = p.name_tag, name_len = 3, ty = TY_I32,
+            next = -1, variant = -1 },
     )
     mut tail := tag_field
     mut tag : i64 = 0
@@ -3613,7 +3615,7 @@ parse_enum_body :: fn(mut p: Parser, enum_ty: i64) -> i64 {
                     p.fields,
                     StructField { name_off = qualified,
                         name_len = variant_len + field_len + 1, ty = field_ty,
-                        next = -1 },
+                        next = -1, variant = tag },
                 )
                 set_next_field(p, tail, field)
                 tail = field
@@ -3995,17 +3997,17 @@ synth_result_struct :: fn(mut p: Parser, ok: i64, bad: i64) -> i64 {
     tag := arena_push(
         p.fields,
         StructField { name_off = p.name_tag, name_len = 3, ty = TY_I64,
-            next = -1 },
+            next = -1, variant = -1 },
     )
     value := arena_push(
         p.fields,
         StructField { name_off = p.name_ok_value, name_len = 8, ty = ok,
-            next = -1 },
+            next = -1, variant = -1 },
     )
     bad_field := arena_push(
         p.fields,
         StructField { name_off = p.name_err_error, name_len = 9, ty = bad,
-            next = -1 },
+            next = -1, variant = -1 },
     )
     set_next_field(p, tag, value)
     set_next_field(p, value, bad_field)
@@ -4088,7 +4090,7 @@ synth_multi_struct :: fn(mut p: Parser) -> i64 {
         field := arena_push(
             p.fields,
             StructField { name_off = name, name_len = length,
-                ty = held, next = -1 },
+                ty = held, next = -1, variant = -1 },
         )
         if (head == (-1)) {
             head = field
