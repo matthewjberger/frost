@@ -150,6 +150,9 @@ classify_ident :: fn(src: str, off: i64, len: i64) -> TokenKind {
         if (str_range_eq(src, off, len, "break")) {
             return TokenKind::KwBreak
         }
+        if (str_range_eq(src, off, len, "defer")) {
+            return TokenKind::KwDefer
+        }
         if (str_range_eq(src, off, len, "false")) {
             return TokenKind::KwFalse
         }

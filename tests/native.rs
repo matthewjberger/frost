@@ -7611,28 +7611,72 @@ fn self_hosted_emits_a_generic_function_with_no_struct_instance() {
     assert_eq!(output, "42\n");
 }
 
+// A `defer` says it runs where the function leaves, so written inside a block
+// it means something other than it reads: it would run past the end of that
+// block, and one in a loop would run once afterwards with whatever the loop left
+// behind rather than once a turn. Both compilers refuse it rather than pick one
+// of those. The self-hosted one used to take it and run it at function exit,
+// which is the shape that made this worth a test: agreeing on what a program
+// means includes agreeing on which programs there are.
+#[test]
+fn both_compilers_refuse_a_defer_inside_a_block() {
+    let cases = [
+        (
+            "deferif",
+            "trace :: fn(n: i64) { print n }\n\
+             f :: fn(x: i64) -> i64 {\n\
+             \x20   if (x > 0) {\n        defer trace(1)\n    }\n\
+             \x20   0\n}\n\
+             main :: fn() -> i64 { print f(1)  0 }\n",
+        ),
+        (
+            "deferloop",
+            "trace :: fn(n: i64) { print n }\n\
+             f :: fn() -> i64 {\n\
+             \x20   mut i : i64 = 0\n\
+             \x20   while (i < 2) {\n        defer trace(i)\n        i = i + 1\n    }\n\
+             \x20   0\n}\n\
+             main :: fn() -> i64 { print f()  0 }\n",
+        ),
+    ];
+    for (name, source) in cases {
+        let bootstrap = compile_error(name, source);
+        assert!(
+            bootstrap.contains("defer"),
+            "the bootstrap took a nested `defer` in {name}, or refused it \
+             without naming it:\n{bootstrap}"
+        );
+        let Some(hosted) = self_hosted_rejects(name, source) else {
+            return;
+        };
+        assert!(
+            hosted.contains("`defer` belongs at the top level"),
+            "the self-hosted compiler did not refuse the nested `defer` in \
+             {name}:\n{hosted}"
+        );
+    }
+}
+
 // The example programs, run under both compilers and compared. They are the
 // longest programs in the tree that neither compiler wrote, and holding the two
 // to the same answer on them is what found a `for` over a range crashing the
 // self-hosted parser, two range loops in one function colliding in the emitted
 // C, and an enum laid out two different ways.
 //
-// The list is the examples the self-hosted compiler takes. `pipeline.frost` is
-// left out because it uses `defer`, and `generic_algorithms.frost` because a
-// generic over a plain struct is compiled against the wrong type there. Both
-// are refused with a diagnostic rather than miscompiled, and adding either here
-// is what says it has been fixed.
+// The list is every example, with nothing left out.
 const SHARED_EXAMPLES: &[&str] = &[
     "native/allocator.frost",
     "native/arena.frost",
     "native/dynamic_arena.frost",
     "native/entity_system.frost",
     "native/game_world.frost",
+    "native/generic_algorithms.frost",
     "native/generic_pool_library.frost",
     "native/generic_slab.frost",
     "native/generic_stack.frost",
     "native/math_transform.frost",
     "native/native_pool.frost",
+    "native/pipeline.frost",
     "native/pool_entities.frost",
     "native/pool_linked_list.frost",
     "native/pool_stress.frost",
@@ -17288,6 +17332,90 @@ many
         "15
 10
 3
+",
+    ),
+    // `defer`, which the self-hosted compiler lexed as an identifier and so did
+    // not have at all. Every road out of a function is here, because each runs
+    // the deferred statements somewhere different: a `return` in the middle, a
+    // body ending in the value it answers with, and a body answering with
+    // nothing. Two in one function say the order is last deferred, first run.
+    // The answer is bound to a name before they run, so what they do cannot
+    // reach it.
+    (
+        "defer_runs_at_every_exit",
+        "trace :: fn(n: i64) { print n }
+
+early :: fn(x: i64) -> i64 {
+    defer trace(1)
+    defer trace(2)
+    if (x > 0) {
+        return x * 10
+    }
+    trace(3)
+    0
+}
+
+quiet :: fn() {
+    defer trace(4)
+    trace(5)
+}
+
+main :: fn() -> i64 {
+    print early(2)
+    print early(0 - 1)
+    quiet()
+    0
+}
+",
+        "2
+1
+20
+3
+2
+1
+0
+5
+4
+",
+    ),
+    // A generic over a plain struct, and a `mut` parameter holding one. Three
+    // separate questions meet here. The tuple a call names is read off its
+    // arguments, and a plain struct carries none of its own, so `swap(u, v)`
+    // has to be typed from the local. A tuple belongs to the generic whose call
+    // made it, so the one `bytes($Vec3)` names is not offered to `swap`. And an
+    // aggregate `mut` parameter is an address, so assigning the whole value
+    // writes through the name rather than over it. The same `swap` is called
+    // with a struct and a scalar, which is what says both instances exist.
+    (
+        "a_generic_over_a_plain_struct",
+        "Vec3 :: struct { x: i64, y: i64, z: i64 }
+
+swap :: fn(mut a: $T, mut b: $T) {
+    t := a
+    a = b
+    b = t
+}
+
+bytes :: fn($T: Type) -> i64 { sizeof(T) }
+
+main :: fn() -> i64 {
+    mut u := Vec3 { x = 1, y = 2, z = 3 }
+    mut v := Vec3 { x = 4, y = 5, z = 6 }
+    swap(u, v)
+    print u.x
+    print v.x
+    mut a : i64 = 100
+    mut b : i64 = 200
+    swap(a, b)
+    print a
+    print bytes($Vec3)
+    0
+}
+",
+        "4
+1
+200
+24
 ",
     ),
 ];

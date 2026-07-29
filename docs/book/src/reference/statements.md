@@ -27,7 +27,9 @@ value is its trailing expression (or `void`).
 - `break` and `continue` are loop control.
 - `with`, `with name Block` names the allocation source every `uses` call inside
   the block draws from, and makes the block that source's region (8a).
-- `defer`, `defer Stmt` runs `Stmt` at scope exit, LIFO (chapter 9.3).
+- `defer`, `defer Stmt` runs `Stmt` where the function leaves, last deferred
+  first. Only at the top level of a function body, and not run by `break` or
+  `continue` (chapter 9.3).
 - `print Expr` writes one value and a newline to standard output: an integer as
   `%lld`, a float as `%g`, and a `str` or `^i8` as its bytes.
 - `print STRING ( "," Expr )*` writes a line built from a format literal. Each

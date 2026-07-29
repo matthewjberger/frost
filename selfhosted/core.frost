@@ -354,6 +354,7 @@ TokenKind :: enum {
     KwSafe,
     KwRef,
     KwInline,
+    KwDefer,
     Lparen,
     Rparen,
     Lbrace,
@@ -804,6 +805,12 @@ TypeArg :: struct {
     // run of ordinary types with nothing to say which parameters they bind, so
     // it belongs to the one generic whose call made it and to no other.
     is_pack: i64,
+    // The generic this tuple was written for, or -1 when nothing says. A call
+    // names its callee, so the tuple a call makes belongs to that generic and
+    // to no other. A generic struct's instance names no function and carries
+    // -1, which every generic accepts, since a function generic over the same
+    // type takes its instance from there.
+    owner: i64,
 }
 
 // A local's type binding during code generation. The table is rebuilt per
@@ -1085,6 +1092,21 @@ Parser :: struct {
     // one, so the gate can ask where a node came from.
     unsafe_spans: Arena<UnsafeSpan>,
     unsafe_depth: i64,
+    // The statements a `defer` put off, as the token index of each in
+    // `name_off`. A copy is made by reading the tokens again at every exit
+    // rather than by copying nodes, so nothing downstream learns a new form.
+    // `defer_base` is where the function being parsed started, since a function
+    // literal inside one has its own.
+    defers: Arena<LocalVar>,
+    defer_base: i64,
+    defer_count: i64,
+    // How many blocks deep the parser is, and the depth a `defer` is allowed at:
+    // the top level of the body being read. A `defer` deeper than that is
+    // refused, since what it means there is not what it looks like. It would run
+    // where the function leaves rather than where the block does, and one
+    // written in a loop would run once with whatever the loop left behind.
+    block_depth: i64,
+    defer_depth: i64,
     moved: Arena<LocalVar>,
     label_id: i64,
     abi_windows: i64,

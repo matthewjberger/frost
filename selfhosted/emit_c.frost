@@ -978,8 +978,14 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
     // The instance this call names, when the callee is generic, since the
     // symbol's list belongs to whichever instance was parsed last.
     mut param : i64 = instance_params(p, fn_index, head)
+    // Whether that answered. When it did, the list is this call's own instance
+    // and says exactly how each argument is passed. When it did not, the
+    // symbol's list is whichever instance was parsed last, which is right only
+    // in a program that uses the generic once.
+    mut param_from_instance : i64 = 1
     if (param == (-1)) {
         param = sym.params
+        param_from_instance = 0
     }
     while (id != (-1)) {
         node := arena_at(p.arena, id)
@@ -1018,12 +1024,16 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                     && is_array_ty(pointee(arg_ty)) == false) {
                     borrow = 1
                 }
-                // A generic function's parameter list belongs to whichever
+                // A generic call whose instance could not be resolved has no
+                // parameter list of its own: the symbol's belongs to whichever
                 // instantiation was parsed last, so it cannot say how this call
-                // passes its arguments. The rule is the same one the parameter
-                // modes encode: a read of a struct borrows, everything else is
-                // passed as it is.
-                if (generic_fn_of(p, fn_index) >= 0) {
+                // passes its arguments. The rule is then the one the parameter
+                // modes encode, read off the argument alone: a struct borrows,
+                // everything else is passed as it is. Where the instance did
+                // answer, its list is exact and this is not, since a `mut`
+                // parameter takes an address whatever it is bound to.
+                if (param_from_instance == 0 && generic_fn_of(p, fn_index) >= 0)
+                {
                     borrow = 0
                     if (param_auto != 2 && is_aggregate(arg_ty)) {
                         borrow = 1
@@ -1192,7 +1202,17 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
                 return
             }
         }
-        place_ty := type_of(p, place)
+        place_ty := place_type(p, place)
+        // The name of an aggregate `mut` parameter is the address it travels
+        // as, so writing the whole value goes through it rather than over it.
+        if (place_ty != type_of(p, place)) {
+            emit_text("(*")
+            emit_expr(p, place)
+            emit_text(") = ")
+            emit_coerced(p, value, place_ty)
+            emit_text(";\n")
+            return
+        }
         emit_expr(p, place)
         emit_text(" = ")
         emit_coerced(p, value, place_ty)
@@ -1959,7 +1979,9 @@ emit_program :: fn(mut p: Parser, head: i64) {
             xstart := used.xarg_start
             xcount := used.xarg_count
             is_pack := used.is_pack
-            if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack)) {
+            owner := used.owner
+            if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack,
+                owner) && tuple_is_first_for(p, gi, ii)) {
                 node := parse_generic_instance(p, gi, arg, xstart, xcount)
                 ret := p.last_return_type
                 emit_mono_prototype(p, node, arg, xstart, xcount, ret)
@@ -1984,7 +2006,9 @@ emit_program :: fn(mut p: Parser, head: i64) {
                 xstart := used.xarg_start
                 xcount := used.xarg_count
                 is_pack := used.is_pack
-                if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack)) {
+                owner := used.owner
+                if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack,
+                    owner) && tuple_is_first_for(p, gi, ii)) {
                     node := parse_generic_instance(p, gi, arg, xstart, xcount)
                     ret := p.last_return_type
                     emit_mono_function(p, node, arg, xstart, xcount, ret)

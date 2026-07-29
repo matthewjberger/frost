@@ -9,6 +9,7 @@ import "layout.frost"
 
 export call_ret_type, call_type_args, call_args_for, collect_type_args,
     fn_index_of, note_type_args, takes_pack, pack_call_args,
+    parse_call_type_args,
     is_type_predicate, predicate_holds, record_parse_local,
     parse_local_type, parse_param_type, field_binding_of,
     fn_proc_type, bundle_field_fn,
@@ -18,6 +19,7 @@ export call_ret_type, call_type_args, call_args_for, collect_type_args,
     nth_param_type, nth_value_arg, nth_param_auto_borrows,
     param_node_by_value,
     record_local, record_mono_ret, type_cache_prepare, type_of, binding_type,
+    place_type,
     types_compatible, value_fits, untyped_literal
 
 // `a == b` on two enum values asks which variant each is, and that is the tag
@@ -256,6 +258,22 @@ binding_type :: fn(mut p: Parser, value: i64) -> i64 {
         return array_of(p, TY_U8, -1)
     }
     if (node.kind != NodeKind::Var) {
+        return ty
+    }
+    if (is_borrow(ty) && is_aggregate(pointee(ty))) {
+        return pointee(ty)
+    }
+    ty
+}
+
+// What an assignment's place denotes. A `mut` parameter of aggregate type
+// travels as an address, and the name stands for the aggregate rather than for
+// the address, which is how `binding_type` reads one on the other side of the
+// `=`. A field or an element off such a name is reached through the address
+// like any other, so only the whole value asks this.
+place_type :: fn(mut p: Parser, place: i64) -> i64 {
+    ty := type_of(p, place)
+    if (arena_at(p.arena, place).kind != NodeKind::Var) {
         return ty
     }
     if (is_borrow(ty) && is_aggregate(pointee(ty))) {
@@ -872,6 +890,26 @@ call_type_args :: fn(mut p: Parser, head: i64) -> i64 {
         }
         id = next_id
     }
+    // No argument carried a tuple, so the tuple is the type an argument has: a
+    // generic over a plain type names that type through what it was given and
+    // nowhere else.
+    id = head
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        value := node.a
+        next_id := node.next
+        vnode := arena_at(p.arena, value)
+        if (vnode.kind != NodeKind::TypeVal) {
+            mut held := type_of(p, value)
+            if (is_pointer(held)) {
+                held = pointee(held)
+            }
+            if (held >= 0) {
+                return held
+            }
+        }
+        id = next_id
+    }
     TY_I64
 }
 
@@ -907,12 +945,11 @@ record_mono_ret :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
 //
 // Distinct tuples rather than instances, since two generic structs written with
 // the same arguments would otherwise have every generic function emitted twice.
-// Which generic each tuple belongs to is deliberately not kept: the tuple of a
-// call is inferred from its arguments, and out here, away from the function the
-// call sits in, there is no local to infer from. A generic is tried against
-// every tuple and `instance_fits` says which pairings are real.
+// A tuple carries which generic it was written for, since a call names its
+// callee. A generic struct's instance names no function and carries -1, which
+// every generic accepts.
 note_type_args :: fn(mut p: Parser, arg: i64, xarg_start: i64, xarg_count: i64,
-    is_pack: i64) {
+    is_pack: i64, owner: i64) {
     if (arg < 0 || arg == TY_PARAM) {
         return
     }
@@ -933,34 +970,40 @@ note_type_args :: fn(mut p: Parser, arg: i64, xarg_start: i64, xarg_count: i64,
     while (i < p.type_args.count) {
         entry := arena_at(p.type_args, i)
         if (entry.arg == arg && entry.xarg_count == xarg_count
-            && entry.is_pack == is_pack
+            && entry.is_pack == is_pack && entry.owner == owner
             && gargs_equal(p, entry.xarg_start, xarg_start, xarg_count)) {
             return
         }
         i = i + 1
     }
     arena_push(p.type_args, TypeArg { arg = arg, xarg_start = xarg_start,
-        xarg_count = xarg_count, is_pack = is_pack })
+        xarg_count = xarg_count, is_pack = is_pack, owner = owner })
 }
 
 collect_type_args :: fn(mut p: Parser) {
     mut i : i64 = 0
     while (i < p.instances.count) {
+        // A generic struct written as `Box<i64>` names no function, so its
+        // tuple is offered to every generic.
         entry := arena_at(p.instances, i)
-        note_type_args(p, entry.arg, entry.xarg_start, entry.xarg_count, 0)
+        note_type_args(p, entry.arg, entry.xarg_start, entry.xarg_count, 0, -1)
         i = i + 1
     }
     i = 0
     while (i < p.arena.count) {
         node := arena_at(p.arena, i)
-        if (node.kind == NodeKind::Call && generic_fn_of(p, node.val) >= 0) {
-            // A call to a generic taking a compile-time list was noted where it
-            // was written, since what the list was given is the type of each
-            // argument and only the parse has the names in scope to say what
-            // those are.
-            if (takes_pack(p, node.val) == false) {
-                arg := call_type_args(p, node.a)
-                note_type_args(p, arg, p.call_xarg_start, p.call_xarg_count, 0)
+        if (node.kind == NodeKind::Call) {
+            owner := generic_fn_of(p, node.val)
+            if (owner >= 0) {
+                // A call to a generic taking a compile-time list was noted
+                // where it was written, since what the list was given is the
+                // type of each argument and only the parse has the names in
+                // scope to say what those are.
+                if (takes_pack(p, node.val) == false) {
+                    arg := call_type_args(p, node.a)
+                    note_type_args(p, arg, p.call_xarg_start,
+                        p.call_xarg_count, 0, owner)
+                }
             }
         }
         i = i + 1
@@ -1162,6 +1205,41 @@ pack_arg_type :: fn(mut p: Parser, value: i64) -> i64 {
         }
     }
     type_of(p, value)
+}
+
+// The tuple a call to a generic names through its arguments alone, read while
+// the declaration around it is being parsed. A generic over a plain type names
+// that type only in the local table, and this is where that table is in scope.
+//
+// -1 when the call writes its type arguments out, since those are read where
+// the tuples are collected and need nothing from here.
+parse_call_type_args :: fn(mut p: Parser, args: i64) -> i64 {
+    mut id := args
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        value := node.a
+        next_id := node.next
+        vnode := arena_at(p.arena, value)
+        if (vnode.kind == NodeKind::TypeVal) {
+            return -1
+        }
+        id = next_id
+    }
+    id = args
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        value := node.a
+        next_id := node.next
+        mut held := pack_arg_type(p, value)
+        if (is_pointer(held)) {
+            held = pointee(held)
+        }
+        if (held >= 0) {
+            return held
+        }
+        id = next_id
+    }
+    -1
 }
 
 // The field a name is bound to by a `for` over `fields(T)`, as the entry

@@ -2275,8 +2275,15 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
                 return
             }
         }
-        place_ty := type_of(p, place)
-        emit_asm_addr(p, place)
+        place_ty := place_type(p, place)
+        // The name of an aggregate `mut` parameter already holds the address
+        // the value lives at, so reading the name is taking its address and
+        // the slot the name sits in is not what is written.
+        if (place_ty != type_of(p, place)) {
+            emit_asm_expr(p, place)
+        } else {
+            emit_asm_addr(p, place)
+        }
         emit_asm_spill(p)
         emit_asm_expr(p, value)
         emit_asm_coerce(p, value, place_ty)
@@ -2987,7 +2994,9 @@ emit_asm_program :: fn(mut p: Parser, head: i64) {
                 xstart := used.xarg_start
                 xcount := used.xarg_count
                 is_pack := used.is_pack
-                if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack)) {
+                owner := used.owner
+                if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack,
+                    owner) && tuple_is_first_for(p, gi, ii)) {
                     node := parse_generic_instance(p, gi, arg, xstart, xcount)
                     ret := p.last_return_type
                     emit_asm_mono_function(p, node, arg, xstart, xcount, ret)
