@@ -9211,40 +9211,29 @@ fn native_generational_pool_written_in_frost() {
     assert_eq!(output, "100\n1\n1\n0\n");
 }
 
-const FREESTANDING: &str = r#"
-Arena :: struct($N: usize) { data: [N]u8, offset: i64 }
-
-alloc_int :: fn(mut a: Arena<64>) -> ^i64 {
-    slot := ptr_to(a.data[a.offset])
-    a.offset = a.offset + sizeof(i64)
-    ptr_cast($i64, slot)
-}
-
-main :: fn() -> i64 {
-    mut arena : Arena<64> = Arena { data = [0; 64], offset = 0 }
-    p := alloc_int(arena)
-    p^ = 20
-    q := alloc_int(arena)
-    q^ = 22
-    p^ + q^
-}
-"#;
-
+// The example itself rather than a copy of it, and with the gate on.
+//
+// This test held its own transcription of `examples/freestanding.frost` and
+// compiled it with `FROST_CHECK_UNSAFE=0`, so when the unsafety gate became the
+// default the example stopped compiling and nothing said so: the copy still
+// built because the gate was off, and the file nobody compiled rotted. Reading
+// the file is what keeps the two from drifting, and leaving the gate on is what
+// holds an example to the language everyone else writes.
 #[test]
 fn native_freestanding_links_without_libc() {
     if !linker_available() {
         return;
     }
+    let source_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("examples")
+        .join("freestanding.frost");
     let directory = std::env::temp_dir();
-    let source_path = directory.join("frost_heap_freestanding.frost");
     let exe_path = directory.join(format!(
         "frost_heap_freestanding{}",
         std::env::consts::EXE_SUFFIX
     ));
-    std::fs::write(&source_path, FREESTANDING).unwrap();
     let frost = env!("CARGO_BIN_EXE_frost");
     let compile = Command::new(frost)
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("--freestanding")
         .arg("-o")
@@ -9252,9 +9241,15 @@ fn native_freestanding_links_without_libc() {
         .arg(&source_path)
         .output()
         .unwrap();
-    let _ = std::fs::remove_file(&source_path);
     if !compile.status.success() {
+        let message = String::from_utf8_lossy(&compile.stderr);
         // --freestanding needs gcc or clang; skip where only MSVC is present.
+        // A refusal by the compiler itself is a broken example, not a missing
+        // toolchain, and is what this exists to catch.
+        assert!(
+            !message.contains("unsafe"),
+            "examples/freestanding.frost does not compile:\n{message}"
+        );
         return;
     }
     let run = Command::new(&exe_path).status().unwrap();
