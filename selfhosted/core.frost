@@ -1107,6 +1107,11 @@ Parser :: struct {
     // written in a loop would run once with whatever the loop left behind.
     block_depth: i64,
     defer_depth: i64,
+    // Whether the parameter the type variable was written on holds it rather
+    // than being it: `[]$T` and `[N]$T` name it through their element, so what
+    // the argument binds is the element's type. Set by `tparam_position` beside
+    // the position it answers with.
+    tparam_through: i64,
     moved: Arena<LocalVar>,
     label_id: i64,
     abi_windows: i64,

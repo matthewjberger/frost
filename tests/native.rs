@@ -17531,6 +17531,42 @@ main :: fn() -> i64 {
 10
 ",
     ),
+    // A generic over `[]$T`. The parameter holds the type variable rather than
+    // being it, so what a call binds it to is the argument's element, and the
+    // two calls here name one instance over `i64` rather than one per array
+    // length. Reading the argument's own type instead keyed an instance by
+    // `[3]i64` and another by `[2]i64`, each with a parameter of the wrong
+    // width, and the emitted C would not compile.
+    (
+        "a_generic_over_a_slice",
+        "first :: fn(v: []$T) -> i64 {
+    slice_len(v)
+}
+
+counted :: fn(v: []$T) -> i64 {
+    mut n : i64 = 0
+    for x in v {
+        n = n + 1
+    }
+    n
+}
+
+main :: fn() -> i64 {
+    xs := [1, 2, 3]
+    ys := [9, 4]
+    print first(xs)
+    print first(ys)
+    print counted(xs)
+    print counted(ys)
+    0
+}
+",
+        "3
+2
+3
+2
+",
+    ),
     // A `defer` and a `?`. Handing a failure on is the function leaving, so
     // whatever it deferred runs there the way it runs at a `return` written out.
     // The self-hosted compiler built the `?` return node directly rather than
