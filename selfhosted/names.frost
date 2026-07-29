@@ -1450,12 +1450,15 @@ new_unary :: fn(mut p: Parser, kind: NodeKind, child: i64) -> i64 {
     new_unary_at(p, kind, child, held)
 }
 
-// An index node `base[index]`: `a` is the base, `b` the index expression.
-new_index :: fn(mut p: Parser, base: i64, index: i64) -> i64 {
+// An index node `base[index]`: `a` is the base, `b` the index expression. The
+// position is the `[`, taken before the index is parsed. Reading it off the
+// parser afterwards named the token past the `]`, so a diagnostic about an
+// index landed on the statement after the one holding it.
+new_index :: fn(mut p: Parser, base: i64, index: i64, at: i64) -> i64 {
     arena_push(
         p.arena,
         Node { kind = NodeKind::Index, a = base, b = index, c = 0, val = 0,
-            next = -1, pos = cur_off(p) },
+            next = -1, pos = at },
     )
 }
 

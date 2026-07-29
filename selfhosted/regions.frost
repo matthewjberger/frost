@@ -444,11 +444,19 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
         // A string literal is typed as a pointer, and indexing one is still
         // checked: its length came out of the source along with its bytes, so
         // nothing is being vouched for and no block is asked for.
-        if (kind == NodeKind::Index && is_raw_pointer(type_of(p, node.a))
-            && arena_at(p.arena, constant_node(p, node.a)).kind
-                != NodeKind::StrLit) {
-            mut held := arena_at(p.arena, id)
-            held.c = 1
+        // A borrow of a raw pointer is that pointer under another name, so the
+        // question is asked of what the borrow names.
+        if (kind == NodeKind::Index) {
+            mut base_ty := type_of(p, node.a)
+            if (is_borrow(base_ty)) {
+                base_ty = pointee(base_ty)
+            }
+            if (is_raw_pointer(base_ty)
+                && arena_at(p.arena, constant_node(p, node.a)).kind
+                    != NodeKind::StrLit) {
+                mut held := arena_at(p.arena, id)
+                held.c = 1
+            }
         }
         if (kind == NodeKind::Bin) {
             check_flags_operator(p, node.val, node.a, node.b, node.pos)

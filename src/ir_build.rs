@@ -1237,7 +1237,10 @@ fn single_inner(ty: &Type) -> Option<&Type> {
     }
 }
 
-fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
+pub(crate) fn substitute_type(
+    ty: &Type,
+    subst: &HashMap<String, Type>,
+) -> Type {
     match ty {
         Type::Struct(name) if is_generic_instance(name) => {
             if let Some((base, arguments)) = split_instance(name) {

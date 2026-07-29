@@ -63,40 +63,72 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
     };
     externs.insert(BOUNDS_CHECK);
 
+    // The runtime names this file declares itself, from the runtime's own
+    // header rather than from whatever a program said about them. A program may
+    // declare one of these too, and its declaration is the one that is dropped:
+    // two declarations of the same C function have to agree exactly, and a
+    // Frost `^u8` reaching C as `char*` does not match the `void*` the runtime
+    // actually takes.
+    let mut declared: HashSet<&str> = HashSet::new();
+    let runtime_declarations = [
+        (
+            "frost_rt_bounds_check",
+            "void frost_rt_bounds_check(int64_t index, int64_t length);",
+        ),
+        (
+            "frost_rt_check_length",
+            "int64_t frost_rt_check_length(int64_t length);",
+        ),
+        (
+            "frost_rt_generation_check",
+            "void frost_rt_generation_check(int64_t stored, int64_t expected);",
+        ),
+        (
+            "frost_rt_mem_set",
+            "void frost_rt_mem_set(void *destination, int64_t value, int64_t size);",
+        ),
+        (
+            "frost_rt_print_i64",
+            "void frost_rt_print_i64(int64_t value);",
+        ),
+        (
+            "frost_rt_write_bytes",
+            "void frost_rt_write_bytes(const char* data, int64_t length);",
+        ),
+        (
+            "frost_rt_write_i64",
+            "void frost_rt_write_i64(int64_t value);",
+        ),
+        (
+            "frost_rt_write_f64",
+            "void frost_rt_write_f64(double value);",
+        ),
+        (
+            "frost_rt_write_newline",
+            "void frost_rt_write_newline(void);",
+        ),
+        (
+            "frost_rt_write_cstr",
+            "void frost_rt_write_cstr(const char* text);",
+        ),
+        (
+            "frost_rt_print_f64",
+            "void frost_rt_print_f64(double value);",
+        ),
+    ];
+
     let mut output = String::new();
     output.push_str("#include <stdint.h>\n\n");
     output.push_str(crate::arith_prelude::ARITH_PRELUDE);
     output.push('\n');
     externs.insert("frost_rt_arith_trap");
-    output.push_str(
-        "void frost_rt_bounds_check(int64_t index, int64_t length);\n",
-    );
-    output.push_str("int64_t frost_rt_check_length(int64_t length);\n");
-    externs.insert("frost_rt_check_length");
-    output.push_str(
-        "void frost_rt_generation_check(int64_t stored, int64_t expected);\n\n",
-    );
-    externs.insert("frost_rt_generation_check");
-    output.push_str(
-        "void frost_rt_mem_set(void *destination, int64_t value, int64_t size);\n\n",
-    );
-    externs.insert("frost_rt_mem_set");
-    output.push_str("void frost_rt_print_i64(int64_t value);\n");
-    externs.insert("frost_rt_print_i64");
-    output.push_str(
-        "void frost_rt_write_bytes(const char* data, int64_t length);\n",
-    );
-    externs.insert("frost_rt_write_bytes");
-    output.push_str("void frost_rt_write_i64(int64_t value);\n");
-    externs.insert("frost_rt_write_i64");
-    output.push_str("void frost_rt_write_f64(double value);\n");
-    externs.insert("frost_rt_write_f64");
-    output.push_str("void frost_rt_write_newline(void);\n");
-    externs.insert("frost_rt_write_newline");
-    output.push_str("void frost_rt_write_cstr(const char* text);\n");
-    externs.insert("frost_rt_write_cstr");
-    output.push_str("void frost_rt_print_f64(double value);\n\n");
-    externs.insert("frost_rt_print_f64");
+    declared.insert("frost_rt_arith_trap");
+    for (name, declaration) in runtime_declarations {
+        writeln!(output, "{declaration}")?;
+        externs.insert(name);
+        declared.insert(name);
+    }
+    output.push('\n');
 
     // A struct type per aggregate-returning extern, laid out field for field so
     // that the C compiler classifies it exactly as the library's own header
@@ -139,6 +171,9 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
     output.push('\n');
 
     for external in &module.externs {
+        if declared.contains(external.name.as_str()) {
+            continue;
+        }
         let by_value = externs.value_parameters.get(&external.name).cloned();
         let mut params = Vec::new();
         for (index, param) in external.params.iter().enumerate() {

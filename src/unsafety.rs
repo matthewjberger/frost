@@ -78,6 +78,7 @@ fn walk_unsafety(
         unsafe_fns: HashSet::new(),
         fields: HashMap::new(),
         returns: HashMap::new(),
+        generics: HashMap::new(),
         depth: 0,
         audit,
         vouched: Vec::new(),
@@ -94,6 +95,10 @@ fn walk_unsafety(
             Statement::Constant(name, value) => {
                 if let Some(ty) = declared_return(value) {
                     checker.returns.insert(name.clone(), ty);
+                }
+                let parameters = type_parameters(value);
+                if !parameters.is_empty() {
+                    checker.generics.insert(name.clone(), parameters);
                 }
                 // A constant is named from inside every function, so its type
                 // belongs to the walk before any of them start. `ROW :: [1, 2]`
@@ -274,6 +279,37 @@ fn declared_return(value: &Expression) -> Option<Type> {
     }
 }
 
+/// The type a borrow names, or the type itself where it is not one.
+fn without_borrow(ty: Type) -> Type {
+    match ty {
+        Type::Ref(inner) | Type::RefMut(inner) => *inner,
+        other => other,
+    }
+}
+
+/// Which of a function's parameters are types, and what each is called. A
+/// signature written `vec_slice($T: Type, v: Vec<T>) -> []T` answers with `T`,
+/// and the argument at that position at a call site is what `T` stands for
+/// there. Without it the return type names the parameter rather than the
+/// argument, so a field of the element has no declaration to look up.
+fn type_parameters(value: &Expression) -> Vec<(usize, String)> {
+    let params = match value {
+        Expression::Function(params, _, _) | Expression::Proc(params, _, _) => {
+            params
+        }
+        Expression::UnsafeFn(inner) => return type_parameters(inner),
+        _ => return Vec::new(),
+    };
+    params
+        .iter()
+        .enumerate()
+        .filter_map(|(position, param)| match &param.type_annotation {
+            Some(Type::TypeParam(name)) => Some((position, name.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
 struct Checker {
     externs: HashSet<String>,
     unsafe_fns: HashSet<String>,
@@ -281,6 +317,8 @@ struct Checker {
     // What each named function answers with, so a binding takes its type from
     // the call that produced it.
     returns: HashMap<String, Type>,
+    // The type parameters of each named function, by argument position.
+    generics: HashMap<String, Vec<(usize, String)>>,
     // How many `unsafe` blocks enclose what is being walked. Nesting one inside
     // another is allowed and means nothing extra, the same as in Rust.
     depth: usize,
@@ -361,24 +399,54 @@ impl Checker {
                     .map(|declared| declared.field_type.clone())
             }
             // An element of an array or a slice, so `rows[i][j]` names the inner
-            // element rather than nothing. A `str` indexes to a byte.
+            // element rather than nothing. A `str` indexes to a byte, and a
+            // borrow indexes as the place it names.
             Expression::Index(base, _) => match self.type_of(base)? {
                 Type::Array(inner, _) | Type::Slice(inner) => Some(*inner),
                 Type::Str => Some(Type::U8),
                 Type::Ptr(inner) => Some(*inner),
+                Type::Ref(inner) | Type::RefMut(inner) => match *inner {
+                    Type::Array(element, _) | Type::Slice(element) => {
+                        Some(*element)
+                    }
+                    Type::Str => Some(Type::U8),
+                    _ => None,
+                },
                 _ => None,
             },
+            // `ref name := place` binds a borrow, so what it holds is the type
+            // of the place it names. Without this a `ref` local has no type at
+            // all and every field and element reached through one falls to the
+            // refusal.
+            Expression::Borrow(place) => {
+                Some(Type::Ref(Box::new(self.type_of(place)?)))
+            }
+            Expression::BorrowMut(place) => {
+                Some(Type::RefMut(Box::new(self.type_of(place)?)))
+            }
             Expression::Dereference(inner) => match self.type_of(inner)? {
                 Type::Ptr(pointee)
                 | Type::Ref(pointee)
                 | Type::RefMut(pointee) => Some(*pointee),
                 _ => None,
             },
-            Expression::Call(callee, _) => {
+            Expression::Call(callee, arguments) => {
                 let Expression::Identifier(name) = &**callee else {
                     return None;
                 };
-                self.returns.get(name).cloned()
+                let declared = self.returns.get(name)?;
+                let Some(parameters) = self.generics.get(name) else {
+                    return Some(declared.clone());
+                };
+                let mut bound = HashMap::new();
+                for (position, parameter) in parameters {
+                    if let Some(Expression::TypeValue(argument)) =
+                        arguments.get(*position)
+                    {
+                        bound.insert(parameter.clone(), argument.clone());
+                    }
+                }
+                Some(crate::ir_build::substitute_type(declared, &bound))
             }
             // A block's value is what its last statement answers with, and
             // `ptr_cast` is written inside one, so the type of what comes out is
@@ -606,12 +674,13 @@ impl Checker {
             }
             // An array, a slice and a `str` each carry a length and are checked,
             // so indexing one is not gated. A raw pointer carries neither, so
-            // indexing one is. A base this pass cannot name might be either, and
-            // a gate that lets the unknown through reports what it happened to
+            // indexing one is, and a borrow of one is the same pointer under
+            // another name. A base this pass cannot name might be either, and a
+            // gate that lets the unknown through reports what it happened to
             // recognize rather than what a program can reach. Refusing here is
             // what makes the list of blocks the whole list.
             Expression::Index(base, index) => {
-                match self.type_of(base) {
+                match self.type_of(base).map(without_borrow) {
                     Some(Type::Ptr(_)) => {
                         self.refuse("indexing a raw pointer", at);
                     }
