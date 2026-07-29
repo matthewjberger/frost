@@ -7639,6 +7639,50 @@ fn both_compilers_refuse_a_defer_inside_a_block() {
     }
 }
 
+// The other half of a loop variable. Its value carries nothing, but its address
+// still names storage this frame owns, so handing that address out is refused by
+// both compilers. This is the tightening that goes with the loosening in
+// `a_loop_variable_read_carries_no_storage`: without it, giving the loop
+// variable a value worth something would have opened the road that rule exists
+// to close.
+#[test]
+fn both_compilers_refuse_an_address_of_a_loop_variable() {
+    let cases = [
+        (
+            "loopaddr",
+            "leak :: fn(v: []i64) -> ^i64 {\n\
+             \x20   for x in v {\n        return unsafe { ptr_to(x) }\n    }\n\
+             \x20   unsafe { ptr_to(v[0]) }\n}\n\
+             main :: fn() -> i64 { xs := [1, 2]  p := leak(xs)  0 }\n",
+        ),
+        (
+            "loopref",
+            "pick :: fn(v: []i64) -> ref i64 {\n\
+             \x20   for x in v {\n        return x\n    }\n\
+             \x20   v[0]\n}\n\
+             main :: fn() -> i64 { xs := [1, 2]  print pick(xs)  0 }\n",
+        ),
+    ];
+    // The sentence both compilers end on, rather than the word only one of them
+    // opens with.
+    for (name, source) in cases {
+        let bootstrap = compile_error(name, source);
+        assert!(
+            bootstrap.contains("dies when the call returns"),
+            "the bootstrap let the address of a loop variable out in \
+             {name}:\n{bootstrap}"
+        );
+        let Some(hosted) = self_hosted_rejects(name, source) else {
+            return;
+        };
+        assert!(
+            hosted.contains("dies when the call returns"),
+            "the self-hosted compiler let the address of a loop variable out \
+             in {name}:\n{hosted}"
+        );
+    }
+}
+
 // A deferred statement is written out again at every exit and its names are
 // resolved there, so a name it mentions that is bound again below it reads as
 // that later binding. Both compilers took this and both got it wrong, by
@@ -17564,6 +17608,43 @@ main :: fn() -> i64 {
         "3
 2
 3
+2
+",
+    ),
+    // Walking a slice and keeping an element in a local. A loop variable is this
+    // frame's storage, so an address of one dies with the call, but what it
+    // holds is an element worth whatever the sequence was worth. The bootstrap
+    // recorded only the first half, so reading a loop variable answered with
+    // frame storage: `best = x` carried that into `best` and returning `best`
+    // was refused, over a slice of plain integers with nothing to escape. The
+    // self-hosted compiler took it, so the two disagreed about a shape as
+    // ordinary as a maximum.
+    (
+        "a_loop_variable_read_carries_no_storage",
+        "widest :: fn(v: []i64) -> i64 {
+    mut best : i64 = 0
+    for x in v {
+        if (x > best) { best = x }
+    }
+    best
+}
+
+counted :: fn(v: []$T) -> i64 {
+    mut n : i64 = 0
+    for index, x in v {
+        n = index
+    }
+    n
+}
+
+main :: fn() -> i64 {
+    xs := [3, 9, 4]
+    print widest(xs)
+    print counted(xs)
+    0
+}
+",
+        "9
 2
 ",
     ),
