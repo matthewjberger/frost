@@ -7767,7 +7767,7 @@ const STD_MODULES: &[(&str, &str)] = &[
     ("math.frost", "20 passed"),
     ("math64.frost", "20 passed"),
     ("mem.frost", "13 passed"),
-    ("slab.frost", "1 passed"),
+    ("slab.frost", "2 passed"),
     ("snapshot.frost", "6 passed"),
     ("sort.frost", "3 passed"),
     ("strings.frost", "9 passed"),
