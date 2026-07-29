@@ -1001,11 +1001,19 @@ impl Frame<'_> {
                     self.check(body, false);
                 }
                 // A loop variable is this frame's storage the way a local is, so
-                // an address of one dies when the call returns.
-                Statement::For(name, second, _, body) => {
+                // an address of one dies when the call returns. What it holds is
+                // an element of the sequence, which is worth whatever the
+                // sequence was worth, the same way a `let` takes its worth from
+                // the value it was given. Recording only the first half made
+                // reading a loop variable answer `Frame`, so walking a slice and
+                // keeping the largest element in a local refused to return it.
+                Statement::For(name, second, sequence, body) => {
+                    let held = self.value_provenance(sequence);
                     self.storage.insert(name.clone());
+                    self.locals.insert(name.clone(), held);
                     if let Some(second) = second {
                         self.storage.insert(second.clone());
+                        self.locals.insert(second.clone(), held);
                     }
                     self.check(body, false);
                 }
