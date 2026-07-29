@@ -663,12 +663,16 @@ GBinding :: struct {
 }
 
 // One field of a struct: its name (byte range), its type code, and the next
-// field's index in the field arena.
+// field's index in the field arena. `variant` is -1 for an ordinary field and
+// the variant's tag for one that came from an enum variant's payload. Two
+// fields of different variants can never both be live, so they are laid at the
+// same offset, and that number is what says which ones share.
 StructField :: struct {
     name_off: i64,
     name_len: i64,
     ty: i64,
     next: i64,
+    variant: i64,
 }
 
 // A `.Variant` or a `{ ... }` written as a call argument, whose type is the

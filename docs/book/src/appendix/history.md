@@ -506,9 +506,10 @@ whatever compiles its output. In dependency order:
    `damage` and they stay apart. A variant is then a tag value and a set of
    field names rather than a type of its own, which is why construction, field
    access and matching all reduce to what the compiler already did with structs
-   and integers. The variants sit side by side rather than overlapping: a union
-   is what would save the space, and the C backend cannot express one as a plain
-   struct.
+   and integers. The tag says which variant is live, so the variants share their
+   offset and an enum is its tag plus its widest variant. The C backend writes
+   that as an anonymous union of anonymous structs, one per variant, which leaves
+   every field reachable by the flat name it was declared under.
 
    A variant pattern also made `match` an expression rather than a statement. It
    binds a name, each arm assigns to it, and the match is queued for the block

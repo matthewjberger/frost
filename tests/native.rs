@@ -7445,7 +7445,10 @@ fn self_hosted_rejects_a_try_outside_a_fallible_function() {
 
 // Enums with payloads in the self-hosted compiler: variants with fields, a
 // variant with none, construction, a match that binds a variant's fields, and
-// the match standing for a value.
+// the match standing for a value. The size is the tag plus the widest variant,
+// not the tag plus every variant: two variants are never both live, so they sit
+// at the same offset. `an_enum_is_the_same_width_under_both_compilers` is what
+// holds the two compilers to that answer together.
 const SELF_HOSTED_ENUMS: &str = "Shape :: enum {\n\
      \x20   Circle { radius: i64 },\n\
      \x20   Rectangle { width: i64, height: i64 },\n\
@@ -7474,7 +7477,7 @@ fn self_hosted_enums_through_c() {
     let Some(output) = compile_c_and_run("selfenum", &c_source) else {
         return;
     };
-    assert_eq!(output, "75\n24\n0\n32\n");
+    assert_eq!(output, "75\n24\n0\n24\n");
 }
 
 #[test]
@@ -7483,7 +7486,59 @@ fn self_hosted_enums_natively() {
     else {
         return;
     };
-    assert_eq!(output, "75\n24\n0\n32\n");
+    assert_eq!(output, "75\n24\n0\n24\n");
+}
+
+// A layout is a number both compilers have to reach on their own: the bootstrap
+// computes it and hands the IR explicit offsets, the self-hosted C backend
+// writes a C type and lets the C compiler place the fields, and the assembly
+// backend places them itself. The self-hosted one used to lay every variant's
+// fields end to end, so this program printed 32 there and 24 under the
+// bootstrap. Narrow payloads are here because they are what the tag's own width
+// shows up in: a four-byte tag ahead of a four-byte payload is eight bytes, and
+// an eight-byte tag would be twelve rounded to sixteen.
+#[test]
+fn an_enum_is_the_same_width_under_both_compilers() {
+    let source = "Shape :: enum {\n\
+         \x20   Circle { radius: i64 },\n\
+         \x20   Rectangle { width: i64, height: i64 },\n\
+         \x20   Point,\n}\n\
+         Small :: enum { One { a: i32 }, Two { b: i32, c: i32 } }\n\
+         Bare :: enum { Yes, No }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print sizeof(Shape)\n\
+         \x20   print sizeof(Small)\n\
+         \x20   print sizeof(Bare)\n\
+         \x20   s := Shape::Rectangle { width = 4, height = 6 }\n\
+         \x20   print match s {\n\
+         \x20       case .Circle { radius }: radius\n\
+         \x20       case .Rectangle { width, height }: width * height\n\
+         \x20       case .Point: 0\n    }\n\
+         \x20   t := Small::Two { b = 7, c = 9 }\n\
+         \x20   print match t {\n\
+         \x20       case .One { a }: a\n\
+         \x20       case .Two { b, c }: b + c\n    }\n\
+         \x20   0\n}\n";
+    let Some(bootstrap) = bootstrap_output("enumwidth", source) else {
+        return;
+    };
+    let Some(compiler) = build_self_hosted_compiler("enumwidth") else {
+        return;
+    };
+    for (backend, suffix) in [("--emit-asm", "s"), ("--emit-c", "c")] {
+        let hosted = selfhosted_default_output(
+            &compiler,
+            "enumwidth",
+            source,
+            backend,
+            suffix,
+        );
+        assert_eq!(
+            hosted, bootstrap,
+            "the self-hosted compiler's {backend} laid an enum out differently"
+        );
+    }
+    let _ = std::fs::remove_file(&compiler);
 }
 
 #[test]
