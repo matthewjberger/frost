@@ -816,17 +816,115 @@ binop_is_unsigned :: fn(left: i64, right: i64) -> bool {
     wide_unsigned(left) || wide_unsigned(right)
 }
 
+// The branch that reports arithmetic which cannot answer. `taken` is the jump
+// that skips it, so the caller names the condition it wants to survive: `jno`
+// after a signed operation, `jae` after an unsigned one.
+emit_asm_arith_call :: fn(mut p: Parser, taken: str, code: i64) {
+    shadow := abi_shadow(p)
+    past := new_label(p)
+    emit_text("    ")
+    emit_text(taken)
+    emit_text(" .Lar")
+    frost_rt_emit_int(past)
+    emit_text("\n")
+    emit_text("    movq $")
+    frost_rt_emit_int(code)
+    emit_text(", ")
+    emit_asm_arg_reg(p, 0)
+    emit_text("\n")
+    asm_i("subq $", shadow, ", %rsp")
+    asm("call frost_rt_arith_trap")
+    asm_i("addq $", shadow, ", %rsp")
+    emit_label(".Lar", past)
+    emit_text(":\n")
+}
+
+// A result narrower than the register it was computed in, held to the range its
+// own type means. The arithmetic itself cannot overflow at 64 bits when both
+// operands are narrower, so this is the whole of the check for those widths.
+emit_asm_narrow_check :: fn(mut p: Parser, bits: i64, unsigned: bool,
+    what: i64) {
+    shadow := abi_shadow(p)
+    past := new_label(p)
+    // A value fits `bits` signed exactly when shifting it up and back recovers
+    // it, and fits `bits` unsigned exactly when nothing is left above them. Two
+    // shifts and a compare, with no bound to build and no negative immediate.
+    asm("movq %rax, %r11")
+    if (unsigned) {
+        asm_i("shrq $", bits, ", %r11")
+    } else {
+        asm_i("shlq $", 64 - bits, ", %r11")
+        asm_i("sarq $", 64 - bits, ", %r11")
+    }
+    if (unsigned) {
+        asm("cmpq $0, %r11")
+    } else {
+        asm("cmpq %rax, %r11")
+    }
+    emit_text("    je .Lar")
+    frost_rt_emit_int(past)
+    emit_text("
+")
+    emit_text("    movq $")
+    frost_rt_emit_int(what)
+    emit_text(", ")
+    emit_asm_arg_reg(p, 0)
+    emit_text("
+")
+    asm_i("subq $", shadow, ", %rsp")
+    asm("call frost_rt_arith_trap")
+    asm_i("addq $", shadow, ", %rsp")
+    emit_label(".Lar", past)
+    emit_text(":
+")
+}
+// The check an operation's own width and signedness call for, emitted where the
+// flags the arithmetic just set are still live.
+emit_asm_arith_check :: fn(mut p: Parser, op: i64, ty: i64, unsigned: bool) {
+    if (is_integer(ty) == false) {
+        return
+    }
+    wide := scalar_size(ty) == 8
+    if (op == OP_ADD || op == OP_SUB || op == OP_MUL) {
+        if (wide) {
+            if (unsigned) {
+                emit_asm_arith_call(p, "jae", op)
+            } else {
+                emit_asm_arith_call(p, "jno", op)
+            }
+            return
+        }
+        // The range is the result type's, so its own signedness is what says
+        // where the ends are. The flag above belongs to the instruction that
+        // was emitted, which follows the operands.
+        emit_asm_narrow_check(p, scalar_size(ty) * 8, is_unsigned(ty), op)
+    }
+}
+
 emit_asm_binop :: fn(op: i64, unsigned: bool) {
-    if (op == 0) {
+    if (op == OP_ADD || op == OP_WRAP_ADD) {
         asm("addq %r11, %rax")
         return
     }
-    if (op == 1) {
+    if (op == OP_SUB || op == OP_WRAP_SUB) {
         asm("subq %r11, %rax")
         return
     }
-    if (op == 2) {
+    // Wrapping keeps the low bits whatever the signedness, so the signed
+    // multiply is the one to use: the two agree there and it leaves %rdx alone.
+    if (op == OP_WRAP_MUL) {
         asm("imulq %r11, %rax")
+        return
+    }
+    if (op == 2) {
+        // `imulq` sets the flags for a signed product. An unsigned one goes
+        // through `mulq`, whose carry says the high half is not empty, which is
+        // the only form that answers for a full-width unsigned overflow.
+        if (unsigned) {
+            asm("mulq %r11")
+        } else {
+            asm("imulq %r11, %rax")
+        }
         return
     }
     if (op == 3 || op == 4) {
@@ -1371,7 +1469,9 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         if (simple != SIMPLE_NONE) {
             emit_asm_expr(p, bin.a)
             emit_asm_simple_into_r11(p, bin.b, simple)
-            emit_asm_binop(op, binop_is_unsigned(left_ty, right_ty))
+            unsigned := binop_is_unsigned(left_ty, right_ty)
+            emit_asm_binop(op, unsigned)
+            emit_asm_arith_check(p, op, type_of(p, id), unsigned)
             return
         }
         emit_asm_expr(p, bin.a)
@@ -1379,7 +1479,9 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         emit_asm_expr(p, bin.b)
         asm("movq %rax, %r11")
         emit_asm_unspill(p)
-        emit_asm_binop(op, binop_is_unsigned(left_ty, right_ty))
+        unsigned := binop_is_unsigned(left_ty, right_ty)
+        emit_asm_binop(op, unsigned)
+        emit_asm_arith_check(p, op, type_of(p, id), unsigned)
         return
     }
     if (kind == NodeKind::Call) {

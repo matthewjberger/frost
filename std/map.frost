@@ -52,9 +52,12 @@ Hashing :: struct($K: Type) {
 
 // A scramble of the number, so keys that differ in low bits alone do not all
 // land in one run of slots.
+// Wrapping on purpose: a scramble multiplies precisely to leave the range, and
+// the low bits it keeps are the answer. Ordinary arithmetic refuses a result
+// that does not fit, which is what a count wants and what this does not.
 i64_hash :: fn(key: i64) -> i64 {
-    mut h := key * 2654435761
-    h = h + (h / 4096)
+    mut h := wrap_mul(key, 2654435761)
+    h = wrap_add(h, h / 4096)
     h
 }
 
@@ -68,7 +71,7 @@ i64_same :: fn(a: i64, b: i64) -> bool {
 str_hash :: fn(key: str) -> i64 {
     mut h : i64 = 2166136261
     for index, byte in key {
-        h = ((h * 33) + byte) & 4611686018427387903
+        h = wrap_add(wrap_mul(h, 33), byte) & 4611686018427387903
     }
     h
 }
@@ -260,7 +263,8 @@ map_clear :: fn($K: Type, $V: Type, mut m: Map<K, V>) {
 Cell :: struct { x: i64, y: i64 }
 
 cell_hash :: fn(c: Cell) -> i64 {
-    (i64_hash(c.x) + (i64_hash(c.y) * 31)) & 4611686018427387903
+    wrap_add(i64_hash(c.x), wrap_mul(i64_hash(c.y), 31))
+        & 4611686018427387903
 }
 
 cell_same :: fn(a: Cell, b: Cell) -> bool {

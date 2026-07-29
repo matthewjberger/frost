@@ -531,6 +531,15 @@ parse_primary :: fn(mut p: Parser) -> i64 {
             advance(p)
             return lower_flags_has(p, set, wanted)
         }
+        if (str_range_eq(p.src, offset, length, "wrap_add")) {
+            return parse_wrapping(p, OP_WRAP_ADD)
+        }
+        if (str_range_eq(p.src, offset, length, "wrap_sub")) {
+            return parse_wrapping(p, OP_WRAP_SUB)
+        }
+        if (str_range_eq(p.src, offset, length, "wrap_mul")) {
+            return parse_wrapping(p, OP_WRAP_MUL)
+        }
         if (str_range_eq(p.src, offset, length, "slice_len")
             || str_range_eq(p.src, offset, length, "str_len")) {
             advance(p)
@@ -797,6 +806,17 @@ lower_try :: fn(mut p: Parser, value: i64) -> i64 {
 // in the left, which is `(chosen & wanted) == wanted`. The bits looked for are
 // bound to a name first, so however they were written they are computed once
 // rather than twice.
+// `wrap_add(a, b)` and its two siblings, read where the cursor already sits on
+// the opening parenthesis.
+parse_wrapping :: fn(mut p: Parser, op: i64) -> i64 {
+    advance(p)
+    left := parse_expr(p)
+    advance(p)
+    right := parse_expr(p)
+    advance(p)
+    new_node(p, NodeKind::Bin, left, right, op)
+}
+
 lower_flags_has :: fn(mut p: Parser, set: i64, wanted: i64) -> i64 {
     node := arena_at(p.arena, wanted)
     kind := node.kind

@@ -104,6 +104,7 @@ M_SHRQ :: 43
 // arrive as float literals and never cross.
 M_CVTSI2SSQ :: 44
 M_CVTTSS2SIQ :: 45
+M_MULQ :: 46
 // Not an instruction: a label definition, which takes a place in the list so
 // its address is whatever the instructions before it add up to.
 M_LABEL :: 40
@@ -297,7 +298,7 @@ name_hash :: fn(src: str, off: i64, len: i64) -> i64 {
     mut h : i64 = 2166136261
     mut i : i64 = 0
     while (i < len) {
-        h = (h * 131 + src[off + i]) & 4611686018427387903
+        h = wrap_add(wrap_mul(h, 131), src[off + i]) & 4611686018427387903
         i = i + 1
     }
     h
@@ -558,6 +559,7 @@ condition_code :: fn(src: str, off: i64, len: i64) -> i64 {
         if (first == CH_b && second == CH_e) { return 6 }
         if (first == CH_a && second == CH_e) { return 3 }
         if (first == CH_n && second == CH_s) { return 9 }
+        if (first == CH_n && second == CH_o) { return 1 }
         return -1
     }
     -1
@@ -583,6 +585,7 @@ mnemonic_of :: fn(src: str, off: i64, len: i64) -> (op: i64, cc: i64) {
     if (bytes_same(src, off, len, "imulq")) { return M_IMULQ, 0 }
     if (bytes_same(src, off, len, "idivq")) { return M_IDIVQ, 0 }
     if (bytes_same(src, off, len, "divq")) { return M_DIVQ, 0 }
+    if (bytes_same(src, off, len, "mulq")) { return M_MULQ, 0 }
     if (bytes_same(src, off, len, "shrq")) { return M_SHRQ, 0 }
     if (bytes_same(src, off, len, "cqto")) { return M_CQTO, 0 }
     if (bytes_same(src, off, len, "andq")) { return M_ANDQ, 0 }
@@ -993,12 +996,15 @@ encode_insn :: fn(mut unit: Assembly, index: i64) {
             0, byte_reg_forces_rex(a_reg))
         return
     }
-    if (op == M_IDIVQ || op == M_DIVQ) {
-        // The same opcode either way: which of the two divides it is comes from
-        // the digit in the ModRM byte.
+    if (op == M_IDIVQ || op == M_DIVQ || op == M_MULQ) {
+        // One opcode for the whole group: which of them it is comes from the
+        // digit in the ModRM byte.
         mut digit : i64 = 7
         if (op == M_DIVQ) {
             digit = 6
+        }
+        if (op == M_MULQ) {
+            digit = 4
         }
         emit_reg_rm(unit, 0, 1, 0, 247, digit, OPND_REG, reg_code(a_reg), 0, 0)
         return
@@ -1010,6 +1016,15 @@ encode_insn :: fn(mut unit: Assembly, index: i64) {
         }
         if (op == M_SHRQ) {
             digit = 5
+        }
+        // By a written amount, or by whatever `%cl` holds. The two are
+        // different opcodes, and reading an immediate as the register form
+        // shifts by the wrong number without saying so.
+        if (a_kind == OPND_IMM) {
+            emit_reg_rm(unit, 0, 1, 0, 193, digit, OPND_REG, reg_code(b_reg),
+                0, 0)
+            text_byte(unit, a_disp)
+            return
         }
         emit_reg_rm(unit, 0, 1, 0, 211, digit, OPND_REG, reg_code(b_reg), 0, 0)
         return

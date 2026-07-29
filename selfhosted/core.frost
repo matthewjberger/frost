@@ -17,6 +17,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     DISTINCT_STRIDE, Node, NodeKind,
     OP_ADD, OP_AND, OP_DIV, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT, OP_MOD, OP_MUL,
     OP_NE, OP_OR, OP_SUB, OP_SHL, OP_SHR, OP_BITAND, OP_BITOR,
+    OP_WRAP_ADD, OP_WRAP_SUB, OP_WRAP_MUL,
     op_answers_truth,
     BORROW_FLAG, POINTER_BASE, Parser, STRUCT_BASE, StructDef,
     StructField, Sym, TokenKind, VariantFixup, FixupKind, TY_BOOL, TY_F32, TY_F64, TY_HANDLE, TY_I16, TY_I32, TY_I64, TY_I8, TY_ISIZE,
@@ -293,6 +294,12 @@ OP_SHL    :: 13
 OP_SHR    :: 14
 OP_BITAND :: 15
 OP_BITOR  :: 16
+// Arithmetic that keeps the low bits of its type and drops the rest. Ordinary
+// arithmetic refuses a result that does not fit; a hash is the case where
+// leaving the range is the point, and it says so at the site.
+OP_WRAP_ADD :: 17
+OP_WRAP_SUB :: 18
+OP_WRAP_MUL :: 19
 
 // Whether an operator answers with a truth value rather than with a number.
 // The codes are not laid out so that one comparison separates the two groups:
@@ -1126,6 +1133,9 @@ Parser :: struct {
     frame_answers_view: i64,
     frame_answers_place: i64,
     frame_answers_direct: i64,
+    // Which scratch slot the next checked operation reads its left operand
+    // into, counted per function.
+    arith_site: i64,
     // The parameter nodes declared `mut`, by node index, so the exclusivity
     // check can tell an exclusive borrow from a shared one where the type alone
     // cannot. A `mut` and a read of an aggregate both pass by address.

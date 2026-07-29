@@ -369,24 +369,21 @@ so nobody has to find out by reading the passes.
   or an ordinary one, because every step in front of a dereference says where the
   pointer was read from and none of them says where it points. Reaching through a
   `^T` is gated on an `unsafe` block.
-- Integer overflow wraps rather than trapping, and that is a decision rather
-  than a gap. Wrapping is defined behavior, and a trap would be control flow
-  hidden behind an operator, which the design rules out. An index computed with
-  arithmetic that wraps lands on the wrong element, and the bounds check still
-  runs on the value that comes out, so the read stays inside the array: a wrong
-  answer, not a wrong address.
+- Integer arithmetic whose result does not fit the type it is computed at stops
+  there rather than wrapping. Add, subtract, multiply, divide by zero, the one
+  signed division that has no answer, negating the lowest value, and a shift by
+  more than the width are all refused. A wrapped count is a wrong number that
+  keeps going, and the checks downstream then run against it.
 
-  Where a wrapped number *did* become a wrong address, it is now refused, and
-  each of those was a real hole rather than a theoretical one. A count times an
-  element width that wraps asks the allocator for fewer bytes than the caller
-  believes. A slice length that is negative reads as enormous to a bounds check
-  that compares unsigned. A sub-slice longer than the run it came from carries a
-  length its storage does not have. All three are checked where the value is
-  made, and all three were reachable from safe code.
+  Leaving the range is spelled where it is the point. `wrap_add`, `wrap_sub` and
+  `wrap_mul` keep the low bits and drop the rest, which is what a hash wants: a
+  scramble multiplies precisely to leave the range, and a hash that stopped
+  there would be a hash nobody could write. Trapping without them would have
+  made a hash map unwritable, so they arrived together.
 
-  Checking the arithmetic inside an index instead would have been worse than
-  nothing: `xs[a * b]` would be checked while `i := a * b` followed by `xs[i]`
-  would not, which is a guarantee about spelling rather than about the program.
+  Each backend detects the condition inline and calls the runtime only on the
+  branch that has already failed, so arithmetic that fits costs a comparison the
+  hardware was doing anyway.
 - There is no bound on recursion depth. What there is instead is a guarantee
   about how running the stack out fails: every frame wider than a page touches
   each page on the way down, on every target, so the stack pointer cannot move

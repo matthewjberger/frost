@@ -2,6 +2,7 @@
 
 import "core.frost"
 import "imports.frost"
+import "layout.frost"
 import "lexer.frost"
 import "names.frost"
 import "types.frost"
@@ -29,7 +30,10 @@ emit_op :: fn(op: i64) {
         case 13: emit_text(" << ")
         case 14: emit_text(" >> ")
         case 15: emit_text(" & ")
-        case _: emit_text(" | ")
+        case 16: emit_text(" | ")
+        case 17: emit_text(" + ")
+        case 18: emit_text(" - ")
+        case _: emit_text(" * ")
     }
 }
 
@@ -756,11 +760,108 @@ emit_expr :: fn(mut p: Parser, id: i64) {
     left := bin.a
     op := bin.val
     right := bin.b
+    ty := type_of(p, id)
+    if (arith_checked(p, op, ty)) {
+        emit_checked_bin(p, left, op, right, ty)
+        return
+    }
     emit_text("(")
     emit_expr(p, left)
     emit_op(op)
     emit_expr(p, right)
     emit_text(")")
+}
+
+// Whether an operation can leave the range of the type it is computed at. A
+// comparison answers a truth value, a bitwise operation stays inside, and
+// anything that is not an integer is a float or a pointer.
+arith_checked :: fn(mut p: Parser, op: i64, ty: i64) -> bool {
+    if (is_integer(ty) == false) {
+        return false
+    }
+    op == OP_ADD || op == OP_SUB || op == OP_MUL || op == OP_DIV
+        || op == OP_MOD
+}
+
+// A 64-bit operation is checked where it is done, since there is no wider place
+// to do it. A narrower one is computed at 64 bits, where neither operand can
+// overflow, and the answer is held to the range its own type means.
+//
+// Both operands are read into names before the check sees them, because C
+// sequences neither a call's arguments nor an operator's operands, and the other
+// two backends evaluate left to right. Without this, `take(10) + take(32)`
+// answered with the two calls the other way round.
+emit_checked_bin :: fn(mut p: Parser, left: i64, op: i64, right: i64, ty: i64) {
+    signed := is_unsigned(ty) == false
+    slot := p.arith_site
+    if (slot >= ARITH_SLOTS) {
+        report("frost: more checked arithmetic in one function than there are ")
+        report("slots to read its operands into\n")
+        frost_rt_die()
+    }
+    p.arith_site = slot + 1
+    emit_text("(frost_t[")
+    frost_rt_emit_int(slot)
+    emit_text("] = (")
+    emit_expr(p, left)
+    emit_text("), ")
+    if (scalar_size(ty) == 8 || op == OP_DIV || op == OP_MOD) {
+        // Bound first: an aggregate argument travels by address, and a call is
+        // not something an address can be taken of.
+        helper := arith_wide_helper(op, signed)
+        emit_text(helper)
+        emit_text("(frost_t[")
+        frost_rt_emit_int(slot)
+        emit_text("], (")
+        emit_expr(p, right)
+        emit_text(")))")
+        return
+    }
+    emit_text("frost_narrow((frost_t[")
+    frost_rt_emit_int(slot)
+    emit_text("]")
+    emit_op(op)
+    emit_text("(")
+    emit_expr(p, right)
+    emit_text(")), ")
+    frost_rt_emit_int(scalar_size(ty) * 8)
+    emit_text(", ")
+    if (signed) {
+        emit_text("1")
+    } else {
+        emit_text("0")
+    }
+    // The operation, so the sentence an overflow gets is the same one the other
+    // backends give for it.
+    emit_text(", ")
+    frost_rt_emit_int(op)
+    emit_text("))")
+}
+
+// How many checked operations one function may hold. Reaching it is a refusal
+// rather than a wrong slot, since two sites sharing one would read each other's
+// operand.
+ARITH_SLOTS :: 256
+
+arith_wide_helper :: fn(op: i64, signed: bool) -> str {
+    if (op == OP_ADD) {
+        if (signed) { return "frost_add_i64" }
+        return "frost_add_u64"
+    }
+    if (op == OP_SUB) {
+        if (signed) { return "frost_sub_i64" }
+        return "frost_sub_u64"
+    }
+    if (op == OP_MUL) {
+        if (signed) { return "frost_mul_i64" }
+        return "frost_mul_u64"
+    }
+    if (op == OP_DIV) {
+        if (signed) { return "frost_div_i64" }
+        return "frost_div_u64"
+    }
+    if (signed) { return "frost_rem_i64" }
+    "frost_rem_u64"
 }
 
 // A call through a function-pointer value. The value is a `void*`, so it is
@@ -1511,6 +1612,15 @@ emit_type_defs :: fn(mut p: Parser) {
 // value (Frost's implicit return) and appending a `return 0;` fallthrough only
 // when the body does not already end in a return or a value.
 emit_function_body :: fn(mut p: Parser, body: i64) {
+    // Somewhere to read a checked operation's left operand into. C sequences
+    // neither a call's arguments nor an operator's operands, and the comma
+    // operator does, so a checked operation reads its left side into a slot
+    // here and the whole of its right side happens after that. One slot per
+    // site, since a site's own value is dead by the time the next one starts.
+    p.arith_site = 0
+    emit_text("int64_t frost_t[")
+    frost_rt_emit_int(ARITH_SLOTS)
+    emit_text("]; (void)frost_t;\n")
     if (body == (-1)) {
         emit_text("return 0;\n")
         return
@@ -1713,6 +1823,46 @@ emit_program :: fn(mut p: Parser, head: i64) {
     // The same unsigned comparison that answers for a negative index would read
     // a negative length as enormous and let every index through, so a length is
     // answered for once where the slice is built rather than at each access.
+    // Arithmetic whose result does not fit the type it is computed at has no
+    // right answer, so it stops rather than wrapping. Each is a comparison the
+    // hardware was doing anyway, and the call sits on the branch that failed.
+    emit_text("void frost_rt_arith_trap(int64_t);\n")
+    emit_text("static inline int64_t frost_add_i64(int64_t a, int64_t b) {\n")
+    emit_text("  if ((b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b))\n")
+    emit_text("    frost_rt_arith_trap(0);\n  return a + b;\n}\n")
+    emit_text("static inline int64_t frost_sub_i64(int64_t a, int64_t b) {\n")
+    emit_text("  if ((b < 0 && a > INT64_MAX + b) || (b > 0 && a < INT64_MIN + b))\n")
+    emit_text("    frost_rt_arith_trap(1);\n  return a - b;\n}\n")
+    emit_text("static inline int64_t frost_mul_i64(int64_t a, int64_t b) {\n")
+    emit_text("  if (a != 0 && b != 0) {\n")
+    emit_text("    int64_t r = (int64_t)((uint64_t)a * (uint64_t)b);\n")
+    emit_text("    if (r / b != a) frost_rt_arith_trap(2);\n    return r;\n  }\n")
+    emit_text("  return 0;\n}\n")
+    emit_text("static inline uint64_t frost_add_u64(uint64_t a, uint64_t b) {\n")
+    emit_text("  if (a > UINT64_MAX - b) frost_rt_arith_trap(0);\n  return a + b;\n}\n")
+    emit_text("static inline uint64_t frost_sub_u64(uint64_t a, uint64_t b) {\n")
+    emit_text("  if (a < b) frost_rt_arith_trap(1);\n  return a - b;\n}\n")
+    emit_text("static inline uint64_t frost_mul_u64(uint64_t a, uint64_t b) {\n")
+    emit_text("  if (a != 0 && b > UINT64_MAX / a) frost_rt_arith_trap(2);\n")
+    emit_text("  return a * b;\n}\n")
+    emit_text("static inline int64_t frost_div_i64(int64_t a, int64_t b) {\n")
+    emit_text("  if (b == 0) frost_rt_arith_trap(3);\n")
+    emit_text("  if (a == INT64_MIN && b == -1) frost_rt_arith_trap(5);\n")
+    emit_text("  return a / b;\n}\n")
+    emit_text("static inline int64_t frost_rem_i64(int64_t a, int64_t b) {\n")
+    emit_text("  if (b == 0) frost_rt_arith_trap(4);\n")
+    emit_text("  if (a == INT64_MIN && b == -1) return 0;\n  return a % b;\n}\n")
+    emit_text("static inline uint64_t frost_div_u64(uint64_t a, uint64_t b) {\n")
+    emit_text("  if (b == 0) frost_rt_arith_trap(3);\n  return a / b;\n}\n")
+    emit_text("static inline uint64_t frost_rem_u64(uint64_t a, uint64_t b) {\n")
+    emit_text("  if (b == 0) frost_rt_arith_trap(4);\n  return a % b;\n}\n")
+    emit_text("static inline int64_t frost_narrow(int64_t v, int64_t bits, int64_t is_signed, int64_t what) {\n")
+    emit_text("  if (is_signed) {\n")
+    emit_text("    int64_t hi = ((int64_t)1 << (bits - 1)) - 1;\n")
+    emit_text("    if (v < -hi - 1 || v > hi) frost_rt_arith_trap(what);\n")
+    emit_text("  } else {\n")
+    emit_text("    if (v < 0 || (uint64_t)v > (((uint64_t)1 << bits) - 1))\n")
+    emit_text("      frost_rt_arith_trap(what);\n  }\n  return v;\n}\n")
     emit_text("int64_t frost_rt_check_length(int64_t);\n")
     emit_text("static inline int64_t frost_length(int64_t n) {\n")
     emit_text("  if (n < 0) { frost_rt_check_length(n); }\n")

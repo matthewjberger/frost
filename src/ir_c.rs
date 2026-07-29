@@ -65,6 +65,9 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
 
     let mut output = String::new();
     output.push_str("#include <stdint.h>\n\n");
+    output.push_str(crate::arith_prelude::ARITH_PRELUDE);
+    output.push('\n');
+    externs.insert("frost_rt_arith_trap");
     output.push_str(
         "void frost_rt_bounds_check(int64_t index, int64_t length);\n",
     );
@@ -554,14 +557,19 @@ fn rvalue_expr(
         IrRvalue::Binary(op, left, right) => {
             let left_expr = operand_expr(function, left)?;
             let right_expr = operand_expr(function, right)?;
-            format!("({left_expr} {} {right_expr})", binary_operator(*op))
+            let ty = operand_type(function, left);
+            checked_binary(*op, &left_expr, &right_expr, &ty)
         }
         IrRvalue::Unary(op, operand) => {
             let expr = operand_expr(function, operand)?;
+            let ty = operand_type(function, operand);
             match op {
                 // The operand is parenthesised, not just the whole thing. A
                 // negated negative constant came out as `--9`, which C reads as
                 // a decrement and refuses because a literal is not a place.
+                IrUnOp::Negate if integer_range(&ty).is_some() => {
+                    format!("frost_neg_i64(({expr}))")
+                }
                 IrUnOp::Negate => format!("(-({expr}))"),
                 IrUnOp::Not => format!("(!({expr}))"),
             }
@@ -700,11 +708,80 @@ fn operand_type(function: &IrFunction, operand: &IrOperand) -> Type {
     }
 }
 
+/// The range an integer type can hold, and whether it is signed. `None` for
+/// anything that is not an integer, where arithmetic is either floating point
+/// or a pointer difference and neither has this question.
+fn integer_range(ty: &Type) -> Option<(bool, u32)> {
+    let held = match ty {
+        Type::Distinct(_, inner) => inner.as_ref(),
+        other => other,
+    };
+    match held {
+        Type::I8 => Some((true, 8)),
+        Type::I16 => Some((true, 16)),
+        Type::I32 => Some((true, 32)),
+        Type::I64 | Type::Isize => Some((true, 64)),
+        Type::U8 => Some((false, 8)),
+        Type::U16 => Some((false, 16)),
+        Type::U32 => Some((false, 32)),
+        Type::U64 | Type::Usize => Some((false, 64)),
+        _ => None,
+    }
+}
+
+/// One arithmetic operation, with the check its type needs.
+///
+/// A 64-bit operation is checked where it is done, since there is no wider place
+/// to do it. A narrower one is computed at 64 bits, where neither operand can
+/// overflow, and the answer is held to the range its own type means.
+fn checked_binary(op: IrBinOp, left: &str, right: &str, ty: &Type) -> String {
+    let Some((signed, bits)) = integer_range(ty) else {
+        return format!("({left} {} {right})", binary_operator(op));
+    };
+    let wide = bits == 64;
+    let suffix = if signed { "i64" } else { "u64" };
+    let call =
+        |name: &str| format!("frost_{name}_{suffix}(({left}), ({right}))");
+    let sign = i32::from(signed);
+    // The narrow form names the operation too, so the sentence a program gets
+    // for an overflow does not depend on which backend compiled it.
+    let narrow = |expr: String, fault: i64| {
+        format!("frost_narrow((int64_t){expr}, {bits}, {sign}, {fault})")
+    };
+    match op {
+        IrBinOp::Add | IrBinOp::Subtract | IrBinOp::Multiply => {
+            let (name, fault) = match op {
+                IrBinOp::Add => ("add", 0),
+                IrBinOp::Subtract => ("sub", 1),
+                _ => ("mul", 2),
+            };
+            if wide {
+                call(name)
+            } else {
+                narrow(
+                    format!("(({left}) {} ({right}))", binary_operator(op)),
+                    fault,
+                )
+            }
+        }
+        IrBinOp::Divide => call("div"),
+        IrBinOp::Modulo => call("rem"),
+        IrBinOp::ShiftLeft | IrBinOp::ShiftRight => narrow(
+            format!(
+                "(({left}) {} frost_shift((int64_t)({right}), {bits}))",
+                binary_operator(op)
+            ),
+            8,
+        ),
+        _ => format!("({left} {} {right})", binary_operator(op)),
+    }
+}
+
 fn binary_operator(op: IrBinOp) -> &'static str {
     match op {
-        IrBinOp::Add => "+",
-        IrBinOp::Subtract => "-",
-        IrBinOp::Multiply => "*",
+        IrBinOp::Add | IrBinOp::WrappingAdd => "+",
+        IrBinOp::Subtract | IrBinOp::WrappingSubtract => "-",
+        IrBinOp::Multiply | IrBinOp::WrappingMultiply => "*",
         IrBinOp::Divide => "/",
         IrBinOp::Modulo => "%",
         IrBinOp::BitwiseAnd => "&",

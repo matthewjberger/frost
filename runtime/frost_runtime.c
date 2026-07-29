@@ -211,6 +211,33 @@ int64_t frost_rt_check_length(int64_t length) {
     return length;
 }
 
+/* Arithmetic that cannot answer.
+
+   An integer operation whose result does not fit the type it is being computed
+   at has no right answer, and wrapping is a wrong one that keeps going. Every
+   backend detects the condition itself, inline, and calls this only on the
+   branch that has already failed, so an operation that fits costs a compare the
+   hardware was doing anyway. */
+void frost_rt_arith_trap(int64_t what) {
+    static const char *reasons[] = {
+        "this addition overflowed",
+        "this subtraction overflowed",
+        "this multiplication overflowed",
+        "division by zero",
+        "remainder by zero",
+        "this division overflowed",
+        "this negation overflowed",
+        "this shift moved by more than the width of its type",
+        "this arithmetic left the range of its type",
+    };
+    const char *reason = "arithmetic that cannot answer";
+    if (what >= 0 && what < (int64_t)(sizeof(reasons) / sizeof(reasons[0]))) {
+        reason = reasons[what];
+    }
+    fprintf(stderr, "frost: %s\n", reason);
+    frost_rt_stop();
+}
+
 /* A view of `count` elements starting `from` elements into a run of `room`,
    refused where it would reach past the end.
 

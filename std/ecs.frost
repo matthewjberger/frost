@@ -497,7 +497,7 @@ mask_hash :: fn(m: Mask) -> i64 {
     mut h : i64 = 0
     mut i : i64 = 0
     while (i < MASK_WORDS) {
-        h = h * 1099511628211 + m.words[i]
+        h = wrap_add(wrap_mul(h, 1099511628211), m.words[i])
         i = i + 1
     }
     h
@@ -506,8 +506,8 @@ mask_hash :: fn(m: Mask) -> i64 {
 // The slot a mask sits in, or the first empty one on its probe run. The table
 // is never full, since it grows at half.
 lookup_slot :: fn(l: Lookup, mask: Mask) -> i64 {
-    mut h := mask_hash(mask) * 2654435761
-    h = h + (h / 4096)
+    mut h := wrap_mul(mask_hash(mask), 2654435761)
+    h = wrap_add(h, h / 4096)
     mut i := h % l.cap
     if (i < 0) {
         i = -i

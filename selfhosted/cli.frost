@@ -183,7 +183,7 @@ file_checksum :: fn(path: ^i8) -> i64 {
     mut sum : i64 = length + 1
     mut k : i64 = 0
     while (k < length) {
-        sum = sum * 131 + byte_at(text, k)
+        sum = wrap_add(wrap_mul(sum, 131), byte_at(text, k))
         k = k + 1
     }
     sum
@@ -197,7 +197,7 @@ text_checksum :: fn(text: str) -> i64 {
     mut sum : i64 = length + 1
     mut k : i64 = 0
     while (k < length) {
-        sum = sum * 131 + text[k]
+        sum = wrap_add(wrap_mul(sum, 131), text[k])
         k = k + 1
     }
     sum

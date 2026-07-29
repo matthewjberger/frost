@@ -334,7 +334,11 @@ tokenize :: fn(src: str, len: i64, mut tokens: Arena<Token>) {
                     || byte_of(src, i, len) == CH_UNDERSCORE) {
                     held := byte_of(src, i, len)
                     if (held != CH_UNDERSCORE) {
-                        value = value * base + radix_digit(held)
+                        // Wrapping on purpose: `0xFFFFFFFFFFFFFFFF` is a bit
+                        // pattern, and the digits build it by leaving the
+                        // signed range on the way.
+                        value = wrap_add(wrap_mul(value, base),
+                            radix_digit(held))
                     }
                     i = i + 1
                 }
@@ -345,7 +349,7 @@ tokenize :: fn(src: str, len: i64, mut tokens: Arena<Token>) {
                 || byte_of(src, i, len) == CH_UNDERSCORE) {
                 held := byte_of(src, i, len)
                 if (held != CH_UNDERSCORE) {
-                    value = value * 10 + (held - CH_0)
+                    value = wrap_add(wrap_mul(value, 10), held - CH_0)
                 }
                 i = i + 1
             }

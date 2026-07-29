@@ -578,6 +578,7 @@ main :: fn() -> i64 {
         frame_answers_view = 0,
         frame_answers_place = 0,
         frame_answers_direct = 0,
+        arith_site = 0,
         mut_params = arena_make($LocalVar, 8192),
         value_params = arena_make($LocalVar, 4096),
         move_scratch = arena_make($LocalVar, 4096),

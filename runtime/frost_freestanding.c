@@ -47,6 +47,11 @@ frost_rt_i64 frost_rt_check_length(frost_rt_i64 length) {
    libc is held to the same guarantees as one built with it. There is no heap
    here, so nothing calls the allocator, but a program can still cut a view from
    a stack array and can still ask how many bytes a count of elements takes. */
+void frost_rt_arith_trap(frost_rt_i64 what) {
+    (void)what;
+    __builtin_trap();
+}
+
 frost_rt_i64 frost_rt_check_span(frost_rt_i64 from, frost_rt_i64 count,
                                  frost_rt_i64 room) {
     if (from < 0 || from > room) {
