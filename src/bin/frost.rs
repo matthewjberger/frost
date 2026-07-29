@@ -388,12 +388,7 @@ fn compile() -> Result<()> {
         });
     }
     check_callback_declarations(&statements).context("Callback error")?;
-    // On by default now that the standard library and the self-hosted compiler
-    // are gate-clean. FROST_CHECK_UNSAFE=0 turns it off, for compiling older
-    // code that has not marked its unchecked operations yet.
-    if std::env::var("FROST_CHECK_UNSAFE").as_deref() != Ok("0") {
-        check_unsafety(&statements).context("Unsafe operation error")?;
-    }
+    check_unsafety(&statements).context("Unsafe operation error")?;
     if cli.audit_unsafe {
         let held = frost::audit_unsafe_blocks(&statements);
         if !held.is_empty() {

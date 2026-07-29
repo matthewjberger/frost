@@ -84,6 +84,7 @@ fn walk_unsafety(
         scope: Vec::new(),
         diagnostics: Vec::new(),
     };
+    let mut top_level: HashMap<String, Type> = HashMap::new();
     for statement in statements {
         // What each function answers with. The index rule below refuses a base
         // whose type it cannot name, and a binding is most often given its type
@@ -93,6 +94,13 @@ fn walk_unsafety(
             Statement::Constant(name, value) => {
                 if let Some(ty) = declared_return(value) {
                     checker.returns.insert(name.clone(), ty);
+                }
+                // A constant is named from inside every function, so its type
+                // belongs to the walk before any of them start. `ROW :: [1, 2]`
+                // then `ROW[i]` is an index into an array, and without this the
+                // base has no type and the rule refuses it.
+                if let Some(ty) = constant_type(value) {
+                    top_level.insert(name.clone(), ty);
                 }
             }
             Statement::Extern {
@@ -134,10 +142,26 @@ fn walk_unsafety(
             _ => {}
         }
     }
+    checker.scope.push(top_level);
     for statement in statements {
         checker.statement(statement);
     }
     checker.diagnostics
+}
+
+/// The type a top-level constant holds, for the shapes that say so plainly. Only
+/// enough to tell an index into one from an index into a raw pointer.
+fn constant_type(value: &Expression) -> Option<Type> {
+    match value {
+        Expression::Literal(Literal::Array(elements)) => {
+            Some(Type::Array(Box::new(Type::Unknown), elements.len()))
+        }
+        Expression::ArrayRepeat(_, _) => {
+            Some(Type::Array(Box::new(Type::Unknown), 0))
+        }
+        Expression::Literal(Literal::String(_)) => Some(Type::Str),
+        _ => None,
+    }
 }
 
 // Replace every `unsafe fn(...)` with the plain function it wraps, once the
@@ -305,6 +329,16 @@ impl Checker {
             Expression::Identifier(name) => self.lookup(name).cloned(),
             Expression::FieldAccess(base, field) => {
                 let base_type = self.type_of(base)?;
+                // A `columns<T, N>` is laid out by reflecting T's fields, which
+                // happens after this pass, so the field a body names has no
+                // declaration to look up yet. Every one of them is an array,
+                // which is all this rule needs: what it refuses is a raw
+                // pointer, and a column is not one.
+                if let Type::Struct(name) = &base_type
+                    && name.starts_with("columns<")
+                {
+                    return Some(Type::Array(Box::new(Type::Unknown), 0));
+                }
                 let name = match base_type {
                     Type::Struct(name) => name,
                     Type::Ptr(inner)

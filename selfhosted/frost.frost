@@ -667,11 +667,8 @@ main :: fn() -> i64 {
     // After the types, because whether an index or a field read goes through a
     // raw pointer is a question about a local's type, and check_types is where
     // the locals are known. It writes the answer onto the node and this reads
-    // it. On by default, the same as the bootstrap: FROST_CHECK_UNSAFE=0 turns
-    // it off, for compiling code that has not marked its unchecked operations.
-    if (cstr_eq(unsafe { frost_rt_getenv("FROST_CHECK_UNSAFE") }, "0") == false) {
-        check_unsafety(parser)
-    }
+    // it.
+    check_unsafety(parser)
 
     // The checks are done, so a node's type is settled. The memo is what makes
     // emit stop re-deriving the same ones, and a per-module build emits as many

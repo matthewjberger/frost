@@ -85,7 +85,6 @@ pub fn build_self_hosted_compiler(name: &str) -> Option<PathBuf> {
     ));
     let frost = env!("CARGO_BIN_EXE_frost");
     let build = Command::new(frost)
-        .env("FROST_CHECK_UNSAFE", "0")
         .arg("--link")
         .arg("-o")
         .arg(&compiler)
