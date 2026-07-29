@@ -197,6 +197,23 @@ close :: extern fn(f: File)              // terminal consumer, across the FFI bo
 - At most once comes from the move checker (section 2). Consuming a linear
   value moves it, so a second use is a use-after-move error, and there is no
   double-free.
+
+  A resource is consumed through the *place* that names it rather than through
+  the name at its root, which is what makes the count hold for one held inside
+  something else. `close(h.file)` consumes part of `h`, so a second
+  `close(h.file)` is a second consumption and so is consuming `h` afterwards,
+  since the whole contains the part. Two separate fields, and two elements whose
+  indexes are known apart, are different storage and may each be consumed once:
+  that is what a container releasing each of its own rests on, and
+  `world_release` frees several `Vec` fields in a row. A place given away and
+  then assigned holds a value again, so `world.tables = kept` after
+  `vec_free($Table, world.tables)` is a container replacing what it released.
+
+  Tracked per name, this did not hold. A field was never recorded, so a resource
+  reached through one could be consumed any number of times in safe code with no
+  `unsafe` anywhere, which is a double free rather than a leak. The places are
+  compared the same way the exclusivity check compares a call's borrows, which
+  is the machinery both compilers already had for the neighbouring question.
 - At least once is the new rule. A linear value still live at the end of the
   function that owns it is a "never consumed" error, and there is no leak.
 

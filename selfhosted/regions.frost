@@ -11,8 +11,57 @@ import "cursor.frost"
 import "parser.frost"
 
 export check_borrow_exclusivity, check_calls, check_export_collisions,
-    check_frame_escapes, check_moves,
+    check_frame_escapes, check_moves, check_pooled_resources,
     check_reference_fields, check_regions, check_types, check_unsafety
+
+// A pool whose elements are resources.
+//
+// A slot is emptied by bumping a generation and filled again by an insert that
+// overwrites what was there, so nothing consumes the element that leaves. The
+// container carries one obligation and its slots carry none, and there is no
+// consumer that can discharge the difference: releasing each element means
+// consuming `p.storage[i]` around a loop, which is a move inside a loop and
+// refused, correctly, since nothing says the indexes differ. So the shape is one
+// the language demands be consumed and gives no way to consume, and it is
+// refused where the container is declared.
+//
+// A slab holds its elements in `storage` and a columns container holds one array
+// per field of the element instead, so both are answered by the same question:
+// whether any run of values this container owns is a run of resources.
+check_pooled_resources :: fn(mut p: Parser) {
+    mut i : i64 = 0
+    while (i < p.instances.count) {
+        entry := arena_at(p.instances, i)
+        struct_ty := STRUCT_BASE + entry.struct_index
+        if (is_slab_ty(p, struct_ty) || is_columns_ty(p, struct_ty)) {
+            report_pooled_resource(p, struct_ty)
+        }
+        i = i + 1
+    }
+}
+
+report_pooled_resource :: fn(mut p: Parser, struct_ty: i64) {
+    def := arena_at(p.structs, struct_index_of(struct_ty))
+    name_off := def.name_off
+    name_len := def.name_len
+    mut field := def.field_head
+    while (field != (-1)) {
+        held := arena_at(p.fields, field)
+        ty := held.ty
+        next_field := held.next
+        // A run held by value is a slot table. A slice looks at storage it does
+        // not own, so what is in it is not this container's to consume.
+        if (is_array_ty(ty) && is_slice_ty(p, ty) == false
+            && is_linear_type(p, array_element(p, ty))) {
+            report_where(p.modules, p.src, name_off)
+            report("'")
+            report_src(p.src, name_off, name_len)
+            report("' is a pool of a resource. A slot is released by bumping a generation and filled again by an insert that overwrites it, so nothing consumes the element that leaves. Keep the resource outside the pool and put a handle to it in the slot, or hold the elements beside the pool: one array of offsets giving each element its range into a single run that owns the whole of it")
+            frost_rt_die()
+        }
+        field = next_field
+    }
+}
 
 
 // ---------------------------------------------------------------------------
@@ -929,6 +978,87 @@ check_linear_locals :: fn(mut p: Parser, head: i64, answers: bool) {
 // tracking the moved set with a union at every branch, so what a branch moved is
 // known only after both are joined. The moved set is p.moved, reset per function.
 
+// The place already given away that shares storage with this one, or -1. Two
+// places are the same storage when they overlap rather than when they read
+// alike, which is the question the exclusivity check asks of a call's borrows.
+place_is_moved :: fn(mut p: Parser, id: i64) -> i64 {
+    if (id < 0) {
+        return -1
+    }
+    mut i : i64 = 0
+    while (i < p.moved.count) {
+        entry := arena_at(p.moved, i)
+        held := entry.slot
+        if (held >= 0 && places_overlap(p, held, id)) {
+            return held
+        }
+        i = i + 1
+    }
+    -1
+}
+
+// A place holds a value again, so nothing that shares its storage is gone any
+// more. The entries are compacted rather than marked, since the set is a run
+// whose length is what the branch walks save and restore.
+revive_place :: fn(mut p: Parser, id: i64) {
+    if (id < 0 || is_place_expr(p, id) == false) {
+        return
+    }
+    mut kept : i64 = 0
+    mut i : i64 = 0
+    while (i < p.moved.count) {
+        entry := arena_at(p.moved, i)
+        held := entry.slot
+        name_off := entry.name_off
+        name_len := entry.name_len
+        if (held < 0 || places_overlap(p, held, id) == false) {
+            mut target := arena_at(p.moved, kept)
+            target.name_off = name_off
+            target.name_len = name_len
+            target.ty = 0
+            target.slot = held
+            kept = kept + 1
+        }
+        i = i + 1
+    }
+    p.moved.count = kept
+}
+
+// What a place reaches through, which is read even where the place itself is
+// written: the index of `xs[i] = v`, and the base of a field or an element. -1
+// for a bare name, which reaches through nothing.
+place_under :: fn(mut p: Parser, id: i64) -> i64 {
+    if (id < 0) {
+        return -1
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NodeKind::Var) {
+        return -1
+    }
+    if (kind == NodeKind::Index) {
+        walk_moves_expr(p, node.b)
+        return place_under(p, node.a)
+    }
+    if (kind == NodeKind::Field || kind == NodeKind::Deref) {
+        return place_under(p, node.a)
+    }
+    id
+}
+
+// Refuse a read of storage that has gone, naming the root it hangs off. The
+// position is the place being read, since that is the line to look at.
+report_if_moved :: fn(mut p: Parser, id: i64, name_off: i64, name_len: i64) {
+    if (place_is_moved(p, id) < 0) {
+        return
+    }
+    report_where(p.modules, p.src, name_off)
+    report("use of moved value '")
+    report_src(p.src, name_off, name_len)
+    report("'")
+    frost_rt_die()
+}
+
 walk_moves_expr :: fn(mut p: Parser, id: i64) {
     if (id == (-1)) {
         return
@@ -936,12 +1066,20 @@ walk_moves_expr :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
     kind := node.kind
     if (kind == NodeKind::Var) {
-        if (is_moved(p, node.val, node.c)) {
-            report_where(p.modules, p.src, node.val)
-            report("use of moved value '")
-            report_src(p.src, node.val, node.c)
-            report("'")
-            frost_rt_die()
+        report_if_moved(p, id, node.val, node.c)
+        return
+    }
+    // A field or an element is a place of its own, so it is weighed against
+    // what has gone rather than only its root being weighed. Reading one field
+    // after another was given away is reading different storage, and taking the
+    // whole after a part is taking the same resource twice.
+    if ((kind == NodeKind::Field || kind == NodeKind::Index)
+        && is_place_expr(p, id)) {
+        root := strip_place(p, id, place_depth(p, id))
+        rnode := arena_at(p.arena, root)
+        report_if_moved(p, id, rnode.val, rnode.c)
+        if (kind == NodeKind::Index) {
+            walk_moves_expr(p, node.b)
         }
         return
     }
@@ -1013,7 +1151,21 @@ walk_moves_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
             if (pnode.a != 1 && anode.kind == NodeKind::Var
                 && is_aggregate(ptype)) {
                 arena_push(p.moved,
-                    LocalVar { name_off = anode.val, name_len = anode.c, ty = 0, slot = 0 })
+                    LocalVar { name_off = anode.val, name_len = anode.c,
+                        ty = 0, slot = arg })
+            } else if (pnode.a != 1 && is_linear_type(p, ptype)
+                && is_place_expr(p, arg)) {
+                // A resource reached through a field or an element is a place of
+                // its own. What holds it is not given away, so the name alone
+                // says nothing, and only the place says which storage went.
+                // Recorded for a resource rather than for every aggregate,
+                // since reading a plain struct out of a field is a copy the
+                // language has always taken.
+                root := strip_place(p, arg, place_depth(p, arg))
+                rnode := arena_at(p.arena, root)
+                arena_push(p.moved,
+                    LocalVar { name_off = rnode.val, name_len = rnode.c,
+                        ty = 0, slot = arg })
             }
         }
         i = i + 1
@@ -1055,7 +1207,7 @@ walk_moves_if :: fn(mut p: Parser, then_head: i64, else_head: i64) {
         if (then_gone == false) {
             arena_push(p.move_scratch,
                 LocalVar { name_off = e.name_off, name_len = e.name_len,
-                    ty = 0, slot = 0 })
+                    ty = 0, slot = e.slot })
         }
         k = k + 1
     }
@@ -1068,9 +1220,11 @@ walk_moves_if :: fn(mut p: Parser, then_head: i64, else_head: i64) {
     mut s := scratch_base
     while (s < scratch_top) {
         e := arena_at(p.move_scratch, s)
-        if (is_moved(p, e.name_off, e.name_len) == false) {
+        held := e.slot
+        if (place_is_moved(p, held) < 0) {
             arena_push(p.moved,
-                LocalVar { name_off = e.name_off, name_len = e.name_len, ty = 0, slot = 0 })
+                LocalVar { name_off = e.name_off, name_len = e.name_len,
+                    ty = 0, slot = held })
         }
         s = s + 1
     }
@@ -1162,7 +1316,13 @@ walk_moves_block :: fn(mut p: Parser, head: i64) {
         }
         if (kind == NodeKind::Assign) {
             walk_moves_expr(p, node.b)
-            walk_moves_expr(p, node.a)
+            // The target is written, not read. Putting a value into a place is
+            // what makes it hold one again, so a place given away and then
+            // assigned is live: `vec_free($Table, world.tables)` followed by
+            // `world.tables = kept` is a container replacing what it released.
+            // Whatever the target reaches through is still a read.
+            revive_place(p, node.a)
+            walk_moves_expr(p, place_under(p, node.a))
         }
         if (kind == NodeKind::If) {
             walk_moves_expr(p, node.a)

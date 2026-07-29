@@ -83,14 +83,18 @@ pub fn check_ownership_recovering(
     let signatures = collect_signatures(statements);
     let param_types = collect_param_types(statements);
     let field_types = collect_field_types(statements);
-    let held = linear_closure(linear, &field_types);
+    let held = linear_closure(linear, &field_types, statements);
     let program = Program {
         linear: &held,
         signatures: &signatures,
         param_types: &param_types,
         field_types: &field_types,
     };
-    let mut reports = Vec::new();
+    let mut reports = crate::linear_instances::check_pooled_resources(
+        statements,
+        &crate::linear_instances::locate_instances(statements),
+        &held,
+    );
     for statement in statements {
         let outcome = check_statement(&statement.node, &program, &mut reports);
         if let Err(error) = locate(outcome, statement.position) {
@@ -247,6 +251,7 @@ fn check_function_moves(
     let mut checker = MoveChecker {
         types: HashMap::new(),
         states: HashMap::new(),
+        paths: HashMap::new(),
         linear: program.linear,
         signatures: program.signatures,
         param_types: program.param_types,
@@ -292,7 +297,15 @@ fn join_state(left: MoveState, right: MoveState) -> MoveState {
 
 struct MoveChecker<'a> {
     types: HashMap<String, Type>,
+    // What each place a body names has been done with, keyed by the place
+    // written out. A bare name is a place one step long, so a name and a field
+    // of it sit in the same table and are told apart the same way.
     states: HashMap<String, MoveState>,
+    // The path behind each of those keys. Two places are the same storage when
+    // their paths overlap rather than when they read alike, and the key alone
+    // cannot answer that: `xs[i]` and `xs[j]` are written differently and are
+    // one element whenever the two numbers agree.
+    paths: HashMap<String, Vec<Step>>,
     linear: &'a HashSet<String>,
     signatures: &'a Signatures,
     param_types: &'a ParamTypes,
@@ -312,6 +325,10 @@ struct MoveChecker<'a> {
 impl MoveChecker<'_> {
     fn note_binding(&mut self, name: &str, ty: Option<Type>) {
         self.states.insert(name.to_string(), MoveState::Live);
+        self.paths.insert(
+            name.to_string(),
+            vec![Step::Named(name.to_string())],
+        );
         match ty {
             Some(ty) => {
                 self.types.insert(name.to_string(), ty);
@@ -323,7 +340,139 @@ impl MoveChecker<'_> {
     }
 
     fn state_of(&self, name: &str) -> MoveState {
-        self.states.get(name).copied().unwrap_or(MoveState::Live)
+        self.state_of_place(&[Step::Named(name.to_string())], name).0
+    }
+
+    /// What has been done with a place, which is what has been done with any
+    /// place it shares storage with. Consuming `h.file` consumes part of `h`,
+    /// so consuming `h` afterwards is consuming the same resource twice, and
+    /// naming `h.file` again is naming what is already gone.
+    ///
+    /// The exact key is asked first so a place answers for itself, and the rest
+    /// of the table is asked only when it has nothing to say.
+    ///
+    /// The answer carries the place it came from, since that is the one worth
+    /// naming: a read of `a.value` refused because `a` was consumed should say
+    /// `a`, which is where the value went, rather than the narrower place the
+    /// reader happened to write.
+    fn state_of_place(
+        &self,
+        path: &[Step],
+        key: &str,
+    ) -> (MoveState, String) {
+        if let Some(state) = self.states.get(key)
+            && *state != MoveState::Live
+        {
+            return (*state, key.to_string());
+        }
+        let mut held = (MoveState::Live, key.to_string());
+        for (other, state) in &self.states {
+            if *state == MoveState::Live || other == key {
+                continue;
+            }
+            let Some(reached) = self.paths.get(other) else {
+                continue;
+            };
+            if places_overlap(reached, path) {
+                held = (*state, other.clone());
+                if *state == MoveState::Moved {
+                    return held;
+                }
+            }
+        }
+        held
+    }
+
+    /// The key a place is filed under, recording the path behind it so a later
+    /// place can be weighed against this one.
+    fn place_key(&mut self, path: &[Step]) -> String {
+        let key = describe_place(path);
+        self.paths.entry(key.clone()).or_insert_with(|| path.to_vec());
+        key
+    }
+
+    /// A place holds a value again, so nothing sharing its storage is gone.
+    fn revive_place(&mut self, path: &[Step], key: &str) {
+        self.states.insert(key.to_string(), MoveState::Live);
+        let overlapping: Vec<String> = self
+            .states
+            .keys()
+            .filter(|other| {
+                self.paths
+                    .get(*other)
+                    .is_some_and(|reached| places_overlap(reached, path))
+            })
+            .cloned()
+            .collect();
+        for other in overlapping {
+            self.states.insert(other, MoveState::Live);
+        }
+    }
+
+    /// What a place reaches through, which is read even where the place itself
+    /// is written: the index of `xs[i] = v`, and the base of a field of a
+    /// borrow. A bare name reaches through nothing.
+    fn visit_beneath(&mut self, target: &Expression) -> Result<()> {
+        match target {
+            Expression::Identifier(_) => Ok(()),
+            Expression::Index(base, index) => {
+                self.visit(index, false)?;
+                self.visit_beneath(base)
+            }
+            Expression::FieldAccess(base, _)
+            | Expression::Dereference(base) => self.visit_beneath(base),
+            other => self.visit(other, false),
+        }
+    }
+
+    /// A field or an element, reached where a value is wanted. What is asked of
+    /// the table is the whole path, since that is what says which storage this
+    /// names, and what is recorded is the same path when the value is one that
+    /// moves.
+    fn visit_place(
+        &mut self,
+        expression: &Expression,
+        path: &[Step],
+        moving: bool,
+    ) -> Result<()> {
+        let key = self.place_key(path);
+        // Only a resource. A plain struct read out of a field is a copy the
+        // language has always taken, and counting one as a consumption would
+        // refuse `bound := o.inner` followed by any other use of `o`. What
+        // linearity adds is that a resource has to be consumed exactly once,
+        // and it is that count a second consumption breaks.
+        //
+        // A copy is not a consumption however it is used, so reading the width
+        // of a resource waiting on a `defer` is a read like any other. What is
+        // gone is gone either way, which is why only the deferred case asks
+        // whether this use consumes.
+        let consuming = moving
+            && self
+                .value_type(expression)
+                .map(|ty| ty.is_linear_with(self.linear))
+                .unwrap_or(false);
+        let (state, blamed) = self.state_of_place(path, &key);
+        match state {
+            MoveState::Live => {}
+            MoveState::Deferred if consuming => {
+                bail!(
+                    "ownership: value '{blamed}' is already scheduled for consumption by a later defer; it cannot be moved again"
+                );
+            }
+            MoveState::Deferred => {}
+            MoveState::Moved | MoveState::MaybeMoved => {
+                bail!("ownership: use of moved value '{blamed}'");
+            }
+        }
+        if consuming {
+            let consumed = if self.in_defer {
+                MoveState::Deferred
+            } else {
+                MoveState::Moved
+            };
+            self.states.insert(key, consumed);
+        }
+        Ok(())
     }
 
     /// Record a failed statement and carry on to the next one, unless the same
@@ -418,8 +567,18 @@ impl MoveChecker<'_> {
             }
             Statement::Assignment(target, value) => {
                 self.visit(value, true)?;
+                // The target is written, not read. Putting a value into a place
+                // is what makes it hold one again, so a place given away and
+                // then assigned is live: `vec_free($Table, world.tables)`
+                // followed by `world.tables = kept` is a container replacing
+                // what it released. Whatever the target reaches through is
+                // still a read, which is the index of `xs[i] = v`.
                 if let Expression::Identifier(name) = target {
                     self.states.insert(name.clone(), MoveState::Live);
+                } else if let Some(path) = self.borrow_place(target) {
+                    let key = self.place_key(&path);
+                    self.revive_place(&path, &key);
+                    self.visit_beneath(target)?;
                 } else {
                     self.visit(target, false)?;
                 }
@@ -607,7 +766,20 @@ impl MoveChecker<'_> {
             return before.clone();
         }
         let mut result = before.clone();
-        for name in before.keys() {
+        // Every key any arm touched, not just the ones live before them. A
+        // field consumed in one branch and not another is moved on one path
+        // and not the other, and the key for it exists only inside that arm.
+        let mut keys: Vec<String> = before.keys().cloned().collect();
+        for states in &live {
+            for name in states.keys() {
+                if !before.contains_key(name) {
+                    keys.push(name.clone());
+                }
+            }
+        }
+        keys.sort();
+        keys.dedup();
+        for name in &keys {
             let mut merged: Option<MoveState> = None;
             for states in &live {
                 let state =
@@ -655,10 +827,30 @@ impl MoveChecker<'_> {
             | Expression::BorrowMut(inner)
             | Expression::AddressOf(inner)
             | Expression::Dereference(inner) => self.visit(inner, false),
-            Expression::FieldAccess(base, _) => self.visit(base, false),
+            // A field or an element is a place of its own. Consuming one
+            // consumes part of what holds it, so the whole path is what the
+            // table is asked about rather than the name at its root: reading
+            // `h.name` after `h.file` was consumed is reading a different
+            // place, and consuming `h` afterwards is consuming the same
+            // resource a second time.
+            //
+            // A place whose type is not known, or which is not a resource, is
+            // walked the way it always was. Nothing is recorded for it, so a
+            // scalar field costs no bookkeeping.
+            Expression::FieldAccess(base, _) => {
+                if let Some(path) = self.borrow_place(expression) {
+                    self.visit_place(expression, &path, moving)?;
+                    return Ok(());
+                }
+                self.visit(base, false)
+            }
             Expression::Index(base, index) => {
-                self.visit(base, false)?;
-                self.visit(index, false)
+                self.visit(index, false)?;
+                if let Some(path) = self.borrow_place(expression) {
+                    self.visit_place(expression, &path, moving)?;
+                    return Ok(());
+                }
+                self.visit(base, false)
             }
             Expression::PackMap(operand, _, _)
             | Expression::Prefix(_, operand) => self.visit(operand, false),
@@ -704,13 +896,35 @@ impl MoveChecker<'_> {
                 );
                 let known = !deferred;
                 for (index, argument) in arguments.iter().enumerate() {
-                    let borrows = param_types
+                    let declared = param_types
                         .and_then(|types| types.get(index))
-                        .map(|ty| {
-                            matches!(ty, Some(Type::Ref(_) | Type::RefMut(_)))
-                        })
-                        .unwrap_or(false);
+                        .and_then(|ty| ty.as_ref());
+                    let borrows = matches!(
+                        declared,
+                        Some(Type::Ref(_) | Type::RefMut(_))
+                    );
                     self.visit(argument, known && !borrows)?;
+                    // What the callee says it takes, rather than what the
+                    // argument's own type works out to. A place behind a `mut`
+                    // parameter types through a borrow and through the mode
+                    // lowering that put it there, and either can leave it
+                    // unresolved; the declaration says `move f: File` whatever
+                    // the caller wrote, and that is what says a resource was
+                    // handed over.
+                    if known
+                        && !borrows
+                        && declared
+                            .is_some_and(|ty| ty.is_linear_with(self.linear))
+                        && let Some(path) = self.borrow_place(argument)
+                    {
+                        let key = self.place_key(&path);
+                        let consumed = if self.in_defer {
+                            MoveState::Deferred
+                        } else {
+                            MoveState::Moved
+                        };
+                        self.states.insert(key, consumed);
+                    }
                 }
                 Ok(())
             }
@@ -791,7 +1005,15 @@ impl MoveChecker<'_> {
                 _ => None,
             },
             Expression::FieldAccess(base, field) => {
-                let Type::Struct(name) = self.value_type(base)? else {
+                // A `mut` parameter of struct type is a borrow of one, and a
+                // field of it is the same field. Asking only about the struct
+                // itself left every place behind a borrow untyped, so nothing
+                // consumed through one was recorded.
+                let held = match self.value_type(base)? {
+                    Type::Ref(inner) | Type::RefMut(inner) => *inner,
+                    other => other,
+                };
+                let Type::Struct(name) = held else {
                     return None;
                 };
                 self.field_types.get(&(name, field.clone())).cloned()
@@ -1023,8 +1245,13 @@ fn is_linear_type(ty: &Type, linear: &HashSet<String>) -> bool {
 fn linear_closure(
     declared: &HashSet<String>,
     fields: &FieldTypes,
+    statements: &[Spanned<Statement>],
 ) -> HashSet<String> {
     let mut held = declared.clone();
+    // The instantiations the program writes. A generic's declared field names a
+    // parameter bound to nothing here, so the field table answers for `Slab` and
+    // not for `Slab<Node, 2>`, and it is the second that holds the resource.
+    let instances = crate::linear_instances::collect_instances(statements);
     loop {
         let mut grew = false;
         for ((owner, _), ty) in fields {
@@ -1035,6 +1262,16 @@ fn linear_closure(
                 held.insert(owner.clone());
                 grew = true;
             }
+        }
+        // In the same loop as the holders, since an instance is a resource
+        // because of a field and a struct is one because of an instance in a
+        // field of its own.
+        if crate::linear_instances::note_linear_instances(
+            statements,
+            &instances,
+            &mut held,
+        ) {
+            grew = true;
         }
         if !grew {
             return held;
@@ -1390,6 +1627,96 @@ mod tests {
                 close(f)\n\
             }";
         assert!(check(source).is_err());
+    }
+
+    // A resource reached through a field is a place of its own, and consuming
+    // it twice consumes it twice. Moves were tracked by name, so the field was
+    // never recorded and nothing said the second consumption was one: with a
+    // `close` that frees, this is a double free written without `unsafe`.
+    #[test]
+    fn consuming_a_resource_through_a_field_twice_is_rejected() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            Holder :: struct { file: File, name: i64 }\n\
+            close :: extern fn(f: File)\n\
+            run :: fn(move h: Holder) {\n\
+                close(h.file)\n\
+                close(h.file)\n\
+            }";
+        assert!(check(source).is_err());
+    }
+
+    // The whole contains the part, so consuming the whole after the part is the
+    // same resource a second time.
+    #[test]
+    fn consuming_a_whole_after_its_field_is_rejected() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            Holder :: struct { file: File, name: i64 }\n\
+            close :: extern fn(f: File)\n\
+            drop_holder :: extern fn(h: Holder)\n\
+            run :: fn(move h: Holder) {\n\
+                close(h.file)\n\
+                drop_holder(h)\n\
+            }";
+        assert!(check(source).is_err());
+    }
+
+    // The same through a borrow. A `mut` parameter of struct type is a borrow
+    // of one by the time this runs, so what the callee declared it takes is
+    // what says a resource was handed over.
+    #[test]
+    fn consuming_a_resource_through_a_borrowed_field_twice_is_rejected() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            Holder :: struct { file: File, name: i64 }\n\
+            close :: fn(move f: File) -> i64 { f.handle }\n\
+            run :: fn(mut h: Holder) -> i64 {\n\
+                close(h.file)\n\
+                close(h.file)\n\
+            }";
+        assert!(check(source).is_err());
+    }
+
+    // An element answers the same way, and two elements known apart do not.
+    #[test]
+    fn consuming_an_element_twice_is_rejected() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            close :: extern fn(f: File)\n\
+            run :: fn(move run: [2]File) {\n\
+                close(run[0])\n\
+                close(run[0])\n\
+            }";
+        assert!(check(source).is_err());
+    }
+
+    #[test]
+    fn consuming_two_separate_elements_is_accepted() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            close :: extern fn(f: File)\n\
+            run :: fn(move run: [2]File) {\n\
+                close(run[0])\n\
+                close(run[1])\n\
+            }";
+        assert!(check(source).is_ok());
+    }
+
+    // Two fields are different storage, which is what a container releasing
+    // each of its own rests on: `world_release` frees several `Vec` fields in a
+    // row and every one of them has to be allowed.
+    #[test]
+    fn consuming_two_separate_fields_is_accepted() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            Pair :: struct { left: File, right: File }\n\
+            close :: extern fn(f: File)\n\
+            run :: fn(move p: Pair) {\n\
+                close(p.left)\n\
+                close(p.right)\n\
+            }";
+        assert!(check(source).is_ok());
     }
 
     #[test]
