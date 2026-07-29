@@ -99,7 +99,7 @@ value_after :: fn(argument: ^i8, flag: ^i8) -> ^i8 {
         k = k + 1
     }
     rest := argument_len - flag_len
-    out := unsafe { ptr_cast($i8, malloc(rest + 1)) }
+    out := unsafe { ptr_cast($i8, frost_rt_alloc(rest + 1)) }
     k = 0
     while (k < rest) {
         byte_set(out, k, byte_at(argument, flag_len + k))
@@ -114,7 +114,7 @@ value_after :: fn(argument: ^i8, flag: ^i8) -> ^i8 {
 join_two :: fn(first: ^i8, second: ^i8) -> ^i8 {
     first_len := cstr_len(first)
     second_len := cstr_len(second)
-    out := unsafe { ptr_cast($i8, malloc(first_len + second_len + 1)) }
+    out := unsafe { ptr_cast($i8, frost_rt_alloc(first_len + second_len + 1)) }
     mut k : i64 = 0
     while (k < first_len) {
         byte_set(out, k, byte_at(first, k))
@@ -122,9 +122,7 @@ join_two :: fn(first: ^i8, second: ^i8) -> ^i8 {
     }
     k = 0
     while (k < second_len) {
-        unsafe {
-            byte_set(out, first_len + k, byte_at(second, k))
-        }
+        byte_set(out, first_len + k, byte_at(second, k))
         k = k + 1
     }
     byte_set(out, first_len + second_len, 0)
@@ -145,7 +143,7 @@ join_number :: fn(first: ^i8, number: i64, last: ^i8) -> ^i8 {
     first_len := cstr_len(first)
     last_len := cstr_len(last)
     out := unsafe {
-        ptr_cast($i8, malloc(first_len + digits + last_len + 1))
+        ptr_cast($i8, frost_rt_alloc(first_len + digits + last_len + 1))
     }
     mut k : i64 = 0
     while (k < first_len) {
@@ -156,19 +154,14 @@ join_number :: fn(first: ^i8, number: i64, last: ^i8) -> ^i8 {
     mut written : i64 = 0
     while (written < digits) {
         digit := value / scale
-        unsafe {
-            byte_set(out, first_len + written, CH_0 + digit)
-        }
+        byte_set(out, first_len + written, CH_0 + digit)
         value = value - digit * scale
         scale = scale / 10
         written = written + 1
     }
     k = 0
     while (k < last_len) {
-        unsafe {
-            byte_set(out, first_len + digits + k,
-                byte_at(last, k))
-        }
+        byte_set(out, first_len + digits + k, byte_at(last, k))
         k = k + 1
     }
     byte_set(out, first_len + digits + last_len, 0)

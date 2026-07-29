@@ -657,6 +657,21 @@ int64_t frost_rt_heap_live(void) {
     return frost_rt_heap_blocks;
 }
 
+/* Allocation for the compiler's own arenas, which is the same abort on failure
+   without the block counting. `heap_live` is there so a container's tests can
+   say a leak happened; a compiler that runs once and exits frees nothing on
+   purpose, and counting its blocks would answer a question nobody asked. */
+void *frost_rt_alloc(int64_t size) {
+    void *block = malloc((size_t)size);
+    if (block == NULL) {
+        fprintf(stderr,
+                "frost: out of memory asking for %lld bytes\n",
+                (long long)size);
+        frost_rt_stop();
+    }
+    return block;
+}
+
 /* An allocation that fails aborts rather than answering with nothing.
 
    Frost has no way to say a call ran out of memory: there is no

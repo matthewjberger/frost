@@ -32,7 +32,7 @@ join_path :: fn(parent: ^i8, src: str, off: i64, len: i64) -> ^i8 {
         }
         k = k + 1
     }
-    out := unsafe { ptr_cast($i8, malloc(cut + len + 1)) }
+    out := unsafe { ptr_cast($i8, frost_rt_alloc(cut + len + 1)) }
     k = 0
     while (k < cut) {
         byte_set(out, k, byte_at(parent, k))
@@ -58,7 +58,7 @@ join_under :: fn(directory: ^i8, src: str, off: i64, len: i64) -> ^i8 {
             separator = 1
         }
     }
-    out := unsafe { ptr_cast($i8, malloc(directory_len + separator + len + 1)) }
+    out := unsafe { ptr_cast($i8, frost_rt_alloc(directory_len + separator + len + 1)) }
     mut k : i64 = 0
     while (k < directory_len) {
         byte_set(out, k, byte_at(directory, k))
@@ -69,10 +69,7 @@ join_under :: fn(directory: ^i8, src: str, off: i64, len: i64) -> ^i8 {
     }
     k = 0
     while (k < len) {
-        unsafe {
-            byte_set(out, directory_len + separator + k,
-                src[off + k])
-        }
+        byte_set(out, directory_len + separator + k, src[off + k])
         k = k + 1
     }
     byte_set(out, directory_len + separator + len, 0)
@@ -358,19 +355,19 @@ blank_range :: fn(buffer: str, from: i64, through: i64) {
 // nothing else has yet.
 joined_path :: fn(directory: ^i8, upto: i64, name: ^i8) -> ^i8 {
     extra := cstr_len(name)
-    block := unsafe { ptr_cast($i8, malloc(upto + extra + 2)) }
+    block := unsafe { ptr_cast($i8, frost_rt_alloc(upto + extra + 2)) }
     mut i : i64 = 0
     while (i < upto) {
-        unsafe { byte_set(block, i, byte_at(directory, i)) }
+        byte_set(block, i, byte_at(directory, i))
         i = i + 1
     }
-    unsafe { byte_set(block, upto, CH_SLASH) }
+    byte_set(block, upto, CH_SLASH)
     mut k : i64 = 0
     while (k < extra) {
-        unsafe { byte_set(block, upto + 1 + k, byte_at(name, k)) }
+        byte_set(block, upto + 1 + k, byte_at(name, k))
         k = k + 1
     }
-    unsafe { byte_set(block, upto + 1 + extra, 0) }
+    byte_set(block, upto + 1 + extra, 0)
     block
 }
 
@@ -381,7 +378,7 @@ directory_part :: fn(path: ^i8, upto: i64) -> i64 {
     mut at := upto
     while (at > 0) {
         at = at - 1
-        held := unsafe { byte_at(path, at) }
+        held := byte_at(path, at)
         if (held == CH_SLASH || held == CH_BACKSLASH) {
             return at
         }

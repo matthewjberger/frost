@@ -334,9 +334,7 @@ pack_element_name :: fn(mut p: Parser, off: i64, len: i64,
     start := p.synth_next
     mut k : i64 = 0
     while (k < len) {
-        unsafe {
-            p.src[start + k] = p.src[off + k]
-        }
+        p.src[start + k] = p.src[off + k]
         k = k + 1
     }
     p.src[start + len] = CH_UNDERSCORE
@@ -352,9 +350,7 @@ pack_element_name :: fn(mut p: Parser, off: i64, len: i64,
     mut written : i64 = 0
     while (written < digits) {
         digit := value / scale
-        unsafe {
-            p.src[start + len + 2 + written] = cast($u8, CH_0 + digit)
-        }
+        p.src[start + len + 2 + written] = cast($u8, CH_0 + digit)
         value = value - digit * scale
         scale = scale / 10
         written = written + 1

@@ -549,6 +549,41 @@ bench-selfhost-incremental: selfhost-build
 test:
     cargo test -p frost -- --nocapture
 
+# Every `unsafe` block in the tree earns itself (Unix)
+#
+# A block that vouches for nothing is not harmless. `unsafe` is the complete
+# list of places to look when something has corrupted memory, and that list is
+# only worth reading if every entry on it is there for a reason. One idle block
+# is noise; a habit of them is a list nobody reads.
+[unix]
+audit:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for f in std/*.frost examples/native/*.frost examples/selfhosted/*.frost \
+             examples/tour.frost selfhosted/frost.frost; do
+        cargo run -r -q -p frost --bin frost -- --audit-unsafe --emit-c \
+            -o /dev/null "$f" 2>&1 \
+            | grep -E "vouches for nothing|is inside another one" && {
+                echo "unsafe audit: $f"; exit 1; }
+        true
+    done
+    echo "unsafe audit: every block earns itself"
+
+# Every `unsafe` block in the tree earns itself (Windows)
+[windows]
+audit:
+    #!powershell
+    $found = 0
+    $files = (Get-ChildItem std/*.frost) + (Get-ChildItem examples/native/*.frost) + (Get-ChildItem examples/selfhosted/*.frost) + @(Get-Item examples/tour.frost) + @(Get-Item selfhosted/frost.frost)
+    foreach ($f in $files) {
+        $out = cargo run -r -q -p frost --bin frost -- --audit-unsafe --emit-c -o audit.tmp $f.FullName 2>&1 | Out-String
+        $held = ([regex]::Matches($out, 'vouches for nothing|is inside another one')).Count
+        if ($held -gt 0) { Write-Host "unsafe audit: $($f.Name) has $held"; $found = $found + 1 }
+    }
+    Remove-Item audit.tmp -Force -ErrorAction SilentlyContinue
+    if ($found -gt 0) { exit 1 }
+    Write-Host "unsafe audit: every block earns itself"
+
 # Runs all tests with every imported module reduced to what its interface says
 # it offers, which is what --incremental relies on (Unix)
 [unix]

@@ -14,11 +14,17 @@
 
 export print_int, print_char, print_str, print_int_line, print_str_line
 
-// Each of these takes a number, or a pointer with the length beside it, so
-// there is nothing a caller can hand them that misbehaves. They are `safe` and
-// need no block at their call sites. (The bare name `print` is a statement
-// keyword in the language, so the writers are named for what they write.)
-frost_rt_emit_bytes :: safe extern fn(data: ^u8, length: i64)
+// The ones that take a number are `safe` and need no block at their call sites,
+// because there is nothing a caller can hand them that misbehaves. (The bare
+// name `print` is a statement keyword in the language, so the writers are named
+// for what they write.)
+//
+// The one that takes a pointer and a length is not. It asserts that `length`
+// bytes live at `data`, which is the claim `slice_from` is gated for, and a
+// length that does not match the pointer reads past the end inside C where
+// nothing checks it. The self-hosted compiler declares the same function plain
+// and blocks its one call; this now agrees with it.
+frost_rt_emit_bytes :: extern fn(data: ^u8, length: i64)
 frost_rt_emit_int :: safe extern fn(value: i64)
 frost_rt_emit_char :: safe extern fn(byte: i64)
 
@@ -32,7 +38,9 @@ print_str :: fn(text: str) {
     if (str_len(text) == 0) {
         return
     }
-    frost_rt_emit_bytes(ptr_to(text[0]), str_len(text))
+    // The length comes from the same `str` the pointer is taken from, so the
+    // two cannot disagree. That is the whole of what the block vouches for.
+    unsafe { frost_rt_emit_bytes(ptr_to(text[0]), str_len(text)) }
 }
 
 print_int_line :: fn(value: i64) {
