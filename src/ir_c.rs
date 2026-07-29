@@ -68,6 +68,8 @@ pub fn emit_c(module: &IrModule) -> Result<String> {
     output.push_str(
         "void frost_rt_bounds_check(int64_t index, int64_t length);\n",
     );
+    output.push_str("int64_t frost_rt_check_length(int64_t length);\n");
+    externs.insert("frost_rt_check_length");
     output.push_str(
         "void frost_rt_generation_check(int64_t stored, int64_t expected);\n\n",
     );

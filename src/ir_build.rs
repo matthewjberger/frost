@@ -6858,7 +6858,20 @@ impl<'a> FunctionLowering<'a> {
         let (pointer, _) = self.lower_expression(&arguments[1], None)?;
         let (length, length_type) =
             self.lower_expression(&arguments[2], None)?;
-        let length = self.coerce(length, &length_type, &Type::Usize)?;
+        // Checked while it is still signed. The bounds check every later access
+        // goes through compares unsigned, so a negative length would read as
+        // enormous there and let every index past the end of the run.
+        let length = self.coerce(length, &length_type, &Type::I64)?;
+        let checked = self.fresh_local(Type::I64, None);
+        self.emit(IrStatement::Assign(
+            checked,
+            IrRvalue::Call {
+                function: "frost_rt_check_length".to_string(),
+                arguments: vec![length],
+            },
+        ));
+        let length =
+            self.coerce(IrOperand::Local(checked), &Type::I64, &Type::Usize)?;
         let slice_type = Type::Slice(Box::new(element.clone()));
         let slice_local = self.fresh_local(slice_type.clone(), None);
         self.mark_in_memory(slice_local);

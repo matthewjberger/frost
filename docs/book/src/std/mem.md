@@ -43,6 +43,31 @@ decided while the program runs, get back into the typed world.
 slice is as long as the capacity, and the prefix is as long as the count, so
 `vec_slice` hands out two elements out of sixty-four rather than sixty-four.
 
+## What is checked here, and what is taken on trust
+
+A count is the caller's word for how many elements are there, and that is what
+makes these unchecked. Three parts of the claim are not a matter of trust, and
+each is refused rather than believed.
+
+A negative length. Every access through a slice is bounds-checked, and the check
+compares unsigned so one comparison answers for a negative index as well as for
+one past the end. That same cast reads a negative length as enormous, so a slice
+built with one was not bounds-checked at all and `slice_prefix($T, xs, -1)`
+reached it from ordinary safe code. A length is settled once where the slice is
+built while an access happens in a loop, so it is answered for there.
+
+A size that wraps. `count * sizeof(T)` at a large count wraps to a small number,
+so the allocator hands back a small block while the slice over it carries the
+count that was asked for. Every read past the block's real end is then checked
+against the wrong number and passes.
+
+An allocation that fails. It aborts rather than answering with a null, because
+these have no way to say they ran out of memory and every caller wraps what
+comes back in a slice without looking.
+
+What stays on trust is the part that cannot be settled without knowing what the
+program meant: that `count` elements really do live at the pointer.
+
 ## The calls
 
 | Call | What it does |

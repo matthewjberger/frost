@@ -574,6 +574,30 @@ emit_asm_bounds_call :: fn(mut p: Parser) {
     emit_text(":\n")
 }
 
+// A slice's length in %rax, answered for before the slice is built. The bounds
+// check above compares unsigned, which is what makes one comparison answer for a
+// negative index as well as for one past the end, and the same cast would read a
+// negative length as enormous and leave every access through that slice
+// unchecked. A length is settled once where the slice is made while an access
+// happens in a loop, so this is where it is asked. The runtime holds the message
+// and the abort, and only a negative length reaches them.
+emit_asm_length_call :: fn(mut p: Parser) {
+    shadow := abi_shadow(p)
+    inside := new_label(p)
+    asm("cmpq $0, %rax")
+    emit_text("    jge .Llen")
+    frost_rt_emit_int(inside)
+    emit_text("\n")
+    emit_text("    movq %rax, ")
+    emit_asm_arg_reg(p, 0)
+    emit_text("\n")
+    asm_i("subq $", shadow, ", %rsp")
+    asm("call frost_rt_check_length")
+    asm_i("addq $", shadow, ", %rsp")
+    emit_label(".Llen", inside)
+    emit_text(":\n")
+}
+
 // The address of a slab element named by a handle. The slab's address is kept
 // in a frame slot across frost_rt_slot, which unpacks and validates the handle and
 // answers with the checked slot index. That index scales into the storage run.
@@ -1398,6 +1422,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         emit_asm_expr(p, node.a)
         asm_i("movq %rax, ", slot, "(%rbp)")
         emit_asm_expr(p, node.b)
+        emit_asm_length_call(p)
         asm_i("movq %rax, ", slot + 8, "(%rbp)")
         asm_i("leaq ", slot, "(%rbp), %rax")
         return

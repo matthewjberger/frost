@@ -24,6 +24,11 @@ export heap_array, heap_slice, heap_grow, heap_grow_slice, heap_release,
 // where it found it, so a test can say a leak happened rather than waiting for
 // a long-running program to notice.
 frost_rt_heap_live    :: safe extern fn() -> i64
+// How many bytes a count of elements takes, refused where the multiplication
+// would wrap. Safe because it is arithmetic and an abort: a wrapped size asks
+// for fewer bytes than the caller believes, and the slice built over the block
+// then reads past its end with every access reporting as bounds-checked.
+frost_rt_check_size   :: safe extern fn(count: i64, width: i64) -> i64
 frost_rt_heap_alloc   :: extern fn(size: i64) -> ^u8
 frost_rt_heap_realloc :: extern fn(block: ^u8, size: i64) -> ^u8
 frost_rt_heap_free    :: extern fn(block: ^u8)
@@ -37,7 +42,9 @@ heap_array :: fn($T: Type, count: i64) -> ^T {
     if (room < 1) {
         room = 1
     }
-    unsafe { ptr_cast($T, frost_rt_heap_alloc(room * sizeof(T))) }
+    unsafe {
+        ptr_cast($T, frost_rt_heap_alloc(frost_rt_check_size(room, sizeof(T))))
+    }
 }
 
 // The same block as a slice of that length, which is what makes the code above
@@ -59,7 +66,8 @@ heap_grow :: fn($T: Type, move block: ^T, count: i64) -> ^T {
     }
     unsafe {
         ptr_cast($T,
-            frost_rt_heap_realloc(ptr_cast($u8, block), room * sizeof(T)))
+            frost_rt_heap_realloc(ptr_cast($u8, block),
+                frost_rt_check_size(room, sizeof(T))))
     }
 }
 
@@ -72,7 +80,7 @@ heap_grow_slice :: fn($T: Type, move held: []T, count: i64) -> []T {
     grown := unsafe {
         ptr_cast($T,
             frost_rt_heap_realloc(ptr_cast($u8, ptr_to(held[0])),
-                room * sizeof(T)))
+                frost_rt_check_size(room, sizeof(T))))
     }
     unsafe { slice_from($T, grown, room) }
 }
