@@ -1,3 +1,13 @@
+/* This is compiled as `-std=c11`, which is strict ISO C, and under it a POSIX
+   library declares only what ISO C has: no `siginfo_t`, no `stack_t`, no
+   `sigaltstack`, no `write`. Asking for POSIX is what puts them back, and it has
+   to be asked before the first header is read, so it sits above every include
+   rather than beside the ones that need it. Left alone where the toolchain has
+   already chosen a level, since raising it is the toolchain's call to make. */
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <setjmp.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -6,7 +16,13 @@
 #if defined(_WIN32)
 #include <windows.h>
 #else
+/* `signal.h` and `unistd.h` belong here rather than beside the stack handler
+   that wants them. The handler is written further down than the first use of
+   `write`, so including them there left that call with no declaration at all
+   and the one the header then gave it conflicted with the guess. */
+#include <signal.h>
 #include <sys/wait.h>
+#include <unistd.h>
 #if defined(__has_include)
 #if __has_include(<execinfo.h>)
 #define FROST_HAS_EXECINFO 1
@@ -100,9 +116,6 @@ static void frost_rt_install_stack_handler(void) {
     AddVectoredExceptionHandler(1, frost_rt_stack_handler);
 }
 #else
-#include <signal.h>
-#include <unistd.h>
-
 /* Roughly where the stack was when the program started, and how far below it a
    fault still counts as the stack running out. The window is generous on
    purpose: mislabelling one crash costs a wrong sentence, while missing the
