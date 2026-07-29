@@ -14,6 +14,8 @@
 // switching a system from `Slab<T, N>` to `columns<T, N>` changes the container
 // token and the `slab_` prefix, nothing else.
 
+import "slab.frost"
+
 export columns_reset, columns_full, columns_insert, columns_alive,
     columns_release
 
@@ -61,6 +63,11 @@ columns_release :: fn($T: Type, $N: usize, mut c: columns<T, N>,
         return false
     }
     c.generations[index] = c.generations[index] + 1
+    // The handle scheme is the slab's, so its generation bound is too: a spent
+    // slot is retired rather than handed out again. See GENERATION_LIMIT.
+    if (c.generations[index] > GENERATION_LIMIT) {
+        return true
+    }
     c.free_list[c.free_count] = index
     c.free_count = c.free_count + 1
     true

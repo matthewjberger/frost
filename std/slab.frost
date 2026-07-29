@@ -13,7 +13,21 @@
 // the generation are packed together. The two convert freely because a handle is
 // an i64 at the ABI.
 
-export Slab, slab_reset, slab_full, slab_insert, slab_alive, slab_release
+export Slab, slab_reset, slab_full, slab_insert, slab_alive, slab_release,
+    GENERATION_LIMIT
+
+// The highest generation a slot can carry. A handle packs the generation into
+// the top 32 bits of an i64, and reading it back sign-extends, so a generation
+// of 2^31 comes back negative and no longer equals the slot's own count. Past
+// that point the slot would hand out handles that were stale the moment they
+// were made, and the program would abort on a handle it had just been given.
+//
+// A slot that reaches this is retired instead: it is not returned to the free
+// list, so the slab loses one place and stays correct. Every handle to it is
+// already stale by the ordinary rule, which is the answer that keeps a
+// long-running program running rather than stopping it on a number nobody
+// wrote down. Reaching it takes two billion releases of one slot.
+GENERATION_LIMIT :: 2147483647
 
 Slab :: struct($T: Type, $N: usize) {
     storage: [N]T,
@@ -61,7 +75,49 @@ slab_release :: fn($T: Type, $N: usize, mut s: Slab<T, N>, handle: Handle<T>) ->
     index := raw & 4294967295
     if (s.generations[index] != (raw >> 32)) { return false }
     s.generations[index] = s.generations[index] + 1
+    // A slot whose generation is spent is retired rather than reused. Handing it
+    // out again would give the caller a handle its own check rejects.
+    if (s.generations[index] > GENERATION_LIMIT) {
+        return true
+    }
     s.free_list[s.free_count] = index
     s.free_count = s.free_count + 1
     true
+}
+
+SlabThing :: struct { hp: i64 }
+
+// A slot one release short of its bound still works, and the release that takes
+// it past retires it rather than handing it back. Driven by writing the
+// generation rather than by two billion releases, which is the only way to reach
+// this in a test and is why the bound went unnoticed.
+test "a slot whose generation is spent is retired rather than reused" {
+    mut s : Slab<SlabThing, 2> = Slab {
+        storage = [SlabThing { hp = 0 }, SlabThing { hp = 0 }],
+        generations = [0, 0],
+        free_list = [0, 0],
+        free_count = 0,
+    }
+    slab_reset($SlabThing, $2, s)
+
+    first := slab_insert($SlabThing, $2, s, SlabThing { hp = 7 })
+    raw : i64 = first
+    index := raw & 4294967295
+    // One short of the bound: the release puts the slot back and the handle it
+    // then hands out is one its own check accepts.
+    s.generations[index] = GENERATION_LIMIT - 1
+    assert(slab_release($SlabThing, $2, s, (s.generations[index] << 32) | index))
+    assert(s.free_count == 2)
+    again := slab_insert($SlabThing, $2, s, SlabThing { hp = 8 })
+    assert(slab_alive($SlabThing, $2, s, again))
+
+    // And the release that takes it past: the slot does not come back, so the
+    // slab has one fewer place rather than a handle that is stale on arrival.
+    raw_again : i64 = again
+    spent := raw_again & 4294967295
+    s.generations[spent] = GENERATION_LIMIT
+    before := s.free_count
+    assert(slab_release($SlabThing, $2, s,
+        (s.generations[spent] << 32) | spent))
+    assert(s.free_count == before)
 }

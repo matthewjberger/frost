@@ -79,6 +79,21 @@ increments its generation. A lookup whose handle generation does not match the
 slot's current generation aborts rather than returning the slot's new occupant,
 so a stale handle can never read or write freed-and-reused data.
 
+The generation occupies the top 32 bits of the handle and is read back
+sign-extended, so a slot's count may reach 2^31 - 1 and no further: past that
+the generation packed into a handle no longer equals the slot's own count, and
+the slot would hand out handles that were stale the moment they were made. A
+slot that reaches the bound is retired rather than returned to the free list, so
+the container loses one place and stays correct. Reaching it takes two billion
+releases of a single slot.
+
+The direction of that failure is the point. The check compares the slot's
+ever-increasing count against a sign-extended 32-bit value, so a count past the
+bound can never equal an older handle's generation: what a spent slot produces
+is a handle nothing accepts, never a stale handle something does. `std/slab.frost`
+and `std/columns.frost` retire the slot; the pool examples under `examples/` are
+written for the shape and say so.
+
 ## 10.4 Bounds checking
 
 Every fixed-array index is checked against the statically known length. An

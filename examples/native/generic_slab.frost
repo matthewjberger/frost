@@ -50,6 +50,10 @@ slab_alive :: fn($T: Type, $N: usize, s: Slab<T, N>, handle: Handle<T>) -> bool 
 
 // Bumping the generation is what makes every outstanding handle to this slot
 // stale, so a later read through one aborts rather than seeing the next tenant.
+//
+// Written for the shape rather than for use. A handle packs the generation into
+// 32 bits, so a slot released two billion times has to be retired rather than
+// reused; `std/slab.frost` does that and is the one to reach for.
 slab_release :: fn($T: Type, $N: usize, mut s: Slab<T, N>, handle: Handle<T>) {
     raw : i64 = handle
     index := raw & 4294967295
