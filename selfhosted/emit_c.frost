@@ -780,7 +780,7 @@ arith_checked :: fn(mut p: Parser, op: i64, ty: i64) -> bool {
         return false
     }
     op == OP_ADD || op == OP_SUB || op == OP_MUL || op == OP_DIV
-        || op == OP_MOD
+        || op == OP_MOD || op == OP_SHL || op == OP_SHR
 }
 
 // A 64-bit operation is checked where it is done, since there is no wider place
@@ -805,6 +805,41 @@ emit_checked_bin :: fn(mut p: Parser, left: i64, op: i64, right: i64, ty: i64) {
     emit_text("] = (")
     emit_expr(p, left)
     emit_text("), ")
+    // A shift moves by less than the width of what it shifts, and the answer
+    // then fits by construction, so the amount is what is answered for.
+    if (op == OP_SHL || op == OP_SHR) {
+        emit_text("frost_narrow((")
+        // The slot is signed, so an unsigned right shift has to say so or the
+        // sign bit is carried down instead of a zero.
+        if (signed) {
+            emit_text("frost_t[")
+            frost_rt_emit_int(slot)
+            emit_text("]")
+        } else {
+            emit_text("(int64_t)((uint64_t)frost_t[")
+            frost_rt_emit_int(slot)
+            emit_text("]")
+        }
+        emit_op(op)
+        emit_text("frost_shift((")
+        emit_expr(p, right)
+        emit_text("), ")
+        frost_rt_emit_int(scalar_size(ty) * 8)
+        emit_text("))")
+        if (signed == false) {
+            emit_text(")")
+        }
+        emit_text(", ")
+        frost_rt_emit_int(scalar_size(ty) * 8)
+        emit_text(", ")
+        if (signed) {
+            emit_text("1")
+        } else {
+            emit_text("0")
+        }
+        emit_text(", 7))")
+        return
+    }
     if (scalar_size(ty) == 8 || op == OP_DIV || op == OP_MOD) {
         // Bound first: an aggregate argument travels by address, and a call is
         // not something an address can be taken of.
@@ -1857,12 +1892,21 @@ emit_program :: fn(mut p: Parser, head: i64) {
     emit_text("static inline uint64_t frost_rem_u64(uint64_t a, uint64_t b) {\n")
     emit_text("  if (b == 0) frost_rt_arith_trap(4);\n  return a % b;\n}\n")
     emit_text("static inline int64_t frost_narrow(int64_t v, int64_t bits, int64_t is_signed, int64_t what) {\n")
+    // A full-width value has nothing to narrow to, and building its bound would
+    // shift a one into the sign bit, which is the overflow this is here for.
+    emit_text("  if (bits >= 64) return v;\n")
     emit_text("  if (is_signed) {\n")
     emit_text("    int64_t hi = ((int64_t)1 << (bits - 1)) - 1;\n")
     emit_text("    if (v < -hi - 1 || v > hi) frost_rt_arith_trap(what);\n")
     emit_text("  } else {\n")
     emit_text("    if (v < 0 || (uint64_t)v > (((uint64_t)1 << bits) - 1))\n")
     emit_text("      frost_rt_arith_trap(what);\n  }\n  return v;\n}\n")
+    // A shift moves by less than the width of what it shifts. The hardware
+    // answers a wider one by masking, which is a different shift than the one
+    // that was written.
+    emit_text("static inline int64_t frost_shift(int64_t by, int64_t bits) {\n")
+    emit_text("  if (by < 0 || by >= bits) frost_rt_arith_trap(7);\n")
+    emit_text("  return by;\n}\n")
     emit_text("int64_t frost_rt_check_length(int64_t);\n")
     emit_text("static inline int64_t frost_length(int64_t n) {\n")
     emit_text("  if (n < 0) { frost_rt_check_length(n); }\n")

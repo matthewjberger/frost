@@ -64,6 +64,9 @@ static inline uint64_t frost_fit_u(uint64_t v, uint64_t hi) {
    backend emits when it knows the type but not the numbers. */
 static inline int64_t frost_narrow(int64_t v, int64_t bits, int64_t is_signed,
                                    int64_t what) {
+  /* A full-width value has nothing to narrow to, and building its bound would
+     shift a one into the sign bit, which is the overflow this is here for. */
+  if (bits >= 64) return v;
   if (is_signed) {
     int64_t hi = ((int64_t)1 << (bits - 1)) - 1;
     if (v < -hi - 1 || v > hi) frost_rt_arith_trap(what);

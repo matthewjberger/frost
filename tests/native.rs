@@ -8967,6 +8967,19 @@ fn arithmetic_that_leaves_its_type_stops_there() {
     }
 }
 
+// A literal may span lines, and one written in a file saved with CRLF has to be
+// the same string as the same literal saved with LF. The two compilers read the
+// carriage return differently, so the same program measured four bytes under one
+// and three under the other.
+#[test]
+fn a_literal_spanning_lines_does_not_carry_the_carriage_return() {
+    let source = "main :: fn() -> i64 {\n    s := \"a\r\nb\"\n    print str_len(s)\n    0\n}\n";
+    let Some(output) = compile_and_run_unaudited("crlfliteral", source) else {
+        return;
+    };
+    assert_eq!(output, "3\n");
+}
+
 // The other half: leaving the range is the point of a hash, so it is spelled.
 #[test]
 fn wrapping_arithmetic_is_asked_for_by_name() {
