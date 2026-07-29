@@ -255,6 +255,24 @@ lex_operator :: fn(src: str, i: i64, len: i64, mut tokens: Arena<Token>) -> i64 
         push_token(tokens, TokenKind::Oror, i, 2, 0)
         return i + 2
     }
+    // `$...`, the compile-time list, is three dots and is taken whole. Reading
+    // it a byte at a time leaves the last two to be read as a range.
+    if (c == CH_DOT && d == CH_DOT && byte_of(src, i + 2, len) == CH_DOT) {
+        push_token(tokens, TokenKind::Dot, i, 1, 0)
+        push_token(tokens, TokenKind::Dot, i + 1, 1, 0)
+        push_token(tokens, TokenKind::Dot, i + 2, 1, 0)
+        return i + 3
+    }
+    // A range, which is written only between `in` and a `for`'s body. `..=`
+    // reaches its bound and `..` stops before it.
+    if (c == CH_DOT && d == CH_DOT) {
+        if (byte_of(src, i + 2, len) == CH_EQ) {
+            push_token(tokens, TokenKind::Dotdoteq, i, 3, 0)
+            return i + 3
+        }
+        push_token(tokens, TokenKind::Dotdot, i, 2, 0)
+        return i + 2
+    }
     // TokenKind::Eof stands for "nothing matched" here. A byte that is none of the
     // operators below used to keep it and be pushed as an end-of-file token,
     // so the parser stopped where the byte was and the compiler wrote an empty

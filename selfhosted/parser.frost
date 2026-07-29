@@ -2421,6 +2421,67 @@ starts_multi_binding :: fn(mut p: Parser) -> bool {
         && peek_kind(p, 2) == TokenKind::Comma
 }
 
+// `for i in a..b { ... }`, written out as the counted loop it stands for, with
+// the cursor on the body's opening brace. The reader's name is the counter
+// itself, so nothing is indexed and no element is bound. The bound is read into
+// a name once ahead of the loop, so a call in that position happens once rather
+// than once per turn, and `..=` reaches it.
+parse_for_range :: fn(mut p: Parser, first_off: i64, item_off: i64,
+    item_len: i64, has_index: i64, start: i64, finish: i64,
+    closed: i64) -> i64 {
+    if (has_index == 1) {
+        report_where(p.modules, p.src, first_off)
+        report("a `for` over a range binds one name, which is the number")
+        frost_rt_die()
+    }
+    unique := p.arena.count
+    end_off := synth_numbered(p, "__for_end", unique)
+    end_len := 9 + digits_in(unique)
+    bind_end := new_let_node(p, finish, end_off, end_len, -1)
+
+    // The counter carries a name of its own and the reader's name is bound from
+    // it inside the loop, which is what the walk over a sequence does with its
+    // element. Two loops in one function would otherwise declare the reader's
+    // name twice in one C scope, since a binding is emitted where it stands and
+    // only a loop body opens a block.
+    at_off := synth_numbered(p, "__for_at", unique)
+    at_len := 8 + digits_in(unique)
+    bind_at := new_let_node(p, start, at_off, at_len, -1)
+
+    index_var := new_named_node(p, NodeKind::Var, 0, at_off, at_len)
+    end_var := new_named_node(p, NodeKind::Var, 0, end_off, end_len)
+    mut compare := OP_LT
+    if (closed == 1) {
+        compare = OP_LE
+    }
+    condition := new_node(p, NodeKind::Bin, index_var, end_var, compare)
+
+    body := parse_block(p)
+
+    at_again := new_named_node(p, NodeKind::Var, 0, at_off, at_len)
+    bind_item := new_let_node(p, at_again, item_off, item_len, -1)
+    set_next(p, bind_item, body)
+
+    step_at := new_named_node(p, NodeKind::Var, 0, at_off, at_len)
+    one := new_node(p, NodeKind::Num, 0, 0, 1)
+    bumped := new_node(p, NodeKind::Bin, step_at, one, OP_ADD)
+    step_place := new_named_node(p, NodeKind::Var, 0, at_off, at_len)
+    step := new_node(p, NodeKind::Assign, step_place, bumped, 0)
+    mut tail := bind_item
+    mut following := node_next(p, tail)
+    while (following != (-1)) {
+        tail = following
+        following = node_next(p, tail)
+    }
+    set_next(p, tail, step)
+
+    loop := new_node(p, NodeKind::While, condition, bind_item, 0)
+    set_while_preamble(p, loop, -1)
+    set_next(p, bind_end, bind_at)
+    set_next(p, bind_at, loop)
+    bind_end
+}
+
 parse_stmt :: fn(mut p: Parser) -> i64 {
     kind := cur(p)
     // Where the statement starts. Everything below builds its node after
@@ -2673,7 +2734,23 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         held_no_lit := p.no_struct_lit
         p.no_struct_lit = true
         sequence := parse_expr(p)
+        // `for i in a..b` walks the numbers rather than a sequence, so it takes
+        // the counted loop straight rather than reaching one through a length
+        // and an index.
+        mut range_end : i64 = -1
+        mut range_closed : i64 = 0
+        if (cur(p) == TokenKind::Dotdot || cur(p) == TokenKind::Dotdoteq) {
+            if (cur(p) == TokenKind::Dotdoteq) {
+                range_closed = 1
+            }
+            advance(p)
+            range_end = parse_expr(p)
+        }
         p.no_struct_lit = held_no_lit
+        if (range_end != (-1)) {
+            return parse_for_range(p, first_off, item_off, item_len, has_index,
+                sequence, range_end, range_closed)
+        }
 
         unique := p.arena.count
         // A name is already evaluated once and already carries its own type, so

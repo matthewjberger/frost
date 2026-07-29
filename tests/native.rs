@@ -7611,6 +7611,92 @@ fn self_hosted_emits_a_generic_function_with_no_struct_instance() {
     assert_eq!(output, "42\n");
 }
 
+// The example programs, run under both compilers and compared. They are the
+// longest programs in the tree that neither compiler wrote, and holding the two
+// to the same answer on them is what found a `for` over a range crashing the
+// self-hosted parser, two range loops in one function colliding in the emitted
+// C, and an enum laid out two different ways.
+//
+// The list is the examples the self-hosted compiler takes. `pipeline.frost` is
+// left out because it uses `defer`, and `generic_algorithms.frost` because a
+// generic over a plain struct is compiled against the wrong type there. Both
+// are refused with a diagnostic rather than miscompiled, and adding either here
+// is what says it has been fixed.
+const SHARED_EXAMPLES: &[&str] = &[
+    "native/allocator.frost",
+    "native/arena.frost",
+    "native/dynamic_arena.frost",
+    "native/entity_system.frost",
+    "native/game_world.frost",
+    "native/generic_pool_library.frost",
+    "native/generic_slab.frost",
+    "native/generic_stack.frost",
+    "native/math_transform.frost",
+    "native/native_pool.frost",
+    "native/pool_entities.frost",
+    "native/pool_linked_list.frost",
+    "native/pool_stress.frost",
+    "native/shapes.frost",
+    "native/slices.frost",
+    "native/vectors.frost",
+    "tour.frost",
+];
+
+#[test]
+fn both_compilers_agree_on_the_examples() {
+    if c_compiler().is_none() || !linker_available() {
+        return;
+    }
+    let Some(compiler) = build_self_hosted_compiler("sharedex") else {
+        return;
+    };
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let directory = std::env::temp_dir();
+    for example in SHARED_EXAMPLES {
+        let source = root.join("examples").join(example);
+        let label = unique("frost_shared");
+        let exe =
+            directory.join(format!("{label}{}", std::env::consts::EXE_SUFFIX));
+        let built = Command::new(env!("CARGO_BIN_EXE_frost"))
+            .arg("--link")
+            .arg("-o")
+            .arg(&exe)
+            .arg(&source)
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "the bootstrap refused {example}:\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let want = String::from_utf8_lossy(
+            &Command::new(&exe).output().unwrap().stdout,
+        )
+        .replace("\r\n", "\n");
+        let _ = std::fs::remove_file(&exe);
+
+        let emitted = directory.join(format!("{label}.c"));
+        let run = Command::new(&compiler)
+            .arg(&source)
+            .arg("-o")
+            .arg(&emitted)
+            .output()
+            .unwrap();
+        assert!(
+            run.status.success(),
+            "the self-hosted compiler refused {example}:\n{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        let c_source = std::fs::read_to_string(&emitted).unwrap();
+        let _ = std::fs::remove_file(&emitted);
+        let Some(got) = compile_c_and_run(&label, &c_source) else {
+            return;
+        };
+        assert_eq!(got, want, "the two compilers disagree about {example}");
+    }
+    let _ = std::fs::remove_file(&compiler);
+}
+
 // Everything the two self-hosted backends can express, run through both. They
 // answer the same thing or one of them is wrong.
 #[test]
@@ -17168,6 +17254,40 @@ many
         "-9223372036854775808
 1099511627776
 -9223372036854775808
+",
+    ),
+    // A `for` over a range. The self-hosted lexer had no `..` at all, so
+    // `for i in 0..6` read as a field access on a number and the parse came
+    // apart somewhere further down the file: two examples died indexing the
+    // node arena and a third reported the next function's name as an unknown
+    // enum variant. Two loops in one function are here because the first
+    // desugar declared the counter where the loop stood, and a function body is
+    // one C scope, so the second declaration collided with the first.
+    (
+        "a_for_over_a_range",
+        "main :: fn() -> i64 {
+    mut total : i64 = 0
+    for i in 0..6 {
+        total = total + i
+    }
+    print total
+    mut closed : i64 = 0
+    for i in 1..=4 {
+        closed = closed + i
+    }
+    print closed
+    n := 3
+    mut counted : i64 = 0
+    for i in 0..n {
+        counted = counted + 1
+    }
+    print counted
+    0
+}
+",
+        "15
+10
+3
 ",
     ),
 ];

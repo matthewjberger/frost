@@ -132,11 +132,8 @@ rather than the ones that keep it tidy.
 | Variable | Effect |
 | --- | --- |
 | `FROST_PATH` | Import search directories. The bootstrap splits it the way the platform splits a path list and places it after `-L` and before `frost.json`; the self-hosted compiler takes it as one directory, ahead of `std` and `.` |
-| `FROST_CHECK_UNSAFE` | Set to `0` to turn the unsafe-operation check off, for compiling code that has not marked its unchecked operations yet. On otherwise, in both compilers |
 
-`FROST_CHECK_UNSAFE` is read at `src/bin/frost.rs` and again at
-`selfhosted/frost.frost`, so setting it changes both. The rest of the search
-order is [finding a module](../impl/modules.md).
+The rest of the search order is [finding a module](../impl/modules.md).
 
 ### Read by the bootstrap compiler only
 
