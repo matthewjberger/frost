@@ -362,15 +362,13 @@ so nobody has to find out by reading the passes.
   be true of every argument the type system permits, which rules out anything
   taking a pointer and a length separately, since those can disagree and that is
   exactly what `slice_from` is gated for.
-- A raw place against an ordinary one is read as apart, so `f(p^, x)` with `p`
-  holding `x`'s address passes the exclusivity check. Two places that each reach
-  through a raw pointer are no longer read as apart, since every step in front of
-  a dereference says where the pointer was read from and none of them says where
-  it points. Extending that to a raw place against any other place refuses
-  `f(p^, y)` for every unrelated `y` in a body holding one raw pointer, which is
-  most of what unsafe code is, so it stays here rather than being closed by
-  refusing the cases around it. Reaching through a `^T` is gated on an `unsafe`
-  block.
+- What is left of the exclusivity question is a place reached through a raw
+  pointer that nothing in the call is weighed against, since the check only
+  compares the borrows one call takes. A place reaching through a raw pointer now
+  overlaps whatever it *is* weighed against, whether that is another such place
+  or an ordinary one, because every step in front of a dereference says where the
+  pointer was read from and none of them says where it points. Reaching through a
+  `^T` is gated on an `unsafe` block.
 - Integer overflow wraps rather than trapping, and that is a decision rather
   than a gap. Wrapping is defined behavior, and a trap would be control flow
   hidden behind an operator, which the design rules out. An index computed with

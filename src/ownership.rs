@@ -915,17 +915,18 @@ fn reaches_through_raw(path: &[Step]) -> bool {
 // A raw dereference breaks the argument the prefix comparison rests on. Every
 // step before one says where the pointer was read from, and none of them says
 // where it points, so `p^` and `q^` are one place whenever `p` and `q` hold one
-// address and the names in front of them settle nothing. A pair that each reach
-// through a raw pointer therefore overlap: what the comparison could prove about
-// them, it cannot.
+// address, and `p^` and `x` are one place whenever `p` holds `x`'s address. The
+// names settle nothing either way, so a place reaching through a raw pointer
+// overlaps whatever it is weighed against: what the comparison could prove about
+// it, it cannot.
 //
-// Both sides rather than either. A raw place against an ordinary one is the same
-// question, since `p` may point at `x`, but answering it the same way refuses
-// `f(p^, y)` for every unrelated `y` in a body that holds one raw pointer, and
-// that is most of what unsafe code is. It stays on the list of what is not
-// guarded rather than being closed by refusing the cases around it.
+// Either side rather than both. Refusing only the pair looked like the
+// affordable half of the rule, on the reasoning that the rest would refuse
+// `f(p^, y)` for every unrelated `y` in a body holding one raw pointer.
+// Measuring said otherwise: across the standard library, both compilers and the
+// examples, the whole rule refuses nothing.
 fn places_overlap(first: &[Step], second: &[Step]) -> bool {
-    if reaches_through_raw(first) && reaches_through_raw(second) {
+    if reaches_through_raw(first) || reaches_through_raw(second) {
         return true;
     }
     let common = first.len().min(second.len());
