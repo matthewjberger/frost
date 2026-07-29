@@ -273,6 +273,14 @@ pub enum IrBinOp {
     Add,
     Subtract,
     Multiply,
+    // Arithmetic that keeps the low bits and drops the rest, asked for by name.
+    // Ordinary arithmetic refuses a result that does not fit, which is what a
+    // count wants and what a hash does not: a scramble multiplies precisely to
+    // leave the range, and a hash that stopped there would be a hash nobody can
+    // write.
+    WrappingAdd,
+    WrappingSubtract,
+    WrappingMultiply,
     Divide,
     Modulo,
     BitwiseAnd,

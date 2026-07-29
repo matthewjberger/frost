@@ -448,16 +448,40 @@ fn binary(op: IrBinOp, left: Value, right: Value, ty: &Type) -> Eval<Value> {
     let (bits, signed) = integer_info(ty);
     let left = normalize(left.as_i64(), bits, signed);
     let right = normalize(right.as_i64(), bits, signed);
+    // Arithmetic is done where it cannot overflow and the answer is then held to
+    // the range its type means, which is one rule for every width and matches
+    // what the two compiled backends check for.
+    let wide = |value: i128| -> Eval<i64> {
+        let (low, high) = if signed {
+            (-(1i128 << (bits - 1)), (1i128 << (bits - 1)) - 1)
+        } else {
+            (0, (1i128 << bits) - 1)
+        };
+        if value < low || value > high {
+            return unsupported("arithmetic left the range of its type");
+        }
+        Ok(value as i64)
+    };
+    let as_wide = |value: i64| -> i128 {
+        if signed {
+            value as i128
+        } else {
+            value as u64 as i128
+        }
+    };
     let result = match op {
-        IrBinOp::Add => left.wrapping_add(right),
-        IrBinOp::Subtract => left.wrapping_sub(right),
-        IrBinOp::Multiply => left.wrapping_mul(right),
+        IrBinOp::Add => wide(as_wide(left) + as_wide(right))?,
+        IrBinOp::Subtract => wide(as_wide(left) - as_wide(right))?,
+        IrBinOp::Multiply => wide(as_wide(left) * as_wide(right))?,
+        IrBinOp::WrappingAdd => left.wrapping_add(right),
+        IrBinOp::WrappingSubtract => left.wrapping_sub(right),
+        IrBinOp::WrappingMultiply => left.wrapping_mul(right),
         IrBinOp::Divide => {
             if right == 0 {
                 return unsupported("division by zero");
             }
             if signed {
-                left.wrapping_div(right)
+                wide(as_wide(left) / as_wide(right))?
             } else {
                 ((left as u64) / (right as u64)) as i64
             }
@@ -467,7 +491,7 @@ fn binary(op: IrBinOp, left: Value, right: Value, ty: &Type) -> Eval<Value> {
                 return unsupported("remainder by zero");
             }
             if signed {
-                left.wrapping_rem(right)
+                (as_wide(left) % as_wide(right)) as i64
             } else {
                 ((left as u64) % (right as u64)) as i64
             }
@@ -478,7 +502,7 @@ fn binary(op: IrBinOp, left: Value, right: Value, ty: &Type) -> Eval<Value> {
             if !(0..bits as i64).contains(&right) {
                 return unsupported("shift out of range");
             }
-            left.wrapping_shl(right as u32)
+            wide(as_wide(left) << right)?
         }
         IrBinOp::ShiftRight => {
             if !(0..bits as i64).contains(&right) {
@@ -663,14 +687,30 @@ mod tests {
     }
 
     #[test]
-    fn binary_unsigned_add_wraps_at_width() {
+    fn binary_add_stops_where_the_width_ends() {
+        assert!(binary(IrBinOp::Add, int(200), int(100), &Type::U8).is_err());
+        assert!(
+            binary(
+                IrBinOp::Add,
+                int(4_000_000_000),
+                int(1_000_000_000),
+                &Type::U32
+            )
+            .is_err()
+        );
+        assert!(binary(IrBinOp::Add, int(100), int(100), &Type::I8).is_err());
+    }
+
+    #[test]
+    fn binary_wrapping_add_keeps_the_low_bits() {
         assert_eq!(
-            ok(binary(IrBinOp::Add, int(200), int(100), &Type::U8)).as_i64(),
+            ok(binary(IrBinOp::WrappingAdd, int(200), int(100), &Type::U8))
+                .as_i64(),
             44
         );
         assert_eq!(
             ok(binary(
-                IrBinOp::Add,
+                IrBinOp::WrappingAdd,
                 int(4_000_000_000),
                 int(1_000_000_000),
                 &Type::U32
@@ -678,12 +718,9 @@ mod tests {
             .as_i64(),
             705_032_704
         );
-    }
-
-    #[test]
-    fn binary_signed_add_wraps_at_width() {
         assert_eq!(
-            ok(binary(IrBinOp::Add, int(100), int(100), &Type::I8)).as_i64(),
+            ok(binary(IrBinOp::WrappingAdd, int(100), int(100), &Type::I8))
+                .as_i64(),
             -56
         );
     }

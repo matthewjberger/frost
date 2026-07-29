@@ -181,7 +181,7 @@
     "builtin-functions": {
       "comment": "the primitives the compiler provides rather than the standard library",
       "name": "support.function.builtin.frost",
-      "match": "\\b(assert|flags_has|ptr_to|ptr_cast|slice_from|slice_len|str_len)\\b"
+      "match": "\\b(assert|flags_has|ptr_to|ptr_cast|slice_from|slice_len|str_len|wrap_add|wrap_sub|wrap_mul)\\b"
     },
     "builtin-types": {
       "patterns": [

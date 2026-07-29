@@ -293,7 +293,14 @@ write_coff_object :: fn(mut unit: Assembly, mut object: Blob, path: ^i8) {
             info_relocs, COFF_INFO_NUMBER)
     }
 
+    // After the three debug names, which went into the string table first so the
+    // section headers could point at them. Starting at 4 gave the first symbol
+    // name too long for its entry the offset of `.debug_line`, so the linker
+    // read that as the name and looked for a definition of it.
     mut string_at : i64 = 4
+    if (debug) {
+        string_at = info_name_at + str_len(COFF_INFO_NAME) + 1
+    }
     mut s : i64 = 0
     while (s < asm_symbol_count(unit)) {
         if (carried(unit, s)) {

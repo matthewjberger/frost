@@ -668,10 +668,10 @@ printf :: extern fn(fmt: ^i8, value: i64) -> i32
 main :: fn() -> i64 {
     a : u8 = 200
     b : u8 = 100
-    unsafe { printf("%lld\n", a + b) }
+    unsafe { printf("%lld\n", wrap_add(a, b)) }
     d : u32 = 4000000000
     e : u32 = 1000000000
-    unsafe { printf("%lld\n", d + e) }
+    unsafe { printf("%lld\n", wrap_add(d, e)) }
     g : i64 = 42
     unsafe { printf("%lld\n", -g) }
     0
@@ -3889,8 +3889,11 @@ fn self_hosted_native_backend_emits_working_assembly() {
     let exe_path = directory
         .join(format!("frost_mfasm_out{}", std::env::consts::EXE_SUFFIX));
     std::fs::write(&asm_path, &assembly).unwrap();
+    // With the runtime, since a program that does arithmetic names the check
+    // the way one that indexes names the bounds check.
     let assembled = Command::new(c_compiler().unwrap())
         .arg(&asm_path)
+        .arg(runtime_source())
         .arg("-o")
         .arg(&exe_path)
         .output()
@@ -8923,25 +8926,61 @@ fn a_sub_slice_may_not_reach_past_the_run_it_came_from() {
     }
 }
 
-// Integer arithmetic wraps, and that is a decision rather than a gap. What it
-// must not do is turn into a memory error: an index computed with arithmetic
-// that wraps lands on the wrong element, and the bounds check still runs on the
-// value that comes out, so the read stays inside the array. This pins that,
-// since the difference between a wrong answer and a wrong address is the whole
-// of what the guarantee claims here.
+// Arithmetic whose result does not fit the type it is computed at stops there.
+// An index used to be the case that showed why: one computed with arithmetic
+// that wrapped landed on the wrong element, in range, and nothing said so.
 #[test]
-fn an_index_whose_arithmetic_wraps_stays_inside_the_array() {
+fn arithmetic_that_leaves_its_type_stops_there() {
+    let cases = [
+        (
+            "ovadd",
+            "a : i64 = 9223372036854775807\n    print a + 1\n",
+            "this addition overflowed",
+        ),
+        (
+            "ovmul",
+            "huge : i64 = 4611686018427387904\n    print huge * 4\n",
+            "multiplication overflowed",
+        ),
+        (
+            "ovnarrow",
+            "a : u8 = 200\n    b : u8 = 100\n    print a + b\n",
+            "this addition overflowed",
+        ),
+        (
+            "ovdiv",
+            "a : i64 = 1\n    b : i64 = 0\n    print a / b\n",
+            "division by zero",
+        ),
+    ];
+    for (name, body, wanted) in cases {
+        let source = format!("main :: fn() -> i64 {{\n    {body}    0\n}}\n");
+        let Some((succeeded, stderr)) = compile_and_run_status(name, &source)
+        else {
+            return;
+        };
+        assert!(!succeeded, "{name} should stop");
+        assert!(
+            stderr.contains(wanted),
+            "expected {wanted} for {name}, got:\n{stderr}"
+        );
+    }
+}
+
+// The other half: leaving the range is the point of a hash, so it is spelled.
+#[test]
+fn wrapping_arithmetic_is_asked_for_by_name() {
     let source = "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
          main :: fn() -> i64 {\n\
-         \x20   mut xs : [4]i64 = [10, 20, 30, 40]\n\
-         \x20   huge := 4611686018427387904\n\
-         \x20   unsafe { printf(\"%lld\\n\", xs[huge * 4]) }\n\
+         \x20   key : i64 = 123456789\n\
+         \x20   mut h := wrap_mul(key, 2654435761)\n\
+         \x20   h = wrap_add(h, 7)\n\
+         \x20   unsafe { printf(\"%lld\\n\", h & 4611686018427387903) }\n\
          \x20   0\n}\n";
-    let Some(output) = compile_and_run_unaudited("wrapindex", source) else {
+    let Some(output) = compile_and_run_unaudited("wraphash", source) else {
         return;
     };
-    // 4611686018427387904 * 4 wraps to 0, so this reads the first element.
-    assert_eq!(output, "10\n");
+    assert_eq!(output, "327708115659831436\n");
 }
 
 // A frame wider than a page has to touch each page on the way down, or the
@@ -10950,7 +10989,7 @@ main :: fn() -> i64 {
     unsafe { printf("%lld\n", mask | 256) }
 
     small : u8 = 200
-    unsafe { printf("%lld\n", small + 100) }
+    unsafe { printf("%lld\n", wrap_add(small, 100)) }
     0
 }
 "#;
@@ -15074,9 +15113,10 @@ main :: fn() -> i64 {
     unsafe { printf("%lld\n", accumulator * 10 + (byte - 48)) }
 
     // A literal still takes the width of what it is combined with, which is
-    // what the backwards rule was there to protect and which still holds.
+    // what the backwards rule was there to protect and which still holds. The
+    // sum leaves eight bits, so it says which it means.
     mut small : u8 = 250
-    small = small + 10
+    small = wrap_add(small, 10)
     wide : i64 = small
     unsafe { printf("%lld\n", wide) }
     0

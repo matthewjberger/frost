@@ -24,6 +24,9 @@ pub const BUILTIN_FUNCTIONS: &[&str] = &[
     "slice_from",
     "slice_len",
     "str_len",
+    "wrap_add",
+    "wrap_mul",
+    "wrap_sub",
 ];
 
 struct FunctionSignature {
@@ -5405,6 +5408,18 @@ impl<'a> FunctionLowering<'a> {
                 "cast" => return self.lower_cast(arguments),
                 "ptr_cast" => return self.lower_ptr_cast(arguments),
                 "slice_from" => return self.lower_slice_from(arguments),
+                "wrap_add" => {
+                    return self
+                        .lower_wrapping(IrBinOp::WrappingAdd, arguments);
+                }
+                "wrap_sub" => {
+                    return self
+                        .lower_wrapping(IrBinOp::WrappingSubtract, arguments);
+                }
+                "wrap_mul" => {
+                    return self
+                        .lower_wrapping(IrBinOp::WrappingMultiply, arguments);
+                }
                 _ => {}
             }
         }
@@ -6903,6 +6918,33 @@ impl<'a> FunctionLowering<'a> {
             value: length,
         });
         Ok((IrOperand::Local(slice_local), slice_type))
+    }
+
+    /// `wrap_add(a, b)`, `wrap_sub(a, b)`, `wrap_mul(a, b)`: arithmetic that
+    /// keeps the low bits of its type and drops the rest.
+    ///
+    /// Ordinary arithmetic refuses a result that does not fit, because a count
+    /// that overflowed is a wrong number that keeps going. A hash is the case
+    /// where leaving the range is the point, and it is spelled rather than
+    /// assumed, so a reader can tell the two apart at the site.
+    fn lower_wrapping(
+        &mut self,
+        op: IrBinOp,
+        arguments: &[Expression],
+    ) -> Result<(IrOperand, Type)> {
+        if arguments.len() != 2 {
+            bail!("this takes two numbers, as in wrap_mul(a, b)");
+        }
+        let (left, left_type) = self.lower_expression(&arguments[0], None)?;
+        let (right, right_type) =
+            self.lower_expression(&arguments[1], Some(&left_type))?;
+        let right = self.coerce(right, &right_type, &left_type)?;
+        let result = self.fresh_local(left_type.clone(), None);
+        self.emit(IrStatement::Assign(
+            result,
+            IrRvalue::Binary(op, left, right),
+        ));
+        Ok((IrOperand::Local(result), left_type))
     }
 
     /// `cast($T, value)`: a conversion the reader asked for.
@@ -8945,6 +8987,9 @@ fn operator_text(binop: IrBinOp) -> &'static str {
         IrBinOp::Add => "+",
         IrBinOp::Subtract => "-",
         IrBinOp::Multiply => "*",
+        IrBinOp::WrappingAdd => "wrap_add",
+        IrBinOp::WrappingSubtract => "wrap_sub",
+        IrBinOp::WrappingMultiply => "wrap_mul",
         IrBinOp::Divide => "/",
         IrBinOp::Modulo => "%",
         IrBinOp::BitwiseAnd => "&",

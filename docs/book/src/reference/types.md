@@ -10,8 +10,12 @@
 | `bool` | boolean | 1 |
 | `void` | the unit/empty type | 0 |
 
-All scalar types are copy types (chapter 8). Integer arithmetic wraps at the
-type width with two's-complement semantics and is never checked for overflow.
+All scalar types are copy types (chapter 8). Integer arithmetic whose result
+does not fit the type it is computed at aborts rather than wrapping: add,
+subtract, multiply, divide or take the remainder by zero, divide the lowest
+signed value by minus one, negate that value, or shift by more than the width.
+`wrap_add(a, b)`, `wrap_sub(a, b)` and `wrap_mul(a, b)` keep the low bits and
+drop the rest, for the cases where leaving the range is what was wanted.
 Mixed-width integer arithmetic is permitted. The narrower operand widens to the
 wider type.
 

@@ -17,6 +17,23 @@ use crate::types::Type;
 // answers for it itself rather than calling it, so it is written once here.
 const BOUNDS_CHECK: &str = "frost_rt_bounds_check";
 const LENGTH_CHECK: &str = "frost_rt_check_length";
+const ARITH_TRAP: &str = "frost_rt_arith_trap";
+
+/// Which arithmetic could not answer. The runtime holds the sentences and this
+/// crosses the call, so no backend has to put a string anywhere. The
+/// discriminants are the contract with `frost_rt_arith_trap`.
+#[derive(Clone, Copy)]
+#[repr(i64)]
+enum ArithFault {
+    Add = 0,
+    Subtract = 1,
+    Multiply = 2,
+    DivideByZero = 3,
+    RemainderByZero = 4,
+    DivideOverflow = 5,
+    Negate = 6,
+    Shift = 7,
+}
 
 // `FROST_TIMINGS=1` reports the split between generating code for each
 // function and writing the object, which are the two halves of the backend and
@@ -552,6 +569,18 @@ impl Generator {
                 object.declare_function(name, Linkage::Import, &signature)?;
             self.decls.functions.insert(func_id, (signature, false));
             self.functions.insert(name.to_string(), func_id);
+        }
+
+        if !self.functions.contains_key(ARITH_TRAP) {
+            let mut signature = self.decls.make_signature();
+            signature.params.push(AbiParam::new(types::I64));
+            let func_id = object.declare_function(
+                ARITH_TRAP,
+                Linkage::Import,
+                &signature,
+            )?;
+            self.decls.functions.insert(func_id, (signature, false));
+            self.functions.insert(ARITH_TRAP.to_string(), func_id);
         }
 
         if !self.functions.contains_key(LENGTH_CHECK) {
@@ -1177,6 +1206,22 @@ impl Translator<'_, '_> {
                         if operand_type.is_float() {
                             self.builder.ins().fneg(value)
                         } else {
+                            // The most negative value of a signed type has no
+                            // positive counterpart, so negating it answers with
+                            // itself and the sign quietly stays.
+                            let width =
+                                self.builder.func.dfg.value_type(value).bits();
+                            // Shifted down rather than built and negated: the
+                            // lowest value of a 64-bit type has no positive
+                            // counterpart, so negating it is the overflow this
+                            // very check exists to catch.
+                            let lowest = i64::MIN >> (64 - width);
+                            let at_edge = self.builder.ins().icmp_imm(
+                                IntCC::Equal,
+                                value,
+                                lowest,
+                            );
+                            self.emit_arith_trap(at_edge, ArithFault::Negate)?;
                             self.builder.ins().ineg(value)
                         }
                     }
@@ -1293,14 +1338,46 @@ impl Translator<'_, '_> {
     ) -> Result<Value> {
         let float = operand_type.is_float();
         let signed = is_signed(operand_type);
+        if !float && matches!(op, IrBinOp::Add | IrBinOp::Subtract) {
+            let result = if matches!(op, IrBinOp::Add) {
+                self.builder.ins().iadd(left, right)
+            } else {
+                self.builder.ins().isub(left, right)
+            };
+            let adding = matches!(op, IrBinOp::Add);
+            let code = if adding {
+                ArithFault::Add
+            } else {
+                ArithFault::Subtract
+            };
+            let outside = if signed {
+                self.signed_sum_overflowed(adding, left, right, result)
+            } else {
+                self.unsigned_sum_overflowed(adding, left, right, result)
+            };
+            self.emit_arith_trap(outside, code)?;
+            return Ok(result);
+        }
+        if !float && matches!(op, IrBinOp::Multiply) {
+            let result = self.builder.ins().imul(left, right);
+            let outside = self.product_overflowed(left, right, result, signed);
+            self.emit_arith_trap(outside, ArithFault::Multiply)?;
+            return Ok(result);
+        }
+        if !float && matches!(op, IrBinOp::Divide | IrBinOp::Modulo) {
+            self.guard_divisor(op, left, right, signed)?;
+        }
+        if !float && matches!(op, IrBinOp::ShiftLeft | IrBinOp::ShiftRight) {
+            self.guard_shift(left, right)?;
+        }
         let instructions = self.builder.ins();
         Ok(match op {
             IrBinOp::Add if float => instructions.fadd(left, right),
-            IrBinOp::Add => instructions.iadd(left, right),
             IrBinOp::Subtract if float => instructions.fsub(left, right),
-            IrBinOp::Subtract => instructions.isub(left, right),
             IrBinOp::Multiply if float => instructions.fmul(left, right),
-            IrBinOp::Multiply => instructions.imul(left, right),
+            IrBinOp::WrappingAdd => instructions.iadd(left, right),
+            IrBinOp::WrappingSubtract => instructions.isub(left, right),
+            IrBinOp::WrappingMultiply => instructions.imul(left, right),
             IrBinOp::Divide if float => instructions.fdiv(left, right),
             IrBinOp::Divide if signed => instructions.sdiv(left, right),
             IrBinOp::Divide => instructions.udiv(left, right),
@@ -1315,6 +1392,133 @@ impl Translator<'_, '_> {
                 return self.comparison(comparison, left, right, operand_type);
             }
         })
+    }
+
+    /// Whether an unsigned add or subtract left the range of its type: a sum
+    /// that came out below where it started carried, and a difference of a
+    /// larger value borrowed.
+    fn unsigned_sum_overflowed(
+        &mut self,
+        adding: bool,
+        left: Value,
+        right: Value,
+        result: Value,
+    ) -> Value {
+        let (a, b) = if adding {
+            (result, left)
+        } else {
+            (left, right)
+        };
+        self.builder.ins().icmp(IntCC::UnsignedLessThan, a, b)
+    }
+
+    /// The same for a signed one: the result's sign disagrees with what the
+    /// operands' signs say it must be, which the sign bit of `(a^r) & (b^r)`
+    /// carries for an add and of `(a^b) & (a^r)` for a subtract.
+    fn signed_sum_overflowed(
+        &mut self,
+        adding: bool,
+        left: Value,
+        right: Value,
+        result: Value,
+    ) -> Value {
+        let first = if adding {
+            self.builder.ins().bxor(left, result)
+        } else {
+            self.builder.ins().bxor(left, right)
+        };
+        let second = if adding {
+            self.builder.ins().bxor(right, result)
+        } else {
+            self.builder.ins().bxor(left, result)
+        };
+        let both = self.builder.ins().band(first, second);
+        self.builder.ins().icmp_imm(IntCC::SignedLessThan, both, 0)
+    }
+
+    /// Whether a multiply left the range of its type. The high half of the
+    /// double-width product says so: zero for an unsigned product that fits, and
+    /// the sign extension of the low half for a signed one.
+    fn product_overflowed(
+        &mut self,
+        left: Value,
+        right: Value,
+        result: Value,
+        signed: bool,
+    ) -> Value {
+        if !signed {
+            let high = self.builder.ins().umulhi(left, right);
+            return self.builder.ins().icmp_imm(IntCC::NotEqual, high, 0);
+        }
+        let high = self.builder.ins().smulhi(left, right);
+        let width = self.builder.func.dfg.value_type(result).bits() as i64;
+        let sign = self.builder.ins().sshr_imm(result, width - 1);
+        self.builder.ins().icmp(IntCC::NotEqual, high, sign)
+    }
+
+    /// A divisor of zero, and the one signed division whose answer does not fit:
+    /// the most negative value over minus one.
+    fn guard_divisor(
+        &mut self,
+        op: IrBinOp,
+        left: Value,
+        right: Value,
+        signed: bool,
+    ) -> Result<()> {
+        let zero = self.builder.ins().icmp_imm(IntCC::Equal, right, 0);
+        let code = if matches!(op, IrBinOp::Divide) {
+            ArithFault::DivideByZero
+        } else {
+            ArithFault::RemainderByZero
+        };
+        self.emit_arith_trap(zero, code)?;
+        if signed && matches!(op, IrBinOp::Divide) {
+            let width = self.builder.func.dfg.value_type(left).bits();
+            // Shifted down rather than built and negated, for the same reason.
+            let lowest = i64::MIN >> (64 - width);
+            let is_lowest =
+                self.builder.ins().icmp_imm(IntCC::Equal, left, lowest);
+            let is_minus_one =
+                self.builder.ins().icmp_imm(IntCC::Equal, right, -1);
+            let both = self.builder.ins().band(is_lowest, is_minus_one);
+            self.emit_arith_trap(both, ArithFault::DivideOverflow)?;
+        }
+        Ok(())
+    }
+
+    /// A shift by more than the width of the type it shifts, which the hardware
+    /// answers for by masking and so silently gives a different shift.
+    fn guard_shift(&mut self, left: Value, right: Value) -> Result<()> {
+        let width = self.builder.func.dfg.value_type(left).bits() as i64;
+        let past = self.builder.ins().icmp_imm(
+            IntCC::UnsignedGreaterThanOrEqual,
+            right,
+            width,
+        );
+        self.emit_arith_trap(past, ArithFault::Shift)
+    }
+
+    /// The branch that reports. Shaped like the index check: the runtime holds
+    /// the message and the abort, and arithmetic that fits reaches neither.
+    fn emit_arith_trap(
+        &mut self,
+        outside: Value,
+        fault: ArithFault,
+    ) -> Result<()> {
+        let Some(func_id) = self.functions.get(ARITH_TRAP) else {
+            bail!("native backend: call to undeclared function '{ARITH_TRAP}'");
+        };
+        let func_ref =
+            self.decls.declare_func_in_func(*func_id, self.builder.func);
+        let report = self.builder.create_block();
+        let past = self.builder.create_block();
+        self.builder.ins().brif(outside, report, &[], past, &[]);
+        self.builder.switch_to_block(report);
+        let reason = self.builder.ins().iconst(types::I64, fault as i64);
+        self.builder.ins().call(func_ref, &[reason]);
+        self.builder.ins().jump(past, &[]);
+        self.builder.switch_to_block(past);
+        Ok(())
     }
 
     fn comparison(
