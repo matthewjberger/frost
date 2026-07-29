@@ -3396,20 +3396,7 @@ fn the_standard_library_passes_its_own_tests() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let directory = std::env::temp_dir();
 
-    let modules = [
-        ("ecs.frost", "107 passed"),
-        ("map.frost", "12 passed"),
-        ("math.frost", "20 passed"),
-        ("math64.frost", "20 passed"),
-        ("mem.frost", "13 passed"),
-        ("slab.frost", "1 passed"),
-        ("snapshot.frost", "6 passed"),
-        ("sort.frost", "3 passed"),
-        ("strings.frost", "9 passed"),
-        ("thread.frost", "3 passed"),
-        ("vec.frost", "5 passed"),
-    ];
-    for (module, expected) in modules {
+    for (module, expected) in STD_MODULES.iter().copied() {
         let source = root.join("std").join(module);
         for (label, emit_c) in [("stdnative", false), ("stdc", true)] {
             let exe = directory.join(format!(
@@ -3466,25 +3453,10 @@ fn self_hosted_runs_the_standard_library_tests() {
     // A list naming the standard library and holding four of its modules is the
     // shape this suite exists to catch.
     //
-    // It is the same list `the_standard_library_passes_its_own_tests` holds the
-    // bootstrap to, and the two are meant to stay the same list. map, slab and
-    // vec were in that one and not this one, so the containers a program is
-    // most likely to reach for were compiled by one compiler and not the other.
-    let modules = [
-        ("map.frost", "12 passed"),
-        ("slab.frost", "1 passed"),
-        ("vec.frost", "5 passed"),
-        ("strings.frost", "9 passed"),
-        ("math.frost", "20 passed"),
-        ("math64.frost", "20 passed"),
-        ("sort.frost", "3 passed"),
-        ("mem.frost", "13 passed"),
-        ("ecs.frost", "107 passed"),
-        ("snapshot.frost", "6 passed"),
-        ("thread.frost", "3 passed"),
-    ];
+    // `STD_MODULES` is the one list, which the bootstrap suite reads too. They
+    // used to be two literals and drifted by three modules.
     for (label, backend) in [("stdc", "--emit-c"), ("stdasm", "--emit-asm")] {
-        for (module, expected) in modules {
+        for (module, expected) in STD_MODULES.iter().copied() {
             let exe = directory.join(format!(
                 "{}{}",
                 unique(&format!("frost_{label}")),
@@ -7647,10 +7619,12 @@ fn both_compilers_refuse_a_defer_inside_a_block() {
              main :: fn() -> i64 { print f()  0 }\n",
         ),
     ];
+    // Both halves assert the same sentence, so neither compiler can refuse it
+    // with something a reader cannot act on and still pass.
     for (name, source) in cases {
         let bootstrap = compile_error(name, source);
         assert!(
-            bootstrap.contains("defer"),
+            bootstrap.contains("`defer` belongs at the top level"),
             "the bootstrap took a nested `defer` in {name}, or refused it \
              without naming it:\n{bootstrap}"
         );
@@ -7696,6 +7670,66 @@ fn both_compilers_refuse_a_defer_over_a_rebound_name() {
         "the self-hosted compiler took a `defer` over a rebound name:\n{hosted}"
     );
 }
+
+// A `test` body is a function body and defers like one. It gets its own mark,
+// and without one a deferred statement written in a test never ran, because
+// nothing put the copies where that body falls off the end, and the entry stayed
+// on the list for whatever was parsed next to run.
+#[test]
+fn a_defer_in_a_test_body_runs() {
+    let source = "trace :: fn(n: i64) { print n }\n\
+         test \"a defer runs where the test body ends\" {\n\
+         \x20   defer trace(7)\n\
+         \x20   trace(1)\n}\n\
+         test \"and belongs to the test that wrote it\" {\n\
+         \x20   trace(2)\n}\n";
+    let directory = std::env::temp_dir();
+    let input = directory.join(format!("{}.frost", unique("frost_defertest")));
+    std::fs::write(&input, source).unwrap();
+    let exe = directory.join(format!(
+        "{}{}",
+        unique("frost_defertest"),
+        std::env::consts::EXE_SUFFIX
+    ));
+    let run = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("--test")
+        .arg("-o")
+        .arg(&exe)
+        .arg(&input)
+        .output()
+        .unwrap();
+    let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&exe);
+    // 1 then 7 says the deferred statement ran where that body ended, and the
+    // single 2 says it did not follow the parse into the next test.
+    assert!(
+        output.contains("1\n7\n") && output.contains("2\n"),
+        "a `defer` in a test body did not run where the body ended:\n{output}"
+    );
+    assert!(
+        output.matches('7').count() == 1,
+        "a `defer` in one test body ran in another:\n{output}"
+    );
+}
+
+// The standard library modules that carry `test` blocks, and how many each
+// carries. One list rather than two that currently match: the bootstrap suite
+// and the self-hosted one drifted apart by three modules, so map, slab and vec
+// were compiled by one compiler and never the other.
+const STD_MODULES: &[(&str, &str)] = &[
+    ("ecs.frost", "107 passed"),
+    ("map.frost", "12 passed"),
+    ("math.frost", "20 passed"),
+    ("math64.frost", "20 passed"),
+    ("mem.frost", "13 passed"),
+    ("slab.frost", "1 passed"),
+    ("snapshot.frost", "6 passed"),
+    ("sort.frost", "3 passed"),
+    ("strings.frost", "9 passed"),
+    ("thread.frost", "3 passed"),
+    ("vec.frost", "5 passed"),
+];
 
 // The example programs, run under both compilers and compared. They are the
 // longest programs in the tree that neither compiler wrote, and holding the two
@@ -17538,6 +17572,56 @@ main :: fn() -> i64 {
 0
 99
 1
+",
+    ),
+    // A body whose answer is a trailing `if`, and one whose answer is a
+    // trailing `match`. Each branch of an answering `if` becomes a return, so
+    // each has to carry what was deferred the way a written `return` does. The
+    // self-hosted compiler put the copies after the `if` instead, which left
+    // them where nothing reached and took the answer with them: both branches
+    // ran their deferred statement and then the function answered 0.
+    (
+        "a_defer_under_a_trailing_branch",
+        "trace :: fn(n: i64) { print n }
+Kind :: enum { One, Two }
+
+branchy :: fn(c: i64) -> i64 {
+    defer trace(1)
+    if (c > 0) { 10 } else { 20 }
+}
+
+matchy :: fn(k: Kind) -> i64 {
+    defer trace(2)
+    match k {
+        case .One: 30
+        case .Two: 40
+    }
+}
+
+pair :: fn() -> (a: i64, b: i64) {
+    defer trace(3)
+    return 4, 5
+}
+
+main :: fn() -> i64 {
+    print branchy(1)
+    print branchy(0 - 1)
+    print matchy(Kind::Two)
+    x, y := pair()
+    print x
+    print y
+    0
+}
+",
+        "1
+10
+1
+20
+2
+40
+3
+4
+5
 ",
     ),
 ];

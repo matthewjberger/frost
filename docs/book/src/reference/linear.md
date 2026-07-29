@@ -25,7 +25,8 @@ and where a `?` hands a failure on, since that is the function leaving too. It
 does not run on `break` or `continue`, which leave a loop rather than the
 function.
 
-Written inside an `if` or a loop body it is refused, by both compilers. Down
+Written inside any block, whether that is an `if`, a loop body, an `unsafe`
+block or a bare one, it is refused by both compilers with the same message. Down
 there it would mean something other than it reads: it would run past the end of
 the block it was written in, and one written in a loop would run once
 afterwards, with whatever the loop left behind, rather than once a turn.
