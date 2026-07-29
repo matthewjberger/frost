@@ -366,8 +366,15 @@ so nobody has to find out by reading the passes.
   that overflows wraps to some other number, and the bounds check then runs on
   that number: the read stays inside the array and lands on the wrong element. A
   wrong answer, not a wrong address.
-- There is no stack-depth guard. Unbounded recursion runs the stack out and the
-  process dies however the host decides.
+- There is no bound on recursion depth. What there is instead is a guarantee
+  about how running the stack out fails: every frame wider than a page touches
+  each page on the way down, on every target, so the stack pointer cannot move
+  past the guard in one step and write into whatever is mapped below it. That is
+  the stack-clash shape, and it is the only part of this that was a memory-safety
+  question. Unbounded recursion therefore faults on the guard rather than
+  corrupting anything, and the runtime names it rather than leaving a bare fault
+  address. How deep a program may go is still the host's business, not the
+  language's.
 - A callback's guarantee stops at the C boundary. The Frost side is checked.
   The context moves in and comes back out, the registration is `linear` so
   forgetting to unregister is a compile error, and the region check holds the

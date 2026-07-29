@@ -2439,30 +2439,38 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
     emit_text("    subq $")
     emit_frame_symbol(p)
     emit_text(", %rsp\n")
-    // Windows grows the stack through a guard page, so a frame wider than one
-    // page has to touch each page on the way down or the guard is stepped over
-    // and the access faults. The size is a symbol here rather than a number, so
-    // which pages to touch is decided while the program runs: one pass down
-    // from the frame pointer, one write per page. A frame of one page, which is
-    // almost all of them, leaves the loop after a single turn.
-    if (p.abi_windows == 1) {
-        asm("movq %rbp, %r11")
-        emit_text(".Lprobe")
-        frost_rt_emit_int(mine)
-        emit_text(":\n")
-        asm("subq $4096, %r11")
-        asm("cmpq %rsp, %r11")
-        emit_text("    jbe .Lprobed")
-        frost_rt_emit_int(mine)
-        emit_text("\n")
-        asm("movq $0, (%r11)")
-        emit_text("    jmp .Lprobe")
-        frost_rt_emit_int(mine)
-        emit_text("\n")
-        emit_text(".Lprobed")
-        frost_rt_emit_int(mine)
-        emit_text(":\n")
-    }
+    // A stack grows through a guard page, so a frame wider than one page has to
+    // touch each page on the way down. A frame that moves the stack pointer past
+    // the guard in one step and then writes below it steps over the guard
+    // entirely and lands in whatever is mapped there, which is a write to
+    // somebody else's memory rather than the fault the guard exists to raise.
+    //
+    // Every target, not only Windows. Linux grows the main thread's stack with a
+    // wide gap below it, which makes the jump harder from there, but a thread
+    // stack is an ordinary mapping with a single guard page and a `spawn` body
+    // holding a wide frame reaches that on any of them. A guarantee that holds
+    // on one platform is a platform note rather than a guarantee.
+    //
+    // The size is a symbol rather than a number, so which pages to touch is
+    // decided while the program runs: one pass down from the frame pointer, one
+    // write per page. A frame of one page, which is almost all of them, leaves
+    // the loop after a single turn.
+    asm("movq %rbp, %r11")
+    emit_text(".Lprobe")
+    frost_rt_emit_int(mine)
+    emit_text(":\n")
+    asm("subq $4096, %r11")
+    asm("cmpq %rsp, %r11")
+    emit_text("    jbe .Lprobed")
+    frost_rt_emit_int(mine)
+    emit_text("\n")
+    asm("movq $0, (%r11)")
+    emit_text("    jmp .Lprobe")
+    frost_rt_emit_int(mine)
+    emit_text("\n")
+    emit_text(".Lprobed")
+    frost_rt_emit_int(mine)
+    emit_text(":\n")
 
     // A struct result arrives as a hidden pointer ahead of the real arguments.
     regs := abi_arg_regs(p)

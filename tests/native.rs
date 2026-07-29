@@ -8950,6 +8950,54 @@ fn a_slice_may_not_be_built_with_a_negative_length() {
     );
 }
 
+// A frame wider than a page has to touch each page on the way down, or the
+// stack pointer moves past the guard in one step and the first write below it
+// lands in whatever is mapped there. Both backends probe; this is the check that
+// the probe is right rather than merely present, since a wrong one faults on
+// every call.
+#[test]
+fn a_frame_wider_than_a_page_touches_each_page() {
+    let source = "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
+         wide :: fn(seed: i64) -> i64 {\n\
+         \x20   mut buffer : [8192]i64 = [0; 8192]\n\
+         \x20   buffer[0] = seed\n\
+         \x20   buffer[8191] = seed\n\
+         \x20   buffer[0] + buffer[8191]\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   printf(\"%lld\\n\", wide(21))\n\
+         \x20   0\n}\n";
+    let Some(output) = compile_and_run_unaudited("pageprobe", source) else {
+        return;
+    };
+    assert_eq!(output, "42\n");
+}
+
+// Running the stack out is safe either way, because every frame reaches the
+// guard rather than stepping over it. What this checks is that it says so: the
+// process used to die with a fault address and nothing naming which of the many
+// ways to fault it was.
+#[test]
+fn an_exhausted_stack_says_what_happened() {
+    let source = "down :: fn(n: i64) -> i64 {\n\
+         \x20   if (n <= 0) { return 0 }\n\
+         \x20   down(n - 1) + 1\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print down(100000000)\n\
+         \x20   0\n}\n";
+    let Some((succeeded, stderr)) =
+        compile_and_run_status("stackout", source, Audit::Off)
+    else {
+        return;
+    };
+    assert!(!succeeded, "unbounded recursion should not succeed");
+    assert!(
+        stderr.contains("the stack ran out"),
+        "expected the stack-exhaustion message, got:\n{stderr}"
+    );
+}
+
 // The other end of the same rule: an empty slice is not a negative one, and a
 // container that hands out a zero-length prefix has to keep working.
 #[test]

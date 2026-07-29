@@ -54,6 +54,127 @@ static void frost_rt_stop(void) {
     abort();
 }
 
+/* Running the stack out.
+
+   Every frame wider than a page touches each page on its way down, so the guard
+   is hit rather than stepped over and unbounded recursion faults instead of
+   writing into whatever is mapped below. That much is the compiler's doing and
+   it is what makes this safe. What it is not is legible: the process dies with
+   a fault address and nothing saying which of the many ways to fault it was.
+
+   Naming it costs one handler. On Windows the guard raises a distinct exception
+   code, so there is nothing to guess. On POSIX it arrives as SIGSEGV like any
+   other bad access, so the handler runs on its own stack (the ordinary one is
+   what ran out) and says only that the fault is near the stack pointer, which is
+   the honest reading: an address a page or two from where the stack was is the
+   stack, and one far from it is somebody else's bug. */
+static const char frost_rt_stack_message[] =
+    "frost: the stack ran out, which is unbounded recursion or a frame too "
+    "wide for it\n";
+
+/* Written with the system call rather than with stdio, because a handler runs
+   where stdio's own locks and buffers may not be reachable, and on Windows it
+   runs on the stack that just ran out. */
+static void frost_rt_write_stderr(const char *text, unsigned long length) {
+#if defined(_WIN32)
+    DWORD written = 0;
+    WriteFile(GetStdHandle(STD_ERROR_HANDLE), text, length, &written, NULL);
+#else
+    ssize_t ignored = write(2, text, (size_t)length);
+    (void)ignored;
+#endif
+}
+
+#if defined(_WIN32)
+static LONG CALLBACK frost_rt_stack_handler(EXCEPTION_POINTERS *info) {
+    if (info->ExceptionRecord->ExceptionCode == EXCEPTION_STACK_OVERFLOW) {
+        frost_rt_write_stderr(frost_rt_stack_message,
+                              sizeof(frost_rt_stack_message) - 1);
+    }
+    /* The message is all this is for. What the process does next is what it
+       would have done, so the exit code and the debugger's view are unchanged. */
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+static void frost_rt_install_stack_handler(void) {
+    AddVectoredExceptionHandler(1, frost_rt_stack_handler);
+}
+#else
+#include <signal.h>
+#include <unistd.h>
+
+/* Roughly where the stack was when the program started, and how far below it a
+   fault still counts as the stack running out. The window is generous on
+   purpose: mislabelling one crash costs a wrong sentence, while missing the
+   common case costs the whole point of the handler. Anything outside it is
+   somebody else's bad pointer and is left to report itself. */
+static char *frost_rt_stack_top = NULL;
+#define FROST_RT_STACK_WINDOW (256 * 1024 * 1024)
+
+static char frost_rt_handler_stack[64 * 1024];
+
+static void frost_rt_stack_handler(int signal, siginfo_t *info, void *context) {
+    (void)context;
+    char *fault = (char *)info->si_addr;
+    if (frost_rt_stack_top != NULL && fault < frost_rt_stack_top
+        && fault > frost_rt_stack_top - FROST_RT_STACK_WINDOW) {
+        frost_rt_write_stderr(frost_rt_stack_message,
+                              sizeof(frost_rt_stack_message) - 1);
+    }
+    /* Put the default back and return, so the fault happens again and kills the
+       process the way it would have. Reporting a different exit code here would
+       be the handler changing what the program did rather than explaining it. */
+    struct sigaction restore;
+    memset(&restore, 0, sizeof(restore));
+    restore.sa_handler = SIG_DFL;
+    sigemptyset(&restore.sa_mask);
+    sigaction(signal, &restore, NULL);
+}
+
+static void frost_rt_install_stack_handler(void) {
+    stack_t alternate;
+    struct sigaction action;
+    char here;
+    frost_rt_stack_top = &here;
+    alternate.ss_sp = frost_rt_handler_stack;
+    alternate.ss_size = sizeof(frost_rt_handler_stack);
+    alternate.ss_flags = 0;
+    /* The handler needs a stack of its own, since the one that ran out is the
+       one it would otherwise run on. Without this there is nothing to report
+       from and the program dies as it did before, which is why a failure here
+       simply leaves the handler uninstalled. */
+    if (sigaltstack(&alternate, NULL) != 0) {
+        return;
+    }
+    memset(&action, 0, sizeof(action));
+    action.sa_sigaction = frost_rt_stack_handler;
+    action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    sigemptyset(&action.sa_mask);
+    sigaction(SIGSEGV, &action, NULL);
+    sigaction(SIGBUS, &action, NULL);
+}
+#endif
+
+/* Armed before the program's own `main` runs. The generated code's `main` is the
+   program's, so there is no earlier place in it to put this, and the loader is
+   what runs something ahead of it. */
+static void frost_rt_arm_stack_guard(void) {
+    frost_rt_install_stack_handler();
+}
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((constructor)) static void frost_rt_arm_at_start(void) {
+    frost_rt_arm_stack_guard();
+}
+#elif defined(_MSC_VER)
+#pragma section(".CRT$XCU", read)
+static void __cdecl frost_rt_arm_at_start(void) {
+    frost_rt_arm_stack_guard();
+}
+__declspec(allocate(".CRT$XCU")) void(__cdecl *frost_rt_arm_slot)(void) =
+    frost_rt_arm_at_start;
+#endif
+
 void frost_rt_bounds_check(int64_t index, int64_t length) {
     if ((uint64_t)index >= (uint64_t)length) {
         fprintf(stderr,
