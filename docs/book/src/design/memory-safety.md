@@ -25,9 +25,19 @@ one decision plus a small number of local rules.
    stored where the call cannot see, or by being what the block ends with
    (`src/regions.rs`, and `check_frame_escapes` in `selfhosted/regions.frost`;
    both compilers refuse the same programs). A view the function was handed names
-   storage the caller owns and passes back out freely. What no borrow of either
-   kind may do is be stored: not in a struct field, not in an array element, not
-   in a container.
+   storage the caller owns and passes back out freely. Neither borrow may be
+   stored: not in a struct field, not in an array element, not in a container.
+
+   A slice is not one of those two, and the difference is worth saying in the
+   same breath. `[]T` carries a length beside the address, it is an ordinary
+   storable type, and a struct field may hold one, which is what a parser
+   reading views into a buffer it does not own is built from. So the two are
+   guaranteed differently: a borrow is held by being *unspellable* in a field
+   (`Type::contains_reference` answers true for `Ref` and `RefMut`, and for a
+   slice it asks about the element instead), while a slice is held by the frame
+   and region checks, which refuse one whose storage they cannot trace. Checked
+   rather than impossible, and the check is the same one the paragraph above
+   describes.
 
    Refusing what it cannot trace is the point rather than an implementation
    detail. The check answered "this does not name my frame" for every expression

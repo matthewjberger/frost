@@ -227,7 +227,9 @@ check_types :: fn(mut p: Parser, head: i64) {
             xstart := used.xarg_start
             xcount := used.xarg_count
             is_pack := used.is_pack
-            if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack)) {
+            owner := used.owner
+            if (instance_fits_kind(p, gi, arg, xstart, xcount, is_pack,
+                owner) && tuple_is_first_for(p, gi, ii)) {
                 instance := parse_generic_instance(p, gi, arg, xstart, xcount)
                 // The return type worked out for this instance. The template's
                 // own still names its parameters.
@@ -326,7 +328,7 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
                 return
             }
         }
-        place_ty := type_of(p, place)
+        place_ty := place_type(p, place)
         value_ty := type_of(p, value)
         if (value_fits(p, value, value_ty, place_ty) == false) {
             report_where(p.modules, p.src, node.pos)

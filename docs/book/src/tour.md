@@ -198,6 +198,13 @@ A `ref T` is a checked address: reading and writing through it needs no
 other container. Chapter 3.3 of [types.md](reference/types.md) has the rule and
 chapter 8 of [ownership.md](reference/ownership.md) has the checks.
 
+A slice is not held that way. `[]T` is an address with a length beside it and an
+ordinary storable type, so a struct field may hold one, which is what a parser
+holding views into a buffer it does not own is made of. What keeps a stored
+slice honest is not the type but the frame and region checks, which refuse a
+function that answers with a view whose storage they cannot trace. See
+[memory-safety.md](design/memory-safety.md).
+
 Raw pointers `^T` exist as an explicit, unchecked escape hatch for FFI, and
 `ptr_to(x)` is how you take one.
 
