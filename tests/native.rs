@@ -3274,6 +3274,44 @@ fn indexing_a_base_of_unknown_type_is_gated() {
     );
 }
 
+// A `ref` local holds the type of the place it names, so a field or an element
+// reached through one is named rather than unknown. The gate used to have no
+// type for a `ref` at all, and refused every read through one; the standard
+// library's snapshot module could not be compiled by the bootstrap for that
+// reason while the self-hosted compiler took it.
+#[test]
+fn a_ref_local_carries_the_type_of_what_it_names() {
+    let source = "Inner :: struct { cells: [4]i64 }\n\
+                  Outer :: struct { inner: Inner }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   mut items := [Outer { inner = Inner { cells = [1, 2, 3, 4] } }]\n\
+                  \x20   ref held := items[0]\n\
+                  \x20   print held.inner.cells[2]\n\
+                  \x20   0\n}\n";
+    let Some(output) = compile_and_run_unaudited("reftype", source) else {
+        return;
+    };
+    assert_eq!(output, "3\n");
+}
+
+// And a borrow of a raw pointer is that pointer under another name, so indexing
+// one is gated exactly as indexing the pointer is. Giving a `ref` a type is only
+// safe if the gate reads through the borrow to what is behind it.
+#[test]
+fn a_ref_to_a_raw_pointer_indexes_as_a_raw_pointer() {
+    let source = "main :: fn() -> i64 {\n\
+                  \x20   mut cells := [1, 2, 3, 4]\n\
+                  \x20   mut here := unsafe { ptr_to(cells[0]) }\n\
+                  \x20   ref aliased := here\n\
+                  \x20   print aliased[1]\n\
+                  \x20   0\n}\n";
+    let message = compile_error_checked("refptrindex", source);
+    assert!(
+        message.contains("indexing a raw pointer"),
+        "expected the raw-pointer index gate through the borrow, got:\n{message}"
+    );
+}
+
 // The whole point of the standard library absorbing the unsafe floor: a program
 // that uses vec, sort, format, strings and io compiles under the unsafety gate
 // with no `unsafe` of its own. The containers' raw pointers and FFI are wrapped
@@ -3338,23 +3376,42 @@ fn a_program_using_std_is_clean_under_the_unsafe_gate() {
     let _ = std::fs::remove_dir_all(&directory);
 }
 
-// std/math.frost's own test blocks, run through both of the bootstrap's
-// backends. Every exported function is covered: a differential test says the
-// two backends agree, and these say the answers are right. A rotation that
-// turns the wrong way, a projection with the depth range inverted and a
-// quaternion that is its own inverse all agree across backends and are all
-// wrong, so agreement was never going to be enough on its own.
+// Every standard library module that carries tests, run through both of the
+// bootstrap's backends. Its counterpart below runs the same blocks under the
+// self-hosted compiler, and until this covered more than math the two compilers
+// were not being asked the same question: `snapshot.frost` was rejected by the
+// bootstrap's unsafe gate and compiled by the self-hosted one, and any program
+// importing `mem.frost` failed to build through the C backend on a declaration
+// the emitted prelude had already made.
+//
+// The math modules are here for a second reason. Every exported function is
+// covered, because a differential test says the two backends agree and these say
+// the answers are right. A rotation that turns the wrong way, a projection with
+// the depth range inverted and a quaternion that is its own inverse all agree
+// across backends and are all wrong. Both precisions run: the f64 library is the
+// f32 one with its element type changed, so a formula that survived the copy
+// wrong fails here.
 #[test]
-fn the_math_library_passes_its_own_tests() {
+fn the_standard_library_passes_its_own_tests() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let directory = std::env::temp_dir();
 
-    // Both precisions. The f64 library is the f32 one with its element type
-    // changed, so the same twenty tests run over it and a formula that survived
-    // the copy wrong fails here.
-    for module in ["math.frost", "math64.frost"] {
+    let modules = [
+        ("ecs.frost", "107 passed"),
+        ("map.frost", "12 passed"),
+        ("math.frost", "20 passed"),
+        ("math64.frost", "20 passed"),
+        ("mem.frost", "13 passed"),
+        ("slab.frost", "1 passed"),
+        ("snapshot.frost", "6 passed"),
+        ("sort.frost", "3 passed"),
+        ("strings.frost", "9 passed"),
+        ("thread.frost", "3 passed"),
+        ("vec.frost", "5 passed"),
+    ];
+    for (module, expected) in modules {
         let source = root.join("std").join(module);
-        for (label, emit_c) in [("mathnative", false), ("mathc", true)] {
+        for (label, emit_c) in [("stdnative", false), ("stdc", true)] {
             let exe = directory.join(format!(
                 "{}{}",
                 unique(&format!("frost_{label}")),
@@ -3374,7 +3431,7 @@ fn the_math_library_passes_its_own_tests() {
             let output =
                 String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
             assert!(
-                output.contains("20 passed, 0 failed"),
+                output.contains(expected) && output.contains("0 failed"),
                 "{module} {label}:\n{output}{}",
                 String::from_utf8_lossy(&run.stderr)
             );

@@ -910,6 +910,7 @@ parse_postfix :: fn(mut p: Parser, start: i64) -> i64 {
             advance(p)
             node = new_unary(p, NodeKind::Deref, node)
         } else {
+            bracket := cur_off(p)
             advance(p)
             index := parse_expr(p)
             advance(p)
@@ -920,7 +921,7 @@ parse_postfix :: fn(mut p: Parser, start: i64) -> i64 {
             if (held >= 0) {
                 node = held
             } else {
-                node = new_index(p, node, index)
+                node = new_index(p, node, index, bracket)
             }
         }
     }
@@ -2683,6 +2684,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         // sequence instead of asking the reader for an `unsafe` block.
         seq_node := arena_at(p.arena, sequence)
         seq_kind := seq_node.kind
+        seq_at := seq_node.pos
         in_place := seq_kind == NodeKind::Var
         mut seq_off := seq_node.val
         mut seq_len := seq_node.c
@@ -2725,7 +2727,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         // body they wrote.
         seq_again := new_named_node(p, NodeKind::Var, 0, seq_off, seq_len)
         at_again := new_named_node(p, NodeKind::Var, 0, index_off, index_len)
-        element := new_index(p, seq_again, at_again)
+        element := new_index(p, seq_again, at_again, seq_at)
         bind_item := new_let_node(p, element, item_off, item_len, -1)
         set_next(p, bind_item, body)
 
