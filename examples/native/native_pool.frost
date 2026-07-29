@@ -62,6 +62,9 @@ slab_write :: fn(mut p: Slab, handle: i64, move value: Entity) {
     p.storage[hindex(handle)] = value
 }
 
+// Written for the shape rather than for use. A handle packs the generation into
+// 32 bits, so a slot released two billion times has to be retired rather than
+// reused; `std/slab.frost` does that and is the one to reach for.
 slab_release :: fn(mut p: Slab, handle: i64) {
     index := hindex(handle)
     p.generations[index] = p.generations[index] + 1

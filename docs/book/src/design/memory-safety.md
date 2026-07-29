@@ -51,7 +51,12 @@ one decision plus a small number of local rules.
    live-but-unconsumed linear value at end of scope is a compile error.
 5. No use-after-free through a stale handle. A generational handle whose slot
    has been freed and reused reports "not contained". It can never silently read
-   a live value.
+   a live value. A slot's generation is bounded, because a handle carries it in
+   32 bits: a slot released 2^31 times is retired rather than reused, so the
+   container loses one place instead of handing out a handle its own check would
+   reject. The bound cannot produce the opposite failure, since the check
+   compares an ever-increasing count against a sign-extended 32-bit value and a
+   count past the bound equals no older handle's generation.
 6. No out-of-bounds array access. Every array index is bounds-checked against
    the array's statically-known length. An out-of-range index aborts with a
    diagnostic rather than reading or writing past the array.
