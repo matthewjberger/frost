@@ -56,6 +56,11 @@ built with one was not bounds-checked at all and `slice_prefix($T, xs, -1)`
 reached it from ordinary safe code. A length is settled once where the slice is
 built while an access happens in a loop, so it is answered for there.
 
+A view longer than the run it came from. `slice_prefix` and `slice_range` cut
+from a slice, so the run is known and a longer view is a false claim rather than
+an unverifiable one. Both ends are answered for against it. `slice_span` and
+`slice_chunk` clamp before they cut and so never reach this.
+
 A size that wraps. `count * sizeof(T)` at a large count wraps to a small number,
 so the allocator hands back a small block while the slice over it carries the
 count that was asked for. Every read past the block's real end is then checked
