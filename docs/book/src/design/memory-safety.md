@@ -371,10 +371,24 @@ so nobody has to find out by reading the passes.
   most of what unsafe code is, so it stays here rather than being closed by
   refusing the cases around it. Reaching through a `^T` is gated on an `unsafe`
   block.
-- Integer overflow wraps rather than trapping. An index computed with arithmetic
-  that overflows wraps to some other number, and the bounds check then runs on
-  that number: the read stays inside the array and lands on the wrong element. A
-  wrong answer, not a wrong address.
+- Integer overflow wraps rather than trapping, and that is a decision rather
+  than a gap. Wrapping is defined behavior, and a trap would be control flow
+  hidden behind an operator, which the design rules out. An index computed with
+  arithmetic that wraps lands on the wrong element, and the bounds check still
+  runs on the value that comes out, so the read stays inside the array: a wrong
+  answer, not a wrong address.
+
+  Where a wrapped number *did* become a wrong address, it is now refused, and
+  each of those was a real hole rather than a theoretical one. A count times an
+  element width that wraps asks the allocator for fewer bytes than the caller
+  believes. A slice length that is negative reads as enormous to a bounds check
+  that compares unsigned. A sub-slice longer than the run it came from carries a
+  length its storage does not have. All three are checked where the value is
+  made, and all three were reachable from safe code.
+
+  Checking the arithmetic inside an index instead would have been worse than
+  nothing: `xs[a * b]` would be checked while `i := a * b` followed by `xs[i]`
+  would not, which is a guarantee about spelling rather than about the program.
 - There is no bound on recursion depth. What there is instead is a guarantee
   about how running the stack out fails: every frame wider than a page touches
   each page on the way down, on every target, so the stack pointer cannot move

@@ -211,6 +211,31 @@ int64_t frost_rt_check_length(int64_t length) {
     return length;
 }
 
+/* A view of `count` elements starting `from` elements into a run of `room`,
+   refused where it would reach past the end.
+
+   This is the part of `slice_from`'s claim that a sub-slice does know. Handed a
+   raw pointer, nothing can say how many elements live behind it. Handed a slice,
+   the run is right there, so a prefix or a range longer than what is left is not
+   an unverifiable claim but a false one: the view that came back carried a
+   length the storage did not have, and every access through it was
+   bounds-checked against that length and passed. */
+int64_t frost_rt_check_span(int64_t from, int64_t count, int64_t room) {
+    if (from < 0 || from > room) {
+        fprintf(stderr,
+                "frost: a view cannot start %lld elements into a run of %lld\n",
+                (long long)from, (long long)room);
+        frost_rt_stop();
+    }
+    if (count < 0 || count > room - from) {
+        fprintf(stderr,
+                "frost: a view of %lld elements starting at %lld reaches past a run of %lld\n",
+                (long long)count, (long long)from, (long long)room);
+        frost_rt_stop();
+    }
+    return count;
+}
+
 /* How many bytes `count` elements of `width` take, refused where the product
    would wrap.
 

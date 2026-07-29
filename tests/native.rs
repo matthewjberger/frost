@@ -8950,6 +8950,61 @@ fn a_slice_may_not_be_built_with_a_negative_length() {
     );
 }
 
+// Sub-slicing knows the run it is cutting from, so a view longer than what is
+// left is a false claim rather than an unverifiable one. It used to be taken on
+// trust, and the view that came back carried a length its storage did not have,
+// so every access through it was bounds-checked against that length and passed.
+#[test]
+fn a_sub_slice_may_not_reach_past_the_run_it_came_from() {
+    let cases = [
+        ("prefixwiden", "slice_prefix($i64, xs, 1000000)"),
+        ("rangewiden", "slice_range($i64, xs, 2, 1000000)"),
+        ("rangepast", "slice_range($i64, xs, 9, 1)"),
+    ];
+    for (name, view) in cases {
+        let source = format!(
+            "import \"mem.frost\"\n\
+             main :: fn() -> i64 {{\n\
+             \x20   xs := heap_slice($i64, 4)\n\
+             \x20   wide := {view}\n\
+             \x20   print slice_len(wide)\n\
+             \x20   0\n}}\n"
+        );
+        let Some((succeeded, stderr)) =
+            compile_and_run_status(name, &source, Audit::Off)
+        else {
+            return;
+        };
+        assert!(!succeeded, "{name} should abort");
+        assert!(
+            stderr.contains("reaches past a run")
+                || stderr.contains("cannot start"),
+            "expected the span check for {name}, got:\n{stderr}"
+        );
+    }
+}
+
+// Integer arithmetic wraps, and that is a decision rather than a gap. What it
+// must not do is turn into a memory error: an index computed with arithmetic
+// that wraps lands on the wrong element, and the bounds check still runs on the
+// value that comes out, so the read stays inside the array. This pins that,
+// since the difference between a wrong answer and a wrong address is the whole
+// of what the guarantee claims here.
+#[test]
+fn an_index_whose_arithmetic_wraps_stays_inside_the_array() {
+    let source = "printf :: extern fn(fmt: ^i8, value: i64) -> i32\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut xs : [4]i64 = [10, 20, 30, 40]\n\
+         \x20   huge := 4611686018427387904\n\
+         \x20   printf(\"%lld\\n\", xs[huge * 4])\n\
+         \x20   0\n}\n";
+    let Some(output) = compile_and_run_unaudited("wrapindex", source) else {
+        return;
+    };
+    // 4611686018427387904 * 4 wraps to 0, so this reads the first element.
+    assert_eq!(output, "10\n");
+}
+
 // A frame wider than a page has to touch each page on the way down, or the
 // stack pointer moves past the guard in one step and the first write below it
 // lands in whatever is mapped there. Both backends probe; this is the check that

@@ -29,6 +29,9 @@ frost_rt_heap_live    :: safe extern fn() -> i64
 // for fewer bytes than the caller believes, and the slice built over the block
 // then reads past its end with every access reporting as bounds-checked.
 frost_rt_check_size   :: safe extern fn(count: i64, width: i64) -> i64
+// A view of `count` elements starting `from` into a run of `room`, refused where
+// it reaches past the end. Safe for the same reason: arithmetic and an abort.
+frost_rt_check_span   :: safe extern fn(from: i64, count: i64, room: i64) -> i64
 frost_rt_heap_alloc   :: extern fn(size: i64) -> ^u8
 frost_rt_heap_realloc :: extern fn(block: ^u8, size: i64) -> ^u8
 frost_rt_heap_free    :: extern fn(block: ^u8)
@@ -88,7 +91,17 @@ heap_grow_slice :: fn($T: Type, move held: []T, count: i64) -> []T {
 // The first `count` elements of a slice. A container whose storage is the whole
 // block hands out its live prefix with this, so the length a caller sees is the
 // number of elements there are rather than the room there is.
+//
+// A count past the end is refused. Where the pointer comes from a slice the run
+// is known, so a longer view is a false claim rather than an unverifiable one,
+// and the empty case answers with the slice itself since there is no element to
+// point at.
 slice_prefix :: fn($T: Type, held: []T, count: i64) -> []T {
+    room := slice_len(held)
+    frost_rt_check_span(0, count, room)
+    if (count == 0) {
+        return slice_empty($T, held)
+    }
     unsafe { slice_from($T, ptr_to(held[0]), count) }
 }
 
@@ -96,12 +109,28 @@ slice_prefix :: fn($T: Type, held: []T, count: i64) -> []T {
 // own storage rather than from this frame, which is what lets the view outlive
 // the call the way `slice_prefix` does.
 //
-// `from` is bounds-checked because reaching it is an index. `count` is the
-// caller's word, as it is for `slice_prefix`: a run longer than what is left
-// views memory past the end. Where the count is derived rather than known,
-// `slice_span` clamps it instead.
+// Both ends are answered for against the run: `from` because reaching it is an
+// index, and `count` because a view longer than what is left carries a length
+// its storage does not have, and every access through it is then bounds-checked
+// against that length and passes. Where the count is derived rather than known,
+// `slice_span` clamps it first.
 slice_range :: fn($T: Type, held: []T, from: i64, count: i64) -> []T {
+    room := slice_len(held)
+    frost_rt_check_span(from, count, room)
+    if (count == 0) {
+        return slice_empty($T, held)
+    }
     unsafe { slice_from($T, ptr_to(held[from]), count) }
+}
+
+// A view of nothing over the same storage. `ptr_to(held[0])` is an index like
+// any other, so an empty slice has no element to take the address of, and every
+// answer of no elements comes through here instead.
+slice_empty :: fn($T: Type, held: []T) -> []T {
+    if (slice_len(held) == 0) {
+        return held
+    }
+    unsafe { slice_from($T, ptr_to(held[0]), 0) }
 }
 
 // The same run, but ending at the slice's end rather than past it. An empty
