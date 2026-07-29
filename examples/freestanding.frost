@@ -18,17 +18,25 @@ Arena :: struct($N: usize) {
     offset: i64,
 }
 
+// Reaching the byte is a checked index, so the address is inside the arena. What
+// the block vouches for is the other half: that eight bytes starting there are
+// an i64, which the offset stepping by `sizeof(i64)` is what makes true.
 alloc_int :: fn(mut a: Arena<64>) -> ^i64 {
     slot := ptr_to(a.data[a.offset])
     a.offset = a.offset + sizeof(i64)
-    ptr_cast($i64, slot)
+    unsafe { ptr_cast($i64, slot) }
 }
 
 main :: fn() -> i64 {
     mut arena : Arena<64> = Arena { data = [0; 64], offset = 0 }
     p := alloc_int(arena)
-    p^ = 20
     q := alloc_int(arena)
-    q^ = 22
-    p^ + q^                 // 42, returned as the process exit code
+    // Two distinct slots, eight bytes apart, both inside an arena that outlives
+    // them. Writing and reading through a raw pointer is unchecked wherever it
+    // is written, and this is the whole of what these vouch for.
+    unsafe {
+        p^ = 20
+        q^ = 22
+        p^ + q^             // 42, returned as the process exit code
+    }
 }

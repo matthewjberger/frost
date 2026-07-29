@@ -560,7 +560,8 @@ audit:
     #!/usr/bin/env bash
     set -euo pipefail
     for f in std/*.frost examples/native/*.frost examples/selfhosted/*.frost \
-             examples/tour.frost selfhosted/frost.frost; do
+             examples/tour.frost examples/freestanding.frost \
+             selfhosted/frost.frost; do
         cargo run -r -q -p frost --bin frost -- --audit-unsafe --emit-c \
             -o /dev/null "$f" 2>&1 \
             | grep -E "vouches for nothing|is inside another one" && {
@@ -574,7 +575,7 @@ audit:
 audit:
     #!powershell
     $found = 0
-    $files = (Get-ChildItem std/*.frost) + (Get-ChildItem examples/native/*.frost) + (Get-ChildItem examples/selfhosted/*.frost) + @(Get-Item examples/tour.frost) + @(Get-Item selfhosted/frost.frost)
+    $files = (Get-ChildItem std/*.frost) + (Get-ChildItem examples/native/*.frost) + (Get-ChildItem examples/selfhosted/*.frost) + @(Get-Item examples/tour.frost) + @(Get-Item examples/freestanding.frost) + @(Get-Item selfhosted/frost.frost)
     foreach ($f in $files) {
         $out = cargo run -r -q -p frost --bin frost -- --audit-unsafe --emit-c -o audit.tmp $f.FullName 2>&1 | Out-String
         $held = ([regex]::Matches($out, 'vouches for nothing|is inside another one')).Count
