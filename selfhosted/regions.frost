@@ -854,12 +854,74 @@ stmt_consumes :: fn(mut p: Parser, id: i64, off: i64, len: i64) -> bool {
     if (kind == NodeKind::Assign) {
         value = node.b
     }
-    if (value == (-1)) {
+    expr_consumes(p, value, off, len)
+}
+
+// Whether an expression hands the value on, anywhere inside it. A consuming
+// call gives the value away wherever it is written, so `total = total +
+// close(f)` consumes exactly as `close(f)` on its own line does, and reading
+// the root of the expression alone missed every one written as an operand.
+expr_consumes :: fn(mut p: Parser, id: i64, off: i64, len: i64) -> bool {
+    if (id == (-1)) {
         return false
     }
-    vnode := arena_at(p.arena, value)
-    if (vnode.kind == NodeKind::Call) {
-        return call_consumes(p, vnode.a, vnode.val, off, len)
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    left := node.a
+    right := node.b
+    if (kind == NodeKind::Call) {
+        if (call_consumes(p, left, node.val, off, len)) {
+            return true
+        }
+        return args_consume(p, left, off, len)
+    }
+    if (kind == NodeKind::CallPtr) {
+        return args_consume(p, left, off, len)
+    }
+    // Only the left side of `&&` and `||` is reached on every path, so a call
+    // written on the right hands the value on sometimes rather than always.
+    if (kind == NodeKind::Bin) {
+        if (node.val == OP_AND || node.val == OP_OR) {
+            return expr_consumes(p, left, off, len)
+        }
+        return expr_consumes(p, left, off, len)
+            || expr_consumes(p, right, off, len)
+    }
+    if (kind == NodeKind::Index || kind == NodeKind::SliceFrom) {
+        return expr_consumes(p, left, off, len)
+            || expr_consumes(p, right, off, len)
+    }
+    if (kind == NodeKind::Field || kind == NodeKind::Deref
+        || kind == NodeKind::AddrOf || kind == NodeKind::PtrCast
+        || kind == NodeKind::Cast || kind == NodeKind::SliceLen
+        || kind == NodeKind::Assert || kind == NodeKind::Ref) {
+        return expr_consumes(p, left, off, len)
+    }
+    // An `if` used as a value hands it on only where both arms do, the same
+    // rule an `if` written as a statement answers to.
+    if (kind == NodeKind::If) {
+        return right != (-1) && node.val != (-1)
+            && consumes_block(p, right, off, len, true)
+            && consumes_block(p, node.val, off, len, true)
+    }
+    if (kind == NodeKind::StructLit || kind == NodeKind::ArrayLit) {
+        return args_consume(p, left, off, len)
+    }
+    false
+}
+
+// The same question of every item in a chained list: an argument list, a
+// struct literal's initializers, an array literal's elements.
+args_consume :: fn(mut p: Parser, head: i64, off: i64, len: i64) -> bool {
+    mut id := head
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        value := node.a
+        next_id := node.next
+        if (expr_consumes(p, value, off, len)) {
+            return true
+        }
+        id = next_id
     }
     false
 }
@@ -922,36 +984,127 @@ match_in :: fn(mut p: Parser, id: i64) -> i64 {
     -1
 }
 
-// Whether a block consumes the value on every path through it: a statement that
-// consumes it, an `if` whose branches both do, or a `match` whose arms all do.
+// Whether a block consumes the value on every path through it. `break` and
+// `continue` leave the block a loop body is, so they are paths out of it; at
+// the top of a function body there are none to meet.
 consumes_value :: fn(mut p: Parser, head: i64, off: i64, len: i64) -> bool {
+    consumes_block(p, head, off, len, true)
+}
+
+// A block consumes on every path when a statement in it consumes before
+// anything leaves. Reading only for a consuming statement took the first one it
+// found for the whole answer, so a `return` written above it read as though the
+// path through that return went on to consume.
+//
+// `loops` is whether `break` and `continue` leave *this* block. They bind to
+// the nearest enclosing loop, so inside a loop written further in they do not.
+consumes_block :: fn(mut p: Parser, head: i64, off: i64, len: i64,
+    loops: bool) -> bool {
     mut id := head
     while (id != (-1)) {
         node := arena_at(p.arena, id)
-        if (stmt_consumes(p, id, off, len)) {
+        next_id := node.next
+        if (stmt_consumes_all(p, id, off, len, loops)) {
             return true
         }
-        if (node.kind == NodeKind::If && node.val != (-1)
-            && consumes_value(p, node.b, off, len)
-            && consumes_value(p, node.val, off, len)) {
+        if (exits_without(p, id, off, len, loops)) {
+            return false
+        }
+        id = next_id
+    }
+    false
+}
+
+// Whether one statement consumes the value on every path through itself: it
+// hands it on outright, or it is an `if` whose branches both do, or a `match`
+// whose arms all do.
+stmt_consumes_all :: fn(mut p: Parser, id: i64, off: i64, len: i64,
+    loops: bool) -> bool {
+    if (stmt_consumes(p, id, off, len)) {
+        return true
+    }
+    node := arena_at(p.arena, id)
+    if (node.kind == NodeKind::If && node.val != (-1)
+        && consumes_block(p, node.b, off, len, loops)
+        && consumes_block(p, node.val, off, len, loops)) {
+        return true
+    }
+    // Taking a value apart is consuming it: every arm names what it held,
+    // and what an arm does with those is the arm's own obligation. The
+    // match is reached through the statement holding it, which is an
+    // expression statement when it is what the body answers with.
+    held := match_in(p, id)
+    if (held != (-1)) {
+        mnode := arena_at(p.arena, held)
+        cases := mnode.b
+        if (match_subject_is(p, held, off, len)) {
             return true
         }
-        // Taking a value apart is consuming it: every arm names what it held,
-        // and what an arm does with those is the arm's own obligation. The
-        // match is reached through the statement holding it, which is an
-        // expression statement when it is what the body answers with.
-        held := match_in(p, id)
-        if (held != (-1)) {
-            mnode := arena_at(p.arena, held)
-            cases := mnode.b
-            if (match_subject_is(p, held, off, len)) {
-                return true
-            }
-            if (match_arms_consume(p, cases, off, len)) {
-                return true
-            }
+        if (match_arms_consume(p, cases, off, len)) {
+            return true
         }
-        id = node.next
+    }
+    false
+}
+
+// Whether a statement has a path that leaves the block it sits in with the
+// value still held. Everything written after such a statement is off that path,
+// so a consumption down there is not on every one.
+exits_without :: fn(mut p: Parser, id: i64, off: i64, len: i64,
+    loops: bool) -> bool {
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NodeKind::Return) {
+        return true
+    }
+    if (loops && (kind == NodeKind::Break || kind == NodeKind::Continue)) {
+        return true
+    }
+    if (kind == NodeKind::If) {
+        return branch_exits_without(p, node.b, off, len, loops)
+            || branch_exits_without(p, node.val, off, len, loops)
+    }
+    if (kind == NodeKind::With) {
+        return branch_exits_without(p, node.a, off, len, loops)
+    }
+    // A `break` written inside this loop leaves the loop, not the block the
+    // loop sits in, so only a `return` reaches past it.
+    if (kind == NodeKind::While) {
+        return branch_exits_without(p, node.b, off, len, false)
+    }
+    held := match_in(p, id)
+    if (held != (-1)) {
+        mnode := arena_at(p.arena, held)
+        mut cid := mnode.b
+        while (cid != (-1)) {
+            cnode := arena_at(p.arena, cid)
+            body := cnode.a
+            next_case := cnode.next
+            if (branch_exits_without(p, body, off, len, loops)) {
+                return true
+            }
+            cid = next_case
+        }
+    }
+    false
+}
+
+// The same question of a block written inside a statement: does a path through
+// it leave the enclosing block with the value still held. A consumption reached
+// first discharges the obligation, so what follows it is no longer a leak.
+branch_exits_without :: fn(mut p: Parser, head: i64, off: i64, len: i64,
+    loops: bool) -> bool {
+    mut id := head
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        next_id := node.next
+        if (stmt_consumes_all(p, id, off, len, loops)) {
+            return false
+        }
+        if (exits_without(p, id, off, len, loops)) {
+            return true
+        }
+        id = next_id
     }
     false
 }
