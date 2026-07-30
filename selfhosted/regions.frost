@@ -44,27 +44,63 @@ check_pooled_resources :: fn(mut p: Parser) {
     }
 }
 
+// The slot table, and only that. A slab keeps its elements in `storage`, so that
+// one field is the question and any other run the struct happens to carry is not:
+// a field holding resources beside a pool makes the struct a resource by the
+// ordinary rule and is answered for there. A columns container has no `storage`
+// at all, since one array per field of the element is what it is, so every column
+// is part of the element and every column is asked. The bookkeeping arrays are
+// the container's own and hold no element.
 report_pooled_resource :: fn(mut p: Parser, struct_ty: i64) {
+    if (is_slab_ty(p, struct_ty)) {
+        storage := slab_field_type(p, struct_ty, "storage")
+        if (is_slice_ty(p, storage) == false
+            && is_linear_type(p, array_element(p, storage))) {
+            report_pool(p, struct_ty)
+        }
+        return
+    }
     def := arena_at(p.structs, struct_index_of(struct_ty))
-    name_off := def.name_off
-    name_len := def.name_len
     mut field := def.field_head
     while (field != (-1)) {
         held := arena_at(p.fields, field)
         ty := held.ty
+        name_off := held.name_off
+        name_len := held.name_len
         next_field := held.next
-        // A run held by value is a slot table. A slice looks at storage it does
-        // not own, so what is in it is not this container's to consume.
-        if (is_array_ty(ty) && is_slice_ty(p, ty) == false
+        if (is_column_field(p, name_off, name_len) && is_array_ty(ty)
+            && is_slice_ty(p, ty) == false
             && is_linear_type(p, array_element(p, ty))) {
-            report_where(p.modules, p.src, name_off)
-            report("'")
-            report_src(p.src, name_off, name_len)
-            report("' is a pool of a resource. A slot is released by bumping a generation and filled again by an insert that overwrites it, so nothing consumes the element that leaves. Keep the resource outside the pool and put a handle to it in the slot, or hold the elements beside the pool: one array of offsets giving each element its range into a single run that owns the whole of it")
-            frost_rt_die()
+            report_pool(p, struct_ty)
         }
         field = next_field
     }
+}
+
+// Whether a field of a columns container is one of the element's rather than the
+// container's own bookkeeping.
+is_column_field :: fn(mut p: Parser, off: i64, len: i64) -> bool {
+    if (str_range_eq(p.src, off, len, "generations")) {
+        return false
+    }
+    if (str_range_eq(p.src, off, len, "free_list")) {
+        return false
+    }
+    if (str_range_eq(p.src, off, len, "free_count")) {
+        return false
+    }
+    true
+}
+
+report_pool :: fn(mut p: Parser, struct_ty: i64) {
+    def := arena_at(p.structs, struct_index_of(struct_ty))
+    name_off := def.name_off
+    name_len := def.name_len
+    report_where(p.modules, p.src, name_off)
+    report("'")
+    report_src(p.src, name_off, name_len)
+    report("' is a pool of a resource. A slot is released by bumping a generation and filled again by an insert that overwrites it, so nothing consumes the element that leaves. Keep the resource outside the pool and put a handle to it in the slot, or hold the elements beside the pool: one array of offsets giving each element its range into a single run that owns the whole of it")
+    frost_rt_die()
 }
 
 
@@ -1001,14 +1037,74 @@ place_is_moved :: fn(mut p: Parser, id: i64) -> i64 {
     -1
 }
 
-// Whether `outer` names storage `inner` is part of: the same place, or one
-// `inner` hangs off.
+// Whether two places are definitely the same storage, step for step.
 //
-// Overlap is symmetric and says only that two places share storage, not which of
-// them is the wider. An assignment asks the question both ways round and needs
-// them told apart: what the write revives is what it covers, and what refuses
-// the write is what covers it.
-place_contains :: fn(mut p: Parser, outer: i64, inner: i64) -> bool {
+// Not `places_equal`, which answers whether they may be: an index nothing knows
+// the value of is neither definitely together nor definitely apart, and a
+// dereference through a raw pointer is the same. Which of the three answers a
+// caller wants depends on what it does with it, so the two are asked separately.
+places_same :: fn(mut p: Parser, a: i64, b: i64) -> bool {
+    na := arena_at(p.arena, a)
+    nb := arena_at(p.arena, b)
+    kind := na.kind
+    if (kind != nb.kind) {
+        return false
+    }
+    if (kind == NodeKind::Var) {
+        return na.c == nb.c && bytes_equal(p.src, na.val, nb.val, na.c)
+    }
+    if (kind == NodeKind::Field) {
+        if (na.c != nb.c) {
+            return false
+        }
+        if (bytes_equal(p.src, na.val, nb.val, na.c) == false) {
+            return false
+        }
+        return places_same(p, na.a, nb.a)
+    }
+    if (kind == NodeKind::Index) {
+        ia := arena_at(p.arena, na.b)
+        ib := arena_at(p.arena, nb.b)
+        if (ia.kind != NodeKind::Num || ib.kind != NodeKind::Num) {
+            return false
+        }
+        if (ia.val != ib.val) {
+            return false
+        }
+        return places_same(p, na.a, nb.a)
+    }
+    if (kind == NodeKind::Deref) {
+        // A borrow was proven where it formed. A raw pointer says nothing about
+        // where it lands, so two of them are not definitely anything.
+        if (na.val != 1 || nb.val != 1) {
+            return false
+        }
+        return places_same(p, na.a, nb.a)
+    }
+    false
+}
+
+// Whether `outer` definitely names storage `inner` is part of: the same place, or
+// one `inner` hangs off.
+//
+// Unknown answers no. This is what a write consults to decide what it gives
+// back, and reviving on a guess is what lets a resource be consumed twice, so a
+// place reached through an index nobody knows or a raw pointer is not revived.
+place_covers :: fn(mut p: Parser, outer: i64, inner: i64) -> bool {
+    depth_out := place_depth(p, outer)
+    depth_in := place_depth(p, inner)
+    if (depth_out > depth_in) {
+        return false
+    }
+    places_same(p, outer, strip_place(p, inner, depth_in - depth_out))
+}
+
+// Whether `inner` might be part of some wider place.
+//
+// Unknown answers yes, which is the other way round from `place_covers` and for
+// the same reason. This is what refuses a write into storage that has gone, and
+// what cannot be told apart there is what has to be refused.
+place_maybe_within :: fn(mut p: Parser, inner: i64, outer: i64) -> bool {
     place_depth(p, outer) <= place_depth(p, inner)
         && places_overlap(p, outer, inner)
 }
@@ -1025,7 +1121,7 @@ moved_container_of :: fn(mut p: Parser, id: i64) -> i64 {
         entry := arena_at(p.moved, i)
         held := entry.slot
         if (held >= 0 && place_depth(p, held) < place_depth(p, id)
-            && place_contains(p, held, id)) {
+            && place_maybe_within(p, id, held)) {
             return held
         }
         i = i + 1
@@ -1051,7 +1147,7 @@ revive_place :: fn(mut p: Parser, id: i64) {
         // write settles the whole of it. Writing `h.file` does not give `h` back,
         // since the rest of `h` is still wherever it went, and dropping that
         // entry let a value be consumed, written into, and consumed again.
-        if (held < 0 || place_contains(p, id, held) == false) {
+        if (held < 0 || place_covers(p, id, held) == false) {
             mut target := arena_at(p.moved, kept)
             target.name_off = name_off
             target.name_len = name_len

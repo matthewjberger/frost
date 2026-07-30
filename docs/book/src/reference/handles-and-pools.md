@@ -104,8 +104,15 @@ difference, since releasing each element means consuming `s.storage[i]` around a
 loop, and a move inside a loop is refused because nothing says the indexes
 differ.
 
-So it is refused where the container is declared, in both compilers, for a
-`Slab`, a `columns`, and a container of that shape written out by hand alike.
+What is asked about is the slot table, which is the elements a handle addresses.
+For a slab that is `storage`, and another run the struct happens to carry is not
+one: a field holding resources makes the struct a resource by the ordinary linear
+rule, and that is where it is answered for. A `columns` container has no
+`storage`, since one array per field of the element is what it is, so every column
+is asked and `generations`, `free_list` and `free_count` are not.
+
+It is refused where the container is declared, in both compilers, for a `Slab`, a
+`columns`, and a container of that shape written out by hand alike.
 What to write instead is either a handle in the slot and the resource outside the
 pool, or the elements beside the pool: one array of offsets giving each element
 its range into a single run that owns the whole of it, which is one allocation for

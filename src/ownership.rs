@@ -403,7 +403,7 @@ impl MoveChecker<'_> {
             .filter(|other| {
                 self.paths
                     .get(*other)
-                    .is_some_and(|reached| place_contains(path, reached))
+                    .is_some_and(|reached| place_covers(path, reached))
             })
             .cloned()
             .collect();
@@ -422,7 +422,7 @@ impl MoveChecker<'_> {
             .filter_map(|(other, _)| {
                 let reached = self.paths.get(other)?;
                 (reached.len() < path.len()
-                    && place_contains(reached, path))
+                    && place_maybe_within(path, reached))
                 .then(|| other.clone())
             })
             .min()
@@ -1180,15 +1180,43 @@ fn places_overlap(first: &[Step], second: &[Step]) -> bool {
         .any(|(left, right)| steps_apart(left, right))
 }
 
-// Whether `outer` names storage `inner` is part of: the same place, or one
-// `inner` hangs off.
+// Whether two steps definitely name the same storage.
 //
-// Overlap is symmetric and says only that two places share storage, not which of
-// them is the wider. Writing a field of a value that was given away is not
-// giving the value back, and the two questions an assignment asks need the
-// direction: what the write revives is what it covers, and what refuses the
-// write is what covers it.
-fn place_contains(outer: &[Step], inner: &[Step]) -> bool {
+// Not the negation of `steps_apart`: an index nothing knows the value of is
+// neither definitely together nor definitely apart, and a dereference through a
+// raw pointer is the same. Which of the three answers a caller wants depends on
+// what it does with it, so the two questions are asked separately.
+fn steps_same(left: &Step, right: &Step) -> bool {
+    match (left, right) {
+        (Step::Named(one), Step::Named(other)) => one == other,
+        (Step::Index(Some(one), _), Step::Index(Some(other), _)) => {
+            one == other
+        }
+        (Step::Deref(one), Step::Deref(other)) => !one && !other,
+        _ => false,
+    }
+}
+
+// Whether `outer` definitely names storage `inner` is part of: the same place, or
+// one `inner` hangs off.
+//
+// Unknown answers no. This is what a write consults to decide what it gives back,
+// and reviving on a guess is what lets a resource be consumed twice, so a place
+// reached through an index nobody knows or a raw pointer is not revived.
+fn place_covers(outer: &[Step], inner: &[Step]) -> bool {
+    outer.len() <= inner.len()
+        && outer
+            .iter()
+            .zip(inner)
+            .all(|(left, right)| steps_same(left, right))
+}
+
+// Whether `inner` might be part of some wider place.
+//
+// Unknown answers yes, which is the other way round from `place_covers` and for
+// the same reason. This is what refuses a write into storage that has gone, and
+// what cannot be told apart there is what has to be refused.
+fn place_maybe_within(inner: &[Step], outer: &[Step]) -> bool {
     outer.len() <= inner.len() && places_overlap(outer, inner)
 }
 
