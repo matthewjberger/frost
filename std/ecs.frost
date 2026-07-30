@@ -23,6 +23,7 @@
 // `[]T`, and through generational handles that refuse a stale entity.
 
 import "vec.frost"
+import "map.frost"
 import "mem.frost"
 import "strings.frost"
 
@@ -85,7 +86,7 @@ export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     // format is std/snapshot.frost's, and the layout is this file's, so these
     // are the seam between them.
     TICK_SIZE, column_new, column_push_zero,
-    lookup_new, lookup_free, lookup_put,
+    mask_hash, mask_keys,
     Mask, MASK_WORDS, MAX_COMPONENTS,
     mask_empty, mask_with, mask_without, mask_has, mask_covers, mask_disjoint,
     mask_or, mask_equal, mask_is_empty
@@ -457,39 +458,11 @@ Table :: struct {
 // ---------------------------------------------------------------------------
 // The mask table
 //
-// Mask to table index, by open addressing with linear probing. A world's own
-// rather than the standard library's map because the key is a mask and the
-// value is a row: two runs of i64 and nothing generic, which is the whole of
-// what a lookup by archetype needs.
+// Mask to table index, which is the standard library's map under a `Hashing`
+// bundle over the mask. The world kept its own open-addressed pair of runs while
+// a generic taking a bundle could not be compiled beside one taking two type
+// parameters; it can, so this is one table rather than two.
 // ---------------------------------------------------------------------------
-
-Lookup :: struct {
-    masks: Vec<Mask>,
-    rows: Vec<i64>,
-    cap: i64,
-    count: i64,
-}
-
-// The empty mask is the empty archetype, which is a real key, so the empty slot
-// is marked by a row of -1 rather than by a mask of no bits.
-lookup_new :: fn(capacity: i64) -> Lookup {
-    mut cap : i64 = 8
-    while (cap < capacity) { cap = cap * 2 }
-    mut made := Lookup { masks = vec_new($Mask, cap), rows = vec_new($i64, cap),
-        cap = cap, count = 0 }
-    mut i : i64 = 0
-    while (i < cap) {
-        vec_push($Mask, made.masks, mask_empty())
-        vec_push($i64, made.rows, -1)
-        i = i + 1
-    }
-    made
-}
-
-lookup_free :: fn(move l: Lookup) {
-    vec_free($Mask, l.masks)
-    vec_free($i64, l.rows)
-}
 
 // A whole mask mixed into one number, so a key that differs only in its fourth
 // word still lands somewhere else.
@@ -503,75 +476,7 @@ mask_hash :: fn(m: Mask) -> i64 {
     h
 }
 
-// The slot a mask sits in, or the first empty one on its probe run. The table
-// is never full, since it grows at half.
-lookup_slot :: fn(l: Lookup, mask: Mask) -> i64 {
-    mut h := wrap_mul(mask_hash(mask), 2654435761)
-    h = wrap_add(h, h / 4096)
-    mut i := h % l.cap
-    if (i < 0) {
-        i = -i
-    }
-    masks := vec_slice($Mask, l.masks)
-    rows := vec_slice($i64, l.rows)
-    while (rows[i] >= 0 && mask_equal(masks[i], mask) == false) {
-        i = i + 1
-        if (i >= l.cap) { i = 0 }
-    }
-    i
-}
-
-lookup_get :: fn(l: Lookup, mask: Mask) -> i64 {
-    slot := lookup_slot(l, mask)
-    vec_slice($i64, l.rows)[slot]
-}
-
-lookup_put :: fn(mut l: Lookup, mask: Mask, row: i64) {
-    if (l.count * 2 >= l.cap) {
-        lookup_grow(l)
-    }
-    slot := lookup_slot(l, mask)
-    mut rows := vec_slice($i64, l.rows)
-    if (rows[slot] < 0) {
-        l.count = l.count + 1
-    }
-    vec_slice($Mask, l.masks)[slot] = mask
-    vec_slice($i64, l.rows)[slot] = row
-}
-
-lookup_grow :: fn(mut l: Lookup) {
-    old_cap := l.cap
-    // The old runs are read out before the new ones go in, and the new ones are
-    // made here rather than by building a whole table and taking it apart: a
-    // table owns two vectors, and one made only to be gutted would be a
-    // resource nothing consumed.
-    old_masks := l.masks
-    old_rows := l.rows
-    room := old_cap * 2
-    mut masks := vec_new($Mask, room)
-    mut rows := vec_new($i64, room)
-    mut k : i64 = 0
-    while (k < room) {
-        vec_push($Mask, masks, mask_empty())
-        vec_push($i64, rows, -1)
-        k = k + 1
-    }
-    l.masks = masks
-    l.rows = rows
-    l.cap = room
-    l.count = 0
-    mut i : i64 = 0
-    while (i < old_cap) {
-        held_mask := vec_slice($Mask, old_masks)[i]
-        held_row := vec_slice($i64, old_rows)[i]
-        if (held_row >= 0) {
-            lookup_put(l, held_mask, held_row)
-        }
-        i = i + 1
-    }
-    vec_free($Mask, old_masks)
-    vec_free($i64, old_rows)
-}
+mask_keys :: Hashing<Mask> { hash = mask_hash, equal = mask_equal }
 
 // ---------------------------------------------------------------------------
 // The world
@@ -596,7 +501,7 @@ World :: struct {
     next_id: i64,
     tables: Vec<Table>,
     // Mask to table index, so a migration finds its destination without a scan.
-    lookup: Lookup,
+    lookup: Map<Mask, i64>,
     live: i64,
     // The clock every write is stamped with. It starts at one so that zero,
     // which is what a freshly allocated row holds, is a time before anything.
@@ -618,7 +523,7 @@ ecs_new :: fn() -> World {
         free_ids = vec_new($i64, 64),
         next_id = 0,
         tables = vec_new($Table, 16),
-        lookup = lookup_new(32),
+        lookup = map_new($Mask, $i64, 32),
         live = 0,
         tick = 1,
         resources = vec_new($Column, 4),
@@ -633,7 +538,7 @@ ecs_new :: fn() -> World {
         Table { mask = mask_empty(), entities = vec_new($Entity, 16),
             columns = vec_new($Column, 1) },
     )
-    lookup_put(world.lookup, mask_empty(), 0)
+    map_put($Mask, $i64, $mask_keys, world.lookup, mask_empty(), 0)
     world
 }
 
@@ -661,7 +566,7 @@ world_release :: fn(mut world: World) {
     vec_free($i64, world.registry.sizes)
     vec_free($i64, world.registry.types)
     vec_free($str, world.registry.names)
-    lookup_free(world.lookup)
+    map_free($Mask, $i64, world.lookup)
 }
 
 ecs_free :: fn(move world: World) {
@@ -787,7 +692,7 @@ ecs_component_size :: fn(world: World, component: i64) -> i64 {
 // columns are created in ascending bit order, which is the order every lookup
 // assumes.
 table_for :: fn(mut world: World, mask: Mask) -> i64 {
-    held := lookup_get(world.lookup, mask)
+    held := map_get($Mask, $i64, $mask_keys, world.lookup, mask, -1)
     if (held >= 0) {
         return held
     }
@@ -803,7 +708,7 @@ table_for :: fn(mut world: World, mask: Mask) -> i64 {
     }
     made := vec_len($Table, world.tables)
     vec_push($Table, world.tables, table)
-    lookup_put(world.lookup, mask, made)
+    map_put($Mask, $i64, $mask_keys, world.lookup, mask, made)
     made
 }
 
@@ -1787,12 +1692,12 @@ table_move :: fn(mut held: Table) -> Table {
 // Where every entity is, and which mask reaches which table, worked out again
 // over the tables that are left.
 rebuild_lookup :: fn(mut world: World) {
-    lookup_free(world.lookup)
-    world.lookup = lookup_new(vec_len($Table, world.tables) * 2 + 16)
+    map_free($Mask, $i64, world.lookup)
+    world.lookup = map_new($Mask, $i64, vec_len($Table, world.tables) * 2 + 16)
     mut index : i64 = 0
     while (index < vec_len($Table, world.tables)) {
         ref table := vec_slice($Table, world.tables)[index]
-        lookup_put(world.lookup, table.mask, index)
+        map_put($Mask, $i64, $mask_keys, world.lookup, table.mask, index)
         rows := vec_slice($Entity, table.entities)
         mut row : i64 = 0
         while (row < slice_len(rows)) {
@@ -2370,8 +2275,8 @@ world_clear :: fn(mut world: World) {
     world.log.len = 0
     world.live = 0
     world.next_id = 0
-    lookup_free(world.lookup)
-    world.lookup = lookup_new(32)
+    map_free($Mask, $i64, world.lookup)
+    world.lookup = map_new($Mask, $i64, 32)
     // The empty archetype comes back, because a world without one is not a
     // world: `ecs_spawn` reaches it by index rather than through the lookup, so
     // the next spawn into a cleared world would otherwise put a row where there
@@ -2382,7 +2287,7 @@ world_clear :: fn(mut world: World) {
         Table { mask = mask_empty(), entities = vec_new($Entity, 16),
             columns = vec_new($Column, 1) },
     )
-    lookup_put(world.lookup, mask_empty(), 0)
+    map_put($Mask, $i64, $mask_keys, world.lookup, mask_empty(), 0)
 }
 
 // ---------------------------------------------------------------------------

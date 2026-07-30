@@ -22,10 +22,6 @@ See [the self-hosted compiler](impl/self-hosted.md).
 
 ## What is left
 
-The ECS keeps its own mask table rather than the standard library's map. The
-faults that forced that are fixed, so this is a change nobody has made yet
-rather than one nothing allows.
-
 The wgpu binding is generated with a safe wrapper per call now, so a program
 that draws a triangle writes no `unsafe` of its own for the graphics API: the
 perimeter is one generated file. What is left there is the same shape as the
