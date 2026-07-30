@@ -612,10 +612,16 @@ check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64,
                 // Either shape does: the caller hands over a value and the
                 // call takes its address, or it hands over a reference it
                 // already holds, which is what a `mut` parameter passed on to
-                // another function is.
+                // another function is. The second shape asks what the reference
+                // points at rather than that it is one, since every pointer
+                // fits every other and the parameter's own type is a pointer
+                // here: a `^i8` handed to a `str` was two pointers agreeing,
+                // and the callee then read the length from whatever sat beside
+                // it.
                 mut fits := value_fits(p, value, arg_ty, expected)
-                if (fits == false && expected != declared) {
-                    fits = value_fits(p, value, arg_ty, declared)
+                if (fits == false && expected != declared && is_pointer(arg_ty)
+                    && value_fits(p, value, pointee(arg_ty), expected)) {
+                    fits = true
                 }
                 if (expected != TY_PARAM && fits == false) {
                     report_where(p.modules, p.src, vnode.pos)

@@ -496,6 +496,16 @@ fn is_aggregate(ty: &Type) -> bool {
     )
 }
 
+/// What a pointer points at, or `None` for anything that is not one.
+fn pointee(ty: &Type) -> Option<&Type> {
+    match ty {
+        Type::Ptr(inner) | Type::Ref(inner) | Type::RefMut(inner) => {
+            Some(inner)
+        }
+        _ => None,
+    }
+}
+
 /// Whether a value of one type may stand where the other is wanted.
 ///
 /// Not equality. Two integer widths fit each other here, because the language
@@ -544,12 +554,40 @@ fn fits(given: &Type, wanted: &Type) -> bool {
     if matches!(wanted, Type::Void) {
         return true;
     }
+    // A run fits a run when its elements do, and its length is part of what it
+    // is. This is where an enum spelled as its declaration meets one spelled as
+    // the layout it lowers to, a rule the top of this function has for a bare
+    // name and needs inside a run as well.
+    if let (
+        Type::Array(given_element, given_count),
+        Type::Array(wanted_element, wanted_count),
+    ) = (given, wanted)
+    {
+        return given_count == wanted_count
+            && fits(given_element, wanted_element);
+    }
+    if let (Type::Slice(given_element), Type::Slice(wanted_element)) =
+        (given, wanted)
+    {
+        return fits(given_element, wanted_element);
+    }
     // An aggregate travels by address: the mode pass rewrites a parameter that
     // holds one into a pointer to it, so a call passes the address where the
-    // signature says the value. That is the calling convention rather than a
-    // mismatch, and the pointee is checked where it is read.
-    if (is_aggregate(wanted) && is_pointer(given))
-        || (is_aggregate(given) && is_pointer(wanted))
+    // signature says the value. What travels has to be the address of the thing
+    // wanted, since a pointer to something else is a different value. Where the
+    // wanted type carries a length beside its address, taking one for the other
+    // reads whatever sat beside the pointer as the length: `takes(p)` with
+    // `p : ^i8` and a `str` parameter answered a length of two trillion and
+    // indexed past the end of a two-byte string with the bounds check agreeing.
+    if is_aggregate(wanted)
+        && let Some(inner) = pointee(given)
+        && fits(inner, wanted)
+    {
+        return true;
+    }
+    if is_aggregate(given)
+        && let Some(inner) = pointee(wanted)
+        && fits(given, inner)
     {
         return true;
     }

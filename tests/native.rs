@@ -15839,6 +15839,21 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          main :: fn() -> i64 { 0 }\n",
         "second-class",
     ),
+    // A slice is an address and a length. A bare pointer is the address alone,
+    // so a callee handed one reads whatever sat beside it for the length: this
+    // answered a length of two trillion for a five-byte string, and indexing a
+    // hundred thousand past the end of a two-byte one passed the bounds check.
+    // The one pointer that does reach a slice of bytes is a string literal,
+    // where the compiler wrote the bytes and knows how many there are.
+    (
+        "pointer_for_text",
+        "width :: fn(s: str) -> i64 { str_len(s) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   p : ^i8 = \"hello\"\n\
+         \x20   print width(p)\n\
+         \x20   0\n}\n",
+        "argument",
+    ),
 ];
 
 #[test]
