@@ -11,9 +11,9 @@ module only when its own source or an imported interface changes.
 
 Goal 9 in [philosophy.md](../design/philosophy.md) makes compilation speed a
 promise. The constant factor is already handled: the bootstrap's full native
-build runs at about 166,000 lines per second, from `just bench-scaling`, which
-clears the bar. This is the other half, and it is not a constant factor.
-[roadmap.md](../roadmap.md) holds the measurements.
+build clears the bar, which `just bench-scaling` is what says. This is the other
+half, and it is not a constant factor. [roadmap.md](../roadmap.md) lists the
+recipes.
 
 `src/imports.rs` flattens every import into one AST. `resolve_imports` reads each
 imported file, parses it, renames its private names, and splices the statements
@@ -178,17 +178,14 @@ been the tempting reuse: an extern means C linkage and a C ABI, which loses the
 hidden out-pointer and has nowhere to put parameter modes, `uses` sets or
 linearity.
 
-What it is worth to the bootstrap, from `just bench-incremental` on 9,484 lines
-across 65 files, one of which changed:
-
-| | full | incremental | incremental, bodies spliced |
-| --- | --- | --- | --- |
-| build | ~580 ms | ~200 ms | 399 ms |
-
-About 90 ms of each is process start and the linker, which no amount of skipping
-removes, so the compiler's own work goes from about 490 ms to about 110 ms, and
-the declaration form is most of that: it took the skipped path from 309 ms of
-compiler work to 110 ms.
+What it is worth to the bootstrap is what `just bench-incremental` answers: it
+builds a program across many files, changes one, and times a full build against
+an incremental one. Read the two against each other rather than either alone,
+since process start and the linker sit inside both and no amount of skipping
+removes them. Against the compiler's own work the incremental build is a small
+fraction of the full one, and the declaration form is most of that difference:
+splicing bodies instead leaves the front end walking code it will never emit,
+which the recipe's third column shows costs most of the win.
 
 ## Open questions
 

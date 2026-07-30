@@ -196,8 +196,9 @@ It sat under "Linearity checking on the IR" and every item was marked done.
 12. Parallel code generation. *(Done: `src/ir_codegen.rs` builds and compiles
     functions across every core from a shared work queue. 385 ms to 55 ms on
     sixteen threads at 10,401 functions, and a full native build of 58k lines
-    in 353 ms. [roadmap.md](../roadmap.md) has the sweep, and why a shared cursor
-    beats splitting the function list into equal chunks.)*
+    in 353 ms, measured when it landed. [roadmap.md](../roadmap.md) says how to
+    sweep it again, and why a shared cursor beats splitting the function list
+    into equal chunks.)*
 13. Callbacks with a typed context. *(Done. An `extern fn` with a `$handler`
     parameter bound to a function signature is a callback registration:
     `src/callbacks.rs` checks the declaration, `src/regions.rs` holds the

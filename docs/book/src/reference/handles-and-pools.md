@@ -123,9 +123,10 @@ the lot and a linear scan to walk.
 `pool[handle]` reads the slot's generation and compares it on every access. For a
 handful of lookups that is nothing. For a pass that walks the same elements over
 and over it is paid once a hop for an answer that cannot change while the pass
-runs, and it is measurable: over twenty million hops, summing one field, the
-handle form takes 53 ms against 26 ms for the same loop over a plain array. About
-a nanosecond a hop, and most of a loop that does nothing else.
+runs, and it is measurable: over tens of millions of hops summing one field, the
+handle form costs about twice what the same loop over a plain array does. That is
+roughly a nanosecond a hop, which is most of a loop that does nothing else and a
+rounding error in one that does anything.
 
 `slab_slot` is how that is paid once. It checks the generation, answers with the
 slot the handle names, or `-1` where the handle is stale. Indexing `storage` with
@@ -143,10 +144,9 @@ if (slot >= 0) {
 }
 ```
 
-The same twenty million hops through a slot take 33 ms, so about three quarters
-of the check's cost goes. What is left over the plain array is the second index
-rather than the check: a slot table is one more load than walking storage
-directly.
+The same walk through a slot gives back most of the check's cost. What is left
+over the plain array is the second index rather than the check: a slot table is
+one more load than walking storage directly.
 
 What it costs in the other direction is the guarantee. A slot is a number, and
 nothing says it still names the element it named. Release that slot while a loop
