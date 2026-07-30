@@ -13,7 +13,8 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     GenericFn, GParam, GArg, GBinding, ImportEdge, Instance, LocalVar, Module,
     Rename,
     MonoNode,
-    MonoRet, ProcSig, CONST_BASE, PROC_BASE, FN_BASE, DISTINCT_BASE,
+    BoundValue,
+    MonoRet, PendingRet, ProcSig, CONST_BASE, PROC_BASE, FN_BASE, DISTINCT_BASE,
     DISTINCT_STRIDE, Node, NodeKind,
     OP_ADD, OP_AND, OP_DIV, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT, OP_MOD, OP_MUL,
     OP_NE, OP_OR, OP_SUB, OP_SHL, OP_SHR, OP_BITAND, OP_BITOR,
@@ -644,6 +645,31 @@ GParam :: struct {
 GArg :: struct {
     value: i64,
     is_type: i64,
+    // Where this element's type is read from again, as an index into
+    // `pending_rets`, or -1 for an element whose type is already what it will
+    // be. An element whose type is what a call to a generic answers with is one
+    // of these: the answer is worked out after the call is parsed.
+    pending: i64,
+}
+
+// The expression one entry of `parse_locals` was bound to, in step with it, and
+// -1 for a name that binds none. A name's type is read where it is bound, and a
+// type that is what a call to a generic answers with is not settled then, so a
+// reader that comes after has to reach the expression rather than the type it
+// had at the time.
+BoundValue :: struct {
+    node: i64,
+}
+
+// One list element whose type is the return type of a call to a generic. Which
+// monomorphization the call names is worked out where the call is parsed, since
+// only there are the names it writes in scope; what that monomorphization
+// returns is read from this later, once every one of them is recorded.
+PendingRet :: struct {
+    fn_index: i64,
+    arg: i64,
+    xarg_start: i64,
+    xarg_count: i64,
 }
 
 // One node's derived type, memoized during emit. type_of otherwise re-derives a
@@ -1010,6 +1036,7 @@ Parser :: struct {
     // settled before anything else runs. Everything else types a name from the
     // table the emitters build, which is what it has always done.
     parse_locals: Arena<LocalVar>,
+    parse_local_values: Arena<BoundValue>,
     // The run of that table holding the parameters of the declaration being
     // parsed. An expansion-time `if` asks about a parameter and nothing else,
     // which is what keeps a body's own `is_float(x)` over a local its own call.
@@ -1036,6 +1063,9 @@ Parser :: struct {
     // so a nested generic's arguments do not interleave with the outer one's in
     // `gargs`. Each level pushes its arguments here, copies them out, and pops.
     argbuf: Arena<GArg>,
+    // The calls a compile-time list's elements take their types from, each
+    // named by the tuple the call makes.
+    pending_rets: Arena<PendingRet>,
     gbindings: Arena<GBinding>,
     type_param_off: i64,
     type_param_len: i64,

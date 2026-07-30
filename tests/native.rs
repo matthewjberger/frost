@@ -3484,6 +3484,86 @@ fn self_hosted_runs_the_standard_library_tests() {
     let _ = std::fs::remove_file(&compiler);
 }
 
+// A generic in one module whose body calls a helper in that same module, reached
+// from a program that imported only the generic. `for_each_row` is the one: it
+// hands its columns to a row loop that `ecs.frost` does not export, and an
+// instance of it is stamped out wherever it is called. Nothing else in the tree
+// calls `for_each_row` from another module, so this is what says the helper
+// resolves from where the instance is made rather than from where it is
+// written.
+#[test]
+fn a_generic_reaches_its_own_module_from_a_program_that_imported_it() {
+    let Some(compiler) = build_self_hosted_compiler("ecsimport") else {
+        return;
+    };
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let directory = std::env::temp_dir();
+    let source = directory
+        .join(unique("frost_ecs_import"))
+        .with_extension("frost");
+    std::fs::write(
+        &source,
+        "import \"ecs.frost\"\n\
+         Position :: struct { x: f32, y: f32 }\n\
+         nudge :: fn(p: []Position, row: i64) {\n\
+         \x20   p[row].x = p[row].x + 1.0\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut world := ecs_new()\n\
+         \x20   position := ecs_register($Position, world)\n\
+         \x20   a := ecs_spawn(world)\n\
+         \x20   ecs_add($Position, world, a, position,\n\
+         \x20       Position { x = 1.0, y = 2.0 })\n\
+         \x20   for_each_row($nudge, world, no_filters(), $Position)\n\
+         \x20   held := ecs_get($Position, world, a, position)\n\
+         \x20   print held.x\n    ecs_free(world)\n    0\n}\n",
+    )
+    .unwrap();
+
+    let run_with = |compiler: &Path, label: &str, extra: &[&str]| {
+        let exe = directory.join(format!(
+            "{}{}",
+            unique("frost_ecs_import"),
+            std::env::consts::EXE_SUFFIX
+        ));
+        let built = Command::new(compiler)
+            .args(extra)
+            .arg("-L")
+            .arg(root.join("std"))
+            .arg("--link")
+            .arg("-o")
+            .arg(&exe)
+            .arg(&source)
+            .env(
+                "FROST_RUNTIME",
+                format!("{}/runtime/frost_runtime.c", root.display()),
+            )
+            .output()
+            .unwrap();
+        assert!(
+            built.status.success(),
+            "{label} refused a program importing ecs.frost:\n{}",
+            String::from_utf8_lossy(&built.stderr)
+        );
+        let ran = Command::new(&exe).output().unwrap();
+        let output = String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n");
+        let _ = std::fs::remove_file(&exe);
+        assert_eq!(
+            output, "2\n",
+            "{label} ran the body the wrong number of times"
+        );
+    };
+
+    run_with(Path::new(env!("CARGO_BIN_EXE_frost")), "the bootstrap", &[]);
+    run_with(&compiler, "the self-hosted C backend", &["--emit-c"]);
+    run_with(
+        &compiler,
+        "the self-hosted assembly backend",
+        &["--emit-asm"],
+    );
+    let _ = std::fs::remove_file(&compiler);
+    let _ = std::fs::remove_file(&source);
+}
+
 // `str` is a slice of bytes, an `if` is an expression, and a body ending in one
 // answers with whichever branch ran.
 #[test]
@@ -17528,6 +17608,42 @@ fn bootstrap_output(name: &str, source: &str) -> Option<String> {
 // both compilers do, so a construct only one of them handles is a bug in
 // whichever is wrong rather than a feature with a caveat.
 const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
+    // An element of a compile-time list whose type is what a call to a generic
+    // answers with. The element is written down while the call is parsed, and a
+    // generic's concrete return type is worked out after that, so the
+    // self-hosted compiler recorded the element as `i64` and refused the body
+    // it reaches for taking a `Pair`. The emitters run once the types have
+    // settled and named the other specialization.
+    //
+    // The return type has to be an aggregate for this to bite: a call
+    // answering with one is bound to a name where it is written, so the
+    // element reads a name whose type is not recorded until the checks run,
+    // rather than the call itself.
+    (
+        "a_list_element_typed_by_a_call_to_a_generic",
+        "Pair :: struct($T: Type) { first: T, second: T }\n\
+         hold :: fn($T: Type, value: i64) -> Pair<T> {\n\
+         \x20   Pair { first = value, second = value + 1 }\n}\n\
+         each :: fn($body: Type, cols: $...) {\n    body(c for c in cols)\n}\n\
+         show :: fn(p: Pair<i64>) {\n    print p.first + p.second\n}\n\
+         main :: fn() -> i64 {\n    each($show, hold($i64, 20))\n    0\n}\n",
+        "41\n",
+    ),
+    // The same element written as a name given the call. It reaches the answer
+    // by a different route, since a name a program writes is bound where the
+    // program says and the one above is bound where the compiler puts it, so a
+    // fix for either one on its own leaves the other wrong.
+    (
+        "a_list_element_named_by_a_local_holding_a_generic_call",
+        "Pair :: struct($T: Type) { first: T, second: T }\n\
+         hold :: fn($T: Type, value: i64) -> Pair<T> {\n\
+         \x20   Pair { first = value, second = value + 1 }\n}\n\
+         each :: fn($body: Type, cols: $...) {\n    body(c for c in cols)\n}\n\
+         show :: fn(p: Pair<i64>) {\n    print p.first + p.second\n}\n\
+         main :: fn() -> i64 {\n    made := hold($i64, 20)\n\
+         \x20   each($show, made)\n    0\n}\n",
+        "41\n",
+    ),
     // A constant standing for another constant. Both compilers parsed
     // `ALIAS :: BASE` as an expression rather than a declaration, because those
     // are also the tokens of `Enum::Variant` and what followed had to say which

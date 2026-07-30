@@ -719,7 +719,7 @@ instantiate_current :: fn(mut p: Parser, gi: i64) -> i64 {
     while (j < xparam_count) {
         param := arena_at(p.gparams, xparam_start + j)
         bound := type_code_for(p, param.name_off, param.name_len)
-        arena_push(p.gargs, GArg { value = bound, is_type = 0 })
+        arena_push(p.gargs, GArg { value = bound, is_type = 0, pending = -1 })
         j = j + 1
     }
     instantiate(p, gi, p.type_binding, run_start, xparam_count)
@@ -1020,6 +1020,9 @@ hold_struct_result :: fn(mut p: Parser, value: i64) -> i64 {
     p.match_count = p.match_count + 1
     bind := new_let_node(p, value, name_off, name_len, -1)
     arena_push(p.pending, LocalVar { name_off = bind, name_len = bind, ty = 0, slot = 0 })
+    // The name binds the call, so an argument written as the call reads the
+    // same as one written as a name given the call.
+    record_parse_local(p, name_off, name_len, type_of(p, value), value)
     new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
             name_off)
 }
@@ -1508,7 +1511,8 @@ parse_type :: fn(mut p: Parser) -> i64 {
             if (is_value == 1 && is_pointer(param_ty) == false) {
                 param_ty = BORROW_FLAG + param_ty
             }
-            arena_push(p.proc_params, GArg { value = param_ty, is_type = 0 })
+            arena_push(p.proc_params,
+                GArg { value = param_ty, is_type = 0, pending = -1 })
             param_count = param_count + 1
             if (cur(p) == TokenKind::Comma) {
                 advance(p)
@@ -1635,7 +1639,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
                 if (a == TY_PARAM) {
                     all_concrete = 0
                 }
-                arena_push(p.argbuf, GArg { value = a, is_type = 0 })
+                arena_push(p.argbuf, GArg { value = a, is_type = 0, pending = -1 })
                 count = count + 1
                 if (cur(p) == TokenKind::Comma) {
                     advance(p)
@@ -1651,7 +1655,8 @@ parse_type :: fn(mut p: Parser) -> i64 {
                 mut j : i64 = 1
                 while (j < count) {
                     entry := arena_at(p.argbuf, buf_start + j)
-                    arena_push(p.gargs, GArg { value = entry.value, is_type = 0 })
+                    arena_push(p.gargs,
+                        GArg { value = entry.value, is_type = 0, pending = -1 })
                     j = j + 1
                 }
                 xarg_count = count - 1
@@ -2652,9 +2657,9 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         // record theirs, so an argument at a call below it can be typed where
         // it is written.
         if (ann >= 0) {
-            record_parse_local(p, offset, length, ann)
+            record_parse_local(p, offset, length, ann, -1)
         } else {
-            record_parse_local(p, offset, length, type_of(p, value))
+            record_parse_local(p, offset, length, type_of(p, value), value)
         }
         return new_let_node(p, value, offset, length, ann)
     }
@@ -2967,7 +2972,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         value := parse_expr(p)
         // What the name binds is recorded for the rest of this parse, so an
         // argument at a call below it can be typed where it is written.
-        record_parse_local(p, offset, length, type_of(p, value))
+        record_parse_local(p, offset, length, type_of(p, value), value)
         return new_let_node(p, value, offset, length, -1)
     }
     if (cur(p) == TokenKind::Ident && peek_kind(p, 1) == TokenKind::Colon) {
@@ -2980,7 +2985,7 @@ parse_stmt :: fn(mut p: Parser) -> i64 {
         p.expected_type = ann
         value := parse_expr(p)
         p.expected_type = saved_expected
-        record_parse_local(p, offset, length, ann)
+        record_parse_local(p, offset, length, ann, -1)
         return new_let_node(p, value, offset, length, ann)
     }
 
@@ -3505,7 +3510,7 @@ parse_params :: fn(mut p: Parser) -> i64 {
                             c = name_len, val = name_off, next = -1,
                             pos = pack_off },
                     )
-                    record_parse_local(p, name_off, name_len, element_ty)
+                    record_parse_local(p, name_off, name_len, element_ty, -1)
                     if (head == (-1)) {
                         head = held
                         tail = held
@@ -3603,7 +3608,7 @@ parse_params :: fn(mut p: Parser) -> i64 {
             }
             // What a name binds is recorded for the parse too, so an argument
             // at a call in this body can be typed where it is written.
-            record_parse_local(p, offset, length, ty)
+            record_parse_local(p, offset, length, ty, -1)
             fixed = fixed + 1
             if (head == (-1)) {
                 head = param
@@ -3757,6 +3762,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
     p.defer_depth = saved_defer_depth
     made := new_func_node(p, body, params, fn_index, is_main)
     p.parse_locals.count = locals_mark
+    p.parse_local_values.count = locals_mark
     p.parse_param_start = saved_param_start
     p.parse_param_end = saved_param_end
     made
