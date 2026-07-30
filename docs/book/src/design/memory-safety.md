@@ -58,7 +58,13 @@ one decision plus a small number of local rules.
    `mut` parameters at once, nor to a `mut` and a read parameter at the same
    time.
 4. No leaked resources. A `linear` value must be consumed exactly once. A
-   live-but-unconsumed linear value at end of scope is a compile error.
+   live-but-unconsumed linear value at end of scope is a compile error, and the
+   count is kept per *place*, so a resource inside something else carries the
+   obligation too. The count holds within one function. It does not yet cross a
+   call: what a callee consumes through a borrowed parameter is not recorded
+   against the caller's argument, so "exactly once" is enforced per function
+   rather than per program. That is the largest hole in this document and
+   "What is not yet guarded" states it with the shape that breaks it.
 5. No use-after-free through a stale handle. A generational handle whose slot
    has been freed and reused reports "not contained". It can never silently read
    a live value. A slot's generation is bounded, because a handle carries it in
@@ -399,6 +405,34 @@ one audited function and hand back something the language can check.
 
 The guarantees above are what the checks prove. This is what they do not, stated
 so nobody has to find out by reading the passes.
+
+- **A resource consumed through a borrowed parameter is not counted against the
+  caller.** This is the one that breaks a guarantee rather than bounding it, and
+  it is where the next work on this document goes.
+
+  ```frost
+  once :: fn(mut h: Holder) -> i64 { close(h.file) }   // consumes part of h
+
+  once(h)
+  once(h)          // taken by both compilers: closed twice
+  ```
+
+  The count is per place and per function. Inside `once`, a second `close(h.file)`
+  is refused. At the call site nothing says `once` consumed anything, so `h.file`
+  is still live as far as the caller can see, and the second call closes it again.
+  Handing the resource out reaches the same end by the other road: a function
+  answering with `h.file` read out of a borrow can be called twice, which is how
+  a resource put into a `Vec` can be got back out as many times as it is asked
+  for.
+
+  What is needed is a summary per function of which borrowed places it consumes,
+  applied at each call. What makes that more than bookkeeping is that the
+  standard library depends on discharging resources through a `mut` borrow in a
+  loop: `world_release` walks `world.tables` binding each element by `ref` and
+  releasing it in place, because a resource in a container cannot be moved out
+  to be consumed. A summary that marked each element consumed would refuse that
+  loop, correctly by its own rule and wrongly by the language's intent, so the
+  rule and the container idiom have to be settled together.
 
 - Raw pointers (`^T`) are an explicit escape hatch, used for FFI and the pool
   runtime's internals. They are `Copy` and unchecked, exactly like C pointers,
