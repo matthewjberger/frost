@@ -4210,13 +4210,31 @@ fn self_hosted_rejects(name: &str, source: &str) -> Option<String> {
         .output()
         .unwrap();
 
-    let _ = std::fs::remove_file(&input);
     let _ = std::fs::remove_file(&compiler);
 
     assert!(
         !run.status.success(),
         "expected the self-hosted compiler to reject the program"
     );
+
+    // The bootstrap refuses it too, since a rule belongs to the language rather
+    // than to one compiler. The wording stays each compiler's own; the refusal
+    // is what both answer for.
+    let object = directory.join(format!("frost_mfck_boot_{name}.o"));
+    let bootstrap = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("-o")
+        .arg(&object)
+        .arg(&input)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&input);
+    let _ = std::fs::remove_file(&object);
+    assert!(
+        !bootstrap.status.success(),
+        "the self-hosted compiler refused {name} and the bootstrap built it:\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+
     Some(String::from_utf8_lossy(&run.stderr).to_string())
 }
 
@@ -15597,8 +15615,7 @@ fn both_compilers_refuse_a_pool_of_resources_nobody_releases() {
                   \x20       free_count = 0,\n\
                   \x20   }\n\
                   \x20   0\n}\n";
-    // Only the bootstrap here. The pair is in REFUSED_BY_BOTH, which builds the
-    // self-hosted compiler once for the whole list rather than once per case.
+    // The self-hosted half is in REFUSED_BY_BOTH.
     let bootstrap = bootstrap_refusal("poolboot", source);
     assert!(
         bootstrap.contains("is a pool of"),
@@ -15681,17 +15698,9 @@ fn both_compilers_take_a_pool_beside_a_run_of_resources() {
     let _ = std::fs::remove_file(&compiler);
 }
 
-// Every program the language refuses, put through both compilers.
-//
-// A rule that lands in one compiler and not the other is two languages, and the
-// shape it takes is a program one refuses and the other builds. Case by case
-// that is a test each, and a rule added later gets a test only if whoever added
-// it thought to write two. As a table it is the list itself: an entry here is
-// answered for by both, and the next rule is a line rather than a decision.
-//
-// The wanted text is what each has to say, not merely that it said something,
-// since two compilers refusing one program for two reasons is the same
-// divergence wearing a passing test.
+// Programs the language refuses, put through both compilers. The third field is
+// what each has to say, since two compilers refusing one program for two
+// different reasons is a divergence that a refusal alone would not show.
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
     // A resource reached through a field is a place of its own, so consuming it
     // twice consumes it twice. Tracked by name, the field was never recorded and
