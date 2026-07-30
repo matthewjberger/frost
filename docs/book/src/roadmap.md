@@ -2,6 +2,23 @@
 
 ## What is left
 
+**A resource consumed through a borrowed parameter is not counted against the
+caller.** A function that consumes part of what it borrows can be called twice
+and consume twice, and one that hands the resource out can be called twice and
+hand it out twice. Both compile today, under both compilers, in safe code with
+no `unsafe` anywhere. It is the one place a guarantee in
+[memory-safety.md](design/memory-safety.md) does not hold, and that document
+states the shape.
+
+What it needs is a summary per function of the borrowed places it consumes,
+applied at each call site. The design question that comes with it is what
+happens to a container that releases its elements in place: `world_release` in
+`std/ecs.frost` walks a `Vec<Table>` binding each element by `ref` and releasing
+it, because a resource in a container cannot be moved out to be consumed. A
+summary strong enough to catch the double consumption refuses that loop as well,
+so the rule and the idiom have to be settled in one go rather than one after the
+other.
+
 The wgpu binding is generated with a safe wrapper per call now, so a program
 that draws a triangle writes no `unsafe` of its own for the graphics API: the
 perimeter is one generated file. What is left there is the same shape as the
