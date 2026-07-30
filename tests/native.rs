@@ -15938,6 +15938,23 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   0\n}\n",
         "is a pool of",
     ),
+    // The same pool, reached without writing its name. Both rules read the
+    // instantiations a program writes down, and a call that answers with one
+    // makes it without anyone writing it, so a pool of resources compiled as
+    // long as nobody annotated the binding that held it.
+    (
+        "pool_nobody_named",
+        "Slab :: struct($T: Type, $N: usize) {\n\
+         \x20   storage: [N]T,\n    generations: [N]i64,\n}\n\
+         File :: linear struct { fd: i64 }\n\
+         Node :: struct { file: File, hp: i64 }\n\
+         fresh :: fn($T: Type, $N: usize, seed: $T) -> Slab<T, N> {\n\
+         \x20   Slab { storage = [seed; N], generations = [0; N] }\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   pool := fresh($Node, $2, Node { file = File { fd = 1 }, hp = 0 })\n\
+         \x20   0\n}\n",
+        "is a pool of",
+    ),
     // The same container written out rather than instantiated. Both rules ran
     // over the instantiations a program names, so a concrete one slipped.
     (

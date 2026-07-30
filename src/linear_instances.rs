@@ -24,7 +24,8 @@ use std::collections::{HashMap, HashSet};
 
 /// The generic structs a program declares, by name, with their parameters and
 /// the field types written under them.
-type Templates<'a> = HashMap<&'a str, (&'a [String], &'a [StructField])>;
+pub(crate) type Templates<'a> =
+    HashMap<&'a str, (&'a [String], &'a [StructField])>;
 
 /// Instantiation names with where each was written.
 pub(crate) type Located = HashMap<String, Position>;
@@ -103,25 +104,112 @@ pub(crate) fn check_pooled_resources(
         if !element.is_linear_with(held) {
             continue;
         }
-        // The name carries the prefix an import gives a private declaration, and
-        // a reader wrote neither, so it is put back the way every other
-        // diagnostic puts it back.
-        let named = crate::imports::demangle_private_names(&format!(
-            "'{instance}' is a pool of '{element}'"
-        ));
         reports.push(format!(
-            "at {}: linearity: {named}, which is a resource. A slot is \
-             released by bumping a generation and filled again by an insert \
-             that overwrites it, so nothing consumes the element that leaves. \
-             Keep the resource outside the pool and put a handle to it in the \
-             slot, or hold the elements beside the pool: one array of offsets \
-             giving each element its range into a single run that owns the \
-             whole of it.",
-            at.describe()
+            "at {}: linearity: {}",
+            at.describe(),
+            pool_report(instance, &element)
         ));
     }
     reports.sort();
+    // One type reaches both rules by more than one road, and a reader wants the
+    // complaint once.
+    reports.dedup();
     reports
+}
+
+/// What to say about a pool holding a resource. The name carries the prefix an
+/// import gives a private declaration, and a reader wrote neither, so it is put
+/// back the way every other diagnostic puts it back.
+fn pool_report(instance: &str, element: &Type) -> String {
+    let named = crate::imports::demangle_private_names(&format!(
+        "'{instance}' is a pool of '{element}'"
+    ));
+    format!(
+        "{named}, which is a resource. A slot is released by bumping a \
+         generation and filled again by an insert that overwrites it, so \
+         nothing consumes the element that leaves. Keep the resource outside \
+         the pool and put a handle to it in the slot, or hold the elements \
+         beside the pool: one array of offsets giving each element its range \
+         into a single run that owns the whole of it."
+    )
+}
+
+/// The complaint to make about a concrete type holding a pool of resources, or
+/// `None` where the type is sound.
+///
+/// The rule itself is 10.3's. What this adds is where it is asked: of the types
+/// a program *forms* rather than the ones it writes down. A generic's own field
+/// names a parameter bound to nothing, so `Slab` holds no resource while
+/// `Slab<Node, 2>` does, and a program that never writes that name still makes
+/// one when it calls a generic that answers with it.
+pub(crate) fn pooled_resource_in(
+    ty: &Type,
+    templates: &Templates,
+    held: &HashSet<String>,
+) -> Option<String> {
+    if held.is_empty() {
+        return None;
+    }
+    let mut seen = HashSet::new();
+    walk_concrete(ty, templates, held, &mut seen)
+}
+
+fn walk_concrete(
+    ty: &Type,
+    templates: &Templates,
+    held: &HashSet<String>,
+    seen: &mut HashSet<String>,
+) -> Option<String> {
+    match ty {
+        // A name binds its arguments to the template's parameters, so the
+        // fields it really has are what answer. A type reached twice is left
+        // alone the second time, since a struct may name itself through a
+        // pointer and this walk would not end.
+        Type::Struct(name) | Type::Enum(name) => {
+            if !name.contains('<') || !seen.insert(name.clone()) {
+                return None;
+            }
+            let (base, arguments) = split_instance(name)?;
+            let (params, fields) = templates.get(base.as_str())?;
+            if params.len() != arguments.len() {
+                return None;
+            }
+            // A pool is the same question about the same type, so it is asked
+            // here as well: an instantiation the program never writes down is
+            // reached through what a call makes rather than through a name, and
+            // the walk over written names cannot see one.
+            if let Some(element) = pool_element(&base, &arguments, templates)
+                && element.is_linear_with(held)
+            {
+                return Some(pool_report(name, &element));
+            }
+            let mut subst: HashMap<String, Type> = HashMap::new();
+            for (param, argument) in params.iter().zip(arguments.iter()) {
+                subst.insert(param.clone(), argument_type(argument));
+            }
+            fields.iter().find_map(|field| {
+                let concrete = substitute_type(&field.field_type, &subst);
+                walk_concrete(&concrete, templates, held, seen)
+            })
+        }
+        Type::Ptr(inner)
+        | Type::Ref(inner)
+        | Type::RefMut(inner)
+        | Type::Array(inner, _)
+        | Type::ArrayGeneric(inner, _)
+        | Type::Slice(inner)
+        | Type::Handle(inner)
+        | Type::Distinct(_, inner) => {
+            walk_concrete(inner, templates, held, seen)
+        }
+        Type::Proc(parameters, result) => parameters
+            .iter()
+            .chain(std::iter::once(result.as_ref()))
+            .find_map(|held_type| {
+                walk_concrete(held_type, templates, held, seen)
+            }),
+        _ => None,
+    }
 }
 
 /// The element type of a pool, or `None` where this instantiation is not one.
@@ -301,11 +389,11 @@ fn note_type(ty: &Type, found: &mut Located, at: Position) {
             }
         }
         Type::Ptr(inner)
+        | Type::Slice(inner)
         | Type::Ref(inner)
         | Type::RefMut(inner)
         | Type::Array(inner, _)
         | Type::ArrayGeneric(inner, _)
-        | Type::Slice(inner)
         | Type::Handle(inner)
         | Type::Distinct(_, inner) => note_type(inner, found, at),
         Type::Proc(parameters, result) => {
