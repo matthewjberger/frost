@@ -1344,6 +1344,12 @@ place_under :: fn(mut p: Parser, id: i64) -> i64 {
 // Refuse a read of storage that has gone, naming the root it hangs off. The
 // position is the place being read, since that is the line to look at.
 report_if_moved :: fn(mut p: Parser, id: i64, name_off: i64, name_len: i64) {
+    // While the summaries are settling the state is not final, so what would be
+    // said here would be said against a half-answer. The reporting walk that
+    // follows says it once the answers are in.
+    if (p.moves_quiet == 1) {
+        return
+    }
     if (place_is_moved(p, id) < 0) {
         return
     }
@@ -1405,6 +1411,165 @@ walk_moves_expr :: fn(mut p: Parser, id: i64) {
 
 // An argument is read before it is moved, so the uses inside every argument are
 // checked first, then the values a by-value parameter takes are marked moved.
+// The run of field names from a place down to the name it is rooted in, pushed
+// root first. Answers false for a place reached any other way, having pushed
+// nothing the caller has to keep.
+//
+// Fields only. An element is reached by a number worked out while the program
+// runs, so the place a caller would have to be told about is one neither side
+// can name, and a container releasing its elements one at a time is the shape
+// that would be refused for it. Leaving those out is this rule declining to
+// answer rather than answering wrong.
+push_field_chain :: fn(mut p: Parser, place: i64) -> bool {
+    node := arena_at(p.arena, place)
+    kind := node.kind
+    base := node.a
+    name_off := node.val
+    name_len := node.c
+    if (kind == NodeKind::Var) {
+        return true
+    }
+    if (kind != NodeKind::Field) {
+        return false
+    }
+    if (push_field_chain(p, base) == false) {
+        return false
+    }
+    arena_push(p.summary_steps,
+        SummaryStep { name_off = name_off, name_len = name_len })
+    true
+}
+
+// Whether this run of field names is already recorded for this parameter, so a
+// round that learns nothing new leaves the table alone and the fixpoint closes.
+summary_known :: fn(mut p: Parser, fn_index: i64, param: i64, start: i64,
+    count: i64) -> bool {
+    mut i : i64 = 0
+    while (i < p.summaries.count) {
+        entry := arena_at(p.summaries, i)
+        held_fn := entry.fn_index
+        held_param := entry.param
+        held_start := entry.step_start
+        held_count := entry.step_count
+        if (held_fn == fn_index && held_param == param
+            && held_count == count) {
+            mut k : i64 = 0
+            mut same := true
+            while (k < count) {
+                mine := arena_at(p.summary_steps, start + k)
+                mine_off := mine.name_off
+                mine_len := mine.name_len
+                theirs := arena_at(p.summary_steps, held_start + k)
+                if (theirs.name_len != mine_len
+                    || bytes_equal(p.src, theirs.name_off, mine_off,
+                        mine_len) == false) {
+                    same = false
+                }
+                k = k + 1
+            }
+            if (same) {
+                return true
+            }
+        }
+        i = i + 1
+    }
+    false
+}
+
+// What this function gave away that belonged to a parameter it only borrows,
+// which is exactly what its callers cannot see for themselves. A parameter
+// taken by value is not one of these: the call site already reads the
+// declaration and marks the whole argument gone.
+note_summaries :: fn(mut p: Parser, fn_index: i64, params: i64) {
+    mut index : i64 = 0
+    mut param := params
+    while (param != (-1)) {
+        pnode := arena_at(p.arena, param)
+        borrows := pnode.a
+        pname_off := pnode.val
+        pname_len := pnode.c
+        next_param := pnode.next
+        if (borrows == 1) {
+            mut i : i64 = 0
+            while (i < p.moved.count) {
+                entry := arena_at(p.moved, i)
+                place := entry.slot
+                if (place >= 0) {
+                    root := strip_place(p, place, place_depth(p, place))
+                    rnode := arena_at(p.arena, root)
+                    root_off := rnode.val
+                    root_len := rnode.c
+                    if (rnode.kind == NodeKind::Var && root_len == pname_len
+                        && bytes_equal(p.src, root_off, pname_off, pname_len)
+                        && place != root) {
+                        start := p.summary_steps.count
+                        if (push_field_chain(p, place)) {
+                            count := p.summary_steps.count - start
+                            if (count > 0
+                                && summary_known(p, fn_index, index, start,
+                                    count) == false) {
+                                arena_push(p.summaries,
+                                    Summary { fn_index = fn_index,
+                                        param = index, step_start = start,
+                                        step_count = count })
+                            } else {
+                                p.summary_steps.count = start
+                            }
+                        } else {
+                            p.summary_steps.count = start
+                        }
+                    }
+                }
+                i = i + 1
+            }
+        }
+        index = index + 1
+        param = next_param
+    }
+}
+
+// What the callee did to the resources it was lent, read against the places the
+// caller wrote. `once(h)` where `once` gives away its parameter's `.file` gives
+// up `h.file` here, so a second `once(h)` names storage that is already gone.
+//
+// The argument as written is deliberate. A loop that binds each element of a
+// container by `ref` and releases it hands over a name it rebinds every turn,
+// and rebinding gives that name back, so releasing a container's elements one at
+// a time stays what it always was.
+apply_summaries :: fn(mut p: Parser, args: i64, fn_index: i64) {
+    mut i : i64 = 0
+    while (i < p.summaries.count) {
+        entry := arena_at(p.summaries, i)
+        held_fn := entry.fn_index
+        param := entry.param
+        start := entry.step_start
+        count := entry.step_count
+        if (held_fn == fn_index) {
+            arg := nth_value_arg(p, args, param)
+            if (arg != (-1) && is_place_expr(p, arg)) {
+                mut place := arg
+                mut k : i64 = 0
+                while (k < count) {
+                    step := arena_at(p.summary_steps, start + k)
+                    step_off := step.name_off
+                    step_len := step.name_len
+                    place = new_field_node(p, place, step_off, step_len)
+                    k = k + 1
+                }
+                root := strip_place(p, arg, place_depth(p, arg))
+                rnode := arena_at(p.arena, root)
+                root_off := rnode.val
+                root_len := rnode.c
+                report_if_moved(p, place, root_off, root_len)
+                arena_push(p.moved,
+                    LocalVar { name_off = root_off, name_len = root_len,
+                        ty = 0, slot = place })
+            }
+        }
+        i = i + 1
+    }
+}
+
 walk_moves_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
     mut id := args
     while (id != (-1)) {
@@ -1412,6 +1577,7 @@ walk_moves_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         walk_moves_expr(p, anode.a)
         id = anode.next
     }
+    apply_summaries(p, args, fn_index)
     sym := arena_at(p.fns, fn_index)
     params := sym.params
     count := count_value_args(p, args)
@@ -1600,6 +1766,55 @@ walk_moves_while :: fn(mut p: Parser, body: i64) {
     p.move_scratch.count = scratch_base
 }
 
+// A place of resource type given to the caller is gone from here, the same as
+// one handed to a call that takes it. Reading it and reading nothing else is
+// how a function hands out what it was only lent.
+note_handed_out :: fn(mut p: Parser, value: i64) {
+    if (value == (-1) || is_place_expr(p, value) == false) {
+        return
+    }
+    // What the function was declared to answer with, rather than what the place
+    // works out to. This walk runs before the locals are recorded, so a field
+    // read has nothing to type it against, and the declaration says the same
+    // thing without needing one.
+    if (p.moves_answers == 0) {
+        return
+    }
+    root := strip_place(p, value, place_depth(p, value))
+    rnode := arena_at(p.arena, root)
+    root_off := rnode.val
+    root_len := rnode.c
+    arena_push(p.moved,
+        LocalVar { name_off = root_off, name_len = root_len, ty = 0,
+            slot = value })
+}
+
+// A body, and the value it answers with. The last statement is that value when
+// it is an expression: the emitters are what turn the last one into a return,
+// so nothing before them has marked it as one.
+walk_moves_body :: fn(mut p: Parser, body: i64, answers: bool) {
+    saved := p.moves_answers
+    p.moves_answers = 0
+    if (answers) {
+        p.moves_answers = 1
+    }
+    walk_moves_block(p, body)
+    mut id := body
+    mut last : i64 = -1
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        last = id
+        id = node.next
+    }
+    if (last != (-1)) {
+        node := arena_at(p.arena, last)
+        if (node.kind == NodeKind::ExprStmt) {
+            note_handed_out(p, node.a)
+        }
+    }
+    p.moves_answers = saved
+}
+
 walk_moves_block :: fn(mut p: Parser, head: i64) {
     mut id := head
     while (id != (-1)) {
@@ -1608,6 +1823,9 @@ walk_moves_block :: fn(mut p: Parser, head: i64) {
         if (kind == NodeKind::Let || kind == NodeKind::Print || kind == NodeKind::ExprStmt
             || kind == NodeKind::Return) {
             walk_moves_expr(p, node.a)
+        }
+        if (kind == NodeKind::Return) {
+            note_handed_out(p, node.a)
         }
         if (kind == NodeKind::Assign) {
             walk_moves_expr(p, node.b)
@@ -1694,7 +1912,58 @@ in_scratch :: fn(mut p: Parser, base: i64, off: i64, len: i64) -> bool {
     false
 }
 
+// Whether the program declares a resource at all. Everything the summaries do
+// is about resources, so a program with none pays nothing for them, which is
+// the bargain the rest of the linear machinery strikes too.
+program_has_resources :: fn(mut p: Parser) -> bool {
+    mut i : i64 = 0
+    while (i < p.structs.count) {
+        def := arena_at(p.structs, i)
+        if (def.is_linear == 1) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
+// Work out what every function does to what it is lent, until a round learns
+// nothing new. A round rather than a pass, because what one function gives away
+// depends on what the functions it calls give away, and the table only grows,
+// so this settles.
+settle_summaries :: fn(mut p: Parser) {
+    if (program_has_resources(p) == false) {
+        return
+    }
+    p.moves_quiet = 1
+    mut known : i64 = -1
+    while (known != p.summaries.count) {
+        known = p.summaries.count
+        mut i : i64 = 0
+        while (i < p.arena.count) {
+            node := arena_at(p.arena, i)
+            kind := node.kind
+            body := node.a
+            params := node.b
+            fn_index := node.val
+            if (kind == NodeKind::Func) {
+                mut answers : bool = false
+                if (fn_index >= 0 && fn_index < p.fns.count) {
+                    sym := arena_at(p.fns, fn_index)
+                    answers = is_linear_type(p, sym.ret_type)
+                }
+                p.moved.count = 0
+                walk_moves_body(p, body, answers)
+                note_summaries(p, fn_index, params)
+            }
+            i = i + 1
+        }
+    }
+    p.moves_quiet = 0
+}
+
 check_moves :: fn(mut p: Parser) {
+    settle_summaries(p)
     mut i : i64 = 0
     while (i < p.arena.count) {
         node := arena_at(p.arena, i)
@@ -1707,7 +1976,7 @@ check_moves :: fn(mut p: Parser) {
             }
             check_linear_locals(p, node.a, answers)
             p.moved.count = 0
-            walk_moves_block(p, node.a)
+            walk_moves_body(p, node.a, answers)
         }
         i = i + 1
     }

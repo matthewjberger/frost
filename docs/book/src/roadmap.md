@@ -2,22 +2,18 @@
 
 ## What is left
 
-**A resource consumed through a borrowed parameter is not counted against the
-caller.** A function that consumes part of what it borrows can be called twice
-and consume twice, and one that hands the resource out can be called twice and
-hand it out twice. Both compile today, under both compilers, in safe code with
-no `unsafe` anywhere. It is the one place a guarantee in
-[memory-safety.md](design/memory-safety.md) does not hold, and that document
-states the shape.
+**A resource reached through an element and given away twice.** The count now
+crosses a call for a resource reached through *fields*, which is what closed the
+double free a borrowed parameter used to allow. An element is not carried: which
+element is a number worked out while the program runs, so the place a caller
+would have to be told about is one neither side can name. `vec_get` answering
+with an element by value is the shape that shows it, so a `Vec` of resources can
+still hand the same one out twice.
 
-What it needs is a summary per function of the borrowed places it consumes,
-applied at each call site. The design question that comes with it is what
-happens to a container that releases its elements in place: `world_release` in
-`std/ecs.frost` walks a `Vec<Table>` binding each element by `ref` and releasing
-it, because a resource in a container cannot be moved out to be consumed. A
-summary strong enough to catch the double consumption refuses that loop as well,
-so the rule and the idiom have to be settled in one go rather than one after the
-other.
+Closing it means knowing that what a function answers with came out of what it
+was lent, which is the provenance question the frame check already answers for
+borrowed views and does not yet answer for resources. That is the next piece of
+this, and it subsumes the element case rather than sitting beside it.
 
 The wgpu binding is generated with a safe wrapper per call now, so a program
 that draws a triangle writes no `unsafe` of its own for the graphics API: the

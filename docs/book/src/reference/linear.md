@@ -12,14 +12,13 @@ the obligation. An instantiation is asked about what it was bound to rather than
 what its template declares, since a template's field names a parameter bound to
 nothing. A slice is not one of these: it looks at storage it does not own.
 
-The count is kept per *place*, and within one function. What a callee consumes
-through a borrowed parameter is not recorded against the caller's argument, so a
-function that consumes part of what it borrows may be called twice and consume
-twice. See "What is not yet guarded" in
-[memory-safety.md](../design/memory-safety.md).
-
-Per place rather than per name is what makes the count hold
-for a resource inside something else. `close(h.file)` consumes part of `h`, so a
+The count is kept per *place* rather than per name, which is what makes it hold
+for a resource inside something else. It crosses a call as well: a function
+carries what it consumes through the parameters it only borrows, and a call site
+reads that against the places the caller wrote, so `once(h)` consuming its
+parameter's `.file` gives up `h.file` and a second `once(h)` is refused. Fields
+carry across, elements do not; "What is not yet guarded" in
+[memory-safety.md](../design/memory-safety.md) says why. `close(h.file)` consumes part of `h`, so a
 second `close(h.file)` is a second consumption and so is consuming `h` after it.
 Two separate fields, and two elements whose indexes are known apart, are
 different storage and may each be consumed once. Assigning a place gives it back,
