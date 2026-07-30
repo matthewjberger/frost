@@ -15950,6 +15950,38 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   drop_pool(p)\n}\n",
         "is a pool of",
     ),
+    // A resource still held on a path that leaves before the line that hands it
+    // on. The self-hosted check read forward for a consuming statement and took
+    // the first one it found for the whole answer, so a `return` written above
+    // that line read as though the path through it went on to consume: a
+    // resource silently dropped, in safe code, with no `unsafe` anywhere.
+    (
+        "leaked_on_early_return",
+        "File :: linear struct { fd: i64 }\n\
+         close :: fn(move f: File) -> i64 { f.fd }\n\
+         run :: fn(early: i64) -> i64 {\n\
+         \x20   f := File { fd = 3 }\n\
+         \x20   if (early > 0) {\n        return 1\n    }\n\
+         \x20   close(f)\n}\n\
+         main :: fn() -> i64 {\n    print run(1)\n    0\n}\n",
+        "consumed",
+    ),
+    // `break` is the same path out of the block a loop body is, and it binds to
+    // the nearest loop, which is what tells it from a `break` written inside a
+    // loop further in.
+    (
+        "leaked_on_break",
+        "File :: linear struct { fd: i64 }\n\
+         close :: fn(move f: File) -> i64 { f.fd }\n\
+         run :: fn() -> i64 {\n\
+         \x20   mut i : i64 = 0\n\
+         \x20   while (i < 4) {\n\
+         \x20       f := File { fd = i }\n\
+         \x20       if (i == 2) {\n            break\n        }\n\
+         \x20       close(f)\n        i = i + 1\n    }\n    0\n}\n\
+         main :: fn() -> i64 {\n    print run()\n    0\n}\n",
+        "consumed",
+    ),
     // The rules that were already shared, here so the table is the whole list
     // rather than only what this round added.
     (
@@ -17648,6 +17680,25 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          main :: fn() -> i64 {\n    made := hold($i64, 20)\n\
          \x20   each($show, made)\n    0\n}\n",
         "41\n",
+    ),
+    // A resource handed on from inside an expression rather than from a
+    // statement of its own. The self-hosted check read the root of the
+    // statement's expression and nothing below it, so a consuming call written
+    // as an operand read as no consumption at all and honest code was refused
+    // for leaking what it had just handed away.
+    (
+        "a_resource_consumed_inside_an_expression",
+        "File :: linear struct { fd: i64 }\n\
+         close :: fn(move f: File) -> i64 { f.fd }\n\
+         run :: fn() -> i64 {\n\
+         \x20   mut i : i64 = 0\n\
+         \x20   mut total : i64 = 0\n\
+         \x20   while (i < 4) {\n\
+         \x20       f := File { fd = i }\n\
+         \x20       total = total + close(f)\n\
+         \x20       i = i + 1\n    }\n    total\n}\n\
+         main :: fn() -> i64 {\n    print run()\n    0\n}\n",
+        "6\n",
     ),
     // A constant standing for another constant. Both compilers parsed
     // `ALIAS :: BASE` as an expression rather than a declaration, because those
