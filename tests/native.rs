@@ -7384,6 +7384,58 @@ fn self_hosted_reports_an_unreadable_import() {
     );
 }
 
+// A name a file declares that one of its imports already offers. The namespace
+// is flat, so there is no qualifying one of them: the bootstrap silently took
+// the file's own, and the self-hosted compiler emitted both under one symbol and
+// left whichever assembler read the output to notice.
+#[test]
+fn both_compilers_refuse_a_name_an_import_already_offers() {
+    let directory = std::env::temp_dir().join(unique("frost_collide"));
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("lib.frost"),
+        "export shared\n\nshared :: fn(n: i64) -> i64 { n + 1 }\n",
+    )
+    .unwrap();
+    let main = directory.join("main.frost");
+    std::fs::write(
+        &main,
+        "import \"lib.frost\"\n\
+         shared :: fn(n: i64) -> i64 { n * 100 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print shared(2)\n\
+         \x20   0\n}\n",
+    )
+    .unwrap();
+
+    let bootstrap = Command::new(env!("CARGO_BIN_EXE_frost"))
+        .arg("-o")
+        .arg(directory.join("m.o"))
+        .arg(&main)
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&bootstrap.stderr);
+    assert!(
+        !bootstrap.status.success() && said.contains("also arrives from an import"),
+        "the bootstrap took a name declared twice:\n{said}"
+    );
+
+    let Some(compiler) = build_self_hosted_compiler("collide") else {
+        return;
+    };
+    let hosted = Command::new(&compiler)
+        .env("FROST_INPUT", &main)
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&hosted.stderr);
+    assert!(
+        !hosted.status.success() && said.contains("also arrives from an import"),
+        "the self-hosted compiler took it:\n{said}"
+    );
+    let _ = std::fs::remove_file(&compiler);
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
 // Failure sets in the self-hosted compiler: `-> T ! E` answers with a value or
 // a failure, `?` hands a failure on, and both sides come back out at the top.
 const SELF_HOSTED_FAILURE_SETS: &str = "OpenError :: struct { code: i64 }\n\
