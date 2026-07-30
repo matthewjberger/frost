@@ -406,7 +406,24 @@ value_fits :: fn(mut p: Parser, value: i64, from: i64, to: i64) -> bool {
     if (is_distinct(to) && untyped_literal(p, value)) {
         return types_compatible(p, from, distinct_repr(to))
     }
+    // A string literal is bytes the compiler wrote down, so it knows how many
+    // there are and hands a slice its length. That is the one pointer a slice of
+    // bytes accepts, and it is the expression rather than the type that says so.
+    if (is_pointer(from) && is_array_ty(to) && is_slice_ty(p, to)
+        && array_element(p, to) == TY_U8 && is_str_literal(p, value)) {
+        return true
+    }
     types_compatible(p, from, to)
+}
+
+// Whether an expression is text written down in the source, which is the one
+// pointer that reaches a slice of bytes. A named constant holding one is the same
+// literal under a name, which is what `constant_node` reaches through.
+is_str_literal :: fn(mut p: Parser, value: i64) -> bool {
+    if (value < 0) {
+        return false
+    }
+    arena_at(p.arena, constant_node(p, value)).kind == NodeKind::StrLit
 }
 
 types_compatible :: fn(mut p: Parser, from: i64, to: i64) -> bool {
@@ -437,13 +454,13 @@ types_compatible :: fn(mut p: Parser, from: i64, to: i64) -> bool {
         return true
     }
     // An array reaches a slice of its own element type and nothing else. Two
-    // arrays that are not the same type were caught above.
+    // arrays that are not the same type were caught above. A bare pointer
+    // reaches neither: a slice is an address and a length, and a pointer is the
+    // address without the length, so what a callee would read for the length is
+    // whatever sat beside it. The one pointer that does reach a slice is a
+    // string literal, which `value_fits` answers for, since being a literal is a
+    // question about the expression rather than about its type.
     if (is_array_ty(from) || is_array_ty(to)) {
-        // A `str` is a slice of bytes, and a string literal is a bare pointer
-        // to them, so that one pointer reaches a slice by gaining a length.
-        if (is_pointer(from) && is_array_ty(to) && is_slice_ty(p, to)) {
-            return array_element(p, to) == TY_U8
-        }
         return is_array_ty(from) && is_array_ty(to) && is_slice_ty(p, to)
             && array_element(p, from) == array_element(p, to)
     }

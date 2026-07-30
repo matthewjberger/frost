@@ -43,11 +43,6 @@ perimeter is one generated file. What is left there is the same shape as the
 compiler's byte access, a perimeter rather than a proof, since a descriptor is
 a pointer C reads without checking.
 
-One more, found the same way: a `^i8` passed where a `str` is declared is
-accepted by the bootstrap and miscompiles rather than being refused. A string
-literal reaching a `str` parameter is why the rule exists. It should ask whether
-the argument is a literal rather than whether its type is a pointer.
-
 One more, and it is an ordering question rather than a missing feature: a
 compile-time list element whose type comes from a call to a generic is typed
 before that generic's return type is known. The tuple a call names is recorded
