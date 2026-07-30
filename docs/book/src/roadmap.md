@@ -1,24 +1,4 @@
-# What is left, and the order to do it in
-
-Goal 9 in [philosophy.md](design/philosophy.md) makes compilation speed a promise
-rather than a happy accident, and that promise has a bill. This is the bill,
-sequenced so that nothing here gets built twice.
-
-## The target
-
-Competitive with Jai and Odin, which in practice means a full build in the
-100,000 lines per second range rather than merely "fast for a compiler". That is
-a number to measure against, not a feeling. Both compilers clear it, and the
-measurements are below.
-
-## What the bill bought
-
-Nothing is left on it. The speed bill this document was opened for is paid, and
-the two items that followed it are built.
-
-Everything the two compilers are held to is done: they accept the same language,
-and what says so is a suite of programs run through both rather than a claim.
-See [the self-hosted compiler](impl/self-hosted.md).
+# What is left
 
 ## What is left
 
@@ -28,38 +8,33 @@ perimeter is one generated file. What is left there is the same shape as the
 compiler's byte access, a perimeter rather than a proof, since a descriptor is
 a pointer C reads without checking.
 
-## What is done, and what it cost
+Everything else this document was opened for is built. The two compilers accept
+the same language, and what says so is a suite of programs run through both
+rather than a claim. See [the self-hosted compiler](impl/self-hosted.md).
 
-Both compilers clear the target on a full build, and the self-hosted one
-rebuilds only what changed.
+## The speed promise, and how to check it
 
-**Where the bootstrap stands**, from `just bench-scaling` on 58,107 lines:
+Goal 9 in [philosophy.md](design/philosophy.md) makes compilation speed a
+promise rather than a happy accident: competitive with Jai and Odin, which in
+practice means a full build in the 100,000 lines per second range rather than
+merely "fast for a compiler".
 
-| stage | rate |
+That is a thing to measure, not to record. A number written down here is a
+number about one machine on one day, and it goes stale without anyone noticing
+it has. So run it:
+
+| what | recipe |
 | --- | --- |
-| front end (`--emit-c`, 318 ms) | ~183,000 lines/sec |
-| full build (`--native`, 349 ms) | ~166,000 lines/sec |
+| the bootstrap, front end and full build, over a range of program sizes | `just bench-scaling` |
+| the self-hosted compiler on its own source, both backends | `just bench-selfhost` |
+| what a rebuild costs against a whole-program build | `just bench-selfhost-incremental` |
 
-Code generation is 64 ms of that 349 ms build, with the front end holding the
-rest. Cranelift is not the problem.
+Take warm runs only: the first run after a build measures the file cache.
 
-**Where the self-hosted compiler stands** on its own source, 14,273 lines, from
-`just bench-selfhost`, warm runs only since the first run after a build measures
-the file cache:
-
-| compiler and backend | full build |
-| --- | --- |
-| bootstrap front end (`--emit-c`) | ~72,000 lines/sec |
-| self-hosted, C backend | ~145,000 lines/sec |
-| self-hosted, assembly backend | ~130,000 lines/sec |
-
-**And what a rebuild costs**, from `just bench-selfhost-incremental`:
-
-| build | assembly | C |
-| --- | --- | --- |
-| whole program | ~1,500 ms | ~1,440 ms |
-| incremental, first build | ~1,060 ms | ~1,280 ms |
-| incremental, nothing changed | ~330 ms | ~350 ms |
+Both compilers clear the target, and the assembly backend is the faster of the
+self-hosted pair by a wide margin, since it writes machine code rather than
+handing text to a C compiler. An incremental rebuild that changed nothing costs
+a fraction of a whole-program build; the fraction is what the recipe answers.
 
 The six pieces that took it there:
 
@@ -82,9 +57,7 @@ The six pieces that took it there:
    the runtime prototypes, the type definitions and a prototype for every
    function and specialization in the program, with only the bodies differing;
    and the mark that says a type is already written has to be cleared per unit,
-   since a per-module build writes the definitions several times. On the
-   compiler's own source that is about 1,220 ms whole-program against about
-   310 ms once the objects are there.
+   since a per-module build writes the definitions several times.
 5. **A table over a type's fields** (spec 11.1d), which is what the layout
    tables a renderer writes by hand are. `for field in fields(T)` expands once
    per field, and `offset_of`, `sizeof`, the type predicates and `field_count`
@@ -98,8 +71,9 @@ The six pieces that took it there:
    whole-program one: the machine-code step is where a build's time is, not the
    compiler. Emitting could be parallel too, since the type system is local and
    signature-based, but the compiler writes straight to one file at a time and
-   emitting is 150 ms of a 1,060 ms build, so buffering a unit in memory to
-   parallelize it would be work spent where the time is not.
+   emitting is a small share of a build, so buffering a unit in memory to
+   parallelize it would be work spent where the time is not. Check that share
+   again before believing it, since it is what the decision rests on.
 
 A benchmark is easy to get wrong in ways that read as a compiler result.
 Generated programs that name a function `f32` time a parse error. Programs whose
@@ -125,8 +99,8 @@ contributes its interface as it stands makes the front end walk bodies it will
 never emit. `Statement::Declared` is a function's signature with no body, which
 is what a module offers for every function whose body a caller does not need. A
 generic still offers its body, because the caller is what stamps out the
-template. In the bootstrap that took the skipped path from 309 ms of compiler
-work to about 110 ms.
+template. In the bootstrap that cut the work a skipped module costs to roughly a
+third.
 
 **A declared signature is not an `extern`.** An extern means C linkage and a C
 ABI, and loses the hidden out-pointer an aggregate return uses along with
@@ -146,16 +120,11 @@ only thing that would justify revisiting it.
 an order of magnitude and the expensive ones sit next to each other in a module,
 so splitting the function list into equal chunks leaves one thread holding all
 of them while the rest finish early. Handing out one function at a time from an
-atomic cursor does not. On 10,401 functions, with `FROST_THREADS=n`:
-
-| threads | 1 | 2 | 4 | 8 | 16 |
-| --- | --- | --- | --- | --- | --- |
-| code generation | 385 ms | 218 ms | 111 ms | 65 ms | 55 ms |
-
-That is 7.0x on a machine with eight physical cores, which is about as close to
-linear as this gets. Two things are needed to reach it: one ISA per thread
-rather than one shared, and per-thread contexts, since the object is the only
-serial part and only the defining step touches it.
+atomic cursor does not. `FROST_THREADS=n` sweeps it on a program with enough
+functions to matter, and code generation scales close to linearly in physical
+cores, with hyperthreads adding little. Two things are needed to reach that:
+one ISA per thread rather than one shared, and per-thread contexts, since the
+object is the only serial part and only the defining step touches it.
 
 ## What is deliberately not on this list
 

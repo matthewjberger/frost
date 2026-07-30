@@ -141,12 +141,12 @@ means a byte comparison against a build from a different tree.
 
 ## Compile speed
 
-Both compilers clear the 100,000 lines per second target, and
-[roadmap.md](../roadmap.md) is where every measurement lives, each beside the
-`just` recipe that produces it. The two that matter here, from
-`just bench-selfhost` on the self-hosted compiler's own 14,273 lines: about
-145,000 lines per second through its C backend, and about 130,000 through its
-assembly backend.
+Both compilers clear the 100,000 lines per second target.
+[roadmap.md](../roadmap.md) lists the `just` recipe for each thing worth
+measuring, rather than recording what one machine answered on one day.
+`just bench-selfhost` is the one for this compiler, on its own source, through
+both of its backends; the assembly backend is the faster of the two, since it
+writes machine code rather than handing text to a C compiler.
 
 The language is built to compile fast. There are no traits or typeclasses, so no
 constraint solving. No lifetimes, so the region check is a cheap flow pass. No
@@ -166,14 +166,15 @@ compiled once into an object cached in the temp directory, keyed by a hash of
 its source and the tool that built it, and linked thereafter. The assembler went
 the same way: `selfhosted/assemble.frost` encodes the emitted text and
 `coff.frost` writes the object, so on Windows a build reaches an object without
-running `as` and without the text ever becoming a file. That took `--native` on
-`std/ecs.frost` from 155 ms to 86 and on the compiler's own source from 327 to
-222, and a cold incremental build of the compiler from 675 ms to 366.
+running `as` and without the text ever becoming a file. That roughly halved
+`--native` on the programs it was measured against, spawning a process per
+module having been most of what a build cost.
 
-What remains of the emitted text is what the direct path has still to remove: of
-the 86 ms, 64 is the front end and formatting the assembly, and 22 is encoding
-it and writing the object. Handing the backend's instructions to the encoder as
-records rather than as text is what reaches the rest.
+What remains of the emitted text is what the direct path has still to remove.
+Most of what is left is the front end and formatting the assembly, with encoding
+it and writing the object a minority; handing the backend's instructions to the
+encoder as records rather than as text is what reaches the rest. Re-measure that
+split before spending on it, since it is what says the work is worth doing.
 
 What remains outside the compiler is the linker invocation, which on the
 bootstrap is about two thirds of a small build and is mostly fixed process and
@@ -222,8 +223,8 @@ argued, with `just bench-scaling`, which spans 917 to 58,107 generated lines and
 640 to 10,240 specializations: four times the input costs roughly four times the
 time on both the front-end and the full-native curves, so the pipeline is close
 to linear with a mild superlinear term that grows with function count. Read
-ratios rather than absolutes there, since about 15 ms of every figure is process
-startup.
+ratios rather than absolutes there: process startup is a fixed cost inside every
+figure, and it dominates the small end.
 
 So the front end is what the curve is made of. Parse, parameter modes, regions,
 ownership, IR lowering, type checking, monomorphization to fixpoint and C
@@ -234,9 +235,8 @@ specialization worklist dedups through a hash set rather than a scan.
 What these numbers do not show is the shape problem, because every program there
 is a single file, so a change to one line rebuilds everything no matter how
 little it reaches. `just bench-incremental` is the measurement that does show
-it: on the bootstrap, 9,484 lines across 65 files with one changed, about 580 ms
-full against about 200 ms with `--incremental`. See
-[separate-compilation.md](separate-compilation.md).
+it, on a bootstrap program spread across many files with one of them changed.
+See [separate-compilation.md](separate-compilation.md).
 
 The Frost compiler has its own answer to the same shape problem, and a smaller
 one, because it emits assembly rather than an IR. `--incremental` emits one
@@ -247,16 +247,18 @@ to, so nothing else has to be hashed or walked. Where the encoder runs, the unit
 stays in memory and no assembly file is written at all; where the toolchain does
 the encoding it is written to `<build>/m<n>.s` for that program to read.
 
-On its own source that is about 366 ms for a first incremental build and about
-271 ms once the objects are there, and the compiler that comes out is byte for
-byte the one the whole-program build produces.
+`just bench-selfhost-incremental` puts a whole-program build, a first
+incremental build and one where nothing changed side by side on its own source.
+The compiler that comes out is byte for byte the one the whole-program build
+produces, which a test checks rather than a claim.
 
 What keeps the backend off the curve, on the bootstrap:
 
 1. Functions compile in parallel. The type system is local and
    signature-based, so once signatures are collected functions are independent,
    which is a large part of why the language was designed the way it is. Code
-   generation runs on every core and is 64 ms of a 349 ms build at 58k lines.
+   generation runs on every core and is a minority of a full build, with the
+   front end holding the rest, so Cranelift is not what to attack first.
 2. Modules compile separately. Each module is its own object on the link path,
    monomorphization is seeded per module, `--incremental` skips the modules an
    edit cannot reach, and a skipped module contributes signatures rather than

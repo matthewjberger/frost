@@ -101,12 +101,13 @@ actual work predictable.
    Whole-program monomorphization with imports flattened into one AST is the
    shape that contradicts it, so separate compilation is an obligation this goal
    takes on. The bar is the one Jai and Odin set, a full build in the 100,000
-   lines per second range, and a full native build clears it at about 165,000
-   lines per second. That is the constant factor, and it is done. So is the
-   shape. Each module is its own object and `--incremental` rebuilds only the
-   modules an edit can reach. Both are measured by commands rather than
-   remembered, `just bench-scaling` and `just bench-incremental`, and recorded
-   in [self-hosting.md](../impl/self-hosted.md) and
+   lines per second range, and a full native build clears it. That is the
+   constant factor, and it is done. So is the shape. Each module is its own
+   object and `--incremental` rebuilds only the modules an edit can reach. Both
+   are measured by commands rather than remembered, `just bench-scaling` and
+   `just bench-incremental`, which is deliberate: a rate written into a document
+   is a rate about one machine on one day, and it goes stale without anyone
+   noticing it has. See [self-hosting.md](../impl/self-hosted.md) and
    [separate-compilation.md](../impl/separate-compilation.md).
    [roadmap.md](../roadmap.md) is the surrounding order of work.
 

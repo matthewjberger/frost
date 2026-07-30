@@ -81,9 +81,10 @@ up as a disagreement rather than as a wrong binary.
 The compiler is written in Frost. `selfhosted/frost.frost` reproduces itself
 byte for byte through its own C backend and its own x86-64 assembly backend, so
 a build can go from source to a running compiler with no C compiler in the loop.
-A full native build of 58k lines runs at about 166,000 lines per second with
-code generation spread across cores, and `--incremental` rebuilds only the
-modules an edit can reach.
+A full native build clears the 100,000 lines per second the speed promise asks
+for, with code generation spread across cores, and `--incremental` rebuilds only
+the modules an edit can reach. `just bench-scaling` is what says so on the
+machine in front of you.
 
 The standard library is ordinary Frost. It has length-carrying strings, a
 growable `Vec` and a hash map, file and formatted output, a sort, the slab and
