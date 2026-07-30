@@ -222,9 +222,23 @@ close :: extern fn(f: File)              // terminal consumer, across the FFI bo
   `unsafe` anywhere, which is a double free rather than a leak. The places are
   compared the same way the exclusivity check compares a call's borrows, which
   is the machinery both compilers already had for the neighbouring question.
-  Overlap answers whether two places share storage; which of them is the wider
-  is a second question, and the two are asked separately because an assignment
-  needs both.
+  Overlap answers whether two places share storage. Which of them is the wider
+  is a second question, and an assignment asks it in both directions with
+  opposite safe answers, so there are two relations rather than one reading of
+  overlap. What a write gives back is what it *definitely* covers, since
+  reviving on a guess is what lets a resource be consumed twice: an element at an
+  index nobody knows, or a place reached through a raw pointer, is not revived.
+  What refuses a write is anything it *might* be inside, since storage that may
+  already have gone is the case worth refusing. Neither is the negation of the
+  other; between them sits everything the checks cannot tell, and each takes the
+  side that is safe for what it does.
+
+  What the rule is about is the elements a handle addresses. A slab keeps those
+  in `storage`, so that field is the question and another run the struct happens
+  to carry is not one: a field holding resources makes the struct a resource by
+  the ordinary rule, and that is where it is answered for. A `columns` container
+  has no `storage`, since one array per field of the element is what it is, so
+  every column is asked and the bookkeeping arrays are not.
 - At least once is the new rule. A linear value still live at the end of the
   function that owns it is a "never consumed" error, and there is no leak.
 

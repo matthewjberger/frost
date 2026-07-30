@@ -29,16 +29,6 @@ type Templates<'a> = HashMap<&'a str, (&'a [String], &'a [StructField])>;
 /// Instantiation names with where each was written.
 pub(crate) type Located = HashMap<String, Position>;
 
-/// The declared structs, gathered once. Both the closure that runs to a fixpoint
-/// and the pool rule read the same table, and building it per round made a pass
-/// that is meant to be linear in a program's size walk it again for every type
-/// the closure found.
-pub(crate) fn declared_structs(
-    statements: &[Spanned<Statement>],
-) -> Templates<'_> {
-    templates_of(statements)
-}
-
 /// Grow `held` with every instantiation whose bound fields hold a resource.
 /// Answers whether it grew, so a caller running a fixpoint over holders can run
 /// this inside the same loop and let the two converge together: an instance is a
@@ -85,7 +75,7 @@ pub(crate) fn check_pooled_resources(
     if held.is_empty() {
         return Vec::new();
     }
-    let templates = templates_of(statements);
+    let templates = declared_structs(statements);
     // Every pool a program has, which is an instantiation of a generic one and a
     // plainly declared one alike. A concrete `Pool :: struct { storage: [4]File,
     // generations: [4]i64 }` is the same container written out, and asking only
@@ -179,7 +169,13 @@ fn is_run(ty: &Type) -> bool {
     matches!(ty, Type::Array(..) | Type::ArrayGeneric(..))
 }
 
-fn templates_of(statements: &[Spanned<Statement>]) -> Templates<'_> {
+/// The declared structs, gathered once. Both the closure that runs to a fixpoint
+/// and the pool rule read the same table, and building it per round made a pass
+/// meant to stay linear in a program's size walk it again for every type the
+/// closure found.
+pub(crate) fn declared_structs(
+    statements: &[Spanned<Statement>],
+) -> Templates<'_> {
     let mut templates: Templates = HashMap::new();
     for statement in statements {
         if let Statement::Struct(name, params, fields) = &statement.node {

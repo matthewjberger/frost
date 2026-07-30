@@ -17,8 +17,10 @@ for a resource inside something else. `close(h.file)` consumes part of `h`, so a
 second `close(h.file)` is a second consumption and so is consuming `h` after it.
 Two separate fields, and two elements whose indexes are known apart, are
 different storage and may each be consumed once. Assigning a place gives it back,
-along with everything it covers; writing a part of something already given away
-is refused, since that storage belongs to whoever it went to.
+along with everything it definitely covers; writing a part of something that may
+already have been given away is refused, since that storage belongs to whoever it
+went to. The two directions take opposite sides of what the checks cannot tell:
+an element at an index nobody knows is not revived, and is not written into.
 
 A pool may not hold resources. A slot is emptied by bumping a generation and
 filled again by an insert that overwrites it, so nothing consumes the element

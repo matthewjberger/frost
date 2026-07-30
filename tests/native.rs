@@ -15686,6 +15686,41 @@ fn both_compilers_refuse_writing_into_what_was_consumed() {
     );
 }
 
+// A slab-shaped struct carrying a run of resources that is not its slot table.
+// The rule is about the elements a handle addresses, so `storage` is the question
+// and another field is not: a field holding resources makes the struct a resource
+// by the ordinary rule, and that is where it is answered for. The two compilers
+// read this differently at first, one asking `storage` and the other every array
+// it could find, which is two languages rather than one.
+#[test]
+fn both_compilers_take_a_pool_beside_a_run_of_resources() {
+    let source = "File :: linear struct { fd: i64 }\n\
+                  Thing :: struct {\n\
+                  \x20   storage: [2]i64,\n\
+                  \x20   generations: [2]i64,\n\
+                  \x20   extras: [2]File,\n}\n\
+                  drop_thing :: fn(move t: Thing) -> i64 { 0 }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   t := Thing {\n\
+                  \x20       storage = [0; 2],\n\
+                  \x20       generations = [0; 2],\n\
+                  \x20       extras = [File { fd = 1 }; 2],\n\
+                  \x20   }\n\
+                  \x20   drop_thing(t)\n}\n";
+    let Some((ok, stderr)) = compile_and_run_status("pooladj", source) else {
+        return;
+    };
+    assert!(ok, "the bootstrap refused a pool beside resources:\n{stderr}");
+    let Some(compiler) = build_self_hosted_compiler("pooladj") else {
+        return;
+    };
+    let hosted = selfhosted_default_output(
+        &compiler, "pooladj", source, "--emit-c", "c",
+    );
+    assert_eq!(hosted, "", "the self-hosted compiler disagreed");
+    let _ = std::fs::remove_file(&compiler);
+}
+
 // What the bootstrap said when it would not compile a program.
 fn bootstrap_refusal(name: &str, source: &str) -> String {
     let directory = std::env::temp_dir();
