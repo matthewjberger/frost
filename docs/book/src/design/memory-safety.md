@@ -205,17 +205,51 @@ close :: extern fn(f: File)              // terminal consumer, across the FFI bo
   since the whole contains the part. Two separate fields, and two elements whose
   indexes are known apart, are different storage and may each be consumed once:
   that is what a container releasing each of its own rests on, and
-  `world_release` frees several `Vec` fields in a row. A place given away and
-  then assigned holds a value again, so `world.tables = kept` after
-  `vec_free($Table, world.tables)` is a container replacing what it released.
+  `world_release` frees several `Vec` fields in a row.
 
-  Tracked per name, this did not hold. A field was never recorded, so a resource
+  Assigning a place makes it hold a value again, and the direction matters.
+  Writing a place revives it and everything it *covers*, since the write settles
+  the whole of it: `world.tables = kept` after `vec_free($Table, world.tables)`
+  is a container replacing what it released, and assigning the whole of a struct
+  gives its fields back. Writing a *part* of something already given away is not
+  taking it back. It is refused, because the storage belongs to whoever it was
+  handed to and may already have been released, and because reviving the
+  container from a write to one field let a value be consumed, written into, and
+  consumed again.
+
+  Tracked per name, none of this held. A field was never recorded, so a resource
   reached through one could be consumed any number of times in safe code with no
   `unsafe` anywhere, which is a double free rather than a leak. The places are
   compared the same way the exclusivity check compares a call's borrows, which
   is the machinery both compilers already had for the neighbouring question.
+  Overlap answers whether two places share storage; which of them is the wider
+  is a second question, and the two are asked separately because an assignment
+  needs both.
 - At least once is the new rule. A linear value still live at the end of the
   function that owns it is a "never consumed" error, and there is no leak.
+
+  A container is a resource where what it holds is one, and that is asked of the
+  instantiation rather than the declaration. A generic's field names a parameter
+  bound to nothing, so `Slab` holds no resource and reading only the declarations
+  said no `Slab<T, N>` does either. The instantiations a program writes carry
+  their arguments in the name, so binding the template's parameters to them gives
+  the fields that instantiation really has. A fixed array of resources counts as
+  one too, since freeing the run is not freeing what is in it; a slice does not,
+  since it looks at storage it does not own.
+
+  A pool of resources is refused where it is declared. A slot is emptied by
+  bumping a generation and filled again by an insert that overwrites what was
+  there, so nothing consumes the element that leaves: the container carries one
+  obligation and its slots carry none. No consumer can discharge the difference,
+  because releasing each element means consuming `p.storage[i]` around a loop,
+  which is a move inside a loop and refused, correctly, since nothing says the
+  indexes differ. So it is a shape the language would demand be consumed and give
+  no way to consume, and refusing it at the declaration is the only place a
+  reader can act on it. The diagnostic names the replacement: keep the resource
+  outside the pool and put a handle to it in the slot, or hold the elements
+  beside the pool as one array of offsets into a single run that owns the whole
+  of it. A `Slab`, a `columns` and a container written out by hand are all asked,
+  since they are the same shape however it was spelled.
 
 Consuming means moving the value onward, returning it, passing it by value to
 another function (typically an `extern` that takes ownership across the FFI

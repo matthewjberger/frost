@@ -394,19 +394,38 @@ impl MoveChecker<'_> {
     /// A place holds a value again, so nothing sharing its storage is gone.
     fn revive_place(&mut self, path: &[Step], key: &str) {
         self.states.insert(key.to_string(), MoveState::Live);
-        let overlapping: Vec<String> = self
+        // Only what the write covers. Writing `h` gives `h.file` back because the
+        // write settles the whole of it; writing `h.file` does not give `h` back,
+        // since the rest of `h` is still wherever it went.
+        let covered: Vec<String> = self
             .states
             .keys()
             .filter(|other| {
                 self.paths
                     .get(*other)
-                    .is_some_and(|reached| places_overlap(reached, path))
+                    .is_some_and(|reached| place_contains(path, reached))
             })
             .cloned()
             .collect();
-        for other in overlapping {
+        for other in covered {
             self.states.insert(other, MoveState::Live);
         }
+    }
+
+    /// The place already given away that this one is part of, or `None`. Writing
+    /// into storage that was handed to someone else is not giving it back: the
+    /// callee owns it and may have released it already.
+    fn moved_container_of(&self, path: &[Step]) -> Option<String> {
+        self.states
+            .iter()
+            .filter(|(_, state)| **state != MoveState::Live)
+            .filter_map(|(other, _)| {
+                let reached = self.paths.get(other)?;
+                (reached.len() < path.len()
+                    && place_contains(reached, path))
+                .then(|| other.clone())
+            })
+            .min()
     }
 
     /// What a place reaches through, which is read even where the place itself
@@ -577,6 +596,9 @@ impl MoveChecker<'_> {
                     self.states.insert(name.clone(), MoveState::Live);
                 } else if let Some(path) = self.borrow_place(target) {
                     let key = self.place_key(&path);
+                    if let Some(blamed) = self.moved_container_of(&path) {
+                        bail!("ownership: use of moved value '{blamed}'");
+                    }
                     self.revive_place(&path, &key);
                     self.visit_beneath(target)?;
                 } else {
@@ -1158,6 +1180,18 @@ fn places_overlap(first: &[Step], second: &[Step]) -> bool {
         .any(|(left, right)| steps_apart(left, right))
 }
 
+// Whether `outer` names storage `inner` is part of: the same place, or one
+// `inner` hangs off.
+//
+// Overlap is symmetric and says only that two places share storage, not which of
+// them is the wider. Writing a field of a value that was given away is not
+// giving the value back, and the two questions an assignment asks need the
+// direction: what the write revives is what it covers, and what refuses the
+// write is what covers it.
+fn place_contains(outer: &[Step], inner: &[Step]) -> bool {
+    outer.len() <= inner.len() && places_overlap(outer, inner)
+}
+
 // How a place reads back in a diagnostic.
 fn describe_place(path: &[Step]) -> String {
     path.iter()
@@ -1252,6 +1286,7 @@ fn linear_closure(
     // parameter bound to nothing here, so the field table answers for `Slab` and
     // not for `Slab<Node, 2>`, and it is the second that holds the resource.
     let instances = crate::linear_instances::collect_instances(statements);
+    let templates = crate::linear_instances::declared_structs(statements);
     loop {
         let mut grew = false;
         for ((owner, _), ty) in fields {
@@ -1267,7 +1302,7 @@ fn linear_closure(
         // because of a field and a struct is one because of an instance in a
         // field of its own.
         if crate::linear_instances::note_linear_instances(
-            statements,
+            &templates,
             &instances,
             &mut held,
         ) {
@@ -1676,6 +1711,41 @@ mod tests {
                 close(h.file)\n\
             }";
         assert!(check(source).is_err());
+    }
+
+    // Writing into storage that was handed away is not taking it back. Reviving
+    // whatever shared the target's storage let a value be consumed, written into,
+    // and consumed again, which is the hole the place tracking was for reached by
+    // two steps instead of one.
+    #[test]
+    fn writing_a_field_of_a_consumed_value_is_rejected() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            Holder :: struct { file: File, name: i64 }\n\
+            open :: fn(n: i64) -> File { File { handle = n } }\n\
+            drop_holder :: extern fn(h: Holder)\n\
+            run :: fn(move h: Holder) {\n\
+                drop_holder(h)\n\
+                h.file = open(9)\n\
+            }";
+        assert!(check(source).is_err());
+    }
+
+    // Writing the whole of it is, since the write settles every part.
+    #[test]
+    fn writing_a_whole_after_consuming_a_field_is_accepted() {
+        let source = "\
+            File :: linear struct { handle: i64 }\n\
+            Holder :: struct { file: File, name: i64 }\n\
+            open :: fn(n: i64) -> File { File { handle = n } }\n\
+            close :: extern fn(f: File)\n\
+            drop_holder :: extern fn(h: Holder)\n\
+            run :: fn(mut h: Holder) {\n\
+                close(h.file)\n\
+                h = Holder { file = open(9), name = 2 }\n\
+                drop_holder(h)\n\
+            }";
+        assert!(check(source).is_ok());
     }
 
     // An element answers the same way, and two elements known apart do not.
