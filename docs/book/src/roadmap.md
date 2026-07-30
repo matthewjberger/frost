@@ -39,9 +39,15 @@ happens first.
 
 What it costs today: `for_each_row` in `std/ecs.frost` works out its columns
 once per row rather than once per table. Hoisting them means handing them to a
-second generic as a list of its own, which is exactly the shape above. The fix
-is to record the node a call names rather than the tuple, and resolve the tuple
-where the return types are settled.
+second generic as a list of its own, which is exactly the shape above: written
+that way, the element is recorded as `i64` and the body it reaches takes an
+argument of the wrong type.
+
+The fix is to record the node a call names rather than the tuple, and resolve
+the tuple where the return types are settled. Settling it eagerly instead, by
+parsing the instance where the element is read, does not work: the parse of one
+declaration is not re-entrant, and doing it there walks off the end of the node
+arena. So the resolution has to be deferred rather than hoisted forward.
 
 ## What is done, and what it cost
 
