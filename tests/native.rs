@@ -17538,6 +17538,13 @@ fn the_assembler_rounds_a_float_literal_to_the_nearest_double() {
 // are neighbouring doubles, this is why, and
 // `the_assembler_rounds_a_float_literal_to_the_nearest_double` is the test that
 // says which of them is right.
+//
+// Windows only, and what that leaves uncovered is worth knowing: the backend
+// emits a different instruction set per calling convention, so an encoding used
+// only by System V is never weighed here. `movb $imm, %reg`, which says how
+// many vector registers a variadic call uses, was wrong for exactly that
+// reason. `the_assembler_writes_the_elf_object_clang_writes` is the other half
+// and needs clang.
 #[test]
 fn the_assembler_encodes_what_the_system_assembler_does() {
     if !cfg!(windows) || !binutils_available() {
