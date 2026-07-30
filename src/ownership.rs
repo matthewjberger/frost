@@ -36,6 +36,7 @@ struct Program<'a> {
     signatures: &'a Signatures,
     param_types: &'a ParamTypes,
     field_types: &'a FieldTypes,
+    summaries: &'a Summaries,
 }
 
 fn collect_field_types(statements: &[Spanned<Statement>]) -> FieldTypes {
@@ -84,11 +85,22 @@ pub fn check_ownership_recovering(
     let param_types = collect_param_types(statements);
     let field_types = collect_field_types(statements);
     let held = linear_closure(linear, &field_types, statements);
+    let summaries = settle_summaries(
+        statements,
+        &Program {
+            linear: &held,
+            signatures: &signatures,
+            param_types: &param_types,
+            field_types: &field_types,
+            summaries: &Summaries::new(),
+        },
+    );
     let program = Program {
         linear: &held,
         signatures: &signatures,
         param_types: &param_types,
         field_types: &field_types,
+        summaries: &summaries,
     };
     let mut reports = crate::linear_instances::check_pooled_resources(
         statements,
@@ -243,11 +255,127 @@ fn check_statement(
     Ok(())
 }
 
+/// What each function does to the resources it is lent: for one parameter, the
+/// place under it that the body hands on, and whether it does so on every path.
+///
+/// The count linearity keeps is per place, and a place lives in one function. A
+/// callee that consumes part of what it borrows leaves the caller believing that
+/// storage is still live, so calling it twice consumes twice. This is what the
+/// call site reads to know better.
+type Summary = Vec<(usize, Vec<Step>, MoveState)>;
+type Summaries = HashMap<String, Summary>;
+
+/// Work out what every function does to what it is lent, until a round learns
+/// nothing new.
+///
+/// A round rather than a pass, because what one function gives away depends on
+/// what the functions it calls give away: `outer` consuming through `inner`
+/// only shows up once `inner`'s own summary is known. The set only ever grows,
+/// so this settles.
+///
+/// A program with no resources at all pays nothing for this, which is the same
+/// bargain every other part of the linear machinery strikes.
+fn settle_summaries(
+    statements: &[Spanned<Statement>],
+    seed: &Program,
+) -> Summaries {
+    let mut summaries = Summaries::new();
+    if seed.linear.is_empty() {
+        return summaries;
+    }
+    loop {
+        let program = Program {
+            summaries: &summaries,
+            ..*seed
+        };
+        let mut round = Summaries::new();
+        for statement in statements {
+            let (name, params, body) = match &statement.node {
+                Statement::Constant(
+                    name,
+                    Expression::Function(params, _, body)
+                    | Expression::Proc(params, _, body),
+                ) => (name, params, body),
+                _ => continue,
+            };
+            let checker = run_function(params, body, &program);
+            let found = summarize(params, &checker);
+            if !found.is_empty() {
+                round.insert(name.clone(), found);
+            }
+        }
+        if round == summaries {
+            return summaries;
+        }
+        summaries = round;
+    }
+}
+
+/// The places a body hands on that belong to a borrowed parameter, which is
+/// exactly what its caller cannot see for itself.
+///
+/// A parameter taken by `move` is not one of these. The call site already reads
+/// the declaration and marks the whole argument gone, so counting it here would
+/// say the same thing twice.
+fn summarize(params: &[Parameter], checker: &MoveChecker) -> Summary {
+    let mut found = Summary::new();
+    for (index, parameter) in params.iter().enumerate() {
+        if !matches!(
+            parameter.type_annotation,
+            Some(Type::Ref(_) | Type::RefMut(_))
+        ) {
+            continue;
+        }
+        for (key, state) in &checker.states {
+            if *state == MoveState::Live {
+                continue;
+            }
+            let Some(path) = checker.paths.get(key) else {
+                continue;
+            };
+            let Some(Step::Named(root)) = path.first() else {
+                continue;
+            };
+            if root != &parameter.name {
+                continue;
+            }
+            // Fields only. An element is reached by a number worked out while
+            // the program runs, so the place a caller would have to be told
+            // about is one neither side can name, and a container releasing its
+            // elements one at a time is the shape that would be refused for it.
+            // Leaving those out is this rule declining to answer rather than
+            // answering wrong.
+            let under = &path[1..];
+            if under.is_empty()
+                || !under.iter().all(|step| {
+                    matches!(step, Step::Named(_) | Step::Deref(false))
+                })
+            {
+                continue;
+            }
+            found.push((index, under.to_vec(), *state));
+        }
+    }
+    found.sort_by(|left, right| {
+        (left.0, describe_place(&left.1))
+            .cmp(&(right.0, describe_place(&right.1)))
+    });
+    found
+}
+
 fn check_function_moves(
     params: &[Parameter],
     body: &Block,
     program: &Program,
 ) -> Vec<String> {
+    run_function(params, body, program).reports
+}
+
+fn run_function<'a>(
+    params: &[Parameter],
+    body: &Block,
+    program: &Program<'a>,
+) -> MoveChecker<'a> {
     let mut checker = MoveChecker {
         types: HashMap::new(),
         states: HashMap::new(),
@@ -256,6 +384,7 @@ fn check_function_moves(
         signatures: program.signatures,
         param_types: program.param_types,
         field_types: program.field_types,
+        summaries: program.summaries,
         compile_time: params
             .iter()
             .filter(|parameter| {
@@ -276,7 +405,7 @@ fn check_function_moves(
         }
     }
     checker.check_function_body(body);
-    checker.reports
+    checker
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -310,6 +439,10 @@ struct MoveChecker<'a> {
     signatures: &'a Signatures,
     param_types: &'a ParamTypes,
     field_types: &'a FieldTypes,
+    // What each function already worked out does to the resources it is lent.
+    // Empty while the summaries are still settling, which is why they settle
+    // before anything is reported.
+    summaries: &'a Summaries,
     // The enclosing function's compile-time parameters. A call to one of these
     // names a function only once the generic is specialized, so nothing is
     // known about what it does with its arguments until then.
@@ -485,6 +618,52 @@ impl MoveChecker<'_> {
                 MoveState::Deferred
             } else {
                 MoveState::Moved
+            };
+            self.states.insert(key, consumed);
+        }
+        Ok(())
+    }
+
+    /// What the callee did to the resources it was lent, read against the
+    /// places the caller wrote.
+    ///
+    /// The place is the argument as written with the callee's path under it, so
+    /// `once(h)` where `once` consumes its parameter's `.file` gives up `h.file`
+    /// here. That is what makes the count hold across a call: a second `once(h)`
+    /// names storage that is already gone.
+    ///
+    /// The argument as written is deliberate. A loop that binds each element of
+    /// a container by `ref` and releases it hands over a name it rebinds every
+    /// turn, and rebinding gives that name back, so releasing a container's
+    /// elements one at a time stays what it always was.
+    fn apply_summary(
+        &mut self,
+        callee: &Expression,
+        arguments: &[Expression],
+    ) -> Result<()> {
+        let Expression::Identifier(name) = callee else {
+            return Ok(());
+        };
+        let Some(summary) = self.summaries.get(name) else {
+            return Ok(());
+        };
+        for (index, under, state) in summary.clone() {
+            let Some(argument) = arguments.get(index) else {
+                continue;
+            };
+            let Some(mut path) = self.borrow_place(argument) else {
+                continue;
+            };
+            path.extend(under);
+            let key = self.place_key(&path);
+            let (held, blamed) = self.state_of_place(&path, &key);
+            if held != MoveState::Live {
+                bail!("ownership: use of moved value '{blamed}'");
+            }
+            let consumed = if self.in_defer {
+                MoveState::Deferred
+            } else {
+                state
             };
             self.states.insert(key, consumed);
         }
@@ -944,6 +1123,9 @@ impl MoveChecker<'_> {
                         };
                         self.states.insert(key, consumed);
                     }
+                }
+                if known {
+                    self.apply_summary(callee, arguments)?;
                 }
                 Ok(())
             }

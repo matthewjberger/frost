@@ -15967,6 +15967,39 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   drop_pool(p)\n}\n",
         "is a pool of",
     ),
+    // A resource consumed through a borrowed parameter, twice. The count is
+    // kept per place and a place lived in one function, so `once` refused a
+    // second `close(h.file)` inside itself and said nothing to its caller. Both
+    // compilers took two calls to it: a double free in safe code with no
+    // `unsafe` anywhere, and the largest hole the guarantees had.
+    (
+        "consumed_through_a_borrow_twice",
+        "File :: linear struct { fd: i64 }\n\
+         Holder :: struct { file: File, name: i64 }\n\
+         close :: fn(move f: File) -> i64 { f.fd }\n\
+         once :: fn(mut h: Holder) -> i64 { close(h.file) }\n\
+         drop_holder :: fn(move h: Holder) -> i64 { close(h.file) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut h := Holder { file = File { fd = 5 }, name = 1 }\n\
+         \x20   print once(h)\n    print once(h)\n    drop_holder(h)\n}\n",
+        "moved",
+    ),
+    // The same by the other road: handing the resource out rather than
+    // consuming it. A function answering with what it read out of a borrow can
+    // be called as many times as you like, and each answer is the same storage.
+    (
+        "handed_out_of_a_borrow_twice",
+        "File :: linear struct { fd: i64 }\n\
+         Holder :: struct { file: File, name: i64 }\n\
+         close :: fn(move f: File) -> i64 { f.fd }\n\
+         lift :: fn(h: Holder) -> File { h.file }\n\
+         drop_holder :: fn(move h: Holder) -> i64 { close(h.file) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   h := Holder { file = File { fd = 5 }, name = 1 }\n\
+         \x20   print close(lift(h))\n    print close(lift(h))\n\
+         \x20   drop_holder(h)\n}\n",
+        "moved",
+    ),
     // A resource still held on a path that leaves before the line that hands it
     // on. The self-hosted check read forward for a consuming statement and took
     // the first one it found for the whole answer, so a `return` written above

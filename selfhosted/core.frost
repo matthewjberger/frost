@@ -13,7 +13,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     GenericFn, GParam, GArg, GBinding, ImportEdge, Instance, LocalVar, Module,
     Rename,
     MonoNode,
-    BoundValue,
+    BoundValue, Summary, SummaryStep,
     MonoRet, PendingRet, ProcSig, CONST_BASE, PROC_BASE, FN_BASE, DISTINCT_BASE,
     DISTINCT_STRIDE, Node, NodeKind,
     OP_ADD, OP_AND, OP_DIV, OP_EQ, OP_GE, OP_GT, OP_LE, OP_LT, OP_MOD, OP_MUL,
@@ -652,6 +652,27 @@ GArg :: struct {
     pending: i64,
 }
 
+// One place a function hands on that belongs to a borrowed parameter: which
+// function, which parameter, and the run of field names under it held in
+// `summary_steps`.
+//
+// The count linearity keeps is per place, and a place lives in one function. A
+// callee that consumes part of what it borrows leaves its caller believing that
+// storage is still live, so calling it twice consumes twice. This is what a call
+// site reads to know better.
+Summary :: struct {
+    fn_index: i64,
+    param: i64,
+    step_start: i64,
+    step_count: i64,
+}
+
+// One field name on the way from a borrowed parameter to the place given away.
+SummaryStep :: struct {
+    name_off: i64,
+    name_len: i64,
+}
+
 // The expression one entry of `parse_locals` was bound to, in step with it, and
 // -1 for a name that binds none. A name's type is read where it is bound, and a
 // type that is what a call to a generic answers with is not settled then, so a
@@ -1143,6 +1164,20 @@ Parser :: struct {
     // the position it answers with.
     tparam_through: i64,
     moved: Arena<LocalVar>,
+    // What each function does to the resources it is lent, and the field names
+    // that say which place. Worked out to a fixpoint before anything is
+    // reported, since what one function gives away depends on what the
+    // functions it calls give away.
+    summaries: Arena<Summary>,
+    summary_steps: Arena<SummaryStep>,
+    // Whether the move walk is working the summaries out rather than reporting.
+    // The same walk does both, and a complaint made while the answers are still
+    // settling is one made against a state that is not final.
+    moves_quiet: i64,
+    // Whether the function being walked answers with a resource, which is what
+    // says a place it hands back is one. The walk runs before the locals are
+    // recorded, so the declaration is what can be read rather than the place.
+    moves_answers: i64,
     label_id: i64,
     abi_windows: i64,
     // Whether the argument list just read held a `for` over a compile-time list
