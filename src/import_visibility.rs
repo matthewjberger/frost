@@ -35,6 +35,9 @@ pub struct FileNames {
     pub declared: HashSet<String>,
     pub imports: Vec<PathBuf>,
     pub used: Vec<String>,
+    // The exported names this file read under another name. One of those does
+    // not arrive under its own, so it is not a name this file holds twice.
+    pub renamed: HashSet<String>,
 }
 
 impl FileNames {
@@ -59,13 +62,63 @@ impl FileNames {
                 candidates.into_iter().filter(|name| !bound.contains(name)),
             );
         }
+        let mut renamed = HashSet::new();
+        for statement in statements {
+            if let Statement::Import(_, renames) = &statement.node {
+                for rename in renames {
+                    renamed.insert(rename.exported.clone());
+                }
+            }
+        }
         FileNames {
             module: module.to_string(),
             declared,
             imports: imports.to_vec(),
             used,
+            renamed,
         }
     }
+}
+
+// Every name a file declares that an import already brought in.
+//
+// The namespace is flat, so two declarations of one name are two things called
+// the same thing and there is no qualifying one of them. Left alone the two
+// compilers answered differently: the bootstrap took the file's own and said
+// nothing, and the self-hosted compiler emitted both under one symbol and left
+// the assembler to notice. Neither is a choice a reader made, so the collision
+// is refused and the reader makes it, by renaming the import or the declaration.
+pub fn shadowed_imports(
+    files: &[FileNames],
+    exports: &HashMap<PathBuf, (String, HashSet<String>)>,
+) -> Vec<String> {
+    let mut reports = Vec::new();
+    for file in files {
+        let visible: HashSet<&str> = file
+            .imports
+            .iter()
+            .filter_map(|path| exports.get(path))
+            .flat_map(|(_, names)| names.iter().map(String::as_str))
+            .collect();
+        let mut said = HashSet::new();
+        for name in &file.declared {
+            // A name this file renamed on the way in arrives as the new name, so
+            // the old one is not visible here and is not a collision. Renaming
+            // is how a reader keeps both.
+            if file.renamed.contains(name.as_str())
+                || !visible.contains(name.as_str())
+                || !said.insert(name.as_str())
+            {
+                continue;
+            }
+            reports.push(format!(
+                "{}: '{name}' is declared here and also arrives from an import; rename one of them, or read the import under another name with `import \"...\" ({name} as ...)`",
+                file.module
+            ));
+        }
+    }
+    reports.sort();
+    reports
 }
 
 // Every name each file used that belongs to a module it did not import, as the

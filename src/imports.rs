@@ -8,7 +8,9 @@ use crate::build_cache::{
     BuildCache, ModuleRecord, digest, fnv1a, interface_fingerprint,
     module_fingerprint, stamp_file,
 };
-use crate::import_visibility::{FileNames, unimported_names};
+use crate::import_visibility::{
+    FileNames, shadowed_imports, unimported_names,
+};
 use crate::interface::ModuleInterface;
 use crate::lexer::Lexer;
 use crate::lexer::Token;
@@ -258,6 +260,13 @@ pub fn resolve_imports_cached(
     if !reports.is_empty() {
         bail!(
             "an import says what a file may name, and these name what they did not import:\n{}",
+            reports.join("\n")
+        );
+    }
+    let reports = shadowed_imports(&walk.files, &walk.module_exports);
+    if !reports.is_empty() {
+        bail!(
+            "a name means one thing in a file, and these mean two:\n{}",
             reports.join("\n")
         );
     }

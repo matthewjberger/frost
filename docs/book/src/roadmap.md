@@ -22,12 +22,6 @@ See [the self-hosted compiler](impl/self-hosted.md).
 
 ## What is left
 
-A name a program declares may collide with one an import exports, and nothing
-says so. Both are emitted, under one symbol, and what catches it is whichever
-assembler or C compiler reads the output. `check_export_collisions` answers for
-two modules exporting one name and not for a module's own declaration shadowing
-what it imported.
-
 The ECS keeps its own mask table rather than the standard library's map. The
 faults that forced that are fixed, so this is a change nobody has made yet
 rather than one nothing allows.
