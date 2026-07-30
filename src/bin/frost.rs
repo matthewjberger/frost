@@ -108,6 +108,45 @@ fn search_roots(cli: &Cli, project_root: &Path) -> Result<Vec<SearchRoot>> {
     Ok(roots)
 }
 
+/// Whether the program already declares this runtime entry point itself, which
+/// the compiler's own source does. Declaring it twice is a redefinition.
+fn declares_extern(statements: &[Spanned<Statement>], wanted: &str) -> bool {
+    statements.iter().any(|statement| {
+        matches!(&statement.node, Statement::Extern { name, .. } if name == wanted)
+    })
+}
+
+/// What `assert` lowers to. Generated here and audited by construction, so a
+/// call the compiler wrote itself needs no `unsafe` block around it.
+fn assert_declaration() -> Spanned<Statement> {
+    Spanned::new(
+        Statement::Extern {
+            name: "frost_rt_assert_at".to_string(),
+            params: vec![
+                Parameter {
+                    name: "cond".to_string(),
+                    type_annotation: Some(Type::Bool),
+                    mutable: false,
+                    mode: frost::ParamMode::Read,
+                    compile_time_signature: None,
+                    pack: false,
+                },
+                Parameter {
+                    name: "where".to_string(),
+                    type_annotation: Some(Type::Ptr(Box::new(Type::I8))),
+                    mutable: false,
+                    mode: frost::ParamMode::Read,
+                    compile_time_signature: None,
+                    pack: false,
+                },
+            ],
+            return_type: None,
+            safe: true,
+        },
+        Position::default(),
+    )
+}
+
 fn test_harness(tests: &[(String, String)]) -> Vec<Spanned<Statement>> {
     let spanned = |statement| Spanned::new(statement, Position::default());
     let call = |name: &str, arguments: Vec<Expression>| {
@@ -422,6 +461,13 @@ fn compile() -> Result<()> {
     lower_failure_sets(&mut statements, &mut linear_types)
         .context("Failure set error")?;
     lower_param_modes(&mut statements);
+    // `assert` is a builtin, so it belongs to every program rather than to the
+    // test harness that used to be the only thing declaring what it lowers to.
+    // Without this it read as an unknown variable outside a test, which is a
+    // different language from the one the self-hosted compiler accepts.
+    if !cli.test && !declares_extern(&statements, "frost_rt_assert_at") {
+        statements.push(assert_declaration());
+    }
     check_ownership(&statements, &linear_types).context("Ownership error")?;
 
     if cli.test {

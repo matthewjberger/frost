@@ -17698,6 +17698,15 @@ const SAME_LANGUAGE_CASES: &[(&str, &str, &str)] = &[
          \x20   each($show, made)\n    0\n}\n",
         "41\n",
     ),
+    // `assert` outside a test. It is a builtin, so it belongs to every program,
+    // and what it lowers to used to be declared only by the test harness. So it
+    // read as an unknown variable in an ordinary build under the bootstrap and
+    // compiled under the self-hosted compiler, which is two languages.
+    (
+        "an_assertion_outside_a_test",
+        "main :: fn() -> i64 {\n    assert(1 == 1)\n    print 7\n    0\n}\n",
+        "7\n",
+    ),
     // A resource handed on from inside an expression rather than from a
     // statement of its own. The self-hosted check read the root of the
     // statement's expression and nothing below it, so a consuming call written
