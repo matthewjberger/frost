@@ -15574,27 +15574,6 @@ fn the_self_hosted_compiler_refuses_a_leaked_generic_linear() {
 // holding one was an obligation in one compiler and ordinary data in the other:
 // the leak below was refused by one and compiled by the other. A slice is not
 // one of these, since it does not own what it looks at.
-#[test]
-fn both_compilers_refuse_a_leaked_run_of_resources() {
-    let source = "File :: linear struct { fd: i64 }\n\
-                  Holder :: struct { items: [2]File }\n\
-                  main :: fn() -> i64 {\n\
-                  \x20   h := Holder { items = [File { fd = 1 }; 2] }\n\
-                  \x20   0\n}\n";
-    let bootstrap = bootstrap_refusal("runboot", source);
-    assert!(
-        bootstrap.contains("consumed"),
-        "the bootstrap took a leaked run of resources:\n{bootstrap}"
-    );
-    let Some(hosted) = self_hosted_rejects("runself", source) else {
-        return;
-    };
-    assert!(
-        hosted.contains("consumed"),
-        "the self-hosted compiler took it:\n{hosted}"
-    );
-}
-
 // A generic struct's declared field names a parameter bound to nothing, so the
 // declarations alone say `Slab` holds no resource and therefore that no
 // `Slab<T, N>` does. A pool of a type holding a resource was ordinary data, so
@@ -15618,17 +15597,12 @@ fn both_compilers_refuse_a_pool_of_resources_nobody_releases() {
                   \x20       free_count = 0,\n\
                   \x20   }\n\
                   \x20   0\n}\n";
+    // Only the bootstrap here. The pair is in REFUSED_BY_BOTH, which builds the
+    // self-hosted compiler once for the whole list rather than once per case.
     let bootstrap = bootstrap_refusal("poolboot", source);
     assert!(
         bootstrap.contains("is a pool of"),
         "the bootstrap took a pool of resources:\n{bootstrap}"
-    );
-    let Some(hosted) = self_hosted_rejects("poolself", source) else {
-        return;
-    };
-    assert!(
-        hosted.contains("is a pool of"),
-        "the self-hosted compiler took it:\n{hosted}"
     );
 }
 
@@ -15647,13 +15621,6 @@ fn both_compilers_refuse_a_concrete_pool_of_resources() {
     assert!(
         bootstrap.contains("is a pool of"),
         "the bootstrap took a concrete pool of resources:\n{bootstrap}"
-    );
-    let Some(hosted) = self_hosted_rejects("cpoolself", source) else {
-        return;
-    };
-    assert!(
-        hosted.contains("is a pool of"),
-        "the self-hosted compiler took it:\n{hosted}"
     );
 }
 
@@ -15676,13 +15643,6 @@ fn both_compilers_refuse_writing_into_what_was_consumed() {
     assert!(
         bootstrap.contains("moved"),
         "the bootstrap took a write into consumed storage:\n{bootstrap}"
-    );
-    let Some(hosted) = self_hosted_rejects("reviveself", source) else {
-        return;
-    };
-    assert!(
-        hosted.contains("moved"),
-        "the self-hosted compiler took it:\n{hosted}"
     );
 }
 
@@ -15718,6 +15678,189 @@ fn both_compilers_take_a_pool_beside_a_run_of_resources() {
         &compiler, "pooladj", source, "--emit-c", "c",
     );
     assert_eq!(hosted, "", "the self-hosted compiler disagreed");
+    let _ = std::fs::remove_file(&compiler);
+}
+
+// Every program the language refuses, put through both compilers.
+//
+// A rule that lands in one compiler and not the other is two languages, and the
+// shape it takes is a program one refuses and the other builds. Case by case
+// that is a test each, and a rule added later gets a test only if whoever added
+// it thought to write two. As a table it is the list itself: an entry here is
+// answered for by both, and the next rule is a line rather than a decision.
+//
+// The wanted text is what each has to say, not merely that it said something,
+// since two compilers refusing one program for two reasons is the same
+// divergence wearing a passing test.
+const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A resource reached through a field is a place of its own, so consuming it
+    // twice consumes it twice. Tracked by name, the field was never recorded and
+    // neither compiler said the second consumption was one: with a consumer that
+    // frees, a double free in safe code with no `unsafe` anywhere.
+    (
+        "field_twice",
+        "File :: linear struct { fd: i64 }\n\
+         Holder :: struct { file: File, name: i64 }\n\
+         close :: fn(move f: File) -> i64 { f.fd }\n\
+         drop_holder :: fn(move h: Holder) -> i64 { close(h.file) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   h := Holder { file = File { fd = 7 }, name = 1 }\n\
+         \x20   close(h.file)\n\
+         \x20   close(h.file)\n\
+         \x20   drop_holder(h)\n}\n",
+        "moved",
+    ),
+    // An element answers the same way.
+    (
+        "element_twice",
+        "File :: linear struct { fd: i64 }\n\
+         close :: fn(move f: File) -> i64 { f.fd }\n\
+         drop_run :: fn(move xs: [2]File) -> i64 { 0 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut run : [2]File = [File { fd = 9 }; 2]\n\
+         \x20   close(run[0])\n\
+         \x20   close(run[0])\n\
+         \x20   drop_run(run)\n}\n",
+        "moved",
+    ),
+    // And so does a place behind a `mut` borrow, which reaches it by a different
+    // road: the mode lowering has already made the parameter a borrow by the time
+    // the check runs, so what the callee declared it takes is what says a
+    // resource was handed over.
+    (
+        "borrowed_field_twice",
+        "File :: linear struct { fd: i64 }\n\
+         Holder :: struct { file: File, name: i64 }\n\
+         close :: fn(move f: File) -> i64 { f.fd }\n\
+         twice :: fn(mut h: Holder) -> i64 {\n\
+         \x20   close(h.file)\n\
+         \x20   close(h.file)\n}\n\
+         drop_holder :: fn(move h: Holder) -> i64 { close(h.file) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut h := Holder { file = File { fd = 5 }, name = 1 }\n\
+         \x20   twice(h)\n\
+         \x20   drop_holder(h)\n}\n",
+        "moved",
+    ),
+    // Writing into storage that was handed away is not taking it back, and
+    // reviving the container from a write to one field let a value be consumed,
+    // written into, and consumed again.
+    (
+        "write_into_consumed",
+        "File :: linear struct { fd: i64 }\n\
+         Holder :: struct { file: File, name: i64 }\n\
+         close :: fn(move f: File) -> i64 { f.fd }\n\
+         open :: fn(n: i64) -> File { File { fd = n } }\n\
+         drop_holder :: fn(move h: Holder) -> i64 { close(h.file) }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut h := Holder { file = open(7), name = 1 }\n\
+         \x20   drop_holder(h)\n\
+         \x20   h.file = open(9)\n\
+         \x20   drop_holder(h)\n}\n",
+        "moved",
+    ),
+    // A run of resources is a resource, since freeing the run is not freeing what
+    // is in it and a fixed array holds its elements by value.
+    (
+        "leaked_run",
+        "File :: linear struct { fd: i64 }\n\
+         Holder :: struct { items: [2]File }\n\
+         main :: fn() -> i64 {\n\
+         \x20   h := Holder { items = [File { fd = 1 }; 2] }\n\
+         \x20   0\n}\n",
+        "consumed",
+    ),
+    // A pool of resources, from a generic container. A slot is emptied by bumping
+    // a generation and filled again by an insert that overwrites it, so nothing
+    // consumes the element that leaves and no consumer can be written that would.
+    (
+        "generic_pool",
+        "Slab :: struct($T: Type, $N: usize) {\n\
+         \x20   storage: [N]T,\n\
+         \x20   generations: [N]i64,\n\
+         \x20   free_list: [N]i64,\n\
+         \x20   free_count: i64,\n}\n\
+         File :: linear struct { fd: i64 }\n\
+         Node :: struct { file: File, hp: i64 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut pool : Slab<Node, 2> = Slab {\n\
+         \x20       storage = [Node { file = File { fd = 1 }, hp = 0 }; 2],\n\
+         \x20       generations = [0; 2],\n\
+         \x20       free_list = [0; 2],\n\
+         \x20       free_count = 0,\n\
+         \x20   }\n\
+         \x20   0\n}\n",
+        "is a pool of",
+    ),
+    // The same container written out rather than instantiated. Both rules ran
+    // over the instantiations a program names, so a concrete one slipped.
+    (
+        "concrete_pool",
+        "File :: linear struct { fd: i64 }\n\
+         Pool :: struct { storage: [2]File, generations: [2]i64 }\n\
+         drop_pool :: fn(move p: Pool) -> i64 { 0 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   p := Pool { storage = [File { fd = 1 }; 2], generations = [0; 2] }\n\
+         \x20   drop_pool(p)\n}\n",
+        "is a pool of",
+    ),
+    // The rules that were already shared, here so the table is the whole list
+    // rather than only what this round added.
+    (
+        "use_after_move",
+        "P :: struct { x: i64 }\n\
+         take :: fn(move p: P) -> i64 { p.x }\n\
+         main :: fn() -> i64 {\n\
+         \x20   p := P { x = 1 }\n\
+         \x20   take(p)\n\
+         \x20   take(p)\n}\n",
+        "moved",
+    ),
+    (
+        "leaked_resource",
+        "File :: linear struct { fd: i64 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   f := File { fd = 1 }\n\
+         \x20   0\n}\n",
+        "consumed",
+    ),
+    (
+        "reference_in_a_field",
+        "Bad :: struct { r: ref i64 }\n\
+         main :: fn() -> i64 { 0 }\n",
+        "second-class",
+    ),
+];
+
+#[test]
+fn both_compilers_refuse_the_same_programs() {
+    let Some(compiler) = build_self_hosted_compiler("refuseboth") else {
+        return;
+    };
+    let directory = std::env::temp_dir();
+    for (name, source, wanted) in REFUSED_BY_BOTH {
+        let bootstrap = bootstrap_refusal(name, source);
+        assert!(
+            bootstrap.contains(wanted),
+            "the bootstrap did not say '{wanted}' about {name}:\n{bootstrap}"
+        );
+        let input = directory.join(format!("frost_both_{name}.frost"));
+        std::fs::write(&input, source).unwrap();
+        let run = Command::new(&compiler)
+            .env("FROST_INPUT", &input)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&input);
+        let hosted = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            !run.status.success(),
+            "the self-hosted compiler built {name}, which the bootstrap refuses"
+        );
+        assert!(
+            hosted.contains(wanted),
+            "the self-hosted compiler did not say '{wanted}' about {name}:\n{hosted}"
+        );
+    }
     let _ = std::fs::remove_file(&compiler);
 }
 
@@ -15764,13 +15907,6 @@ fn both_compilers_refuse_consuming_a_field_twice() {
         bootstrap.contains("moved"),
         "the bootstrap took a resource consumed twice:\n{bootstrap}"
     );
-    let Some(hosted) = self_hosted_rejects("dfself", source) else {
-        return;
-    };
-    assert!(
-        hosted.contains("moved"),
-        "the self-hosted compiler took it:\n{hosted}"
-    );
 }
 
 // The same through an element, and through a `mut` borrow, which reaches the
@@ -15803,13 +15939,6 @@ fn both_compilers_refuse_consuming_an_element_or_a_borrowed_field_twice() {
         assert!(
             bootstrap.contains("moved"),
             "the bootstrap took {name}:\n{bootstrap}"
-        );
-        let Some(hosted) = self_hosted_rejects(name, source) else {
-            return;
-        };
-        assert!(
-            hosted.contains("moved"),
-            "the self-hosted compiler took {name}:\n{hosted}"
         );
     }
 }
