@@ -1304,11 +1304,37 @@ encode_move :: fn(mut unit: Assembly, op: i64, a_kind: i64, a_reg: i64,
             text_word64(unit, value)
             return
         }
+        if (op == M_MOVB) {
+            // A byte move takes its own opcode. The general form is `C7 /0`
+            // with a four-byte immediate whatever the operand width, so
+            // reaching for it here wrote one byte where the processor reads
+            // four and every instruction after it landed one byte along. The
+            // form that takes a byte is `C6 /0`, and a register destination has
+            // a shorter one still, `B0+r`, which is what the system assembler
+            // picks and what the object is compared against.
+            //
+            // Only the System V path emits `movb $imm, %al`, to say how many
+            // vector registers a variadic call uses, so this was a hole on one
+            // target that the other could not reach.
+            if (b_kind == OPND_REG) {
+                code := reg_code(b_reg)
+                mut rex_b : i64 = 0
+                if (code >= 8) {
+                    rex_b = 1
+                }
+                maybe_rex(unit, 0, 0, 0, rex_b, byte_reg_forces_rex(b_reg))
+                text_byte(unit, 176 + code % 8)
+                text_byte(unit, value)
+                return
+            }
+            emit_reg_rm(unit, prefix, w, 0, 198, 0, b_kind, reg_code(b_reg),
+                b_disp, force)
+            text_byte(unit, value)
+            return
+        }
         emit_reg_rm(unit, prefix, w, 0, 199, 0, b_kind, reg_code(b_reg), b_disp,
             force)
-        if (op == M_MOVB) {
-            text_byte(unit, value)
-        } else if (op == M_MOVW) {
+        if (op == M_MOVW) {
             text_byte(unit, value)
             text_byte(unit, value >> 8)
         } else {

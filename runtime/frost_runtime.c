@@ -2,10 +2,31 @@
    library declares only what ISO C has: no `siginfo_t`, no `stack_t`, no
    `sigaltstack`, no `write`. Asking for POSIX is what puts them back, and it has
    to be asked before the first header is read, so it sits above every include
-   rather than beside the ones that need it. Left alone where the toolchain has
-   already chosen a level, since raising it is the toolchain's call to make. */
-#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+   rather than beside the ones that need it.
+
+   POSIX is not one level, and the piece this runtime needs is above the base.
+   `sigaltstack`, `stack_t` and `SA_ONSTACK` are X/Open rather than base POSIX,
+   and glibc keeps them behind `_XOPEN_SOURCE` however recent a
+   `_POSIX_C_SOURCE` it is given. Naming only the latter left the alternate
+   stack the fault handler runs on undeclared, which is a compile error rather
+   than a handler that quietly does nothing.
+
+   Apple inverts the relationship: naming `_POSIX_C_SOURCE` there *narrows*
+   what `<signal.h>` offers, so the same request that widens glibc would hide
+   `SA_ONSTACK`, and `_DARWIN_C_SOURCE` is what puts it back.
+
+   Left alone wherever the toolchain has already chosen a level, since raising
+   one it picked is its call to make. */
+#if !defined(_WIN32)
+#if !defined(_XOPEN_SOURCE)
+#define _XOPEN_SOURCE 700
+#endif
+#if !defined(_POSIX_C_SOURCE)
 #define _POSIX_C_SOURCE 200809L
+#endif
+#if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
+#define _DARWIN_C_SOURCE 1
+#endif
 #endif
 
 #include <setjmp.h>
