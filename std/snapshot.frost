@@ -11,6 +11,7 @@
 // laid out to write one down.
 
 import "ecs.frost"
+import "map.frost"
 import "vec.frost"
 import "mem.frost"
 
@@ -289,7 +290,7 @@ ecs_load :: fn(mut world: World, mut s: Snapshot) -> bool {
             table.mask.words[word] = held
             word = word + 1
         }
-        lookup_put(world.lookup, table.mask, index)
+        map_put($Mask, $i64, $mask_keys, world.lookup, table.mask, index)
         rows := snapshot_take(s)
         mut row : i64 = 0
         while (row < rows) {
