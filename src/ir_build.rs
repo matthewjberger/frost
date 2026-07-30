@@ -5847,6 +5847,38 @@ impl<'a> FunctionLowering<'a> {
             display.push_str(&format!("({})", written.join(", ")));
         }
 
+        // What this specialization's types really are is known here and nowhere
+        // earlier: a generic's own signature names parameters bound to nothing,
+        // so `heap_slice` holds no resource while `heap_slice<File>` does. The
+        // rules about where a resource may live are asked of the concrete
+        // types, which is why they are asked here rather than of the written
+        // ones alone: a program that never writes `Vec<File>` down still makes
+        // one.
+        if !self.builder.linear.is_empty() {
+            let templates: HashMap<&str, (&[String], &[StructField])> = self
+                .builder
+                .generic_struct_defs
+                .iter()
+                .map(|(held, (params, fields))| {
+                    (held.as_str(), (params.as_slice(), fields.as_slice()))
+                })
+                .collect();
+            for concrete in value_parameter_types
+                .iter()
+                .chain(std::iter::once(&return_type))
+            {
+                if let Some(report) =
+                    crate::linear_instances::pooled_resource_in(
+                        concrete,
+                        &templates,
+                        &self.builder.linear,
+                    )
+                {
+                    bail!("linearity: {report}");
+                }
+            }
+        }
+
         self.specializations.push(Specialization {
             generic_name: name.to_string(),
             mangled_name: mangled_name.clone(),
