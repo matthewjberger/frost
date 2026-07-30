@@ -28,11 +28,15 @@ export check_borrow_exclusivity, check_calls, check_export_collisions,
 // A slab holds its elements in `storage` and a columns container holds one array
 // per field of the element instead, so both are answered by the same question:
 // whether any run of values this container owns is a run of resources.
+// Every struct, rather than every instantiation of a generic one. A concrete
+// `Pool :: struct { storage: [4]File, generations: [4]i64 }` is the same
+// container written out, and asking only about instantiations let it through. A
+// generic's own entry holds no fields, since those are read again per instance,
+// so a template never matches the shape and needs no excluding.
 check_pooled_resources :: fn(mut p: Parser) {
     mut i : i64 = 0
-    while (i < p.instances.count) {
-        entry := arena_at(p.instances, i)
-        struct_ty := STRUCT_BASE + entry.struct_index
+    while (i < p.structs.count) {
+        struct_ty := STRUCT_BASE + i
         if (is_slab_ty(p, struct_ty) || is_columns_ty(p, struct_ty)) {
             report_pooled_resource(p, struct_ty)
         }
@@ -997,6 +1001,38 @@ place_is_moved :: fn(mut p: Parser, id: i64) -> i64 {
     -1
 }
 
+// Whether `outer` names storage `inner` is part of: the same place, or one
+// `inner` hangs off.
+//
+// Overlap is symmetric and says only that two places share storage, not which of
+// them is the wider. An assignment asks the question both ways round and needs
+// them told apart: what the write revives is what it covers, and what refuses
+// the write is what covers it.
+place_contains :: fn(mut p: Parser, outer: i64, inner: i64) -> bool {
+    place_depth(p, outer) <= place_depth(p, inner)
+        && places_overlap(p, outer, inner)
+}
+
+// The place already given away that this one is part of, or -1. Writing into
+// storage handed to someone else is not giving it back: the callee owns it and
+// may have released it already.
+moved_container_of :: fn(mut p: Parser, id: i64) -> i64 {
+    if (id < 0) {
+        return -1
+    }
+    mut i : i64 = 0
+    while (i < p.moved.count) {
+        entry := arena_at(p.moved, i)
+        held := entry.slot
+        if (held >= 0 && place_depth(p, held) < place_depth(p, id)
+            && place_contains(p, held, id)) {
+            return held
+        }
+        i = i + 1
+    }
+    -1
+}
+
 // A place holds a value again, so nothing that shares its storage is gone any
 // more. The entries are compacted rather than marked, since the set is a run
 // whose length is what the branch walks save and restore.
@@ -1011,7 +1047,11 @@ revive_place :: fn(mut p: Parser, id: i64) {
         held := entry.slot
         name_off := entry.name_off
         name_len := entry.name_len
-        if (held < 0 || places_overlap(p, held, id) == false) {
+        // Only what the write covers. Writing `h` gives `h.file` back, since the
+        // write settles the whole of it. Writing `h.file` does not give `h` back,
+        // since the rest of `h` is still wherever it went, and dropping that
+        // entry let a value be consumed, written into, and consumed again.
+        if (held < 0 || place_contains(p, id, held) == false) {
             mut target := arena_at(p.moved, kept)
             target.name_off = name_off
             target.name_len = name_len
@@ -1320,7 +1360,19 @@ walk_moves_block :: fn(mut p: Parser, head: i64) {
             // what makes it hold one again, so a place given away and then
             // assigned is live: `vec_free($Table, world.tables)` followed by
             // `world.tables = kept` is a container replacing what it released.
-            // Whatever the target reaches through is still a read.
+            // Whatever the target reaches through is still a read, and a target
+            // inside something already given away is not a write anyone may
+            // make.
+            container := moved_container_of(p, node.a)
+            if (container >= 0) {
+                root := strip_place(p, container, place_depth(p, container))
+                rnode := arena_at(p.arena, root)
+                report_where(p.modules, p.src, rnode.val)
+                report("use of moved value '")
+                report_src(p.src, rnode.val, rnode.c)
+                report("'")
+                frost_rt_die()
+            }
             revive_place(p, node.a)
             walk_moves_expr(p, place_under(p, node.a))
         }

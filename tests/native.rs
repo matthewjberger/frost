@@ -15632,6 +15632,60 @@ fn both_compilers_refuse_a_pool_of_resources_nobody_releases() {
     );
 }
 
+// A pool written out rather than instantiated from a generic one. Both rules ran
+// over the instantiations a program names, so a concrete container of the same
+// shape was not asked about at all.
+#[test]
+fn both_compilers_refuse_a_concrete_pool_of_resources() {
+    let source = "File :: linear struct { fd: i64 }\n\
+                  Pool :: struct { storage: [2]File, generations: [2]i64 }\n\
+                  drop_pool :: fn(move p: Pool) -> i64 { 0 }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   p := Pool { storage = [File { fd = 1 }; 2], generations = [0; 2] }\n\
+                  \x20   drop_pool(p)\n}\n";
+    let bootstrap = bootstrap_refusal("cpoolboot", source);
+    assert!(
+        bootstrap.contains("is a pool of"),
+        "the bootstrap took a concrete pool of resources:\n{bootstrap}"
+    );
+    let Some(hosted) = self_hosted_rejects("cpoolself", source) else {
+        return;
+    };
+    assert!(
+        hosted.contains("is a pool of"),
+        "the self-hosted compiler took it:\n{hosted}"
+    );
+}
+
+// Consuming a value, writing into part of it, and consuming it again. The first
+// consumption hands the storage to someone else, so the write is not the caller's
+// to make and the second consumption is the same value twice.
+#[test]
+fn both_compilers_refuse_writing_into_what_was_consumed() {
+    let source = "File :: linear struct { fd: i64 }\n\
+                  Holder :: struct { file: File, name: i64 }\n\
+                  close :: fn(move f: File) -> i64 { f.fd }\n\
+                  open :: fn(n: i64) -> File { File { fd = n } }\n\
+                  drop_holder :: fn(move h: Holder) -> i64 { close(h.file) }\n\
+                  main :: fn() -> i64 {\n\
+                  \x20   mut h := Holder { file = open(7), name = 1 }\n\
+                  \x20   drop_holder(h)\n\
+                  \x20   h.file = open(9)\n\
+                  \x20   drop_holder(h)\n}\n";
+    let bootstrap = bootstrap_refusal("reviveboot", source);
+    assert!(
+        bootstrap.contains("moved"),
+        "the bootstrap took a write into consumed storage:\n{bootstrap}"
+    );
+    let Some(hosted) = self_hosted_rejects("reviveself", source) else {
+        return;
+    };
+    assert!(
+        hosted.contains("moved"),
+        "the self-hosted compiler took it:\n{hosted}"
+    );
+}
+
 // What the bootstrap said when it would not compile a program.
 fn bootstrap_refusal(name: &str, source: &str) -> String {
     let directory = std::env::temp_dir();

@@ -94,6 +94,23 @@ is a handle nothing accepts, never a stale handle something does. `std/slab.fros
 and `std/columns.frost` retire the slot; the pool examples under `examples/` are
 written for the shape and say so.
 
+### A pool holds data, not resources
+
+An element type may not be `linear`, and may not hold anything that is. A slot is
+emptied by bumping a generation and filled again by an insert that overwrites
+what was there, so nothing consumes the element that leaves: the pool carries one
+obligation and its slots carry none. Nor can a consumer be written to make up the
+difference, since releasing each element means consuming `s.storage[i]` around a
+loop, and a move inside a loop is refused because nothing says the indexes
+differ.
+
+So it is refused where the container is declared, in both compilers, for a
+`Slab`, a `columns`, and a container of that shape written out by hand alike.
+What to write instead is either a handle in the slot and the resource outside the
+pool, or the elements beside the pool: one array of offsets giving each element
+its range into a single run that owns the whole of it, which is one allocation for
+the lot and a linear scan to walk.
+
 ### What the check costs, and how to pay it once
 
 `pool[handle]` reads the slot's generation and compares it on every access. For a

@@ -29,26 +29,35 @@ type Templates<'a> = HashMap<&'a str, (&'a [String], &'a [StructField])>;
 /// Instantiation names with where each was written.
 pub(crate) type Located = HashMap<String, Position>;
 
+/// The declared structs, gathered once. Both the closure that runs to a fixpoint
+/// and the pool rule read the same table, and building it per round made a pass
+/// that is meant to be linear in a program's size walk it again for every type
+/// the closure found.
+pub(crate) fn declared_structs(
+    statements: &[Spanned<Statement>],
+) -> Templates<'_> {
+    templates_of(statements)
+}
+
 /// Grow `held` with every instantiation whose bound fields hold a resource.
 /// Answers whether it grew, so a caller running a fixpoint over holders can run
 /// this inside the same loop and let the two converge together: an instance is a
 /// resource because of a field, and a struct is a resource because of an
 /// instance in a field of its own.
 pub(crate) fn note_linear_instances(
-    statements: &[Spanned<Statement>],
+    templates: &Templates,
     instances: &HashSet<String>,
     held: &mut HashSet<String>,
 ) -> bool {
     if held.is_empty() {
         return false;
     }
-    let templates = templates_of(statements);
     let mut grew = false;
     for instance in instances {
         if held.contains(instance.as_str()) {
             continue;
         }
-        if instance_is_linear(instance, &templates, held) {
+        if instance_is_linear(instance, templates, held) {
             held.insert(instance.clone());
             grew = true;
         }
@@ -77,11 +86,27 @@ pub(crate) fn check_pooled_resources(
         return Vec::new();
     }
     let templates = templates_of(statements);
+    // Every pool a program has, which is an instantiation of a generic one and a
+    // plainly declared one alike. A concrete `Pool :: struct { storage: [4]File,
+    // generations: [4]i64 }` is the same container written out, and asking only
+    // about instantiations let it through.
+    let mut pools: Vec<(String, Position)> = instances
+        .iter()
+        .map(|(name, at)| (name.clone(), *at))
+        .collect();
+    for statement in statements {
+        if let Statement::Struct(name, params, _) = &statement.node
+            && params.is_empty()
+        {
+            pools.push((name.clone(), statement.position));
+        }
+    }
     let mut reports = Vec::new();
-    for (instance, at) in instances {
-        let Some((base, arguments)) = split_instance(instance) else {
-            continue;
-        };
+    for (instance, at) in &pools {
+        // A name with no arguments binds nothing, and its fields are already the
+        // types it has, so the same substitution answers for both shapes.
+        let (base, arguments) = split_instance(instance)
+            .unwrap_or_else(|| (instance.clone(), Vec::new()));
         let Some(element) = pool_element(&base, &arguments, &templates) else {
             continue;
         };
@@ -513,7 +538,8 @@ mod tests {
         let statements = parser.parse().unwrap();
         let found = collect_instances(&statements);
         let mut held = parser.linear_types().clone();
-        note_linear_instances(&statements, &found, &mut held);
+        let templates = declared_structs(&statements);
+        note_linear_instances(&templates, &found, &mut held);
         assert!(held.contains("Pool<File>"), "held {held:?}");
     }
 

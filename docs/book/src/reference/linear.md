@@ -6,6 +6,25 @@ A struct or enum declared `linear` must be consumed exactly once. The move
 rule gives "at most once". Linearity adds "at least once". A linear value still
 live at the end of its owning scope is a compile error.
 
+A resource held inside something else is one too, so a struct with a linear
+field, a fixed array of resources, and a generic instantiated with one all carry
+the obligation. An instantiation is asked about what it was bound to rather than
+what its template declares, since a template's field names a parameter bound to
+nothing. A slice is not one of these: it looks at storage it does not own.
+
+The count is kept per *place* rather than per name, which is what makes it hold
+for a resource inside something else. `close(h.file)` consumes part of `h`, so a
+second `close(h.file)` is a second consumption and so is consuming `h` after it.
+Two separate fields, and two elements whose indexes are known apart, are
+different storage and may each be consumed once. Assigning a place gives it back,
+along with everything it covers; writing a part of something already given away
+is refused, since that storage belongs to whoever it went to.
+
+A pool may not hold resources. A slot is emptied by bumping a generation and
+filled again by an insert that overwrites it, so nothing consumes the element
+that leaves and no consumer can be written that would. Chapter 10.3 has the shape
+and what to write instead.
+
 ## 9.2 Consuming
 
 A linear value is consumed by moving it onward, whether by returning it, passing
