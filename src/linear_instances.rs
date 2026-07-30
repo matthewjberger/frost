@@ -269,9 +269,7 @@ pub(crate) fn collect_instances(
 /// The same, with where each was written, which is where a complaint about one
 /// belongs. The position is the statement the name was found in, since that is
 /// the line a reader looks at.
-pub(crate) fn locate_instances(
-    statements: &[Spanned<Statement>],
-) -> Located {
+pub(crate) fn locate_instances(statements: &[Spanned<Statement>]) -> Located {
     let mut found = Located::new();
     for statement in statements {
         walk_statement(&statement.node, &mut found, statement.position);
@@ -285,8 +283,7 @@ pub(crate) fn locate_instances(
             continue;
         };
         for argument in arguments {
-            if argument.contains('<')
-                && !found.contains_key(argument.as_str())
+            if argument.contains('<') && !found.contains_key(argument.as_str())
             {
                 found.insert(argument.clone(), at);
                 pending.push((argument, at));
@@ -321,7 +318,11 @@ fn note_type(ty: &Type, found: &mut Located, at: Position) {
     }
 }
 
-fn walk_parameters(parameters: &[Parameter], found: &mut Located, at: Position) {
+fn walk_parameters(
+    parameters: &[Parameter],
+    found: &mut Located,
+    at: Position,
+) {
     for parameter in parameters {
         if let Some(ty) = &parameter.type_annotation {
             note_type(ty, found, at);
