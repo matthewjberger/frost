@@ -24,7 +24,7 @@ import "mem.frost"
 
 export Map, Hashing, Slot, map_new, map_free, map_len, map_put, map_get, map_has,
     map_remove, map_clear,
-    i64_hash, i64_same, str_hash, str_same, i64_keys,
+    i64_hash, i64_same, str_hash, str_same, i64_keys, str_keys,
     Text, text, text_hash, text_same, text_keys
 
 // What a slot holds. A tombstone is a slot a key was removed from: a probe run
@@ -76,9 +76,10 @@ str_hash :: fn(key: str) -> i64 {
     h
 }
 
-// A string as a key. The bytes are wrapped in a struct rather than used bare
-// because a key is an element of a run, and a run of slices is a shape the
-// self-hosted compiler does not yet hold.
+// A string as a key, wrapped in a struct. `str_keys` uses the bytes bare and is
+// what to reach for; this stays because a program that named `Text` still names
+// it, and because a key that carries something beside its bytes is written this
+// way.
 Text :: struct {
     bytes: str,
 }
@@ -110,6 +111,7 @@ str_same :: fn(a: str, b: str) -> bool {
 }
 
 i64_keys :: Hashing<i64> { hash = i64_hash, equal = i64_same }
+str_keys :: Hashing<str> { hash = str_hash, equal = str_same }
 text_keys :: Hashing<Text> { hash = text_hash, equal = text_same }
 
 // A power-of-two capacity, so the slot index is a mask rather than a modulo,
@@ -283,6 +285,21 @@ test "a value is put and read back" {
     assert(map_get($i64, $i64, $i64_keys, m, 3, -1) == -1)
     assert(map_has($i64, $i64, $i64_keys, m, 2))
     map_free($i64, $i64, m)
+}
+
+// The bytes bare, with no wrapper around them. A key is an element of a run, so
+// this is a run of slices, and the compiler that reads it has to hold that shape
+// through the instantiation and out the other side.
+test "a slice is a key" {
+    mut m := map_new($str, $i64, 8)
+    map_put($str, $i64, $str_keys, m, "ada", 36)
+    map_put($str, $i64, $str_keys, m, "grace", 45)
+    assert(map_len($str, $i64, m) == 2)
+    assert(map_get($str, $i64, $str_keys, m, "ada", 0) == 36)
+    assert(map_get($str, $i64, $str_keys, m, "grace", 0) == 45)
+    assert(map_has($str, $i64, $str_keys, m, "ada"))
+    assert(map_get($str, $i64, $str_keys, m, "hopper", -1) == (-1))
+    map_free($str, $i64, m)
 }
 
 test "a key put twice holds the second value" {

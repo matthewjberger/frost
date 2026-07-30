@@ -22,20 +22,15 @@ See [the self-hosted compiler](impl/self-hosted.md).
 
 ## What is left
 
-Two faults in the self-hosted compiler, both found by writing `Map<K, V>`, both
-worked around in the library rather than fixed:
+A name a program declares may collide with one an import exports, and nothing
+says so. Both are emitted, under one symbol, and what catches it is whichever
+assembler or C compiler reads the output. `check_export_collisions` answers for
+two modules exporting one name and not for a module's own declaration shadowing
+what it imported.
 
-- A generic instantiated with a slice type (`Hashing<str>`) leaves a binding
-  behind that the next template checked reads as its own, so an unrelated
-  `vec_push` fails with "the place is a 'u8' and the value is a '[]u8'". A key
-  that is a slice is wrapped in a struct (`Text`) until this is fixed.
-- A module that both takes a bundle argument (`map_put($i64, $i64, $i64_keys,
-  ...)`) and declares a generic with two type parameters and a `$body` reports
-  the bundle constant as an undefined function. The ECS keeps its own mask table
-  rather than the standard library's map.
-
-Both are the same shape: compile-time parameter state that belongs to one
-template being read while another is checked. The reproductions are small.
+The ECS keeps its own mask table rather than the standard library's map. The
+faults that forced that are fixed, so this is a change nobody has made yet
+rather than one nothing allows.
 
 The wgpu binding is generated with a safe wrapper per call now, so a program
 that draws a triangle writes no `unsafe` of its own for the graphics API: the
