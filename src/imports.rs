@@ -8,9 +8,7 @@ use crate::build_cache::{
     BuildCache, ModuleRecord, digest, fnv1a, interface_fingerprint,
     module_fingerprint, stamp_file,
 };
-use crate::import_visibility::{
-    FileNames, shadowed_imports, unimported_names,
-};
+use crate::import_visibility::{FileNames, shadowed_imports, unimported_names};
 use crate::interface::ModuleInterface;
 use crate::lexer::Lexer;
 use crate::lexer::Token;

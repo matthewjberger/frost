@@ -325,10 +325,8 @@ struct MoveChecker<'a> {
 impl MoveChecker<'_> {
     fn note_binding(&mut self, name: &str, ty: Option<Type>) {
         self.states.insert(name.to_string(), MoveState::Live);
-        self.paths.insert(
-            name.to_string(),
-            vec![Step::Named(name.to_string())],
-        );
+        self.paths
+            .insert(name.to_string(), vec![Step::Named(name.to_string())]);
         match ty {
             Some(ty) => {
                 self.types.insert(name.to_string(), ty);
@@ -340,7 +338,8 @@ impl MoveChecker<'_> {
     }
 
     fn state_of(&self, name: &str) -> MoveState {
-        self.state_of_place(&[Step::Named(name.to_string())], name).0
+        self.state_of_place(&[Step::Named(name.to_string())], name)
+            .0
     }
 
     /// What has been done with a place, which is what has been done with any
@@ -355,11 +354,7 @@ impl MoveChecker<'_> {
     /// naming: a read of `a.value` refused because `a` was consumed should say
     /// `a`, which is where the value went, rather than the narrower place the
     /// reader happened to write.
-    fn state_of_place(
-        &self,
-        path: &[Step],
-        key: &str,
-    ) -> (MoveState, String) {
+    fn state_of_place(&self, path: &[Step], key: &str) -> (MoveState, String) {
         if let Some(state) = self.states.get(key)
             && *state != MoveState::Live
         {
@@ -387,7 +382,9 @@ impl MoveChecker<'_> {
     /// place can be weighed against this one.
     fn place_key(&mut self, path: &[Step]) -> String {
         let key = describe_place(path);
-        self.paths.entry(key.clone()).or_insert_with(|| path.to_vec());
+        self.paths
+            .entry(key.clone())
+            .or_insert_with(|| path.to_vec());
         key
     }
 
@@ -1330,9 +1327,7 @@ fn linear_closure(
         // because of a field and a struct is one because of an instance in a
         // field of its own.
         if crate::linear_instances::note_linear_instances(
-            &templates,
-            &instances,
-            &mut held,
+            &templates, &instances, &mut held,
         ) {
             grew = true;
         }

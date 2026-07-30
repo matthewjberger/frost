@@ -1046,9 +1046,7 @@ fn linear_with_holders(
         // because of a field and a struct is one because of an instance in a
         // field of its own.
         if crate::linear_instances::note_linear_instances(
-            &templates,
-            &instances,
-            &mut held,
+            &templates, &instances, &mut held,
         ) {
             grew = true;
         }

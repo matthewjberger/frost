@@ -7496,7 +7496,8 @@ fn both_compilers_refuse_a_name_an_import_already_offers() {
         .unwrap();
     let said = String::from_utf8_lossy(&bootstrap.stderr);
     assert!(
-        !bootstrap.status.success() && said.contains("also arrives from an import"),
+        !bootstrap.status.success()
+            && said.contains("also arrives from an import"),
         "the bootstrap took a name declared twice:\n{said}"
     );
 
@@ -7509,7 +7510,8 @@ fn both_compilers_refuse_a_name_an_import_already_offers() {
         .unwrap();
     let said = String::from_utf8_lossy(&hosted.stderr);
     assert!(
-        !hosted.status.success() && said.contains("also arrives from an import"),
+        !hosted.status.success()
+            && said.contains("also arrives from an import"),
         "the self-hosted compiler took it:\n{said}"
     );
     let _ = std::fs::remove_file(&compiler);
@@ -15819,7 +15821,10 @@ fn both_compilers_take_a_pool_beside_a_run_of_resources() {
     let Some((ok, stderr)) = compile_and_run_status("pooladj", source) else {
         return;
     };
-    assert!(ok, "the bootstrap refused a pool beside resources:\n{stderr}");
+    assert!(
+        ok,
+        "the bootstrap refused a pool beside resources:\n{stderr}"
+    );
     let Some(compiler) = build_self_hosted_compiler("pooladj") else {
         return;
     };
