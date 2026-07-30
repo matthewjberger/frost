@@ -2743,12 +2743,18 @@ fn compile_c_and_run(name: &str, c_source: &str) -> Option<String> {
     // compiles to and for assertions, so the runtime is linked alongside it.
     let runtime =
         format!("{}/runtime/frost_runtime.c", env!("CARGO_MANIFEST_DIR"));
+    // The math functions `std/math.frost` reaches live in libm where the
+    // platform keeps them out of the C runtime, which is Linux and the BSDs.
+    // Both compilers pass this on their own link paths; a test that links what
+    // one of them emitted has to pass it too, and only a platform that keeps
+    // them apart says so.
     let compile = Command::new(compiler)
         .arg("-std=c11")
         .arg(&c_path)
         .arg(&runtime)
         .arg("-o")
         .arg(&exe_path)
+        .arg("-lm")
         .output()
         .unwrap();
     assert!(
@@ -3783,12 +3789,18 @@ fn compile_c_with_runtime(name: &str, c_source: &str) -> Option<PathBuf> {
     std::fs::write(&c_path, c_source).unwrap();
     let runtime =
         format!("{}/runtime/frost_runtime.c", env!("CARGO_MANIFEST_DIR"));
+    // The math functions `std/math.frost` reaches live in libm where the
+    // platform keeps them out of the C runtime, which is Linux and the BSDs.
+    // Both compilers pass this on their own link paths; a test that links what
+    // one of them emitted has to pass it too, and only a platform that keeps
+    // them apart says so.
     let compile = Command::new(compiler)
         .arg("-std=c11")
         .arg(&c_path)
         .arg(&runtime)
         .arg("-o")
         .arg(&exe_path)
+        .arg("-lm")
         .output()
         .unwrap();
     assert!(
@@ -16425,6 +16437,34 @@ const AWAY_FROM_THE_CHECKOUT: &str = "import \"vec.frost\"
      }
 ";
 
+/// Run something that was written to disk a moment ago, waiting out the window
+/// where the kernel still counts it as open for writing.
+///
+/// The copy closes its own handle before it returns. What keeps the file busy
+/// is another test starting a process at that instant: a spawn forks first and
+/// execs after, and in between the child holds every descriptor this process
+/// had, the one the copy wrote through among them. Until that child reaches its
+/// own exec the file has a writer, and Linux refuses to execute a file that
+/// has one. Nothing here can close that window, so this waits for it rather
+/// than failing a run over it.
+fn run_when_no_longer_busy(command: &mut Command) -> std::process::Output {
+    // ETXTBSY. Matched by number because the `ErrorKind` that names it is not
+    // stable yet.
+    const TEXT_FILE_BUSY: i32 = 26;
+    for _ in 0..100 {
+        match command.output() {
+            Ok(output) => return output,
+            Err(error) if error.raw_os_error() == Some(TEXT_FILE_BUSY) => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(error) => {
+                panic!("could not run what was just written: {error}")
+            }
+        }
+    }
+    panic!("what was just written stayed busy");
+}
+
 #[test]
 fn both_compilers_build_and_run_from_outside_the_checkout() {
     if c_compiler().is_none() || !linker_available() {
@@ -16442,14 +16482,14 @@ fn both_compilers_build_and_run_from_outside_the_checkout() {
         std::fs::write(work.join("program.frost"), AWAY_FROM_THE_CHECKOUT)
             .unwrap();
         let exe = work.join(format!("program{}", std::env::consts::EXE_SUFFIX));
-        let build = Command::new(&installed)
-            .current_dir(&work)
-            .arg("--link")
-            .arg("-o")
-            .arg(&exe)
-            .arg("program.frost")
-            .output()
-            .unwrap();
+        let build = run_when_no_longer_busy(
+            Command::new(&installed)
+                .current_dir(&work)
+                .arg("--link")
+                .arg("-o")
+                .arg(&exe)
+                .arg("program.frost"),
+        );
         assert!(
             build.status.success() && exe.exists(),
             "{label} could not build from {}:\n{}{}",
@@ -16457,7 +16497,8 @@ fn both_compilers_build_and_run_from_outside_the_checkout() {
             String::from_utf8_lossy(&build.stdout),
             String::from_utf8_lossy(&build.stderr)
         );
-        let run = Command::new(&exe).current_dir(&work).output().unwrap();
+        let run =
+            run_when_no_longer_busy(Command::new(&exe).current_dir(&work));
         assert!(
             run.status.success(),
             "{label} built a program that did not run"
