@@ -28,27 +28,6 @@ perimeter is one generated file. What is left there is the same shape as the
 compiler's byte access, a perimeter rather than a proof, since a descriptor is
 a pointer C reads without checking.
 
-One more, and it is an ordering question rather than a missing feature: a
-compile-time list element whose type comes from a call to a generic is typed
-before that generic's return type is known. The tuple a call names is recorded
-while it is parsed, and a generic's concrete return type is worked out
-afterwards, so an element written `f($T, ...)` is recorded as `i64` and the
-emitter, which runs once the types have settled, names a different
-specialization. Both halves are right on their own. What is wrong is that one
-happens first.
-
-What it costs today: `for_each_row` in `std/ecs.frost` works out its columns
-once per row rather than once per table. Hoisting them means handing them to a
-second generic as a list of its own, which is exactly the shape above: written
-that way, the element is recorded as `i64` and the body it reaches takes an
-argument of the wrong type.
-
-The fix is to record the node a call names rather than the tuple, and resolve
-the tuple where the return types are settled. Settling it eagerly instead, by
-parsing the instance where the element is read, does not work: the parse of one
-declaration is not re-entrant, and doing it there walks off the end of the node
-arena. So the resolution has to be deferred rather than hoisted forward.
-
 ## What is done, and what it cost
 
 Both compilers clear the target on a full build, and the self-hosted one

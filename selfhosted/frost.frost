@@ -510,6 +510,7 @@ main :: fn() -> i64 {
         emit_module = -1,
         field_bindings = arena_make($LocalVar, 64),
         parse_locals = arena_make($LocalVar, 4096),
+        parse_local_values = arena_make($BoundValue, 4096),
         parse_param_start = 0,
         parse_param_end = 0,
         pack_off = 0,
@@ -522,6 +523,7 @@ main :: fn() -> i64 {
         procs = arena_make($ProcSig, 4096),
         proc_params = arena_make($GArg, 4096),
         argbuf = arena_make($GArg, 4096),
+        pending_rets = arena_make($PendingRet, 4096),
         gbindings = arena_make($GBinding, 4096),
         type_param_off = 0,
         type_param_len = 0,
@@ -660,6 +662,13 @@ main :: fn() -> i64 {
         known = parser.type_args.count
         collect_type_args(parser)
         record_mono_rets(parser)
+        // A list element whose type is what a call to a generic answers with
+        // was written down before that answer was worked out. Reading it here
+        // names a tuple nothing has been instantiated for, which is a round
+        // that found something new whatever the count says.
+        if (settle_pack_args(parser)) {
+            known = -1
+        }
     }
     check_calls(parser)
     check_pooled_resources(parser)

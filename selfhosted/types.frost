@@ -9,6 +9,7 @@ import "names.frost"
 import "layout.frost"
 
 export call_ret_type, call_type_args, call_args_for, collect_type_args,
+    settle_pack_args,
     fn_index_of, note_type_args, takes_pack, pack_call_args,
     parse_call_type_args,
     is_type_predicate, predicate_holds, record_parse_local,
@@ -881,7 +882,8 @@ call_type_args :: fn(mut p: Parser, head: i64, owner: i64) -> i64 {
             if (count == 0) {
                 first = vnode.val
             } else {
-                arena_push(p.gargs, GArg { value = vnode.val, is_type = 0 })
+                arena_push(p.gargs,
+                    GArg { value = vnode.val, is_type = 0, pending = -1 })
             }
             count = count + 1
         }
@@ -1053,6 +1055,83 @@ collect_type_args :: fn(mut p: Parser) {
     }
 }
 
+// Read every list element whose type is what a call to a generic answers with,
+// now that the monomorphizations recorded their return types. An element like
+// that is written down as the default while its call is parsed, because the
+// answer is not worked out until afterwards, and the emitters run once the types
+// have settled and name the specialization the settled tuple picks out. This is
+// what makes the tuple an instance was made under the same one.
+//
+// Answers whether any tuple changed, which is a round that found something new:
+// a changed tuple is a specialization nothing has been instantiated for yet.
+settle_pack_args :: fn(mut p: Parser) -> bool {
+    mut changed := false
+    mut i : i64 = 0
+    while (i < p.type_args.count) {
+        used := arena_at(p.type_args, i)
+        start := used.xarg_start
+        count := used.xarg_count
+        fresh := settled_run(p, start, count)
+        if (fresh >= 0) {
+            slot := arena_at(p.type_args, i)
+            slot.xarg_start = fresh
+            changed = true
+        }
+        i = i + 1
+    }
+    changed
+}
+
+// A run with every element that reads again read, or -1 where none of them
+// changed. A fresh run rather than the old one written over: an instance
+// already parsed from a run is held under its contents, so contents that
+// changed underneath it would answer that lookup with a body parsed for other
+// types.
+settled_run :: fn(mut p: Parser, start: i64, count: i64) -> i64 {
+    buf_start := p.argbuf.count
+    mut differs := false
+    mut k : i64 = 0
+    while (k < count) {
+        held := arena_at(p.gargs, start + k)
+        value := held.value
+        is_type := held.is_type
+        pending := held.pending
+        mut settled := value
+        if (pending >= 0) {
+            settled = pending_ret_type(p, pending)
+        }
+        // What an element reads again is kept only until it changes. The answer
+        // is recorded once and never revised, so reading it after that answers
+        // the same, and a run that keeps changing is a fixpoint that never
+        // closes.
+        mut later := pending
+        if (settled != value) {
+            differs = true
+            later = -1
+        }
+        arena_push(p.argbuf,
+            GArg { value = settled, is_type = is_type, pending = later })
+        k = k + 1
+    }
+    mut fresh : i64 = -1
+    if (differs) {
+        fresh = copy_run(p, buf_start)
+    }
+    p.argbuf.count = buf_start
+    fresh
+}
+
+// What the call an element waits on returns, as recorded for its
+// monomorphization.
+pending_ret_type :: fn(mut p: Parser, pending: i64) -> i64 {
+    held := arena_at(p.pending_rets, pending)
+    fn_index := held.fn_index
+    arg := held.arg
+    xarg_start := held.xarg_start
+    xarg_count := held.xarg_count
+    mono_ret_type(p, fn_index, arg, xarg_start, xarg_count)
+}
+
 mono_ret_type :: fn(mut p: Parser, fn_index: i64, arg: i64, xarg_start: i64,
     xarg_count: i64) -> i64 {
     mut i : i64 = 0
@@ -1145,7 +1224,8 @@ fn_proc_type :: fn(mut p: Parser, fn_index: i64) -> i64 {
     mut pid := sym.params
     while (pid != (-1)) {
         pnode := arena_at(p.arena, pid)
-        arena_push(p.proc_params, GArg { value = pnode.b, is_type = 0 })
+        arena_push(p.proc_params, GArg { value = pnode.b, is_type = 0,
+            pending = -1 })
         count = count + 1
         pid = pnode.next
     }
@@ -1200,9 +1280,15 @@ predicate_holds :: fn(mut p: Parser, off: i64, len: i64, ty: i64) -> i64 {
 }
 
 // Record what a name binds for the rest of this declaration's parse.
-record_parse_local :: fn(mut p: Parser, off: i64, len: i64, ty: i64) {
+// `bound` is the expression the name was given, for a name whose type was read
+// off one, and -1 for a parameter, a list element or a name written with the
+// type it holds. The two tables move together, so a binding that shadows an
+// earlier one shadows what that one bound as well.
+record_parse_local :: fn(mut p: Parser, off: i64, len: i64, ty: i64,
+    bound: i64) {
     arena_push(p.parse_locals, LocalVar { name_off = off, name_len = len,
         ty = ty, slot = 0 })
+    arena_push(p.parse_local_values, BoundValue { node = bound })
 }
 
 // The type a name binds to in the declaration being parsed, or -1 when nothing
@@ -1234,6 +1320,81 @@ parse_param_type :: fn(mut p: Parser, off: i64, len: i64) -> i64 {
         }
     }
     -1
+}
+
+// The expression an argument holds, reading through a name to what it was
+// bound to. An argument is a name in two ways that matter here: written as one,
+// and a call answering with an aggregate, which is bound to a name where it was
+// written. Either way the name's type was read off the expression while the
+// expression was still being parsed, so a reader that comes after wants the
+// expression.
+bound_value :: fn(mut p: Parser, value: i64) -> i64 {
+    node := arena_at(p.arena, value)
+    if (node.kind != NodeKind::Var) {
+        return value
+    }
+    name_off := node.val
+    name_len := node.c
+    mut i : i64 = p.parse_locals.count
+    while (i > 0) {
+        i = i - 1
+        entry := arena_at(p.parse_locals, i)
+        if (entry.name_len == name_len
+            && bytes_equal(p.src, entry.name_off, name_off, name_len)) {
+            held := arena_at(p.parse_local_values, i)
+            bound := held.node
+            if (bound >= 0) {
+                return bound
+            }
+            return value
+        }
+    }
+    value
+}
+
+// Where a list element's type is read from again, for an element whose type is
+// what a call to a generic answers with, and -1 for one whose type is already
+// what it will be. The tuple the call names is worked out here, since the names
+// it writes are in scope only during this parse, and the type that
+// monomorphization returns is read from the tuple later.
+pack_arg_pending :: fn(mut p: Parser, written: i64) -> i64 {
+    value := bound_value(p, written)
+    node := arena_at(p.arena, value)
+    if (node.kind != NodeKind::Call) {
+        return -1
+    }
+    args := node.a
+    fn_index := node.val
+    if (generic_fn_of(p, fn_index) < 0) {
+        return -1
+    }
+    sym := arena_at(p.fns, fn_index)
+    sym_off := sym.off
+    sym_len := sym.len
+    // A call through a local of function-pointer type is indirect and answers
+    // with that signature's return type, which is known already.
+    if (local_exists(p, sym_off, sym_len)) {
+        return -1
+    }
+    arg := call_args_for(p, args, fn_index)
+    xarg_start := p.call_xarg_start
+    xarg_count := p.call_xarg_count
+    // The same call is read more than once, since the checks and the emitters
+    // work the tuple out again where it was written. One entry per
+    // monomorphization keeps this table the size of what the program
+    // instantiates rather than the size of how often it is read.
+    mut i : i64 = 0
+    while (i < p.pending_rets.count) {
+        entry := arena_at(p.pending_rets, i)
+        if (entry.fn_index == fn_index && entry.arg == arg
+            && entry.xarg_count == xarg_count
+            && gargs_equal(p, entry.xarg_start, xarg_start, xarg_count)) {
+            return i
+        }
+        i = i + 1
+    }
+    arena_push(p.pending_rets, PendingRet { fn_index = fn_index, arg = arg,
+        xarg_start = xarg_start, xarg_count = xarg_count })
 }
 
 // The type of one argument given to a compile-time list. A name is what the
@@ -1495,7 +1656,12 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
     // and both are part of what makes this specialization the one it is. What
     // separates them is the count the declaration wrote, which every reader of
     // the run already has.
-    xstart := p.gargs.count
+    //
+    // The elements are collected on the argument stack first. Working out an
+    // element's type reads what it names, and a name that is itself a generic
+    // leaves a run of its own in `gargs`, so building this run there directly
+    // would interleave the two.
+    buf_start := p.argbuf.count
     mut primary : i64 = TY_I64
     mut types_seen : i64 = 0
     mut id := args
@@ -1508,7 +1674,8 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
             if (types_seen == 0) {
                 primary = vnode.val
             } else {
-                arena_push(p.gargs, GArg { value = vnode.val, is_type = 0 })
+                arena_push(p.argbuf,
+                    GArg { value = vnode.val, is_type = 0, pending = -1 })
             }
             types_seen = types_seen + 1
         }
@@ -1528,24 +1695,46 @@ pack_call_args :: fn(mut p: Parser, args: i64, fn_index: i64) -> bool {
         // parameter and evaluated nowhere.
         if (vnode.kind == NodeKind::TypeVal) {
             if (seen >= declared) {
-                arena_push(p.gargs, GArg { value = vnode.val, is_type = 1 })
+                arena_push(p.argbuf,
+                    GArg { value = vnode.val, is_type = 1, pending = -1 })
                 count = count + 1
             }
             seen = seen + 1
         } else {
             if (index >= fixed) {
-                arena_push(p.gargs,
-                    GArg { value = pack_arg_type(p, value), is_type = 0 })
+                later := pack_arg_pending(p, value)
+                held := pack_arg_type(p, value)
+                arena_push(p.argbuf,
+                    GArg { value = held, is_type = 0, pending = later })
                 count = count + 1
             }
             index = index + 1
         }
         id = next_id
     }
+    xstart := copy_run(p, buf_start)
+    p.argbuf.count = buf_start
     p.call_xarg_start = xstart
     p.call_xarg_count = gfn.xparam_count + count
     p.call_pack_primary = primary
     true
+}
+
+// The run built on the argument stack from `at` upward, moved into `gargs` in
+// one piece. Answers where it landed.
+copy_run :: fn(mut p: Parser, at: i64) -> i64 {
+    start := p.gargs.count
+    mut k : i64 = at
+    while (k < p.argbuf.count) {
+        held := arena_at(p.argbuf, k)
+        value := held.value
+        is_type := held.is_type
+        pending := held.pending
+        arena_push(p.gargs,
+            GArg { value = value, is_type = is_type, pending = pending })
+        k = k + 1
+    }
+    start
 }
 
 call_ret_type :: fn(mut p: Parser, args: i64, fn_index: i64) -> i64 {
