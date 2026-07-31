@@ -1595,10 +1595,23 @@ impl Translator<'_, '_> {
                 }
             }
             (true, false) => {
-                if is_signed(target) {
-                    self.builder.ins().fcvt_to_sint(target_clif, value)
+                // x64 converts a float to a 32 or 64 bit integer and to nothing
+                // narrower, so a `u8` or a `u16` target lands in 32 and has its
+                // width taken off after.
+                let wide = if target_clif.bits() < 32 {
+                    types::I32
                 } else {
-                    self.builder.ins().fcvt_to_uint(target_clif, value)
+                    target_clif
+                };
+                let converted = if is_signed(target) {
+                    self.builder.ins().fcvt_to_sint(wide, value)
+                } else {
+                    self.builder.ins().fcvt_to_uint(wide, value)
+                };
+                if wide == target_clif {
+                    converted
+                } else {
+                    self.builder.ins().ireduce(target_clif, converted)
                 }
             }
             (true, true) => {

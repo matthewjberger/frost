@@ -576,23 +576,26 @@ test:
 
 # Every `unsafe` block in the tree earns itself (Unix)
 #
-# A block that vouches for nothing is not harmless. `unsafe` is the complete
-# list of places to look when something has corrupted memory, and that list is
-# only worth reading if every entry on it is there for a reason. One idle block
-# is noise; a habit of them is a list nobody reads.
+# A block that vouches for nothing is noise on the one list worth reading when
+# something has corrupted memory. The compiler warns about each on every build,
+# so this reads the warnings rather than the exit code, which lets it cover the
+# graphics modules that are imported rather than compiled on their own.
 [unix]
 audit:
     #!/usr/bin/env bash
-    set -euo pipefail
-    for f in std/*.frost examples/native/*.frost examples/selfhosted/*.frost \
-             examples/tour.frost examples/freestanding.frost \
-             selfhosted/frost.frost; do
-        cargo run -r -q -p frost --bin frost -- --audit-unsafe --emit-c \
-            -o /dev/null "$f" 2>&1 \
-            | grep -E "vouches for nothing|is inside another one" && {
-                echo "unsafe audit: $f"; exit 1; }
-        true
-    done
+    set -uo pipefail
+    found=0
+    while IFS= read -r f; do
+        out=$(cargo run -r -q -p frost --bin frost -- -L std --emit-c \
+            -o /dev/null "$f" 2>&1 || true)
+        held=$(printf '%s\n' "$out" \
+            | grep -cE "vouches for nothing|is inside another one" || true)
+        if [ "$held" -gt 0 ]; then
+            echo "unsafe audit: $f has $held"
+            found=$((found + held))
+        fi
+    done < <(find std examples selfhosted -name '*.frost' | sort)
+    if [ "$found" -gt 0 ]; then exit 1; fi
     echo "unsafe audit: every block earns itself"
 
 # Every `unsafe` block in the tree earns itself (Windows)
@@ -600,11 +603,11 @@ audit:
 audit:
     #!powershell
     $found = 0
-    $files = (Get-ChildItem std/*.frost) + (Get-ChildItem examples/native/*.frost) + (Get-ChildItem examples/selfhosted/*.frost) + @(Get-Item examples/tour.frost) + @(Get-Item examples/freestanding.frost) + @(Get-Item selfhosted/frost.frost)
+    $files = Get-ChildItem std, examples, selfhosted -Filter *.frost -Recurse | Sort-Object FullName
     foreach ($f in $files) {
-        $out = cargo run -r -q -p frost --bin frost -- --audit-unsafe --emit-c -o audit.tmp $f.FullName 2>&1 | Out-String
+        $out = cargo run -r -q -p frost --bin frost -- -L std --emit-c -o audit.tmp $f.FullName 2>&1 | Out-String
         $held = ([regex]::Matches($out, 'vouches for nothing|is inside another one')).Count
-        if ($held -gt 0) { Write-Host "unsafe audit: $($f.Name) has $held"; $found = $found + 1 }
+        if ($held -gt 0) { Write-Host "unsafe audit: $($f.Name) has $held"; $found = $found + $held }
     }
     Remove-Item audit.tmp -Force -ErrorAction SilentlyContinue
     if ($found -gt 0) { exit 1 }

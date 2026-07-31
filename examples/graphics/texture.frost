@@ -220,7 +220,7 @@ texture_upload :: fn(device: Device, queue: Queue, held: Image) -> Texture2D {
 
     mut written := whole_extent(held.width, held.height)
     queue_write_texture(queue, ptr_to(destination),
-        unsafe { ptr_to(held.pixels[0]) },
+        ptr_to(held.pixels[0]),
         cast($u64, held.width * held.height * CHANNELS), ptr_to(layout),
         ptr_to(written))
 

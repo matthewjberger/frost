@@ -142,13 +142,13 @@ actual work predictable.
   call an interface is a struct whose fields are function pointers. Do not reach for a generic
   sort, hash or equality that works over everything. Write the one you need over
   the layout you have, and pass `$compare` or `$hash` when it varies. The
-  self-hosted compiler is 5,000 lines and wanted a generic function three times,
-  which is the shape of the language working rather than a gap in it.
+  The self-hosted compiler is 5,000 lines and wanted a generic function three
+  times.
 
   This is also what keeps the front end near-linear. Coherence checking, bound
   solving and method resolution are among the passes that dominate other
   compilers' front ends, and their absence is measured in
-  [self-hosting.md](../impl/self-hosted.md), not assumed.
+  [self-hosting.md](../impl/self-hosted.md).
 - Not access-controlled per declaration. There is no `pub`, no private
   marker on any item, and no `pub(crate)` refinement of one. Every struct field
   is public, so encapsulation by field privacy is out of scope. A module does

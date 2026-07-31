@@ -2958,10 +2958,35 @@ frame_call_prov :: fn(mut p: Parser, id: i64) -> i64 {
     if (type_holds_view(p, answer, FRAME_TYPE_DEPTH) == false) {
         return PROV_OUTLIVES
     }
+    // C has global storage, so what an extern answers with is not built from
+    // what it was handed. This gives up catching a C function that does answer
+    // with a pointer into one of its arguments, which `strchr` is the shape of.
+    if (sym.is_extern == 1) {
+        return PROV_OUTLIVES
+    }
+    // Only the arguments the callee's answer reaches. Weighing every one reads
+    // a wrapper as handing back whatever it was given, and a wrapper over C
+    // hands back the library's storage.
+    mut reaches : i64 = -1
+    callee := node.val
+    if (callee >= 0 && callee < p.answer_masks.count) {
+        mask_entry := arena_at(p.answer_masks, callee)
+        reaches = mask_entry.mask
+    }
     mut held : i64 = PROV_OUTLIVES
     count := count_value_args(p, args)
     mut i : i64 = 0
     while (i < count) {
+        mut weighed : bool = true
+        if (i < ANSWER_BITS) {
+            if (reaches & (1 << i) == 0) {
+                weighed = false
+            }
+        }
+        if (weighed == false) {
+            i = i + 1
+            continue
+        }
         arg := nth_value_arg(p, args, i)
         param := nth_param_node(p, params, i)
         mut declared : i64 = -1
@@ -3361,7 +3386,323 @@ frame_seed_params :: fn(mut p: Parser, params: i64) {
     }
 }
 
+// How many parameters a mask can carry. Past this the answer is every
+// parameter, which is what the join did before any of this existed.
+ANSWER_BITS :: 62
+
+// Every parameter of this function, as a mask.
+answer_all_params :: fn(mut p: Parser, params: i64) -> i64 {
+    mut n : i64 = 0
+    mut id := params
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        id = node.next
+        n = n + 1
+    }
+    if (n >= ANSWER_BITS) {
+        return -1
+    }
+    (1 << n) - 1
+}
+
+// The bit for the parameter of this name, or 0 where the name is not one.
+answer_param_bit :: fn(mut p: Parser, params: i64, off: i64, len: i64) -> i64 {
+    mut id := params
+    mut n : i64 = 0
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        if (node.c == len && bytes_equal(p.src, node.val, off, len)) {
+            if (n >= ANSWER_BITS) {
+                return -1
+            }
+            return 1 << n
+        }
+        id = node.next
+        n = n + 1
+    }
+    0
+}
+
+// Whether reaching into this place stays inside storage a parameter holds
+// inline. A field does, and so does an element of a fixed array. An element of
+// a slice or a raw pointer lands wherever the run was allocated.
+answer_reaches_inline :: fn(mut p: Parser, id: i64) -> bool {
+    if (id == (-1)) {
+        return true
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    base := node.a
+    if (kind == NodeKind::Field) {
+        return answer_reaches_inline(p, base)
+    }
+    if (kind == NodeKind::Index) {
+        held := frame_place_type(p, base)
+        if (held < 0) {
+            return answer_reaches_inline(p, base)
+        }
+        if (is_array_ty(held) && is_slice_ty(p, held) == false) {
+            return answer_reaches_inline(p, base)
+        }
+        return false
+    }
+    if (kind == NodeKind::Deref) {
+        return false
+    }
+    true
+}
+
+// The parameters a place names the storage of.
+answer_place_mask :: fn(mut p: Parser, id: i64, params: i64) -> i64 {
+    if (id == (-1)) {
+        return 0
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NodeKind::Field || kind == NodeKind::Index) {
+        if (answer_reaches_inline(p, id)) {
+            return answer_place_mask(p, node.a, params)
+        }
+        return 0
+    }
+    if (kind == NodeKind::Deref) {
+        return 0
+    }
+    answer_value_mask(p, id, params)
+}
+
+// The parameters the storage of this value can be named through.
+answer_value_mask :: fn(mut p: Parser, id: i64, params: i64) -> i64 {
+    if (id == (-1)) {
+        return 0
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    child := node.a
+    if (kind == NodeKind::AddrOf || kind == NodeKind::Ref) {
+        return answer_place_mask(p, child, params)
+    }
+    if (kind == NodeKind::Var) {
+        bit := answer_param_bit(p, params, node.val, node.c)
+        if (bit != 0) {
+            return bit
+        }
+        held := type_listed(p.answer_locals, p.src, node.val, node.c)
+        if (held >= 0) {
+            return held
+        }
+        return 0
+    }
+    // A place read by value copies what is there. Whatever views the copy holds
+    // point where they already pointed, so the container is not named by it.
+    if (kind == NodeKind::Field || kind == NodeKind::Index) {
+        held := frame_place_type(p, id)
+        if (held >= 0 && type_holds_view(p, held, FRAME_TYPE_DEPTH) == false) {
+            return 0
+        }
+        if (answer_reaches_inline(p, id)) {
+            return answer_value_mask(p, child, params)
+        }
+        return 0
+    }
+    if (kind == NodeKind::Deref) {
+        return 0
+    }
+    if (kind == NodeKind::PtrCast || kind == NodeKind::Cast) {
+        return answer_value_mask(p, child, params)
+    }
+    if (kind == NodeKind::SliceFrom) {
+        return answer_value_mask(p, child, params)
+            | answer_value_mask(p, node.b, params)
+    }
+    if (kind == NodeKind::StructLit || kind == NodeKind::ArrayLit) {
+        mut found : i64 = 0
+        mut item := child
+        while (item != (-1)) {
+            inode := arena_at(p.arena, item)
+            found = found | answer_value_mask(p, inode.a, params)
+            item = inode.next
+        }
+        return found
+    }
+    if (kind == NodeKind::If) {
+        return answer_block_answer(p, node.b, params)
+            | answer_block_answer(p, node.val, params)
+    }
+    if (kind == NodeKind::Match) {
+        mut found : i64 = 0
+        mut arm := node.b
+        while (arm != (-1)) {
+            case_node := arena_at(p.arena, arm)
+            found = found | answer_block_answer(p, case_node.a, params)
+            arm = case_node.next
+        }
+        return found
+    }
+    if (kind == NodeKind::Call) {
+        return answer_call_mask(p, id, params)
+    }
+    if (kind == NodeKind::Num || kind == NodeKind::Float
+        || kind == NodeKind::StrLit || kind == NodeKind::Sizeof
+        || kind == NodeKind::SliceLen || kind == NodeKind::TypeVal
+        || kind == NodeKind::Bin) {
+        return 0
+    }
+    // A shape this walk does not read answers with every parameter, which is
+    // the join it replaced.
+    answer_all_params(p, params)
+}
+
+// What a block hands back.
+answer_block_answer :: fn(mut p: Parser, head: i64, params: i64) -> i64 {
+    answer_value_mask(p, block_answer(p, head), params)
+}
+
+// What a call contributes: the arguments the callee's own answer reaches.
+answer_call_mask :: fn(mut p: Parser, id: i64, params: i64) -> i64 {
+    node := arena_at(p.arena, id)
+    args := node.a
+    sym := arena_at(p.fns, node.val)
+    if (sym.defined == 0) {
+        return answer_all_params(p, params)
+    }
+    // C has global storage, so what an extern answers with is not built from
+    // what it was handed.
+    if (sym.is_extern == 1) {
+        return 0
+    }
+    callee := node.val
+    mut reaches : i64 = -1
+    if (callee >= 0 && callee < p.answer_masks.count) {
+        held := arena_at(p.answer_masks, callee)
+        reaches = held.mask
+    }
+    mut found : i64 = 0
+    count := count_value_args(p, args)
+    mut i : i64 = 0
+    while (i < count) {
+        mut weighed : bool = true
+        if (i < ANSWER_BITS) {
+            if (reaches & (1 << i) == 0) {
+                weighed = false
+            }
+        }
+        if (weighed) {
+            found = found | answer_value_mask(p, nth_value_arg(p, args, i),
+                params)
+        }
+        i = i + 1
+    }
+    found
+}
+
+// One exit, read as a place where the function answers with one.
+answer_exit_mask :: fn(mut p: Parser, id: i64, params: i64,
+    answers_place: bool) -> i64 {
+    if (answers_place) {
+        return answer_place_mask(p, id, params)
+    }
+    answer_value_mask(p, id, params)
+}
+
+// Walk a body, binding each local to the parameters its value reaches, and
+// gather what every exit answers with.
+answer_walk_block :: fn(mut p: Parser, head: i64, params: i64,
+    answers_place: bool) -> i64 {
+    mut found : i64 = 0
+    mut id := head
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        kind := node.kind
+        next := node.next
+        if (kind == NodeKind::Let) {
+            mask := answer_value_mask(p, node.a, params)
+            note_type(p.answer_locals, p.src, node.val, node.c, mask)
+        }
+        if (kind == NodeKind::Return) {
+            found = found | answer_exit_mask(p, node.a, params, answers_place)
+        }
+        if (kind == NodeKind::While || kind == NodeKind::With) {
+            found = found | answer_walk_block(p, node.b, params, answers_place)
+        }
+        if (kind == NodeKind::If) {
+            found = found | answer_walk_block(p, node.b, params, answers_place)
+            found = found
+                | answer_walk_block(p, node.val, params, answers_place)
+        }
+        if (kind == NodeKind::Match) {
+            mut arm := node.b
+            while (arm != (-1)) {
+                case_node := arena_at(p.arena, arm)
+                found = found
+                    | answer_walk_block(p, case_node.a, params, answers_place)
+                arm = case_node.next
+            }
+        }
+        id = next
+    }
+    found | answer_exit_mask(p, block_answer(p, head), params, answers_place)
+}
+
+// Which parameters each function's answer can name the storage of. Grown from
+// nothing to a fixpoint, since one function's answer reaches another's and a
+// set that only gains bits settles.
+settle_answer_sources :: fn(mut p: Parser) {
+    while (p.answer_masks.count < p.fns.count) {
+        arena_push(p.answer_masks, AnswerMask { mask = 0 })
+    }
+    mut grew : i64 = 1
+    while (grew == 1) {
+        grew = 0
+        mut i : i64 = 0
+        while (i < p.arena.count) {
+            node := arena_at(p.arena, i)
+            if (node.kind == NodeKind::Func) {
+                body := node.a
+                fn_index := node.val
+                sym := arena_at(p.fns, fn_index)
+                params := sym.params
+                answers_place := is_borrow(sym.ret_type)
+                p.frame_types.count = 0
+                p.answer_locals.count = 0
+                frame_seed_types(p, params)
+                // A function handing back a place reaches it through bindings
+                // this walk does not follow closely enough to narrow, so it
+                // keeps every parameter and the join weighs them all.
+                mut mask : i64 = answer_all_params(p, params)
+                if (answers_place == false) {
+                    mask = answer_walk_block(p, body, params, answers_place)
+                }
+                if (fn_index >= 0 && fn_index < p.answer_masks.count) {
+                    mut held := arena_at(p.answer_masks, fn_index)
+                    merged := held.mask | mask
+                    if (merged != held.mask) {
+                        held.mask = merged
+                        grew = 1
+                    }
+                }
+            }
+            i = i + 1
+        }
+    }
+}
+
+// The declared type of each parameter, which is what tells reaching through an
+// indirection from reaching into storage held inline.
+frame_seed_types :: fn(mut p: Parser, params: i64) {
+    mut id := params
+    while (id != (-1)) {
+        node := arena_at(p.arena, id)
+        off := node.val
+        len := node.c
+        ty := node.b
+        id = node.next
+        note_type(p.frame_types, p.src, off, len, ty)
+    }
+}
+
 check_frame_escapes :: fn(mut p: Parser) {
+    settle_answer_sources(p)
     mut i : i64 = 0
     while (i < p.arena.count) {
         node := arena_at(p.arena, i)
@@ -3730,14 +4071,12 @@ check_unsafety :: fn(mut p: Parser) {
             report(" is unchecked, so it belongs in an `unsafe` block")
             frost_rt_die()
         }
-        if (gated == 1 && p.audit_unsafe == 1) {
+        if (gated == 1) {
             mark_span_used(p, node.pos)
         }
         i = i + 1
     }
-    if (p.audit_unsafe == 1) {
-        report_idle_unsafe(p)
-    }
+    report_idle_unsafe(p)
 }
 
 // Mark the innermost `unsafe` holding this position as having earned itself.
@@ -3765,9 +4104,10 @@ mark_span_used :: fn(mut p: Parser, pos: i64) {
 }
 
 // Every block that vouches for nothing: one holding no unchecked operation, and
-// one written inside another, which already covers what is in it. Reported only
-// when asked for, since a build should pay for the checks that keep a program
-// correct rather than the ones that keep it tidy.
+// one written inside another, which already covers what is in it. Reported on
+// every build as a warning, since the list of `unsafe` blocks is only worth
+// reading while every one of them earns its place. `--audit-unsafe` turns the
+// warning into a failure, which is what holds a tree to it.
 report_idle_unsafe :: fn(mut p: Parser) {
     mut found : i64 = 0
     mut i : i64 = 0
@@ -3796,18 +4136,18 @@ report_idle_unsafe :: fn(mut p: Parser) {
         }
         if (first == 1 && nested == 1) {
             report_where(p.modules, p.src, span.start)
-            report("this `unsafe` block is inside another one, which already ")
-            report("vouches for what is in it\n")
+            report("warning: this `unsafe` block is inside another one, which ")
+            report("already vouches for what is in it\n")
             found = 1
         } else if (first == 1 && used == 0) {
             report_where(p.modules, p.src, span.start)
-            report("this `unsafe` block holds no unchecked operation, so it ")
-            report("vouches for nothing\n")
+            report("warning: this `unsafe` block holds no unchecked operation, ")
+            report("so it vouches for nothing\n")
             found = 1
         }
         i = i + 1
     }
-    if (found == 1) {
+    if (found == 1 && p.audit_unsafe == 1) {
         frost_rt_die()
     }
 }

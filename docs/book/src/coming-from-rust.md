@@ -896,5 +896,5 @@ feeling like something removed.
 - [c-compatibility.md](impl/c-compatibility.md), the C type mapping and FFI details.
 - [architecture.md](impl/architecture.md), the compiler pipeline, the typed IR, and
   the three backends that must agree.
-- `examples/native/`, runnable programs, starting with `game_world.frost` and
-  `pool_linked_list.frost`.
+- `examples/native/`, runnable programs, starting with `game_world.frost` (the
+  entity-component system) and `pool_linked_list.frost`.

@@ -532,6 +532,14 @@ pub fn check_frame_escapes_recovering(program: &Program) -> Vec<Diagnostic> {
     let registrations = crate::callbacks::callback_registrations(program);
     let fields = collect_field_types(program);
     let views = collect_view_returns(program, &fields);
+    let externs: HashSet<String> = program
+        .iter()
+        .filter_map(|statement| match &statement.node {
+            Statement::Extern { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
+    let answer_sources = collect_answer_sources(program, &externs, &fields);
     let param_modes = collect_param_modes(program);
     let return_types = collect_return_types(program);
     // Which functions answer with a place rather than a value. A `ref T` is the
@@ -600,6 +608,8 @@ pub fn check_frame_escapes_recovering(program: &Program) -> Vec<Diagnostic> {
                 answers_direct_view: answered.is_some_and(is_direct_view),
                 registrations: &registrations,
                 views: &views,
+                externs: &externs,
+                answer_sources: &answer_sources,
                 params: &param_modes,
                 answers_place_by_name: &ref_returns,
                 types: HashMap::new(),
@@ -791,6 +801,363 @@ fn collect_view_returns(
     views
 }
 
+/// One function as the answer walk reads it: its parameters by name and by
+/// declared type, and the body to walk.
+struct Declared<'a> {
+    name: String,
+    parameters: Vec<String>,
+    types: HashMap<String, Type>,
+    answers_place: bool,
+    body: &'a Block,
+}
+
+/// What one function's answer walk needs.
+struct Answers<'a> {
+    parameters: &'a [String],
+    declared: &'a HashMap<String, Type>,
+    fields: &'a FieldTypes,
+    sources: &'a HashMap<String, Vec<bool>>,
+    externs: &'a HashSet<String>,
+    // Whether the function hands back a place rather than a value. A `ref T`
+    // answer is the place itself, so reaching into a parameter to build it
+    // names that parameter's storage, where copying a value out of one does
+    // not.
+    answers_place: bool,
+}
+
+/// Which parameters a function's answer can name the storage of.
+///
+/// A call site weighs the arguments this says reach the answer. Joining over
+/// every argument reads a wrapper as handing back whatever it was given, and a
+/// wrapper over C hands back the library's storage: `device_create_texture`
+/// takes the address of a local descriptor and answers with a handle wgpu owns.
+///
+/// Grown from nothing to a fixpoint, since one function's answer reaches
+/// another's and a set that only gains entries settles. A shape this cannot
+/// read answers with every parameter, which is what the join did everywhere.
+fn collect_answer_sources(
+    program: &Program,
+    externs: &HashSet<String>,
+    fields: &FieldTypes,
+) -> HashMap<String, Vec<bool>> {
+    let mut functions: Vec<Declared<'_>> = Vec::new();
+    for statement in program {
+        if let Statement::Constant(
+            name,
+            Expression::Function(parameters, signature, body)
+            | Expression::Proc(parameters, signature, body),
+        ) = &statement.node
+        {
+            functions.push(Declared {
+                name: name.clone(),
+                answers_place: matches!(
+                    &signature.kind,
+                    ReturnKind::Single(Type::Ref(_) | Type::RefMut(_))
+                        | ReturnKind::Fallible(
+                            Type::Ref(_) | Type::RefMut(_),
+                            _
+                        )
+                ),
+                parameters: parameters
+                    .iter()
+                    .map(|one| one.name.clone())
+                    .collect(),
+                types: parameters
+                    .iter()
+                    .filter_map(|one| {
+                        one.type_annotation
+                            .clone()
+                            .map(|ty| (one.name.clone(), ty))
+                    })
+                    .collect(),
+                body,
+            });
+        }
+    }
+    let mut sources: HashMap<String, Vec<bool>> = functions
+        .iter()
+        .map(|one| (one.name.clone(), vec![false; one.parameters.len()]))
+        .collect();
+    loop {
+        let mut grew = false;
+        for one in &functions {
+            let walk = Answers {
+                parameters: &one.parameters,
+                declared: &one.types,
+                fields,
+                sources: &sources,
+                externs,
+                answers_place: one.answers_place,
+            };
+            let mut environment: HashMap<String, HashSet<usize>> =
+                HashMap::new();
+            let mut answer: HashSet<usize> = HashSet::new();
+            answer_of_block(one.body, &walk, &mut environment, &mut answer);
+            let held = sources
+                .get_mut(&one.name)
+                .expect("every function is listed");
+            for index in answer {
+                if index < held.len() && !held[index] {
+                    held[index] = true;
+                    grew = true;
+                }
+            }
+        }
+        if !grew {
+            return sources;
+        }
+    }
+}
+
+/// Walk a body, binding each local to the parameters its value reaches, and
+/// gather what every exit answers with.
+fn answer_of_block(
+    block: &Block,
+    walk: &Answers,
+    environment: &mut HashMap<String, HashSet<usize>>,
+    answer: &mut HashSet<usize>,
+) {
+    for statement in block {
+        match &statement.node {
+            Statement::Let { name, value, .. } => {
+                let reached = expression_sources(value, walk, environment);
+                environment.insert(name.clone(), reached);
+            }
+            Statement::Return(value) => {
+                answer.extend(answer_sources_of(value, walk, environment));
+            }
+            Statement::While(_, body)
+            | Statement::For(_, _, _, body)
+            | Statement::With(_, body) => {
+                answer_of_block(body, walk, environment, answer);
+            }
+            _ => {}
+        }
+    }
+    if let Some(value) = block_value(block) {
+        answer.extend(answer_sources_of(value, walk, environment));
+    }
+}
+
+/// What one exit answers with. A function handing back a place is read as a
+/// place, so `h.a[i]` names `h`; one handing back a value is read as a value,
+/// so the same expression names nothing of `h`.
+fn answer_sources_of(
+    value: &Expression,
+    walk: &Answers,
+    environment: &HashMap<String, HashSet<usize>>,
+) -> HashSet<usize> {
+    if walk.answers_place {
+        return place_sources(value, walk, environment);
+    }
+    expression_sources(value, walk, environment)
+}
+
+/// The parameters a place names the storage of. Reaching into one through a
+/// field or an element of a fixed array stays inside it; reaching through a
+/// slice or a pointer lands on storage allocated elsewhere.
+fn place_sources(
+    place: &Expression,
+    walk: &Answers,
+    environment: &HashMap<String, HashSet<usize>>,
+) -> HashSet<usize> {
+    match place {
+        Expression::FieldAccess(base, _) | Expression::Index(base, _) => {
+            if reaches_inline(place, walk) {
+                place_sources(base, walk, environment)
+            } else {
+                HashSet::new()
+            }
+        }
+        Expression::Dereference(_) => HashSet::new(),
+        _ => expression_sources(place, walk, environment),
+    }
+}
+
+/// The type of a place, read from the parameter declarations and the struct
+/// fields, which is as much as this walk needs to tell reaching through an
+/// indirection from reaching into storage held inline.
+fn declared_place_type(place: &Expression, walk: &Answers) -> Option<Type> {
+    match place {
+        Expression::Identifier(name) => walk.declared.get(name).cloned(),
+        Expression::FieldAccess(base, field) => {
+            let name = match declared_place_type(base, walk)? {
+                Type::Struct(name) | Type::Enum(name) => name,
+                Type::Ptr(inner) | Type::Ref(inner) | Type::RefMut(inner) => {
+                    match *inner {
+                        Type::Struct(name) | Type::Enum(name) => name,
+                        _ => return None,
+                    }
+                }
+                _ => return None,
+            };
+            walk.fields
+                .get(Type::template_of(&name))?
+                .iter()
+                .find(|(declared, _)| declared == field)
+                .map(|(_, ty)| ty.clone())
+        }
+        Expression::Index(base, _) => match declared_place_type(base, walk)? {
+            Type::Array(inner, _)
+            | Type::ArrayGeneric(inner, _)
+            | Type::Slice(inner)
+            | Type::Ptr(inner) => Some(*inner),
+            Type::Str => Some(Type::U8),
+            _ => None,
+        },
+        Expression::Dereference(base) => {
+            match declared_place_type(base, walk)? {
+                Type::Ptr(inner) | Type::Ref(inner) | Type::RefMut(inner) => {
+                    Some(*inner)
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Whether reaching into this place lands on storage held inline by the
+/// parameter it is rooted at. An element of a fixed array is, and so is a field.
+/// An element of a slice or a raw pointer is not: the run lives wherever it was
+/// allocated, which is what a caller handing over a heap slice relies on.
+fn reaches_inline(place: &Expression, walk: &Answers) -> bool {
+    match place {
+        Expression::Identifier(_) => true,
+        Expression::FieldAccess(base, _) => reaches_inline(base, walk),
+        Expression::Index(base, _) => match declared_place_type(base, walk) {
+            Some(Type::Array(..) | Type::ArrayGeneric(..)) => {
+                reaches_inline(base, walk)
+            }
+            Some(_) => false,
+            None => reaches_inline(base, walk),
+        },
+        Expression::Dereference(_) => false,
+        _ => true,
+    }
+}
+
+/// The parameters whose storage this expression can name.
+fn expression_sources(
+    expression: &Expression,
+    walk: &Answers,
+    environment: &HashMap<String, HashSet<usize>>,
+) -> HashSet<usize> {
+    let of = |value: &Expression| expression_sources(value, walk, environment);
+    let union = |values: &mut dyn Iterator<Item = &Expression>| {
+        values.fold(HashSet::new(), |mut held, value| {
+            held.extend(expression_sources(value, walk, environment));
+            held
+        })
+    };
+    let addressed =
+        |place: &Expression| place_sources(place, walk, environment);
+    match expression {
+        Expression::Identifier(name) => {
+            if let Some(index) =
+                walk.parameters.iter().position(|one| one == name)
+            {
+                return HashSet::from([index]);
+            }
+            environment.get(name).cloned().unwrap_or_default()
+        }
+        Expression::Literal(Literal::Array(values)) => {
+            union(&mut values.iter())
+        }
+        Expression::Literal(_) | Expression::Boolean(_) => HashSet::new(),
+        Expression::Call(callee, arguments) => {
+            let Expression::Identifier(name) = callee.as_ref() else {
+                return union(&mut arguments.iter());
+            };
+            match name.as_str() {
+                "ptr_to" => {
+                    arguments.iter().fold(HashSet::new(), |mut held, place| {
+                        held.extend(addressed(place));
+                        held
+                    })
+                }
+                "ptr_cast" | "slice_from" => union(&mut arguments.iter()),
+                "sizeof" | "offset_of" | "slice_len" | "type_name" => {
+                    HashSet::new()
+                }
+                // C has global storage, so what an extern answers with is not
+                // built from what it was handed.
+                _ if walk.externs.contains(name) => HashSet::new(),
+                _ => match walk.sources.get(name) {
+                    Some(flags) => arguments
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| {
+                            flags.get(*index).copied().unwrap_or(true)
+                        })
+                        .fold(HashSet::new(), |mut held, (_, argument)| {
+                            held.extend(of(argument));
+                            held
+                        }),
+                    None => union(&mut arguments.iter()),
+                },
+            }
+        }
+        Expression::Borrow(inner)
+        | Expression::BorrowMut(inner)
+        | Expression::AddressOf(inner) => addressed(inner),
+        // A place read by value copies what is there. Whatever views the copy
+        // holds point where they already pointed, so the container it came out
+        // of is not named by the answer.
+        Expression::FieldAccess(base, _) | Expression::Index(base, _) => {
+            match declared_place_type(expression, walk) {
+                Some(ty)
+                    if !holds_view(&ty, walk.fields, &mut HashSet::new()) =>
+                {
+                    HashSet::new()
+                }
+                _ if reaches_inline(expression, walk) => of(base),
+                _ => HashSet::new(),
+            }
+        }
+        Expression::Dereference(_) => HashSet::new(),
+        Expression::UnsafeFn(inner)
+        | Expression::Try(inner)
+        | Expression::ArrayRepeat(inner, _)
+        | Expression::Prefix(_, inner) => of(inner),
+        Expression::Infix(left, _, right)
+        | Expression::Range(left, right, _) => {
+            let mut held = of(left);
+            held.extend(of(right));
+            held
+        }
+        Expression::Tuple(values) => union(&mut values.iter()),
+        Expression::StructInit(_, values) => {
+            union(&mut values.iter().map(|(_, value)| value))
+        }
+        Expression::EnumVariantInit(_, _, values) => {
+            union(&mut values.iter().map(|(_, value)| value))
+        }
+        Expression::Unsafe(block) => {
+            block_value(block).map_or_else(HashSet::new, of)
+        }
+        Expression::If(_, then_block, else_block) => {
+            let mut held =
+                block_value(then_block).map_or_else(HashSet::new, of);
+            if let Some(other) = else_block
+                && let Some(value) = block_value(other)
+            {
+                held.extend(of(value));
+            }
+            held
+        }
+        Expression::Switch(_, cases) => {
+            cases.iter().fold(HashSet::new(), |mut held, case| {
+                if let Some(value) = block_value(&case.body) {
+                    held.extend(of(value));
+                }
+                held
+            })
+        }
+        _ => (0..walk.parameters.len()).collect(),
+    }
+}
+
 /// Whether a value of this type is, or holds, a view of storage it does not own.
 /// Only such a value can carry storage out of a call, so only a function
 /// answering with one has to account for where that storage came from.
@@ -919,6 +1286,12 @@ struct Frame<'a> {
     registrations: &'a HashMap<String, crate::callbacks::CallbackShape>,
     // Whether each function answers with something holding a view.
     views: &'a HashMap<String, bool>,
+    // The C functions this program declares. What one answers with is storage
+    // it was not handed, so the arguments say nothing about it.
+    externs: &'a HashSet<String>,
+    // Which parameters each function's answer can name the storage of, so a
+    // call weighs those arguments and leaves the rest alone.
+    answer_sources: &'a HashMap<String, Vec<bool>>,
     // How each function takes its arguments, which says whether a callee was
     // handed the address of what it was passed or a copy of it.
     params: &'a ParamModes,
@@ -1694,6 +2067,22 @@ impl Frame<'_> {
             // A cast keeps pointing where it pointed, and a slice wraps a
             // pointer in a length, so both answer with their argument's storage.
             "ptr_cast" | "slice_from" => self.shortest(arguments.iter()),
+            // A count, an offset and a width are numbers, and a type's name is
+            // bytes the compiler wrote. None of them names a caller's storage.
+            "sizeof" | "offset_of" | "slice_len" | "type_name" => {
+                Provenance::Outlives
+            }
+            // A conversion answers with the type it was given. Where that type
+            // holds no view it carries no storage, and where it does the
+            // storage is whatever was converted.
+            "cast" => match arguments.first() {
+                Some(Expression::TypeValue(ty))
+                    if !holds_view(ty, self.fields, &mut HashSet::new()) =>
+                {
+                    Provenance::Outlives
+                }
+                _ => self.shortest(arguments.iter().skip(1)),
+            },
             _ => {
                 // A registration holds its context for as long as it lives, so
                 // it names that storage the way a pointer to it would.
@@ -1708,14 +2097,34 @@ impl Frame<'_> {
                     // A callee answering with no view answers with a value, and
                     // a value carries no storage out however it was built.
                     Some(false) => Provenance::Outlives,
-                    Some(true) => arguments.iter().enumerate().fold(
-                        Provenance::Outlives,
-                        |held, (index, argument)| {
-                            held.max(
-                                self.argument_provenance(name, index, argument),
-                            )
-                        },
-                    ),
+                    // C has global storage, so what an extern answers with is
+                    // not built from what it was handed. This gives up catching
+                    // a C function that does answer with a pointer into one of
+                    // its arguments, which `strchr` is the shape of.
+                    Some(true) if self.externs.contains(name) => {
+                        Provenance::Outlives
+                    }
+                    Some(true) => {
+                        let reaches = self.answer_sources.get(name);
+                        arguments.iter().enumerate().fold(
+                            Provenance::Outlives,
+                            |held, (index, argument)| {
+                                if let Some(flags) = reaches
+                                    && !flags
+                                        .get(index)
+                                        .copied()
+                                        .unwrap_or(true)
+                                {
+                                    return held;
+                                }
+                                held.max(
+                                    self.argument_provenance(
+                                        name, index, argument,
+                                    ),
+                                )
+                            },
+                        )
+                    }
                     // A name with no signature in this program: a compile-time
                     // parameter standing for a function, or one the walk never
                     // saw.

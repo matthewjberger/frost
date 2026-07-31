@@ -10,7 +10,8 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     CH_LOWER_B, CH_LOWER_E, CH_LOWER_F, CH_LOWER_X, CH_UPPER_B, CH_UPPER_E,
     CH_UPPER_F, CH_UPPER_X,
     Cap, Provider, FlagBit,
-    GenericFn, GParam, GArg, GBinding, ImportEdge, Instance, LocalVar, Module,
+    AnswerMask, GenericFn, GParam, GArg, GBinding, ImportEdge, Instance,
+    LocalVar, Module,
     Rename,
     MonoNode,
     BoundValue, Summary, SummaryStep,
@@ -863,6 +864,11 @@ TypeArg :: struct {
 // A local's type binding during code generation. The table is rebuilt per
 // function and maps a local's name (byte range) to its type code, so a field
 // access or a `:=` can be typed by walking it.
+// Which parameters a function's answer can name the storage of, one bit per
+// parameter, indexed by function. A mask of -1 is every parameter, which is
+// what a body shape the walk cannot read answers with.
+AnswerMask :: struct { mask: i64 }
+
 LocalVar :: struct {
     name_off: i64,
     name_len: i64,
@@ -1216,6 +1222,10 @@ Parser :: struct {
     frame_outlives: Arena<LocalVar>,
     // What each local's value names, as a provenance in `slot`.
     frame_locals: Arena<LocalVar>,
+    // Which parameters each function's answer can name the storage of, and the
+    // masks the locals of the body being walked carry.
+    answer_masks: Arena<AnswerMask>,
+    answer_locals: Arena<LocalVar>,
     // For a local that borrows rather than owning storage, where the place it
     // names lives. `ref x := place` binds one, and so does a binding taken from
     // a call answering with a `ref`.

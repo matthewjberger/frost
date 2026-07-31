@@ -9,9 +9,8 @@ through Cranelift or to portable C, and the compiler is written in Frost.
 
 ## Borrows are parameter modes
 
-Most safe systems languages make you describe how long a reference lives. Frost
-deletes the question. A borrow is not a type you write, it is what a parameter
-mode means.
+A borrow is what a parameter mode means, so there is no reference type to write
+and no lifetime to describe.
 
 ```frost
 wound :: fn(mut e: Entity, amount: i64) { e.hp = e.hp - amount }

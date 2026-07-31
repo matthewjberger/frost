@@ -139,7 +139,7 @@ main :: fn() -> i64 {
     source.hwnd = hwnd
 
     mut surface_descriptor := surface_descriptor_init()
-    surface_descriptor.next_in_chain = unsafe { ptr_cast($u8, ptr_to(source)) }
+    surface_descriptor.next_in_chain = ptr_to(source)
     surface := instance_create_surface(instance, ptr_to(surface_descriptor))
     if (hwnd == null()) { return 23 }
 
@@ -150,7 +150,7 @@ main :: fn() -> i64 {
         next_in_chain = null(),
         mode = CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
         callback = fill_adapter,
-        userdata1 = unsafe { ptr_cast($u8, ptr_to(adapter_slot)) },
+        userdata1 = ptr_to(adapter_slot),
         userdata2 = null(),
     }
     // The adapter has to be chosen knowing which surface it will draw to, or
@@ -177,7 +177,7 @@ main :: fn() -> i64 {
         next_in_chain = null(),
         mode = CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
         callback = fill_device,
-        userdata1 = unsafe { ptr_cast($u8, ptr_to(device_slot)) },
+        userdata1 = ptr_to(device_slot),
         userdata2 = null(),
     }
     adapter_request_device(adapter,
@@ -199,7 +199,7 @@ main :: fn() -> i64 {
     capability_status := surface_get_capabilities(surface, adapter, ptr_to(capabilities))
     if (capability_status != 1) { return 30 }
     if (capabilities.formats_count == 0) { return 31 }
-    surface_format := unsafe { ptr_cast($u32, capabilities.formats)^ }
+    surface_format := unsafe { capabilities.formats^ }
 
     mut configuration := surface_configuration_init()
     configuration.device = device
@@ -216,7 +216,7 @@ main :: fn() -> i64 {
     wgsl.code = StringView { data = SHADER, length = str_len(SHADER) }
 
     mut module_descriptor := shader_module_descriptor_init()
-    module_descriptor.next_in_chain = unsafe { ptr_cast($u8, ptr_to(wgsl)) }
+    module_descriptor.next_in_chain = ptr_to(wgsl)
     shader := device_create_shader_module(device, ptr_to(module_descriptor))
 
     // The three vertices, written once into a buffer the GPU reads. The
@@ -242,7 +242,7 @@ main :: fn() -> i64 {
     vertex_buffer_descriptor.size = VERTEX_BYTES
     vertex_buffer := device_create_buffer(device, ptr_to(vertex_buffer_descriptor))
     queue_write_buffer(queue, vertex_buffer, 0,
-            unsafe { ptr_cast($u8, ptr_to(vertices[0])) }, VERTEX_BYTES)
+            ptr_to(vertices[0]), VERTEX_BYTES)
 
     // The uniform holding the matrix, rewritten every frame.
     mut uniform_buffer_descriptor := buffer_descriptor_init()
@@ -261,7 +261,7 @@ main :: fn() -> i64 {
 
     mut group_layout_descriptor := bind_group_layout_descriptor_init()
     group_layout_descriptor.entries_count = 1
-    group_layout_descriptor.entries = unsafe { ptr_cast($u8, ptr_to(layout_entry)) }
+    group_layout_descriptor.entries = ptr_to(layout_entry)
     group_layout := device_create_bind_group_layout(device, ptr_to(group_layout_descriptor))
 
     mut group_entry := bind_group_entry_init()
@@ -272,12 +272,12 @@ main :: fn() -> i64 {
     mut group_descriptor := bind_group_descriptor_init()
     group_descriptor.layout = group_layout
     group_descriptor.entries_count = 1
-    group_descriptor.entries = unsafe { ptr_cast($u8, ptr_to(group_entry)) }
+    group_descriptor.entries = ptr_to(group_entry)
     bind_group := device_create_bind_group(device, ptr_to(group_descriptor))
 
     mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 1
-    pipeline_layout_descriptor.bind_group_layouts = unsafe { ptr_cast($u8, ptr_to(group_layout)) }
+    pipeline_layout_descriptor.bind_group_layouts = ptr_to(group_layout)
     pipeline_layout := device_create_pipeline_layout(device,
             ptr_to(pipeline_layout_descriptor))
 
@@ -294,7 +294,7 @@ main :: fn() -> i64 {
     buffer_layout.step_mode = VERTEX_STEP_MODE_VERTEX
     buffer_layout.array_stride = VERTEX_STRIDE
     buffer_layout.attributes_count = 2
-    buffer_layout.attributes = unsafe { ptr_cast($u8, ptr_to(attributes[0])) }
+    buffer_layout.attributes = ptr_to(attributes[0])
 
     // The pipeline.
     mut target := color_target_state_init()
@@ -304,7 +304,7 @@ main :: fn() -> i64 {
     fragment.module = shader
     fragment.entry_point = StringView { data = "fs_main", length = 7 }
     fragment.targets_count = 1
-    fragment.targets = unsafe { ptr_cast($u8, ptr_to(target)) }
+    fragment.targets = ptr_to(target)
     mut pipeline_descriptor := render_pipeline_descriptor_init()
     pipeline_descriptor.layout = pipeline_layout
     pipeline_descriptor.vertex.module = shader
@@ -312,7 +312,7 @@ main :: fn() -> i64 {
         StringView { data = "vs_main", length = 7 }
     pipeline_descriptor.vertex.buffers_count = 1
     pipeline_descriptor.vertex.buffers =
-        unsafe { ptr_cast($u8, ptr_to(buffer_layout)) }
+        ptr_to(buffer_layout)
     pipeline_descriptor.primitive.topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
     pipeline_descriptor.multisample.count = 1
     pipeline_descriptor.multisample.mask = 4294967295
@@ -361,7 +361,7 @@ main :: fn() -> i64 {
             model := mat4_rotation_y(radians(120.0) * milliseconds / 1000.0)
             mut mvp := mat4_mul(view_projection, model)
             queue_write_buffer(queue, uniform_buffer, 0,
-                unsafe { ptr_cast($u8, ptr_to(mvp.m[0])) }, UNIFORM_BYTES)
+                ptr_to(mvp.m[0]), UNIFORM_BYTES)
 
             texture_view := texture_create_view(frame.texture, null())
             encoder := device_create_command_encoder(device, null())
@@ -376,7 +376,7 @@ main :: fn() -> i64 {
             mut pass_descriptor := render_pass_descriptor_init()
             pass_descriptor.color_attachments_count = 1
             pass_descriptor.color_attachments =
-                unsafe { ptr_cast($u8, ptr_to(attachment)) }
+                ptr_to(attachment)
 
             pass := command_encoder_begin_render_pass(encoder,
                 ptr_to(pass_descriptor))

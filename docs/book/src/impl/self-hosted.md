@@ -13,8 +13,7 @@ language's own allocator rather than a runtime pool.
 
 ## What it implements
 
-Not a toy subset. It checks its own programs rather than deferring to whatever
-compiles its output, which it has to, because through the assembly backend
+It checks its own programs, which it has to: through the assembly backend
 nothing downstream would catch a mistake.
 
 - Types and layout. `i64`, `i8`, `u8`, `bool`, `str`, pointers `^T`, fixed
@@ -152,8 +151,7 @@ The language is built to compile fast. There are no traits or typeclasses, so no
 constraint solving. No lifetimes, so the region check is a cheap flow pass. No
 global type inference, only local. No macros and no declaration-generating
 comptime, only specialization. No textual includes, only modules parsed once.
-Those are the features that make other compilers slow, and the spec omits them
-on purpose.
+Those are the features that make other compilers slow, and the spec omits them.
 
 Which leaves the tools a build shells out to. On the C path an external C
 compiler costs several times the whole Frost front end and scales worse, and
@@ -250,7 +248,7 @@ the encoding it is written to `<build>/m<n>.s` for that program to read.
 `just bench-selfhost-incremental` puts a whole-program build, a first
 incremental build and one where nothing changed side by side on its own source.
 The compiler that comes out is byte for byte the one the whole-program build
-produces, which a test checks rather than a claim.
+produces, which a test checks.
 
 What keeps the backend off the curve, on the bootstrap:
 
@@ -267,8 +265,8 @@ What keeps the backend off the curve, on the bootstrap:
 3. Specializations carry across builds, since a module's object holds the ones
    that module asked for and reusing the object reuses them.
 
-The shape is measured rather than assumed, and the measurement is a command
-rather than a memory. A benchmark is easy to get wrong in ways that look like a
+The shape is measured, and the measurement is a command you can run today. A
+benchmark is easy to get wrong in ways that look like a
 compiler result: generated programs that name a function `f32` time a parse
 error, and programs whose `main` holds thousands of call sites make parallel
 code generation look like it does nothing, because one function is one thread

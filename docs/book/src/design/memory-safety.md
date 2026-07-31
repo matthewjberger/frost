@@ -81,19 +81,19 @@ and region checks, which is what `^T` is for. It carries no guarantee, and a
 program that casts one with `ptr_cast` and reads through it is on its own.
 
 The other is the elements of a heap container when the container is freed.
-`vec_free` and `map_free` give the block back and nothing consumes what was in
-it, so where the element is a resource, consuming each one first is the caller's
-obligation rather than something the compiler checks. A slot is reached by a
-number worked out while the program runs, so there is no place a check could
-name to say the obligation was met. The library holds itself back everywhere a
-bound can do the work: `vec_get`, `vec_set`, `vec_clear`, `map_put`, `map_get`,
+`vec_free` and `map_free` give the block back while the elements go unconsumed,
+so where the element is a resource, consuming each one first is the caller's
+obligation. A slot is reached by a number worked out while the program runs, so
+the check has no place to name when it asks whether the obligation was met. A
+bound covers the rest: `vec_get`, `vec_set`, `vec_clear`, `map_put`, `map_get`,
 `map_clear`, `option_is_some` and `option_unwrap_or` are declared
-`where !is_linear(T)`, so the operations that would silently drop an element
-refuse the type instead. The free itself cannot carry that bound, because
-`Vec<T>` and `Map<K, V>` are resources themselves and the free is the only thing
-that consumes one. `std/ecs.frost` shows the discipline that discharges it: a
-`Vec<Table>` where `Table` is a resource, released one element at a time through
-a `ref` borrow before the storage goes.
+`where !is_linear(T)`, so an operation that would silently drop an element
+refuses the type at the call. A bound on the free itself would make a container
+of resources impossible to discharge, since `Vec<T>` and `Map<K, V>` are
+resources themselves and the free is the only thing that consumes one.
+`std/ecs.frost` shows the discipline that discharges it: a `Vec<Table>` where
+`Table` is a resource, released one element at a time through a `ref` borrow
+before the storage goes.
 
 The first four hold statically. The fifth uses a runtime generation check that
 stays cheap (one integer compare) because the static rules keep handles honest.
@@ -270,12 +270,12 @@ close :: extern fn(f: File)              // terminal consumer, across the FFI bo
   instantiation really has. An enum answers the same way, since a variant's
   payload is held by its enum exactly as a field is held by its struct.
 
-  The instantiations asked about are the ones a program *forms*, not only the
-  ones it spells out. A call that answers with one makes it without anyone
-  writing the name, so a call is typed as the callee's return type with that
-  call's own type arguments put in. Reading the names in the source alone let
+  The instantiations asked about are the ones a program *forms*. A call that
+  answers with one makes it while the source spells out no name for it, so a
+  call is typed as the callee's return type with that call's own type arguments
+  put in. Reading the names in the source alone let
   `held := option_some($File, ...)` leave `Option<File>` ordinary data, and the
-  obligation on the resource inside it went in and did not come out.
+  obligation on the resource inside it went in and stayed there.
 
   A fixed array of resources counts as one too, since freeing the run is not
   freeing what is in it; a slice does not, since it looks at storage it does not

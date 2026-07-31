@@ -311,10 +311,10 @@ The vocabulary is fixed and closed:
 | `is_linear(T)` | a resource: a type that must be consumed exactly once |
 
 `is_linear` is how a container holds itself to elements it can account for.
-`vec_set` writes into a slot and nothing consumes what was there, so it is
-declared `where !is_linear(T)` and a `Vec<File>` is refused at the call rather
-than leaking inside a body the caller never wrote. A resource element is reached
-through `vec_slice`, where `ref e := vec_slice(v)[i]` stays a borrow.
+`vec_set` writes into a slot while whatever was there goes unconsumed, so it is
+declared `where !is_linear(T)`, and a `Vec<File>` is refused at the call the
+reader wrote. A resource element is reached through `vec_slice`, where
+`ref e := vec_slice(v)[i]` stays a borrow.
 
 Terms combine with `&&`, `||` and `!`. A distinct type answers as what it is
 represented by, since that is what its arithmetic and its layout follow.

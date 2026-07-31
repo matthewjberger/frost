@@ -321,7 +321,7 @@ main :: fn() -> i64 {
 The arrays are written out at construction because a struct literal cannot run
 code, and `slab_reset` is what fills in the free list. Passing `world[hero]` to
 a function borrows the element, and that borrow is a parameter mode like any
-other. `examples/native/game_world.frost` is this over an entity enum, and
+other. `examples/native/entity_system.frost` is this over an entity enum, and
 chapter 10 of [handles-and-pools.md](reference/handles-and-pools.md) states the
 generational rule.
 
@@ -666,7 +666,8 @@ to it by generation rather than by a lifetime the compiler had to track.
 ## Where to next
 
 - Runnable programs live in `examples/native/`. Start with `game_world.frost`
-  (an entity system) and `generic_slab.frost` (the slab written out in full).
+  (the entity-component system) and `generic_slab.frost` (the slab written out
+  in full).
 - [coming-from-rust.md](coming-from-rust.md) if you already think in Rust.
 - [patterns.md](patterns.md) for what the language rewards and what it merely
   permits.

@@ -111,14 +111,14 @@ mesh_upload :: fn(device: Device, queue: Queue, vertices: []Vertex,
     vertex_descriptor.size = vertex_bytes
     vertex_buffer := device_create_buffer(device, ptr_to(vertex_descriptor))
     queue_write_buffer(queue, vertex_buffer, 0,
-        unsafe { ptr_cast($u8, ptr_to(vertices[0])) }, vertex_bytes)
+        ptr_to(vertices[0]), vertex_bytes)
 
     mut index_descriptor := buffer_descriptor_init()
     index_descriptor.usage = BufferUsage::Index | BufferUsage::CopyDst
     index_descriptor.size = index_bytes
     index_buffer := device_create_buffer(device, ptr_to(index_descriptor))
     queue_write_buffer(queue, index_buffer, 0,
-        unsafe { ptr_cast($u8, ptr_to(indices[0])) }, index_bytes)
+        ptr_to(indices[0]), index_bytes)
 
     Mesh { vertices = vertex_buffer, indices = index_buffer,
         index_count = cast($u32, slice_len(indices)),

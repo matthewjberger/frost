@@ -198,11 +198,56 @@ pub fn check_interface_round_trip(interface: &ModuleInterface) -> Result<()> {
     })?;
     if &back != interface {
         anyhow::bail!(
-            "the interface of '{}' did not survive a round trip, so an interface does not mean the same thing written down as it does in memory",
-            interface.module
+            "the interface of '{}' did not survive a round trip, so an interface does not mean the same thing written down as it does in memory: {}",
+            interface.module,
+            first_difference(interface, &back)
         );
     }
     Ok(())
+}
+
+/// What changed across the round trip, named closely enough to act on. A
+/// message saying only that something changed leaves the reader to bisect the
+/// module by hand.
+fn first_difference(
+    before: &ModuleInterface,
+    after: &ModuleInterface,
+) -> String {
+    if before.module != after.module {
+        return format!(
+            "the module name became '{}' from '{}'",
+            after.module, before.module
+        );
+    }
+    if before.exports != after.exports {
+        return format!(
+            "the exports became {:?} from {:?}",
+            after.exports, before.exports
+        );
+    }
+    if before.linear_types != after.linear_types {
+        return format!(
+            "the linear types became {:?} from {:?}",
+            after.linear_types, before.linear_types
+        );
+    }
+    if before.declarations.len() != after.declarations.len() {
+        return format!(
+            "{} declarations came back from {}",
+            after.declarations.len(),
+            before.declarations.len()
+        );
+    }
+    for (one, other) in before.declarations.iter().zip(&after.declarations) {
+        if one != other {
+            let named = declared_name(one).unwrap_or("an unnamed declaration");
+            return format!(
+                "the declaration of '{named}' became {:?} from {:?}",
+                other.node, one.node
+            );
+        }
+    }
+    "nothing the comparison could name".to_string()
 }
 
 #[cfg(test)]
@@ -222,6 +267,19 @@ mod tests {
             parser.exports(),
             &parser.linear_types().iter().cloned().collect(),
         )
+    }
+
+    #[test]
+    fn a_float_constant_survives_the_round_trip() {
+        // Seventeen significant digits, which is where a decimal encoding stops
+        // being lossless unless both ends round the same way. Written as bits,
+        // there is nothing to round.
+        let source = "export PITCH_LIMIT\n\
+                      PITCH_LIMIT :: 1.5607963267948966\n\
+                      TINY :: 0.1\n\
+                      WIDE :: 1.0e300\n";
+        let interface = interface_of(source);
+        check_interface_round_trip(&interface).expect("a float round trips");
     }
 
     fn carried(interface: &ModuleInterface) -> Vec<&str> {

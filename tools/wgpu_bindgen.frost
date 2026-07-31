@@ -205,7 +205,9 @@ type_starts :: fn(mut document: Json, node: i64, prefix: str) -> bool {
 }
 
 // The part of `struct.render_pass_color_attachment` after the dot, appended in
-// PascalCase.
+// PascalCase. An array writes its element the same way inside brackets, as
+// `array<struct.bind_group_entry>`, so the name ends at the backslash
+// that opens the closing bracket.
 append_after_dot :: fn(mut out: Builder, mut document: Json, node: i64) {
     off := json_text_off(document, node)
     length := json_text_len(document, node)
@@ -222,7 +224,9 @@ append_after_dot :: fn(mut out: Builder, mut document: Json, node: i64) {
     index = start
     while (index < length) {
         byte := source[off + index]
-        if (byte == 95) {
+        if (byte == 92) {
+            index = length
+        } else if (byte == 95) {
             upper = 1
         } else {
             if (upper == 1 && byte >= 97 && byte <= 122) {
@@ -316,7 +320,25 @@ append_type :: fn(mut out: Builder, mut document: Json, holder: i64) {
         append_after_dot(out, document, kind)
         return
     }
+    // An array is a pointer to its first element and a separate count. Naming
+    // the element is what keeps `ptr_cast` out of a caller: a descriptor field
+    // typed `^u8` has to be fed through one, and that is an `unsafe` block per
+    // descriptor in code that never calls C itself.
     if (type_is_array(document, kind)) {
+        if (type_starts(document, kind, "array\\u003cenum.")) {
+            builder_str_value(out, "^u32")
+            return
+        }
+        if (type_starts(document, kind, "array\\u003cstruct.")) {
+            builder_byte(out, 94)
+            append_after_dot(out, document, kind)
+            return
+        }
+        // An object is `distinct ^u8`, so a run of them is a pointer to a
+        // distinct type, which the self-hosted compiler cannot yet read. Left a
+        // byte pointer until it can.
+        builder_str_value(out, "^u8")
+        return
         builder_str_value(out, "^u8")
         return
     }
