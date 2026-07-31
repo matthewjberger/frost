@@ -18870,6 +18870,30 @@ main :: fn() -> i64 {
     // A float carries its literal node instead, so `-2.2` matched neither and
     // was refused as a declaration the compiler does not have. A positive float
     // and a negative integer both worked, which is what kept it hidden.
+    // A float literal takes its width from the context, the way an integer
+    // literal does. The self-hosted compiler read every one at double, so
+    // `-2.1 + 1.1` at an `f32` added two doubles and rounded once at the end
+    // where the bootstrap added two singles. It contradicted itself as well as
+    // the bootstrap: the same two numbers held in `f32` locals answered the
+    // other way.
+    (
+        "a_float_literal_takes_the_width_of_its_context",
+        "FLOOR :: -2.1\n\
+         RISE :: 1.1\n\
+         main :: fn() -> i64 {\n\
+         \x20   named : f32 = FLOOR + RISE\n\
+         \x20   written : f32 = -2.1 + 1.1\n\
+         \x20   mut a : f32 = -2.1\n\
+         \x20   mut b : f32 = 1.1\n\
+         \x20   computed := a + b\n\
+         \x20   wide : f64 = -2.1 + 1.1\n\
+         \x20   print cast($i64, named * 100.0)\n\
+         \x20   print cast($i64, written * 100.0)\n\
+         \x20   print cast($i64, computed * 100.0)\n\
+         \x20   print cast($i64, wide * 100.0)\n\
+         \x20   0\n}\n",
+        "-99\n-99\n-99\n-100\n",
+    ),
     // The numbers are exact in binary on purpose: what this pins is that the
     // declaration is read at all, and a value that needs rounding would pin
     // where the arithmetic happens instead, which is its own question.

@@ -1390,6 +1390,16 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
     // already knows how to read a decimal and this compiler does not need to.
     if (kind == NodeKind::Float) {
         asm_i("movq .Lflt", id, "(%rip), %rax")
+        // Read at single precision. The digits were laid down as a double, so
+        // narrowing is what leaves the number an `f32` holds, and the bits stay
+        // in %eax because that is where every other single-precision value in
+        // this backend travels. What widens it again is the conversion the
+        // context asks for, the same one every other `f32` goes through.
+        if (node.a == 1) {
+            emit_asm_move("movq", "%rax", "%xmm0")
+            emit_asm_move("cvtsd2ss", "%xmm0", "%xmm0")
+            emit_asm_move("movd", "%xmm0", "%eax")
+        }
         return
     }
     if (kind == NodeKind::Assert) {
