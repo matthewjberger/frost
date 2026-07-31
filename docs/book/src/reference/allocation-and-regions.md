@@ -205,7 +205,7 @@ arena check asks whether a pointer is known to come from the region and refuses
 it when it is; the frame check asks whether a view is known to come from
 somewhere that outlives the call and refuses it when it is not. A view whose
 storage the walk cannot trace is refused, so a road nobody wrote down is a
-refusal rather than a leak. What that costs is measured rather than assumed:
+refusal rather than a leak. What that costs is measured:
 across the standard library, the self-hosted compiler and the examples it refuses
 nothing, and both compilers refuse the same programs.
 

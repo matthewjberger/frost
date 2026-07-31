@@ -7928,8 +7928,8 @@ fn a_defer_in_a_test_body_runs() {
 const STD_MODULES: &[(&str, &str)] = &[
     ("ecs.frost", "107 passed"),
     ("map.frost", "13 passed"),
-    ("math.frost", "20 passed"),
-    ("math64.frost", "20 passed"),
+    ("math.frost", "23 passed"),
+    ("math64.frost", "23 passed"),
     ("mem.frost", "13 passed"),
     ("slab.frost", "2 passed"),
     ("snapshot.frost", "6 passed"),
@@ -16288,23 +16288,58 @@ fn both_compilers_refuse_consuming_an_element_or_a_borrowed_field_twice() {
     }
 }
 
-// `--audit-unsafe` is the opt-in pass that reports a block vouching for
-// nothing. It is off by default, so a build pays for the checks that keep a
-// program correct rather than the ones that keep it tidy.
+// A block vouching for nothing is reported on every build. `--audit-unsafe`
+// turns the warning into a failure, which is what holds a tree to zero of them.
 fn audit_unsafe(name: &str, source: &str) -> String {
+    compile_reporting_unsafe(name, source, true).0
+}
+
+/// The compiler's stderr and whether it succeeded, with the audit optionally
+/// promoted to a failure.
+fn compile_reporting_unsafe(
+    name: &str,
+    source: &str,
+    fatal: bool,
+) -> (String, bool) {
     let directory = std::env::temp_dir();
     let source_path = directory.join(format!("frost_audit_{name}.frost"));
     std::fs::write(&source_path, source).unwrap();
     let frost = env!("CARGO_BIN_EXE_frost");
-    let output = Command::new(frost)
-        .arg("--audit-unsafe")
+    let mut command = Command::new(frost);
+    if fatal {
+        command.arg("--audit-unsafe");
+    }
+    let output = command
         .arg("-o")
         .arg(directory.join(format!("frost_audit_{name}.o")))
         .arg(&source_path)
         .output()
         .unwrap();
     let _ = std::fs::remove_file(&source_path);
-    String::from_utf8_lossy(&output.stderr).to_string()
+    (
+        String::from_utf8_lossy(&output.stderr).to_string(),
+        output.status.success(),
+    )
+}
+
+#[test]
+fn an_idle_block_warns_on_an_ordinary_build() {
+    let source = "main :: fn() -> i64 {\n\
+                  \x20   x := unsafe { 1 + 1 }\n\
+                  \x20   print x\n\
+                  \x20   0\n}\n";
+    let (message, built) = compile_reporting_unsafe("warn", source, false);
+    assert!(
+        message.contains("vouches for nothing"),
+        "expected a warning without the flag, got:\n{message}"
+    );
+    // A warning, so the program still builds. The flag is what refuses it.
+    assert!(built, "the warning failed the build:\n{message}");
+    let (_, refused) = compile_reporting_unsafe("warnfatal", source, true);
+    assert!(
+        !refused,
+        "`--audit-unsafe` took a block that vouches for nothing"
+    );
 }
 
 #[test]
@@ -16418,8 +16453,17 @@ fn the_graphics_examples_compile_against_their_bindings() {
     // wgpu.frost is generated from a schema that is not in the repository, so
     // a checkout without it can still check the hand-written binding.
     let generated = root.join("examples").join("graphics").join("wgpu.frost");
+    // Every demo, so one that imports `renderer.frost` is among them. The two
+    // that import nothing were the whole list, and a renderer the region check
+    // refused compiled here for as long as nobody named it.
     let examples: &[&str] = if generated.exists() {
-        &["window.frost", "triangle.frost"]
+        &[
+            "window.frost",
+            "triangle.frost",
+            "scene.frost",
+            "spinning.frost",
+            "textured.frost",
+        ]
     } else {
         &["window.frost"]
     };
@@ -16459,28 +16503,37 @@ fn self_hosted_compiles_the_sdl_binding() {
         return;
     };
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let source = root.join("examples").join("graphics").join("window.frost");
-    let emitted = std::env::temp_dir().join("frost_gfxsh_window.c");
-    let run = Command::new(&compiler)
-        .arg("-o")
-        .arg(&emitted)
-        .arg(&source)
-        .current_dir(&root)
-        .output()
-        .unwrap();
-    let _ = std::fs::remove_file(&compiler);
-    assert!(
-        run.status.success(),
-        "the self-hosted compiler refused the SDL binding:
+    // `window.frost` reaches SDL and nothing else. `textured.frost` pulls in the
+    // renderer, the camera, the mesh cache and the wgpu binding, which is the
+    // whole graphics surface and the part a region rule reaches.
+    for example in ["window.frost", "textured.frost"] {
+        let source = root.join("examples").join("graphics").join(example);
+        let emitted =
+            std::env::temp_dir().join(format!("frost_gfxsh_{example}.c"));
+        let run = Command::new(&compiler)
+            .arg("-o")
+            .arg(&emitted)
+            .arg(&source)
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(
+            run.status.success(),
+            "the self-hosted compiler refused {example}:
 {}",
-        String::from_utf8_lossy(&run.stderr)
-    );
-    let emitted_c = std::fs::read_to_string(&emitted).unwrap_or_default();
-    let _ = std::fs::remove_file(&emitted);
-    assert!(
-        emitted_c.contains("SDL_CreateWindow"),
-        "the emitted C does not reach SDL"
-    );
+            String::from_utf8_lossy(&run.stderr)
+        );
+        if example == "window.frost" {
+            let emitted_c =
+                std::fs::read_to_string(&emitted).unwrap_or_default();
+            assert!(
+                emitted_c.contains("SDL_CreateWindow"),
+                "the emitted C does not reach SDL"
+            );
+        }
+        let _ = std::fs::remove_file(&emitted);
+    }
+    let _ = std::fs::remove_file(&compiler);
 }
 
 // Both compilers, run from a working directory that is not the checkout, on a
@@ -18620,6 +18673,24 @@ main :: fn() -> i64 {
          \x20   each(File { fd = 7 }, 5)\n\
          \x20   0\n}\n",
         "7\n5\n",
+    ),
+    // A float converted to an integer narrower than 32 bits. x64 converts a
+    // float to a 32 or 64 bit register and to nothing narrower, so the
+    // conversion has to land in 32 and have its width taken off after. Asking
+    // for the narrow width directly answered 72 for 200 and 32767 for 65535 in
+    // a release build, and tripped an assertion inside the register allocator
+    // in a debug one.
+    (
+        "a_float_converted_to_a_narrow_integer",
+        "main :: fn() -> i64 {\n\
+         \x20   x : f32 = 200.7\n\
+         \x20   print cast($i64, cast($u8, x))\n\
+         \x20   y : f64 = 65535.4\n\
+         \x20   print cast($i64, cast($u16, y))\n\
+         \x20   s : f32 = -40.9\n\
+         \x20   print cast($i64, cast($i8, s))\n\
+         \x20   0\n}\n",
+        "200\n65535\n-40\n",
     ),
 ];
 

@@ -11,7 +11,7 @@ A Frost program is plain data and free functions that transform it. There are no
 
 ## Borrows are parameter modes
 
-Most safe systems languages make you describe how long a reference lives. Frost deletes the question. A borrow is not a type you write, it is what a parameter mode means.
+A borrow is what a parameter mode means, so there is no reference type to write and no lifetime to describe.
 
 ```frost
 wound :: fn(mut e: Entity, amount: i64) { e.hp = e.hp - amount }
@@ -31,11 +31,10 @@ wound :: fn(mut e: Entity, amount: i64) { e.hp = e.hp - amount }
 
 ## A short tour
 
-What Frost has instead of the usual machinery: borrows that are parameter modes,
-a resource the compiler counts, a failure that travels in the signature, a `for`
-with no iterator to implement, a function that answers with two values and no
-tuple type behind them, and literals that leave out a type the context already
-carries while every field keeps its name.
+The tour covers borrows that are parameter modes, a resource the compiler counts,
+a failure that travels in the signature, a `for` that needs no iterator, a
+function that answers with two values, and literals that leave out a type the
+context already carries while every field keeps its name.
 
 <p align="center">
   <img src="docs/book/src/tour.svg" alt="A tour of Frost: parameter modes, a linear resource, a failure set, and the inference in a literal" width="700">
@@ -45,10 +44,10 @@ carries while every field keeps its name.
 frost examples/tour.frost          # compile, link, and run
 ```
 
-That is [`examples/tour.frost`](examples/tour.frost), not prose. A test compiles
-it, checks what it prints, and checks it still matches what is written here.
+That is [`examples/tour.frost`](examples/tour.frost). A test compiles it, checks
+what it prints, and checks it still matches what is written here.
 
-For long-lived data, an `Entity` lives in a pool and is named by a `Handle`, a small copy value rather than a pointer. Freeing a slot raises its generation, so a handle to a reused slot reads as stale rather than reading whatever took its place. The pool is ordinary Frost code, not a runtime, and is generic over element type and capacity. See [`examples/native/game_world.frost`](examples/native/game_world.frost).
+For long-lived data, a value lives in a pool and is named by a `Handle`, a small copy value. Freeing a slot raises its generation, so a handle to a reused slot reads as stale rather than reading whatever took its place. The archetype entity-component system in [`std/ecs.frost`](std/ecs.frost) is built on that, and [`just scene`](docs/book/src/std/ecs.md) runs it: entities in an ECS, two passes, depth deciding what is in front.
 
 ## Documentation
 

@@ -128,7 +128,7 @@ translation so each value carries a real type. Anything outside the supported
 subset fails loudly with a `native backend: ...` error rather than emitting
 incorrect code.
 
-## The C ABI is classified, not assumed
+## The C ABI is classified per target
 
 `src/c_abi.rs` decides how C returns a struct, which is not how Frost returns
 one. Frost returns every aggregate through a hidden out-pointer, uniformly. C

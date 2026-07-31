@@ -1,55 +1,64 @@
-// A small game world: entities in one slab, behaviour as a free function over
-// an enum, and identity as a handle that can be stored in an array and stays
-// checkable after the slot it names is reused.
+// A small game world on the entity-component system: a component is plain data,
+// entities holding the same set of them share a table, and a system walks that
+// table's columns rather than chasing one entity at a time.
 //
-// The slab is the standard library one (std/slab.frost). Only `world[handle]` comes from the
-// compiler, and that is the one thing that has to.
+// An entity is an id and a generation, so a handle kept past a despawn names a
+// generation the slot no longer has and every lookup refuses it.
+//
+// The ECS is the standard library one (std/ecs.frost), written in ordinary
+// Frost.
 
 import "io.frost"
 
-import "slab.frost"
+import "ecs.frost"
 
-Kind :: enum { Hero, Monster { threat: i64 } }
-Entity :: struct { hp: i64, kind: Kind }
-
-threat_of :: fn(e: Entity) -> i64 {
-    match unsafe { e^.kind } {
-        case .Hero: 0
-        case .Monster { threat }: threat
-    }
-}
+Health :: struct { hp: i64 }
+Threat :: struct { level: i64 }
 
 show :: fn(flag: bool) { if (flag) { print_int_line(1) } else { print_int_line(0) } }
 
 main :: fn() -> i64 {
-    mut world : Slab<Entity, 16> = Slab {
-        storage = [Entity { hp = 0, kind = Kind::Hero }; 16],
-        generations = [0; 16],
-        free_list = [0; 16],
-        free_count = 0,
+    mut world := ecs_new()
+    health := ecs_register($Health, world)
+    threat := ecs_register($Threat, world)
+
+    hero := ecs_spawn(world)
+    ecs_add($Health, world, hero, health, Health { hp = 100 })
+
+    ogre := ecs_spawn(world)
+    ecs_add($Health, world, ogre, health, Health { hp = 40 })
+    ecs_add($Threat, world, ogre, threat, Threat { level = 7 })
+
+    imp := ecs_spawn(world)
+    ecs_add($Health, world, imp, health, Health { hp = 60 })
+    ecs_add($Threat, world, imp, threat, Threat { level = 3 })
+
+    // One pass over the threat column of every table that carries one. The
+    // hero has no threat, so no table holding it is visited for him.
+    mut total : i64 = 0
+    mut walk := query_begin(world)
+    query_with(walk, threat)
+    while (query_next(world, walk)) {
+        levels := query_column($Threat, world, walk, threat)
+        mut i : i64 = 0
+        while (i < walk.count) {
+            total = total + levels[i].level
+            i = i + 1
+        }
     }
-    slab_reset($Entity, $16, world)
+    print_int_line(total)  // 10
 
-    // Handles are copy values, so they go in an array like any other scalar.
-    // A reference could not.
-    mut handles : [3]Handle<Entity> = [0; 3]
-    handles[0] = slab_insert($Entity, $16, world, Entity { hp = 100, kind = Kind::Hero })
-    handles[1] = slab_insert($Entity, $16, world,
-        Entity { hp = 40, kind = Kind::Monster { threat = 7 } })
-    handles[2] = slab_insert($Entity, $16, world,
-        Entity { hp = 60, kind = Kind::Monster { threat = 3 } })
+    wounded := ecs_get($Health, world, ogre, health)
+    ecs_set($Health, world, ogre, health, Health { hp = wounded.hp - 15 })
+    print_int_line(ecs_get($Health, world, ogre, health).hp)  // 25
 
-    mut total_threat : i64 = 0
-    for i in 0..3 {
-        total_threat = total_threat + threat_of(world[handles[i]])
-    }
-    print_int_line(total_threat)  // 10
+    // Despawning frees the id and bumps its generation, so the handle held here
+    // stops naming anything.
+    ecs_despawn(world, ogre)
+    show(ecs_alive(world, ogre))   // 0
+    show(ecs_alive(world, hero))   // 1
+    print_int_line(ecs_count(world))  // 2
 
-    world[handles[1]].hp = world[handles[1]].hp - 15
-    print_int_line(world[handles[1]].hp)  // 25
-
-    show(slab_release($Entity, $16, world, handles[1]))
-    show(slab_alive($Entity, $16, world, handles[1]))   // 0
-    show(slab_alive($Entity, $16, world, handles[0]))   // 1
+    ecs_free(world)
     0
 }

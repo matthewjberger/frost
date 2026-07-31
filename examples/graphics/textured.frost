@@ -203,7 +203,7 @@ prepare :: fn(mut world: World, queue: Queue, entities: []Entity,
         values[22] = behaviour.z
         values[23] = behaviour.w
         queue_write_buffer(queue, slots[index].uniform, 0,
-            unsafe { ptr_cast($u8, ptr_to(values[0])) }, OBJECT_BYTES)
+            ptr_to(values[0]), OBJECT_BYTES)
         index = index + 1
     }
 }
@@ -235,7 +235,7 @@ write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, w: i64, h: i64) {
     values[30] = 0.18
     values[31] = 1.0
     queue_write_buffer(queue, uniform, 0,
-        unsafe { ptr_cast($u8, ptr_to(values[0])) }, FRAME_BYTES)
+        ptr_to(values[0]), FRAME_BYTES)
 }
 
 uniform_layout :: fn(device: Device, size: i64) -> BindGroupLayout {
@@ -246,7 +246,7 @@ uniform_layout :: fn(device: Device, size: i64) -> BindGroupLayout {
     entry.buffer.min_binding_size = size
     mut descriptor := bind_group_layout_descriptor_init()
     descriptor.entries_count = 1
-    descriptor.entries = unsafe { ptr_cast($u8, ptr_to(entry)) }
+    descriptor.entries = ptr_to(entry)
     device_create_bind_group_layout(device, ptr_to(descriptor))
 }
 
@@ -263,7 +263,7 @@ surface_layout :: fn(device: Device) -> BindGroupLayout {
     entries[1].sampler.type = SAMPLER_BINDING_TYPE_FILTERING
     mut descriptor := bind_group_layout_descriptor_init()
     descriptor.entries_count = 2
-    descriptor.entries = unsafe { ptr_cast($u8, ptr_to(entries[0])) }
+    descriptor.entries = ptr_to(entries[0])
     device_create_bind_group_layout(device, ptr_to(descriptor))
 }
 
@@ -277,7 +277,7 @@ surface_group :: fn(device: Device, layout: BindGroupLayout,
     mut descriptor := bind_group_descriptor_init()
     descriptor.layout = layout
     descriptor.entries_count = 2
-    descriptor.entries = unsafe { ptr_cast($u8, ptr_to(entries[0])) }
+    descriptor.entries = ptr_to(entries[0])
     device_create_bind_group(device, ptr_to(descriptor))
 }
 
@@ -297,7 +297,7 @@ uniform_group :: fn(device: Device, layout: BindGroupLayout, held: Buffer,
     mut descriptor := bind_group_descriptor_init()
     descriptor.layout = layout
     descriptor.entries_count = 1
-    descriptor.entries = unsafe { ptr_cast($u8, ptr_to(entry)) }
+    descriptor.entries = ptr_to(entry)
     device_create_bind_group(device, ptr_to(descriptor))
 }
 
@@ -307,7 +307,7 @@ make_pipeline :: fn(device: Device, format: u32,
     wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
     wgsl.code = StringView { data = SHADER, length = str_len(SHADER) }
     mut module_descriptor := shader_module_descriptor_init()
-    module_descriptor.next_in_chain = unsafe { ptr_cast($u8, ptr_to(wgsl)) }
+    module_descriptor.next_in_chain = ptr_to(wgsl)
     shader := device_create_shader_module(device, ptr_to(module_descriptor))
 
     mut attributes : [3]VertexAttribute = [vertex_attribute_init(); 3]
@@ -325,7 +325,7 @@ make_pipeline :: fn(device: Device, format: u32,
     buffer_layout.array_stride = VERTEX_STRIDE
     buffer_layout.step_mode = VERTEX_STEP_MODE_VERTEX
     buffer_layout.attributes_count = 3
-    buffer_layout.attributes = unsafe { ptr_cast($u8, ptr_to(attributes[0])) }
+    buffer_layout.attributes = ptr_to(attributes[0])
 
     mut target := color_target_state_init()
     target.format = format
@@ -335,7 +335,7 @@ make_pipeline :: fn(device: Device, format: u32,
     fragment.module = shader
     fragment.entry_point = StringView { data = "fs_main", length = 7 }
     fragment.targets_count = 1
-    fragment.targets = unsafe { ptr_cast($u8, ptr_to(target)) }
+    fragment.targets = ptr_to(target)
 
     mut depth := depth_stencil_state_init()
     depth.format = DEPTH_FORMAT
@@ -347,14 +347,14 @@ make_pipeline :: fn(device: Device, format: u32,
     descriptor.vertex.module = shader
     descriptor.vertex.entry_point = StringView { data = "vs_main", length = 7 }
     descriptor.vertex.buffers_count = 1
-    descriptor.vertex.buffers = unsafe { ptr_cast($u8, ptr_to(buffer_layout)) }
+    descriptor.vertex.buffers = ptr_to(buffer_layout)
     descriptor.primitive.topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
     descriptor.primitive.front_face = FRONT_FACE_CCW
     descriptor.primitive.cull_mode = CULL_MODE_BACK
     descriptor.multisample.count = 1
     descriptor.multisample.mask = 4294967295
     descriptor.depth_stencil = ptr_to(depth)
-    descriptor.fragment = unsafe { ptr_cast($u8, ptr_to(fragment)) }
+    descriptor.fragment = ptr_to(fragment)
     device_create_render_pipeline(device, ptr_to(descriptor))
 }
 
@@ -456,7 +456,7 @@ main :: fn() -> i64 {
     mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 3
     pipeline_layout_descriptor.bind_group_layouts =
-        unsafe { ptr_cast($u8, ptr_to(layouts[0])) }
+        ptr_to(layouts[0])
     pipeline_layout := device_create_pipeline_layout(device,
         ptr_to(pipeline_layout_descriptor))
 
@@ -531,7 +531,7 @@ main :: fn() -> i64 {
     }
     mut passes : [1]Pass = [
         Pass { name = "scene", draw = draw_scene,
-            state = unsafe { ptr_cast($u8, ptr_to(scene)) } },
+            state = ptr_to(scene) },
     ]
 
     mut eye := camera_default()

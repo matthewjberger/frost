@@ -1,7 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::Result;
-
 use crate::parser::{
     Block, Diagnostic, Expression, Literal, Statement, StructField,
 };
@@ -39,34 +37,21 @@ use crate::{Position, Spanned};
 // The walks below list every statement and expression form rather than ending in
 // a wildcard. A form nobody handled is a compile error here instead of a hole
 // nobody sees until a program reaches through it. `print` was that hole.
-pub fn check_unsafety(statements: &[Spanned<Statement>]) -> Result<()> {
-    let diagnostics = check_unsafety_recovering(statements);
-    if diagnostics.is_empty() {
-        return Ok(());
-    }
-    Err(anyhow::anyhow!(crate::flatten(&diagnostics, "\n")))
-}
-
-/// Walk the whole program, reporting every operation that belongs in an
-/// `unsafe` block rather than stopping at the first. Each refusal is
-/// independent of the others, so one does not colour what follows it.
-pub fn check_unsafety_recovering(
+/// One walk, both answers: the operations that must sit inside an `unsafe`
+/// block, and the blocks holding none. Marking a block as vouched-for costs a
+/// bool per block and changes no refusal, so a build gets the second answer for
+/// what the first already costs.
+///
+/// A block that vouches for nothing is a warning rather than a refusal. The
+/// program is correct; the block is a place a reader will look for a danger
+/// that is not there, and the list of blocks is worth what it is because
+/// everything on it earns its place.
+pub fn check_unsafety_and_audit(
     statements: &[Spanned<Statement>],
-) -> Vec<Diagnostic> {
-    walk_unsafety(statements, false)
-}
-
-/// The same walk, also reporting a block that vouches for nothing: one holding
-/// no unchecked operation, and one written inside another, which already
-/// covers it. This is off unless asked for, because a build should pay for the
-/// checks that keep a program correct and not for the ones that keep it tidy.
-pub fn audit_unsafe_blocks(
-    statements: &[Spanned<Statement>],
-) -> Vec<Diagnostic> {
+) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
     walk_unsafety(statements, true)
         .into_iter()
-        .filter(|d| d.message.starts_with("this `unsafe`"))
-        .collect()
+        .partition(|d| !d.message.starts_with("this `unsafe`"))
 }
 
 fn walk_unsafety(

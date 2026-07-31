@@ -961,10 +961,49 @@ impl Display for Expression {
     }
 }
 
+/// A float written as its bits. An interface has to mean the same thing written
+/// down as it does in memory, and a decimal is only lossless where both ends
+/// round correctly: `PITCH_LIMIT :: 1.5607963267948966` came back one unit in
+/// the last place lighter, which made a module's own interface disagree with
+/// its source. The bits carry no such question.
+mod double_bits {
+    pub fn serialize<S: serde::Serializer>(
+        value: &f64,
+        writer: S,
+    ) -> Result<S::Ok, S::Error> {
+        writer.serialize_u64(value.to_bits())
+    }
+
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+        reader: D,
+    ) -> Result<f64, D::Error> {
+        let bits: u64 = serde::Deserialize::deserialize(reader)?;
+        Ok(f64::from_bits(bits))
+    }
+}
+
+mod single_bits {
+    pub fn serialize<S: serde::Serializer>(
+        value: &f32,
+        writer: S,
+    ) -> Result<S::Ok, S::Error> {
+        writer.serialize_u32(value.to_bits())
+    }
+
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
+        reader: D,
+    ) -> Result<f32, D::Error> {
+        let bits: u32 = serde::Deserialize::deserialize(reader)?;
+        Ok(f32::from_bits(bits))
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize, Debug, PartialEq, Clone)]
 pub enum Literal {
     Integer(i64),
+    #[serde(with = "double_bits")]
     Float(f64),
+    #[serde(with = "single_bits")]
     Float32(f32),
     Boolean(bool),
     String(String),

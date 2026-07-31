@@ -22,6 +22,7 @@ export Vec2d, Vec3d, Vec4d, Mat4d, Quatd,
     mat4d_zero, mat4d_identity, mat4d_mul, mat4d_mul_vec4,
     mat4d_translation, mat4d_scale, mat4d_rotation_x, mat4d_rotation_y,
     mat4d_rotation_z, mat4d_perspective, mat4d_perspective_zo, mat4d_ortho,
+    mat4d_ortho_zo,
     mat4d_look_at,
     mat4d_transform_point, mat4d_transform_dir,
     quatd_identity, quatd_from_axis_angle, quatd_mul, quatd_length,
@@ -274,6 +275,22 @@ mat4d_ortho :: fn(left: f64, right: f64, bottom: f64, top: f64,
     out.m[12] = -(right + left) / (right - left)
     out.m[13] = -(top + bottom) / (top - bottom)
     out.m[14] = -(far + near) / (far - near)
+    out
+}
+
+// The same box with the depth range [0, 1] rather than [-1, 1], which is what
+// Direct3D, Metal, Vulkan and WebGPU take. A directional light's shadow
+// projection built with the other one puts half its range behind the near
+// plane, and the picture comes out uniformly lit or uniformly dark.
+mat4d_ortho_zo :: fn(left: f64, right: f64, bottom: f64, top: f64,
+    near: f64, far: f64) -> Mat4d {
+    mut out := mat4d_identity()
+    out.m[0] = 2.0 / (right - left)
+    out.m[5] = 2.0 / (top - bottom)
+    out.m[10] = -1.0 / (far - near)
+    out.m[12] = -(right + left) / (right - left)
+    out.m[13] = -(top + bottom) / (top - bottom)
+    out.m[14] = -near / (far - near)
     out
 }
 
@@ -589,6 +606,40 @@ test "ortho maps its box onto clip space" {
     assert(near(at_near.z, -1.0))
     at_far := mat4d_transform_point(box, vec3d(0.0, 0.0, -11.0))
     assert(near(at_far.z, 1.0))
+}
+
+test "ortho zo puts the near plane at zero and the far plane at one" {
+    box := mat4d_ortho_zo(-2.0, 2.0, -1.0, 1.0, 1.0, 11.0)
+    at_near := mat4d_transform_point(box, vec3d(0.0, 0.0, -1.0))
+    assert(near(at_near.z, 0.0))
+    at_far := mat4d_transform_point(box, vec3d(0.0, 0.0, -11.0))
+    assert(near(at_far.z, 1.0))
+    middle := mat4d_transform_point(box, vec3d(0.0, 0.0, -6.0))
+    assert(near(middle.z, 0.5))
+}
+
+test "ortho zo maps x and y the way ortho does" {
+    box := mat4d_ortho_zo(-2.0, 2.0, -1.0, 1.0, 1.0, 11.0)
+    left := mat4d_transform_point(box, vec3d(-2.0, 0.0, -1.0))
+    assert(near(left.x, -1.0))
+    right := mat4d_transform_point(box, vec3d(2.0, 0.0, -1.0))
+    assert(near(right.x, 1.0))
+    top := mat4d_transform_point(box, vec3d(0.0, 1.0, -1.0))
+    assert(near(top.y, 1.0))
+    bottom := mat4d_transform_point(box, vec3d(0.0, -1.0, -1.0))
+    assert(near(bottom.y, -1.0))
+}
+
+test "an off centre ortho zo box lands on the middle of clip space" {
+    box := mat4d_ortho_zo(0.0, 8.0, 0.0, 4.0, 0.5, 20.5)
+    centre := mat4d_transform_point(box, vec3d(4.0, 2.0, -0.5))
+    assert(near(centre.x, 0.0))
+    assert(near(centre.y, 0.0))
+    assert(near(centre.z, 0.0))
+    far_corner := mat4d_transform_point(box, vec3d(8.0, 4.0, -20.5))
+    assert(near(far_corner.x, 1.0))
+    assert(near(far_corner.y, 1.0))
+    assert(near(far_corner.z, 1.0))
 }
 
 test "look at puts the camera where it says" {

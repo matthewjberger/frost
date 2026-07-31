@@ -2,42 +2,38 @@
 
 ## What is left
 
-**A container of resources is checked at both ends now, except where it is
-freed.** Handing one out is refused: a function may answer with a resource out
-of a borrowed parameter only where the place can be named by a run of fields,
-which is what a caller can be told about, so `vec_get<File>` no longer compiles.
-Dropping one is refused by a bound: `is_linear` joined the `where` vocabulary,
-so a function that must not take a resource can say so, and the library
-functions that would overwrite or forget an element hold themselves to elements
-that are not resources. `vec_get`, `vec_set`, `vec_clear`, `map_put`, `map_get`,
-`map_clear`, `option_is_some` and `option_unwrap_or` all carry the bound.
-`map_get` stays a defaulting read for plain values rather than growing a second
-fallible-accessor convention beside the sentinels the containers already use:
-presence is `map_has`.
+**A container of resources is checked where it hands an element out and where
+it drops one. The free is what remains.** A function may answer with a resource
+out of a borrowed parameter where the place is a run of fields, which is what a
+caller can be told about, so `vec_get<File>` now fails to compile. `is_linear`
+joined the `where` vocabulary, so a function that would overwrite or forget an
+element holds itself to plain elements: `vec_get`, `vec_set`, `vec_clear`,
+`map_put`, `map_get`, `map_clear`, `option_is_some` and `option_unwrap_or` all
+carry the bound. `map_get` stays a defaulting read for plain values, and
+presence is `map_has`, so the containers keep the one sentinel convention they
+already had.
 
-What is left is `vec_free` and `map_free`. They release the storage and nothing
-consumes the elements, and they cannot carry the bound: `Vec<T>` and
-`Map<K, V>` are themselves resources, so the free is the only thing that
-consumes one, and a bound there would leave a container of resources with no way
-to be discharged at all. A slot is reached by a number worked out while the
-program runs, so there is no place a check could name to say the elements were
-consumed. Doing it before the block goes is the caller's obligation, and
-`std/ecs.frost` is what that looks like: a `Vec<Table>` where `Table` is a
-resource, released one element at a time through a `ref` borrow before the
-storage goes. The shape is writable, it is written, and it is not checked.
+`vec_free` and `map_free` release the storage while the elements go unconsumed.
+A bound would make them unusable: `Vec<T>` and `Map<K, V>` are resources
+themselves, so the free is the only thing that consumes one. A slot is reached
+by a number worked out while the program runs, so the check has no place to name
+when it asks whether the elements went. Consuming them before the block goes is
+the caller's obligation. `std/ecs.frost` shows the discipline: a `Vec<Table>`
+where `Table` is a resource, released one element at a time through a `ref`
+borrow before the storage goes. That shape is writable, it is written, and it
+is unchecked.
 
-The pool rule refuses `Slab<File>` outright for the same shape, which it can
-because a pool is recognized by its declaration rather than by a call.
+The pool rule refuses `Slab<File>` outright for the same shape, because a pool
+is recognized by its declaration.
 
-What a type holds is read from the types a program *forms* rather than the ones
-it spells out. A call that answers with an instantiation makes one without
-anyone writing its name, so `held := option_some($File, ...)` used to leave
-`Option<File>` ordinary data and the obligation on the resource inside it went
-in and did not come out. Three things had to be true together: the ownership
-pass types a call as the callee's return type with that call's own type
-arguments put in, a variant's payload is held by its enum the way a field is
-held by its struct, and the walk runs over the instantiations specialization
-forms rather than over the source alone.
+What a type holds is read from the types a program *forms*. A call that answers
+with an instantiation makes one while the source spells out no name for it, so
+`held := option_some($File, ...)` used to leave `Option<File>` ordinary data and
+the obligation on the resource inside it went in and stayed there. Three things
+had to be true together: the ownership pass types a call as the callee's return
+type with that call's own type arguments put in, a variant's payload is held by
+its enum the way a field is held by its struct, and the walk runs over the
+instantiations specialization forms.
 
 **An instance nobody asked for is still type-checked, and one of them cannot
 be.** The self-hosted compiler offers every recorded type-argument tuple to
@@ -51,23 +47,31 @@ std/option.frost: case .Some { value }: value
     assigning a value of the wrong type: the place is a 'i64' and the value is a 'File'
 ```
 
-So an `Option` holding a resource cannot be used at all under the self-hosted
-compiler, correctly consumed or not, while the bootstrap takes it. The bound on
-`option_unwrap_or` does not prevent this: a `where` clause is read at a call, and
-this instance has no call to read it at. Closing it means an instance being made
-only where something asks for it, which is the same question `instance_was_called`
-answers for the hand-out rule, and it runs into the -1 owner wildcard that lets a
-tuple recorded inside one generic reach another.
+So the self-hosted compiler refuses every program that puts a resource in an
+`Option`, including the ones that consume it correctly, while the bootstrap
+takes them. The bound on `option_unwrap_or` leaves this alone, since a `where`
+clause is read at a call and this instance has no call to read it at. Closing it
+means making an instance only where something asks for one, which is the
+question `instance_was_called` answers for the hand-out rule, and it runs into
+the -1 owner wildcard that lets a tuple recorded inside one generic reach
+another.
 
-The wgpu binding is generated with a safe wrapper per call now, so a program
-that draws a triangle writes no `unsafe` of its own for the graphics API: the
-perimeter is one generated file. What is left there is the same shape as the
-compiler's byte access, a perimeter rather than a proof, since a descriptor is
-a pointer C reads without checking.
+The wgpu binding is generated with a safe wrapper per call, so the 325 `unsafe`
+blocks in `examples/graphics/wgpu.frost` are the whole of the FFI perimeter for
+the calls themselves. Two patterns still leave `unsafe` in the caller, and
+`examples/graphics/triangle.frost` writes 21 blocks between them: an async
+request hands its result to a callback through a `userdata` pointer the caller
+casts back with `ptr_cast`, and a descriptor chain is a `^u8` that C walks. Both
+are the same shape as the compiler's byte access, a perimeter rather than a
+proof.
 
-Everything else this document was opened for is built. The two compilers accept
-the same language, and what says so is a suite of programs run through both
-rather than a claim. See [the self-hosted compiler](impl/self-hosted.md).
+Every `unsafe` block in the tree earns itself, and the compiler says so: a block
+holding no unchecked operation is a warning on every build, and `--audit-unsafe`
+turns that warning into a failure.
+
+Everything else this document was opened for is built. A suite of programs run
+through both compilers is what says they accept the same language. See [the
+self-hosted compiler](impl/self-hosted.md).
 
 ## The speed promise, and how to check it
 
@@ -107,7 +111,7 @@ The six pieces that took it there:
    graph, because the answer is already in hand. The C runtime is cached the
    same way, being a compilation unit like any other.
 3. **`--incremental`**, which produces byte for byte the compiler the
-   whole-program build produces. A test checks that rather than a claim.
+   whole-program build produces. A test checks that.
 4. **Both backends split.** The C backend emits one unit per module too. It
    differs from the assembly case in exactly two ways, and they were the whole
    of the work: a C unit cannot call what it has not seen, so every unit carries

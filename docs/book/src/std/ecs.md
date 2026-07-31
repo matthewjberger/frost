@@ -28,7 +28,9 @@ main :: fn() -> i64 {
     ecs_add($Position, world, ship, position, Position { x = 0.0, y = 0.0 })
     ecs_add($Velocity, world, ship, velocity, Velocity { x = 1.0, y = 0.5 })
 
-    mut q := query_begin(world, position | velocity)
+    mut q := query_begin(world)
+    query_with(q, position)
+    query_with(q, velocity)
     while (query_next(world, q)) {
         mut p := query_column($Position, world, q, position)
         v := query_column($Velocity, world, q, velocity)

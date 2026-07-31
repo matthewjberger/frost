@@ -140,7 +140,7 @@ prepare :: fn(mut world: World, queue: Queue, entities: []Entity,
             mat4_rotation_y(turn.angle))
         mut mvp := mat4_mul(view_projection, model)
         queue_write_buffer(queue, slots[index].uniform, 0,
-            unsafe { ptr_cast($u8, ptr_to(mvp.m[0])) }, UNIFORM_BYTES)
+            ptr_to(mvp.m[0]), UNIFORM_BYTES)
         index = index + 1
     }
 }
@@ -151,7 +151,7 @@ make_pipeline :: fn(device: Device, format: u32,
     wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
     wgsl.code = StringView { data = SHADER, length = str_len(SHADER) }
     mut module_descriptor := shader_module_descriptor_init()
-    module_descriptor.next_in_chain = unsafe { ptr_cast($u8, ptr_to(wgsl)) }
+    module_descriptor.next_in_chain = ptr_to(wgsl)
     shader := device_create_shader_module(device, ptr_to(module_descriptor))
 
     mut attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
@@ -166,7 +166,7 @@ make_pipeline :: fn(device: Device, format: u32,
     buffer_layout.array_stride = 32
     buffer_layout.step_mode = VERTEX_STEP_MODE_VERTEX
     buffer_layout.attributes_count = 2
-    buffer_layout.attributes = unsafe { ptr_cast($u8, ptr_to(attributes[0])) }
+    buffer_layout.attributes = ptr_to(attributes[0])
 
     mut target := color_target_state_init()
     target.format = format
@@ -176,7 +176,7 @@ make_pipeline :: fn(device: Device, format: u32,
     fragment.module = shader
     fragment.entry_point = StringView { data = "fs_main", length = 7 }
     fragment.targets_count = 1
-    fragment.targets = unsafe { ptr_cast($u8, ptr_to(target)) }
+    fragment.targets = ptr_to(target)
 
     // Depth on: write it, and keep the fragment only where it is nearer than
     // what is already there.
@@ -190,14 +190,14 @@ make_pipeline :: fn(device: Device, format: u32,
     descriptor.vertex.module = shader
     descriptor.vertex.entry_point = StringView { data = "vs_main", length = 7 }
     descriptor.vertex.buffers_count = 1
-    descriptor.vertex.buffers = unsafe { ptr_cast($u8, ptr_to(buffer_layout)) }
+    descriptor.vertex.buffers = ptr_to(buffer_layout)
     descriptor.primitive.topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
     descriptor.primitive.front_face = FRONT_FACE_CCW
     descriptor.primitive.cull_mode = CULL_MODE_NONE
     descriptor.multisample.count = 1
     descriptor.multisample.mask = 4294967295
     descriptor.depth_stencil = ptr_to(depth)
-    descriptor.fragment = unsafe { ptr_cast($u8, ptr_to(fragment)) }
+    descriptor.fragment = ptr_to(fragment)
     device_create_render_pipeline(device, ptr_to(descriptor))
 }
 
@@ -230,7 +230,7 @@ main :: fn() -> i64 {
     vertex_descriptor.size = VERTEX_BYTES
     vertex_buffer := device_create_buffer(device, ptr_to(vertex_descriptor))
     queue_write_buffer(queue, vertex_buffer, 0,
-        unsafe { ptr_cast($u8, ptr_to(vertices[0])) }, VERTEX_BYTES)
+        ptr_to(vertices[0]), VERTEX_BYTES)
 
     mut layout_entry := bind_group_layout_entry_init()
     layout_entry.binding = 0
@@ -240,14 +240,14 @@ main :: fn() -> i64 {
     mut group_layout_descriptor := bind_group_layout_descriptor_init()
     group_layout_descriptor.entries_count = 1
     group_layout_descriptor.entries =
-        unsafe { ptr_cast($u8, ptr_to(layout_entry)) }
+        ptr_to(layout_entry)
     group_layout := device_create_bind_group_layout(device,
         ptr_to(group_layout_descriptor))
 
     mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
     pipeline_layout_descriptor.bind_group_layouts_count = 1
     pipeline_layout_descriptor.bind_group_layouts =
-        unsafe { ptr_cast($u8, ptr_to(group_layout)) }
+        ptr_to(group_layout)
     pipeline_layout := device_create_pipeline_layout(device,
         ptr_to(pipeline_layout_descriptor))
 
@@ -290,7 +290,7 @@ main :: fn() -> i64 {
         group_descriptor.layout = group_layout
         group_descriptor.entries_count = 1
         group_descriptor.entries =
-            unsafe { ptr_cast($u8, ptr_to(group_entry)) }
+            ptr_to(group_entry)
         slots[made] = Slot { uniform = uniform,
             group = device_create_bind_group(device, ptr_to(group_descriptor)),
             near = nears[made] }
@@ -308,9 +308,9 @@ main :: fn() -> i64 {
     // what the first wrote.
     mut passes : [2]Pass = [
         Pass { name = "near", draw = draw_layer,
-            state = unsafe { ptr_cast($u8, ptr_to(near_scene)) } },
+            state = ptr_to(near_scene) },
         Pass { name = "far", draw = draw_layer,
-            state = unsafe { ptr_cast($u8, ptr_to(far_scene)) } },
+            state = ptr_to(far_scene) },
     ]
 
     while (platform_poll(p)) {

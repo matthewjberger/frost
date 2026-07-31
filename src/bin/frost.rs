@@ -12,10 +12,10 @@ use frost::{
     RunOutcome, SearchRoot, Spanned, Statement, TEST_PREFIX, Type,
     build_module, build_module_per_module, check_callback_declarations,
     check_frame_escapes, check_linearity, check_module, check_ownership,
-    check_regions, check_unsafety, compile_ir_to_object, emit_c,
-    lower_allocation_sources, lower_failure_sets, lower_multiple_returns,
-    lower_param_modes, register_entry_file, resolve_distinct_types,
-    resolve_imports_cached, run_module, strip_unsafe_fns,
+    check_regions, compile_ir_to_object, emit_c, lower_allocation_sources,
+    lower_failure_sets, lower_multiple_returns, lower_param_modes,
+    register_entry_file, resolve_distinct_types, resolve_imports_cached,
+    run_module, strip_unsafe_fns,
 };
 
 #[derive(Parser)]
@@ -62,7 +62,7 @@ struct Cli {
 
     #[arg(
         long,
-        help = "Also report every `unsafe` block that vouches for nothing. Off by default: a build pays for the checks that keep a program correct, not for the ones that keep it tidy"
+        help = "Fail the build when an `unsafe` block vouches for nothing. Every build warns about one; this is what holds a tree to zero of them"
     )]
     audit_unsafe: bool,
 
@@ -427,24 +427,27 @@ fn compile() -> Result<()> {
         });
     }
     check_callback_declarations(&statements).context("Callback error")?;
-    check_unsafety(&statements).context("Unsafe operation error")?;
-    if cli.audit_unsafe {
-        let held = frost::audit_unsafe_blocks(&statements);
-        if !held.is_empty() {
-            let listed: Vec<String> = held
-                .iter()
-                .map(|d| format!("at {}: {}", d.position.describe(), d.message))
-                .collect();
-            anyhow::bail!(
-                "Unsafe audit
-
-{}",
-                listed.join(
-                    "
-"
-                )
-            );
-        }
+    let (unchecked, idle) = frost::check_unsafety_and_audit(&statements);
+    if !unchecked.is_empty() {
+        let listed: Vec<String> = unchecked
+            .iter()
+            .map(|d| format!("at {}: {}", d.position.describe(), d.message))
+            .collect();
+        return Err(anyhow::anyhow!(listed.join("\n")))
+            .context("Unsafe operation error");
+    }
+    // A block holding nothing unchecked is reported on every build, since the
+    // list of `unsafe` blocks is only worth reading while every one of them
+    // earns its place. `--audit-unsafe` turns the report into a failure, which
+    // is what holds a tree to it.
+    for held in &idle {
+        eprintln!("warning: at {}: {}", held.position.describe(), held.message);
+    }
+    if cli.audit_unsafe && !idle.is_empty() {
+        anyhow::bail!(
+            "Unsafe audit: {} block(s) vouch for nothing",
+            idle.len()
+        );
     }
     // `unsafe fn` is only meaningful to the unsafety check. Strip it to the
     // plain function it wraps before any later pass or backend sees one.

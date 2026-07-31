@@ -268,7 +268,7 @@ shaped this way.
 Option :: enum($T: Type) { None, Some { value: T } }
 ```
 
-An ordinary generic enum, with nothing special about it, which is the point.
+An ordinary generic enum, written in Frost like the rest of the library.
 There is no null and no built-in optional type. The language grew generic enums
 so that this could be written in Frost rather than built into the compiler, and
 the whole module is the declaration above plus four functions over it.

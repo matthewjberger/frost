@@ -39,7 +39,7 @@ export Renderer, Frame, Pass, Target,
     renderer_begin, renderer_end, renderer_run,
     renderer_device, renderer_queue, renderer_format, renderer_depth_format,
     frame_ok, frame_encoder, frame_view, frame_pass, frame_pass_into,
-    frame_target, target_of, no_depth,
+    frame_target, target_of, no_view,
     DEPTH_FORMAT, no_pointer
 
 no_pointer :: fn() -> ^u8 {
@@ -160,7 +160,7 @@ renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
     source.chain.stype = S_TYPE_SURFACE_SOURCE_WINDOWS_HWND
     source.hwnd = hwnd
     mut descriptor := surface_descriptor_init()
-    descriptor.next_in_chain = unsafe { ptr_cast($u8, ptr_to(source)) }
+    descriptor.next_in_chain = ptr_to(source)
     r.surface = instance_create_surface(r.instance, ptr_to(descriptor))
 
     // The adapter is chosen knowing the surface it will draw to. Choosing it
@@ -171,7 +171,7 @@ renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
         next_in_chain = no_pointer(),
         mode = CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
         callback = take_adapter,
-        userdata1 = unsafe { ptr_cast($u8, ptr_to(adapter_slot)) },
+        userdata1 = ptr_to(adapter_slot),
         userdata2 = no_pointer(),
     }
     mut options := request_adapter_options_init()
@@ -188,7 +188,7 @@ renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
         next_in_chain = no_pointer(),
         mode = CALLBACK_MODE_ALLOW_PROCESS_EVENTS,
         callback = take_device,
-        userdata1 = unsafe { ptr_cast($u8, ptr_to(device_slot)) },
+        userdata1 = ptr_to(device_slot),
         userdata2 = no_pointer(),
     }
     adapter_request_device(r.adapter, no_pointer(), ptr_to(device_info))
@@ -295,14 +295,15 @@ Target :: struct {
 }
 
 // A target naming views a caller made, for a pass drawing somewhere other than
-// the window. `no_depth()` where a pass needs no depth buffer.
+// the window. `no_view()` fills the slot a pass does not use, which is the
+// colour slot for a depth-only pass and the depth slot for one that needs none.
 target_of :: fn(color: TextureView, depth: TextureView, has_color: bool,
     has_depth: bool) -> Target {
     Target { color = color, depth = depth, has_color = has_color,
         has_depth = has_depth }
 }
 
-no_depth :: fn() -> TextureView { no_texture_view() }
+no_view :: fn() -> TextureView { no_texture_view() }
 
 // The frame's own: the surface texture this frame acquired, and the depth
 // buffer beside it.
@@ -342,7 +343,7 @@ frame_pass_into :: fn(mut f: Frame, into: Target, load: u32, clear: Color,
     if (into.has_color) {
         descriptor.color_attachments_count = 1
         descriptor.color_attachments =
-            unsafe { ptr_cast($u8, ptr_to(attachment)) }
+            ptr_to(attachment)
     }
     if (into.has_depth) {
         descriptor.depth_stencil_attachment = ptr_to(depth)
