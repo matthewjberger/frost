@@ -64,7 +64,7 @@ export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     mask_without_mask,
     world_clear,
     query_changed, query_added,
-    ecs_resource_register, ecs_resource, ecs_resource_set,
+    ecs_resource_register, ecs_resource, ecs_resource_ref, ecs_resource_set,
     ecs_resource_slice,
     ecs_log_enable, ecs_log, ecs_log_clear,
     ChangeKind,
@@ -1293,7 +1293,48 @@ ecs_resource :: fn($T: Type, world: World, slot: i64) -> $T {
     ecs_resource_slice($T, world, slot)[0]
 }
 
-ecs_resource_set :: fn($T: Type, mut world: World, slot: i64, value: $T) {
+// The resource where it lives, rather than a copy of it. A resource holding a
+// linear value cannot be read by the one above: what comes back owns what it
+// holds, so a system that only wanted to look at it is left holding a second
+// `Vec` to free. A borrow reads it in place and owns nothing, which is what a
+// system asking about the world wants and the only way to reach a resource
+// that holds a resource.
+//
+//     ref held := ecs_resource_ref($Tree, world, slot)
+//     print hierarchy_child_count(held.tree, parent)
+ecs_resource_ref :: fn($T: Type, world: World, slot: i64) -> ref T {
+    held := ecs_resource_slice($T, world, slot)
+    ref result := held[0]
+    result
+}
+
+test "a resource that holds a resource is read where it lives" {
+    mut world := ecs_new()
+    slot := ecs_resource_register($Hierarchy, world)
+    mut tree := hierarchy_new()
+    parent := ecs_spawn(world)
+    child := ecs_spawn(world)
+    hierarchy_attach(tree, child, parent)
+    ecs_resource_set($Hierarchy, world, slot, tree)
+    // Read by borrow, so nothing here owns the vectors inside it and the
+    // question is asked of the one the world holds. The owning read cannot do
+    // this: what it answers with has to be consumed, and a system that only
+    // means to look would be left holding vectors to free.
+    kept := ecs_resource_ref($Hierarchy, world, slot)
+    assert(hierarchy_child_count(kept, parent) == 1)
+    assert(is_no_entity(hierarchy_parent(kept, child)) == false)
+    // Taken by value at the end, which is what the owning read is for: this
+    // one means to release it.
+    giving := ecs_resource($Hierarchy, world, slot)
+    hierarchy_free(giving)
+    ecs_free(world)
+}
+
+// Handing a value to the world, which is what setting a resource is: the world
+// holds it from here, so the name that held it does not. `move` is what says so
+// for a resource that has to be released, and for one that does not it means
+// what it always meant.
+ecs_resource_set :: fn($T: Type, mut world: World, slot: i64, move value: $T) {
     mut held := ecs_resource_slice($T, world, slot)
     held[0] = value
     ref column := vec_slice($Column, world.resources)[slot]

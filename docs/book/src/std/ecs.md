@@ -193,6 +193,33 @@ mut place := ecs_resource_slice($Time, world, time)
 place[0].frame = place[0].frame + 1
 ```
 
+Setting a resource hands it to the world, so the value moves: a resource that
+has to be released is the world's from there, and the name that held it does not
+have to release it.
+
+Reading one back has two shapes, and which to reach for follows from that. The
+owning read answers with the value, which is what a caller taking it back to
+release it wants. A resource holding something linear cannot be read that way by
+anyone else: what comes back owns what it holds, so a system that only meant to
+look at a `Hierarchy` would be left with vectors to free. `ecs_resource_ref`
+answers with a borrow, reading it where it lives and owning nothing.
+
+```frost
+tree := ecs_resource_register($Hierarchy, world)
+ecs_resource_set($Hierarchy, world, tree, hierarchy_new())
+
+held := ecs_resource_ref($Hierarchy, world, tree)   // look at it
+print hierarchy_child_count(held, parent)
+
+giving := ecs_resource($Hierarchy, world, tree)     // take it back
+hierarchy_free(giving)
+```
+
+This is what a system reaches a resource through. A system is a
+`fn(mut World)` and captures nothing, so everything it works on is a component
+or a resource, and the borrowing read is the only way one of them holds
+something the world is responsible for.
+
 ## Events
 
 A channel one system writes and another reads. Events live in a column, so
