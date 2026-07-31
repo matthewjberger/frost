@@ -16589,7 +16589,7 @@ fn the_render_graph_orders_its_passes() {
             .unwrap();
         let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
         assert!(
-            output.contains("20 passed, 0 failed"),
+            output.contains("21 passed, 0 failed"),
             "the render graph's own tests did not pass (emit_c: {emit_c}):\n{output}{}",
             String::from_utf8_lossy(&run.stderr)
         );
