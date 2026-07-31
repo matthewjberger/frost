@@ -17,6 +17,7 @@ export append_node, array_element, array_index_of, array_length, array_of,
     report_type_name, report_distinct_note, written_number,
     intern_global, is_aggregate, is_array_ty, is_const, is_float, is_main_name,
     is_borrow, is_pointer, is_proc, is_raw_pointer, is_slab_ty, is_slice_ty,
+    is_indirect, pointer_to, borrow_of,
     is_integer,
     is_columns_ty, columns_lookup, is_columns_new_call, field_type_by_range,
     is_columns_bookkeeping,
@@ -812,7 +813,7 @@ report_type_name :: fn(mut p: Parser, ty: i64) {
     if (held == TY_HANDLE) { report("Handle") return }
     if (is_pointer(held)) {
         report("^")
-        report_type_name(p, pointee(held))
+        report_type_name(p, pointee(p, held))
         return
     }
     if (is_array_ty(held)) {
@@ -891,7 +892,7 @@ write_type_name :: fn(mut p: Parser, ty: i64) {
     if (held == TY_HANDLE) { synth_bytes(p, "Handle") return }
     if (is_pointer(held)) {
         synth_bytes(p, "^")
-        write_type_name(p, pointee(held))
+        write_type_name(p, pointee(p, held))
         return
     }
     if (is_array_ty(held)) {
@@ -943,18 +944,68 @@ written_number :: fn(mut p: Parser, value: i64) -> bool {
 // away before it is a type, and a function pointer emits its own declarator.
 is_pointer :: fn(ty: i64) -> bool {
     held := distinct_repr(ty)
+    if (is_indirect(held)) {
+        return true
+    }
     held >= POINTER_BASE && held < CONST_BASE
 }
 
-// A borrow carries the flag. A raw pointer is indirect without it.
+// A borrow carries the flag. A raw pointer is indirect without it. An
+// indirection over a distinct type carries the same difference in the low bit
+// of its code, so this answers for one without reading the table.
 is_borrow :: fn(ty: i64) -> bool {
     held := distinct_repr(ty)
+    if (is_indirect(held)) {
+        return (held - INDIRECT_BASE) % 2 == 1
+    }
     held >= BORROW_FLAG && held < CONST_BASE
 }
 
 is_raw_pointer :: fn(ty: i64) -> bool {
     held := distinct_repr(ty)
+    if (is_indirect(held)) {
+        return (held - INDIRECT_BASE) % 2 == 0
+    }
     held >= POINTER_BASE && held < BORROW_FLAG
+}
+
+// Whether the code names an indirection over a distinct type, which is the one
+// shape that is looked up rather than added. See `Indirect` in core.frost.
+is_indirect :: fn(ty: i64) -> bool {
+    ty >= INDIRECT_BASE && ty < POINTER_BASE
+}
+
+// `^T` and a borrow of `T`. Every type but a distinct one composes by adding a
+// base to what is pointed at; a distinct type's code already sits above every
+// base, so those are interned here instead and the code is an index.
+pointer_to :: fn(mut p: Parser, target: i64) -> i64 {
+    if (is_distinct(target) == false) {
+        return POINTER_BASE + target
+    }
+    indirect_of(p, target, 0)
+}
+
+borrow_of :: fn(mut p: Parser, target: i64) -> i64 {
+    if (is_distinct(target) == false) {
+        return BORROW_FLAG + target
+    }
+    indirect_of(p, target, 1)
+}
+
+// Deduplicated, so two spellings of `^Meters` share a code and comparing two
+// types stays a comparison of two numbers.
+indirect_of :: fn(mut p: Parser, target: i64, borrow: i64) -> i64 {
+    mut i : i64 = 0
+    while (i < p.indirects.count) {
+        entry := arena_at(p.indirects, i)
+        if (entry.target == target && entry.borrow == borrow) {
+            return INDIRECT_BASE + i * 2 + borrow
+        }
+        i = i + 1
+    }
+    made := arena_push(p.indirects,
+        Indirect { target = target, borrow = borrow })
+    INDIRECT_BASE + made * 2 + borrow
 }
 
 // A function pointer: the address of a function of a given signature, a
@@ -1049,8 +1100,12 @@ unit_holds :: fn(mut p: Parser, off: i64) -> bool {
     off >= entry.start && off < entry.finish
 }
 
-pointee :: fn(ty: i64) -> i64 {
+pointee :: fn(mut p: Parser, ty: i64) -> i64 {
     held := distinct_repr(ty)
+    if (is_indirect(held)) {
+        entry := arena_at(p.indirects, (held - INDIRECT_BASE) / 2)
+        return entry.target
+    }
     if (is_borrow(held)) {
         return held - BORROW_FLAG
     }
@@ -1077,7 +1132,7 @@ is_float :: fn(ty: i64) -> bool {
 }
 is_array_ty :: fn(ty: i64) -> bool {
     held := distinct_repr(ty)
-    held >= ARRAY_BASE && held < POINTER_BASE
+    held >= ARRAY_BASE && held < INDIRECT_BASE
 }
 
 // Everything wider than a register, which is everything this compiler holds by
@@ -1132,7 +1187,7 @@ struct_index_of :: fn(ty: i64) -> i64 {
 slab_field_id :: fn(mut p: Parser, struct_ty: i64, name: ^i8) -> i64 {
     mut base := struct_ty
     if (is_pointer(base)) {
-        base = pointee(base)
+        base = pointee(p, base)
     }
     if (is_struct_ty(base) == false) {
         return -1
@@ -1177,7 +1232,7 @@ field_type_by_range :: fn(mut p: Parser, struct_ty: i64, off: i64, len: i64)
     -> i64 {
     mut base := struct_ty
     if (is_pointer(base)) {
-        base = pointee(base)
+        base = pointee(p, base)
     }
     if (is_struct_ty(base) == false) {
         return -1

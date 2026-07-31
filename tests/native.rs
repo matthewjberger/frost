@@ -18870,6 +18870,49 @@ main :: fn() -> i64 {
     // A float carries its literal node instead, so `-2.2` matched neither and
     // was refused as a declaration the compiler does not have. A positive float
     // and a negative integer both worked, which is what kept it hidden.
+    // A pointer to a distinct type. Every type in the self-hosted compiler is
+    // one i64, built by adding a base to what it contains, which works because
+    // each base sits above everything it can hold. A distinct type sits above
+    // all of them, since its code carries the representation it is laid out as,
+    // so `POINTER_BASE + Meters` landed back inside the distinct range and read
+    // as a different distinct type: `pointee` answered 247 and the struct table
+    // was asked for entry 231. The compiler died with an arena index rather
+    // than saying anything.
+    //
+    // Both representations, because the arithmetic goes wrong differently for
+    // each: a distinct over a pointer moved the code by a whole stride, and one
+    // over an integer moved it inside the first.
+    (
+        "a_pointer_to_a_distinct_integer",
+        "Meters :: distinct i64\n\
+         far :: fn(p: ^Meters) -> i64 {\n\
+         \x20   held : Meters = unsafe { p^ }\n\
+         \x20   count : i64 = held\n\
+         \x20   count + 1\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut m : Meters = 41\n\
+         \x20   print far(ptr_to(m))\n\
+         \x20   0\n}\n",
+        "42\n",
+    ),
+    (
+        "a_pointer_to_a_distinct_pointer",
+        "Grip :: distinct ^u8\n\
+         no_grip :: fn() -> Grip {\n\
+         \x20   zero := 0\n\
+         \x20   unsafe { ptr_cast($u8, zero) }\n}\n\
+         same :: fn(p: ^Grip) -> i64 {\n\
+         \x20   held : Grip = unsafe { p^ }\n\
+         \x20   if (held == no_grip()) {\n\
+         \x20       return 1\n\
+         \x20   }\n\
+         \x20   0\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut g := no_grip()\n\
+         \x20   print same(ptr_to(g))\n\
+         \x20   0\n}\n",
+        "1\n",
+    ),
     // A float literal takes its width from the context, the way an integer
     // literal does. The self-hosted compiler read every one at double, so
     // `-2.1 + 1.1` at an `f32` added two doubles and rounded once at the end

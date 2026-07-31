@@ -411,7 +411,7 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
             cbase_ty := type_of(p, cbase)
             mut cthrough := cbase_ty
             if (is_pointer(cthrough)) {
-                cthrough = pointee(cthrough)
+                cthrough = pointee(p, cthrough)
             }
             if (type_of(p, cindex) == TY_HANDLE
                 && is_columns_ty(p, cthrough)) {
@@ -442,7 +442,7 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
         base_ty := type_of(p, base)
         mut through := base_ty
         if (is_pointer(through)) {
-            through = pointee(through)
+            through = pointee(p, through)
         }
         // A handle names a slot in a slab. frost_rt_slot validates it and answers
         // with the checked index, and the storage element at that index is the
@@ -490,7 +490,7 @@ emit_asm_addr :: fn(mut p: Parser, id: i64) {
                 length_const = array_length(p, through)
             }
         } else if (is_pointer(base_ty)) {
-            element = pointee(base_ty)
+            element = pointee(p, base_ty)
             emit_asm_expr(p, base)
         } else {
             element = base_ty
@@ -717,7 +717,7 @@ emit_asm_columns_scatter :: fn(mut p: Parser, cbase: i64, cbase_ty: i64,
     value_ty := type_of(p, value)
     mut value_struct := value_ty
     if (is_pointer(value_struct)) {
-        value_struct = pointee(value_struct)
+        value_struct = pointee(p, value_struct)
     }
     def := arena_at(p.structs, struct_index_of(cthrough))
     mut fid := def.field_head
@@ -1325,7 +1325,7 @@ value_param_type :: fn(mut p: Parser, params: i64, index: i64) -> i64 {
     }
     declared := nth_param_type(p, params, index)
     if (is_pointer(declared)) {
-        return pointee(declared)
+        return pointee(p, declared)
     }
     declared
 }
@@ -1430,7 +1430,7 @@ emit_asm_expr :: fn(mut p: Parser, id: i64) {
         }
         mut inner_ty := type_of(p, inner)
         if (is_pointer(inner_ty)) {
-            inner_ty = pointee(inner_ty)
+            inner_ty = pointee(p, inner_ty)
         }
         if (is_array_ty(inner_ty) && is_slice_ty(p, inner_ty) == false) {
             asm_i("movq $", array_length(p, inner_ty), ", %rax")
@@ -1916,8 +1916,8 @@ emit_asm_call :: fn(mut p: Parser, args: i64, fn_index: i64) {
         // takes, and an aggregate is already an address here, so the
         // conversion is against what the pointer points at.
         mut want := declared
-        if (is_pointer(want) && is_aggregate(pointee(want))) {
-            want = pointee(want)
+        if (is_pointer(want) && is_aggregate(pointee(p, want))) {
+            want = pointee(p, want)
         }
         if (declared >= 0 && want != TY_PARAM) {
             // Whether a parameter is a slice holds whatever the type argument
@@ -2196,7 +2196,7 @@ emit_asm_write_value :: fn(mut p: Parser, value: i64) {
         emit_asm_write_call(p, "frost_rt_write_bytes", 2)
         return
     }
-    if (is_pointer(value_ty) && pointee(value_ty) == TY_I8) {
+    if (is_pointer(value_ty) && pointee(p, value_ty) == TY_I8) {
         emit_asm_expr(p, value)
         emit_text("    movq %rax, ")
         emit_asm_arg_reg(p, 0)
@@ -2284,7 +2284,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
             cbase_ty := type_of(p, cbase)
             mut cthrough := cbase_ty
             if (is_pointer(cthrough)) {
-                cthrough = pointee(cthrough)
+                cthrough = pointee(p, cthrough)
             }
             if (type_of(p, cindex) == TY_HANDLE
                 && is_columns_ty(p, cthrough)) {
@@ -2342,7 +2342,7 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         one_ty := type_of(p, node.a)
         // A run of bytes rather than a number is written as bytes.
         if ((is_array_ty(one_ty) && is_slice_ty(p, one_ty))
-            || (is_pointer(one_ty) && pointee(one_ty) == TY_I8)) {
+            || (is_pointer(one_ty) && pointee(p, one_ty) == TY_I8)) {
             emit_asm_write_value(p, node.a)
             emit_asm_write_call(p, "frost_rt_write_newline", 0)
             return
@@ -2677,7 +2677,7 @@ emit_asm_frame :: fn(mut p: Parser, body: i64, params: i64, ret: i64) {
         // already reads a borrowed struct through.
         mut want : i64 = -1
         if (param_node_by_value(p, pid)) {
-            want = pointee(ptype)
+            want = pointee(p, ptype)
         }
         if (want >= 0) {
             kind := value_abi_kind(p, want)

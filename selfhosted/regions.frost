@@ -480,7 +480,7 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
         if (place_node.kind == NodeKind::Index) {
             mut through := type_of(p, place_node.a)
             if (is_pointer(through)) {
-                through = pointee(through)
+                through = pointee(p, through)
             }
             if (type_of(p, place_node.b) == TY_HANDLE
                 && is_columns_ty(p, through)) {
@@ -629,7 +629,7 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
         if (kind == NodeKind::Index) {
             mut base_ty := type_of(p, node.a)
             if (is_borrow(base_ty)) {
-                base_ty = pointee(base_ty)
+                base_ty = pointee(p, base_ty)
             }
             if (is_raw_pointer(base_ty)
                 && arena_at(p.arena, constant_node(p, node.a)).kind
@@ -694,7 +694,7 @@ check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64,
             if (declared >= 0) {
                 mut expected := declared
                 if (is_borrow(expected)) {
-                    expected = pointee(expected)
+                    expected = pointee(p, expected)
                 }
                 want_single(p, value, expected)
                 arg_ty := type_of(p, value)
@@ -709,7 +709,7 @@ check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64,
                 // it.
                 mut fits := value_fits(p, value, arg_ty, expected)
                 if (fits == false && expected != declared && is_pointer(arg_ty)
-                    && value_fits(p, value, pointee(arg_ty), expected)) {
+                    && value_fits(p, value, pointee(p, arg_ty), expected)) {
                     fits = true
                 }
                 if (expected != TY_PARAM && fits == false) {
@@ -1880,7 +1880,7 @@ param_place_type :: fn(mut p: Parser, place: i64, params: i64) -> i64 {
             if (pname_len == name_len
                 && bytes_equal(p.src, pname_off, name_off, name_len)) {
                 if (is_pointer(pty)) {
-                    return pointee(pty)
+                    return pointee(p, pty)
                 }
                 return pty
             }
@@ -1899,7 +1899,7 @@ param_place_type :: fn(mut p: Parser, place: i64, params: i64) -> i64 {
         // generic, answers for itself.
         mut owner := held
         if (is_pointer(owner)) {
-            owner = pointee(owner)
+            owner = pointee(p, owner)
         }
         if (is_struct_ty(owner)) {
             def := arena_at(p.structs, struct_index_of(owner))
@@ -2737,7 +2737,7 @@ view_lands_in :: fn(mut p: Parser, answer: i64, param: i64) -> bool {
         return true
     }
     if (is_pointer(answer)) {
-        return type_holds_inline(p, pointee(answer), param, FRAME_TYPE_DEPTH)
+        return type_holds_inline(p, pointee(p, answer), param, FRAME_TYPE_DEPTH)
     }
     if (is_array_ty(answer) && is_slice_ty(p, answer)) {
         return type_holds_inline(p, array_element(p, answer), param,
@@ -2787,7 +2787,7 @@ frame_place_type :: fn(mut p: Parser, id: i64) -> i64 {
         // struct indexed is a slab or a columns container, whose element is a
         // question this walk does not need to answer.
         if (is_pointer(base)) {
-            inner := pointee(base)
+            inner := pointee(p, base)
             if (is_array_ty(inner)) {
                 return array_element(p, inner)
             }
@@ -2803,7 +2803,7 @@ frame_place_type :: fn(mut p: Parser, id: i64) -> i64 {
         if (base < 0 || is_pointer(base) == false) {
             return -1
         }
-        return pointee(base)
+        return pointee(p, base)
     }
     -1
 }
@@ -2838,17 +2838,17 @@ frame_value_type :: fn(mut p: Parser, id: i64) -> i64 {
         if (held < 0) {
             return -1
         }
-        return POINTER_BASE + held
+        return pointer_to(p, held)
     }
     if (kind == NodeKind::Ref) {
         held := frame_place_type(p, child)
         if (held < 0) {
             return -1
         }
-        return BORROW_FLAG + held
+        return borrow_of(p, held)
     }
     if (kind == NodeKind::PtrCast) {
-        return POINTER_BASE + val
+        return pointer_to(p, val)
     }
     if (kind == NodeKind::SliceFrom || kind == NodeKind::Cast) {
         return val
@@ -3088,7 +3088,7 @@ frame_call_prov :: fn(mut p: Parser, id: i64) -> i64 {
             // the mode is carried beside it.
             if (pnode.a == 1) {
                 addressed = true
-                declared = pointee(declared)
+                declared = pointee(p, declared)
             }
         }
         held = prov_max(held,
@@ -3165,7 +3165,7 @@ frame_value_prov :: fn(mut p: Parser, id: i64) -> i64 {
     if (kind == NodeKind::Deref) {
         base := frame_place_type(p, child)
         if (base >= 0 && is_pointer(base)
-            && type_holds_view(p, pointee(base), FRAME_TYPE_DEPTH) == false) {
+            && type_holds_view(p, pointee(p, base), FRAME_TYPE_DEPTH) == false) {
             return PROV_OUTLIVES
         }
         return frame_value_prov(p, child)

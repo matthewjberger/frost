@@ -9,7 +9,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     CH_TAB, CH_UNDERSCORE, CH_UPPER_A, CH_UPPER_Z, Alias, ConstDef, Export,
     CH_LOWER_B, CH_LOWER_E, CH_LOWER_F, CH_LOWER_X, CH_UPPER_B, CH_UPPER_E,
     CH_UPPER_F, CH_UPPER_X,
-    Cap, Provider, FlagBit,
+    Cap, Provider, FlagBit, Indirect,
     AnswerMask, GenericFn, GParam, GArg, GBinding, ImportEdge, Instance,
     LocalVar, Module,
     Rename,
@@ -21,7 +21,7 @@ export ARRAY_BASE, Arena, ArrayDef, CH_0, CH_9, TestCase, CH_AMP, CH_BACKSLASH, 
     OP_NE, OP_OR, OP_SUB, OP_SHL, OP_SHR, OP_BITAND, OP_BITOR,
     OP_WRAP_ADD, OP_WRAP_SUB, OP_WRAP_MUL,
     op_answers_truth,
-    BORROW_FLAG, POINTER_BASE, Parser, STRUCT_BASE, StructDef,
+    BORROW_FLAG, POINTER_BASE, INDIRECT_BASE, Parser, STRUCT_BASE, StructDef,
     StructField, Sym, TokenKind, VariantFixup, FixupKind, TY_BOOL, TY_F32, TY_F64, TY_HANDLE, TY_I16, TY_I32, TY_I64, TY_I8, TY_ISIZE,
     TY_PARAM, TY_U16,
     TY_U32, TY_U64, TY_U8, TY_USIZE, TY_VOID, Token, TypeArg,
@@ -238,6 +238,11 @@ STRUCT_BASE  :: 16
 // array that did not say how long it is. That keeps `[]T` and `[N]T` one kind of
 // thing everywhere but their layout.
 ARRAY_BASE   :: 500000
+// `^T` and borrows of `T` where `T` is distinct, which are the one shape that
+// cannot be reached by adding a base to the type pointed at. See `Indirect`.
+// The range sits under POINTER_BASE so `is_pointer` answers for it by reading
+// the code, the way it does for every other pointer.
+INDIRECT_BASE :: 900000
 POINTER_BASE :: 1000000
 // A borrow (a `mut`/read parameter, a `ref` binding) is a C pointer like a raw
 // one, and emits identically, but the two are different to the unsafety gate. A
@@ -833,6 +838,23 @@ ArrayDef :: struct {
     emitted: i64,
 }
 
+// One `^T` or borrow of `T` where `T` is a distinct type. Every other type
+// composes by addition, which works because each base sits above everything it
+// can contain. A distinct type sits above all of them, since its code carries
+// the representation it is laid out as, so adding a pointer's base to one lands
+// back inside the distinct range and reads as a different distinct type
+// entirely. `^Meters` read as a struct index far past the end of the table.
+//
+// These are the one shape that cannot compose, so they are given a range of
+// their own and an entry here saying what each points at.
+Indirect :: struct {
+    target: i64,
+    // Whether the indirection was proven safe where it was formed. A borrow and
+    // a raw pointer emit alike and differ only to the unsafety gate, which is
+    // the same difference `BORROW_FLAG` carries for every other type.
+    borrow: i64,
+}
+
 // A function-pointer signature: the return type and a run of parameter type
 // codes in the `proc_params` arena. Every distinct signature is one entry, so a
 // function-pointer type is this table's index plus PROC_BASE.
@@ -1308,6 +1330,7 @@ Parser :: struct {
     // the whole of what tells one apart.
     flag_bits: Arena<FlagBit>,
     arrays: Arena<ArrayDef>,
+    indirects: Arena<Indirect>,
     tests: Arena<TestCase>,
     testing: i64,
     // Whether to report an `unsafe` block that vouches for nothing. Off unless
