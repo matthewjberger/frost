@@ -22,7 +22,7 @@ comes straight out of [math.md](math.md).
 | `scene.frost` | Entities in an ECS, two passes, depth deciding what is in front |
 | `spinning.frost` | Lit surfaces: a mesh cache, a material registry, two bind groups |
 | `textured.frost` | The same field with its surfaces read off an image |
-| `shadowed.frost` | A shadow pass, a lit scene, and a bloom chain over it |
+| `shadowed.frost` | A compute pass, a shadow pass, a lit scene, and a bloom chain |
 
 ```bash
 just window
@@ -245,6 +245,12 @@ attachment and decides no load op; what it does is order the passes around it,
 which is all a compute step needs from a graph. `graph_compute_pass` declares
 one the same way a drawing pass declares a target, and is handed a compute pass
 encoder rather than a render pass encoder.
+
+`shadowed.frost` uses one: a compute pass writes a value per thing that is
+drawn, from the frame's clock and the index, and the scene pass reads the run to
+add a glow the bloom then picks up. The compute pass is declared *after* the
+pass that reads it and runs first, because the buffer between them is the only
+thing that says so.
 
 A **transient** lives inside one frame. The graph works out when each resource
 is first and last touched, and hands two transients the same texture when the

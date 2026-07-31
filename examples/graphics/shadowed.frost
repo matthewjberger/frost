@@ -4,12 +4,18 @@
 //
 // W/A/S/D move, Q and E drop and rise, the arrow keys look, escape closes it.
 //
-// This is the demo the render graph exists for. Five passes and a chain of
-// resources between them: the shadow pass draws the scene from where the light
-// is and keeps only depth; the scene pass samples that depth to ask, for every
-// point it lights, whether the light can see it, and draws into a target rather
+// This is the demo the render graph exists for. Six passes and a chain of
+// resources between them: a compute pass works out a glow per thing that is
+// drawn; the shadow pass draws the scene from where the light is and keeps only
+// depth; the scene pass samples that depth to ask, for every point it lights,
+// whether the light can see it, reads the glow, and draws into a target rather
 // than at the window; two steps pull the bright parts out and spread them; and
 // a last pass adds the two together onto the window.
+//
+// The compute pass is written last of the six and runs first. Nothing between
+// it and the scene is an attachment: it writes a run of bytes and the scene
+// reads them, and a buffer written by one pass and read by another is an
+// ordering like any other.
 //
 // Nothing here says what runs when. Each pass declares what it reads and what
 // it writes, and the order falls out: `graph_schedule` puts every writer before
@@ -86,6 +92,10 @@ ROW_RISE :: 2.25
 ROW_DEPTH :: 1.5
 COLUMN_SPACING :: 3.25
 
+// How many bytes the glow buffer takes. One float per thing that is drawn,
+// rounded up to what a storage binding wants to start on.
+GLOW_BYTES :: 64
+
 // The camera, the light, and the matrix the light sees the world through.
 FRAME_FLOATS :: 48
 FRAME_BYTES :: 192
@@ -115,6 +125,7 @@ Scene :: struct {
     slots: []Slot,
     meshes: []Mesh,
     shadow_group: BindGroup,
+    glow_group: BindGroup,
     count: i64,
     samples_shadow: i64,
 }
@@ -139,6 +150,10 @@ struct Object {
 @group(1) @binding(0) var<uniform> object: Object;
 @group(2) @binding(0) var shadow_map: texture_depth_2d;
 @group(2) @binding(1) var shadow_reader: sampler_comparison;
+// What the compute pass left, one value per thing drawn. Which one belongs to
+// this thing is carried in the object's own uniform, since every thing is drawn
+// with its own binding and knows nothing else about the run.
+@group(3) @binding(0) var<storage, read> glow: array<f32>;
 
 // The shadow pass. No colour attachment and no fragment stage: what it writes
 // is depth, and depth is written whether or not anything shades.
@@ -218,7 +233,45 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let lit = object.base_color.rgb
         * (frame.ambient.rgb + frame.light_color.rgb * strength * lambert)
         + frame.light_color.rgb * strength * highlight;
-    return vec4<f32>(lit, object.base_color.a);
+    // A glow of its own, from the run the compute pass wrote. It is added
+    // rather than lit, so it reaches past one and is what the bloom below
+    // picks up.
+    let pulse = glow[u32(object.surface.z)];
+    return vec4<f32>(lit + object.base_color.rgb * pulse * 0.9,
+        object.base_color.a);
+}
+"
+
+// One value per thing that is drawn, worked out on the device rather than on
+// the way there. Nothing about a pulse needs the CPU: it is a function of the
+// frame's time and the index, so it is written where it is read.
+//
+// This is what a buffer resource is for. The compute pass writes the run and
+// the scene pass reads it, and that is the whole of what puts the compute
+// first: no attachment between them, no order written down anywhere.
+PULSE_SHADER :: "
+struct Frame {
+    view_projection: mat4x4<f32>,
+    light_view_projection: mat4x4<f32>,
+    camera_position: vec4<f32>,
+    light_direction: vec4<f32>,
+    light_color: vec4<f32>,
+    ambient: vec4<f32>,
+}
+
+@group(0) @binding(0) var<uniform> frame: Frame;
+@group(1) @binding(0) var<storage, read_write> glow: array<f32>;
+
+@compute @workgroup_size(64)
+fn cs_pulse(@builtin(global_invocation_id) id: vec3<u32>) {
+    let index = id.x;
+    if (index >= arrayLength(&glow)) {
+        return;
+    }
+    // The seconds since the program started, carried in the one component of
+    // the frame's ambient colour that nothing else reads.
+    let seconds = frame.ambient.w;
+    glow[index] = 0.5 + 0.5 * sin(seconds * 1.7 + f32(index) * 0.9);
 }
 "
 
@@ -313,6 +366,8 @@ draw_things :: fn(pass: RenderPassEncoder, state: ^u8) {
     if (unsafe { s^.samples_shadow } == 1) {
         render_pass_encoder_set_bind_group(pass, 2,
             unsafe { s^.shadow_group }, 0, no_pointer())
+        render_pass_encoder_set_bind_group(pass, 3,
+            unsafe { s^.glow_group }, 0, no_pointer())
     }
 
     mut index : i64 = 0
@@ -360,7 +415,12 @@ prepare :: fn(mut world: World, queue: Queue, entities: []Entity,
         behaviour := material_surface(surface)
         values[20] = behaviour.x
         values[21] = behaviour.y
-        values[22] = behaviour.z
+        // Which of the compute pass's values belongs to this thing. Every thing
+        // is drawn with its own binding and knows nothing else about the run,
+        // so the index travels with it, in the component of the surface that
+        // the lighting does not read.
+        which : f32 = index
+        values[22] = which
         values[23] = behaviour.w
         queue_write_buffer(queue, slots[index].uniform, 0,
             ptr_to(values[0]), OBJECT_BYTES)
@@ -382,7 +442,7 @@ light_view_projection :: fn(direction: Vec3) -> Mat4 {
 // The camera, the light, and the light's matrix, as the bytes the shader reads
 // them as.
 write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, direction: Vec3,
-    w: i64, h: i64) {
+    seconds: f32, w: i64, h: i64) {
     mut values : [FRAME_FLOATS]f32 = [0.0; FRAME_FLOATS]
     mut view_projection := camera_view_projection(eye, w, h)
     mut element : i64 = 0
@@ -412,14 +472,22 @@ write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, direction: Vec3,
     values[44] = 0.1
     values[45] = 0.12
     values[46] = 0.16
-    values[47] = 1.0
+    // The seconds since the program started. The ambient colour's fourth
+    // component is the one thing in here nothing reads, so the clock rides in
+    // it rather than in a second uniform bound everywhere.
+    values[47] = seconds
     queue_write_buffer(queue, uniform, 0, ptr_to(values[0]), FRAME_BYTES)
 }
 
-uniform_layout :: fn(device: Device, size: i64) -> BindGroupLayout {
+// Which stages may read it is part of the layout, and a stage left out is a
+// pipeline that will not build rather than a binding that reads nothing: the
+// frame is read by the compute pass as well as by the two drawing ones, so it
+// says all three.
+uniform_layout :: fn(device: Device, size: i64,
+    stages: ShaderStage) -> BindGroupLayout {
     mut entry := bind_group_layout_entry_init()
     entry.binding = 0
-    entry.visibility = ShaderStage::Vertex | ShaderStage::Fragment
+    entry.visibility = stages
     entry.buffer.type = BUFFER_BINDING_TYPE_UNIFORM
     entry.buffer.min_binding_size = size
     mut descriptor := bind_group_layout_descriptor_init()
@@ -627,6 +695,68 @@ rebuild_step :: fn(mut g: Graph, state: ^u8) {
     }
 }
 
+// The run of values the compute pass writes and the scene pass reads. Two
+// layouts over the same buffer, because what may be written to it is part of
+// the binding rather than of the buffer.
+storage_layout :: fn(device: Device, writable: bool) -> BindGroupLayout {
+    mut entry := bind_group_layout_entry_init()
+    entry.binding = 0
+    entry.visibility = ShaderStage::Fragment | ShaderStage::Compute
+    if (writable) {
+        entry.buffer.type = BUFFER_BINDING_TYPE_STORAGE
+    } else {
+        entry.buffer.type = BUFFER_BINDING_TYPE_READ_ONLY_STORAGE
+    }
+    mut descriptor := bind_group_layout_descriptor_init()
+    descriptor.entries_count = 1
+    descriptor.entries = ptr_to(entry)
+    device_create_bind_group_layout(device, ptr_to(descriptor))
+}
+
+storage_group :: fn(device: Device, layout: BindGroupLayout, held: Buffer,
+    size: i64) -> BindGroup {
+    mut entry := bind_group_entry_init()
+    entry.binding = 0
+    entry.buffer = held
+    entry.size = size
+    mut descriptor := bind_group_descriptor_init()
+    descriptor.layout = layout
+    descriptor.entries_count = 1
+    descriptor.entries = ptr_to(entry)
+    device_create_bind_group(device, ptr_to(descriptor))
+}
+
+// What the compute pass records with: the pipeline, the frame it reads the
+// time from, and the run it writes.
+Pulse :: struct {
+    pipeline: ComputePipeline,
+    frame_group: BindGroup,
+    glow_group: BindGroup,
+    groups: i64,
+}
+
+dispatch_pulse :: fn(pass: ComputePassEncoder, state: ^u8) {
+    mut held := unsafe { ptr_cast($Pulse, state) }
+    compute_pass_encoder_set_pipeline(pass, unsafe { held^.pipeline })
+    compute_pass_encoder_set_bind_group(pass, 0, unsafe { held^.frame_group },
+        0, no_pointer())
+    compute_pass_encoder_set_bind_group(pass, 1, unsafe { held^.glow_group },
+        0, no_pointer())
+    // One group covers every thing that is drawn, since the shader answers for
+    // an index past the end rather than being dispatched exactly.
+    compute_pass_encoder_dispatch_workgroups(pass, 1, 1, 1)
+}
+
+make_pulse_pipeline :: fn(device: Device, shader: ShaderModule,
+    layout: PipelineLayout) -> ComputePipeline {
+    mut descriptor := compute_pipeline_descriptor_init()
+    descriptor.layout = layout
+    descriptor.compute.module = shader
+    descriptor.compute.entry_point = StringView { data = "cs_pulse",
+        length = 8 }
+    device_create_compute_pipeline(device, ptr_to(descriptor))
+}
+
 // A texture and the sampler that reads it, which is what every step of the
 // chain binds and nothing else.
 sampled_layout :: fn(device: Device) -> BindGroupLayout {
@@ -692,6 +822,16 @@ make_cover_pipeline :: fn(device: Device, shader: ShaderModule, format: u32,
     device_create_render_pipeline(device, ptr_to(descriptor))
 }
 
+// A pipeline layout over up to four groups, which is what the scene wants: the
+// frame, the object, the shadow map and the run of pulses.
+wide_layout :: fn(device: Device, groups: i64,
+    mut layouts: [4]BindGroupLayout) -> PipelineLayout {
+    mut descriptor := pipeline_layout_descriptor_init()
+    descriptor.bind_group_layouts_count = groups
+    descriptor.bind_group_layouts = ptr_to(layouts[0])
+    device_create_pipeline_layout(device, ptr_to(descriptor))
+}
+
 cover_layout :: fn(device: Device, groups: i64,
     mut layouts: [2]BindGroupLayout) -> PipelineLayout {
     mut descriptor := pipeline_layout_descriptor_init()
@@ -750,26 +890,30 @@ main :: fn() -> i64 {
         base_color = vec4(0.68, 0.66, 0.62, 1.0), roughness = 0.9,
         metallic = 0.0 })
 
-    frame_layout := uniform_layout(device, FRAME_BYTES)
-    object_layout := uniform_layout(device, OBJECT_BYTES)
+    frame_layout := uniform_layout(device, FRAME_BYTES,
+        ShaderStage::Vertex | ShaderStage::Fragment | ShaderStage::Compute)
+    object_layout := uniform_layout(device, OBJECT_BYTES,
+        ShaderStage::Vertex | ShaderStage::Fragment)
     map_layout := shadow_layout(device)
+    // The same buffer through two bindings: the compute pass writes it, the
+    // scene pass only reads it, and which of those a binding allows belongs to
+    // the layout rather than to the buffer.
+    written_glow := storage_layout(device, true)
+    read_glow := storage_layout(device, false)
 
     // Two layouts, because the shadow pass has no shadow map to bind and a
     // pipeline may not name a group its shader never reads.
-    mut shadow_layouts : [2]BindGroupLayout = [frame_layout, object_layout]
-    mut shadow_layout_descriptor := pipeline_layout_descriptor_init()
-    shadow_layout_descriptor.bind_group_layouts_count = 2
-    shadow_layout_descriptor.bind_group_layouts = ptr_to(shadow_layouts[0])
-    shadow_pipeline_layout := device_create_pipeline_layout(device,
-        ptr_to(shadow_layout_descriptor))
+    mut shadow_layouts : [4]BindGroupLayout = [frame_layout, object_layout,
+        map_layout, read_glow]
+    shadow_pipeline_layout := wide_layout(device, 2, shadow_layouts)
 
-    mut scene_layouts : [3]BindGroupLayout = [frame_layout, object_layout,
-        map_layout]
-    mut scene_layout_descriptor := pipeline_layout_descriptor_init()
-    scene_layout_descriptor.bind_group_layouts_count = 3
-    scene_layout_descriptor.bind_group_layouts = ptr_to(scene_layouts[0])
-    scene_pipeline_layout := device_create_pipeline_layout(device,
-        ptr_to(scene_layout_descriptor))
+    mut scene_layouts : [4]BindGroupLayout = [frame_layout, object_layout,
+        map_layout, read_glow]
+    scene_pipeline_layout := wide_layout(device, 4, scene_layouts)
+
+    mut pulse_layouts : [4]BindGroupLayout = [frame_layout, written_glow,
+        frame_layout, frame_layout]
+    pulse_pipeline_layout := wide_layout(device, 2, pulse_layouts)
 
     frame_uniform := uniform_buffer(device, FRAME_BYTES)
     frame_group := uniform_group(device, frame_layout, frame_uniform,
@@ -847,7 +991,7 @@ main :: fn() -> i64 {
     // Six resources and five passes. Nothing below says what runs when: the
     // shadow map, the lit scene and the two steps of the bloom are each written
     // by one pass and read by another, and that is the whole of the order.
-    mut graph := graph_new(device, 6, 5)
+    mut graph := graph_new(device, 7, 6)
     screen := graph_backbuffer(graph)
     shadow_map := graph_depth(graph, "shadow map", SHADOW_SIZE, SHADOW_SIZE,
         DEPTH_FORMAT)
@@ -863,12 +1007,16 @@ main :: fn() -> i64 {
         renderer_format(r))
     blurred := graph_transient_color(graph, "blurred", HALF, HALF,
         renderer_format(r))
+    // A run of bytes rather than a picture. Nothing draws into it and nothing
+    // samples it; one pass fills it and another reads it, which is the only
+    // thing the graph needs to put them in order.
+    glow := graph_buffer(graph, "glow", GLOW_BYTES, BufferUsage::Storage)
 
     mut shadow_scene := Scene {
         pipeline = make_shadow_pipeline(device, shader, shadow_pipeline_layout),
         frame_group = frame_group,
         slots = slots, meshes = meshes,
-        shadow_group = no_bind_group(),
+        shadow_group = no_bind_group(), glow_group = no_bind_group(),
         count = INSTANCES, samples_shadow = 0,
     }
     shadow_pass := graph_pass(graph, "shadow", draw_things,
@@ -882,7 +1030,7 @@ main :: fn() -> i64 {
             scene_pipeline_layout),
         frame_group = frame_group,
         slots = slots, meshes = meshes,
-        shadow_group = no_bind_group(),
+        shadow_group = no_bind_group(), glow_group = no_bind_group(),
         count = INSTANCES, samples_shadow = 1,
     }
     lit_pass := graph_pass(graph, "scene", draw_things, ptr_to(lit_scene))
@@ -890,6 +1038,19 @@ main :: fn() -> i64 {
         Color { r = 0.05, g = 0.06, b = 0.09, a = 1.0 })
     graph_writes_depth(graph, lit_pass, depth)
     graph_reads(graph, lit_pass, shadow_map)
+    graph_reads(graph, lit_pass, glow)
+
+    // Declared after the pass that reads it, and it runs first: the buffer
+    // between them is the whole of what says so.
+    mut pulse := Pulse {
+        pipeline = make_pulse_pipeline(device,
+            make_post_shader(device, PULSE_SHADER), pulse_pipeline_layout),
+        frame_group = frame_group, glow_group = no_bind_group(), groups = 2,
+    }
+    pulse_pass := graph_compute_pass(graph, "pulse", dispatch_pulse,
+        ptr_to(pulse))
+    graph_writes(graph, pulse_pass, glow)
+
 
     // The chain. Each step is the same fullscreen triangle with a different
     // fragment entry and a different input, and each is declared in whatever
@@ -951,12 +1112,19 @@ main :: fn() -> i64 {
     graph_resize(graph, WIDTH, HEIGHT)
     lit_scene.shadow_group = shadow_group_of(device, map_layout,
         graph_view(graph, shadow_map), graph_sampler(graph, shadow_map))
+    // A buffer is made once and never remade, since nothing about its size
+    // follows the window, so these two bindings are built here and left alone.
+    pulse.glow_group = storage_group(device, written_glow,
+        graph_buffer_of(graph, glow), GLOW_BYTES)
+    lit_scene.glow_group = storage_group(device, read_glow,
+        graph_buffer_of(graph, glow), GLOW_BYTES)
 
     light := vec3_normalize(vec3(-0.55, -1.0, -0.4))
 
     mut eye := camera_default()
     eye.position = vec3(0.0, 1.5, 13.0)
     eye.pitch = -0.05
+    mut elapsed : f32 = 0.0
 
     while (scheduled && platform_poll(p)) {
         if (key_pressed(p, KEY_ESCAPE)) {
@@ -968,7 +1136,9 @@ main :: fn() -> i64 {
         }
         step := delta_seconds(p)
         camera_advance(eye, p, step)
-        write_frame(queue, frame_uniform, eye, light, width(p), height(p))
+        elapsed = elapsed + step
+        write_frame(queue, frame_uniform, eye, light, elapsed, width(p),
+            height(p))
         prepare(world, queue, entities, slots, registry, placement, spin,
             drawn, step)
 
