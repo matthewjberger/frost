@@ -367,6 +367,67 @@ check_types_list :: fn(mut p: Parser, head: i64) {
     }
 }
 
+// A float literal reaching a place that holds single precision is read at
+// single precision. `held : f32 = -2.1 + 1.1` adds two numbers an `f32` holds
+// and the same expression read at `f64` adds two an `f64` holds, so the two
+// answer differently and the context is what decides which.
+//
+// The width is written onto the literal's node rather than answered from here,
+// because both emitters ask a node for its type long after this walk is over:
+// the C backend writes the suffix that stops C widening the constant, and the
+// assembler narrows and widens the number it laid down as a double.
+want_single :: fn(mut p: Parser, id: i64, want: i64) {
+    if (id < 0 || distinct_repr(want) != TY_F32) {
+        return
+    }
+    mark_single(p, id)
+}
+
+mark_single :: fn(mut p: Parser, id: i64) {
+    if (id < 0) {
+        return
+    }
+    node := arena_at(p.arena, id)
+    kind := node.kind
+    if (kind == NodeKind::Float) {
+        mut held := arena_at(p.arena, id)
+        held.a = 1
+        return
+    }
+    // Arithmetic over literals is a literal, so the width reaches through it.
+    // A comparison answers a truth value whatever it was handed, and stops it.
+    if (kind == NodeKind::Bin && op_answers_truth(node.val) == false) {
+        left := node.a
+        right := node.b
+        mark_single(p, left)
+        mark_single(p, right)
+        return
+    }
+    // A constant standing for a float literal is that literal here. The name is
+    // replaced by the number it holds rather than marked, since one constant is
+    // read in as many places as it is written and each of them decides its own
+    // width; this node is the one use.
+    if (kind == NodeKind::Var && local_exists(p, node.val, node.c) == false) {
+        source := value_const_node(p, node.val, node.c)
+        if (source < 0) {
+            return
+        }
+        literal := arena_at(p.arena, source)
+        if (literal.kind != NodeKind::Float) {
+            return
+        }
+        sign := literal.b
+        offset := literal.val
+        length := literal.c
+        mut here := arena_at(p.arena, id)
+        here.kind = NodeKind::Float
+        here.a = 1
+        here.b = sign
+        here.val = offset
+        here.c = length
+    }
+}
+
 check_types_stmt :: fn(mut p: Parser, id: i64) {
     node := arena_at(p.arena, id)
     kind := node.kind
@@ -391,6 +452,7 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
             // so it has no declaration to answer with a type.
             ty = annotation
         } else {
+            want_single(p, value, annotation)
             value_ty := type_of(p, value)
             if (value_fits(p, value, value_ty, annotation) == false) {
                 report_where(p.modules, p.src, node.pos)
@@ -426,6 +488,7 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
             }
         }
         place_ty := place_type(p, place)
+        want_single(p, value, place_ty)
         value_ty := type_of(p, value)
         if (value_fits(p, value, value_ty, place_ty) == false) {
             report_where(p.modules, p.src, node.pos)
@@ -445,6 +508,7 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
             return
         }
         check_types_expr(p, value)
+        want_single(p, value, p.current_ret)
         value_ty := type_of(p, value)
         if (value_fits(p, value, value_ty, p.current_ret) == false) {
             report_where(p.modules, p.src, node.pos)
@@ -515,21 +579,38 @@ check_types_expr :: fn(mut p: Parser, id: i64) {
         return
     }
     if (kind == NodeKind::StructLit) {
+        struct_ty := node.val
         mut fid := node.a
         while (fid != (-1)) {
             fnode := arena_at(p.arena, fid)
             next_field := fnode.next
-            check_types_expr(p, fnode.a)
+            value := fnode.a
+            field_off := fnode.val
+            field_len := fnode.c
+            check_types_expr(p, value)
+            if (is_struct_ty(struct_ty)) {
+                want_single(p, value,
+                    field_type(p, struct_ty, field_off, field_len))
+            }
             fid = next_field
         }
         return
     }
     if (kind == NodeKind::ArrayLit) {
+        // The element type, where the literal has one to give. Asking an arena
+        // for the entry a type that is not an array names would be a read past
+        // its end rather than an answer.
+        held := type_of(p, id)
+        mut element : i64 = -1
+        if (is_array_ty(held)) {
+            element = array_element(p, held)
+        }
         mut eid := node.a
         while (eid != (-1)) {
             enode := arena_at(p.arena, eid)
             next_element := enode.next
             check_types_expr(p, enode.a)
+            want_single(p, enode.a, element)
             eid = next_element
         }
         return
@@ -615,6 +696,7 @@ check_call_arguments :: fn(mut p: Parser, args: i64, fn_index: i64,
                 if (is_borrow(expected)) {
                     expected = pointee(expected)
                 }
+                want_single(p, value, expected)
                 arg_ty := type_of(p, value)
                 // Either shape does: the caller hands over a value and the
                 // call takes its address, or it hands over a reference it

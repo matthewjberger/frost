@@ -387,6 +387,13 @@ emit_expr :: fn(mut p: Parser, id: i64) {
             emit_text("-")
         }
         emit_source(p.src, node.val, node.c)
+        // A decimal constant is a double in C. The suffix is what makes it the
+        // single-precision number the context asked for, so two of them are
+        // added at the width they were read at rather than at double and
+        // rounded once at the end.
+        if (node.a == 1) {
+            emit_text("f")
+        }
         return
     }
     if (kind == NodeKind::Var) {
