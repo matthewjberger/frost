@@ -308,6 +308,13 @@ The vocabulary is fixed and closed:
 | `is_array(T)` | a fixed array `[N]T` |
 | `is_slice(T)` | a slice `[]T`, which includes `str` |
 | `is_pointer(T)` | a raw pointer or a borrow |
+| `is_linear(T)` | a resource: a type that must be consumed exactly once |
+
+`is_linear` is how a container holds itself to elements it can account for.
+`vec_set` writes into a slot and nothing consumes what was there, so it is
+declared `where !is_linear(T)` and a `Vec<File>` is refused at the call rather
+than leaking inside a body the caller never wrote. A resource element is reached
+through `vec_slice`, where `ref e := vec_slice(v)[i]` stays a borrow.
 
 Terms combine with `&&`, `||` and `!`. A distinct type answers as what it is
 represented by, since that is what its arithmetic and its layout follow.

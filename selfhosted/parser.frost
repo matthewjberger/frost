@@ -643,6 +643,16 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     if (cur(p) == TokenKind::Lbrace && p.no_struct_lit == false) {
         struct_ty := resolve_lit_type(p, offset, length)
         advance(p)
+        // A literal whose instance is read off its own field values has to have
+        // them parsed before the type exists, so the fields are read against no
+        // expected type and the instance is made from what they turned out to
+        // be.
+        if (struct_ty == TY_INFER) {
+            inits := parse_field_inits(p, TY_I64)
+            made := instantiate_inferred(p, generic_index_for(p, offset, length),
+                inits, offset, length)
+            return new_struct_lit(p, made, inits)
+        }
         inits := parse_field_inits(p, struct_ty)
         return new_struct_lit(p, struct_ty, inits)
     }
@@ -743,6 +753,111 @@ instance_generic_of :: fn(mut p: Parser, ty: i64) -> i64 {
     -1
 }
 
+// What `resolve_lit_type` answers for a bare generic literal that nothing in
+// the context names an instance for. It is not a type: the arguments come from
+// the values the fields are given, and those are not parsed yet when the type is
+// asked for.
+TY_INFER :: -2
+
+// The value written for a field the template declares as its type parameter, or
+// -1 where the literal gives none. A template keeps only the token its fields
+// start at, since every instance parses them again under its own bindings, so
+// the declaration is read here as tokens rather than as recorded fields.
+//
+// Only a field written as the bare parameter name answers. `storage: [N]T` says
+// what `T` is as well, but reading it means matching the shape of a type against
+// the shape of a value, and the arguments can be written out instead.
+param_typed_value :: fn(mut p: Parser, field_token: i64, tparam_off: i64,
+    tparam_len: i64, inits: i64) -> i64 {
+    saved := p.ti
+    p.ti = field_token
+    mut found : i64 = -1
+    mut depth : i64 = 0
+    mut started : i64 = 0
+    while (cur(p) != TokenKind::Eof) {
+        if (cur(p) == TokenKind::Lbrace) {
+            depth = depth + 1
+            started = 1
+        }
+        if (cur(p) == TokenKind::Rbrace) {
+            depth = depth - 1
+            if (started == 1 && depth <= 0) {
+                p.ti = saved
+                return found
+            }
+        }
+        if (found < 0 && started == 1 && depth == 1
+            && cur(p) == TokenKind::Ident
+            && peek_kind(p, 1) == TokenKind::Colon
+            && peek_kind(p, 2) == TokenKind::Ident
+            && (peek_kind(p, 3) == TokenKind::Comma
+                || peek_kind(p, 3) == TokenKind::Rbrace)) {
+            fname_off := cur_off(p)
+            fname_len := cur_len(p)
+            advance(p)
+            advance(p)
+            if (cur_len(p) == tparam_len
+                && bytes_equal(p.src, cur_off(p), tparam_off, tparam_len)) {
+                found = init_value_for(p, inits, fname_off, fname_len)
+            }
+        }
+        advance(p)
+    }
+    p.ti = saved
+    found
+}
+
+// The value a literal gives one named field, or -1 where it names no such field.
+init_value_for :: fn(mut p: Parser, inits: i64, name_off: i64,
+    name_len: i64) -> i64 {
+    mut id := inits
+    while (id != (-1)) {
+        init := arena_at(p.arena, id)
+        init_off := init.val
+        init_len := init.c
+        value := init.a
+        next_init := init.next
+        if (init_len == name_len
+            && bytes_equal(p.src, init_off, name_off, name_len)) {
+            return value
+        }
+        id = next_init
+    }
+    -1
+}
+
+// The instance a bare `Name { ... }` makes when nothing named it. Only a
+// generic taking one parameter is answered for, which is the one whose count of
+// further parameters is zero: a field declared as a parameter carries no record
+// of *which* one, so past the first there is nothing to tell them apart and the
+// reader writes the arguments instead.
+instantiate_inferred :: fn(mut p: Parser, gi: i64, inits: i64, offset: i64,
+    length: i64) -> i64 {
+    template := arena_at(p.structs, gi)
+    xparam_count := template.xparam_count
+    field_token := template.field_token
+    tparam_off := template.tparam_off
+    tparam_len := template.tparam_len
+    mut bound : i64 = -1
+    if (xparam_count == 0) {
+        value := param_typed_value(p, field_token, tparam_off, tparam_len,
+            inits)
+        if (value >= 0) {
+            bound = type_of(p, value)
+        }
+    }
+    if (bound < 0) {
+        report_where(p.modules, p.src, offset)
+        report("'")
+        report_src(p.src, offset, length)
+        report("' is generic and nothing here says which instance this literal is: write the arguments on the literal, as in '")
+        report_src(p.src, offset, length)
+        report("<i64> { ... }', or give the binding a declared type that names them")
+        frost_rt_die()
+    }
+    instantiate(p, gi, bound, p.gargs.count, 0)
+}
+
 // The struct type for a literal `Name { ... }`. A generic name resolves, under
 // an active binding, to the instance for the bound arguments. That is how the
 // bare `Arena { ... }` inside a generic function names the right instance.
@@ -759,7 +874,19 @@ resolve_lit_type :: fn(mut p: Parser, offset: i64, length: i64) -> i64 {
             && instance_generic_of(p, p.expected_type) == gi) {
             return p.expected_type
         }
-        return TY_I64
+        // The generic's own parse stands in with a placeholder. Nothing of that
+        // parse is emitted and the body is read again per instance with the
+        // arguments bound, so what it answers here is never what is compiled.
+        if (p.type_param_len > 0) {
+            return TY_I64
+        }
+        // Outside one, nothing here names the instance, so it is worked out
+        // from the values the fields are given. That needs the fields parsed
+        // first, which is the caller's job, so this says so rather than
+        // answering. Carrying the placeholder on instead gave a struct literal
+        // a type that is not a struct, and the emitters read a struct index out
+        // of it and indexed a table with -1.
+        return TY_INFER
     }
     type_code_for(p, offset, length)
 }

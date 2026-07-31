@@ -25,7 +25,7 @@ use std::collections::{HashMap, HashSet};
 /// The generic structs a program declares, by name, with their parameters and
 /// the field types written under them.
 pub(crate) type Templates<'a> =
-    HashMap<&'a str, (&'a [String], &'a [StructField])>;
+    HashMap<&'a str, (&'a [String], Vec<StructField>)>;
 
 /// Instantiation names with where each was written.
 pub(crate) type Located = HashMap<String, Position>;
@@ -266,8 +266,25 @@ pub(crate) fn declared_structs(
 ) -> Templates<'_> {
     let mut templates: Templates = HashMap::new();
     for statement in statements {
-        if let Statement::Struct(name, params, fields) = &statement.node {
-            templates.insert(name.as_str(), (params.as_slice(), fields));
+        match &statement.node {
+            Statement::Struct(name, params, fields) => {
+                templates
+                    .insert(name.as_str(), (params.as_slice(), fields.clone()));
+            }
+            // An enum holds a resource when any variant's payload does, the
+            // same way a struct holds one when any field does. Reading only
+            // the structs left `Option<File>` ordinary data, so a resource put
+            // in one lost its obligation on the way in.
+            Statement::Enum(name, params, variants) => {
+                let payload: Vec<StructField> = variants
+                    .iter()
+                    .filter_map(|variant| variant.fields.as_ref())
+                    .flatten()
+                    .cloned()
+                    .collect();
+                templates.insert(name.as_str(), (params.as_slice(), payload));
+            }
+            _ => {}
         }
     }
     templates

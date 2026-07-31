@@ -18,7 +18,11 @@ option_none :: fn($T: Type) -> Option<T> {
     Option::None
 }
 
-option_is_some :: fn($T: Type, o: Option<T>) -> bool {
+// Held to values that are not resources: matching an option consumes it, so an
+// option holding one cannot be asked this question without giving it up, and a
+// predicate that consumes its subject is one nobody can call. The bound says so
+// at the declaration rather than leaving a body that will not instantiate.
+option_is_some :: fn($T: Type, o: Option<T>) -> bool where !is_linear(T) {
     match o {
         case .None: false
         case .Some { value }: true
@@ -28,7 +32,11 @@ option_is_some :: fn($T: Type, o: Option<T>) -> bool {
 // The value if there is one, otherwise the fallback. Takes the fallback by
 // value rather than lazily, because there are no closures to defer it with and
 // pretending otherwise would hide the cost.
-option_unwrap_or :: fn($T: Type, o: Option<T>, move fallback: $T) -> $T {
+//
+// Held to values that are not resources: it takes two and answers with one, so
+// whichever loses is dropped and nothing consumes it.
+option_unwrap_or :: fn($T: Type, o: Option<T>, move fallback: $T) -> $T
+    where !is_linear(T) {
     match o {
         case .None: fallback
         case .Some { value }: value

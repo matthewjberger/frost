@@ -588,7 +588,7 @@ specialized.
 There is a `where` clause, and it is not a trait bound. It asks what the
 compiler already knows about a type, over a fixed vocabulary: `is_numeric`,
 `is_integer`, `is_float`, `is_struct`, `is_array`, `is_slice`, `is_pointer`,
-combined with `&&`, `||` and `!`.
+`is_linear`, combined with `&&`, `||` and `!`.
 
 ```frost
 twice :: fn($T: Type, v: $T) -> T where is_numeric(T) { v + v }

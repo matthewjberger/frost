@@ -130,6 +130,13 @@ map_new :: fn($K: Type, $V: Type, capacity: i64) -> Map<K, V> {
     Map { keys = keys, values = values, state = state, cap = cap, count = 0 }
 }
 
+// Give the three blocks back. This frees the tables, not what is in them: where
+// `K` or `V` is a resource, every live key and value has to have been consumed
+// before this runs, and that is the caller's obligation rather than something
+// the compiler checks, since a slot is reached by a number worked out while the
+// program runs and there is no place the check could name. Not held back from
+// resources for the same reason `vec_free` is not: `Map<K, V>` is itself a
+// resource, so this is the only thing that consumes one.
 map_free :: fn($K: Type, $V: Type, move m: Map<K, V>) {
     heap_release_slice($K, m.keys)
     heap_release_slice($V, m.values)
@@ -211,8 +218,10 @@ map_grow :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>) {
     heap_release_slice($Slot, old_state)
 }
 
+// Held to keys and values that are not resources: an insert into a slot that
+// was already used overwrites what was there and nothing consumes it.
 map_put :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>,
-    key: $K, move value: $V) {
+    key: $K, move value: $V) where !is_linear(K) && !is_linear(V) {
     if (m.count * 2 >= m.cap) {
         map_grow($K, $V, $ops, m)
     }
@@ -227,8 +236,14 @@ map_has :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>,
 
 // The value for a key, or the supplied default when the key is absent, so a
 // caller reads without a separate presence check when a default will do.
+//
+// Held to values that are not resources. It takes two and answers with one, so
+// the other is dropped, and the one it answers with on the found path is read
+// out of a table it only borrows by a slot worked out while the program runs:
+// nothing can be told which value went, and asking twice hands out the same
+// one. Presence is `map_has`, which borrows and answers a bool.
 map_get :: fn($K: Type, $V: Type, $ops: Hashing<K>, m: Map<K, V>, key: $K,
-    move fallback: $V) -> $V {
+    move fallback: $V) -> $V where !is_linear(V) {
     slot := map_find($K, $V, $ops, m, key)
     if (m.state[slot] == Slot::Used) {
         return m.values[slot]
@@ -251,8 +266,10 @@ map_remove :: fn($K: Type, $V: Type, $ops: Hashing<K>, mut m: Map<K, V>,
 }
 
 // Empty every slot without freeing the table, so it is reused rather than
-// reallocated.
-map_clear :: fn($K: Type, $V: Type, mut m: Map<K, V>) {
+// reallocated. Held to keys and values that are not resources, since marking a
+// slot empty is dropping what was in it without consuming it.
+map_clear :: fn($K: Type, $V: Type, mut m: Map<K, V>)
+    where !is_linear(K) && !is_linear(V) {
     mut state := m.state
     mut i : i64 = 0
     while (i < m.cap) {

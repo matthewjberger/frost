@@ -1178,6 +1178,9 @@ Parser :: struct {
     // says a place it hands back is one. The walk runs before the locals are
     // recorded, so the declaration is what can be read rather than the place.
     moves_answers: i64,
+    // The parameter list of the function being walked, so a place rooted in one
+    // can be typed from the declaration.
+    moves_params: i64,
     label_id: i64,
     abi_windows: i64,
     // Whether the argument list just read held a `for` over a compile-time list

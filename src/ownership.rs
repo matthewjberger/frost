@@ -8,7 +8,37 @@ use crate::parser::{
 };
 use crate::types::Type;
 
-type Signatures = HashMap<String, Type>;
+type Signatures = HashMap<String, Signature>;
+
+/// What a call to a function answers with, and what a call needs in order to
+/// work that out.
+///
+/// The declared return type on its own is not it. `option_some` is declared
+/// `-> Option<T>`, whose template names no resource, and `option_some($File, f)`
+/// answers with `Option<File>`, which is one. Reading the declaration as written
+/// left a resource put into an option ordinary data, and the obligation went in
+/// and did not come out.
+struct Signature {
+    result: Type,
+    /// One slot per parameter: the name where that position declares a
+    /// compile-time type parameter, and `None` where it takes a value. A call
+    /// binds them positionally, each `$T: Type` taking the type written at its
+    /// place, which is how specialization binds them too.
+    type_params: Vec<Option<String>>,
+}
+
+/// The parameter positions that take a type rather than a value.
+fn type_parameter_slots(parameters: &[Parameter]) -> Vec<Option<String>> {
+    parameters
+        .iter()
+        .map(|parameter| match &parameter.type_annotation {
+            Some(Type::TypeParam(name)) if name == &parameter.name => {
+                Some(name.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
 
 fn locate<T>(result: Result<T>, position: Position) -> Result<T> {
     result.map_err(|error| {
@@ -39,16 +69,99 @@ struct Program<'a> {
     summaries: &'a Summaries,
 }
 
+/// Everything the move check reads about a program, gathered once so a
+/// specialization can be checked at the moment it is made.
+///
+/// A generic's own body names parameters bound to nothing: `vec_get` reads
+/// `v.storage[index]` where the element type is a name standing for anything, so
+/// nothing there is a resource and nothing there is a move. `vec_get<File>` is
+/// where both are true, and that body exists only while it is being lowered.
+/// The self-hosted compiler checks its instances for the same reason.
+pub struct Specializations {
+    signatures: Signatures,
+    param_types: ParamTypes,
+    field_types: FieldTypes,
+    held: HashSet<String>,
+    summaries: Summaries,
+}
+
+/// Gather them. A program with nothing to say about ownership still pays for
+/// this once, which is the same bargain `check_ownership` strikes.
+pub fn specializations(
+    statements: &[Spanned<Statement>],
+    linear: &HashSet<String>,
+) -> Specializations {
+    let signatures = collect_signatures(statements);
+    let param_types = collect_param_types(statements);
+    let field_types = collect_field_types(statements);
+    let held = linear_closure(linear, &field_types, statements);
+    let summaries = settle_summaries(
+        statements,
+        &Program {
+            linear: &held,
+            signatures: &signatures,
+            param_types: &param_types,
+            field_types: &field_types,
+            summaries: &Summaries::new(),
+        },
+    );
+    Specializations {
+        signatures,
+        param_types,
+        field_types,
+        held,
+        summaries,
+    }
+}
+
+impl Specializations {
+    /// What is wrong with one specialized body, which is the same question
+    /// asked of any other function.
+    pub fn check(&self, params: &[Parameter], body: &Block) -> Vec<String> {
+        check_function_moves(
+            params,
+            body,
+            &Program {
+                linear: &self.held,
+                signatures: &self.signatures,
+                param_types: &self.param_types,
+                field_types: &self.field_types,
+                summaries: &self.summaries,
+            },
+        )
+    }
+}
+
 fn collect_field_types(statements: &[Spanned<Statement>]) -> FieldTypes {
     let mut fields = HashMap::new();
     for statement in statements {
-        if let Statement::Struct(name, _, declared) = &statement.node {
-            for field in declared {
-                fields.insert(
-                    (name.clone(), field.name.clone()),
-                    field.field_type.clone(),
-                );
+        match &statement.node {
+            Statement::Struct(name, _, declared) => {
+                for field in declared {
+                    fields.insert(
+                        (name.clone(), field.name.clone()),
+                        field.field_type.clone(),
+                    );
+                }
             }
+            // A variant's payload is held by the enum exactly as a field is
+            // held by a struct, so an enum carrying a resource is one. Reading
+            // only the structs left an option holding a file ordinary data, and
+            // the obligation went in and did not come out.
+            Statement::Enum(name, _, variants) => {
+                for variant in variants {
+                    let Some(declared) = &variant.fields else {
+                        continue;
+                    };
+                    for field in declared {
+                        fields.insert(
+                            (name.clone(), field.name.clone()),
+                            field.field_type.clone(),
+                        );
+                    }
+                }
+            }
+            _ => {}
         }
     }
     fields
@@ -160,28 +273,43 @@ fn collect_signatures(statements: &[Spanned<Statement>]) -> Signatures {
         match &statement.node {
             Statement::Constant(
                 name,
-                Expression::Function(_, return_sig, _)
-                | Expression::Proc(_, return_sig, _),
+                Expression::Function(parameters, return_sig, _)
+                | Expression::Proc(parameters, return_sig, _),
             ) => {
                 signatures.insert(
                     name.clone(),
-                    return_sig.to_type().unwrap_or(Type::Void),
+                    Signature {
+                        result: return_sig.to_type().unwrap_or(Type::Void),
+                        type_params: type_parameter_slots(parameters),
+                    },
                 );
             }
             Statement::Extern {
-                name, return_type, ..
+                name,
+                return_type,
+                params,
+                ..
             } => {
                 signatures.insert(
                     name.clone(),
-                    return_type.clone().unwrap_or(Type::Void),
+                    Signature {
+                        result: return_type.clone().unwrap_or(Type::Void),
+                        type_params: type_parameter_slots(params),
+                    },
                 );
             }
             Statement::Declared {
-                name, return_sig, ..
+                name,
+                return_sig,
+                params,
+                ..
             } => {
                 signatures.insert(
                     name.clone(),
-                    return_sig.to_type().unwrap_or(Type::Void),
+                    Signature {
+                        result: return_sig.to_type().unwrap_or(Type::Void),
+                        type_params: type_parameter_slots(params),
+                    },
                 );
             }
             _ => {}
@@ -299,16 +427,106 @@ fn settle_summaries(
                 _ => continue,
             };
             let checker = run_function(params, body, &program);
-            let found = summarize(params, &checker);
-            if !found.is_empty() {
-                round.insert(name.clone(), found);
+            for entry in summarize(params, &checker) {
+                round.entry(name.clone()).or_default().push(entry);
             }
         }
-        if round == summaries {
+        // Grown rather than replaced, so this settles. A round reads the round
+        // before it: applying a summary at a call site marks a place gone,
+        // which stops the body recording what it would otherwise have recorded,
+        // so a set built fresh each time can lose an entry it had and find it
+        // again on the round after, and the two states alternate for ever.
+        let mut grew = false;
+        for (name, found) in round {
+            let held = summaries.entry(name).or_default();
+            for entry in found {
+                let seen = held.iter().any(|(index, under, _)| {
+                    *index == entry.0
+                        && describe_place(under) == describe_place(&entry.1)
+                });
+                if !seen {
+                    held.push(entry);
+                    grew = true;
+                }
+            }
+        }
+        if !grew {
             return summaries;
         }
-        summaries = round;
     }
+}
+
+/// The run of steps under a parameter that a summary can name, or `None` where
+/// it cannot name this place at all.
+///
+/// Fields it can name, and the dereference the mode lowering puts in front of a
+/// borrowed aggregate. An element it cannot: which element is a number worked
+/// out while the program runs, so there is no place to hand a caller that means
+/// the one this body took. An empty run is not a place under the parameter but
+/// the parameter itself, which the call site already reads from the declaration.
+fn nameable_under(path: &[Step]) -> Option<&[Step]> {
+    let under = &path[1..];
+    let named = under
+        .iter()
+        .all(|step| matches!(step, Step::Named(_) | Step::Deref(false)));
+    (!under.is_empty() && named).then_some(under)
+}
+
+/// A resource given away out of a borrowed parameter by a place no summary can
+/// name, which is the one shape the count cannot be made to cross a call.
+///
+/// `vec_get` is the example: it answers with `v.storage[index]`, so the caller
+/// is handed a resource out of a container it still believes untouched, and
+/// asking twice hands the same one out twice.
+///
+/// Refused rather than approximated. A summary saying "some element of this
+/// went" is the whole container as far as a caller can act on it, and that
+/// would refuse a container releasing its own elements one at a time, which is
+/// how resources in containers are written. What to do instead is reach the
+/// element through a borrow that stays a borrow, or take the container by
+/// `move` and answer with it again.
+fn handed_out_unnameable(
+    params: &[Parameter],
+    checker: &MoveChecker,
+) -> Vec<String> {
+    let mut reports = Vec::new();
+    for parameter in params {
+        if !matches!(
+            parameter.type_annotation,
+            Some(Type::Ref(_) | Type::RefMut(_))
+        ) {
+            continue;
+        }
+        for (key, state) in &checker.states {
+            if *state == MoveState::Live {
+                continue;
+            }
+            let Some(path) = checker.paths.get(key) else {
+                continue;
+            };
+            let Some(Step::Named(root)) = path.first() else {
+                continue;
+            };
+            if root != &parameter.name || path.len() < 2 {
+                continue;
+            }
+            if nameable_under(path).is_some() {
+                continue;
+            }
+            reports.push(format!(
+                "ownership: '{key}' gives away a resource out of '{}', which \
+                 this function only borrows, and names it by an element rather \
+                 than by a field. A caller cannot be told which element went, \
+                 so nothing stops it asking again and being handed the same one \
+                 twice. Reach the element through a borrow that stays a borrow, \
+                 or take '{}' by `move` and answer with it.",
+                parameter.name, parameter.name
+            ));
+        }
+    }
+    reports.sort();
+    reports.dedup();
+    reports
 }
 
 /// The places a body hands on that belong to a borrowed parameter, which is
@@ -339,20 +557,9 @@ fn summarize(params: &[Parameter], checker: &MoveChecker) -> Summary {
             if root != &parameter.name {
                 continue;
             }
-            // Fields only. An element is reached by a number worked out while
-            // the program runs, so the place a caller would have to be told
-            // about is one neither side can name, and a container releasing its
-            // elements one at a time is the shape that would be refused for it.
-            // Leaving those out is this rule declining to answer rather than
-            // answering wrong.
-            let under = &path[1..];
-            if under.is_empty()
-                || !under.iter().all(|step| {
-                    matches!(step, Step::Named(_) | Step::Deref(false))
-                })
-            {
+            let Some(under) = nameable_under(path) else {
                 continue;
-            }
+            };
             found.push((index, under.to_vec(), *state));
         }
     }
@@ -368,7 +575,11 @@ fn check_function_moves(
     body: &Block,
     program: &Program,
 ) -> Vec<String> {
-    run_function(params, body, program).reports
+    let checker = run_function(params, body, program);
+    let unnameable = handed_out_unnameable(params, &checker);
+    let mut reports = checker.reports;
+    reports.extend(unnameable);
+    reports
 }
 
 fn run_function<'a>(
@@ -1497,11 +1708,17 @@ fn linear_closure(
     loop {
         let mut grew = false;
         for ((owner, _), ty) in fields {
-            if held.contains(Type::template_of(owner)) {
+            // The name itself as well as the template it came from. A field
+            // table gathered over monomorphized declarations owns names like
+            // `Option<File>`, whose template is `Option`, so a guard reading
+            // only the template answers about a name that was never going to be
+            // inserted and reports growth on every round for ever.
+            if held.contains(owner.as_str())
+                || held.contains(Type::template_of(owner))
+            {
                 continue;
             }
-            if is_linear_type(ty, &held) {
-                held.insert(owner.clone());
+            if is_linear_type(ty, &held) && held.insert(owner.clone()) {
                 grew = true;
             }
         }
@@ -1541,12 +1758,27 @@ fn infer_type(
             Some(Type::Bool)
         }
         Expression::Identifier(name) => types.get(name).cloned(),
-        Expression::Call(callee, _) => {
-            if let Expression::Identifier(name) = &**callee {
-                signatures.get(name).cloned()
-            } else {
-                None
+        // The declared result with this call's type arguments put in, so a call
+        // that answers with an instantiation is typed as the one it makes
+        // rather than as the template it was declared from.
+        Expression::Call(callee, arguments) => {
+            let Expression::Identifier(name) = &**callee else {
+                return None;
+            };
+            let signature = signatures.get(name)?;
+            let mut subst: HashMap<String, Type> = HashMap::new();
+            for (slot, argument) in signature.type_params.iter().zip(arguments)
+            {
+                if let Some(parameter) = slot
+                    && let Expression::TypeValue(ty) = argument
+                {
+                    subst.insert(parameter.clone(), ty.clone());
+                }
             }
+            if subst.is_empty() {
+                return Some(signature.result.clone());
+            }
+            Some(crate::ir_build::substitute_type(&signature.result, &subst))
         }
         _ => None,
     }
