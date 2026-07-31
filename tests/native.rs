@@ -18603,6 +18603,24 @@ main :: fn() -> i64 {
          \x20   0\n}\n",
         "7\n",
     ),
+    // `is_linear` asked of a list element while the body is expanded, which is
+    // the same question a `where` bound asks and the same table answers it. The
+    // branch that cannot compile for this element is dropped rather than
+    // skipped, so one body consumes the resource and prints the plain value.
+    (
+        "is_linear_decides_a_branch_at_expansion_time",
+        "File :: linear struct { fd: i64 }\n\
+         close :: fn(move f: File) -> i64 { f.fd }\n\
+         plain :: fn(v: i64) -> i64 { v }\n\
+         each :: fn(args: $...) {\n\
+         \x20   for v in args {\n\
+         \x20       if (is_linear(v)) { print close(v) } else { print plain(v) }\n\
+         \x20   }\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   each(File { fd = 7 }, 5)\n\
+         \x20   0\n}\n",
+        "7\n5\n",
+    ),
 ];
 
 // Build and run `source` with the self-hosted compiler through one of its
