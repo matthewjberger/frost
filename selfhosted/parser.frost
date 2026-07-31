@@ -690,7 +690,7 @@ parse_primary :: fn(mut p: Parser) -> i64 {
     // only a scalar is dereferenced here.
     param_ty := parse_param_type(p, offset, length)
     if (param_ty >= 0 && is_borrow(param_ty)
-        && is_aggregate(pointee(param_ty)) == false) {
+        && is_aggregate(pointee(p, param_ty)) == false) {
         held := new_named_node_at(p, NodeKind::Var, 0, offset, length, offset)
         made := new_unary(p, NodeKind::Deref, held)
         // Marked as a read through a borrow rather than through a raw pointer.
@@ -1631,7 +1631,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
     // not gated the way a raw pointer is.
     if (cur(p) == TokenKind::KwRef) {
         advance(p)
-        return BORROW_FLAG + parse_type(p)
+        return borrow_of(p, parse_type(p))
     }
     // `fn(T, U) -> R` is a function pointer: the address of a function of that
     // signature, a callable value. A `mut` parameter is a borrow, the same as a
@@ -1666,10 +1666,10 @@ parse_type :: fn(mut p: Parser) -> i64 {
             }
             mut param_ty := parse_type(p)
             if (is_mut == 1 && is_pointer(param_ty) == false) {
-                param_ty = BORROW_FLAG + param_ty
+                param_ty = borrow_of(p, param_ty)
             }
             if (is_value == 1 && is_pointer(param_ty) == false) {
-                param_ty = BORROW_FLAG + param_ty
+                param_ty = borrow_of(p, param_ty)
             }
             arena_push(p.proc_params,
                 GArg { value = param_ty, is_type = 0, pending = -1 })
@@ -1717,7 +1717,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
         mut made := array_of(p, element, length)
         mut level : i64 = 0
         while (level < pointer_levels) {
-            made = POINTER_BASE + made
+            made = pointer_to(p, made)
             level = level + 1
         }
         return made
@@ -1842,7 +1842,7 @@ parse_type :: fn(mut p: Parser) -> i64 {
     mut result := base
     mut k : i64 = 0
     while (k < pointer_levels) {
-        result = POINTER_BASE + result
+        result = pointer_to(p, result)
         k = k + 1
     }
     result
@@ -3770,7 +3770,7 @@ parse_params :: fn(mut p: Parser) -> i64 {
                 }
             }
             if (auto_borrow == 1) {
-                ty = BORROW_FLAG + ty
+                ty = borrow_of(p, ty)
             }
             // A `move` parameter takes the value itself however wide it is, and
             // is marked so, since whether a read parameter borrows depends on
@@ -3903,7 +3903,7 @@ parse_function :: fn(mut p: Parser) -> i64 {
             binding := synth_capability_name(p, cap_name_off, cap_name_len)
             capability := arena_push(
                 p.arena,
-                Node { kind = NodeKind::Param, a = 1, b = BORROW_FLAG + cap_ty,
+                Node { kind = NodeKind::Param, a = 1, b = borrow_of(p, cap_ty),
                     c = cap_name_len, val = binding, next = -1,
                     pos = cur_off(p) },
             )

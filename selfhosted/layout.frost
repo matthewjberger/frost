@@ -133,7 +133,7 @@ type_size :: fn(mut p: Parser, ty: i64) -> i64 {
 field_offset :: fn(mut p: Parser, struct_ty: i64, off: i64, len: i64) -> i64 {
     mut base := struct_ty
     if (is_pointer(base)) {
-        base = pointee(base)
+        base = pointee(p, base)
     }
     if (is_struct_ty(base) == false) {
         return 0

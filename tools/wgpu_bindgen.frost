@@ -329,16 +329,12 @@ append_type :: fn(mut out: Builder, mut document: Json, holder: i64) {
             builder_str_value(out, "^u32")
             return
         }
-        if (type_starts(document, kind, "array\\u003cstruct.")) {
+        if (type_starts(document, kind, "array\\u003cstruct.")
+            || type_starts(document, kind, "array\\u003cobject.")) {
             builder_byte(out, 94)
             append_after_dot(out, document, kind)
             return
         }
-        // An object is `distinct ^u8`, so a run of them is a pointer to a
-        // distinct type, which the self-hosted compiler cannot yet read. Left a
-        // byte pointer until it can.
-        builder_str_value(out, "^u8")
-        return
         builder_str_value(out, "^u8")
         return
     }

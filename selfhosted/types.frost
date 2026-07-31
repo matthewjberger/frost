@@ -50,7 +50,7 @@ lower_enum_compare :: fn(mut p: Parser, id: i64) {
     // through it, so the tag is reached the same way either way.
     mut ty := type_of(p, left)
     if (is_pointer(ty)) {
-        ty = pointee(ty)
+        ty = pointee(p, ty)
     }
     if (is_struct_ty(ty) == false) {
         return
@@ -262,8 +262,8 @@ binding_type :: fn(mut p: Parser, value: i64) -> i64 {
     if (node.kind != NodeKind::Var) {
         return ty
     }
-    if (is_borrow(ty) && is_aggregate(pointee(ty))) {
-        return pointee(ty)
+    if (is_borrow(ty) && is_aggregate(pointee(p, ty))) {
+        return pointee(p, ty)
     }
     ty
 }
@@ -278,8 +278,8 @@ place_type :: fn(mut p: Parser, place: i64) -> i64 {
     if (arena_at(p.arena, place).kind != NodeKind::Var) {
         return ty
     }
-    if (is_borrow(ty) && is_aggregate(pointee(ty))) {
-        return pointee(ty)
+    if (is_borrow(ty) && is_aggregate(pointee(p, ty))) {
+        return pointee(p, ty)
     }
     ty
 }
@@ -451,7 +451,7 @@ types_compatible :: fn(mut p: Parser, from: i64, to: i64) -> bool {
     // address of one is that value: `slice[index]` of a struct answers with a
     // pointer, and handing it to a place of the struct's own type is a copy of
     // the element, not a type error.
-    if (is_pointer(from) && is_aggregate(to) && pointee(from) == to) {
+    if (is_pointer(from) && is_aggregate(to) && pointee(p, from) == to) {
         return true
     }
     // An array reaches a slice of its own element type and nothing else. Two
@@ -566,7 +566,7 @@ record_local :: fn(mut p: Parser, off: i64, len: i64, ty: i64) {
 field_type :: fn(mut p: Parser, base_ty: i64, off: i64, len: i64) -> i64 {
     mut struct_ty := base_ty
     if (is_pointer(struct_ty)) {
-        struct_ty = pointee(struct_ty)
+        struct_ty = pointee(p, struct_ty)
     }
     if (is_struct_ty(struct_ty) == false) {
         return TY_I64
@@ -680,7 +680,7 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
             cbase_ty := type_of(p, base_node.a)
             mut cthrough := cbase_ty
             if (is_pointer(cthrough)) {
-                cthrough = pointee(cthrough)
+                cthrough = pointee(p, cthrough)
             }
             if (type_of(p, base_node.b) == TY_HANDLE
                 && is_columns_ty(p, cthrough)) {
@@ -695,7 +695,7 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
         inner := node.a
         t := type_of(p, inner)
         if (is_pointer(t)) {
-            return pointee(t)
+            return pointee(p, t)
         }
         return TY_I64
     }
@@ -721,7 +721,7 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
             return array_element(p, t)
         }
         if (is_pointer(t)) {
-            inner := pointee(t)
+            inner := pointee(p, t)
             if (is_array_ty(inner)) {
                 return array_element(p, inner)
             }
@@ -751,20 +751,20 @@ type_of_compute :: fn(mut p: Parser, id: i64) -> i64 {
         return array_of(p, element, node.c)
     }
     if (kind == NodeKind::Ref) {
-        return BORROW_FLAG + type_of(p, node.a)
+        return borrow_of(p, type_of(p, node.a))
     }
     if (kind == NodeKind::SliceFrom) {
         return node.val
     }
     if (kind == NodeKind::AddrOf) {
         inner := node.a
-        return POINTER_BASE + type_of(p, inner)
+        return pointer_to(p, type_of(p, inner))
     }
     if (kind == NodeKind::Cast) {
         return node.val
     }
     if (kind == NodeKind::PtrCast) {
-        return POINTER_BASE + node.val
+        return pointer_to(p, node.val)
     }
     // A float literal is the digits until something says how wide they are, the
     // way an integer literal is. What said so is written on the node by
@@ -910,7 +910,7 @@ call_type_args :: fn(mut p: Parser, head: i64, owner: i64) -> i64 {
         next_id := node.next
         mut t := type_of(p, value)
         if (is_pointer(t)) {
-            t = pointee(t)
+            t = pointee(p, t)
         }
         // A runtime argument that is a generic instance carries the whole tuple
         // its parameters were bound to, so a call that leaves the arguments
@@ -954,7 +954,7 @@ call_type_args :: fn(mut p: Parser, head: i64, owner: i64) -> i64 {
         if (vnode.kind != NodeKind::TypeVal) {
             mut held := argument_type(p, value)
             if (is_pointer(held)) {
-                held = pointee(held)
+                held = pointee(p, held)
             }
             if (held >= 0) {
                 return held
@@ -1557,7 +1557,7 @@ call_arg_type_at :: fn(mut p: Parser, args: i64, at: i64,
         if (seen == at) {
             mut held := argument_type(p, value)
             if (is_pointer(held)) {
-                held = pointee(held)
+                held = pointee(p, held)
             }
             if (through == 1) {
                 if (held < 0 || is_array_ty(held) == false) {
@@ -1610,7 +1610,7 @@ parse_call_type_args :: fn(mut p: Parser, args: i64, gfn_index: i64) -> i64 {
         next_id := node.next
         mut held := argument_type(p, value)
         if (is_pointer(held)) {
-            held = pointee(held)
+            held = pointee(p, held)
         }
         if (held >= 0) {
             return held

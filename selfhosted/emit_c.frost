@@ -149,7 +149,7 @@ emit_coerced :: fn(mut p: Parser, value_in: i64, want: i64) {
     // of the struct's own type is a copy of what it points at: `items[row] =
     // value` in a setter whose component is a struct is this, and without the
     // dereference C is handed a pointer where a struct belongs.
-    if (is_aggregate(want) && is_pointer(have) && pointee(have) == want) {
+    if (is_aggregate(want) && is_pointer(have) && pointee(p, have) == want) {
         emit_text("(*")
         emit_expr(p, value)
         emit_text(")")
@@ -261,7 +261,7 @@ emit_ctype :: fn(mut p: Parser, held: i64) {
         return
     }
     if (is_pointer(ty)) {
-        emit_ctype(p, pointee(ty))
+        emit_ctype(p, pointee(p, ty))
         emit_text("*")
         return
     }
@@ -513,7 +513,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
             cbase_ty := type_of(p, cbase)
             mut cthrough := cbase_ty
             if (is_pointer(cthrough)) {
-                cthrough = pointee(cthrough)
+                cthrough = pointee(p, cthrough)
             }
             if (type_of(p, cindex) == TY_HANDLE
                 && is_columns_ty(p, cthrough)) {
@@ -568,7 +568,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         base_ty := type_of(p, base)
         mut through := base_ty
         if (is_pointer(through)) {
-            through = pointee(through)
+            through = pointee(p, through)
         }
         // Indexing a slab by a handle: the handle names a slot, and the slot is
         // reached only after `frost_rt_slot` unpacks its index, bounds-checks it
@@ -682,7 +682,7 @@ emit_expr :: fn(mut p: Parser, id: i64) {
         mut inner_ty := type_of(p, inner)
         mut through : bool = false
         if (is_pointer(inner_ty)) {
-            inner_ty = pointee(inner_ty)
+            inner_ty = pointee(p, inner_ty)
             through = true
         }
         if (is_array_ty(inner_ty) && is_slice_ty(p, inner_ty) == false) {
@@ -962,7 +962,7 @@ emit_indirect_call :: fn(mut p: Parser, off: i64, len: i64, callee_node: i64,
         }
         arg_ty := type_of(p, node.a)
         if (param_ty >= 0 && is_pointer(param_ty)
-            && is_aggregate(pointee(param_ty)) && is_pointer(arg_ty) == false) {
+            && is_aggregate(pointee(p, param_ty)) && is_pointer(arg_ty) == false) {
             emit_text("(&(")
             emit_expr(p, node.a)
             emit_text("))")
@@ -1026,9 +1026,9 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                 // leaves it alone, but a `str` parameter wants a slice built
                 // from it and handed over by address like any other aggregate.
                 if (param_auto == 1 && is_pointer(param_ty)
-                    && is_slice_ty(p, pointee(param_ty))
+                    && is_slice_ty(p, pointee(p, param_ty))
                     && is_pointer(arg_ty)
-                    && is_array_ty(pointee(arg_ty)) == false) {
+                    && is_array_ty(pointee(p, arg_ty)) == false) {
                     borrow = 1
                 }
                 // A generic call whose instance could not be resolved has no
@@ -1059,7 +1059,7 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
             // this, and without it C is handed the bytes where a slice belongs.
             mut want_ty := param_ty
             if (is_pointer(want_ty)) {
-                want_ty = pointee(want_ty)
+                want_ty = pointee(p, want_ty)
             }
             // Only where the parameter borrows. A generic taking its value
             // outright is handed the slice itself, and handing it an address
@@ -1084,7 +1084,7 @@ emit_args :: fn(mut p: Parser, head: i64, fn_index: i64) {
                 // A borrowed parameter takes an address, and an array reaching
                 // a slice parameter has to become one first. The slice itself
                 // is what the callee is handed the address of.
-                want := pointee(param_ty)
+                want := pointee(p, param_ty)
                 if (is_array_ty(want) && is_slice_ty(p, want)) {
                     emit_text("(&")
                     emit_coerced(p, value, want)
@@ -1143,7 +1143,7 @@ emit_write_value :: fn(mut p: Parser, value: i64) {
     }
     // A `^i8` is a C string, whose length is where its NUL is. An unannotated
     // string literal is one of these.
-    if (is_pointer(value_ty) && pointee(value_ty) == TY_I8) {
+    if (is_pointer(value_ty) && pointee(p, value_ty) == TY_I8) {
         emit_text("frost_rt_write_cstr((const char*)(")
         emit_expr(p, value)
         emit_text("));\n")
@@ -1209,7 +1209,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
             cbase_ty := type_of(p, cbase)
             mut cthrough := cbase_ty
             if (is_pointer(cthrough)) {
-                cthrough = pointee(cthrough)
+                cthrough = pointee(p, cthrough)
             }
             if (type_of(p, cindex) == TY_HANDLE
                 && is_columns_ty(p, cthrough)) {
@@ -1293,7 +1293,7 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         // A run of bytes rather than a number is written as bytes. Everything
         // else keeps the two printf forms it always had.
         if ((is_array_ty(value_ty) && is_slice_ty(p, value_ty))
-            || (is_pointer(value_ty) && pointee(value_ty) == TY_I8)) {
+            || (is_pointer(value_ty) && pointee(p, value_ty) == TY_I8)) {
             emit_write_value(p, value)
             emit_text("frost_rt_write_newline();\n")
             return
@@ -1436,7 +1436,7 @@ emit_param_signature :: fn(mut p: Parser, head: i64) {
         // address. See emit_value_param_bindings.
         by_value := param_node_by_value(p, id)
         if (by_value) {
-            ty = pointee(ty)
+            ty = pointee(p, ty)
         }
         emit_ctype(p, ty)
         emit_text(" ")
@@ -1588,7 +1588,7 @@ emit_array_ordered :: fn(mut p: Parser, i: i64) {
     // concrete per-instance arrays, so it is not defined here.
     mut bare := element
     while (is_pointer(bare)) {
-        bare = pointee(bare)
+        bare = pointee(p, bare)
     }
     if (bare == TY_PARAM) {
         return
