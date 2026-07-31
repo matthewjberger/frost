@@ -826,36 +826,62 @@ init_value_for :: fn(mut p: Parser, inits: i64, name_off: i64,
     -1
 }
 
-// The instance a bare `Name { ... }` makes when nothing named it. Only a
-// generic taking one parameter is answered for, which is the one whose count of
-// further parameters is zero: a field declared as a parameter carries no record
-// of *which* one, so past the first there is nothing to tell them apart and the
-// reader writes the arguments instead.
+// What one parameter is bound to, read off the value written for a field the
+// template declares as that parameter, or -1 where no field carries it.
+inferred_arg :: fn(mut p: Parser, field_token: i64, name_off: i64,
+    name_len: i64, inits: i64) -> i64 {
+    value := param_typed_value(p, field_token, name_off, name_len, inits)
+    if (value < 0) {
+        return -1
+    }
+    type_of(p, value)
+}
+
+// The instance a bare `Name { ... }` makes when nothing named it. Every
+// parameter is read off the field that declares it, so a generic taking several
+// resolves as a whole, and one whose parameter no field carries by itself is
+// left to the reader to write out.
 instantiate_inferred :: fn(mut p: Parser, gi: i64, inits: i64, offset: i64,
     length: i64) -> i64 {
     template := arena_at(p.structs, gi)
+    xparam_start := template.xparam_start
     xparam_count := template.xparam_count
     field_token := template.field_token
     tparam_off := template.tparam_off
     tparam_len := template.tparam_len
-    mut bound : i64 = -1
-    if (xparam_count == 0) {
-        value := param_typed_value(p, field_token, tparam_off, tparam_len,
-            inits)
-        if (value >= 0) {
-            bound = type_of(p, value)
+    primary := inferred_arg(p, field_token, tparam_off, tparam_len, inits)
+    if (primary < 0) {
+        report_uninferable(p, offset, length)
+    }
+    run_start := p.gargs.count
+    mut j : i64 = 0
+    while (j < xparam_count) {
+        param := arena_at(p.gparams, xparam_start + j)
+        pname_off := param.name_off
+        pname_len := param.name_len
+        // A value parameter stands for a number rather than a type, so no
+        // field's declared type is it and there is nothing to read it off.
+        mut bound : i64 = -1
+        if (param.is_value == 0) {
+            bound = inferred_arg(p, field_token, pname_off, pname_len, inits)
         }
+        if (bound < 0) {
+            report_uninferable(p, offset, length)
+        }
+        arena_push(p.gargs, GArg { value = bound, is_type = 0, pending = -1 })
+        j = j + 1
     }
-    if (bound < 0) {
-        report_where(p.modules, p.src, offset)
-        report("'")
-        report_src(p.src, offset, length)
-        report("' is generic and nothing here says which instance this literal is: write the arguments on the literal, as in '")
-        report_src(p.src, offset, length)
-        report("<i64> { ... }', or give the binding a declared type that names them")
-        frost_rt_die()
-    }
-    instantiate(p, gi, bound, p.gargs.count, 0)
+    instantiate(p, gi, primary, run_start, xparam_count)
+}
+
+report_uninferable :: fn(mut p: Parser, offset: i64, length: i64) {
+    report_where(p.modules, p.src, offset)
+    report("'")
+    report_src(p.src, offset, length)
+    report("' is generic and nothing here says which instance this literal is: write the arguments on the literal, as in '")
+    report_src(p.src, offset, length)
+    report("<i64> { ... }', or give the binding a declared type that names them")
+    frost_rt_die()
 }
 
 // The struct type for a literal `Name { ... }`. A generic name resolves, under

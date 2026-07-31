@@ -18591,6 +18591,18 @@ main :: fn() -> i64 {
          \x20   0\n}\n",
         "3\n30\n",
     ),
+    // The same, for a generic taking more than one parameter. Each is read off
+    // the field that declares it, so the instance resolves as a whole rather
+    // than only where a single parameter made the answer obvious.
+    (
+        "a_generic_literal_inferring_two_arguments",
+        "Duo :: struct($A: Type, $B: Type) { first: A, second: B }\n\
+         main :: fn() -> i64 {\n\
+         \x20   d := Duo { first = 7, second = true }\n\
+         \x20   print d.first\n\
+         \x20   0\n}\n",
+        "7\n",
+    ),
 ];
 
 // Build and run `source` with the self-hosted compiler through one of its
