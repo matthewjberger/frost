@@ -223,9 +223,9 @@ dependencies runs exactly as it was written and two passes over one keep the
 order they were declared in.
 
 It answers false, having said which pass and which resource, for a read of a
-resource nothing writes, a cycle, a pass that writes nothing, and a read of a
-resource that follows the window. That last one is the least obvious and the
-most useful: a bind group naming a texture is made once, and a window-sized
+resource nothing writes, a cycle, a pass that writes nothing at all, and a read
+of a resource that follows the window. That last one is the least obvious and
+the most useful: a bind group naming a texture is made once, and a window-sized
 texture is thrown away and remade on a resize, so sampling one leaves the
 binding pointing at a texture that no longer exists.
 
@@ -236,10 +236,72 @@ every pass after loads what is there. In `scene.frost` that rule replaced a pass
 body reading its own state to pick between two load ops, which is the kind of
 rule a reader keeps rather than one the code does.
 
-Scheduling is arithmetic over two tables and touches no device, so
-`graph.frost` carries eight `test` blocks that run under `just test` with
-`no_device()` in place of a GPU: what runs first, what the load ops come out as,
-and each of the four graphs that cannot run at all.
+### What a resource can be
+
+A colour or depth target, the window's own texture, and two more:
+
+A **buffer** is a run of bytes a pass writes and another reads. It is never an
+attachment and decides no load op; what it does is order the passes around it,
+which is all a compute step needs from a graph. `graph_compute_pass` declares
+one the same way a drawing pass declares a target, and is handed a compute pass
+encoder rather than a render pass encoder.
+
+A **transient** lives inside one frame. The graph works out when each resource
+is first and last touched, and hands two transients the same texture when the
+first is finished with before the second is started. A chain of post-process
+steps costs two textures however long it gets, because each step reads the one
+before and writes the next:
+
+```frost
+first  := graph_transient_color(g, "first", 64, 64, format)
+middle := graph_transient_color(g, "middle", 64, 64, format)
+last   := graph_transient_color(g, "last", 64, 64, format)
+// first is free by the time last starts, so they are one texture
+```
+
+An **external** is one the graph orders passes around and does not own. A
+program hands it a texture with `graph_set_external`, which is how the same
+graph draws each camera into that camera's target.
+
+A declared size may be a share of the window rather than a number: `-1` is the
+whole of it, `-2` a half, `-4` a quarter. A chain that runs at half resolution
+says so once and follows a resize.
+
+### Ordering a program asks for
+
+`graph_runs_after(g, after, before)` puts one pass after another when they share
+no resource and the order still matters. It joins the edges the reads and writes
+imply, and a cycle made this way is refused like any other.
+
+### Turning passes off, and phases
+
+`graph_set_enabled` takes a pass out of the frame without changing the order, so
+a debug view toggles one every frame with no rescheduling. `graph_save_enabled`
+and `graph_restore_enabled` put back what was there rather than turning
+everything on, which matters when something was already off.
+
+A pass belongs to a phase, and `graph_run_phase` runs one. That is what renders
+the same graph once per camera: the shared work carries one phase, each view's
+work carries its own, and a program runs the shared phase once and each view's
+phase with a different external bound.
+
+### Sub-graphs
+
+A graph built on its own can be handed to another with `graph_sub`, and
+`graph_sub_pass` is a pass that runs it. The pass declares what it reads and
+writes like any other, which is what puts the nested work in the right place in
+the parent's order, and `graph_takes` binds one of the child's resources to one
+of the parent's.
+
+A `Graph` is `linear` for the same reason a `Frame` is: `graph_sub` keeps the
+child, so a caller that also freed its own copy would free the same tables
+twice, and the obligation on the type makes that stop compiling.
+
+Ordering, resource lifetimes and pool assignment are all arithmetic over tables
+and touch no device, so `graph.frost` carries twenty `test` blocks that run
+under `just test` with `no_device()` in place of a GPU: what runs first, which
+transients share a texture, what the load ops come out as, the phase and enabled
+state a pass carries, and each of the five graphs that cannot run at all.
 
 ## The frame is linear
 

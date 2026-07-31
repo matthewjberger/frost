@@ -15859,6 +15859,37 @@ fn both_compilers_take_a_pool_beside_a_run_of_resources() {
 // what each has to say, since two compilers refusing one program for two
 // different reasons is a divergence that a refusal alone would not show.
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A distinct type taken from its representation through a field. The
+    // bootstrap held a named local, an argument and a binding to the rule and
+    // let a field through, because the check sat in the branch that assigns to
+    // an identifier and the branch that assigns to a place did not have it. A
+    // `flags` type is a distinct one with names under it, so the same hole put
+    // a bare number into a set of bits, which is how it was found: the wgpu
+    // binding declares `usage` as one.
+    (
+        "distinct_through_a_field",
+        "Meters :: distinct i64\n\
+         Holder :: struct { m: Meters }\n\
+         main :: fn() -> i64 {\n\
+         \x20   plain : i64 = 2\n\
+         \x20   mut h := Holder { m = cast($Meters, 0) }\n\
+         \x20   h.m = plain\n\
+         \x20   print 1\n\
+         \x20   0\n}\n",
+        "representation",
+    ),
+    (
+        "flags_through_a_field",
+        "Usage :: flags u64 { None = 0, Read = 1, Write = 2 }\n\
+         Holder :: struct { usage: Usage }\n\
+         main :: fn() -> i64 {\n\
+         \x20   plain : u32 = 2\n\
+         \x20   mut h := Holder { usage = Usage::None }\n\
+         \x20   h.usage = plain\n\
+         \x20   print 1\n\
+         \x20   0\n}\n",
+        "names declared under it",
+    ),
     // A resource reached through a field is a place of its own, so consuming it
     // twice consumes it twice. Tracked by name, the field was never recorded and
     // neither compiler said the second consumption was one: with a consumer that
@@ -16503,10 +16534,12 @@ fn the_graphics_examples_compile_against_their_bindings() {
     }
 }
 
-// What a render graph orders, and what it refuses. Scheduling is arithmetic
-// over two tables, so every one of these runs with `no_device()` in place of a
-// GPU: the order a pass runs in, the load op each attachment gets, and the four
-// graphs that cannot run at all.
+// What a render graph orders, and what it refuses. Ordering, resource lifetimes
+// and pool assignment are all arithmetic over tables, so every one of these
+// runs with `no_device()` in place of a GPU: the order a pass runs in, which
+// transients end up sharing one texture, the load op each attachment gets, the
+// phase and enabled state a pass carries, and the five graphs that cannot run
+// at all.
 //
 // Linking is what needs the libraries, since the graph imports the wgpu binding
 // and that names symbols whether or not a test calls them. Where they are not
@@ -16556,7 +16589,7 @@ fn the_render_graph_orders_its_passes() {
             .unwrap();
         let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
         assert!(
-            output.contains("8 passed, 0 failed"),
+            output.contains("20 passed, 0 failed"),
             "the render graph's own tests did not pass (emit_c: {emit_c}):\n{output}{}",
             String::from_utf8_lossy(&run.stderr)
         );

@@ -35,7 +35,7 @@ export Renderer, Frame, Target,
     renderer_open, renderer_close, renderer_ok, renderer_resize,
     renderer_begin, renderer_end,
     renderer_device, renderer_queue, renderer_format,
-    frame_ok, frame_view, frame_pass_into,
+    frame_ok, frame_view, frame_encoder, frame_pass_into,
     target_of, no_view,
     DEPTH_FORMAT, no_pointer
 
@@ -275,6 +275,9 @@ renderer_begin :: fn(mut r: Renderer) -> Frame {
 }
 
 frame_ok :: fn(f: Frame) -> bool { f.ready }
+// The frame's own command encoder, which is what a pass recording something
+// other than a render pass opens its own encoder over.
+frame_encoder :: fn(f: Frame) -> CommandEncoder { f.encoder }
 frame_view :: fn(f: Frame) -> TextureView { f.view }
 
 // Where a pass draws. A colour attachment, a depth attachment, or both: a
