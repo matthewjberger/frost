@@ -1245,6 +1245,7 @@ is_type_predicate :: fn(src: str, off: i64, len: i64) -> bool {
         || str_range_eq(src, off, len, "is_array")
         || str_range_eq(src, off, len, "is_slice")
         || str_range_eq(src, off, len, "is_pointer")
+        || str_range_eq(src, off, len, "is_linear")
 }
 
 predicate_holds :: fn(mut p: Parser, off: i64, len: i64, ty: i64) -> i64 {
@@ -1274,6 +1275,15 @@ predicate_holds :: fn(mut p: Parser, off: i64, len: i64, ty: i64) -> i64 {
     }
     if (str_range_eq(p.src, off, len, "is_pointer")) {
         if (is_pointer(ty)) { return 1 }
+        return 0
+    }
+    // Whether a value of this type has to be consumed exactly once. A container
+    // that reaches an element by a number cannot say which element it took, so
+    // the generic ones hold themselves to types where there is nothing to say:
+    // `where !is_linear(T)` refuses the binding at the call rather than
+    // leaking inside a body nobody wrote.
+    if (str_range_eq(p.src, off, len, "is_linear")) {
+        if (is_linear_type(p, ty)) { return 1 }
         return 0
     }
     -1

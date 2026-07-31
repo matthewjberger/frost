@@ -1766,6 +1766,70 @@ walk_moves_while :: fn(mut p: Parser, body: i64) {
     p.move_scratch.count = scratch_base
 }
 
+// The type of a place whose root is a parameter, worked out from the
+// declaration. This walk runs before the locals are recorded, so a field read
+// has nothing else to type it against, and a parameter's declared type is
+// concrete in an instance where the template's own is a name standing for
+// anything. Answers -1 where the place is rooted anywhere else.
+param_place_type :: fn(mut p: Parser, place: i64, params: i64) -> i64 {
+    if (place == (-1)) {
+        return -1
+    }
+    node := arena_at(p.arena, place)
+    kind := node.kind
+    base := node.a
+    name_off := node.val
+    name_len := node.c
+    if (kind == NodeKind::Var) {
+        mut id := params
+        while (id != (-1)) {
+            pnode := arena_at(p.arena, id)
+            pname_off := pnode.val
+            pname_len := pnode.c
+            pty := pnode.b
+            next_param := pnode.next
+            if (pname_len == name_len
+                && bytes_equal(p.src, pname_off, name_off, name_len)) {
+                if (is_pointer(pty)) {
+                    return pointee(pty)
+                }
+                return pty
+            }
+            id = next_param
+        }
+        return -1
+    }
+    if (kind == NodeKind::Field) {
+        held := param_place_type(p, base, params)
+        if (held < 0) {
+            return -1
+        }
+        // A generic's own entry holds whatever its last instantiation left in
+        // it, so a field read off the template says nothing about the body
+        // being walked. Only an instantiation, or a struct that was never
+        // generic, answers for itself.
+        mut owner := held
+        if (is_pointer(owner)) {
+            owner = pointee(owner)
+        }
+        if (is_struct_ty(owner)) {
+            def := arena_at(p.structs, struct_index_of(owner))
+            if (def.is_generic == 1) {
+                return -1
+            }
+        }
+        return field_type(p, held, name_off, name_len)
+    }
+    if (kind == NodeKind::Index) {
+        held := param_place_type(p, base, params)
+        if (held < 0 || is_array_ty(held) == false) {
+            return -1
+        }
+        return array_element(p, held)
+    }
+    -1
+}
+
 // A place of resource type given to the caller is gone from here, the same as
 // one handed to a call that takes it. Reading it and reading nothing else is
 // how a function hands out what it was only lent.
@@ -1773,11 +1837,16 @@ note_handed_out :: fn(mut p: Parser, value: i64) {
     if (value == (-1) || is_place_expr(p, value) == false) {
         return
     }
-    // What the function was declared to answer with, rather than what the place
-    // works out to. This walk runs before the locals are recorded, so a field
-    // read has nothing to type it against, and the declaration says the same
-    // thing without needing one.
-    if (p.moves_answers == 0) {
+    // What the place itself is, where it is rooted in a parameter, since an
+    // instance's parameter carries a real type where the function it was made
+    // from answers with a name standing for anything. What the function was
+    // declared to answer with covers the rest.
+    held := param_place_type(p, value, p.moves_params)
+    mut resource := p.moves_answers == 1
+    if (held >= 0) {
+        resource = is_linear_type(p, held)
+    }
+    if (resource == false) {
         return
     }
     root := strip_place(p, value, place_depth(p, value))
@@ -1792,8 +1861,10 @@ note_handed_out :: fn(mut p: Parser, value: i64) {
 // A body, and the value it answers with. The last statement is that value when
 // it is an expression: the emitters are what turn the last one into a return,
 // so nothing before them has marked it as one.
-walk_moves_body :: fn(mut p: Parser, body: i64, answers: bool) {
+walk_moves_body :: fn(mut p: Parser, body: i64, params: i64, answers: bool) {
     saved := p.moves_answers
+    saved_params := p.moves_params
+    p.moves_params = params
     p.moves_answers = 0
     if (answers) {
         p.moves_answers = 1
@@ -1813,6 +1884,102 @@ walk_moves_body :: fn(mut p: Parser, body: i64, answers: bool) {
         }
     }
     p.moves_answers = saved
+    p.moves_params = saved_params
+}
+
+// Whether a call anywhere in the program asked for this instance.
+//
+// Two things make one. A call names its callee, and the tuple it leaves carries
+// that generic as its owner. A generic *struct* written with an argument leaves
+// a tuple owned by nothing, and that one is offered to every generic function
+// there is, so `Vec<Table>` alone brings `vec_get<Table>` into being with
+// nothing calling it. An instance nobody calls hands nothing to anybody, so a
+// rule about what a caller is told has nothing to say about it.
+//
+// Answered only where a rule is about to complain, since it walks two tables.
+instance_was_called :: fn(mut p: Parser, node_id: i64) -> bool {
+    mut i : i64 = 0
+    while (i < p.mono_nodes.count) {
+        held := arena_at(p.mono_nodes, i)
+        if (held.node == node_id) {
+            owner := held.gfn_index
+            arg := held.arg
+            xstart := held.xarg_start
+            xcount := held.xarg_count
+            mut k : i64 = 0
+            while (k < p.type_args.count) {
+                used := arena_at(p.type_args, k)
+                if (used.owner == owner && used.arg == arg
+                    && used.xarg_count == xcount
+                    && gargs_equal(p, used.xarg_start, xstart, xcount)) {
+                    return true
+                }
+                k = k + 1
+            }
+            return false
+        }
+        i = i + 1
+    }
+    false
+}
+
+// A resource given away out of a borrowed parameter by a place no summary can
+// name, which is the one shape the count cannot be made to cross a call.
+//
+// `vec_get` is the example: it answers with `v.storage[index]`, so the caller
+// is handed a resource out of a container it still believes untouched, and
+// asking twice hands the same one out twice.
+//
+// Refused rather than approximated. A summary saying "some element of this
+// went" is the whole container as far as a caller can act on it, and that would
+// refuse a container releasing its own elements one at a time, which is how
+// resources in containers are written.
+report_unnameable :: fn(mut p: Parser, params: i64, fn_index: i64,
+    node_id: i64) {
+    // A template's own body is walked with nothing bound, so it is left to its
+    // instances to answer for. Asked only where a candidate was found, since
+    // that is rare and this walks every instance the program made.
+    mut param := params
+    while (param != (-1)) {
+        pnode := arena_at(p.arena, param)
+        borrows := pnode.a
+        pname_off := pnode.val
+        pname_len := pnode.c
+        next_param := pnode.next
+        if (borrows == 1) {
+            mut i : i64 = 0
+            while (i < p.moved.count) {
+                entry := arena_at(p.moved, i)
+                place := entry.slot
+                if (place >= 0) {
+                    root := strip_place(p, place, place_depth(p, place))
+                    rnode := arena_at(p.arena, root)
+                    root_off := rnode.val
+                    root_len := rnode.c
+                    if (rnode.kind == NodeKind::Var && root_len == pname_len
+                        && bytes_equal(p.src, root_off, pname_off, pname_len)
+                        && place != root) {
+                        mark := p.summary_steps.count
+                        nameable := push_field_chain(p, place)
+                        p.summary_steps.count = mark
+                        mut answerable := true
+                        if (generic_fn_of(p, fn_index) >= 0) {
+                            answerable = instance_was_called(p, node_id)
+                        }
+                        if (nameable == false && answerable) {
+                            report_where(p.modules, p.src, root_off)
+                            report("this gives away a resource out of '")
+                            report_src(p.src, pname_off, pname_len)
+                            report("', which it only borrows, and names it by an element rather than by a field. A caller cannot be told which element went, so nothing stops it asking again and being handed the same one twice. Reach the element through a borrow that stays a borrow, or take it by `move` and answer with it")
+                            frost_rt_die()
+                        }
+                    }
+                }
+                i = i + 1
+            }
+        }
+        param = next_param
+    }
 }
 
 walk_moves_block :: fn(mut p: Parser, head: i64) {
@@ -1953,7 +2120,7 @@ settle_summaries :: fn(mut p: Parser) {
                     answers = is_linear_type(p, sym.ret_type)
                 }
                 p.moved.count = 0
-                walk_moves_body(p, body, answers)
+                walk_moves_body(p, body, params, answers)
                 note_summaries(p, fn_index, params)
             }
             i = i + 1
@@ -1976,7 +2143,8 @@ check_moves :: fn(mut p: Parser) {
             }
             check_linear_locals(p, node.a, answers)
             p.moved.count = 0
-            walk_moves_body(p, node.a, answers)
+            walk_moves_body(p, node.a, node.b, answers)
+            report_unnameable(p, node.b, fn_index, i)
         }
         i = i + 1
     }

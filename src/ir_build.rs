@@ -172,6 +172,23 @@ fn build_module_inner(
         }
     }
 
+    // The concrete types beside the written ones, so a place reached through an
+    // instantiation has a type. `Vec<File>` is where `storage` is a run of
+    // resources; `Vec` alone says only that it is a run of whatever `T` stands
+    // for, and nothing can be told about a resource from that. A call that
+    // answers with an instantiation makes one without anyone writing its name,
+    // which is why this is read from what specialization forms rather than from
+    // what the source spells out.
+    let mut with_instances: Vec<Spanned<Statement>> = statements.to_vec();
+    with_instances.extend(
+        layout_statements
+            .iter()
+            .skip(statements.len())
+            .map(|statement| {
+                Spanned::new(statement.clone(), Position::default())
+            }),
+    );
+
     let mut builder = IrBuilder {
         signatures: HashMap::new(),
         structs,
@@ -180,12 +197,14 @@ fn build_module_inner(
         constants,
         generic_functions,
         generic_struct_defs,
-        linear: linear_with_holders(linear, statements),
+        linear: linear_with_holders(linear, &with_instances),
         registrations: crate::callbacks::callback_registrations(statements),
         type_ids: std::cell::RefCell::new(HashMap::new()),
         anon_counter: std::cell::Cell::new(0),
     };
     builder.collect_signatures(statements);
+
+    let ownership = crate::ownership::specializations(&with_instances, linear);
 
     let mut functions = Vec::new();
     let mut externs = Vec::new();
@@ -217,9 +236,27 @@ fn build_module_inner(
                     body.clone(),
                     None,
                     parameters,
-                    &builder.structs,
-                    &HashMap::new(),
+                    ExpansionContext {
+                        structs: &builder.structs,
+                        subst: &HashMap::new(),
+                        linear,
+                    },
                 )?;
+                // The ownership rules again, over the types specialization
+                // forms rather than only the ones the source writes down. A
+                // call that answers with an instantiation makes one without
+                // anyone naming it, so `held := option_some($File, ...)` left
+                // `Option<File>` ordinary data and the obligation on the
+                // resource inside it went in and did not come out.
+                if let Some(first) = ownership.check(parameters, body).first() {
+                    bail!(
+                        "{}",
+                        crate::imports::demangle_private_names(&format!(
+                            "at {}: {first}",
+                            position.describe()
+                        ))
+                    );
+                }
                 let (function, requests, anon) = locate(
                     builder.lower_function(name, parameters, return_sig, body),
                     position,
@@ -414,9 +451,30 @@ fn build_module_inner(
                 body,
                 specialization.pack.as_ref(),
                 &parameters,
-                &builder.structs,
-                &specialization.subst,
+                ExpansionContext {
+                    structs: &builder.structs,
+                    subst: &specialization.subst,
+                    linear,
+                },
             )?;
+            // The ownership rules, asked of the body that really exists. The
+            // template's own says nothing: its parameters are bound to nothing,
+            // so no type there is a resource and a list has no elements to
+            // unroll. This is the first and only point where both are true.
+            let complaints = ownership.check(&parameters, &body);
+            if let Some(first) = complaints.first() {
+                // The prefix an import gives a private name is nothing the
+                // reader wrote, so it comes back off the way it does in every
+                // other diagnostic.
+                bail!(
+                    "{}",
+                    crate::imports::demangle_private_names(&format!(
+                        "at {}: instantiating '{}': {first}",
+                        specialization.requested_at.describe(),
+                        specialization.display
+                    ))
+                );
+            }
             let (function, requests, anon) = locate_instantiation(
                 builder.lower_function(
                     &specialization.mangled_name,
@@ -1009,9 +1067,14 @@ impl IrBuilder {
 }
 
 /// Every type that has to be consumed: the ones declared `linear`, and the ones
-/// holding such a value in a field, since a struct holding a resource is a
-/// resource. Run once per module, and only when something is declared linear at
-/// all, so a program with no resources pays nothing for it.
+/// holding such a value, since a struct holding a resource is a resource and an
+/// enum with one in a variant's payload is too. Run once per module, and only
+/// when something is declared linear at all, so a program with no resources pays
+/// nothing for it.
+///
+/// The statements are the ones specialization forms as well as the ones the
+/// source writes, since a call that answers with an instantiation makes one
+/// without anyone naming it.
 fn linear_with_holders(
     declared: &HashSet<String>,
     statements: &[Spanned<Statement>],
@@ -1020,25 +1083,47 @@ fn linear_with_holders(
     if held.is_empty() {
         return held;
     }
-    // The instantiations the program writes, which the declarations alone cannot
-    // answer for: a generic's field is a parameter bound to nothing here, so
-    // `Slab` holds no resource while `Slab<Node, 2>` does.
+    // The instantiations, which the declarations alone cannot answer for: a
+    // generic's field is a parameter bound to nothing here, so `Slab` holds no
+    // resource while `Slab<Node, 2>` does.
     let instances = crate::linear_instances::collect_instances(statements);
     let templates = crate::linear_instances::declared_structs(statements);
     loop {
         let mut grew = false;
         for statement in statements {
-            let Statement::Struct(name, _, fields) = &statement.node else {
-                continue;
-            };
-            if held.contains(Type::template_of(name)) {
+            // A variant's payload is held by the enum exactly as a field is held
+            // by a struct, so an enum carrying a resource is one. Reading only
+            // the structs left an option holding a file ordinary data, and the
+            // obligation went in and did not come out.
+            let (name, field_types): (&String, Vec<&Type>) =
+                match &statement.node {
+                    Statement::Struct(name, _, fields) => (
+                        name,
+                        fields.iter().map(|field| &field.field_type).collect(),
+                    ),
+                    Statement::Enum(name, _, variants) => (
+                        name,
+                        variants
+                            .iter()
+                            .filter_map(|variant| variant.fields.as_ref())
+                            .flatten()
+                            .map(|field| &field.field_type)
+                            .collect(),
+                    ),
+                    _ => continue,
+                };
+            // The name itself as well as the template it came from. These
+            // statements include the instantiations specialization forms, whose
+            // names carry their arguments, so a guard reading only the template
+            // asks about a name that was never going to be inserted and reports
+            // growth on every round for ever.
+            if held.contains(name.as_str())
+                || held.contains(Type::template_of(name))
+            {
                 continue;
             }
-            let holds = fields
-                .iter()
-                .any(|field| field.field_type.is_linear_with(&held));
-            if holds {
-                held.insert(name.clone());
+            let holds = field_types.iter().any(|ty| ty.is_linear_with(&held));
+            if holds && held.insert(name.clone()) {
                 grew = true;
             }
         }
@@ -1591,7 +1676,11 @@ fn mangle_specialization(
 // asking whether a type has a field of a given name. A string literal does not
 // grep back to the declaration it names, which is the one thing the flat
 // namespace is for.
-fn type_predicate(name: &str, ty: &Type) -> Option<bool> {
+fn type_predicate(
+    name: &str,
+    ty: &Type,
+    linear: &HashSet<String>,
+) -> Option<bool> {
     let answer = match name {
         "is_numeric" => ty.is_integer() || ty.is_float(),
         "is_integer" => ty.is_integer(),
@@ -1602,21 +1691,29 @@ fn type_predicate(name: &str, ty: &Type) -> Option<bool> {
         "is_pointer" => {
             matches!(ty, Type::Ptr(_) | Type::Ref(_) | Type::RefMut(_))
         }
+        // Whether a value of this type has to be consumed exactly once. A
+        // container that reaches an element by a number cannot say which
+        // element it took, so the generic ones hold themselves to types where
+        // there is nothing to say: `where !is_linear(T)` is how a function
+        // that would otherwise drop or duplicate a resource refuses the
+        // binding at the call rather than leaking inside a body nobody wrote.
+        "is_linear" => ty.is_linear_with(linear),
         _ => return None,
     };
     Some(answer)
 }
 
-const BOUND_VOCABULARY: &str = "is_numeric, is_integer, is_float, is_struct, is_array, is_slice, is_pointer";
+const BOUND_VOCABULARY: &str = "is_numeric, is_integer, is_float, is_struct, is_array, is_slice, is_pointer, is_linear";
 
 fn evaluate_bound(
     expression: &Expression,
     subst: &HashMap<String, Type>,
+    linear: &HashSet<String>,
 ) -> Result<bool> {
     match expression {
         Expression::Infix(left, operator, right) => {
-            let left = evaluate_bound(left, subst)?;
-            let right = evaluate_bound(right, subst)?;
+            let left = evaluate_bound(left, subst, linear)?;
+            let right = evaluate_bound(right, subst, linear)?;
             match operator {
                 crate::parser::Operator::And => Ok(left && right),
                 crate::parser::Operator::Or => Ok(left || right),
@@ -1626,7 +1723,7 @@ fn evaluate_bound(
             }
         }
         Expression::Prefix(crate::parser::Operator::Not, inner) => {
-            Ok(!evaluate_bound(inner, subst)?)
+            Ok(!evaluate_bound(inner, subst, linear)?)
         }
         Expression::Call(callee, arguments) => {
             let Expression::Identifier(predicate) = callee.as_ref() else {
@@ -1648,7 +1745,7 @@ fn evaluate_bound(
                     "the bound names '{parameter}', which is not a compile-time parameter of this function"
                 )
             };
-            match type_predicate(predicate, ty) {
+            match type_predicate(predicate, ty, linear) {
                 Some(answer) => Ok(answer),
                 None => bail!(
                     "'{predicate}' is not one of the bounds a type can be held to, which are: {BOUND_VOCABULARY}"
@@ -1667,8 +1764,9 @@ fn check_bound(
     bound: &Expression,
     subst: &HashMap<String, Type>,
     callee: &str,
+    linear: &HashSet<String>,
 ) -> Result<()> {
-    if evaluate_bound(bound, subst)? {
+    if evaluate_bound(bound, subst, linear)? {
         return Ok(());
     }
     let mut bindings: Vec<String> = subst
@@ -1759,15 +1857,32 @@ struct Expansion<'a> {
     // them per copy of the body. A field is not a value, so the only things
     // that read this are `offset_of`, `sizeof` and the type predicates.
     fields: HashMap<String, (usize, Type)>,
+    // The types that have to be consumed, so `is_linear` answers here the way
+    // it answers in a `where` bound. Both ask the same question of the same
+    // set, so an expansion-time `if` and a call-site bound cannot disagree.
+    linear: &'a HashSet<String>,
+}
+
+// What expansion reads that does not change while it runs: the layouts a walk
+// over a type's fields reports, the arguments this specialization was made for,
+// and the types that have to be consumed.
+struct ExpansionContext<'a> {
+    structs: &'a HashMap<String, StructLayout>,
+    subst: &'a HashMap<String, Type>,
+    linear: &'a HashSet<String>,
 }
 
 fn expand_compile_time(
     body: Block,
     pack: Option<&(String, Vec<PackElement>)>,
     parameters: &[Parameter],
-    structs: &HashMap<String, StructLayout>,
-    subst: &HashMap<String, Type>,
+    context: ExpansionContext<'_>,
 ) -> Result<Block> {
+    let ExpansionContext {
+        structs,
+        subst,
+        linear,
+    } = context;
     let mut types = HashMap::new();
     for parameter in parameters {
         if let Some(ty) = &parameter.type_annotation {
@@ -1780,6 +1895,7 @@ fn expand_compile_time(
         structs,
         subst,
         fields: HashMap::new(),
+        linear,
     };
     expansion.block(body)
 }
@@ -1941,6 +2057,7 @@ impl Expansion<'_> {
             structs: self.structs,
             subst: self.subst,
             fields: self.fields.clone(),
+            linear: self.linear,
         }
     }
 
@@ -1953,6 +2070,7 @@ impl Expansion<'_> {
             structs: self.structs,
             subst: self.subst,
             fields,
+            linear: self.linear,
         }
     }
 
@@ -2021,7 +2139,7 @@ impl Expansion<'_> {
                         None => return Ok(None),
                     },
                 };
-                Ok(type_predicate(predicate, ty))
+                Ok(type_predicate(predicate, ty, self.linear))
             }
             _ => Ok(None),
         }
@@ -4013,8 +4131,14 @@ impl<'a> FunctionLowering<'a> {
                             .generic_struct_defs
                             .contains_key(struct_name) =>
                         {
-                            self.generic_instance_of(struct_name, field_inits)
-                                .unwrap_or_else(|| struct_name.clone())
+                            let Some(instance) = self
+                                .generic_instance_of(struct_name, field_inits)
+                            else {
+                                bail!(
+                                    "'{struct_name}' is generic and nothing here says which instance this literal is: write the arguments on the literal, as in '{struct_name}<i64> {{ ... }}', or give the binding a declared type that names them"
+                                );
+                            };
+                            instance
                         }
                         _ => struct_name.clone(),
                     };
@@ -5737,7 +5861,7 @@ impl<'a> FunctionLowering<'a> {
         // The bound, before the body is specialized, so a type that cannot
         // work is refused here rather than inside code the reader never wrote.
         if let Some(bound) = &generic.return_sig.bound {
-            check_bound(bound, &subst, name)?;
+            check_bound(bound, &subst, name, &self.builder.linear)?;
         }
 
         for (parameter, target) in bundle_checks {
@@ -5855,12 +5979,12 @@ impl<'a> FunctionLowering<'a> {
         // ones alone: a program that never writes `Vec<File>` down still makes
         // one.
         if !self.builder.linear.is_empty() {
-            let templates: HashMap<&str, (&[String], &[StructField])> = self
+            let templates: crate::linear_instances::Templates<'_> = self
                 .builder
                 .generic_struct_defs
                 .iter()
                 .map(|(held, (params, fields))| {
-                    (held.as_str(), (params.as_slice(), fields.as_slice()))
+                    (held.as_str(), (params.as_slice(), fields.clone()))
                 })
                 .collect();
             for concrete in value_parameter_types
@@ -8800,6 +8924,9 @@ impl<'a> FunctionLowering<'a> {
         }
     }
 
+    /// The instance a bare `Name { ... }` literal makes, worked out by matching
+    /// each field's written value against the field's declared type. A generic
+    /// call takes its `$T` in writing; a literal takes it from what it is given.
     fn generic_instance_of(
         &self,
         struct_name: &str,
@@ -8821,15 +8948,14 @@ impl<'a> FunctionLowering<'a> {
                 );
             }
         }
+        // Every parameter, or none of them. Rendering an unbound one as its own
+        // name made `Pair<T>`, a type nothing declares, and the reader was told
+        // it was unknown rather than that the literal had not said which
+        // instance it is.
         let rendered: Vec<String> = type_params
             .iter()
-            .map(|type_param| {
-                subst
-                    .get(type_param)
-                    .map(|ty| ty.to_string())
-                    .unwrap_or_else(|| type_param.clone())
-            })
-            .collect();
+            .map(|type_param| Some(subst.get(type_param)?.to_string()))
+            .collect::<Option<Vec<String>>>()?;
         Some(format!("{struct_name}<{}>", rendered.join(", ")))
     }
 

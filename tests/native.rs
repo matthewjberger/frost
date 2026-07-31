@@ -16085,6 +16085,96 @@ const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
          \x20   0\n}\n",
         "argument",
     ),
+    // A resource handed out of a borrowed container by an element. A summary
+    // tells a caller which field of a borrowed parameter went, and an element is
+    // reached by a number worked out while the program runs, so there is no
+    // place a caller could be told about: `peek` answers with the same storage
+    // however many times it is asked, and each answer is consumed. Refused
+    // rather than approximated, since a summary saying "some element went" is
+    // the whole container as far as a caller can act on it and would refuse a
+    // container releasing its elements one at a time.
+    (
+        "handed_out_by_element",
+        "Box :: struct($T: Type) { storage: [2]T, len: i64 }\n\
+         File :: linear struct { fd: i64 }\n\
+         close :: fn(move f: File) -> i64 { f.fd }\n\
+         peek :: fn($T: Type, b: Box<T>, index: i64) -> $T { b.storage[index] }\n\
+         drop_box :: fn(move b: Box<File>) -> i64 { 0 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   b : Box<File> = Box { storage = [File { fd = 1 }; 2], len = 2 }\n\
+         \x20   print close(peek($File, b, 0))\n\
+         \x20   print close(peek($File, b, 0))\n\
+         \x20   drop_box(b)\n}\n",
+        "by an element",
+    ),
+    // A value moved twice through a compile-time list. A generic's own body
+    // names parameters bound to nothing and a list there has no elements to
+    // unroll, so the template says nothing about the moves its instances make.
+    // The bootstrap checked the template alone and took this; the check now runs
+    // on the substituted body, which is the first point where both the element
+    // type and the unrolled list exist.
+    (
+        "moved_through_a_compile_time_list",
+        "P :: struct { x: i64 }\n\
+         take :: fn(move p: P) -> i64 { p.x }\n\
+         each :: fn($body: Type, items: $...) {\n\
+         \x20   body(c for c in items)\n\
+         \x20   body(c for c in items)\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   p := P { x = 1 }\n\
+         \x20   each($take, p)\n\
+         \x20   0\n}\n",
+        "moved",
+    ),
+    // The same bound, where it does not hold. The complaint lands on the call
+    // the reader wrote rather than inside a library body they never saw, which
+    // is the whole point of asking at the call.
+    (
+        "a_resource_against_a_bound_that_refuses_one",
+        "File :: linear struct { fd: i64 }\n\
+         close :: fn(move f: File) -> i64 { f.fd }\n\
+         only_plain :: fn($T: Type, v: $T) -> i64 where !is_linear(T) { 1 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   f := File { fd = 1 }\n\
+         \x20   print only_plain($File, f)\n\
+         \x20   print close(f)\n\
+         \x20   0\n}\n",
+        "is_linear",
+    ),
+    // A generic instantiated with a resource where the program never writes the
+    // instantiation's name. What a type holds was read off the names the source
+    // spells out, so `held := wrap($File, ...)` left `Opt<File>` ordinary data
+    // and the obligation on the resource inside it went in and did not come
+    // out. The types a call forms answer for it now, and a variant's payload is
+    // held by its enum the way a field is held by its struct.
+    (
+        "a_resource_in_an_instance_nobody_named",
+        "File :: linear struct { fd: i64 }\n\
+         Opt :: enum($T: Type) { None, Some { value: T } }\n\
+         wrap :: fn($T: Type, move value: $T) -> Opt<T> {\n\
+         \x20   Opt::Some { value = value }\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   held := wrap($File, File { fd = 1 })\n\
+         \x20   0\n}\n",
+        "consumed",
+    ),
+    // A generic literal no field of which is written as the bare parameter, so
+    // there is nothing to read the argument off and nothing in the context
+    // naming it. The self-hosted compiler stood a placeholder in for the type
+    // and the emitters read a struct index out of something that is not a
+    // struct, dying with an arena index of -16 rather than saying anything. The
+    // bootstrap rendered the parameter it could not bind as its own name and
+    // called `Box<T>` an unknown struct, which points at neither the cause nor
+    // the fix.
+    (
+        "a_generic_literal_with_no_argument_to_read",
+        "Box :: struct($T: Type) { storage: [2]T, len: i64 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   b := Box { storage = [7; 2], len = 2 }\n\
+         \x20   print b.storage[0] + b.len\n\
+         \x20   0\n}\n",
+        "is generic",
+    ),
 ];
 
 #[test]
@@ -18469,6 +18559,37 @@ main :: fn() -> i64 {
 4
 5
 ",
+    ),
+    // A bound on whether a type has to be consumed. It is the one predicate in
+    // the vocabulary that asks about an obligation rather than about a
+    // representation, and it is what lets a container hold itself to elements
+    // it can account for: a slot is reached by a number worked out while the
+    // program runs, so a write into one drops what was there with no place a
+    // check could name.
+    (
+        "a_bound_on_whether_a_type_is_a_resource",
+        "P :: struct { x: i64 }\n\
+         only_plain :: fn($T: Type, v: $T) -> i64 where !is_linear(T) { 1 }\n\
+         main :: fn() -> i64 {\n\
+         \x20   print only_plain($i64, 7)\n\
+         \x20   print only_plain($P, P { x = 2 })\n\
+         \x20   0\n}\n",
+        "1\n1\n",
+    ),
+    // The two ways a generic literal says which instance it is: the arguments
+    // written on the literal, and a declared type that names them. Both are
+    // context the reader supplied rather than something worked back out of the
+    // field values.
+    (
+        "a_generic_literal_saying_its_instance",
+        "Pair :: struct($T: Type) { first: T, second: T }\n\
+         main :: fn() -> i64 {\n\
+         \x20   a := Pair<i64> { first = 1, second = 2 }\n\
+         \x20   b : Pair<i64> = Pair { first = 10, second = 20 }\n\
+         \x20   print a.first + a.second\n\
+         \x20   print b.first + b.second\n\
+         \x20   0\n}\n",
+        "3\n30\n",
     ),
 ];
 

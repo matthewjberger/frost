@@ -161,10 +161,11 @@ of the ugliest corners of Rust's grammar.
 
 A closed vocabulary of bounds. `$T` can carry a bound, written as a `where`
 clause after the signature, but only from a fixed list: `is_numeric`,
-`is_integer`, `is_float`, `is_struct`, `is_array`, `is_slice` and `is_pointer`,
-combined with `&&`, `||` and `!`. Every one of those is a question the compiler
-answers for itself anyway, to pick an integer or a floating point instruction
-and to decide how wide a value is and whether it travels by address. Nothing a
+`is_integer`, `is_float`, `is_struct`, `is_array`, `is_slice`, `is_pointer` and
+`is_linear`, combined with `&&`, `||` and `!`. Every one of those is a question
+the compiler answers for itself anyway, to pick an integer or a floating point
+instruction, to decide how wide a value is and whether it travels by address,
+and to know what has to be consumed. Nothing a
 program can extend, so a requirement outside the list has no way to be written
 down and surfaces at instantiation instead, pointing into the generic's body
 rather than at the caller's line. That is the C++ template experience Rust's

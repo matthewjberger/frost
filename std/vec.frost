@@ -29,6 +29,18 @@ vec_new :: fn($T: Type, capacity: i64) -> Vec<T> {
     Vec { storage = heap_slice($T, room), len = 0, cap = room }
 }
 
+// Give the block back. This frees the storage, not the elements: where `T` is a
+// resource, every element has to have been consumed before this runs, and that
+// is the caller's obligation rather than something the compiler checks. An
+// element is reached by a number worked out while the program runs, so there is
+// no place the check could name to say the obligation was discharged. The
+// pattern that discharges it is a walk over `vec_slice` consuming each element
+// through a `ref` borrow, and then this.
+//
+// It is not held back from resources the way `vec_get` and `vec_set` are.
+// `Vec<T>` is itself a resource whatever `T` is, so this is the only thing that
+// consumes one, and a bound here would leave a container of resources with no
+// way to be discharged at all.
 vec_free :: fn($T: Type, move v: Vec<T>) {
     heap_release_slice($T, v.storage)
 }
@@ -59,18 +71,31 @@ vec_push :: fn($T: Type, mut v: Vec<T>, move value: $T) {
     v.len = v.len + 1
 }
 
-vec_get :: fn($T: Type, v: Vec<T>, index: i64) -> $T {
+// A copy of an element. Held to elements that are not resources: this answers
+// with what it read out of a container it only borrows, and which element it
+// read is a number worked out while the program runs, so a caller cannot be
+// told the element went and nothing stops it asking twice and being handed the
+// same one. A resource element is reached through `vec_slice`, where
+// `ref e := vec_slice(v)[i]` stays a borrow and the container keeps it.
+vec_get :: fn($T: Type, v: Vec<T>, index: i64) -> $T where !is_linear(T) {
     v.storage[index]
 }
 
-vec_set :: fn($T: Type, mut v: Vec<T>, index: i64, move value: $T) {
+// Held to elements that are not resources: the write drops whatever was in the
+// slot and nothing consumes it. Answering with the old element instead would
+// hand a resource out of a borrowed container by an element, which is the shape
+// `vec_get` is held back from, so there is no consuming form of this to reach
+// for either.
+vec_set :: fn($T: Type, mut v: Vec<T>, index: i64, move value: $T)
+    where !is_linear(T) {
     mut held := v.storage
     held[index] = value
 }
 
 // Drop every element without freeing the storage, so the vector is reused
-// rather than reallocated.
-vec_clear :: fn($T: Type, mut v: Vec<T>) {
+// rather than reallocated. Held to elements that are not resources, since
+// forgetting a resource is dropping it without consuming it.
+vec_clear :: fn($T: Type, mut v: Vec<T>) where !is_linear(T) {
     v.len = 0
 }
 

@@ -2,41 +2,42 @@
 
 ## What is left
 
-**The standard library was written for plain data, and a container of resources
-leaks in ways nothing checks.** Handing one out is refused now: a function may
-answer with a resource out of a borrowed parameter only where the place can be
-named by a run of fields, which is what a caller can be told about, so
-`vec_get<File>` no longer compiles. What is left is everything that *drops* one:
+**A container of resources is checked at both ends now, except where it is
+freed.** Handing one out is refused: a function may answer with a resource out
+of a borrowed parameter only where the place can be named by a run of fields,
+which is what a caller can be told about, so `vec_get<File>` no longer compiles.
+Dropping one is refused by a bound: `is_linear` joined the `where` vocabulary,
+so a function that must not take a resource can say so, and the library
+functions that would overwrite or forget an element hold themselves to elements
+that are not resources. `vec_get`, `vec_set`, `vec_clear`, `map_put`, `map_get`,
+`map_clear`, `option_is_some` and `option_unwrap_or` all carry the bound.
+`map_get` stays a defaulting read for plain values rather than growing a second
+fallible-accessor convention beside the sentinels the containers already use:
+presence is `map_has`.
 
-- `vec_set` and `map_put` overwrite a slot, and nothing consumes what was in it.
-- `vec_free` and `map_free` release the storage, and nothing consumes the
-  elements. `vec_clear` and `map_clear` do it without even releasing.
-- `map_get` and `option_unwrap_or` take a value and a fallback and answer with
-  one of them. The loser is dropped. `map_get` is neither an option nor a
-  sentinel: it is `option_unwrap_or` spelled again over a table.
-- `option_is_some` cannot be instantiated with a resource at all, since matching
-  a borrowed option consumes it. A function nobody can call is a different
-  problem from one that leaks, and this one is the smaller.
+What is left is `vec_free` and `map_free`. They release the storage and nothing
+consumes the elements, and they cannot carry the bound: `Vec<T>` and
+`Map<K, V>` are themselves resources, so the free is the only thing that
+consumes one, and a bound there would leave a container of resources with no way
+to be discharged at all. A slot is reached by a number worked out while the
+program runs, so there is no place a check could name to say the elements were
+consumed. Doing it before the block goes is the caller's obligation, and
+`std/ecs.frost` is what that looks like: a `Vec<Table>` where `Table` is a
+resource, released one element at a time through a `ref` borrow before the
+storage goes. The shape is writable, it is written, and it is not checked.
 
-The pool rule refuses `Slab<File>` outright for exactly this shape. A blanket
-refusal of `Vec<File>` is wrong, though, and `std/ecs.frost` is the proof: a
-`Vec<Table>` where `Table` is a resource is released correctly, one element at a
-time through a `ref` borrow, before the storage goes. The shape is writable. The
-library's own functions are what are not written for it.
+The pool rule refuses `Slab<File>` outright for the same shape, which it can
+because a pool is recognized by its declaration rather than by a call.
 
-What would let this be said rather than only documented is `is_linear` in the
-`where` vocabulary. That vocabulary is closed on purpose and holds `is_numeric`,
-`is_integer`, `is_float`, `is_struct`, `is_array`, `is_slice` and `is_pointer`,
-none of which can express it, so a function that must not take a resource has no
-way to say so. Both compilers already answer the question for themselves.
-
-**A generic instantiated with a resource is one only where the program writes
-its name.** The bootstrap classifies instantiations by walking the names a
-program spells out, so `held := option_some($File, ...)` leaves `Option<File>`
-ordinary data and the obligation vanishes on the way in. The self-hosted
-compiler instantiates before it checks and gets this right, which makes it a
-divergence as well as a hole. Closing it means discovering instantiations from
-what specialization creates rather than from what the source names.
+What a type holds is read from the types a program *forms* rather than the ones
+it spells out. A call that answers with an instantiation makes one without
+anyone writing its name, so `held := option_some($File, ...)` used to leave
+`Option<File>` ordinary data and the obligation on the resource inside it went
+in and did not come out. Three things had to be true together: the ownership
+pass types a call as the callee's return type with that call's own type
+arguments put in, a variant's payload is held by its enum the way a field is
+held by its struct, and the walk runs over the instantiations specialization
+forms rather than over the source alone.
 
 The wgpu binding is generated with a safe wrapper per call now, so a program
 that draws a triangle writes no `unsafe` of its own for the graphics API: the
