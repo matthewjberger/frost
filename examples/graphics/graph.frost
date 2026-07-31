@@ -16,8 +16,15 @@ export ResourceId, PassId, Resource, GraphPass, Graph,
     graph_new, graph_free, graph_backbuffer, graph_color, graph_depth,
     graph_pass, graph_writes_color, graph_writes_depth, graph_reads,
     graph_schedule, graph_resize, graph_run, graph_view, graph_sampler,
-    graph_order_at,
-    WINDOW_SIZED, MAX_READS, no_resource
+    graph_order_at, graph_buffer, graph_buffer_of, graph_writes,
+    graph_compute_pass, graph_transient_color, graph_transient_depth,
+    graph_pool_size, graph_slot_of, graph_runs_after,
+    graph_set_enabled, graph_enabled, graph_only, graph_all_enabled,
+    graph_save_enabled, graph_restore_enabled,
+    graph_run_phase, graph_set_phase, graph_phase_of, ANY_PHASE,
+    graph_external_color, graph_set_external,
+    graph_sub, graph_sub_pass, graph_takes,
+    WINDOW_SIZED, MAX_READS, MAX_WRITES, no_resource
 
 // Which resource, and which pass. Distinct so one cannot be written where the
 // other is wanted, and an integer so the region check reads it as a number
@@ -29,6 +36,19 @@ PassId :: distinct i64
 WINDOW_SIZED :: -1
 
 MAX_READS :: 4
+
+// How many resources one pass may write that are not an attachment. A colour
+// and a depth target are named on their own, since the graph has to build a
+// `Target` out of them; everything else a pass writes is an ordering edge and
+// nothing more.
+MAX_WRITES :: 4
+
+// A pass belongs to a phase, and a run may be asked for one phase rather than
+// the whole graph. This is what renders the same graph once per camera: the
+// per-view passes carry that view's phase, the passes shared between views
+// carry another, and a program runs the shared work once and the view work per
+// camera with a different target bound each time.
+ANY_PHASE :: -1
 
 // The slot a pass leaves empty: a depth-only pass names no colour, and a step
 // that needs no depth buffer names no depth.
@@ -51,15 +71,23 @@ pass_index :: fn(p: PassId) -> i64 {
     held
 }
 
-ResourceKind :: enum { Color, Depth, Backbuffer }
+ResourceKind :: enum { Color, Depth, Buffer, Backbuffer }
 
 Resource :: struct {
     name: str,
     kind: ResourceKind,
     format: u32,
+    // What a texture measures, and what a buffer measures. A buffer has one
+    // dimension and it is bytes, so it uses `width` and leaves `height` at
+    // zero rather than carrying a second field nothing else reads.
     width: i64,
     height: i64,
+    // What a buffer is allowed to be used as. wgpu refuses a binding whose
+    // usage the buffer was not made with, and the pass that reads it is the
+    // only thing that knows, so the declaration carries it.
+    usage: BufferUsage,
     held: Texture2D,
+    buffer: Buffer,
     made: bool,
     // Whether some pass has already written it this frame, which is what
     // decides between clearing it and loading what is there. Cleared at the top
@@ -68,24 +96,113 @@ Resource :: struct {
     // Whether any pass reads it, which is what says a window-sized one would
     // leave a bind group holding a dead view.
     sampled: bool,
+    // Whether what backs it comes from outside. The window's own texture is one
+    // of these and comes from the frame; anything else a program owns and
+    // supplies with `graph_set_external`, which is how the same graph draws
+    // into a different target for each camera.
+    external: bool,
+    // Whether the graph may hand this resource a texture another resource is
+    // also using. A transient is one a pass fills in and a later pass consumes
+    // inside the same frame, so once the last reader has run the memory is free
+    // for something else that fits. A resource a program reads between frames
+    // is not one of these, and is left alone.
+    transient: bool,
+    // Which pool slot backs it, worked out while scheduling. A resource that is
+    // not transient owns its texture and holds -1.
+    slot: i64,
+    // The first and last step of the order that touches it, which is the whole
+    // of what decides whether two of them can share.
+    first_use: i64,
+    last_use: i64,
 }
+
+// An order one pass was given rather than one it earned. Two passes that share
+// no resource have nothing between them for the graph to read, and sometimes
+// one still has to run first: a pass that writes through a binding the graph
+// does not know about, or one whose cost a program wants paid early.
+Edge :: struct {
+    before: i64,
+    after: i64,
+}
+
+// One resource of a sub-graph, and what the parent hands it.
+Binding :: struct {
+    sub: i64,
+    inner: i64,
+    outer: i64,
+}
+
+// One texture the pool owns, and the step after which it is free for another
+// resource. Two transients share a slot when they are the same shape and the
+// first is finished with before the second is started.
+PoolSlot :: struct {
+    kind: ResourceKind,
+    format: u32,
+    width: i64,
+    height: i64,
+    held: Texture2D,
+    made: bool,
+    free_at: i64,
+}
+
+// What a pass records with. A pass that draws is handed a render pass over the
+// targets it declared, and a pass that computes is handed a compute pass; the
+// two take different encoders, so which one a pass is decides which of them it
+// is called through.
+PassKind :: enum { Render, Compute, SubGraph }
 
 GraphPass :: struct {
     name: str,
+    kind: PassKind,
     draw: fn(RenderPassEncoder, ^u8),
+    dispatch: fn(ComputePassEncoder, ^u8),
     state: ^u8,
     color: ResourceId,
     depth: ResourceId,
     clear: Color,
     reads: [MAX_READS]ResourceId,
     read_count: i64,
+    // Everything written that is not an attachment, which today is buffers.
+    writes: [MAX_WRITES]ResourceId,
+    write_count: i64,
+    // Which phase it belongs to. A run asking for one phase skips the rest.
+    phase: i64,
+    // Which sub-graph it runs, for a pass that is one. A sub-graph is a graph
+    // built on its own and handed over: it schedules itself, owns its own
+    // targets, and is ordered inside its parent by what this pass declares it
+    // reads and writes, the same as any other pass.
+    sub: i64,
+    // Whether it runs this frame. A pass that is off keeps its place in the
+    // order and records nothing, so turning one off does not reorder the rest
+    // and turning it back on needs no rescheduling. It writes nothing while it
+    // is off, so the pass after it clears what it would have loaded.
+    enabled: bool,
 }
 
-Graph :: struct {
+// `linear` because it owns heap and hands ownership on. `graph_sub` takes a
+// child graph and keeps it, so a caller that also freed its own copy would free
+// the same tables twice; the obligation on the type is what makes that stop
+// compiling rather than crash.
+Graph :: linear struct {
     device: Device,
     resources: []Resource,
     passes: []GraphPass,
     order: []i64,
+    pool: []PoolSlot,
+    pool_count: i64,
+    edges: []Edge,
+    edge_count: i64,
+    subs: []Graph,
+    sub_count: i64,
+    // Which resource of a sub-graph takes which of this one's, applied before
+    // the child runs. This is how a nested graph is handed the target it draws
+    // into without either of them naming the other's table.
+    bindings: []Binding,
+    binding_count: i64,
+    // What every pass's `enabled` was when it was last saved, so a view that
+    // turns things off can put back exactly what it found rather than turning
+    // everything on.
+    saved: []bool,
     resource_count: i64,
     pass_count: i64,
     scheduled: bool,
@@ -103,6 +220,15 @@ graph_new :: fn(device: Device, resources: i64, passes: i64) -> Graph {
         resources = heap_slice($Resource, room),
         passes = heap_slice($GraphPass, seats),
         order = heap_slice($i64, seats),
+        pool = heap_slice($PoolSlot, room),
+        pool_count = 0,
+        edges = heap_slice($Edge, seats * 4),
+        edge_count = 0,
+        subs = heap_slice($Graph, seats),
+        sub_count = 0,
+        bindings = heap_slice($Binding, seats * 4),
+        binding_count = 0,
+        saved = heap_slice($bool, seats),
         resource_count = 0,
         pass_count = 0,
         scheduled = false,
@@ -111,19 +237,44 @@ graph_new :: fn(device: Device, resources: i64, passes: i64) -> Graph {
     }
 }
 
-graph_free :: fn(mut g: Graph) {
+graph_free :: fn(move g: Graph) {
     mut i : i64 = 0
     while (i < g.resource_count) {
         mut held := g.resources
-        if (held[i].made) {
-            texture_free(held[i].held)
+        if (held[i].made && held[i].external == false) {
+            if (is_buffer(held[i])) {
+                buffer_destroy(held[i].buffer)
+                buffer_release(held[i].buffer)
+            } else {
+                texture_free(held[i].held)
+            }
             held[i].made = false
         }
         i = i + 1
     }
+    mut slot : i64 = 0
+    while (slot < g.pool_count) {
+        mut pool := g.pool
+        if (pool[slot].made) {
+            texture_free(pool[slot].held)
+            pool[slot].made = false
+        }
+        slot = slot + 1
+    }
     heap_release_slice($Resource, g.resources)
     heap_release_slice($GraphPass, g.passes)
     heap_release_slice($i64, g.order)
+    heap_release_slice($PoolSlot, g.pool)
+    mut sub : i64 = 0
+    while (sub < g.sub_count) {
+        mut nested := g.subs
+        graph_free(nested[sub])
+        sub = sub + 1
+    }
+    heap_release_slice($Edge, g.edges)
+    heap_release_slice($bool, g.saved)
+    heap_release_slice($Graph, g.subs)
+    heap_release_slice($Binding, g.bindings)
 }
 
 // The window's own texture, which the graph does not own and does not make. Its
@@ -142,6 +293,67 @@ graph_depth :: fn(mut g: Graph, name: str, w: i64, h: i64,
     add_resource(g, name, ResourceKind::Depth, format, w, h)
 }
 
+// A target that lives inside one frame. It is written by a pass and consumed by
+// a later one, and after that its memory is the graph's to hand to anything of
+// the same shape that starts later. A chain of post-process steps at one size
+// costs one texture per step that is alive at once rather than one per step.
+graph_transient_color :: fn(mut g: Graph, name: str, w: i64, h: i64,
+    format: u32) -> ResourceId {
+    mark_transient(g, add_resource(g, name, ResourceKind::Color, format, w, h))
+}
+
+graph_transient_depth :: fn(mut g: Graph, name: str, w: i64, h: i64,
+    format: u32) -> ResourceId {
+    mark_transient(g, add_resource(g, name, ResourceKind::Depth, format, w, h))
+}
+
+// A target the graph orders passes around and does not own. The program hands
+// it a view each frame, or each camera.
+graph_external_color :: fn(mut g: Graph, name: str) -> ResourceId {
+    made := add_resource(g, name, ResourceKind::Color, 0, 0, 0)
+    if (resource_is_none(made) == false) {
+        mut held := g.resources
+        held[resource_index(made)].external = true
+    }
+    made
+}
+
+// What backs an external this frame. Given again per camera, the same graph
+// draws each view into that view's target.
+graph_set_external :: fn(mut g: Graph, r: ResourceId, held: Texture2D) {
+    mut kept := g.resources
+    index := resource_index(r)
+    if (kept[index].external == false) {
+        print "graph: this resource is the graph's own, so it takes no texture from outside:"
+        print kept[index].name
+        return
+    }
+    kept[index].held = held
+    kept[index].made = true
+}
+
+mark_transient :: fn(mut g: Graph, r: ResourceId) -> ResourceId {
+    if (resource_is_none(r) == false) {
+        mut held := g.resources
+        held[resource_index(r)].transient = true
+    }
+    r
+}
+
+// A run of bytes on the device that a pass writes and another reads. The
+// counterpart of a colour or depth target for everything that is not a picture:
+// a culling list a compute pass fills in, the bone matrices a skinned mesh
+// reads, the counts an indirect draw is issued from.
+graph_buffer :: fn(mut g: Graph, name: str, bytes: i64,
+    usage: BufferUsage) -> ResourceId {
+    made := add_resource(g, name, ResourceKind::Buffer, 0, bytes, 0)
+    if (resource_is_none(made) == false) {
+        mut held := g.resources
+        held[resource_index(made)].usage = usage
+    }
+    made
+}
+
 add_resource :: fn(mut g: Graph, name: str, kind: ResourceKind, format: u32,
     w: i64, h: i64) -> ResourceId {
     index := g.resource_count
@@ -152,13 +364,31 @@ add_resource :: fn(mut g: Graph, name: str, kind: ResourceKind, format: u32,
     mut held := g.resources
     held[index] = Resource {
         name = name, kind = kind, format = format, width = w, height = h,
-        held = no_texture2d(), made = false, written = false, sampled = false,
+        usage = BufferUsage::None,
+        held = no_texture2d(), buffer = no_buffer(),
+        made = false, written = false, sampled = false,
+        transient = false, slot = -1, first_use = -1, last_use = -1,
+        external = false,
     }
     g.resource_count = index + 1
     cast($ResourceId, index)
 }
 
 graph_pass :: fn(mut g: Graph, name: str, draw: fn(RenderPassEncoder, ^u8),
+    state: ^u8) -> PassId {
+    add_pass(g, name, PassKind::Render, draw, dispatches_nothing, state)
+}
+
+// A pass that runs a compute shader. It declares what it reads and writes the
+// same way a drawing one does, and the order follows from the same edges: the
+// difference is only what it is handed to record into.
+graph_compute_pass :: fn(mut g: Graph, name: str,
+    dispatch: fn(ComputePassEncoder, ^u8), state: ^u8) -> PassId {
+    add_pass(g, name, PassKind::Compute, draws_nothing, dispatch, state)
+}
+
+add_pass :: fn(mut g: Graph, name: str, kind: PassKind,
+    draw: fn(RenderPassEncoder, ^u8), dispatch: fn(ComputePassEncoder, ^u8),
     state: ^u8) -> PassId {
     index := g.pass_count
     if (index >= slice_len(g.passes)) {
@@ -167,14 +397,75 @@ graph_pass :: fn(mut g: Graph, name: str, draw: fn(RenderPassEncoder, ^u8),
     }
     mut held := g.passes
     held[index] = GraphPass {
-        name = name, draw = draw, state = state,
+        name = name, kind = kind, draw = draw, dispatch = dispatch,
+        state = state,
         color = no_resource(), depth = no_resource(),
         clear = clear_black(), reads = [no_resource(); MAX_READS],
         read_count = 0,
+        writes = [no_resource(); MAX_WRITES], write_count = 0,
+        sub = -1, phase = 0, enabled = true,
     }
     g.pass_count = index + 1
     cast($PassId, index)
 }
+
+// A graph built on its own, handed to this one to run inside. It keeps its own
+// resources and its own order; what it is given from outside is said with
+// `graph_takes`.
+graph_sub :: fn(mut g: Graph, move child: Graph) -> i64 {
+    index := g.sub_count
+    if (index >= slice_len(g.subs)) {
+        print "graph: more sub-graphs than the graph was made room for"
+        graph_free(child)
+        return -1
+    }
+    mut held := g.subs
+    held[index] = child
+    g.sub_count = index + 1
+    index
+}
+
+// A pass that runs a sub-graph. It declares what it reads and writes like any
+// other, which is what puts the nested work in the right place in this graph's
+// order.
+graph_sub_pass :: fn(mut g: Graph, name: str, sub: i64) -> PassId {
+    made := add_pass(g, name, PassKind::SubGraph, draws_nothing,
+        dispatches_nothing, no_pointer())
+    if (pass_index(made) >= 0) {
+        mut held := g.passes
+        held[pass_index(made)].sub = sub
+    }
+    made
+}
+
+// A resource of the sub-graph takes what this graph holds for one of its own.
+// Applied every time the child runs, so a parent that binds a different target
+// per camera draws each view where that view goes.
+graph_takes :: fn(mut g: Graph, sub: i64, inner: ResourceId,
+    outer: ResourceId) {
+    if (g.binding_count >= slice_len(g.bindings)) {
+        print "graph: more sub-graph inputs than the graph was made room for"
+        return
+    }
+    mut held := g.bindings
+    held[g.binding_count] = Binding { sub = sub,
+        inner = resource_index(inner), outer = resource_index(outer) }
+    g.binding_count = g.binding_count + 1
+}
+
+is_sub :: fn(one: GraphPass) -> bool {
+    match one.kind {
+        case .SubGraph: true
+        case .Render: false
+        case .Compute: false
+    }
+}
+
+// The half of a pass that its kind does not use. Neither is ever called: the
+// kind decides which one is, and a pass is made through one of the two entry
+// points above rather than by filling the struct in.
+draws_nothing :: fn(pass: RenderPassEncoder, state: ^u8) { }
+dispatches_nothing :: fn(pass: ComputePassEncoder, state: ^u8) { }
 
 clear_black :: fn() -> Color {
     Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 }
@@ -190,6 +481,21 @@ graph_writes_color :: fn(mut g: Graph, p: PassId, r: ResourceId, clear: Color) {
 graph_writes_depth :: fn(mut g: Graph, p: PassId, r: ResourceId) {
     mut held := g.passes
     held[pass_index(p)].depth = r
+}
+
+// A resource a pass writes that is not an attachment. It orders the passes
+// around it exactly as a colour or depth write does, and decides no load op,
+// because there is nothing to load.
+graph_writes :: fn(mut g: Graph, p: PassId, r: ResourceId) {
+    mut held := g.passes
+    index := pass_index(p)
+    count := held[index].write_count
+    if (count >= MAX_WRITES) {
+        print "graph: a pass writes more resources than one can hold"
+        return
+    }
+    held[index].writes[count] = r
+    held[index].write_count = count + 1
 }
 
 graph_reads :: fn(mut g: Graph, p: PassId, r: ResourceId) {
@@ -218,6 +524,13 @@ pass_writes :: fn(mut g: Graph, pass: i64, resource: i64) -> bool {
         && resource_index(one.depth) == resource) {
         return true
     }
+    mut i : i64 = 0
+    while (i < one.write_count) {
+        if (resource_index(one.writes[i]) == resource) {
+            return true
+        }
+        i = i + 1
+    }
     false
 }
 
@@ -234,9 +547,44 @@ pass_reads :: fn(mut g: Graph, pass: i64, resource: i64) -> bool {
     false
 }
 
+// `after` runs after `before`, said rather than derived. The order the graph
+// works out is the two joined: everything the resources imply, and everything a
+// program added on top.
+graph_runs_after :: fn(mut g: Graph, after: PassId, before: PassId) {
+    later := pass_index(after)
+    earlier := pass_index(before)
+    if (later == earlier) {
+        return
+    }
+    if (g.edge_count >= slice_len(g.edges)) {
+        print "graph: more orderings than the graph was made room for"
+        return
+    }
+    mut held := g.edges
+    held[g.edge_count] = Edge { before = earlier, after = later }
+    g.edge_count = g.edge_count + 1
+}
+
+said_before :: fn(mut g: Graph, before: i64, after: i64) -> bool {
+    held := g.edges
+    mut i : i64 = 0
+    while (i < g.edge_count) {
+        one := held[i]
+        if (one.before == before && one.after == after) {
+            return true
+        }
+        i = i + 1
+    }
+    false
+}
+
 // Whether `before` has to run before `after`: one writes what the other reads,
-// or both write the same resource and the second draws over the first.
+// both write the same resource and the second draws over the first, or a
+// program said so.
 runs_before :: fn(mut g: Graph, before: i64, after: i64) -> bool {
+    if (said_before(g, before, after)) {
+        return true
+    }
     mut r : i64 = 0
     while (r < g.resource_count) {
         if (pass_writes(g, before, r) && pass_reads(g, after, r)) {
@@ -310,8 +658,103 @@ graph_schedule :: fn(mut g: Graph) -> bool {
     }
     heap_release_slice($i64, waiting)
     heap_release_slice($i64, placed)
+    settle_lifetimes(g)
+    settle_pool(g)
     g.scheduled = true
     true
+}
+
+// When each resource is first touched and last touched, counted in steps of the
+// order rather than in passes as they were declared. Everything a pass writes
+// or reads is a use; a resource nothing touches keeps -1 and is left out of the
+// pool, since sharing memory with something that is never read buys nothing.
+settle_lifetimes :: fn(mut g: Graph) {
+    mut i : i64 = 0
+    while (i < g.resource_count) {
+        mut held := g.resources
+        held[i].first_use = -1
+        held[i].last_use = -1
+        i = i + 1
+    }
+    mut step : i64 = 0
+    while (step < g.pass_count) {
+        which := graph_order_at(g, step)
+        mut r : i64 = 0
+        while (r < g.resource_count) {
+            if (pass_writes(g, which, r) || pass_reads(g, which, r)) {
+                mut held := g.resources
+                if (held[r].first_use < 0) {
+                    held[r].first_use = step
+                }
+                held[r].last_use = step
+            }
+            r = r + 1
+        }
+        step = step + 1
+    }
+}
+
+// Which pool slot backs each transient. Walked in the order the resources are
+// first touched, so a slot whose last reader has already run is free for the
+// next one that fits. This is the whole of the aliasing: same shape, and the
+// one before is finished with before this one starts.
+settle_pool :: fn(mut g: Graph) {
+    g.pool_count = 0
+    mut step : i64 = 0
+    while (step < g.pass_count) {
+        mut r : i64 = 0
+        while (r < g.resource_count) {
+            mut held := g.resources
+            one := held[r]
+            if (one.transient && one.first_use == step) {
+                held[r].slot = slot_for(g, one)
+            }
+            r = r + 1
+        }
+        step = step + 1
+    }
+}
+
+// A slot of the right shape that nothing is still reading, or a new one.
+slot_for :: fn(mut g: Graph, one: Resource) -> i64 {
+    mut i : i64 = 0
+    while (i < g.pool_count) {
+        mut pool := g.pool
+        slot := pool[i]
+        if (slot.free_at < one.first_use && slot.format == one.format
+            && slot.width == one.width && slot.height == one.height
+            && same_kind(slot.kind, one.kind)) {
+            pool[i].free_at = one.last_use
+            return i
+        }
+        i = i + 1
+    }
+    made := g.pool_count
+    if (made >= slice_len(g.pool)) {
+        print "graph: more pool slots than the graph was made room for"
+        return -1
+    }
+    mut pool := g.pool
+    pool[made] = PoolSlot {
+        kind = one.kind, format = one.format,
+        width = one.width, height = one.height,
+        held = no_texture2d(), made = false, free_at = one.last_use,
+    }
+    g.pool_count = made + 1
+    made
+}
+
+same_kind :: fn(a: ResourceKind, b: ResourceKind) -> bool {
+    kind_order(a) == kind_order(b)
+}
+
+kind_order :: fn(k: ResourceKind) -> i64 {
+    match k {
+        case .Color: 0
+        case .Depth: 1
+        case .Buffer: 2
+        case .Backbuffer: 3
+    }
 }
 
 // What a graph has to say before it can be ordered at all.
@@ -321,8 +764,9 @@ check_declarations :: fn(mut g: Graph) -> bool {
     while (i < g.pass_count) {
         held := g.passes
         one := held[i]
-        if (resource_is_none(one.color) && resource_is_none(one.depth)) {
-            print "graph: a pass writes nothing, so it can draw nowhere:"
+        if (resource_is_none(one.color) && resource_is_none(one.depth)
+            && one.write_count == 0) {
+            print "graph: a pass writes nothing, so nothing it did could be read:"
             print one.name
             ok = false
         }
@@ -362,7 +806,11 @@ check_declarations :: fn(mut g: Graph) -> bool {
     while (r < g.resource_count) {
         held := g.resources
         one := held[r]
-        if (one.sampled == false && is_color(one)) {
+        // An external is written for something outside the graph to read, and
+        // the backbuffer is presented, so neither is dead for having no reader
+        // in here.
+        if (one.sampled == false && one.external == false
+            && (is_color(one) || is_buffer(one))) {
             print "graph: nothing reads or presents this resource, so it is dead:"
             print one.name
         }
@@ -376,6 +824,7 @@ is_backbuffer :: fn(one: Resource) -> bool {
         case .Backbuffer: true
         case .Color: false
         case .Depth: false
+        case .Buffer: false
     }
 }
 
@@ -384,13 +833,26 @@ is_color :: fn(one: Resource) -> bool {
         case .Color: true
         case .Backbuffer: false
         case .Depth: false
+        case .Buffer: false
+    }
+}
+
+// A buffer is drawn into by nothing, so it is never an attachment and never
+// decides a load op. It orders passes and nothing else, which is the whole of
+// what a compute step needs from a graph.
+is_buffer :: fn(one: Resource) -> bool {
+    match one.kind {
+        case .Buffer: true
+        case .Color: false
+        case .Depth: false
+        case .Backbuffer: false
     }
 }
 
 resource_window_sized :: fn(mut g: Graph, index: i64) -> bool {
     held := g.resources
     one := held[index]
-    if (is_backbuffer(one)) {
+    if (is_backbuffer(one) || is_buffer(one)) {
         return false
     }
     one.width == WINDOW_SIZED || one.height == WINDOW_SIZED
@@ -420,7 +882,14 @@ make_resources :: fn(mut g: Graph) {
     while (i < g.resource_count) {
         mut held := g.resources
         one := held[i]
-        if (is_backbuffer(one) == false && one.made == false) {
+        if (one.transient || one.external) {
+            // The pool owns one, and the program owns the other.
+        } else if (is_buffer(one)) {
+            if (one.made == false && one.width > 0) {
+                held[i].buffer = make_buffer(g.device, one.width, one.usage)
+                held[i].made = true
+            }
+        } else if (is_backbuffer(one) == false && one.made == false) {
             w := sized(one.width, g.width)
             h := sized(one.height, g.height)
             if (w > 0 && h > 0) {
@@ -430,11 +899,47 @@ make_resources :: fn(mut g: Graph) {
         }
         i = i + 1
     }
+    make_pool(g)
 }
 
+// One texture per pool slot, at the size the slot was declared at. A slot is
+// made once and handed to every resource that shares it, which is what makes
+// two steps of a chain cost one texture.
+make_pool :: fn(mut g: Graph) {
+    mut i : i64 = 0
+    while (i < g.pool_count) {
+        mut pool := g.pool
+        slot := pool[i]
+        if (slot.made == false) {
+            w := sized(slot.width, g.width)
+            h := sized(slot.height, g.height)
+            if (w > 0 && h > 0) {
+                pool[i].held = make_pool_one(g.device, slot, w, h)
+                pool[i].made = true
+            }
+        }
+        i = i + 1
+    }
+}
+
+make_pool_one :: fn(device: Device, slot: PoolSlot, w: i64,
+    h: i64) -> Texture2D {
+    match slot.kind {
+        case .Depth: texture_depth_target(device, w, h, slot.format)
+        case .Color: texture_render_target(device, w, h, slot.format)
+        case .Buffer: no_texture2d()
+        case .Backbuffer: no_texture2d()
+    }
+}
+
+// What a declared size comes to once the window is known. A positive number is
+// that many texels. A negative one is a share of the window: -1 is the whole of
+// it, -2 a half, -4 a quarter, which is how a chain of post-process steps runs
+// at a fraction of the resolution and follows a resize without saying twice how
+// big the window is.
 sized :: fn(declared: i64, window: i64) -> i64 {
-    if (declared == WINDOW_SIZED) {
-        return window
+    if (declared < 0) {
+        return window / (-declared)
     }
     declared
 }
@@ -443,8 +948,16 @@ make_one :: fn(device: Device, one: Resource, w: i64, h: i64) -> Texture2D {
     match one.kind {
         case .Depth: texture_depth_target(device, w, h, one.format)
         case .Color: texture_render_target(device, w, h, one.format)
+        case .Buffer: no_texture2d()
         case .Backbuffer: no_texture2d()
     }
+}
+
+make_buffer :: fn(device: Device, bytes: i64, usage: BufferUsage) -> Buffer {
+    mut descriptor := buffer_descriptor_init()
+    descriptor.usage = usage
+    descriptor.size = bytes
+    device_create_buffer(device, ptr_to(descriptor))
 }
 
 // The window changed, so every resource that follows it is remade and the rest
@@ -456,13 +969,23 @@ graph_resize :: fn(mut g: Graph, w: i64, h: i64) {
     while (i < g.resource_count) {
         mut held := g.resources
         one := held[i]
-        if (is_backbuffer(one) == false && resource_window_sized(g, i)) {
+        if (one.transient == false && one.external == false
+            && is_backbuffer(one) == false && resource_window_sized(g, i)) {
             if (held[i].made) {
                 texture_free(held[i].held)
                 held[i].made = false
             }
         }
         i = i + 1
+    }
+    mut slot : i64 = 0
+    while (slot < g.pool_count) {
+        mut pool := g.pool
+        if (pool[slot].made && pool[slot].width < 0) {
+            texture_free(pool[slot].held)
+            pool[slot].made = false
+        }
+        slot = slot + 1
     }
     make_resources(g)
 }
@@ -473,6 +996,9 @@ graph_resize :: fn(mut g: Graph, w: i64, h: i64) {
 graph_view :: fn(g: Graph, r: ResourceId) -> TextureView {
     held := g.resources
     one := held[resource_index(r)]
+    if (one.transient) {
+        return pool_view(g, one)
+    }
     if (one.made == false) {
         print "graph: this resource has no view yet, so give the graph a size with graph_resize first:"
         print one.name
@@ -481,15 +1007,125 @@ graph_view :: fn(g: Graph, r: ResourceId) -> TextureView {
     one.held.view
 }
 
+// The texture a transient was given, which is its slot's. A resource whose
+// slot was never made answers with nothing and says so, the same as a
+// resource of its own would.
+pool_view :: fn(g: Graph, one: Resource) -> TextureView {
+    if (one.slot < 0) {
+        print "graph: this resource has no slot yet, so schedule the graph first:"
+        print one.name
+        return no_view()
+    }
+    pool := g.pool
+    if (pool[one.slot].made == false) {
+        print "graph: this resource has no view yet, so give the graph a size with graph_resize first:"
+        print one.name
+        return no_view()
+    }
+    pool[one.slot].held.view
+}
+
+pool_sampler :: fn(g: Graph, one: Resource) -> Sampler {
+    if (one.slot < 0) {
+        return no_sampler()
+    }
+    pool := g.pool
+    if (pool[one.slot].made == false) {
+        return no_sampler()
+    }
+    pool[one.slot].held.sampler
+}
+
 graph_sampler :: fn(g: Graph, r: ResourceId) -> Sampler {
     held := g.resources
     one := held[resource_index(r)]
+    if (one.transient) {
+        return pool_sampler(g, one)
+    }
     if (one.made == false) {
         print "graph: this resource has no sampler yet, so give the graph a size with graph_resize first:"
         print one.name
         return no_sampler()
     }
     one.held.sampler
+}
+
+// The buffer behind a resource, for a caller building the bind group that
+// names it. Like a view, it exists once the graph has been given a size.
+graph_buffer_of :: fn(g: Graph, r: ResourceId) -> Buffer {
+    held := g.resources
+    one := held[resource_index(r)]
+    if (one.made == false) {
+        print "graph: this buffer has not been made yet, so give the graph a size with graph_resize first:"
+        print one.name
+        return no_buffer()
+    }
+    one.buffer
+}
+
+// How many textures the pool holds, and which slot a resource was given. Two
+// transients that share are two ids answering the same slot, which is what a
+// test reads instead of counting allocations.
+graph_pool_size :: fn(g: Graph) -> i64 { g.pool_count }
+
+graph_slot_of :: fn(g: Graph, r: ResourceId) -> i64 {
+    held := g.resources
+    held[resource_index(r)].slot
+}
+
+// Whether a pass runs this frame. What it writes is written only when it runs,
+// so the pass after one that is off clears the target rather than loading what
+// nobody put there.
+graph_set_enabled :: fn(mut g: Graph, p: PassId, on: bool) {
+    mut held := g.passes
+    held[pass_index(p)].enabled = on
+}
+
+graph_enabled :: fn(g: Graph, p: PassId) -> bool {
+    held := g.passes
+    held[pass_index(p)].enabled
+}
+
+// Everything off but one, which is what a view showing a single step is.
+graph_only :: fn(mut g: Graph, p: PassId) {
+    kept := pass_index(p)
+    mut held := g.passes
+    mut i : i64 = 0
+    while (i < g.pass_count) {
+        held[i].enabled = i == kept
+        i = i + 1
+    }
+}
+
+graph_all_enabled :: fn(mut g: Graph) {
+    mut held := g.passes
+    mut i : i64 = 0
+    while (i < g.pass_count) {
+        held[i].enabled = true
+        i = i + 1
+    }
+}
+
+// What is on now, and putting it back. A debug view saves, turns things off,
+// and restores, and what it restores is what was there rather than everything.
+graph_save_enabled :: fn(mut g: Graph) {
+    mut into := g.saved
+    held := g.passes
+    mut i : i64 = 0
+    while (i < g.pass_count) {
+        into[i] = held[i].enabled
+        i = i + 1
+    }
+}
+
+graph_restore_enabled :: fn(mut g: Graph) {
+    from := g.saved
+    mut held := g.passes
+    mut i : i64 = 0
+    while (i < g.pass_count) {
+        held[i].enabled = from[i]
+        i = i + 1
+    }
 }
 
 // Which pass runs nth, so a test can read the order without drawing.
@@ -500,7 +1136,15 @@ graph_order_at :: fn(g: Graph, n: i64) -> i64 {
 
 // One frame. Every resource starts unwritten, so the first pass to reach one
 // clears it and every pass after loads what is there.
+// Every pass, whatever phase it is in.
 graph_run :: fn(mut g: Graph, mut f: Frame) {
+    graph_run_phase(g, f, ANY_PHASE)
+}
+
+// The passes of one phase, in the order the whole graph was scheduled in. The
+// order is the graph's and does not change with the phase asked for, so two
+// phases run in the order they would have run in together.
+graph_run_phase :: fn(mut g: Graph, mut f: Frame, wanted: i64) {
     if (g.scheduled == false) {
         print "graph: this graph was never scheduled, so it has no order to run"
         return
@@ -517,6 +1161,20 @@ graph_run :: fn(mut g: Graph, mut f: Frame) {
         which := graph_order_at(g, step)
         held := g.passes
         one := held[which]
+        if (one.enabled == false || in_phase(one, wanted) == false) {
+            step = step + 1
+            continue
+        }
+        if (is_sub(one)) {
+            run_sub(g, f, one.sub)
+            step = step + 1
+            continue
+        }
+        if (is_compute(one)) {
+            run_compute(f, one)
+            step = step + 1
+            continue
+        }
         color_load := load_for(g, one.color)
         depth_load := load_for(g, one.depth)
         mark_written(g, one.color)
@@ -529,6 +1187,66 @@ graph_run :: fn(mut g: Graph, mut f: Frame) {
         render_pass_encoder_release(encoder)
         step = step + 1
     }
+}
+
+in_phase :: fn(one: GraphPass, wanted: i64) -> bool {
+    wanted == ANY_PHASE || one.phase == wanted
+}
+
+graph_set_phase :: fn(mut g: Graph, p: PassId, phase: i64) {
+    mut held := g.passes
+    held[pass_index(p)].phase = phase
+}
+
+graph_phase_of :: fn(g: Graph, p: PassId) -> i64 {
+    held := g.passes
+    held[pass_index(p)].phase
+}
+
+is_compute :: fn(one: GraphPass) -> bool {
+    match one.kind {
+        case .Compute: true
+        case .Render: false
+        case .SubGraph: false
+    }
+}
+
+// A compute pass over the frame's encoder. It writes buffers, so it has no
+// attachments to build and no load op to decide; the order it runs in is the
+// whole of what the graph gave it.
+run_compute :: fn(mut f: Frame, one: GraphPass) {
+    mut descriptor := compute_pass_descriptor_init()
+    encoder := command_encoder_begin_compute_pass(frame_encoder(f),
+        ptr_to(descriptor))
+    one.dispatch(encoder, one.state)
+    compute_pass_encoder_end(encoder)
+    compute_pass_encoder_release(encoder)
+}
+
+// A nested graph, given what its parent holds and then run whole. Every phase
+// of it runs: a phase is a division of the graph it was declared in, and the
+// child's phases are its own.
+run_sub :: fn(mut g: Graph, mut f: Frame, sub: i64) {
+    if (sub < 0 || sub >= g.sub_count) {
+        return
+    }
+    mut i : i64 = 0
+    while (i < g.binding_count) {
+        held := g.bindings
+        one := held[i]
+        if (one.sub == sub) {
+            outer := g.resources
+            source := outer[one.outer]
+            mut nested := g.subs
+            mut inner := nested[sub].resources
+            inner[one.inner].held = source.held
+            inner[one.inner].buffer = source.buffer
+            inner[one.inner].made = source.made
+        }
+        i = i + 1
+    }
+    mut nested := g.subs
+    graph_run(nested[sub], f)
 }
 
 load_for :: fn(mut g: Graph, r: ResourceId) -> u32 {
@@ -571,6 +1289,7 @@ target_for :: fn(mut g: Graph, f: Frame, one: GraphPass) -> Target {
 // The order is arithmetic over two tables, so it is answered without a device
 // and without drawing.
 nothing_drawn :: fn(pass: RenderPassEncoder, state: ^u8) { }
+nothing_dispatched :: fn(pass: ComputePassEncoder, state: ^u8) { }
 
 test "a pass runs after the pass whose write it reads" {
     mut g := graph_new(no_device(), 4, 4)
@@ -661,6 +1380,241 @@ test "a pass that writes nothing is refused" {
     idle := graph_pass(g, "idle", nothing_drawn, no_pointer())
     assert(graph_schedule(g) == false)
     graph_free(g)
+}
+
+test "a pass runs after the compute pass whose buffer it reads" {
+    mut g := graph_new(no_device(), 4, 4)
+    screen := graph_backbuffer(g)
+    visible := graph_buffer(g, "visible", 4096, BufferUsage::Storage)
+    // Declared first, and it reads what the compute pass writes.
+    scene := graph_pass(g, "scene", nothing_drawn, no_pointer())
+    graph_writes_color(g, scene, screen, clear_black())
+    graph_reads(g, scene, visible)
+    cull := graph_compute_pass(g, "cull", nothing_dispatched, no_pointer())
+    graph_writes(g, cull, visible)
+    assert(graph_schedule(g))
+    assert(graph_order_at(g, 0) == 1)
+    assert(graph_order_at(g, 1) == 0)
+    graph_free(g)
+}
+
+test "a compute pass that writes a buffer draws nowhere and is allowed" {
+    mut g := graph_new(no_device(), 4, 4)
+    screen := graph_backbuffer(g)
+    counts := graph_buffer(g, "counts", 256, BufferUsage::Storage)
+    cull := graph_compute_pass(g, "cull", nothing_dispatched, no_pointer())
+    graph_writes(g, cull, counts)
+    scene := graph_pass(g, "scene", nothing_drawn, no_pointer())
+    graph_writes_color(g, scene, screen, clear_black())
+    graph_reads(g, scene, counts)
+    assert(graph_schedule(g))
+    graph_free(g)
+}
+
+test "a chain of three targets costs two textures" {
+    mut g := graph_new(no_device(), 8, 8)
+    screen := graph_backbuffer(g)
+    // The shape a post-process chain has: each step reads the one before and
+    // writes the next. The first target is finished with by the time the third
+    // is started, so the two of them are one texture and the chain costs two
+    // however long it gets.
+    first := graph_transient_color(g, "first", 64, 64, 0)
+    middle := graph_transient_color(g, "middle", 64, 64, 0)
+    last := graph_transient_color(g, "last", 64, 64, 0)
+    scene := graph_pass(g, "scene", nothing_drawn, no_pointer())
+    graph_writes_color(g, scene, first, clear_black())
+    bright := graph_pass(g, "bright", nothing_drawn, no_pointer())
+    graph_reads(g, bright, first)
+    graph_writes_color(g, bright, middle, clear_black())
+    blur := graph_pass(g, "blur", nothing_drawn, no_pointer())
+    graph_reads(g, blur, middle)
+    graph_writes_color(g, blur, last, clear_black())
+    compose := graph_pass(g, "compose", nothing_drawn, no_pointer())
+    graph_reads(g, compose, last)
+    graph_writes_color(g, compose, screen, clear_black())
+    assert(graph_schedule(g))
+    assert(graph_slot_of(g, first) == graph_slot_of(g, last))
+    assert(graph_slot_of(g, first) != graph_slot_of(g, middle))
+    assert(graph_pool_size(g) == 2)
+    graph_free(g)
+}
+
+test "two transients alive at once are two textures" {
+    mut g := graph_new(no_device(), 8, 8)
+    screen := graph_backbuffer(g)
+    // Both are read by the same pass, so neither is finished with before the
+    // other starts and they cannot be the same texture.
+    left := graph_transient_color(g, "left", 64, 64, 0)
+    right := graph_transient_color(g, "right", 64, 64, 0)
+    one := graph_pass(g, "one", nothing_drawn, no_pointer())
+    graph_writes_color(g, one, left, clear_black())
+    two := graph_pass(g, "two", nothing_drawn, no_pointer())
+    graph_writes_color(g, two, right, clear_black())
+    compose := graph_pass(g, "compose", nothing_drawn, no_pointer())
+    graph_writes_color(g, compose, screen, clear_black())
+    graph_reads(g, compose, left)
+    graph_reads(g, compose, right)
+    assert(graph_schedule(g))
+    assert(graph_slot_of(g, left) != graph_slot_of(g, right))
+    assert(graph_pool_size(g) == 2)
+    graph_free(g)
+}
+
+test "two transients of different shapes never share" {
+    mut g := graph_new(no_device(), 8, 8)
+    screen := graph_backbuffer(g)
+    // The same chain as above, with the third target a different size. The
+    // lifetimes leave room to share and the shapes do not, so this is three
+    // textures where the matching one was two.
+    first := graph_transient_color(g, "first", 64, 64, 0)
+    middle := graph_transient_color(g, "middle", 64, 64, 0)
+    last := graph_transient_color(g, "last", 32, 32, 0)
+    scene := graph_pass(g, "scene", nothing_drawn, no_pointer())
+    graph_writes_color(g, scene, first, clear_black())
+    bright := graph_pass(g, "bright", nothing_drawn, no_pointer())
+    graph_reads(g, bright, first)
+    graph_writes_color(g, bright, middle, clear_black())
+    blur := graph_pass(g, "blur", nothing_drawn, no_pointer())
+    graph_reads(g, blur, middle)
+    graph_writes_color(g, blur, last, clear_black())
+    compose := graph_pass(g, "compose", nothing_drawn, no_pointer())
+    graph_reads(g, compose, last)
+    graph_writes_color(g, compose, screen, clear_black())
+    assert(graph_schedule(g))
+    assert(graph_slot_of(g, first) != graph_slot_of(g, last))
+    assert(graph_pool_size(g) == 3)
+    graph_free(g)
+}
+
+test "an order a program says is kept when nothing implies one" {
+    mut g := graph_new(no_device(), 4, 4)
+    screen := graph_backbuffer(g)
+    other := graph_depth(g, "other", 8, 8, 0)
+    // Two passes sharing no resource, so the graph reads nothing between them
+    // and would keep them as written. The second is told to run first.
+    first := graph_pass(g, "first", nothing_drawn, no_pointer())
+    graph_writes_color(g, first, screen, clear_black())
+    second := graph_pass(g, "second", nothing_drawn, no_pointer())
+    graph_writes_depth(g, second, other)
+    graph_runs_after(g, first, second)
+    assert(graph_schedule(g))
+    assert(graph_order_at(g, 0) == 1)
+    assert(graph_order_at(g, 1) == 0)
+    graph_free(g)
+}
+
+test "an order a program says can be a cycle and is refused" {
+    mut g := graph_new(no_device(), 4, 4)
+    screen := graph_backbuffer(g)
+    other := graph_depth(g, "other", 8, 8, 0)
+    first := graph_pass(g, "first", nothing_drawn, no_pointer())
+    graph_writes_color(g, first, screen, clear_black())
+    second := graph_pass(g, "second", nothing_drawn, no_pointer())
+    graph_writes_depth(g, second, other)
+    graph_runs_after(g, first, second)
+    graph_runs_after(g, second, first)
+    assert(graph_schedule(g) == false)
+    graph_free(g)
+}
+
+test "what was saved is what comes back, not everything" {
+    mut g := graph_new(no_device(), 4, 4)
+    screen := graph_backbuffer(g)
+    depth := graph_depth(g, "depth", 8, 8, 0)
+    first := graph_pass(g, "first", nothing_drawn, no_pointer())
+    graph_writes_color(g, first, screen, clear_black())
+    second := graph_pass(g, "second", nothing_drawn, no_pointer())
+    graph_writes_depth(g, second, depth)
+    third := graph_pass(g, "third", nothing_drawn, no_pointer())
+    graph_writes_color(g, third, screen, clear_black())
+
+    // One already off before anything saves, which is the case a restore that
+    // turned everything on would get wrong.
+    graph_set_enabled(g, second, false)
+    graph_save_enabled(g)
+    graph_only(g, third)
+    assert(graph_enabled(g, first) == false)
+    assert(graph_enabled(g, third))
+    graph_restore_enabled(g)
+    assert(graph_enabled(g, first))
+    assert(graph_enabled(g, second) == false)
+    assert(graph_enabled(g, third))
+    graph_free(g)
+}
+
+test "a pass that is off is still in the order" {
+    mut g := graph_new(no_device(), 4, 4)
+    screen := graph_backbuffer(g)
+    shadow := graph_depth(g, "shadow", 8, 8, 0)
+    scene := graph_pass(g, "scene", nothing_drawn, no_pointer())
+    graph_writes_color(g, scene, screen, clear_black())
+    graph_reads(g, scene, shadow)
+    caster := graph_pass(g, "caster", nothing_drawn, no_pointer())
+    graph_writes_depth(g, caster, shadow)
+    assert(graph_schedule(g))
+    // Turning it off after scheduling changes nothing about the order, which
+    // is what lets a view toggle a pass every frame without rescheduling.
+    graph_set_enabled(g, caster, false)
+    assert(graph_order_at(g, 0) == 1)
+    assert(graph_order_at(g, 1) == 0)
+    graph_free(g)
+}
+
+test "a run of one phase leaves the other phases alone" {
+    mut g := graph_new(no_device(), 4, 4)
+    screen := graph_backbuffer(g)
+    depth := graph_depth(g, "depth", 8, 8, 0)
+    shared := graph_pass(g, "shared", nothing_drawn, no_pointer())
+    graph_writes_depth(g, shared, depth)
+    left := graph_pass(g, "left", nothing_drawn, no_pointer())
+    graph_writes_color(g, left, screen, clear_black())
+    graph_reads(g, left, depth)
+    graph_set_phase(g, left, 1)
+    right := graph_pass(g, "right", nothing_drawn, no_pointer())
+    graph_writes_color(g, right, screen, clear_black())
+    graph_reads(g, right, depth)
+    graph_set_phase(g, right, 2)
+    assert(graph_schedule(g))
+    // The work shared between views is phase zero and the per-view work is
+    // one and two, so a program runs zero once and each view's phase per
+    // camera. The order is the graph's whichever phase is asked for.
+    assert(graph_phase_of(g, shared) == 0)
+    assert(graph_phase_of(g, left) == 1)
+    assert(graph_phase_of(g, right) == 2)
+    assert(graph_order_at(g, 0) == 0)
+    graph_free(g)
+}
+
+test "a sub-graph is ordered by what its pass declares" {
+    mut child := graph_new(no_device(), 2, 1)
+    inner := graph_external_color(child, "target")
+    draw := graph_pass(child, "draw", nothing_drawn, no_pointer())
+    graph_writes_color(child, draw, inner, clear_black())
+    assert(graph_schedule(child))
+
+    mut g := graph_new(no_device(), 4, 4)
+    screen := graph_backbuffer(g)
+    offscreen := graph_color(g, "offscreen", 64, 64, 0)
+    // Declared second and reading what the sub-graph writes, so the nested
+    // work is ordered first by the same rule any other pass follows.
+    compose := graph_pass(g, "compose", nothing_drawn, no_pointer())
+    graph_writes_color(g, compose, screen, clear_black())
+    graph_reads(g, compose, offscreen)
+    sub := graph_sub(g, child)
+    views := graph_sub_pass(g, "views", sub)
+    graph_writes_color(g, views, offscreen, clear_black())
+    graph_takes(g, sub, inner, offscreen)
+    assert(graph_schedule(g))
+    assert(graph_order_at(g, 0) == 1)
+    assert(graph_order_at(g, 1) == 0)
+    graph_free(g)
+}
+
+test "a size is a share of the window" {
+    assert(sized(64, 1280) == 64)
+    assert(sized(WINDOW_SIZED, 1280) == 1280)
+    assert(sized(-2, 1280) == 640)
+    assert(sized(-4, 1280) == 320)
 }
 
 test "a resource that follows the window may not be read" {

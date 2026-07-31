@@ -6575,6 +6575,23 @@ impl<'a> FunctionLowering<'a> {
         let (address, pointee) = self.place_address(target)?;
         let (operand, value_type) =
             self.lower_expression(value, Some(&pointee))?;
+        // The same nominal rule the named local above is held to. A field, an
+        // element and a place behind a pointer are assignments too, and a
+        // distinct type reached through one of them was taking its
+        // representation without a `cast` saying so: `h.usage = plain` put a
+        // number into a set of bits.
+        if distinct_mismatch(value, &value_type, &pointee, &self.builder.flags)
+        {
+            let (described, note) = nominal_words(
+                value,
+                &value_type,
+                &pointee,
+                &self.builder.flags,
+            );
+            bail!(
+                "this place is a '{pointee}' and the value is {described}; {note}"
+            );
+        }
         if needs_memory(&pointee) {
             let IrOperand::Local(source_local) = operand else {
                 bail!("aggregate assignment from a non-place value");
