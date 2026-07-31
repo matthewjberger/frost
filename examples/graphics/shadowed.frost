@@ -65,6 +65,7 @@ import "graph.frost"
 import "texture.frost"
 import "mesh.frost"
 import "material.frost"
+import "scene_sync.frost"
 import "wgpu.frost"
 import "ecs.frost"
 import "math.frost"
@@ -112,43 +113,38 @@ INSET_WIDTH :: 384
 INSET_HEIGHT :: 216
 INSET_MARGIN :: 24
 
-// How many bytes the glow buffer takes. One float per thing that is drawn,
-// rounded up to what a storage binding wants to start on.
-GLOW_BYTES :: 64
+// How many things may be drawn at once. The slot table, the draw list and the
+// run of glow values are all this long, because the scene shader reads the run
+// at the slot a thing was given: three numbers that have to agree, so they are
+// one number.
+MAX_DRAWN :: 40
+GLOW_BYTES :: 160
 
 // The camera, the light, and the matrix the light sees the world through.
 FRAME_FLOATS :: 48
 FRAME_BYTES :: 192
 
-// One thing's own: its model matrix, its colour, and how its surface behaves.
-OBJECT_FLOATS :: 24
-OBJECT_BYTES :: 96
+// What one thing's own uniform holds is `scene_sync`'s, since that is what
+// fills it, and `OBJECT_BYTES` arrives from there.
 
 // Where a thing is and how big, how it turns, and what it is drawn as. The
 // floor is an entity like any other, with a scale that flattens it and a turn
 // rate of nothing.
 Placement :: struct { position: Vec3, scale: Vec3 }
 Spin :: struct { axis: Vec3, speed: f32, angle: f32 }
-Drawn :: struct { mesh: i64, material: i64 }
 
-// Where a thing ended up, once its own placement and every placement above it
-// have been applied. Written by a system and read by the one that uploads, so
-// the walk of the world and the walk that fills buffers are two passes over the
-// same data rather than one loop doing both.
-Model :: struct { matrix: Mat4 }
+// `Drawn` and `Model` are declared in scene_sync.frost, because the walk from
+// the world to what a pass draws is what reads them. Where a thing ended up is
+// written by a system here and read there.
 
 // What the systems work on that is not a component. A system is a
 // `fn(mut World)` and captures nothing, so the queue it writes through, the
 // tables it indexes and the ids of the components themselves are a resource
 // like anything else. It holds a `Materials`, so it is read by borrow.
 Feed :: struct {
-    queue: Queue,
     entities: []Entity,
-    slots: []Slot,
-    registry: Materials,
     placement: i64,
     spin: i64,
-    drawn: i64,
     model: i64,
     step: f32,
 }
@@ -158,22 +154,18 @@ Feed :: struct {
 FEED_SLOT :: 0
 TREE_SLOT :: 1
 
-// The buffer and binding one thing is drawn with. Both passes bind the same
-// one: the shadow pass needs the model matrix and nothing else, and that is
-// already here.
-Slot :: struct { uniform: Buffer, group: BindGroup }
-
 // What a pass records with. The shadow pass reads the first three fields and
 // the scene pass reads all of them, which is why one struct serves both: the
 // two are the same walk over the same slots with a different pipeline.
 Scene :: struct {
     pipeline: RenderPipeline,
     frame_group: BindGroup,
-    slots: []Slot,
-    meshes: []Mesh,
+    // What to draw, filled from the world once a frame. All three passes that
+    // draw the scene point at the one run rather than each holding a copy: it
+    // is written after the schedule and read by every one of them.
+    list: ^DrawList,
     shadow_group: BindGroup,
     glow_group: BindGroup,
-    count: i64,
     samples_shadow: i64,
 }
 
@@ -283,7 +275,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // A glow of its own, from the run the compute pass wrote. It is added
     // rather than lit, so it reaches past one and is what the bloom below
     // picks up.
-    let pulse = glow[u32(object.surface.z)];
+    // Bounded, because which slot a thing was given comes from a table that
+    // grows and the run does not.
+    let which = u32(object.surface.z);
+    var pulse = 0.0;
+    if (which < arrayLength(&glow)) {
+        pulse = glow[which];
+    }
     return vec4<f32>(lit + object.base_color.rgb * pulse * 0.9,
         object.base_color.a);
 }
@@ -423,13 +421,17 @@ draw_things :: fn(pass: RenderPassEncoder, state: ^u8) {
             unsafe { s^.glow_group }, 0, no_pointer())
     }
 
+    // What to draw came out of the world this frame. The pass walks the run
+    // and knows nothing about entities or components.
+    list := unsafe { s^.list^ }
     mut index : i64 = 0
-    while (index < unsafe { s^.count }) {
-        render_pass_encoder_set_bind_group(pass, 1,
-            unsafe { s^.slots[index].group }, 0, no_pointer())
-        held := unsafe { s^.meshes[index] }
-        mesh_bind(pass, held)
-        render_pass_encoder_draw_indexed(pass, held.index_count, 1, 0, 0, 0)
+    while (index < draw_list_count(list)) {
+        one := draw_list_at(list, index)
+        render_pass_encoder_set_bind_group(pass, 1, one.binding, 0,
+            no_pointer())
+        mesh_bind(pass, one.geometry)
+        render_pass_encoder_draw_indexed(pass, one.geometry.index_count, 1, 0,
+            0, 0)
         index = index + 1
     }
 }
@@ -439,7 +441,9 @@ draw_things :: fn(pass: RenderPassEncoder, state: ^u8) {
 // buffers are filled last, so nothing reads a matrix in the same pass that
 // wrote it.
 
-// Every turn advanced by the frame's step.
+// Every turn advanced by the frame's step. What a thing is drawn as is not
+// read here at all: turning and placing are about the world, and what comes of
+// that is scene_sync's to work out.
 turn_things :: fn(mut world: World) {
     feed := ecs_resource_ref($Feed, world, FEED_SLOT)
     mut index : i64 = 0
@@ -489,47 +493,6 @@ local_of :: fn(mut world: World, feed: Feed, entity: Entity) -> Mat4 {
     mat4_mul(mat4_translation(place.position),
         mat4_mul(quat_to_mat4(quat_from_axis_angle(turn.axis, turn.angle)),
             mat4_scale(place.scale)))
-}
-
-// The buffers each thing is drawn with, filled from what the pass above left.
-upload_things :: fn(mut world: World) {
-    feed := ecs_resource_ref($Feed, world, FEED_SLOT)
-    mut index : i64 = 0
-    while (index < slice_len(feed.entities)) {
-        entity := feed.entities[index]
-        if (ecs_has(world, entity, feed.drawn) == false) {
-            index = index + 1
-            continue
-        }
-        shown := ecs_get($Drawn, world, entity, feed.drawn)
-        model := ecs_get($Model, world, entity, feed.model).matrix
-        surface := materials_at(feed.registry, shown.material)
-
-        mut values : [OBJECT_FLOATS]f32 = [0.0; OBJECT_FLOATS]
-        mut element : i64 = 0
-        while (element < 16) {
-            values[element] = model.m[element]
-            element = element + 1
-        }
-        colour := material_color(surface)
-        values[16] = colour.x
-        values[17] = colour.y
-        values[18] = colour.z
-        values[19] = colour.w
-        behaviour := material_surface(surface)
-        values[20] = behaviour.x
-        values[21] = behaviour.y
-        // Which of the compute pass's values belongs to this thing. Every thing
-        // is drawn with its own binding and knows nothing else about the run,
-        // so the index travels with it, in the component of the surface that
-        // the lighting does not read.
-        which : f32 = index
-        values[22] = which
-        values[23] = behaviour.w
-        queue_write_buffer(feed.queue, feed.slots[index].uniform, 0,
-            ptr_to(values[0]), OBJECT_BYTES)
-        index = index + 1
-    }
 }
 
 // Where the light is looking from, as a matrix. A directional light has no
@@ -1050,8 +1013,12 @@ main :: fn() -> i64 {
     // One more than the things that are drawn: the last is the root every
     // shape hangs off, walked by the systems and uploaded by none of them.
     mut entities := heap_slice($Entity, INSTANCES + 1)
-    mut slots := heap_slice($Slot, INSTANCES)
-    mut meshes := heap_slice($Mesh, INSTANCES)
+    // A binding per thing, keyed by the entity rather than by a position, and
+    // the run of draw items one frame produces. Room for more than the scene
+    // starts with, since the point of keying by entity is that a thing spawned
+    // later needs nothing resized.
+    mut slot_table := slot_table_new(MAX_DRAWN, object_layout)
+    mut list := draw_list_new(MAX_DRAWN)
     mut tree := hierarchy_new()
 
     // The floor first, so it is the one thing under everything else, then a
@@ -1065,11 +1032,6 @@ main :: fn() -> i64 {
     ecs_set($Drawn, world, floor, drawn, Drawn { mesh = cube,
         material = looks[3] })
     entities[0] = floor
-    meshes[0] = mesh_cache_at(cache, cube)
-    floor_uniform := uniform_buffer(device, OBJECT_BYTES)
-    slots[0] = Slot { uniform = floor_uniform,
-        group = uniform_group(device, object_layout, floor_uniform,
-            OBJECT_BYTES) }
 
     // The middle column and the middle row, so the grid is centred on the
     // floor and the bottom row is the one measured against it.
@@ -1102,11 +1064,10 @@ main :: fn() -> i64 {
         ecs_set($Drawn, world, entity, drawn, Drawn { mesh = shape,
             material = looks[made - (made / 3) * 3] })
 
+        // Nothing here makes a buffer or a binding. What is drawn and where it
+        // is are the world's; the device side of it is worked out from the
+        // world once a frame.
         entities[made + 1] = entity
-        meshes[made + 1] = mesh_cache_at(cache, shape)
-        held := uniform_buffer(device, OBJECT_BYTES)
-        slots[made + 1] = Slot { uniform = held,
-            group = uniform_group(device, object_layout, held, OBJECT_BYTES) }
         made = made + 1
     }
 
@@ -1137,17 +1098,15 @@ main :: fn() -> i64 {
     // again: setting a resource moves it, and the registry inside this one is
     // released at the end.
     ecs_resource_set($Feed, world, feed_slot, Feed {
-        queue = queue, entities = entities, slots = slots,
-        registry = registry, placement = placement, spin = spin,
-        drawn = drawn, model = model, step = 0.0 })
+        entities = entities, placement = placement, spin = spin,
+        model = model, step = 0.0 })
 
-    // What a frame does, read top to bottom. Turning, then where everything
-    // ended up, then the buffers: a stage apart each, so nothing reads a matrix
-    // in the pass that wrote it.
+    // What a frame does to the world, read top to bottom: turning, then where
+    // everything ended up. What comes of that is scene_sync's, run after the
+    // schedule, so a system never touches the device.
     mut frame_schedule := schedule_new()
     schedule_add(frame_schedule, Stage::First, turn_things)
     schedule_add(frame_schedule, Stage::Update, place_things)
-    schedule_add(frame_schedule, Stage::Last, upload_things)
 
     shader := make_shader(device)
 
@@ -1189,9 +1148,9 @@ main :: fn() -> i64 {
     mut shadow_scene := Scene {
         pipeline = make_shadow_pipeline(device, shader, shadow_pipeline_layout),
         frame_group = frame_group,
-        slots = slots, meshes = meshes,
+        list = ptr_to(list),
         shadow_group = no_bind_group(), glow_group = no_bind_group(),
-        count = INSTANCES, samples_shadow = 0,
+        samples_shadow = 0,
     }
     shadow_pass := graph_pass(graph, "shadow", draw_things,
         ptr_to(shadow_scene))
@@ -1203,9 +1162,9 @@ main :: fn() -> i64 {
         pipeline = make_scene_pipeline(device, shader, renderer_format(r),
             scene_pipeline_layout),
         frame_group = frame_group,
-        slots = slots, meshes = meshes,
+        list = ptr_to(list),
         shadow_group = no_bind_group(), glow_group = no_bind_group(),
-        count = INSTANCES, samples_shadow = 1,
+        samples_shadow = 1,
     }
     lit_pass := graph_pass(graph, "scene", draw_things, ptr_to(lit_scene))
     graph_writes_color(graph, lit_pass, lit,
@@ -1290,9 +1249,9 @@ main :: fn() -> i64 {
     mut inset_scene := Scene {
         pipeline = lit_scene.pipeline,
         frame_group = inset_frame_group,
-        slots = slots, meshes = meshes,
+        list = ptr_to(list),
         shadow_group = no_bind_group(), glow_group = no_bind_group(),
-        count = INSTANCES, samples_shadow = 1,
+        samples_shadow = 1,
     }
     inset_scene_pass := graph_pass(inset_graph, "inset scene", draw_things,
         ptr_to(inset_scene))
@@ -1384,6 +1343,10 @@ main :: fn() -> i64 {
         mut feeding := ecs_resource_slice($Feed, world, feed_slot)
         feeding[0].step = step
         schedule_run(frame_schedule, world, ANY_STATE)
+        // From the world to what the passes draw, once a frame. Every pass that
+        // draws the scene walks the same run.
+        scene_sync(world, list, slot_table, device, queue, registry, cache,
+            ObjectIds { model = model, drawn = drawn })
 
         mut f := renderer_begin(r)
         if (frame_ok(f)) {
@@ -1396,11 +1359,10 @@ main :: fn() -> i64 {
     schedule_free(frame_schedule)
     giving := ecs_resource($Hierarchy, world, tree_slot)
     hierarchy_free(giving)
-    heap_release_slice($Mesh, meshes)
-    heap_release_slice($Slot, slots)
+    draw_list_free(list)
+    slot_table_free(slot_table)
     heap_release_slice($Entity, entities)
-    taken := ecs_resource($Feed, world, feed_slot)
-    materials_free(taken.registry)
+    materials_free(registry)
     mesh_cache_free(cache)
     ecs_free(world)
     renderer_close(r)

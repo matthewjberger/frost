@@ -16558,6 +16558,7 @@ fn the_graphics_examples_compile_against_their_bindings() {
             "textured.frost",
             "shadowed.frost",
             "graph.frost",
+            "scene_sync.frost",
         ]
     } else {
         &["window.frost"]
@@ -16713,7 +16714,18 @@ fn self_hosted_compiles_the_sdl_binding() {
     // adds the render graph, which is where a `match` answers with a texture and
     // where this compiler used to read one at the width of the zero its binding
     // was seeded with.
-    for example in ["window.frost", "textured.frost", "shadowed.frost"] {
+    //
+    // The last two read `wgpu.frost`, which is generated from a schema that is
+    // not in the repository, so a checkout without it checks the hand-written
+    // binding and stops there. Its sibling above has always said so and this one
+    // did not, which is a checkout that builds here and fails on the runner.
+    let generated = root.join("examples").join("graphics").join("wgpu.frost");
+    let examples: &[&str] = if generated.exists() {
+        &["window.frost", "textured.frost", "shadowed.frost"]
+    } else {
+        &["window.frost"]
+    };
+    for example in examples {
         let source = root.join("examples").join("graphics").join(example);
         let emitted =
             std::env::temp_dir().join(format!("frost_gfxsh_{example}.c"));
@@ -16730,7 +16742,7 @@ fn self_hosted_compiles_the_sdl_binding() {
 {}",
             String::from_utf8_lossy(&run.stderr)
         );
-        if example == "window.frost" {
+        if *example == "window.frost" {
             let emitted_c =
                 std::fs::read_to_string(&emitted).unwrap_or_default();
             assert!(
