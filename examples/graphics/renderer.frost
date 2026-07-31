@@ -3,43 +3,40 @@
 //
 //   mut r := renderer_open(platform_window(p), width(p), height(p))
 //   while (platform_poll(p)) {
-//       if (resized(p)) { renderer_resize(r, width(p), height(p)) }
-//       mut f := renderer_begin(r)
-//       if (frame_ok(f)) {
-//           run(f, ...)
-//           renderer_end(r, f)
+//       if (resized(p)) {
+//           renderer_resize(r, width(p), height(p))
+//           graph_resize(g, width(p), height(p))
 //       }
+//       mut f := renderer_begin(r)
+//       if (frame_ok(f)) { graph_run(g, f) }
+//       renderer_end(r, f)
 //   }
+//
+// `renderer_end` on every path, including the one where no frame was acquired,
+// because a `Frame` is linear and ending it is what gives its handles back.
 //
 // Bringing wgpu up is the same twelve steps every time and none of them are a
 // program's business: an instance, a surface off the platform window, an
 // adapter chosen knowing that surface, a device, a queue, and a configuration
-// whose format the surface names rather than a guess. That is what this owns.
+// whose format the surface names rather than a guess. That is what this owns,
+// and it is where the window ends.
 //
-// What it deliberately does not own is what to draw. A `Pass` is a name and a
-// function, and `renderer_run` hands each one the frame in order. That is the
-// whole of the graph here: passes declare nothing about resources yet, so
-// ordering is the order they are written in. When there are transient targets
-// to alias and passes that must not run before their input exists, this is
-// where that goes, and a pass written today does not change shape when it
-// arrives.
-//
-// What a pass draws into is a `Target`, not the window. The frame's own target
-// is the surface texture and the depth beside it, and a pass that wants one of
-// its own makes it and hands it over instead. That is what a shadow map, a
-// picking buffer, and every post-process step are: draw into a texture, then
-// read it in the pass after. A renderer that can only reach the window can do
-// none of them, and the difference is this one struct.
+// What to draw, in what order, and into what belongs to `graph.frost`. A pass
+// declares the targets it reads and writes, the graph works out the order from
+// those declarations, makes every target that is not the window's, and hands
+// each pass an encoder over a `Target`. This module supplies the two halves the
+// graph builds on: the frame's own surface texture, and `frame_pass_into`,
+// which opens a render pass over whatever target it is given.
 
 import "sdl.frost"
 import "wgpu.frost"
 
-export Renderer, Frame, Pass, Target,
+export Renderer, Frame, Target,
     renderer_open, renderer_close, renderer_ok, renderer_resize,
-    renderer_begin, renderer_end, renderer_run,
-    renderer_device, renderer_queue, renderer_format, renderer_depth_format,
-    frame_ok, frame_encoder, frame_view, frame_pass, frame_pass_into,
-    frame_target, target_of, no_view,
+    renderer_begin, renderer_end,
+    renderer_device, renderer_queue, renderer_format,
+    frame_ok, frame_view, frame_pass_into,
+    target_of, no_view,
     DEPTH_FORMAT, no_pointer
 
 no_pointer :: fn() -> ^u8 {
@@ -62,49 +59,26 @@ Renderer :: struct {
     queue: Queue,
     format: u32,
     configuration: SurfaceConfiguration,
-    depth: Texture,
-    depth_view: TextureView,
     opened: bool,
 }
 
-// The depth target, which is the renderer's rather than a frame's: it is the
-// same size as the window and outlives every frame drawn into it, so it is made
-// with the surface and remade when the surface is.
-make_depth :: fn(mut r: Renderer, w: i64, h: i64) {
-    mut descriptor := texture_descriptor_init()
-    descriptor.usage = TextureUsage::RenderAttachment
-    descriptor.dimension = TEXTURE_DIMENSION_2D
-    descriptor.size = Extent3D { width = cast($u32, w),
-        height = cast($u32, h), depth_or_array_layers = 1 }
-    descriptor.format = DEPTH_FORMAT
-    descriptor.mip_level_count = 1
-    descriptor.sample_count = 1
-    r.depth = device_create_texture(r.device, ptr_to(descriptor))
-    r.depth_view = texture_create_view(r.depth, no_pointer())
-}
-
-// One frame in flight. The texture is the surface's own, so it is not held past
-// the present that consumes it.
-Frame :: struct {
+// One frame in flight, and `linear` because of what it holds. Every handle in
+// here is counted by wgpu and has to be given back exactly once: a surface
+// texture still held is a surface that cannot be configured, which is a resize
+// that fails. Rust reaches for `Drop` here. Frost has no destructors, and this
+// is the thing it has instead: the obligation is on the type, `renderer_end`
+// takes the frame by `move`, and a path that acquires one and returns without
+// ending it stops compiling.
+//
+// It is the frame rather than the handles that carries the obligation. A
+// `Device` or a `BindGroup` is refcounted and read out of a struct all over a
+// program, which is shared ownership and a different thing; these four are
+// taken and given back inside one frame, which is what linear describes.
+Frame :: linear struct {
     texture: SurfaceTexture,
     view: TextureView,
-    depth_view: TextureView,
     encoder: CommandEncoder,
     ready: bool,
-}
-
-// A named step in a frame. `draw` is handed the frame and whatever the pass was
-// built with, since Frost has no closures and a pass has state: a pipeline, a
-// bind group, the buffers it wrote once.
-//
-// This is the shape a trait would have in another language, written out. The
-// advantage of writing it out is that a pass is a value, so a program can hold
-// a list of them, reorder it, or leave one out, without the language having an
-// opinion about registration.
-Pass :: struct {
-    name: str,
-    draw: fn(mut Frame, ^u8),
-    state: ^u8,
 }
 
 // Waits for a callback that answers on the instance's own event pump. wgpu
@@ -144,7 +118,6 @@ renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
         instance = no_instance(), surface = no_surface(),
         adapter = no_adapter(), device = no_device(), queue = no_queue(),
         format = 0, configuration = surface_configuration_init(),
-        depth = no_texture(), depth_view = no_texture_view(),
         opened = false,
     }
     r.instance = create_instance(no_pointer())
@@ -217,7 +190,6 @@ renderer_open :: fn(window: Window, w: i64, h: i64) -> Renderer {
     r.configuration.height = cast($u32, h)
     r.configuration.present_mode = PRESENT_MODE_FIFO
     surface_configure(r.surface, ptr_to(r.configuration))
-    make_depth(r, w, h)
     r.opened = true
     r
 }
@@ -226,15 +198,23 @@ renderer_ok :: fn(r: Renderer) -> bool { r.opened }
 renderer_device :: fn(r: Renderer) -> Device { r.device }
 renderer_queue :: fn(r: Renderer) -> Queue { r.queue }
 renderer_format :: fn(r: Renderer) -> u32 { r.format }
-renderer_depth_format :: fn(r: Renderer) -> u32 { DEPTH_FORMAT }
 
+// Everything opening took, given back, children before what made them. These
+// live as long as the program does, so what this buys is a clean exit rather
+// than a working resize: the frame-scoped handles are the ones whose counting
+// decides whether the next frame draws, and those are `Frame`'s.
 renderer_close :: fn(mut r: Renderer) {
+    queue_release(r.queue)
+    device_release(r.device)
+    adapter_release(r.adapter)
+    surface_release(r.surface)
+    instance_release(r.instance)
     r.opened = false
 }
 
-// A surface has to be told the window changed, and the depth target has to be
-// the same size as what it is tested against, so it is thrown away and made
-// again rather than resized: a texture has one size for its whole life.
+// A surface has to be told the window changed. Every target tested against it
+// has to change with it, and those belong to the graph, which is told the same
+// thing by the same caller.
 renderer_resize :: fn(mut r: Renderer, w: i64, h: i64) {
     if (w <= 0 || h <= 0) {
         return
@@ -242,30 +222,51 @@ renderer_resize :: fn(mut r: Renderer, w: i64, h: i64) {
     r.configuration.width = cast($u32, w)
     r.configuration.height = cast($u32, h)
     surface_configure(r.surface, ptr_to(r.configuration))
-    texture_destroy(r.depth)
-    make_depth(r, w, h)
+}
+
+// Whether what the surface answered with is something to draw into.
+acquired :: fn(f: Frame) -> bool {
+    f.texture.status == SURFACE_GET_CURRENT_TEXTURE_STATUS_SUCCESS_OPTIMAL
+        || f.texture.status == SURFACE_GET_CURRENT_TEXTURE_STATUS_SUCCESS_SUBOPTIMAL
+}
+
+// Letting go of the texture the surface handed over. A failed acquire answers
+// with nothing to release, so the handle is checked before it is given back.
+release_acquired :: fn(mut f: Frame) {
+    if (f.texture.texture == no_texture()) {
+        return
+    }
+    texture_release(f.texture.texture)
+    f.texture.texture = no_texture()
 }
 
 // Acquires the frame's texture and opens an encoder for it.
 //
 // A surface goes stale when the window moves under it, and skipping the frame
 // is not enough: nothing would make it fresh again and the window would stay
-// black. So a bad status reconfigures before the frame is given up, and the
-// next one succeeds.
+// black. So a stale surface is configured again and asked a second time, and
+// the frame after a resize is drawn rather than dropped.
+//
+// The texture from the stale attempt is given back before the surface is
+// configured. A surface cannot be configured while a texture of its swapchain
+// is still held, and every acquire that is never released holds one: that is
+// what made a resize answer `Invalid surface` and take the program with it.
 renderer_begin :: fn(mut r: Renderer) -> Frame {
     mut f := Frame {
         texture = surface_texture_init(),
         view = no_texture_view(),
-        depth_view = r.depth_view,
         encoder = no_command_encoder(),
         ready = false,
     }
     surface_get_current_texture(r.surface, ptr_to(f.texture))
-    good := f.texture.status == SURFACE_GET_CURRENT_TEXTURE_STATUS_SUCCESS_OPTIMAL
-        || f.texture.status == SURFACE_GET_CURRENT_TEXTURE_STATUS_SUCCESS_SUBOPTIMAL
-    if (good == false) {
+    if (acquired(f) == false) {
+        release_acquired(f)
         surface_configure(r.surface, ptr_to(r.configuration))
-        return f
+        surface_get_current_texture(r.surface, ptr_to(f.texture))
+        if (acquired(f) == false) {
+            release_acquired(f)
+            return f
+        }
     }
     f.view = texture_create_view(f.texture.texture, no_pointer())
     f.encoder = device_create_command_encoder(r.device, no_pointer())
@@ -274,16 +275,8 @@ renderer_begin :: fn(mut r: Renderer) -> Frame {
 }
 
 frame_ok :: fn(f: Frame) -> bool { f.ready }
-frame_encoder :: fn(f: Frame) -> CommandEncoder { f.encoder }
 frame_view :: fn(f: Frame) -> TextureView { f.view }
 
-// A render pass over the frame's colour and depth targets. `load` says whether
-// what is there already survives, which is what lets a second pass draw over a
-// first instead of erasing it: the first clears, the rest load.
-//
-// Depth follows the same rule and it is the more important one. Every pass
-// after the first has to load the depth the passes before it wrote, or each one
-// sorts only against itself and the last to draw wins wherever they overlap.
 // Where a pass draws. A colour attachment, a depth attachment, or both: a
 // shadow map is depth with no colour, a post-process step is colour with no
 // depth, and an ordinary scene pass is both.
@@ -305,23 +298,16 @@ target_of :: fn(color: TextureView, depth: TextureView, has_color: bool,
 
 no_view :: fn() -> TextureView { no_texture_view() }
 
-// The frame's own: the surface texture this frame acquired, and the depth
-// buffer beside it.
-frame_target :: fn(f: Frame) -> Target {
-    Target { color = f.view, depth = f.depth_view, has_color = true,
-        has_depth = true }
-}
-
-// The frame's target, which is what a pass drawing to the window wants and
-// what every pass wanted when there was only one.
-frame_pass :: fn(mut f: Frame, load: u32, clear: Color,
-    depth_load: u32) -> RenderPassEncoder {
-    frame_pass_into(f, frame_target(f), load, clear, depth_load)
-}
-
 // A pass into whatever it was given. The attachments a pass has are the ones
 // its target says it has, so a depth-only pass writes no colour and a
 // post-process step is not asked for a depth buffer it does not have.
+//
+// `load` says whether what is already in an attachment survives, which is what
+// lets a second pass draw over a first instead of erasing it. Depth follows the
+// same rule and it is the more important one: every pass after the first has to
+// load the depth the passes before it wrote, or each sorts only against itself
+// and the last to draw wins wherever they overlap. The graph decides both, from
+// what each pass declared it writes.
 frame_pass_into :: fn(mut f: Frame, into: Target, load: u32, clear: Color,
     depth_load: u32) -> RenderPassEncoder {
     mut attachment := render_pass_color_attachment_init()
@@ -351,22 +337,25 @@ frame_pass_into :: fn(mut f: Frame, into: Target, load: u32, clear: Color,
     command_encoder_begin_render_pass(f.encoder, ptr_to(descriptor))
 }
 
-// Each pass in order, given the frame and its own state.
-renderer_run :: fn(mut f: Frame, passes: []Pass) {
-    mut index : i64 = 0
-    while (index < slice_len(passes)) {
-        held := passes[index]
-        held.draw(f, held.state)
-        index = index + 1
-    }
-}
-
-// Closes the encoder, submits it, and shows the result.
-renderer_end :: fn(mut r: Renderer, mut f: Frame) {
+// Closes the encoder, submits it, shows the result, and gives back everything
+// the frame took.
+//
+// The order is the one the counting requires: the command buffer after the
+// submit that reads it, the encoder after the buffer it produced, the view
+// after the submit that draws through it, and the surface texture after the
+// present that shows it.
+renderer_end :: fn(mut r: Renderer, move f: Frame) {
     if (f.ready == false) {
         return
     }
     mut command := command_encoder_finish(f.encoder, no_pointer())
     queue_submit(r.queue, 1, ptr_to(command))
     surface_present(r.surface)
+    command_buffer_release(command)
+    command_encoder_release(f.encoder)
+    f.encoder = no_command_encoder()
+    texture_view_release(f.view)
+    f.view = no_texture_view()
+    release_acquired(f)
+    f.ready = false
 }

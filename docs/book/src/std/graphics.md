@@ -1,21 +1,36 @@
 # Graphics bindings
 
-`examples/graphics/` is not part of `std/`. It is two C libraries bound to
-Frost, and two programs that use them: a window, and a spinning triangle drawn
-with wgpu. It is here because those bindings are the working answer to what a
-Frost program does when it has to talk to a real graphics API, and because the
-math the triangle uses comes straight out of [math.md](math.md).
+`examples/graphics/` sits outside `std/`. It is two C libraries bound to Frost,
+the pieces a drawing program is built out of, and six programs that use them. It
+is here because those bindings are the working answer to what a Frost program
+does when it has to talk to a real graphics API, and because the math they use
+comes straight out of [math.md](math.md).
 
 | File | What it is |
 | --- | --- |
 | `sdl.frost` | SDL3: a window, its events, and the clock that paces them. Hand-written |
 | `wgpu.frost` | The whole WebGPU API. Generated, and not committed |
+| `platform.frost` | The window, the keyboard and the frame clock under one handle |
+| `renderer.frost` | The device, the surface and the frame under one handle |
+| `graph.frost` | A render graph: passes declare their targets, the order follows |
+| `camera.frost` | Where the eye is and what it looks at |
+| `mesh.frost` | Geometry on the device, and the cache a program names it through |
+| `material.frost` | A registry of surfaces, so a thing that is drawn carries a number |
+| `texture.frost` | Images on the device, and render targets to draw into |
 | `window.frost` | Opens a window and pumps it until it is closed |
 | `triangle.frost` | Draws a rotating triangle into that window |
+| `scene.frost` | Entities in an ECS, two passes, depth deciding what is in front |
+| `spinning.frost` | Lit surfaces: a mesh cache, a material registry, two bind groups |
+| `textured.frost` | The same field with its surfaces read off an image |
+| `shadowed.frost` | A shadow pass and a scene pass, ordered by the map between them |
 
 ```bash
 just window
 just triangle
+just scene
+just spinning
+just textured
+just shadowed
 ```
 
 ## The binding is the perimeter
@@ -176,3 +191,95 @@ The window's own event loop is a poll rather than a callback, which is SDL3's
 API. A C callback declared through an extern's parameter list must take its
 context first, so Win32's `WNDPROC`, which has no context parameter, could not
 be declared that way.
+
+## The render graph
+
+Everything past the triangle draws through `graph.frost`. A pass is a name, a
+function and the state it records with, and it declares three things: the colour
+target it writes, the depth target it writes, and the resources it reads.
+
+```frost
+mut g := graph_new(device, 3, 2)
+screen := graph_backbuffer(g)
+map := graph_depth(g, "shadow map", 1024, 1024, DEPTH_FORMAT)
+depth := graph_depth(g, "depth", WINDOW_SIZED, WINDOW_SIZED, DEPTH_FORMAT)
+
+shadow := graph_pass(g, "shadow", draw_things, ptr_to(shadow_scene))
+graph_writes_depth(g, shadow, map)
+
+scene := graph_pass(g, "scene", draw_things, ptr_to(lit_scene))
+graph_writes_color(g, scene, screen, background)
+graph_writes_depth(g, scene, depth)
+graph_reads(g, scene, map)
+
+graph_schedule(g)
+```
+
+From those declarations `graph_schedule` works out the order: an edge from a
+pass that writes a resource to every pass that reads it, and an edge in
+declaration order between two passes writing the same one. Kahn's algorithm over
+those edges, re-seeded in declaration order every round, so a graph with no
+dependencies runs exactly as it was written and two passes over one keep the
+order they were declared in.
+
+It answers false, having said which pass and which resource, for a read of a
+resource nothing writes, a cycle, a pass that writes nothing, and a read of a
+resource that follows the window. That last one is the least obvious and the
+most useful: a bind group naming a texture is made once, and a window-sized
+texture is thrown away and remade on a resize, so sampling one leaves the
+binding pointing at a texture that no longer exists.
+
+`graph_run` then makes each pass's `Target` and hands its function a
+`RenderPassEncoder` over it. The load ops come from the same declarations: every
+resource starts each frame unwritten, the first pass to write one clears it, and
+every pass after loads what is there. In `scene.frost` that rule replaced a pass
+body reading its own state to pick between two load ops, which is the kind of
+rule a reader keeps rather than one the code does.
+
+Scheduling is arithmetic over two tables and touches no device, so
+`graph.frost` carries eight `test` blocks that run under `just test` with
+`no_device()` in place of a GPU: what runs first, what the load ops come out as,
+and each of the four graphs that cannot run at all.
+
+## The frame is linear
+
+Every WebGPU object is reference counted: `wgpuTextureRelease` and its
+twenty-two siblings exist for exactly that, and a surface cannot be configured
+while a texture of its swapchain is still held. A renderer that acquires a
+surface texture each frame and never gives it back draws correctly and then dies
+on the first window resize with `Invalid surface`.
+
+Rust reaches for `Drop` here. Frost has no destructors, and what it has instead
+is the obligation on the type:
+
+```frost
+Frame :: linear struct {
+    texture: SurfaceTexture,
+    view: TextureView,
+    encoder: CommandEncoder,
+    ready: bool,
+}
+
+renderer_end :: fn(mut r: Renderer, move f: Frame) { ... }
+```
+
+`renderer_begin` hands back a linear value and `renderer_end` takes it by
+`move`, so the pairing is checked rather than remembered. Marking the type was
+enough to make all four demos stop compiling, each on the same shape:
+
+```frost
+mut f := renderer_begin(r)
+if (frame_ok(f)) {
+    graph_run(graph, f)
+    renderer_end(r, f)      // ends the frame only when one was acquired
+}
+```
+
+> linearity: linear value 'f' is not consumed on every path before return
+
+The fix is to end the frame outside the `if`. This is the trade the design makes
+in place of a destructor: nothing is inserted on your behalf, and nothing is
+forgotten either. It only pays where the type is marked, and the handles worth
+marking are the frame-scoped ones. `Device`, `BindGroup` and the pipelines are
+refcounted and read out of structs all over a program, which is shared
+ownership; making those linear would model the wrong thing.

@@ -465,7 +465,20 @@ fn emit_statement(
                 }
                 return Ok(());
             }
-            let value = rvalue_expr(function, rvalue, externs)?;
+            let mut value = rvalue_expr(function, rvalue, externs)?;
+            // `ptr_cast` is a copy in the IR, so a pointer can be assigned the
+            // integer it reinterprets. C reads that as building a pointer out
+            // of an integer and refuses, so the reinterpretation is written
+            // where the IR only implied it.
+            if let IrRvalue::Use(operand) = rvalue {
+                let wanted = c_type(&local_type)?;
+                let held = c_type(&operand_type(function, operand))?;
+                if wanted != held
+                    && (wanted.ends_with('*') || held.ends_with('*'))
+                {
+                    value = format!("({wanted})({value})");
+                }
+            }
             if function.locals[*local].in_memory {
                 writeln!(
                     output,

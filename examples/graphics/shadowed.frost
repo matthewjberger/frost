@@ -1,0 +1,708 @@
+// A lit scene where one pass writes a depth map and the next reads it.
+//
+//   just shadowed
+//
+// W/A/S/D move, Q and E drop and rise, the arrow keys look, escape closes it.
+//
+// This is the demo the render graph exists for. Two passes, one resource
+// between them: the shadow pass draws the scene from where the light is and
+// keeps only depth, and the scene pass samples that depth to ask, for every
+// point it lights, whether the light can see it. The order matters absolutely.
+// Sampling the shadow map before it was written this frame gives last frame's
+// shadows, which on a spinning scene reads as shadows lagging the objects that
+// cast them.
+//
+// Nothing here says which pass runs first. The shadow pass declares that it
+// writes the map, the scene pass declares that it reads it, and that is the
+// whole ordering: `graph_schedule` puts the writer before the reader, refuses a
+// graph where they wait on each other, and refuses a read of a resource nothing
+// writes. Both load ops come from the same declarations.
+//
+// Two things about a shadow map are worth pointing at, because both are easy to
+// get wrong and neither looks like a bug in the code:
+//
+// The map is 1024 by 1024 and does not follow the window. A resource the scene
+// samples must not, because the bind group naming it is made once and a resize
+// would leave it pointing at a texture that no longer exists. The graph refuses
+// that rather than leaving it to be found later.
+//
+// Depth in WebGPU runs from zero at the near plane to one at the far plane, not
+// from minus one, which is why the light's projection is `mat4_ortho_zo`. The
+// other one puts half the scene behind the near plane, and every fragment there
+// reads as lit.
+
+import "platform.frost"
+import "camera.frost"
+import "renderer.frost"
+import "graph.frost"
+import "texture.frost"
+import "mesh.frost"
+import "material.frost"
+import "wgpu.frost"
+import "ecs.frost"
+import "math.frost"
+import "mem.frost"
+import "io.frost"
+
+WIDTH :: 1280
+HEIGHT :: 720
+
+// How wide the shadow map is. Fixed rather than window-sized: what it covers is
+// a piece of the world, which the window has nothing to do with.
+SHADOW_SIZE :: 1024
+
+// A grid of shapes over a floor, and the floor is one of them.
+GRID :: 3
+SHAPES :: 9
+INSTANCES :: 10
+
+// Where the floor sits and how thick it is. The cube it is made of runs from
+// -0.5 to 0.5, so its top surface is half its thickness above its middle, and
+// that is the height everything else is placed against.
+FLOOR_Y :: -2.25
+FLOOR_THICKNESS :: 0.25
+FLOOR_TOP :: -2.125
+
+// How far the lowest shape's middle sits above that surface. A cube of this
+// size reaches 0.866 from its middle at the corner and turns about an axis of
+// its own, so anything less than that puts a corner through the floor for part
+// of every turn; a sphere of radius 0.7 reaches less. The rest is air, so the
+// gap reads as a gap and the shadow under it reads as a shadow.
+LOWEST_CLEARANCE :: 1.125
+
+ROW_RISE :: 2.25
+ROW_DEPTH :: 1.5
+COLUMN_SPACING :: 3.25
+
+// The camera, the light, and the matrix the light sees the world through.
+FRAME_FLOATS :: 48
+FRAME_BYTES :: 192
+
+// One thing's own: its model matrix, its colour, and how its surface behaves.
+OBJECT_FLOATS :: 24
+OBJECT_BYTES :: 96
+
+// Where a thing is and how big, how it turns, and what it is drawn as. The
+// floor is an entity like any other, with a scale that flattens it and a turn
+// rate of nothing.
+Placement :: struct { position: Vec3, scale: Vec3 }
+Spin :: struct { axis: Vec3, speed: f32, angle: f32 }
+Drawn :: struct { mesh: i64, material: i64 }
+
+// The buffer and binding one thing is drawn with. Both passes bind the same
+// one: the shadow pass needs the model matrix and nothing else, and that is
+// already here.
+Slot :: struct { uniform: Buffer, group: BindGroup }
+
+// What a pass records with. The shadow pass reads the first three fields and
+// the scene pass reads all of them, which is why one struct serves both: the
+// two are the same walk over the same slots with a different pipeline.
+Scene :: struct {
+    pipeline: RenderPipeline,
+    frame_group: BindGroup,
+    slots: []Slot,
+    meshes: []Mesh,
+    shadow_group: BindGroup,
+    count: i64,
+    samples_shadow: i64,
+}
+
+SHADER :: "
+struct Frame {
+    view_projection: mat4x4<f32>,
+    light_view_projection: mat4x4<f32>,
+    camera_position: vec4<f32>,
+    light_direction: vec4<f32>,
+    light_color: vec4<f32>,
+    ambient: vec4<f32>,
+}
+
+struct Object {
+    model: mat4x4<f32>,
+    base_color: vec4<f32>,
+    surface: vec4<f32>,
+}
+
+@group(0) @binding(0) var<uniform> frame: Frame;
+@group(1) @binding(0) var<uniform> object: Object;
+@group(2) @binding(0) var shadow_map: texture_depth_2d;
+@group(2) @binding(1) var shadow_reader: sampler_comparison;
+
+// The shadow pass. No colour attachment and no fragment stage: what it writes
+// is depth, and depth is written whether or not anything shades.
+@vertex
+fn vs_shadow(@location(0) position: vec3<f32>) -> @builtin(position) vec4<f32> {
+    return frame.light_view_projection * object.model * vec4<f32>(position, 1.0);
+}
+
+struct VertexOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) world: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) light_clip: vec4<f32>,
+}
+
+@vertex
+fn vs_main(@location(0) position: vec3<f32>,
+           @location(1) normal: vec3<f32>) -> VertexOut {
+    var out: VertexOut;
+    let world = object.model * vec4<f32>(position, 1.0);
+    out.clip = frame.view_projection * world;
+    out.world = world.xyz;
+    out.normal = (object.model * vec4<f32>(normal, 0.0)).xyz;
+    out.light_clip = frame.light_view_projection * world;
+    return out;
+}
+
+// How much of the light reaches this point: one where all of it does, zero
+// where none of it does, and the fractions between from reading nine texels
+// around the one it lands on. `textureSampleCompareLevel` rather than
+// `textureSampleCompare` because this is called under an `if`, and the plain
+// one wants the whole workgroup to agree that it was.
+fn light_reaching(light_clip: vec4<f32>) -> f32 {
+    let ndc = light_clip.xyz / light_clip.w;
+    // The map covers a piece of the world. Outside it there is nothing to say
+    // a point is in shadow, so it is lit.
+    if (ndc.z > 1.0 || ndc.z < 0.0
+        || abs(ndc.x) > 1.0 || abs(ndc.y) > 1.0) {
+        return 1.0;
+    }
+    // Clip space runs left to right and bottom to top; a texture reads top to
+    // bottom, so the vertical coordinate turns over here.
+    let uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+    // How far one texel is, asked of the map rather than written down. A
+    // number here would be a second place the map's size is decided, and the
+    // two would drift.
+    let texel = 1.0 / vec2<f32>(textureDimensions(shadow_map));
+    var reaching = 0.0;
+    for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+            let at = uv + vec2<f32>(f32(x), f32(y)) * texel;
+            reaching = reaching
+                + textureSampleCompareLevel(shadow_map, shadow_reader, at,
+                    ndc.z);
+        }
+    }
+    return reaching / 9.0;
+}
+
+@fragment
+fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
+    let facing = normalize(in.normal);
+    let toward_light = normalize(-frame.light_direction.xyz);
+    let toward_eye = normalize(frame.camera_position.xyz - in.world);
+    let halfway = normalize(toward_light + toward_eye);
+
+    let lambert = max(dot(facing, toward_light), 0.0);
+    let rough = clamp(object.surface.x, 0.05, 1.0);
+    let tightness = 2.0 / (rough * rough) - 2.0;
+    let highlight = pow(max(dot(facing, halfway), 0.0), tightness)
+        * (1.0 - rough);
+
+    // A surface facing away from the light is dark whatever the map says, so
+    // the two are multiplied rather than one of them deciding.
+    let reaching = light_reaching(in.light_clip);
+    let strength = frame.light_color.w * reaching;
+    let lit = object.base_color.rgb
+        * (frame.ambient.rgb + frame.light_color.rgb * strength * lambert)
+        + frame.light_color.rgb * strength * highlight;
+    return vec4<f32>(lit, object.base_color.a);
+}
+"
+
+// One walk over the slots. Which pipeline it sets and whether it binds the
+// shadow map is the state's, so the two passes are this function twice with
+// different state, and neither of them says what it draws into.
+draw_things :: fn(pass: RenderPassEncoder, state: ^u8) {
+    mut s := unsafe { ptr_cast($Scene, state) }
+    render_pass_encoder_set_pipeline(pass, unsafe { s^.pipeline })
+    render_pass_encoder_set_bind_group(pass, 0, unsafe { s^.frame_group }, 0,
+        no_pointer())
+    if (unsafe { s^.samples_shadow } == 1) {
+        render_pass_encoder_set_bind_group(pass, 2,
+            unsafe { s^.shadow_group }, 0, no_pointer())
+    }
+
+    mut index : i64 = 0
+    while (index < unsafe { s^.count }) {
+        render_pass_encoder_set_bind_group(pass, 1,
+            unsafe { s^.slots[index].group }, 0, no_pointer())
+        held := unsafe { s^.meshes[index] }
+        mesh_bind(pass, held)
+        render_pass_encoder_draw_indexed(pass, held.index_count, 1, 0, 0, 0)
+        index = index + 1
+    }
+}
+
+// The frame's read of the world: turn everything, work out where it is, and
+// leave each matrix in the buffer its binding points at. Both passes read what
+// this leaves behind, so it happens once rather than once per pass.
+prepare :: fn(mut world: World, queue: Queue, entities: []Entity,
+    slots: []Slot, registry: Materials, placement: i64, spin: i64, drawn: i64,
+    step: f32) {
+    mut index : i64 = 0
+    while (index < slice_len(entities)) {
+        entity := entities[index]
+        mut turn := ecs_get($Spin, world, entity, spin)
+        turn.angle = turn.angle + turn.speed * step
+        ecs_set($Spin, world, entity, spin, turn)
+
+        place := ecs_get($Placement, world, entity, placement)
+        shown := ecs_get($Drawn, world, entity, drawn)
+        model := mat4_mul(mat4_translation(place.position),
+            mat4_mul(quat_to_mat4(quat_from_axis_angle(turn.axis, turn.angle)),
+                mat4_scale(place.scale)))
+        surface := materials_at(registry, shown.material)
+
+        mut values : [OBJECT_FLOATS]f32 = [0.0; OBJECT_FLOATS]
+        mut element : i64 = 0
+        while (element < 16) {
+            values[element] = model.m[element]
+            element = element + 1
+        }
+        colour := material_color(surface)
+        values[16] = colour.x
+        values[17] = colour.y
+        values[18] = colour.z
+        values[19] = colour.w
+        behaviour := material_surface(surface)
+        values[20] = behaviour.x
+        values[21] = behaviour.y
+        values[22] = behaviour.z
+        values[23] = behaviour.w
+        queue_write_buffer(queue, slots[index].uniform, 0,
+            ptr_to(values[0]), OBJECT_BYTES)
+        index = index + 1
+    }
+}
+
+// Where the light is looking from, as a matrix. A directional light has no
+// position, so one is chosen: far enough back along the direction it shines
+// that everything the scene occupies is in front of it, and an orthographic
+// box wide enough to hold that.
+light_view_projection :: fn(direction: Vec3) -> Mat4 {
+    away := vec3_scale(vec3_normalize(direction), -22.0)
+    view := mat4_look_at(away, vec3(0.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0))
+    projection := mat4_ortho_zo(-13.0, 13.0, -13.0, 13.0, 1.0, 44.0)
+    mat4_mul(projection, view)
+}
+
+// The camera, the light, and the light's matrix, as the bytes the shader reads
+// them as.
+write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, direction: Vec3,
+    w: i64, h: i64) {
+    mut values : [FRAME_FLOATS]f32 = [0.0; FRAME_FLOATS]
+    mut view_projection := camera_view_projection(eye, w, h)
+    mut element : i64 = 0
+    while (element < 16) {
+        values[element] = view_projection.m[element]
+        element = element + 1
+    }
+    mut light := light_view_projection(direction)
+    mut second : i64 = 0
+    while (second < 16) {
+        values[16 + second] = light.m[second]
+        second = second + 1
+    }
+    at := camera_position(eye)
+    values[32] = at.x
+    values[33] = at.y
+    values[34] = at.z
+    values[35] = 1.0
+    values[36] = direction.x
+    values[37] = direction.y
+    values[38] = direction.z
+    values[39] = 0.0
+    values[40] = 1.0
+    values[41] = 0.96
+    values[42] = 0.88
+    values[43] = 2.4
+    values[44] = 0.1
+    values[45] = 0.12
+    values[46] = 0.16
+    values[47] = 1.0
+    queue_write_buffer(queue, uniform, 0, ptr_to(values[0]), FRAME_BYTES)
+}
+
+uniform_layout :: fn(device: Device, size: i64) -> BindGroupLayout {
+    mut entry := bind_group_layout_entry_init()
+    entry.binding = 0
+    entry.visibility = ShaderStage::Vertex | ShaderStage::Fragment
+    entry.buffer.type = BUFFER_BINDING_TYPE_UNIFORM
+    entry.buffer.min_binding_size = size
+    mut descriptor := bind_group_layout_descriptor_init()
+    descriptor.entries_count = 1
+    descriptor.entries = ptr_to(entry)
+    device_create_bind_group_layout(device, ptr_to(descriptor))
+}
+
+// The map and the sampler that reads it. A comparison sampler answers how much
+// of the neighbourhood passed the depth test rather than what the depth was,
+// which is what makes one read give a soft edge.
+shadow_layout :: fn(device: Device) -> BindGroupLayout {
+    mut entries : [2]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 2]
+    entries[0].binding = 0
+    entries[0].visibility = ShaderStage::Fragment
+    entries[0].texture.sample_type = TEXTURE_SAMPLE_TYPE_DEPTH
+    entries[0].texture.view_dimension = TEXTURE_VIEW_DIMENSION_2D
+    entries[1].binding = 1
+    entries[1].visibility = ShaderStage::Fragment
+    entries[1].sampler.type = SAMPLER_BINDING_TYPE_COMPARISON
+    mut descriptor := bind_group_layout_descriptor_init()
+    descriptor.entries_count = 2
+    descriptor.entries = ptr_to(entries[0])
+    device_create_bind_group_layout(device, ptr_to(descriptor))
+}
+
+shadow_group_of :: fn(device: Device, layout: BindGroupLayout, view: TextureView,
+    reader: Sampler) -> BindGroup {
+    mut entries : [2]BindGroupEntry = [bind_group_entry_init(); 2]
+    entries[0].binding = 0
+    entries[0].texture_view = view
+    entries[1].binding = 1
+    entries[1].sampler = reader
+    mut descriptor := bind_group_descriptor_init()
+    descriptor.layout = layout
+    descriptor.entries_count = 2
+    descriptor.entries = ptr_to(entries[0])
+    device_create_bind_group(device, ptr_to(descriptor))
+}
+
+uniform_buffer :: fn(device: Device, size: i64) -> Buffer {
+    mut descriptor := buffer_descriptor_init()
+    descriptor.usage = BufferUsage::Uniform | BufferUsage::CopyDst
+    descriptor.size = size
+    device_create_buffer(device, ptr_to(descriptor))
+}
+
+uniform_group :: fn(device: Device, layout: BindGroupLayout, held: Buffer,
+    size: i64) -> BindGroup {
+    mut entry := bind_group_entry_init()
+    entry.binding = 0
+    entry.buffer = held
+    entry.size = size
+    mut descriptor := bind_group_descriptor_init()
+    descriptor.layout = layout
+    descriptor.entries_count = 1
+    descriptor.entries = ptr_to(entry)
+    device_create_bind_group(device, ptr_to(descriptor))
+}
+
+// Position and normal, which is what both pipelines read. The shadow one uses
+// only the first and takes the same buffer, since one layout for one mesh is
+// what lets the same geometry go through both.
+vertex_layout :: fn(mut attributes: [2]VertexAttribute) -> VertexBufferLayout {
+    attributes[0].format = VERTEX_FORMAT_FLOAT32X3
+    attributes[0].offset = POSITION_OFFSET
+    attributes[0].shader_location = 0
+    attributes[1].format = VERTEX_FORMAT_FLOAT32X3
+    attributes[1].offset = NORMAL_OFFSET
+    attributes[1].shader_location = 1
+
+    mut buffer_layout := vertex_buffer_layout_init()
+    buffer_layout.array_stride = VERTEX_STRIDE
+    buffer_layout.step_mode = VERTEX_STEP_MODE_VERTEX
+    buffer_layout.attributes_count = 2
+    buffer_layout.attributes = ptr_to(attributes[0])
+    buffer_layout
+}
+
+make_shader :: fn(device: Device) -> ShaderModule {
+    mut wgsl := shader_source_WGSL_init()
+    wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
+    wgsl.code = StringView { data = SHADER, length = str_len(SHADER) }
+    mut module_descriptor := shader_module_descriptor_init()
+    module_descriptor.next_in_chain = ptr_to(wgsl)
+    device_create_shader_module(device, ptr_to(module_descriptor))
+}
+
+// The pass that writes the map. No fragment stage and no colour target: depth
+// is all of what it produces, so there is nothing to shade.
+//
+// The bias is what keeps a surface from shadowing itself. A depth texel covers
+// a patch of surface and holds one number for it, so a sloped surface is nearer
+// than its own recorded depth over half of every texel and stripes itself. The
+// slope-scaled term is the one that matters; the constant handles what is flat.
+make_shadow_pipeline :: fn(device: Device, shader: ShaderModule,
+    layout: PipelineLayout) -> RenderPipeline {
+    mut attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
+    mut buffer_layout := vertex_layout(attributes)
+
+    mut depth := depth_stencil_state_init()
+    depth.format = DEPTH_FORMAT
+    depth.depth_write_enabled = OPTIONAL_BOOL_TRUE
+    depth.depth_compare = COMPARE_FUNCTION_LESS
+    depth.depth_bias = 2
+    depth.depth_bias_slope_scale = 2.0
+
+    mut descriptor := render_pipeline_descriptor_init()
+    descriptor.layout = layout
+    descriptor.vertex.module = shader
+    descriptor.vertex.entry_point = StringView { data = "vs_shadow",
+        length = 9 }
+    descriptor.vertex.buffers_count = 1
+    descriptor.vertex.buffers = ptr_to(buffer_layout)
+    descriptor.primitive.topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
+    descriptor.primitive.front_face = FRONT_FACE_CCW
+    descriptor.primitive.cull_mode = CULL_MODE_BACK
+    descriptor.multisample.count = 1
+    descriptor.multisample.mask = 4294967295
+    descriptor.depth_stencil = ptr_to(depth)
+    device_create_render_pipeline(device, ptr_to(descriptor))
+}
+
+make_scene_pipeline :: fn(device: Device, shader: ShaderModule, format: u32,
+    layout: PipelineLayout) -> RenderPipeline {
+    mut attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
+    mut buffer_layout := vertex_layout(attributes)
+
+    mut target := color_target_state_init()
+    target.format = format
+    target.write_mask = ColorWriteMask::All
+
+    mut fragment := fragment_state_init()
+    fragment.module = shader
+    fragment.entry_point = StringView { data = "fs_main", length = 7 }
+    fragment.targets_count = 1
+    fragment.targets = ptr_to(target)
+
+    mut depth := depth_stencil_state_init()
+    depth.format = DEPTH_FORMAT
+    depth.depth_write_enabled = OPTIONAL_BOOL_TRUE
+    depth.depth_compare = COMPARE_FUNCTION_LESS
+
+    mut descriptor := render_pipeline_descriptor_init()
+    descriptor.layout = layout
+    descriptor.vertex.module = shader
+    descriptor.vertex.entry_point = StringView { data = "vs_main", length = 7 }
+    descriptor.vertex.buffers_count = 1
+    descriptor.vertex.buffers = ptr_to(buffer_layout)
+    descriptor.primitive.topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
+    descriptor.primitive.front_face = FRONT_FACE_CCW
+    descriptor.primitive.cull_mode = CULL_MODE_BACK
+    descriptor.multisample.count = 1
+    descriptor.multisample.mask = 4294967295
+    descriptor.depth_stencil = ptr_to(depth)
+    descriptor.fragment = ptr_to(fragment)
+    device_create_render_pipeline(device, ptr_to(descriptor))
+}
+
+main :: fn() -> i64 {
+    mut p := platform_open("Frost shadowed scene", WIDTH, HEIGHT)
+    if (platform_ok(p) == false) {
+        print_str_line("no window")
+        print_str_line(platform_error())
+        return 1
+    }
+    mut r := renderer_open(platform_window(p), WIDTH, HEIGHT)
+    if (renderer_ok(r) == false) {
+        print_str_line("no device")
+        platform_close(p)
+        return 2
+    }
+    device := renderer_device(r)
+    queue := renderer_queue(r)
+
+    mut cache := mesh_cache_new(4)
+    mesh_cache_insert(cache, "cube", cube_mesh(device, queue))
+    mesh_cache_insert(cache, "sphere", sphere_mesh(device, queue, 0.7, 16, 24))
+    cube := mesh_cache_find(cache, "cube")
+    sphere := mesh_cache_find(cache, "sphere")
+
+    mut registry := materials_new(8)
+    mut looks : [4]i64 = [0; 4]
+    looks[0] = materials_add(registry, Material {
+        base_color = vec4(0.86, 0.33, 0.3, 1.0), roughness = 0.4,
+        metallic = 0.0 })
+    looks[1] = materials_add(registry, Material {
+        base_color = vec4(0.32, 0.76, 0.48, 1.0), roughness = 0.55,
+        metallic = 0.0 })
+    looks[2] = materials_add(registry, Material {
+        base_color = vec4(0.36, 0.52, 0.92, 1.0), roughness = 0.25,
+        metallic = 0.0 })
+    // The floor, which is matte so the shadow on it reads as a shadow rather
+    // than as a change in the highlight.
+    looks[3] = materials_add(registry, Material {
+        base_color = vec4(0.68, 0.66, 0.62, 1.0), roughness = 0.9,
+        metallic = 0.0 })
+
+    frame_layout := uniform_layout(device, FRAME_BYTES)
+    object_layout := uniform_layout(device, OBJECT_BYTES)
+    map_layout := shadow_layout(device)
+
+    // Two layouts, because the shadow pass has no shadow map to bind and a
+    // pipeline may not name a group its shader never reads.
+    mut shadow_layouts : [2]BindGroupLayout = [frame_layout, object_layout]
+    mut shadow_layout_descriptor := pipeline_layout_descriptor_init()
+    shadow_layout_descriptor.bind_group_layouts_count = 2
+    shadow_layout_descriptor.bind_group_layouts = ptr_to(shadow_layouts[0])
+    shadow_pipeline_layout := device_create_pipeline_layout(device,
+        ptr_to(shadow_layout_descriptor))
+
+    mut scene_layouts : [3]BindGroupLayout = [frame_layout, object_layout,
+        map_layout]
+    mut scene_layout_descriptor := pipeline_layout_descriptor_init()
+    scene_layout_descriptor.bind_group_layouts_count = 3
+    scene_layout_descriptor.bind_group_layouts = ptr_to(scene_layouts[0])
+    scene_pipeline_layout := device_create_pipeline_layout(device,
+        ptr_to(scene_layout_descriptor))
+
+    frame_uniform := uniform_buffer(device, FRAME_BYTES)
+    frame_group := uniform_group(device, frame_layout, frame_uniform,
+        FRAME_BYTES)
+
+    mut world := ecs_new()
+    placement := ecs_register($Placement, world)
+    spin := ecs_register($Spin, world)
+    drawn := ecs_register($Drawn, world)
+    wanted := mask_with(mask_with(mask_with(mask_empty(), placement), spin),
+        drawn)
+
+    mut entities := heap_slice($Entity, INSTANCES)
+    mut slots := heap_slice($Slot, INSTANCES)
+    mut meshes := heap_slice($Mesh, INSTANCES)
+
+    // The floor first, so it is the one thing under everything else, then a
+    // grid of shapes above it turning about their own axes.
+    floor := ecs_spawn_with(world, wanted)
+    ecs_set($Placement, world, floor, placement, Placement {
+        position = vec3(0.0, FLOOR_Y, 0.0),
+        scale = vec3(9.0, FLOOR_THICKNESS, 9.0) })
+    ecs_set($Spin, world, floor, spin, Spin { axis = vec3(0.0, 1.0, 0.0),
+        speed = 0.0, angle = 0.0 })
+    ecs_set($Drawn, world, floor, drawn, Drawn { mesh = cube,
+        material = looks[3] })
+    entities[0] = floor
+    meshes[0] = mesh_cache_at(cache, cube)
+    floor_uniform := uniform_buffer(device, OBJECT_BYTES)
+    slots[0] = Slot { uniform = floor_uniform,
+        group = uniform_group(device, object_layout, floor_uniform,
+            OBJECT_BYTES) }
+
+    // The middle column and the middle row, so the grid is centred on the
+    // floor and the bottom row is the one measured against it.
+    half : f32 = 1.0
+    lowest : f32 = FLOOR_TOP + LOWEST_CLEARANCE
+    mut made : i64 = 0
+    while (made < SHAPES) {
+        row := made / GRID
+        column := made - row * GRID
+        across : f32 = column
+        up : f32 = row
+        entity := ecs_spawn_with(world, wanted)
+        ecs_set($Placement, world, entity, placement, Placement {
+            position = vec3((across - half) * COLUMN_SPACING,
+                lowest + up * ROW_RISE,
+                (up - half) * ROW_DEPTH),
+            scale = vec3(1.0, 1.0, 1.0) })
+
+        // An axis that differs from one to the next, so the shadows underneath
+        // move differently rather than as one shape.
+        turning := vec3_normalize(vec3(0.3 + row, 1.0, 0.2 + column))
+        speed : f32 = 0.5 + 0.11 * made
+        ecs_set($Spin, world, entity, spin, Spin { axis = turning,
+            speed = speed, angle = 0.0 })
+
+        mut shape := cube
+        if (made - (made / 2) * 2 == 1) {
+            shape = sphere
+        }
+        ecs_set($Drawn, world, entity, drawn, Drawn { mesh = shape,
+            material = looks[made - (made / 3) * 3] })
+
+        entities[made + 1] = entity
+        meshes[made + 1] = mesh_cache_at(cache, shape)
+        held := uniform_buffer(device, OBJECT_BYTES)
+        slots[made + 1] = Slot { uniform = held,
+            group = uniform_group(device, object_layout, held, OBJECT_BYTES) }
+        made = made + 1
+    }
+
+    shader := make_shader(device)
+
+    // Two resources and two passes. The shadow map is the only thing between
+    // them, and it is the whole of the order: nothing here says which runs
+    // first.
+    mut graph := graph_new(device, 3, 2)
+    screen := graph_backbuffer(graph)
+    shadow_map := graph_depth(graph, "shadow map", SHADOW_SIZE, SHADOW_SIZE,
+        DEPTH_FORMAT)
+    depth := graph_depth(graph, "depth", WINDOW_SIZED, WINDOW_SIZED,
+        DEPTH_FORMAT)
+
+    mut shadow_scene := Scene {
+        pipeline = make_shadow_pipeline(device, shader, shadow_pipeline_layout),
+        frame_group = frame_group,
+        slots = slots, meshes = meshes,
+        shadow_group = no_bind_group(),
+        count = INSTANCES, samples_shadow = 0,
+    }
+    shadow_pass := graph_pass(graph, "shadow", draw_things,
+        ptr_to(shadow_scene))
+    graph_writes_depth(graph, shadow_pass, shadow_map)
+
+    // Declared second and reading what the first writes, which is the edge the
+    // order follows. Declaring them the other way round changes nothing.
+    mut lit_scene := Scene {
+        pipeline = make_scene_pipeline(device, shader, renderer_format(r),
+            scene_pipeline_layout),
+        frame_group = frame_group,
+        slots = slots, meshes = meshes,
+        shadow_group = no_bind_group(),
+        count = INSTANCES, samples_shadow = 1,
+    }
+    lit_pass := graph_pass(graph, "scene", draw_things, ptr_to(lit_scene))
+    graph_writes_color(graph, lit_pass, screen,
+        Color { r = 0.05, g = 0.06, b = 0.09, a = 1.0 })
+    graph_writes_depth(graph, lit_pass, depth)
+    graph_reads(graph, lit_pass, shadow_map)
+
+    scheduled := graph_schedule(graph)
+    if (scheduled == false) {
+        print_str_line("the render graph cannot run")
+    }
+    // The textures exist from here, so the binding that names the map is made
+    // after this and never again: the map does not follow the window, so a
+    // resize leaves it alone.
+    graph_resize(graph, WIDTH, HEIGHT)
+    lit_scene.shadow_group = shadow_group_of(device, map_layout,
+        graph_view(graph, shadow_map), graph_sampler(graph, shadow_map))
+
+    light := vec3_normalize(vec3(-0.55, -1.0, -0.4))
+
+    mut eye := camera_default()
+    eye.position = vec3(0.0, 1.5, 13.0)
+    eye.pitch = -0.05
+
+    while (scheduled && platform_poll(p)) {
+        if (key_pressed(p, KEY_ESCAPE)) {
+            break
+        }
+        if (resized(p)) {
+            renderer_resize(r, width(p), height(p))
+            graph_resize(graph, width(p), height(p))
+        }
+        step := delta_seconds(p)
+        camera_advance(eye, p, step)
+        write_frame(queue, frame_uniform, eye, light, width(p), height(p))
+        prepare(world, queue, entities, slots, registry, placement, spin,
+            drawn, step)
+
+        mut f := renderer_begin(r)
+        if (frame_ok(f)) {
+            graph_run(graph, f)
+        }
+        renderer_end(r, f)
+    }
+
+    graph_free(graph)
+    heap_release_slice($Mesh, meshes)
+    heap_release_slice($Slot, slots)
+    heap_release_slice($Entity, entities)
+    materials_free(registry)
+    mesh_cache_free(cache)
+    ecs_free(world)
+    renderer_close(r)
+    platform_close(p)
+    0
+}

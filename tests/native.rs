@@ -3402,9 +3402,17 @@ fn the_standard_library_passes_its_own_tests() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let directory = std::env::temp_dir();
 
+    // The C half needs a C compiler, and until `--test` honoured `--emit-c` it
+    // did not: both halves of this loop built through Cranelift and the C
+    // backend ran none of these bodies.
+    let with_c = c_compiler().is_some();
+
     for (module, expected) in STD_MODULES.iter().copied() {
         let source = root.join("std").join(module);
         for (label, emit_c) in [("stdnative", false), ("stdc", true)] {
+            if emit_c && !with_c {
+                continue;
+            }
             let exe = directory.join(format!(
                 "{}{}",
                 unique(&format!("frost_{label}")),
@@ -16463,6 +16471,8 @@ fn the_graphics_examples_compile_against_their_bindings() {
             "scene.frost",
             "spinning.frost",
             "textured.frost",
+            "shadowed.frost",
+            "graph.frost",
         ]
     } else {
         &["window.frost"]
@@ -16493,6 +16503,113 @@ fn the_graphics_examples_compile_against_their_bindings() {
     }
 }
 
+// What a render graph orders, and what it refuses. Scheduling is arithmetic
+// over two tables, so every one of these runs with `no_device()` in place of a
+// GPU: the order a pass runs in, the load op each attachment gets, and the four
+// graphs that cannot run at all.
+//
+// Linking is what needs the libraries, since the graph imports the wgpu binding
+// and that names symbols whether or not a test calls them. Where they are not
+// beside the examples this says nothing rather than failing, which is a
+// checkout that has not run `just deps`.
+//
+// A `--test` build runs from the temp directory, and the loader looks for a
+// shared library beside the executable rather than beside the source. The two
+// directories holding them go on the search path, or the test binary dies
+// before `main` with nothing on either stream and the failure reads as the
+// graph answering wrong.
+#[test]
+fn the_render_graph_orders_its_passes() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let graphics = root.join("examples").join("graphics");
+    let Some(libraries) = graphics_libraries(&graphics) else {
+        return;
+    };
+    let source = graphics.join("graph.frost");
+    let search = library_search_path(&graphics);
+    // Both backends, because a difference between them is a difference in what
+    // the graph decides.
+    for emit_c in [false, true] {
+        if emit_c && c_compiler().is_none() {
+            continue;
+        }
+        let mut command = Command::new(env!("CARGO_BIN_EXE_frost"));
+        if emit_c {
+            command.arg("--emit-c");
+        }
+        for library in &libraries {
+            command.arg("--libs").arg(library);
+        }
+        let run = command
+            .arg("--test")
+            .arg(&source)
+            .current_dir(&root)
+            .env(
+                if cfg!(windows) {
+                    "PATH"
+                } else {
+                    "LD_LIBRARY_PATH"
+                },
+                &search,
+            )
+            .output()
+            .unwrap();
+        let output = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+        assert!(
+            output.contains("8 passed, 0 failed"),
+            "the render graph's own tests did not pass (emit_c: {emit_c}):\n{output}{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+    }
+}
+
+// Where the loader has to look for the graphics libraries, in front of
+// whatever it already searched. On Windows this is `PATH` and elsewhere it is
+// `LD_LIBRARY_PATH`; both are read at load time by the process being started,
+// which is why it is set on the compiler that starts it.
+fn library_search_path(graphics: &Path) -> std::ffi::OsString {
+    let variable = if cfg!(windows) {
+        "PATH"
+    } else {
+        "LD_LIBRARY_PATH"
+    };
+    let existing = std::env::var_os(variable).unwrap_or_default();
+    let mut directories = vec![graphics.to_path_buf(), graphics.join("wgpu")];
+    directories.extend(std::env::split_paths(&existing));
+    std::env::join_paths(directories).unwrap_or(existing)
+}
+
+// What to link the graphics examples against, or nothing where they are not
+// here. wgpu-native is downloaded beside the examples by `just deps` and is not
+// in the repository, so its absence is what says a checkout has not run it.
+// SDL3 is beside the examples on Windows and the system's package elsewhere.
+fn graphics_libraries(graphics: &Path) -> Option<Vec<String>> {
+    if !graphics.join("wgpu.frost").exists() {
+        return None;
+    }
+    if cfg!(windows) {
+        let sdl = graphics.join("SDL3.dll");
+        let wgpu = graphics.join("wgpu").join("wgpu_native.dll");
+        if !sdl.exists() || !wgpu.exists() {
+            return None;
+        }
+        return Some(vec![
+            sdl.to_string_lossy().into_owned(),
+            wgpu.to_string_lossy().into_owned(),
+        ]);
+    }
+    for name in ["libwgpu_native.so", "libwgpu_native.dylib"] {
+        let wgpu = graphics.join("wgpu").join(name);
+        if wgpu.exists() {
+            return Some(vec![
+                "-lSDL3".to_string(),
+                wgpu.to_string_lossy().into_owned(),
+            ]);
+        }
+    }
+    None
+}
+
 // The same binding through the other compiler. It could not read the SDL
 // binding at all until a constant was allowed to be text, which is four lines
 // of `sdl.frost` naming the window properties, so the whole graphics surface
@@ -16505,8 +16622,11 @@ fn self_hosted_compiles_the_sdl_binding() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     // `window.frost` reaches SDL and nothing else. `textured.frost` pulls in the
     // renderer, the camera, the mesh cache and the wgpu binding, which is the
-    // whole graphics surface and the part a region rule reaches.
-    for example in ["window.frost", "textured.frost"] {
+    // whole graphics surface and the part a region rule reaches. `shadowed.frost`
+    // adds the render graph, which is where a `match` answers with a texture and
+    // where this compiler used to read one at the width of the zero its binding
+    // was seeded with.
+    for example in ["window.frost", "textured.frost", "shadowed.frost"] {
         let source = root.join("examples").join("graphics").join(example);
         let emitted =
             std::env::temp_dir().join(format!("frost_gfxsh_{example}.c"));
@@ -18691,6 +18811,91 @@ main :: fn() -> i64 {
          \x20   print cast($i64, cast($i8, s))\n\
          \x20   0\n}\n",
         "200\n65535\n-40\n",
+    ),
+    // A `match` used where a value is wanted. The self-hosted compiler binds a
+    // name, lets each arm assign to it and stands for the name, and that
+    // binding is declared before a single arm has been read: it was seeded with
+    // a zero and took the type of one. An arm answering with a struct was
+    // refused for handing a struct to an i64, and an arm answering with a float
+    // was accepted and truncated, which is the worse half.
+    (
+        "a_match_answers_with_a_float",
+        "pick :: fn(k: i64) -> f64 {\n\
+         \x20   match k {\n\
+         \x20       case 0: 1.5\n\
+         \x20       case _: 2.25\n\
+         \x20   }\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   print cast($i64, pick(0) * 100.0)\n\
+         \x20   print cast($i64, pick(1) * 100.0)\n\
+         \x20   0\n}\n",
+        "150\n225\n",
+    ),
+    (
+        "a_match_answers_with_a_struct",
+        "Held :: struct { x: i64, y: i64 }\n\
+         one :: fn() -> Held { Held { x = 1, y = 2 } }\n\
+         two :: fn() -> Held { Held { x = 3, y = 4 } }\n\
+         pick :: fn(k: i64) -> Held {\n\
+         \x20   match k {\n\
+         \x20       case 0: one()\n\
+         \x20       case _: two()\n\
+         \x20   }\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   got := pick(1)\n\
+         \x20   print got.x\n\
+         \x20   print got.y\n\
+         \x20   0\n}\n",
+        "3\n4\n",
+    ),
+    (
+        "a_match_answers_with_an_array",
+        "pick :: fn(k: i64) -> [3]i64 {\n\
+         \x20   match k {\n\
+         \x20       case 0: [1, 2, 3]\n\
+         \x20       case _: [4, 5, 6]\n\
+         \x20   }\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   got := pick(1)\n\
+         \x20   print got[2]\n\
+         \x20   0\n}\n",
+        "6\n",
+    ),
+    // The same binding, reached by the other road: an `if` used where a value
+    // is wanted takes it too, and a fix for one arm shape leaves the other
+    // wrong.
+    // A constant whose value is a negative float. The self-hosted compiler
+    // sorts a constant by the token after `::`, and a sign in front of a number
+    // was only considered for the integer constants it folds arithmetic over.
+    // A float carries its literal node instead, so `-2.2` matched neither and
+    // was refused as a declaration the compiler does not have. A positive float
+    // and a negative integer both worked, which is what kept it hidden.
+    // The numbers are exact in binary on purpose: what this pins is that the
+    // declaration is read at all, and a value that needs rounding would pin
+    // where the arithmetic happens instead, which is its own question.
+    (
+        "a_constant_holding_a_negative_float",
+        "FLOOR :: -2.5\n\
+         RISE :: 1.25\n\
+         DEEP :: -3\n\
+         main :: fn() -> i64 {\n\
+         \x20   lowest : f32 = FLOOR + RISE\n\
+         \x20   print cast($i64, lowest * 100.0)\n\
+         \x20   print DEEP\n\
+         \x20   0\n}\n",
+        "-125\n-3\n",
+    ),
+    (
+        "an_if_answers_with_a_struct",
+        "Held :: struct { x: i64, y: i64 }\n\
+         pick :: fn(k: i64) -> Held {\n\
+         \x20   if (k == 0) { Held { x = 1, y = 2 } } else { Held { x = 3, y = 4 } }\n\
+         }\n\
+         main :: fn() -> i64 {\n\
+         \x20   got := pick(1)\n\
+         \x20   print got.x + got.y\n\
+         \x20   0\n}\n",
+        "7\n",
     ),
 ];
 

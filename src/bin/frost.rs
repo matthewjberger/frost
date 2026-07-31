@@ -486,26 +486,42 @@ fn compile() -> Result<()> {
             .context("IR lowering error")?;
         check_module(&module).context("IR type error")?;
         check_linearity(&module).context("Linearity error")?;
-        let object_bytes = compile_ir_to_object(&module)
-            .context("Native compilation error")?;
-
         let stem = Path::new(&cli.file)
             .file_stem()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
         let directory = std::env::temp_dir();
-        let object_path = directory.join(format!("frost_test_{stem}.o"));
         let exe_path = directory
             .join(format!("frost_test_{stem}{}", std::env::consts::EXE_SUFFIX));
-        fs::write(&object_path, object_bytes)?;
-        link_executable(
-            &[object_path.to_string_lossy().into_owned()],
-            &exe_path.to_string_lossy(),
-            &cli.libs,
-            false,
-        )?;
-        fs::remove_file(&object_path).ok();
+        // `--emit-c` picks the backend a test body runs through, the same way it
+        // does for a program. A suite that asked for both and got the native one
+        // twice is a suite that was only ever testing one of them.
+        if cli.emit_c {
+            let c_source = emit_c(&module).context("C emission error")?;
+            let c_path = directory.join(format!("frost_test_{stem}.c"));
+            fs::write(&c_path, c_source).with_context(|| {
+                format!("Failed to write C file: {}", c_path.display())
+            })?;
+            compile_c(
+                &c_path.to_string_lossy(),
+                &exe_path.to_string_lossy(),
+                &cli.libs,
+            )?;
+            fs::remove_file(&c_path).ok();
+        } else {
+            let object_bytes = compile_ir_to_object(&module)
+                .context("Native compilation error")?;
+            let object_path = directory.join(format!("frost_test_{stem}.o"));
+            fs::write(&object_path, object_bytes)?;
+            link_executable(
+                &[object_path.to_string_lossy().into_owned()],
+                &exe_path.to_string_lossy(),
+                &cli.libs,
+                false,
+            )?;
+            fs::remove_file(&object_path).ok();
+        }
 
         println!("running {} test(s)", tests.len());
         let status = Command::new(&exe_path)

@@ -13,6 +13,10 @@
 // triangles would sit on top of the near ones and everything else would look
 // identical. It is a thing that is either right or obviously wrong on screen.
 //
+// Both passes declare the same two targets and the render graph decides the
+// rest: which runs first, and that the first write of a target clears it while
+// the second loads what is there. Neither pass body mentions a load op.
+//
 // The entities are ordinary ECS rows. `ecs_spawn_with` puts each one in its
 // archetype as it is made rather than migrating it there a component at a time,
 // and a query walks the columns.
@@ -20,6 +24,7 @@
 import "platform.frost"
 import "camera.frost"
 import "renderer.frost"
+import "graph.frost"
 import "wgpu.frost"
 import "ecs.frost"
 import "math.frost"
@@ -90,21 +95,16 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 // One pass body, told by its state which layer it is for. Both passes are the
 // same function with different state, which is what a pass being a value buys:
 // nothing had to be written twice to have two of them.
-draw_layer :: fn(mut f: Frame, state: ^u8) {
+//
+// What the two of them draw into, and whether each clears what is there or
+// draws over it, is not written here. Both passes declare the same colour and
+// depth targets, the graph puts the first writer first, and the first write of
+// a target clears it while every write after loads it. That used to be this
+// function reading its own state to pick between two load ops, which is a rule
+// a reader keeps rather than one the code does.
+draw_layer :: fn(pass: RenderPassEncoder, state: ^u8) {
     mut s := unsafe { ptr_cast($Scene, state) }
     near := unsafe { s^.draw_near }
-
-    // The first pass clears both targets, the second loads them. Loading depth
-    // is what lets the second pass sort against the first rather than only
-    // against itself.
-    mut load : u32 = LOAD_OP_LOAD
-    mut depth_load : u32 = LOAD_OP_LOAD
-    if (near == 1) {
-        load = LOAD_OP_CLEAR
-        depth_load = LOAD_OP_CLEAR
-    }
-    pass := frame_pass(f, load,
-        Color { r = 0.05, g = 0.05, b = 0.08, a = 1.0 }, depth_load)
     render_pass_encoder_set_pipeline(pass, unsafe { s^.pipeline })
     render_pass_encoder_set_vertex_buffer(pass, 0, unsafe { s^.vertices }, 0,
         VERTEX_BYTES)
@@ -119,7 +119,6 @@ draw_layer :: fn(mut f: Frame, state: ^u8) {
         }
         index = index + 1
     }
-    render_pass_encoder_end(pass)
 }
 
 // The frame's read of the world: advance every angle, work out where each
@@ -304,21 +303,33 @@ main :: fn() -> i64 {
     mut far_scene := Scene { pipeline = pipeline, vertices = vertex_buffer,
         slots = slots, draw_near = 0 }
 
-    // Near first so it clears, far second so it loads and is sorted against
-    // what the first wrote.
-    mut passes : [2]Pass = [
-        Pass { name = "near", draw = draw_layer,
-            state = ptr_to(near_scene) },
-        Pass { name = "far", draw = draw_layer,
-            state = ptr_to(far_scene) },
-    ]
+    // Both passes write both targets, and nothing stands between them, so the
+    // graph keeps them in the order they were declared: near clears, far draws
+    // over what near left and sorts against the depth it wrote.
+    mut graph := graph_new(device, 2, 2)
+    screen := graph_backbuffer(graph)
+    depth := graph_depth(graph, "depth", WINDOW_SIZED, WINDOW_SIZED,
+        DEPTH_FORMAT)
+    background := Color { r = 0.05, g = 0.05, b = 0.08, a = 1.0 }
+    near_pass := graph_pass(graph, "near", draw_layer, ptr_to(near_scene))
+    graph_writes_color(graph, near_pass, screen, background)
+    graph_writes_depth(graph, near_pass, depth)
+    far_pass := graph_pass(graph, "far", draw_layer, ptr_to(far_scene))
+    graph_writes_color(graph, far_pass, screen, background)
+    graph_writes_depth(graph, far_pass, depth)
+    scheduled := graph_schedule(graph)
+    if (scheduled == false) {
+        print_str_line("the render graph cannot run")
+    }
+    graph_resize(graph, WIDTH, HEIGHT)
 
-    while (platform_poll(p)) {
+    while (scheduled && platform_poll(p)) {
         if (key_pressed(p, KEY_ESCAPE)) {
             break
         }
         if (resized(p)) {
             renderer_resize(r, width(p), height(p))
+            graph_resize(graph, width(p), height(p))
         }
         step := delta_seconds(p)
         camera_advance(eye, p, step)
@@ -327,11 +338,12 @@ main :: fn() -> i64 {
 
         mut f := renderer_begin(r)
         if (frame_ok(f)) {
-            renderer_run(f, passes)
-            renderer_end(r, f)
+            graph_run(graph, f)
         }
+        renderer_end(r, f)
     }
 
+    graph_free(graph)
     heap_release_slice($Slot, slots)
     heap_release_slice($Entity, entities)
     ecs_free(world)

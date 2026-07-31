@@ -98,7 +98,7 @@ Requires a Rust toolchain and a C compiler (gcc or clang) for linking. An import
 
 ### The graphics demos
 
-Five programs that open a window and draw through wgpu, in the order they were
+Six programs that open a window and draw through wgpu, in the order they were
 built, each one the smallest step past the last:
 
 ```bash
@@ -109,7 +109,15 @@ just triangle    # the first thing drawn: one triangle, one pipeline
 just scene       # entities in an ECS, two passes, depth deciding what is in front
 just spinning    # lit surfaces: a mesh cache, a material registry, two bind groups
 just textured    # the same field with its surfaces read off an image
+just shadowed    # a shadow pass and a scene pass, ordered by the map between them
 ```
+
+From `scene` on, what runs and in what order is a render graph
+([`examples/graphics/graph.frost`](examples/graphics/graph.frost)). A pass
+declares the targets it reads and writes; the graph works out the order from
+those declarations, makes every target the window does not own, and decides each
+load op. `shadowed` is what that buys: the shadow pass and the scene pass are
+written in either order and the map between them puts the writer first.
 
 `W`/`A`/`S`/`D` move, `Q` and `E` drop and rise, the arrow keys look, and escape
 closes. Resizing works in all of them. `just input` opens a window and reports
