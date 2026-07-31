@@ -2,18 +2,41 @@
 
 ## What is left
 
-**A resource reached through an element and given away twice.** The count now
-crosses a call for a resource reached through *fields*, which is what closed the
-double free a borrowed parameter used to allow. An element is not carried: which
-element is a number worked out while the program runs, so the place a caller
-would have to be told about is one neither side can name. `vec_get` answering
-with an element by value is the shape that shows it, so a `Vec` of resources can
-still hand the same one out twice.
+**The standard library was written for plain data, and a container of resources
+leaks in ways nothing checks.** Handing one out is refused now: a function may
+answer with a resource out of a borrowed parameter only where the place can be
+named by a run of fields, which is what a caller can be told about, so
+`vec_get<File>` no longer compiles. What is left is everything that *drops* one:
 
-Closing it means knowing that what a function answers with came out of what it
-was lent, which is the provenance question the frame check already answers for
-borrowed views and does not yet answer for resources. That is the next piece of
-this, and it subsumes the element case rather than sitting beside it.
+- `vec_set` and `map_put` overwrite a slot, and nothing consumes what was in it.
+- `vec_free` and `map_free` release the storage, and nothing consumes the
+  elements. `vec_clear` and `map_clear` do it without even releasing.
+- `map_get` and `option_unwrap_or` take a value and a fallback and answer with
+  one of them. The loser is dropped. `map_get` is neither an option nor a
+  sentinel: it is `option_unwrap_or` spelled again over a table.
+- `option_is_some` cannot be instantiated with a resource at all, since matching
+  a borrowed option consumes it. A function nobody can call is a different
+  problem from one that leaks, and this one is the smaller.
+
+The pool rule refuses `Slab<File>` outright for exactly this shape. A blanket
+refusal of `Vec<File>` is wrong, though, and `std/ecs.frost` is the proof: a
+`Vec<Table>` where `Table` is a resource is released correctly, one element at a
+time through a `ref` borrow, before the storage goes. The shape is writable. The
+library's own functions are what are not written for it.
+
+What would let this be said rather than only documented is `is_linear` in the
+`where` vocabulary. That vocabulary is closed on purpose and holds `is_numeric`,
+`is_integer`, `is_float`, `is_struct`, `is_array`, `is_slice` and `is_pointer`,
+none of which can express it, so a function that must not take a resource has no
+way to say so. Both compilers already answer the question for themselves.
+
+**A generic instantiated with a resource is one only where the program writes
+its name.** The bootstrap classifies instantiations by walking the names a
+program spells out, so `held := option_some($File, ...)` leaves `Option<File>`
+ordinary data and the obligation vanishes on the way in. The self-hosted
+compiler instantiates before it checks and gets this right, which makes it a
+divergence as well as a hole. Closing it means discovering instantiations from
+what specialization creates rather than from what the source names.
 
 The wgpu binding is generated with a safe wrapper per call now, so a program
 that draws a triangle writes no `unsafe` of its own for the graphics API: the
