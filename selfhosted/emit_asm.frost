@@ -2230,6 +2230,14 @@ emit_asm_stmt :: fn(mut p: Parser, id: i64) {
         if (annotation == (-1)) {
             ty = binding_type(p, value)
         }
+        // Storage a branch fills in, and a zeroed slot until one does.
+        if (value == (-1)) {
+            record_local(p, off, len, ty)
+            zeroed := local_slot(p, off, len)
+            asm_i("leaq ", zeroed, "(%rbp), %r10")
+            emit_asm_zero(type_size(p, ty))
+            return
+        }
         // `columns_new()` is a zeroed container. There is no call to make, only
         // the local's slot to clear.
         if (is_columns_new_call(p, value)) {

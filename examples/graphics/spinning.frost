@@ -25,6 +25,7 @@
 import "platform.frost"
 import "camera.frost"
 import "renderer.frost"
+import "graph.frost"
 import "mesh.frost"
 import "material.frost"
 import "wgpu.frost"
@@ -128,11 +129,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 
 // One pass over everything. Both bindings are set here and neither is built
 // here: what a pass does is record, and what it records was decided before it
-// ran.
-draw_scene :: fn(mut f: Frame, state: ^u8) {
+// ran. The encoder comes from the graph, which made the targets this draws
+// into and chose their load ops from what the pass declared.
+draw_scene :: fn(pass: RenderPassEncoder, state: ^u8) {
     mut s := unsafe { ptr_cast($Scene, state) }
-    pass := frame_pass(f, LOAD_OP_CLEAR,
-        Color { r = 0.04, g = 0.05, b = 0.07, a = 1.0 }, LOAD_OP_CLEAR)
     render_pass_encoder_set_pipeline(pass, unsafe { s^.pipeline })
     render_pass_encoder_set_bind_group(pass, 0, unsafe { s^.frame_group }, 0,
         no_pointer())
@@ -146,7 +146,6 @@ draw_scene :: fn(mut f: Frame, state: ^u8) {
         render_pass_encoder_draw_indexed(pass, held.index_count, 1, 0, 0, 0)
         index = index + 1
     }
-    render_pass_encoder_end(pass)
 }
 
 // The frame's read of the world: turn everything, work out where it is, and
@@ -408,21 +407,37 @@ main :: fn() -> i64 {
         slots = slots, entities = entities, meshes = meshes,
         count = INSTANCES,
     }
-    mut passes : [1]Pass = [
-        Pass { name = "scene", draw = draw_scene,
-            state = ptr_to(scene) },
-    ]
+    // One pass, and the two targets it writes. The graph makes the depth
+    // buffer, sizes it with the window and decides both load ops, so the pass
+    // above says what it draws into and nothing about how.
+    mut graph := graph_new(device, 2, 1)
+    screen := graph_backbuffer(graph)
+    depth := graph_depth(graph, "depth", WINDOW_SIZED, WINDOW_SIZED,
+        DEPTH_FORMAT)
+    scene_pass := graph_pass(graph, "scene", draw_scene, ptr_to(scene))
+    graph_writes_color(graph, scene_pass, screen,
+        Color { r = 0.04, g = 0.05, b = 0.07, a = 1.0 })
+    graph_writes_depth(graph, scene_pass, depth)
+    // Answered before the first frame rather than found out during one. What it
+    // refuses it says at the same time, so a graph that cannot run says why once
+    // instead of every frame.
+    scheduled := graph_schedule(graph)
+    if (scheduled == false) {
+        print_str_line("the render graph cannot run")
+    }
+    graph_resize(graph, WIDTH, HEIGHT)
 
     mut eye := camera_default()
     eye.position = vec3(0.0, 0.0, 14.0)
     eye.pitch = 0.0
 
-    while (platform_poll(p)) {
+    while (scheduled && platform_poll(p)) {
         if (key_pressed(p, KEY_ESCAPE)) {
             break
         }
         if (resized(p)) {
             renderer_resize(r, width(p), height(p))
+            graph_resize(graph, width(p), height(p))
         }
         step := delta_seconds(p)
         camera_advance(eye, p, step)
@@ -432,11 +447,12 @@ main :: fn() -> i64 {
 
         mut f := renderer_begin(r)
         if (frame_ok(f)) {
-            renderer_run(f, passes)
-            renderer_end(r, f)
+            graph_run(graph, f)
         }
+        renderer_end(r, f)
     }
 
+    graph_free(graph)
     heap_release_slice($Mesh, meshes)
     heap_release_slice($Slot, slots)
     heap_release_slice($Entity, entities)

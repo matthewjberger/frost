@@ -918,6 +918,34 @@ emit_handles :: fn(mut out: Builder, mut names: Builder,
     null_handle()
 }
 ")
+        // Giving a handle back. Every object in the API is counted, and the
+        // schema describes none of the counting: `wgpuXAddRef` and
+        // `wgpuXRelease` are written for each object by the header's own macro
+        // and appear in no method list. A binding generated from the schema
+        // alone can acquire a swapchain texture and has no way to let go of it,
+        // and the surface then refuses to be configured again, which is a
+        // resize.
+        //
+        // Only the release half is here. Taking a second reference is a thing a
+        // program does when it hands a handle somewhere that outlives it, and
+        // nothing in this tree does; letting go of one is what every frame does.
+        builder_str_value(out, "wgpu")
+        append_pascal(out, document, name)
+        builder_str_value(out, "Release :: extern fn(handle: ")
+        append_pascal(out, document, name)
+        builder_str_value(out, ")
+")
+        append_snake(out, document, name)
+        builder_str_value(out, "_release :: fn(handle: ")
+        append_snake(names, document, name)
+        builder_str_value(names, "_release, ")
+        append_pascal(out, document, name)
+        builder_str_value(out, ") {
+    unsafe { wgpu")
+        append_pascal(out, document, name)
+        builder_str_value(out, "Release(handle) }
+}
+")
         index = index + 1
     }
     total

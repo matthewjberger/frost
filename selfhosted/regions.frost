@@ -375,6 +375,13 @@ check_types_stmt :: fn(mut p: Parser, id: i64) {
         annotation := node.b
         off := node.val
         len := node.c
+        // Storage a branch fills in has no value of its own here, so there is
+        // nothing to check its type against. The type is the one the branches
+        // answered with, written on when they were read.
+        if (value == (-1)) {
+            record_local(p, off, len, annotation)
+            return
+        }
         check_types_expr(p, value)
         mut ty := annotation
         if (annotation == (-1)) {

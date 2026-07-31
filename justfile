@@ -334,6 +334,17 @@ textured:
     cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 --libs=-lwgpu_native -o examples/graphics/textured examples/graphics/textured.frost
     ./examples/graphics/textured
 
+# A shadow pass and a scene pass, ordered by the map between them (Windows)
+[windows]
+shadowed:
+    $sdl = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "examples/graphics" }; cargo run -r -q -p frost --bin frost -- --link --libs "$sdl/SDL3.dll" --libs "examples/graphics/wgpu/wgpu_native.dll" -o examples/graphics/shadowed.exe examples/graphics/shadowed.frost; Copy-Item examples/graphics/wgpu/wgpu_native.dll examples/graphics -Force; & ./examples/graphics/shadowed.exe
+
+# A shadow pass and a scene pass, ordered by the map between them (Unix)
+[unix]
+shadowed:
+    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 --libs=-lwgpu_native -o examples/graphics/shadowed examples/graphics/shadowed.frost
+    ./examples/graphics/shadowed
+
 # Opens a window and reports what the platform layer saw (Windows)
 [windows]
 input:

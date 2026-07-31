@@ -1175,6 +1175,14 @@ emit_stmt :: fn(mut p: Parser, id: i64) {
         emit_ctype(p, ty)
         emit_text(" ")
         emit_local_name(p, off, len)
+        // Storage a branch fills in. It is zeroed rather than left as it is, so
+        // a branch that hands back nothing leaves a value that is the same on
+        // every run.
+        if (value == (-1)) {
+            emit_text(" = {0};\n")
+            record_local(p, off, len, ty)
+            return
+        }
         emit_text(" = ")
         emit_coerced(p, value, ty)
         emit_text(";\n")
@@ -1693,6 +1701,20 @@ emit_type_defs :: fn(mut p: Parser) {
 // Emit a function body, treating a trailing expression statement as the return
 // value (Frost's implicit return) and appending a `return 0;` fallthrough only
 // when the body does not already end in a return or a value.
+// The return C wants where a body can fall off its end. Every branch of the
+// body may already have returned, so nothing here is read; C still wants a
+// value of the declared type, and a zero is one for a number and not one for a
+// struct or an array.
+emit_fallthrough_return :: fn(mut p: Parser) {
+    if (is_aggregate(p.current_ret)) {
+        emit_text("return (")
+        emit_ctype(p, p.current_ret)
+        emit_text("){0};\n")
+        return
+    }
+    emit_text("return 0;\n")
+}
+
 emit_function_body :: fn(mut p: Parser, body: i64) {
     // Somewhere to read a checked operation's left operand into. C sequences
     // neither a call's arguments nor an operator's operands, and the comma
@@ -1704,7 +1726,7 @@ emit_function_body :: fn(mut p: Parser, body: i64) {
     frost_rt_emit_int(ARITH_SLOTS)
     emit_text("]; (void)frost_t;\n")
     if (body == (-1)) {
-        emit_text("return 0;\n")
+        emit_fallthrough_return(p)
         return
     }
     mut id := body
@@ -1725,7 +1747,7 @@ emit_function_body :: fn(mut p: Parser, body: i64) {
             } else {
                 emit_stmt(p, id)
                 if (kind != NodeKind::Return) {
-                    emit_text("return 0;\n")
+                    emit_fallthrough_return(p)
                 }
             }
         } else {

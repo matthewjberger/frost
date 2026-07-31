@@ -324,8 +324,14 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         bind := new_let_node(p, seed, name_off, name_len, -1)
         chosen := parse_stmt(p)
         node := arena_at(p.arena, chosen)
-        assign_block_value(p, node.b, name_off, name_len)
-        assign_block_value(p, node.val, name_off, name_len)
+        then_head := node.b
+        else_head := node.val
+        mut answered := assign_block_value(p, then_head, name_off, name_len)
+        otherwise := assign_block_value(p, else_head, name_off, name_len)
+        if (answered == (-1)) {
+            answered = otherwise
+        }
+        bind_answer_type(p, bind, answered)
         arena_push(p.pending, LocalVar { name_off = bind, name_len = chosen,
             ty = 0, slot = 0 })
         return new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
@@ -341,7 +347,8 @@ parse_primary :: fn(mut p: Parser) -> i64 {
         seed := new_node(p, NodeKind::Num, 0, 0, 0)
         bind := new_let_node(p, seed, name_off, name_len, -1)
         chosen := parse_match(p)
-        assign_match_values(p, chosen, name_off, name_len)
+        answered := assign_match_values(p, chosen, name_off, name_len)
+        bind_answer_type(p, bind, answered)
         arena_push(p.pending, LocalVar { name_off = bind, name_len = chosen,
             ty = 0, slot = 0 })
         return new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
@@ -2183,10 +2190,28 @@ parse_variant_case :: fn(mut p: Parser, subject: i64) -> i64 {
 // expression. Nothing about the branch itself changes, only where its answer
 // goes. A branch ending in something with no value was never producing one and
 // is left as it is.
-assign_block_value :: fn(mut p: Parser, head: i64, name_off: i64,
-    name_len: i64) {
-    if (head == (-1)) {
+// The type the branches answer with, written onto the binding they assign into.
+// That binding is declared before a single branch has been read, so it is
+// seeded with a zero and takes the type of one. A branch answering with a
+// struct, an array or a float is a different width from that zero, so the
+// seed goes and the type comes from here: the binding is storage the branches
+// fill in, and it carries the type they fill it with.
+bind_answer_type :: fn(mut p: Parser, bind: i64, answered: i64) {
+    if (answered == (-1)) {
         return
+    }
+    mut node := arena_at(p.arena, bind)
+    node.b = answered
+    node.a = -1
+}
+
+// Answers with the type the branch hands back, or -1 where it hands back
+// nothing. The name being written into is declared before any branch is parsed,
+// so this is the only place its type can come from.
+assign_block_value :: fn(mut p: Parser, head: i64, name_off: i64,
+    name_len: i64) -> i64 {
+    if (head == (-1)) {
+        return -1
     }
     mut last := head
     mut following := node_next(p, last)
@@ -2196,12 +2221,15 @@ assign_block_value :: fn(mut p: Parser, head: i64, name_off: i64,
     }
     body := arena_at(p.arena, last)
     if (body.kind == NodeKind::ExprStmt && type_of(p, body.a) != TY_VOID) {
+        answered := type_of(p, body.a)
         place := new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
             name_off)
         body.kind = NodeKind::Assign
         body.b = body.a
         body.a = place
+        return answered
     }
+    -1
 }
 
 // A block's trailing expression, made into the answer it already was.
@@ -2284,12 +2312,11 @@ return_trailing_branches :: fn(mut p: Parser, body: i64) {
 // one value is a NodeKind::Match with a case per arm. A match on several is the
 // chain of `if`s the tuple patterns stand for, so the arms are its branches.
 assign_match_values :: fn(mut p: Parser, chosen: i64, name_off: i64,
-    name_len: i64) {
+    name_len: i64) -> i64 {
     node := arena_at(p.arena, chosen)
     kind := node.kind
     if (kind == NodeKind::Match) {
-        assign_case_values(p, chosen, name_off, name_len)
-        return
+        return assign_case_values(p, chosen, name_off, name_len)
     }
     assign_chain_values(p, chosen, name_off, name_len)
 }
@@ -2298,9 +2325,9 @@ assign_match_values :: fn(mut p: Parser, chosen: i64, name_off: i64,
 // already was. The chain's else is either another `if` or a block, so this is
 // the branching counterpart of assign_block_value.
 assign_chain_values :: fn(mut p: Parser, head: i64, name_off: i64,
-    name_len: i64) {
+    name_len: i64) -> i64 {
     if (head == (-1)) {
-        return
+        return -1
     }
     mut last := head
     mut following := node_next(p, last)
@@ -2312,16 +2339,20 @@ assign_chain_values :: fn(mut p: Parser, head: i64, name_off: i64,
     if (node.kind == NodeKind::If) {
         then_head := node.b
         else_head := node.val
-        assign_chain_values(p, then_head, name_off, name_len)
-        assign_chain_values(p, else_head, name_off, name_len)
-        return
+        answered := assign_chain_values(p, then_head, name_off, name_len)
+        second := assign_chain_values(p, else_head, name_off, name_len)
+        if (answered != (-1)) {
+            return answered
+        }
+        return second
     }
     assign_block_value(p, last, name_off, name_len)
 }
 
 assign_case_values :: fn(mut p: Parser, match_node: i64, name_off: i64,
-    name_len: i64) {
+    name_len: i64) -> i64 {
     node := arena_at(p.arena, match_node)
+    mut answered : i64 = -1
     mut cid := node.b
     while (cid != (-1)) {
         case_node := arena_at(p.arena, cid)
@@ -2335,6 +2366,9 @@ assign_case_values :: fn(mut p: Parser, match_node: i64, name_off: i64,
         // An arm that ends in something with no value, a call to a void
         // function say, was never producing one, so it is left as it is.
         if (body.kind == NodeKind::ExprStmt && type_of(p, body.a) != TY_VOID) {
+            if (answered == (-1)) {
+                answered = type_of(p, body.a)
+            }
             place := new_named_node_at(p, NodeKind::Var, 0, name_off, name_len,
             name_off)
             body.kind = NodeKind::Assign
@@ -2343,6 +2377,7 @@ assign_case_values :: fn(mut p: Parser, match_node: i64, name_off: i64,
         }
         cid = case_node.next
     }
+    answered
 }
 
 // Whether what follows `match` is several values rather than one: a `(` with a
@@ -5179,12 +5214,20 @@ parse_program :: fn(mut p: Parser) -> i64 {
             // `Name :: OtherName`.
             parse_value_const(p)
         } else if (third == TokenKind::Str || third == TokenKind::Float
-            || third == TokenKind::Lbracket) {
+            || third == TokenKind::Lbracket
+            || (third == TokenKind::Minus
+                && peek_kind(p, 3) == TokenKind::Float)) {
             // A constant whose value is a literal this compiler folds no
             // arithmetic over. It is kept as the literal's node and written out
             // again wherever the name is read, so it reaches each use the way a
             // literal written there would, including the length a `str` or an
             // array carries.
+            //
+            // A sign in front of a float belongs here rather than with the
+            // integer constants above, which fold to a number: the value stays
+            // the literal's node and the minus is part of the expression parsed
+            // into it. Without this a negative float constant was read as a
+            // declaration this compiler does not know.
             parse_value_const(p)
         } else if (third != TokenKind::KwFn && third != TokenKind::KwInline) {
             // Everything above is a form this compiler knows. Anything else

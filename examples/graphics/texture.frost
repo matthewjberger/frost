@@ -22,7 +22,7 @@ import "mem.frost"
 
 export Image, image_new, image_free, image_set, image_fill,
     image_checker, image_bricks, image_rings, image_corner_marks,
-    Texture2D, texture_upload, texture_free, texture_view_of,
+    Texture2D, no_texture2d, texture_upload, texture_free, texture_view_of,
     texture_sampler_of,
     texture_render_target, texture_depth_target, comparison_sampler
 
@@ -190,6 +190,13 @@ whole_extent :: fn(width: i64, height: i64) -> Extent3D {
 // because a binding wants all three and none of them is useful alone.
 Texture2D :: struct { texture: Texture, view: TextureView, sampler: Sampler }
 
+// The three of nothing, for a place that holds a texture before there is one to
+// hold.
+no_texture2d :: fn() -> Texture2D {
+    Texture2D { texture = no_texture(), view = no_texture_view(),
+        sampler = no_sampler() }
+}
+
 texture_view_of :: fn(held: Texture2D) -> TextureView { held.view }
 texture_sampler_of :: fn(held: Texture2D) -> Sampler { held.sampler }
 
@@ -247,8 +254,14 @@ texture_upload :: fn(device: Device, queue: Queue, held: Image) -> Texture2D {
     Texture2D { texture = made, view = view, sampler = sampler }
 }
 
-texture_free :: fn(mut held: Texture2D) {
+// Giving one back. Destroying frees the memory behind the image; the three
+// handles over it are counted separately and each has to be let go of, or the
+// texture stays alive and whatever it was made for cannot be remade.
+texture_free :: fn(held: Texture2D) {
+    sampler_release(held.sampler)
+    texture_view_release(held.view)
     texture_destroy(held.texture)
+    texture_release(held.texture)
 }
 
 // A texture a pass draws into and a later pass reads. The two usages together
