@@ -39,6 +39,26 @@ arguments put in, a variant's payload is held by its enum the way a field is
 held by its struct, and the walk runs over the instantiations specialization
 forms rather than over the source alone.
 
+**An instance nobody asked for is still type-checked, and one of them cannot
+be.** The self-hosted compiler offers every recorded type-argument tuple to
+every generic function whose parameter kinds fit, so writing `Option<File>`
+brings `option_unwrap_or<File>` into being with nothing calling it. Its body
+then reads `$T` as `i64` in the return position while the payload is `File`, and
+the program is refused for a function it never mentions:
+
+```
+std/option.frost: case .Some { value }: value
+    assigning a value of the wrong type: the place is a 'i64' and the value is a 'File'
+```
+
+So an `Option` holding a resource cannot be used at all under the self-hosted
+compiler, correctly consumed or not, while the bootstrap takes it. The bound on
+`option_unwrap_or` does not prevent this: a `where` clause is read at a call, and
+this instance has no call to read it at. Closing it means an instance being made
+only where something asks for it, which is the same question `instance_was_called`
+answers for the hand-out rule, and it runs into the -1 owner wildcard that lets a
+tuple recorded inside one generic reach another.
+
 The wgpu binding is generated with a safe wrapper per call now, so a program
 that draws a triangle writes no `unsafe` of its own for the graphics API: the
 perimeter is one generated file. What is left there is the same shape as the
