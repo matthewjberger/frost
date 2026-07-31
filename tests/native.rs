@@ -7934,7 +7934,7 @@ fn a_defer_in_a_test_body_runs() {
 // and the self-hosted one drifted apart by three modules, so map, slab and vec
 // were compiled by one compiler and never the other.
 const STD_MODULES: &[(&str, &str)] = &[
-    ("ecs.frost", "107 passed"),
+    ("ecs.frost", "108 passed"),
     ("map.frost", "13 passed"),
     ("math.frost", "23 passed"),
     ("math64.frost", "23 passed"),

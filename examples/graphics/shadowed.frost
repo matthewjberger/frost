@@ -18,6 +18,13 @@
 // where the nested work falls in the order is decided the same way everything
 // else is.
 //
+// What the world does each frame is a schedule of three systems rather than one
+// loop: turning, then where everything ended up, then the buffers. A system is
+// a `fn(mut World)` and captures nothing, so what it works on is components and
+// two resources, and the shapes hang off a root in a hierarchy the world holds,
+// which is why each one both spins and orbits without either saying anything
+// about the other.
+//
 // The compute pass is written last of the six drawing passes and runs first. Nothing between
 // it and the scene is an attachment: it writes a run of bytes and the scene
 // reads them, and a buffer written by one pass and read by another is an
@@ -123,6 +130,33 @@ OBJECT_BYTES :: 96
 Placement :: struct { position: Vec3, scale: Vec3 }
 Spin :: struct { axis: Vec3, speed: f32, angle: f32 }
 Drawn :: struct { mesh: i64, material: i64 }
+
+// Where a thing ended up, once its own placement and every placement above it
+// have been applied. Written by a system and read by the one that uploads, so
+// the walk of the world and the walk that fills buffers are two passes over the
+// same data rather than one loop doing both.
+Model :: struct { matrix: Mat4 }
+
+// What the systems work on that is not a component. A system is a
+// `fn(mut World)` and captures nothing, so the queue it writes through, the
+// tables it indexes and the ids of the components themselves are a resource
+// like anything else. It holds a `Materials`, so it is read by borrow.
+Feed :: struct {
+    queue: Queue,
+    entities: []Entity,
+    slots: []Slot,
+    registry: Materials,
+    placement: i64,
+    spin: i64,
+    drawn: i64,
+    model: i64,
+    step: f32,
+}
+
+// Which resource slot holds what. Registered in this order and read by name
+// rather than by a number written twice.
+FEED_SLOT :: 0
+TREE_SLOT :: 1
 
 // The buffer and binding one thing is drawn with. Both passes bind the same
 // one: the shadow pass needs the model matrix and nothing else, and that is
@@ -400,25 +434,76 @@ draw_things :: fn(pass: RenderPassEncoder, state: ^u8) {
     }
 }
 
-// The frame's read of the world: turn everything, work out where it is, and
-// leave each matrix in the buffer its binding points at. Both passes read what
-// this leaves behind, so it happens once rather than once per pass.
-prepare :: fn(mut world: World, queue: Queue, entities: []Entity,
-    slots: []Slot, registry: Materials, placement: i64, spin: i64, drawn: i64,
-    step: f32) {
-    mut index : i64 = 0
-    while (index < slice_len(entities)) {
-        entity := entities[index]
-        mut turn := ecs_get($Spin, world, entity, spin)
-        turn.angle = turn.angle + turn.speed * step
-        ecs_set($Spin, world, entity, spin, turn)
+// The frame's read of the world, as three systems a schedule runs in order.
+// Turning happens first, where a thing ends up is worked out second, and the
+// buffers are filled last, so nothing reads a matrix in the same pass that
+// wrote it.
 
-        place := ecs_get($Placement, world, entity, placement)
-        shown := ecs_get($Drawn, world, entity, drawn)
-        model := mat4_mul(mat4_translation(place.position),
-            mat4_mul(quat_to_mat4(quat_from_axis_angle(turn.axis, turn.angle)),
-                mat4_scale(place.scale)))
-        surface := materials_at(registry, shown.material)
+// Every turn advanced by the frame's step.
+turn_things :: fn(mut world: World) {
+    feed := ecs_resource_ref($Feed, world, FEED_SLOT)
+    mut index : i64 = 0
+    while (index < slice_len(feed.entities)) {
+        entity := feed.entities[index]
+        mut turn := ecs_get($Spin, world, entity, feed.spin)
+        turn.angle = turn.angle + turn.speed * feed.step
+        ecs_set($Spin, world, entity, feed.spin, turn)
+        index = index + 1
+    }
+}
+
+// Where a thing is, its own placement and its parent's together. Two passes
+// rather than a walk down the tree, because everything here is either a root or
+// a child of one: a deeper tree wants the parents ordered before the children,
+// which is a sort rather than a second loop.
+place_things :: fn(mut world: World) {
+    feed := ecs_resource_ref($Feed, world, FEED_SLOT)
+    tree := ecs_resource_ref($Hierarchy, world, TREE_SLOT)
+    mut index : i64 = 0
+    while (index < slice_len(feed.entities)) {
+        entity := feed.entities[index]
+        if (is_no_entity(hierarchy_parent(tree, entity))) {
+            ecs_set($Model, world, entity, feed.model,
+                Model { matrix = local_of(world, feed, entity) })
+        }
+        index = index + 1
+    }
+    mut child : i64 = 0
+    while (child < slice_len(feed.entities)) {
+        entity := feed.entities[child]
+        above := hierarchy_parent(tree, entity)
+        if (is_no_entity(above) == false) {
+            over := ecs_get($Model, world, above, feed.model)
+            ecs_set($Model, world, entity, feed.model,
+                Model { matrix = mat4_mul(over.matrix,
+                    local_of(world, feed, entity)) })
+        }
+        child = child + 1
+    }
+}
+
+// A thing's own placement, before anything above it is applied.
+local_of :: fn(mut world: World, feed: Feed, entity: Entity) -> Mat4 {
+    place := ecs_get($Placement, world, entity, feed.placement)
+    turn := ecs_get($Spin, world, entity, feed.spin)
+    mat4_mul(mat4_translation(place.position),
+        mat4_mul(quat_to_mat4(quat_from_axis_angle(turn.axis, turn.angle)),
+            mat4_scale(place.scale)))
+}
+
+// The buffers each thing is drawn with, filled from what the pass above left.
+upload_things :: fn(mut world: World) {
+    feed := ecs_resource_ref($Feed, world, FEED_SLOT)
+    mut index : i64 = 0
+    while (index < slice_len(feed.entities)) {
+        entity := feed.entities[index]
+        if (ecs_has(world, entity, feed.drawn) == false) {
+            index = index + 1
+            continue
+        }
+        shown := ecs_get($Drawn, world, entity, feed.drawn)
+        model := ecs_get($Model, world, entity, feed.model).matrix
+        surface := materials_at(feed.registry, shown.material)
 
         mut values : [OBJECT_FLOATS]f32 = [0.0; OBJECT_FLOATS]
         mut element : i64 = 0
@@ -441,7 +526,7 @@ prepare :: fn(mut world: World, queue: Queue, entities: []Entity,
         which : f32 = index
         values[22] = which
         values[23] = behaviour.w
-        queue_write_buffer(queue, slots[index].uniform, 0,
+        queue_write_buffer(feed.queue, feed.slots[index].uniform, 0,
             ptr_to(values[0]), OBJECT_BYTES)
         index = index + 1
     }
@@ -954,12 +1039,20 @@ main :: fn() -> i64 {
     placement := ecs_register($Placement, world)
     spin := ecs_register($Spin, world)
     drawn := ecs_register($Drawn, world)
-    wanted := mask_with(mask_with(mask_with(mask_empty(), placement), spin),
-        drawn)
+    model := ecs_register($Model, world)
+    wanted := mask_with(mask_with(mask_with(mask_with(mask_empty(), placement),
+        spin), drawn), model)
+    // The root has a place and a turn and nothing drawn, since it is what the
+    // grid hangs off rather than a thing on the screen.
+    root_wanted := mask_with(mask_with(mask_with(mask_empty(), placement),
+        spin), model)
 
-    mut entities := heap_slice($Entity, INSTANCES)
+    // One more than the things that are drawn: the last is the root every
+    // shape hangs off, walked by the systems and uploaded by none of them.
+    mut entities := heap_slice($Entity, INSTANCES + 1)
     mut slots := heap_slice($Slot, INSTANCES)
     mut meshes := heap_slice($Mesh, INSTANCES)
+    mut tree := hierarchy_new()
 
     // The floor first, so it is the one thing under everything else, then a
     // grid of shapes above it turning about their own axes.
@@ -1016,6 +1109,45 @@ main :: fn() -> i64 {
             group = uniform_group(device, object_layout, held, OBJECT_BYTES) }
         made = made + 1
     }
+
+    // The root, and the grid hung off it. Each shape keeps its own turn, and
+    // the root turns too, so what a shape ends up doing is its own spin inside
+    // an orbit and neither of them says anything about the other.
+    root := ecs_spawn_with(world, root_wanted)
+    ecs_set($Placement, world, root, placement, Placement {
+        position = vec3(0.0, 0.0, 0.0), scale = vec3(1.0, 1.0, 1.0) })
+    ecs_set($Spin, world, root, spin, Spin { axis = vec3(0.0, 1.0, 0.0),
+        speed = 0.25, angle = 0.0 })
+    // Hung off the root before the root is put in the table, since putting it
+    // there is handing it over and the name does not hold it afterwards.
+    mut hung : i64 = 1
+    while (hung < INSTANCES) {
+        hierarchy_attach(tree, entities[hung], root)
+        hung = hung + 1
+    }
+    entities[INSTANCES] = root
+
+    // What the systems work on. Registered in the order the slot constants
+    // name, and the tree is handed over: the world holds it from here.
+    feed_slot := ecs_resource_register($Feed, world)
+    tree_slot := ecs_resource_register($Hierarchy, world)
+    ecs_resource_set($Hierarchy, world, tree_slot, tree)
+    // Handed over once. What changes every frame is the step, and that is
+    // written where it lives rather than by handing the whole thing over
+    // again: setting a resource moves it, and the registry inside this one is
+    // released at the end.
+    ecs_resource_set($Feed, world, feed_slot, Feed {
+        queue = queue, entities = entities, slots = slots,
+        registry = registry, placement = placement, spin = spin,
+        drawn = drawn, model = model, step = 0.0 })
+
+    // What a frame does, read top to bottom. Turning, then where everything
+    // ended up, then the buffers: a stage apart each, so nothing reads a matrix
+    // in the pass that wrote it.
+    mut frame_schedule := schedule_new()
+    schedule_add(frame_schedule, Stage::First, turn_things)
+    schedule_add(frame_schedule, Stage::Update, place_things)
+    schedule_add(frame_schedule, Stage::Last, upload_things)
 
     shader := make_shader(device)
 
@@ -1249,8 +1381,9 @@ main :: fn() -> i64 {
         watcher.pitch = -0.35
         write_frame(queue, inset_uniform, watcher, light, elapsed, INSET_WIDTH,
             INSET_HEIGHT)
-        prepare(world, queue, entities, slots, registry, placement, spin,
-            drawn, step)
+        mut feeding := ecs_resource_slice($Feed, world, feed_slot)
+        feeding[0].step = step
+        schedule_run(frame_schedule, world, ANY_STATE)
 
         mut f := renderer_begin(r)
         if (frame_ok(f)) {
@@ -1260,10 +1393,14 @@ main :: fn() -> i64 {
     }
 
     graph_free(graph)
+    schedule_free(frame_schedule)
+    giving := ecs_resource($Hierarchy, world, tree_slot)
+    hierarchy_free(giving)
     heap_release_slice($Mesh, meshes)
     heap_release_slice($Slot, slots)
     heap_release_slice($Entity, entities)
-    materials_free(registry)
+    taken := ecs_resource($Feed, world, feed_slot)
+    materials_free(taken.registry)
     mesh_cache_free(cache)
     ecs_free(world)
     renderer_close(r)
