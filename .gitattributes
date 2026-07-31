@@ -1,0 +1,5 @@
+# Shell scripts are run straight out of the working tree by a Linux container
+# (`just ci-linux`), so they have to keep their line endings whatever the host
+# checks out with. `sh` reads a carriage return as part of the command and fails
+# on the first line it meets one.
+*.sh text eol=lf
