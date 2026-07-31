@@ -436,6 +436,31 @@ selfhost-examples: selfhost-build
         rm -f "$f.s" "$f.exe"
     done
 
+# A green suite on this machine says nothing about three kinds of defect, and
+# all three were red in CI for weeks while everything passed here: the runtime's
+# POSIX feature macros, which decide whether it compiles at all; an encoding the
+# backend emits only under the System V convention, so the assembler was wrong
+# in a way no Windows test could reach; and a library a link needs only where
+# the platform keeps it out of libc.
+#
+# Worth running before pushing anything that touches the runtime, the assembler,
+# or a link command. Needs Docker. The first run pulls an image and builds from
+# cold, so give it a few minutes.
+#
+# The target directory is kept out of the checkout so the host's own build is
+# untouched, which is why `ci/linux-check.sh` has to name the standard library.
+
+# Runs every gate the Linux runner runs, in a container (Windows)
+[windows]
+ci-linux:
+    docker run --rm -v "${PWD}:/w" -w /w -e CARGO_TARGET_DIR=/tmp/target rust:latest sh ci/linux-check.sh
+
+# Runs every gate the Linux runner runs, in a container. Pins the toolchain and
+# the C compiler to the image rather than to whatever is installed here (Unix)
+[unix]
+ci-linux:
+    docker run --rm -v "$PWD:/w" -w /w -e CARGO_TARGET_DIR=/tmp/target rust:latest sh ci/linux-check.sh
+
 # Checks the self-hosted compiler reproduces itself exactly (three-stage fixpoint)
 selfhost-check:
     cargo test -r -p frost --test native self_hosting_is_a_fixpoint -- --nocapture
