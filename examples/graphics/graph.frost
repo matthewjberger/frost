@@ -1330,6 +1330,14 @@ run_sub :: fn(mut g: Graph, mut f: Frame, sub: i64) {
             // What backs it rather than what it holds. A transient's texture
             // is the pool slot's, and handing over the empty field on the
             // resource itself gives the child a target of nothing.
+            //
+            // Written out here rather than asked of a function taking the
+            // graph and the resource. That shape answers with a field of the
+            // resource down one path, so the answer names a value the caller
+            // holds in its own frame, and putting it into the child's table
+            // would be storing a view of storage that dies first. Both
+            // compilers refuse it, which is the point; this reads the pool
+            // through the graph and copies out of it.
             mut given := source.held
             if (source.transient && source.slot >= 0) {
                 pool := g.pool

@@ -909,6 +909,31 @@ fn collect_answer_sources(
     }
 }
 
+/// The blocks a branching expression holds, walked for the exits inside them.
+/// Only the shapes that carry a block need reaching: everything else is a value
+/// and is read where it is used.
+fn answer_of_branches(
+    value: &Expression,
+    walk: &Answers,
+    environment: &mut HashMap<String, HashSet<usize>>,
+    answer: &mut HashSet<usize>,
+) {
+    match value {
+        Expression::If(_, consequence, alternative) => {
+            answer_of_block(consequence, walk, environment, answer);
+            if let Some(alternative) = alternative {
+                answer_of_block(alternative, walk, environment, answer);
+            }
+        }
+        Expression::Switch(_, cases) => {
+            for case in cases {
+                answer_of_block(&case.body, walk, environment, answer);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Walk a body, binding each local to the parameters its value reaches, and
 /// gather what every exit answers with.
 fn answer_of_block(
@@ -930,6 +955,16 @@ fn answer_of_block(
             | Statement::For(_, _, _, body)
             | Statement::With(_, body) => {
                 answer_of_block(body, walk, environment, answer);
+            }
+            // A branch is an expression, so a `return` written inside one
+            // reaches here as an expression statement rather than as a
+            // statement of its own. Walking only the loops meant every exit
+            // taken from inside an `if` or a `match` was unread, and a function
+            // answering with a view of a parameter from one of those was
+            // recorded as naming nothing: the caller was then free to store it
+            // somewhere that outlives what it points into.
+            Statement::Expression(value) | Statement::Print(value, _) => {
+                answer_of_branches(value, walk, environment, answer);
             }
             _ => {}
         }
