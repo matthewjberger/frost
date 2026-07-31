@@ -585,6 +585,13 @@ bench-selfhost-incremental: selfhost-build
 test:
     cargo test -p frost -- --nocapture
 
+# Random programs through all five oracles, for as many seeds as you ask for.
+# `just test` runs sixty of these; this is the same generator turned up, for
+# hunting rather than for gating. `FROST_FUZZ_FROM` starts somewhere other than
+# zero, so a second run covers ground the first did not.
+fuzz seeds="2000":
+    FROST_FUZZ_SEEDS={{seeds}} cargo test -r -p frost --test fuzz every_compiler_agrees -- --nocapture
+
 # Every `unsafe` block in the tree earns itself (Unix)
 #
 # A block that vouches for nothing is noise on the one list worth reading when

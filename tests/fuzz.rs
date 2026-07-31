@@ -104,13 +104,63 @@ fn gen_float(rng: &mut Rng, depth: u32) -> String {
     }
 }
 
+// What every generated program declares above `main`. Fixed rather than
+// generated, because the shapes that have gone wrong are not the declarations
+// but how a value reaches one: a literal read at the width a binding asks for,
+// a number read back through a name it was given, a pointer to a type whose
+// code the compiler has to look up rather than compute.
+const PRELUDE: &str = "\
+Meters :: distinct i64\n\
+Grip :: distinct ^u8\n\
+Pair :: struct { first: i64, second: f32 }\n\
+LOW :: -2.1\n\
+HIGH :: 1.1\n\
+WIDE :: 0.5\n\
+COUNT :: 7\n\
+no_grip :: fn() -> Grip {\n\
+\x20   zero := 0\n\
+\x20   unsafe { ptr_cast($u8, zero) }\n\
+}\n\
+through :: fn(p: ^Meters) -> i64 {\n\
+\x20   held : Meters = unsafe { p^ }\n\
+\x20   count : i64 = held\n\
+\x20   count\n\
+}\n\
+grips :: fn(p: ^Grip) -> i64 {\n\
+\x20   held : Grip = unsafe { p^ }\n\
+\x20   if (held == no_grip()) {\n\
+\x20       return 1\n\
+\x20   }\n\
+\x20   0\n\
+}\n";
+
+// A float expression written where a binding of a stated width takes it, which
+// is the one place a literal's own width is decided by something other than
+// itself. Printed as a scaled integer, so the four backends are compared on the
+// number rather than on how many digits each writes.
+fn gen_typed_float(rng: &mut Rng, index: usize, width: &str) -> String {
+    let value = match rng.below(4) {
+        // Two constants, so the name is read at the width as well as the
+        // digits. These are the values that are not exact in either width, so
+        // adding them at one and at the other answers differently.
+        0 => "LOW + HIGH".to_string(),
+        1 => "LOW + WIDE".to_string(),
+        _ => format!("{} + {}", gen_float(rng, 1), gen_float(rng, 1)),
+    };
+    format!(
+        "    w{index} : {width} = {value}\n\
+         \x20   print cast($i64, w{index} * 100.0)\n"
+    )
+}
+
 fn gen_program(rng: &mut Rng, lines: usize) -> String {
     // `print` rather than an extern `printf`. It is the language's own, so it
     // needs no `unsafe` and no declaration that a C header might already have
     // its own idea about, and every backend has to agree about what it writes.
-    let mut source = String::from("main :: fn() -> i64 {\n");
+    let mut source = String::from(PRELUDE);
+    source.push_str("main :: fn() -> i64 {\n");
     for index in 0..lines {
-        match rng.below(6) {
+        match rng.below(12) {
             0 => {
                 let cond = gen_cond(rng, 2);
                 let then = gen_expr(rng, 3);
@@ -162,6 +212,85 @@ fn gen_program(rng: &mut Rng, lines: usize) -> String {
                      \x20   print (f{index} == f{index})\n"
                 ));
             }
+            5 => {
+                // A literal read at single precision, and the same shape read
+                // at double beside it. The two answer differently on purpose:
+                // `-2.1 + 1.1` is one number added at one width and another at
+                // the other, and a compiler that reads every float literal at
+                // double answers the wide one twice.
+                let width = if rng.below(2) == 0 { "f32" } else { "f64" };
+                source.push_str(&gen_typed_float(rng, index, width));
+            }
+            6 => {
+                // A number through a distinct type and back. The name is the
+                // whole of the difference, so what comes out has to be what
+                // went in. Half of them read a named constant at the distinct
+                // type, which is the integer counterpart of a float constant
+                // read at a width: the name has to reach the type the same way
+                // the digits would.
+                let expr = if rng.below(2) == 0 {
+                    format!("COUNT + {}", gen_expr(rng, 1))
+                } else {
+                    gen_expr(rng, 2)
+                };
+                source.push_str(&format!(
+                    "    m{index} : Meters = {expr}\n\
+                     \x20   back{index} : i64 = m{index}\n\
+                     \x20   print back{index}\n"
+                ));
+            }
+            7 => {
+                // A pointer to a distinct type, which is the one type this
+                // compiler looks up rather than computes. Reading it back at
+                // the distinct type is what says the lookup answered with the
+                // type rather than with what it is represented by.
+                let expr = gen_expr(rng, 2);
+                source.push_str(&format!(
+                    "    mut p{index} : Meters = {expr}\n\
+                     \x20   print through(ptr_to(p{index}))\n"
+                ));
+            }
+            8 => {
+                // The same, over a pointer rather than an integer. The two go
+                // wrong differently: a distinct over a pointer moves the type
+                // code by a whole stride and one over an integer moves it
+                // inside the first.
+                source.push_str(&format!(
+                    "    mut g{index} := no_grip()\n\
+                     \x20   print grips(ptr_to(g{index}))\n"
+                ));
+            }
+            9 => {
+                // A `match` where a value is wanted. The binding its arms write
+                // into is made before an arm has been read, so what type it
+                // ends up with is decided by the arms and by nothing else.
+                let expr = gen_expr(rng, 2);
+                let (a, b, c) =
+                    (gen_expr(rng, 1), gen_expr(rng, 1), gen_expr(rng, 1));
+                source.push_str(&format!(
+                    "    v{index} := match (({expr}) % 3) {{\n\
+                     \x20       case 0: {a}\n\
+                     \x20       case 1: {b}\n\
+                     \x20       case _: {c}\n\
+                     \x20   }}\n\
+                     \x20   print v{index}\n"
+                ));
+            }
+            10 => {
+                // The same construct answering with something wider than a
+                // register, which is the half of it that was refused outright.
+                let expr = gen_expr(rng, 2);
+                let (a, b) = (gen_expr(rng, 1), gen_expr(rng, 1));
+                let (x, y) = (gen_float(rng, 1), gen_float(rng, 1));
+                source.push_str(&format!(
+                    "    s{index} := match (({expr}) % 2) {{\n\
+                     \x20       case 0: Pair {{ first = {a}, second = {x} }}\n\
+                     \x20       case _: Pair {{ first = {b}, second = {y} }}\n\
+                     \x20   }}\n\
+                     \x20   print s{index}.first\n\
+                     \x20   print cast($i64, s{index}.second * 100.0)\n"
+                ));
+            }
             _ => {
                 let expr = gen_expr(rng, 4);
                 source.push_str(&format!("    print {expr}\n"));
@@ -202,7 +331,11 @@ fn run_backend(name: &str, source: &str, emit_c: bool) -> String {
     String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n")
 }
 
-fn run_ir(name: &str, source: &str) -> String {
+// The interpreter answers for the programs it can hold and says so for the
+// rest: a local wider than a register is one it declines, and the generator
+// writes those on purpose now. A refusal it names is not a disagreement, so it
+// steps aside; anything else it does is.
+fn run_ir(name: &str, source: &str) -> Option<String> {
     let directory = std::env::temp_dir();
     let source_path = directory.join(format!("frost_fuzz_{name}.frost"));
     std::fs::write(&source_path, source).unwrap();
@@ -213,12 +346,15 @@ fn run_ir(name: &str, source: &str) -> String {
         .output()
         .unwrap();
     let _ = std::fs::remove_file(&source_path);
+    let complaint = String::from_utf8_lossy(&output.stderr).to_string();
+    if output.status.code() == Some(3) && complaint.contains("declined") {
+        return None;
+    }
     assert!(
         output.status.success(),
-        "ir interpreter declined a scalar program:\n{source}\n{}",
-        String::from_utf8_lossy(&output.stderr)
+        "the ir interpreter failed rather than declining:\n{source}\n{complaint}"
     );
-    String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n")
+    Some(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"))
 }
 
 fn run_self_hosted(
@@ -237,8 +373,12 @@ fn run_self_hosted(
 // was written and nothing that could see the bug was ever asked.
 #[test]
 fn the_generator_writes_the_constructs_it_claims_to() {
+    // More seeds than the run below, because this one compiles nothing and a
+    // statement kind that shows up once in a dozen needs the room to. Adding
+    // six kinds without widening this is what made it claim a construct had
+    // stopped being written when it had only become rarer.
     let mut corpus = String::new();
-    for seed in 0..60u64 {
+    for seed in 0..300u64 {
         let mut rng = Rng::new(seed);
         corpus.push_str(&gen_program(&mut rng, 4));
     }
@@ -250,6 +390,15 @@ fn the_generator_writes_the_constructs_it_claims_to() {
         ("a float literal", ".25"),
         ("a negative float literal", "-1.5"),
         ("a float comparison", ".5 < "),
+        ("a literal read at single precision", " : f32 = "),
+        ("the same literal read at double", " : f64 = "),
+        ("a constant in a typed float context", "LOW + HIGH"),
+        ("a value through a distinct type", " : Meters = "),
+        ("a pointer to a distinct integer", "through(ptr_to("),
+        ("a pointer to a distinct pointer", "grips(ptr_to("),
+        ("a match where a value is wanted", ":= match (("),
+        ("a match answering with a struct", "case 0: Pair {"),
+        ("a named integer constant at a distinct type", "= COUNT + "),
     ] {
         assert!(
             corpus.contains(needle),
@@ -266,7 +415,19 @@ fn every_compiler_agrees_on_random_programs() {
     // Built once. It is the expensive part, and building it per seed would put
     // the cost of sixty compiles between the fuzzer and anyone running it.
     let hosted = build_self_hosted_compiler("fuzz");
-    for seed in 0..60u64 {
+    // Sixty by default, which is what a gate can afford. `FROST_FUZZ_SEEDS`
+    // raises it for a hunt: the shapes this writes are the ones five oracles
+    // have disagreed about before, and a disagreement that takes a thousand
+    // seeds to reach is still a disagreement.
+    let seeds: u64 = std::env::var("FROST_FUZZ_SEEDS")
+        .ok()
+        .and_then(|held| held.parse().ok())
+        .unwrap_or(60);
+    let first: u64 = std::env::var("FROST_FUZZ_FROM")
+        .ok()
+        .and_then(|held| held.parse().ok())
+        .unwrap_or(0);
+    for seed in first..first + seeds {
         let mut rng = Rng::new(seed);
         let source = gen_program(&mut rng, 4);
         let native = run_backend(&format!("s{seed}"), &source, false);
@@ -275,11 +436,12 @@ fn every_compiler_agrees_on_random_programs() {
             native, via_c,
             "the bootstrap's backends disagree on seed {seed}:\n{source}"
         );
-        let interpreted = run_ir(&format!("s{seed}i"), &source);
-        assert_eq!(
-            native, interpreted,
-            "the IR interpreter disagrees on seed {seed}:\n{source}"
-        );
+        if let Some(interpreted) = run_ir(&format!("s{seed}i"), &source) {
+            assert_eq!(
+                native, interpreted,
+                "the IR interpreter disagrees on seed {seed}:\n{source}"
+            );
+        }
         let Some(compiler) = hosted.as_ref() else {
             continue;
         };
