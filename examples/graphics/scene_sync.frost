@@ -27,8 +27,8 @@ import "mem.frost"
 
 export Drawable, DrawList, SlotTable, ObjectIds, Drawn, Model,
     draw_list_new, draw_list_free, draw_list_count, draw_list_at,
-    slot_table_new, slot_table_free, slot_table_count,
-    scene_sync, OBJECT_FLOATS, OBJECT_BYTES
+    slot_table_new, slot_table_free,
+    scene_sync, OBJECT_BYTES
 
 // One thing's own: its model matrix, its colour, and the two numbers that say
 // how the surface behaves, with the fourth of those carrying which entry of a
@@ -36,12 +36,12 @@ export Drawable, DrawList, SlotTable, ObjectIds, Drawn, Model,
 OBJECT_FLOATS :: 24
 OBJECT_BYTES :: 96
 
-// One thing to draw, as the pass wants it: what to bind, what geometry, and
-// which slot of any per-object run the shader reads.
+// One thing to draw, as the pass wants it: what to bind and what geometry.
+// Which slot of a per-object run belongs to it is written into the uniform
+// rather than carried here, since the shader is what reads it.
 Drawable :: struct {
     binding: BindGroup,
     geometry: Mesh,
-    at: i64,
 }
 
 // What one frame produced. Filled from nothing every frame, because what is in
@@ -109,8 +109,6 @@ slot_table_free :: fn(mut table: SlotTable) {
     heap_release_slice($Slot, table.slots)
     table.count = 0
 }
-
-slot_table_count :: fn(table: SlotTable) -> i64 { table.count }
 
 // The slot an entity already has, or a new one. An entity is matched by both
 // halves of its handle, so a slot left behind by a despawn is not handed to
@@ -222,7 +220,7 @@ push_drawable :: fn(mut list: DrawList, table: SlotTable, slot: i64,
     held := table.slots
     mut items := list.items
     items[list.count] = Drawable { binding = held[slot].binding,
-        geometry = geometry, at = slot }
+        geometry = geometry }
     list.count = list.count + 1
 }
 
