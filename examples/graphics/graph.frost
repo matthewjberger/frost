@@ -23,7 +23,7 @@ export ResourceId, PassId, Resource, GraphPass, Graph,
     graph_save_enabled, graph_restore_enabled,
     graph_run_phase, graph_set_phase, graph_phase_of, ANY_PHASE,
     graph_external_color, graph_set_external,
-    graph_sub, graph_sub_pass, graph_takes,
+    graph_sub, graph_sub_pass, graph_takes, graph_rebuilds, graph_device,
     WINDOW_SIZED, MAX_READS, MAX_WRITES, no_resource
 
 // Which resource, and which pass. Distinct so one cannot be written where the
@@ -101,6 +101,12 @@ Resource :: struct {
     // supplies with `graph_set_external`, which is how the same graph draws
     // into a different target for each camera.
     external: bool,
+    // Whether the texture behind it was made again since the passes that name
+    // it last built their bindings. A bind group holds a view, and a view of a
+    // texture that has been thrown away is a view of nothing, so a resource
+    // that follows the window carries this across a resize and the passes that
+    // read it are told.
+    remade: bool,
     // Whether the graph may hand this resource a texture another resource is
     // also using. A transient is one a pass fills in and a later pass consumes
     // inside the same frame, so once the last reader has run the memory is free
@@ -167,6 +173,11 @@ GraphPass :: struct {
     write_count: i64,
     // Which phase it belongs to. A run asking for one phase skips the rest.
     phase: i64,
+    // What to call when a resource this pass names has been made again. A pass
+    // that reads a target sized by the window keeps a bind group naming its
+    // view, and this is where that binding is built afresh. A pass that reads
+    // nothing that moves never needs one.
+    rebuild: fn(mut Graph, ^u8),
     // Which sub-graph it runs, for a pass that is one. A sub-graph is a graph
     // built on its own and handed over: it schedules itself, owns its own
     // targets, and is ordered inside its parent by what this pass declares it
@@ -368,7 +379,7 @@ add_resource :: fn(mut g: Graph, name: str, kind: ResourceKind, format: u32,
         held = no_texture2d(), buffer = no_buffer(),
         made = false, written = false, sampled = false,
         transient = false, slot = -1, first_use = -1, last_use = -1,
-        external = false,
+        external = false, remade = false,
     }
     g.resource_count = index + 1
     cast($ResourceId, index)
@@ -403,7 +414,7 @@ add_pass :: fn(mut g: Graph, name: str, kind: PassKind,
         clear = clear_black(), reads = [no_resource(); MAX_READS],
         read_count = 0,
         writes = [no_resource(); MAX_WRITES], write_count = 0,
-        sub = -1, phase = 0, enabled = true,
+        rebuild = rebuilds_nothing, sub = -1, phase = 0, enabled = true,
     }
     g.pass_count = index + 1
     cast($PassId, index)
@@ -460,6 +471,15 @@ is_sub :: fn(one: GraphPass) -> bool {
         case .Compute: false
     }
 }
+
+// What a pass does when the targets it reads have been made again. Told rather
+// than worked out: only the pass knows which bindings name which view.
+graph_rebuilds :: fn(mut g: Graph, p: PassId, rebuild: fn(mut Graph, ^u8)) {
+    mut held := g.passes
+    held[pass_index(p)].rebuild = rebuild
+}
+
+rebuilds_nothing :: fn(g: Graph, state: ^u8) { }
 
 // The half of a pass that its kind does not use. Neither is ever called: the
 // kind decides which one is, and a pass is made through one of the two entry
@@ -787,9 +807,12 @@ check_declarations :: fn(mut g: Graph) -> bool {
                 print resource_name(g, wanted)
                 ok = false
             }
-            i_sized := resource_window_sized(g, wanted)
-            if (i_sized) {
-                print "graph: a resource a pass reads may not follow the window, since the bind group would hold a dead view:"
+            // A target sized by the window is thrown away and made again on a
+            // resize, so a binding naming its view has to be built again too.
+            // A pass that says how is handed the shape; one that does not
+            // would read a view of a texture that no longer exists.
+            if (resource_window_sized(g, wanted) && rebuilds(one) == false) {
+                print "graph: this pass reads a resource that follows the window and does not say how it rebuilds, so its binding would hold a dead view:"
                 print one.name
                 print resource_name(g, wanted)
                 ok = false
@@ -817,6 +840,11 @@ check_declarations :: fn(mut g: Graph) -> bool {
         r = r + 1
     }
     ok
+}
+
+// Whether a pass was given something to call when its targets move.
+rebuilds :: fn(one: GraphPass) -> bool {
+    one.rebuild != rebuilds_nothing
 }
 
 is_backbuffer :: fn(one: Resource) -> bool {
@@ -895,6 +923,7 @@ make_resources :: fn(mut g: Graph) {
             if (w > 0 && h > 0) {
                 held[i].held = make_one(g.device, one, w, h)
                 held[i].made = true
+                held[i].remade = true
             }
         }
         i = i + 1
@@ -916,7 +945,20 @@ make_pool :: fn(mut g: Graph) {
             if (w > 0 && h > 0) {
                 pool[i].held = make_pool_one(g.device, slot, w, h)
                 pool[i].made = true
+                mark_slot_remade(g, i)
             }
+        }
+        i = i + 1
+    }
+}
+
+// Every resource sharing a slot has a new view when that slot is made again.
+mark_slot_remade :: fn(mut g: Graph, slot: i64) {
+    mut held := g.resources
+    mut i : i64 = 0
+    while (i < g.resource_count) {
+        if (held[i].transient && held[i].slot == slot) {
+            held[i].remade = true
         }
         i = i + 1
     }
@@ -988,6 +1030,40 @@ graph_resize :: fn(mut g: Graph, w: i64, h: i64) {
         slot = slot + 1
     }
     make_resources(g)
+    tell_passes(g)
+}
+
+// Every pass that names a resource made again since it last built its
+// bindings, told once, and the marks cleared behind them.
+tell_passes :: fn(mut g: Graph) {
+    mut p : i64 = 0
+    while (p < g.pass_count) {
+        held := g.passes
+        one := held[p]
+        mut touched : bool = false
+        mut r : i64 = 0
+        while (r < g.resource_count) {
+            kept := g.resources
+            if (kept[r].remade && (pass_reads(g, p, r) || pass_writes(g, p, r))) {
+                touched = true
+            }
+            r = r + 1
+        }
+        if (touched) {
+            // Read out of the table before the call, so nothing of the graph is
+            // still borrowed while the pass reaches back into it for its view.
+            rebuild := one.rebuild
+            state := one.state
+            rebuild(g, state)
+        }
+        p = p + 1
+    }
+    mut i : i64 = 0
+    while (i < g.resource_count) {
+        mut kept := g.resources
+        kept[i].remade = false
+        i = i + 1
+    }
 }
 
 // The view of a resource the graph owns. A graph learns its size from
@@ -1127,6 +1203,10 @@ graph_restore_enabled :: fn(mut g: Graph) {
         i = i + 1
     }
 }
+
+// The device the graph was opened with, for a pass rebuilding a binding when
+// its targets have moved and holding no device of its own.
+graph_device :: fn(g: Graph) -> Device { g.device }
 
 // Which pass runs nth, so a test can read the order without drawing.
 graph_order_at :: fn(g: Graph, n: i64) -> i64 {
@@ -1290,6 +1370,7 @@ target_for :: fn(mut g: Graph, f: Frame, one: GraphPass) -> Target {
 // and without drawing.
 nothing_drawn :: fn(pass: RenderPassEncoder, state: ^u8) { }
 nothing_dispatched :: fn(pass: ComputePassEncoder, state: ^u8) { }
+nothing_rebuilt :: fn(g: Graph, state: ^u8) { }
 
 test "a pass runs after the pass whose write it reads" {
     mut g := graph_new(no_device(), 4, 4)
@@ -1617,7 +1698,7 @@ test "a size is a share of the window" {
     assert(sized(-4, 1280) == 320)
 }
 
-test "a resource that follows the window may not be read" {
+test "a resource that follows the window may not be read blindly" {
     mut g := graph_new(no_device(), 4, 4)
     screen := graph_backbuffer(g)
     sized := graph_depth(g, "sized", WINDOW_SIZED, WINDOW_SIZED, 0)
@@ -1627,6 +1708,22 @@ test "a resource that follows the window may not be read" {
     graph_writes_color(g, reader, screen, clear_black())
     graph_reads(g, reader, sized)
     assert(graph_schedule(g) == false)
+    graph_free(g)
+}
+
+test "a pass that says how it rebuilds may read one" {
+    mut g := graph_new(no_device(), 4, 4)
+    screen := graph_backbuffer(g)
+    sized := graph_color(g, "sized", WINDOW_SIZED, WINDOW_SIZED, 0)
+    writer := graph_pass(g, "writer", nothing_drawn, no_pointer())
+    graph_writes_color(g, writer, sized, clear_black())
+    reader := graph_pass(g, "reader", nothing_drawn, no_pointer())
+    graph_writes_color(g, reader, screen, clear_black())
+    graph_reads(g, reader, sized)
+    // The same graph the case above refuses, and the one line that makes it a
+    // graph that can run: the pass says what to call when its input moves.
+    graph_rebuilds(g, reader, nothing_rebuilt)
+    assert(graph_schedule(g))
     graph_free(g)
 }
 
@@ -1653,11 +1750,17 @@ test "the first write of a resource clears it and the second loads it" {
     graph_free(g)
 }
 
+// What a pass draws into, which is the one place the three kinds of backing
+// meet: the window's own texture comes from the frame, a transient's comes from
+// the slot it shares, and everything else owns its own.
 view_of :: fn(mut g: Graph, f: Frame, r: ResourceId) -> TextureView {
     held := g.resources
     one := held[resource_index(r)]
     if (is_backbuffer(one)) {
         return frame_view(f)
+    }
+    if (one.transient) {
+        return pool_view(g, one)
     }
     one.held.view
 }

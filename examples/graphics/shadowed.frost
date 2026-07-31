@@ -4,27 +4,35 @@
 //
 // W/A/S/D move, Q and E drop and rise, the arrow keys look, escape closes it.
 //
-// This is the demo the render graph exists for. Two passes, one resource
-// between them: the shadow pass draws the scene from where the light is and
-// keeps only depth, and the scene pass samples that depth to ask, for every
-// point it lights, whether the light can see it. The order matters absolutely.
-// Sampling the shadow map before it was written this frame gives last frame's
-// shadows, which on a spinning scene reads as shadows lagging the objects that
-// cast them.
+// This is the demo the render graph exists for. Five passes and a chain of
+// resources between them: the shadow pass draws the scene from where the light
+// is and keeps only depth; the scene pass samples that depth to ask, for every
+// point it lights, whether the light can see it, and draws into a target rather
+// than at the window; two steps pull the bright parts out and spread them; and
+// a last pass adds the two together onto the window.
 //
-// Nothing here says which pass runs first. The shadow pass declares that it
-// writes the map, the scene pass declares that it reads it, and that is the
-// whole ordering: `graph_schedule` puts the writer before the reader, refuses a
-// graph where they wait on each other, and refuses a read of a resource nothing
-// writes. Both load ops come from the same declarations.
+// Nothing here says what runs when. Each pass declares what it reads and what
+// it writes, and the order falls out: `graph_schedule` puts every writer before
+// its reader, refuses a graph where two wait on each other, and refuses a read
+// of a resource nothing writes. Every load op comes from the same declarations.
 //
-// Two things about a shadow map are worth pointing at, because both are easy to
-// get wrong and neither looks like a bug in the code:
+// The three targets in the middle are transient, which is the graph's word for
+// written and consumed inside one frame. The graph works out when each is first
+// and last touched and hands two of them the same texture wherever their
+// lifetimes leave room, so the chain does not cost one full-size target per
+// step. The two bloom steps are declared at `HALF`, a negative size meaning a
+// share of the window rather than a count of texels.
 //
-// The map is 1024 by 1024 and does not follow the window. A resource the scene
-// samples must not, because the bind group naming it is made once and a resize
-// would leave it pointing at a texture that no longer exists. The graph refuses
-// that rather than leaving it to be found later.
+// Three things are worth pointing at, because each is easy to get wrong and
+// none of them looks like a bug in the code:
+//
+// A target sized by the window is thrown away and made again on a resize, so a
+// binding naming its view would be left pointing at a texture that no longer
+// exists. A pass that reads one says how it rebuilds, and the graph calls that
+// after a resize; a pass that reads one and says nothing is refused.
+//
+// The shadow map is 1024 by 1024 and does not follow the window, because what
+// it covers is a piece of the world rather than a piece of the screen.
 //
 // Depth in WebGPU runs from zero at the near plane to one at the far plane, not
 // from minus one, which is why the light's projection is `mat4_ortho_zo`. The
@@ -46,6 +54,10 @@ import "io.frost"
 
 WIDTH :: 1280
 HEIGHT :: 720
+
+// The post-process chain runs at a share of the window rather than at all of
+// it, which is what a negative size means to the graph: -2 is half.
+HALF :: -2
 
 // How wide the shadow map is. Fixed rather than window-sized: what it covers is
 // a piece of the world, which the window has nothing to do with.
@@ -207,6 +219,86 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         * (frame.ambient.rgb + frame.light_color.rgb * strength * lambert)
         + frame.light_color.rgb * strength * highlight;
     return vec4<f32>(lit, object.base_color.a);
+}
+"
+
+// A triangle that covers the screen, built from the vertex index with no
+// vertex buffer at all, and the two steps of a bloom over what the scene left.
+//
+// The chain is what the graph's transients are for: `bright` and `blurred` are
+// written and consumed inside one frame, so the graph hands them one texture
+// between them when their lifetimes allow, and both run at half the window.
+POST_SHADER :: "
+struct Coverage {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+}
+
+@vertex
+fn vs_cover(@builtin(vertex_index) index: u32) -> Coverage {
+    var out: Coverage;
+    let x = f32((index & 1u) << 1u);
+    let y = f32(index & 2u);
+    out.clip = vec4<f32>(x * 2.0 - 1.0, y * 2.0 - 1.0, 0.0, 1.0);
+    out.uv = vec2<f32>(x, 1.0 - y);
+    return out;
+}
+
+@group(0) @binding(0) var source: texture_2d<f32>;
+@group(0) @binding(1) var reader: sampler;
+
+// What is brighter than the scene's own range, which is what blooms.
+@fragment
+fn fs_bright(in: Coverage) -> @location(0) vec4<f32> {
+    let held = textureSample(source, reader, in.uv).rgb;
+    let strength = max(dot(held, vec3<f32>(0.2126, 0.7152, 0.0722)) - 1.0, 0.0);
+    return vec4<f32>(held * strength, 1.0);
+}
+
+// Nine taps across the texel grid, which at half resolution is a wide enough
+// spread to read as a glow without a second pass in the other direction.
+@fragment
+fn fs_blur(in: Coverage) -> @location(0) vec4<f32> {
+    let texel = 1.0 / vec2<f32>(textureDimensions(source));
+    var total = vec3<f32>(0.0, 0.0, 0.0);
+    for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+            let at = in.uv + vec2<f32>(f32(x), f32(y)) * texel * 2.0;
+            total = total + textureSample(source, reader, at).rgb;
+        }
+    }
+    return vec4<f32>(total / 9.0, 1.0);
+}
+"
+
+// The scene and the glow added over it. A second group, because this one reads
+// two textures rather than one.
+COMPOSE_SHADER :: "
+struct Coverage {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+}
+
+@vertex
+fn vs_cover(@builtin(vertex_index) index: u32) -> Coverage {
+    var out: Coverage;
+    let x = f32((index & 1u) << 1u);
+    let y = f32(index & 2u);
+    out.clip = vec4<f32>(x * 2.0 - 1.0, y * 2.0 - 1.0, 0.0, 1.0);
+    out.uv = vec2<f32>(x, 1.0 - y);
+    return out;
+}
+
+@group(0) @binding(0) var scene: texture_2d<f32>;
+@group(0) @binding(1) var scene_reader: sampler;
+@group(1) @binding(0) var glow: texture_2d<f32>;
+@group(1) @binding(1) var glow_reader: sampler;
+
+@fragment
+fn fs_compose(in: Coverage) -> @location(0) vec4<f32> {
+    let lit = textureSample(scene, scene_reader, in.uv).rgb;
+    let added = textureSample(glow, glow_reader, in.uv).rgb;
+    return vec4<f32>(lit + added, 1.0);
 }
 "
 
@@ -487,6 +579,138 @@ make_scene_pipeline :: fn(device: Device, shader: ShaderModule, format: u32,
     device_create_render_pipeline(device, ptr_to(descriptor))
 }
 
+// A step of the chain: one pipeline, the layout its input is bound through,
+// and which resource that input is. The binding is remade whenever the graph
+// says the texture behind it moved, which is every resize, since these follow
+// the window.
+Step :: struct {
+    pipeline: RenderPipeline,
+    layout: BindGroupLayout,
+    source: ResourceId,
+    group: BindGroup,
+    // The compose step reads two, so it carries a second of each.
+    second_layout: BindGroupLayout,
+    second_source: ResourceId,
+    second_group: BindGroup,
+    reads_two: i64,
+}
+
+// One fullscreen triangle. No vertex buffer: the three corners come from the
+// vertex index, so there is nothing to bind but the texture being read.
+draw_cover :: fn(pass: RenderPassEncoder, state: ^u8) {
+    mut step := unsafe { ptr_cast($Step, state) }
+    render_pass_encoder_set_pipeline(pass, unsafe { step^.pipeline })
+    render_pass_encoder_set_bind_group(pass, 0, unsafe { step^.group }, 0,
+        no_pointer())
+    if (unsafe { step^.reads_two } == 1) {
+        render_pass_encoder_set_bind_group(pass, 1,
+            unsafe { step^.second_group }, 0, no_pointer())
+    }
+    render_pass_encoder_draw(pass, 3, 1, 0, 0)
+}
+
+// What the graph calls when a texture this step reads has been made again. A
+// bind group holds a view, and a resize throws the view away, so the binding is
+// built afresh from what the graph now holds.
+rebuild_step :: fn(mut g: Graph, state: ^u8) {
+    mut step := unsafe { ptr_cast($Step, state) }
+    unsafe {
+        step^.group = sampled_group(graph_device(g), step^.layout,
+            graph_view(g, step^.source), graph_sampler(g, step^.source))
+    }
+    if (unsafe { step^.reads_two } == 1) {
+        unsafe {
+            step^.second_group = sampled_group(graph_device(g),
+                step^.second_layout, graph_view(g, step^.second_source),
+                graph_sampler(g, step^.second_source))
+        }
+    }
+}
+
+// A texture and the sampler that reads it, which is what every step of the
+// chain binds and nothing else.
+sampled_layout :: fn(device: Device) -> BindGroupLayout {
+    mut entries : [2]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 2]
+    entries[0].binding = 0
+    entries[0].visibility = ShaderStage::Fragment
+    entries[0].texture.sample_type = TEXTURE_SAMPLE_TYPE_FLOAT
+    entries[0].texture.view_dimension = TEXTURE_VIEW_DIMENSION_2D
+    entries[1].binding = 1
+    entries[1].visibility = ShaderStage::Fragment
+    entries[1].sampler.type = SAMPLER_BINDING_TYPE_FILTERING
+    mut descriptor := bind_group_layout_descriptor_init()
+    descriptor.entries_count = 2
+    descriptor.entries = ptr_to(entries[0])
+    device_create_bind_group_layout(device, ptr_to(descriptor))
+}
+
+sampled_group :: fn(device: Device, layout: BindGroupLayout, view: TextureView,
+    reader: Sampler) -> BindGroup {
+    mut entries : [2]BindGroupEntry = [bind_group_entry_init(); 2]
+    entries[0].binding = 0
+    entries[0].texture_view = view
+    entries[1].binding = 1
+    entries[1].sampler = reader
+    mut descriptor := bind_group_descriptor_init()
+    descriptor.layout = layout
+    descriptor.entries_count = 2
+    descriptor.entries = ptr_to(entries[0])
+    device_create_bind_group(device, ptr_to(descriptor))
+}
+
+// A pipeline over the fullscreen triangle, with no vertex buffer and no depth.
+make_cover_pipeline :: fn(device: Device, shader: ShaderModule, format: u32,
+    entry: str, layout: PipelineLayout) -> RenderPipeline {
+    mut target := color_target_state_init()
+    target.format = format
+    target.write_mask = ColorWriteMask::All
+
+    mut fragment := fragment_state_init()
+    fragment.module = shader
+    // The entry point as C reads it: the same bytes with the length beside them
+    // rather than a terminator at the end. A literal written here is coerced;
+    // one arriving as a `str` needs the pointer said, and that is all the block
+    // vouches for.
+    fragment.entry_point = StringView {
+        data = unsafe { ptr_cast($i8, ptr_to(entry[0])) },
+        length = str_len(entry) }
+    fragment.targets_count = 1
+    fragment.targets = ptr_to(target)
+
+    mut descriptor := render_pipeline_descriptor_init()
+    descriptor.layout = layout
+    descriptor.vertex.module = shader
+    descriptor.vertex.entry_point = StringView { data = "vs_cover",
+        length = 8 }
+    descriptor.vertex.buffers_count = 0
+    descriptor.primitive.topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
+    descriptor.primitive.front_face = FRONT_FACE_CCW
+    descriptor.primitive.cull_mode = CULL_MODE_NONE
+    descriptor.multisample.count = 1
+    descriptor.multisample.mask = 4294967295
+    descriptor.fragment = ptr_to(fragment)
+    device_create_render_pipeline(device, ptr_to(descriptor))
+}
+
+cover_layout :: fn(device: Device, groups: i64,
+    mut layouts: [2]BindGroupLayout) -> PipelineLayout {
+    mut descriptor := pipeline_layout_descriptor_init()
+    descriptor.bind_group_layouts_count = groups
+    descriptor.bind_group_layouts = ptr_to(layouts[0])
+    device_create_pipeline_layout(device, ptr_to(descriptor))
+}
+
+make_post_shader :: fn(device: Device, source: str) -> ShaderModule {
+    mut wgsl := shader_source_WGSL_init()
+    wgsl.chain.stype = S_TYPE_SHADER_SOURCE_WGSL
+    wgsl.code = StringView {
+        data = unsafe { ptr_cast($i8, ptr_to(source[0])) },
+        length = str_len(source) }
+    mut module_descriptor := shader_module_descriptor_init()
+    module_descriptor.next_in_chain = ptr_to(wgsl)
+    device_create_shader_module(device, ptr_to(module_descriptor))
+}
+
 main :: fn() -> i64 {
     mut p := platform_open("Frost shadowed scene", WIDTH, HEIGHT)
     if (platform_ok(p) == false) {
@@ -620,15 +844,25 @@ main :: fn() -> i64 {
 
     shader := make_shader(device)
 
-    // Two resources and two passes. The shadow map is the only thing between
-    // them, and it is the whole of the order: nothing here says which runs
-    // first.
-    mut graph := graph_new(device, 3, 2)
+    // Six resources and five passes. Nothing below says what runs when: the
+    // shadow map, the lit scene and the two steps of the bloom are each written
+    // by one pass and read by another, and that is the whole of the order.
+    mut graph := graph_new(device, 6, 5)
     screen := graph_backbuffer(graph)
     shadow_map := graph_depth(graph, "shadow map", SHADOW_SIZE, SHADOW_SIZE,
         DEPTH_FORMAT)
-    depth := graph_depth(graph, "depth", WINDOW_SIZED, WINDOW_SIZED,
+    depth := graph_transient_depth(graph, "depth", WINDOW_SIZED, WINDOW_SIZED,
         DEPTH_FORMAT)
+    // The scene is drawn into a target rather than at the window, so the chain
+    // has something to read. It and the two bloom steps are transient: written
+    // and consumed inside one frame, so the graph hands them one texture
+    // between them wherever their lifetimes leave room.
+    lit := graph_transient_color(graph, "lit", WINDOW_SIZED, WINDOW_SIZED,
+        renderer_format(r))
+    bright := graph_transient_color(graph, "bright", HALF, HALF,
+        renderer_format(r))
+    blurred := graph_transient_color(graph, "blurred", HALF, HALF,
+        renderer_format(r))
 
     mut shadow_scene := Scene {
         pipeline = make_shadow_pipeline(device, shader, shadow_pipeline_layout),
@@ -652,10 +886,60 @@ main :: fn() -> i64 {
         count = INSTANCES, samples_shadow = 1,
     }
     lit_pass := graph_pass(graph, "scene", draw_things, ptr_to(lit_scene))
-    graph_writes_color(graph, lit_pass, screen,
+    graph_writes_color(graph, lit_pass, lit,
         Color { r = 0.05, g = 0.06, b = 0.09, a = 1.0 })
     graph_writes_depth(graph, lit_pass, depth)
     graph_reads(graph, lit_pass, shadow_map)
+
+    // The chain. Each step is the same fullscreen triangle with a different
+    // fragment entry and a different input, and each is declared in whatever
+    // order reads well: what runs when comes from the reads and writes.
+    post_shader := make_post_shader(device, POST_SHADER)
+    compose_shader := make_post_shader(device, COMPOSE_SHADER)
+    sampled := sampled_layout(device)
+    mut one_group : [2]BindGroupLayout = [sampled, sampled]
+    one_layout := cover_layout(device, 1, one_group)
+    mut two_groups : [2]BindGroupLayout = [sampled, sampled]
+    two_layout := cover_layout(device, 2, two_groups)
+
+    mut bright_step := Step {
+        pipeline = make_cover_pipeline(device, post_shader, renderer_format(r),
+            "fs_bright", one_layout),
+        layout = sampled, source = lit, group = no_bind_group(),
+        second_layout = sampled, second_source = lit,
+        second_group = no_bind_group(), reads_two = 0,
+    }
+    bright_pass := graph_pass(graph, "bright", draw_cover,
+        ptr_to(bright_step))
+    graph_writes_color(graph, bright_pass, bright, Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 })
+    graph_reads(graph, bright_pass, lit)
+    graph_rebuilds(graph, bright_pass, rebuild_step)
+
+    mut blur_step := Step {
+        pipeline = make_cover_pipeline(device, post_shader, renderer_format(r),
+            "fs_blur", one_layout),
+        layout = sampled, source = bright, group = no_bind_group(),
+        second_layout = sampled, second_source = bright,
+        second_group = no_bind_group(), reads_two = 0,
+    }
+    blur_pass := graph_pass(graph, "blur", draw_cover, ptr_to(blur_step))
+    graph_writes_color(graph, blur_pass, blurred, Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 })
+    graph_reads(graph, blur_pass, bright)
+    graph_rebuilds(graph, blur_pass, rebuild_step)
+
+    mut compose_step := Step {
+        pipeline = make_cover_pipeline(device, compose_shader,
+            renderer_format(r), "fs_compose", two_layout),
+        layout = sampled, source = lit, group = no_bind_group(),
+        second_layout = sampled, second_source = blurred,
+        second_group = no_bind_group(), reads_two = 1,
+    }
+    compose_pass := graph_pass(graph, "compose", draw_cover,
+        ptr_to(compose_step))
+    graph_writes_color(graph, compose_pass, screen, Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 })
+    graph_reads(graph, compose_pass, lit)
+    graph_reads(graph, compose_pass, blurred)
+    graph_rebuilds(graph, compose_pass, rebuild_step)
 
     scheduled := graph_schedule(graph)
     if (scheduled == false) {

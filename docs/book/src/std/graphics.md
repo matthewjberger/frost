@@ -22,7 +22,7 @@ comes straight out of [math.md](math.md).
 | `scene.frost` | Entities in an ECS, two passes, depth deciding what is in front |
 | `spinning.frost` | Lit surfaces: a mesh cache, a material registry, two bind groups |
 | `textured.frost` | The same field with its surfaces read off an image |
-| `shadowed.frost` | A shadow pass and a scene pass, ordered by the map between them |
+| `shadowed.frost` | A shadow pass, a lit scene, and a bloom chain over it |
 
 ```bash
 just window
