@@ -4,7 +4,8 @@
 //
 // W/A/S/D move, Q and E drop and rise, the arrow keys look, escape closes it.
 //
-// This is the demo the render graph exists for. Six passes and a chain of
+// This is the demo the render graph exists for. Eight passes, one of them a
+// graph of its own, and a chain of
 // resources between them: a compute pass works out a glow per thing that is
 // drawn; the shadow pass draws the scene from where the light is and keeps only
 // depth; the scene pass samples that depth to ask, for every point it lights,
@@ -12,7 +13,12 @@
 // than at the window; two steps pull the bright parts out and spread them; and
 // a last pass adds the two together onto the window.
 //
-// The compute pass is written last of the six and runs first. Nothing between
+// The second view in the corner is a sub-graph: its own target, its own depth
+// and its own scene pass, run by a pass here that declares what it writes, so
+// where the nested work falls in the order is decided the same way everything
+// else is.
+//
+// The compute pass is written last of the six drawing passes and runs first. Nothing between
 // it and the scene is an attachment: it writes a run of bytes and the scene
 // reads them, and a buffer written by one pass and read by another is an
 // ordering like any other.
@@ -91,6 +97,13 @@ LOWEST_CLEARANCE :: 1.125
 ROW_RISE :: 2.25
 ROW_DEPTH :: 1.5
 COLUMN_SPACING :: 3.25
+
+// The inset view in the corner, and how big it is. A fixed size rather than a
+// share of the window: it is a picture of the scene from somewhere else, and
+// what it is worth showing does not change with how big the window got.
+INSET_WIDTH :: 384
+INSET_HEIGHT :: 216
+INSET_MARGIN :: 24
 
 // How many bytes the glow buffer takes. One float per thing that is drawn,
 // rounded up to what a storage binding wants to start on.
@@ -306,6 +319,12 @@ fn fs_bright(in: Coverage) -> @location(0) vec4<f32> {
     let held = textureSample(source, reader, in.uv).rgb;
     let strength = max(dot(held, vec3<f32>(0.2126, 0.7152, 0.0722)) - 1.0, 0.0);
     return vec4<f32>(held * strength, 1.0);
+}
+
+// The texture as it is, for putting one picture inside another.
+@fragment
+fn fs_blit(in: Coverage) -> @location(0) vec4<f32> {
+    return textureSample(source, reader, in.uv);
 }
 
 // Nine taps across the texel grid, which at half resolution is a wide enough
@@ -661,12 +680,24 @@ Step :: struct {
     second_source: ResourceId,
     second_group: BindGroup,
     reads_two: i64,
+    // Where in the target it draws, or a width of zero for the whole of it.
+    // The inset is the one step that covers part of the screen rather than all
+    // of it, and a viewport is what says so without a second pipeline.
+    at_x: f32,
+    at_y: f32,
+    at_width: f32,
+    at_height: f32,
 }
 
 // One fullscreen triangle. No vertex buffer: the three corners come from the
 // vertex index, so there is nothing to bind but the texture being read.
 draw_cover :: fn(pass: RenderPassEncoder, state: ^u8) {
     mut step := unsafe { ptr_cast($Step, state) }
+    if (unsafe { step^.at_width } > 0.0) {
+        render_pass_encoder_set_viewport(pass, unsafe { step^.at_x },
+            unsafe { step^.at_y }, unsafe { step^.at_width },
+            unsafe { step^.at_height }, 0.0, 1.0)
+    }
     render_pass_encoder_set_pipeline(pass, unsafe { step^.pipeline })
     render_pass_encoder_set_bind_group(pass, 0, unsafe { step^.group }, 0,
         no_pointer())
@@ -991,7 +1022,14 @@ main :: fn() -> i64 {
     // Six resources and five passes. Nothing below says what runs when: the
     // shadow map, the lit scene and the two steps of the bloom are each written
     // by one pass and read by another, and that is the whole of the order.
-    mut graph := graph_new(device, 7, 6)
+    // The second view, drawn from somewhere else with the same scene. Only the
+    // frame differs: the same slots, the same meshes and the same pipeline, so
+    // a second camera costs one uniform and one binding.
+    inset_uniform := uniform_buffer(device, FRAME_BYTES)
+    inset_frame_group := uniform_group(device, frame_layout, inset_uniform,
+        FRAME_BYTES)
+
+    mut graph := graph_new(device, 8, 8)
     screen := graph_backbuffer(graph)
     shadow_map := graph_depth(graph, "shadow map", SHADOW_SIZE, SHADOW_SIZE,
         DEPTH_FORMAT)
@@ -1011,6 +1049,10 @@ main :: fn() -> i64 {
     // samples it; one pass fills it and another reads it, which is the only
     // thing the graph needs to put them in order.
     glow := graph_buffer(graph, "glow", GLOW_BYTES, BufferUsage::Storage)
+    // What the second view is drawn into. Transient like the rest of the
+    // chain, and a fixed size, so the binding that reads it is built once.
+    inset := graph_transient_color(graph, "inset", INSET_WIDTH, INSET_HEIGHT,
+        renderer_format(r))
 
     mut shadow_scene := Scene {
         pipeline = make_shadow_pipeline(device, shader, shadow_pipeline_layout),
@@ -1069,6 +1111,7 @@ main :: fn() -> i64 {
         layout = sampled, source = lit, group = no_bind_group(),
         second_layout = sampled, second_source = lit,
         second_group = no_bind_group(), reads_two = 0,
+        at_x = 0.0, at_y = 0.0, at_width = 0.0, at_height = 0.0,
     }
     bright_pass := graph_pass(graph, "bright", draw_cover,
         ptr_to(bright_step))
@@ -1082,6 +1125,7 @@ main :: fn() -> i64 {
         layout = sampled, source = bright, group = no_bind_group(),
         second_layout = sampled, second_source = bright,
         second_group = no_bind_group(), reads_two = 0,
+        at_x = 0.0, at_y = 0.0, at_width = 0.0, at_height = 0.0,
     }
     blur_pass := graph_pass(graph, "blur", draw_cover, ptr_to(blur_step))
     graph_writes_color(graph, blur_pass, blurred, Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 })
@@ -1094,6 +1138,7 @@ main :: fn() -> i64 {
         layout = sampled, source = lit, group = no_bind_group(),
         second_layout = sampled, second_source = blurred,
         second_group = no_bind_group(), reads_two = 1,
+        at_x = 0.0, at_y = 0.0, at_width = 0.0, at_height = 0.0,
     }
     compose_pass := graph_pass(graph, "compose", draw_cover,
         ptr_to(compose_step))
@@ -1101,6 +1146,56 @@ main :: fn() -> i64 {
     graph_reads(graph, compose_pass, lit)
     graph_reads(graph, compose_pass, blurred)
     graph_rebuilds(graph, compose_pass, rebuild_step)
+
+    // The second view is a graph of its own: its own target, its own depth, its
+    // own pass. It is handed to this one and run by a pass here, so where the
+    // nested work falls in the order comes from what that pass declares it
+    // writes, the same as everything else.
+    mut inset_graph := graph_new(device, 2, 1)
+    inset_target := graph_external_color(inset_graph, "target")
+    inset_depth := graph_depth(inset_graph, "depth", INSET_WIDTH, INSET_HEIGHT,
+        DEPTH_FORMAT)
+    mut inset_scene := Scene {
+        pipeline = lit_scene.pipeline,
+        frame_group = inset_frame_group,
+        slots = slots, meshes = meshes,
+        shadow_group = no_bind_group(), glow_group = no_bind_group(),
+        count = INSTANCES, samples_shadow = 1,
+    }
+    inset_scene_pass := graph_pass(inset_graph, "inset scene", draw_things,
+        ptr_to(inset_scene))
+    graph_writes_color(inset_graph, inset_scene_pass, inset_target,
+        Color { r = 0.02, g = 0.02, b = 0.04, a = 1.0 })
+    graph_writes_depth(inset_graph, inset_scene_pass, inset_depth)
+    if (graph_schedule(inset_graph) == false) {
+        print_str_line("the inset graph cannot run")
+    }
+
+    sub := graph_sub(graph, inset_graph)
+    inset_pass := graph_sub_pass(graph, "inset view", sub)
+    graph_writes_color(graph, inset_pass, inset,
+        Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 })
+    // What the child draws into is what this graph holds for `inset`, given
+    // again every time the child runs.
+    graph_takes(graph, sub, inset_target, inset)
+
+    // Last, and over the top: the second view drawn into a corner of what the
+    // compose pass left. Both write the window, and the graph keeps them in the
+    // order they were declared, so this one loads rather than clears.
+    mut inset_step := Step {
+        pipeline = make_cover_pipeline(device, post_shader, renderer_format(r),
+            "fs_blit", one_layout),
+        layout = sampled, source = inset, group = no_bind_group(),
+        second_layout = sampled, second_source = inset,
+        second_group = no_bind_group(), reads_two = 0,
+        at_x = INSET_MARGIN, at_y = INSET_MARGIN,
+        at_width = INSET_WIDTH, at_height = INSET_HEIGHT,
+    }
+    corner_pass := graph_pass(graph, "corner", draw_cover,
+        ptr_to(inset_step))
+    graph_writes_color(graph, corner_pass, screen,
+        Color { r = 0.0, g = 0.0, b = 0.0, a = 1.0 })
+    graph_reads(graph, corner_pass, inset)
 
     scheduled := graph_schedule(graph)
     if (scheduled == false) {
@@ -1118,6 +1213,12 @@ main :: fn() -> i64 {
         graph_buffer_of(graph, glow), GLOW_BYTES)
     lit_scene.glow_group = storage_group(device, read_glow,
         graph_buffer_of(graph, glow), GLOW_BYTES)
+    // The inset's own bindings. Its target is a fixed size, so what reads it is
+    // built here once and stays good across a resize.
+    inset_scene.shadow_group = lit_scene.shadow_group
+    inset_scene.glow_group = lit_scene.glow_group
+    inset_step.group = sampled_group(device, sampled, graph_view(graph, inset),
+        graph_sampler(graph, inset))
 
     light := vec3_normalize(vec3(-0.55, -1.0, -0.4))
 
@@ -1139,6 +1240,15 @@ main :: fn() -> i64 {
         elapsed = elapsed + step
         write_frame(queue, frame_uniform, eye, light, elapsed, width(p),
             height(p))
+        // The second camera, looking back at the scene from the other side and
+        // fixed rather than driven, so the inset shows what the first one
+        // cannot see.
+        mut watcher := camera_default()
+        watcher.position = vec3(9.0, 5.0, -9.0)
+        watcher.yaw = 2.4
+        watcher.pitch = -0.35
+        write_frame(queue, inset_uniform, watcher, light, elapsed, INSET_WIDTH,
+            INSET_HEIGHT)
         prepare(world, queue, entities, slots, registry, placement, spin,
             drawn, step)
 

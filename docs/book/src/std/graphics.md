@@ -294,7 +294,14 @@ phase with a different external bound.
 ### Sub-graphs
 
 A graph built on its own can be handed to another with `graph_sub`, and
-`graph_sub_pass` is a pass that runs it. The pass declares what it reads and
+`graph_sub_pass` is a pass that runs it. `shadowed.frost` uses one for a second
+camera: a child graph with its own target, its own depth and its own scene pass,
+drawn into a corner of the window by a pass that reads what the child wrote.
+
+A sub-graph cannot be reached once it has been handed over, so `graph_resize`
+reaches its children. A child whose resources are a fixed size makes them on the
+first of those and ignores the rest; one whose resources follow the window
+follows the same window its parent does. The pass declares what it reads and
 writes like any other, which is what puts the nested work in the right place in
 the parent's order, and `graph_takes` binds one of the child's resources to one
 of the parent's.
