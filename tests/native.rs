@@ -15859,6 +15859,60 @@ fn both_compilers_take_a_pool_beside_a_run_of_resources() {
 // what each has to say, since two compilers refusing one program for two
 // different reasons is a divergence that a refusal alone would not show.
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // A view of a parameter handed back from inside a branch. The walk that
+    // works out which parameters a function's answer can name read `return`
+    // inside a loop and inside a `with`, and read the block's trailing value,
+    // and never read one inside an `if` or a `match`: a branch is an
+    // expression, so a `return` written in one arrives as an expression
+    // statement rather than as a statement of its own.
+    //
+    // So a function answering with a view of a parameter from a branch was
+    // recorded as naming nothing, and a caller was free to store what it
+    // answered with somewhere that outlives what it points into. Adding the
+    // branch made the check *more* permissive than the same function without
+    // it, which is a fixpoint losing a source rather than growing one.
+    //
+    // The caller has to take the container as a parameter for this to bite: an
+    // answer naming a parameter outlives the call, so the check only turns on
+    // the source it was missing. With the container a local of the caller, the
+    // answer names that frame either way and the same program is refused with
+    // the hole open, which is what made the first attempt at this case pass
+    // whether or not the fix was in.
+    (
+        "a_view_of_a_parameter_returned_from_a_branch",
+        "import \"mem.frost\"\n\
+         Grip :: distinct ^u8\n\
+         Trio :: struct { one: Grip, two: Grip, three: Grip }\n\
+         Resource :: struct { held: Trio, transient: bool, slot: i64 }\n\
+         Slot :: struct { held: Trio, made: bool }\n\
+         Box :: struct { pool: []Slot, into: []Resource }\n\
+         no_trio :: fn() -> Trio {\n\
+         \x20   zero := 0\n\
+         \x20   Trio { one = unsafe { ptr_cast($u8, zero) },\n\
+         \x20       two = unsafe { ptr_cast($u8, zero) },\n\
+         \x20       three = unsafe { ptr_cast($u8, zero) } }\n}\n\
+         backing_of :: fn(b: Box, one: Resource) -> Trio {\n\
+         \x20   if (one.transient == false) {\n\
+         \x20       return one.held\n\
+         \x20   }\n\
+         \x20   pool := b.pool\n\
+         \x20   pool[one.slot].held\n}\n\
+         put :: fn(mut b: Box, at: i64) {\n\
+         \x20   source := Resource { held = no_trio(), transient = false,\n\
+         \x20       slot = 0 }\n\
+         \x20   given := backing_of(b, source)\n\
+         \x20   mut into := b.into\n\
+         \x20   into[at].held = given\n}\n\
+         main :: fn() -> i64 {\n\
+         \x20   mut b := Box { pool = heap_slice($Slot, 2),\n\
+         \x20       into = heap_slice($Resource, 2) }\n\
+         \x20   put(b, 0)\n\
+         \x20   print 1\n\
+         \x20   heap_release_slice($Resource, b.into)\n\
+         \x20   heap_release_slice($Slot, b.pool)\n\
+         \x20   0\n}\n",
+        "frame",
+    ),
     // A distinct type taken from its representation through a field. The
     // bootstrap held a named local, an argument and a binding to the rule and
     // let a field through, because the check sat in the branch that assigns to
