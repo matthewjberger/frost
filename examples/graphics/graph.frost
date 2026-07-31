@@ -1031,6 +1031,16 @@ graph_resize :: fn(mut g: Graph, w: i64, h: i64) {
     }
     make_resources(g)
     tell_passes(g)
+    // A sub-graph is handed over and cannot be reached afterwards, so it is
+    // sized through the one that holds it. A child whose resources are a fixed
+    // size makes them on the first of these and ignores the rest; one whose
+    // resources follow the window follows the same window this does.
+    mut sub : i64 = 0
+    while (sub < g.sub_count) {
+        mut nested := g.subs
+        graph_resize(nested[sub], w, h)
+        sub = sub + 1
+    }
 }
 
 // Every pass that names a resource made again since it last built its
@@ -1317,11 +1327,21 @@ run_sub :: fn(mut g: Graph, mut f: Frame, sub: i64) {
         if (one.sub == sub) {
             outer := g.resources
             source := outer[one.outer]
+            // What backs it rather than what it holds. A transient's texture
+            // is the pool slot's, and handing over the empty field on the
+            // resource itself gives the child a target of nothing.
+            mut given := source.held
+            if (source.transient && source.slot >= 0) {
+                pool := g.pool
+                if (pool[source.slot].made) {
+                    given = pool[source.slot].held
+                }
+            }
             mut nested := g.subs
             mut inner := nested[sub].resources
-            inner[one.inner].held = source.held
+            inner[one.inner].held = given
             inner[one.inner].buffer = source.buffer
-            inner[one.inner].made = source.made
+            inner[one.inner].made = source.made || source.transient
         }
         i = i + 1
     }
