@@ -7974,6 +7974,7 @@ const SHARED_EXAMPLES: &[&str] = &[
     "native/shapes.frost",
     "native/slices.frost",
     "native/vectors.frost",
+    "selfhosted/diamond.frost",
     "tour.frost",
 ];
 
