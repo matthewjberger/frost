@@ -16006,6 +16006,25 @@ fn both_compilers_take_a_pool_beside_a_run_of_resources() {
 // what each has to say, since two compilers refusing one program for two
 // different reasons is a divergence that a refusal alone would not show.
 const REFUSED_BY_BOTH: &[(&str, &str, &str)] = &[
+    // An aggregate travels by address, so once a call has taken one there is
+    // nothing left to tell a pointer to one struct from a pointer to another:
+    // every check after that point is looking at a machine word. The bootstrap
+    // took the address without comparing the two types and a twelve-byte value
+    // was read as sixty-four bytes, with the bounds checks agreeing throughout.
+    // The self-hosted compiler had always refused it.
+    (
+        "an_aggregate_of_the_wrong_type_is_refused",
+        "Small :: struct { x: f32, y: f32, z: f32 }\n\
+         Large :: struct { m: [16]f32 }\n\
+         takes_large :: fn(held: Large) -> f32 { held.m[0] }\n\
+         main :: fn() -> i64 {\n\
+         \x20   small := Small { x = 1.0, y = 2.0, z = 3.0 }\n\
+         \x20   answer := takes_large(small)\n\
+         \x20   if (answer > 0.0) { print 1 } else { print 0 }\n\
+         \x20   0\n\
+         }\n",
+        "Large",
+    ),
     // A view of a parameter handed back from inside a branch. The walk that
     // works out which parameters a function's answer can name read `return`
     // inside a loop and inside a `with`, and read the block's trailing value,
