@@ -416,11 +416,13 @@ main :: fn() -> i64 {
         render_world_begin(near_render)
         scene_sync(world, near_render, registry, cache,
             drawn_in_layer(model, drawn, NEAR))
-        render_world_upload(near_render, queue)
+        render_world_upload(near_render, queue,
+            camera_view_projection(world_camera(world), width(p), height(p)))
         render_world_begin(far_render)
         scene_sync(world, far_render, registry, cache,
             drawn_in_layer(model, drawn, FAR))
-        render_world_upload(far_render, queue)
+        render_world_upload(far_render, queue,
+            camera_view_projection(world_camera(world), width(p), height(p)))
 
         mut f := renderer_begin(r)
         if (frame_ok(f)) {
