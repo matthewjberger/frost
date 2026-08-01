@@ -943,7 +943,7 @@ main :: fn() -> i64 {
     // grid of shapes above it turning about their own axes.
     floor := ecs_spawn_with(world, wanted)
     ecs_set($Placement, world, floor, placement, Placement {
-        position = vec3(0.0, FLOOR_Y, 0.0),
+        position = vec3(0.0, FLOOR_Y, 0.0), rotation = quat_identity(),
         scale = vec3(9.0, FLOOR_THICKNESS, 9.0) })
     ecs_set($Spin, world, floor, spin, Spin { axis = vec3(0.0, 1.0, 0.0),
         speed = 0.0, angle = 0.0 })
@@ -966,7 +966,7 @@ main :: fn() -> i64 {
             position = vec3((across - half) * COLUMN_SPACING,
                 lowest + up * ROW_RISE,
                 (up - half) * ROW_DEPTH),
-            scale = vec3(1.0, 1.0, 1.0) })
+            rotation = quat_identity(), scale = vec3(1.0, 1.0, 1.0) })
 
         // An axis that differs from one to the next, so the shadows underneath
         // move differently rather than as one shape.
@@ -994,7 +994,8 @@ main :: fn() -> i64 {
     // an orbit and neither of them says anything about the other.
     root := ecs_spawn_with(world, root_wanted)
     ecs_set($Placement, world, root, placement, Placement {
-        position = vec3(0.0, 0.0, 0.0), scale = vec3(1.0, 1.0, 1.0) })
+        position = vec3(0.0, 0.0, 0.0), rotation = quat_identity(),
+        scale = vec3(1.0, 1.0, 1.0) })
     ecs_set($Spin, world, root, spin, Spin { axis = vec3(0.0, 1.0, 0.0),
         speed = 0.25, angle = 0.0 })
     // Hung off the root before the root is put in the table, since putting it

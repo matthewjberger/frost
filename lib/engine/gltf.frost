@@ -26,6 +26,10 @@
 // so a length that runs past the end is a file that gets refused rather than a
 // read that goes wherever the arithmetic pointed.
 
+import "world.frost"
+import "ecs.frost"
+import "../renderer/render_world.frost"
+import "../renderer/wgpu.frost"
 import "../renderer/mesh.frost"
 import "../renderer/material.frost"
 import "json.frost"
@@ -42,7 +46,7 @@ export Gltf, GltfNode, GltfPrimitive,
     gltf_primitive_count, gltf_primitive_at,
     gltf_material_count, gltf_material_at,
     gltf_node_count, gltf_node_at, gltf_node_children, gltf_root_count,
-    gltf_root_at, gltf_node_matrix
+    gltf_root_at, gltf_node_matrix, gltf_spawn
 
 // One drawable run: the vertices, the indices that order them, and which
 // material it wears, or -1 where the file named none.
@@ -806,4 +810,143 @@ test "a file that is not one is refused rather than read" {
     mut wrong := gltf_read("lib/engine/assets/generate.py")
     assert(gltf_ok(wrong) == false)
     gltf_free(wrong)
+}
+
+// What a read file becomes in a world.
+//
+//     mut model := gltf_read("thing.glb")
+//     root := gltf_spawn(world, model, device, queue, registry, cache, ids)
+//     gltf_free(model)
+//
+// One entity per node, each hung off whatever the file hung it off, and one
+// child entity per primitive under any node that draws. A glTF mesh is a list
+// of primitives and each carries its own material, so a shape split across
+// three of them is three things to draw; giving each its own entity is what
+// lets the run a pass walks stay flat.
+//
+// The geometry and the materials go to the device here, once, and what the
+// entities carry is the numbers they came back as. After this the file has done
+// its job and `gltf_free` takes it away: nothing spawned points into it.
+
+gltf_spawn :: fn(mut world: World, mut model: Gltf, device: Device,
+    queue: Queue, mut registry: Materials, mut cache: MeshCache,
+    ids: WorldIds) -> Entity {
+    if (gltf_ok(model) == false) {
+        return no_entity()
+    }
+    // Where each of the file's own numbers ended up in the caller's tables. A
+    // file names its meshes and materials from zero and the tables it is being
+    // loaded into already hold other things.
+    mut meshes := heap_slice($i64, gltf_primitive_count(model))
+    mut materials := heap_slice($i64, gltf_material_count(model))
+    mut index : i64 = 0
+    while (index < gltf_material_count(model)) {
+        materials[index] = materials_add(registry, gltf_material_at(model,
+            index))
+        index = index + 1
+    }
+    index = 0
+    while (index < gltf_primitive_count(model)) {
+        held := gltf_primitive_at(model, index)
+        // Where it lands, read before the insert puts it there. Every
+        // primitive goes under the one name, since what a thing carries is the
+        // number and nothing looks a loaded mesh up by name.
+        meshes[index] = cache.count
+        mesh_cache_insert(cache, "gltf", mesh_upload(device, queue,
+            held.vertices, held.indices))
+        index = index + 1
+    }
+
+    // One entity above the file's own roots, so a caller moves the whole model
+    // by moving one thing and a file with several roots is still one model.
+    root := spawn_node_entity(world, ids, placed_at(vec3(0.0, 0.0, 0.0)))
+    mut at : i64 = 0
+    while (at < gltf_root_count(model)) {
+        spawn_node(world, model, gltf_root_at(model, at), root, meshes,
+            materials, ids)
+        at = at + 1
+    }
+    heap_release_slice($i64, meshes)
+    heap_release_slice($i64, materials)
+    root
+}
+
+// One node and everything under it, hung off what it was given.
+spawn_node :: fn(mut world: World, mut model: Gltf, node: i64, parent: Entity,
+    meshes: []i64, materials: []i64, ids: WorldIds) {
+    if (node < 0 || node >= gltf_node_count(model)) {
+        return
+    }
+    held := gltf_node_at(model, node)
+    entity := spawn_node_entity(world, ids, Placement {
+        position = held.translation, rotation = held.rotation,
+        scale = held.scale })
+    tree := world_tree(world)
+    hierarchy_attach(tree, entity, parent)
+
+    if (held.mesh >= 0) {
+        first := gltf_mesh_first(model, held.mesh)
+        mut part : i64 = 0
+        while (part < gltf_mesh_span(model, held.mesh)) {
+            drawn := gltf_primitive_at(model, first + part)
+            // A material of -1 is a file that named none, and the default is
+            // what the registry answers for a number it does not hold.
+            mut wears : i64 = -1
+            if (drawn.material >= 0 && drawn.material < slice_len(materials)) {
+                wears = materials[drawn.material]
+            }
+            // The primitive sits where its node sits, so its own placement is
+            // nothing at all and the node above carries the transform.
+            piece := spawn_drawn(world, ids, Drawn {
+                mesh = meshes[first + part], material = wears,
+                layer = ONE_LAYER })
+            mut under := world_tree(world)
+            hierarchy_attach(under, piece, entity)
+            part = part + 1
+        }
+    }
+
+    children := gltf_node_children(model, node)
+    mut child : i64 = 0
+    while (child < slice_len(children)) {
+        spawn_node(world, model, children[child], entity, meshes, materials,
+            ids)
+        child = child + 1
+    }
+}
+
+// A node of the file's tree: somewhere to be, and nothing drawn.
+//
+// No `Drawn` at all rather than one saying nothing. A query asks for the
+// components a thing carries, so a node carrying that component is a node the
+// walk hands to the pass, and what it would hand over is a mesh that is not
+// there. Most of a real file's nodes draw nothing: they are the joints and the
+// groupings the model was built out of.
+spawn_node_entity :: fn(mut world: World, ids: WorldIds,
+    place: Placement) -> Entity {
+    wanted := mask_with(mask_with(mask_with(mask_empty(), ids.placement),
+        ids.spin), ids.model)
+    entity := ecs_spawn_with(world, wanted)
+    place_and_still(world, ids, entity, place)
+    entity
+}
+
+// One primitive: drawn, and sitting exactly where the node above it sits.
+spawn_drawn :: fn(mut world: World, ids: WorldIds, shown: Drawn) -> Entity {
+    wanted := mask_with(mask_with(mask_with(mask_with(mask_empty(),
+        ids.placement), ids.spin), ids.model), ids.drawn)
+    entity := ecs_spawn_with(world, wanted)
+    place_and_still(world, ids, entity, placed_at(vec3(0.0, 0.0, 0.0)))
+    ecs_set($Drawn, world, entity, ids.drawn, shown)
+    entity
+}
+
+// Where it sits, and not turning. Every entity the walk makes has a placement
+// and a spin, because that is what `place_things` asks for, and a loaded model
+// turns only if something else says so.
+place_and_still :: fn(mut world: World, ids: WorldIds, entity: Entity,
+    place: Placement) {
+    ecs_set($Placement, world, entity, ids.placement, place)
+    ecs_set($Spin, world, entity, ids.spin, Spin { axis = vec3(0.0, 1.0, 0.0),
+        speed = 0.0, angle = 0.0 })
 }

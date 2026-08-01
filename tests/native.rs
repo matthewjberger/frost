@@ -16708,6 +16708,7 @@ fn the_graphics_examples_compile_against_their_bindings() {
             "scene_sync.frost",
             "world.frost",
             "gltf.frost",
+            "gltf_model.frost",
         ]
     } else {
         &["window.frost"]
@@ -17058,7 +17059,12 @@ fn self_hosted_compiles_the_sdl_binding() {
     // did not, which is a checkout that builds here and fails on the runner.
     let generated = graphics_source(&root, "wgpu.frost");
     let examples: &[&str] = if generated.exists() {
-        &["window.frost", "textured.frost", "shadowed.frost"]
+        &[
+            "window.frost",
+            "textured.frost",
+            "shadowed.frost",
+            "gltf_model.frost",
+        ]
     } else {
         &["window.frost"]
     };

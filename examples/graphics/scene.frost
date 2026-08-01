@@ -297,7 +297,7 @@ main :: fn() -> i64 {
         held := ecs_spawn_with(world, wanted)
         ecs_set($Placement, world, held, placement, Placement {
             position = vec3(spread[made], 0.0, depths[made]),
-            scale = vec3(0.6, 0.6, 0.6) })
+            rotation = quat_identity(), scale = vec3(0.6, 0.6, 0.6) })
         ecs_set($Spin, world, held, spin, Spin { axis = vec3(0.0, 1.0, 0.0),
             speed = rates[made], angle = 0.0 })
         mut shape := cube
