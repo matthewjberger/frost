@@ -41,6 +41,7 @@ export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     query_begin, query_next, query_column, query_entities,
     query_with,
     query_filter, query_row_passes, for_each, for_each_row, component_of,
+    component_for,
     ecs_single, ecs_count_matching, ecs_gather, ecs_pairs, EntityPair,
     ecs_compact,
     Filters, no_filters, filter_without, filter_changed, filter_added,
@@ -65,7 +66,7 @@ export Entity, EntitySlot, Column, Registry, Table, World, Query, Tag,
     world_clear,
     query_changed, query_added,
     ecs_resource_register, ecs_resource, ecs_resource_ref, ecs_resource_set,
-    ecs_resource_slice,
+    ecs_resource_slice, resource_of,
     ecs_log_enable, ecs_log, ecs_log_clear,
     ChangeKind,
     events_new, events_free, events_send, events_sent, events_slice,
@@ -508,6 +509,11 @@ World :: struct {
     tick: i64,
     // A resource is a component with one row and no entity: a column of one.
     resources: Vec<Column>,
+    // What type each of those columns holds, so a resource is reached by the
+    // type it is rather than by where it happens to sit. Kept beside the
+    // columns rather than inside them, because a column is bytes and a width
+    // and knows nothing about what it holds.
+    resource_types: Vec<i64>,
     // What changed structurally, for a program that has to hear about it: a
     // save file writing a delta, an editor keeping a list in step. Off by
     // default, since a world nobody asks pays nothing for it.
@@ -527,6 +533,7 @@ ecs_new :: fn() -> World {
         live = 0,
         tick = 1,
         resources = vec_new($Column, 4),
+        resource_types = vec_new($i64, 4),
         log = vec_new($Change, 16),
         logging = false,
     }
@@ -559,6 +566,7 @@ world_release :: fn(mut world: World) {
         r = r + 1
     }
     vec_free($Column, world.resources)
+    vec_free($i64, world.resource_types)
     vec_free($Change, world.log)
     vec_free($Table, world.tables)
     vec_free($EntitySlot, world.slots)
@@ -618,6 +626,14 @@ ecs_log_clear :: fn(mut world: World) {
 // Register a component and answer its index, which is what every call naming
 // that component is given. The width comes from the type, which is the only
 // thing about it this has to know.
+//
+// Each call hands out a fresh index, so registering a type twice gives two of
+// them and `component_of` answers with the first. An index is a slot the
+// registry hands out and a type is what the slot was cut for; the ceiling is
+// counted in slots, which is why `MAX_COMPONENTS` is a count of these rather
+// than a count of types. A resource is keyed the other way round, by the type
+// it holds, because two pieces of a program each needing the same resource have
+// to reach the same one and a resource has no index a program passes around.
 ecs_register :: fn($T: Type, mut world: World) -> i64 {
     index := world.registry.count
     // Past the ceiling there is no index to give, so a program that registers
@@ -631,6 +647,21 @@ ecs_register :: fn($T: Type, mut world: World) -> i64 {
     vec_push($str, world.registry.names, typename(T))
     world.registry.count = index + 1
     index
+}
+
+// Where a type id sits in the registry, or -1. The scan `component_of` and
+// `ecs_register` both do, written once so the two cannot come to disagree about
+// which index a type has.
+registered_index :: fn(wanted: i64, world: World) -> i64 {
+    known := vec_slice($i64, world.registry.types)
+    mut index : i64 = 0
+    while (index < world.registry.count) {
+        if (known[index] == wanted) {
+            return index
+        }
+        index = index + 1
+    }
+    -1
 }
 
 // The index a name stands for, or -1. What an editor listing components and a
@@ -664,20 +695,31 @@ ecs_component_name :: fn(world: World, component: i64) -> str {
 // which would otherwise be a mask bit nothing sets and a query that silently
 // matches nothing.
 component_of :: fn($T: Type, world: World) -> i64 {
-    wanted := type_id(T)
-    known := vec_slice($i64, world.registry.types)
-    mut index : i64 = 0
-    while (index < world.registry.count) {
-        if (known[index] == wanted) {
-            return index
-        }
-        index = index + 1
+    held := registered_index(type_id(T), world)
+    if (held >= 0) {
+        return held
     }
     // A type nothing registered would otherwise be a mask bit nothing sets, so
     // the query would match nothing and say nothing about why.
     unsafe { frost_rt_error("frost: a query names an unregistered component\n") }
     frost_rt_die()
     -1
+}
+
+// The component a type has, cut if it does not have one yet. What a piece of a
+// program calls when it needs a component to exist and does not know whether
+// something else needed it first: two of them asking get the same index, where
+// two of them registering get two.
+//
+// `ecs_register` is the other half and means something narrower: cut a slot.
+// The ceiling is counted in slots, so filling a registry is registering, and
+// declaring what you need is this.
+component_for :: fn($T: Type, mut world: World) -> i64 {
+    held := registered_index(type_id(T), world)
+    if (held >= 0) {
+        return held
+    }
+    ecs_register($T, world)
 }
 
 // The width a component was registered with.
@@ -1275,12 +1317,54 @@ ecs_added_since :: fn(world: World, entity: Entity, component: i64,
 // and reached through the same typed slice.
 // ---------------------------------------------------------------------------
 
+// Register a resource and answer the slot it was given.
+//
+// Registering a type that is already registered answers the slot it already
+// has, the way `ecs_register` does for a component. That is what lets two
+// pieces of a program each declare they need the same resource: whichever runs
+// second finds the one already there instead of laying a second column over it
+// and leaving half the program writing into a value the other half never reads.
 ecs_resource_register :: fn($T: Type, mut world: World) -> i64 {
+    held := resource_index(type_id(T), world)
+    if (held >= 0) {
+        return held
+    }
     slot := vec_len($Column, world.resources)
     mut column := column_new(sizeof(T))
     column_push_zero(column, world.tick)
     vec_push($Column, world.resources, column)
+    vec_push($i64, world.resource_types, type_id(T))
     slot
+}
+
+// Where a type id sits among the resources, or -1.
+resource_index :: fn(wanted: i64, world: World) -> i64 {
+    known := vec_slice($i64, world.resource_types)
+    mut slot : i64 = 0
+    while (slot < vec_len($i64, world.resource_types)) {
+        if (known[slot] == wanted) {
+            return slot
+        }
+        slot = slot + 1
+    }
+    -1
+}
+
+// The slot a resource type was registered in, which is what lets a system reach
+// a resource by the type it spells rather than by a number it was told. A world
+// holds a handful of resources, so the walk is over a short run of integers.
+//
+// A type nothing registered stops here. Answering a number anyway would hand
+// back whichever resource happens to sit at that slot, and reading a `Camera`
+// as an `Input` is a wrong answer rather than a failure.
+resource_of :: fn($T: Type, world: World) -> i64 {
+    held := resource_index(type_id(T), world)
+    if (held >= 0) {
+        return held
+    }
+    unsafe { frost_rt_error("frost: a resource is named that nothing registered\n") }
+    frost_rt_die()
+    -1
 }
 
 // The one row, as a slice, which is how a resource is written in place.
@@ -3057,6 +3141,76 @@ second_system :: fn(mut world: World) {
 
 spawning_system :: fn(mut world: World) {
     ecs_spawn(world)
+}
+
+test "a resource is found by the type it is" {
+    mut world := ecs_new()
+    order := ecs_resource_register($TestOrder, world)
+    damage := ecs_resource_register($TestDamage, world)
+    assert(order != damage)
+    // Asked for in the other order from the one they were registered in, so a
+    // lookup answering with the slot it was asked at rather than the slot the
+    // type sits in would agree with itself and still be wrong.
+    assert(resource_of($TestDamage, world) == damage)
+    assert(resource_of($TestOrder, world) == order)
+
+    ecs_resource_set($TestOrder, world, resource_of($TestOrder, world),
+        TestOrder { steps = 7 })
+    ecs_resource_set($TestDamage, world, resource_of($TestDamage, world),
+        TestDamage { amount = 3 })
+    assert(ecs_resource($TestOrder, world,
+        resource_of($TestOrder, world)).steps == 7)
+    assert(ecs_resource($TestDamage, world,
+        resource_of($TestDamage, world)).amount == 3)
+    ecs_free(world)
+}
+
+test "registering a resource twice answers the slot it already has" {
+    mut world := ecs_new()
+    first := ecs_resource_register($TestOrder, world)
+    ecs_resource_set($TestOrder, world, first, TestOrder { steps = 5 })
+    // What a second piece of a program does when it needs the same resource: it
+    // finds the one already there, so what the first piece wrote is still what
+    // is read and no second column was laid over the type.
+    again := ecs_resource_register($TestOrder, world)
+    assert(again == first)
+    assert(ecs_resource($TestOrder, world, again).steps == 5)
+    assert(vec_len($Column, world.resources) == 1)
+    ecs_free(world)
+}
+
+// The two halves are keyed differently on purpose, so this says which is which
+// rather than leaving it to be discovered. A component index is a slot, and
+// asking for a second one gets a second slot; a resource is keyed by its type,
+// and asking again gets the one already there.
+test "a component registers by slot where a resource registers by type" {
+    mut world := ecs_new()
+    first := ecs_register($TestPosition, world)
+    again := ecs_register($TestPosition, world)
+    assert(again != first)
+    // Whichever slot a caller was handed, the by-type route answers the first,
+    // which is what a query built from a type reads.
+    assert(component_of($TestPosition, world) == first)
+
+    held := ecs_resource_register($TestOrder, world)
+    assert(ecs_resource_register($TestOrder, world) == held)
+    ecs_free(world)
+}
+
+test "declaring a component twice reaches the one already there" {
+    mut world := ecs_new()
+    first := component_for($TestPosition, world)
+    // Two pieces of a program each saying they need this component. The second
+    // finds the first's, so an entity given one is an entity the other's query
+    // matches.
+    assert(component_for($TestPosition, world) == first)
+    assert(world.registry.count == 1)
+    // And one asked for where nothing registered cuts the slot rather than
+    // stopping, which is what makes it safe to call before anything else has.
+    second := component_for($TestHealth, world)
+    assert(second != first)
+    assert(world.registry.count == 2)
+    ecs_free(world)
 }
 
 test "a write is stamped with the tick it was made at" {
