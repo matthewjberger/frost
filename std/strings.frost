@@ -12,7 +12,8 @@
 import "mem.frost"
 
 export str_eq, str_starts_with, str_ends_with, str_index_of, str_contains,
-    str_count, str_is_empty, str_to_i64, str_byte_is_digit, str_byte_is_space,
+    str_count, str_is_empty, str_to_i64, str_to_f64,
+    str_byte_is_digit, str_byte_is_space,
     str_slice, str_span
 
 str_is_empty :: fn(s: str) -> bool { str_len(s) == 0 }
@@ -110,6 +111,163 @@ str_to_i64 :: fn(s: str) -> i64 {
         i = i + 1
     }
     if (negative) { -value } else { value }
+}
+
+// Reads a decimal number: an optional sign, digits, an optional fraction, and
+// an optional `e` exponent. Answers 0.0 for anything it cannot read, the way
+// `str_to_i64` answers 0, so a caller that needs to tell "0" from "not a
+// number" looks at the bytes first.
+//
+// The digits become one integer and where the point sat becomes a power of ten,
+// so a number costs one scaling rather than a rounding per digit. Where the
+// integer is under 2^53 and the power is one of the twenty-three a double holds
+// exactly, both sides are exact and the answer is the nearest double to what
+// was written. Past that the scaling goes in steps of twenty-two and the last
+// place can differ.
+str_to_f64 :: fn(s: str) -> f64 {
+    mut at : i64 = 0
+    mut negative := false
+    if (str_len(s) > 0 && (s[0] == 45 || s[0] == 43)) {
+        negative = s[0] == 45
+        at = 1
+    }
+    mut mantissa : i64 = 0
+    mut digits : i64 = 0
+    mut exponent : i64 = 0
+    mut any := false
+    while (at < str_len(s) && str_byte_is_digit(s[at])) {
+        any = true
+        if (digits < SIGNIFICANT) {
+            mantissa = mantissa * 10 + (s[at] - 48)
+            digits = digits + 1
+        } else {
+            // Past what an integer holds, a digit is only its place.
+            exponent = exponent + 1
+        }
+        at = at + 1
+    }
+    if (at < str_len(s) && s[at] == 46) {
+        at = at + 1
+        while (at < str_len(s) && str_byte_is_digit(s[at])) {
+            any = true
+            if (digits < SIGNIFICANT) {
+                mantissa = mantissa * 10 + (s[at] - 48)
+                digits = digits + 1
+                exponent = exponent - 1
+            }
+            at = at + 1
+        }
+    }
+    if (any == false) { return 0.0 }
+    if (at < str_len(s) && (s[at] == 101 || s[at] == 69)) {
+        at = at + 1
+        mut power_negative := false
+        if (at < str_len(s) && (s[at] == 45 || s[at] == 43)) {
+            power_negative = s[at] == 45
+            at = at + 1
+        }
+        mut power : i64 = 0
+        mut power_digits := false
+        while (at < str_len(s) && str_byte_is_digit(s[at])) {
+            power_digits = true
+            // Bounded, since anything this far out is already past what a
+            // double can hold and the scaling below saturates either way.
+            if (power < 1000000) {
+                power = power * 10 + (s[at] - 48)
+            }
+            at = at + 1
+        }
+        if (power_digits == false) { return 0.0 }
+        if (power_negative) {
+            exponent = exponent - power
+        } else {
+            exponent = exponent + power
+        }
+    }
+    if (at != str_len(s)) { return 0.0 }
+    scaled := scale_by_ten(mantissa, exponent)
+    if (negative) { -scaled } else { scaled }
+}
+
+// As many digits as an integer holds without overflowing on the next one.
+SIGNIFICANT :: 18
+
+// Powers of ten a double holds exactly, which runs out after this many.
+EXACT_POWERS :: 23
+
+// The largest integer a double holds exactly, so a mantissa under it converts
+// without rounding and the scaling below is the only rounding there is.
+EXACT_INTEGER :: 9007199254740992
+
+scale_by_ten :: fn(mantissa: i64, exponent: i64) -> f64 {
+    mut powers : [EXACT_POWERS]f64 = [
+        1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
+        1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22]
+    held : f64 = mantissa
+    if (mantissa < EXACT_INTEGER) {
+        if (exponent >= 0 && exponent < EXACT_POWERS) {
+            return held * powers[exponent]
+        }
+        if (exponent < 0 && -exponent < EXACT_POWERS) {
+            return held / powers[-exponent]
+        }
+    }
+    mut result := held
+    mut left := exponent
+    while (left > 0) {
+        mut step := left
+        if (step > EXACT_POWERS - 1) { step = EXACT_POWERS - 1 }
+        result = result * powers[step]
+        left = left - step
+    }
+    while (left < 0) {
+        mut step := -left
+        if (step > EXACT_POWERS - 1) { step = EXACT_POWERS - 1 }
+        result = result / powers[step]
+        left = left + step
+    }
+    result
+}
+
+test "a decimal number reads as the nearest double" {
+    // Every one of these is a double exactly, so the comparison is equality
+    // rather than a tolerance: a tolerance would pass on an answer that is
+    // merely close, which is the thing worth catching.
+    assert(str_to_f64("0") == 0.0)
+    assert(str_to_f64("1") == 1.0)
+    assert(str_to_f64("-1") == -1.0)
+    assert(str_to_f64("0.5") == 0.5)
+    assert(str_to_f64("-0.25") == -0.25)
+    assert(str_to_f64("123.456") == 123.456)
+    assert(str_to_f64("1e3") == 1000.0)
+    assert(str_to_f64("1E3") == 1000.0)
+    assert(str_to_f64("1e-3") == 0.001)
+    assert(str_to_f64("1.5e2") == 150.0)
+    assert(str_to_f64("-2.5e-2") == -0.025)
+    assert(str_to_f64("+3") == 3.0)
+    // The whole number is read, so a fraction is not dropped the way a reader
+    // that stopped at the point would drop it.
+    assert(str_to_f64("2.75") != 2.0)
+}
+
+test "a decimal number that is not one reads as zero" {
+    assert(str_to_f64("") == 0.0)
+    assert(str_to_f64("-") == 0.0)
+    assert(str_to_f64("abc") == 0.0)
+    assert(str_to_f64("1.2.3") == 0.0)
+    assert(str_to_f64("12a") == 0.0)
+    assert(str_to_f64("1e") == 0.0)
+    assert(str_to_f64("1e+") == 0.0)
+    assert(str_to_f64(".") == 0.0)
+}
+
+test "a number past what a double holds saturates rather than wrapping" {
+    assert(str_to_f64("1e400") > 1e300)
+    assert(str_to_f64("-1e400") < -1e300)
+    assert(str_to_f64("1e-400") == 0.0)
+    // Eighteen digits fit and the nineteenth is a place, so the value is the
+    // same either way round.
+    assert(str_to_f64("1234567890123456789") == 1234567890123456789.0)
 }
 
 test "equality compares bytes and length" {

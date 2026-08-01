@@ -66,6 +66,7 @@ with no allocation anywhere.
 | `str_contains(s, needle) -> bool` | Whether it occurs at all |
 | `str_count(s, byte) -> i64` | How many times that byte appears |
 | `str_to_i64(s) -> i64` | A decimal integer, with an optional leading `-` |
+| `str_to_f64(s) -> f64` | A decimal number, fraction and `e` exponent included |
 | `str_byte_is_digit(byte) -> bool` | Whether the byte is `0` through `9` |
 | `str_byte_is_space(byte) -> bool` | Space, tab, newline or carriage return |
 
@@ -81,6 +82,15 @@ a match at every call for nothing.
 `str_to_i64` answers 0 for anything it cannot read, which is what C's `atoi`
 does. It does not distinguish `"0"` from "not a number". A caller that needs the
 difference checks the bytes first, which is what `str_byte_is_digit` is for.
+`str_to_f64` answers 0.0 on the same terms.
+
+`str_to_f64` reads the digits into one integer and turns where the point sat
+into a power of ten, so a number costs one scaling rather than a rounding per
+digit. Where the integer is under 2^53 and the power is one of the twenty-three
+a double holds exactly, both sides are exact and the answer is the nearest
+double to what was written, which is what lets its tests compare with `==`
+rather than a tolerance. Past that the scaling goes in steps and the last place
+can differ.
 
 ## `std/format.frost`, the builder
 
@@ -178,7 +188,8 @@ JsonKind :: enum { Null, True, False, Number, String, Array, Object }
 | `json_free(move document)` | Releases the node vector |
 | `json_root(document) -> i64` | The root node, or -1 if the parse failed |
 | `json_kind(mut document, node) -> JsonKind` | What the node is |
-| `json_number(mut document, node) -> i64` | A number node's value |
+| `json_number(mut document, node) -> i64` | A number node's integer part |
+| `json_real(mut document, node) -> f64` | The whole of a number node |
 | `json_is_null(mut document, node) -> bool` | Whether it is the null node |
 | `json_text_eq(mut document, node, text) -> bool` | Whether a string node holds exactly this text |
 | `json_text_off(mut document, node) -> i64` | Where a string node's bytes start in the source |
@@ -198,10 +209,11 @@ nothing per string. That is also why the accessors take offsets and lengths
 rather than handing out a `str`: the node names a span of a buffer the caller
 still owns.
 
-Numbers are integers. The documents this exists to read (interface files,
-manifests, C API descriptions) carry counts and sizes rather than measurements,
-and a float field would be a promise the module cannot keep without a float
-parser. A fraction or an exponent in the source is read past and dropped.
+A number is read twice over. `json_number` answers with the integer part,
+which is what a count or a size is, and `json_real` answers with the whole of
+it, which is what a measurement is. A number node records where its digits sit
+the same way a string node does, so the second of those is `str_to_f64` over
+bytes already in memory and the parse still copies nothing per number.
 
 Children are chained with a `first` and a `next` index the way a linked list is,
 so an array of a thousand elements costs a thousand nodes and no reallocation of
