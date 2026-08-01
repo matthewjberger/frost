@@ -49,6 +49,7 @@ Each layer may name the ones below it and none may name the ones above.
 | `spinning.frost` | Lit surfaces: a mesh cache, a material registry, two bind groups |
 | `textured.frost` | The same field with its surfaces read off an image |
 | `shadowed.frost` | An ECS schedule driving compute, shadows, a bloom chain and a second view |
+| `gltf_model.frost` | A model read out of a file and spawned into the world |
 
 Frost has no crates, so nothing in the compiler refuses a file that reaches the
 wrong way. What refuses it is a test: `the_graphics_layers_only_reach_downwards`
@@ -68,6 +69,7 @@ just scene
 just spinning
 just textured
 just shadowed
+just gltf
 ```
 
 ## The binding is the perimeter
@@ -451,6 +453,36 @@ one of them. `scene.frost` divides its world that way: two calls over one slot
 table give the near pass and the far pass a run apiece, each holding only what
 that pass draws. Which things those are is decided once a frame in the walk, and
 a pass records every item it is handed.
+
+### A model out of a file
+
+`gltf.frost` reads a binary glTF into geometry, materials and a tree of nodes,
+and `gltf_spawn` turns that into entities:
+
+```frost
+mut held := gltf_read("lib/engine/assets/shapes.glb")
+root := gltf_spawn(world, held, device, queue, registry, cache, ids)
+gltf_free(held)
+```
+
+One entity per node, hung off whatever the file hung it off, and one child per
+primitive under a node that draws, because a glTF mesh is a list of primitives
+and each carries its own material. The geometry and the materials go to the
+device once, here; what the entities carry is the numbers they came back as, so
+after this the file has done its job and nothing spawned points into it.
+
+A node that draws nothing has no `Drawn` component at all rather than one saying
+nothing. A query asks for the components a thing carries, so a node carrying
+that component is a node the walk hands to a pass, and what it would hand over
+is a mesh that is not there. Most of a real file's nodes draw nothing: they are
+the joints and the groupings the model was built out of.
+
+`Placement` carries a rotation for this. A glTF node gives a quaternion, and
+`Spin` is a turn applied on top of it about an axis of the thing's own, so a
+loaded model that already faces somewhere can also be made to rotate without
+either being folded into the other. `just gltf` puts a spin on the one entity
+the whole file hangs off, which is how a model turns as one thing while its own
+tree stays untouched.
 
 ### Grouping by material
 

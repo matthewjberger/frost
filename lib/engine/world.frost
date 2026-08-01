@@ -25,16 +25,29 @@ import "camera.frost"
 import "ecs.frost"
 import "math.frost"
 
-export Placement, Spin, WorldIds,
+export Placement, Spin, WorldIds, placed_at,
     world_prepare, world_tree, world_schedule,
     world_input, world_camera, world_camera_set,
     WORLD_SLOT, TREE_SLOT, INPUT_SLOT, CAMERA_SLOT
 
-// Where a thing is and how big, and how it turns. The components a frame reads
+// Where a thing is, how it is turned and how big. The components a frame reads
 // to work out where everything ended up, which is the answer it writes into the
 // `Model` the renderer reads.
-Placement :: struct { position: Vec3, scale: Vec3 }
+//
+// Three parts rather than a matrix, because that is what a thing is authored
+// with and what every file format hands over. `rotation` is where it faces
+// before anything turns it; `Spin` is a turn applied on top, about an axis of
+// the thing's own, so a loaded model that already faces somewhere can also be
+// made to rotate without either of them being folded into the other.
+Placement :: struct { position: Vec3, rotation: Quat, scale: Vec3 }
 Spin :: struct { axis: Vec3, speed: f32, angle: f32 }
+
+// A placement that only says where, for a thing that faces the way it was
+// modelled and is the size it was modelled at.
+placed_at :: fn(position: Vec3) -> Placement {
+    Placement { position = position, rotation = quat_identity(),
+        scale = vec3(1.0, 1.0, 1.0) }
+}
 
 // Which component is which. A system captures nothing, so this is what it reads
 // to find its way around the world.
@@ -189,9 +202,12 @@ local_of :: fn(mut world: World, placement: i64, spin: i64,
     entity: Entity) -> Mat4 {
     place := ecs_get($Placement, world, entity, placement)
     turn := ecs_get($Spin, world, entity, spin)
+    // Where it faces, then the turn on top of that, so a thing spins about its
+    // own axis rather than about the one it would have had unrotated.
+    facing := quat_mul(place.rotation,
+        quat_from_axis_angle(turn.axis, turn.angle))
     mat4_mul(mat4_translation(place.position),
-        mat4_mul(quat_to_mat4(quat_from_axis_angle(turn.axis, turn.angle)),
-            mat4_scale(place.scale)))
+        mat4_mul(quat_to_mat4(facing), mat4_scale(place.scale)))
 }
 
 // What a frame does to a world is arithmetic over components and resources, so
@@ -276,7 +292,8 @@ test "a thing is placed against whatever it hangs off, however deep" {
     mut made : i64 = 0
     while (made < 3) {
         ecs_set($Placement, world, chain[made], ids.placement, Placement {
-            position = vec3(1.0, 0.0, 0.0), scale = vec3(1.0, 1.0, 1.0) })
+            position = vec3(1.0, 0.0, 0.0), rotation = quat_identity(),
+            scale = vec3(1.0, 1.0, 1.0) })
         ecs_set($Spin, world, chain[made], ids.spin, Spin {
             axis = vec3(0.0, 1.0, 0.0), speed = 0.0, angle = 0.0 })
         made = made + 1

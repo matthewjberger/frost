@@ -1,38 +1,36 @@
-// The same lit field, with the surfaces reading their colour off an image.
+// A model read out of a file, drawn.
 //
-//   just textured
+//   just gltf
 //
 // W/A/S/D move, Q and E drop and rise, the arrow keys look, escape closes it.
 //
-// What is new is the third binding and where it sits. The camera and the light
-// change once a frame, a thing's own matrix changes per thing, and an image
-// changes per material: thirty-six things share four images, so there are four
-// texture bindings and not thirty-six. That is the whole reason bindings come
-// in groups rather than one flat list, and it is visible here as a loop that
-// sets group 2 only when the material changes.
+// Nothing here says what to draw. `gltf_read` takes a binary glTF file apart
+// into geometry, materials and a tree of nodes, and `gltf_spawn` turns that
+// into entities: one per node, hung off whatever the file hung it off, and one
+// child per primitive under a node that draws. From there it is the same
+// schedule and the same pass every other demo uses, which is the point: what a
+// file loader produces is entities like any other, and the renderer never finds
+// out where they came from.
 //
-// The images are drawn rather than loaded, since a file format is a parser and
-// a parser is beside the point. Each carries a mark in one corner and a stripe
-// down one edge, which is what makes a flipped vertical coordinate something
-// you can see rather than something you have to reason about. Get the mapping
-// wrong and the marks are in the wrong corner; everything else looks fine.
+// The file is `lib/engine/assets/shapes.glb`, written by the generator beside
+// it. A cube, a pyramid and a floor, under two roots, one of which gives its
+// transform as a whole matrix. The whole model is hung off one entity that
+// turns, so what you see is the file's own tree carried around by something
+// above it.
 //
-// The things are sorted by material before they are drawn. Nothing here is slow
-// enough to need it, and it is what the loop above is a loop over: draw order
-// is chosen so the expensive binding changes as little as it can. What the
-// world hands back is in whatever order the world holds it, so the sort is over
-// the run a frame produced rather than over anything the program laid out.
+// The rest of this file is `spinning.frost`'s lit pass, unchanged. What is
+// worth reading is `main`.
 
 import "../../lib/platform/platform.frost"
 import "../../lib/engine/camera.frost"
 import "../../lib/renderer/renderer.frost"
 import "../../lib/renderer/graph.frost"
+import "../../lib/renderer/mesh.frost"
+import "../../lib/renderer/material.frost"
 import "../../lib/renderer/render_world.frost"
 import "../../lib/engine/scene_sync.frost"
 import "../../lib/engine/world.frost"
-import "../../lib/renderer/mesh.frost"
-import "../../lib/renderer/material.frost"
-import "../../lib/renderer/texture.frost"
+import "../../lib/engine/gltf.frost"
 import "../../lib/renderer/wgpu.frost"
 import "ecs.frost"
 import "math.frost"
@@ -42,25 +40,21 @@ import "io.frost"
 WIDTH :: 1280
 HEIGHT :: 720
 
-GRID :: 6
-INSTANCES :: 36
-LOOKS :: 4
-IMAGE_SIZE :: 64
+// How many things the file may spawn, which is the slot table, the draw list
+// and nothing else. A loaded model is as big as its file says.
+MAX_DRAWN :: 64
+
+// What is loaded, named from the root of the checkout.
+MODEL :: "lib/engine/assets/shapes.glb"
 
 // The camera and the light, written once a frame: a matrix, then four vectors.
 FRAME_FLOATS :: 32
 FRAME_BYTES :: 128
 
-// What one thing's own uniform holds is `scene_sync`'s, since that is what
-// fills it, and `OBJECT_BYTES` arrives from there.
-
-// What a pass records with. The images are here because binding one is this
-// pass's own work, and they are indexed by material, which holds because the
-// materials were registered first and in the same order.
+// What a pass records with, which is the run a frame produced and nothing else.
 Scene :: struct {
     pipeline: RenderPipeline,
     frame_group: BindGroup,
-    material_groups: []BindGroup,
     list: ^DrawList,
 }
 
@@ -81,34 +75,26 @@ struct Object {
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(1) @binding(0) var<uniform> object: Object;
-@group(2) @binding(0) var surface_texture: texture_2d<f32>;
-@group(2) @binding(1) var surface_sampler: sampler;
 
 struct VertexOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) world: vec3<f32>,
     @location(1) normal: vec3<f32>,
-    @location(2) texcoord: vec2<f32>,
 }
 
 @vertex
 fn vs_main(@location(0) position: vec3<f32>,
-           @location(1) normal: vec3<f32>,
-           @location(2) texcoord: vec2<f32>) -> VertexOut {
+           @location(1) normal: vec3<f32>) -> VertexOut {
     var out: VertexOut;
     let world = object.model * vec4<f32>(position, 1.0);
     out.clip = frame.view_projection * world;
     out.world = world.xyz;
     out.normal = (object.model * vec4<f32>(normal, 0.0)).xyz;
-    out.texcoord = texcoord;
     return out;
 }
 
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
-    let sampled = textureSample(surface_texture, surface_sampler, in.texcoord);
-    let albedo = object.base_color.rgb * sampled.rgb;
-
     let facing = normalize(in.normal);
     let toward_light = normalize(-frame.light_direction.xyz);
     let toward_eye = normalize(frame.camera_position.xyz - in.world);
@@ -117,21 +103,27 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let lambert = max(dot(facing, toward_light), 0.0);
     let rough = clamp(object.surface.x, 0.05, 1.0);
     let tightness = 2.0 / (rough * rough) - 2.0;
+    // Scaled by how much light reaches the surface at all, and kept small.
+    // Without the first, a face turned away from the light still catches a
+    // highlight; without the second, the lobe carries as much energy as the
+    // whole rest of the shading, and a large flat face lying along it comes
+    // out white. Both show up on a loaded model long before they show up on a
+    // field of spheres.
     let highlight = pow(max(dot(facing, halfway), 0.0), tightness)
-        * (1.0 - rough);
+        * (1.0 - rough) * lambert * 0.3;
 
     let strength = frame.light_color.w;
-    let lit = albedo
+    let lit = object.base_color.rgb
         * (frame.ambient.rgb + frame.light_color.rgb * strength * lambert)
         + frame.light_color.rgb * strength * highlight;
     return vec4<f32>(lit, object.base_color.a);
 }
 "
 
-// One pass over everything, in an order that groups the things sharing an
-// image. The texture binding is set when it changes and not per thing, which is
-// what the order was chosen for. The encoder is the graph's, over the targets
-// the pass declared.
+// One pass over everything. Both bindings are set here and neither is built
+// here: what a pass does is record, and what it records was decided before it
+// ran. The encoder comes from the graph, which made the targets this draws
+// into and chose their load ops from what the pass declared.
 draw_scene :: fn(pass: RenderPassEncoder, state: ^u8) {
     mut s := unsafe { ptr_cast($Scene, state) }
     render_pass_encoder_set_pipeline(pass, unsafe { s^.pipeline })
@@ -139,15 +131,9 @@ draw_scene :: fn(pass: RenderPassEncoder, state: ^u8) {
         no_pointer())
 
     list := unsafe { s^.list^ }
-    mut bound : i64 = -1
     mut index : i64 = 0
     while (index < draw_list_count(list)) {
         one := draw_list_at(list, index)
-        if (one.material != bound) {
-            render_pass_encoder_set_bind_group(pass, 2,
-                unsafe { s^.material_groups[one.material] }, 0, no_pointer())
-            bound = one.material
-        }
         render_pass_encoder_set_bind_group(pass, 1, one.binding, 0,
             no_pointer())
         mesh_bind(pass, one.geometry)
@@ -178,10 +164,14 @@ write_frame :: fn(queue: Queue, uniform: Buffer, eye: Camera, w: i64, h: i64) {
     values[24] = 1.0
     values[25] = 0.97
     values[26] = 0.9
-    values[27] = 2.5
-    values[28] = 0.12
-    values[29] = 0.14
-    values[30] = 0.18
+    // Softer than the lit demos next door, because the colours in the file are
+    // an exporter's rather than ones picked to sit under a bright light: at
+    // their strength these wash to white and the model reads as untextured
+    // geometry rather than as three materials.
+    values[27] = 1.0
+    values[28] = 0.18
+    values[29] = 0.2
+    values[30] = 0.24
     values[31] = 1.0
     queue_write_buffer(queue, uniform, 0,
         ptr_to(values[0]), FRAME_BYTES)
@@ -197,37 +187,6 @@ uniform_layout :: fn(device: Device, size: i64) -> BindGroupLayout {
     descriptor.entries_count = 1
     descriptor.entries = ptr_to(entry)
     device_create_bind_group_layout(device, ptr_to(descriptor))
-}
-
-// An image and the sampler that reads it, which are two entries of one group
-// because they are used together and neither is any use alone.
-surface_layout :: fn(device: Device) -> BindGroupLayout {
-    mut entries : [2]BindGroupLayoutEntry = [bind_group_layout_entry_init(); 2]
-    entries[0].binding = 0
-    entries[0].visibility = ShaderStage::Fragment
-    entries[0].texture.sample_type = TEXTURE_SAMPLE_TYPE_FLOAT
-    entries[0].texture.view_dimension = TEXTURE_VIEW_DIMENSION_2D
-    entries[1].binding = 1
-    entries[1].visibility = ShaderStage::Fragment
-    entries[1].sampler.type = SAMPLER_BINDING_TYPE_FILTERING
-    mut descriptor := bind_group_layout_descriptor_init()
-    descriptor.entries_count = 2
-    descriptor.entries = ptr_to(entries[0])
-    device_create_bind_group_layout(device, ptr_to(descriptor))
-}
-
-surface_group :: fn(device: Device, layout: BindGroupLayout,
-    held: Texture2D) -> BindGroup {
-    mut entries : [2]BindGroupEntry = [bind_group_entry_init(); 2]
-    entries[0].binding = 0
-    entries[0].texture_view = texture_view_of(held)
-    entries[1].binding = 1
-    entries[1].sampler = texture_sampler_of(held)
-    mut descriptor := bind_group_descriptor_init()
-    descriptor.layout = layout
-    descriptor.entries_count = 2
-    descriptor.entries = ptr_to(entries[0])
-    device_create_bind_group(device, ptr_to(descriptor))
 }
 
 uniform_buffer :: fn(device: Device, size: i64) -> Buffer {
@@ -259,21 +218,18 @@ make_pipeline :: fn(device: Device, format: u32,
     module_descriptor.next_in_chain = ptr_to(wgsl)
     shader := device_create_shader_module(device, ptr_to(module_descriptor))
 
-    mut attributes : [3]VertexAttribute = [vertex_attribute_init(); 3]
+    mut attributes : [2]VertexAttribute = [vertex_attribute_init(); 2]
     attributes[0].format = VERTEX_FORMAT_FLOAT32X3
     attributes[0].offset = POSITION_OFFSET
     attributes[0].shader_location = 0
     attributes[1].format = VERTEX_FORMAT_FLOAT32X3
     attributes[1].offset = NORMAL_OFFSET
     attributes[1].shader_location = 1
-    attributes[2].format = VERTEX_FORMAT_FLOAT32X2
-    attributes[2].offset = TEXCOORD_OFFSET
-    attributes[2].shader_location = 2
 
     mut buffer_layout := vertex_buffer_layout_init()
     buffer_layout.array_stride = VERTEX_STRIDE
     buffer_layout.step_mode = VERTEX_STEP_MODE_VERTEX
-    buffer_layout.attributes_count = 3
+    buffer_layout.attributes_count = 2
     buffer_layout.attributes = ptr_to(attributes[0])
 
     mut target := color_target_state_init()
@@ -299,6 +255,8 @@ make_pipeline :: fn(device: Device, format: u32,
     descriptor.vertex.buffers = ptr_to(buffer_layout)
     descriptor.primitive.topology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
     descriptor.primitive.front_face = FRONT_FACE_CCW
+    // Backs are thrown away, which is what the winding is for and what makes a
+    // closed shape cost half of what it looks like it costs.
     descriptor.primitive.cull_mode = CULL_MODE_BACK
     descriptor.multisample.count = 1
     descriptor.multisample.mask = 4294967295
@@ -307,31 +265,8 @@ make_pipeline :: fn(device: Device, format: u32,
     device_create_render_pipeline(device, ptr_to(descriptor))
 }
 
-// The four images, each a different pattern so which material a thing carries
-// is readable off the screen, and each marked in one corner so which way up it
-// went on is readable too.
-build_image :: fn(which: i64) -> Image {
-    mut held := image_new(IMAGE_SIZE, IMAGE_SIZE)
-    if (which == 0) {
-        image_checker(held, 8, vec4(0.9, 0.9, 0.92, 1.0),
-            vec4(0.25, 0.26, 0.3, 1.0))
-    } else if (which == 1) {
-        image_bricks(held, vec4(0.75, 0.36, 0.28, 1.0),
-            vec4(0.85, 0.84, 0.8, 1.0))
-    } else if (which == 2) {
-        image_rings(held, vec4(0.95, 0.93, 0.85, 1.0),
-            vec4(0.3, 0.55, 0.75, 1.0))
-    } else {
-        image_fill(held, vec4(0.55, 0.75, 0.5, 1.0))
-        image_checker(held, 4, vec4(0.55, 0.75, 0.5, 1.0),
-            vec4(0.45, 0.62, 0.42, 1.0))
-    }
-    image_corner_marks(held, vec4(1.0, 0.2, 0.35, 1.0))
-    held
-}
-
 main :: fn() -> i64 {
-    mut p := platform_open("Frost textured primitives", WIDTH, HEIGHT)
+    mut p := platform_open("Frost glTF", WIDTH, HEIGHT)
     if (platform_ok(p) == false) {
         print_str_line("no window")
         print_str_line(platform_error())
@@ -346,55 +281,18 @@ main :: fn() -> i64 {
     device := renderer_device(r)
     queue := renderer_queue(r)
 
-    mut cache := mesh_cache_new(4)
-    mesh_cache_insert(cache, "cube", cube_mesh(device, queue))
-    mesh_cache_insert(cache, "sphere", sphere_mesh(device, queue, 0.6, 16, 24))
-    cube := mesh_cache_find(cache, "cube")
-    sphere := mesh_cache_find(cache, "sphere")
-
-    // The colour a material carries now tints what the image gives rather than
-    // being the whole of the surface, so these are nearer to white than the
-    // untextured field's are.
-    mut registry := materials_new(8)
-    mut looks : [LOOKS]i64 = [0; LOOKS]
-    looks[0] = materials_add(registry, Material {
-        base_color = vec4(1.0, 0.95, 0.92, 1.0), roughness = 0.35,
-        metallic = 0.0 })
-    looks[1] = materials_add(registry, Material {
-        base_color = vec4(1.0, 0.98, 0.95, 1.0), roughness = 0.6,
-        metallic = 0.0 })
-    looks[2] = materials_add(registry, Material {
-        base_color = vec4(0.95, 0.97, 1.0, 1.0), roughness = 0.2,
-        metallic = 0.0 })
-    looks[3] = materials_add(registry, Material {
-        base_color = vec4(0.98, 1.0, 0.94, 1.0), roughness = 0.45,
-        metallic = 0.0 })
+    // Empty. What goes in them is whatever the file turns out to hold.
+    mut cache := mesh_cache_new(MAX_DRAWN)
+    mut registry := materials_new(MAX_DRAWN)
 
     frame_layout := uniform_layout(device, FRAME_BYTES)
     object_layout := uniform_layout(device, OBJECT_BYTES)
-    material_layout := surface_layout(device)
-    mut layouts : [3]BindGroupLayout = [frame_layout, object_layout,
-        material_layout]
+    mut layouts : [2]BindGroupLayout = [frame_layout, object_layout]
     mut pipeline_layout_descriptor := pipeline_layout_descriptor_init()
-    pipeline_layout_descriptor.bind_group_layouts_count = 3
-    pipeline_layout_descriptor.bind_group_layouts =
-        ptr_to(layouts[0])
+    pipeline_layout_descriptor.bind_group_layouts_count = 2
+    pipeline_layout_descriptor.bind_group_layouts = ptr_to(layouts[0])
     pipeline_layout := device_create_pipeline_layout(device,
         ptr_to(pipeline_layout_descriptor))
-
-    // One texture per material, made once and bound once per run of things
-    // that share it.
-    mut textures := heap_slice($Texture2D, LOOKS)
-    mut material_groups := heap_slice($BindGroup, LOOKS)
-    mut built : i64 = 0
-    while (built < LOOKS) {
-        mut picture := build_image(built)
-        textures[built] = texture_upload(device, queue, picture)
-        material_groups[built] = surface_group(device, material_layout,
-            textures[built])
-        image_free(picture)
-        built = built + 1
-    }
 
     frame_uniform := uniform_buffer(device, FRAME_BYTES)
     frame_group := uniform_group(device, frame_layout, frame_uniform,
@@ -402,60 +300,42 @@ main :: fn() -> i64 {
 
     mut world := ecs_new()
     ids := world_prepare(world)
-    placement := ids.placement
-    spin := ids.spin
-    drawn := ids.drawn
     model := ids.model
-    wanted := mask_with(mask_with(mask_with(mask_with(mask_empty(), placement),
-        spin), drawn), model)
+    drawn := ids.drawn
 
-    // A binding per thing, keyed by the entity, and the run one frame produces.
-    mut slot_table := slot_table_new(INSTANCES * 2, object_layout)
-    mut list := draw_list_new(INSTANCES * 2)
+    mut slot_table := slot_table_new(MAX_DRAWN, object_layout)
+    mut list := draw_list_new(MAX_DRAWN)
     mut frame_schedule := world_schedule()
 
-    half : f32 = 2.5
-    mut made : i64 = 0
-    while (made < INSTANCES) {
-        row := made / GRID
-        column := made - row * GRID
-        across : f32 = column
-        up : f32 = row
-        entity := ecs_spawn_with(world, wanted)
-        ecs_set($Placement, world, entity, placement, Placement {
-            position = vec3((across - half) * 1.8, (up - half) * 1.8, 0.0),
-            rotation = quat_identity(), scale = vec3(1.0, 1.0, 1.0) })
-
-        turning := vec3_normalize(vec3(0.3 + row, 1.0, 0.2 + column))
-        speed : f32 = 0.4 + 0.09 * made
-        ecs_set($Spin, world, entity, spin, Spin { axis = turning,
-            speed = speed, angle = 0.0 })
-
-        mut shape := cube
-        if (made - (made / 2) * 2 == 1) {
-            shape = sphere
-        }
-        which := made - (made / LOOKS) * LOOKS
-        ecs_set($Drawn, world, entity, drawn, Drawn { mesh = shape,
-            material = looks[which], layer = ONE_LAYER })
-        made = made + 1
+    // The whole of what this demo has to say about what is drawn. The path is
+    // from the root of the checkout, which is where `just gltf` runs it.
+    mut held := gltf_read(MODEL)
+    loaded := gltf_ok(held)
+    root := gltf_spawn(world, held, device, queue, registry, cache, ids)
+    gltf_free(held)
+    if (loaded == false) {
+        print_str_line("no model at:")
+        print_str_line(MODEL)
+        print_str_line("run this from the root of the checkout, or `just gltf`")
+    } else {
+        // The model turns as one thing. Its own tree is untouched: this is a
+        // spin on the entity everything the file spawned hangs off.
+        ecs_set($Spin, world, root, ids.spin, Spin {
+            axis = vec3(0.0, 1.0, 0.0), speed = 0.4, angle = 0.0 })
     }
 
     mut scene := Scene {
         pipeline = make_pipeline(device, renderer_format(r), pipeline_layout),
         frame_group = frame_group,
-        material_groups = material_groups,
         list = ptr_to(list),
     }
-    // One pass, and the two targets it writes. The depth buffer is the graph's:
-    // it follows the window and both load ops come from what the pass declared.
     mut graph := graph_new(device, 2, 1)
     screen := graph_backbuffer(graph)
     depth := graph_depth(graph, "depth", WINDOW_SIZED, WINDOW_SIZED,
         DEPTH_FORMAT)
     scene_pass := graph_pass(graph, "scene", draw_scene, ptr_to(scene))
     graph_writes_color(graph, scene_pass, screen,
-        Color { r = 0.04, g = 0.05, b = 0.07, a = 1.0 })
+        Color { r = 0.05, g = 0.06, b = 0.09, a = 1.0 })
     graph_writes_depth(graph, scene_pass, depth)
     scheduled := graph_schedule(graph)
     if (scheduled == false) {
@@ -464,8 +344,8 @@ main :: fn() -> i64 {
     graph_resize(graph, WIDTH, HEIGHT)
 
     mut eye := camera_default()
-    eye.position = vec3(0.0, 0.0, 14.0)
-    eye.pitch = 0.0
+    eye.position = vec3(0.0, 2.0, 7.0)
+    eye.pitch = -0.2
     world_camera_set(world, eye)
 
     while (scheduled && platform_poll(p)) {
@@ -482,7 +362,6 @@ main :: fn() -> i64 {
             height(p))
         scene_sync(world, list, slot_table, device, queue, registry, cache,
             all_drawn(model, drawn))
-        draw_list_group_by_material(list)
 
         mut f := renderer_begin(r)
         if (frame_ok(f)) {
@@ -492,13 +371,6 @@ main :: fn() -> i64 {
     }
 
     graph_free(graph)
-    mut freed : i64 = 0
-    while (freed < LOOKS) {
-        texture_free(textures[freed])
-        freed = freed + 1
-    }
-    heap_release_slice($BindGroup, material_groups)
-    heap_release_slice($Texture2D, textures)
     draw_list_free(list)
     slot_table_free(slot_table)
     schedule_free(frame_schedule)

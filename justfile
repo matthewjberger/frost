@@ -334,6 +334,17 @@ textured:
     cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 --libs=-lwgpu_native -o examples/graphics/textured examples/graphics/textured.frost
     ./examples/graphics/textured
 
+# A model read out of a binary glTF file, drawn (Windows)
+[windows]
+gltf:
+    $sdl = if ($env:SDL3_DIR) { $env:SDL3_DIR } else { "lib/platform" }; cargo run -r -q -p frost --bin frost -- --link --libs "$sdl/SDL3.dll" --libs "lib/renderer/wgpu/wgpu_native.dll" -o examples/graphics/gltf_model.exe examples/graphics/gltf_model.frost; Copy-Item lib/renderer/wgpu/wgpu_native.dll examples/graphics -Force; Copy-Item "$sdl/SDL3.dll" examples/graphics -Force; & ./examples/graphics/gltf_model.exe
+
+# A model read out of a binary glTF file, drawn (Unix)
+[unix]
+gltf:
+    cargo run -r -q -p frost --bin frost -- --link --libs=-lSDL3 --libs=-lwgpu_native -o examples/graphics/gltf_model examples/graphics/gltf_model.frost
+    ./examples/graphics/gltf_model
+
 # A shadow pass and a scene pass, ordered by the map between them (Windows)
 [windows]
 shadowed:

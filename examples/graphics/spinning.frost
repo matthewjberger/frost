@@ -330,7 +330,7 @@ main :: fn() -> i64 {
         entity := ecs_spawn_with(world, wanted)
         ecs_set($Placement, world, entity, placement, Placement {
             position = vec3((across - half) * 1.8, (up - half) * 1.8, 0.0),
-            scale = vec3(1.0, 1.0, 1.0) })
+            rotation = quat_identity(), scale = vec3(1.0, 1.0, 1.0) })
 
         // An axis that differs from one to the next, so the field does not read
         // as one object drawn thirty-six times.
